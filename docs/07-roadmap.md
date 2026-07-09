@@ -15,7 +15,7 @@ Goal: one orchestrator (Claude Code) delegates one task each to a Codex worker a
 
 ## M1 — The GLM leg + approvals + real telemetry (~1–2 weeks)
 
-- `glm-adapter` = claude-adapter + env override (Z.ai Anthropic-compatible endpoint), pending doc-01 findings on a native Z-code surface.
+- `glm-adapter` = claude-adapter + env override (Z.ai Anthropic-compatible endpoint; officially supported config per doc 01 §5 — set `ANTHROPIC_DEFAULT_*_MODEL=glm-5.2…`, long timeout, auto-compact). Respect plan concurrency ceilings in the scheduler from day one (Pro tier ≈ 1 in-flight).
 - Approval routing v1: deterministic policy file (allowlist/denylist per tool/command/path-scope) → escalate to `fleet_wait` → timeout = deny-with-message. Wire Codex server-requests and Claude canUseTool into it.
 - BatonEvent schema v1 (doc 05) + SQLite index + digest levels; derived signals: stall, budget burn, scope drift.
 - Task cards + result contracts (doc 06 Q6), per-harness brief templates.
@@ -47,8 +47,10 @@ Goal: one orchestrator (Claude Code) delegates one task each to a Codex worker a
 
 ## Open questions carried into implementation
 
-1. `fleet_wait` vs MCP client timeouts: max safe block duration per client; resumable wait cursors as the fallback design.
-2. Codex daemon vs per-worker stdio app-server: daemon gives multi-client + remote-control, stdio gives isolation; measure both.
-3. Claude Code `--bg` background-agent mode: does it expose enough (notifications, reattach) to replace the per-process adapter? (Doc 01 to verify current state.)
-4. Native Z.ai harness surface — exists? programmatic? (Doc 01.)
+1. `fleet_wait` vs MCP client timeouts: max safe block duration per client; resumable wait cursors as the fallback design. (MCP tasks extension — doc 03 — is the eventual native answer; host support varies today.)
+2. Codex daemon vs per-worker stdio app-server: daemon gives multi-client + remote-control (+ experimental WebSocket transport), stdio gives isolation; measure both.
+3. Claude Code `--bg` background-agent mode: does it expose enough (notifications, reattach) to replace the per-process adapter?
+4. ~~Native Z.ai harness surface~~ **Resolved (doc 01 §5): none exists; Claude Code/Cline/OpenCode are the officially supported harnesses.** Remaining: GLM-5.2 quality inside the Claude harness vs OpenCode.
 5. Where compaction bites: worker-side (brief survival — mitigations in doc 06 Q6) and orchestrator-side (fleet state re-hydration via `fleet_list` — doc 06 Q3).
+6. `turn/steer` behavioral semantics (queue vs immediate splice) — schema documents the method, not the behavior; test in M0.
+7. Anthropic agent-teams internals (`~/.claude/teams/` mailbox + file-lock task ledger, TeammateIdle hooks — doc 01 §6) as a design reference and possible integration point: could baton workers appear as "teammates" to a Claude orchestrator?

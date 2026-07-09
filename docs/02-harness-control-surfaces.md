@@ -21,7 +21,7 @@ To orchestrate a full harness you need, at minimum:
 
 ## Codex CLI 0.144.0 — the richest surface (locally verified)
 
-`codex app-server` is a JSON-RPC (stdio or daemon socket) protocol; `codex app-server generate-json-schema --out <dir>` emits the full typed schema — an underrated gift: **machine-readable protocol introspection**, so an adapter can feature-detect by schema diff instead of version sniffing. Method inventory extracted from the v2 schema bundle:
+`codex app-server` is a JSON-RPC protocol (NDJSON over stdio; experimental WebSocket `--listen ws://…` and Unix-socket transports; officially documented at developers.openai.com/codex/app-server and the interface behind OpenAI's own rich clients). `codex app-server generate-json-schema --out <dir>` emits the full typed schema — an underrated gift: **machine-readable protocol introspection**, so an adapter can feature-detect by schema diff instead of version sniffing. Method inventory extracted from the v2 schema bundle:
 
 | Primitive | Codex method(s) |
 |---|---|
@@ -54,7 +54,7 @@ Beyond the minimum vocabulary, notable extras:
 No public JSON-RPC schema dump, but three overlapping surfaces:
 
 1. **Headless stream-json**: `claude -p --input-format stream-json --output-format stream-json` — NDJSON turns in, NDJSON events out; `--include-partial-messages` (token-level deltas), `--include-hook-events` (hook lifecycle in the stream — telemetry hook-point), `--replay-user-messages` (echo confirmation). Sessions: `--session-id <uuid>`, `--resume`, `--continue`, `--fork-session`, `--no-session-persistence`, `--name`. Behavior config: `--agents <json>` (inline subagent definitions), `--append-system-prompt`, `--permission-mode {acceptEdits,auto,bypassPermissions,manual,dontAsk,plan}`, `--effort`, `--model`, `--betas`.
-2. **Agent SDK (TS/Py)**: wraps the stream-json control protocol — `query()`, `interrupt()`, `canUseTool` callback (programmatic approval = the approve primitive), hooks, `setPermissionMode`/`setModel` at runtime. The control protocol rides the same NDJSON channel as `control_request`/`control_response` frames. *(Semantics known pre-cutoff; exact current frame set to be confirmed in doc 01 landscape.)*
+2. **Agent SDK (TS/Py)**: wraps the stream-json control protocol — `query()`, `interrupt()` (streaming-input mode only; on CLI ≥2.1.205 returns an interrupt receipt with `still_queued` message UUIDs), `canUseTool` callback (programmatic approval = the approve primitive), and **mid-run reconfiguration**: `setModel()`, `setPermissionMode()`, `applyFlagSettings()` (model, effortLevel, permissions, hooks, skillOverrides, agent — applied next turn). Hooks are a steering surface in their own right: **PreToolUse can allow/deny/ask/defer, rewrite tool inputs (`updatedInput`), and replace tool outputs (`updatedToolOutput`)** — per-tool-call interception stronger than message injection; Notification hooks fire on `permission_prompt`/`idle_prompt`; SubagentStart/Stop expose transcript paths; TS-only events include `TeammateIdle`, `TaskCompleted`, `WorktreeCreate/Remove`. The control protocol rides the same NDJSON channel as `control_request`/`control_response` frames. (Web-verified via doc 01 §4; the `claude-agent-acp` adapter source doubles as the de-facto frame documentation.)
 3. **`claude mcp serve`** — Claude Code as an MCP server (harness-as-tool), verified present.
 4. **`--bg` / `--background`** — "start the session as a background agent," plus `--from-pr` (sessions linked to PRs). Anthropic is also building the durable-worker substrate natively.
 
@@ -75,12 +75,13 @@ Mapping to the vocabulary:
 
 **Key asymmetry vs Codex:** Claude Code's richest control mode (SDK/stream-json) is *per-process* — the controller owns the process's stdio. Codex's app-server is a *daemon* — many clients can attach, pair, and share threads. For fleet supervision the daemon shape is structurally better; Claude Code gets partway there with `--bg` and session resumability. A baton adapter for Claude Code should itself be a small daemon owning N child processes and re-exposing them (which is exactly what OpenAI's broker does for the single-Codex case, and what `opencode` does natively — see below).
 
-## GLM / Z.ai ("Z-code", GLM 5.x)
+## GLM / Z.ai (GLM 5.2 — resolved, doc 01 §5)
 
-No native Z.ai CLI found on this machine; status of "Z-code" and GLM 5.2 pending web verification (doc 01). What is already load-bearing:
+There is **no first-party "Z-code" CLI**. Z.ai's GLM Coding Plan (GLM-5.2, GLM-5-Turbo, GLM-4.7) officially supports *third-party* harnesses — **Claude Code, Cline, and OpenCode** — auto-configured by `npx @z_ai/coding-helper`. The Anthropic-compatible endpoint is confirmed from official docs: `ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic` + `ANTHROPIC_AUTH_TOKEN`, with model mapping via `ANTHROPIC_DEFAULT_*_MODEL` (e.g. `ANTHROPIC_DEFAULT_OPUS_MODEL=glm-5.2[1m]` for 1M context); Z.ai recommends a 3,000,000 ms timeout and 1M-token auto-compact window — explicitly agent-session-oriented.
 
-- Z.ai ships an **Anthropic-compatible API endpoint** for its coding plan (`ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic` pattern, pre-cutoff knowledge). Consequence: **Claude Code itself is a perfectly good GLM harness** — `ANTHROPIC_BASE_URL=… ANTHROPIC_AUTH_TOKEN=… claude -p …` gives the GLM leg the *entire* Claude Code control surface above, one adapter for two legs.
-- Caveat to research: harness/model mismatch — Claude Code's prompts and tool descriptions are tuned for Claude; GLM-in-Claude-harness is *not* GLM at its best (the same "harness IS the product" argument from the brief cuts against this shortcut). If a first-party Z.ai harness with a programmatic surface exists, it's preferable; the Claude-Code-as-GLM-harness path is the pragmatic MVP fallback.
+So **Claude Code as the GLM harness is not a hack, it's the vendor's blessed configuration** — the glm-adapter is the claude-adapter with env overrides, exactly as hoped. Two caveats survive:
+- Harness/model mismatch still costs quality (Claude-tuned prompts and tool descriptions driving GLM); Z.ai's own compat verification trails Claude Code releases (2.0.14 vs today's 2.1.205). OpenCode is the officially-supported alternative harness if the mismatch proves expensive.
+- The plan is **contractually locked to supported harnesses** and enforces per-tier *concurrency* limits (Pro-tier reports of a single in-flight request; peak-hour 3× quota multipliers on GLM-5.2). Fleet math changes accordingly — see doc 01 §7 and doc 06 Q7.
 
 ## Also installed here (widens the fleet, sharpens the design)
 
@@ -96,15 +97,15 @@ No native Z.ai CLI found on this machine; status of "Z-code" and GLM 5.2 pending
 | spawn | ✅ native | ✅ native | ✅ (env override) | ✅ session/new |
 | stream | ✅ rich (deltas, diffs, plans) | ✅ rich | ✅ | ✅ session/update |
 | interrupt | ✅ `turn/interrupt` | ✅ SDK interrupt | ✅ | ✅ session/cancel |
-| steer mid-turn | ✅ **`turn/steer`** | ⚠️ emulate | ⚠️ emulate | ❓ verify |
-| inject context | ✅ `thread/inject_items` | ⚠️ between turns | ⚠️ | ❓ |
-| approvals → client | ✅ JSON-RPC requests | ✅ canUseTool | ✅ | ✅ permission requests |
-| resume/fork/rollback | ✅ / ✅ / ✅ | ✅ / ✅ / ❌ | ✅ | ❓ |
+| steer mid-turn | ✅ **`turn/steer`** | ⚠️ emulate (but PreToolUse `updatedInput`/`updatedToolOutput` rewriting = native tool-level steering) | ⚠️ same | ❌ (ACP has no steer) |
+| inject context | ✅ `thread/inject_items` | ⚠️ between turns | ⚠️ | ❌ |
+| approvals → client | ✅ JSON-RPC requests | ✅ canUseTool | ✅ | ✅ session/request_permission |
+| resume/fork/rollback | ✅ / ✅ / ✅ | ✅ / ✅ / ❌ | ✅ | ✅ resume (capability-gated) / adapter-dependent / ❌ |
 | goal pinning | ✅ `thread/goal/*` | ❌ (emulate via system prompt) | ❌ | ❌ |
-| usage/rate-limit telemetry | ✅ push notifications | ✅ OTel + result events | ⚠️ (Z.ai side unknown) | ❓ |
+| usage/rate-limit telemetry | ✅ push notifications | ✅ OTel + result events | ⚠️ (Z.ai side unknown) | ❌ (not in ACP) |
 | daemon / multi-client | ✅ daemon + pairing | ⚠️ per-process (`--bg` emerging) | ⚠️ | ❌ (stdio per client) |
 | schema introspection | ✅ generate-json-schema | ❌ | ❌ | ✅ (ACP versioned spec) |
 
-Legend: ✅ native · ⚠️ emulable with adapter work · ❌ absent · ❓ pending doc-01 verification.
+Legend: ✅ native · ⚠️ emulable with adapter work · ❌ absent. (Gemini column reflects the verified ACP spec — doc 01 §1.)
 
 **Design consequence:** the common denominator is poor but the union is rich. A lowest-common-denominator protocol wastes Codex's steering and Claude's hooks; the hub should expose a **capability-negotiated** surface (each adapter publishes a "harness card" of supported primitives, and the orchestrator's tools degrade gracefully — e.g. `steer` falls back to interrupt+reprompt with an explicit `emulated: true` flag in telemetry).

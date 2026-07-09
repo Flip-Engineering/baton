@@ -46,7 +46,13 @@ The quality ceiling of the whole system is set by what crosses the boundary, not
 
 ## Q7. The economics are real but rest on ToS sand
 
-The flat-rate-fleet story has a regulatory risk inside it: vendors price subscriptions assuming human-paced interactive use, and all of them meter programmatic/agentic use differently over time. OpenAI's plugin *blesses* Claude→Codex under a ChatGPT plan (their code, their runtime). The inverse (a Codex orchestrator driving Claude Code under a Max plan through our hub) has no such blessing, and vendors have historically tightened OAuth-token use by third-party harnesses. This is a **risk register item, not a footnote**: per-vendor auth posture should be a config knob (subscription vs API-key), and the system must degrade gracefully to API billing where subscription use is disallowed or throttled. Needs current facts (doc 01) and periodic re-checking — the answer will change.
+The flat-rate-fleet story has a regulatory risk inside it: vendors price subscriptions assuming human-paced interactive use, and all of them meter programmatic/agentic use differently over time. The facts landed by doc 01 §7 make this concrete, vendor by vendor:
+
+- **Anthropic already tried to close it.** On 2026-05-14 they announced splitting programmatic usage (Agent SDK, `claude -p`, GH Actions) into metered credit pools; on 2026-06-15 they cancelled it *while stating they're reworking it, not abandoning it*. Subscription-funded orchestration of Claude workers currently works, is currently allowed, and is explicitly on notice.
+- **OpenAI blesses narrowly.** The plugin path (their code, their runtime) is sanctioned and metered against account limits; ChatGPT-auth for programmatic/CI use is documented for "trusted runners"; the ACP adapter documents subscription auth as unsupported in remote projects. Claude→Codex has a blessing; a third-party hub should stay close to the blessed surface (the app-server their own plugin uses).
+- **Z.ai contractually locks harnesses.** The GLM Coding Plan restricts use to *officially supported tools* (Claude Code, Cline, OpenCode — which conveniently includes our adapter path), prohibits account sharing, enforces with rate-limits/freezes/bans, and rations by **concurrency tier** (Pro-tier reports of one in-flight request; 3× peak-hour quota burn on GLM-5.2). A GLM "fleet" on a Lite/Pro plan is one worker with a queue.
+
+Consequences: per-vendor auth posture is a config knob (subscription vs API-key) with graceful degradation to API billing; per-vendor concurrency ceilings live in the harness card and the *scheduler* (queue, don't storm); dispatch should be time-aware where quota multipliers are (Z.ai peak hours); and the whole risk gets re-checked on a calendar, because all three vendors moved within the last 8 months.
 
 ## Q8. Failure taxonomy — "retry" is not a policy
 
