@@ -43,6 +43,8 @@ Beyond the minimum vocabulary, notable extras:
 - **`codex remote-control start|stop|pair`** — daemon with short-lived pairing codes; `codex app-server daemon bootstrap` explicitly targets "durable local app-server management for SSH-driven use". OpenAI is building the remote-supervision substrate themselves.
 - **`externalAgentConfig/detect` / `import` (+ `readHistories`)** — Codex imports config *and session histories* from other agents' installations. Cross-harness session migration is already on their roadmap in some form.
 - **`codex exec --json`** and **`codex exec-server`** — headless one-shot and a standalone exec service; `codex mcp-server` — Codex as an MCP server (harness-as-tool).
+- **`codex exec --output-schema <FILE>`** — the harness itself enforces a JSON-Schema shape on the final response. Result contracts (doc 06 Q6) get native enforcement on the Codex leg instead of parse-and-retry.
+- **`codex features list`** — runtime feature-flag inspection (`--enable/--disable <FEATURE>` per invocation): a second feature-detection channel alongside schema introspection.
 - `thread/realtime/*` — voice/realtime channel per thread (out of scope, but shows where this is going).
 
 **Evidence from OpenAI's own Claude Code plugin (installed locally, v1.0.6):** their bridge runs a persistent `app-server` behind a Unix-socket broker (`app-server-broker.mjs`), single-flights requests, and — the telling detail — carves out an exception so `turn/interrupt` is allowed from a *different* client socket while a stream is active. Interruption is treated as a cross-client control-plane right. Orchestrator-side, the companion (`codex-companion.mjs`) is a file-backed job ledger: `task [--background]`, `status --wait` (2s poll), `result`, `cancel`, jobs keyed to the calling Claude session ID. That's their answer to the event-loop problem: **poll, don't push** (see doc 04).
@@ -84,7 +86,7 @@ No native Z.ai CLI found on this machine; status of "Z-code" and GLM 5.2 pending
 
 `opencode`, `crush`, `droid` (Factory), `gemini` (Gemini CLI — speaks ACP natively), `qwen`. Two observations:
 
-- **opencode is client/server by design** with an HTTP API and multi-provider support (incl. Z.ai/GLM) — it's prior art for "harness as attachable server" and possibly the cheapest *third* harness family to adapt.
+- **opencode is client/server by design** and demonstrates nearly every primitive this project wants, natively (verified from `--help`): `opencode serve` (headless server), `attach <url>` (multi-client attach), `acp` (**ships an ACP server mode**), `run` (headless one-shot), `export/import <session>` (session portability as JSON!), `stats` (usage/cost telemetry) — plus multi-provider support (incl. Z.ai/GLM). It's living prior art for "harness as attachable server" and possibly the cheapest *third* harness family to adapt.
 - The fleet on one developer laptop is already 7+ harnesses across 5+ vendors. Any design that hardcodes three vendors is dead on arrival; the adapter boundary is the product.
 
 ## Capability matrix (summary)
