@@ -137,7 +137,11 @@ export async function verify(task, result, sandbox, opts = {}) {
 
   const observedExit = resultRun.timedOut ? null : resultRun.exitCode;
   const claimedExit = result?.verification?.claimedExit ?? null;
-  const matchesClaim = observedExit === claimedExit;
+  // A worker that makes no exit claim (a subprocess adapter that doesn't run its own
+  // verification passes claimedExit=null) hasn't "diverged" — there is nothing to
+  // diverge from. Only a claim that contradicts the hub's observation is a divergence.
+  const hadClaim = claimedExit !== null;
+  const matchesClaim = !hadClaim || observedExit === claimedExit;
   const passed = observedExit === task.verification.expectExit;
 
   let redGreen = null;
@@ -192,6 +196,7 @@ export async function verify(task, result, sandbox, opts = {}) {
   const verdict = {
     reverified: true,
     observedExit,
+    hadClaim,
     matchesClaim,
     passed,
     locus: 'fresh_sandbox',
