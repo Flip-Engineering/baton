@@ -25,16 +25,21 @@ function tsAt(ms) {
   return new Date(BASE_TS + ms).toISOString();
 }
 
+// FIXTURE NOTE — D2 conformance (spec/RECONCILIATION.md, authoritative over the
+// three previously-incompatible per-cluster Brief typedefs, red integration#5):
+// `pathScope` is a flat `string[]` of in-scope globs (NOT `{include,exclude}`),
+// and `budget.wallMin` (not `wallMinutes`). story.mjs's out-of-scope/collision
+// signals must read `brief.pathScope` directly as the glob array.
 function makeBrief(overrides = {}) {
   return {
     goal: 'do the thing',
     constraints: [],
-    pathScope: { include: ['src/auth/**'], exclude: [] },
+    pathScope: ['src/auth/**'],
     tools: ['bash', 'edit'],
     outputFormat: 'diff',
     definitionOfDone: 'tests pass',
     verification: { command: 'npm test', expectExit: 0 },
-    budget: { tokens: 1000, usd: 1, wallMinutes: 30 },
+    budget: { tokens: 1000, usd: 1, wallMin: 30 },
     ...overrides,
   };
 }
@@ -247,7 +252,7 @@ test('TOKENS events accumulate budgetUsed; crossing 50/80/100% fires over_budget
       seq: 1,
       turnEpoch: 0,
       actor: 'orchestrator',
-      payload: { taskId: 't1', brief: makeBrief({ budget: { tokens: 1000, usd: 1, wallMinutes: 30 } }) },
+      payload: { taskId: 't1', brief: makeBrief({ budget: { tokens: 1000, usd: 1, wallMin: 30 } }) },
     })
   );
   state = foldEvent(state, ev({ worker: 'w1', kind: KIND.TURN_STARTED, seq: 2, turnEpoch: 1, actor: 'orchestrator', payload: {} }));
@@ -322,9 +327,9 @@ test('TURN_STARTED resets the loop-detection window across a turn boundary', () 
 // 12. out-of-scope edits
 // ===========================================================================
 
-test('a FILE_EDIT outside brief.pathScope.include produces out_of_scope; one inside does not', () => {
+test('a FILE_EDIT outside brief.pathScope produces out_of_scope; one inside does not', () => {
   let state = initialState();
-  const brief = makeBrief({ pathScope: { include: ['src/auth/**'], exclude: [] } });
+  const brief = makeBrief({ pathScope: ['src/auth/**'] });
   state = foldEvent(state, ev({ worker: 'w1', kind: KIND.SPAWNED, seq: 1, turnEpoch: 0, actor: 'orchestrator', payload: { taskId: 't1', brief } }));
   state = foldEvent(state, ev({ worker: 'w1', kind: KIND.TURN_STARTED, seq: 2, turnEpoch: 1, actor: 'orchestrator', payload: {} }));
 
@@ -368,10 +373,10 @@ test('stalled = quiet too long per injected clock for a working worker; not asse
 // 14. path scope collisions
 // ===========================================================================
 
-test('pathScopeCollisions() finds an entry when two working workers overlap pathScope.include and both edited the overlap', () => {
+test('pathScopeCollisions() finds an entry when two working workers overlap pathScope globs and both edited the overlap', () => {
   let state = initialState();
-  const briefA = makeBrief({ pathScope: { include: ['src/shared/**'], exclude: [] } });
-  const briefB = makeBrief({ pathScope: { include: ['src/shared/**'], exclude: [] } });
+  const briefA = makeBrief({ pathScope: ['src/shared/**'] });
+  const briefB = makeBrief({ pathScope: ['src/shared/**'] });
 
   state = foldEvent(state, ev({ worker: 'w1', kind: KIND.SPAWNED, seq: 1, turnEpoch: 0, actor: 'orchestrator', payload: { taskId: 't1', brief: briefA } }));
   state = foldEvent(state, ev({ worker: 'w1', kind: KIND.TURN_STARTED, seq: 2, turnEpoch: 1, actor: 'orchestrator', payload: {} }));
@@ -387,8 +392,8 @@ test('pathScopeCollisions() finds an entry when two working workers overlap path
 
 test('pathScopeCollisions() finds nothing when scopes do not overlap', () => {
   let state = initialState();
-  const briefA = makeBrief({ pathScope: { include: ['src/a/**'], exclude: [] } });
-  const briefB = makeBrief({ pathScope: { include: ['src/b/**'], exclude: [] } });
+  const briefA = makeBrief({ pathScope: ['src/a/**'] });
+  const briefB = makeBrief({ pathScope: ['src/b/**'] });
 
   state = foldEvent(state, ev({ worker: 'w1', kind: KIND.SPAWNED, seq: 1, turnEpoch: 0, actor: 'orchestrator', payload: { taskId: 't1', brief: briefA } }));
   state = foldEvent(state, ev({ worker: 'w1', kind: KIND.TURN_STARTED, seq: 2, turnEpoch: 1, actor: 'orchestrator', payload: {} }));
@@ -557,3 +562,99 @@ function replacer(_key, value) {
   if (value instanceof Map) return { __map: [...value.entries()] };
   return value;
 }
+
+// ===========================================================================
+// D3 — EventKind vocabulary pin (red integration#6: Core's spec said
+// `question.resolved`, story.mjs's KIND map said `question.answered` — a real
+// event stream would silently never clear a blocked worker's story). D3 is the
+// authoritative resolution: `question.answered` is the ONE name, and
+// `content.file_edit`/`content.tool_call` (not `action.file_edit`/
+// `action.command_exec`) are the canonical action-kind strings.
+//
+// These assertions deliberately use LITERAL strings copied verbatim from
+// spec/RECONCILIATION.md's D3 canonical vocabulary table — NOT `KIND.*`
+// constants — because a test built from the module's own constants can never
+// catch that module drifting from the cross-cluster agreement (exactly the
+// failure mode red integration#6 found: story.test.mjs's own QUESTION_ANSWERED
+// test always passed regardless of what Core actually emits).
+// ===========================================================================
+
+test('D3 pin: KIND literal values equal the authoritative canonical vocabulary, verified against hardcoded strings (not KIND constants) to catch cross-cluster re-drift', () => {
+  const canonicalFromReconciliationD3 = {
+    SPAWNED: 'lifecycle.spawned',
+    TURN_STARTED: 'lifecycle.turn_started',
+    TURN_COMPLETED: 'lifecycle.turn_completed',
+    SESSION_COMPACTED: 'lifecycle.session_compacted',
+    EXITED: 'lifecycle.exited',
+    CRASHED: 'lifecycle.crashed',
+    FILE_EDIT: 'content.file_edit',
+    COMMAND_EXEC: 'content.tool_call',
+    INTERRUPT_REQUESTED: 'control.interrupt_requested',
+    INTERRUPT_CONFIRMED: 'control.interrupt_confirmed',
+    STEER: 'control.steer',
+    NUDGE: 'control.nudge',
+    APPROVAL_REQUESTED: 'approval.requested',
+    APPROVAL_RESOLVED: 'approval.resolved',
+    QUESTION_ASKED: 'question.asked',
+    QUESTION_ANSWERED: 'question.answered',
+    TOKENS: 'resource.tokens',
+    ERROR: 'error',
+  };
+  for (const [name, literal] of Object.entries(canonicalFromReconciliationD3)) {
+    assert.equal(
+      KIND[name],
+      literal,
+      `KIND.${name} must equal D3's canonical '${literal}' — a drifted value here would silently break real cross-cluster event handling`
+    );
+  }
+});
+
+test('D3 pin: a QUESTION_ASKED -> QUESTION_ANSWERED transition driven by hardcoded literal event kinds (as a real emitter would produce them, not via KIND constants) correctly clears input_required', () => {
+  let state = initialState();
+  state = foldEvent(state, {
+    seq: 1, ts: tsAt(0), worker: 'w1', harness: 'mock@1.0.0', turnEpoch: 0, actor: 'orchestrator',
+    kind: 'lifecycle.spawned', payload: { taskId: 't1', brief: makeBrief() },
+  });
+  state = foldEvent(state, {
+    seq: 2, ts: tsAt(1), worker: 'w1', harness: 'mock@1.0.0', turnEpoch: 1, actor: 'orchestrator',
+    kind: 'lifecycle.turn_started', payload: {},
+  });
+  state = foldEvent(state, {
+    seq: 3, ts: tsAt(2), worker: 'w1', harness: 'mock@1.0.0', turnEpoch: 1, actor: 'worker',
+    kind: 'question.asked', payload: { msgId: 'q1', question: 'proceed?' },
+  });
+  assert.equal(state.workers.get('w1').status, 'input_required');
+
+  // The literal a real Core coordinator emits per D3 — NOT the deprecated 'question.resolved'
+  // that red integration#6 found Core's own spec mistakenly used.
+  state = foldEvent(state, {
+    seq: 4, ts: tsAt(3), worker: 'w1', harness: 'mock@1.0.0', turnEpoch: 1, actor: 'orchestrator',
+    kind: 'question.answered', payload: { msgId: 'q1' },
+  });
+  const w1 = state.workers.get('w1');
+  assert.equal(w1.status, 'working', 'a real question.answered event must clear input_required back to working');
+  assert.equal(w1.questionsPending.length, 0);
+});
+
+test('D3 pin: the deprecated "question.resolved" literal (Core\'s pre-reconciliation spec typo) is NOT recognized — it is bookkept as an unknown kind, never clears input_required', () => {
+  let state = initialState();
+  state = foldEvent(state, {
+    seq: 1, ts: tsAt(0), worker: 'w1', harness: 'mock@1.0.0', turnEpoch: 0, actor: 'orchestrator',
+    kind: 'lifecycle.spawned', payload: { taskId: 't1', brief: makeBrief() },
+  });
+  state = foldEvent(state, {
+    seq: 2, ts: tsAt(1), worker: 'w1', harness: 'mock@1.0.0', turnEpoch: 1, actor: 'orchestrator',
+    kind: 'lifecycle.turn_started', payload: {},
+  });
+  state = foldEvent(state, {
+    seq: 3, ts: tsAt(2), worker: 'w1', harness: 'mock@1.0.0', turnEpoch: 1, actor: 'worker',
+    kind: 'question.asked', payload: { msgId: 'q1', question: 'proceed?' },
+  });
+  state = foldEvent(state, {
+    seq: 4, ts: tsAt(3), worker: 'w1', harness: 'mock@1.0.0', turnEpoch: 1, actor: 'orchestrator',
+    kind: 'question.resolved', payload: { msgId: 'q1' },
+  });
+  const w1 = state.workers.get('w1');
+  assert.equal(w1.status, 'input_required', 'the wrong literal must not silently clear the blocked state (this is the exact bug D3 forecloses)');
+  assert.equal(w1.questionsPending.length, 1);
+});

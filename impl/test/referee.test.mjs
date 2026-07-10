@@ -4,6 +4,14 @@
 // A worker that FORGES "done" (claims pass while the committed code actually fails the
 // pinned check) must be caught. Tiny real repos with real shell/node one-liner test
 // commands are used so the gate runs for real, not against a stub.
+//
+// D6 (spec/RECONCILIATION.md, authoritative — resolves red workers-trust#1/#4): the
+// freshness guard is MANDATORY, not opt-in. IMPLEMENTATION.md's `RefereeTask.workerWorktreeDir`
+// was documented "omit if unknown," making R1's defensive half a silent no-op whenever a
+// caller forgot to pass it — and the flagship test itself omitted it. Per D6, `verify()`
+// MUST assert `sandbox.dir !== task.workerWorktreeDir` unconditionally: the field is now
+// REQUIRED (verify() rejects if it's missing, distinct from rejecting because it EQUALS
+// sandbox.dir), and every test that exercises the trust gate supplies it.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,10 +45,17 @@ function makeRealRepo() {
   return dir;
 }
 
+// D6: workerWorktreeDir is now a REQUIRED field (not "omit if unknown") — every task
+// fixture supplies a real, distinct placeholder path by default so ordinary pass/fail/
+// red-green/coverage tests keep exercising the mandatory-but-satisfied path; tests that
+// specifically probe the guard itself override it explicitly.
+const PLACEHOLDER_WORKER_WORKTREE_DIR = join(tmpdir(), 'baton-referee-worker-placeholder-never-used-as-a-real-dir');
+
 function makeTask(overrides = {}) {
   return {
     id: 't1',
     verification: { command: 'test -f done.txt', expectExit: 0 },
+    workerWorktreeDir: PLACEHOLDER_WORKER_WORKTREE_DIR,
     ...overrides,
   };
 }
@@ -113,7 +128,7 @@ test('divergence: a genuinely failing sandbox but a claim of the passing exit co
 });
 
 // ============================================================
-// SameWorktreeError — behavior 50
+// SameWorktreeError / mandatory freshness guard — behavior 50, hardened per D6
 // ============================================================
 
 test('verify() rejects with SameWorktreeError when sandbox.dir equals the worker\'s own worktree, and never runs the command', async (t) => {
@@ -125,6 +140,42 @@ test('verify() rejects with SameWorktreeError when sandbox.dir equals the worker
 
   await assert.rejects(() => verify(task, result, sandbox), SameWorktreeError);
   assert.ok(!existsSync(join(sandbox.dir, 'ran.marker')), 'the verification command was never invoked');
+});
+
+test('D6: the freshness guard is NOT optional — verify() rejects if task.workerWorktreeDir is omitted entirely, before running the command', async (t) => {
+  const sandbox = makeSandbox();
+  t.after(() => sandbox.cleanup());
+
+  const task = makeTask({ verification: { command: 'touch ran.marker', expectExit: 0 } });
+  delete task.workerWorktreeDir; // simulate a caller that "forgot" — the old, dangerous "omit if unknown" path
+  const result = makeResult();
+
+  await assert.rejects(
+    () => verify(task, result, sandbox),
+    (err) => {
+      // A caller-contract violation (missing required field) is distinct from catching
+      // an actual same-dir forgery: never silently treated as "no defense configured,
+      // proceed anyway," and never mistaken for SameWorktreeError itself.
+      assert.ok(!(err instanceof SameWorktreeError), 'a MISSING field is not the same failure as an EQUAL field');
+      assert.match(err.message, /workerWorktreeDir/i);
+      return true;
+    },
+  );
+  assert.ok(!existsSync(join(sandbox.dir, 'ran.marker')), 'the verification command never ran without the guard armed');
+});
+
+test('sanity check: a workerWorktreeDir that is merely DIFFERENT from sandbox.dir never spuriously throws SameWorktreeError', async (t) => {
+  const sandbox = makeSandbox();
+  t.after(() => sandbox.cleanup());
+  writeFileSync(join(sandbox.dir, 'done.txt'), 'ok');
+
+  const someOtherRealDir = mkdtempSync(join(tmpdir(), 'baton-referee-other-worker-dir-'));
+  const task = makeTask({ workerWorktreeDir: someOtherRealDir });
+  const result = makeResult();
+
+  const verdict = await verify(task, result, sandbox);
+  assert.equal(verdict.passed, true, 'the guard checks exact-dir-equality, not mere presence of a workerWorktreeDir');
+  rmSync(someOtherRealDir, { recursive: true, force: true });
 });
 
 // ============================================================
@@ -180,12 +231,73 @@ test('FLAGSHIP: a MockAdapter forgeSuccess run is caught end-to-end across workt
   const sandbox = await freshVerifySandbox(repoRoot, 'forge-task-result', resultSha);
   t.after(() => sandbox.cleanup());
 
-  const task = { id: 'forge-task', verification: brief.verification };
+  // D6/red workers-trust#4: workerWorktreeDir is REQUIRED — the flagship test must
+  // arm BOTH the structural guarantee (a genuinely distinct sandbox dir) and the
+  // defensive SameWorktreeError check simultaneously, never omit it as the old test did.
+  const task = { id: 'forge-task', verification: brief.verification, workerWorktreeDir: handle.dir };
   const verdict = await verify(task, workerResult, sandbox);
 
   assert.equal(verdict.passed, false, 'the trust gate independently observes the check really fails');
   assert.equal(verdict.matchesClaim, false, 'the claim diverges from what was actually observed');
   assert.equal(accept(verdict), false, 'a forged done is never accepted');
+});
+
+test('FLAGSHIP-2: freshness is PROVEN to be the mechanism — a check that would spuriously PASS in the worker\'s own poisoned dir genuinely FAILS in the fresh sandbox (red workers-trust#7)', async (t) => {
+  // The original flagship test proves "the gate re-checks and doesn't trust the claim,"
+  // but its forged content (an unrelated file) never makes `test -f done.txt` pass
+  // ANYWHERE — so it can't distinguish "the gate re-ran the check" from "the gate
+  // specifically ran it in a FRESH sandbox." This test closes that gap: done.txt is
+  // planted directly on disk in the worker's own worktree (so checking that directory
+  // as-is would spuriously PASS) but via a .gitignore entry it is structurally excluded
+  // from every commit — the worker's own literal commit, AND captureCommit's snapshot-
+  // if-dirty fallback, AND therefore the fresh sandbox checked out from that commit.
+  // Only running in the fresh sandbox catches the lie; running in the worker's own dir
+  // would have been fooled.
+  const repoRoot = makeRealRepo();
+  t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
+  writeFileSync(join(repoRoot, '.gitignore'), 'done.txt\n');
+  sh('git', ['add', '-A'], repoRoot);
+  sh('git', ['commit', '-q', '-m', 'add gitignore'], repoRoot);
+  const baseSha = sh('git', ['rev-parse', 'HEAD'], repoRoot);
+
+  const handle = await createFromBase(repoRoot, 'poison-task', baseSha);
+
+  const brief = {
+    goal: 'create done.txt',
+    constraints: [],
+    pathScope: [],
+    definitionOfDone: 'done.txt exists',
+    verification: { command: 'test -f done.txt', expectExit: 0 },
+    budget: { tokens: 100, usd: 1, wallMin: 10 },
+  };
+  // done.txt IS written to disk (a real file, real content) — but it's gitignored, so
+  // `git add -A && git commit` (both the mock's own commit and captureCommit's
+  // snapshot-if-dirty fallback) never actually tracks it.
+  const scenario = { outcome: 'failed', forgeSuccess: true, edits: [{ path: 'done.txt', content: 'ok' }] };
+  const adapter = new MockAdapter({ scenario });
+  const workerResult = await adapter.run(brief, { worktree: handle.dir, timeoutMs: 20000 });
+  assert.equal(workerResult.status, 'completed', 'the mock lies about status, as scripted');
+
+  // THE PROOF, part 1: re-running the pinned check directly in the worker's own
+  // worktree — the thing R1 exists to prevent — would be FOOLED (the file is really
+  // there on disk, gitignore or not).
+  const wouldFoolWorkerDir = existsSync(join(handle.dir, 'done.txt'));
+  assert.equal(wouldFoolWorkerDir, true, 'sanity: the worker\'s own directory really does have the planted file on disk');
+
+  // THE PROOF, part 2: the captured commit — and therefore the fresh sandbox checked
+  // out from it — never includes the gitignored file at all.
+  const { sha: resultSha } = await captureCommit(repoRoot, 'poison-task');
+  const sandbox = await freshVerifySandbox(repoRoot, 'poison-task-result', resultSha);
+  t.after(() => sandbox.cleanup());
+  assert.ok(!existsSync(join(sandbox.dir, 'done.txt')), 'the fresh sandbox never received the gitignored plant');
+
+  const task = { id: 'poison-task', verification: brief.verification, workerWorktreeDir: handle.dir };
+  const verdict = await verify(task, workerResult, sandbox);
+
+  assert.equal(verdict.passed, false, 'freshness catches what re-running in the worker\'s own dir would have missed');
+  assert.equal(verdict.matchesClaim, false);
+  assert.equal(verdict.locus, 'fresh_sandbox', 'the verdict is explicit about WHERE the check ran — the load-bearing property');
+  assert.equal(accept(verdict), false);
 });
 
 // ============================================================

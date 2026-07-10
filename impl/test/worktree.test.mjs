@@ -1,6 +1,18 @@
 // Cluster 2 (Workers & Trust) — worktree.mjs test suite.
 // All tests run against REAL temporary git repositories (git init + a base commit,
 // created inline in each test) — no mocking of git itself, per spec §3.
+//
+// D7 (spec/RECONCILIATION.md, authoritative) pins worktree.mjs's exports as the
+// coordinator's ONE dependency interface (no separate WorktreeManager shape):
+// pinBaseSha, createFromBase, captureCommit, freshVerifySandbox, changedLines, reap,
+// reconcile, listWorktrees — every name below matches D7 verbatim. `markStopped` is
+// not in D7's literal list but remains a real export per IMPLEMENTATION.md §3 (W5) —
+// its cross-cluster call site is pinned explicitly at IMPLEMENTATION.md line 1301:
+// the coordinator calls `worktree.markStopped` + `worktree.reap` ONLY after observing
+// an interrupted/killed session settle, never on normal task completion (which only
+// ever reaps the *verify sandbox*, via `sandbox.cleanup()` — see D4). That resolves
+// red workers-trust#3's danger (every normal completion throwing WorktreeLockedError)
+// without deleting the precondition itself.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,8 +40,8 @@ import { MockAdapter } from '../src/adapter.mjs';
 
 // ---------- helpers ----------
 
-function sh(cmd, args, cwd) {
-  return execFileSync(cmd, args, { cwd, encoding: 'utf8' }).trim();
+function sh(cmd, args, cwd, input) {
+  return execFileSync(cmd, args, { cwd, encoding: 'utf8', ...(input !== undefined ? { input } : {}) }).trim();
 }
 
 /** A real git repo with one base commit. Returns { dir, baseSha }. */
@@ -87,6 +99,15 @@ test('pinBaseSha on a dirty repo with autoStash:true stashes and returns a clean
   assert.equal(typeof result.stashRef, 'string');
   assert.equal(sh('git', ['rev-parse', 'HEAD'], dir), baseSha);
   assert.ok(isClean(dir), 'repo is clean after auto-stash');
+
+  // W4 ("never auto-popped"), asserted DIRECTLY: the stash referenced by result.stashRef
+  // must still be present in `git stash list`, not just inferred from repo-cleanliness.
+  const stashList = sh('git', ['stash', 'list'], dir);
+  const stashIndex = result.stashRef.replace(/^stash@\{|\}$/g, '');
+  assert.ok(
+    stashList.split('\n').some((line) => line.startsWith(`stash@{${stashIndex}}`) || line.includes(result.stashRef)),
+    `git stash list must contain ${result.stashRef}, got:\n${stashList}`,
+  );
 });
 
 // ============================================================
@@ -156,6 +177,14 @@ test('captureCommit on a dirty worktree snapshots a commit with the vendor trail
   const message = sh('git', ['log', '-1', '--pretty=%B'], handle.dir);
   assert.match(message, /Baton-Task:\s*t1/);
   assert.match(message, /Baton-Vendor:\s*mock/);
+
+  // Strengthened per red workers-trust#10: a substring match anywhere in the message
+  // body (including the SUBJECT line) would also pass; require these to be structurally
+  // valid trailers via `git interpret-trailers --parse`, i.e. actually trailing footer
+  // key:value pairs, not merely matching text.
+  const trailers = sh('git', ['interpret-trailers', '--parse'], handle.dir, message);
+  assert.match(trailers, /^Baton-Task:\s*t1$/m, 'Baton-Task must be a real trailer, not incidental text');
+  assert.match(trailers, /^Baton-Vendor:\s*mock$/m, 'Baton-Vendor must be a real trailer, not incidental text');
 });
 
 test('captureCommit on an unchanged worktree does not create an empty commit', async (t) => {
@@ -291,7 +320,7 @@ test('interrupt-then-reap sequencing: an aborted MockAdapter run can be markStop
   };
   const adapter = new MockAdapter({ scenario });
   let editCount = 0;
-  const log = { append: (e) => { if (e.kind === 'action.file_edit') { editCount += 1; if (editCount === 1) ac.abort(); } } };
+  const log = { append: (e) => { if (e.kind === 'content.file_edit') { editCount += 1; if (editCount === 1) ac.abort(); } } };
 
   const result = await adapter.run(
     { goal: 'g', constraints: [], pathScope: [], definitionOfDone: 'd', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1, usd: 1, wallMin: 1 } },
@@ -304,6 +333,38 @@ test('interrupt-then-reap sequencing: an aborted MockAdapter run can be markStop
   await reap(dir, 't1');
 
   assert.ok(!existsSync(handle.dir), 'the partial work is discarded along with the directory');
+});
+
+// ============================================================
+// crash/abort landing mid-git-op — red workers-trust#11
+// ============================================================
+
+test('a same-tick abort (delayMs:0) during a MockAdapter run never leaves a git lockfile behind, and the worktree can still be markStopped + reaped cleanly', async (t) => {
+  const { dir, baseSha } = makeRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const handle = await createFromBase(dir, 't1', baseSha);
+
+  const ac = new AbortController();
+  const scenario = {
+    outcome: 'completed',
+    edits: [{ path: 'a.txt', content: 'a', delayMs: 0 }],
+  };
+  const adapter = new MockAdapter({ scenario });
+  const runPromise = adapter.run(
+    { goal: 'g', constraints: [], pathScope: [], definitionOfDone: 'd', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1, usd: 1, wallMin: 1 } },
+    { worktree: handle.dir, timeoutMs: 20000, signal: ac.signal },
+  );
+  ac.abort(); // fires essentially concurrently with the scripted git add+commit
+  await runPromise;
+
+  // A5/A8: an in-flight git write is atomic w.r.t. abort — the worktree is always in a
+  // git-valid state afterward, never a half-written index.
+  assert.doesNotThrow(() => sh('git', ['status', '--porcelain'], handle.dir));
+  assert.ok(!existsSync(join(handle.dir, '.git', 'index.lock')));
+
+  await markStopped(dir, 't1');
+  await assert.doesNotReject(() => reap(dir, 't1'));
+  assert.ok(!existsSync(handle.dir));
 });
 
 // ============================================================
@@ -340,8 +401,30 @@ test('reconcile leaves directories whose taskId is in expectedActiveTaskIds alon
 });
 
 // ============================================================
-// changedLines — behaviors 43-44
+// reconcile() log-event attribution — red workers-trust#9
 // ============================================================
+
+test('reconcile() emits one worktree.reconciled event per removed directory, each attributed to that directory\'s own taskId', async (t) => {
+  const { dir, baseSha } = makeRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  await createFromBase(dir, 'zombie1', baseSha);
+  await createFromBase(dir, 'zombie2', baseSha);
+  const { events, log } = stubLog();
+
+  const report = await reconcile(dir, [], { log });
+
+  const reconciledEvents = events.filter((e) => e.kind === 'worktree.reconciled');
+  assert.equal(reconciledEvents.length, 2, 'one worktree.reconciled event per removed directory, not one aggregate event for both');
+
+  const workers = reconciledEvents.map((e) => e.worker).sort();
+  assert.deepEqual(workers, ['zombie1', 'zombie2'], 'each removal event is attributed to that directory\'s own taskId, never a shared "worktree" sentinel');
+
+  // Cross-check against the report itself: every removed dir has a matching per-taskId event.
+  for (const removedPath of report.removedZombieDirs) {
+    const match = reconciledEvents.find((e) => removedPath.includes(e.worker));
+    assert.ok(match, `no worktree.reconciled event found attributed to ${removedPath}`);
+  }
+});
 
 test('changedLines reports added lines in a new file and modified lines in an existing file', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'baton-wt-test-'));
@@ -406,7 +489,7 @@ test('listWorktrees reports created worktrees and verify sandboxes with correct 
 // log emission — behavior 46
 // ============================================================
 
-test('createFromBase, captureCommit, freshVerifySandbox, reap, reconcile each append at least one documented-prefix log event', async (t) => {
+test('createFromBase, captureCommit, freshVerifySandbox, reap, reconcile each append at least one documented-prefix log event, correctly attributed via `worker`', async (t) => {
   const { dir, baseSha } = makeRepo();
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const prefixOk = (kind) => /^(lifecycle\.|worktree\.)/.test(kind);
@@ -416,6 +499,7 @@ test('createFromBase, captureCommit, freshVerifySandbox, reap, reconcile each ap
     const handle = await createFromBase(dir, 't1', baseSha, { log });
     assert.ok(events.length >= 1);
     assert.ok(events.every((e) => prefixOk(e.kind)), 'createFromBase log kinds');
+    assert.ok(events.every((e) => e.worker === 't1'), 'createFromBase events are attributed to the taskId, not a generic sentinel');
     void handle;
   }
   {
@@ -424,6 +508,7 @@ test('createFromBase, captureCommit, freshVerifySandbox, reap, reconcile each ap
     await captureCommit(dir, 't1', { log });
     assert.ok(events.length >= 1);
     assert.ok(events.every((e) => prefixOk(e.kind)), 'captureCommit log kinds');
+    assert.ok(events.every((e) => e.worker === 't1'));
   }
   {
     const { events, log } = stubLog();
@@ -438,6 +523,7 @@ test('createFromBase, captureCommit, freshVerifySandbox, reap, reconcile each ap
     await reap(dir, 't1', { log });
     assert.ok(events.length >= 1);
     assert.ok(events.every((e) => prefixOk(e.kind)), 'reap log kinds');
+    assert.ok(events.every((e) => e.worker === 't1'));
   }
   {
     await createFromBase(dir, 'zombie', baseSha);
@@ -445,5 +531,6 @@ test('createFromBase, captureCommit, freshVerifySandbox, reap, reconcile each ap
     await reconcile(dir, [], { log });
     assert.ok(events.length >= 1);
     assert.ok(events.every((e) => prefixOk(e.kind)), 'reconcile log kinds');
+    assert.ok(events.every((e) => e.worker === 'zombie'), 'per-directory reconcile attribution (red workers-trust#9)');
   }
 });

@@ -5,23 +5,29 @@
 // spec/IMPLEMENTATION.md (CLUSTER 1 — CORE, section 5).
 //
 // FIXTURE NOTE (deviation from a literal "import MockAdapter from ../src/adapter.mjs"):
-// coordinator.mjs's own `Adapter` contract (spec §3.2) is
-//   { card(), spawn(worker,brief), prompt(worker,content,mode), interrupt(worker,then),
-//     approve(worker,requestId,decision,payload), kill(worker), onEvent(cb) }
-// which is a *different shape* from Cluster B's adapter.mjs `MockAdapter`
-//   { card(), run(brief, opts) }
-// (a single run-to-completion call with AbortSignal-driven cancellation). The two
-// clusters' Adapter typedefs are not interchangeable. The spec's own "Test
-// independence note" (section 6 of the Core cluster spec) explicitly directs Core's
-// test suite to "construct minimal local fakes conforming to Adapter/RefereeFn/
-// WorktreeManager/RouteFn ... rather than importing Cluster B's real MockAdapter" —
-// this file follows that guidance so it stays buildable/testable with no build-order
-// dependency on Cluster B, and so the fake actually satisfies the interface
-// coordinator.mjs calls.
+// coordinator.mjs's own `Adapter` contract is now pinned by spec/RECONCILIATION.md D1
+// (the unified, session-shaped Adapter — authoritative over any conflicting cluster spec):
+//   { card(), spawn(worker,brief), prompt(worker,content,mode),
+//     interrupt(worker,then), approve(worker,requestId,decision,payload),
+//     answer(worker,requestId,answer), kill(worker), onEvent(cb) }
+// `answer()` is distinct from `approve()` (red core#1 / D1): approvals carry a closed
+// 'allow'|'deny'|'cancel' enum; questions carry a free-form {text?, decision?} answer.
+// Confirmed-stop (interrupt/kill) is ALWAYS delivered as an onEvent event, never as the
+// resolved value of the interrupt()/kill()/adapter-call promise (D1) — `ScriptableAdapter`
+// below models this: `interrupt()`/`kill()` resolve their own immediate Ack right away, and
+// the coordinator must separately await the matching control.interrupt_confirmed/
+// kill.confirmed event pushed through `emit()`.
+// This shape is a deliberate divergence from Cluster B's one-shot `adapter.mjs`
+// `MockAdapter` { card(), run(brief, opts) } — the spec's own "Test independence note"
+// (section 6 of the Core cluster spec) explicitly directs Core's test suite to
+// "construct minimal local fakes conforming to Adapter/RefereeFn/WorktreeManager/RouteFn
+// ... rather than importing Cluster B's real MockAdapter" — this file follows that
+// guidance so it stays buildable/testable with no build-order dependency on Cluster B,
+// and so the fake actually satisfies the D1 interface coordinator.mjs calls.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -29,6 +35,7 @@ import {
   WorkerNotFoundError,
   DuplicateTaskIdError,
   UnknownVendorError,
+  DependencyCycleError,
 } from '../src/coordinator.mjs';
 import { Log } from '../src/log.mjs';
 import { FenceTable } from '../src/fence.mjs';
@@ -96,13 +103,14 @@ class ScriptableAdapter {
       maxContext,
       verbs: { spawn: 'native', interrupt: 'native', ...verbs },
     };
-    this.calls = { spawn: [], prompt: [], interrupt: [], approve: [], kill: [] };
-    this.gates = { spawn: null, prompt: null, interrupt: null, approve: null, kill: null };
+    this.calls = { spawn: [], prompt: [], interrupt: [], approve: [], answer: [], kill: [] };
+    this.gates = { spawn: null, prompt: null, interrupt: null, approve: null, answer: null, kill: null };
     this.acks = {
       spawn: { ok: true },
       prompt: { ok: true },
       interrupt: { ok: true },
       approve: { ok: true },
+      answer: { ok: true },
       kill: { ok: true },
     };
     this._onEvent = null;
@@ -136,6 +144,12 @@ class ScriptableAdapter {
     this.calls.approve.push({ worker, requestId, decision, payload });
     if (this.gates.approve) await this.gates.approve;
     return this.acks.approve;
+  }
+  /** D1: distinct from approve() — for free-form QUESTION answers, never for approvals. */
+  async answer(worker, requestId, answer) {
+    this.calls.answer.push({ worker, requestId, answer });
+    if (this.gates.answer) await this.gates.answer;
+    return this.acks.answer;
   }
   async kill(worker) {
     this.calls.kill.push({ worker });
@@ -277,6 +291,38 @@ test('spawn() at the vendor concurrency ceiling queues as pending (GLM=1 case); 
   assert.equal(adapter.calls.spawn.length, 2);
 });
 
+// core#6: a worker in 'stopping' (or 'blocked') still occupies a concurrency seat until it
+// reaches idle/terminal — the ceiling accounting race. Every OTHER ceiling test frees the
+// slot via a completed lifecycle.turn_completed; this one frees it via an in-flight
+// interrupt() that has NOT yet been confirmed, which must NOT free the seat.
+test('D11/core#6: a "stopping" worker still counts against its vendor ceiling until its stop is confirmed, not merely requested (GLM=1)', async () => {
+  const adapter = new ScriptableAdapter({ harness: 'glm-via-claude', concurrencyCeiling: 1 });
+  const { coordinator, worktrees } = setup({ adapters: { glm: adapter }, route: fixedRoute('glm') });
+
+  const handleA = await coordinator.spawn('glm', makeBrief(), { taskId: 'a' });
+  assert.equal(handleA.status, 'working');
+
+  // Interrupt the sole active worker but gate its adapter Ack so it stays 'stopping'
+  // indefinitely — the confirmed-stop event never arrives during this test.
+  adapter.gates.interrupt = new Promise(() => {});
+  coordinator.interrupt(handleA.id);
+  assert.equal(coordinator.list().find((w) => w.id === handleA.id).status, 'stopping');
+
+  const handleB = await coordinator.spawn('glm', makeBrief(), { taskId: 'b' });
+  assert.equal(
+    handleB.status,
+    'pending',
+    'a second GLM task must not dispatch while the first is only "stopping", not yet confirmed-stopped — GLM concurrencyCeiling:1 is a hard vendor limit'
+  );
+  assert.equal(worktrees.calls.create.length, 1, 'no worktree for the still-blocked second task');
+  assert.equal(adapter.calls.spawn.length, 1, 'no adapter.spawn call for the still-blocked second task');
+
+  // Explicitly re-check after a tick — the seat must remain occupied, not freed by the
+  // mere fact that an interrupt was requested.
+  coordinator.tick();
+  assert.equal(coordinator.list().find((w) => w.id === handleB.id).status, 'pending');
+});
+
 test('a task with an unsatisfied dep stays pending even with free concurrency headroom', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapters: { mock: adapter } });
@@ -301,6 +347,63 @@ test('a task with an unsatisfied dep stays pending even with free concurrency he
 
   const promoted = coordinator.list().find((w) => w.id === dependent.id);
   assert.equal(promoted.status, 'working', 'dep satisfied -> task must now dispatch');
+});
+
+// core#10 / D11: dependency cycles are validated OUT at spawn() time, never left as a
+// silent permanent-pending deadlock. D11 pins the exact behavior and error class.
+test('D11/core#10: spawn() rejects a task whose deps would close a dependency cycle with DependencyCycleError, never a silent permanent-pending deadlock', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapters: { mock: adapter } });
+
+  // t1 depends on t2, which does not exist yet — queueing it is entirely legitimate.
+  const t1 = await coordinator.spawn('mock', makeBrief(), { taskId: 't1', deps: ['t2'] });
+  assert.equal(t1.status, 'pending');
+
+  // t2 depending back on t1 closes a 2-cycle: t1 -> t2 -> t1. This must be rejected
+  // outright on the call that completes the cycle, not silently left pending forever.
+  await assert.rejects(
+    () => coordinator.spawn('mock', makeBrief(), { taskId: 't2', deps: ['t1'] }),
+    DependencyCycleError
+  );
+
+  // The rejected cyclic spawn must not have registered a task or dispatched anything.
+  const table = coordinator.list();
+  assert.ok(!table.some((w) => w.taskId === 't2'), 'a rejected cyclic spawn must not leave a task behind');
+  assert.equal(adapter.calls.spawn.length, 0, 'no worker was ever dispatched for either half of the cycle');
+
+  // Repeated tick()s must not eventually "resolve" the cycle by any other means — t1 stays
+  // legitimately pending on its (never-satisfiable, since t2 was rejected) dep forever, but
+  // that is a distinct, non-silent outcome from what a real cycle would have caused.
+  coordinator.tick();
+  coordinator.tick();
+  assert.equal(coordinator.list().find((w) => w.id === t1.id).status, 'pending');
+});
+
+// core#7: the "no background timer thread, every public command implicitly ticks first"
+// contract, proven via a command OTHER than the literally-named tick(). Every prior
+// clock-driven test in this suite advances the clock and then calls .tick() explicitly;
+// this one deliberately never does, to prove the deadline sweep is not hardcoded to fire
+// only from a literal `.tick()` call.
+test('core#7: the implicit tick-on-every-command contract fires a deadline sweep as a side effect of a command other than .tick()', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator, advance, log } = setup({ adapters: { mock: adapter }, stopDeadlineMs: 1000 });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const p = coordinator.interrupt(handle.id); // adapter Acks, but no confirmed-stop ever arrives
+  advance(1001);
+
+  // Deliberately call a DIFFERENT public command instead of .tick() anywhere in this test.
+  coordinator.list();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  const result = await p;
+  assert.equal(result.result, 'forced', 'the stopDeadlineMs sweep must have fired as a side effect of list(), not require an explicit tick()');
+  assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'dead');
+  assert.equal(adapter.calls.kill.length, 1, 'a forced stop must escalate to adapter.kill()');
+  const kinds = log.read(handle.id).map((e) => e.kind);
+  assert.ok(kinds.includes('control.forced_stop'));
 });
 
 test('spawn(\'auto\', brief) resolves the vendor via the injected route() using live cards/inFlight', async () => {
@@ -436,20 +539,28 @@ test('send() propagates emulated:true from the adapter ack verbatim, into both t
   assert.equal(steerEvent.emulated, true);
 });
 
-test('send() on a worker currently stopping is refused immediately, without calling the adapter', async () => {
+test('send() on a worker currently stopping is refused immediately, without calling the adapter or writing any log entry', async () => {
   const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapters: { mock: adapter } });
+  const { coordinator, log } = setup({ adapters: { mock: adapter } });
   const handle = await coordinator.spawn('mock', makeBrief());
 
   adapter.gates.interrupt = new Promise(() => {}); // wedge, so we can inspect mid-stop
   coordinator.interrupt(handle.id); // fire-and-forget; status flips synchronously
   assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'stopping');
 
-  const before = adapter.calls.prompt.length;
+  const promptCallsBefore = adapter.calls.prompt.length;
+  const logCountBefore = log.read(handle.id).length;
   const result = await coordinator.send(handle.id, { text: 'nudge' }, 'nudge');
   assert.equal(result.ok, false);
   assert.equal(result.result, 'worker_stopping');
-  assert.equal(adapter.calls.prompt.length, before, 'no adapter call for a nudge queued mid-stop');
+  assert.equal(adapter.calls.prompt.length, promptCallsBefore, 'no adapter call for a nudge queued mid-stop');
+  // core#12: §3.5 send step 2 promises "no adapter call, no log entry" — the log-entry half
+  // was previously unverified (only the adapter-call half was checked).
+  assert.equal(
+    log.read(handle.id).length,
+    logCountBefore,
+    'a nudge refused mid-stop must append no log entry at all, not just no control.nudge'
+  );
 });
 
 // ============================================================
@@ -508,7 +619,11 @@ test('interrupt()\'s promise does not resolve until the adapter emits its confir
   assert.equal(result.result, 'confirmed');
 });
 
-test('while a worker is stopping, its worktree lease is not touched by verify/remove operations', async () => {
+// core#11: a lifecycle.turn_completed claim arriving DURING the stopping window must be
+// discarded — the task must never end up 'completed'. This extends the C5 worktree-lease
+// test (which only proved the trust gate's verify-worktree machinery is not touched mid-stop)
+// to also assert the final outcome once the interrupt confirms.
+test('while a worker is stopping, its worktree lease is not touched by verify/remove operations, and a turn_completed claim arriving mid-stop is discarded (never completed)', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator, worktrees } = setup({ adapters: { mock: adapter } });
   const handle = await coordinator.spawn('mock', makeBrief());
@@ -542,7 +657,24 @@ test('while a worker is stopping, its worktree lease is not touched by verify/re
     actor: 'worker',
     payload: {},
   });
-  await interruptPromise;
+  const interruptResult = await interruptPromise;
+  assert.equal(interruptResult.result, 'confirmed');
+
+  // D9: the claim that arrived mid-stop must be discarded, never retroactively trusted —
+  // the trust gate must still never have run, and the task must never reach 'completed'.
+  assert.equal(
+    worktrees.calls.createVerifyWorktree.length,
+    0,
+    'a turn_completed claim received during stopping must never trigger the trust gate, even after confirmation'
+  );
+  const outcome = await coordinator.result(handle.id);
+  assert.notEqual(outcome.status, 'completed', 'a completion claim racing an interrupt must never win as completed');
+  if (outcome.ready) {
+    assert.ok(
+      ['cancelled', 'failed'].includes(outcome.status),
+      'a discarded mid-stop claim ends the task cancelled/failed per D9, not completed'
+    );
+  }
 });
 
 test('interrupt() on a blocked worker auto-resolves its pending approval with a cancel decision', async () => {
@@ -599,6 +731,160 @@ test('if the adapter never emits a confirmed-stop event, interrupt() resolves fo
   assert.ok(kinds.includes('control.forced_stop'));
 });
 
+// core#2 / D9: composing interrupt()/kill() on the same worker before the first confirms.
+// A fresh interrupt/kill on idle/working/blocked bumps the fence and calls the adapter; a
+// SECOND interrupt/kill while already 'stopping' must NOT re-bump the fence or re-call the
+// adapter — it attaches as an additional waiter on the same in-flight confirmation. A kill()
+// arriving during a soft interrupt()'s wait escalates immediately to force-kill. Every
+// interrupt/kill promise must resolve — none may hang on a fence value the adapter can
+// never emit (SYSTEM.md §5.6: kill always works).
+
+test('D9: a second interrupt() on a worker already stopping does not re-bump the fence or re-call the adapter; it attaches as an additional waiter and both promises resolve on the single confirmation', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator, fences } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const gate = deferred();
+  adapter.gates.interrupt = gate.promise;
+  const first = coordinator.interrupt(handle.id);
+  assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'stopping');
+  const fenceAfterFirst = fences.current(handle.id).fence;
+
+  const second = coordinator.interrupt(handle.id); // fired while still 'stopping', first not yet confirmed
+  await Promise.resolve();
+  assert.equal(adapter.calls.interrupt.length, 1, 'a second interrupt() while stopping must not re-call the adapter');
+  assert.equal(
+    fences.current(handle.id).fence,
+    fenceAfterFirst,
+    'a second interrupt() while stopping must not re-bump the fence'
+  );
+
+  gate.resolve({ ok: true });
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'control.interrupt_confirmed',
+    actor: 'worker',
+    payload: {},
+  });
+
+  // Both promises MUST resolve — neither may hang on a fence value the adapter never emits.
+  const [r1, r2] = await Promise.all([first, second]);
+  assert.equal(r1.result, 'confirmed');
+  assert.equal(r2.result, 'confirmed');
+  assert.equal(adapter.calls.interrupt.length, 1, 'still exactly one physical adapter.interrupt() call for both waiters');
+});
+
+test('D9: kill() arriving while a soft interrupt() is still in flight escalates immediately to force-kill; both promises resolve and the worker ends dead', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapters: { mock: adapter }, stopDeadlineMs: 15000 });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const interruptGate = new Promise(() => {}); // the soft interrupt's adapter call never Acks
+  adapter.gates.interrupt = interruptGate;
+  const interruptPromise = coordinator.interrupt(handle.id);
+  assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'stopping');
+
+  const killPromise = coordinator.kill(handle.id);
+  // Escalation to force-kill must be immediate — no clock advance past stopDeadlineMs, no
+  // explicit tick() — distinguishing it from the ordinary stopDeadlineMs-driven forced path.
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(
+    adapter.calls.kill.length,
+    1,
+    'kill() arriving during an in-flight soft interrupt must escalate to adapter.kill() immediately'
+  );
+
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'kill.confirmed',
+    actor: 'worker',
+    payload: {},
+  });
+
+  // Neither the superseded interrupt() nor the escalating kill() may hang.
+  const [interruptResult, killResult] = await Promise.all([interruptPromise, killPromise]);
+  assert.equal(killResult.result, 'confirmed');
+  assert.ok(
+    ['confirmed', 'forced'].includes(interruptResult.result),
+    'the superseded interrupt() must still resolve, never hang, once the escalated kill lands'
+  );
+  assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'dead');
+});
+
+// core#13: WorkerNotFoundError is proven for send() (behavior 27) but was previously
+// untested for interrupt()/kill()/result(), even though they share getWorker().
+
+test('interrupt() on an unknown worker throws WorkerNotFoundError', async () => {
+  const { coordinator } = setup();
+  await assert.rejects(() => coordinator.interrupt('no-such-worker'), WorkerNotFoundError);
+});
+
+test('kill() on an unknown worker throws WorkerNotFoundError', async () => {
+  const { coordinator } = setup();
+  await assert.rejects(() => coordinator.kill('no-such-worker'), WorkerNotFoundError);
+});
+
+test('result() on an unknown worker throws WorkerNotFoundError', async () => {
+  const { coordinator } = setup();
+  await assert.rejects(() => coordinator.result('no-such-worker'), WorkerNotFoundError);
+});
+
+// core#14 / C9: "no silent emulation" is tested for send() but interrupt()/kill() also
+// receive an Ack that may carry emulated:true, and C9 requires it propagate verbatim
+// into both the return value and the logged confirmation event.
+
+test('C9/core#14: interrupt() propagates emulated:true from the adapter Ack verbatim into the return value and the logged control.interrupt_confirmed event', async () => {
+  const adapter = new ScriptableAdapter({ verbs: { interrupt: 'emulated' } });
+  adapter.acks.interrupt = { ok: true, emulated: true };
+  const { coordinator, log } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const p = coordinator.interrupt(handle.id);
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'control.interrupt_confirmed',
+    actor: 'worker',
+    payload: {},
+  });
+  const result = await p;
+  assert.equal(result.emulated, true, "interrupt()'s return shape must carry emulated, not silently drop it");
+
+  const confirmedEvent = log.read(handle.id).find((e) => e.kind === 'control.interrupt_confirmed');
+  assert.ok(confirmedEvent);
+  assert.equal(confirmedEvent.emulated, true, 'the logged confirmation must also carry emulated:true');
+});
+
+test('C9/core#14: kill() propagates emulated:true from the adapter Ack verbatim into the return value and the logged kill.confirmed event', async () => {
+  const adapter = new ScriptableAdapter({ verbs: { kill: 'emulated' } });
+  adapter.acks.kill = { ok: true, emulated: true };
+  const { coordinator, log } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const p = coordinator.kill(handle.id);
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'kill.confirmed',
+    actor: 'worker',
+    payload: {},
+  });
+  const result = await p;
+  assert.equal(result.emulated, true, "kill()'s return shape must carry emulated, not silently drop it");
+
+  const confirmedEvent = log.read(handle.id).find((e) => e.kind === 'kill.confirmed');
+  assert.ok(confirmedEvent);
+  assert.equal(confirmedEvent.emulated, true, 'the logged confirmation must also carry emulated:true');
+});
+
 test('kill() on an already-dead worker is idempotent (already_dead, no duplicate kill.confirmed)', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator, log } = setup({ adapters: { mock: adapter } });
@@ -651,7 +937,13 @@ test('a blocking question surfaces the worker as blocked and appears as a questi
   assert.equal(item.type, 'question');
 });
 
-test('respond() answers a pending question: applied, question.resolved logged, worker returns to working', async () => {
+// core#1 / D1 / D3: respond() to a QUESTION must call adapter.answer() with the free-form
+// answer (never approve()); respond() to an APPROVAL must call adapter.approve() with the
+// closed enum decision (never answer()). Both are asserted on the exact adapter method +
+// args called, not merely the coordinator-side status, so an implementation that silently
+// drops the delivery (or aliases the two paths) cannot pass.
+
+test('respond() answers a pending QUESTION: calls adapter.answer() with the free-form answer (never approve()), question.answered logged, worker returns to working', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator, log } = setup({ adapters: { mock: adapter } });
   const handle = await coordinator.spawn('mock', makeBrief());
@@ -672,8 +964,57 @@ test('respond() answers a pending question: applied, question.resolved logged, w
   assert.equal(result.result, 'applied');
   assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'working');
 
+  // D1/core#1: the exact adapter call, not just the status transition.
+  const answerCall = adapter.calls.answer.find((c) => c.requestId === requestId);
+  assert.ok(answerCall, 'respond() on a question must call adapter.answer(), not approve()');
+  assert.equal(answerCall.worker, handle.id);
+  assert.deepEqual(answerCall.answer, { text: 'option A' });
+  assert.equal(
+    adapter.calls.approve.filter((c) => c.requestId === requestId).length,
+    0,
+    'a question response must never be aliased onto approve()'
+  );
+
+  // D3: 'question.answered' is the canonical kind, not 'question.resolved'.
   const kinds = log.read(handle.id).map((e) => e.kind);
-  assert.ok(kinds.includes('question.resolved'));
+  assert.ok(kinds.includes('question.answered'));
+  assert.ok(!kinds.includes('question.resolved'), 'question.resolved is not in the D3 vocabulary');
+});
+
+test('respond() resolves a pending APPROVAL: calls adapter.approve() with the closed enum decision (never answer()), approval.resolved logged', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator, log } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const requestId = 'appr-1';
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'approval.requested',
+    actor: 'worker',
+    payload: { requestId, question: 'ok to proceed?', blocking: true },
+  });
+  await Promise.resolve();
+
+  const result = await coordinator.respond(requestId, { decision: 'allow' });
+  assert.equal(result.ok, true);
+  assert.equal(result.result, 'applied');
+  assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'working');
+
+  // D1/core#1: the exact adapter call — approve() with the extracted enum decision.
+  const approveCall = adapter.calls.approve.find((c) => c.requestId === requestId);
+  assert.ok(approveCall, 'respond() on an approval must call adapter.approve()');
+  assert.equal(approveCall.worker, handle.id);
+  assert.equal(approveCall.decision, 'allow', 'approve() must receive the closed enum decision, not the whole answer object');
+  assert.equal(
+    adapter.calls.answer.filter((c) => c.requestId === requestId).length,
+    0,
+    'an approval response must never be aliased onto answer()'
+  );
+
+  const kinds = log.read(handle.id).map((e) => e.kind);
+  assert.ok(kinds.includes('approval.resolved'));
 });
 
 test('single-consumer: two respond() calls issued back-to-back for the same requestId resolve exactly once', async () => {
@@ -707,10 +1048,14 @@ test('single-consumer: two respond() calls issued back-to-back for the same requ
     candidateAnswers.includes(JSON.stringify(loser.resolution)),
     'the loser must echo whichever answer actually won'
   );
-  assert.equal(adapter.calls.approve.length + 0, adapter.calls.approve.length); // sanity: no throw above
-  // The question is answered via the adapter's approve()/answer-delivery path exactly once.
-  const deliveryCount = adapter.calls.approve.filter((c) => c.requestId === requestId).length;
-  assert.equal(deliveryCount, 1, 'exactly one delivery to the adapter, never two');
+  // D1: the question is delivered exclusively via adapter.answer(), never approve().
+  const deliveryCount = adapter.calls.answer.filter((c) => c.requestId === requestId).length;
+  assert.equal(deliveryCount, 1, 'exactly one delivery to adapter.answer(), never two');
+  assert.equal(
+    adapter.calls.approve.filter((c) => c.requestId === requestId).length,
+    0,
+    'a question must never be delivered via approve()'
+  );
 });
 
 test('respond() on an unknown requestId returns not_found without throwing', async () => {
@@ -720,7 +1065,7 @@ test('respond() on an unknown requestId returns not_found without throwing', asy
   assert.equal(result.result, 'not_found');
 });
 
-test('an unanswered approval auto-resolves to the documented default after approvalTimeoutMs; a late respond() is already_resolved', async () => {
+test('an unanswered approval auto-resolves to a fixed \'deny\' default after approvalTimeoutMs; a late respond() is already_resolved', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator, advance } = setup({ adapters: { mock: adapter }, approvalTimeoutMs: 1000 });
   const handle = await coordinator.spawn('mock', makeBrief());
@@ -741,13 +1086,16 @@ test('an unanswered approval auto-resolves to the documented default after appro
 
   const approveCall = adapter.calls.approve.find((c) => c.requestId === requestId);
   assert.ok(approveCall, 'tick() must sweep the expired approval and deliver the default decision');
-  assert.ok(['deny', 'cancel'].includes(approveCall.decision));
+  // core#8: the default is pinned to exactly 'deny' (fail-closed) — an exact match, not
+  // an includes() over ['deny','cancel'], so two spec-compliant implementations cannot
+  // disagree on live behavior for every timed-out approval in the system.
+  assert.equal(approveCall.decision, 'deny');
 
   const late = await coordinator.respond(requestId, { decision: 'allow' });
   assert.equal(late.result, 'already_resolved');
 });
 
-test('an answer arriving after the asking turn has ended is consumed (single-consumer holds) but not delivered to the adapter', async () => {
+test('an answer arriving after the asking turn has ended is consumed (single-consumer holds) but not delivered to adapter.answer()', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator, log, fences } = setup({ adapters: { mock: adapter } });
   const handle = await coordinator.spawn('mock', makeBrief());
@@ -775,11 +1123,11 @@ test('an answer arriving after the asking turn has ended is consumed (single-con
   });
   await Promise.resolve();
 
-  const approveCallsBefore = adapter.calls.approve.length;
+  const answerCallsBefore = adapter.calls.answer.length;
   const result = await coordinator.respond(requestId, { text: 'too late' });
   assert.equal(result.ok, true, 'single-consumer still resolves the request exactly once');
   assert.equal(result.result, 'applied');
-  assert.equal(adapter.calls.approve.length, approveCallsBefore, 'a stale-turn answer must never reach the adapter');
+  assert.equal(adapter.calls.answer.length, answerCallsBefore, 'a stale-turn answer must never reach adapter.answer()');
 
   const kinds = log.read(handle.id).map((e) => e.kind);
   assert.ok(kinds.includes('control.stale_rejected'));
@@ -927,30 +1275,76 @@ test('a throwing referee ends the task at failed (never stuck verifying, never c
 // crash / restart / log-is-truth — behaviors 47-48
 // ============================================================
 
-test('replaying a hand-constructed event sequence reconstructs the same terminal task status', async () => {
+// core#3 / D10: Coordinator construction replay. `new Coordinator(opts)` must rebuild ALL
+// state (task status, WorkerHandle, FenceTable fence/turnEpoch) purely by reading the log —
+// NO test may pre-seed `fences`/tasks by hand, and the task must never have been
+// `spawn()`-ed on this coordinator instance. This test constructs the coordinator the
+// NORMAL way against a log directory populated entirely out-of-band, and exercises every
+// row of D10's event-kind -> state table in one pass.
+test('construction replay (D10): a normally-constructed Coordinator rebuilds task/worker status per the D10 event-kind table, with no manual fences.register or spawn()', async () => {
   const dir = tmpDir();
   const log = new Log(join(dir, 'log'));
-  const workerId = 'w-replay';
-  const taskId = 'task-replay';
-  const common = { worker: workerId, harness: 'mock@1.0.0', turnEpoch: 1 };
 
-  // NOTE: a live run's lifecycle.spawned payload must carry enough to reconstruct
-  // DriverTask (including taskId); that shape is not pinned to a literal schema
-  // elsewhere in the spec, so this is the test's own reasonable assumption.
-  log.append({ ...common, actor: 'orchestrator', kind: 'lifecycle.spawned', payload: { taskId, brief: makeBrief() } });
-  log.append({ ...common, actor: 'orchestrator', kind: 'lifecycle.turn_started', payload: {} });
-  log.append({
-    ...common,
-    actor: 'policy',
-    kind: 'verify.reverified',
-    payload: {
-      verdict: { reverified: true, observedExit: 0, matchesClaim: true, locus: 'fresh_sandbox', note: 'ok' },
+  function seedWorker(workerId, taskId, events) {
+    const common = { worker: workerId, harness: 'mock@1.0.0' };
+    log.append({
+      ...common,
+      turnEpoch: 1,
+      actor: 'orchestrator',
+      kind: 'lifecycle.spawned',
+      payload: { taskId, brief: makeBrief() },
+    });
+    for (const e of events) log.append({ ...common, ...e });
+  }
+
+  // Row 1: turn_completed + later verify.reverified{accept:true} -> completed.
+  seedWorker('w-completed', 'task-completed', [
+    { turnEpoch: 1, actor: 'orchestrator', kind: 'lifecycle.turn_started', payload: {} },
+    { turnEpoch: 1, actor: 'worker', kind: 'lifecycle.turn_completed', payload: makeWorkerResult() },
+    {
+      turnEpoch: 1,
+      actor: 'policy',
+      kind: 'verify.reverified',
+      payload: { accept: true, verdict: { reverified: true, observedExit: 0, matchesClaim: true, locus: 'fresh_sandbox', note: 'ok' } },
     },
-  });
-  log.append({ ...common, actor: 'policy', kind: 'lifecycle.turn_completed', payload: { status: 'completed' } });
+  ]);
 
+  // Row 2: verify.reverified{accept:false} -> failed.
+  seedWorker('w-failed', 'task-failed', [
+    { turnEpoch: 1, actor: 'orchestrator', kind: 'lifecycle.turn_started', payload: {} },
+    { turnEpoch: 1, actor: 'worker', kind: 'lifecycle.turn_completed', payload: makeWorkerResult() },
+    {
+      turnEpoch: 1,
+      actor: 'policy',
+      kind: 'verify.reverified',
+      payload: { accept: false, verdict: { reverified: true, observedExit: 1, matchesClaim: false, locus: 'fresh_sandbox', note: 'mismatch' } },
+    },
+  ]);
+
+  // Row 3: kill.confirmed / control.interrupt_confirmed (no later turn) -> cancelled/idle.
+  seedWorker('w-cancelled', 'task-cancelled', [
+    { turnEpoch: 1, actor: 'orchestrator', kind: 'lifecycle.turn_started', payload: {} },
+    { turnEpoch: 1, actor: 'human', kind: 'control.interrupt_requested', payload: {} },
+    { turnEpoch: 1, actor: 'worker', kind: 'control.interrupt_confirmed', payload: {} },
+  ]);
+
+  // Row 4: turn_started with no terminal event -> working (resumable).
+  seedWorker('w-working', 'task-working', [{ turnEpoch: 1, actor: 'orchestrator', kind: 'lifecycle.turn_started', payload: {} }]);
+
+  // Row 5: question.asked unanswered -> input_required.
+  seedWorker('w-blocked', 'task-blocked', [
+    { turnEpoch: 1, actor: 'orchestrator', kind: 'lifecycle.turn_started', payload: {} },
+    {
+      turnEpoch: 1,
+      actor: 'worker',
+      kind: 'question.asked',
+      payload: { requestId: 'q-replay', question: 'which way?', blocking: true },
+    },
+  ]);
+
+  // Constructed the NORMAL way: no manual fences.register(), no coordinator.spawn() call
+  // for any of these tasks anywhere in this test.
   const fences = new FenceTable();
-  fences.register(workerId);
   const adapters = { mock: new ScriptableAdapter() };
   const worktrees = new SpyWorktreeManager();
   const coordinator = new Coordinator({
@@ -962,10 +1356,59 @@ test('replaying a hand-constructed event sequence reconstructs the same terminal
     route: fixedRoute('mock'),
     now: () => 0,
   });
+  if (coordinator.ready) await coordinator.ready; // tolerate either sync or awaited-ready construction
 
-  const outcome = await coordinator.result(workerId);
-  assert.equal(outcome.ready, true, 'a rebuilt coordinator must reconstruct terminal status from the log alone');
-  assert.equal(outcome.status, 'completed');
+  // Row 1 — completed.
+  const completed = await coordinator.result('w-completed');
+  assert.equal(completed.ready, true, 'construction must replay a terminal completed status from the log alone');
+  assert.equal(completed.status, 'completed');
+
+  // Row 2 — failed.
+  const failed = await coordinator.result('w-failed');
+  assert.equal(failed.ready, true);
+  assert.equal(failed.status, 'failed');
+
+  // Row 3 — cancelled/idle (D10 itself documents either as acceptable for this row).
+  const cancelled = await coordinator.result('w-cancelled');
+  assert.ok(['cancelled', 'idle'].includes(cancelled.status));
+
+  // Row 4 — working (resumable), not ready.
+  const working = await coordinator.result('w-working');
+  assert.equal(working.ready, false);
+  assert.equal(working.status, 'working');
+
+  // Row 5 — input_required, not ready.
+  const blocked = await coordinator.result('w-blocked');
+  assert.equal(blocked.ready, false);
+  assert.equal(blocked.status, 'input_required');
+
+  // The FenceTable must be genuinely repopulated by replay (register() + max turnEpoch seen)
+  // — NOT left unknown_worker, which is what a constructor with no replay logic would leave.
+  for (const workerId of ['w-completed', 'w-failed', 'w-cancelled', 'w-working', 'w-blocked']) {
+    const stamp = fences.current(workerId);
+    assert.ok(stamp, `fences must be repopulated for ${workerId} by construction replay alone`);
+    assert.equal(typeof stamp.fence, 'number');
+    assert.equal(stamp.turnEpoch, 1, `${workerId}'s turnEpoch must be recovered from its log's max seen turnEpoch`);
+    assert.notEqual(
+      fences.check(workerId, stamp).result,
+      'unknown_worker',
+      `${workerId} must be register()-ed by replay, not left unknown_worker`
+    );
+  }
+
+  // list()/result() must also work for a worker that was NEVER spawn()-ed on this instance.
+  const table = coordinator.list();
+  for (const [workerId, taskId] of [
+    ['w-completed', 'task-completed'],
+    ['w-failed', 'task-failed'],
+    ['w-cancelled', 'task-cancelled'],
+    ['w-working', 'task-working'],
+    ['w-blocked', 'task-blocked'],
+  ]) {
+    const entry = table.find((w) => w.id === workerId);
+    assert.ok(entry, `list() must include ${workerId}, replayed purely from the log`);
+    assert.equal(entry.taskId, taskId);
+  }
 });
 
 test('Coordinator construction invokes worktrees.reconcile() exactly once', () => {
@@ -1083,7 +1526,13 @@ test('a second wait() with nothing new in between does not repeat facts/attentio
   assert.deepEqual(second.attention, []);
 });
 
-test('at-least-once wait(): a digest not yet followed by a subsequent wait() is re-served after a simulated restart', async () => {
+// core#4 / D11: wait()'s at-least-once restart guarantee depends on a Cursor state-file
+// location now PINNED in the contract: "<logDir>/.cursors/<worker>.floor", derived from
+// Log's own constructor dir. Asserted directly (not just via black-box restart behavior)
+// so a future refactor can't silently change the convention and break restart
+// compatibility. Construction of coordinator2 is also now the NORMAL path (D10): no
+// manual fences.register() — replay from the log alone must recover the worker.
+test('at-least-once wait() (D11): a digest not yet followed by a subsequent wait() is re-served after a simulated restart, and the ack floor lives on disk at <logDir>/.cursors/<worker>.floor', async () => {
   const dir = tmpDir();
   const logDir = join(dir, 'log');
   const log1 = new Log(logDir);
@@ -1103,11 +1552,19 @@ test('at-least-once wait(): a digest not yet followed by a subsequent wait() is 
   const first = await coordinator1.wait(50);
   assert.ok(first.facts.length > 0 || first.attention.length > 0);
 
+  // D11: the pinned on-disk cursor floor path, owned by the Coordinator under logDir.
+  const cursorFloorPath = join(logDir, '.cursors', `${handle.id}.floor`);
+  assert.ok(
+    existsSync(cursorFloorPath),
+    `D11 pins the cursor floor at ${cursorFloorPath}; a future refactor must not silently move it`
+  );
+
   // Simulate a crash: a brand-new Coordinator/Log/Cursor stack pointed at the same on-disk
   // log directory, with NO further wait() ever having been called to ack the digest above.
+  // Constructed the NORMAL way (D10): no manual fences.register() — replay from the log
+  // directory alone must recover the worker that coordinator1 spawned.
   const log2 = new Log(logDir);
   const fences2 = new FenceTable();
-  fences2.register(handle.id);
   const worktrees2 = new SpyWorktreeManager();
   const coordinator2 = new Coordinator({
     log: log2,
@@ -1118,12 +1575,13 @@ test('at-least-once wait(): a digest not yet followed by a subsequent wait() is 
     route: fixedRoute('mock'),
     now: () => 0,
   });
+  if (coordinator2.ready) await coordinator2.ready;
 
   const replayed = await coordinator2.wait(50);
   assert.deepEqual(
     replayed.facts.map((f) => f.seq),
     first.facts.map((f) => f.seq),
-    'an un-acked digest must be re-served after a simulated restart'
+    'an un-acked digest must be re-served after a simulated restart, because the floor is on disk, not in memory (C8)'
   );
 });
 

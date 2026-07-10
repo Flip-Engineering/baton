@@ -24,17 +24,26 @@ import {
 // Fixtures
 // ---------------------------------------------------------------------------
 
-/** A minimal, fully valid Brief field set — the delegation contract. */
+// ---------------------------------------------------------------------------
+// FIXTURE NOTE — D2 conformance (spec/RECONCILIATION.md, authoritative over the
+// cluster-specific Brief typedefs it resolved): `pathScope` is a flat `string[]`
+// of in-scope path globs (NOT `{include,exclude}` — that richer shape was one of
+// three incompatible per-cluster typedefs red-teamed away, red integration#5),
+// and `budget.wallMin` (not `wallMinutes`). This is the ONE Brief shape every
+// cluster/module/test must build and consume.
+// ---------------------------------------------------------------------------
+
+/** A minimal, fully valid Brief field set — the delegation contract (D2). */
 function validBriefFields(overrides = {}) {
   return {
     goal: 'Add rate limiting to the API gateway',
     constraints: ['no new external dependencies', 'must not break existing tests'],
-    pathScope: { include: ['src/gateway/**'], exclude: ['src/gateway/generated/**'] },
+    pathScope: ['src/gateway/**'],
     tools: ['bash', 'edit', 'read'],
     outputFormat: 'unified diff + summary',
     definitionOfDone: 'rate limiting middleware installed and covered by tests',
     verification: { command: 'npm test -- gateway', expectExit: 0 },
-    budget: { tokens: 200000, usd: 5, wallMinutes: 30 },
+    budget: { tokens: 200000, usd: 5, wallMin: 30 },
     ...overrides,
   };
 }
@@ -66,7 +75,7 @@ test('createBrief: all required fields present returns a frozen Brief with exact
 test('createBrief: brief is a delegation contract — carries objective, scope paths, tools, output format, and the exact done-command', () => {
   const brief = createBrief(validBriefFields());
   assert.equal(typeof brief.goal, 'string');
-  assert.ok(Array.isArray(brief.pathScope.include));
+  assert.ok(Array.isArray(brief.pathScope), 'pathScope is a flat string[] of globs (D2), not {include,exclude}');
   assert.ok(Array.isArray(brief.tools) && brief.tools.length > 0);
   assert.equal(typeof brief.outputFormat, 'string');
   // The exact 'done' verification command — the ONLY definition of done.
@@ -98,17 +107,15 @@ test('validator rejects a brief missing the done-command (via the full verificat
   assert.ok(result.errors.some((e) => /verification/i.test(e)));
 });
 
-test('createBrief: pathScope.include entry starting with "/" (absolute path) throws — must be repo-relative', () => {
-  const fields = validBriefFields({
-    pathScope: { include: ['/etc/passwd'], exclude: [] },
-  });
+test('createBrief: pathScope entry starting with "/" (absolute path) throws — must be repo-relative', () => {
+  const fields = validBriefFields({ pathScope: ['/etc/passwd'] });
   assert.throws(() => createBrief(fields), ValidationError);
 });
 
-test('createBrief: empty pathScope.include and empty exclude is accepted (explicitly unscoped)', () => {
-  const fields = validBriefFields({ pathScope: { include: [], exclude: [] } });
+test('createBrief: empty pathScope ([]) is accepted (explicitly unscoped)', () => {
+  const fields = validBriefFields({ pathScope: [] });
   const brief = createBrief(fields);
-  assert.deepEqual(brief.pathScope, { include: [], exclude: [] });
+  assert.deepEqual(brief.pathScope, []);
 });
 
 test('validateBrief: returns {ok:false, errors:[...]} without throwing, for programmatic checks', () => {
@@ -133,11 +140,34 @@ test('createBrief: returned Brief is deeply frozen — mutation throws TypeError
   }, TypeError);
 });
 
-test('createBrief: mutating nested pathScope array throws TypeError (deep freeze)', () => {
+test('createBrief: mutating the pathScope array throws TypeError (deep freeze)', () => {
   const brief = createBrief(validBriefFields());
   assert.throws(() => {
-    brief.pathScope.include.push('src/**');
+    brief.pathScope.push('src/**');
   }, TypeError);
+});
+
+// ===========================================================================
+// D2 — "same done command" structural invariant: identity, not just equality
+// ===========================================================================
+
+test('D2: brief.verification is a STABLE object reference across repeated reads — the trust gate re-reads task.brief.verification later and must get back the exact same object, never a re-materialized copy', () => {
+  const brief = createBrief(validBriefFields());
+  const readOne = brief.verification;
+  const readTwo = brief.verification;
+  assert.strictEqual(readOne, readTwo, 'repeated property access must yield the identical object, not structurally-equal clones');
+});
+
+test('D2: createBrief does not clone the caller\'s verification object identity into something new and detached — the frozen brief.verification is the one and only "done" definition, checkable by reference equality against itself over time (simulating the trust gate holding a reference across an await boundary)', async () => {
+  const fields = validBriefFields();
+  const brief = createBrief(fields);
+  const capturedAtDispatch = brief.verification;
+  // Simulate time passing (e.g. the worker's whole turn) between the coordinator first reading
+  // brief.verification at dispatch and the trust gate re-reading task.brief.verification later.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const capturedAtTrustGate = brief.verification;
+  assert.strictEqual(capturedAtDispatch, capturedAtTrustGate);
+  assert.strictEqual(capturedAtDispatch.command, capturedAtTrustGate.command);
 });
 
 // ===========================================================================

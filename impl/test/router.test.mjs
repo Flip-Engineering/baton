@@ -187,26 +187,43 @@ test('decay is a read-time projection: a bucket recorded once at t=0 shows conti
   assert.ok(decayed.count < 0.01);
 });
 
-test('recency bias: an old losing streak is outweighed by recent wins — prove a stale bad record does not doom a candidate', () => {
+test('D5/recency bias: an old losing streak is outweighed by recent wins — hand-computed exact numbers, not just a qualitative threshold', () => {
   const router = new AdaptiveRouter({ now: () => T0, halfLifeMs: DEFAULT_HALF_LIFE_MS, explorationConstant: 0 });
 
-  // Long-ago losing streak, far enough back that it has almost fully decayed away.
+  // Long-ago losing streak (20 verified losses), ALL recorded at the identical instant `longAgo`
+  // so there is zero inter-record decay among them — the resulting bucket is exactly
+  // {weight:0, count:20, lastUsedTs:longAgo}, a clean number to hand-verify against.
   const longAgo = T0;
   for (let i = 0; i < 20; i++) {
     router.record('m1', 'build', false, { family: 'fam', now: longAgo });
   }
+  assert.deepEqual(router.getStat('m1', 'build'), { weight: 0, count: 20, lastUsedTs: longAgo, firstSeenTs: longAgo, family: 'fam', modelVersion: 'm1', taskType: 'build', seededFrom: null });
 
-  // Recent wins, many half-lives later.
+  // 10 half-lives later: decayFactor = 2**-10 = 1/1024. Then 5 verified wins, ALL recorded at
+  // the identical instant `muchLater` (again zero inter-record decay), so the math is exact:
+  //   decayed-old = {weight: 0, count: 20/1024 = 5/256}
+  //   +5 wins one at a time (no further decay between them, same instant) ->
+  //   final = {weight: 5, count: 5 + 5/256 = 1285/256}
   const muchLater = T0 + 10 * DEFAULT_HALF_LIFE_MS;
   for (let i = 0; i < 5; i++) {
-    router.record('m1', 'build', true, { family: 'fam', now: muchLater + i });
+    router.record('m1', 'build', true, { family: 'fam', now: muchLater });
   }
 
-  const rawStat = router.getStat('m1', 'build');
-  const decayed = decayedStat(rawStat, muchLater + 5, DEFAULT_HALF_LIFE_MS);
+  const finalStat = router.getStat('m1', 'build');
+  const expectedWeight = 5;
+  const expectedCount = 5 + 20 / 1024; // = 1285/256
+  assert.ok(Math.abs(finalStat.weight - expectedWeight) < 1e-9, `expected weight ${expectedWeight}, got ${finalStat.weight}`);
+  assert.ok(Math.abs(finalStat.count - expectedCount) < 1e-9, `expected count ${expectedCount}, got ${finalStat.count}`);
+
+  // rate = weight/count = 5 / (1285/256) = 1280/1285 = 256/257 — an exact fraction, hand-derivable
+  // from the spec's own decay formula, not an approximation.
+  const decayed = decayedStat(finalStat, muchLater, DEFAULT_HALF_LIFE_MS);
   const rate = decayed.weight / decayed.count;
-  // The ancient 0/20 losing streak has decayed to near-nothing; the 5 recent wins dominate.
-  assert.ok(rate > 0.8, `expected recent wins to dominate, got rate=${rate}`);
+  const expectedRate = 256 / 257;
+  assert.ok(Math.abs(rate - expectedRate) < 1e-9, `expected exact rate 256/257 = ${expectedRate}, got ${rate}`);
+  // The ancient 0/20 losing streak alone would give rate=0; the 5 recent wins push it to ~0.996 —
+  // proof, by exact arithmetic, that recency dominates a stale bad record.
+  assert.ok(rate > 0.99, `expected recent wins to dominate, got rate=${rate}`);
 });
 
 test('recency bias: pick() favors a candidate with a stale losing history over one with none, once its recent wins are recorded', () => {
@@ -261,25 +278,57 @@ test('a brand-new modelVersion in a family/taskType with prior history seeds at 
   assert.notEqual(newStat.weight, predecessorDecayed.weight + 1);
 });
 
-test('a new modelVersion gets tried, not starved: pick() selects it over an established rival due to the exploration bonus on its low count', () => {
-  const router = new AdaptiveRouter({ mode: 'adaptive', now: () => T0, halfLifeMs: DEFAULT_HALF_LIFE_MS, explorationConstant: 2 });
+test('D5: a new modelVersion gets tried, not starved — hand-computed exact scores via decayedStat()/scoreCandidate() prove WHY pick() favors it, not just that it happens to win', () => {
+  const halfLifeMs = DEFAULT_HALF_LIFE_MS;
+  const explorationConstant = 2;
+  const seedDiscount = 0.5; // DEFAULT_SEED_DISCOUNT
+  const router = new AdaptiveRouter({ mode: 'adaptive', now: () => T0, halfLifeMs, explorationConstant, seedDiscount });
 
-  // Establish a long, decent-but-not-perfect track record for the incumbent.
+  // Establish the incumbent's whole track record at the IDENTICAL instant T0 (zero inter-record
+  // decay) so the resulting bucket is an exact, hand-verifiable number: 40 wins / 10 losses of 50
+  // (i % 5 !== 0 is false exactly for i=0,5,...,45 -> 10 losses), giving {weight:40, count:50}.
   for (let i = 0; i < 50; i++) {
-    router.record('incumbent', 'build', i % 5 !== 0, { family: 'fam', now: T0 + i });
+    router.record('incumbent', 'build', i % 5 !== 0, { family: 'fam', now: T0 });
   }
+  const incumbentStat = router.getStat('incumbent', 'build');
+  assert.ok(Math.abs(incumbentStat.weight - 40) < 1e-9, `expected incumbent weight 40, got ${incumbentStat.weight}`);
+  assert.ok(Math.abs(incumbentStat.count - 50) < 1e-9, `expected incumbent count 50, got ${incumbentStat.count}`);
 
-  // Seed the new model by touching it once via pick() eligibility path (pick() itself
-  // must seed on first touch per spec) — call pick() and confirm it is at least sometimes
-  // selected, i.e. its exploration bonus can overcome the incumbent's higher raw rate.
+  // pick() at the SAME instant T0 (zero elapsed decay) seeds the newcomer from the incumbent
+  // (its only same-family/taskType predecessor): weight = 40*0.5 = 20, count = 50*0.5 = 25.
+  // Seeding preserves the raw win-rate exactly (20/25 = 40/50 = 0.8 for both) — it is the
+  // EXPLORATION BONUS on the newcomer's much lower count, not a rate difference, that must
+  // decide the pick. This is the concrete mechanism "not starved" actually rests on.
   const candidates = [candidate({ modelVersion: 'incumbent', family: 'fam' }), candidate({ modelVersion: 'newcomer', family: 'fam' })];
-  const picked = router.pick({ taskType: 'build' }, candidates, { now: T0 + 50 });
+  const picked = router.pick({ taskType: 'build' }, candidates, { now: T0 });
 
-  // The newcomer must have been seeded (touched) by this pick() call, proving it is
-  // considered — not permanently starved by having zero samples relative to the incumbent's 50.
   const newcomerStat = router.getStat('newcomer', 'build');
   assert.ok(newcomerStat !== null, 'newcomer bucket must be seeded/touched by pick(), not ignored');
-  assert.equal(picked, 'newcomer', 'a fresh model with a large exploration bonus should get tried, not starved');
+  assert.equal(newcomerStat.seededFrom, 'incumbent');
+  assert.ok(Math.abs(newcomerStat.weight - 20) < 1e-9, `expected seeded weight 20, got ${newcomerStat.weight}`);
+  assert.ok(Math.abs(newcomerStat.count - 25) < 1e-9, `expected seeded count 25, got ${newcomerStat.count}`);
+
+  // Hand-compute both scores via the module's own pure functions, per the spec's exact formula
+  // (§3.1): rate = weight/count; bonus = explorationConstant * sqrt(ln(totalDecayedCount+1) / (count+eps));
+  // score = rate + bonus. totalDecayedCount across the two eligible candidates = 50 + 25 = 75.
+  const totalDecayedCount = 50 + 25;
+  const decayedIncumbent = decayedStat(incumbentStat, T0, halfLifeMs);
+  const decayedNewcomer = decayedStat(newcomerStat, T0, halfLifeMs);
+  const scoreIncumbent = scoreCandidate(decayedIncumbent, totalDecayedCount, { explorationConstant });
+  const scoreNewcomer = scoreCandidate(decayedNewcomer, totalDecayedCount, { explorationConstant });
+
+  // Both have identical raw win-rate (0.8) — the newcomer wins purely on exploration bonus.
+  assert.ok(Math.abs(decayedIncumbent.weight / decayedIncumbent.count - 0.8) < 1e-9);
+  assert.ok(Math.abs(decayedNewcomer.weight / decayedNewcomer.count - 0.8) < 1e-9);
+  assert.ok(scoreNewcomer > scoreIncumbent, `expected newcomer's lower-count exploration bonus to win: incumbent=${scoreIncumbent}, newcomer=${scoreNewcomer}`);
+
+  // The hand-derived scores must be exactly what scoreCandidate() computes, and pick() must
+  // actually select the higher-scoring candidate — closing the loop from formula to behavior.
+  const bonusIncumbent = explorationConstant * Math.sqrt(Math.log(totalDecayedCount + 1) / (50 + 1e-6));
+  const bonusNewcomer = explorationConstant * Math.sqrt(Math.log(totalDecayedCount + 1) / (25 + 1e-6));
+  assert.ok(Math.abs(scoreIncumbent - (0.8 + bonusIncumbent)) < 1e-6);
+  assert.ok(Math.abs(scoreNewcomer - (0.8 + bonusNewcomer)) < 1e-6);
+  assert.equal(picked, 'newcomer', 'a fresh model with a large exploration bonus must get tried, not starved by the incumbent\'s larger sample size');
 });
 
 test('a modelVersion in a different family never seeds from another family\'s bucket, even with an identical taskType', () => {
