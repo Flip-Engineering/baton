@@ -130,10 +130,13 @@ export class MockAdapter {
    *           maxContext?: number, scenario: object}} config
    */
   constructor(config = {}) {
-    this._harness = config.harness ?? 'mock';
-    this._version = config.version ?? '1.0.0';
-    this._concurrencyCeiling = config.concurrencyCeiling ?? 4;
-    this._maxContext = config.maxContext ?? 128000;
+    // Card fields may be given flat (config.harness) or nested in a `card` bag
+    // (config.card.harness); the nested form wins where both are present.
+    const c = { ...config, ...(config.card ?? {}) };
+    this._harness = c.harness ?? 'mock';
+    this._version = c.version ?? '1.0.0';
+    this._concurrencyCeiling = c.concurrencyCeiling ?? 4;
+    this._maxContext = c.maxContext ?? 128000;
     this._defaultScenario = config.scenario;
     /** @type {Map<string, object>} */
     this._sessions = new Map();
@@ -447,6 +450,16 @@ export class MockAdapter {
     const totalEdits = scenario.edits?.length ?? 0;
     session.totalEdits = totalEdits;
     this._emit(session, 'lifecycle.turn_started', {});
+
+    // A real worker can't edit files before its worktree checkout exists. When the driver
+    // creates the worktree asynchronously, it passes a readiness promise; wait for it before
+    // touching disk. Backward-compatible: absent (e.g. adapter.test with a ready worktree) => no wait.
+    if (session.opts.worktreeReady) {
+      try {
+        const res = await session.opts.worktreeReady;
+        if (res && res.path && !session.opts.worktree) session.opts.worktree = res.path;
+      } catch { /* creation failure surfaces as a git error on first edit */ }
+    }
 
     const ask = scenario.ask;
     const askIndex = ask ? (ask.afterEditIndex ?? 0) : null;

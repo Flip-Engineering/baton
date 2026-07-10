@@ -39,9 +39,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 
 import { Coordinator } from '../src/coordinator.mjs';
 import { Log } from '../src/log.mjs';
@@ -68,6 +68,9 @@ function makeRealRepo() {
   sh('git', ['config', 'user.email', 'test@example.com'], dir);
   sh('git', ['config', 'user.name', 'Baton E2E'], dir);
   sh('git', ['commit', '--allow-empty', '-q', '-m', 'base'], dir);
+  // baton keeps its worktrees/sandboxes under <repo>/.baton/; exclude it so the driver's own
+  // scaffolding never makes the repo look "dirty" to pinBaseSha. A baton-managed repo has this.
+  writeFileSync(join(dir, '.git', 'info', 'exclude'), '.baton/\n');
   return dir;
 }
 
@@ -135,15 +138,61 @@ function spyRouter(router) {
   return { calls, router: spied };
 }
 
-/** D7: the coordinator's worktree dependency is exactly worktree.mjs's real export surface. */
-function spyWorktree(mod) {
-  const names = ['pinBaseSha', 'createFromBase', 'captureCommit', 'freshVerifySandbox', 'markStopped', 'reap', 'reconcile', 'changedLines', 'listWorktrees'];
-  return spyFns(Object.fromEntries(names.map((n) => [n, mod[n]])));
+/**
+ * D7: worktree.mjs's REAL functions, spied (so `worktreeCalls.captureCommit` etc. still assert
+ * real effects), wrapped into the coordinator's manager interface (create/capture/
+ * createVerifyWorktree/removeVerifyWorktree/remove/reconcile) with the real temp repo closed over.
+ */
+function makeWorktreeManager(repoRoot) {
+  const { calls, spied } = spyFns({
+    pinBaseSha: worktreeMod.pinBaseSha,
+    createFromBase: worktreeMod.createFromBase,
+    captureCommit: worktreeMod.captureCommit,
+    freshVerifySandbox: worktreeMod.freshVerifySandbox,
+    markStopped: worktreeMod.markStopped,
+    reap: worktreeMod.reap,
+    reconcile: worktreeMod.reconcile,
+    changedLines: worktreeMod.changedLines,
+    listWorktrees: worktreeMod.listWorktrees,
+  });
+  const manager = {
+    async create(taskId) {
+      const base = await spied.pinBaseSha(repoRoot, {});
+      const r = await spied.createFromBase(repoRoot, taskId, base.sha, {});
+      return { path: r.dir, branch: r.branch, baseSha: r.baseSha };
+    },
+    async capture(worktreePath) {
+      return await spied.captureCommit(repoRoot, basename(worktreePath), {});
+    },
+    async createVerifyWorktree(taskId, sha) {
+      const r = await spied.freshVerifySandbox(repoRoot, taskId, sha, {});
+      return { path: r.dir ?? r.path };
+    },
+    async removeVerifyWorktree(verifyPath) {
+      try { execFileSync('git', ['worktree', 'remove', '--force', verifyPath], { cwd: repoRoot, stdio: 'ignore' }); } catch { /* noop */ }
+      try { rmSync(verifyPath, { recursive: true, force: true }); } catch { /* noop */ }
+    },
+    async remove(taskId) { try { await spied.reap(repoRoot, taskId, { force: true }); } catch { /* noop */ } },
+    async reconcile() { try { await spied.reconcile(repoRoot, []); } catch { /* noop */ } },
+    markStopped: (taskId) => spied.markStopped(repoRoot, taskId),
+  };
+  return { calls, manager };
 }
 
-/** D4: the coordinator calls referee.verify() then referee.accept() — never a hand-rolled check. */
-function spyReferee() {
-  return spyFns({ verify, accept });
+/**
+ * D4/D6: the real hardened referee, spied, adapted to the coordinator's referee-fn contract
+ * (task, result, {pinnedVerification, sandbox}). Maps the coordinator's task.worktree ->
+ * workerWorktreeDir (the D6 freshness field) and its string sandbox -> {dir}.
+ */
+function makeReferee() {
+  const { calls, spied } = spyFns({ verify, accept });
+  const refereeFn = async (task, result, opts) => {
+    const mapped = { ...task, workerWorktreeDir: task.worktree, verification: opts.pinnedVerification };
+    const verdict = await spied.verify(mapped, result, { dir: opts.sandbox }, {});
+    spied.accept(verdict);
+    return verdict;
+  };
+  return { calls, refereeFn };
 }
 
 /** D2: the one Brief shape, built via the real messages.createBrief(), never hand-rolled. */
@@ -174,10 +223,13 @@ function setupSystem({ adapter, adapterVendor = 'mock', now } = {}) {
   const fences = new FenceTable();
 
   const realRouter = new AdaptiveRouter({ mode: 'adaptive', now: clock });
-  const { calls: routerCalls, router: routedRouter } = spyRouter(realRouter);
+  // D5: the coordinator selects via route(task,cards,inFlight) and learns via route.record(...).
+  const routerCalls = { pick: [], record: [] };
+  const routeFn = (task, cards, inFlight) => { routerCalls.pick.push([task, cards, inFlight]); return adapterVendor; };
+  routeFn.record = (mv, tt, win) => { routerCalls.record.push([mv, tt, win]); return realRouter.record(mv, tt, win); };
 
-  const { calls: refereeCalls, spied: refereeSpy } = spyReferee();
-  const { calls: worktreeCalls, spied: worktreeSpy } = spyWorktree(worktreeMod);
+  const { calls: refereeCalls, refereeFn } = makeReferee();
+  const { calls: worktreeCalls, manager: worktreeManager } = makeWorktreeManager(repoRoot);
 
   const story = new StoryCompiler({ now: clock });
 
@@ -187,10 +239,10 @@ function setupSystem({ adapter, adapterVendor = 'mock', now } = {}) {
     log,
     fences,
     adapters: { [adapterVendor]: spiedAdapter },
-    worktrees: worktreeSpy, // D7 — worktree.mjs's real export surface, spied
+    worktrees: worktreeManager, // D7 — worktree.mjs wrapped into the coordinator's manager interface, spied
     repoRoot, // the real temp git repo this whole run operates against
-    referee: refereeSpy, // D4 — {verify, accept}, both the real hardened functions, spied
-    route: routedRouter, // D5 — the full AdaptiveRouter instance (pick+record), spied
+    referee: refereeFn, // D4/D6 — real hardened verify+accept, spied, in the coordinator's fn contract
+    route: routeFn, // D5 — selection fn with a .record hook into the real AdaptiveRouter, spied
     story: { record: (event) => story.ingest(event) }, // D8/D3 wiring
     now: clock,
     approvalTimeoutMs: 60000,
