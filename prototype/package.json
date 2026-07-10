@@ -1,0 +1,14 @@
+{
+  "name": "baton-prototype",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Honest MVP: deterministic orchestrator + Referee (hub-run verification) + pre-registered eval. See README.",
+  "scripts": {
+    "demo": "node demo.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
