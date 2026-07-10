@@ -85,19 +85,19 @@ So **Claude Code as the GLM harness is not a hack, it's the vendor's blessed con
 
 ## Grok Build CLI 0.1.216 — native ACP, shipped by the vendor (added 2026-07-10)
 
-xAI's `grok` is the first flagship vendor CLI whose primary programmatic surface is **ACP itself**: `grok agent stdio` is a standard Agent Client Protocol server (JSON-RPC 2.0, `initialize` → `session/new` → `session/prompt` → streamed `session/update`), extended by a documented catalog of 72 `x.ai/*` methods (fs, git, **git/worktree**, terminal, search, **session/fork**, **rewind/** with on-disk file snapshots, auth, telemetry). No bridge repo, no protocol org adapter — the vendor ships the server. Live-verified here: the initialize handshake succeeds **unauthenticated** and returns the whole harness card (model `grok-build`, **500K context**, agent type `grok-build-plan`, capabilities, runtime commands incl. `compact` and `always-approve` toggling); `session/new` is the auth gate (`-32000 "Authentication required"`). Everything model-side is doc/spec-grade until `grok login` / `XAI_API_KEY` — full dossier with verbatim frames: [reference/grok-build-cli.md](reference/grok-build-cli.md).
+xAI's `grok` is the first flagship vendor CLI whose primary programmatic surface is **ACP itself**: `grok agent stdio` is a standard Agent Client Protocol server (JSON-RPC 2.0, `initialize` → `session/new` → `session/prompt` → streamed `session/update`), extended by a documented catalog of 72 `x.ai/*` methods (fs, git, **git/worktree**, terminal, search, **session/fork**, **rewind/** with on-disk file snapshots, auth, telemetry). No bridge repo, no protocol org adapter — the vendor ships the server. **Live-verified through the full authenticated smoke (2026-07-10)**: cancel conforms (prompt resolves `stopReason:"cancelled"`, session survives), permission requests fire under default config and the allow/deny option flow works, every prompt response carries full **usage `_meta`** (tokens incl. cached/reasoning splits, per turn), mid-turn prompts **queue** (never splice — and cancel kills active+queued together, so steer remains an emulation with mandatory cancel-first ordering), and post-auth the model card is **grok-4.5** (500K ctx) + grok-composer-2.5-fast. The baton adapter (`impl/src/grok-acp.mjs`) passed an 8/8-verdict live E2E driving spawn/approve/steer/interrupt/kill against the real binary. Full dossier with verbatim frames: [reference/grok-build-cli.md](reference/grok-build-cli.md) (post-auth erratum at the tail).
 
 | Primitive | Grok Build |
 |---|---|
 | spawn | `session/new {cwd, mcpServers}`; resume = `session/load` (capability-advertised live) |
 | prompt | `session/prompt` — turn ends when the request resolves (`stopReason`) |
 | stream | `session/update`: `agent_message_chunk`, `agent_thought_chunk`, `tool_call`, `plan` + `x.ai/*` push notifications |
-| interrupt | `session/cancel` (ACP baseline — prompt resolves `stopReason:"cancelled"`); live-advertised `cancelRewind:true` suggests cancel-plus-file-restore |
-| steer | **no native steer** (ACP baseline has none; none in the `x.ai/*` catalog) — emulate, or probe mid-turn `session/prompt` splicing post-auth |
+| interrupt | `session/cancel` — **live-proven**: prompt resolves `stopReason:"cancelled"` (with usage `_meta`), session survives; `cancelRewind:true` does NOT auto-restore files (client-driven rewind only) |
+| steer | **no native steer, live-settled**: a mid-turn `session/prompt` QUEUES (the running turn never sees it) and cancel kills active+queued together — emulation must cancel FIRST, then re-prompt (the adapter's ordering) |
 | inject | between turns only (prompt content); `AGENTS.md` / `--rules` at spawn |
-| approve | `session/request_permission` (ACP) — caveat: `[features] support_permission = false` appears as a config default; `--always-approve` / runtime `always-approve on\|off` bypasses |
+| approve | `session/request_permission` **fires under default config (live)** — options verbatim: `always-allow`(allow_always, listed first), `allow-once`, `reject-once`; allow ran the tool; `--always-approve` / runtime `always-approve on\|off` bypasses |
 | resume/fork/rollback | `session/load` / `x.ai/session/fork` / **`x.ai/rewind/*` restores actual file snapshots** — the only harness in the fleet with true file-level rollback |
-| usage | no documented wire telemetry; **`signals.json`** (turn count, token usage) in the on-disk session dir; `grok trace` export |
+| usage | **live: full usage `_meta` on every prompt response** (`totalTokens/inputTokens/outputTokens/cachedReadTokens/reasoningTokens/modelId`) — richer than expected; `signals.json` + `grok trace` remain the post-hoc sources |
 | health | process exit, JSON-RPC errors (`-32000` auth), sandbox-degradation warnings, `agent_error` notification hook |
 
 Notable extras: first-party **shared leader process** (`grok agent leader`, clients attach `--leader` — codex's daemon+broker shape, vendor-shipped), `grok agent serve` (WebSocket multi-client), kernel sandbox profiles (Seatbelt/Landlock, irreversible at startup), `--best-of-n` (parallel N-way attempts, pick best), `--check` (appended self-verification loop), `--prompt-json` content blocks, session store whose `updates.jsonl` **is the ACP stream** (one format for wire and audit), `grok import` (foreign-session migration), and `[model.<id>]` custom **OpenAI-compatible endpoints** (the harness can front non-xAI models). The help text annotates flags with Claude Code equivalents (`--allow` "(Claude Code: --allowedTools)") and reuses Claude's `--permission-mode` enum verbatim — deliberate control-surface mirroring, which lowers adapter cost. Caveats: bundled docs already drift from the binary twice (effort enum, `-r` arg optionality), one-shot `streaming-json` has **no tool-call events**, and ToS/quota posture for programmatic driving is unpublished.
@@ -115,16 +115,16 @@ Notable extras: first-party **shared leader process** (`grok agent leader`, clie
 |---|---|---|---|---|---|
 | spawn | ✅ native | ✅ native | ✅ (env override) | ✅ session/new | ✅ session/new |
 | stream | ✅ rich (deltas, diffs, plans) | ✅ rich | ✅ | ✅ session/update | ✅ session/update + `x.ai/*` notifs |
-| interrupt | ✅ `turn/interrupt` | ✅ SDK interrupt | ✅ | ✅ session/cancel | ✅ session/cancel (spec; live-unverified) |
+| interrupt | ✅ `turn/interrupt` | ✅ SDK interrupt | ✅ | ✅ session/cancel | ✅ session/cancel (**live-proven**) |
 | steer mid-turn | ✅ **`turn/steer`** | ✅ **native mid-turn user frame** (phase-8 live re-eval; absorbed at next tool boundary) | ✅ same | ❌ (ACP has no steer) | ❌ → emulate (probe splice post-auth) |
 | inject context | ✅ `thread/inject_items` | ⚠️ between turns | ⚠️ | ❌ | ⚠️ between turns |
 | approvals → client | ✅ JSON-RPC requests | ✅ canUseTool | ✅ | ✅ session/request_permission | ✅ session/request_permission (config caveat) |
 | resume/fork/rollback | ✅ / ✅ / ✅ | ✅ / ✅ / ❌ | ✅ | ✅ resume (capability-gated) / adapter-dependent / ❌ | ✅ load / ✅ `x.ai/session/fork` / ✅ **`x.ai/rewind/*` w/ file snapshots** |
-| goal pinning | ✅ `thread/goal/*` | ❌ (emulate via system prompt) | ❌ | ❌ | ❌ (`AGENTS.md` / `--rules`) |
-| usage/rate-limit telemetry | ✅ push notifications | ✅ OTel + result events | ⚠️ (Z.ai side unknown) | ❌ (not in ACP) | ⚠️ `signals.json` on disk; wire unknown |
+| goal pinning | ✅ `thread/goal/*` | ❌ (emulate via system prompt) | ❌ | ❌ | ⚠️ `goal` runtime command (live-listed post-auth; unprobed) |
+| usage/rate-limit telemetry | ✅ push notifications | ✅ OTel + result events | ⚠️ (Z.ai side unknown) | ❌ (not in ACP) | ✅ **usage `_meta` on every prompt response (live)** |
 | daemon / multi-client | ✅ daemon + pairing | ⚠️ per-process (`--bg` emerging) | ⚠️ | ❌ (stdio per client) | ✅ **leader process** + `agent serve` |
 | schema introspection | ✅ generate-json-schema | ❌ | ❌ | ✅ (ACP versioned spec) | ⚠️ ACP spec; `x.ai/*` catalog unshipped |
 
-Legend: ✅ native · ⚠️ emulable with adapter work · ❌ absent. (Gemini column reflects the verified ACP spec — doc 01 §1. Grok column: initialize handshake live-verified, model-side rows spec/doc-grade pending auth — reference/grok-build-cli.md. Claude steer upgraded to native per docs/23 phase-8 live re-eval.)
+Legend: ✅ native · ⚠️ emulable with adapter work · ❌ absent. (Gemini column reflects the verified ACP spec — doc 01 §1. Grok column **live-verified 2026-07-10 post-auth** — authenticated smoke + adapter E2E, 8/8 verdicts; steer stays emulated because mid-turn prompts QUEUE rather than splice, and cancel kills active+queued together — reference/grok-build-cli.md post-auth erratum. Claude steer upgraded to native per docs/23 phase-8 live re-eval.)
 
 **Design consequence:** the common denominator is poor but the union is rich. A lowest-common-denominator protocol wastes Codex's steering and Claude's hooks; the hub should expose a **capability-negotiated** surface (each adapter publishes a "harness card" of supported primitives, and the orchestrator's tools degrade gracefully — e.g. `steer` falls back to interrupt+reprompt with an explicit `emulated: true` flag in telemetry).

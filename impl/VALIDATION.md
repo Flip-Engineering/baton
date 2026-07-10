@@ -122,3 +122,26 @@ terminal** (unbounded by the setup timeout; settled by resolution, cancel, or ch
   `resource.tokens` yet (named gap GA20; the on-disk `signals.json` is the post-hoc source).
 - Assembly into `createDriver()` remains the shared next milestone for all three session adapters
   (docs/23 re-steer item 2); GrokAcpCli joins that batch deliberately unwired.
+
+### Phase-9 follow-up — live-smoke gate CLOSED (2026-07-10, same day, post-`grok login`)
+
+The user authenticated and the full smoke ran: raw-wire probes #3/#4 + an **8/8-verdict live E2E
+driving GrokAcpCli itself** against the real binary (spawn→approve(allow)×2→probe.txt created;
+multi-turn same session; steer mid-tool-loop → `control.steer` → redirected turn answered
+STEER-OK with zero phantom interrupts — the 20-file task stopped at g2; interrupt mid-tool-loop →
+`control.interrupt_confirmed{status:'cancelled'}` → session survived a further turn; kill →
+`kill.confirmed`, no crash event). Evidence: `docs/reference/evidence/grok-0.1.216/`
+(`grok-acp-probe{3,4}.*`, `grok-adapter-live-e2e.*`).
+
+Checklist outcomes: cancel conforms exactly as GA8 assumed; permissions FIRE under default config
+(config-doc ambiguity dead; live option list pinned into the fake — `allow_always` first);
+mid-turn prompts QUEUE and **cancel kills active+queued together** — steer stays `emulated` and
+GA13's cancel-first ordering is mandatory, live-validated; `cancelRewind` does not auto-revert
+files. Two contracts corrected by live: **GA20 overturned** (usage `_meta` rides every prompt
+response → new `resource.tokens {source:'promptMeta'}` + real `budgetUsed.tokens`, F1) and
+**`tool_call_update`** is a second update kind carrying status/diff (mapped, F2). Post-auth model
+card: grok-4.5 (500K ctx) + grok-composer-2.5-fast. Fleet note: user-level MCP/hooks bleed into
+sessions — workers should isolate via `GROK_HOME`.
+
+Suite: **372/372**. GrokAcpCli's card is now fully live-backed: spawn/prompt/interrupt/approve/
+kill native-and-live-proven, steer emulated-and-live-proven, answer unsupported-by-design.

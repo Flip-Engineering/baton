@@ -250,3 +250,46 @@ Session ids pid-namespaced (phase8 R2 lesson — per-worker children would other
 - Reading `signals.json` for usage — coordinator-layer work, not adapter wire truth.
 - `createDriver()` assembly — the phase-8.1 re-steer already schedules session-adapter assembly as
   the next milestone; GrokAcpCli joins ClaudeSessionCli/CodexAppServerCli in that batch.
+
+---
+
+## Errata — post-auth live smoke, grok 0.1.216 authenticated, 2026-07-10
+
+The ⛔ gate at the top of this spec is **CLOSED**. Checklist results (raw frames:
+`docs/reference/evidence/grok-0.1.216/grok-acp-probe{3,4}.jsonl`; adapter E2E ledger:
+`grok-adapter-live-e2e.jsonl` — 8/8 verdicts PASS driving the real binary through the real
+adapter):
+
+1. `session/cancel` conforms exactly as GA8 assumed: pending prompt → `{stopReason:"cancelled"}`,
+   session survives. **GA8 holds unmodified.**
+2. `cancelRewind:true` does not auto-revert files — no adapter impact.
+3. `session/request_permission` fires under default config (the `support_permission=false` doc
+   ambiguity is resolved — it does not suppress ACP asks). Live options put `allow_always`
+   FIRST; GA9's kind-preference (allow → `allow_once` before `allow_always`) picked the
+   conservative once-scoped option and the allowed tool ran. **GA9 holds; fake corrected to the
+   live-verbatim option list** (`always-allow`/`allow-once`/`reject-once`; no reject_always).
+4. Mid-turn `session/prompt` **queues** (not rejected, not spliced) and **cancel kills active +
+   queued together**. Consequences: (a) steer stays `emulated` — no native splice exists, the
+   claude-E2-style upgrade does NOT apply; (b) GA13's cancel-first-THEN-prompt ordering is
+   mandatory, not stylistic — a queue-then-cancel emulation would cancel its own steer content;
+   (c) GA7's one-turn-at-a-time `{ok:false}` guard is retained deliberately even though the wire
+   would queue: queued turns are invisible to the running turn and silently die on any cancel —
+   a hazard baton chooses not to expose.
+5. Update shapes confirmed: `agent_message_chunk`/`agent_thought_chunk` as pinned;
+   **`tool_call_update` is a second update kind** (status transitions, `kind:"edit"`, diff
+   content) → **F2**: mapped to `content.tool_call` alongside `tool_call` (test-locked).
+6. **GA20 OVERTURNED — usage is on the wire**: every prompt response carries
+   `_meta{totalTokens, inputTokens, outputTokens, cachedReadTokens, reasoningTokens, modelId}` →
+   **F1**: adapter emits `resource.tokens {source:'promptMeta', …}` per turn and threads
+   `totalTokens` into `makeResult().budgetUsed.tokens` (test-locked).
+7. Post-auth model card: `session/new` returns `models` (grok-4.5 default, 500K ctx,
+   reasoningEffort high; grok-composer-2.5-fast 200K). `maxContext: 500000` default stands.
+8. Live notifications arrive under **`_x.ai/*`** (leading underscore), all ignored by GA19's
+   default arm as designed; `available_commands_update` also observed and ignored. One stray
+   id-bearing error response (`id:"skills-reload"`) was dropped by the pending-map discipline —
+   GA5 held.
+9. Fleet-isolation note: the user's global MCP servers + hooks ran inside the session
+   (`mcpServers:[]` notwithstanding). Workers should set `GROK_HOME` to a minimal config dir via
+   the constructor's `env` — no adapter change required.
+
+Suite after corrections: **372/372** (+F1 usage test, +F2 tool_call_update test).

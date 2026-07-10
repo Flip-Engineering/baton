@@ -40,16 +40,18 @@ export class GrokRpcTimeoutError extends Error {
 // Small pure helpers
 // ---------------------------------------------------------------------------
 
-/** WorkerResult shape, same convention as cli-adapters.mjs / codex-appserver.mjs (GA20: no wire
- * usage telemetry is documented for this surface yet — budgetUsed stays 0, a named gap). */
-function makeResult(status, summary) {
+/** WorkerResult shape, same convention as cli-adapters.mjs / codex-appserver.mjs. GA20 was
+ * OVERTURNED by the post-auth live smoke (probe #3, 2026-07-10): the prompt response's `_meta`
+ * carries full token accounting ({totalTokens, inputTokens, outputTokens, cachedReadTokens,
+ * reasoningTokens, modelId}) — budgetUsed.tokens is real, not a gap. */
+function makeResult(status, summary, totalTokens = 0) {
   return {
     status,
     summary,
     artifacts: { commits: [], files: [] },
     verification: { command: null, claimedExit: null },
     openQuestions: [],
-    budgetUsed: { tokens: 0, usd: 0 },
+    budgetUsed: { tokens: totalTokens, usd: 0 },
   };
 }
 
@@ -297,6 +299,7 @@ export class GrokAcpCli {
         });
         return;
       case 'tool_call':
+      case 'tool_call_update': // live-smoke F2 (probe #4): status transitions + diff content ride a SECOND update kind
         this._emit(session, 'content.tool_call', { sessionId: session.sessionId, turnId, ...update });
         return;
       default:
@@ -335,6 +338,14 @@ export class GrokAcpCli {
     if (!this._settleTurn(session, turnId)) return;
     const stopReason = result.stopReason ?? 'end_turn';
 
+    // Live-smoke F1 (probe #3): the prompt response's `_meta` carries the turn's full token
+    // accounting — surfaced as the one D3 resource kind, tagged by source (XA18 discipline).
+    const meta = result._meta ?? null;
+    if (meta) {
+      this._emit(session, 'resource.tokens', { source: 'promptMeta', sessionId: session.sessionId, turnId, ...meta });
+    }
+    const tokens = meta?.totalTokens ?? 0;
+
     if (stopReason === 'cancelled') {
       const steer = session.steerPending;
       if (steer) {
@@ -347,7 +358,7 @@ export class GrokAcpCli {
         this._startTurn(session, steer.content);
         return;
       }
-      const res = makeResult('cancelled', 'interrupted');
+      const res = makeResult('cancelled', 'interrupted', tokens);
       this._emit(session, 'control.interrupt_confirmed', { sessionId: session.sessionId, turnId, result: res });
       this._maybeIssueFollowUp(session, turnId);
       return;
@@ -364,7 +375,7 @@ export class GrokAcpCli {
 
     // end_turn and the budget-ish reasons (max_tokens / max_turn_requests) complete the turn;
     // stopReason is surfaced for the coordinator's own policy (GA20: no gating here).
-    const res = makeResult('completed', `turn completed (${stopReason})`);
+    const res = makeResult('completed', `turn completed (${stopReason})`, tokens);
     this._emit(session, 'lifecycle.turn_completed', { result: res, sessionId: session.sessionId, turnId, stopReason });
   }
 

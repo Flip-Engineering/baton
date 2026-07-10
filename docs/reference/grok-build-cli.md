@@ -220,3 +220,72 @@ The lesson from the phase-8 live re-eval applies with full force: every verb abo
 - [ACP specification](https://agentclientprotocol.com/protocol/schema) — session/prompt/cancel/permission semantics Grok claims conformance with
 - [console.x.ai](https://console.x.ai) — API keys
 - ACP SDKs referenced by the user guide: `@agentclientprotocol/sdk` (TS), `agent-client-protocol` (Rust)
+
+---
+
+## Post-auth live-smoke erratum — grok 0.1.216 authenticated, 2026-07-10
+
+The user authenticated (`grok login`, browser flow) and the full spec/phase9 smoke checklist ran:
+raw-wire probes #3/#4 plus a live E2E driving the real `GrokAcpCli` adapter end to end (all 8
+verdicts PASS — spawn/approve/multi-turn/steer/interrupt/survival/kill). Evidence:
+`evidence/grok-0.1.216/grok-acp-probe{3,4}.{mjs,jsonl}`, `grok-adapter-live-e2e.{mjs,jsonl}`.
+Corrections and upgrades to the body above:
+
+1. **The model story changes post-auth.** Authenticated `session/new` returns
+   `models: {currentModelId:"grok-4.5", availableModels:[grok-4.5 (500K ctx, agentType
+   grok-build-plan, supportsReasoningEffort, reasoningEffort:"high"), grok-composer-2.5-fast
+   (200K, agentType "cursor")]}` — `grok-build` was the unauthenticated placeholder. The 500K
+   context figure stands for the default model. `session/new`'s result is richer than
+   `{sessionId}`: it carries `models` and `_meta{currentWorkingDirectory, codebaseIndexed,
+   isGitRepo, gitRoot, showNonGitWarning, feedbackEnabled}`.
+2. **Usage telemetry IS on the wire** (§9/GA20 correction): every `session/prompt` response
+   carries `_meta{totalTokens, inputTokens, outputTokens, cachedReadTokens, reasoningTokens,
+   modelId, requestId, promptId}` — per-turn accounting, better than expected. The `signals.json`
+   fallback is unnecessary for live turns.
+3. **`session/cancel` conforms** (checklist item 1, live-proven): the outstanding prompt resolves
+   `{stopReason:"cancelled"}` (with usage `_meta`) and the session survives for further prompts.
+   Cancel against an idle session is harmless.
+4. **Mid-turn `session/prompt` QUEUES** (item 4): a second prompt during an active turn is
+   neither rejected nor spliced — it waits, and the running turn does NOT see its content (a
+   "STOP" prompt did not stop the tool loop). **`session/cancel` cancels the active turn AND the
+   queued one(s)** — both resolved `cancelled` in one cancel. Two consequences: steer stays
+   **emulated** (no native splice), and the emulation MUST be cancel-first-then-prompt (a
+   queued-then-cancel ordering would eat the steer content) — the adapter's GA13 ordering, now
+   live-validated. The adapter's one-turn-at-a-time guard is deliberately conservative vs. the
+   wire's queueing (queued turns are silently cancellable — a footgun for a fleet).
+5. **`session/request_permission` FIRES under default config** (item 3) — the
+   `[features] support_permission = false` config-doc worry is dead. Live-verbatim options:
+   `[{optionId:"always-allow", name:"Yes, allow all edits during this session",
+   kind:"allow_always"}, {optionId:"allow-once", name:"Yes", kind:"allow_once"},
+   {optionId:"reject-once", name:"No, and tell Grok what to do differently",
+   kind:"reject_once"}]` (note `allow_always` FIRST; no reject_always). `toolCall` carries
+   `{toolCallId, kind:"edit", title, rawInput:{variant:"Write", filePath, content}}`. Answering
+   `selected:allow-once` ran the tool (`tool_call_update status:"completed"`, file on disk).
+6. **Two tool update kinds** (item 5): the initial `tool_call {toolCallId, title:"write",
+   rawInput}` is followed by `tool_call_update` frames carrying `kind:"edit"`, diff `content:
+   [{type:"diff", path, oldText, newText}]`, and `status:"completed"` — the update kind is where
+   the useful telemetry lives. `agent_message_chunk`/`agent_thought_chunk` shapes confirmed
+   exactly as documented (`content:{type:"text",text}`, token-granular).
+7. **`cancelRewind:true` does NOT auto-revert files** (item 2): files written before a cancel
+   stayed on disk. It presumably advertises client-driven rewind of a cancelled turn
+   (`x.ai/rewind/*`); harmless to the adapter.
+8. **Live notification prefix is `_x.ai/*` (leading underscore)**, not the documented `x.ai/*`:
+   `_x.ai/session_notification` (sessionUpdate: hook_execution, session_summary_generated),
+   `_x.ai/models/update`, `_x.ai/announcements/update`, `_x.ai/mcp/init_progress`,
+   `_x.ai/mcp_initialized`, `_x.ai/session/prompt_complete` (fires just before the prompt
+   response resolves). Also observed: a standard-ACP `available_commands_update` session/update,
+   and one stray id-bearing error response (`id:"skills-reload"`) the client never requested —
+   validates the drop-stray-responses discipline.
+9. **User-level config bleeds into ACP sessions**: the session connected the user's global MCP
+   servers (despite `mcpServers:[]` in session/new) and ran the user's `settings.local` hooks
+   (`user_prompt_submit`, `stop` — one hook failure surfaced as a notification, harmless to the
+   protocol). Fleet workers should isolate with `GROK_HOME` pointing at a minimal config dir.
+10. **`availableCommands` is much richer post-auth** — including **`goal`** ("Set, manage, or
+    check an autonomous goal": `<objective> | status | pause | resume | clear`), `loop`, hooks-*,
+    plugins, skills. Goal pinning upgrades from ❌ to a runtime-command surface (unprobed).
+
+**Live-smoke gate: CLOSED for this adapter.** All card-native verbs (spawn/prompt/interrupt/
+approve/kill) live-proven through the adapter itself; steer live-proven as declared-emulated;
+`answer` remains unsupported-by-design. Corrections F1 (usage → `resource.tokens` +
+`budgetUsed.tokens`) and F2 (`tool_call_update` → `content.tool_call`) are test-locked
+(suite 372/372).

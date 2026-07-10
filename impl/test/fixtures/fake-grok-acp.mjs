@@ -73,11 +73,24 @@ function textOf(prompt) {
     .join('\n');
 }
 
+/** Live-shaped usage _meta (probe #3/#4, 2026-07-10): every prompt resolution carries full token
+ * accounting — the F1 correction's whole basis. */
+function usageMeta(outputTokens) {
+  return {
+    sessionId, requestId: 'req-fake', promptId: 'req-fake',
+    totalTokens: 100 + outputTokens, modelId: 'grok-4.5-fake',
+    inputTokens: 100, outputTokens, cachedReadTokens: 50, reasoningTokens: 0,
+  };
+}
+
 function resolvePrompt(result) {
   if (!activePrompt) return;
   const { id, timer } = activePrompt;
   if (timer) clearTimeout(timer);
   activePrompt = null;
+  if (result.result?.stopReason && !result.result._meta) {
+    result = { result: { ...result.result, _meta: usageMeta(7) } };
+  }
   send({ id, ...result });
 }
 
@@ -117,17 +130,23 @@ function runPrompt(text) {
       serverReqSeq += 1;
       toolCallSeq += 1;
       const toolCallId = `call-${toolCallSeq}`;
-      pendingPermission = { id: serverReqSeq, optionIds: { allowOnce: 'opt-allow-once', allowAlways: 'opt-allow-always', rejectOnce: 'opt-reject-once' } };
+      pendingPermission = { id: serverReqSeq, optionIds: { allowOnce: 'allow-once', allowAlways: 'always-allow', rejectOnce: 'reject-once' } };
+      // LIVE-verbatim option list and toolCall shape (probe #4, grok 0.1.216 authenticated):
+      // allow_always is FIRST — the adapter's kind-preference (allow -> allow_once) must not
+      // naively take options[0].
       send({
         id: serverReqSeq,
         method: 'session/request_permission',
         params: {
           sessionId,
-          toolCall: { toolCallId, title: 'run risky command', kind: 'execute', status: 'pending' },
+          toolCall: {
+            toolCallId, kind: 'edit', title: 'Write `/fake/risky.txt`',
+            rawInput: { variant: 'Write', filePath: '/fake/risky.txt', content: 'risky\n' },
+          },
           options: [
-            { optionId: 'opt-allow-once', name: 'Allow once', kind: 'allow_once' },
-            { optionId: 'opt-allow-always', name: 'Always allow', kind: 'allow_always' },
-            { optionId: 'opt-reject-once', name: 'Reject', kind: 'reject_once' },
+            { optionId: 'always-allow', name: 'Yes, allow all edits during this session', kind: 'allow_always' },
+            { optionId: 'allow-once', name: 'Yes', kind: 'allow_once' },
+            { optionId: 'reject-once', name: 'No, and tell Grok what to do differently', kind: 'reject_once' },
           ],
         },
       });
@@ -150,7 +169,14 @@ function runPrompt(text) {
     return; // only session/cancel resolves it
   }
 
-  update({ sessionUpdate: 'tool_call', toolCallId: `call-${(toolCallSeq += 1)}`, title: 'list files (fake)', kind: 'read', status: 'completed' });
+  // LIVE-shaped two-phase tool telemetry (probe #4): an initial tool_call, then a
+  // tool_call_update carrying the completion status + diff content.
+  const tcId = `call-${(toolCallSeq += 1)}`;
+  update({ sessionUpdate: 'tool_call', toolCallId: tcId, title: 'write', rawInput: { filePath: '/fake/out.txt', content: 'x\n' } });
+  update({
+    sessionUpdate: 'tool_call_update', toolCallId: tcId, status: 'completed',
+    content: [{ type: 'diff', path: '/fake/out.txt', oldText: '', newText: 'x\n' }],
+  });
   scheduleNaturalEnd(text);
 }
 

@@ -584,6 +584,42 @@ test('GA11: kill() force-ends the worker and emits kill.confirmed once the proce
 });
 
 // ---------------------------------------------------------------------------
+// Live-smoke corrections F1/F2 (probes #3/#4, 2026-07-10, authenticated grok 0.1.216)
+// ---------------------------------------------------------------------------
+
+test('F1 (live-pinned): the prompt response _meta becomes a resource.tokens event and the terminal result carries budgetUsed.tokens', async () => {
+  const adapter = makeAdapter();
+  const events = collect(adapter);
+  const worker = 'w1';
+  try {
+    await adapter.spawn(worker, makeBrief('trivial'), { worktree: freshWorktree() });
+    const res = await until(events, (e) => e.kind === 'resource.tokens');
+    assert.equal(res.payload.source, 'promptMeta');
+    assert.equal(typeof res.payload.totalTokens, 'number');
+    assert.equal(typeof res.payload.outputTokens, 'number');
+    const terminal = await until(events, (e) => e.kind === 'lifecycle.turn_completed');
+    assert.ok(terminal.payload.result.budgetUsed.tokens > 0, 'GA20 was overturned live: usage IS on the wire and must reach the result');
+  } finally {
+    await cleanup(adapter, worker);
+  }
+});
+
+test('F2 (live-pinned): tool_call_update (status/diff transitions) maps to content.tool_call alongside the initial tool_call', async () => {
+  const adapter = makeAdapter();
+  const events = collect(adapter);
+  const worker = 'w1';
+  try {
+    await adapter.spawn(worker, makeBrief('trivial'), { worktree: freshWorktree() });
+    await until(events, (e) => e.kind === 'content.tool_call' && e.payload.sessionUpdate === 'tool_call');
+    const upd = await until(events, (e) => e.kind === 'content.tool_call' && e.payload.sessionUpdate === 'tool_call_update');
+    assert.equal(upd.payload.status, 'completed');
+    assert.equal(upd.payload.content?.[0]?.type, 'diff');
+  } finally {
+    await cleanup(adapter, worker);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GA18: unexpected child death mid-turn IS a crash (the close path settles the unbounded prompt)
 // ---------------------------------------------------------------------------
 
