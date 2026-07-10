@@ -1,0 +1,1137 @@
+// Cluster 1 (Core) — coordinator.mjs test suite.
+// Covers the 8 commands, dispatch (deps + concurrency ceilings), fence-checked
+// reliability, two-phase interrupt/kill, single-consumer respond(), the trust gate,
+// crash/restart replay, and list()/wait(). Behaviors 19-53 of
+// spec/IMPLEMENTATION.md (CLUSTER 1 — CORE, section 5).
+//
+// FIXTURE NOTE (deviation from a literal "import MockAdapter from ../src/adapter.mjs"):
+// coordinator.mjs's own `Adapter` contract (spec §3.2) is
+//   { card(), spawn(worker,brief), prompt(worker,content,mode), interrupt(worker,then),
+//     approve(worker,requestId,decision,payload), kill(worker), onEvent(cb) }
+// which is a *different shape* from Cluster B's adapter.mjs `MockAdapter`
+//   { card(), run(brief, opts) }
+// (a single run-to-completion call with AbortSignal-driven cancellation). The two
+// clusters' Adapter typedefs are not interchangeable. The spec's own "Test
+// independence note" (section 6 of the Core cluster spec) explicitly directs Core's
+// test suite to "construct minimal local fakes conforming to Adapter/RefereeFn/
+// WorktreeManager/RouteFn ... rather than importing Cluster B's real MockAdapter" —
+// this file follows that guidance so it stays buildable/testable with no build-order
+// dependency on Cluster B, and so the fake actually satisfies the interface
+// coordinator.mjs calls.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  Coordinator,
+  WorkerNotFoundError,
+  DuplicateTaskIdError,
+  UnknownVendorError,
+} from '../src/coordinator.mjs';
+import { Log } from '../src/log.mjs';
+import { FenceTable } from '../src/fence.mjs';
+
+// ============================================================
+// Test fixtures — local fakes for Adapter / WorktreeManager / RefereeFn / RouteFn
+// ============================================================
+
+const dirs = [];
+function tmpDir() {
+  const d = mkdtempSync(join(tmpdir(), 'baton-coord-test-'));
+  dirs.push(d);
+  return d;
+}
+test.after(() => {
+  for (const d of dirs) rmSync(d, { recursive: true, force: true });
+});
+
+function makeBrief(overrides = {}) {
+  return {
+    goal: 'do the thing',
+    constraints: [],
+    pathScope: ['.'],
+    definitionOfDone: 'tests pass',
+    verification: { command: 'true', expectExit: 0 },
+    budget: { tokens: 100000, usd: 5, wallMin: 30 },
+    ...overrides,
+  };
+}
+
+function makeWorkerResult(overrides = {}) {
+  return {
+    status: 'completed',
+    summary: 'ok',
+    artifacts: { commits: ['sha1'], files: [] },
+    verification: { command: 'true', claimedExit: 0 },
+    openQuestions: [],
+    budgetUsed: { tokens: 1, usd: 0.01 },
+    ...overrides,
+  };
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+/**
+ * Scriptable fake conforming to coordinator.mjs's Adapter contract (spec §3.2).
+ * Every mediating method's Ack timing is independently controllable via `gates.<method>`
+ * (a Promise the call `await`s before resolving) so tests can construct exact,
+ * deterministic same-tick races without any real setTimeout/sleep. Worker-originated
+ * events are delivered synchronously to the registered onEvent callback via `emit()`.
+ */
+class ScriptableAdapter {
+  constructor({ harness = 'mock', version = '1.0.0', concurrencyCeiling = Infinity, maxContext = 100000, verbs = {} } = {}) {
+    this._card = {
+      harness,
+      version,
+      authPosture: 'api_key',
+      concurrencyCeiling,
+      maxContext,
+      verbs: { spawn: 'native', interrupt: 'native', ...verbs },
+    };
+    this.calls = { spawn: [], prompt: [], interrupt: [], approve: [], kill: [] };
+    this.gates = { spawn: null, prompt: null, interrupt: null, approve: null, kill: null };
+    this.acks = {
+      spawn: { ok: true },
+      prompt: { ok: true },
+      interrupt: { ok: true },
+      approve: { ok: true },
+      kill: { ok: true },
+    };
+    this._onEvent = null;
+  }
+  card() {
+    return this._card;
+  }
+  onEvent(cb) {
+    this._onEvent = cb;
+  }
+  /** Test-only: push a worker-originated event through the registered callback. */
+  emit(event) {
+    if (this._onEvent) this._onEvent(event);
+  }
+  async spawn(worker, brief) {
+    this.calls.spawn.push({ worker, brief });
+    if (this.gates.spawn) await this.gates.spawn;
+    return this.acks.spawn;
+  }
+  async prompt(worker, content, mode) {
+    this.calls.prompt.push({ worker, content, mode });
+    if (this.gates.prompt) await this.gates.prompt;
+    return this.acks.prompt;
+  }
+  async interrupt(worker, then) {
+    this.calls.interrupt.push({ worker, then });
+    if (this.gates.interrupt) await this.gates.interrupt;
+    return this.acks.interrupt;
+  }
+  async approve(worker, requestId, decision, payload) {
+    this.calls.approve.push({ worker, requestId, decision, payload });
+    if (this.gates.approve) await this.gates.approve;
+    return this.acks.approve;
+  }
+  async kill(worker) {
+    this.calls.kill.push({ worker });
+    if (this.gates.kill) await this.gates.kill;
+    return this.acks.kill;
+  }
+}
+
+/** Spy conforming to the WorktreeManager contract (spec §3.2). */
+class SpyWorktreeManager {
+  constructor() {
+    this.calls = {
+      create: [],
+      capture: [],
+      createVerifyWorktree: [],
+      removeVerifyWorktree: [],
+      remove: [],
+      reconcile: [],
+    };
+  }
+  async create(taskId, baseRef) {
+    this.calls.create.push({ taskId, baseRef });
+    return { path: `/tmp/wt/${taskId}`, branch: `baton/${taskId}`, baseSha: 'sha-base' };
+  }
+  async capture(worktreePath) {
+    this.calls.capture.push({ worktreePath });
+    return { sha: 'sha-result' };
+  }
+  async createVerifyWorktree(taskId, sha) {
+    this.calls.createVerifyWorktree.push({ taskId, sha });
+    return { path: `/tmp/verify/${taskId}-${sha}` };
+  }
+  async removeVerifyWorktree(verifyPath) {
+    this.calls.removeVerifyWorktree.push({ verifyPath });
+  }
+  async remove(taskId) {
+    this.calls.remove.push({ taskId });
+  }
+  async reconcile() {
+    this.calls.reconcile.push({});
+  }
+}
+
+function passingReferee() {
+  return async (task, result, opts) => ({
+    reverified: true,
+    observedExit: task.brief.verification.expectExit,
+    matchesClaim: true,
+    locus: 'fresh_sandbox',
+    note: 'ok',
+  });
+}
+
+function failingReferee(observedExit) {
+  return async (task, result, opts) => ({
+    reverified: true,
+    observedExit,
+    matchesClaim: observedExit === result.verification.claimedExit,
+    locus: 'fresh_sandbox',
+    note: 'observed exit did not match the worker\'s claim',
+  });
+}
+
+function fixedRoute(vendor) {
+  return () => vendor;
+}
+
+/** Wires up a Coordinator with sane defaults; every dependency is overridable. */
+function setup(overrides = {}) {
+  const dir = tmpDir();
+  const log = overrides.log ?? new Log(join(dir, 'log'));
+  const fences = overrides.fences ?? new FenceTable();
+  const adapters = overrides.adapters ?? { mock: new ScriptableAdapter() };
+  const worktrees = overrides.worktrees ?? new SpyWorktreeManager();
+  const referee = overrides.referee ?? passingReferee();
+  const route = overrides.route ?? fixedRoute(Object.keys(adapters)[0]);
+  let t = 0;
+  const now = overrides.now ?? (() => t);
+  const advance = (ms) => {
+    t += ms;
+  };
+  const coordinator = new Coordinator({
+    log,
+    fences,
+    adapters,
+    worktrees,
+    referee,
+    route,
+    now,
+    approvalTimeoutMs: overrides.approvalTimeoutMs ?? 60000,
+    stopDeadlineMs: overrides.stopDeadlineMs ?? 15000,
+  });
+  return { dir, log, fences, adapters, worktrees, referee, route, now, advance, coordinator };
+}
+
+// ============================================================
+// dispatch — behaviors 19-24
+// ============================================================
+
+test('spawn() under headroom creates the worktree, calls adapter.spawn, logs spawned then turn_started in order, returns a working handle', async () => {
+  const { coordinator, adapters, worktrees, log } = setup();
+  const handle = await coordinator.spawn('mock', makeBrief());
+  assert.equal(handle.status, 'working');
+  assert.equal(worktrees.calls.create.length, 1);
+  assert.equal(adapters.mock.calls.spawn.length, 1);
+
+  const kinds = log.read(handle.id).map((e) => e.kind);
+  const spawnedIdx = kinds.indexOf('lifecycle.spawned');
+  const startedIdx = kinds.indexOf('lifecycle.turn_started');
+  assert.ok(spawnedIdx !== -1 && startedIdx !== -1);
+  assert.ok(spawnedIdx < startedIdx, 'lifecycle.spawned must precede lifecycle.turn_started');
+});
+
+test('spawn() at the vendor concurrency ceiling queues as pending (GLM=1 case); promotes once a slot frees', async () => {
+  const adapter = new ScriptableAdapter({ harness: 'glm-via-claude', concurrencyCeiling: 1 });
+  const { coordinator, worktrees } = setup({ adapters: { glm: adapter }, route: fixedRoute('glm') });
+
+  const handleA = await coordinator.spawn('glm', makeBrief(), { taskId: 'a' });
+  assert.equal(handleA.status, 'working');
+
+  const handleB = await coordinator.spawn('glm', makeBrief(), { taskId: 'b' });
+  assert.equal(handleB.status, 'pending');
+  assert.equal(worktrees.calls.create.length, 1, 'no worktree for the queued task yet');
+  assert.equal(adapter.calls.spawn.length, 1, 'no adapter.spawn call for the queued task yet');
+
+  adapter.emit({
+    worker: handleA.id,
+    harness: 'glm-via-claude@1.0.0',
+    turnEpoch: 1,
+    kind: 'lifecycle.turn_completed',
+    actor: 'worker',
+    payload: makeWorkerResult(),
+  });
+  await coordinator.wait(50);
+  coordinator.tick();
+
+  const b = coordinator.list().find((w) => w.id === handleB.id);
+  assert.equal(b.status, 'working');
+  assert.equal(adapter.calls.spawn.length, 2);
+});
+
+test('a task with an unsatisfied dep stays pending even with free concurrency headroom', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapters: { mock: adapter } });
+
+  const dependent = await coordinator.spawn('mock', makeBrief(), { taskId: 't1', deps: ['t0'] });
+  assert.equal(dependent.status, 'pending');
+  assert.equal(adapter.calls.spawn.length, 0);
+
+  const base = await coordinator.spawn('mock', makeBrief(), { taskId: 't0' });
+  assert.equal(base.status, 'working');
+
+  adapter.emit({
+    worker: base.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'lifecycle.turn_completed',
+    actor: 'worker',
+    payload: makeWorkerResult(),
+  });
+  await coordinator.wait(50);
+  coordinator.tick();
+
+  const promoted = coordinator.list().find((w) => w.id === dependent.id);
+  assert.equal(promoted.status, 'working', 'dep satisfied -> task must now dispatch');
+});
+
+test('spawn(\'auto\', brief) resolves the vendor via the injected route() using live cards/inFlight', async () => {
+  const adapterA = new ScriptableAdapter({ harness: 'a' });
+  const adapterB = new ScriptableAdapter({ harness: 'b' });
+  let seenCards = null;
+  let seenInFlight = null;
+  const route = (task, cards, inFlight) => {
+    seenCards = cards;
+    seenInFlight = inFlight;
+    return 'b';
+  };
+  const { coordinator } = setup({ adapters: { a: adapterA, b: adapterB }, route });
+
+  const handle = await coordinator.spawn('auto', makeBrief());
+  assert.equal(handle.status, 'working');
+  assert.ok(seenCards && seenCards.a && seenCards.b, 'route() must see the live HarnessCard map');
+  assert.ok(seenInFlight, 'route() must see in-flight counts');
+  assert.equal(adapterB.calls.spawn.length, 1);
+  assert.equal(adapterA.calls.spawn.length, 0);
+});
+
+test('spawn() with a duplicate taskId throws DuplicateTaskIdError on the second call; the first task is untouched', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapters: { mock: adapter } });
+
+  const first = await coordinator.spawn('mock', makeBrief(), { taskId: 'dup' });
+  await assert.rejects(
+    () => coordinator.spawn('mock', makeBrief(), { taskId: 'dup' }),
+    DuplicateTaskIdError
+  );
+
+  const stillThere = coordinator.list().find((w) => w.id === first.id);
+  assert.equal(stillThere.status, 'working');
+  assert.equal(adapter.calls.spawn.length, 1, 'the failed duplicate must not have dispatched a second worker');
+});
+
+test('with one free slot and two simultaneously-ready tasks, exactly one dispatches per tick(), deterministically FIFO', async () => {
+  const adapter = new ScriptableAdapter({ concurrencyCeiling: 1 });
+  const { coordinator } = setup({ adapters: { mock: adapter }, route: fixedRoute('mock') });
+
+  const base = await coordinator.spawn('mock', makeBrief(), { taskId: 't0' });
+  assert.equal(base.status, 'working');
+  const first = await coordinator.spawn('mock', makeBrief(), { taskId: 't1', deps: ['t0'] });
+  const second = await coordinator.spawn('mock', makeBrief(), { taskId: 't2', deps: ['t0'] });
+  assert.equal(first.status, 'pending');
+  assert.equal(second.status, 'pending');
+
+  adapter.emit({
+    worker: base.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'lifecycle.turn_completed',
+    actor: 'worker',
+    payload: makeWorkerResult(),
+  });
+  await coordinator.wait(50);
+  coordinator.tick();
+
+  const table = coordinator.list();
+  const firstNow = table.find((w) => w.id === first.id);
+  const secondNow = table.find((w) => w.id === second.id);
+  assert.equal(firstNow.status, 'working', 't1 was created first (FIFO) and must dispatch');
+  assert.equal(secondNow.status, 'pending', 't2 must remain queued behind the ceiling');
+  assert.equal(adapter.calls.spawn.length, 2, 't0 + exactly one of {t1,t2}');
+});
+
+// ============================================================
+// send() / fencing races — behaviors 25-29
+// ============================================================
+
+test('send() a nudge to a healthy working worker succeeds and logs control.nudge', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator, log } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const result = await coordinator.send(handle.id, { text: 'keep going' }, 'nudge');
+  assert.equal(result.ok, true);
+  assert.equal(result.result, 'ok');
+  const kinds = log.read(handle.id).map((e) => e.kind);
+  assert.ok(kinds.includes('control.nudge'));
+});
+
+test('a same-tick interrupt racing an in-flight send() rejects the send as stale (no control.nudge logged)', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator, log } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const gate = deferred();
+  adapter.gates.prompt = gate.promise; // send()'s prompt() call will not resolve until we let it
+
+  const sendPromise = coordinator.send(handle.id, { text: 'nudge before interrupt' }, 'nudge');
+  // interrupt() bumps the fence synchronously (before awaiting anything) — this must land
+  // *after* send() already snapshotted its stamp but *before* send()'s post-await recheck.
+  const interruptPromise = coordinator.interrupt(handle.id);
+  assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'stopping');
+
+  gate.resolve({ ok: true });
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'control.interrupt_confirmed',
+    actor: 'worker',
+    payload: {},
+  });
+
+  const sendResult = await sendPromise;
+  await interruptPromise;
+
+  assert.equal(sendResult.ok, false);
+  assert.equal(sendResult.result, 'stale_fence');
+  const kinds = log.read(handle.id).map((e) => e.kind);
+  assert.ok(!kinds.includes('control.nudge'), 'a stale send must never be applied as a nudge');
+  assert.ok(kinds.includes('control.stale_rejected'));
+});
+
+test('send() to an unknown worker throws WorkerNotFoundError', async () => {
+  const { coordinator } = setup();
+  await assert.rejects(() => coordinator.send('no-such-worker', { text: 'hi' }, 'nudge'), WorkerNotFoundError);
+});
+
+test('send() propagates emulated:true from the adapter ack verbatim, into both the return value and the logged event', async () => {
+  const adapter = new ScriptableAdapter({ verbs: { steer: 'emulated' } });
+  adapter.acks.prompt = { ok: true, emulated: true };
+  const { coordinator, log } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const result = await coordinator.send(handle.id, { text: 'steer this way' }, 'steer');
+  assert.equal(result.emulated, true);
+  const steerEvent = log.read(handle.id).find((e) => e.kind === 'control.steer');
+  assert.ok(steerEvent);
+  assert.equal(steerEvent.emulated, true);
+});
+
+test('send() on a worker currently stopping is refused immediately, without calling the adapter', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  adapter.gates.interrupt = new Promise(() => {}); // wedge, so we can inspect mid-stop
+  coordinator.interrupt(handle.id); // fire-and-forget; status flips synchronously
+  assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'stopping');
+
+  const before = adapter.calls.prompt.length;
+  const result = await coordinator.send(handle.id, { text: 'nudge' }, 'nudge');
+  assert.equal(result.ok, false);
+  assert.equal(result.result, 'worker_stopping');
+  assert.equal(adapter.calls.prompt.length, before, 'no adapter call for a nudge queued mid-stop');
+});
+
+// ============================================================
+// interrupt() / two-phase stop — behaviors 30-35
+// ============================================================
+
+test('interrupt() sets status to stopping synchronously, before the confirmed-stop event arrives', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const gate = deferred();
+  adapter.gates.interrupt = gate.promise;
+  const p = coordinator.interrupt(handle.id);
+
+  assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'stopping');
+
+  gate.resolve({ ok: true });
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'control.interrupt_confirmed',
+    actor: 'worker',
+    payload: {},
+  });
+  const result = await p;
+  assert.equal(result.result, 'confirmed');
+});
+
+test('interrupt()\'s promise does not resolve until the adapter emits its confirmed-stop event', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const p = coordinator.interrupt(handle.id);
+  let settled = false;
+  p.then(() => {
+    settled = true;
+  });
+
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(settled, false, 'interrupt() must stay pending until the adapter confirms the stop');
+
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'control.interrupt_confirmed',
+    actor: 'worker',
+    payload: {},
+  });
+  const result = await p;
+  assert.equal(settled, true);
+  assert.equal(result.result, 'confirmed');
+});
+
+test('while a worker is stopping, its worktree lease is not touched by verify/remove operations', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator, worktrees } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const gate = deferred();
+  adapter.gates.interrupt = gate.promise;
+  const interruptPromise = coordinator.interrupt(handle.id);
+  assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'stopping');
+
+  // A completion claim arriving mid-stop must not trigger the trust gate's verify-worktree
+  // machinery against this task while the stop is still unresolved (Invariant C5).
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'lifecycle.turn_completed',
+    actor: 'worker',
+    payload: makeWorkerResult(),
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(worktrees.calls.createVerifyWorktree.length, 0);
+  assert.equal(worktrees.calls.remove.length, 0);
+
+  gate.resolve({ ok: true });
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'control.interrupt_confirmed',
+    actor: 'worker',
+    payload: {},
+  });
+  await interruptPromise;
+});
+
+test('interrupt() on a blocked worker auto-resolves its pending approval with a cancel decision', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const requestId = 'appr-1';
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'approval.requested',
+    actor: 'worker',
+    payload: { requestId, question: 'ok to proceed?', blocking: true },
+  });
+  await Promise.resolve();
+  assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'blocked');
+
+  const interruptPromise = coordinator.interrupt(handle.id);
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'control.interrupt_confirmed',
+    actor: 'worker',
+    payload: {},
+  });
+  const result = await interruptPromise;
+  assert.equal(result.result, 'confirmed');
+
+  const approveCall = adapter.calls.approve.find((c) => c.requestId === requestId);
+  assert.ok(approveCall, 'interrupt() must auto-resolve the outstanding approval');
+  assert.equal(approveCall.decision, 'cancel');
+
+  const followUp = await coordinator.respond(requestId, { decision: 'allow' });
+  assert.equal(followUp.result, 'already_resolved', 'the approval was already consumed by interrupt()');
+});
+
+test('if the adapter never emits a confirmed-stop event, interrupt() resolves forced once stopDeadlineMs elapses', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator, advance, log } = setup({ adapters: { mock: adapter }, stopDeadlineMs: 1000 });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const p = coordinator.interrupt(handle.id); // adapter.interrupt() acks immediately, but no confirmed-stop ever arrives
+  advance(1001);
+  coordinator.tick();
+
+  const result = await p;
+  assert.equal(result.result, 'forced');
+  assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'dead');
+  assert.equal(adapter.calls.kill.length, 1, 'a forced stop must escalate to adapter.kill()');
+  const kinds = log.read(handle.id).map((e) => e.kind);
+  assert.ok(kinds.includes('control.forced_stop'));
+});
+
+test('kill() on an already-dead worker is idempotent (already_dead, no duplicate kill.confirmed)', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator, log } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const firstKill = coordinator.kill(handle.id);
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'kill.confirmed',
+    actor: 'worker',
+    payload: {},
+  });
+  const first = await firstKill;
+  assert.equal(first.result, 'confirmed');
+  assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'dead');
+
+  const second = await coordinator.kill(handle.id);
+  assert.equal(second.result, 'already_dead');
+
+  const killConfirmedCount = log.read(handle.id).filter((e) => e.kind === 'kill.confirmed').length;
+  assert.equal(killConfirmedCount, 1, 'a second kill() on a dead worker must not log a duplicate confirmation');
+});
+
+// ============================================================
+// respond() / single-consumer approvals & questions — behaviors 36-41
+// ============================================================
+
+test('a blocking question surfaces the worker as blocked and appears as a question attention item', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const requestId = 'q-1';
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'question.asked',
+    actor: 'worker',
+    payload: { requestId, question: 'which approach?', blocking: true },
+  });
+  await Promise.resolve();
+  assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'blocked');
+
+  const digest = await coordinator.wait(50);
+  const item = digest.attention.find((a) => a.requestId === requestId);
+  assert.ok(item, 'the blocking question must surface as an attention item');
+  assert.equal(item.type, 'question');
+});
+
+test('respond() answers a pending question: applied, question.resolved logged, worker returns to working', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator, log } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const requestId = 'q-2';
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'question.asked',
+    actor: 'worker',
+    payload: { requestId, question: 'pick one', blocking: true },
+  });
+  await Promise.resolve();
+
+  const result = await coordinator.respond(requestId, { text: 'option A' });
+  assert.equal(result.ok, true);
+  assert.equal(result.result, 'applied');
+  assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'working');
+
+  const kinds = log.read(handle.id).map((e) => e.kind);
+  assert.ok(kinds.includes('question.resolved'));
+});
+
+test('single-consumer: two respond() calls issued back-to-back for the same requestId resolve exactly once', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const requestId = 'q-3';
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'question.asked',
+    actor: 'worker',
+    payload: { requestId, question: 'pick one', blocking: true },
+  });
+  await Promise.resolve();
+
+  // Both calls start synchronously, before either has a chance to await internally —
+  // this is what makes the CAS race meaningful rather than accidentally serialized.
+  const p1 = coordinator.respond(requestId, { text: 'A' });
+  const p2 = coordinator.respond(requestId, { text: 'B' });
+  const [r1, r2] = await Promise.all([p1, p2]);
+
+  const results = [r1.result, r2.result].sort();
+  assert.deepEqual(results, ['already_resolved', 'applied']);
+
+  const loser = r1.result === 'already_resolved' ? r1 : r2;
+  const candidateAnswers = [JSON.stringify({ text: 'A' }), JSON.stringify({ text: 'B' })];
+  assert.ok(
+    candidateAnswers.includes(JSON.stringify(loser.resolution)),
+    'the loser must echo whichever answer actually won'
+  );
+  assert.equal(adapter.calls.approve.length + 0, adapter.calls.approve.length); // sanity: no throw above
+  // The question is answered via the adapter's approve()/answer-delivery path exactly once.
+  const deliveryCount = adapter.calls.approve.filter((c) => c.requestId === requestId).length;
+  assert.equal(deliveryCount, 1, 'exactly one delivery to the adapter, never two');
+});
+
+test('respond() on an unknown requestId returns not_found without throwing', async () => {
+  const { coordinator } = setup();
+  const result = await coordinator.respond('does-not-exist', { text: 'x' });
+  assert.equal(result.ok, false);
+  assert.equal(result.result, 'not_found');
+});
+
+test('an unanswered approval auto-resolves to the documented default after approvalTimeoutMs; a late respond() is already_resolved', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator, advance } = setup({ adapters: { mock: adapter }, approvalTimeoutMs: 1000 });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const requestId = 'appr-2';
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'approval.requested',
+    actor: 'worker',
+    payload: { requestId, question: 'proceed?', blocking: true },
+  });
+  await Promise.resolve();
+
+  advance(1001);
+  coordinator.tick();
+
+  const approveCall = adapter.calls.approve.find((c) => c.requestId === requestId);
+  assert.ok(approveCall, 'tick() must sweep the expired approval and deliver the default decision');
+  assert.ok(['deny', 'cancel'].includes(approveCall.decision));
+
+  const late = await coordinator.respond(requestId, { decision: 'allow' });
+  assert.equal(late.result, 'already_resolved');
+});
+
+test('an answer arriving after the asking turn has ended is consumed (single-consumer holds) but not delivered to the adapter', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator, log, fences } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const requestId = 'q-4';
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'question.asked',
+    actor: 'worker',
+    payload: { requestId, question: 'pick one', blocking: true },
+  });
+  await Promise.resolve();
+
+  // A new turn starts for this worker before the question is ever answered.
+  fences.bumpTurn(handle.id);
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: fences.current(handle.id).turnEpoch,
+    kind: 'lifecycle.turn_started',
+    actor: 'orchestrator',
+    payload: {},
+  });
+  await Promise.resolve();
+
+  const approveCallsBefore = adapter.calls.approve.length;
+  const result = await coordinator.respond(requestId, { text: 'too late' });
+  assert.equal(result.ok, true, 'single-consumer still resolves the request exactly once');
+  assert.equal(result.result, 'applied');
+  assert.equal(adapter.calls.approve.length, approveCallsBefore, 'a stale-turn answer must never reach the adapter');
+
+  const kinds = log.read(handle.id).map((e) => e.kind);
+  assert.ok(kinds.includes('control.stale_rejected'));
+
+  const second = await coordinator.respond(requestId, { text: 'again' });
+  assert.equal(second.result, 'already_resolved', 'the request is already consumed, even though undelivered');
+});
+
+// ============================================================
+// trust gate — behaviors 42-46
+// ============================================================
+
+test('the trust gate runs the referee in a fresh verify sandbox, never the worker\'s own worktree', async () => {
+  const adapter = new ScriptableAdapter();
+  let capturedSandbox = null;
+  const referee = async (task, result, opts) => {
+    capturedSandbox = opts.sandbox;
+    return { reverified: true, observedExit: 0, matchesClaim: true, locus: 'fresh_sandbox', note: 'ok' };
+  };
+  const { coordinator, worktrees } = setup({ adapters: { mock: adapter }, referee });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'lifecycle.turn_completed',
+    actor: 'worker',
+    payload: makeWorkerResult(),
+  });
+  await coordinator.wait(50);
+
+  assert.equal(worktrees.calls.createVerifyWorktree.length, 1);
+  const ownWorktree = coordinator.list().find((w) => w.id === handle.id).worktree;
+  assert.ok(capturedSandbox, 'referee must have been called with a sandbox path');
+  assert.notEqual(capturedSandbox, ownWorktree, 'the referee sandbox must never be the worker\'s own worktree');
+});
+
+test('forged done: worker claims completed/exit-0 but the referee observes a mismatched exit -> task ends failed', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapters: { mock: adapter }, referee: failingReferee(1) });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'lifecycle.turn_completed',
+    actor: 'worker',
+    payload: makeWorkerResult({ status: 'completed', verification: { command: 'true', claimedExit: 0 } }),
+  });
+  await coordinator.wait(50);
+
+  const outcome = await coordinator.result(handle.id);
+  assert.equal(outcome.ready, true);
+  assert.equal(outcome.status, 'failed', 'a forged/incorrect completion claim must never produce completed');
+  assert.equal(outcome.verdict.matchesClaim, false);
+});
+
+test('result() reports not-ready while verifying/working, then the final verdict once the trust gate resolves', async () => {
+  const adapter = new ScriptableAdapter();
+  const gate = deferred();
+  const referee = async () => {
+    await gate.promise;
+    return { reverified: true, observedExit: 0, matchesClaim: true, locus: 'fresh_sandbox', note: 'ok' };
+  };
+  const { coordinator } = setup({ adapters: { mock: adapter }, referee });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'lifecycle.turn_completed',
+    actor: 'worker',
+    payload: makeWorkerResult(),
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  const mid = await coordinator.result(handle.id);
+  assert.equal(mid.ready, false);
+  assert.ok(['verifying', 'working'].includes(mid.status));
+
+  gate.resolve();
+  await coordinator.wait(50);
+
+  const final = await coordinator.result(handle.id);
+  assert.equal(final.ready, true);
+  assert.equal(final.status, 'completed');
+});
+
+test('removeVerifyWorktree is called exactly once whether the referee resolves or throws', async () => {
+  for (const shouldThrow of [false, true]) {
+    const adapter = new ScriptableAdapter();
+    const referee = shouldThrow
+      ? async () => {
+          throw new Error('referee blew up');
+        }
+      : passingReferee();
+    const { coordinator, worktrees } = setup({ adapters: { mock: adapter }, referee });
+    const handle = await coordinator.spawn('mock', makeBrief());
+
+    adapter.emit({
+      worker: handle.id,
+      harness: 'mock@1.0.0',
+      turnEpoch: 1,
+      kind: 'lifecycle.turn_completed',
+      actor: 'worker',
+      payload: makeWorkerResult(),
+    });
+    await coordinator.wait(50);
+
+    assert.equal(worktrees.calls.removeVerifyWorktree.length, 1, `shouldThrow=${shouldThrow}`);
+  }
+});
+
+test('a throwing referee ends the task at failed (never stuck verifying, never completed) and logs an error event', async () => {
+  const adapter = new ScriptableAdapter();
+  const referee = async () => {
+    throw new Error('referee blew up');
+  };
+  const { coordinator, log } = setup({ adapters: { mock: adapter }, referee });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'lifecycle.turn_completed',
+    actor: 'worker',
+    payload: makeWorkerResult(),
+  });
+  await coordinator.wait(50);
+
+  const outcome = await coordinator.result(handle.id);
+  assert.equal(outcome.status, 'failed');
+  assert.equal(outcome.verdict, null);
+
+  const kinds = log.read(handle.id).map((e) => e.kind);
+  assert.ok(kinds.includes('error'));
+});
+
+// ============================================================
+// crash / restart / log-is-truth — behaviors 47-48
+// ============================================================
+
+test('replaying a hand-constructed event sequence reconstructs the same terminal task status', async () => {
+  const dir = tmpDir();
+  const log = new Log(join(dir, 'log'));
+  const workerId = 'w-replay';
+  const taskId = 'task-replay';
+  const common = { worker: workerId, harness: 'mock@1.0.0', turnEpoch: 1 };
+
+  // NOTE: a live run's lifecycle.spawned payload must carry enough to reconstruct
+  // DriverTask (including taskId); that shape is not pinned to a literal schema
+  // elsewhere in the spec, so this is the test's own reasonable assumption.
+  log.append({ ...common, actor: 'orchestrator', kind: 'lifecycle.spawned', payload: { taskId, brief: makeBrief() } });
+  log.append({ ...common, actor: 'orchestrator', kind: 'lifecycle.turn_started', payload: {} });
+  log.append({
+    ...common,
+    actor: 'policy',
+    kind: 'verify.reverified',
+    payload: {
+      verdict: { reverified: true, observedExit: 0, matchesClaim: true, locus: 'fresh_sandbox', note: 'ok' },
+    },
+  });
+  log.append({ ...common, actor: 'policy', kind: 'lifecycle.turn_completed', payload: { status: 'completed' } });
+
+  const fences = new FenceTable();
+  fences.register(workerId);
+  const adapters = { mock: new ScriptableAdapter() };
+  const worktrees = new SpyWorktreeManager();
+  const coordinator = new Coordinator({
+    log,
+    fences,
+    adapters,
+    worktrees,
+    referee: passingReferee(),
+    route: fixedRoute('mock'),
+    now: () => 0,
+  });
+
+  const outcome = await coordinator.result(workerId);
+  assert.equal(outcome.ready, true, 'a rebuilt coordinator must reconstruct terminal status from the log alone');
+  assert.equal(outcome.status, 'completed');
+});
+
+test('Coordinator construction invokes worktrees.reconcile() exactly once', () => {
+  const { worktrees } = setup();
+  assert.equal(worktrees.calls.reconcile.length, 1);
+});
+
+// ============================================================
+// list() / wait() — behaviors 49-53
+// ============================================================
+
+test('list() reports pending and working workers with correct status/budgetUsed/pendingApprovalId fields', async () => {
+  const adapter = new ScriptableAdapter({ concurrencyCeiling: 1 });
+  const { coordinator } = setup({ adapters: { mock: adapter }, route: fixedRoute('mock') });
+
+  const working = await coordinator.spawn('mock', makeBrief(), { taskId: 't-working' });
+  const pendingHandle = await coordinator.spawn('mock', makeBrief(), { taskId: 't-pending' });
+  assert.equal(pendingHandle.status, 'pending');
+
+  const table = coordinator.list();
+  const w = table.find((x) => x.id === working.id);
+  assert.equal(w.status, 'working');
+  assert.ok('budgetUsed' in w);
+  assert.ok('pendingApprovalId' in w);
+
+  const p = table.find((x) => x.id === pendingHandle.id);
+  assert.equal(p.status, 'pending');
+});
+
+test('list() reflects a worker transitioning stopping -> dead', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  const gate = deferred();
+  adapter.gates.interrupt = gate.promise;
+  const interruptPromise = coordinator.interrupt(handle.id);
+  assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'stopping');
+
+  gate.resolve({ ok: true });
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'control.interrupt_confirmed',
+    actor: 'worker',
+    payload: {},
+  });
+  await interruptPromise;
+
+  const killPromise = coordinator.kill(handle.id);
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 2,
+    kind: 'kill.confirmed',
+    actor: 'worker',
+    payload: {},
+  });
+  await killPromise;
+
+  assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'dead');
+});
+
+test('wait(timeoutMs) with nothing pending returns a bounded, empty digest without hanging', async () => {
+  const { coordinator } = setup();
+  const start = Date.now();
+  const digest = await coordinator.wait(20);
+  const elapsed = Date.now() - start;
+
+  assert.deepEqual(digest.attention, []);
+  assert.deepEqual(digest.facts, []);
+  assert.equal(digest.more, false);
+  assert.ok(elapsed < 5000, 'wait() must not hang well past its bound');
+});
+
+test('attention items (question/approval/alarm) are populated ahead of ordinary facts in the same digest', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'question.asked',
+    actor: 'worker',
+    payload: { requestId: 'q-5', question: 'pick one', blocking: true },
+  });
+  adapter.emit({
+    worker: handle.id,
+    harness: 'mock@1.0.0',
+    turnEpoch: 1,
+    kind: 'resource.tokens',
+    actor: 'worker',
+    payload: { tokens: 500 },
+  });
+
+  const digest = await coordinator.wait(50);
+  assert.ok(digest.attention.length >= 1, 'a consumer reading only attention must never miss a blocked worker');
+  assert.equal(digest.attention[0].type, 'question');
+  assert.ok(digest.facts.length >= 1);
+});
+
+test('a second wait() with nothing new in between does not repeat facts/attention already returned', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapters: { mock: adapter } });
+  await coordinator.spawn('mock', makeBrief());
+
+  const first = await coordinator.wait(50);
+  assert.ok(first.facts.length > 0 || first.attention.length > 0);
+
+  const second = await coordinator.wait(20);
+  assert.deepEqual(second.facts, []);
+  assert.deepEqual(second.attention, []);
+});
+
+test('at-least-once wait(): a digest not yet followed by a subsequent wait() is re-served after a simulated restart', async () => {
+  const dir = tmpDir();
+  const logDir = join(dir, 'log');
+  const log1 = new Log(logDir);
+  const fences1 = new FenceTable();
+  const adapter1 = new ScriptableAdapter();
+  const worktrees1 = new SpyWorktreeManager();
+  const coordinator1 = new Coordinator({
+    log: log1,
+    fences: fences1,
+    adapters: { mock: adapter1 },
+    worktrees: worktrees1,
+    referee: passingReferee(),
+    route: fixedRoute('mock'),
+    now: () => 0,
+  });
+  const handle = await coordinator1.spawn('mock', makeBrief());
+  const first = await coordinator1.wait(50);
+  assert.ok(first.facts.length > 0 || first.attention.length > 0);
+
+  // Simulate a crash: a brand-new Coordinator/Log/Cursor stack pointed at the same on-disk
+  // log directory, with NO further wait() ever having been called to ack the digest above.
+  const log2 = new Log(logDir);
+  const fences2 = new FenceTable();
+  fences2.register(handle.id);
+  const worktrees2 = new SpyWorktreeManager();
+  const coordinator2 = new Coordinator({
+    log: log2,
+    fences: fences2,
+    adapters: { mock: new ScriptableAdapter() },
+    worktrees: worktrees2,
+    referee: passingReferee(),
+    route: fixedRoute('mock'),
+    now: () => 0,
+  });
+
+  const replayed = await coordinator2.wait(50);
+  assert.deepEqual(
+    replayed.facts.map((f) => f.seq),
+    first.facts.map((f) => f.seq),
+    'an un-acked digest must be re-served after a simulated restart'
+  );
+});
+
+// ============================================================
+// error taxonomy (§3.4) — extra coverage beyond the numbered list
+// ============================================================
+
+test('spawn() with an explicit unknown vendor name throws UnknownVendorError', async () => {
+  const { coordinator } = setup();
+  await assert.rejects(() => coordinator.spawn('does-not-exist', makeBrief()), UnknownVendorError);
+});
