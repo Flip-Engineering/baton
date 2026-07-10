@@ -6,7 +6,7 @@
 // START of each read and only advance on the NEXT read's arrival, so a reader
 // that dies mid-page can re-see it rather than silently dropping an event.
 
-import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { BatonEvent, WorkerId } from "./types.js";
 
@@ -25,9 +25,10 @@ export class Ledger {
   append(e: Omit<BatonEvent, "seq" | "ts">): BatonEvent {
     const seq = (this.seqByWorker.get(e.worker) ?? 0) + 1;
     this.seqByWorker.set(e.worker, seq);
-    // Note: a real hub injects a monotonic clock here; the prototype stamps at read time
-    // in the harness. We keep ts as a caller-provided ISO string to stay Date-free in tests.
-    const full: BatonEvent = { ...e, seq, ts: (e as any).ts ?? "" } as BatonEvent;
+    // F4 fix: product code stamps a real hub-authoritative timestamp (the Date-ban is a
+    // WORKFLOW-SCRIPT constraint, not a product one). Time-based signals (stall/loop/latency)
+    // depend on this being real.
+    const full: BatonEvent = { ...e, seq, ts: new Date().toISOString() };
     const p = this.path(e.worker);
     mkdirSync(dirname(p), { recursive: true });
     appendFileSync(p, JSON.stringify(full) + "\n", "utf8");
@@ -46,17 +47,30 @@ export class Ledger {
   }
 }
 
-/** Durable, at-least-once cursor. Advances only when the caller acks the prior page. */
+/**
+ * At-least-once cursor. Advances the durable position only after the caller ACKs the prior
+ * page — so a consumer that died mid-page re-sees it rather than dropping events (spec I3).
+ *
+ * F5 fix: the acked position is PERSISTED to disk. The earlier in-memory version asserted
+ * durability but died with the process it was meant to survive — the exact bug the design
+ * warns about. `acked` now round-trips through a file so a restarted hub resumes correctly.
+ */
 export class Cursor {
-  private acked = 0; // last seq the caller confirmed received
-  private served = 0; // last seq we handed out (not yet acked)
+  private acked: number;
+  constructor(private stateFile: string) {
+    this.acked = existsSync(stateFile) ? Number(readFileSync(stateFile, "utf8")) || 0 : 0;
+  }
 
+  /** Serve everything after the persisted ack. The caller MUST call `ack()` once it has durably consumed the page. */
   next(ledger: Ledger, worker: WorkerId): BatonEvent[] {
-    // Advancing the durable position only now (on the NEXT call) is the at-least-once
-    // guarantee: if the previous page's consumer died, we re-serve from `acked`, not `served`.
-    this.acked = this.served;
-    const page = ledger.read(worker, this.acked + 1);
-    if (page.length) this.served = page[page.length - 1].seq;
-    return page;
+    return ledger.read(worker, this.acked + 1);
+  }
+
+  /** Persist the new floor. Idempotent; safe to replay. */
+  ack(uptoSeq: number) {
+    if (uptoSeq <= this.acked) return;
+    this.acked = uptoSeq;
+    mkdirSync(dirname(this.stateFile), { recursive: true });
+    writeFileSync(this.stateFile, String(uptoSeq), "utf8");
   }
 }

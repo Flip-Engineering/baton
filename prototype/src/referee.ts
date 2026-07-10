@@ -7,36 +7,45 @@
 // (exit codes, diffs), so it's ToS-clean; and it IS the "verify" half that
 // compounds as models improve (doc 12 §4).
 
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import type { Task, Verdict, WorkerResult } from "./types.js";
 
 export interface RefereeOpts {
   /** The spec/grader command is PINNED by the human/orchestrator, never worker-supplied (doc 13 T5). */
   pinnedVerification: { command: string; expectExit: number };
-  /** Fresh throwaway sandbox path; verification runs HERE, never on the hub (doc 09 C2). */
+  /**
+   * A FRESH sandbox the orchestrator built from the worker's COMMITTED artifacts (F2 fix) —
+   * NOT the worker's live worktree. Verification runs here, never on the hub (doc 09 C2), so a
+   * worker can't leave a poisoned conftest/test-binary in its worktree to fool the re-check.
+   */
   sandbox: string;
   live: boolean;
+}
+
+function run(cmd: string, args: string[], cwd: string): Promise<number> {
+  return new Promise((resolve) => {
+    const c = spawn(cmd, args, { cwd });
+    const t = setTimeout(() => c.kill("SIGKILL"), 120_000);
+    c.on("close", (code) => { clearTimeout(t); resolve(code ?? 1); });
+    c.on("error", () => { clearTimeout(t); resolve(127); });
+  });
 }
 
 /**
  * Re-derive the truth of a worker's result. The worker's own `verification.claimedExit`
  * is IGNORED except to detect divergence — a worker that forges a green check gains nothing,
- * because we re-run the pinned command ourselves.
+ * because we re-run the pinned command ourselves in a sandbox it didn't control.
  */
-export function referee(task: Task, result: WorkerResult, o: RefereeOpts): Verdict {
+export async function referee(task: Task, result: WorkerResult, o: RefereeOpts): Promise<Verdict> {
   if (!o.live) {
     return {
-      reverified: false, observedExit: null, matchesClaim: false,
-      locus: "fresh_sandbox",
-      note: "[dry-run] would re-run pinned verification in a fresh sandbox and compare to the worker's claim",
+      reverified: false, observedExit: null, matchesClaim: false, locus: "fresh_sandbox",
+      note: "[dry-run] would re-run the PINNED verification in a fresh sandbox (built from committed artifacts) and compare to the worker's claim",
     };
   }
-  // Re-run the PINNED verification (not the worker-reported one — a worker can weaken
-  // its own spec until it passes, doc 13 T1). We use the human/orchestrator-pinned command.
-  const r = spawnSync("bash", ["-lc", o.pinnedVerification.command], {
-    cwd: o.sandbox, encoding: "utf8", timeout: 120_000,
-  });
-  const observedExit = r.status ?? 1;
+  // Re-run the PINNED verification (not the worker-reported one — a worker can weaken its
+  // own spec until it passes, doc 13 T1), in the fresh sandbox.
+  const observedExit = await run("bash", ["-lc", o.pinnedVerification.command], o.sandbox);
   const matchesClaim = observedExit === result.verification.claimedExit;
   const passed = observedExit === o.pinnedVerification.expectExit;
   return {
@@ -55,3 +64,7 @@ export function referee(task: Task, result: WorkerResult, o: RefereeOpts): Verdi
 export function accept(verdict: Verdict, expectExit: number): boolean {
   return verdict.reverified && verdict.observedExit === expectExit;
 }
+
+// A real orchestrator builds the fresh sandbox by checking out the worker's committed
+// artifacts (e.g. `git worktree add <sandbox> <worker-commit>`), NEVER by pointing at the
+// worker's live worktree. The eval provides freshSandboxFor to do exactly that.

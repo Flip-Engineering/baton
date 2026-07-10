@@ -32,9 +32,9 @@ export interface EvalTask { task: Task; pinnedCheck: { command: string; expectEx
  *  - fleet: model-diverse workers, every result Referee-verified; cross-review optional.
  * Returns the pre-registered comparison. `live=false` structurally validates without quota.
  */
-export function runEval(corpus: EvalTask[], live: boolean, dir: string): { solo: ArmResult; fleet: ArmResult; verdict: string } {
-  const solo = arm("solo", corpus, live, dir, ["codex"]); // one strong agent
-  const fleet = arm("fleet", corpus, live, dir, ["codex", "claude", "glm"]); // model-diverse
+export async function runEval(corpus: EvalTask[], live: boolean, dir: string): Promise<{ solo: ArmResult; fleet: ArmResult; verdict: string }> {
+  const solo = await arm("solo", corpus, live, dir, ["codex"]); // one strong agent
+  const fleet = await arm("fleet", corpus, live, dir, ["codex", "claude", "glm"]); // model-diverse
   // The honest comparison on the pre-registered metric.
   const soloRate = solo.verified / Math.max(1, solo.total);
   const fleetRate = fleet.verified / Math.max(1, fleet.total);
@@ -47,23 +47,34 @@ export function runEval(corpus: EvalTask[], live: boolean, dir: string): { solo:
   };
 }
 
-function arm(name: string, corpus: EvalTask[], live: boolean, dir: string, harnesses: string[]): ArmResult {
+async function arm(name: string, corpus: EvalTask[], live: boolean, dir: string, harnesses: string[]): Promise<ArmResult> {
   const adapters: any = {};
   if (harnesses.includes("codex")) adapters.codex = new CodexAdapter();
   if (harnesses.includes("claude")) adapters.claude = new ClaudeAdapter();
   if (harnesses.includes("glm")) adapters.glm = new GlmAdapter();
+  const names = Object.keys(adapters);
 
   const ledger = new Ledger(`${dir}/${name}`);
   const orch = new Orchestrator({
     adapters, ledger, live,
-    // Trivial router for the prototype; the real one is Cairn's RouteStat (doc 11 mod 7).
-    route: (_t, _cards) => (name === "solo" ? "codex" : harnesses[0]),
-    sandboxFor: (t) => t.worktree,
+    // F3 fix: the fleet arm is ACTUALLY model-diverse. A review task must run on a DIFFERENT
+    // family than the impl it reviews (decorrelation is the whole point). The real router is
+    // Cairn's RouteStat (doc 11 mod 7); this is a deterministic diverse placeholder.
+    route: (t, _cards) => {
+      if (name === "solo") return "codex"; // strong single baseline
+      if (/review/.test(t.id)) return names.find((n) => n !== "codex") ?? names[0]; // different family reviews
+      return names[Math.abs(hash(t.id)) % names.length]; // spread impl work across vendors
+    },
+    // F2 fix: a FRESH sandbox from the worker's committed artifacts, never its live worktree.
+    // A real hub does `git worktree add <fresh> <worker-commit>`; the dry prototype returns a path.
+    freshSandboxFor: async (t, _r) => `${t.worktree}.verify`,
   });
   for (const { task } of corpus) orch.submit(task);
-  const verdicts = orch.runToCompletion();
+  const verdicts = await orch.runToCompletion();
   let verified = 0;
   for (const [, v] of verdicts as Map<string, Verdict>) if (v.reverified && v.observedExit === 0) verified++;
-  // Cost/wall are stubbed in the structural prototype; a live run parses --json usage + times each arm.
+  // Cost/wall stubbed structurally; a live run parses --json usage + times each arm (doc 14 #19).
   return { arm: name, verified, total: corpus.length, usd: 0, wallMs: 0 };
 }
+
+function hash(s: string): number { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0; return h; }
