@@ -1,9 +1,9 @@
 # baton prototype — the honest MVP
 
-This is the ~few-hundred-line thing the whole corpus (docs 00–16) keeps concluding should be built *first*: a **deterministic orchestrator + Referee + eval**, reflecting doc 16's two frame-corrections —
+This is the skeleton of the **fleet driver's reliable coordination layer** (the "small program underneath" from [doc 19](../docs/19-north-star-corrected.md)) — a few hundred lines that dispatch workers, run them concurrently under per-vendor limits, and re-check their results. Two ideas it demonstrates:
 
-1. **The orchestrator is a program, not an LLM** (doc 16 Pivot 1). The conductor is `orchestrator.ts` — deterministic dispatch, fencing, DAG ready-work pull, per-harness concurrency ceilings. LLMs live *only* inside adapters (the workers). This deletes the event-loop problem, orchestrator context-poisoning, orchestrator-death recovery, and the nested-approval loop — none of which exist for a program.
-2. **The durable value is the Referee** (doc 13 T5, doc 16 §2). `referee.ts` re-runs a worker's *pinned* verification in a fresh sandbox and trusts only what the hub itself observes. Worker prose is non-authoritative (I7). This is the un-vendorable, ToS-clean, bitter-lesson-proof core.
+1. **The coordination layer is plain code, not an AI.** `orchestrator.ts` does dispatch, version-stamped commands (so stale ones are rejected), ready-work ordering, and per-vendor concurrency limits. The AI lives *only* inside the workers. (Your CLI agent still drives on top — this is the plumbing that makes its commands land reliably; doc 19's reconciliation.) Being plain code is why there's no event-loop problem and no "the coordinator forgot/got confused" failure.
+2. **Trust by re-running.** `referee.ts` re-runs a worker's verification in a *fresh* sandbox and believes only what it observes — never the worker's self-report. This is the driver's **trust feature** (it's how "done" becomes trustworthy), not a separate product. In the fleet driver, this is what lets the driver safely move on, merge, or reroute.
 
 ## Run it
 

@@ -1,5 +1,7 @@
 # 13 — Revision Log (review round 2: red/blue/explore)
 
+> **⚠️ SUPERSEDED ON FRAMING by [doc 19](19-north-star-corrected.md).** This doc introduced the "Referee, not Conductor" reframe — treating independent verification as the product and the fleet driver as an optional branch. **That inversion is retired.** The fleet driver is the product; verification is its trust feature. The individual *fixes* logged here (the corrected control-plane liveness, the concurrency model, the security corrections) are sound and stand — only the "Referee is the identity" framing is wrong.
+
 *The red-team/blue-team/open-minded-critical pass (6 targets × attack→defend→explore-replacements, 18 agents) over the expanded design (docs 10–12, the capability modules, the specs). Every target returned **REVISE** — none KEEP-as-is, none REPLACE-wholesale, none CUT-entirely. That unanimity is itself the finding: the **mechanisms are largely sound, but the framing and the center of gravity are wrong.** This log records the verdicts and the changes they force, and it names the one reframe they converge on.*
 
 ## The convergent meta-finding: Referee, not Conductor

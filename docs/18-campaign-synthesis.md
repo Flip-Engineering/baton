@@ -1,5 +1,7 @@
 # 18 — Max-Campaign Synthesis
 
+> **⚠️ SUPERSEDED ON FRAMING by [doc 19](19-north-star-corrected.md).** This doc concludes "don't build the fleet driver, build a verification eval instead, and treat baton as a neutral trust institution." **That conclusion is retired** — it inverted the goal. The **fleet driver is the product**; verification, the run history, and routing are its supporting features. Read this doc's *mechanisms* (the sealed grader, the honest crash-recovery limits, the per-stream fixes — they're sound), but **ignore its build-order and its "don't build the driver" bottom line.** The eval (E2) is optional de-risking of *one* supporting feature, not a go/no-go on the product.
+
 *Synthesis of the exhaustive red/blue/ideate campaign (7 gap-streams × design→red→blue = 21 agents, 0 errors) plus the prototype self-critique. Full stream transcripts in `reviews/max-campaign/`. This doc records what each stream concluded and — more importantly — the one place they all point. It supersedes nothing; it sharpens doc 16 into a single next action.*
 
 ## The sharpened decision: run E2, not E1

@@ -1,5 +1,7 @@
 # 16 — Framing Critique & Whole Pivots
 
+> **⚠️ SUPERSEDED ON FRAMING by [doc 19](19-north-star-corrected.md).** This doc argues the direct value is "thin and concentrated in the Referee" and leans toward "ship a measurement, not a system." **The framing is retired** — the fleet driver is the product, not an optional branch. Two *mechanisms* here are kept and correct: **(1) the coordinator underneath should be reliable code, not an AI** (the AI still drives on top — see doc 19's reconciliation), and **(2) full vendor harnesses are a fragile substrate** worth weighing against model-backends. Read those; ignore the "don't build it / measure first" recommendation in §5. Routing talk here describes the naive per-vendor tally that rots — superseded by [doc 20](20-adaptive-routing.md).
+
 *The user asked me to critique the framing and direct value of everything presented, and to consider approaches outside the corpus — alternatives and whole pivots. So this doc turns on the other fifteen. It is written to be useful, not loyal: where I think the frame is wrong, I say so plainly, including where that indicts my own prior docs. Max effort, first person, no hedging for the sake of the edifice. If one doc in this repo is worth the user's time, I want it to be this one.*
 
 ---
