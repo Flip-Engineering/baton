@@ -1,0 +1,13 @@
+{
+  "name": "baton",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Fleet driver — one orchestrator agent directs cross-vendor coding-tool workers, with reliable messaging, telemetry, interrupt/steer, and a hard-to-fool trust gate. AI/AX only; no UI. Runnable ESM JS, zero dependencies.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test",
+    "test:watch": "node --test --watch",
+    "demo": "node demo.mjs"
+  }
+}
