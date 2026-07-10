@@ -14,6 +14,10 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 - **Interruption & steering** — pause, redirect, or cancel a worker mid-turn from the orchestrator or from a human seat.
 - **Symmetry** — the same machinery works Claude→(GPT+GLM) and GPT→(Claude+GLM). No privileged vendor.
 
+## → Read [SYSTEM.md](SYSTEM.md) first
+
+**[SYSTEM.md](SYSTEM.md) is the single authoritative design** — the whole thing synthesized into one correct, plain, feature-complete picture: the fleet driver, its reliable coordinator core, the four core features (direct workers, two-way messaging, telemetry, interrupt/steer), and the supporting features (re-verification, adaptive routing, memory, worker tools, safety), with a build order and an honest feature index. Everything in `docs/` below is the exploration and the depth behind it; [GLOSSARY.md](GLOSSARY.md) decodes any leftover jargon.
+
 ## Status
 
 Research + a runnable prototype skeleton, several review rounds applied and then **re-centered on the actual goal** ([docs/19](docs/19-north-star-corrected.md) — read this first; it corrects framing drift in docs 13/16/18).
