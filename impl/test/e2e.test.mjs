@@ -225,6 +225,10 @@ function setupSystem({ adapter, adapterVendor = 'mock', now } = {}) {
   const realRouter = new AdaptiveRouter({ mode: 'adaptive', now: clock });
   // D5: the coordinator selects via route(task,cards,inFlight) and learns via route.record(...).
   const routerCalls = { pick: [], record: [] };
+  // SC9 (phase10): this stub is deliberately synthetic — it records the call and returns the one
+  // vendor unconditionally, and will NEVER mirror the real route() in index.mjs (feasibility +
+  // nonRefuserFor restriction + router.pick + first-listed collision rule). Real-entrypoint
+  // routing is covered by C7 (phase8-correctness.test.mjs) and SC7 (phase10-completion.test.mjs).
   const routeFn = (task, cards, inFlight) => { routerCalls.pick.push([task, cards, inFlight]); return adapterVendor; };
   routeFn.record = (mv, tt, win) => { routerCalls.record.push([mv, tt, win]); return realRouter.record(mv, tt, win); };
 

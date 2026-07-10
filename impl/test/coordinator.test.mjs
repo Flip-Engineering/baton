@@ -494,21 +494,23 @@ test('send() a nudge to a healthy working worker succeeds and logs control.nudge
   assert.ok(kinds.includes('control.nudge'));
 });
 
-test('a same-tick interrupt racing an in-flight send() rejects the send as stale (no control.nudge logged)', async () => {
+// Amended by SC4 (spec/phase10/system-completion.md): delivery now happens on the worker's
+// serialized send lane, so an interrupt landing before the delivery slot opens PREVENTS the
+// delivery outright (worker_stopping, adapter never touched) instead of the old
+// delivered-then-amended ordering. The delivered-despite-stale case still exists — but only for
+// a bump landing while the delivery is genuinely on the wire, pinned by C3
+// (phase8-correctness.test.mjs).
+test('a same-tick interrupt racing a queued send() prevents the delivery entirely (SC4b)', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator, log } = setup({ adapters: { mock: adapter } });
   const handle = await coordinator.spawn('mock', makeBrief());
 
-  const gate = deferred();
-  adapter.gates.prompt = gate.promise; // send()'s prompt() call will not resolve until we let it
-
   const sendPromise = coordinator.send(handle.id, { text: 'nudge before interrupt' }, 'nudge');
-  // interrupt() bumps the fence synchronously (before awaiting anything) — this must land
-  // *after* send() already snapshotted its stamp but *before* send()'s post-await recheck.
+  // interrupt() flips the worker to 'stopping' synchronously — before the send's delivery slot
+  // (a microtask away) ever opens.
   const interruptPromise = coordinator.interrupt(handle.id);
   assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'stopping');
 
-  gate.resolve({ ok: true });
   adapter.emit({
     worker: handle.id,
     harness: 'mock@1.0.0',
@@ -522,14 +524,11 @@ test('a same-tick interrupt racing an in-flight send() rejects the send as stale
   await interruptPromise;
 
   assert.equal(sendResult.ok, false);
-  assert.equal(sendResult.result, 'stale_fence');
+  assert.equal(sendResult.result, 'worker_stopping');
+  assert.equal(adapter.calls.prompt.length, 0, 'SC4b: the queued send re-checked its guards at slot acquisition — the adapter was never touched');
   const kinds = log.read(handle.id).map((e) => e.kind);
-  assert.ok(!kinds.includes('control.nudge'), 'a stale send must never be applied as a nudge');
-  assert.ok(kinds.includes('control.stale_rejected'));
-  assert.ok(
-    kinds.includes('control.delivery_amended'),
-    'adapter.prompt() was actually invoked before the fence moved — the log must say so, not just that the send was rejected'
-  );
+  assert.ok(!kinds.includes('control.nudge'), 'a superseded send must never be applied as a nudge');
+  assert.ok(!kinds.includes('control.delivery_amended'), 'nothing was delivered, so nothing needs amending');
 });
 
 test('send() to an unknown worker throws WorkerNotFoundError', async () => {

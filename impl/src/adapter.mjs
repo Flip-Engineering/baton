@@ -152,7 +152,9 @@ export class MockAdapter {
       authPosture: 'api_key',
       concurrencyCeiling: this._concurrencyCeiling,
       maxContext: this._maxContext,
-      verbs: { spawn: 'native', interrupt: 'native', steer: 'native', ask: 'native' },
+      // SC8: canonical 8-verb card. steer rides prompt(mode:'steer'), approve/answer ride the
+      // respond flow — all genuinely implemented here; pause has no implementation and says so.
+      verbs: { spawn: 'native', prompt: 'native', steer: 'native', interrupt: 'native', approve: 'native', answer: 'native', kill: 'native', pause: 'unsupported' },
     };
   }
 
@@ -563,7 +565,9 @@ export class CodexAdapter extends SubprocessAdapterBase {
       authPosture: 'subscription',
       concurrencyCeiling: 4,
       maxContext: 200000,
-      verbs: { spawn: 'native', interrupt: 'native', steer: 'native', pause: 'unsupported', ask: 'native' },
+      // SC8 honesty: SubprocessAdapterBase implements ONLY spawn — prompt/interrupt/approve/
+      // answer/kill are not-implemented stubs, and the card may not claim otherwise.
+      verbs: { spawn: 'native', prompt: 'unsupported', steer: 'unsupported', interrupt: 'unsupported', approve: 'unsupported', answer: 'unsupported', kill: 'unsupported', pause: 'unsupported' },
     };
   }
 
@@ -581,7 +585,8 @@ export class ClaudeAdapter extends SubprocessAdapterBase {
       authPosture: 'subscription',
       concurrencyCeiling: 4,
       maxContext: 200000,
-      verbs: { spawn: 'native', interrupt: 'native', steer: 'emulated', ask: 'native' },
+      // SC8 honesty: only spawn is implemented on this legacy subprocess tier (see base stubs).
+      verbs: { spawn: 'native', prompt: 'unsupported', steer: 'unsupported', interrupt: 'unsupported', approve: 'unsupported', answer: 'unsupported', kill: 'unsupported', pause: 'unsupported' },
     };
   }
 

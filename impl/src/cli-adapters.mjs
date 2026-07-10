@@ -226,7 +226,9 @@ export class CodexCli extends CliAdapter {
       args: () => ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', ...(opts.model ? ['-m', opts.model] : [])],
       parse: parseCodexEvent,
       env: opts.env,
-      verbs: { spawn: 'native', interrupt: 'emulated', steer: 'unsupported', pause: 'unsupported' },
+      // SC8: canonical 8 keys, honest values — interrupt is a signal (emulated), kill is a real
+      // SIGKILL (native), everything conversational is impossible on a one-shot exec.
+      verbs: { spawn: 'native', prompt: 'unsupported', steer: 'unsupported', interrupt: 'emulated', approve: 'unsupported', answer: 'unsupported', kill: 'native', pause: 'unsupported' },
     });
   }
 }
@@ -239,7 +241,9 @@ export class ClaudeCli extends CliAdapter {
       args: () => ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', ...(opts.model ? ['--model', opts.model] : [])],
       parse: parseClaudeEvent,
       env: opts.env,
-      verbs: { spawn: 'native', interrupt: 'emulated', steer: 'emulated', pause: 'emulated' },
+      // SC8: steer/pause previously claimed 'emulated' while steer() is an honest ok:false stub
+      // and no pause method exists — the card now matches the implemented surface.
+      verbs: { spawn: 'native', prompt: 'unsupported', steer: 'unsupported', interrupt: 'emulated', approve: 'unsupported', answer: 'unsupported', kill: 'native', pause: 'unsupported' },
     });
   }
 }
@@ -276,7 +280,7 @@ export class PiCli extends CliAdapter {
       args: opts.args ?? (() => ['--headless']),
       parse: opts.parse ?? parseClaudeEvent, // assume a Claude-ish stream until confirmed
       env: opts.env,
-      verbs: { spawn: opts.cmd ? 'native' : 'unsupported', interrupt: 'emulated', steer: 'unsupported', pause: 'unsupported' },
+      verbs: { spawn: opts.cmd ? 'native' : 'unsupported', prompt: 'unsupported', steer: 'unsupported', interrupt: 'emulated', approve: 'unsupported', answer: 'unsupported', kill: 'native', pause: 'unsupported' }, // SC8
     });
     this._configured = !!opts.cmd;
   }

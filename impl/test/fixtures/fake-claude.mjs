@@ -34,6 +34,10 @@
 //                                     queued for the next turn).
 //   "TRIGGER_CRASH"                -> writes to stderr and exits 1 immediately (simulates a genuine
 //                                     vendor process failure, distinct from a mere tool denial).
+//   "REPORT_CWD"                   -> completes with result text `cwd:<process.cwd()>` — phase10 SC1's
+//                                     effect-level proof of which directory the child actually runs in.
+//   "REPORT_ENV:<VAR>"             -> completes with result text `env:<VAR>=<value-or-<unset>>` — phase10
+//                                     SC6's effect-level proof of env threading (tests use fake values only).
 //   anything else                  -> emits an assistant text event ("Echo: <text>") then a success
 //                                     result.
 //
@@ -188,6 +192,24 @@ function startNonApprovalTurn(text) {
   if (text.includes('TRIGGER_CRASH')) {
     process.stderr.write('fake-claude: simulated crash\n');
     process.exit(1);
+  }
+
+  if (text.includes('REPORT_CWD')) {
+    emitAssistantText(`cwd is ${process.cwd()}`);
+    emitResult({ text: `cwd:${process.cwd()}` });
+    currentTurn = null;
+    drainQueue();
+    return;
+  }
+
+  const envMatch = text.match(/REPORT_ENV:([A-Z0-9_]+)/);
+  if (envMatch) {
+    const name = envMatch[1];
+    emitAssistantText(`env probe ${name}`);
+    emitResult({ text: `env:${name}=${process.env[name] ?? '<unset>'}` });
+    currentTurn = null;
+    drainQueue();
+    return;
   }
 
   emitAssistantText(`Echo: ${text}`);

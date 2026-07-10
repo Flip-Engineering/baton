@@ -91,6 +91,8 @@ export const KIND = Object.freeze({
   TOKENS: 'resource.tokens',
   FILE_EDIT: 'content.file_edit',
   COMMAND_EXEC: 'content.tool_call',
+  KILL_CONFIRMED: 'kill.confirmed', // SC5a (phase10)
+  REVERIFIED: 'verify.reverified', // SC5c (phase10) — the one kind the coordinator itself emits
   ERROR: 'error',
 });
 
@@ -119,6 +121,7 @@ function newWorkerStory(workerId, harness, spawnedAtSeq) {
     status: 'idle',
     taskId: null,
     brief: null,
+    lastVerdict: null, // SC5c: {accept:boolean} once verify.reverified folds in
     turnEpoch: 0,
     turnCount: 0,
     lastEventSeq: 0,
@@ -228,6 +231,8 @@ function pathScopesOverlap(scopeA, scopeB) {
 const LEGAL_TRANSITIONS = {
   [KIND.SPAWNED]: { from: null, to: 'idle' },
   [KIND.TURN_STARTED]: { from: ['idle', 'working'], to: 'working' },
+  [KIND.TURN_COMPLETED]: { from: ['working'], to: 'idle' }, // SC5b; other statuses: no-op, never a warning
+  [KIND.KILL_CONFIRMED]: { from: null, to: 'exited' }, // SC5a: terminal, mirrors coordinator replay
   [KIND.INTERRUPT_REQUESTED]: { from: ['working', 'blocked', 'idle'], to: 'stopping' },
   [KIND.INTERRUPT_CONFIRMED]: { from: ['stopping'], to: 'idle' },
   [KIND.APPROVAL_REQUESTED]: { from: ['working'], to: 'blocked' },
@@ -321,6 +326,10 @@ function handleKnownKind(w, kind, payload, event) {
     }
     case KIND.TURN_COMPLETED: {
       w.turnEpoch = event.turnEpoch;
+      // SC5b: the finished turn parks the worker at idle. From any other status the transition
+      // is skipped WITHOUT a warning — turn-completed-while-stopping is a legal race whose
+      // terminal state is owned by the stop confirmation.
+      if (w.status === 'working') transitionStatus(w, kind, 'idle');
       break;
     }
     case KIND.SESSION_COMPACTED: {
@@ -337,6 +346,17 @@ function handleKnownKind(w, kind, payload, event) {
     }
     case KIND.INTERRUPT_CONFIRMED: {
       transitionStatus(w, kind, 'idle');
+      break;
+    }
+    case KIND.KILL_CONFIRMED: {
+      // SC5a: a confirmed kill is terminal — the narrative of a killed worker must end.
+      w.status = 'exited';
+      break;
+    }
+    case KIND.REVERIFIED: {
+      // SC5c: the trust gate's verdict becomes story-visible. No status change — the worker is
+      // already idle and may be redispatched; the narrative reads it (SC5d).
+      w.lastVerdict = { accept: payload.accept === true };
       break;
     }
     case KIND.STEER:
@@ -549,6 +569,10 @@ function statusPhrase(w) {
   if (w.status === 'working') {
     return `working (turn ${w.turnCount}, ${budgetPct(w)}% budget)`;
   }
+  if (w.status === 'idle' && w.lastVerdict) {
+    // SC5d: the gate's verdict is the difference between "done" and "your work was rejected".
+    return w.lastVerdict.accept ? 'done (verified)' : 'idle (verification failed)';
+  }
   if (w.status === 'input_required') {
     const q = w.questionsPending.length > 0 ? w.questionsPending[w.questionsPending.length - 1].question : '';
     return `blocked — waiting on: ${truncateQuestion(q)}`;
@@ -590,8 +614,13 @@ export function renderNarrative(state, opts = {}) {
     signalsByWorker.get(s.worker).push(s);
   }
 
-  const activeCount = workers.filter((w) => w.status !== 'exited').length;
-  const doneCount = workers.filter((w) => w.status === 'exited' && !hasCrashWarning(signalsByWorker.get(w.workerId))).length;
+  // SC5d: "active" means actually doing something — a finished (idle) worker is not active,
+  // and verified-accepted work counts as done alongside clean exits.
+  const ACTIVE_STATUSES = ['working', 'stopping', 'blocked', 'input_required'];
+  const activeCount = workers.filter((w) => ACTIVE_STATUSES.includes(w.status)).length;
+  const doneCount = workers.filter(
+    (w) => (w.status === 'exited' && !hasCrashWarning(signalsByWorker.get(w.workerId))) || (w.lastVerdict && w.lastVerdict.accept === true)
+  ).length;
 
   let header = `${activeCount} worker(s) active`;
   if (doneCount > 0) header += `, ${doneCount} done`;

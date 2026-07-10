@@ -926,18 +926,23 @@ test('GlmAdapter.card() reports harness "glm-via-claude" and concurrencyCeiling 
 // verbs map — red workers-trust#6, pinned by D11
 // ============================================================
 
-test('D11: CodexAdapter.card().verbs pins steer:"native" and pause:"unsupported" exactly (resolves the A7/CodexAdapter self-contradiction)', () => {
+// D11 as amended by SC8 (spec/phase10/system-completion.md): D11's steer-native fact belongs to
+// the codex SESSION surface and is pinned there (CodexAppServerCli's own suite). The legacy
+// subprocess tier below implements ONLY spawn — SubprocessAdapterBase stubs prompt/interrupt/
+// approve/answer/kill as not-implemented — so its card may not claim otherwise, and the pre-D1
+// `ask` key is retired for the canonical approve/answer.
+test('D11 as amended by SC8: CodexAdapter (legacy subprocess) card().verbs is the canonical 8-key map claiming only what the tier implements', () => {
   const verbs = new CodexAdapter().card().verbs;
-  assert.equal(verbs.spawn, 'native');
-  assert.equal(verbs.interrupt, 'native');
-  assert.equal(verbs.steer, 'native', 'D11: Codex steer is native — the earlier "unsupported" note referred to pause, not steer');
-  assert.equal(verbs.pause, 'unsupported', 'D11: pause (full turn suspension) is the verb that is genuinely unsupported, distinct from steer');
+  assert.deepEqual(verbs, {
+    spawn: 'native', prompt: 'unsupported', steer: 'unsupported', interrupt: 'unsupported',
+    approve: 'unsupported', answer: 'unsupported', kill: 'unsupported', pause: 'unsupported',
+  });
 });
 
-test('ClaudeAdapter.card().verbs pins the exact documented map (not just key-presence)', () => {
+test('ClaudeAdapter.card().verbs pins the exact SC8-honest map (legacy tier: only spawn is implemented)', () => {
   const verbs = new ClaudeAdapter().card().verbs;
-  assert.equal(verbs.spawn, 'native');
-  assert.equal(verbs.interrupt, 'native');
-  assert.equal(verbs.steer, 'emulated', 'Claude steer goes through interrupt+re-prompt or a PreToolUse hook — never claimed native');
-  assert.equal(verbs.ask, 'native');
+  assert.deepEqual(verbs, {
+    spawn: 'native', prompt: 'unsupported', steer: 'unsupported', interrupt: 'unsupported',
+    approve: 'unsupported', answer: 'unsupported', kill: 'unsupported', pause: 'unsupported',
+  });
 });

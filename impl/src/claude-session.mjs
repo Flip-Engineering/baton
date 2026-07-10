@@ -123,7 +123,17 @@ export class ClaudeSessionCli {
     if (existing && !existing.deadEmitted) {
       return { ok: false, reason: `worker ${worker} already has an active session` };
     }
-    if (!opts.worktree) return { ok: false, reason: 'spawn requires opts.worktree (cwd)' };
+    // SC1: one spawn contract — the coordinator dispatches {worktreeReady}; direct callers may
+    // pass a ready opts.worktree. Resolve BEFORE the child exists; refuse when neither yields a
+    // path — a session must never start in an unspecified cwd (G1: silent wrong-cwd).
+    let cwd = opts.worktree;
+    if (!cwd && opts.worktreeReady) {
+      try {
+        const r = await opts.worktreeReady;
+        if (r && r.path) cwd = r.path;
+      } catch { /* fall through to the refusal below */ }
+    }
+    if (!cwd) return { ok: false, reason: 'spawn requires a worktree (opts.worktree, or opts.worktreeReady resolving {path})' };
 
     const argv = [
       ...(this._cfg.args ?? []),
@@ -138,7 +148,7 @@ export class ClaudeSessionCli {
     let child;
     try {
       child = spawn(this._cfg.cmd, argv, {
-        cwd: opts.worktree,
+        cwd,
         env: { ...process.env, ...(this._cfg.env ?? {}) },
         detached: true, // own process group, so interrupt/kill can signal the whole tree
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -473,5 +483,47 @@ export class ClaudeSessionCli {
     session.terminal = true;
     if (session.killTimer) clearTimeout(session.killTimer);
     this._emit(session, 'lifecycle.crashed', { error: String(err?.message ?? err) });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GlmSessionCli — SC6 (spec/phase10/system-completion.md)
+// ---------------------------------------------------------------------------
+
+/**
+ * The GLM session tier IS Claude Code driving GLM through Z.ai's Anthropic-compatible endpoint
+ * (the officially supported path; there is no separate GLM session binary) — the proven one-shot
+ * ZCodeCli env pattern (cli-adapters.mjs) lifted onto the session adapter, so every session verb
+ * (mid-turn steer, interrupt, approvals) is inherited, not re-implemented.
+ *
+ * Credentials resolve `opts.authToken ?? Z_AI_API_KEY ?? ZHIPU_API_KEY` at construction; absence
+ * is NOT a constructor error — the credential boundary is live-smoke's gate, presence-checked
+ * only, values never printed/logged/committed. Ceiling defaults to 1 (derived: Z.ai Pro ≈ one
+ * in-flight session, same derivation as ZCodeCli) and stays configurable.
+ *
+ * card() adds `nonRefuserFor` — the explicit capability tag SC7's routing selects on, so
+ * domain-sensitive work reaches the capable-non-refuser tier deterministically, never by
+ * operator folklore.
+ */
+export class GlmSessionCli extends ClaudeSessionCli {
+  constructor(opts = {}) {
+    const token = opts.authToken ?? process.env.Z_AI_API_KEY ?? process.env.ZHIPU_API_KEY;
+    super({
+      ...opts,
+      harness: opts.harness ?? 'glm-via-claude-session',
+      version: opts.version ?? 'glm-5.2',
+      ceiling: opts.ceiling ?? 1,
+      env: {
+        ANTHROPIC_BASE_URL: opts.baseUrl ?? 'https://api.z.ai/api/anthropic',
+        ANTHROPIC_AUTH_TOKEN: token ?? '',
+        ...(opts.model ? { ANTHROPIC_DEFAULT_OPUS_MODEL: opts.model, ANTHROPIC_DEFAULT_SONNET_MODEL: opts.model } : {}),
+        ...opts.env,
+      },
+    });
+    this._nonRefuserFor = opts.nonRefuserFor ?? ['ml-ai-inference-training', 'cybersecurity'];
+  }
+
+  card() {
+    return { ...super.card(), nonRefuserFor: [...this._nonRefuserFor] };
   }
 }

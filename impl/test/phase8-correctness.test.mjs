@@ -432,6 +432,10 @@ test('C3: bumpHuman before send(), with the caller\'s stale fence supplied — a
   assert.equal(result.result, 'stale_fence');
 });
 
+// Amended by SC4 (spec/phase10/system-completion.md): sends are now serialized per worker and a
+// queued send revalidates its guards at slot acquisition — which narrows delivered-despite-stale
+// to exactly the window this test pins: a fence bump landing while the delivery itself is on the
+// wire. That race is irreducible (un-delivery is impossible; grok queues prompts in-CLI).
 test('C3: bumpHuman during an in-flight send() — delivery happens, return is stale_fence, and control.delivery_amended is logged', async () => {
   const adapter = new FakeAdapter();
   const { coordinator, fences, log } = setupCoordinator({ adapters: { mock: adapter } });
@@ -441,8 +445,11 @@ test('C3: bumpHuman during an in-flight send() — delivery happens, return is s
   adapter.gates.prompt = gate.promise;
 
   const sendPromise = coordinator.send(handle.id, { text: 'in flight' }, 'nudge');
-  // Races the in-flight delivery: this lands after send() already captured its stamp (pre-check
-  // passed) but before the post-await recheck.
+  // SC4 amendment: deliveries now start on the worker's serialized send lane (a microtask after
+  // send() returns), so the bump must land while the delivery is genuinely ON THE WIRE — after
+  // adapter.prompt() was invoked and its stamp captured, before the post-await recheck. A bump
+  // landing any earlier is now absorbed honestly pre-delivery (see the SC4b tests).
+  while (adapter.calls.prompt.length === 0) await new Promise((r) => setTimeout(r, 1));
   fences.bumpHuman(handle.id);
   gate.resolve({ ok: true });
 

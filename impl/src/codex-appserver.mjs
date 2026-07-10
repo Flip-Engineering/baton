@@ -376,6 +376,18 @@ export class CodexAppServerCli {
       return { ok: false, reason: `worker ${worker} already has an active session` };
     }
 
+    // SC1: resolve the working directory BEFORE any child exists. JSON.stringify silently drops
+    // an undefined cwd from thread/start, which ran the thread wherever the app-server sat —
+    // the G1 silent-wrong-cwd failure. Refuse instead.
+    let cwd = opts.worktree;
+    if (!cwd && opts.worktreeReady) {
+      try {
+        const r = await opts.worktreeReady;
+        if (r && r.path) cwd = r.path;
+      } catch { /* fall through to the refusal below */ }
+    }
+    if (!cwd) return { ok: false, reason: 'spawn requires a worktree (opts.worktree, or opts.worktreeReady resolving {path})' };
+
     const child = this._spawnFn(this._cmd, this._args, {
       env: { ...process.env, ...(this._env ?? {}) },
       detached: true, // owns its own process group (XA11: kill() signals the group)
@@ -409,7 +421,7 @@ export class CodexAppServerCli {
     let threadResult;
     try {
       threadResult = await this._sendRequest(session, 'thread/start', {
-        cwd: opts.worktree,
+        cwd,
         sandbox: opts.sandbox ?? 'workspace-write',
         approvalPolicy: opts.approvalPolicy ?? 'never',
         ephemeral: true,

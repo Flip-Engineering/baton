@@ -18,6 +18,10 @@ import { StoryCompiler } from './story.mjs';
 
 export { Coordinator } from './coordinator.mjs';
 export { MockAdapter, CodexAdapter, ClaudeAdapter, GlmAdapter } from './adapter.mjs';
+// SC2: the session tier IS the product surface — constructible from the entry point.
+export { ClaudeSessionCli, GlmSessionCli } from './claude-session.mjs';
+export { CodexAppServerCli } from './codex-appserver.mjs';
+export { GrokAcpCli } from './grok-acp.mjs';
 export { createBrief } from './messages.mjs';
 export { verify, accept } from './referee.mjs';
 export { AdaptiveRouter } from './router.mjs';
@@ -67,7 +71,13 @@ export function createDriver(opts) {
   // set — no first-fit fallback. `pick()` already returns null when nothing is eligible,
   // which is exactly "queue" (the coordinator's own ceiling re-check catches it too).
   const route = (task, cards, inFlight) => {
-    const feasible = Object.keys(opts.adapters).filter((v) => (inFlight[v] ?? 0) < cards[v].concurrencyCeiling);
+    let feasible = Object.keys(opts.adapters).filter((v) => (inFlight[v] ?? 0) < cards[v].concurrencyCeiling);
+    // SC7: the explicit capability tag beats operator folklore — when any feasible card lists
+    // the task's taskType in nonRefuserFor, restrict to those vendors. Feasibility is computed
+    // FIRST (a capable-but-saturated vendor never restricts) and an unlisted taskType leaves
+    // the pool untouched — the restriction can never strand a task.
+    const capable = feasible.filter((v) => Array.isArray(cards[v].nonRefuserFor) && cards[v].nonRefuserFor.includes(task.taskType));
+    if (capable.length > 0) feasible = capable;
     const candidates = feasible.map((v) => ({
       modelVersion: `${cards[v].harness}@${cards[v].version}`,
       family: 'default',

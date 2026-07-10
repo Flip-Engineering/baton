@@ -33,6 +33,8 @@
 //                                           turn/interrupt (-> status "interrupted", thread
 //                                           survives) or turn/steer (steer forces completion
 //                                           shortly after, proving the steer took effect)
+//       FAKE:REPORT_CWD                  -> completes with an agentMessage `cwd:<thread/start cwd>`
+//                                           (phase10 SC1: proves which cwd the thread was pinned to)
 //       (none of the above)              -> completes normally ~10ms later, status "completed"
 
 import readline from 'node:readline';
@@ -56,6 +58,8 @@ let turnSeq = 0;
 let serverReqSeq = 0;
 /** @type {string|null} */
 let threadId = null;
+/** @type {string|null} phase10 SC1: the cwd received in thread/start, echoed by FAKE:REPORT_CWD */
+let threadCwd = null;
 /** @type {{id:string, timer:NodeJS.Timeout|null}|null} */
 let activeTurn = null;
 /** @type {{id:number, kind:'command'|'fileChange', turnId:string}|null} */
@@ -173,6 +177,14 @@ function runTurn(turnId, input) {
     return;
   }
 
+  if (text.includes('FAKE:REPORT_CWD')) {
+    setTimeout(() => {
+      itemCompleted(turnId, { id: `${turnId}-cwd`, type: 'agentMessage', text: `cwd:${threadCwd}` });
+      finishTurn(turnId, { status: 'completed' });
+    }, 10);
+    return;
+  }
+
   if (text.includes('FAKE:STAY_OPEN')) {
     // Stays open until turn/interrupt or turn/steer arrives; no auto-completion timer.
     return;
@@ -269,6 +281,7 @@ rl.on('line', (line) => {
       // (XA1), so a plain `thread-${threadSeq}` would collide across workers (every child
       // mints "thread-1"), falsely failing XA1's cross-worker threadId inequality assertion.
       threadId = `thread-${process.pid}-${threadSeq}`;
+      threadCwd = obj.params?.cwd ?? null;
       send({
         id: obj.id,
         result: {

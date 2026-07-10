@@ -220,15 +220,38 @@ export class Coordinator {
     const stamp = this._fences.bumpTurn(workerId);
 
     const wallMin = task.brief && task.brief.budget && task.brief.budget.wallMin;
+    // SC1d: the spawn Ack is consumed, not discarded — a refused spawn must fail the task
+    // instead of leaving a zombie in 'working' (the G1 audit's silent failure mode).
     Promise.resolve(this._adapters[vendor].spawn(workerId, task.brief, {
       worktreeReady,
       timeoutMs: wallMin ? wallMin * 60000 : undefined,
-    })).catch(noop);
+    })).then((ack) => {
+      if (ack && ack.ok === false) this._onSpawnRefused(handle, task, harness, ack);
+    }).catch(noop);
 
     this._log.append({ worker: workerId, harness, turnEpoch: stamp.turnEpoch, kind: 'lifecycle.turn_started', actor: 'orchestrator', payload: {} });
 
     task.status = 'working';
     handle.status = 'working';
+  }
+
+  /** SC1d: a refused spawn Ack may never strand its task in 'working'. `lifecycle.crashed` is
+   * the honest kind — replay already folds it to 'failed' and the story compiler
+   * terminal-transitions on it; payload phase:'spawn' says exactly what died and when. Skipped
+   * if an adapter event already ended the worker (both paths racing is benign). */
+  _onSpawnRefused(handle, task, harness, ack) {
+    if (handle.status === 'exited') return;
+    this._log.append({
+      worker: handle.id,
+      harness,
+      turnEpoch: this._safeTurnEpoch(handle),
+      kind: 'lifecycle.crashed',
+      actor: 'orchestrator',
+      payload: { error: ack.reason ?? 'spawn refused', phase: 'spawn' },
+    });
+    handle.status = 'exited';
+    task.status = 'failed';
+    this._dispatchPass();
   }
 
   // =========================================================================
@@ -348,9 +371,23 @@ export class Coordinator {
   async send(workerId, message, mode, opts = {}) {
     this.tick();
     const handle = this._getWorker(workerId);
+    // SC4a: per-worker delivery serialization — deliveries reach the adapter strictly in
+    // send()-call order (a slow steer emulation must never be overtaken by a fast nudge), and a
+    // queued send re-evaluates its guards at slot acquisition (SC4b) because the world it
+    // validated against may have changed while it waited. Ack boundedness is X3's existing
+    // contract — no new timeout is introduced here. The chain never wedges: a rejected delivery
+    // is absorbed on the chain while the caller still sees the rejection from its own slot.
+    const slot = (handle.sendChain ?? Promise.resolve()).then(() => this._deliver(handle, message, mode, opts));
+    handle.sendChain = slot.then(noop, noop);
+    return slot;
+  }
+
+  async _deliver(handle, message, mode, opts) {
+    const workerId = handle.id;
     if (handle.status === 'stopping') return { ok: false, result: 'worker_stopping' };
 
-    // C3: pre-check against an externally-supplied fence, BEFORE any delivery attempt.
+    // C3: pre-check against an externally-supplied fence, BEFORE any delivery attempt —
+    // re-evaluated HERE at delivery-slot acquisition, not at send() entry (SC4b).
     if (opts.expectedFence !== undefined) {
       const preCheck = this._fences.check(workerId, { fence: opts.expectedFence });
       if (!preCheck.ok) {

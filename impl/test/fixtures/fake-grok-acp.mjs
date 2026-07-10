@@ -28,6 +28,8 @@
 //                                  does not map; the turn completes only once it is ANSWERED
 //                                  (an error answer counts — anti-wedge, X3 lesson)
 //       FAKE:STAY_OPEN          -> never resolves on its own; only session/cancel ends it
+//       FAKE:REPORT_CWD         -> resolves after a chunk `cwd:<session/new cwd> oscwd:<process.cwd()>`
+//                                  (phase10 SC1: proves both the wire-pinned and OS-level cwd)
 //       (none)                  -> streams chunks + a tool_call, resolves {stopReason:"end_turn"}
 
 import readline from 'node:readline';
@@ -47,6 +49,8 @@ let serverReqSeq = 0;
 let toolCallSeq = 0;
 /** @type {string|null} */
 let sessionId = null;
+/** @type {string|null} phase10 SC1: the cwd received in session/new, echoed by FAKE:REPORT_CWD */
+let sessCwd = null;
 /** @type {{id:number|string, sessionId:string, timer:NodeJS.Timeout|null, stayOpen:boolean}|null} */
 let activePrompt = null;
 /** @type {{id:number, optionIds:Record<string,string>}|null} */
@@ -164,6 +168,14 @@ function runPrompt(text) {
     return;
   }
 
+  if (text.includes('FAKE:REPORT_CWD')) {
+    setTimeout(() => {
+      chunk(`cwd:${sessCwd} oscwd:${process.cwd()}`);
+      resolvePrompt({ result: { stopReason: 'end_turn' } });
+    }, 10);
+    return;
+  }
+
   if (text.includes('FAKE:STAY_OPEN')) {
     if (activePrompt) activePrompt.stayOpen = true;
     return; // only session/cancel resolves it
@@ -262,6 +274,7 @@ rl.on('line', (line) => {
       // pid-namespaced (phase8 R2): one child per worker means a bare `sess-1` would collide
       // across workers and falsely fail the cross-worker isolation assertion.
       sessionId = `sess-${process.pid}-${sessionSeq}`;
+      sessCwd = obj.params?.cwd ?? null;
       send({ id: obj.id, result: { sessionId } });
       break;
     }

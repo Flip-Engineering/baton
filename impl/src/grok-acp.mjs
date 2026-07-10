@@ -403,9 +403,20 @@ export class GrokAcpCli {
       return { ok: false, reason: `worker ${worker} already has an active session` };
     }
 
+    // SC1: resolve the working directory BEFORE the child exists — grok indexes its OS cwd at
+    // startup, so an undefined cwd silently inherited the orchestrator's own directory (G1).
+    let cwd = opts.worktree;
+    if (!cwd && opts.worktreeReady) {
+      try {
+        const r = await opts.worktreeReady;
+        if (r && r.path) cwd = r.path;
+      } catch { /* fall through to the refusal below */ }
+    }
+    if (!cwd) return { ok: false, reason: 'spawn requires a worktree (opts.worktree, or opts.worktreeReady resolving {path})' };
+
     const child = this._spawnFn(this._cmd, this._args, {
       env: { ...process.env, ...(this._env ?? {}) },
-      cwd: opts.worktree, // grok indexes its cwd at startup; session/new pins it again below
+      cwd, // grok indexes its cwd at startup; session/new pins it again below
       detached: true, // owns its own process group (GA11: kill() signals the group)
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -441,7 +452,7 @@ export class GrokAcpCli {
 
     let newResult;
     try {
-      newResult = await this._sendRequest(session, 'session/new', { cwd: opts.worktree, mcpServers: [] });
+      newResult = await this._sendRequest(session, 'session/new', { cwd, mcpServers: [] });
     } catch (err) {
       // GA10: the [live]-pinned -32000 auth gate (and any other session/new failure) kills the
       // now-useless child and resolves a typed failure — never retried internally.
