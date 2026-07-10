@@ -1,11 +1,7 @@
-// The Referee — the durable core (doc 13 T5, doc 16 §2). Independent, hub-run
-// verification: the hub RE-RUNS a worker's claimed verification in a sandbox the
-// worker did not control, and trusts only what IT observes (I7 / doc 09 C1-C2).
-//
-// This is the ~50 lines that carry most of baton's real, un-vendorable value:
-// no vendor will grade itself against a competitor; this consumes artifacts
-// (exit codes, diffs), so it's ToS-clean; and it IS the "verify" half that
-// compounds as models improve (doc 12 §4).
+// Re-verification — the fleet driver's TRUST FEATURE (doc 19). The driver RE-RUNS a
+// worker's claimed verification in a sandbox the worker did not control, and trusts
+// only what IT observes. This is how the driver knows a worker's "done" is real, so it
+// can safely move on, merge, or reroute. A feature of the driver, not a separate product.
 
 import { spawn } from "node:child_process";
 import type { Task, Verdict, WorkerResult } from "./types.js";

@@ -1,10 +1,9 @@
-// The eval — the ACTUAL first deliverable (doc 16 Pivot 3, doc 07 M1, doc 14 #21).
-// Everything above the control/verification plane gates on ONE number: does a
-// model-diverse, Referee-verified fleet beat a single strong agent on the user's
-// real tasks? This harness answers it with a PRE-REGISTERED metric and pivot criterion.
-//
-// The metric and pivot are committed HERE, in code, before any run — so the eval
-// cannot be rationalized after the fact (the eval's own integrity, doc 14 #21).
+// Optional eval harness — de-risks ONE supporting feature (does a different-vendor
+// check catch defects a same-vendor check misses?). This is NOT a go/no-go on building
+// the fleet driver (doc 19 retired that framing) — it's a measurement you can run once
+// there's history, to decide whether cross-vendor re-verification earns a second vendor's
+// cost. The metric and pivot are committed HERE, before any run, so results can't be
+// rationalized after the fact.
 
 import { Orchestrator } from "./orchestrator.js";
 import { ClaudeAdapter, CodexAdapter, GlmAdapter } from "./adapter.js";
