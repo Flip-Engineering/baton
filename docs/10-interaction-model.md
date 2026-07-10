@@ -1,5 +1,7 @@
 # 10 — The Interaction Model (beyond HCI)
 
+> **Review round 2 caveat (doc 13 T2/T5).** The red/blue/explore pass ruled that this doc's grand vocabulary — "beyond HCI," "three topologies," "stigmergy as the bet," the O(N) leverage claim — is *retrofitted framing over sound mechanisms*, and should be **CUT as load-bearing pitch**. What survives as engineering law: **two channels never fused** (§1 → no `fleet_chat`) and **type every token by provenance** (see doc 12). The T3 "stigmergy" mechanisms are real but are honestly a **small-N hub-mediated coordination service** (etcd/Bazel/Consul lineage), not leaderless stigmergy; the true, narrow win is *keeping untrusted worker prose out of the orchestrator's scarce context* + *"the medium is the record" auditability*, not O(N) scaling (the fleet is capped at handfuls per vendor by concurrency ceilings, so O(N²) never bites). Read the two channels below as the load-bearing content; read the topology framing as exploration the review deflated. The project's honest center of gravity is the **Referee** (doc 13 T5), not this doc's Conductor paradigm.
+
 *The architectural centerpiece: what kinds of interaction baton actually mediates, and why the orchestration-direction layer is built from two channels with opposite properties plus a coordination substrate that replaces most direct messaging. This doc reframes docs 04/05 and sets the frame every capability module (doc 11+) plugs into.*
 
 ## 0. The thesis in one paragraph
