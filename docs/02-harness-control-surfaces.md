@@ -1,6 +1,6 @@
 # 02 — Harness Control Surfaces
 
-*What each harness actually exposes for programmatic control. Primary-source evidence from locally installed binaries unless marked otherwise. Verified 2026-07-09 against: Codex CLI **0.144.0**, Claude Code **2.1.205**.*
+*What each harness actually exposes for programmatic control. Primary-source evidence from locally installed binaries unless marked otherwise. Verified 2026-07-09 against: Codex CLI **0.144.0**, Claude Code **2.1.205**; Grok Build CLI **0.1.216** added 2026-07-10.*
 
 ## The capability vocabulary
 
@@ -66,7 +66,7 @@ Mapping to the vocabulary:
 | prompt | NDJSON user message on stdin (stream-json input keeps stdin open — multiple turns per process) |
 | stream | stream-json events; `--include-partial-messages` for deltas |
 | interrupt | SDK `interrupt()` / control_request frame; SIGINT fallback |
-| steer | **no native `turn/steer` equivalent** — emulate: interrupt → inject steering message → continue; or queue message for next tool-boundary via hook |
+| steer | **native** (corrected by the phase-8 live re-eval, docs/23): a mid-turn user frame on the stream-json channel is absorbed by the running turn at its next tool boundary — no interrupt round-trip needed |
 | inject | additional user/system messages between turns; `--append-system-prompt` at spawn; hooks can inject context per-event |
 | approve | `canUseTool` callback (SDK); `--permission-mode`; hooks (PreToolUse allow/deny) |
 | resume/fork | `--resume/--continue/--fork-session`; transcripts are JSONL on disk (`~/.claude/projects/...`) — replayable |
@@ -83,6 +83,25 @@ So **Claude Code as the GLM harness is not a hack, it's the vendor's blessed con
 - Harness/model mismatch still costs quality (Claude-tuned prompts and tool descriptions driving GLM); Z.ai's own compat verification trails Claude Code releases (2.0.14 vs today's 2.1.205). OpenCode is the officially-supported alternative harness if the mismatch proves expensive.
 - The plan is **contractually locked to supported harnesses** and enforces per-tier *concurrency* limits (Pro-tier reports of a single in-flight request; peak-hour 3× quota multipliers on GLM-5.2). Fleet math changes accordingly — see doc 01 §7 and doc 06 Q7.
 
+## Grok Build CLI 0.1.216 — native ACP, shipped by the vendor (added 2026-07-10)
+
+xAI's `grok` is the first flagship vendor CLI whose primary programmatic surface is **ACP itself**: `grok agent stdio` is a standard Agent Client Protocol server (JSON-RPC 2.0, `initialize` → `session/new` → `session/prompt` → streamed `session/update`), extended by a documented catalog of 72 `x.ai/*` methods (fs, git, **git/worktree**, terminal, search, **session/fork**, **rewind/** with on-disk file snapshots, auth, telemetry). No bridge repo, no protocol org adapter — the vendor ships the server. Live-verified here: the initialize handshake succeeds **unauthenticated** and returns the whole harness card (model `grok-build`, **500K context**, agent type `grok-build-plan`, capabilities, runtime commands incl. `compact` and `always-approve` toggling); `session/new` is the auth gate (`-32000 "Authentication required"`). Everything model-side is doc/spec-grade until `grok login` / `XAI_API_KEY` — full dossier with verbatim frames: [reference/grok-build-cli.md](reference/grok-build-cli.md).
+
+| Primitive | Grok Build |
+|---|---|
+| spawn | `session/new {cwd, mcpServers}`; resume = `session/load` (capability-advertised live) |
+| prompt | `session/prompt` — turn ends when the request resolves (`stopReason`) |
+| stream | `session/update`: `agent_message_chunk`, `agent_thought_chunk`, `tool_call`, `plan` + `x.ai/*` push notifications |
+| interrupt | `session/cancel` (ACP baseline — prompt resolves `stopReason:"cancelled"`); live-advertised `cancelRewind:true` suggests cancel-plus-file-restore |
+| steer | **no native steer** (ACP baseline has none; none in the `x.ai/*` catalog) — emulate, or probe mid-turn `session/prompt` splicing post-auth |
+| inject | between turns only (prompt content); `AGENTS.md` / `--rules` at spawn |
+| approve | `session/request_permission` (ACP) — caveat: `[features] support_permission = false` appears as a config default; `--always-approve` / runtime `always-approve on\|off` bypasses |
+| resume/fork/rollback | `session/load` / `x.ai/session/fork` / **`x.ai/rewind/*` restores actual file snapshots** — the only harness in the fleet with true file-level rollback |
+| usage | no documented wire telemetry; **`signals.json`** (turn count, token usage) in the on-disk session dir; `grok trace` export |
+| health | process exit, JSON-RPC errors (`-32000` auth), sandbox-degradation warnings, `agent_error` notification hook |
+
+Notable extras: first-party **shared leader process** (`grok agent leader`, clients attach `--leader` — codex's daemon+broker shape, vendor-shipped), `grok agent serve` (WebSocket multi-client), kernel sandbox profiles (Seatbelt/Landlock, irreversible at startup), `--best-of-n` (parallel N-way attempts, pick best), `--check` (appended self-verification loop), `--prompt-json` content blocks, session store whose `updates.jsonl` **is the ACP stream** (one format for wire and audit), `grok import` (foreign-session migration), and `[model.<id>]` custom **OpenAI-compatible endpoints** (the harness can front non-xAI models). The help text annotates flags with Claude Code equivalents (`--allow` "(Claude Code: --allowedTools)") and reuses Claude's `--permission-mode` enum verbatim — deliberate control-surface mirroring, which lowers adapter cost. Caveats: bundled docs already drift from the binary twice (effort enum, `-r` arg optionality), one-shot `streaming-json` has **no tool-call events**, and ToS/quota posture for programmatic driving is unpublished.
+
 ## Also installed here (widens the fleet, sharpens the design)
 
 `opencode`, `crush`, `droid` (Factory), `gemini` (Gemini CLI — speaks ACP natively), `qwen`. Two observations:
@@ -92,20 +111,20 @@ So **Claude Code as the GLM harness is not a hack, it's the vendor's blessed con
 
 ## Capability matrix (summary)
 
-| Primitive | Codex (app-server) | Claude Code (SDK/stream-json) | GLM via Claude Code | Gemini CLI (ACP) |
-|---|---|---|---|---|
-| spawn | ✅ native | ✅ native | ✅ (env override) | ✅ session/new |
-| stream | ✅ rich (deltas, diffs, plans) | ✅ rich | ✅ | ✅ session/update |
-| interrupt | ✅ `turn/interrupt` | ✅ SDK interrupt | ✅ | ✅ session/cancel |
-| steer mid-turn | ✅ **`turn/steer`** | ⚠️ emulate (but PreToolUse `updatedInput`/`updatedToolOutput` rewriting = native tool-level steering) | ⚠️ same | ❌ (ACP has no steer) |
-| inject context | ✅ `thread/inject_items` | ⚠️ between turns | ⚠️ | ❌ |
-| approvals → client | ✅ JSON-RPC requests | ✅ canUseTool | ✅ | ✅ session/request_permission |
-| resume/fork/rollback | ✅ / ✅ / ✅ | ✅ / ✅ / ❌ | ✅ | ✅ resume (capability-gated) / adapter-dependent / ❌ |
-| goal pinning | ✅ `thread/goal/*` | ❌ (emulate via system prompt) | ❌ | ❌ |
-| usage/rate-limit telemetry | ✅ push notifications | ✅ OTel + result events | ⚠️ (Z.ai side unknown) | ❌ (not in ACP) |
-| daemon / multi-client | ✅ daemon + pairing | ⚠️ per-process (`--bg` emerging) | ⚠️ | ❌ (stdio per client) |
-| schema introspection | ✅ generate-json-schema | ❌ | ❌ | ✅ (ACP versioned spec) |
+| Primitive | Codex (app-server) | Claude Code (SDK/stream-json) | GLM via Claude Code | Gemini CLI (ACP) | Grok Build (ACP) |
+|---|---|---|---|---|---|
+| spawn | ✅ native | ✅ native | ✅ (env override) | ✅ session/new | ✅ session/new |
+| stream | ✅ rich (deltas, diffs, plans) | ✅ rich | ✅ | ✅ session/update | ✅ session/update + `x.ai/*` notifs |
+| interrupt | ✅ `turn/interrupt` | ✅ SDK interrupt | ✅ | ✅ session/cancel | ✅ session/cancel (spec; live-unverified) |
+| steer mid-turn | ✅ **`turn/steer`** | ✅ **native mid-turn user frame** (phase-8 live re-eval; absorbed at next tool boundary) | ✅ same | ❌ (ACP has no steer) | ❌ → emulate (probe splice post-auth) |
+| inject context | ✅ `thread/inject_items` | ⚠️ between turns | ⚠️ | ❌ | ⚠️ between turns |
+| approvals → client | ✅ JSON-RPC requests | ✅ canUseTool | ✅ | ✅ session/request_permission | ✅ session/request_permission (config caveat) |
+| resume/fork/rollback | ✅ / ✅ / ✅ | ✅ / ✅ / ❌ | ✅ | ✅ resume (capability-gated) / adapter-dependent / ❌ | ✅ load / ✅ `x.ai/session/fork` / ✅ **`x.ai/rewind/*` w/ file snapshots** |
+| goal pinning | ✅ `thread/goal/*` | ❌ (emulate via system prompt) | ❌ | ❌ | ❌ (`AGENTS.md` / `--rules`) |
+| usage/rate-limit telemetry | ✅ push notifications | ✅ OTel + result events | ⚠️ (Z.ai side unknown) | ❌ (not in ACP) | ⚠️ `signals.json` on disk; wire unknown |
+| daemon / multi-client | ✅ daemon + pairing | ⚠️ per-process (`--bg` emerging) | ⚠️ | ❌ (stdio per client) | ✅ **leader process** + `agent serve` |
+| schema introspection | ✅ generate-json-schema | ❌ | ❌ | ✅ (ACP versioned spec) | ⚠️ ACP spec; `x.ai/*` catalog unshipped |
 
-Legend: ✅ native · ⚠️ emulable with adapter work · ❌ absent. (Gemini column reflects the verified ACP spec — doc 01 §1.)
+Legend: ✅ native · ⚠️ emulable with adapter work · ❌ absent. (Gemini column reflects the verified ACP spec — doc 01 §1. Grok column: initialize handshake live-verified, model-side rows spec/doc-grade pending auth — reference/grok-build-cli.md. Claude steer upgraded to native per docs/23 phase-8 live re-eval.)
 
 **Design consequence:** the common denominator is poor but the union is rich. A lowest-common-denominator protocol wastes Codex's steering and Claude's hooks; the hub should expose a **capability-negotiated** surface (each adapter publishes a "harness card" of supported primitives, and the orchestrator's tools degrade gracefully — e.g. `steer` falls back to interrupt+reprompt with an explicit `emulated: true` flag in telemetry).

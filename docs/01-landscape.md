@@ -64,6 +64,10 @@
 
 *Design consequences (fold into docs 04/06/07): per-vendor auth posture must be a config knob with API-key fallback; per-vendor concurrency ceilings belong in the harness card and the scheduler, not in retry loops; peak-hour multipliers argue for time-aware dispatch; and the fleet must degrade gracefully to fewer seats when a vendor tightens — which history says they will, possibly mid-run.*
 
+## 8. Grok Build CLI — the first vendor-native ACP agent (local addendum, 2026-07-10)
+
+**[local — primary-source, this machine; not part of the verified web run]** xAI's Grok Build CLI (`grok` 0.1.216) inverts the §1 pattern that flagship ACP adapters are maintained by the protocol org rather than the model vendors: **the vendor ships ACP as the product's own agent surface** (`grok agent stdio`), extended by 72 documented `x.ai/*` methods (git worktrees, session fork, rewind-with-file-snapshots, terminal, auth) plus first-party multi-client modes (WebSocket `serve`, WS relay, shared leader process). Its initialize handshake was live-verified here unauthenticated — it returns the full harness card (model `grok-build`, 500K context) before login; `session/new` is the auth gate. The CLI's control flags deliberately mirror Claude Code's (annotated equivalences in `--help`, identical `--permission-mode` enum). Consequence for §1's ecosystem read: ACP is graduating from "IDE-integration adapter layer" to a vendor-shipped control plane, which strengthens the case for baton speaking ACP natively as one southbound dialect. Control-surface detail and capability-matrix row: doc 02; full dossier: [reference/grok-build-cli.md](reference/grok-build-cli.md).
+
 ## Open questions carried forward
 
 1. Exact current stream-json control-frame vocabulary of Claude Code (only indirectly evidenced via claude-agent-acp source; local schema introspection unavailable). Track the adapter repo as the de-facto documentation.
