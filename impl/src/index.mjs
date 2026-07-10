@@ -30,7 +30,7 @@ function worktreeManager(repoRoot) {
       const r = await worktreeMod.createFromBase(repoRoot, taskId, base.sha, {});
       return { path: r.dir, branch: r.branch, baseSha: r.baseSha };
     },
-    async capture(worktreePath) { return worktreeMod.captureCommit(repoRoot, basename(worktreePath), {}); },
+    async capture(worktreePath, opts = {}) { return worktreeMod.captureCommit(repoRoot, basename(worktreePath), { vendor: opts.vendor }); },
     async createVerifyWorktree(taskId, sha) {
       const r = await worktreeMod.freshVerifySandbox(repoRoot, taskId, sha, {});
       return { path: r.dir ?? r.path };
@@ -47,7 +47,7 @@ function worktreeManager(repoRoot) {
 /** The real hardened referee in the coordinator's fn contract (maps task.worktree -> workerWorktreeDir, string sandbox -> {dir}). */
 function refereeFn(task, result, opts) {
   const mapped = { ...task, workerWorktreeDir: task.worktree, verification: opts.pinnedVerification };
-  return verify(mapped, result, { dir: opts.sandbox }, {}).then((verdict) => { accept(verdict); return verdict; });
+  return verify(mapped, result, { dir: opts.sandbox }, {});
 }
 
 /**
@@ -63,10 +63,21 @@ export function createDriver(opts) {
   const router = new AdaptiveRouter({ mode: 'adaptive', now });
   const story = new StoryCompiler({ now });
 
-  // D5: selection fn with a .record hook into the router (verified outcomes only).
+  // C2/D5: real selection via router.pick(task, candidates) over the ceiling-feasible
+  // set — no first-fit fallback. `pick()` already returns null when nothing is eligible,
+  // which is exactly "queue" (the coordinator's own ceiling re-check catches it too).
   const route = (task, cards, inFlight) => {
-    const candidates = Object.keys(opts.adapters).filter((v) => (inFlight[v] ?? 0) < cards[v].concurrencyCeiling);
-    return candidates[0] ?? Object.keys(opts.adapters)[0];
+    const feasible = Object.keys(opts.adapters).filter((v) => (inFlight[v] ?? 0) < cards[v].concurrencyCeiling);
+    const candidates = feasible.map((v) => ({
+      modelVersion: `${cards[v].harness}@${cards[v].version}`,
+      family: 'default',
+      concurrencyCeiling: cards[v].concurrencyCeiling,
+      inFlight: inFlight[v] ?? 0,
+    }));
+    const chosen = router.pick(task, candidates);
+    if (!chosen) return null;
+    const byModelVersion = new Map(feasible.map((v) => [`${cards[v].harness}@${cards[v].version}`, v]));
+    return byModelVersion.get(chosen) ?? null;
   };
   route.record = (mv, tt, win) => router.record(mv, tt, win);
 
@@ -77,6 +88,8 @@ export function createDriver(opts) {
     repoRoot: opts.repoRoot,
     referee: refereeFn,
     route,
+    accept: (verdict, acceptOpts) => accept(verdict, acceptOpts),
+    acceptOpts: { requireRedGreen: opts.requireRedGreen ?? false, requireCoverage: opts.requireCoverage ?? false },
     story: { record: (e) => story.ingest(e) },
     now,
     approvalTimeoutMs: opts.approvalTimeoutMs ?? 60000,

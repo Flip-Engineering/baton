@@ -48,6 +48,13 @@ function minimalBrief() {
 
 function noop() {}
 
+/** C1: the default done-gate, behavior-preserving-by-construction for every caller that
+ * doesn't override it — exactly today's inline check, moved into an injectable, named
+ * function. `acceptOpts.expectExit` carries the per-task expected exit code. */
+function defaultAccept(verdict, acceptOpts) {
+  return !!(verdict && verdict.reverified === true && verdict.observedExit === acceptOpts.expectExit);
+}
+
 export class Coordinator {
   /** @param {object} opts */
   constructor(opts) {
@@ -62,14 +69,31 @@ export class Coordinator {
     this._approvalTimeoutMs = opts.approvalTimeoutMs ?? 60000;
     this._stopDeadlineMs = opts.stopDeadlineMs ?? 15000;
     this._waitPollMs = opts.waitPollMs ?? 25;
+    // C1: the sole done-gate, and the driver-level policy passed to every accept() call.
+    this._accept = opts.accept ?? defaultAccept;
+    this._acceptOpts = opts.acceptOpts ?? {};
+    // C4: injectable timer primitives for a real, unref'd stop-deadline timer.
+    this._setTimeout = opts.setTimeout ?? globalThis.setTimeout;
+    this._clearTimeout = opts.clearTimeout ?? globalThis.clearTimeout;
 
     // D8: feed the optional story sink — wrap log.append so every logged event also reaches
-    // the story compiler. No-op when no story sink is provided (coordinator.test passes none).
-    if (this._story && typeof this._story.record === 'function') {
+    // the story compiler. Also guards the raw append itself: a write that fails because the
+    // log destination was torn down out from under an in-flight background continuation
+    // (e.g. a worker's scheduled completion racing external cleanup) must never crash the
+    // process — matching the same "a broken sink never affects correctness" philosophy the
+    // story wiring already applies, extended to the log destination itself.
+    {
       const rawAppend = this._log.append.bind(this._log);
       this._log.append = (partial) => {
-        const e = rawAppend(partial);
-        try { this._story.record(e); } catch { /* a broken story sink never affects correctness */ }
+        let e;
+        try {
+          e = rawAppend(partial);
+        } catch {
+          return undefined;
+        }
+        if (this._story && typeof this._story.record === 'function') {
+          try { this._story.record(e); } catch { /* a broken story sink never affects correctness */ }
+        }
         return e;
       };
     }
@@ -312,10 +336,27 @@ export class Coordinator {
   // Command: send()
   // =========================================================================
 
-  async send(workerId, message, mode) {
+  async send(workerId, message, mode, opts = {}) {
     this.tick();
     const handle = this._getWorker(workerId);
     if (handle.status === 'stopping') return { ok: false, result: 'worker_stopping' };
+
+    // C3: pre-check against an externally-supplied fence, BEFORE any delivery attempt.
+    if (opts.expectedFence !== undefined) {
+      const preCheck = this._fences.check(workerId, { fence: opts.expectedFence });
+      if (!preCheck.ok) {
+        const harness = this._harnessOf(handle.vendor);
+        this._log.append({
+          worker: workerId,
+          harness,
+          turnEpoch: this._fences.current(workerId).turnEpoch,
+          kind: 'control.stale_rejected',
+          actor: 'orchestrator',
+          payload: { op: 'send', mode, attempted: opts.expectedFence, current: preCheck.current, phase: 'pre_delivery' },
+        });
+        return { ok: false, result: 'stale_fence', current: preCheck.current };
+      }
+    }
 
     const stamp = this._fences.issue(workerId);
     const harness = this._harnessOf(handle.vendor);
@@ -330,7 +371,16 @@ export class Coordinator {
         turnEpoch: currentTurnEpoch,
         kind: 'control.stale_rejected',
         actor: 'orchestrator',
-        payload: { op: 'send', mode, attempted: stamp, current: check.current },
+        payload: { op: 'send', mode, attempted: stamp, current: check.current, phase: 'post_delivery' },
+      });
+      // C3: delivery already happened despite the staleness — say so, loudly.
+      this._log.append({
+        worker: workerId,
+        harness,
+        turnEpoch: currentTurnEpoch,
+        kind: 'control.delivery_amended',
+        actor: 'policy',
+        payload: { op: 'send', mode, message, deliveredDespiteStale: true, attempted: stamp, current: check.current },
       });
       return { ok: false, result: 'stale_fence', current: check.current };
     }
@@ -400,8 +450,14 @@ export class Coordinator {
       ackReady: false,
       confirmReceived: false,
       finalized: false,
+      timerHandle: null,
     };
     this._stopWaiters.set(handle.id, waiter);
+
+    // C4: a real, injectable, unref'd deadline timer — independent of tick()'s sweep,
+    // which remains as a redundant, harmless backup path.
+    waiter.timerHandle = this._setTimeout(() => this._forceStop(handle.id, waiter), this._stopDeadlineMs);
+    if (waiter.timerHandle && typeof waiter.timerHandle.unref === 'function') waiter.timerHandle.unref();
 
     const call =
       mode === 'kill'
@@ -444,6 +500,7 @@ export class Coordinator {
   _finalizeStop(workerId, waiter) {
     if (waiter.finalized) return;
     waiter.finalized = true;
+    if (waiter.timerHandle != null) this._clearTimeout(waiter.timerHandle);
     const handle = this._workers.get(workerId);
     const harness = handle ? this._harnessOf(handle.vendor) : '';
     const kind = waiter.mode === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed';
@@ -474,6 +531,7 @@ export class Coordinator {
   _forceStop(workerId, waiter) {
     if (waiter.finalized) return;
     waiter.finalized = true;
+    if (waiter.timerHandle != null) this._clearTimeout(waiter.timerHandle);
     const handle = this._workers.get(workerId);
     const harness = handle ? this._harnessOf(handle.vendor) : '';
     this._log.append({ worker: workerId, harness, turnEpoch: handle ? this._safeTurnEpoch(handle) : 0, kind: 'control.forced_stop', actor: 'policy', payload: {} });
@@ -752,7 +810,9 @@ export class Coordinator {
 
     let verifyPath = null;
     try {
-      const captured = await this._worktrees.capture(handle.worktree ?? task.worktree);
+      // C5: thread the dispatching vendor through to captureCommit so the snapshot
+      // commit (when one is made) is genuinely attributed.
+      const captured = await this._worktrees.capture(handle.worktree ?? task.worktree, { vendor: handle.vendor });
       const sha = captured && captured.sha;
       const created = await this._worktrees.createVerifyWorktree(task.id, sha);
       verifyPath = created && created.path;
@@ -765,14 +825,24 @@ export class Coordinator {
       }
 
       task.verdict = verdict;
-      const accept = !!(verdict && verdict.reverified === true && verdict.observedExit === task.brief.verification.expectExit);
+      // C1: referee.accept() (or an injected equivalent) is the SOLE done-gate.
+      const acceptOpts = { ...this._acceptOpts, expectExit: task.brief.verification.expectExit };
+      const accept = this._accept(verdict, acceptOpts);
       this._log.append({
         worker: handle.id,
         harness,
         turnEpoch: this._safeTurnEpoch(handle),
         kind: 'verify.reverified',
         actor: 'policy',
-        payload: { verdict, accept },
+        payload: {
+          verdict,
+          accept,
+          acceptOpts: {
+            requireRedGreen: this._acceptOpts.requireRedGreen ?? false,
+            requireCoverage: this._acceptOpts.requireCoverage ?? false,
+          },
+          capture: { sha: captured && captured.sha, snapshotted: captured && captured.snapshotted, vendor: handle.vendor ?? null },
+        },
       });
       task.status = accept ? 'completed' : 'failed';
 

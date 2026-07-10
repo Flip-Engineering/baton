@@ -81,6 +81,7 @@ export const KIND = Object.freeze({
   CRASHED: 'lifecycle.crashed',
   INTERRUPT_REQUESTED: 'control.interrupt_requested',
   INTERRUPT_CONFIRMED: 'control.interrupt_confirmed',
+  DELIVERY_AMENDED: 'control.delivery_amended',
   STEER: 'control.steer',
   NUDGE: 'control.nudge',
   APPROVAL_REQUESTED: 'approval.requested',

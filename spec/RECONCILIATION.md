@@ -53,7 +53,7 @@ Canonical set (resolves red integration#6 / workers-trust#5 — `question.answer
 ```
 lifecycle.spawned | lifecycle.turn_started | lifecycle.turn_completed | lifecycle.session_compacted | lifecycle.exited | lifecycle.crashed
 content.message | content.file_edit | content.tool_call | content.plan
-control.send | control.nudge | control.steer | control.interrupt_requested | control.interrupt_confirmed | control.stale_rejected | control.forced_stop
+control.send | control.nudge | control.steer | control.interrupt_requested | control.interrupt_confirmed | control.stale_rejected | control.delivery_amended | control.forced_stop
 approval.requested | approval.resolved
 question.asked | question.answered
 kill.requested | kill.confirmed
@@ -64,6 +64,8 @@ error
 ```
 
 `story.mjs`'s `KIND` map and `coordinator.mjs`'s emitters both use exactly these strings. No other kind strings exist. An unmapped kind in the story fold is passed through as `unknown.passthrough` (never dropped, never crashes).
+
+**Phase-8 amendment (`control.delivery_amended`, spec/phase8/gate-and-control-correctness.md C3, reconciled at spec/phase8/RECONCILIATION.md R7):** `control.stale_rejected` means the coordinator refused to apply an op (whether or not the adapter was ever touched); `control.delivery_amended` means `send()`'s `adapter.prompt()` was actually invoked — content reached the worker — and only afterward did the coordinator discover the fence had moved out from under it. Logged if and only if delivery was actually attempted and found stale on the post-check; never logged for a pre-delivery rejection (nothing was delivered, nothing to amend).
 
 ## D4 — The trust-gate wiring (the "dead on arrival" fix — red workers-trust#1, integration#2)
 
@@ -95,6 +97,8 @@ on a worker's lifecycle.turn_completed (claimed result):
 
 The coordinator's dependency is exactly what `worktree.mjs` exports (no separate `WorktreeManager` shape):
 `pinBaseSha(repo)`, `createFromBase(taskId, baseSha)`, `captureCommit(taskId)`, `freshVerifySandbox(taskId, sha)`, `changedLines(taskId, sha)`, `reap(taskId, {force?})`, `reconcile()`, `listWorktrees()`. Names are fixed here.
+
+**Phase-8 amendment (`.baton/` exclusion, spec/phase8/gate-and-control-correctness.md C6, reconciled at spec/phase8/RECONCILIATION.md R7/step 2):** additive-only — `worktree.mjs` gains one new export, `ensureBatonExcluded(repoRoot)`, which idempotently ensures `.baton/` is present in `<repoRoot>/.git/info/exclude`, preserving any pre-existing content. `pinBaseSha(repoRoot, opts)` calls it as its very first action, before the `isClean()` dirty-check, so a repo with a pre-existing, not-yet-gitignored `.baton/` directory is never mistaken for dirty because of baton's own bookkeeping. The coordinator never calls `ensureBatonExcluded` directly; it is consumed internally by `pinBaseSha` and is separately exported for direct testing/tooling. Does not change the `WorktreeManager` shape the coordinator depends on.
 
 ## D8 — Provenance in real digests (red integration#4)
 

@@ -379,11 +379,18 @@ test('D11/core#10: spawn() rejects a task whose deps would close a dependency cy
   assert.equal(coordinator.list().find((w) => w.id === t1.id).status, 'pending');
 });
 
-// core#7: the "no background timer thread, every public command implicitly ticks first"
-// contract, proven via a command OTHER than the literally-named tick(). Every prior
-// clock-driven test in this suite advances the clock and then calls .tick() explicitly;
-// this one deliberately never does, to prove the deadline sweep is not hardcoded to fire
-// only from a literal `.tick()` call.
+// core#7: proves the tick()-driven deadline sweep still works as a redundant backup path,
+// exercised via a command OTHER than the literally-named tick(). Since C4, the coordinator
+// *also* arms a real, unref'd background timer on every fresh stop-waiter (independent of
+// tick()) — so "no background timer thread" is no longer true of the coordinator overall.
+// This test's setup() never overrides opts.setTimeout/opts.clearTimeout, so that real timer
+// is armed for the full stopDeadlineMs (1000ms) here too; but this test's fake logical clock
+// is advanced instantly and a non-tick command (list()) is called in the same real-time tick,
+// so the sweep-based path always wins the race and force-stops microseconds in, long before
+// the real 1-second background timer could ever fire (and _forceStop's clear makes the
+// later-armed real timer moot). What this test actually proves: the deadline sweep is not
+// hardcoded to fire only from a literal `.tick()` call — any public command implicitly
+// ticking first is enough, even with the real background timer also armed alongside it.
 test('core#7: the implicit tick-on-every-command contract fires a deadline sweep as a side effect of a command other than .tick()', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator, advance, log } = setup({ adapters: { mock: adapter }, stopDeadlineMs: 1000 });
@@ -519,6 +526,10 @@ test('a same-tick interrupt racing an in-flight send() rejects the send as stale
   const kinds = log.read(handle.id).map((e) => e.kind);
   assert.ok(!kinds.includes('control.nudge'), 'a stale send must never be applied as a nudge');
   assert.ok(kinds.includes('control.stale_rejected'));
+  assert.ok(
+    kinds.includes('control.delivery_amended'),
+    'adapter.prompt() was actually invoked before the fence moved — the log must say so, not just that the send was rejected'
+  );
 });
 
 test('send() to an unknown worker throws WorkerNotFoundError', async () => {

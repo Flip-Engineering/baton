@@ -84,6 +84,23 @@ function logEvent(opts, worker, kind, payload) {
 }
 
 // ---------------------------------------------------------------------------
+// ensureBatonExcluded
+// ---------------------------------------------------------------------------
+
+/** Idempotently ensures '.baton/' is present in <repoRoot>/.git/info/exclude, preserving any
+ * existing content. Additive export per RECONCILIATION.md D7's addendum (C6). */
+export function ensureBatonExcluded(repoRoot) {
+  const excludePath = join(repoRoot, '.git', 'info', 'exclude');
+  let existing = '';
+  if (existsSync(excludePath)) existing = readFileSync(excludePath, 'utf8');
+  const lines = existing.split('\n');
+  if (lines.some((l) => l.trim() === '.baton/')) return; // already present — no-op
+  const withNewline = existing.length > 0 && !existing.endsWith('\n') ? existing + '\n' : existing;
+  mkdirSync(dirname(excludePath), { recursive: true });
+  writeFileSync(excludePath, `${withNewline}.baton/\n`, 'utf8');
+}
+
+// ---------------------------------------------------------------------------
 // pinBaseSha
 // ---------------------------------------------------------------------------
 
@@ -94,6 +111,7 @@ function logEvent(opts, worker, kind, payload) {
  * @throws {DirtyRepoError}
  */
 export async function pinBaseSha(repoRoot, opts = {}) {
+  ensureBatonExcluded(repoRoot);
   const targetRef = opts.targetRef ?? 'HEAD';
   const dirty = !isClean(repoRoot);
   if (dirty) {

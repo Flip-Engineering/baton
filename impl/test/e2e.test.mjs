@@ -39,7 +39,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 
@@ -68,9 +68,9 @@ function makeRealRepo() {
   sh('git', ['config', 'user.email', 'test@example.com'], dir);
   sh('git', ['config', 'user.name', 'Baton E2E'], dir);
   sh('git', ['commit', '--allow-empty', '-q', '-m', 'base'], dir);
-  // baton keeps its worktrees/sandboxes under <repo>/.baton/; exclude it so the driver's own
-  // scaffolding never makes the repo look "dirty" to pinBaseSha. A baton-managed repo has this.
-  writeFileSync(join(dir, '.git', 'info', 'exclude'), '.baton/\n');
+  // baton keeps its worktrees/sandboxes under <repo>/.baton/; pinBaseSha() itself now calls
+  // ensureBatonExcluded() first (C6), which writes this exclude line idempotently before the
+  // dirty check ever runs — so this helper no longer needs to write it manually.
   return dir;
 }
 

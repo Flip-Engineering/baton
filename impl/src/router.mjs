@@ -223,8 +223,17 @@ export class AdaptiveRouter {
       // pick — not the intended "tried, not starved" behavior once a
       // candidate is genuinely well-evidenced (see D5, where the newcomer's
       // seeded count comfortably clears this bar and wins on its own merit).
+      //
+      // The threshold comparison is EPSILON-tolerant: real-clock decay between
+      // when evidence was record()ed and when pick() is later called (even a
+      // single elapsed millisecond) shaves a physically-insignificant sliver
+      // off decayed.count. Without this tolerance, a candidate that reached
+      // exactly minSamplesForAdaptive real (undecayed) samples could
+      // nondeterministically flip below the "well-evidenced" bar purely from
+      // wall-clock jitter between record() and pick() — the same real
+      // evidence must always classify the same way.
       const score =
-        decayed.count < this.minSamplesForAdaptive
+        decayed.count < this.minSamplesForAdaptive - EPSILON
           ? this.defaultPriorSuccessRate
           : scoreCandidate(decayed, totalDecayedCount, {
               explorationConstant: this.explorationConstant,
