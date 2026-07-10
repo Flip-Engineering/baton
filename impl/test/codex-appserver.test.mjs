@@ -448,6 +448,33 @@ test('XA17: malformed JSON lines and unknown-method notifications never crash th
     const terminal = await until(events, (e) => e.kind === 'lifecycle.turn_completed');
     assert.equal(terminal.payload.result.status, 'completed');
     assert.equal(events.some((e) => e.kind === 'lifecycle.crashed'), false, 'garbage input must never be mistaken for a crash');
+    const idless = events.find((e) => e.kind === 'error' && e.payload.correlated === false);
+    assert.ok(idless, 'XA5: an id-less error line surfaces as an UNCORRELATED error event — observable, never speculatively matched to a pending request');
+  } finally {
+    await cleanup(adapter, worker);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Anti-wedge (live-schema-informed): server->client requests OUTSIDE the mapped table (the real
+// 0.144.0 protocol also has item/permissions/requestApproval and item/tool/call) must be ANSWERED
+// with an error response, never silently dropped — a dangling JSON-RPC request wedges its turn.
+// ---------------------------------------------------------------------------
+
+test('anti-wedge: an unmapped server->client REQUEST is auto-answered with an error (turn completes; observable error event; no wedge)', async () => {
+  const adapter = makeAdapter();
+  const events = collect(adapter);
+  const worker = 'w1';
+  try {
+    await adapter.spawn(worker, makeBrief('FAKE:SERVER_UNKNOWN_REQUEST do something needing odd approval'), { worktree: freshWorktree() });
+    // The fake blocks the turn until OUR response to its unmapped request arrives — completion IS the proof.
+    const terminal = await until(events, (e) => e.kind === 'lifecycle.turn_completed');
+    assert.equal(terminal.payload.result.status, 'completed');
+    const surfaced = events.find((e) => e.kind === 'error' && e.payload.serverMethod === 'item/permissions/requestApproval');
+    assert.ok(surfaced, 'the auto-decline is observable, not a silent drop');
+    assert.equal(surfaced.payload.correlated, true);
+    assert.equal(events.some((e) => e.kind === 'approval.requested'), false,
+      'an unmapped request kind is NOT surfaced as a baton approval — approve()/answer() have no wire mapping for it');
   } finally {
     await cleanup(adapter, worker);
   }

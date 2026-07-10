@@ -79,6 +79,23 @@ test('CS1: buildClaudeSessionArgs always includes the stream-json trio; adds per
   assert.equal(withResume[ridx + 1], 'sess-123');
 });
 
+test('CS1 erratum E1: a permission mode is ALWAYS rendered by default (acceptEdits, one-shot parity) — without one a live worker cannot edit files at all (proven live 2026-07-10: Write denied, probe.txt never created)', () => {
+  const base = buildClaudeSessionArgs({});
+  const pidx = base.indexOf('--permission-mode');
+  assert.ok(pidx !== -1, 'default argv must carry --permission-mode; its absence was a live-breaking gap');
+  assert.equal(base[pidx + 1], 'acceptEdits', 'parity with the proven one-shot ClaudeCli argv');
+
+  const custom = buildClaudeSessionArgs({ permissionMode: 'bypassPermissions' });
+  assert.equal(custom[custom.indexOf('--permission-mode') + 1], 'bypassPermissions');
+
+  const none = buildClaudeSessionArgs({ permissionMode: null });
+  assert.ok(!none.includes('--permission-mode'), 'explicit null opts out (caller supplies its own policy flags)');
+
+  const both = buildClaudeSessionArgs({ approvals: true });
+  assert.ok(both.includes('--permission-mode') && both.includes('--permission-prompt-tool'),
+    'approvals and permission mode compose: acceptEdits auto-allows worktree edits, everything else routes to approve()');
+});
+
 test('conforms to the D1 8-verb session-shaped Adapter contract', () => {
   assert.doesNotThrow(() => assertIsAdapter(makeCli()));
 });
@@ -104,9 +121,10 @@ test('CS18: card().verbs.approve/answer are unsupported by default and native on
   assert.equal(withApprovals.verbs.answer, 'native');
 });
 
-test('card declares steer as emulated (D1 no-silent-emulation) and everything else native', () => {
+test('card declares steer as NATIVE (erratum E2: mid-turn stream-json injection is real) and everything else native too', () => {
   const card = makeCli().card();
-  assert.equal(card.verbs.steer, 'emulated');
+  assert.equal(card.verbs.steer, 'native',
+    'live-disproven premise: CS8 assumed no way to splice content into an in-flight completion; the real CLI absorbs a mid-turn user frame at the next tool boundary');
   assert.equal(card.verbs.spawn, 'native');
   assert.equal(card.verbs.prompt, 'native');
   assert.equal(card.verbs.interrupt, 'native');
@@ -164,7 +182,7 @@ test('CS6: two prompt() calls produce two turn_completed events on the SAME chil
   await waitForKind('kill.confirmed');
 });
 
-test('CS7: prompt mode "nudge" also writes natively and completes a turn (queue-for-next-turn semantics, not mid-completion injection)', async () => {
+test('CS7: prompt mode "nudge" also writes natively; sent while idle it begins the next turn (sent mid-turn it would be absorbed — see the CS8/E2 steer tests)', async () => {
   const { cli, waitFor, waitForKind } = harness();
   const w = 'w1';
   await cli.spawn(w, brief('t1'), { worktree: process.cwd() });
@@ -184,10 +202,11 @@ test('CS7: prompt mode "nudge" also writes natively and completes a turn (queue-
 });
 
 // ---------------------------------------------------------------------------
-// CS8 — steer: emulated as interrupt-then-reprompt (the ONE picked semantics)
+// CS8 (erratum E2) — steer: NATIVE mid-turn injection. The running turn absorbs the frame at
+// its next boundary; no interrupt round-trip, no aborted tool call, one terminal per turn.
 // ---------------------------------------------------------------------------
 
-test('CS8: prompt(mode:"steer") interrupts the in-flight turn then reprompts with the steer content on the same process', async () => {
+test('CS8/E2: prompt(mode:"steer") injects into the IN-FLIGHT turn natively — the running turn absorbs it and completes redirected, with NO interrupt round-trip', async () => {
   const { cli, events, waitForKind } = harness();
   const w = 'w1';
   await cli.spawn(w, brief('HOLD_UNTIL_INTERRUPT'), { worktree: process.cwd() });
@@ -196,17 +215,34 @@ test('CS8: prompt(mode:"steer") interrupts the in-flight turn then reprompts wit
 
   const ack = await cli.prompt(w, 'steer: do the other thing instead', 'steer');
   assert.equal(ack.ok, true);
-  assert.equal(ack.emulated, true, 'CS19: steer is never silently emulated, the Ack says so');
+  assert.ok(!ack.emulated, 'steer is native on this wire now — no emulation flag');
 
-  await waitForKind('control.interrupt_confirmed');
   const completed = await waitForKind('lifecycle.turn_completed', 4000);
   assert.equal(completed.payload.pid, spawned.payload.pid, 'steer redirected the SAME session, no respawn');
+  assert.match(completed.payload.result?.summary ?? '', /steered-to:.*do the other thing instead/,
+    'the RUNNING turn absorbed the steer content (live-observed semantics), not a fresh turn after an interrupt');
 
-  const steerKinds = events.map((e) => e.kind);
-  assert.ok(steerKinds.includes('control.interrupt_requested'));
-  assert.ok(steerKinds.includes('control.interrupt_confirmed'));
-  const steeredMessage = events.find((e) => e.kind === 'content.message' && /do the other thing instead/.test(e.payload.text ?? ''));
-  assert.ok(steeredMessage, 'the steer content was actually delivered as the next turn');
+  const kinds = events.map((e) => e.kind);
+  assert.ok(!kinds.includes('control.interrupt_requested'), 'no phantom interrupt in the log for a steer');
+  assert.ok(!kinds.includes('control.interrupt_confirmed'), 'a steer must not satisfy a racing stop-waiter');
+  assert.ok(kinds.includes('control.steer'), 'the steer itself is an explicit orchestrator-actor event');
+  assert.equal(kinds.filter((k) => k === 'lifecycle.turn_started').length, 1,
+    'the absorbed frame does NOT fake a second turn_started — one turn, one start, one terminal');
+
+  await cli.kill(w);
+  await waitForKind('kill.confirmed');
+});
+
+test('CS8/E2: steer when NO turn is in flight simply begins the next turn (wire truth: same user frame either way)', async () => {
+  const { cli, waitFor, waitForKind } = harness();
+  const w = 'w1';
+  await cli.spawn(w, brief('t1'), { worktree: process.cwd() });
+  const first = await waitForKind('lifecycle.turn_completed');
+
+  const ack = await cli.prompt(w, 'steer while idle', 'steer');
+  assert.equal(ack.ok, true);
+  const completed = await waitFor((e) => e.kind === 'lifecycle.turn_completed' && e !== first, 4000);
+  assert.match(completed.payload.result?.summary ?? '', /steer while idle/);
 
   await cli.kill(w);
   await waitForKind('kill.confirmed');
@@ -277,7 +313,29 @@ test('CS12: approve("allow") round-trips a real can_use_tool control_request/con
   assert.equal(resolved.payload.decision, 'allow');
 
   const completed = await waitForKind('lifecycle.turn_completed', 4000);
-  assert.match(completed.payload.result?.summary ?? JSON.stringify(completed.payload), /approved:Bash/);
+  assert.match(completed.payload.result?.summary ?? JSON.stringify(completed.payload), /approved:Bash/,
+    'the fake validates updatedInput+toolUseID (erratum E3) — reaching approved: proves the full live-honored shape went out');
+
+  await cli.kill(w);
+  await waitForKind('kill.confirmed');
+});
+
+test('CS12 erratum E3 regression: approve("allow") with NO payload falls back to the ORIGINAL request input and echoes toolUseID — a bare {behavior:"allow"} is silently re-asked by the real CLI (live-caught wedge, 2026-07-10)', async () => {
+  const { cli, events, waitForKind } = harness({ approvals: true });
+  const w = 'w1';
+  await cli.spawn(w, brief('REQUEST_APPROVAL:Bash'), { worktree: process.cwd() });
+  const requested = await waitForKind('approval.requested');
+  assert.ok(requested.payload.toolUseID, 'the wire tool_use_id is surfaced so callers can correlate');
+
+  const ack = await cli.approve(w, requested.payload.requestId, 'allow'); // no payload at all
+  assert.equal(ack.ok, true);
+
+  const completed = await waitForKind('lifecycle.turn_completed', 4000);
+  assert.match(completed.payload.result?.summary ?? '', /approved:Bash/,
+    'an allow without updatedInput/toolUseID would have been re-asked and then failed approval-invalid');
+  const echo = events.find((e) => e.kind === 'content.message' && /ran Bash with/.test(e.payload.text ?? ''));
+  assert.match(echo.payload.text, /"command":"echo hi"/, 'the ORIGINAL request input was echoed back as updatedInput');
+  assert.equal(events.filter((e) => e.kind === 'approval.requested').length, 1, 'exactly one ask — no silent re-ask loop');
 
   await cli.kill(w);
   await waitForKind('kill.confirmed');

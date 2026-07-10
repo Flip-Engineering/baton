@@ -323,3 +323,58 @@ mock of the adapter's internals. It must, and does:
 - A shared-daemon/broker transport (XA1) — a legitimate alternative topology for a future
   "foreman" build, deliberately not built here; per-worker isolation is the chosen default for
   this cluster, not a placeholder for it.
+
+---
+
+## Errata — live-verified against codex-cli 0.144.0 app-server, 2026-07-10 (post-implementation re-evaluation)
+
+A raw-wire live probe (session scratchpad `probe-codex-appserver.mjs`, raw frames in
+`codex-probe-raw.jsonl`) re-verified this spec's protocol claims against the real binary and the
+`codex app-server generate-json-schema` bundle. The architecture held up: `initialize`/
+`initialized`/`thread/start`/`turn/start`/`turn/steer`/`turn/interrupt` are all real with the
+pinned param shapes; `TurnStatus` is exactly `completed|interrupted|failed|inProgress`; the
+approval decision vocabulary contains exactly the pinned `accept`/`decline`/`cancel` (plus
+richer variants unused here); `turn/interrupt` → `{}` → `turn/completed{status:'interrupted'}`
+with the THREAD SURVIVING was proven live, as was mid-turn `turn/steer` redirecting a running
+turn. Two pinned details were wrong, and one robustness gap was closed:
+
+### X1 — stale-steer error is an ID-MATCHED `-32600`, not `-32010`
+
+Live: `turn/steer` with a wrong `expectedTurnId` fails with
+`{"error":{"code":-32600,"message":"expected active turn id \`X\` but found \`Y\`"},"id":<req>}`.
+The `-32010` code in the fixture/tests was never verified and is fiction for 0.144.0. The
+adapter itself never branched on the code (it propagates `err.message`) — behavior unchanged;
+fixture and comments corrected.
+
+### X2 — unknown-method errors are ID-MATCHED on 0.144.0; the id-less hazard is demoted to defensive modeling
+
+Live: an unknown method gets an id-matched `-32600` (`"Invalid request: unknown variant ..."`),
+correlated to its request. The dossier's "id-less -32600, verified live" (docs/reference/
+codex-app-server.md §Unknown method) does not hold on 0.144.0 — either version drift or a
+flawed original observation. XA3/XA5 remain: per-request timeouts stay mandatory (a wedged
+server sends nothing at all), and the adapter still surfaces any genuinely id-less error as an
+uncorrelated `error` event (fixture models one synthetically under `FAKE_CODEX_MALFORMED`,
+labeled synthetic).
+
+### X3 — unmapped server→client REQUESTS must be answered, never ignored (anti-wedge)
+
+The real schema also serves `item/permissions/requestApproval` and `item/tool/call` — outside
+this MVP's mapped table. The original "silently ignored" rule left a JSON-RPC request dangling,
+wedging its turn forever. Amendment: the adapter replies
+`{id, error:{code:-32601, message:'baton: unhandled server->client request "<method>"'}}` and
+emits an observable `error` event (`correlated:true, serverMethod`). XA17's "never crash" gains
+"never wedge".
+
+### X4 — single pending-request slot replaced by a keyed map
+
+`session.wait` (one slot) would clobber an earlier pending approval/question if the server
+issued two concurrently, leaving the first's `rawId` unanswerable — the same wedge class as X3.
+Now `session.waits: Map(requestId -> wait)`; `approve()`/`answer()` consume by key
+(answer-exactly-once preserved per request).
+
+### Still open (honestly)
+
+- `-32001` busy on `thread/start` remains fixture-pinned only (hard to reproduce on demand);
+  the adapter's typed-failure path is what the tests lock.
+- Live approval round-trip not yet exercised (an `approvalPolicy:'untrusted'` echo probe was
+  auto-run without prompting); the static schema match (decision vocab, answers shape) is exact.

@@ -14,9 +14,15 @@ import { renderPrompt } from './cli-adapters.mjs';
 // buildClaudeSessionArgs — pure function (no process spawned), CS1.
 // ---------------------------------------------------------------------------
 
-export function buildClaudeSessionArgs({ approvals = false, sessionId, model } = {}) {
+export function buildClaudeSessionArgs({ approvals = false, sessionId, model, permissionMode = 'acceptEdits' } = {}) {
   // stream-json "only works with --print"; --verbose is required alongside it (CS1/§1).
   const args = ['--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'];
+  // Erratum E1 (live-caught 2026-07-10): without a permission mode, a --print session's tool
+  // calls are auto-DENIED — the worker cannot even edit files. Default matches the proven
+  // one-shot ClaudeCli argv (acceptEdits: worktree edits auto-allowed; everything else routes
+  // to the permission prompt / approve() when approvals is on). Pass permissionMode:null to
+  // opt out and supply your own policy flags via ctor args.
+  if (permissionMode != null) args.push('--permission-mode', permissionMode);
   if (approvals) args.push('--permission-prompt-tool', 'stdio'); // magic value per the Agent SDK source (§0)
   if (sessionId) args.push('--resume', sessionId);
   if (model) args.push('--model', model);
@@ -58,6 +64,7 @@ export class ClaudeSessionCli {
       sessionId: opts.sessionId,
       killGraceMs: opts.killGraceMs ?? 5000,
       model: opts.model,
+      permissionMode: opts.permissionMode === undefined ? 'acceptEdits' : opts.permissionMode, // E1
     };
     /** @type {Map<string, object>} worker -> session */
     this._sessions = new Map();
@@ -74,7 +81,7 @@ export class ClaudeSessionCli {
       verbs: {
         spawn: 'native',
         prompt: 'native',
-        steer: 'emulated', // CS8/§3 — interrupt-then-reprompt, the ONE picked semantics
+        steer: 'native', // E2: mid-turn stream-json injection is real — the running turn absorbs it
         interrupt: 'native',
         approve: this._cfg.approvals ? 'native' : 'unsupported', // CS18
         answer: this._cfg.approvals ? 'native' : 'unsupported', // CS18
@@ -120,7 +127,12 @@ export class ClaudeSessionCli {
 
     const argv = [
       ...(this._cfg.args ?? []),
-      ...buildClaudeSessionArgs({ approvals: this._cfg.approvals, sessionId: this._cfg.sessionId, model: this._cfg.model }),
+      ...buildClaudeSessionArgs({
+        approvals: this._cfg.approvals,
+        sessionId: this._cfg.sessionId,
+        model: this._cfg.model,
+        permissionMode: this._cfg.permissionMode,
+      }),
     ];
 
     let child;
@@ -145,14 +157,15 @@ export class ClaudeSessionCli {
       turnInFlight: false,
       discardNextResult: false, // CS11
       turnEpoch: 0,
-      epoch: 0, // R5.1: bumped by explicit interrupt()/kill() to abandon a pending steer follow-up
       reqSeq: 0,
       deadEmitted: false,
       terminal: false, // set once the child process itself has exited
       stopping: false,
       killTimer: null,
       pendingControlRequests: new Map(), // wire request_id (WE sent) -> resolve(responseObj)
-      wireToAdapterId: new Map(), // adapter-minted requestId -> wire request_id (R4)
+      // adapter-minted requestId -> {wireId, input?, toolUseID?} (R4 + erratum E3: approve()
+      // must echo the request's own input and tool_use_id back on an allow)
+      wireToAdapterId: new Map(),
     };
     this._sessions.set(worker, session);
 
@@ -179,13 +192,19 @@ export class ClaudeSessionCli {
     try { session.child.stdin.write(`${JSON.stringify(obj)}\n`); } catch { /* pipe race, process already gone */ }
   }
 
-  /** CS4: lifecycle.turn_started is emitted by the ADAPTER at the moment a `user` frame is written. */
+  /**
+   * CS4 as amended by erratum E2: lifecycle.turn_started (and a turnEpoch bump) are emitted only
+   * when this frame BEGINS a turn. A frame written while a turn is already in flight is absorbed
+   * by that RUNNING turn at its next boundary (live-observed wire semantics) — fabricating a
+   * second turn_started for it would corrupt the one-start/one-terminal accounting.
+   */
   _writeUserFrame(session, text) {
     if (session.terminal) return;
+    const beginsTurn = !session.turnInFlight;
     session.turnInFlight = true;
-    session.turnEpoch = (session.turnEpoch ?? 0) + 1;
+    if (beginsTurn) session.turnEpoch = (session.turnEpoch ?? 0) + 1;
     this._write(session, { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
-    this._emit(session, 'lifecycle.turn_started', {});
+    if (beginsTurn) this._emit(session, 'lifecycle.turn_started', {});
   }
 
   _onData(session, chunk) {
@@ -255,15 +274,19 @@ export class ClaudeSessionCli {
     const wireId = obj.request_id;
     if (req.subtype === 'can_use_tool') {
       // R4: requestId must be unique ACROSS WORKERS within one adapter instance — namespace it,
-      // keeping the raw wire id internal for constructing the control_response.
+      // keeping the raw wire id internal for constructing the control_response. E3: the request's
+      // own input and tool_use_id are retained — the CLI honors an allow ONLY when the response
+      // echoes updatedInput and toolUseID (a bare allow is silently re-asked; live-caught).
       const requestId = `${session.worker}:${wireId}`;
-      session.wireToAdapterId.set(requestId, wireId);
-      this._emit(session, 'approval.requested', { requestId, toolName: req.tool_name, input: req.input });
+      session.wireToAdapterId.set(requestId, { wireId, input: req.input, toolUseID: req.tool_use_id });
+      this._emit(session, 'approval.requested', {
+        requestId, toolName: req.tool_name, input: req.input, toolUseID: req.tool_use_id,
+      });
       return;
     }
     if (req.subtype === 'elicitation') {
       const requestId = `${session.worker}:${wireId}`;
-      session.wireToAdapterId.set(requestId, wireId);
+      session.wireToAdapterId.set(requestId, { wireId });
       this._emit(session, 'question.asked', { requestId, question: req.message });
       return;
     }
@@ -312,22 +335,21 @@ export class ClaudeSessionCli {
     if (!session || session.terminal) return { ok: false, reason: `unknown or terminal worker ${worker}` };
 
     if (mode === 'steer') {
-      // CS8: emulated as interrupt -> await confirm -> reprompt with the steer content, on the
-      // SAME process. The Ack resolves immediately; the interrupt/reprompt sequence is async.
-      const epochAtSchedule = session.epoch;
-      const confirmed = this._sendInterrupt(session);
-      confirmed.then(() => {
-        if (session.terminal) return;
-        this._emit(session, 'control.interrupt_confirmed', {});
-        // R5.1: abandon this follow-up if a subsequent interrupt()/kill() arrived meanwhile.
-        if (session.epoch !== epochAtSchedule) return;
-        this._writeUserFrame(session, content);
-      });
-      return { ok: true, emulated: true };
+      // CS8 as amended by erratum E2 (live-proven 2026-07-10): steer is NATIVE. A user frame
+      // written mid-turn is consumed by the RUNNING turn at its next tool boundary — the turn
+      // redirects without an interrupt round-trip, without aborting the in-flight tool call,
+      // and without a phantom control.interrupt_confirmed that could satisfy a racing stop-
+      // waiter. (An orchestrator that wants IMMEDIATE redirection — aborting the current tool
+      // call — composes interrupt() + prompt() explicitly; that is a stop, not a steer.)
+      // When no turn is in flight the same frame simply begins the next turn: wire truth.
+      this._emit(session, 'control.steer', { midTurn: session.turnInFlight });
+      this._writeUserFrame(session, content);
+      return { ok: true };
     }
 
-    // CS7: 'turn' and 'nudge' are wire-identical for Claude — both just queue the next `user`
-    // frame the CLI drains at its own turn boundary. Native; never silently emulated (CS19).
+    // CS7 as amended by E2: 'turn' and 'nudge' are wire-identical for Claude — a plain `user`
+    // frame. Sent while idle it begins the next turn; sent mid-turn the running turn absorbs
+    // it (nudge semantics are therefore genuinely native here). Never silently emulated (CS19).
     this._writeUserFrame(session, content);
     return { ok: true };
   }
@@ -339,7 +361,6 @@ export class ClaudeSessionCli {
   async interrupt(worker) {
     const session = this._sessions.get(worker);
     if (!session || session.terminal) return { ok: true }; // D9: interrupt always resolves
-    session.epoch += 1; // R5.1: abandon any pending steer follow-up for this worker
     const confirmed = this._sendInterrupt(session);
     confirmed.then(() => {
       if (session.terminal) return;
@@ -359,21 +380,26 @@ export class ClaudeSessionCli {
     }
     const session = this._sessions.get(worker);
     if (!session || session.terminal) return { ok: false, reason: `unknown or terminal worker ${worker}` };
-    const wireId = session.wireToAdapterId.get(requestId);
-    if (!wireId) return { ok: false, reason: `no pending approval for requestId ${requestId}` };
+    const entry = session.wireToAdapterId.get(requestId);
+    if (!entry) return { ok: false, reason: `no pending approval for requestId ${requestId}` };
     session.wireToAdapterId.delete(requestId);
+    const { wireId, input, toolUseID } = entry;
 
+    // E3: mirror the Agent SDK's reference client exactly — every PermissionResult goes out
+    // with the request's toolUseID, and an allow ALWAYS carries updatedInput (falling back to
+    // the request's own input). Live-caught: {behavior:'allow'} alone is silently re-asked by
+    // the CLI (fresh request_id) and the turn wedges.
     let permission;
     let emulated;
     if (decision === 'allow') {
-      permission = { behavior: 'allow', updatedInput: payload?.updatedInput };
+      permission = { behavior: 'allow', updatedInput: payload?.updatedInput ?? input, toolUseID };
     } else if (decision === 'cancel') {
       // The wire's PermissionResult union has no native 'cancel' — closest achievable mapping,
       // flagged as emulated (D1 "no silent emulation").
-      permission = { behavior: 'deny', message: payload?.message ?? 'cancelled by baton', interrupt: true };
+      permission = { behavior: 'deny', message: payload?.message ?? 'cancelled by baton', interrupt: true, toolUseID };
       emulated = true;
     } else {
-      permission = { behavior: 'deny', message: payload?.message ?? 'denied by baton' };
+      permission = { behavior: 'deny', message: payload?.message ?? 'denied by baton', toolUseID };
     }
 
     this._write(session, { type: 'control_response', response: { subtype: 'success', request_id: wireId, response: permission } });
@@ -387,9 +413,10 @@ export class ClaudeSessionCli {
     }
     const session = this._sessions.get(worker);
     if (!session || session.terminal) return { ok: false, reason: `unknown or terminal worker ${worker}` };
-    const wireId = session.wireToAdapterId.get(requestId);
-    if (!wireId) return { ok: false, reason: `no pending question for requestId ${requestId}` };
+    const entry = session.wireToAdapterId.get(requestId);
+    if (!entry) return { ok: false, reason: `no pending question for requestId ${requestId}` };
     session.wireToAdapterId.delete(requestId);
+    const { wireId } = entry;
 
     const { text, decision } = reply;
     const action = decision ?? (text !== undefined ? 'accept' : 'decline');
@@ -411,7 +438,6 @@ export class ClaudeSessionCli {
   async kill(worker) {
     const session = this._sessions.get(worker);
     if (!session || session.terminal) return { ok: true }; // D9: kill always resolves
-    session.epoch += 1; // R5.1: abandon any pending steer follow-up for this worker
     if (!session.stopping) {
       session.stopping = true;
       this._emit(session, 'kill.requested', {});

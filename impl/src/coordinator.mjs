@@ -84,11 +84,20 @@ export class Coordinator {
     // story wiring already applies, extended to the log destination itself.
     {
       const rawAppend = this._log.append.bind(this._log);
+      this._appendFailures = 0;
       this._log.append = (partial) => {
         let e;
         try {
           e = rawAppend(partial);
-        } catch {
+        } catch (err) {
+          // Log-is-truth means a dropped event may NOT be invisible: count every drop and warn
+          // on the first. (The swallow exists for one benign race — a fire-and-forget adapter
+          // continuation writing after external teardown — but a real append failure mid-run,
+          // e.g. disk full, must be observable, not silent data loss.)
+          this._appendFailures += 1;
+          if (this._appendFailures === 1) {
+            try { process.emitWarning(`baton coordinator: log.append failed and the event was dropped: ${err?.message ?? err}`); } catch { /* never throws */ }
+          }
           return undefined;
         }
         if (this._story && typeof this._story.record === 'function') {

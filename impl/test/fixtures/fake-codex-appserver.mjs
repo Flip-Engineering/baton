@@ -24,6 +24,10 @@
 //       FAKE:REQUEST_APPROVAL:command    -> emits item/commandExecution/requestApproval and
 //                                           BLOCKS the turn until the client responds
 //       FAKE:REQUEST_APPROVAL:fileChange -> same, item/fileChange/requestApproval
+//       FAKE:SERVER_UNKNOWN_REQUEST      -> emits a server->client REQUEST with a method baton
+//                                           does not map (anti-wedge: the adapter must ANSWER it,
+//                                           an error response is fine — the turn completes only
+//                                           once the response arrives)
 //       FAKE:REQUEST_QUESTION            -> emits item/tool/requestUserInput and blocks
 //       FAKE:STAY_OPEN                   -> the turn does NOT auto-complete; it only ends via
 //                                           turn/interrupt (-> status "interrupted", thread
@@ -58,6 +62,8 @@ let activeTurn = null;
 let pendingApproval = null;
 /** @type {{id:number, turnId:string, qid:string}|null} */
 let pendingQuestion = null;
+/** @type {{id:number, turnId:string|null}|null} */
+let pendingUnknownServerReq = null;
 
 function send(obj) {
   process.stdout.write(JSON.stringify(obj) + '\n');
@@ -107,6 +113,11 @@ function runTurn(turnId, input) {
   if (MALFORMED) {
     process.stdout.write('{not-valid-json,,,\n');
     notify('bogus/unknownNotification', { whatever: true });
+    // SYNTHETIC id-less error (hazard modeling, not a live-pinned behavior): a server that
+    // cannot recover an id from a broken inbound line has nothing to correlate a rejection to.
+    // The adapter must surface it as an uncorrelated error event and let the real pending
+    // request(s) time out on their own deadline — never speculatively match it (XA5).
+    send({ error: { code: -32700, message: 'Parse error (synthetic id-less hazard)' } });
   }
 
   itemCompleted(turnId, { id: `${turnId}-ack`, type: 'agentMessage', text: `received: ${text}`.slice(0, 200) });
@@ -144,6 +155,20 @@ function runTurn(turnId, input) {
       serverReqSeq += 1;
       pendingQuestion = { id: serverReqSeq, turnId, qid };
       send({ id: serverReqSeq, method: 'item/tool/requestUserInput', params: { threadId, turnId, itemId, questions: [{ id: qid, header: 'Approach', question: 'Which approach should I take?' }] } });
+    }, 10);
+    return;
+  }
+
+  if (text.includes('FAKE:SERVER_UNKNOWN_REQUEST')) {
+    // Fires a server->client REQUEST whose method baton does not map
+    // (item/permissions/requestApproval is REAL in the 0.144.0 schema but outside the adapter's
+    // mapped table). A JSON-RPC request left unanswered wedges its turn forever — the adapter
+    // must reply (an error response is fine), never silently ignore. The turn completes ONLY
+    // once the client's response arrives (see the client-response branch in the line handler).
+    setTimeout(() => {
+      serverReqSeq += 1;
+      pendingUnknownServerReq = { id: serverReqSeq, turnId };
+      send({ id: serverReqSeq, method: 'item/permissions/requestApproval', params: { threadId, turnId, itemId: 'perm-item-1', reason: 'unmapped-by-baton request kind' } });
     }, 10);
     return;
   }
@@ -211,6 +236,17 @@ rl.on('line', (line) => {
   if (obj.method === undefined && obj.id !== undefined) {
     if (pendingApproval && obj.id === pendingApproval.id) { handleApprovalResponse(obj); return; }
     if (pendingQuestion && obj.id === pendingQuestion.id) { handleQuestionResponse(obj); return; }
+    if (pendingUnknownServerReq && obj.id === pendingUnknownServerReq.id) {
+      // The client ANSWERED the unmapped request (an error response counts — the point is it
+      // did not leave the request dangling). Reward: the blocked turn now completes.
+      const { turnId } = pendingUnknownServerReq;
+      pendingUnknownServerReq = null;
+      if (turnId && activeTurn && activeTurn.id === turnId) {
+        itemCompleted(turnId, { id: `${turnId}-unwedged-msg`, type: 'agentMessage', text: `unwedged: client answered (error:${!!obj.error})` });
+        scheduleNaturalCompletion(turnId, 'post-unknown-request', 10);
+      }
+      return;
+    }
     return; // stray/late response — ignore
   }
 
@@ -255,7 +291,10 @@ rl.on('line', (line) => {
     case 'turn/steer': {
       const { expectedTurnId } = obj.params;
       if (!activeTurn || activeTurn.id !== expectedTurnId) {
-        send({ id: obj.id, error: { code: -32010, message: 'no active turn matches expectedTurnId' } });
+        // Live-probed shape (codex 0.144.0, 2026-07-10): a stale/mismatched steer fails with an
+        // ID-MATCHED -32600 carrying this exact message form — NOT the -32010 this fixture
+        // previously invented.
+        send({ id: obj.id, error: { code: -32600, message: `expected active turn id \`${expectedTurnId}\` but found \`${activeTurn ? activeTurn.id : '(none)'}\`` } });
         break;
       }
       send({ id: obj.id, result: { turnId: activeTurn.id } });
@@ -268,9 +307,11 @@ rl.on('line', (line) => {
       break;
     }
     default:
-      // Unknown method from a well-behaved client shouldn't happen; real codex answers with an
-      // id-less -32600. We mirror that exactly (see dossier §9) rather than inventing a nicer shape.
-      send({ error: { code: -32600, message: `Invalid request: unknown variant \`${obj.method}\`` } });
+      // Live-probed (codex 0.144.0, 2026-07-10): an unknown method gets an ID-MATCHED -32600
+      // ("Invalid request: unknown variant `X`, expected one of `initialize`, ..."), not the
+      // id-less error this fixture previously claimed. Id-less errors remain a modeled hazard
+      // for lines the server cannot correlate — see the MALFORMED branch in runTurn.
+      send({ id: obj.id, error: { code: -32600, message: `Invalid request: unknown variant \`${obj.method}\`, expected one of \`initialize\`, \`thread/start\`, \`turn/start\`` } });
   }
 });
 

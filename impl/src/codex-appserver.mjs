@@ -249,7 +249,9 @@ export class CodexAppServerCli {
       // XA13: mints an adapter-opaque requestId (R4: unique across workers within this
       // adapter instance, since the coordinator's single-consumer map is keyed globally by it)
       // and records the raw wire id/kind so approve() can echo the wire response later.
-      session.wait = { kind: 'approval', requestId, rawId: id, threadId: params.threadId, turnId: params.turnId, itemId: params.itemId };
+      // Keyed map (not a single slot): the wire permits multiple pending server->client
+      // requests, and clobbering an earlier one would leave its rawId unanswerable — a wedge.
+      session.waits.set(requestId, { kind: 'approval', rawId: id, threadId: params.threadId, turnId: params.turnId, itemId: params.itemId });
       this._emit(session, 'approval.requested', {
         requestId, kind, threadId: params.threadId, turnId: params.turnId, itemId: params.itemId,
         command: params.command, cwd: params.cwd, reason: params.reason,
@@ -259,14 +261,19 @@ export class CodexAppServerCli {
     if (method === 'item/tool/requestUserInput') {
       const requestId = `${session.worker}:q:${(session.reqIdSeq += 1)}`;
       const qid = params.questions?.[0]?.id;
-      session.wait = { kind: 'question', requestId, rawId: id, threadId: params.threadId, turnId: params.turnId, qid };
+      session.waits.set(requestId, { kind: 'question', rawId: id, threadId: params.threadId, turnId: params.turnId, qid });
       this._emit(session, 'question.asked', {
         requestId, threadId: params.threadId, turnId: params.turnId, itemId: params.itemId, questions: params.questions,
       });
       return;
     }
-    // Any other server->client request method is out of this MVP's mapped table; XA17's
-    // "never crash on the unmapped" rule applies here too — silently ignored.
+    // Any other server->client REQUEST (e.g. the real item/permissions/requestApproval,
+    // item/tool/call — present in the 0.144.0 schema but outside this MVP's mapped table) must
+    // still be ANSWERED: a JSON-RPC request left dangling wedges its turn forever. Reply with a
+    // method-not-found error and surface an observable event — never a silent drop (XA17 keeps
+    // "never crash"; this adds "never wedge").
+    this._writeRaw(session, { id, error: { code: -32601, message: `baton: unhandled server->client request "${method}"` } });
+    this._emit(session, 'error', { message: `unmapped server->client request "${method}" auto-declined`, code: -32601, correlated: true, serverMethod: method });
   }
 
   // -------------------------------------------------------------------------
@@ -381,7 +388,7 @@ export class CodexAppServerCli {
       pendingRequests: new Map(),
       threadId: null, activeTurn: null, turnEpoch: 0,
       nudgeQueue: [], // XA7 mode:'nudge' emulation buffer
-      wait: null, // the single pending approval/question (XA9/XA12)
+      waits: new Map(), // requestId -> pending approval/question (XA9/XA12; keyed, never clobbered)
       terminalTurns: new Set(), // XA16
       lastTokenUsage: null,
       stopGeneration: 0, pendingFollowUp: null, // R5.1
@@ -521,13 +528,14 @@ export class CodexAppServerCli {
   async approve(worker, requestId, decision, payload) {
     const session = this._sessions.get(worker);
     if (!session) return { ok: false, reason: `unknown worker ${worker}` };
-    if (!session.wait || session.wait.kind !== 'approval' || session.wait.requestId !== requestId) {
+    const wait = session.waits.get(requestId);
+    if (!wait || wait.kind !== 'approval') {
       return { ok: false, reason: 'approve(): no matching approval wait-item for this requestId (answer exactly once)' };
     }
     const wire = DECISION_WIRE[decision];
     if (!wire) return { ok: false, reason: `approve(): unknown decision "${decision}"` };
-    const { rawId } = session.wait;
-    session.wait = null; // consumed — a request is a consumable message, not a replayable fact
+    const { rawId } = wait;
+    session.waits.delete(requestId); // consumed — a request is a consumable message, not a replayable fact
     this._writeRaw(session, { id: rawId, result: { decision: wire } });
     this._emit(session, 'approval.resolved', { requestId, decision, payload: payload ?? null });
     return { ok: true };
@@ -536,11 +544,12 @@ export class CodexAppServerCli {
   async answer(worker, requestId, answer) {
     const session = this._sessions.get(worker);
     if (!session) return { ok: false, reason: `unknown worker ${worker}` };
-    if (!session.wait || session.wait.kind !== 'question' || session.wait.requestId !== requestId) {
+    const wait = session.waits.get(requestId);
+    if (!wait || wait.kind !== 'question') {
       return { ok: false, reason: 'answer(): no matching question wait-item for this requestId (distinct from approve())' };
     }
-    const { rawId, qid } = session.wait;
-    session.wait = null;
+    const { rawId, qid } = wait;
+    session.waits.delete(requestId);
     const text = answer?.text ?? answer?.decision ?? '';
     // XA12: Baton's free-form {text?, decision?} maps onto the schema's (possibly multi-
     // question) {answers: {<qid>: {answers: string[]}}} shape, answering only the first

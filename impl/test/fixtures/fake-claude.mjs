@@ -16,10 +16,22 @@
 //   "REQUEST_APPROVAL:<toolName>"  -> emits a can_use_tool control_request; blocks the turn until a
 //                                     control_response answers it, then completes reflecting the
 //                                     decision (approval is never a crash — see spec CS12).
+//                                     LIVE-FAITHFUL VALIDATION (erratum E3, observed live 2026-07-10
+//                                     on claude 2.1.206): an `allow` missing `updatedInput` (object)
+//                                     or `toolUseID` is NOT honored — the real CLI silently re-asks
+//                                     with a fresh request_id. This fake re-asks ONCE, then (bounded
+//                                     purely so an unfixed adapter fails an assertion instead of
+//                                     hanging the suite — the real CLI re-asks forever) fails the
+//                                     turn with an `approval-invalid:` error result.
 //   "REQUEST_QUESTION"             -> emits an elicitation control_request; blocks until answered,
 //                                     then completes reflecting the answer.
-//   "HOLD_UNTIL_INTERRUPT"         -> emits one assistant text event, then blocks forever (no result)
-//                                     until an interrupt control_request arrives.
+//   "HOLD_UNTIL_INTERRUPT"         -> emits one assistant text event, then blocks (no result) until
+//                                     EITHER an interrupt control_request arrives OR a `user` frame
+//                                     lands mid-turn — in which case the RUNNING turn absorbs it and
+//                                     completes as `steered-to:<text>` (erratum E2, observed live
+//                                     2026-07-10: stream-json input written mid-turn is consumed by
+//                                     the in-flight turn at its next tool boundary — it does NOT sit
+//                                     queued for the next turn).
 //   "TRIGGER_CRASH"                -> writes to stderr and exits 1 immediately (simulates a genuine
 //                                     vendor process failure, distinct from a mere tool denial).
 //   anything else                  -> emits an assistant text event ("Echo: <text>") then a success
@@ -105,27 +117,50 @@ function startTurn(text) {
   const approvalMatch = text.match(/REQUEST_APPROVAL:(\S+)/);
   if (approvalMatch) {
     const toolName = approvalMatch[1];
-    const requestId = nextRequestId();
-    currentTurn = { kind: 'approval', requestId };
-    pending.set(requestId, (resp) => {
-      currentTurn = null;
-      if (resp && resp.behavior === 'allow') {
-        emitAssistantText(`ran ${toolName} with ${JSON.stringify(resp.updatedInput ?? {})}`);
-        emitResult({ text: `approved:${toolName}` });
-      } else {
-        emitAssistantText(`permission denied for ${toolName}`);
-        emitResult({ text: `denied:${toolName}:${(resp && resp.message) || 'no reason given'}` });
-      }
-      drainQueue();
-    });
-    send({
-      type: 'control_request',
-      request_id: requestId,
-      request: { subtype: 'can_use_tool', tool_name: toolName, input: { command: 'echo hi' }, tool_use_id: `toolu_${requestId}` },
-    });
+    askApproval(toolName, { command: 'echo hi' }, 0);
     return;
   }
 
+  return startNonApprovalTurn(text);
+}
+
+/**
+ * Erratum E3 (live-faithful): the real CLI honors an `allow` ONLY when it carries an
+ * `updatedInput` object and the `toolUseID` echoed from the request (the Agent SDK's own
+ * reference client always sends both: `{...permissionResult, toolUseID: request.tool_use_id}`).
+ * An invalid allow is silently re-asked with a FRESH request_id. `attempt` bounds the re-ask
+ * at 1 purely for suite determinism (see header comment).
+ */
+function askApproval(toolName, input, attempt) {
+  const requestId = nextRequestId();
+  const toolUseId = `toolu_${requestId}`;
+  currentTurn = { kind: 'approval', requestId };
+  pending.set(requestId, (resp) => {
+    currentTurn = null;
+    if (resp && resp.behavior === 'allow') {
+      const valid = resp.updatedInput && typeof resp.updatedInput === 'object' && typeof resp.toolUseID === 'string';
+      if (!valid) {
+        if (attempt === 0) { askApproval(toolName, input, 1); return; } // live behavior: re-ask
+        emitResult({ text: `approval-invalid:${toolName}:allow missing updatedInput/toolUseID`, isError: true });
+        drainQueue();
+        return;
+      }
+      emitAssistantText(`ran ${toolName} with ${JSON.stringify(resp.updatedInput)}`);
+      emitResult({ text: `approved:${toolName}` });
+    } else {
+      emitAssistantText(`permission denied for ${toolName}`);
+      emitResult({ text: `denied:${toolName}:${(resp && resp.message) || 'no reason given'}` });
+    }
+    drainQueue();
+  });
+  send({
+    type: 'control_request',
+    request_id: requestId,
+    request: { subtype: 'can_use_tool', tool_name: toolName, input, tool_use_id: toolUseId },
+  });
+}
+
+function startNonApprovalTurn(text) {
   if (text.includes('REQUEST_QUESTION')) {
     const requestId = nextRequestId();
     currentTurn = { kind: 'question', requestId };
@@ -193,8 +228,20 @@ rl.on('line', (line) => {
 
   if (obj.type === 'user') {
     const text = (obj.message?.content ?? []).map((c) => c.text ?? '').join('');
-    if (currentTurn) queue.push(text);
-    else startTurn(text);
+    if (currentTurn && currentTurn.kind === 'hold') {
+      // Erratum E2 (live-faithful): a user frame landing mid-turn is ABSORBED by the running
+      // turn at its next boundary — the turn redirects and completes reflecting the new text.
+      currentTurn = null;
+      emitAssistantText(`steered: ${text}`);
+      emitResult({ text: `steered-to:${text}` });
+      drainQueue();
+    } else if (currentTurn) {
+      // While a permission/question round-trip is pending we queue conservatively (that live
+      // interleaving is not yet pinned by a probe).
+      queue.push(text);
+    } else {
+      startTurn(text);
+    }
     return;
   }
 

@@ -76,8 +76,10 @@ export function createDriver(opts) {
     }));
     const chosen = router.pick(task, candidates);
     if (!chosen) return null;
-    const byModelVersion = new Map(feasible.map((v) => [`${cards[v].harness}@${cards[v].version}`, v]));
-    return byModelVersion.get(chosen) ?? null;
+    // First-listed feasible vendor wins a modelVersion collision: two adapters CAN share
+    // harness@version (e.g. one-shot ClaudeCli and session ClaudeSessionCli for the same CLI),
+    // and a last-wins Map would silently flip which vendor key receives the dispatch.
+    return feasible.find((v) => `${cards[v].harness}@${cards[v].version}` === chosen) ?? null;
   };
   route.record = (mv, tt, win) => router.record(mv, tt, win);
 

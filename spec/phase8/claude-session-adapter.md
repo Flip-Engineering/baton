@@ -217,3 +217,69 @@ A standalone, dependency-free ESM script (`node test/fixtures/fake-claude.mjs`) 
 - Does not attempt PreToolUse-hook-based input rewriting (dossier's alternative steer mechanism) — out
   of scope for the base stream-json control surface this phase targets; noted as a future upgrade path,
   not a missing requirement (D1 already satisfied via CS8's emulation).
+
+---
+
+## Errata — live-verified against claude 2.1.206, 2026-07-10 (post-implementation re-evaluation)
+
+A live smoke of the implemented adapter against the real CLI (three runs: baseline, approvals,
+fixed — session scratchpad `smoke-claude-real.mjs` / `smoke-claude-approvals.mjs` /
+`smoke-claude-fixed.mjs`) disproved three pinned contracts. Each erratum below SUPERSEDES the
+original text; the adapter, fixture, and tests were amended to the live-observed truth in the
+same change that added this section.
+
+### E1 — CS1 was missing a permission mode entirely (live-breaking)
+
+As specced, `buildClaudeSessionArgs()` rendered no `--permission-mode`. In `--print` mode with no
+permission prompt tool, tool calls are auto-DENIED: the live worker's `Write` was refused and
+`probe.txt` was never created — **the adapter as-specced could not do any work** with
+`approvals:false`. The proven one-shot `ClaudeCli` argv always carried
+`--permission-mode acceptEdits`; the session spec simply dropped it. The fake-binary suite could
+never catch this (the fake enforces no permission policy).
+
+**Amendment:** CS1 now renders `--permission-mode <mode>` with default `'acceptEdits'`
+(one-shot parity: worktree edits auto-allowed, the trust gate re-verifies everything anyway);
+`permissionMode: null` opts out; `approvals:true` composes (whatever the mode does not
+auto-allow routes to `approve()`). Live re-proof: `probe.txt exists = true`.
+
+### E2 — CS7's "honest limit" was false; steer is NATIVE, CS8's emulation is removed
+
+CS7 claimed *"turn-boundary injection only — stream-json gives no way to splice content into a
+completion already in flight"*, and CS8 built the interrupt→confirm→reprompt emulation on that
+premise. Live: a plain `user` frame written MID-TURN is consumed by the RUNNING turn at its next
+tool boundary — the turn redirects and produces ONE terminal result (observed: a counting turn
+abandoned its loop and answered `REDIRECTED`, single `result` frame, ~8s after injection —
+exactly one tool-boundary later).
+
+**Amendment:** `prompt(mode:'steer')` writes the frame directly: `card().verbs.steer ===
+'native'`, no `emulated` flag, an explicit `control.steer` (orchestrator-actor) event marks it,
+and NO `control.interrupt_requested/confirmed` are emitted (the emulation's phantom interrupt
+could satisfy a racing coordinator stop-waiter and polluted D10 replay). A frame written
+mid-turn no longer bumps `turnEpoch`/emits `lifecycle.turn_started` — one turn, one start, one
+terminal. `'nudge'` is thereby genuinely native mid-turn guidance on this wire. R5.1's
+steer-follow-up abandonment machinery (session `epoch`) is deleted — there is no follow-up to
+abandon. Residual semantic honestly noted: native steer redirects at the NEXT tool boundary; an
+orchestrator that wants IMMEDIATE redirection (abort the in-flight tool call) composes
+`interrupt()` + `prompt()` explicitly — that is a stop-then-redirect, not a steer.
+
+### E3 — CS12's allow shape was insufficient and wedged the turn (live-caught)
+
+`{behavior:'allow', updatedInput: payload?.updatedInput}` (i.e. possibly ABSENT `updatedInput`,
+never any `toolUseID`) is NOT honored: the live CLI silently re-asks the same permission with a
+fresh `request_id` and the turn wedges (observed: two identical `can_use_tool` requests 4.6s
+apart, then a 100s timeout). The Agent SDK's reference client always replies
+`{...permissionResult, toolUseID: request.tool_use_id}` and always carries `updatedInput` on an
+allow.
+
+**Amendment:** the adapter retains each request's `input` and `tool_use_id`;
+`approve('allow')` sends `updatedInput: payload?.updatedInput ?? <request input>` plus
+`toolUseID`; deny/cancel also carry `toolUseID`. `approval.requested` surfaces `toolUseID`.
+The fake now validates exactly what the live CLI validates (re-asks once on an invalid allow,
+then fails the turn `approval-invalid:` — bounded solely so an unfixed adapter fails an
+assertion instead of hanging the suite; the real CLI re-asks indefinitely).
+
+### Still open (honestly)
+
+- `answer()`'s elicitation response shape (`{action, content:{value}}`) remains statically
+  derived, not live-verified (needs an MCP server that elicits).
+- `--resume` semantics are fake-verified only (CS15); a live resume smoke is future work.

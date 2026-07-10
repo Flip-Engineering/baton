@@ -379,3 +379,30 @@ Plugin cache layout: `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`
 - https://code.claude.com/docs/en/monitoring-usage — OTel reference
 - https://code.claude.com/docs/en/checkpointing.md — checkpoints/rewind
 - https://code.claude.com/docs/en/sessions.md — naming, resume, `--from-pr`, transcript storage
+---
+
+## Live-probe erratum — claude 2.1.206 stream-json session mode, 2026-07-10
+
+Three live smokes of a persistent `--print --input-format stream-json --output-format
+stream-json --verbose` session (session scratchpad `smoke-claude-real.mjs`,
+`smoke-claude-approvals.mjs`, `smoke-claude-fixed.mjs`) established, against real turns:
+
+1. **Mid-turn `user` frames STEER the running turn.** A frame written while a turn is executing
+   is consumed at the next tool boundary by the SAME turn, which redirects and emits ONE
+   `result` (observed: a counting turn abandoned its loop ~one tool-boundary after injection and
+   answered the injected instruction). "Queued for the next turn boundary" is the wrong model;
+   native steering/nudging needs no interrupt round-trip.
+2. **A permission mode is load-bearing in print mode.** With neither `--permission-mode` nor
+   `--permission-prompt-tool`, tool calls auto-deny (`Write` refused; no file created). With
+   `--permission-mode acceptEdits`, worktree edits run unattended. With `--permission-prompt-tool
+   stdio` + `--permission-mode default`, `Write` emits a `can_use_tool` control_request.
+3. **`can_use_tool` allows are honored ONLY when the control_response's PermissionResult carries
+   `updatedInput` and the request's `toolUseID`** (the Agent SDK reference client always sends
+   `{...result, toolUseID: request.tool_use_id}`). A bare `{behavior:'allow'}` is silently
+   re-asked with a fresh `request_id` — indefinitely (turn wedge). Deny with
+   `{behavior:'deny', message, toolUseID}` completes the turn gracefully (model reports the
+   block; no crash).
+4. Confirmed unchanged: `control_request {subtype:'interrupt'}` confirms in <100ms mid-tool-call
+   and the session survives for further turns; `system/init` carries the wire `session_id`;
+   interrupted turns still emit a trailing `result` frame (must be discarded to keep
+   one-terminal-per-turn); SIGTERM ends the process cleanly (~0.5s).

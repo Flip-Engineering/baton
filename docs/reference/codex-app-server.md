@@ -236,3 +236,26 @@ From `/Users/wahargis/.claude/plugins/cache/openai-codex/codex/1.0.6/scripts/`:
 - [Remote connections — official docs](https://developers.openai.com/codex/remote-connections)
 - [openai/codex#22851 — pairing stuck when daemon cannot use proxy](https://github.com/openai/codex/issues/22851)
 - [openai/codex#20944 — half-created thread breaks resume/fork](https://github.com/openai/codex/issues/20944)
+---
+
+## Live-probe erratum — codex-cli 0.144.0, 2026-07-10
+
+A raw-wire probe of `codex app-server` 0.144.0 (initialize → thread/start → turn/start →
+turn/steer wrong/right → turn/interrupt → post-interrupt turn; raw frames preserved in the
+session scratchpad `codex-probe-raw.jsonl`) corrects two claims above:
+
+- **Unknown-method `-32600` errors carry the request `id` on 0.144.0** — the "no `id`"
+  claim (§Unknown method, and takeaway #2) does not reproduce; the error is fully correlatable.
+  Per-request timeouts remain mandatory anyway (a wedged/hung server sends nothing at all).
+- **Stale `turn/steer` (wrong `expectedTurnId`) fails with an id-matched `-32600`**,
+  message `expected active turn id \`X\` but found \`Y\`` — not a dedicated code.
+
+Confirmed live on 0.144.0, unchanged from this dossier: no-`jsonrpc` framing; `thread/start`
+params `{cwd, sandbox, approvalPolicy, ephemeral}` → `result.thread.id`; `turn/start` →
+`result.turn.id` + `turn/started`/`item/*`/`thread/tokenUsage/updated`/
+`account/rateLimits/updated` notifications; `turn/completed` `turn.status` ∈
+`completed|interrupted|failed|inProgress`; mid-turn `turn/steer` (right id) → `{turnId}` and the
+turn redirects; `turn/interrupt` → `{}` then `turn/completed{status:'interrupted'}` and the
+THREAD SURVIVES for further `turn/start`s. The schema bundle additionally serves
+`item/permissions/requestApproval` and `item/tool/call` server→client requests — baton's
+adapter must answer (not ignore) any unmapped server request or the turn wedges.

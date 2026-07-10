@@ -57,3 +57,31 @@ A 24-agent adversarial completeness audit (see `docs/22-completeness-audit.md`) 
 - **`createDriver()` has no direct tests.** `e2e.test.mjs` hand-wires the modules and its inline `routeFn` has already drifted from the shipped `route()`.
 
 **Bottom line:** the deterministic trust spine is real and well-tested; the overclaims are all in the *wiring* (built-and-tested modules — `accept()` hardening, `router.pick()` — not plumbed into the live path) and in the *real-vendor control surface* (one-shot adapters under-implement 4 of 8 Adapter verbs). See `docs/22` §6 for the ranked fix list.
+
+---
+
+## Addendum — phase-8 live re-evaluation (2026-07-10)
+
+Phase 8's session adapters shipped green against fake binaries (336/336) but had never touched a
+real vendor. A skeptical live re-evaluation (docs/23) re-derived every protocol claim from
+independent ground truth and drove both adapters against the real CLIs. Result:
+
+- **The codex app-server adapter survived contact with reality almost untouched** — methods,
+  shapes, enums, steer/interrupt/thread-survival all reproduced live. Two error-code details in
+  the FAKE were fiction (`-32010`; "id-less -32600") and were corrected to the live-observed
+  id-matched `-32600`s; unmapped server→client requests are now answered (anti-wedge) and
+  pending approvals are keyed, not single-slotted.
+- **The claude session adapter had three live-breaking defects the fake could not see**: no
+  permission mode at all (worker couldn't edit files — E1), a steer emulation built on a false
+  premise (mid-turn injection is native on this wire — E2), and an approve() shape the CLI
+  silently re-asks forever (missing `updatedInput`/`toolUseID` — E3). All three are fixed,
+  test-locked against a live-faithful fake, and **re-proven live**: `probe.txt` written under
+  `acceptEdits`; a running turn absorbed `prompt(...,'steer')` and answered `REDIRECTED` as its
+  single terminal with zero interrupt events; approve-allow ran the tool on the first ask and
+  approve-deny blocked it gracefully.
+
+Suite: **340/340**. All eight session verbs are now live-proven on Claude except `answer()`
+(elicitation — statically derived) and `pause` (unsupported by design); codex live-proven for
+spawn/prompt/steer/interrupt/kill with approvals statically exact against the schema bundle.
+The standing rule this earned: **fake-binary green is not "done" — every verb an adapter
+declares `native` gets a live smoke, and the fake is corrected to what the live run shows.**

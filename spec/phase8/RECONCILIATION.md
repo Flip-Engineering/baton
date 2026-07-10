@@ -269,3 +269,14 @@ retirement (e2e asserts no attribution), and one more reason to retire it.
    assertion, e2e exclude-line cleanup. Then, in a later phase, retire `setupSystem()` for
    `createDriver()` (C7's 8-assertion acceptance bar) and wire the session adapters + R10.2
    `stopDeadlineMs` pass-through into `createDriver`/`CLI_ADAPTERS`.
+
+---
+
+## Erratum (2026-07-10, live re-evaluation)
+
+**R5.1 (Claude side) is moot as of the claude-session errata:** steer is native mid-turn
+injection now (spec E2) — there is no interrupt→reprompt follow-up to abandon, and the session
+`epoch` guard was deleted with it. R5.1 stands unchanged for the codex adapter's
+`interrupt(worker, then)` follow-up path. R5.2 (coordinator swallows unmatched interrupt
+confirms) is unaffected — and matters slightly less now that Claude steers emit no
+`control.interrupt_confirmed` at all.
