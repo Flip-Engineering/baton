@@ -85,3 +85,40 @@ Suite: **340/340**. All eight session verbs are now live-proven on Claude except
 spawn/prompt/steer/interrupt/kill with approvals statically exact against the schema bundle.
 The standing rule this earned: **fake-binary green is not "done" — every verb an adapter
 declares `native` gets a live smoke, and the fake is corrected to what the live run shows.**
+
+---
+
+## Addendum — phase 9: Grok Build ACP session adapter (2026-07-10)
+
+Grok Build CLI 0.1.216 (xAI) joined the harness matrix (dossier:
+`docs/reference/grok-build-cli.md`; spec: `spec/phase9/grok-acp-adapter.md`). `GrokAcpCli`
+(`src/grok-acp.mjs`) drives `grok agent stdio` — the first vendor-native ACP surface in the fleet —
+one child per worker, JSON-RPC 2.0 **with** the `jsonrpc` member (live-verified difference from
+codex), and the ACP turn shape faithfully modeled: **the `session/prompt` response IS the turn
+terminal** (unbounded by the setup timeout; settled by resolution, cancel, or child death), and
+`session/cancel` is a response-less notification.
+
+- **TDD red→green**: 29 new conformance tests (`test/grok-acp.test.mjs`) against a protocol-level
+  fake (`test/fixtures/fake-grok-acp.mjs`) that reproduces the two [live]-pinned frames verbatim
+  (initialize handshake; `session/new` → `-32000 "Authentication required"`). Red observed
+  (341/342 with the adapter absent), then green: **suite 370/370**.
+- **Steer is emulated and says so** (card + per-Ack `emulated:true`): cancel-then-reprompt with
+  the E2 lesson enforced structurally — the emulation's internal cancel emits `control.steer`,
+  never a phantom `control.interrupt_confirmed`. `answer()` is `unsupported` (ACP has no ask-user
+  primitive) — a named gap, not an emulation.
+- **X3/X4 lessons applied from day one**: unmapped server→client `x.ai/*` requests are
+  auto-answered `-32601` + observable error event (anti-wedge); pending permissions live in a
+  keyed map (answer-exactly-once). Refusal terminals are surfaced as `lifecycle.crashed` with
+  `stopReason:'refusal'` — the router-visible signal the non-refuser routing tier needs.
+- **⛔ NOT "done" per the phase-8.1 live-smoke gate.** This machine is unauthenticated to grok
+  (`session/new` → -32000, live), so every model-side contract (prompt/cancel/permission/update
+  shapes) is [acp-spec]+[doc]-grade — precisely the circular-validation trap docs/23 documented.
+  The post-auth smoke checklist is pinned at the top of the spec (first items: `session/cancel`
+  conformance, the undocumented live-advertised `cancelRewind:true`, whether
+  `session/request_permission` fires under default config, mid-turn `session/prompt` behavior —
+  the last one can upgrade steer to native, exactly like claude E2). **Unlock: `grok login` or
+  `XAI_API_KEY`, then live-smoke before trusting `native` verbs.**
+- **No wire usage telemetry** is documented for this surface — the adapter emits no
+  `resource.tokens` yet (named gap GA20; the on-disk `signals.json` is the post-hoc source).
+- Assembly into `createDriver()` remains the shared next milestone for all three session adapters
+  (docs/23 re-steer item 2); GrokAcpCli joins that batch deliberately unwired.

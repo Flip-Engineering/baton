@@ -1,0 +1,559 @@
+// grok-acp.mjs — the Grok Build ACP SESSION adapter (spec/phase9/grok-acp-adapter.md,
+// contracts GA1..GA20). One dedicated `grok agent stdio` child per WORKER, speaking JSON-RPC 2.0
+// over NDJSON stdio — grok's wire INCLUDES the `jsonrpc` member (live-verified), unlike codex.
+// No shared leader, no npm dependency: plain node:child_process + hand-rolled line framing,
+// matching the house style of ./codex-appserver.mjs / ./claude-session.mjs.
+//
+// Conforms to the D1 session Adapter surface (see assertIsAdapter in ./adapter.mjs):
+//   card() / spawn() / prompt() / interrupt() / approve() / answer() / kill() / onEvent()
+//
+// The ACP shape difference that drives this file's structure (GA3/GA18): `session/prompt` is a
+// LONG-LIVED REQUEST — its response ({stopReason}) IS the turn terminal. So turns are settled by
+// request resolution, not by notification; `session/cancel` is a response-less NOTIFICATION whose
+// effect arrives as the pending prompt resolving {stopReason:"cancelled"}.
+//
+// ⛔ Live-smoke gate (spec §0, docs/23 standing rule): everything model-side here is
+// [acp-spec]+[doc]-grade until a post-auth smoke against the real binary runs — the fake proving
+// this adapter green is necessary, not sufficient. `initialize` and the session/new -32000 auth
+// gate are the two [live]-pinned facts.
+
+import { spawn, execFileSync } from 'node:child_process';
+import { renderBrief } from './adapter.mjs';
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+/**
+ * A bounded setup RPC (initialize / session/new) never got a response within requestTimeoutMs.
+ * The prompt request is deliberately NOT bounded by this (GA3): its lifetime IS the turn.
+ */
+export class GrokRpcTimeoutError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'GrokRpcTimeoutError';
+    this.code = 'timeout';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Small pure helpers
+// ---------------------------------------------------------------------------
+
+/** WorkerResult shape, same convention as cli-adapters.mjs / codex-appserver.mjs (GA20: no wire
+ * usage telemetry is documented for this surface yet — budgetUsed stays 0, a named gap). */
+function makeResult(status, summary) {
+  return {
+    status,
+    summary,
+    artifacts: { commits: [], files: [] },
+    verification: { command: null, claimedExit: null },
+    openQuestions: [],
+    budgetUsed: { tokens: 0, usd: 0 },
+  };
+}
+
+/** GA9: D1 allow/deny -> an ACP PermissionOption, by kind preference then position. */
+function pickOption(options, decision) {
+  const opts = options ?? [];
+  if (decision === 'allow') {
+    const byKind = opts.find((o) => o.kind === 'allow_once') ?? opts.find((o) => o.kind === 'allow_always');
+    return byKind ?? opts[0];
+  }
+  const byKind = opts.find((o) => o.kind === 'reject_once') ?? opts.find((o) => o.kind === 'reject_always');
+  return byKind ?? opts[opts.length - 1];
+}
+
+// ---------------------------------------------------------------------------
+// GrokAcpCli
+// ---------------------------------------------------------------------------
+
+export class GrokAcpCli {
+  /**
+   * @param {{cmd?:string, args?:string[], env?:object, requestTimeoutMs?:number,
+   *   stopDeadlineMs?:number, ceiling?:number, maxContext?:number,
+   *   versionProbe?:()=>string, spawnFn?:Function}} opts
+   */
+  constructor(opts = {}) {
+    // GA3: derived, never invented — same rule and option names as the codex/claude adapters.
+    if (opts.requestTimeoutMs === undefined && opts.stopDeadlineMs === undefined) {
+      throw new TypeError(
+        'GrokAcpCli: requestTimeoutMs or stopDeadlineMs is required — refusing to silently pick a timeout the coordinator did not derive',
+      );
+    }
+    this._requestTimeoutMs = opts.requestTimeoutMs ?? opts.stopDeadlineMs;
+    this._cmd = opts.cmd ?? 'grok';
+    this._args = opts.args ?? ['agent', 'stdio'];
+    this._env = opts.env;
+    this._spawnFn = opts.spawnFn ?? spawn;
+    this._ceiling = opts.ceiling ?? 4;
+    // GA4: 500000 is the live handshake's totalContextTokens for grok-build, not a guess.
+    this._maxContext = opts.maxContext ?? 500000;
+
+    // GA15: probed once, synchronously, cached; never throws.
+    const versionProbe = opts.versionProbe ?? (() => execFileSync('grok', ['--version']).toString().trim());
+    try {
+      this._version = versionProbe();
+    } catch {
+      this._version = 'unknown';
+    }
+
+    /** @type {Map<string, object>} worker -> session */
+    this._sessions = new Map();
+    this._cb = null;
+  }
+
+  // -------------------------------------------------------------------------
+  // card() — GA14 (steer is EMULATED and says so; answer is a named gap)
+  // -------------------------------------------------------------------------
+
+  card() {
+    return {
+      harness: 'grok',
+      version: this._version,
+      authPosture: 'subscription',
+      concurrencyCeiling: this._ceiling,
+      maxContext: this._maxContext,
+      verbs: {
+        spawn: 'native',
+        prompt: 'native',
+        steer: 'emulated',
+        interrupt: 'native',
+        approve: 'native',
+        answer: 'unsupported',
+        kill: 'native',
+        pause: 'unsupported',
+      },
+    };
+  }
+
+  onEvent(cb) {
+    this._cb = cb;
+  }
+
+  // -------------------------------------------------------------------------
+  // Event envelope (D1: {worker, harness, turnEpoch, actor, kind, payload})
+  // -------------------------------------------------------------------------
+
+  _emit(session, kind, payload) {
+    const evt = {
+      worker: session.worker,
+      harness: 'grok',
+      turnEpoch: session.turnEpoch,
+      actor: kind.startsWith('control.') || kind.startsWith('kill.') ? 'orchestrator' : 'worker',
+      kind,
+      payload,
+    };
+    if (this._cb) this._cb(evt);
+    return evt;
+  }
+
+  // -------------------------------------------------------------------------
+  // Wire plumbing (GA2/GA3/GA5): jsonrpc INCLUDED; bounded setup RPCs; unbounded prompt
+  // -------------------------------------------------------------------------
+
+  _writeRaw(session, obj) {
+    try {
+      session.child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...obj })}\n`);
+    } catch {
+      /* pipe already closed — the caller's timeout/close handling covers it */
+    }
+  }
+
+  /**
+   * A client-initiated request. `timeoutMs: null` means unbounded — used ONLY by session/prompt,
+   * whose response is the turn terminal (GA3); the close handler settles it if the child dies.
+   */
+  _sendRequest(session, method, params, { timeoutMs } = {}) {
+    return new Promise((resolve, reject) => {
+      const id = (session.reqSeq += 1);
+      const bound = timeoutMs === undefined ? this._requestTimeoutMs : timeoutMs;
+      let timer = null;
+      if (bound !== null) {
+        timer = setTimeout(() => {
+          session.pendingRequests.delete(id);
+          reject(new GrokRpcTimeoutError(`grok agent stdio: "${method}" timed out after ${bound}ms`));
+        }, bound);
+      }
+      session.pendingRequests.set(id, { resolve, reject, timer });
+      this._writeRaw(session, { id, method, params });
+    });
+  }
+
+  _attachChild(session) {
+    session.child.stdout.setEncoding('utf8');
+    session.child.stdout.on('data', (chunk) => {
+      session.buf += chunk;
+      let nl;
+      while ((nl = session.buf.indexOf('\n')) !== -1) {
+        const line = session.buf.slice(0, nl);
+        session.buf = session.buf.slice(nl + 1);
+        this._onLine(session, line);
+      }
+    });
+    session.child.stderr.on('data', () => {}); // nothing on this wire is diagnosed from stderr
+    session.child.on('close', () => this._onClose(session));
+    session.child.on('error', () => {}); // spawn-time ENOENT surfaces via the pending initialize timeout
+  }
+
+  _onClose(session) {
+    session.closed = true;
+    // GA11: kill.confirmed fires once the OS confirms the process is gone (D1: an event, never
+    // the Ack); the pending-request settlement below then absorbs the prompt silently (killing).
+    if (session.killing && !session.killConfirmed) {
+      session.killConfirmed = true;
+      this._emit(session, 'kill.confirmed', { sessionId: session.sessionId });
+    }
+    // The unbounded prompt (and any in-flight bounded RPC) must not dangle past child death.
+    for (const [id, pending] of session.pendingRequests) {
+      session.pendingRequests.delete(id);
+      if (pending.timer) clearTimeout(pending.timer);
+      pending.reject(new Error('grok agent stdio closed before responding'));
+    }
+  }
+
+  _onLine(session, line) {
+    if (!line.trim()) return;
+    let obj;
+    try {
+      obj = JSON.parse(line);
+    } catch {
+      return; // GA5/GA17: malformed lines never crash — dropped, buffer already advanced
+    }
+
+    if (obj.method === undefined && obj.id !== undefined) {
+      const pending = session.pendingRequests.get(obj.id);
+      if (!pending) return; // late/stray response — drop
+      session.pendingRequests.delete(obj.id);
+      if (pending.timer) clearTimeout(pending.timer);
+      if (obj.error) {
+        const err = new Error(obj.error.message ?? 'grok ACP RPC error');
+        err.code = obj.error.code;
+        err.data = obj.error.data;
+        pending.reject(err);
+      } else {
+        pending.resolve(obj.result);
+      }
+      return;
+    }
+
+    if (obj.method === undefined && obj.id === undefined) {
+      // GA5: an id-less error is surfaced as an UNCORRELATED error event, never matched.
+      if (obj.error) {
+        this._emit(session, 'error', { message: obj.error.message, code: obj.error.code, correlated: false });
+      }
+      return;
+    }
+
+    if (obj.method !== undefined && obj.id !== undefined) {
+      this._onServerRequest(session, obj);
+      return;
+    }
+
+    this._onNotification(session, obj.method, obj.params ?? {});
+  }
+
+  // -------------------------------------------------------------------------
+  // Server -> client requests (GA9 + the X3 anti-wedge rule applied from day one)
+  // -------------------------------------------------------------------------
+
+  _onServerRequest(session, obj) {
+    const { method, params, id } = obj;
+    if (method === 'session/request_permission') {
+      const requestId = `${session.worker}:apr:${(session.reqIdSeq += 1)}`;
+      // Keyed map (X4 lesson): the wire permits multiple pending server->client requests.
+      session.waits.set(requestId, { kind: 'approval', rawId: id, options: params?.options ?? [] });
+      this._emit(session, 'approval.requested', {
+        requestId,
+        sessionId: params?.sessionId ?? session.sessionId,
+        turnId: session.activeTurn?.turnId ?? null,
+        toolCall: params?.toolCall ?? null,
+        options: params?.options ?? [],
+      });
+      return;
+    }
+    // Any other server->client REQUEST (the x.ai/* extension surface: fs, terminal, worktree, …)
+    // is outside this MVP's mapped table but must still be ANSWERED — a dangling JSON-RPC request
+    // wedges its turn forever. Reply method-not-found + an observable event; never a silent drop.
+    this._writeRaw(session, { id, error: { code: -32601, message: `baton: unhandled server->client request "${method}"` } });
+    this._emit(session, 'error', { message: `unmapped server->client request "${method}" auto-declined`, code: -32601, correlated: true, serverMethod: method });
+  }
+
+  // -------------------------------------------------------------------------
+  // Notifications (GA19 mapping table)
+  // -------------------------------------------------------------------------
+
+  _onNotification(session, method, params) {
+    if (method !== 'session/update') return; // unknown/future notifications: ignored (GA5)
+    if (!session.activeTurn) return; // trailing updates after a terminal are dropped (GA16)
+    const { turnId } = session.activeTurn;
+    const update = params.update ?? {};
+    switch (update.sessionUpdate) {
+      case 'agent_message_chunk':
+        this._emit(session, 'content.message', {
+          sessionId: session.sessionId, turnId,
+          text: update.content?.text ?? '',
+          chunked: true, // ACP streams chunks; they pass through individually (GA19)
+        });
+        return;
+      case 'tool_call':
+        this._emit(session, 'content.tool_call', { sessionId: session.sessionId, turnId, ...update });
+        return;
+      default:
+        // agent_thought_chunk / plan / unknown-future variants: ignored per the spec's table —
+        // an unmapped update must never crash the adapter or fake a terminal (GA17/D3).
+        return;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Turn engine (GA6/GA16/GA18): the prompt request's settlement IS the terminal
+  // -------------------------------------------------------------------------
+
+  _startTurn(session, text) {
+    session.turnSeq += 1;
+    session.turnEpoch += 1;
+    const turnId = `t${session.turnSeq}`; // GA6: ACP has no wire turn id — adapter-minted
+    session.activeTurn = { turnId };
+    this._emit(session, 'lifecycle.turn_started', { sessionId: session.sessionId, turnId });
+    this._sendRequest(session, 'session/prompt', {
+      sessionId: session.sessionId,
+      prompt: [{ type: 'text', text: String(text) }],
+    }, { timeoutMs: null }) // GA3: the turn's own lifetime — never bounded by the setup timeout
+      .then((result) => this._onTurnEnd(session, turnId, result ?? {}))
+      .catch((err) => this._onTurnError(session, turnId, err));
+  }
+
+  _settleTurn(session, turnId) {
+    if (session.terminalTurns.has(turnId)) return false; // GA16: single terminal per turn
+    session.terminalTurns.add(turnId);
+    if (session.activeTurn && session.activeTurn.turnId === turnId) session.activeTurn = null;
+    return true;
+  }
+
+  _onTurnEnd(session, turnId, result) {
+    if (!this._settleTurn(session, turnId)) return;
+    const stopReason = result.stopReason ?? 'end_turn';
+
+    if (stopReason === 'cancelled') {
+      const steer = session.steerPending;
+      if (steer) {
+        // GA13: the emulation's internal cancel is NOT an orchestrator interrupt — emitting
+        // interrupt_confirmed here would be exactly the phantom-event pollution E2 flagged.
+        session.steerPending = null;
+        this._emit(session, 'control.steer', {
+          sessionId: session.sessionId, resteeredFrom: turnId, emulated: true, content: steer.content,
+        });
+        this._startTurn(session, steer.content);
+        return;
+      }
+      const res = makeResult('cancelled', 'interrupted');
+      this._emit(session, 'control.interrupt_confirmed', { sessionId: session.sessionId, turnId, result: res });
+      this._maybeIssueFollowUp(session, turnId);
+      return;
+    }
+
+    if (stopReason === 'refusal') {
+      // GA18: the router-visible refusal signal (the GLM non-refuser tier exists because
+      // refusals are routable data) — a refused task is a failed turn, tagged by stopReason.
+      this._emit(session, 'lifecycle.crashed', {
+        sessionId: session.sessionId, turnId, error: 'worker refused the task', stopReason: 'refusal',
+      });
+      return;
+    }
+
+    // end_turn and the budget-ish reasons (max_tokens / max_turn_requests) complete the turn;
+    // stopReason is surfaced for the coordinator's own policy (GA20: no gating here).
+    const res = makeResult('completed', `turn completed (${stopReason})`);
+    this._emit(session, 'lifecycle.turn_completed', { result: res, sessionId: session.sessionId, turnId, stopReason });
+  }
+
+  _onTurnError(session, turnId, err) {
+    if (!this._settleTurn(session, turnId)) return;
+    if (session.killing) return; // GA11: a deliberate kill is not a worker crash — kill.confirmed is the terminal
+    this._emit(session, 'lifecycle.crashed', { sessionId: session.sessionId, turnId, error: err.message });
+  }
+
+  /** R5.1 discipline: a pending follow-up survives only if no newer interrupt()/kill() superseded it. */
+  _maybeIssueFollowUp(session, turnId) {
+    const follow = session.pendingFollowUp;
+    if (!follow || follow.turnId !== turnId) return;
+    session.pendingFollowUp = null;
+    this.prompt(session.worker, follow.then, 'turn');
+  }
+
+  // -------------------------------------------------------------------------
+  // spawn() — GA6/GA10: initialize -> session/new -> first prompt dispatch
+  // -------------------------------------------------------------------------
+
+  async spawn(worker, brief, opts = {}) {
+    const existing = this._sessions.get(worker);
+    if (existing && !existing.closed) {
+      return { ok: false, reason: `worker ${worker} already has an active session` };
+    }
+
+    const child = this._spawnFn(this._cmd, this._args, {
+      env: { ...process.env, ...(this._env ?? {}) },
+      cwd: opts.worktree, // grok indexes its cwd at startup; session/new pins it again below
+      detached: true, // owns its own process group (GA11: kill() signals the group)
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    const session = {
+      worker, child, buf: '',
+      reqSeq: 0, reqIdSeq: 0, turnSeq: 0,
+      pendingRequests: new Map(),
+      sessionId: null, activeTurn: null, turnEpoch: 0,
+      nudgeQueue: [], // GA7 mode:'nudge' emulation buffer
+      waits: new Map(), // requestId -> pending approval (keyed, never clobbered — X4)
+      terminalTurns: new Set(), // GA16
+      steerPending: null, // GA13
+      pendingFollowUp: null, // R5.1
+      killing: false, killConfirmed: false, closed: false,
+    };
+    this._sessions.set(worker, session);
+    this._attachChild(session);
+
+    try {
+      // GA6: baton delegates no client-side fs/terminal to the worker's agent — the worker does
+      // its own work inside its worktree; declining the capabilities keeps the x.ai/* fs/terminal
+      // server->client traffic off this wire (anything sent anyway is auto-answered, GA-anti-wedge).
+      await this._sendRequest(session, 'initialize', {
+        protocolVersion: 1,
+        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+      });
+    } catch (err) {
+      this._killChild(session);
+      this._sessions.delete(worker);
+      return { ok: false, reason: err.message, code: err.code };
+    }
+
+    let newResult;
+    try {
+      newResult = await this._sendRequest(session, 'session/new', { cwd: opts.worktree, mcpServers: [] });
+    } catch (err) {
+      // GA10: the [live]-pinned -32000 auth gate (and any other session/new failure) kills the
+      // now-useless child and resolves a typed failure — never retried internally.
+      this._killChild(session);
+      this._sessions.delete(worker);
+      return { ok: false, reason: err.message, code: err.code };
+    }
+    session.sessionId = newResult.sessionId;
+    this._emit(session, 'lifecycle.spawned', { sessionId: session.sessionId, pid: child.pid });
+
+    // GA6: the Ack resolves once the first prompt is DISPATCHED after a live handshake — ACP has
+    // no separate turn-accepted response; completion is exclusively an onEvent fact.
+    this._startTurn(session, renderBrief(brief, 'grok-acp'));
+    return { ok: true };
+  }
+
+  _killChild(session) {
+    try {
+      process.kill(-session.child.pid, 'SIGKILL');
+    } catch {
+      try { session.child.kill('SIGKILL'); } catch { /* already gone */ }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // prompt() — GA7: turn (native multi-turn) / nudge (emulated) / steer (GA13 emulation)
+  // -------------------------------------------------------------------------
+
+  async prompt(worker, content, mode = 'turn') {
+    const session = this._sessions.get(worker);
+    if (!session || !session.sessionId || session.closed) return { ok: false, reason: `unknown worker ${worker}` };
+
+    if (mode === 'nudge') {
+      session.nudgeQueue.push(content);
+      return { ok: true, emulated: true };
+    }
+
+    if (mode === 'steer') {
+      if (!session.activeTurn) return { ok: false, reason: 'no active turn to steer' };
+      // GA13: cancel-then-reprompt, the case the adapter-contract's emulation pattern exists for
+      // (the wire genuinely lacks steer — unlike claude E2, where native existed). The cancelled
+      // resolution consumes this marker and dispatches `content` as the next turn.
+      session.steerPending = { content: String(content) };
+      this._writeRaw(session, { method: 'session/cancel', params: { sessionId: session.sessionId } });
+      return { ok: true, emulated: true };
+    }
+
+    // mode === 'turn'
+    if (session.activeTurn) {
+      return { ok: false, reason: 'a turn is already active (ACP baseline: one prompt turn at a time)' };
+    }
+    const nudges = session.nudgeQueue.splice(0);
+    const text = [...nudges, content].join('\n');
+    this._startTurn(session, text);
+    return { ok: true };
+  }
+
+  // -------------------------------------------------------------------------
+  // interrupt() — GA8: session/cancel is a response-less notification; session survives
+  // -------------------------------------------------------------------------
+
+  async interrupt(worker, then) {
+    const session = this._sessions.get(worker);
+    if (!session) return { ok: false, reason: `unknown worker ${worker}` };
+    if (!session.activeTurn) return { ok: true, reason: 'no active turn to interrupt' };
+
+    const { turnId } = session.activeTurn;
+    // An interrupt supersedes any not-yet-consumed steer, and any earlier follow-up (R5.1).
+    session.steerPending = null;
+    session.pendingFollowUp = then !== undefined ? { turnId, then } : null;
+
+    // GA8: a NOTIFICATION — nothing to await; the Ack is the write. The confirmed stop arrives
+    // exclusively as control.interrupt_confirmed when the prompt resolves cancelled (D9).
+    this._writeRaw(session, { method: 'session/cancel', params: { sessionId: session.sessionId } });
+    return { ok: true };
+  }
+
+  // -------------------------------------------------------------------------
+  // approve() / answer() — GA9 / GA12
+  // -------------------------------------------------------------------------
+
+  async approve(worker, requestId, decision, payload) {
+    const session = this._sessions.get(worker);
+    if (!session) return { ok: false, reason: `unknown worker ${worker}` };
+    const wait = session.waits.get(requestId);
+    if (!wait || wait.kind !== 'approval') {
+      return { ok: false, reason: 'approve(): no matching approval wait-item for this requestId (answer exactly once)' };
+    }
+    let outcome;
+    if (decision === 'cancel') {
+      outcome = { outcome: 'cancelled' };
+    } else if (decision === 'allow' || decision === 'deny') {
+      const optionId = payload?.optionId ?? pickOption(wait.options, decision)?.optionId;
+      if (!optionId) return { ok: false, reason: 'approve(): the permission request carried no selectable options' };
+      outcome = { outcome: 'selected', optionId };
+    } else {
+      return { ok: false, reason: `approve(): unknown decision "${decision}"` };
+    }
+    const { rawId } = wait;
+    session.waits.delete(requestId); // consumed — a request is a consumable message, not a replayable fact
+    this._writeRaw(session, { id: rawId, result: { outcome } });
+    this._emit(session, 'approval.resolved', { requestId, decision, payload: payload ?? null });
+    return { ok: true };
+  }
+
+  async answer() {
+    // GA12: ACP has no ask-user-a-question primitive and the x.ai/* catalog documents none —
+    // a named gap (card verbs.answer:'unsupported'), not an emulation.
+    return { ok: false, reason: 'answer() unsupported on the grok ACP wire — no ask-user primitive (GA12)' };
+  }
+
+  // -------------------------------------------------------------------------
+  // kill() — GA11: process-group SIGKILL; kill.confirmed from the close handler
+  // -------------------------------------------------------------------------
+
+  async kill(worker) {
+    const session = this._sessions.get(worker);
+    if (!session || !session.child) return { ok: true }; // already gone — a moot no-op
+    session.steerPending = null;
+    session.pendingFollowUp = null; // R5.1: abandon any pending auto-follow-up
+    if (session.killing) return { ok: true };
+    session.killing = true;
+    this._killChild(session);
+    return { ok: true };
+  }
+}
