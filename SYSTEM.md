@@ -85,8 +85,12 @@ Deeper spec: [`spec/supervisor-state-machine.md`](spec/supervisor-state-machine.
 
 ## 4. The four core capabilities (your named features)
 
-### 4.1 Directing workers
-The orchestrator decides via the eight commands; the coordinator's dispatch step executes. Workers run in **separate git copies of the repo** (worktrees) so they never step on each other, and each commits its own work with its own name attached. Reaching a worker is done through a per-vendor adapter (§6).
+### 4.1 Directing workers, each in its own git worktree
+The orchestrator decides via the eight commands; the coordinator's dispatch step executes. Reaching a worker is done through a per-vendor adapter (§6).
+
+**Every worker runs in its own git worktree** — its own working directory on its own branch, sharing one copy of the repo's history underneath (cheap). This is load-bearing plumbing, not a detail, because it does three jobs at once: (1) **isolation** — workers edit and test in parallel without clobbering each other, enforced by git itself (it won't check out the same branch twice); (2) **it's what the trust gate checks against** — re-verification runs in a *fresh* worktree at the worker's committed result, never the worker's own directory, so a doctored test or uncommitted junk can't fool it; (3) **it defines merging** — each result is a branch, so integrating accepted work is a clean branch merge, and collisions between workers are visible, not silent.
+
+The worker just sees a normal repo; the coordinator does all the worktree bookkeeping — create from a pinned clean base, confine the worker to it (the sandbox boundary), capture the result as a *commit* (never a dirty tree), re-verify in a fresh worktree at that commit, merge if accepted, and clean up on done-or-crash (with zombie worktrees reaped on restart). Workers may run their own git — commits are captured, but `push` and other irreversible outside-world actions are approval-gated. Merge collisions are avoided up front by giving concurrent workers **non-overlapping path scopes** (claimed on the shared scratchpad), with textual merge for the MVP and merge-by-meaning as a later upgrade. Full mechanics, commands, and the disk-cost / non-git / interrupt-interaction considerations: [`spec/worktrees.md`](spec/worktrees.md).
 
 ### 4.2 Messaging, both ways
 Down and up, on a channel that respects turn boundaries (never interrupts a worker mid-thought — that's what steering is for). Full shapes: [`spec/communication-channel.md`](spec/communication-channel.md).
@@ -192,6 +196,8 @@ Every feature the exploration produced, with honest status. **Core** = the drive
 | Feature | Role | Status | Where |
 |---|---|---|---|
 | Direct workers via 8 commands | Core | MVP | `spec/driver.md` |
+| Per-worker git worktrees (isolation, verify-against, clean merge) | Core | MVP | `spec/worktrees.md` |
+| Path leases (non-overlapping scopes → clean merges) | Core | MVP | `spec/worktrees.md`, `docs/capabilities/coordination-repl.md` |
 | Two-way messaging (brief/nudge/steer/ask/answer/result) | Core | MVP | `spec/communication-channel.md` |
 | Telemetry log + live feed + warning signals | Core | MVP (feed to design) | `docs/05` |
 | Interrupt & steer, dependable | Core | MVP | `docs/05` §4, `spec/supervisor-state-machine.md` |
