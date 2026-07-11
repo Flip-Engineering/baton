@@ -26,6 +26,8 @@ test('EP1/EP4: untrusted forwarding is ignored; trusted proxy selects a bounded 
   assert.deepEqual(direct, { address: '203.0.113.9', transport: 'https', proxied: false });
   const proxied = resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1', encrypted: false }, headers: { 'x-forwarded-for': '198.51.100.2, 192.0.2.9', 'x-forwarded-proto': 'https' } }, { trustedProxies: ['192.0.2.1'], forwardedHop: 1, requireForwardedHttps: true });
   assert.deepEqual(proxied, { address: '198.51.100.2', transport: 'https', proxied: true });
+  const standard = resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1', encrypted: false }, headers: { forwarded: 'for=198.51.100.2;proto=https, for=192.0.2.9;proto=https' } }, { trustedProxies: ['192.0.2.1'], forwardedHop: 1, requireForwardedHttps: true });
+  assert.deepEqual(standard, { address: '198.51.100.2', transport: 'https', proxied: true });
   const directPolicy = edge({ trustedProxies: ['192.0.2.1'], proxyMode: false });
   assert.equal(directPolicy.resolve({ socket: { remoteAddress: '192.0.2.1', encrypted: false }, headers: { 'x-forwarded-for': '198.51.100.2', 'x-forwarded-proto': 'https' } }).transport, 'http');
   assert.throws(() => resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1' }, headers: { forwarded: 'for=1.2.3.4', 'x-forwarded-for': '1.2.3.4' } }, { trustedProxies: ['192.0.2.1'] }), /mixed forwarding/);
@@ -69,6 +71,12 @@ test('EP3: authenticated principal and weighted cost quotas refuse before durabl
   assert.equal((await s.web.execute(ctx, envelope('two'))).status, 429);
   assert.equal(s.coordination.events().filter((event) => event.kind === 'web.command_admitted').length, 1);
   assert.equal(s.fleetCalls.filter((call) => call.key === 'list').length, 1);
+});
+
+test('EP2/EP3: weighted refusal does not consume the separate command-count bucket', () => {
+  const policy = edge({ limits: { principal: 1, cost: 1 } });
+  assert.equal(policy.takeCommand('credential', 2).quota, 'cost');
+  assert.equal(policy.takeCommand('credential', 1).ok, true);
 });
 
 test('EP5/EP6: readiness is non-disclosing and shutdown is bounded/idempotent with no fleet effect', async () => {

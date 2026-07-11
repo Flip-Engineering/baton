@@ -30,8 +30,34 @@ export class FixedWindowQuota {
     entry.used += cost;
     return { ok: true };
   }
+  canTake(key, cost = 1) {
+    positive(cost, 'cost');
+    const now = this.now(); const start = Math.floor(now / this.windowMs) * this.windowMs;
+    for (const [k, v] of this.keys) if (v.start < start) this.keys.delete(k);
+    const entry = this.keys.get(key);
+    if (!entry && this.keys.size >= this.maxKeys) return { ok: false, retryAfter: Math.max(1, Math.ceil((start + this.windowMs - now) / 1000)), reason: 'capacity' };
+    if ((entry?.used ?? 0) + cost > this.limit) return { ok: false, retryAfter: Math.max(1, Math.ceil((start + this.windowMs - now) / 1000)) };
+    return { ok: true };
+  }
   get size() { return this.keys.size; }
 }
+
+const parseForwarded = (value) => {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 512) throw new TypeError('invalid forwarding chain');
+  const elements = value.split(',');
+  if (elements.length > 16) throw new TypeError('invalid forwarding chain');
+  return elements.map((element) => {
+    const fields = Object.create(null);
+    for (const parameter of element.split(';')) {
+      const match = /^([a-z]+)=([^\s;,]+)$/i.exec(parameter.trim());
+      if (!match || Object.hasOwn(fields, match[1].toLowerCase())) throw new TypeError('invalid forwarding chain');
+      fields[match[1].toLowerCase()] = match[2];
+    }
+    if (!fields.for || !fields.proto || !['http', 'https'].includes(fields.proto)) throw new TypeError('invalid forwarding chain');
+    if (fields.for.startsWith('"') || fields.for.includes(':') || Object.keys(fields).some((key) => !['for', 'proto'].includes(key))) throw new TypeError('invalid forwarding chain');
+    return { address: address(fields.for), proto: fields.proto };
+  });
+};
 
 export function resolveEdgeRequest(req, { trustedProxies = [], forwardedHop = 0, requireForwardedHttps = false } = {}) {
   if (!Number.isSafeInteger(forwardedHop) || forwardedHop < 0) throw new TypeError('forwardedHop must be a non-negative safe integer');
@@ -40,7 +66,14 @@ export function resolveEdgeRequest(req, { trustedProxies = [], forwardedHop = 0,
   const xff = req.headers?.['x-forwarded-for']; const forwarded = req.headers?.forwarded;
   if (!trusted) return { address: peer, transport: req.socket?.encrypted ? 'https' : 'http', proxied: false };
   if (xff != null && forwarded != null) throw new TypeError('mixed forwarding headers');
-  if (forwarded != null) throw new TypeError('Forwarded header is not supported');
+  if (forwarded != null) {
+    if (req.headers?.['x-forwarded-proto'] != null) throw new TypeError('mixed forwarding headers');
+    const chain = parseForwarded(forwarded);
+    if (forwardedHop >= chain.length) throw new TypeError('invalid forwarding chain');
+    const selected = chain[chain.length - 1 - forwardedHop];
+    if (requireForwardedHttps && selected.proto !== 'https') throw new TypeError('forwarded HTTPS required');
+    return { address: selected.address, transport: selected.proto, proxied: true };
+  }
   if (typeof xff !== 'string' || xff.length === 0 || xff.length > 512) throw new TypeError('invalid forwarding chain');
   const chain = xff.split(',').map((part) => address(part.trim()));
   if (chain.length > 16 || forwardedHop >= chain.length) throw new TypeError('invalid forwarding chain');
@@ -68,5 +101,13 @@ export class WebEdgePolicy {
   }
   digest(value) { return createHmac('sha256', this.addressKey).update(value).digest('hex'); }
   take(kind, key, cost) { return this.quotas[kind].take(key, cost); }
+  takeCommand(key, cost) {
+    const count = this.quotas.principal.canTake(key);
+    if (!count.ok) return { ...count, quota: 'principal' };
+    const weighted = this.quotas.cost.canTake(key, cost);
+    if (!weighted.ok) return { ...weighted, quota: 'cost' };
+    this.quotas.principal.take(key); this.quotas.cost.take(key, cost);
+    return { ok: true };
+  }
   closeAdmission() { this.admitting = false; }
 }

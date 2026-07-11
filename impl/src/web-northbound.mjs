@@ -181,12 +181,10 @@ export class WebNorthbound {
     }
     if (this.edge) {
       const key = ctx.principal.credentialId;
-      const count = this.edge.take('principal', key);
-      const cost = this.edge.take('cost', key, ({ spawn: 10, send: 2, interrupt: 2, kill: 2, respond: 2 }[envelope.command] ?? 1));
-      const refusal = !count.ok ? count : !cost.ok ? cost : null;
-      if (refusal) {
-        try { this._audit('quota_refused', ctx, { quota: !count.ok ? 'principal' : 'cost' }); } catch { return error(503, 'temporarily_unavailable'); }
-        return { ...error(429, 'rate_limited'), headers: { 'retry-after': String(refusal.retryAfter) } };
+      const quota = this.edge.takeCommand(key, ({ spawn: 10, send: 2, interrupt: 2, kill: 2, respond: 2 }[envelope.command] ?? 1));
+      if (!quota.ok) {
+        try { this._audit('quota_refused', ctx, { quota: quota.quota }); } catch { return error(503, 'temporarily_unavailable'); }
+        return { ...error(429, 'rate_limited'), headers: { 'retry-after': String(quota.retryAfter) } };
       }
     }
 
