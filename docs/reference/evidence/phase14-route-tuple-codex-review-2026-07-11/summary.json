@@ -1,8 +1,8 @@
 {
-  "at": "2026-07-11T22:25:00.733Z",
-  "repoHead": "37b175a0ca92beb29edbd15724ceb3127a9d5883",
+  "at": "2026-07-11T22:27:45.406Z",
+  "repoHead": "8ab5b384178892f3efbe1d6831d307617c23b2df",
   "workerId": "w-1",
-  "pid": 4931,
+  "pid": 43956,
   "model": "gpt-5.6-sol",
   "effort": "low",
   "result": {
@@ -22,9 +22,9 @@
       "mutationStrength": null,
       "mutationPassed": null,
       "survivedMutants": [],
-      "observedOutputTail": "ring end to end (104.731209ms)\n✔ decayedStat: null stat has no decayed values (bucket does not exist) (1.323042ms)\n✔ decayedStat: exactly one half-life halves weight and count (hand-computed example) (0.791791ms)\n✔ decayedStat: no elapsed time returns the stat unchanged (0.06275ms)\n✔ decayedStat: two half-lives quarters weight and count (0.04275ms)\n✔ scoreCandidate: rate falls back to defaultPriorSuccessRate when count is 0 (0.173334ms)\n✔ scoreCandidate: higher decayed weight/count (all wins) scores higher than a losing candidate at equal count (0.060375ms)\n✔ mode:round-robin cycles through eligible candidates in given order, wrapping, independently per taskType (0.185667ms)\n✔ candidates at concurrencyCeiling are filtered before selection; sole remaining eligible candidate is returned regardless of mode (0.188ms)\n✔ pick() returns null for an empty candidates array or when all candidates are at ceiling (0.086083ms)\n✔ respects concurrency: a maxed vendor is skipped in favor of one with headroom (0.163292ms)\n✔ mode:auto stays round-robin while totalDecayedCount < minSamplesForAdaptive, then switches to score-based selection (0.159792ms)\n✔ record(..., true) increases decayed weight and count; record(..., false) increases count only (rate falls) (0.062709ms)\n✔ record() decays the existing bucket by elapsed time before adding the new observation (hand-computed half-life example) (0.052792ms)\n✔ decay is a read-time projection: a bucket recorded once at t=0 shows continued decay toward the prior at t=10*halfLifeMs via getStat/pick, without another record() (0.041958ms)\n✔ D5/recency bias: an old losing streak is outweighed by recent wins — hand-computed exact numbers, not just a qualitative threshold (0.096667ms)\n✔ recency bias: pick() favors a candidate with a stale losing history over one with none, once its recent wins are recorded (0.076875ms)\n✔ a brand-new modelVersion in a family/taskType with prior history seeds at seedDiscount * predecessor decayed weight/count (0.076083ms)\n✔ D5: a new modelVersion gets tried, not starved — hand-computed exact scores via decayedStat()/scoreCandidate() prove WHY pick() favors it, not just that it happens to win (0.127583ms)\n✔ a modelVersion in a different family never seeds from another family's bucket, even with an identical taskType (0.040833ms)\n✔ no predecessor exists in family+taskType: bucket starts at {weight:0,count:0,seededFrom:null} and scoring falls back to defaultPriorSuccessRate (0.057542ms)\n✔ seeding reads a predecessor bucket but never mutates it; seeding is idempotent on re-touch (0.054875ms)\n✔ learns only from verified wins: record() has no code path that accepts or derives from a worker self-report field (0.173167ms)\n✔ record() throws RouterUsageError when verifiedWin is not strictly boolean (e.g. a truthy string) (0.068792ms)\n✔ a worker self-report alone (no explicit record(verifiedWin) call) never moves the stats (0.025792ms)\n✔ record() with a repeated taskId applies at most once; snapshot() is identical after the 2nd identical call (0.088125ms)\n✔ record() calls without taskId are never deduped — every call applies (at-least-once tradeoff) (0.029167ms)\n✔ the first record() call for a fresh taskId returns {applied:true} (0.0325ms)\n✔ getStat() for a never-recorded, never-seeded bucket returns null, not a zeroed object (0.023584ms)\n✔ snapshot() returns a deep copy; mutating it does not affect router state (0.044958ms)\n✔ no Math.random() anywhere: tie-breaking among equal scores is deterministic (first candidate wins) (0.039125ms)\n✔ route-tuple candidates fall back to legacy learning evidence when no exact tuple bucket exists (0.045917ms)\n✔ exact route-tuple evidence takes precedence over a stronger legacy alias (0.050667ms)\n✔ two AdaptiveRouter instances fed the identical sequence of record()/pick() calls with the same injected now values produce identical snapshots (0.066459ms)\nℹ tests 84\nℹ suites 0\nℹ pass 84\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1134.490208\n",
+      "observedOutputTail": "ring end to end (105.444333ms)\n✔ decayedStat: null stat has no decayed values (bucket does not exist) (1.21125ms)\n✔ decayedStat: exactly one half-life halves weight and count (hand-computed example) (0.0855ms)\n✔ decayedStat: no elapsed time returns the stat unchanged (1.160625ms)\n✔ decayedStat: two half-lives quarters weight and count (0.119333ms)\n✔ scoreCandidate: rate falls back to defaultPriorSuccessRate when count is 0 (0.118584ms)\n✔ scoreCandidate: higher decayed weight/count (all wins) scores higher than a losing candidate at equal count (0.054084ms)\n✔ mode:round-robin cycles through eligible candidates in given order, wrapping, independently per taskType (0.437542ms)\n✔ candidates at concurrencyCeiling are filtered before selection; sole remaining eligible candidate is returned regardless of mode (0.650584ms)\n✔ pick() returns null for an empty candidates array or when all candidates are at ceiling (0.188667ms)\n✔ respects concurrency: a maxed vendor is skipped in favor of one with headroom (0.443541ms)\n✔ mode:auto stays round-robin while totalDecayedCount < minSamplesForAdaptive, then switches to score-based selection (0.106333ms)\n✔ record(..., true) increases decayed weight and count; record(..., false) increases count only (rate falls) (0.231416ms)\n✔ record() decays the existing bucket by elapsed time before adding the new observation (hand-computed half-life example) (0.116167ms)\n✔ decay is a read-time projection: a bucket recorded once at t=0 shows continued decay toward the prior at t=10*halfLifeMs via getStat/pick, without another record() (0.046125ms)\n✔ D5/recency bias: an old losing streak is outweighed by recent wins — hand-computed exact numbers, not just a qualitative threshold (0.095291ms)\n✔ recency bias: pick() favors a candidate with a stale losing history over one with none, once its recent wins are recorded (0.0695ms)\n✔ a brand-new modelVersion in a family/taskType with prior history seeds at seedDiscount * predecessor decayed weight/count (0.078041ms)\n✔ D5: a new modelVersion gets tried, not starved — hand-computed exact scores via decayedStat()/scoreCandidate() prove WHY pick() favors it, not just that it happens to win (0.622292ms)\n✔ a modelVersion in a different family never seeds from another family's bucket, even with an identical taskType (0.046125ms)\n✔ no predecessor exists in family+taskType: bucket starts at {weight:0,count:0,seededFrom:null} and scoring falls back to defaultPriorSuccessRate (0.034042ms)\n✔ seeding reads a predecessor bucket but never mutates it; seeding is idempotent on re-touch (0.044666ms)\n✔ learns only from verified wins: record() has no code path that accepts or derives from a worker self-report field (0.181875ms)\n✔ record() throws RouterUsageError when verifiedWin is not strictly boolean (e.g. a truthy string) (0.06375ms)\n✔ a worker self-report alone (no explicit record(verifiedWin) call) never moves the stats (0.025375ms)\n✔ record() with a repeated taskId applies at most once; snapshot() is identical after the 2nd identical call (0.086042ms)\n✔ record() calls without taskId are never deduped — every call applies (at-least-once tradeoff) (0.02775ms)\n✔ the first record() call for a fresh taskId returns {applied:true} (0.024708ms)\n✔ getStat() for a never-recorded, never-seeded bucket returns null, not a zeroed object (0.059208ms)\n✔ snapshot() returns a deep copy; mutating it does not affect router state (0.043958ms)\n✔ no Math.random() anywhere: tie-breaking among equal scores is deterministic (first candidate wins) (0.038417ms)\n✔ route-tuple candidates fall back to legacy learning evidence when no exact tuple bucket exists (0.045458ms)\n✔ exact route-tuple evidence takes precedence over a stronger legacy alias (0.051709ms)\n✔ two AdaptiveRouter instances fed the identical sequence of record()/pick() calls with the same injected now values produce identical snapshots (0.065834ms)\nℹ tests 85\nℹ suites 0\nℹ pass 85\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1149.667417\n",
       "note": "PASS: observed exit 0 matches expected 0.",
-      "durationMs": 1192
+      "durationMs": 1206
     },
     "artifacts": {
       "commits": [],
@@ -48,14 +48,14 @@
     "sessionRef": {
       "vendor": "codex",
       "kind": "thread",
-      "id": "019f5347-b424-79a2-bde4-ded259309006",
+      "id": "019f5349-f0c1-71b3-8c91-c0333d93a791",
       "persistence": "native",
       "source": "wire"
     },
     "sessionContext": {
       "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-route-tuple-review",
       "repoRoot": "/Users/wahargis/Development/Experiments/baton",
-      "baseSha": "8d9cbe48228959843fceb816d4e13f8dbd650561",
+      "baseSha": "38abb227e62042f684e86d5151f5c69159c31728",
       "branch": "baton/codex-route-tuple-review",
       "ownerTaskId": "codex-route-tuple-review"
     },
@@ -69,15 +69,19 @@
     "ok": true,
     "result": "integrated",
     "integration": {
-      "beforeSha": "8d9cbe48228959843fceb816d4e13f8dbd650561",
-      "resultSha": "37b175a0ca92beb29edbd15724ceb3127a9d5883",
-      "afterSha": "37b175a0ca92beb29edbd15724ceb3127a9d5883",
+      "beforeSha": "38abb227e62042f684e86d5151f5c69159c31728",
+      "resultSha": "8ab5b384178892f3efbe1d6831d307617c23b2df",
+      "afterSha": "8ab5b384178892f3efbe1d6831d307617c23b2df",
       "strategy": "ff-only",
       "actor": "orchestrator"
     }
   },
   "approvals": [],
-  "steer": null,
+  "steer": {
+    "ok": true,
+    "result": "ok",
+    "emulated": false
+  },
   "checks": {
     "noHarnessError": true,
     "exactTupleHonest": true,

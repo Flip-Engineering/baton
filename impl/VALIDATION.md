@@ -99,8 +99,9 @@ git worktree registrations gone, every task terminal, and all temporary stress b
 
 ### Exact model and persistent-session control
 
-`spawn(vendor, brief, {model, modelPolicy})` filters model eligibility before routing, maps exact
-model/effort/service controls to native harness wires, carries requested/resolved/observed identity
+`spawn(vendor, brief, {model, effort, modelPolicy})` filters exact tuple eligibility before routing,
+maps exact model/effort/service controls to native harness wires, carries
+requested/resolved/observed identity
 through replay and verification, and kills silent non-alias fallbacks. Two real Grok models ran
 concurrently and were fully reaped.
 
@@ -138,6 +139,7 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 | Authenticated web SSE WN6 | `docs/handoff/evidence/phase12-web-stream-2026-07-11.md`; 62 focused Phase 11/12 contracts plus the 598/598 full suite cover authenticated single-use stream nonces, exact binding, snapshot/reconnect cursors, bounded replay/backpressure/tickets/connections, fail-closed audit/read/write/setup behavior, split trust labels, live expiry/revocation including per-event replay checks, HTTP/CORS integration, and disconnect-without-fleet-control; four exact-model recursive Baton turns all integrated or rejected honestly and fully reaped, ending in a no-actionable-finding review |
 | Atlas structural delta | `docs/handoff/evidence/phase13-atlas-structural-2026-07-11.md`; 7 focused contracts plus the 551/551 full suite use pinned real ast-grep parsing for confined, deterministic, token-bounded, content-addressed JS/TS-family AST deltas and live-prove Baton's own added export; shared index/overlay, search, symbols/SCIP, and later representation rungs remain explicit |
 | Atlas index/symbol/SCIP | `docs/handoff/evidence/phase13-atlas-index-symbols-2026-07-11.md`; 9 focused contracts plus the 576/576 full suite cover projection-committing explicit epochs, artifact/epoch tamper refusal, base-plus-worktree overlay reconciliation/staleness, lexical/repo-map/code-seed orientation, parsed symbol/reference/call graphs, SCIP JSON artifacts, bounded resumable output, cancellation/confinement, result ceilings, typed ambiguity, deterministic reverify, and a live 75-document Baton self-index; exact-model semantic review awaits quota reset, while live LSP, structural rewrite, semantic/CPG/IR/merge rungs remain explicit |
+| Harness/model/effort route tuple | `docs/handoff/evidence/phase14-route-tuple-2026-07-11.md`; 609/609 full-suite contracts plus recursive exact `CodexAppServerCli` + `gpt-5.6-sol` + `low` runs cover direct/auto/web selection, native mapping, honest nullable observation, recovery, durable event/coordination/story/result/replay/review/integration/commit attribution, exact learning buckets with read-only legacy fallback, mismatch kill/reap, and heterogeneous assembled-driver filtering; the final detached review found no actionable defect and every lifecycle/reap check passed |
 | Credential discipline | GLM checked by presence only and recorded `PENDING-LIVE-no-credential`; no credential value was logged |
 
 The three-vendor capstone checks were: no harness error; Claude/Codex/Grok all completed; every
@@ -191,5 +193,7 @@ proved it could stop and reap four same-vendor sessions concurrently, select exa
 two independently verified turns on one native session, isolate a live credentialed Grok worker,
 deny an outside-worktree write in its native sandbox, and auto-kill/reap it at a hard token budget.
 Those coordination/knowledge, Atlas index/symbol, and authenticated SSE milestones now ship. The
-next active pursuit is end-to-end harness + exact-model + effort route specificity (issue #2),
-followed by the remaining identity/quota/proxy/browser/MCP/operator and representation ladders.
+the harness + exact-model + effort route specificity gate (issue #2) now also ships. The next active
+pursuit is the remaining identity/quota/proxy/browser/MCP/operator surface, followed by the next
+measured representation rungs; isolated authenticated concurrent Grok 4.5 route/kill/reap remains
+pending live re-authentication rather than being inferred from deterministic coverage.

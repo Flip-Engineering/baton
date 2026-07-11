@@ -68,8 +68,9 @@ Harness/CLI, exact model, and model effort are independent axes. The orchestrato
 - select reasoning effort and service tier where the harness exposes them, without encoding either
   as an accidental property of the harness name;
 - inspect available/default/current model information and the provenance/freshness of that card;
-- see requested, resolved, observed, and rerouted model identities in handles, events, results,
-  verification, routing statistics, replay, scorecards, and commit attribution; and
+- see requested, resolved, and observed harness/model/effort identities in handles, events,
+  results, durable coordination, verification, routing statistics, replay, scorecards, reviews,
+  and commit attribution; and
 - fail visibly when a model cannot be honored—never silently fall back to a harness default.
 
 Selection must map to real controls: Claude/GLM `--model`, Codex thread/turn model overrides, Grok
@@ -81,7 +82,9 @@ ChatGPT transport; Baton may not silently substitute it or any older default. On
 authentication is available, Grok 4.5 through Grok Build is the intended cross-family,
 Opus-class review/implementation stand-in. These are operator policy inputs backed by live cards,
 not timeless model folklore. GitHub issue
-[#2](https://github.com/wahargis/baton/issues/2) tracks end-to-end route-tuple completion.
+[#2](https://github.com/wahargis/baton/issues/2) records the completed deterministic and recursive
+route-tuple implementation gate; the isolated concurrent Grok rerun remains separate live evidence
+pending provider re-authentication.
 
 Concurrent-provider acceptance includes starting multiple Grok workers at once, observing the
 configured concurrency/card limits, interrupting and killing selected workers, and proving native
@@ -225,14 +228,19 @@ negative result retires a rung through a recorded Decision, never through omissi
 Current shipped checkpoints as of 2026-07-11: CK1–CK9 supplies the deployment-neutral task,
 artifact, Scratch, and typed causal knowledge authority; Atlas supplies AST structural delta plus
 shared base/worktree index, lexical orientation, symbol/reference/call graph, and SCIP JSON; and
-Phase 12 WN6 supplies the authenticated resumable SSE user-to-orchestrator observation channel.
-The active next increment is GitHub issue #2's first-class `{harness, exactModel, effort}` route
-tuple across cards, dispatch, web/API schemas, attribution, and tests. These checkpoints narrow
-sequence only; they do not retire any later capability below.
+Phase 12 WN6 supplies the authenticated resumable SSE user-to-orchestrator observation channel;
+and Phase 14 supplies the first-class `{harness, exactModel, effort}` route tuple across cards,
+direct and automatic dispatch, authenticated web commands, native wires, durable attribution,
+learning, replay, recovery, review, verification, integration, and commit trailers. The recursive
+Codex route/review gates used exact `gpt-5.6-sol` at `low` effort and fully reaped every worker.
+Authenticated concurrent Grok 4.5 route/kill/reap is retained as `PENDING-LIVE` until isolated
+provider authentication is available. The active next increment is the remaining authenticated
+identity/proxy/browser/MCP/operator surface, followed by the next measured Atlas representation
+rungs. These checkpoints narrow sequence only; they do not retire any later capability below.
 
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
-2. Ship harness-independent exact model selection and attribution.
+2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**
 3. Make persistent sessions genuinely usable through the driver; add resume/fork/rejoin.
 4. Ship OS/credential isolation and budget/watchdog governance.
 5. Complete hardened acceptance and structured integration.
