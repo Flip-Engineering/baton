@@ -123,7 +123,13 @@ export class WebEventStream {
       return response(429, 'rate_limited');
     }
 
-    const snapshot = this.coordination.snapshot();
+    let snapshot;
+    try { snapshot = this.coordination.snapshot(); }
+    catch {
+      try { this._audit('stream_refused', principal, origin, { repoId: grant.repoId, reason: 'snapshot_unavailable' }); }
+      catch { return response(503, 'temporarily_unavailable'); }
+      return response(503, 'temporarily_unavailable');
+    }
     const boundary = snapshot.lastSeq;
     const requested = cursor == null || cursor === '' ? null : Number(cursor);
     if (requested !== null && (!Number.isSafeInteger(requested)
@@ -194,12 +200,17 @@ export class WebEventStream {
     this.activeConnections += 1;
     const pump = () => {
       if (closed) return;
-      if (!this._liveAuthorized(principal, origin, grant.repoId)) {
-        disconnect('stream_authorization_lost');
+      try {
+        if (!this._liveAuthorized(principal, origin, grant.repoId)) {
+          disconnect('stream_authorization_lost');
+          try { res.end(); } catch { /* connection is already unusable */ }
+          return;
+        }
+        for (const event of this.coordination.events(next)) if (!send(event)) break;
+      } catch {
+        disconnect('stream_read_failed');
         try { res.end(); } catch { /* connection is already unusable */ }
-        return;
       }
-      for (const event of this.coordination.events(next)) if (!send(event)) break;
     };
     let headersStarted = false;
     try {

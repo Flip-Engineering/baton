@@ -195,3 +195,48 @@ test('WN2/WN6: an established stream stops at credential expiry before reading l
   assert.ok(output.output.length >= beforeExpiry.length);
   assert.equal(coordination.events().some((event) => event.payload.kind === 'stream_authorization_lost'), true);
 });
+
+test('WN6/WN7: snapshot acquisition failure is typed and audited before SSE setup', () => {
+  const { coordination, stream } = fixture({ maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const ticket = stream.issue(principal(), 'https://control.test', 'repo-a');
+  coordination.snapshot = () => { throw new Error('coordination unavailable'); };
+  const output = new Response();
+  const refused = stream.open({ ticket: ticket.body.ticket, principal: principal(), origin: 'https://control.test' }, output);
+  assert.equal(refused.status, 503);
+  assert.equal(refused.body.error.code, 'temporarily_unavailable');
+  assert.equal(output.status, undefined);
+  assert.equal(output.output, '');
+  assert.equal(stream.activeConnections, 0);
+  assert.equal(coordination.events().some((event) => event.payload.kind === 'stream_refused'
+    && event.payload.reason === 'snapshot_unavailable'), true);
+  assert.equal(stream.consume(ticket.body.ticket, principal(), 'https://control.test'), null, 'a connection attempt consumes its one-time nonce even on bounded setup refusal');
+});
+
+test('WN6/WN7: later coordination-read and socket-write exceptions close without escaping or stranding capacity', async () => {
+  const first = fixture({ maxFrameBytes: 100_000, maxBufferedBytes: 100_000, pollMs: 5 });
+  const firstResponse = new Response();
+  first.stream.open({ ticket: first.stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test' }, firstResponse);
+  const firstEvents = first.coordination.events.bind(first.coordination);
+  first.coordination.events = () => { throw new Error('read failed'); };
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  first.coordination.events = firstEvents;
+  assert.equal(firstResponse.ended, true);
+  assert.equal(first.stream.activeConnections, 0);
+  assert.equal(first.coordination.events().some((event) => event.payload.kind === 'stream_read_failed'), true);
+
+  const second = fixture({ maxFrameBytes: 100_000, maxBufferedBytes: 100_000, pollMs: 5 });
+  class LaterBrokenWrite extends Response {
+    write(value) {
+      this.writeCount = (this.writeCount ?? 0) + 1;
+      if (this.writeCount > 2) throw new Error('socket write failed');
+      return super.write(value);
+    }
+  }
+  const secondResponse = new LaterBrokenWrite();
+  second.stream.open({ ticket: second.stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test' }, secondResponse);
+  second.coordination.recordWebAudit({ kind: 'later-event' }, { actor: 'test', key: 'later-write-event' });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(secondResponse.ended, true);
+  assert.equal(second.stream.activeConnections, 0);
+  assert.equal(second.coordination.events().some((event) => event.payload.kind === 'stream_read_failed'), true);
+});

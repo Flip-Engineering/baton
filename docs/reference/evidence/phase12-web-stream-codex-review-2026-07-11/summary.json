@@ -1,13 +1,34 @@
 {
-  "at": "2026-07-11T21:39:01.080Z",
-  "repoHead": "4ebcfc26ecb2ac7582245620d29cb459be906759",
+  "at": "2026-07-11T21:44:15.300Z",
+  "repoHead": "929bb693891f95ea688dcb33a5ad47f22aa911b8",
   "workerId": "w-1",
-  "pid": 31102,
+  "pid": 50448,
   "model": "gpt-5.6-sol",
   "result": {
     "ready": true,
-    "status": "cancelled",
-    "verdict": null,
+    "status": "completed",
+    "verdict": {
+      "reverified": true,
+      "observedExit": 0,
+      "hadClaim": false,
+      "matchesClaim": true,
+      "passed": true,
+      "locus": "fresh_sandbox",
+      "redGreen": null,
+      "baseExit": null,
+      "coverageOfChange": null,
+      "uncoveredChangedLines": [],
+      "mutationStrength": null,
+      "mutationPassed": null,
+      "survivedMutants": [],
+      "observedOutputTail": "ion append failure poisons before pending/blocked state becomes visible (289.685583ms)\n✔ CK8/CK9: stop-intent append failure calls no adapter and leaves durable task working (231.028917ms)\nPreparing worktree (new branch 'baton/durable-cancel')\n✔ CK8/CK9: cancellation completion failure resolves bounded, keeps stop intent, and restart closes task (281.229416ms)\n✔ CK4: Scratch claims conservatively conflict, warn cross-tree, and expire only by event (2.41875ms)\n✔ CK4: Scratch facts are tree-scoped, grounded, immutable, and explicitly expired (0.861083ms)\n✔ CK5: causal evidence and temporal coherence are enforced (0.550584ms)\n✔ CK5/CK7: bitemporal query, supersession, logged reads, and contamination survive replay (1.307833ms)\n✔ CK7/CK9: invalidation and contamination commit atomically (0.53375ms)\n✔ CK7: failed knowledge and Scratch read appends return no recalled content (0.201416ms)\n✔ CK2/CK8: confirmed kill durably cancels an active public task (295.252708ms)\n✔ WN2/WN8: issued cookie credentials are random, hashed at rest, and use strict host-only attributes (4.001084ms)\n✔ WN2: cookie and bearer authentication return sanitized stable identity, never the raw credential (0.9965ms)\n✔ WN2/WN7: revocation is immediate, audited, and survives restart (1.473417ms)\n✔ WN2/WN5: expired, malformed, mixed, and overlong credentials fail closed (0.920083ms)\n✔ WN2: duplicate revoke is idempotent and unknown sessions do not reveal existence (1.846875ms)\n✔ WN2/WN5: the session registry protects the command northbound and revocation blocks the next command (3.493333ms)\n✔ WN2/WN6: the session authenticator terminates an established stream after durable revocation (23.954333ms)\nPreparing worktree (new branch 'baton/fenced-web-stop')\n✔ WN2/WN3/WN5: authentication, exact origin, CSRF, capability, and repo scope fail before dispatch (6.224542ms)\n✔ WN1/WN4: spawn forwards harness and exact model independently and derives the audit actor from auth (1.954417ms)\n✔ WN4: an identical retry executes once and a same-key different body conflicts without mutation (1.955916ms)\n✔ WN4/WN5/WN7: unknown fields, unknown model policy, and client-supplied audit identity are rejected before admission (0.422958ms)\n✔ WN4: admitted and completed idempotency state survives coordination-store restart (0.504958ms)\n✔ WN1/WN4: fence-sensitive control forwards the expected fence and refuses a missing fence (0.669459ms)\n✔ WN4/WN7: durable completion append failure never returns a successful command result (0.6015ms)\n✔ WN7: coordinator precondition errors become typed, non-leaking invalid-command outcomes (0.467542ms)\n✔ WN1/WN2/WN5/WN8: the HTTP adapter authenticates a bounded JSON command and the server refuses missing TLS/auth (1.937833ms)\n✔ WN3/WN6: the HTTP adapter issues and consumes an authenticated SSE nonce for one repo authority (2.558917ms)\n✔ WN4/WN9: the real coordinator rejects stale web stop fences before adapter mutation (332.788541ms)\n✔ WN2/WN5/WN6: stream tickets are short-lived, single-use, hashed, and exactly bound (6.419667ms)\n✔ WN6: snapshot boundary and reconnect provide ordered at-least-once coordination delivery (5.191291ms)\n✔ WN6/WN7/WN9: expired cursors and bounded backpressure are typed and audited (1.2925ms)\n✔ WN6/WN9: browser disconnect audits closure and never invokes worker control (0.702708ms)\n✔ WN6: audit ordering fails closed before live ticket state or SSE headers (0.704375ms)\n✔ WN6: pruning and ticket/connection ceilings are enforced (1.787167ms)\n✔ WN6: one authority and bounded snapshot/control frames with split trust (3.24975ms)\n✔ WN6: invalid ceilings fail closed and response setup failures release connection authority (2.740709ms)\n✔ WN6: write backpressure stops immediately and claimed content never inherits authoritative trust (2.419459ms)\n✔ WN2/WN6: an established stream stops at credential expiry before reading later events (23.767416ms)\nℹ tests 56\nℹ suites 0\nℹ pass 56\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 3490.198459\n",
+      "note": "PASS: observed exit 0 matches expected 0.",
+      "durationMs": 3623
+    },
+    "artifacts": {
+      "commits": [],
+      "files": []
+    },
     "vendor": "codex",
     "modelRequested": "gpt-5.6-sol",
     "modelResolved": "gpt-5.6-sol",
@@ -19,14 +40,14 @@
     "sessionRef": {
       "vendor": "codex",
       "kind": "thread",
-      "id": "019f531d-0bfc-7393-9487-4fd1cc31d6ed",
+      "id": "019f5322-24c8-7b90-be05-8368cbfd6dcb",
       "persistence": "native",
       "source": "wire"
     },
     "sessionContext": {
       "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-web-stream-review",
       "repoRoot": "/Users/wahargis/Development/Experiments/baton",
-      "baseSha": "4ebcfc26ecb2ac7582245620d29cb459be906759",
+      "baseSha": "a441e69eb5083ab5869afe21453c203229ec546f",
       "branch": "baton/codex-web-stream-review",
       "ownerTaskId": "codex-web-stream-review"
     },
@@ -36,25 +57,31 @@
     "publication": null,
     "retainedResultRef": null
   },
-  "integration": null,
-  "approvals": [],
-  "steer": {
+  "integration": {
     "ok": true,
-    "result": "ok",
-    "emulated": false
+    "result": "integrated",
+    "integration": {
+      "beforeSha": "a441e69eb5083ab5869afe21453c203229ec546f",
+      "resultSha": "929bb693891f95ea688dcb33a5ad47f22aa911b8",
+      "afterSha": "929bb693891f95ea688dcb33a5ad47f22aa911b8",
+      "strategy": "ff-only",
+      "actor": "orchestrator"
+    }
   },
+  "approvals": [],
+  "steer": null,
   "checks": {
-    "noHarnessError": false,
+    "noHarnessError": true,
     "exactModelObserved": true,
-    "freshVerified": false,
-    "integrated": false,
-    "integrationIntent": false,
+    "freshVerified": true,
+    "integrated": true,
+    "integrationIntent": true,
     "killConfirmed": true,
     "processGone": true,
     "worktreeGone": true,
     "runtimeGone": true,
     "branchGone": true
   },
-  "fatal": "Error: review failed trust gate: {\"ready\":true,\"status\":\"cancelled\",\"verdict\":null,\"vendor\":\"codex\",\"modelRequested\":\"gpt-5.6-sol\",\"modelResolved\":\"gpt-5.6-sol\",\"modelObserved\":\"gpt-5.6-sol\",\"modelMismatch\":null,\"sessionRequest\":{\"mode\":\"new\"},\"sessionRef\":{\"vendor\":\"codex\",\"kind\":\"thread\",\"id\":\"019f531d-0bfc-7393-9487-4fd1cc31d6ed\",\"persistence\":\"native\",\"source\":\"wire\"},\"sessionContext\":{\"worktree\":\"/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-web-stream-review\",\"repoRoot\":\"/Users/wahargis/Development/Experiments/baton\",\"baseSha\":\"4ebcfc26ecb2ac7582245620d29cb459be906759\",\"branch\":\"baton/codex-web-stream-review\",\"ownerTaskId\":\"codex-web-stream-review\"},\"lineage\":null,\"review\":null,\"integration\":null,\"publication\":null,\"retainedResultRef\":null}\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase12-web-stream-codex-review-2026-07-11/run.mjs:80:44\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
-  "pass": false
+  "fatal": null,
+  "pass": true
 }
