@@ -51,14 +51,24 @@ A fleet is N harnesses writing simultaneously. Design rules:
 - **No shared mutable "world state" blob.** The seductive `state.json` that every worker reads and writes is the deadlock/lost-update generator. State is derived from the ledger + DAG; nobody writes a shared document. (This is where naive spawn-a-swarm implementations die.)
 - **Idempotency everywhere** (doc 05 §4): every control op and task transition carries a client key; replays are no-ops. Concurrent duplicate claims resolve by CAS; the loser gets `already_assigned`.
 
-## 5. Should the epistemic layer exist in baton? Selective promotion, not a second brain
+## 5. The epistemic layer exists in Baton: selective promotion, not a shared brain
 
-Position: **baton ships the operational + coordinative layers; the epistemic layer is an optional export, not a runtime dependency.** A coding fleet's job is to *land work*, not to accumulate a research narrative. But two epistemic artifacts are cheap and high-value:
+The original research stance made the graph an external PM concern. The full-system goal supersedes
+that boundary: **Baton owns a deployment-neutral typed causal graph, while PM remains prior art and
+an optional ordinary import/export target.** There is no PM or homelab runtime dependency. The graph
+remains selective and pull-only because a coding fleet's primary job is to land work, not to inject
+an accumulated research narrative into every turn. Two epistemic artifacts are immediately cheap
+and high-value:
 
 1. **The run scorecard** (§2, PM's health-score idea): auto-generated at fleet-run end from the ledger — brief coverage, verified-vs-asserted completions, interventions, budget, per-worker cost. Durable, queryable, one row per run.
 2. **Decision provenance** (§2, PM's causal backbone): the orchestrator's consequential choices (spawn, reroute-after-refusal, accept-result, merge) written as decision records with edges to the justifying events. This is the "audit the conductor, not just the musicians" requirement from doc 06 Q3, made concrete.
 
-Everything richer — cross-run learning ("Codex fails auth refactors, route them to Claude"), a literature graph, hypotheses — is **PM's job, not baton's.** The clean integration: baton *emits* into a PM-style KG at run boundaries (a `pm_log_finding`-shaped call per notable outcome, a `pm_decision` per consequential choice), and PM (or any epistemic store) owns the months-scale graph. Baton stays lean; the graph stays curated; neither reimplements the other. This is the honest version of "shared memory" — not one omniscient store, but a **fast operational spine that promotes selectively into a slow epistemic graph**, with the artifact registry (git) as the third, self-managing leg.
+Richer cross-run learning, literature, hypotheses, contradictions, and supersession therefore live in
+Baton's self-contained bitemporal graph under `spec/phase11/coordination-knowledge.md`. They are
+promoted selectively from immutable events/artifacts, never written as an ambient mutable brain.
+External export may shape-map into PM or another graph later, but the product stays self-contained.
+This preserves the honest architecture: a **fast operational spine that promotes selectively into
+a slow epistemic graph**, with Git-backed artifacts as the third leg.
 
 ## 6. Prior-art scorecard (to be completed from the anatomy dossier)
 
@@ -71,7 +81,9 @@ Everything richer — cross-run learning ("Codex fails auth refactors, route the
 | git / worktrees | artifact | branch isolation | the repo IS the memory; PR-as-result-contract | not a coordination store; no live state |
 | MCP-tasks / A2A | coordinative (vocab) | protocol-level task states | the 5-state lifecycle names; refines-links | federation machinery (premature) |
 
-*(Rows will be tightened and 2–3 more added — claude-flow's SQLite `.swarm/`, Letta/MemGPT relevance, beads-style issue-graphs — once the `memory-pm-prior-art` dossier lands; the synthesis stands regardless: operational spine + coordinative DAG + artifact manifest in the hub, epistemic graph as an external promotion target.)*
+*(The synthesis now resolves to: operational spine + coordinative DAG + artifact manifest +
+self-contained selective epistemic graph in the hub. External graphs are optional interchange
+targets, never product dependencies.)*
 
 ## 7. Open questions
 

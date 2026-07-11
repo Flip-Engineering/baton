@@ -47,7 +47,7 @@ Every harness already has a memory story, and doc 08's anatomy run proved they a
 
 ### The agent-facing interface (MCP verbs, `bok_*`)
 
-Deliberately small, in the `fleet_*` idiom of doc 04. Three faces: **write** (mostly automatic + one manual escape), **read** (explicit recall only), **export** (the PM boundary).
+Deliberately small, in the `fleet_*` idiom of doc 04. Three faces: **write** (mostly automatic + one manual escape), **read** (explicit recall only), and optional **interchange**. The graph itself is Baton-owned and self-contained; PM is prior art and one possible export format, not the durable-store boundary.
 
 ```ts
 // ── WRITE (manual escape hatch; the promoter does the rest automatically) ──
@@ -82,7 +82,7 @@ bok_audit(scope?: { project?: string })
 bok_trace(node_id: NodeId, depth?: number = 3)
   -> ProvenancePath  // walk a claim back to the ledger events / artifacts that justify it
 
-// ── EXPORT (the PM boundary — one-way, audit-gated, approval-gated) ──
+// ── OPTIONAL INTERCHANGE (one-way, audit-gated, approval-gated) ──
 bok_export(scope: { project?: string, since_run?: string }, target: `pm://${string}`)
   -> { promoted: {findings, decisions, edges}, skipped_failing_audit: number, pm_ids: NodeId[] }
 ```
@@ -176,7 +176,11 @@ The rungs are a *cost-justified gradient*; each ships value alone, and most flee
 - **Task-class taxonomy is the hard unsolved input.** RouteStats and recall both key on "task-class," and mis-clustering makes routing learn noise (the documented "routing collapse," [arXiv 2602.03478](https://arxiv.org/pdf/2602.03478)). Start with **human/brief-declared classes**; do not auto-cluster early. This is the single most likely thing to make the module quietly wrong.
 - **Re-poisoning is mitigated, not eliminated.** The six layers reduce but don't zero a determined prompt-injection through recalled content — recall output is still model input. Keeping recall read-only, bounded, provenance-framed, and audited is the ceiling of what's achievable without a separate defense.
 - **Three clocks are subtle.** Event-time vs observation-time vs valid-time (Graphiti's model) is genuinely tricky; a bug in invalidation *resurrects refuted beliefs*. Graphiti's own implementation complexity is the warning label.
-- **The PM boundary must stay one-way.** Baton exports into PM; baton must **not** read PM mid-run (that re-opens the fan-out/poisoning channel PM's topic-retrieval was flagged for in doc 08). If a fleet needs durable PM knowledge, a human curator recalls it *into the brief* — the brief is the sanctioned injection point, not a live query. Baton's staging graph and PM can also *diverge* (PM's curator may reject an exported claim); export carries an idempotency key so re-export reconciles rather than duplicates.
+- **External interchange must stay optional and one-way during a run.** Baton's own graph is durable;
+  an export to PM or another store is a copy, not a handoff of ownership. Baton must not query an
+  external graph mid-run (that re-opens the fan-out/poisoning channel doc 08 rejects). Imports are
+  explicit, reviewed data operations outside the active run. Export carries an idempotency key so
+  retries reconcile rather than duplicate.
 - **Contradiction resolution isn't generally automatable.** When run A says "X works" and run B says "X fails," the graph records `Contradicts` and surfaces both; deciding which is right may need a tiebreak run or a human. The BoK's job is to *make the conflict legible and un-loseable*, not to adjudicate it — precisely what the live PM audit does when it flags unresolved structural gaps rather than silently picking a side.
 - **Grounding the audit in reality:** the live `pm_kg_audit` of volta-renaissance returned **70/100** across six axes — causal-completeness 99, temporal-coherence 88 (9 violations: decisions "informed by" findings created *after* them), edge-density 55, and *literature-utilization 20* (283 papers, 58 read). That last number is the cautionary tale baton's `bok_audit` **recall-utility** axis replaces PM's literature axis with: an accumulated store nobody queries is the default failure of a body of knowledge, and the metric must make that visible before the graph is trusted or exported.
 
