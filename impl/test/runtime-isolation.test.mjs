@@ -31,6 +31,7 @@ test('GV6: explicit credential files are copied mode 0600 without exposing conte
   writeFileSync(source, '{"token":"file-secret"}');
   const isolation = new RuntimeIsolation({ repoRoot, baseEnv: { PATH: '/bin' }, credentialFiles: { grok: [source] } });
   const scope = isolation.create('w-2', 'grok');
+  assert.equal(scope.posture.config.endsWith('/w-2/home/.grok'), true);
   const target = join(scope.posture.config, 'auth.json');
   assert.equal(statSync(target).mode & 0o777, 0o600);
   assert.deepEqual(scope.posture.projectedFiles, ['auth.json']);

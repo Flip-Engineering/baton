@@ -37,7 +37,9 @@ export class RuntimeIsolation {
     const root = privateDir(join(this.root, workerId));
     const home = privateDir(join(root, 'home'));
     const tmp = privateDir(join(root, 'tmp'));
-    const config = privateDir(join(root, 'config', family));
+    // Grok's native sandbox grants its expected ~/.grok tree, not an arbitrary GROK_HOME outside
+    // HOME. Keep HOME private and place the projected config at that vendor-native path.
+    const config = privateDir(family === 'grok' ? join(home, '.grok') : join(root, 'config', family));
 
     const env = {};
     const stripped = [];
