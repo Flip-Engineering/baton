@@ -58,7 +58,9 @@ these tests.
   or changing Git. Publication request and exact-fence authorization are durable before the
   publisher; authorization failure invokes no publisher. After the outside effect, publication's
   knowledge decision and driver completion commit atomically. Replay ignores a telemetry-only
-  `publication.completed`, reports publication unknown, and never republishes it.
+  `publication.completed`, reports publication unknown, and never republishes it. Replay also
+  rejects an adversarial asymmetric stream with a mapped completion and promoted decision but no
+  paired driver completion; valid paired authority survives restart.
 - Adapter callback failures caused by an already-poisoned authoritative store are contained at
   the callback boundary rather than escaping as uncaught process exceptions.
 
@@ -75,7 +77,7 @@ node --test impl/test/phase11-acceptance-integration.test.mjs
 20/20 passing
 
 cd impl && node --test
-563/563 passing
+565/565 passing
 ```
 
 The recursive exact-model Grok spec and implementation reviews passed every Baton lifecycle check.
@@ -84,6 +86,14 @@ The implementation review is stored at
 dual-stream write, claim-before-spawn, replay-authority, artifact, Scratch, recall, and refusal seams
 closed in this hardening slice. The earlier first spec-review run was correctly budget-stopped and
 fully reaped; the measured reruns were verified and integrated by Baton itself.
+
+The fresh exact-model Codex CK9 review at
+`reviews/dogfood/codex-ck9-crash-window-review.md` was independently verified, ff-only integrated,
+and fully reaped by Baton. It found a major decision-only replay seam and a minor missing approval
+fixture. Both are now closed: replay requires both halves of the atomic publication batch plus
+matching evidence/payload identity, and question and approval delivery each have post-accept
+single-consumer fault tests. A final recursive rerun of those repairs remains required before this
+review cycle is closed.
 
 ## Remaining beyond the deterministic CK9 gate
 

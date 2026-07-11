@@ -84,8 +84,10 @@ redeliver.
 Publication is a post-effect special case: authorization is durable before the publisher, while
 the knowledge decision and driver completion become authoritative in one coordination append
 batch after the effect. Replay accepts `publication.completed` telemetry only when that atomic
-authority record exists. Otherwise the already integrated task remains completed, publication is
-reported unknown/not completed, and the poisoned live coordinator fails closed.
+authority record exists: the mapped operational digest, decision event, adjacent paired driver
+record, shared batch-key lineage, task identity, evidence reference, and publication payload must
+all agree. Otherwise the already integrated task remains completed, publication is reported
+unknown/not completed, and the poisoned live coordinator fails closed.
 
 `task.created` persists `brief`, `deps`, `refines`, `taskType`, requested vendor/model/session
 policy, and the reserved public handle ID. `task.claimed` persists assignee, resolved vendor/model,

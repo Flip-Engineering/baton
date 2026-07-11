@@ -246,6 +246,32 @@ test('CI2/CK9: accepted input followed by append failure releases one racing con
   assert.equal(replay.list()[0].status, 'orphaned');
 });
 
+test('CI2/CK9: accepted approval append failure also releases one racing consumer without redelivery', async () => {
+  const delivery = deferred();
+  let approvals = 0;
+  const ad = adapter({ approve: async () => { approvals += 1; await delivery.promise; return { ok: true }; } });
+  const { coordinator, log } = harness({ ad });
+  const h = await coordinator.spawn('stub', brief(), { taskId: 'approval-post-effect-failure' });
+  ad._cb({
+    worker: h.id, harness: 'stub', turnEpoch: 2, actor: 'worker', kind: 'approval.requested',
+    payload: { requestId: 'a-post-effect', tool: 'shell', blocking: true },
+  });
+
+  const first = coordinator.respond('a-post-effect', { decision: 'allow' }, 'human');
+  await until(() => approvals === 1);
+  const second = coordinator.respond('a-post-effect', { decision: 'deny' }, 'other-human');
+  log._file = () => join(tmpdir(), 'baton-missing-parent', `${Date.now()}`, 'events.jsonl');
+  delivery.resolve();
+
+  await assert.rejects(first, (error) => error.code === 'operational_log_unavailable');
+  assert.deepEqual(await Promise.race([second, sleep(100).then(() => ({ result: 'timeout' }))]), {
+    ok: false, result: 'already_resolved', resolution: { decision: 'allow' },
+  });
+  assert.equal(approvals, 1);
+  assert.equal(coordinator._pending.get('a-post-effect').state, 'resolved');
+  assert.throws(() => coordinator.list(), (error) => error.code === 'operational_log_unavailable');
+});
+
 test('CI3: kill after a crash settles already_dead without waiting for a new confirmation', async () => {
   let removed = 0;
   const ad = adapter({ kill: async () => ({ ok: true }) });

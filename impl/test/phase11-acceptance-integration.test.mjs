@@ -369,7 +369,7 @@ test('CK8/CK9: integration intent append failure leaves Git and worker ownership
 });
 
 test('AC6: publication has no side effect before approval and allow publishes the exact integrated SHA once', async () => {
-  const { coordinator, coordination, log, handle, calls } = await integratedPublicationTask();
+  const { coordinator, coordination, log, handle, calls, root, logDir } = await integratedPublicationTask();
   const requested = coordinator.requestPublication(handle.id, { remote: 'origin', ref: 'refs/heads/main' }, 'test-user');
   assert.equal(calls.length, 0);
   assert.deepEqual(requested.target, {
@@ -391,6 +391,37 @@ test('AC6: publication has no side effect before approval and allow publishes th
   assert.equal(coordination.events().some((entry) => entry.kind === 'driver.recorded' && entry.payload.kind === 'publication.completed'), true);
   assert.equal(coordination.queryKnowledge({ types: ['Decision'] }).some((node) => node.id.startsWith('decision:publish:')), true);
   assert.equal(coordination.events().some((entry) => entry.kind === 'knowledge.promoted' && entry.payload.promotion?.trigger === 'publication'), true);
+
+  const replay = createDriver({
+    repoRoot: root, logDir, coordination,
+    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) },
+    publisher: async () => { throw new Error('replay must never republish'); }, watchdog: { stallMs: 0 },
+  });
+  assert.deepEqual((await replay.coordinator.result(handle.id)).publication, { requestId: requested.requestId, ...requested.target, actor: 'test-user' });
+});
+
+test('CK9: replay rejects an asymmetric publication decision without its paired driver completion', async () => {
+  const { coordinator, coordination, log, handle, root, logDir, calls } = await integratedPublicationTask();
+  const task = await coordinator.result(handle.id);
+  const publication = { requestId: 'split-publication', remote: 'origin', ref: 'refs/heads/main', sha: task.integration.afterSha, actor: 'test-user' };
+  const operational = log.append({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: coordinator.list()[0].turnEpoch,
+    kind: 'publication.completed', actor: 'human', payload: publication,
+  });
+  const mapped = coordination.mapOperationalEvent(operational, { actor: 'policy', key: `split:evidence:${operational.seq}` });
+  coordination.promoteKnowledgeNode({
+    id: `decision:publish:publish-task:${operational.seq}`, type: 'Decision',
+    body: 'asymmetric publication decision', grounding: 'observed', informedBy: ['task:publish-task'],
+    evidence: [{ coordinationSeq: mapped.evidence.coordinationSeq }],
+  }, { kind: 'Decision', trigger: 'publication' }, { actor: 'human', key: `split:decision:${operational.seq}` });
+
+  const replay = createDriver({
+    repoRoot: root, logDir, coordination,
+    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) },
+    publisher: async () => { throw new Error('replay must never republish'); }, watchdog: { stallMs: 0 },
+  });
+  assert.equal((await replay.coordinator.result(handle.id)).publication, null);
+  assert.equal(calls.length, 0);
 });
 
 test('CK8/CK9: publication authorization append failure invokes no publisher', async () => {

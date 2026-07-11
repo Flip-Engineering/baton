@@ -257,7 +257,7 @@ export class Coordinator {
   /** @param {object} opts */
   constructor(opts) {
     if (!opts?.coordination) throw new TypeError('Coordinator requires a durable coordination store');
-    for (const method of ['snapshot', 'task', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent', 'recordDriver', 'completePublication', 'registerArtifact', 'artifact', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
+    for (const method of ['snapshot', 'task', 'publicationAuthority', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent', 'recordDriver', 'completePublication', 'registerArtifact', 'artifact', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
       if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
     }
     this._log = opts.log;
@@ -2877,9 +2877,7 @@ export class Coordinator {
             // itself. The publication decision and driver completion are an atomic coordination
             // batch; absence of that decision means replay must report outcome unknown, never
             // fabricate a successful publication from the telemetry stream.
-            if (this._coordination?.snapshot().knowledge.nodes.some((node) =>
-              node.id === `decision:publish:${taskId}:${e.seq}`
-              && node.promotion?.trigger === 'publication')) publication = e.payload ?? publication;
+            if (this._coordination?.publicationAuthority(taskId, e)) publication = e.payload ?? publication;
             break;
           case 'lifecycle.crashed':
           case 'control.forced_stop':

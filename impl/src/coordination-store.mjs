@@ -382,6 +382,27 @@ export class CoordinationStore {
     return { ok: true, event: clone(event) };
   }
 
+  /** Verify the complete post-effect publication authority tuple during replay. Merely finding a
+   * promoted decision is insufficient: the mapped operational digest, paired driver record,
+   * adjacency, batch-key lineage, task, evidence, and publication payload must all agree. */
+  publicationAuthority(taskId, operationalEvent) {
+    if (typeof taskId !== 'string' || !operationalEvent || operationalEvent.kind !== 'publication.completed') return null;
+    const evidence = this._evidence.get(`${operationalEvent.worker}:${operationalEvent.seq}`);
+    if (!evidence || evidence.digest !== digest(operationalEvent) || evidence.kind !== 'publication.completed') return null;
+    const nodeId = `decision:publish:${taskId}:${operationalEvent.seq}`;
+    const node = this._knowledgeNodes.get(nodeId);
+    if (!node || node.promotion?.trigger !== 'publication') return null;
+    const decisionEvent = this._events[node.observedSeq - 1];
+    const driverEvent = this._events[node.observedSeq];
+    if (decisionEvent?.kind !== 'knowledge.promoted' || decisionEvent.payload?.id !== nodeId) return null;
+    if (driverEvent?.kind !== 'driver.recorded' || driverEvent.payload?.kind !== 'publication.completed') return null;
+    if (driverEvent.idempotencyKey !== `${decisionEvent.idempotencyKey}:driver`) return null;
+    if (driverEvent.payload?.taskId !== taskId) return null;
+    if (driverEvent.payload?.evidence?.coordinationSeq !== evidence.coordinationSeq) return null;
+    if (digest(driverEvent.payload?.publication) !== digest(operationalEvent.payload)) return null;
+    return freeze({ decisionEvent: decisionEvent.seq, driverEvent: driverEvent.seq, evidence: evidence.coordinationSeq });
+  }
+
   /** Atomically make a post-effect publication authoritative. The operational completion may
    * already exist because the publisher is an outside effect; neither the graph decision nor the
    * driver completion is visible unless both append in one fs write. */
