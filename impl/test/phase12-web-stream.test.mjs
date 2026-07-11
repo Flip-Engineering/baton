@@ -67,7 +67,7 @@ test('WN6/WN7/WN9: expired cursors and bounded backpressure are typed and audite
   const cursor = coordination.snapshot().lastSeq;
   assert.equal(stream.open({ ticket: stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test', cursor }, response), null);
   assert.equal(response.ended, true);
-  assert.match(response.output, /event: lag/);
+  assert.equal(response.output, '', 'an overfull socket receives no additional control bytes');
   assert.equal(coordination.events().some((event) => event.payload.kind === 'stream_backpressure_disconnect'), true);
 });
 
@@ -163,7 +163,7 @@ test('WN6: write backpressure stops immediately and claimed content never inheri
   first.stream.open({ ticket: first.stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test' }, blocked);
   assert.equal(blocked.ended, true);
   assert.equal(first.stream.activeConnections, 0);
-  assert.match(blocked.output, /event: lag/);
+  assert.doesNotMatch(blocked.output, /event: lag/, 'write(false) receives no second write');
 
   const second = fixture({ maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
   const claim = second.coordination.claimScratch({
@@ -178,6 +178,37 @@ test('WN6: write backpressure stops immediately and claimed content never inheri
   assert.match(output.output, /"kind":"scratch.claimed"/);
   assert.match(output.output, /"contentTrust":"claimed"/);
   output.emit('close');
+});
+
+test('WN6/EP6: lag control shares the control-frame and buffered-byte close invariant', () => {
+  const run = ({ maxFrameBytes, maxBufferedBytes = 1_000, writableLength = 0, writeResult = true, throws = false }) => {
+    let released = 0;
+    const { coordination, stream } = fixture({
+      maxFrameBytes, maxControlFrameBytes: 1_000, maxBufferedBytes,
+      acquireConnection: () => ({ ok: true }), releaseConnection: () => { released += 1; },
+    });
+    class CountResponse extends Response {
+      constructor() { super(writableLength, writeResult); this.writeCount = 0; this.endCount = 0; }
+      write(value) { this.writeCount += 1; if (throws) throw new Error('broken socket'); return super.write(value); }
+      end() { this.endCount += 1; super.end(); }
+    }
+    const output = new CountResponse();
+    const ticket = stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket;
+    const cursor = coordination.snapshot().lastSeq;
+    assert.equal(stream.open({ ticket, principal: principal(), origin: 'https://control.test', cursor }, output), null);
+    assert.equal(output.endCount, 1); assert.equal(stream.activeConnections, 0); assert.equal(released, 1);
+    const terminal = coordination.events().filter((event) => ['stream_backpressure_disconnect', 'stream_read_failed'].includes(event.payload.kind));
+    assert.equal(terminal.length, 1);
+    return output;
+  };
+  const room = run({ maxFrameBytes: 1 });
+  assert.equal(room.writeCount, 1); assert.match(room.output, /event: lag/);
+  const full = run({ maxFrameBytes: 1, writableLength: 1_000 });
+  assert.equal(full.writeCount, 0); assert.equal(full.output, '');
+  const refused = run({ maxFrameBytes: 100_000, writeResult: false });
+  assert.equal(refused.writeCount, 1); assert.doesNotMatch(refused.output, /event: lag/);
+  const broken = run({ maxFrameBytes: 100_000, throws: true });
+  assert.equal(broken.writeCount, 1); assert.equal(broken.output, '');
 });
 
 test('WN2/WN6: an established stream stops at credential expiry before reading later events', async () => {

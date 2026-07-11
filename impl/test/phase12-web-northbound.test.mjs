@@ -253,6 +253,7 @@ test('WN3/WN6: the HTTP adapter issues and consumes an authenticated SSE nonce f
 test('WN5/WN6: cookie ticket CSRF fails before issue and Last-Event-ID wins over query cursor', async () => {
   const calls = [];
   const stream = {
+    authorizeIssue(candidate, origin, repoId) { return candidate?.capabilities?.includes('observe') && origin === 'https://control.example.test' && repoId === 'repo-a'; },
     issue(...args) { calls.push({ op: 'issue', args }); return { status: 201, body: { ok: true, ticket: 'ticket' } }; },
     open(args) { calls.push({ op: 'open', args }); return { status: 409, body: { ok: false, error: { code: 'snapshot_required' } } }; },
   };

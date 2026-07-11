@@ -75,7 +75,7 @@ export class WebEventStream {
   issue(principal, origin, repoId) {
     if (!this.accepting) return response(503, 'temporarily_unavailable');
     this._pruneTickets();
-    if (!this._authorized(principal, origin, repoId)) {
+    if (!this.authorizeIssue(principal, origin, repoId)) {
       try { this._audit('stream_ticket_refused', principal, origin, { repoId, reason: 'forbidden' }); }
       catch { return response(503, 'temporarily_unavailable'); }
       return response(principal ? 403 : 401, principal ? 'forbidden' : 'unauthenticated');
@@ -96,6 +96,10 @@ export class WebEventStream {
     catch { return response(503, 'temporarily_unavailable'); }
     this.tickets.set(id, state);
     return { status: 201, body: { ok: true, ticket: `${id}.${secret}`, expiresAt: new Date(expiresAt).toISOString() } };
+  }
+
+  authorizeIssue(principal, origin, repoId) {
+    return this.accepting && this._liveAuthorized(principal, origin, repoId);
   }
 
   _pruneTickets() {
@@ -167,6 +171,7 @@ export class WebEventStream {
     let next = requested === null ? boundary + 1 : requested + 1;
     let closed = false;
     let timer;
+    let endRequested = false;
     const frame = (type, cursorValue, eventId, payload) => ({
       schemaVersion: 1, streamId, cursor: cursorValue, eventId,
       provenance: 'coordination-authority', occurrenceTrust: 'authoritative',
@@ -174,6 +179,17 @@ export class WebEventStream {
       resource: { repoId: grant.repoId }, type, payload,
     });
     const encode = (type, id, value) => `id: ${id}\nevent: ${type}\ndata: ${JSON.stringify(value)}\n\n`;
+    const writeControl = (control) => {
+      const bytes = Buffer.byteLength(control);
+      if (bytes > this.maxControlFrameBytes
+        || (res.writableLength ?? 0) + bytes > this.maxBufferedBytes) return false;
+      try { return res.write(control) !== false; } catch { return false; }
+    };
+    const endSocket = () => {
+      if (endRequested) return;
+      endRequested = true;
+      try { res.end(); } catch { /* the socket is already terminal */ }
+    };
     const disconnect = (kind = 'stream_disconnected') => {
       if (closed) return;
       closed = true;
@@ -186,13 +202,9 @@ export class WebEventStream {
     const closeForShutdown = () => {
       if (closed) return;
       const control = 'event: shutdown\ndata: {"reconnect":true}\n\n';
-      const bytes = Buffer.byteLength(control);
-      try {
-        if (bytes <= this.maxControlFrameBytes
-          && (res.writableLength ?? 0) + bytes <= this.maxBufferedBytes) res.write(control);
-      } catch { /* broken sockets still close and release authority below */ }
+      writeControl(control);
       disconnect('stream_shutdown');
-      try { res.end(); } catch { /* broken sockets are already terminal */ }
+      endSocket();
     };
     const send = (event) => {
       const value = frame('coordination', event.seq, `coordination:${event.seq}`, event);
@@ -201,19 +213,16 @@ export class WebEventStream {
         || (res.writableLength ?? 0) + Buffer.byteLength(encoded) > this.maxBufferedBytes) {
         const lag = frame('lag', next - 1, `lag:${streamId}`, { code: 'backpressure', reconnect: true });
         const control = encode('lag', next - 1, lag);
-        if (Buffer.byteLength(control) <= this.maxControlFrameBytes) res.write(control);
+        writeControl(control);
         disconnect('stream_backpressure_disconnect');
-        res.end();
+        endSocket();
         return false;
       }
       const accepted = res.write(encoded);
       next = event.seq + 1;
       if (accepted === false) {
-        const lag = frame('lag', next - 1, `lag:${streamId}`, { code: 'backpressure', reconnect: true });
-        const control = encode('lag', next - 1, lag);
-        if (Buffer.byteLength(control) <= this.maxControlFrameBytes) res.write(control);
         disconnect('stream_backpressure_disconnect');
-        res.end();
+        endSocket();
         return false;
       }
       return true;
@@ -241,20 +250,20 @@ export class WebEventStream {
       try {
         if (!this._liveAuthorized(principal, origin, grant.repoId)) {
           disconnect('stream_authorization_lost');
-          try { res.end(); } catch { /* connection is already unusable */ }
+          endSocket();
           return;
         }
         for (const event of this.coordination.events(next, this.maxEventsPerPump)) {
           if (!this._liveAuthorized(principal, origin, grant.repoId)) {
             disconnect('stream_authorization_lost');
-            try { res.end(); } catch { /* connection is already unusable */ }
+            endSocket();
             return;
           }
           if (!send(event)) break;
         }
       } catch {
         disconnect('stream_read_failed');
-        try { res.end(); } catch { /* connection is already unusable */ }
+        endSocket();
       }
     };
     let headersStarted = false;
@@ -269,11 +278,8 @@ export class WebEventStream {
       });
       headersStarted = true;
       if (initial && res.write(initial) === false) {
-        const lag = frame('lag', next - 1, `lag:${streamId}`, { code: 'backpressure', reconnect: true });
-        const control = encode('lag', next - 1, lag);
-        if (Buffer.byteLength(control) <= this.maxControlFrameBytes) res.write(control);
         disconnect('stream_backpressure_disconnect');
-        res.end();
+        endSocket();
         return null;
       }
       pump();
@@ -284,7 +290,7 @@ export class WebEventStream {
     } catch {
       disconnect('stream_setup_failed');
       if (headersStarted) {
-        try { res.end(); } catch { /* connection is already unusable */ }
+        endSocket();
         return null;
       }
       return response(503, 'temporarily_unavailable');

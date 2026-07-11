@@ -12,6 +12,9 @@ accept one bounded, strictly parsed forwarding chain and select the configured h
 overlong, ambiguous, or mixed forwarding headers fail typed before authentication/provider/body
 work. Audit records retain only a presence/classification and a keyed address digest, never the raw
 address. Empty proxy trust means direct mode.
+Quoted `Forwarded` values are accepted only through a deliberately small escape-free grammar;
+protocol tokens are case-insensitive HTTP/HTTPS after decoding, while controls, escapes, duplicate
+or unknown parameters, zones, ports, and ambiguous forms remain refused.
 
 ## EP2 — deterministic bounded quota authority
 
@@ -31,8 +34,11 @@ coordinator dispatch. Login throttling therefore bounds provider calls. Principa
 after authentication but before durable command admission or dispatch. Refusal returns bounded
 `429 rate_limited` plus `Retry-After`, is audited fail closed, and mutates no session, command,
 worker, or stream state. The login-attempt quota applies only to the admitted `POST` login route;
-preflight and invalid methods still use the ordinary address quota but cannot consume login
-attempts. Client-supplied IDs cannot choose a quota bucket.
+canonical HTTPS, exact Origin, JSON content type, bounded valid JSON, and an object body are all
+validated before it is consumed. Preflight, invalid methods, and other policy-invalid requests use
+the ordinary address quota but cannot consume login attempts. Stream-ticket Origin, repository,
+capability, and live-principal authorization likewise precede the credential ticket quota.
+Client-supplied IDs cannot choose a quota bucket.
 
 ## EP4 — trusted-proxy and TLS modes are explicit
 
@@ -63,6 +69,7 @@ interrupts/kills workers and never claims worker death. Repeated shutdown is ide
 bounded, including broken sockets and audit failures. The shutdown control frame obeys both its
 control-frame byte ceiling and the connection's buffered-byte ceiling; refusal or write failure
 causes immediate exactly-once close and lease release with no additional socket writes.
+Lag/backpressure controls use the same dual ceiling and exactly-once terminal cleanup invariant.
 
 ## EP7 — durable audit and restart posture
 

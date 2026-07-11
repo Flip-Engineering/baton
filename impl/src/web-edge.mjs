@@ -85,11 +85,15 @@ const parseForwarded = (value) => {
     for (const parameter of element.split(';')) {
       const match = /^([a-z]+)=("[^"]+"|[^\s;,]+)$/i.exec(parameter.trim());
       if (!match || Object.hasOwn(fields, match[1].toLowerCase())) throw new TypeError('invalid forwarding chain');
-      fields[match[1].toLowerCase()] = match[2];
+      let decoded = match[2];
+      if (decoded.startsWith('"')) decoded = decoded.slice(1, -1);
+      if (!/^[A-Za-z0-9.:[\]_%+-]+$/.test(decoded)) throw new TypeError('invalid forwarding chain');
+      fields[match[1].toLowerCase()] = decoded;
     }
-    if (!fields.for || !fields.proto || !['http', 'https'].includes(fields.proto) || Object.keys(fields).some((key) => !['for', 'proto'].includes(key))) throw new TypeError('invalid forwarding chain');
+    if (!fields.for || !fields.proto || Object.keys(fields).some((key) => !['for', 'proto'].includes(key))) throw new TypeError('invalid forwarding chain');
+    fields.proto = fields.proto.toLowerCase();
+    if (!['http', 'https'].includes(fields.proto)) throw new TypeError('invalid forwarding chain');
     let client = fields.for;
-    if (client.startsWith('"')) client = client.slice(1, -1);
     if (client.startsWith('[') && client.endsWith(']')) client = client.slice(1, -1);
     if (client.includes(']') || client.includes('[') || client.includes('%')) throw new TypeError('invalid forwarding chain');
     return { address: address(client), proto: fields.proto };

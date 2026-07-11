@@ -294,13 +294,6 @@ export class WebNorthbound {
         try { this._audit('quota_refused', { origin }, { quota: name, addressDigest: this.edge.digest(identity.address) }); } catch { return this._write(res, error(503, 'temporarily_unavailable')); }
         return this._write(res, error(429, 'rate_limited'), origin, { 'retry-after': String(quota.retryAfter) });
       }
-      if (req.method === 'POST' && url.pathname === '/v1/auth/login') {
-        const login = this.edge.take('login', this.edge.digest(identity.address));
-        if (!login.ok) {
-          try { this._audit('quota_refused', { origin }, { quota: 'login', addressDigest: this.edge.digest(identity.address) }); } catch { return this._write(res, error(503, 'temporarily_unavailable')); }
-          return this._write(res, error(429, 'rate_limited'), origin, { 'retry-after': String(login.retryAfter) });
-        }
-      }
     }
     if (req.method === 'GET' && url.pathname === '/healthz') return this._write(res, result(200, { ok: true }));
     if (req.method === 'GET' && url.pathname === '/readyz') return this._write(res, this._readinessResponse({ origin, remoteAddress: req.edgeAddressDigest ? 'canonical' : (req.socket?.remoteAddress ?? null), addressDigest: req.edgeAddressDigest ?? null }));
@@ -335,6 +328,12 @@ export class WebNorthbound {
           ? equalDigest(tokenHash(ctx.csrfToken), principal.csrfTokenDigest)
           : ctx.csrfToken === principal.csrfToken);
         if (!csrfValid) return this._write(res, error(403, 'forbidden'), origin);
+      }
+      if (typeof this.stream.authorizeIssue !== 'function') return this._write(res, error(503, 'temporarily_unavailable'), origin);
+      if (!this.stream.authorizeIssue(principal, origin, body?.repoId)) {
+        try { this._audit('stream_ticket_refused', { principal, origin, addressDigest: req.edgeAddressDigest ?? null }, { reason: 'forbidden' }); }
+        catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+        return this._write(res, error(403, 'forbidden'), origin);
       }
       if (this.edge) {
         const ticketQuota = this.edge.take('ticket', principal.credentialId);
@@ -435,6 +434,14 @@ export class WebNorthbound {
       return this._write(res, error(401, 'unauthenticated'), ctx.origin);
     };
     if (!this.sessions || typeof this.identityProvider !== 'function') return refused();
+    if (this.edge) {
+      const login = this.edge.take('login', ctx.addressDigest);
+      if (!login.ok) {
+        try { this._audit('quota_refused', ctx, { quota: 'login' }); }
+        catch { return this._write(res, error(503, 'temporarily_unavailable'), ctx.origin); }
+        return this._write(res, error(429, 'rate_limited'), ctx.origin, { 'retry-after': String(login.retryAfter) });
+      }
+    }
     let claims;
     try { claims = await this.identityProvider(json(body), Object.freeze({ origin: ctx.origin, transport: 'https' })); } catch { return refused(); }
     if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), ctx.origin);

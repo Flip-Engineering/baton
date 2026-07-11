@@ -10,9 +10,9 @@ const ORIGIN = 'https://control.test';
 const root = () => mkdtempSync(join(tmpdir(), 'baton-web-edge-'));
 class Response { writeHead(status, headers) { this.status = status; this.headers = headers; } end(body = '') { this.body = body ? JSON.parse(body) : null; } }
 class StreamResponse extends EventEmitter { constructor() { super(); this.output = ''; this.writableLength = 0; } writeHead(status, headers) { this.status = status; this.headers = headers; } write(value) { this.output += value; return true; } end() { this.ended = true; } }
-async function request(web, { path, body, headers = {}, encrypted = true, address = '127.0.0.1', method = 'POST' }) {
+async function request(web, { path, body, rawBody, headers = {}, encrypted = true, address = '127.0.0.1', method = 'POST' }) {
   const req = new EventEmitter(); Object.assign(req, { method, url: path, headers: { origin: ORIGIN, 'content-type': 'application/json', ...headers }, socket: { encrypted, remoteAddress: address }, destroy() {} });
-  const res = new Response(); const pending = web.handle(req, res); queueMicrotask(() => { if (body !== undefined) req.emit('data', Buffer.from(JSON.stringify(body))); req.emit('end'); }); await pending; return res;
+  const res = new Response(); const pending = web.handle(req, res); queueMicrotask(() => { if (rawBody !== undefined) req.emit('data', Buffer.from(rawBody)); else if (body !== undefined) req.emit('data', Buffer.from(JSON.stringify(body))); req.emit('end'); }); await pending; return res;
 }
 function edge(overrides = {}) { return new WebEdgePolicy({ addressKey: 'test-address-key-material', now: () => 1_000, ...overrides }); }
 function system({ edgePolicy = edge(), identityProvider, readinessChecks, stream } = {}) {
@@ -29,6 +29,9 @@ test('EP1/EP4: untrusted forwarding is ignored; trusted proxy selects a bounded 
   assert.deepEqual(proxied, { address: '198.51.100.2', transport: 'https', proxied: true });
   const standard = resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1', encrypted: false }, headers: { forwarded: 'for=198.51.100.2;proto=https, for=192.0.2.9;proto=https' } }, { trustedProxies: ['192.0.2.1'], forwardedHop: 1, requireForwardedHttps: true });
   assert.deepEqual(standard, { address: '198.51.100.2', transport: 'https', proxied: true });
+  const quoted = resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1', encrypted: false }, headers: { forwarded: 'for="198.51.100.2";proto="HTTPS"' } }, { trustedProxies: ['192.0.2.1'], requireForwardedHttps: true });
+  assert.deepEqual(quoted, { address: '198.51.100.2', transport: 'https', proxied: true });
+  assert.throws(() => resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1' }, headers: { forwarded: 'for="198.51.100.2";proto="http\\s"' } }, { trustedProxies: ['192.0.2.1'] }), /invalid forwarding/);
   const directPolicy = edge();
   assert.deepEqual(directPolicy.resolve({ socket: { remoteAddress: '192.0.2.1', encrypted: false }, headers: { 'x-forwarded-for': '198.51.100.2', 'x-forwarded-proto': 'https' } }), { address: '192.0.2.1', transport: 'http', proxied: false });
   assert.throws(() => edge({ trustedProxies: ['192.0.2.1'], proxyMode: false }), /direct mode/);
@@ -100,6 +103,26 @@ test('EP3: preflight and invalid methods do not consume the login-attempt quota'
   assert.equal(providerCalls, 1);
 });
 
+test('EP3: only a fully policy-valid parsed login attempt consumes provider quota', async () => {
+  let providerCalls = 0;
+  const s = system({
+    edgePolicy: edge({ limits: { login: 1 } }),
+    identityProvider: async () => { providerCalls += 1; return null; },
+  });
+  assert.equal((await request(s.web, { path: '/v1/auth/login', body: {}, encrypted: false })).status, 503);
+  assert.equal((await request(s.web, { path: '/v1/auth/login', body: {}, headers: { origin: 'https://wrong.test' } })).status, 403);
+  assert.equal((await request(s.web, { path: '/v1/auth/login', body: {}, headers: { 'content-type': 'text/plain' } })).status, 415);
+  assert.equal((await request(s.web, { path: '/v1/auth/login', rawBody: '{' })).status, 400);
+  assert.equal((await request(s.web, { path: '/v1/auth/login', body: { oversized: 'x'.repeat(70_000) } })).status, 413);
+  assert.equal((await request(s.web, { method: 'OPTIONS', path: '/v1/auth/login' })).status, 204);
+  assert.equal((await request(s.web, { method: 'GET', path: '/v1/auth/login' })).status, 404);
+  assert.equal(providerCalls, 0);
+  assert.equal((await request(s.web, { path: '/v1/auth/login', body: {} })).status, 401);
+  assert.equal(providerCalls, 1);
+  assert.equal((await request(s.web, { path: '/v1/auth/login', body: {} })).status, 429);
+  assert.equal(providerCalls, 1);
+});
+
 test('EP3/EP4: a trusted cleartext backend uses forwarded HTTPS while an untrusted peer cannot', async () => {
   const policy = edge({ proxyMode: true, trustedProxies: ['192.0.2.1'] }); let providerCalls = 0;
   const s = system({ edgePolicy: policy, identityProvider: async () => { providerCalls += 1; return { userId: 'u', authMethod: 'bearer', capabilities: ['observe'], repoIds: ['repo-a'], ttlMs: 60_000 }; } });
@@ -118,6 +141,16 @@ test('EP3: authenticated principal and weighted cost quotas refuse before durabl
   assert.equal((await s.web.execute(ctx, envelope('two'))).status, 429);
   assert.equal(s.coordination.events().filter((event) => event.kind === 'web.command_admitted').length, 1);
   assert.equal(s.fleetCalls.filter((call) => call.key === 'list').length, 1);
+});
+
+test('EP3: unauthorized stream-ticket requests do not consume credential ticket quota', async () => {
+  const s = system({ edgePolicy: edge({ limits: { ticket: 1 } }) });
+  const issued = s.sessions.issue({ userId: 'u', authMethod: 'bearer', capabilities: ['observe'], repoIds: ['repo-a'], ttlMs: 60_000 }, { actor: 'provider' });
+  const authorization = `Bearer ${issued.token}`;
+  assert.equal((await request(s.web, { path: '/v1/stream-tickets', body: { repoId: 'repo-a' }, headers: { authorization, origin: 'https://wrong.test' } })).status, 403);
+  assert.equal((await request(s.web, { path: '/v1/stream-tickets', body: { repoId: 'repo-b' }, headers: { authorization } })).status, 403);
+  assert.equal((await request(s.web, { path: '/v1/stream-tickets', body: { repoId: 'repo-a' }, headers: { authorization } })).status, 201);
+  assert.equal((await request(s.web, { path: '/v1/stream-tickets', body: { repoId: 'repo-a' }, headers: { authorization } })).status, 429);
 });
 
 test('EP2/EP3: weighted refusal does not consume the separate command-count bucket', () => {
