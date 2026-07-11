@@ -382,6 +382,45 @@ export class CoordinationStore {
     return { ok: true, event: clone(event) };
   }
 
+  integrationAuthority(taskId, operationalEvent) {
+    if (typeof taskId !== 'string' || !operationalEvent || operationalEvent.kind !== 'integration.completed') return null;
+    const evidence = this._evidence.get(`${operationalEvent.worker}:${operationalEvent.seq}`);
+    if (!evidence || evidence.digest !== digest(operationalEvent) || evidence.kind !== 'integration.completed') return null;
+    const nodeId = `decision:integrate:${taskId}:${operationalEvent.seq}`;
+    const node = this._knowledgeNodes.get(nodeId);
+    if (!node || node.promotion?.trigger !== 'integration') return null;
+    const decisionEvent = this._events[node.observedSeq - 1];
+    const driverEvent = this._events[node.observedSeq];
+    const artifactEvent = this._events[node.observedSeq + 1];
+    if (decisionEvent?.kind !== 'knowledge.promoted' || decisionEvent.payload?.id !== nodeId) return null;
+    if (driverEvent?.kind !== 'driver.recorded' || driverEvent.payload?.kind !== 'integration.completed') return null;
+    if (artifactEvent?.kind !== 'artifact.registered' || artifactEvent.payload?.taskId !== taskId || artifactEvent.payload?.accepted !== true) return null;
+    if (driverEvent.idempotencyKey !== `${decisionEvent.idempotencyKey}:driver`
+      || artifactEvent.idempotencyKey !== `${decisionEvent.idempotencyKey}:artifact`) return null;
+    if (driverEvent.payload?.taskId !== taskId || driverEvent.payload?.evidence?.coordinationSeq !== evidence.coordinationSeq) return null;
+    if (digest(driverEvent.payload?.integration) !== digest(operationalEvent.payload)) return null;
+    if (digest(artifactEvent.payload?.refs) !== digest({ beforeSha: operationalEvent.payload?.beforeSha, resultSha: operationalEvent.payload?.resultSha, afterSha: operationalEvent.payload?.afterSha })) return null;
+    if (!(artifactEvent.payload?.provenance ?? []).some((ref) => ref?.coordinationSeq === evidence.coordinationSeq)) return null;
+    return freeze({ decisionEvent: decisionEvent.seq, driverEvent: driverEvent.seq, artifactEvent: artifactEvent.seq, evidence: evidence.coordinationSeq });
+  }
+
+  completeIntegration(fields, auth) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) return { ok: true, result: 'idempotent', event: clone(prior) };
+    if (!this._tasks.has(fields?.taskId)) throw new CoordinationRefusal(`unknown integration task ${fields?.taskId}`, 'not_found');
+    const knowledge = this._prepareKnowledgeNode(fields.knowledge);
+    const artifact = this._prepareArtifact(fields.artifact, this._tasks.get(fields.taskId).status);
+    const events = this._appendBatch([
+      { kind: 'knowledge.promoted', payload: { ...knowledge, promotion: { kind: 'Decision', trigger: 'integration' } }, auth },
+      {
+        kind: 'driver.recorded', payload: { kind: 'integration.completed', taskId: fields.taskId, integration: clone(fields.integration), evidence: clone(fields.evidence) },
+        auth: { actor: auth.actor, key: `${auth.key}:driver` },
+      },
+      { kind: 'artifact.registered', payload: artifact, auth: { actor: auth.actor, key: `${auth.key}:artifact` } },
+    ]);
+    return { ok: true, result: 'completed', event: clone(events[0]), driverEvent: clone(events[1]), artifactEvent: clone(events[2]) };
+  }
+
   /** Verify the complete post-effect publication authority tuple during replay. Merely finding a
    * promoted decision is insufficient: the mapped operational digest, paired driver record,
    * adjacency, batch-key lineage, task, evidence, and publication payload must all agree. */

@@ -89,6 +89,13 @@ record, shared batch-key lineage, task identity, evidence reference, and publica
 all agree. Otherwise the already integrated task remains completed, publication is reported
 unknown/not completed, and the poisoned live coordinator fails closed.
 
+Local integration uses the same post-effect authority rule. `integration.requested` precedes Git;
+after a successful local merge, its decision, driver completion, and accepted integration artifact
+commit in one coordination batch. Replay requires the mapped operational digest, complete paired
+batch, task/evidence identity, SHA payload, and accepted provenance. A merge followed by authority
+storage loss poisons the live coordinator and replays integration as unknown rather than claiming
+or repeating the merge.
+
 `task.created` persists `brief`, `deps`, `refines`, `taskType`, requested vendor/model/session
 policy, and the reserved public handle ID. `task.claimed` persists assignee, resolved vendor/model,
 and expected/new versions. Refusal codes are `stale_version | already_assigned |

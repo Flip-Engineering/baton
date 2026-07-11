@@ -54,7 +54,7 @@ function adapter(over = {}) {
   };
 }
 
-function harness(ad, referee = async () => ({ reverified: true, observedExit: 0 }), worktreeOverrides = {}) {
+function harness(ad, referee = async () => ({ reverified: true, observedExit: 0 }), worktreeOverrides = {}, coordinatorOverrides = {}) {
   const log = new Log(mkdtempSync(join(tmpdir(), 'baton-ps-log-')));
   const coordination = new CoordinationStore(mkdtempSync(join(tmpdir(), 'baton-ps-coordination-')), {
     operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
@@ -71,6 +71,7 @@ function harness(ad, referee = async () => ({ reverified: true, observedExit: 0 
     },
     referee: async (...args) => { verifyCalls.push(args); return referee(...args); },
     route: () => 'session', approvalTimeoutMs: 1000, stopDeadlineMs: 100,
+    ...coordinatorOverrides,
   });
   return { c, log, verifyCalls, coordination };
 }
@@ -151,7 +152,12 @@ test('PS2: a follow-up exception is a refused Ack and preserves the prior result
 
 test('CK8/CK9: follow-up refinement failure kills native state and replays an explicit aborted attempt', async () => {
   const ad = adapter();
-  const { c, coordination, log } = harness(ad);
+  const removedScopes = [];
+  const { c, coordination, log } = harness(ad, undefined, {}, { runtimeScopes: {
+    reconcile: () => {},
+    create: (worker) => ({ env: {}, replaceEnv: true, posture: { root: `/runtime/${worker}` } }),
+    remove: (worker) => removedScopes.push(worker),
+  } });
   const h = await c.spawn('session', brief(), { taskId: 'follow-refinement-failure' });
   ad.emit(h.id, 'lifecycle.turn_completed', completed('first'), 1);
   await until(async () => (await c.result(h.id)).ready);
@@ -164,6 +170,7 @@ test('CK8/CK9: follow-up refinement failure kills native state and replays an ex
   assert.equal(ad.calls.prompt.length, 1);
   assert.equal(ad.calls.kill.length, 1);
   assert.equal(c._workers.get(h.id).status, 'orphaned');
+  assert.deepEqual(removedScopes, [h.id]);
   assert.equal(coordination.snapshot().tasks.length, 1);
   assert.equal(coordination.snapshot().tasks[0].status, 'completed');
   assert.equal(coordination.events().some((event) => event.kind === 'driver.recorded' && event.payload.kind === 'follow_up.requested'), true);
@@ -486,9 +493,15 @@ test('CK8/CK9: recovery refinement failure kills a native transport that already
     resumed.emit(worker, 'lifecycle.spawned', { sessionId: 'refine-native', pid: 222 }, 1);
     return { ok: true };
   };
+  const removedScopes = [];
   const replay = new Coordinator({
     log, coordination, fences: new FenceTable(), adapters: { session: resumed },
     worktrees: { validateSessionContext: async () => ({ ok: true }), remove: async () => {}, reconcile: async () => {} },
+    runtimeScopes: {
+      reconcile: () => {},
+      create: (worker) => ({ env: {}, replaceEnv: true, posture: { root: `/runtime/${worker}` } }),
+      remove: (worker) => removedScopes.push(worker),
+    },
     referee: async () => ({}), route: () => 'session', recoveryTimeoutMs: 100, stopDeadlineMs: 100,
   });
   const rawAppend = coordination._appendFile;
@@ -498,7 +511,9 @@ test('CK8/CK9: recovery refinement failure kills a native transport that already
   };
   await assert.rejects(replay.recover(h.id), (error) => error.code === 'coordination_write_unavailable');
   await until(() => resumed.calls.kill.length === 1);
+  await until(() => removedScopes.length === 1);
   assert.equal(replay._workers.get(h.id).status, 'orphaned');
+  assert.deepEqual(removedScopes, [h.id]);
   assert.equal(log.read(h.id).some((event) => event.kind === 'control.refinement_aborted' && event.payload.relation === 'recovery'), true);
 
   coordination._appendFile = rawAppend;

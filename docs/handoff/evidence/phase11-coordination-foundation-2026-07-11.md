@@ -37,6 +37,11 @@ these tests.
   promote deterministically through named `knowledge.promoted` events.
 - Failed integration is no longer telemetry-only; it maps evidence and records an audited
   coordination refusal.
+- Successful integration is also no longer telemetry-authoritative: its knowledge decision,
+  driver completion, and accepted report artifact commit in one coordination batch. Replay
+  verifies their mapped digest, adjacency/key lineage, task identity, SHA payload, and provenance.
+  A fault after the real ff-only merge but before that batch poisons the live coordinator and
+  replays integration unknown; an asymmetric decision-only stream is rejected.
 - Every coordinator-facing coordination mutator now crosses one fail-closed wrapper. Storage or
   integrity exceptions poison all subsequent public commands and abort live spawn admission;
   typed semantic refusals remain ordinary refusals. Injected task-create failure publishes no
@@ -63,6 +68,10 @@ these tests.
   paired driver completion; valid paired authority survives restart.
 - Adapter callback failures caused by an already-poisoned authoritative store are contained at
   the callback boundary rather than escaping as uncaught process exceptions.
+- Follow-up and recovery refinement-fault fixtures verify adapter kill invocation, runtime-scope
+  removal, explicit aborted-attempt telemetry, terminal-predecessor preservation, and orphaned
+  restart state. A live exact-model recursive run separately proves native PID/worktree/runtime/
+  branch reap rather than inferring process cleanup from fake adapters.
 
 Validation:
 
@@ -77,7 +86,7 @@ node --test impl/test/phase11-acceptance-integration.test.mjs
 20/20 passing
 
 cd impl && node --test
-565/565 passing
+567/567 passing
 ```
 
 The recursive exact-model Grok spec and implementation reviews passed every Baton lifecycle check.

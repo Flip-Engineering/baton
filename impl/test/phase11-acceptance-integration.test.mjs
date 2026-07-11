@@ -43,14 +43,15 @@ async function until(fn, timeoutMs = 5000) {
 
 async function completedTask(root, taskId = 'integrate-me') {
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'src/integrated.txt', content: 'accepted\n' }] } });
+  const logDir = mkdtempSync(join(tmpdir(), 'baton-ac5-log-'));
   const driver = createDriver({
-    repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac5-log-')), adapters: { mock: adapter },
+    repoRoot: root, logDir, adapters: { mock: adapter },
     watchdog: { stallMs: 0 },
   });
   const handle = await driver.coordinator.spawn('mock', brief({ command: 'test -f src/integrated.txt', expectExit: 0 }), { taskId });
   await until(async () => (await driver.coordinator.result(handle.id)).ready);
   assert.equal((await driver.coordinator.result(handle.id)).status, 'completed');
-  return { ...driver, handle };
+  return { ...driver, handle, logDir };
 }
 
 function familyAdapter(family, scenario) {
@@ -266,7 +267,7 @@ test('AC5: ff-only integration reaps the worker/worktree/branch and records exac
   const root = repo();
   commitBase(root, { 'README.md': 'base\n' });
   const beforeSha = git(['rev-parse', 'HEAD'], root);
-  const { coordinator, coordination, log, handle } = await completedTask(root);
+  const { coordinator, coordination, log, handle, logDir } = await completedTask(root);
   const taskWorktree = coordinator.list().find((worker) => worker.id === handle.id)?.worktree;
   assert.equal(typeof taskWorktree, 'string');
 
@@ -289,6 +290,60 @@ test('AC5: ff-only integration reaps the worker/worktree/branch and records exac
   assert.equal(coordination.events().some((entry) => entry.kind === 'driver.recorded' && entry.payload.kind === 'integration.completed'), true);
   assert.equal(coordination.queryKnowledge({ types: ['Decision'] }).some((node) => node.id.startsWith('decision:integrate:')), true);
   assert.equal(coordination.events().some((entry) => entry.kind === 'knowledge.promoted' && entry.payload.promotion?.trigger === 'integration'), true);
+
+  const replay = createDriver({
+    repoRoot: root, logDir, coordination,
+    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 0 },
+  });
+  assert.deepEqual((await replay.coordinator.result(handle.id)).integration, response.integration);
+});
+
+test('CK9: post-merge authority-batch failure poisons and replay refuses integration success', async () => {
+  const root = repo();
+  commitBase(root, { 'README.md': 'base\n' });
+  const { coordinator, coordination, handle, logDir } = await completedTask(root, 'integration-post-effect-failure');
+  const resultSha = coordinator._tasks.get('integration-post-effect-failure').capturedSha;
+  const rawAppend = coordination._appendFile;
+  coordination._appendFile = (file, body, encoding) => {
+    if (body.includes('"kind":"knowledge.promoted"') && body.includes('"trigger":"integration"')) throw new Error('integration authority disk full');
+    return rawAppend(file, body, encoding);
+  };
+
+  await assert.rejects(coordinator.integrate(handle.id), (error) => error.code === 'coordination_write_unavailable');
+  assert.equal(git(['rev-parse', 'HEAD'], root), resultSha, 'the local merge happened before authority storage failed');
+  assert.throws(() => coordinator.list(), (error) => error.code === 'coordination_write_unavailable');
+  assert.equal(coordination.queryKnowledge({ types: ['Decision'] }).some((node) => node.id.startsWith('decision:integrate:')), false);
+
+  coordination._appendFile = rawAppend;
+  const replay = createDriver({
+    repoRoot: root, logDir, coordination,
+    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 0 },
+  });
+  assert.equal((await replay.coordinator.result(handle.id)).integration, null);
+});
+
+test('CK9: replay rejects an asymmetric integration decision without driver and artifact authority', async () => {
+  const root = repo();
+  commitBase(root, { 'README.md': 'base\n' });
+  const { coordinator, coordination, log, handle, logDir } = await completedTask(root, 'integration-split-authority');
+  const sha = coordinator._tasks.get('integration-split-authority').capturedSha;
+  const integration = { beforeSha: git(['rev-parse', 'HEAD'], root), resultSha: sha, afterSha: sha, strategy: 'ff-only', actor: 'test' };
+  const operational = log.append({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: coordinator.list()[0].turnEpoch,
+    kind: 'integration.completed', actor: 'human', payload: integration,
+  });
+  const mapped = coordination.mapOperationalEvent(operational, { actor: 'policy', key: `split-integration:evidence:${operational.seq}` });
+  coordination.promoteKnowledgeNode({
+    id: `decision:integrate:integration-split-authority:${operational.seq}`, type: 'Decision',
+    body: 'asymmetric integration decision', grounding: 'observed', informedBy: ['task:integration-split-authority'],
+    evidence: [{ coordinationSeq: mapped.evidence.coordinationSeq }],
+  }, { kind: 'Decision', trigger: 'integration' }, { actor: 'human', key: `split-integration:decision:${operational.seq}` });
+
+  const replay = createDriver({
+    repoRoot: root, logDir, coordination,
+    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 0 },
+  });
+  assert.equal((await replay.coordinator.result(handle.id)).integration, null);
 });
 
 test('AC5: a non-fast-forward main refuses without rewriting either tip', async () => {

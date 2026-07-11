@@ -1,34 +1,13 @@
 {
-  "at": "2026-07-11T20:43:12.863Z",
-  "repoHead": "24067ce5eb2b98c2f9604aca1308989f8f6d9a03",
+  "at": "2026-07-11T20:47:01.154Z",
+  "repoHead": "aeb085e63b3a2b33f2127c28495c1bb5b9ac1d0a",
   "workerId": "w-1",
-  "pid": 45075,
+  "pid": 84365,
   "model": "gpt-5.4",
   "result": {
     "ready": true,
-    "status": "completed",
-    "verdict": {
-      "reverified": true,
-      "observedExit": 0,
-      "hadClaim": false,
-      "matchesClaim": true,
-      "passed": true,
-      "locus": "fresh_sandbox",
-      "redGreen": null,
-      "baseExit": null,
-      "coverageOfChange": null,
-      "uncoveredChangedLines": [],
-      "mutationStrength": null,
-      "mutationPassed": null,
-      "survivedMutants": [],
-      "observedOutputTail": "",
-      "note": "PASS: observed exit 0 matches expected 0.",
-      "durationMs": 14
-    },
-    "artifacts": {
-      "commits": [],
-      "files": []
-    },
+    "status": "cancelled",
+    "verdict": null,
     "vendor": "codex",
     "modelRequested": "gpt-5.4",
     "modelResolved": "gpt-5.4",
@@ -40,14 +19,14 @@
     "sessionRef": {
       "vendor": "codex",
       "kind": "thread",
-      "id": "019f52ea-0879-74b1-b893-0e3cac8aacd1",
+      "id": "019f52ed-ab0d-7263-987c-bdc82b3d75b9",
       "persistence": "native",
       "source": "wire"
     },
     "sessionContext": {
       "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-ck9-crash-window-review",
       "repoRoot": "/Users/wahargis/Development/Experiments/baton",
-      "baseSha": "4d5227f7cce7a4dd443a0728ea7080d9b24a59c3",
+      "baseSha": "aeb085e63b3a2b33f2127c28495c1bb5b9ac1d0a",
       "branch": "baton/codex-ck9-crash-window-review",
       "ownerTaskId": "codex-ck9-crash-window-review"
     },
@@ -57,17 +36,7 @@
     "publication": null,
     "retainedResultRef": null
   },
-  "integration": {
-    "ok": true,
-    "result": "integrated",
-    "integration": {
-      "beforeSha": "4d5227f7cce7a4dd443a0728ea7080d9b24a59c3",
-      "resultSha": "24067ce5eb2b98c2f9604aca1308989f8f6d9a03",
-      "afterSha": "24067ce5eb2b98c2f9604aca1308989f8f6d9a03",
-      "strategy": "ff-only",
-      "actor": "orchestrator"
-    }
-  },
+  "integration": null,
   "approvals": [],
   "budgetSteer": {
     "ok": true,
@@ -75,17 +44,17 @@
     "emulated": false
   },
   "checks": {
-    "noHarnessError": true,
+    "noHarnessError": false,
     "exactModelObserved": true,
-    "freshVerified": true,
-    "integrated": true,
-    "integrationIntent": true,
+    "freshVerified": false,
+    "integrated": false,
+    "integrationIntent": false,
     "killConfirmed": true,
     "processGone": true,
     "worktreeGone": true,
     "runtimeGone": true,
     "branchGone": true
   },
-  "fatal": null,
-  "pass": true
+  "fatal": "Error: review failed trust gate: {\"ready\":true,\"status\":\"cancelled\",\"verdict\":null,\"vendor\":\"codex\",\"modelRequested\":\"gpt-5.4\",\"modelResolved\":\"gpt-5.4\",\"modelObserved\":\"gpt-5.4\",\"modelMismatch\":null,\"sessionRequest\":{\"mode\":\"new\"},\"sessionRef\":{\"vendor\":\"codex\",\"kind\":\"thread\",\"id\":\"019f52ed-ab0d-7263-987c-bdc82b3d75b9\",\"persistence\":\"native\",\"source\":\"wire\"},\"sessionContext\":{\"worktree\":\"/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-ck9-crash-window-review\",\"repoRoot\":\"/Users/wahargis/Development/Experiments/baton\",\"baseSha\":\"aeb085e63b3a2b33f2127c28495c1bb5b9ac1d0a\",\"branch\":\"baton/codex-ck9-crash-window-review\",\"ownerTaskId\":\"codex-ck9-crash-window-review\"},\"lineage\":null,\"review\":null,\"integration\":null,\"publication\":null,\"retainedResultRef\":null}\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase11-ck9-codex-review-2026-07-11/run.mjs:91:44\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
+  "pass": false
 }

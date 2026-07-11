@@ -85,7 +85,7 @@ export class DependencyCycleError extends Error {
 const TERMINAL_TASK_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 const COORDINATION_MUTATORS = new Set([
   'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent',
-  'recordDriver', 'completePublication', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
+  'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
   'readScratch', 'expireScratchClaim', 'expireScratchFact', 'addKnowledgeNode', 'promoteKnowledgeNode',
   'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination',
 ]);
@@ -257,7 +257,7 @@ export class Coordinator {
   /** @param {object} opts */
   constructor(opts) {
     if (!opts?.coordination) throw new TypeError('Coordinator requires a durable coordination store');
-    for (const method of ['snapshot', 'task', 'publicationAuthority', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent', 'recordDriver', 'completePublication', 'registerArtifact', 'artifact', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
+    for (const method of ['snapshot', 'task', 'integrationAuthority', 'publicationAuthority', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent', 'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'artifact', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
       if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
     }
     this._log = opts.log;
@@ -1083,10 +1083,10 @@ export class Coordinator {
       try { await this._worktrees.releaseResult(task.retainedResultRef); } catch { /* merged HEAD now retains the result */ }
       task.retainedResultRef = null;
     }
-    task.integration = Object.freeze({ ...integrated, strategy, actor: opts.actor ?? 'orchestrator' });
+    const integration = Object.freeze({ ...integrated, strategy, actor: opts.actor ?? 'orchestrator' });
     const integrationEvent = this._log.append({
       worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
-      kind: 'integration.completed', actor: opts.actor ?? 'orchestrator', payload: task.integration,
+      kind: 'integration.completed', actor: opts.actor ?? 'orchestrator', payload: integration,
     });
     const integrationEvidence = this._coordMapEvent(integrationEvent);
     if (this._coordination) {
@@ -1094,19 +1094,21 @@ export class Coordinator {
         .map((artifactId) => this._coordination.artifact(artifactId))
         .filter((artifact) => artifact?.accepted === true)
         .flatMap((artifact) => artifact.provenance ?? []);
-      this._coordination.registerArtifact({
-        taskId: task.id, kind: 'report', refs: { beforeSha: task.integration.beforeSha, resultSha: task.integration.resultSha, afterSha: task.integration.afterSha },
-        mediaType: 'application/vnd.baton.integration+json', accepted: true, provenance: [integrationEvidence, ...acceptingEvidence],
-      }, { actor: opts.actor ?? 'orchestrator', key: `artifact.integration:${task.id}:${task.integration.afterSha}` });
-      this._coordination.promoteKnowledgeNode({
-        id: `decision:integrate:${task.id}:${integrationEvent.seq}`, type: 'Decision',
-        body: `Integrated task ${task.id} at ${task.integration.afterSha}`, grounding: 'observed',
-        informedBy: [`task:${task.id}`],
-        evidence: [{ coordinationSeq: integrationEvidence.coordinationSeq }],
-      }, { kind: 'Decision', trigger: 'integration' }, { actor: opts.actor ?? 'orchestrator', key: `knowledge.integration:${task.id}:${integrationEvent.seq}` });
-      this._coordRecord('integration.completed', { taskId: task.id, integration: task.integration, evidence: integrationEvidence }, `driver.integration:${task.id}:${integrationEvent.seq}`, opts.actor ?? 'orchestrator');
+      this._coordination.completeIntegration({
+        taskId: task.id, integration, evidence: integrationEvidence,
+        artifact: {
+          taskId: task.id, kind: 'report', refs: { beforeSha: integration.beforeSha, resultSha: integration.resultSha, afterSha: integration.afterSha },
+          mediaType: 'application/vnd.baton.integration+json', accepted: true, provenance: [integrationEvidence, ...acceptingEvidence],
+        },
+        knowledge: {
+          id: `decision:integrate:${task.id}:${integrationEvent.seq}`, type: 'Decision',
+          body: `Integrated task ${task.id} at ${integration.afterSha}`, grounding: 'observed',
+          informedBy: [`task:${task.id}`], evidence: [{ coordinationSeq: integrationEvidence.coordinationSeq }],
+        },
+      }, { actor: opts.actor ?? 'orchestrator', key: `integration.commit:${task.id}:${integrationEvent.seq}` });
     }
-    return { ok: true, result: 'integrated', integration: task.integration };
+    task.integration = integration;
+    return { ok: true, result: 'integrated', integration };
   }
 
   /** AC6: create an approval-gated exact-SHA publication request. No side effect occurs here. */
@@ -2866,8 +2868,10 @@ export class Coordinator {
             }
             break;
           case 'integration.completed':
-            integration = e.payload ?? integration;
-            retainedResultRef = null;
+            if (this._coordination?.integrationAuthority(taskId, e)) {
+              integration = e.payload ?? integration;
+              retainedResultRef = null;
+            }
             break;
           case 'integration.refused':
             retainedResultRef = e.payload?.retainedResultRef ?? retainedResultRef;
