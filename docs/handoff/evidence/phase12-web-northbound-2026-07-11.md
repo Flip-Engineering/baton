@@ -23,28 +23,39 @@ Shipped behavior:
   durable completion replays as pending rather than dispatching twice.
 - The built-in HTTP adapter accepts only bounded `application/json`, emits no-store typed JSON,
   and the server constructor refuses missing TLS material or an authenticator.
+- `WebSessionStore` issues opaque high-entropy cookie or Bearer credentials exactly once, stores
+  only SHA-256 credential/CSRF digests under mode-0700/0600 paths, returns sanitized principals,
+  enforces bounded credential syntax and expiry, refuses mixed credential modes and URL tokens,
+  and durably revokes a session across restart. Browser cookies are `__Host-`, `Secure`,
+  `HttpOnly`, `SameSite=Strict`, path `/`, and bounded by `Max-Age`.
+- The session registry is directly proven as the web authenticator: a cookie plus its CSRF value
+  admits a scoped command, immediate revocation blocks the next request, and neither secret enters
+  coordination events.
 - The real coordinator checks externally supplied interrupt/kill fences before calling an
   adapter. A stale stop leaves the worker working; the current fence confirms stop and reaps it.
 
 ## Validation
 
 ```text
-node --test impl/test/phase12-web-northbound.test.mjs
-10/10 passing
+node --test impl/test/phase12-web-auth.test.mjs impl/test/phase12-web-northbound.test.mjs
+16/16 passing
 
 cd impl && node --test
-536/536 passing
+542/542 passing
 ```
 
 The focused suite covers authentication, expiry/revocation, origin, CSRF, capability and repo
 scope, exact harness/model forwarding, non-forgeable audit identity, strict schema/model policy,
 durable restart replay, idempotency conflict, missing and stale fences, audit append failure,
 bounded HTTP/CORS admission, non-leaking dispatch errors, TLS/auth server refusal, and real
-coordinator stop/reap behavior.
+coordinator stop/reap behavior. It also covers one-time cookie/Bearer issue, secret-free durable
+storage, filesystem modes, expiry, malformed/mixed/URL credential refusal, restart-safe revocation,
+and registry-to-command integration.
 
 ## Remaining WN gates
 
-- Durable session issuance, refresh, logout, rotation, revocation, and restrictive secret storage.
+- Identity-provider login/bootstrap, refresh/key rotation, and authenticated logout endpoints;
+  durable issue/expiry/revocation and restrictive hashed secret storage ship in this slice.
 - Rate, size, connection, login, and command-cost quotas with trusted-proxy handling.
 - Resumable ordered WebSocket or SSE streaming, cursor expiry, snapshot boundaries, bounded
   buffers, and explicit slow-client gaps.

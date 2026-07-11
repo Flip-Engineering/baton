@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer as createHttpsServer } from 'node:https';
 
 const COMMAND_CAPABILITY = Object.freeze({
@@ -22,6 +22,11 @@ const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies',
 
 function json(value) { return JSON.parse(JSON.stringify(value)); }
 function hash(value) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
+function tokenHash(value) { return createHash('sha256').update(value).digest('hex'); }
+function equalDigest(left, right) {
+  if (!/^[a-f0-9]{64}$/.test(left) || !/^[a-f0-9]{64}$/.test(right)) return false;
+  return timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
+}
 function actor(principal) { return `web:${principal.userId}:${principal.sessionId}`; }
 function result(status, body) { return Object.freeze({ status, body: Object.freeze(body) }); }
 function error(status, code, message = code) { return result(status, { ok: false, error: { code, message } }); }
@@ -110,7 +115,12 @@ export class WebNorthbound {
   _authorize(ctx, envelope) {
     const principal = ctx.principal;
     if (!this.allowedOrigins.has(ctx.origin) || envelope.origin !== ctx.origin) return error(403, 'forbidden');
-    if (principal.authMethod === 'cookie' && (!string(ctx.csrfToken) || ctx.csrfToken !== principal.csrfToken)) return error(403, 'forbidden');
+    if (principal.authMethod === 'cookie') {
+      const csrfValid = string(ctx.csrfToken) && (principal.csrfTokenDigest
+        ? equalDigest(tokenHash(ctx.csrfToken), principal.csrfTokenDigest)
+        : ctx.csrfToken === principal.csrfToken);
+      if (!csrfValid) return error(403, 'forbidden');
+    }
     if (!this.repoIds.has(envelope.repoId) || !Array.isArray(principal.repoIds) || !principal.repoIds.includes(envelope.repoId)) return error(403, 'forbidden');
     if (!Array.isArray(principal.capabilities) || !principal.capabilities.includes(COMMAND_CAPABILITY[envelope.command])) return error(403, 'forbidden');
     return null;
