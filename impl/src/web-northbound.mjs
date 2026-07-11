@@ -1,6 +1,7 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer as createHttpsServer } from 'node:https';
 import { WebEventStream } from './web-stream.mjs';
+import { WebEdgePolicy } from './web-edge.mjs';
 
 const COMMAND_CAPABILITY = Object.freeze({
   spawn: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', respond: 'approve',
@@ -108,6 +109,8 @@ export class WebNorthbound {
     if (!this.authenticate && this.sessions) this.authenticate = this.sessions.authenticator();
     this.isPrincipalActive = opts.isPrincipalActive ?? this.authenticate?.isPrincipalActive ?? null;
     this.maxBodyBytes = opts.maxBodyBytes ?? 64 * 1024;
+    this.edge = opts.edge ?? (opts.edgePolicy ? new WebEdgePolicy(opts.edgePolicy) : null);
+    this.ready = true;
     this.stream = opts.stream ?? new WebEventStream({
       ...opts, coordination: this.coordination,
       allowedOrigins: [...this.allowedOrigins], repoIds: [...this.repoIds],
@@ -163,6 +166,16 @@ export class WebNorthbound {
     if (authorizationFailure) {
       try { this._audit('authorization_refused', ctx, { command: envelope.command, repoId: envelope.repoId }); } catch { return error(503, 'temporarily_unavailable'); }
       return authorizationFailure;
+    }
+    if (this.edge) {
+      const key = ctx.principal.credentialId;
+      const count = this.edge.take('principal', key);
+      const cost = this.edge.take('cost', key, ({ spawn: 10, send: 2, interrupt: 2, kill: 2, respond: 2 }[envelope.command] ?? 1));
+      const refusal = !count.ok ? count : !cost.ok ? cost : null;
+      if (refusal) {
+        try { this._audit('quota_refused', ctx, { quota: !count.ok ? 'principal' : 'cost' }); } catch { return error(503, 'temporarily_unavailable'); }
+        return { ...error(429, 'rate_limited'), headers: { 'retry-after': String(refusal.retryAfter) } };
+      }
     }
 
     const webActor = actor(ctx.principal);
@@ -238,6 +251,30 @@ export class WebNorthbound {
   async handle(req, res) {
     const origin = req.headers.origin ?? null;
     const url = new URL(req.url, 'https://baton.invalid');
+    if (this.edge) {
+      let identity;
+      try { identity = this.edge.resolve(req); } catch {
+        try { this._audit('proxy_refused', { origin }); } catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+        return this._write(res, error(400, 'invalid_forwarding'));
+      }
+      req.edgeIdentity = identity;
+      const name = url.pathname === '/readyz' ? 'readiness' : 'address';
+      const quota = this.edge.take(name, this.edge.digest(identity.address));
+      if (!quota.ok) {
+        try { this._audit('quota_refused', { origin }, { quota: name, addressDigest: this.edge.digest(identity.address) }); } catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+        return this._write(res, error(429, 'rate_limited'), origin, { 'retry-after': String(quota.retryAfter) });
+      }
+      if (url.pathname === '/v1/auth/login') {
+        const login = this.edge.take('login', this.edge.digest(identity.address));
+        if (!login.ok) {
+          try { this._audit('quota_refused', { origin }, { quota: 'login', addressDigest: this.edge.digest(identity.address) }); } catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+          return this._write(res, error(429, 'rate_limited'), origin, { 'retry-after': String(login.retryAfter) });
+        }
+      }
+    }
+    if (req.method === 'GET' && url.pathname === '/healthz') return this._write(res, result(200, { ok: true }));
+    if (req.method === 'GET' && url.pathname === '/readyz') return this._write(res, this.ready && (!this.edge || this.edge.admitting) ? result(200, { ready: true }) : result(503, { ready: false }));
+    if (this.edge && !this.edge.admitting) return this._write(res, error(503, 'temporarily_unavailable'));
     if (req.method === 'POST' && AUTH_PATHS.has(url.pathname)) {
       return this._handleLifecycle(req, res, url.pathname, origin);
     }
@@ -408,10 +445,23 @@ export class WebNorthbound {
 
   _write(res, response, origin = null, extraHeaders = {}) {
     const body = JSON.stringify(response.body);
-    const headers = { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...extraHeaders };
+    const headers = { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...(response.headers ?? {}), ...extraHeaders };
     if (origin && this.allowedOrigins.has(origin)) Object.assign(headers, { 'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true', vary: 'Origin' });
     res.writeHead(response.status, headers);
     res.end(body);
+  }
+
+  async shutdown({ server, drainMs = 5_000 } = {}) {
+    if (this._shutdown) return this._shutdown;
+    if (!Number.isSafeInteger(drainMs) || drainMs <= 0) throw new TypeError('drainMs must be a positive safe integer');
+    this.ready = false; this.edge?.closeAdmission();
+    this._shutdown = (async () => {
+      try { this._audit('shutdown_started', {}); } catch {}
+      this.stream.shutdown?.();
+      await Promise.race([new Promise((resolve) => server?.close ? server.close(resolve) : resolve()), new Promise((resolve) => setTimeout(resolve, drainMs))]);
+      try { this._audit('shutdown_completed', {}); } catch {}
+    })();
+    return this._shutdown;
   }
 }
 

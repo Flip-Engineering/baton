@@ -39,6 +39,7 @@ export class WebEventStream {
     this.isPrincipalActive = opts.isPrincipalActive ?? null;
     this.tickets = new Map();
     this.activeConnections = 0;
+    this.connections = new Set();
   }
 
   _audit(kind, principal, origin, details = {}) {
@@ -157,8 +158,10 @@ export class WebEventStream {
       closed = true;
       this.activeConnections -= 1;
       if (timer) clearInterval(timer);
+      this.connections.delete(closeForShutdown);
       try { this._audit(kind, principal, origin, { repoId: grant.repoId, streamId, cursor: next - 1 }); } catch { /* never turn stream loss into fleet control */ }
     };
+    const closeForShutdown = () => { try { res.write('event: shutdown\ndata: {"reconnect":true}\n\n'); } catch {} disconnect('stream_shutdown'); try { res.end(); } catch {} };
     const send = (event) => {
       const value = frame('coordination', event.seq, `coordination:${event.seq}`, event);
       const encoded = encode('coordination', event.seq, value);
@@ -199,6 +202,7 @@ export class WebEventStream {
     try { this._audit('stream_connected', principal, origin, { repoId: grant.repoId, streamId, cursor: requested ?? boundary }); }
     catch { return response(503, 'temporarily_unavailable'); }
     this.activeConnections += 1;
+    this.connections.add(closeForShutdown);
     const pump = () => {
       if (closed) return;
       try {
@@ -254,6 +258,8 @@ export class WebEventStream {
     }
     return null;
   }
+
+  shutdown() { for (const close of [...this.connections]) close(); }
 
   _contentTrust(event) {
     const kind = event?.kind ?? '';
