@@ -20,6 +20,9 @@ cardinality, deterministic expiry, and no randomness. Separate policies cover un
 attempts per canonical address, all HTTP requests per address, authenticated commands per
 credential, weighted command cost, stream-ticket issuance, and concurrent connections. Limit
 configuration rejects zero, negative, non-integer, unbounded, or internally inconsistent values.
+Every clock sample must be a non-negative safe integer and monotonic for its quota; an invalid or
+regressing sample fails before expiry, key, or counter mutation and can never produce refusal
+metadata. `Retry-After` is always a positive finite integer bounded by the configured window.
 
 ## EP3 — refusal precedes expensive or privileged work
 
@@ -27,7 +30,9 @@ The address quota runs before body parsing, identity-provider execution, session
 coordinator dispatch. Login throttling therefore bounds provider calls. Principal/cost quota runs
 after authentication but before durable command admission or dispatch. Refusal returns bounded
 `429 rate_limited` plus `Retry-After`, is audited fail closed, and mutates no session, command,
-worker, or stream state. Client-supplied IDs cannot choose a quota bucket.
+worker, or stream state. The login-attempt quota applies only to the admitted `POST` login route;
+preflight and invalid methods still use the ordinary address quota but cannot consume login
+attempts. Client-supplied IDs cannot choose a quota bucket.
 
 ## EP4 — trusted-proxy and TLS modes are explicit
 
@@ -58,7 +63,9 @@ bounded, including broken sockets and audit failures.
 Quota refusal, proxy refusal, readiness transition, shutdown start, and shutdown completion are
 append-only audited without raw addresses or credentials. Quota counters are operational abuse
 state and may reset on process restart; command/session/idempotency truth remains durable and is not
-derived from them. Audit failure returns no admission success.
+derived from them. Audit failure returns no admission success. A readiness transition is considered
+recorded only after its transition audit append succeeds, so a failed append is retried on a later
+probe rather than suppressing the transition.
 
 ## EP8 — deterministic and recursive acceptance
 

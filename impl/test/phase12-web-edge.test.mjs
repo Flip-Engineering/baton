@@ -46,6 +46,26 @@ test('EP2: quota windows expire deterministically and key cardinality remains bo
   now = 1_001; assert.equal(quota.take('b', 3).ok, true); assert.equal(quota.size, 1);
 });
 
+test('EP2: invalid or regressing clocks fail without poisoning quota state or Retry-After', () => {
+  for (const value of [NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, -1]) {
+    const quota = new FixedWindowQuota({ limit: 1, windowMs: 1_500, maxKeys: 1, now: () => value });
+    assert.throws(() => quota.take('poison'), /non-negative safe integer/);
+    assert.equal(quota.size, 0);
+  }
+  let now = 1_000;
+  const quota = new FixedWindowQuota({ limit: 1, windowMs: 1_500, maxKeys: 1, now: () => now });
+  assert.equal(quota.take('stable').ok, true);
+  const before = structuredClone([...quota.keys]);
+  now = 999;
+  assert.throws(() => quota.take('stable'), /monotonic/);
+  assert.deepEqual([...quota.keys], before);
+  now = 1_000;
+  const refusal = quota.take('stable');
+  assert.equal(refusal.ok, false);
+  assert.equal(Number.isSafeInteger(refusal.retryAfter), true);
+  assert.ok(refusal.retryAfter > 0 && refusal.retryAfter <= Math.ceil(quota.windowMs / 1_000));
+});
+
 test('EP2/EP7: edge configuration is closed and direct/proxy postures cannot be mixed', () => {
   assert.throws(() => edge({ limits: { invented: 1 } }), /unknown quota policy/);
   assert.throws(() => edge({ proxyMode: true }), /trusted proxies/);
@@ -63,6 +83,21 @@ test('EP3: login address quota refuses before a second provider call or session/
   assert.equal(providerCalls, 1); assert.equal(s.sessions.events().length, 0); assert.deepEqual(s.fleetCalls, []);
   const audit = s.coordination.events().find((event) => event.payload?.kind === 'quota_refused');
   assert.match(audit.payload.addressDigest, /^[a-f0-9]{64}$/); assert.equal(JSON.stringify(audit).includes('127.0.0.1'), false);
+});
+
+test('EP3: preflight and invalid methods do not consume the login-attempt quota', async () => {
+  let providerCalls = 0;
+  const s = system({
+    edgePolicy: edge({ limits: { login: 1 } }),
+    identityProvider: async () => { providerCalls += 1; return null; },
+  });
+  assert.equal((await request(s.web, { method: 'OPTIONS', path: '/v1/auth/login' })).status, 204);
+  assert.equal((await request(s.web, { method: 'GET', path: '/v1/auth/login' })).status, 404);
+  assert.equal(providerCalls, 0);
+  assert.equal((await request(s.web, { path: '/v1/auth/login', body: {} })).status, 401);
+  assert.equal(providerCalls, 1);
+  assert.equal((await request(s.web, { path: '/v1/auth/login', body: {} })).status, 429);
+  assert.equal(providerCalls, 1);
 });
 
 test('EP3/EP4: a trusted cleartext backend uses forwarded HTTPS while an untrusted peer cannot', async () => {
@@ -122,6 +157,24 @@ test('EP5: readiness fails closed when session health or durable audit probing i
   s.coordination.recordWebAudit = () => { throw new Error('audit unavailable'); };
   const refused = await request(s.web, { method: 'GET', path: '/readyz' });
   assert.equal(refused.status, 503); assert.deepEqual(refused.body, { ready: false });
+});
+
+test('EP7: a failed readiness transition audit is retried after audit recovery', async () => {
+  const s = system({ readinessChecks: [() => false] });
+  const record = s.coordination.recordWebAudit.bind(s.coordination);
+  let refusedOnce = false;
+  s.coordination.recordWebAudit = (event, options) => {
+    if (event.kind === 'readiness_transition' && !refusedOnce) {
+      refusedOnce = true;
+      throw new Error('audit unavailable');
+    }
+    return record(event, options);
+  };
+  assert.equal((await request(s.web, { method: 'GET', path: '/readyz' })).status, 503);
+  assert.equal((await request(s.web, { method: 'GET', path: '/readyz' })).status, 503);
+  const transitions = s.coordination.events().filter((event) => event.payload?.kind === 'readiness_transition');
+  assert.equal(transitions.length, 1);
+  assert.equal(transitions[0].payload.ready, false);
 });
 
 test('EP6/EP7: drain deadline forces connections and never reports completion before listener closure', async () => {

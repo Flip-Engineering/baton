@@ -15,28 +15,37 @@ export class FixedWindowQuota {
     this.limit = positive(limit, 'limit'); this.windowMs = positive(windowMs, 'windowMs');
     this.maxKeys = positive(maxKeys, 'maxKeys');
     if (typeof now !== 'function') throw new TypeError('now must be a function');
-    this.now = now; this.keys = new Map();
+    this.now = now; this.keys = new Map(); this.lastNow = null;
+  }
+  _sample(nowMs) {
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new TypeError('quota clock must return a non-negative safe integer');
+    if (this.lastNow !== null && nowMs < this.lastNow) throw new RangeError('quota clock must be monotonic');
+    this.lastNow = nowMs;
+    return nowMs;
+  }
+  _retryAfter(now) {
+    return Math.max(1, Math.ceil((this.windowMs - (now % this.windowMs)) / 1000));
   }
   take(key, cost = 1, nowMs = this.now()) {
     positive(cost, 'cost');
-    const now = nowMs; const start = Math.floor(now / this.windowMs) * this.windowMs;
+    const now = this._sample(nowMs); const start = Math.floor(now / this.windowMs) * this.windowMs;
     for (const [k, v] of this.keys) if (v.start < start) this.keys.delete(k);
     let entry = this.keys.get(key);
     if (!entry) {
-      if (this.keys.size >= this.maxKeys) return { ok: false, retryAfter: Math.max(1, Math.ceil((start + this.windowMs - now) / 1000)), reason: 'capacity' };
+      if (this.keys.size >= this.maxKeys) return { ok: false, retryAfter: this._retryAfter(now), reason: 'capacity' };
       entry = { start, used: 0 }; this.keys.set(key, entry);
     }
-    if (entry.used + cost > this.limit) return { ok: false, retryAfter: Math.max(1, Math.ceil((start + this.windowMs - now) / 1000)) };
+    if (entry.used + cost > this.limit) return { ok: false, retryAfter: this._retryAfter(now) };
     entry.used += cost;
     return { ok: true };
   }
   canTake(key, cost = 1, nowMs = this.now()) {
     positive(cost, 'cost');
-    const now = nowMs; const start = Math.floor(now / this.windowMs) * this.windowMs;
+    const now = this._sample(nowMs); const start = Math.floor(now / this.windowMs) * this.windowMs;
     for (const [k, v] of this.keys) if (v.start < start) this.keys.delete(k);
     const entry = this.keys.get(key);
-    if (!entry && this.keys.size >= this.maxKeys) return { ok: false, retryAfter: Math.max(1, Math.ceil((start + this.windowMs - now) / 1000)), reason: 'capacity' };
-    if ((entry?.used ?? 0) + cost > this.limit) return { ok: false, retryAfter: Math.max(1, Math.ceil((start + this.windowMs - now) / 1000)) };
+    if (!entry && this.keys.size >= this.maxKeys) return { ok: false, retryAfter: this._retryAfter(now), reason: 'capacity' };
+    if ((entry?.used ?? 0) + cost > this.limit) return { ok: false, retryAfter: this._retryAfter(now) };
     return { ok: true };
   }
   get size() { return this.keys.size; }

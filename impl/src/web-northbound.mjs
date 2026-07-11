@@ -152,12 +152,14 @@ export class WebNorthbound {
   }
 
   _readinessResponse(ctx) {
-    let ready = this._isReady();
+    const ready = this._isReady();
     try {
       this._audit('readiness_probe', ctx, { ready });
-      if (this._lastReady !== ready) this._audit('readiness_transition', ctx, { ready });
-    } catch { ready = false; }
-    this._lastReady = ready;
+      if (this._lastReady !== ready) {
+        this._audit('readiness_transition', ctx, { ready });
+        this._lastReady = ready;
+      }
+    } catch { return result(503, { ready: false }); }
     return ready ? result(200, { ready: true }) : result(503, { ready: false });
   }
 
@@ -292,7 +294,7 @@ export class WebNorthbound {
         try { this._audit('quota_refused', { origin }, { quota: name, addressDigest: this.edge.digest(identity.address) }); } catch { return this._write(res, error(503, 'temporarily_unavailable')); }
         return this._write(res, error(429, 'rate_limited'), origin, { 'retry-after': String(quota.retryAfter) });
       }
-      if (url.pathname === '/v1/auth/login') {
+      if (req.method === 'POST' && url.pathname === '/v1/auth/login') {
         const login = this.edge.take('login', this.edge.digest(identity.address));
         if (!login.ok) {
           try { this._audit('quota_refused', { origin }, { quota: 'login', addressDigest: this.edge.digest(identity.address) }); } catch { return this._write(res, error(503, 'temporarily_unavailable')); }
