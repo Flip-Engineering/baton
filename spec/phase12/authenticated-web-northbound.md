@@ -29,7 +29,8 @@ admitted-but-incomplete commands, browser UI automation, and the full adversaria
 active scope.
 
 The shipped lifecycle contracts are IL1–IL8 in
-`spec/phase12/authenticated-web-session-lifecycle.md`. Rate/proxy/browser gates remain explicit.
+`spec/phase12/authenticated-web-session-lifecycle.md`. The next edge-policy contracts are EP1–EP9
+in `spec/phase12/web-edge-policy.md`; browser and optional transport gates remain explicit after it.
 
 ## WN1 — one authority, two web transports
 
