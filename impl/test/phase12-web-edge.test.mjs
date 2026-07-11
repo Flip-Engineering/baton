@@ -28,6 +28,10 @@ test('EP1/EP4: untrusted forwarding is ignored; trusted proxy selects a bounded 
   assert.deepEqual(direct, { address: '203.0.113.9', transport: 'https', proxied: false });
   const proxied = resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1', encrypted: false }, headers: { 'x-forwarded-for': '198.51.100.2, 192.0.2.9', 'x-forwarded-proto': 'https' } }, { trustedProxies: ['192.0.2.1'], forwardedHop: 1, requireForwardedHttps: true });
   assert.deepEqual(proxied, { address: '198.51.100.2', transport: 'https', proxied: true });
+  for (const proto of ['HTTPS', 'Https', 'hTtPs']) {
+    assert.equal(resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1' }, headers: { 'x-forwarded-for': '198.51.100.2', 'x-forwarded-proto': proto } }, { trustedProxies: ['192.0.2.1'], requireForwardedHttps: true }).transport, 'https');
+  }
+  assert.throws(() => resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1' }, headers: { 'x-forwarded-for': '198.51.100.2', 'x-forwarded-proto': 'FTP' } }, { trustedProxies: ['192.0.2.1'] }), /invalid forwarded protocol/);
   const standard = resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1', encrypted: false }, headers: { forwarded: 'for=198.51.100.2;proto=https, for=192.0.2.9;proto=https' } }, { trustedProxies: ['192.0.2.1'], forwardedHop: 1, requireForwardedHttps: true });
   assert.deepEqual(standard, { address: '198.51.100.2', transport: 'https', proxied: true });
   const quoted = resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1', encrypted: false }, headers: { forwarded: 'for="198.51.100.2";proto="HTTPS"' } }, { trustedProxies: ['192.0.2.1'], requireForwardedHttps: true });
@@ -440,12 +444,17 @@ test('EP1/EP4: real proxy listener rejects duplicate forwarding field-lines befo
     ];
     for (const headers of duplicateSets) assert.equal((await send(headers)).status, 400);
     assert.equal((await send({ Forwarded: 'for=198.51.100.1;proto=https' })).status, 200);
+    for (const proto of ['HTTP', 'HTTPS', 'hTtPs']) {
+      const expected = proto.toLowerCase() === 'http' ? 400 : 200;
+      assert.equal((await send({ 'X-Forwarded-For': '198.51.100.1', 'X-Forwarded-Proto': proto })).status, expected);
+    }
+    assert.equal((await send({ 'X-Forwarded-For': '198.51.100.1', 'X-Forwarded-Proto': 'FTP' })).status, 400);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
   assert.equal(s.sessions.events().length, 0); assert.deepEqual(s.fleetCalls, []);
   const audits = s.coordination.events().filter((event) => event.payload?.kind === 'proxy_refused');
-  assert.equal(audits.length, 3);
+  assert.equal(audits.length, 5);
   const serialized = JSON.stringify(audits);
   for (const address of ['198.51.100.1', '198.51.100.2', '2001:db8::1']) assert.equal(serialized.includes(address), false);
 });

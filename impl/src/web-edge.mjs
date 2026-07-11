@@ -156,8 +156,10 @@ export function resolveEdgeRequest(req, { trustedProxies = [], forwardedHop = 0,
   if (typeof xff !== 'string' || xff.length === 0 || xff.length > 512) throw new TypeError('invalid forwarding chain');
   const chain = xff.split(',').map((part) => address(part.trim()));
   if (chain.length > 16 || forwardedHop >= chain.length) throw new TypeError('invalid forwarding chain');
-  const proto = req.headers?.['x-forwarded-proto'];
-  if (typeof proto !== 'string' || !['https', 'http'].includes(proto)) throw new TypeError('invalid forwarded protocol');
+  const rawProto = req.headers?.['x-forwarded-proto'];
+  if (typeof rawProto !== 'string') throw new TypeError('invalid forwarded protocol');
+  const proto = rawProto.toLowerCase();
+  if (!['https', 'http'].includes(proto)) throw new TypeError('invalid forwarded protocol');
   if (requireForwardedHttps && proto !== 'https') throw new TypeError('forwarded HTTPS required');
   return { address: chain[chain.length - 1 - forwardedHop], transport: proto, proxied: true };
 }

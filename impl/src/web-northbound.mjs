@@ -61,14 +61,14 @@ function validProviderClaims(value) {
 function validateEnvelope(envelope) {
   if (!isRecord(envelope)) return 'command envelope must be an object';
   const unknown = Object.keys(envelope).find((key) => !TOP_LEVEL.has(key));
-  if (unknown) return `unknown command field: ${unknown}`;
+  if (unknown) return 'unknown_top_level_field';
   if (envelope.schemaVersion !== 1) return 'unsupported schemaVersion';
   if (!string(envelope.commandId) || !string(envelope.idempotencyKey) || !string(envelope.command) || !string(envelope.repoId) || !string(envelope.origin)) return 'command identity, idempotencyKey, repoId, and origin are required';
   if (!Object.hasOwn(COMMAND_CAPABILITY, envelope.command)) return 'unsupported command';
   if (!isRecord(envelope.args)) return 'args must be an object';
   const allowed = ARG_FIELDS[envelope.command];
   const unknownArg = Object.keys(envelope.args).find((key) => !allowed.has(key));
-  if (unknownArg) return `unknown ${envelope.command} argument: ${unknownArg}`;
+  if (unknownArg) return 'unknown_argument_field';
   if (containsForbiddenKey(envelope.args)) return 'credential-bearing command fields are forbidden';
   if (FENCE_REQUIRED.has(envelope.command) && !Number.isInteger(envelope.expectedFence)) return `${envelope.command} requires expectedFence`;
   if (envelope.command === 'spawn') {
@@ -78,7 +78,7 @@ function validateEnvelope(envelope) {
     if (Object.hasOwn(envelope.args, 'modelPolicy') && !isRecord(envelope.args.modelPolicy)) return 'modelPolicy must be an object';
     if (isRecord(envelope.args.modelPolicy)) {
       const unknownPolicy = Object.keys(envelope.args.modelPolicy).find((key) => !MODEL_POLICY_FIELDS.has(key));
-      if (unknownPolicy) return `unknown modelPolicy field: ${unknownPolicy}`;
+      if (unknownPolicy) return 'unknown_model_policy_field';
     }
   }
   if (['send', 'interrupt', 'kill', 'result'].includes(envelope.command) && !string(envelope.args.workerId)) return `${envelope.command} requires workerId`;

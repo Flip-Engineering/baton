@@ -122,6 +122,24 @@ test('WN4/WN5/WN7: unknown fields, unknown model policy, and client-supplied aud
   assert.equal(coordination.events().some((event) => event.kind === 'web.command_admitted'), false);
 });
 
+test('WN4/WN7: unknown-field refusals use fixed bounded codes and never retain client field names', async () => {
+  const { web, calls, coordination } = fixture();
+  const marker = `credential-shaped-marker-${'x'.repeat(60_000)}`;
+  const cases = [
+    [envelope({ [marker]: true }), 'unknown_top_level_field'],
+    [envelope({ args: { ...envelope().args, [marker]: true } }), 'unknown_argument_field'],
+    [envelope({ args: { ...envelope().args, modelPolicy: { reasoningEffort: 'high', [marker]: true } } }), 'unknown_model_policy_field'],
+  ];
+  for (const [invalid, expected] of cases) {
+    const response = await web.execute(context(), invalid);
+    assert.equal(response.status, 400); assert.equal(response.body.error.message, expected);
+    assert.ok(JSON.stringify(response).length < 512); assert.equal(JSON.stringify(response).includes(marker), false);
+  }
+  const audits = coordination.events().filter((event) => event.payload?.kind === 'command_invalid');
+  assert.deepEqual(audits.map((event) => event.payload.reason), cases.map(([, expected]) => expected));
+  assert.equal(JSON.stringify(audits).includes(marker), false); assert.deepEqual(calls, []);
+});
+
 test('WN4: admitted and completed idempotency state survives coordination-store restart', async () => {
   const directory = root();
   const calls = [];

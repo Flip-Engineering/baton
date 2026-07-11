@@ -18,6 +18,8 @@ IPv4; normalization never grants subnet, implicit loopback, or non-exact trust.
 Quoted `Forwarded` values are accepted only through a deliberately small escape-free grammar;
 protocol tokens are case-insensitive HTTP/HTTPS after decoding, while controls, escapes, duplicate
 or unknown parameters, zones, ports, and ambiguous forms remain refused.
+Both standard `Forwarded` and the single `X-Forwarded-Proto` token normalize HTTP/HTTPS casing
+before semantic and forwarded-HTTPS checks; other schemes remain refused.
 At a trusted peer, wire-level `rawHeaders` must contain exactly one occurrence of each forwarding
 field represented in normalized headers; duplicate `Forwarded`, `X-Forwarded-For`, or
 `X-Forwarded-Proto` field-lines are refused before chain parsing, while one field may contain the
@@ -57,6 +59,8 @@ non-string, control-bearing, absolute, scheme-relative, or fragment-bearing targ
 typed audited refusal before authentication, provider, session, or fleet work. Canonical edge
 identity is resolved first, and malformed targets consume the ordinary address quota before their
 durable refusal audit, preventing audit-write amplification.
+Schema refusals use fixed bounded reason codes. Client-supplied property names are never echoed in
+HTTP errors or retained in durable audit, including near the request-body limit.
 
 ## EP4 — trusted-proxy and TLS modes are explicit
 
