@@ -57,7 +57,7 @@ const brief = createBrief({
 });
 
 let workerId = null; let pid = null; let result = null; let integration = null; let fatal = null; let pumping = true;
-const approvals = []; let budgetSteer = null; let completionSteer = null;
+const approvals = []; let budgetSteer = null;
 async function inputPump() {
   const consumed = new Set();
   while (pumping) {
@@ -71,15 +71,6 @@ async function inputPump() {
     if (workerId && !budgetSteer && log.read(workerId).some((event) => event.kind === 'resource.budget_threshold' && event.payload?.threshold >= 0.5)) {
       budgetSteer = await coordinator.send(workerId,
         `Budget steer: stop all further repository exploration now. Write ${TARGET} immediately from the evidence already collected, with the four exact required headings, then run only the pinned verification command.`,
-        'steer', { actor: 'orchestrator' });
-    }
-    if (workerId && !completionSteer && log.read(workerId).some((event) => {
-      const command = event.payload?.item?.commandActions?.[0]?.command ?? event.payload?.command ?? '';
-      return event.kind === 'content.tool_call' && event.payload?.exitCode === 0
-        && String(command).includes(TARGET) && String(command).includes("grep -q '^## Verdict$'");
-    })) {
-      completionSteer = await coordinator.send(workerId,
-        'Completion steer: the pinned artifact verification has passed. Do not inspect or edit anything else. Emit your final response immediately so Baton can run its independent trust gate.',
         'steer', { actor: 'orchestrator' });
     }
     await sleep(100);
@@ -125,7 +116,7 @@ const checks = {
   runtimeGone: workerId ? !existsSync(join(REPO, '.baton', 'runtime', workerId)) : false,
   branchGone: git(['branch', '--list', `baton/${TASK_ID}`]) === '',
 };
-const summary = { at: new Date().toISOString(), repoHead: git(['rev-parse', 'HEAD']), workerId, pid, model: MODEL, result, integration, approvals, budgetSteer, completionSteer, checks, fatal, pass: Object.values(checks).every(Boolean) };
+const summary = { at: new Date().toISOString(), repoHead: git(['rev-parse', 'HEAD']), workerId, pid, model: MODEL, result, integration, approvals, budgetSteer, checks, fatal, pass: Object.values(checks).every(Boolean) };
 mkdirSync(HERE, { recursive: true });
 writeFileSync(join(HERE, 'events.jsonl'), events.map((event) => JSON.stringify(event)).join('\n') + (events.length ? '\n' : ''));
 writeFileSync(join(HERE, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
