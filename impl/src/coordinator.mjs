@@ -5,7 +5,7 @@
 // (D1/D9/D10/D11), which is authoritative over any conflicting cluster spec.
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import { Cursor } from './log.mjs';
 import { createBrief, createDigest, wrapFact, wrapProse } from './messages.mjs';
 
@@ -65,6 +65,29 @@ function minimalBrief() {
 }
 
 function noop() {}
+
+function globRegex(glob) {
+  let re = '^';
+  const text = String(glob);
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (char === '*') {
+      if (text[i + 1] === '*') {
+        re += '.*';
+        i += 1;
+        if (text[i + 1] === '/') i += 1;
+      } else re += '[^/]*';
+    } else if (char === '?') re += '[^/]';
+    else if ('.+^${}()|[]\\'.includes(char)) re += `\\${char}`;
+    else re += char;
+  }
+  return new RegExp(`${re}$`);
+}
+
+function pathInScope(scopes, path) {
+  if (!Array.isArray(scopes) || scopes.length === 0) return true;
+  return scopes.some((scope) => scope === '**' || scope === '.' || scope === './' || globRegex(scope).test(path));
+}
 
 function normalizeModelPolicy(model, policy) {
   if (model !== undefined && (typeof model !== 'string' || model.length === 0)) {
@@ -207,6 +230,7 @@ export class Coordinator {
     this._fences = opts.fences;
     this._adapters = opts.adapters;
     this._worktrees = opts.worktrees;
+    this._runtimeScopes = opts.runtimeScopes ?? null;
     this._referee = opts.referee;
     this._route = opts.route;
     this._story = opts.story ?? null;
@@ -215,6 +239,15 @@ export class Coordinator {
     this._approvalTimeoutMs = opts.approvalTimeoutMs ?? 60000;
     this._stopDeadlineMs = opts.stopDeadlineMs ?? 15000;
     this._recoveryTimeoutMs = opts.recoveryTimeoutMs ?? 15000;
+    this._budgetThresholds = Object.freeze([...(opts.budgetPolicy?.thresholds ?? [0.5, 0.8, 1])].sort((a, b) => a - b));
+    this._budgetHardStopAt = opts.budgetPolicy?.hardStopAt ?? 1;
+    this._watchdog = Object.freeze({
+      stallMs: opts.watchdog?.stallMs ?? 120000,
+      loopThreshold: opts.watchdog?.loopThreshold ?? 3,
+      scopeAction: opts.watchdog?.scopeAction ?? 'kill',
+      loopAction: opts.watchdog?.loopAction ?? 'interrupt',
+      stallAction: opts.watchdog?.stallAction ?? 'interrupt',
+    });
     this._waitPollMs = opts.waitPollMs ?? 25;
     // C1: the sole done-gate, and the driver-level policy passed to every accept() call.
     this._accept = opts.accept ?? defaultAccept;
@@ -279,6 +312,9 @@ export class Coordinator {
     // D10: reconcile first, then rebuild all state purely from the log.
     if (this._worktrees && typeof this._worktrees.reconcile === 'function') {
       Promise.resolve(this._worktrees.reconcile()).catch(noop);
+    }
+    if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') {
+      Promise.resolve(this._runtimeScopes.reconcile([])).catch(noop);
     }
     this._replay();
   }
@@ -369,6 +405,20 @@ export class Coordinator {
     handle.modelResolved = model ?? null;
     task.modelResolved = model ?? null;
     const harness = this._harnessOf(vendor);
+    let runtime;
+    try {
+      runtime = this._ensureRuntimeScope(handle);
+    } catch (err) {
+      try { this._runtimeScopes?.remove?.(workerId); } catch { /* best effort */ }
+      this._log.append({
+        worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'lifecycle.crashed', actor: 'policy',
+        payload: { phase: 'runtime_scope', error: String(err?.message ?? err) },
+      });
+      task.status = 'failed';
+      handle.status = 'exited';
+      return;
+    }
+    if (runtime) task.runtimeScope = handle.runtimeScope;
 
     // Create the worktree; the returned readiness promise is handed to the adapter so the
     // worker waits for its checkout to exist before touching disk. Status still flips to
@@ -442,6 +492,8 @@ export class Coordinator {
       reasoningEffort: task.modelPolicy?.reasoningEffort,
       serviceTier: task.modelPolicy?.serviceTier,
       session: task.sessionRequest?.mode === 'new' ? undefined : task.sessionRequest,
+      env: runtime?.env,
+      replaceEnv: runtime?.replaceEnv === true,
     })).then((ack) => {
       if (handle.spawnAbort === spawnAbort) handle.spawnAbort = null;
       if (ack && ack.ok === false) this._onSpawnRefused(handle, task, harness, ack);
@@ -458,6 +510,7 @@ export class Coordinator {
 
     task.status = 'working';
     handle.status = 'working';
+    this._resetWatchdogTurn(handle);
   }
 
   /** SC1d: a refused spawn Ack may never strand its task in 'working'. `lifecycle.crashed` is
@@ -479,6 +532,7 @@ export class Coordinator {
     });
     handle.status = 'exited';
     task.status = 'failed';
+    this._removeRuntimeScope(handle);
     this._dispatchPass();
   }
 
@@ -579,6 +633,14 @@ export class Coordinator {
       pendingApprovalId: null,
       pendingQuestionId: null,
       budgetUsed: { tokens: 0, usd: 0 },
+      budgetThresholdsFired: new Set(),
+      usageCumulative: new Map(),
+      watchdogActions: new Set(),
+      recentFailedActions: [],
+      watchdogGeneration: 0,
+      watchdogTimer: null,
+      runtimeScope: null,
+      runtimeLease: null,
       spawnAbort: null,
       createdAt: new Date(this._now()).toISOString(),
     };
@@ -648,6 +710,7 @@ export class Coordinator {
     admission.spawned = new Promise((resolve) => { admission.resolveSpawned = resolve; });
     handle.turnAdmission = admission;
     const session = normalizeSessionRequest({ mode: 'resume', id: handle.sessionRef.id, context });
+    const runtime = this._ensureRuntimeScope(handle);
     this._log.append({
       worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
       kind: 'control.recovery_requested', actor: opts.actor ?? 'orchestrator',
@@ -667,6 +730,8 @@ export class Coordinator {
       reasoningEffort: handle.modelPolicy?.reasoningEffort,
       serviceTier: handle.modelPolicy?.serviceTier,
       session,
+      env: runtime?.env,
+      replaceEnv: runtime?.replaceEnv === true,
     })).then((ack) => ({ ack }), (error) => ({ error }));
 
     let outcome = await Promise.race([attempt, timeout]);
@@ -697,7 +762,7 @@ export class Coordinator {
         worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
         kind: 'control.recovery_failed', actor: 'policy', payload: { ...failed, action: 'kill_untrusted_transport' },
       });
-      Promise.resolve(adapter.kill(workerId)).catch(noop);
+      Promise.resolve(adapter.kill(workerId)).catch(noop).finally(() => this._removeRuntimeScope(handle));
       return { ok: false, ...failed };
     }
 
@@ -711,6 +776,7 @@ export class Coordinator {
     handle.sessionRequest = session;
     handle.sessionContext = context;
     handle.turnAdmission = null;
+    this._resetWatchdogTurn(handle);
     this._log.append({
       worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: stamp.turnEpoch,
       kind: 'control.recovery_attached', actor: 'orchestrator',
@@ -774,6 +840,7 @@ export class Coordinator {
       sessionRef: handle.sessionRef ?? null,
       sessionContext: handle.sessionContext ?? null,
       lineage: handle.lineage ?? null,
+      runtimeScope: handle.runtimeScope ?? null,
       taskId: handle.taskId,
       worktree: handle.worktree,
       fence,
@@ -781,7 +848,7 @@ export class Coordinator {
       status: handle.status,
       pendingApprovalId: handle.pendingApprovalId,
       pendingQuestionId: handle.pendingQuestionId,
-      budgetUsed: handle.budgetUsed,
+      budgetUsed: { ...handle.budgetUsed },
       createdAt: handle.createdAt,
     };
   }
@@ -922,6 +989,7 @@ export class Coordinator {
     task.verdict = null;
     handle.status = 'working';
     handle.turnAdmission = null;
+    this._resetWatchdogTurn(handle);
     this._log.append({
       worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: stamp.turnEpoch,
       kind: 'lifecycle.turn_started', actor: 'orchestrator',
@@ -973,6 +1041,7 @@ export class Coordinator {
     // terminal event as the confirmation, finish cleanup now, and never arm an unfulfillable wait.
     if (handle.status === 'exited') {
       handle.status = 'dead';
+      this._removeRuntimeScope(handle);
       await this._removeTaskWorktree(this._tasks.get(handle.taskId));
       return { ok: true, result: 'already_dead' };
     }
@@ -1007,6 +1076,7 @@ export class Coordinator {
       handle.spawnAbort.abort({ mode, actor });
     }
     handle.status = 'stopping';
+    this._clearWatchdog(handle);
 
     const harness = this._harnessOf(handle.vendor);
     const turnEpoch = this._safeTurnEpoch(handle);
@@ -1056,6 +1126,180 @@ export class Coordinator {
     await Promise.resolve(this._worktrees.remove(ownerTaskId)).catch(noop);
   }
 
+  _ensureRuntimeScope(handle) {
+    if (!this._runtimeScopes || typeof this._runtimeScopes.create !== 'function') return null;
+    if (handle.runtimeLease) return handle.runtimeLease;
+    const lease = this._runtimeScopes.create(handle.id, handle.vendor);
+    handle.runtimeLease = lease;
+    handle.runtimeScope = { ...lease.posture, active: true };
+    this._log.append({
+      worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+      kind: 'runtime.scope_created', actor: 'policy', payload: handle.runtimeScope,
+    });
+    return lease;
+  }
+
+  _removeRuntimeScope(handle) {
+    if (!handle || !this._runtimeScopes || typeof this._runtimeScopes.remove !== 'function') return;
+    try { this._runtimeScopes.remove(handle.id); } catch { /* best-effort cleanup continues */ }
+    handle.runtimeLease = null;
+    if (handle.runtimeScope) handle.runtimeScope = { ...handle.runtimeScope, active: false };
+  }
+
+  _clearWatchdog(handle) {
+    handle.watchdogGeneration = (handle.watchdogGeneration ?? 0) + 1;
+    if (handle.watchdogTimer != null) this._clearTimeout(handle.watchdogTimer);
+    handle.watchdogTimer = null;
+  }
+
+  _armWatchdog(handle) {
+    this._clearWatchdog(handle);
+    if (!(this._watchdog.stallMs > 0) || handle.status !== 'working') return;
+    const generation = handle.watchdogGeneration;
+    handle.watchdogTimer = this._setTimeout(() => {
+      if (handle.watchdogGeneration !== generation || handle.status !== 'working') return;
+      const task = this._tasks.get(handle.taskId);
+      if (!task || task.status !== 'working' || handle.watchdogActions?.has('stall')) return;
+      handle.watchdogActions?.add('stall');
+      this._log.append({
+        worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'health.stall_suspected', actor: 'policy',
+        payload: { elapsedMs: this._watchdog.stallMs, action: this._watchdog.stallAction, mechanical: true },
+      });
+      this._applyWatchdogAction(handle, this._watchdog.stallAction);
+    }, this._watchdog.stallMs);
+    if (handle.watchdogTimer && typeof handle.watchdogTimer.unref === 'function') handle.watchdogTimer.unref();
+  }
+
+  _resetWatchdogTurn(handle) {
+    handle.watchdogActions = new Set();
+    handle.recentFailedActions = [];
+    this._armWatchdog(handle);
+  }
+
+  _touchWatchdog(handle) {
+    if (handle.status === 'working') this._armWatchdog(handle);
+  }
+
+  _applyWatchdogAction(handle, action) {
+    if (handle.status !== 'working' && handle.status !== 'blocked') return;
+    if (action === 'kill') this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+    else if (action === 'interrupt') this._beginStop(handle, 'interrupt', undefined, 'policy').catch(noop);
+  }
+
+  _normalizeUsage(handle, payload) {
+    const source = payload?.source ?? 'unknown';
+    const wireAccounting = payload?.accounting ?? (payload?.tokenUsage ? 'cumulative' : 'delta');
+    const rawTokens = Number(payload?.tokens ?? payload?.totalTokens ?? payload?.tokenUsage?.total?.totalTokens ?? 0);
+    const rawUsd = Number(payload?.usd ?? payload?.totalCostUsd ?? 0);
+    const deltaFor = (dimension, current) => {
+      if (!Number.isFinite(current) || current < 0) return 0;
+      if (wireAccounting !== 'cumulative') return current;
+      const key = `${source}:${dimension}`;
+      const prior = handle.usageCumulative.get(key) ?? 0;
+      handle.usageCumulative.set(key, current);
+      return current >= prior ? current - prior : current;
+    };
+    return {
+      ...payload,
+      tokens: deltaFor('tokens', rawTokens), usd: deltaFor('usd', rawUsd), accounting: 'delta',
+      wireAccounting, wireTokens: rawTokens, wireUsd: rawUsd,
+    };
+  }
+
+  _recordUsage(handle, event) {
+    const task = this._tasks.get(handle.taskId);
+    const payload = this._normalizeUsage(handle, event.payload ?? {});
+    handle.budgetUsed.tokens += payload.tokens;
+    handle.budgetUsed.usd += payload.usd;
+    this._log.append({
+      ...event, payload,
+      modelRequested: handle.modelRequested ?? null,
+      modelResolved: handle.modelResolved ?? null,
+      modelObserved: handle.modelObserved ?? null,
+    });
+    const tokenLimit = Number(task?.brief?.budget?.tokens ?? 0);
+    const usdLimit = Number(task?.brief?.budget?.usd ?? 0);
+    const tokenRatio = tokenLimit > 0 ? handle.budgetUsed.tokens / tokenLimit : 0;
+    const usdRatio = usdLimit > 0 ? handle.budgetUsed.usd / usdLimit : 0;
+    const ratio = Math.max(tokenRatio, usdRatio);
+    let hard = false;
+    for (const threshold of this._budgetThresholds) {
+      if (ratio < threshold || handle.budgetThresholdsFired.has(threshold)) continue;
+      handle.budgetThresholdsFired.add(threshold);
+      const hardStop = threshold >= this._budgetHardStopAt;
+      hard ||= hardStop;
+      this._log.append({
+        worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'resource.budget_threshold', actor: 'policy',
+        payload: {
+          threshold, hardStop, action: hardStop ? 'kill' : 'notify',
+          used: { ...handle.budgetUsed }, limits: { tokens: tokenLimit, usd: usdLimit }, ratio,
+          dimensions: { tokens: tokenRatio, usd: usdRatio },
+        },
+      });
+    }
+    if (hard && handle.status === 'working') this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+  }
+
+  _relativeActionPath(handle, path) {
+    if (typeof path !== 'string' || path.length === 0) return null;
+    if (!isAbsolute(path)) return path.replace(/^\.\//, '');
+    if (!handle.worktree) return path;
+    const rel = relative(handle.worktree, path);
+    return rel.startsWith('..') || isAbsolute(rel) ? path : rel;
+  }
+
+  _observeWatchdogEvent(handle, event) {
+    if (event.actor !== 'worker') return;
+    this._touchWatchdog(handle);
+    if (event.kind === 'lifecycle.turn_started') {
+      this._resetWatchdogTurn(handle);
+      return;
+    }
+    if (event.kind === 'content.tool_call') {
+      const payload = event.payload ?? {};
+      const command = payload.command ?? payload.cmd ?? payload.item?.command ?? payload.rawInput?.command ?? payload.rawOutput?.command;
+      const exitCode = payload.exitCode ?? payload.item?.exitCode ?? payload.rawOutput?.exit_code;
+      const status = payload.status ?? payload.item?.status ?? (exitCode !== undefined ? 'completed' : null);
+      if (typeof command === 'string' && status === 'completed' && Number(exitCode) !== 0) {
+        const signature = `${command}::${Number(exitCode)}`;
+        handle.recentFailedActions.push(signature);
+        const threshold = this._watchdog.loopThreshold;
+        const tail = handle.recentFailedActions.slice(-threshold);
+        if (threshold > 0 && tail.length === threshold && tail.every((value) => value === signature) && !handle.watchdogActions.has('loop')) {
+          handle.watchdogActions.add('loop');
+          this._log.append({
+            worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+            kind: 'health.loop_suspected', actor: 'policy',
+            payload: { command, exitCode: Number(exitCode), count: threshold, action: this._watchdog.loopAction, mechanical: true },
+          });
+          this._applyWatchdogAction(handle, this._watchdog.loopAction);
+        }
+      }
+      return;
+    }
+    if (event.kind === 'content.file_edit') {
+      const payload = event.payload ?? {};
+      const rawPaths = [payload.path, ...(payload.paths ?? []), payload.item?.path,
+        ...((payload.item?.changes ?? []).map((change) => change.path)),
+        ...((payload.content ?? []).filter((item) => item?.type === 'diff').map((item) => item.path))].filter(Boolean);
+      const task = this._tasks.get(handle.taskId);
+      for (const rawPath of rawPaths) {
+        const path = this._relativeActionPath(handle, rawPath);
+        if (!path || pathInScope(task?.brief?.pathScope, path)) continue;
+        if (handle.watchdogActions.has('scope')) break;
+        handle.watchdogActions.add('scope');
+        this._log.append({
+          worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+          kind: 'health.scope_violation', actor: 'policy',
+          payload: { path, observedPath: rawPath, action: this._watchdog.scopeAction, mechanical: true },
+        });
+        this._applyWatchdogAction(handle, this._watchdog.scopeAction);
+      }
+    }
+  }
+
   _wireAck(waiter, call) {
     call
       .then((ack) => {
@@ -1095,6 +1339,7 @@ export class Coordinator {
       const task = this._tasks.get(handle.taskId);
       if (waiter.mode === 'kill') {
         handle.status = 'dead';
+        this._removeRuntimeScope(handle);
         if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'cancelled';
         this._removeTaskWorktree(task).catch(noop);
       } else {
@@ -1111,6 +1356,7 @@ export class Coordinator {
             modelRequested: handle.modelRequested ?? null, modelResolved: handle.modelResolved ?? null, modelObserved: handle.modelObserved ?? null,
             payload: { followUp: true, afterInterrupt: true },
           });
+          this._resetWatchdogTurn(handle);
         } else {
           handle.status = 'idle';
           if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'cancelled';
@@ -1138,6 +1384,7 @@ export class Coordinator {
 
     if (handle) {
       handle.status = 'dead';
+      this._removeRuntimeScope(handle);
       const task = this._tasks.get(handle.taskId);
       if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'failed';
       this._removeTaskWorktree(task).catch(noop);
@@ -1478,11 +1725,15 @@ export class Coordinator {
     const appendAttributed = (partial) => this._log.append({ ...partial, ...attribution });
 
     switch (kind) {
+      case 'resource.tokens':
+        this._recordUsage(handle, event);
+        break;
       case 'lifecycle.turn_completed': {
         // Adapters may wrap the WorkerResult as { result } (MockAdapter) or emit it directly
         // (coordinator.test). Normalize so the logged claim and the gate both see the WorkerResult.
         const wr = (payload && payload.result !== undefined && payload.status === undefined) ? payload.result : payload;
         appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload: wr });
+        this._clearWatchdog(handle);
         if (handle.status !== 'stopping' && handle.status !== 'dead') {
           this._runTrustGate(handle, wr).catch(noop);
         }
@@ -1494,6 +1745,8 @@ export class Coordinator {
         const task = this._tasks.get(handle.taskId);
         if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'failed';
         if (handle.status !== 'dead') handle.status = 'exited';
+        this._clearWatchdog(handle);
+        this._removeRuntimeScope(handle);
         break;
       }
       case 'question.asked': {
@@ -1547,6 +1800,7 @@ export class Coordinator {
       default:
         appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
     }
+    this._observeWatchdogEvent(handle, event);
   }
 
   // =========================================================================
@@ -1662,6 +1916,9 @@ export class Coordinator {
       let sessionRef = null;
       let sessionContext = null;
       let lineage = null;
+      const budgetUsed = { tokens: 0, usd: 0 };
+      const budgetThresholdsFired = new Set();
+      const usageCumulative = new Map();
 
       for (const e of events) {
         if (typeof e.turnEpoch === 'number' && e.turnEpoch > maxTurnEpoch) maxTurnEpoch = e.turnEpoch;
@@ -1696,6 +1953,18 @@ export class Coordinator {
             break;
           case 'worktree.ready':
             sessionContext = e.payload ?? sessionContext;
+            break;
+          case 'resource.tokens':
+            budgetUsed.tokens += Number(e.payload?.tokens ?? 0);
+            budgetUsed.usd += Number(e.payload?.usd ?? 0);
+            if (e.payload?.wireAccounting === 'cumulative') {
+              const source = e.payload?.source ?? 'unknown';
+              usageCumulative.set(`${source}:tokens`, Number(e.payload?.wireTokens ?? 0));
+              usageCumulative.set(`${source}:usd`, Number(e.payload?.wireUsd ?? 0));
+            }
+            break;
+          case 'resource.budget_threshold':
+            if (typeof e.payload?.threshold === 'number') budgetThresholdsFired.add(e.payload.threshold);
             break;
           case 'control.recovery_attached':
             terminalStatus = 'working';
@@ -1817,7 +2086,15 @@ export class Coordinator {
         status: (recoveryTerminalized || sessionRef) ? 'orphaned' : this._deriveWorkerStatus(terminalStatus),
         pendingApprovalId: null,
         pendingQuestionId: null,
-        budgetUsed: { tokens: 0, usd: 0 },
+        budgetUsed,
+        budgetThresholdsFired,
+        usageCumulative,
+        watchdogActions: new Set(),
+        recentFailedActions: [],
+        watchdogGeneration: 0,
+        watchdogTimer: null,
+        runtimeScope: null,
+        runtimeLease: null,
         spawnAbort: null,
         createdAt: new Date(0).toISOString(),
       });

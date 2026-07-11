@@ -95,6 +95,10 @@ export class ClaudeSessionCli {
         refreshedAt: null,
       },
       sessions: { multiTurn: 'native', resume: 'native', fork: 'native' },
+      isolation: {
+        configHome: 'driver-scoped', environment: 'driver-scoped', filesystem: 'worktree+harness-policy',
+        osSandbox: 'unverified', network: 'uncontrolled', credentialProjection: 'explicit',
+      },
       verbs: {
         spawn: 'native',
         prompt: 'native',
@@ -186,7 +190,9 @@ export class ClaudeSessionCli {
     try {
       child = spawn(this._cfg.cmd, argv, {
         cwd,
-        env: { ...process.env, ...(this._cfg.env ?? {}) },
+        env: opts.replaceEnv
+          ? { ...(opts.env ?? {}), ...(this._cfg.env ?? {}) }
+          : { ...process.env, ...(this._cfg.env ?? {}), ...(opts.env ?? {}) },
         detached: true, // own process group, so interrupt/kill can signal the whole tree
         stdio: ['pipe', 'pipe', 'pipe'],
       });
@@ -322,6 +328,12 @@ export class ClaudeSessionCli {
       return;
     }
     const status = obj.is_error ? 'failed' : 'completed';
+    const tokens = (obj.usage?.output_tokens ?? 0) + (obj.usage?.input_tokens ?? 0);
+    this._emit(session, 'resource.tokens', {
+      source: 'result', accounting: 'delta', tokens, usd: obj.total_cost_usd ?? 0,
+      usage: obj.usage ?? null, pid: session.pid,
+      modelRequested: session.modelRequested, modelObserved: session.modelObserved,
+    });
     this._emit(session, 'lifecycle.turn_completed', {
       result: makeResult(status, obj.result, obj.usage, obj.total_cost_usd),
       pid: session.pid,

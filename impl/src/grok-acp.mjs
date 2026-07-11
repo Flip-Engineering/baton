@@ -66,12 +66,13 @@ function pickOption(options, decision) {
   return byKind ?? opts[opts.length - 1];
 }
 
-export function withGrokModelArgs(baseArgs, { model, reasoningEffort } = {}) {
+export function withGrokModelArgs(baseArgs, { model, reasoningEffort, sandbox } = {}) {
   const args = [...baseArgs];
   const insertion = args[0] === 'agent' ? 1 : args.length;
   const selection = [];
   if (model) selection.push('--model', model);
   if (reasoningEffort) selection.push('--reasoning-effort', reasoningEffort);
+  if (sandbox) selection.push('--sandbox', sandbox);
   args.splice(insertion, 0, ...selection);
   return args;
 }
@@ -140,6 +141,10 @@ export class GrokAcpCli {
       // methods are documented vendor capabilities, but Baton does not yet have their exact
       // request/result schemas pinned, so advertising them as native would be a lying card.
       sessions: { multiTurn: 'native', resume: 'native', fork: 'planned', rewind: 'planned' },
+      isolation: {
+        configHome: 'driver-scoped', environment: 'driver-scoped', filesystem: 'worktree+harness-policy',
+        osSandbox: 'unverified', network: 'uncontrolled', credentialProjection: 'explicit',
+      },
       verbs: {
         spawn: 'native',
         prompt: 'native',
@@ -336,7 +341,20 @@ export class GrokAcpCli {
         return;
       case 'tool_call':
       case 'tool_call_update': // live-smoke F2 (probe #4): status transitions + diff content ride a SECOND update kind
-        this._emit(session, 'content.tool_call', { sessionId: session.sessionId, turnId, ...update });
+        {
+          const diffs = (update.content ?? []).filter((item) => item?.type === 'diff' && item.path);
+          if (diffs.length > 0) {
+            this._emit(session, 'content.file_edit', {
+              sessionId: session.sessionId, turnId, toolCallId: update.toolCallId,
+              paths: diffs.map((item) => item.path), diffs,
+            });
+          }
+          this._emit(session, 'content.tool_call', {
+            sessionId: session.sessionId, turnId, ...update,
+            command: update.rawInput?.command ?? update.rawOutput?.command ?? null,
+            exitCode: update.rawOutput?.exit_code ?? null,
+          });
+        }
         return;
       default:
         // agent_thought_chunk / plan / unknown-future variants: ignored per the spec's table —
@@ -379,7 +397,10 @@ export class GrokAcpCli {
     const meta = result._meta ?? null;
     if (meta) {
       session.modelObserved = meta.modelId ?? session.modelObserved;
-      this._emit(session, 'resource.tokens', { source: 'promptMeta', sessionId: session.sessionId, turnId, ...meta });
+      this._emit(session, 'resource.tokens', {
+        source: 'promptMeta', accounting: 'delta', tokens: meta.totalTokens ?? 0, usd: 0,
+        sessionId: session.sessionId, turnId, ...meta,
+      });
     }
     const tokens = meta?.totalTokens ?? 0;
 
@@ -457,12 +478,16 @@ export class GrokAcpCli {
     if (!cwd) return { ok: false, reason: 'spawn requires a worktree (opts.worktree, or opts.worktreeReady resolving {path})' };
 
     const modelRequested = opts.model ?? this._model ?? null;
+    const sandboxRequested = opts.sandbox ?? 'workspace';
     const childArgs = withGrokModelArgs(this._args, {
       model: modelRequested,
       reasoningEffort: opts.reasoningEffort ?? this._reasoningEffort,
+      sandbox: sandboxRequested,
     });
     const child = this._spawnFn(this._cmd, childArgs, {
-      env: { ...process.env, ...(this._env ?? {}) },
+      env: opts.replaceEnv
+        ? { ...(opts.env ?? {}), ...(this._env ?? {}) }
+        : { ...process.env, ...(this._env ?? {}), ...(opts.env ?? {}) },
       cwd, // grok indexes its cwd at startup; session/new pins it again below
       detached: true, // owns its own process group (GA11: kill() signals the group)
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -481,6 +506,7 @@ export class GrokAcpCli {
       killing: false, killConfirmed: false, closed: false,
       modelRequested,
       modelObserved: null,
+      sandboxRequested,
     };
     this._sessions.set(worker, session);
     this._attachChild(session);
@@ -524,6 +550,7 @@ export class GrokAcpCli {
     this._emit(session, 'lifecycle.spawned', {
       sessionId: session.sessionId, pid: child.pid,
       modelRequested: session.modelRequested, modelObserved: session.modelObserved,
+      sandboxRequested: session.sandboxRequested,
     });
 
     // GA6: the Ack resolves once the first prompt is DISPATCHED after a live handshake — ACP has

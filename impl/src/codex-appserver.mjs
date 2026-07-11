@@ -119,6 +119,10 @@ export class CodexAppServerCli {
         provenance: 'adapter-configuration', refreshedAt: null,
       },
       sessions: { multiTurn: 'native', resume: 'native', fork: 'native', rejoin: 'native' },
+      isolation: {
+        configHome: 'driver-scoped', environment: 'driver-scoped', filesystem: 'workspace-write',
+        osSandbox: 'harness-native', network: 'harness-policy', credentialProjection: 'explicit',
+      },
       verbs: {
         spawn: 'native',
         prompt: 'native',
@@ -321,9 +325,15 @@ export class CodexAppServerCli {
         if (item.type === 'agentMessage') {
           this._emit(session, 'content.message', { threadId: params.threadId, turnId, text: item.text });
         } else if (item.type === 'commandExecution' || item.type === 'mcpToolCall') {
-          this._emit(session, 'content.tool_call', { threadId: params.threadId, turnId, item });
+          this._emit(session, 'content.tool_call', {
+            threadId: params.threadId, turnId, item,
+            command: item.command ?? item.tool ?? null,
+            exitCode: item.exitCode ?? null,
+            status: item.status ?? null,
+          });
         } else if (item.type === 'fileChange') {
-          this._emit(session, 'content.file_edit', { threadId: params.threadId, turnId, item });
+          const paths = (item.changes ?? []).map((change) => change.path).filter(Boolean);
+          this._emit(session, 'content.file_edit', { threadId: params.threadId, turnId, item, paths });
         }
         return;
       }
@@ -359,7 +369,9 @@ export class CodexAppServerCli {
       case 'thread/tokenUsage/updated': {
         session.lastTokenUsage = params.tokenUsage?.total ?? null;
         this._emit(session, 'resource.tokens', {
-          source: 'tokenUsage', threadId: params.threadId, turnId: params.turnId, tokenUsage: params.tokenUsage,
+          source: 'tokenUsage', accounting: 'cumulative',
+          tokens: params.tokenUsage?.total?.totalTokens ?? 0, usd: 0,
+          threadId: params.threadId, turnId: params.turnId, tokenUsage: params.tokenUsage,
         });
         return;
       }
@@ -417,7 +429,9 @@ export class CodexAppServerCli {
     if (!cwd) return { ok: false, reason: 'spawn requires a worktree (opts.worktree, or opts.worktreeReady resolving {path})' };
 
     const child = this._spawnFn(this._cmd, this._args, {
-      env: { ...process.env, ...(this._env ?? {}) },
+      env: opts.replaceEnv
+        ? { ...(opts.env ?? {}), ...(this._env ?? {}) }
+        : { ...process.env, ...(this._env ?? {}), ...(opts.env ?? {}) },
       detached: true, // owns its own process group (XA11: kill() signals the group)
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -437,6 +451,10 @@ export class CodexAppServerCli {
       modelObserved: null,
       reasoningEffort: opts.reasoningEffort ?? null,
       serviceTier: opts.serviceTier ?? null,
+      sandboxPolicy: opts.sandboxPolicy ?? {
+        type: 'workspaceWrite', writableRoots: [cwd], networkAccess: false,
+        excludeSlashTmp: false, excludeTmpdirEnvVar: false,
+      },
     };
     this._sessions.set(worker, session);
     this._attachChild(session);
@@ -495,6 +513,7 @@ export class CodexAppServerCli {
         model: session.modelRequested ?? undefined,
         effort: session.reasoningEffort ?? undefined,
         serviceTier: session.serviceTier ?? undefined,
+        sandboxPolicy: session.sandboxPolicy,
         input: [{ type: 'text', text: renderBrief(brief, 'codex-v2') }],
       });
     } catch (err) {
@@ -559,6 +578,7 @@ export class CodexAppServerCli {
         model: session.modelRequested ?? undefined,
         effort: session.reasoningEffort ?? undefined,
         serviceTier: session.serviceTier ?? undefined,
+        sandboxPolicy: session.sandboxPolicy,
         input: [{ type: 'text', text: String(text) }],
       });
       session.activeTurn = { id: turnResult.turn.id };

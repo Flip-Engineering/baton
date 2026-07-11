@@ -15,6 +15,7 @@ import * as worktreeMod from './worktree.mjs';
 import { verify, accept } from './referee.mjs';
 import { AdaptiveRouter } from './router.mjs';
 import { StoryCompiler } from './story.mjs';
+import { RuntimeIsolation } from './runtime-isolation.mjs';
 
 export { Coordinator, ModelSelectionError, SessionSelectionError } from './coordinator.mjs';
 export { MockAdapter, CodexAdapter, ClaudeAdapter, GlmAdapter } from './adapter.mjs';
@@ -25,6 +26,7 @@ export { GrokAcpCli } from './grok-acp.mjs';
 export { createBrief } from './messages.mjs';
 export { verify, accept } from './referee.mjs';
 export { AdaptiveRouter } from './router.mjs';
+export { RuntimeIsolation, isSecretEnvName } from './runtime-isolation.mjs';
 
 /** worktree.mjs's real functions wrapped into the coordinator's manager interface. */
 function worktreeManager(repoRoot) {
@@ -92,6 +94,10 @@ export function createDriver(opts) {
   const fences = new FenceTable();
   const router = new AdaptiveRouter({ mode: 'adaptive', now });
   const story = new StoryCompiler({ now });
+  const runtimeScopes = opts.runtimeScopes ?? new RuntimeIsolation({
+    repoRoot: opts.repoRoot,
+    ...(opts.runtimeIsolation ?? {}),
+  });
 
   // C2/D5: real selection via router.pick(task, candidates) over the ceiling-feasible
   // set — no first-fit fallback. `pick()` already returns null when nothing is eligible,
@@ -127,6 +133,7 @@ export function createDriver(opts) {
     log, fences,
     adapters: opts.adapters,
     worktrees: worktreeManager(opts.repoRoot),
+    runtimeScopes,
     repoRoot: opts.repoRoot,
     referee: refereeFn,
     route,
@@ -137,6 +144,8 @@ export function createDriver(opts) {
     approvalTimeoutMs: opts.approvalTimeoutMs ?? 60000,
     stopDeadlineMs: opts.stopDeadlineMs ?? 15000,
     recoveryTimeoutMs: opts.recoveryTimeoutMs ?? 15000,
+    budgetPolicy: opts.budgetPolicy,
+    watchdog: opts.watchdog,
   });
 
   return { coordinator, story, router, log };
