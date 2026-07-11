@@ -292,7 +292,9 @@ export class MockAdapter {
     if (!session) return { ok: false, reason: `unknown worker ${worker}` };
     // D9: every interrupt/kill Ack resolves — never hangs, and a stop request racing a
     // session that already reached a terminal state is a moot no-op, not a failure.
-    if (session.terminal) return { ok: true, reason: 'already terminal' };
+    // A typed terminal Ack lets the coordinator complete its two-phase stop without waiting
+    // for an event that cannot be emitted after this in-memory session has already ended.
+    if (session.terminal) return { ok: true, terminal: true, reason: 'already terminal' };
     if (session.stopKind === null) {
       session.stopKind = kind;
       this._emit(session, kind === 'kill' ? 'kill.requested' : 'control.interrupt_requested', {});

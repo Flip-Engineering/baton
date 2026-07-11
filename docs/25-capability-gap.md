@@ -21,9 +21,12 @@ Debt is 41.1% of the whole inventory. If deliberately fenced scope is excluded, 
 non-fenced rows, or 51.8%—so “roughly half the researched surface” is accurate. Exactly one third
 of all non-shipped rows (22 of 66) are deliberate scope discipline rather than forgotten work.
 
-Phase 10.1 does not invalidate the inventory, but it corrects one important clause: session
-**wall-time enforcement now ships** under SC18. The rest of the budget/governance row—token/USD
-folding, threshold events, hard spend stops, and watchdog action—remains debt.
+The row counts remain a historical phase-10 snapshot, not a current shipped count. Phase 11 has
+since shipped exact orchestrator-level model selection, persistent follow-up/resume/fork/recovery,
+isolated runtime homes, canonical token/USD thresholds and hard stops, deterministic watchdog
+actions, red→green/changed-line coverage/mutation gates, independent oracle provenance,
+fast-forward integration, and approval-gated publication. Current code/evidence overrides the
+older row status wherever those capabilities appear.
 
 ## What phase 10 actually completed
 
@@ -43,7 +46,7 @@ The shipped control plane is broader than the handoff snapshot implied:
 
 That is a complete phase-10 fleet driver, not a complete realization of every researched feature.
 
-## The high-priority debt, grouped honestly
+## Former high-priority debt, reconciled honestly
 
 The snapshot has seven high-priority rows. They collapse into four implementation programs.
 
@@ -55,45 +58,35 @@ Three high rows describe one cross-vendor gap:
 - Codex `thread/resume`, `thread/fork`, and rejoin-running-thread; and
 - driver-level resume/fork across Claude, Codex, and Grok.
 
-Every vendor has durable-session primitives, but Baton cold-spawns every task. It cannot recover a
-worker session after a child/coordinator failure, fork competing approaches, or amortize repeated
-orientation. This is phase 11's clearest product-depth step because it uses capabilities already
-present southbound.
-
-Coordinator-process persistence was explicitly fenced in phase 10; mid-run vendor-session
-continuity was not. Do not hide this debt behind the adjacent non-goal.
+This now ships. Public follow-up turns reuse an attached verified session; Claude and Codex map
+native resume/fork, Grok maps `session/load`, restart replay treats stored identities as orphaned,
+and explicit bounded recovery requires a fresh exact-identity handshake plus validated worktree
+ownership. Automatic startup rejoin and Grok-native fork/rewind remain debt.
 
 ### 2. Governance: budgets and watchdog action
 
-Two high rows cover complementary controls:
-
-- **Budget enforcement:** phase 10.1 now enforces wall time, but token/USD usage is not folded into
-  handle state, threshold events, alarms, or hard-stop policy.
-- **Watchdog action:** story signals can identify stalls/loops/out-of-scope/budget conditions, but
-  the coordinator does not consume them to steer or stop a worker. Several real-adapter payloads
-  also need normalization before those signals are trustworthy at the driver level.
-
-The live four-Grok test proves manual control at concurrency. It does not prove unattended
-governance; four workers can still waste quota together until policy or a human acts.
+This now ships at the per-task/runtime-scope level. Canonical usage deltas drive durable 50/80/100
+percent threshold facts and confirmed hard stops; deterministic stall, repeated-failure loop, and
+out-of-scope edit rules invoke bounded interrupt/kill. Private runtime homes strip ambient secrets
+and project only explicit credentials. Proactive account quota-window and fleet-seat scheduling
+remain debt.
 
 ### 3. Red→green acceptance
 
-The referee can compute `redGreen` and `accept()` can require it. `createDriver()` does not build a
-base-SHA verification sandbox or pass it to the referee, so `requireRedGreen:true` cannot accept a
-task on the public path. This is the canonical remaining built-but-not-wired acceptance seam.
-
-The implementation must prove the pinned command fails at the base commit and passes at the worker
-commit without weakening the mandatory fresh-result sandbox.
+This now ships through `createDriver()`: distinct fresh base/result sandboxes prove the pinned
+command is newly green; actual changed lines are compared with reported execution; and an optional
+mutation command must report a nonzero all-killed population when required. Independent oracle or
+review tasks receive immutable spec/Git evidence and record reviewer vendor/model family; a
+same-family fallback cannot satisfy a required oracle gate.
 
 ### 4. Integration and irreversible-side-effect approval
 
-Verified work ends on `baton/<taskId>`. There is no structured merge/integration phase, conflict
-handling contract, or git-push approval gate. The recursive capstone required the operator to
-inspect and cherry-pick three verified worker commits manually.
-
-Branch retention is therefore currently functional evidence retention, not a finished lifecycle.
-The multi-Grok stress explicitly deleted cancelled-task branches; Baton does not yet decide when a
-completed branch is integrated, retained, or discarded.
+The first safe vertical now ships. `integrate()` reaps the accepted worker and applies only an
+explicit clean fast-forward; divergence/dirty state refuses without rewriting history and retains
+a durable result ref. A separate single-consumer, timeout-bound, fence-checked publication
+approval targets an exact integrated SHA, credential-free remote name, and full branch ref. No
+approval means no push, and restart drops pending publication authority. Semantic conflict
+handling, stacked integration, deploy adapters, and live remote-push proof remain debt.
 
 ## Deliberately fenced capability families
 
@@ -109,19 +102,22 @@ The 22 fenced rows should remain fenced until the control plane earns expansion.
 Fenced does not mean bad. It means phase-10 completion must not be held hostage by features the
 goal explicitly excluded.
 
-## Phase-11 order of pursuit
+## Remaining order of pursuit
 
-1. **Governance correctness first:** normalize real usage/action events; update handle budget state;
-   emit threshold facts; add policy-driven hard stops and watchdog actions with numbered contracts.
-2. **Session continuity second:** specify a vendor-neutral resume/fork/rejoin contract, then map it
-   to each vendor without pretending their semantics are identical.
-3. **Acceptance depth third:** wire base-SHA red execution into the existing fresh-result referee.
-4. **Integration last:** structured merge/conflict handling and explicit approval for push or other
-   irreversible effects.
+1. **Durable coordination substrate:** typed task/artifact ledger, Scratch coordination, and the
+   self-contained bitemporal causal shared knowledge graph.
+2. **Atlas vertical:** AST/CST parsing, symbols/references, SCIP-compatible interchange, and a first
+   code-property/impact slice backed by executable evidence.
+3. **Capability plane:** Vantage, Evidence Ladder, Skill Forge/computer use, Cartographer/
+   Quartermaster, and Cairn on the same event/artifact substrate.
+4. **Representation and integration depth:** behavioral fingerprints, IR/semantic diff and merge,
+   graph rewrites/e-graphs, conflict handling, and rollback.
+5. **Northbound control:** MCP plus authenticated HTTPS/WebSocket user-to-orchestrator commands,
+   authorization, replay protection, audit, reconnect/resume, and kill/reap control.
 
-Each program should repeat the earned loop: current-state verification → numbered spec → red tests
-→ implementation → adversarial review → live proof. Phase 11 must not silently reclassify debt as
-fenced or infer completion from adapter-only tests.
+Each program repeats the earned loop: current-state verification → numbered spec → red tests →
+implementation → adversarial review → live proof. No phase may infer completion from adapter-only
+tests or introduce a homelab runtime/integration dependency.
 
 ## Evidence
 
@@ -131,4 +127,4 @@ fenced or infer completion from adapter-only tests.
 - Phase-10.1 correction contracts: `spec/phase10.1/spawn-stop-reconciliation.md`
 - Three-vendor live proof: `docs/reference/evidence/phase10.1-capstone-2026-07-10/`
 - Four-Grok kill/reap proof: `docs/reference/evidence/grok-multi-reap-2026-07-10/`
-
+- Phase-11 acceptance/integration proof: `docs/handoff/evidence/phase11-acceptance-integration-2026-07-11.md`

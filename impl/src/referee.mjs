@@ -112,7 +112,7 @@ function runCommand(command, cwd, timeoutMs) {
  * @param {object} task
  * @param {object} result
  * @param {{dir:string, sha:string, cleanup:() => Promise<void>}} sandbox
- * @param {{baseSandbox?: object, requireRedGreen?: boolean, requireCoverage?: boolean, log?: object, worker?: string}} [opts]
+ * @param {{baseSandbox?: object, requireRedGreen?: boolean, requireCoverage?: boolean, requireMutation?: boolean, log?: object, worker?: string}} [opts]
  * @returns {Promise<object>} Verdict
  * @throws {SameWorktreeError}
  */
@@ -176,6 +176,26 @@ export async function verify(task, result, sandbox, opts = {}) {
     }
   }
 
+  let mutationStrength = null;
+  let mutationPassed = null;
+  let survivedMutants = [];
+  let mutationNote = '';
+  if (task.verification.mutationCommand && passed) {
+    const mutationRun = await runCommand(task.verification.mutationCommand, sandbox.dir, timeoutMs);
+    try {
+      const parsed = JSON.parse(mutationRun.output);
+      const killed = Number(parsed.killed);
+      const total = Number(parsed.total);
+      survivedMutants = Array.isArray(parsed.survived) ? parsed.survived : [];
+      if (Number.isFinite(killed) && Number.isFinite(total) && total > 0 && killed >= 0 && killed <= total) {
+        mutationStrength = killed / total;
+        mutationPassed = survivedMutants.length === 0 && killed === total;
+      }
+    } catch {
+      mutationNote = ' Mutation report parse failure — mutation signal unknown.';
+    }
+  }
+
   let note;
   if (!matchesClaim) {
     note = `Diverged from claim: worker claimed exit ${claimedExit}, hub observed ${observedExit}`
@@ -186,12 +206,15 @@ export async function verify(task, result, sandbox, opts = {}) {
     note = `PASS but not red->green: the check already passed before the change (base exit ${baseExit}).`;
   } else if (passed && coverageOfChange === false) {
     note = `PASS but undercovered: ${uncoveredChangedLines.length} changed line(s) never executed.`;
+  } else if (passed && mutationPassed === false) {
+    note = `PASS but mutation-weak: ${survivedMutants.length} mutant(s) survived.`;
   } else if (passed) {
     note = `PASS: observed exit ${observedExit} matches expected ${task.verification.expectExit}.`;
   } else {
     note = `FAIL: observed exit ${observedExit}, expected ${task.verification.expectExit}.`;
   }
   note += coverageNote;
+  note += mutationNote;
 
   const verdict = {
     reverified: true,
@@ -204,6 +227,9 @@ export async function verify(task, result, sandbox, opts = {}) {
     baseExit,
     coverageOfChange,
     uncoveredChangedLines,
+    mutationStrength,
+    mutationPassed,
+    survivedMutants,
     observedOutputTail: resultRun.output.slice(-4000),
     note,
     durationMs,
@@ -232,9 +258,10 @@ export async function verify(task, result, sandbox, opts = {}) {
  * @returns {boolean}
  */
 export function accept(verdict, opts = {}) {
-  const { requireRedGreen = false, requireCoverage = false } = opts;
+  const { requireRedGreen = false, requireCoverage = false, requireMutation = false } = opts;
   if (!verdict.reverified || !verdict.passed) return false;
   if (requireRedGreen && verdict.redGreen !== true) return false;
   if (requireCoverage && verdict.coverageOfChange !== true) return false;
+  if (requireMutation && verdict.mutationPassed !== true) return false;
   return true;
 }

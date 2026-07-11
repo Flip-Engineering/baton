@@ -142,5 +142,6 @@ A second live stress ran one Grok adapter at its four-session ceiling. Four dist
 active turns; two interrupts and four kills confirmed; all processes, worktrees, and stress
 branches were reaped. Evidence: `reference/evidence/grok-multi-reap-2026-07-10/`.
 
-Capabilities still absent from the driver despite vendor support—resume/fork, token/USD governance,
-red→green base execution, and merge/push lifecycle—are tracked in `25-capability-gap.md`.
+Phase 11 subsequently wired exact model selection, resume/fork/recovery, token/USD governance,
+red→green/coverage/mutation acceptance, independent oracle provenance, fast-forward integration,
+and approval-gated publication. Remaining depth is tracked in `25-capability-gap.md`.

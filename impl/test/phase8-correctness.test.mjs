@@ -328,7 +328,7 @@ test('C1: the logged verify.reverified payload records both the accept decision 
   assert.equal(event.payload.accept, false, 'the logged accept decision must reflect the injected policy-gated result');
   assert.deepEqual(
     event.payload.acceptOpts,
-    { requireRedGreen: true, requireCoverage: false },
+    { requireRedGreen: true, requireCoverage: false, requireMutation: false },
     'the exact policy opts used for this decision must be recorded alongside it'
   );
 });
@@ -352,7 +352,7 @@ test('C1: with no accept/acceptOpts override, behavior is unchanged AND the defa
   assert.ok(event);
   assert.deepEqual(
     event.payload.acceptOpts,
-    { requireRedGreen: false, requireCoverage: false },
+    { requireRedGreen: false, requireCoverage: false, requireMutation: false },
     'even the unconfigured default policy must be visible on the logged event, not silently implicit'
   );
 });

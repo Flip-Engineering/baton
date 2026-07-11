@@ -17,7 +17,7 @@ import { AdaptiveRouter } from './router.mjs';
 import { StoryCompiler } from './story.mjs';
 import { RuntimeIsolation } from './runtime-isolation.mjs';
 
-export { Coordinator, ModelSelectionError, SessionSelectionError } from './coordinator.mjs';
+export { Coordinator, ModelSelectionError, SessionSelectionError, IntegrationError, ReviewSelectionError, PublicationError } from './coordinator.mjs';
 export { MockAdapter, CodexAdapter, ClaudeAdapter, GlmAdapter } from './adapter.mjs';
 // SC2: the session tier IS the product surface — constructible from the entry point.
 export { ClaudeSessionCli, GlmSessionCli } from './claude-session.mjs';
@@ -42,6 +42,31 @@ function worktreeManager(repoRoot) {
     async createVerifyWorktree(taskId, sha) {
       const r = await worktreeMod.freshVerifySandbox(repoRoot, taskId, sha, {});
       return { path: r.dir ?? r.path };
+    },
+    async createBaseVerifyWorktree(taskId, sha) {
+      const r = await worktreeMod.freshVerifySandbox(repoRoot, `${taskId}-base`, sha, {});
+      return { path: r.dir ?? r.path };
+    },
+    async changedLines(baseSha, resultSha) {
+      return worktreeMod.changedLines(repoRoot, baseSha, resultSha);
+    },
+    async integrate(sha, opts = {}) {
+      const strategy = opts.strategy ?? 'ff-only';
+      if (strategy !== 'ff-only') throw new Error(`unsupported integration strategy: ${strategy}`);
+      const dirty = execFileSync('git', ['status', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+      if (dirty) throw new Error('main checkout is dirty');
+      const beforeSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+      execFileSync('git', ['merge', '--ff-only', sha], { cwd: repoRoot, stdio: 'pipe' });
+      const afterSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+      return { beforeSha, resultSha: sha, afterSha };
+    },
+    async retainResult(sha) {
+      const ref = `refs/baton/results/${sha}`;
+      execFileSync('git', ['update-ref', ref, sha], { cwd: repoRoot, stdio: 'ignore' });
+      return ref;
+    },
+    async releaseResult(ref) {
+      execFileSync('git', ['update-ref', '-d', ref], { cwd: repoRoot, stdio: 'ignore' });
     },
     async removeVerifyWorktree(verifyPath) {
       try { execFileSync('git', ['worktree', 'remove', '--force', verifyPath], { cwd: repoRoot, stdio: 'ignore' }); } catch { /* noop */ }
@@ -79,7 +104,9 @@ function worktreeManager(repoRoot) {
 /** The real hardened referee in the coordinator's fn contract (maps task.worktree -> workerWorktreeDir, string sandbox -> {dir}). */
 function refereeFn(task, result, opts) {
   const mapped = { ...task, workerWorktreeDir: task.worktree, verification: opts.pinnedVerification };
-  return verify(mapped, result, { dir: opts.sandbox }, {});
+  return verify(mapped, result, { dir: opts.sandbox }, {
+    ...(opts.baseSandbox ? { baseSandbox: { dir: opts.baseSandbox } } : {}),
+  });
 }
 
 /**
@@ -98,6 +125,10 @@ export function createDriver(opts) {
     repoRoot: opts.repoRoot,
     ...(opts.runtimeIsolation ?? {}),
   });
+  const publisher = Object.hasOwn(opts, 'publisher') ? opts.publisher : async ({ remote, ref, sha }) => {
+    execFileSync('git', ['push', '--porcelain', remote, `${sha}:${ref}`], { cwd: opts.repoRoot, stdio: 'ignore' });
+    return { transport: 'git-push' };
+  };
 
   // C2/D5: real selection via router.pick(task, candidates) over the ceiling-feasible
   // set — no first-fit fallback. `pick()` already returns null when nothing is eligible,
@@ -138,7 +169,13 @@ export function createDriver(opts) {
     referee: refereeFn,
     route,
     accept: (verdict, acceptOpts) => accept(verdict, acceptOpts),
-    acceptOpts: { requireRedGreen: opts.requireRedGreen ?? false, requireCoverage: opts.requireCoverage ?? false },
+    acceptOpts: {
+      requireRedGreen: opts.requireRedGreen ?? false,
+      requireCoverage: opts.requireCoverage ?? false,
+      requireMutation: opts.requireMutation ?? false,
+    },
+    requireIndependentOracle: opts.requireIndependentOracle ?? false,
+    publisher,
     story: { record: (e) => story.ingest(e) },
     now,
     approvalTimeoutMs: opts.approvalTimeoutMs ?? 60000,
