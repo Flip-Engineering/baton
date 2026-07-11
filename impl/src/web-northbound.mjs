@@ -20,6 +20,7 @@ const ARG_FIELDS = Object.freeze({
 });
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
+const AUTH_PATHS = new Set(['/v1/auth/login', '/v1/auth/refresh', '/v1/auth/logout']);
 
 function json(value) { return JSON.parse(JSON.stringify(value)); }
 function hash(value) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
@@ -237,10 +238,10 @@ export class WebNorthbound {
   async handle(req, res) {
     const origin = req.headers.origin ?? null;
     const url = new URL(req.url, 'https://baton.invalid');
-    if (req.method === 'POST' && ['/v1/auth/login', '/v1/auth/refresh', '/v1/auth/logout'].includes(url.pathname)) {
+    if (req.method === 'POST' && AUTH_PATHS.has(url.pathname)) {
       return this._handleLifecycle(req, res, url.pathname, origin);
     }
-    if (req.method === 'OPTIONS' && ['/v1/commands', '/v1/stream-tickets'].includes(url.pathname)) {
+    if (req.method === 'OPTIONS' && (['/v1/commands', '/v1/stream-tickets'].includes(url.pathname) || AUTH_PATHS.has(url.pathname))) {
       if (!this.allowedOrigins.has(origin)) return this._write(res, error(403, 'forbidden'));
       res.writeHead(204, {
         'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true',
@@ -305,7 +306,7 @@ export class WebNorthbound {
       catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
       return this._write(res, error(!req.socket?.encrypted ? 503 : 403, !req.socket?.encrypted ? 'temporarily_unavailable' : 'forbidden'), origin);
     }
-    if (req.headers['content-type']?.trim().toLowerCase() !== 'application/json') {
+    if (req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
       try { audit(pathname.endsWith('login') ? 'login_refused' : pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', null, { reason: 'content_type' }); }
       catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
       return this._write(res, error(415, 'unsupported_media_type'), origin);
@@ -321,7 +322,11 @@ export class WebNorthbound {
       catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
       return this._write(res, error(cause?.code === 'body_too_large' ? 413 : 400, 'invalid_request'), origin);
     }
-    if (!isRecord(body)) return this._write(res, error(400, 'invalid_request'), origin);
+    if (!isRecord(body)) {
+      try { audit(pathname.endsWith('login') ? 'login_refused' : pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', principal, { reason: 'invalid_body' }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+      return this._write(res, error(400, 'invalid_request'), origin);
+    }
     if (pathname === '/v1/auth/login') return this._login(res, body, ctx);
     if (!principal) {
       try { audit(pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', null, { reason: 'unauthenticated' }); }
@@ -336,7 +341,11 @@ export class WebNorthbound {
         return this._write(res, error(403, 'forbidden'), origin);
       }
     }
-    if (Object.keys(body).length !== 0) return this._write(res, error(400, 'invalid_request'), origin);
+    if (Object.keys(body).length !== 0) {
+      try { audit(pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', principal, { reason: 'invalid_body' }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+      return this._write(res, error(400, 'invalid_request'), origin);
+    }
     return pathname === '/v1/auth/refresh' ? this._refresh(res, principal, origin) : this._logout(res, principal, origin);
   }
 
@@ -357,6 +366,7 @@ export class WebNorthbound {
   }
 
   _refresh(res, principal, origin) {
+    if (!this.sessions) return this._write(res, error(503, 'temporarily_unavailable'), origin);
     let issued;
     try { issued = this.sessions?.rotate(principal.sessionId, { actor: actor(principal) }); } catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
     if (!issued) return this._write(res, error(401, 'unauthenticated'), origin);
@@ -366,6 +376,7 @@ export class WebNorthbound {
   }
 
   _logout(res, principal, origin) {
+    if (!this.sessions) return this._write(res, error(503, 'temporarily_unavailable'), origin);
     try { this.sessions?.revoke(principal.sessionId, { actor: actor(principal), reason: 'logout' }); }
     catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
     try { this._audit('session_revoked', { principal, origin }, { reason: 'logout' }); }

@@ -85,6 +85,17 @@ export class WebSessionStore {
       if (!old || old.revoked || this._sessions.has(next.sessionId) || this._byDigest.has(next.tokenDigest)) {
         throw new WebSessionIntegrityError('rotation does not reference one active predecessor and fresh successor', 'invalid_rotation');
       }
+      const claimsMatch = next.userId === old.userId && next.authMethod === old.authMethod
+        && JSON.stringify(next.capabilities) === JSON.stringify(old.capabilities)
+        && JSON.stringify(next.repoIds) === JSON.stringify(old.repoIds);
+      const issued = Date.parse(next.issuedAt); const expires = Date.parse(next.expiresAt);
+      const csrfMatches = old.authMethod === 'cookie' ? /^[a-f0-9]{64}$/.test(next.csrfTokenDigest ?? '') : next.csrfTokenDigest === undefined;
+      if (!claimsMatch || !validId(next.sessionId) || !validId(next.credentialId)
+        || !/^[a-f0-9]{64}$/.test(next.tokenDigest ?? '') || !csrfMatches
+        || !Number.isFinite(issued) || !Number.isFinite(expires) || expires <= issued
+        || expires - issued > this.maxTtlMs) {
+        throw new WebSessionIntegrityError('rotation successor violates session invariants', 'invalid_rotation');
+      }
       this._sessions.set(old.sessionId, freeze({ ...clone(old), revoked: true, revokedEvent: event.seq, revokedReason: 'rotated' }));
       const session = freeze({ ...clone(next), revoked: false, issuedEvent: event.seq, revokedEvent: null });
       this._sessions.set(next.sessionId, session);
