@@ -1318,9 +1318,13 @@ export class Coordinator {
   // Command: interrupt() / kill() — two-phase stop (D9)
   // =========================================================================
 
-  async interrupt(workerId, then, actor = 'orchestrator') {
+  async interrupt(workerId, then, actor = 'orchestrator', opts = {}) {
     this.tick();
     const handle = this._getWorker(workerId);
+    if (opts.expectedFence !== undefined) {
+      const check = this._fences.check(workerId, { fence: opts.expectedFence });
+      if (!check.ok) return { ok: false, result: 'stale_fence', current: check.current };
+    }
     if (handle.status === 'dead' || handle.status === 'exited') {
       return { ok: true, result: handle.status === 'dead' ? 'already_dead' : 'already_stopped' };
     }
@@ -1330,9 +1334,13 @@ export class Coordinator {
     return this._beginStop(handle, 'interrupt', then, actor);
   }
 
-  async kill(workerId, actor = 'orchestrator') {
+  async kill(workerId, actor = 'orchestrator', opts = {}) {
     this.tick();
     const handle = this._getWorker(workerId);
+    if (opts.expectedFence !== undefined) {
+      const check = this._fences.check(workerId, { fence: opts.expectedFence });
+      if (!check.ok) return { ok: false, result: 'stale_fence', current: check.current };
+    }
     if (handle.status === 'dead') return { ok: true, result: 'already_dead' };
     if (handle.status === 'orphaned') {
       return { ok: false, result: 'session_not_attached', reason: 'restart replay found no controllable adapter session' };

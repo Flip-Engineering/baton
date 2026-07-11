@@ -129,6 +129,7 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 | Isolated governance Grok | `docs/reference/evidence/phase11-grok-governance-2026-07-11/summary.json` has all 16 checks true; private credential scope, real sandbox denial, canonical usage, automatic budget kill, full reap |
 | Acceptance/integration | `docs/handoff/evidence/phase11-acceptance-integration-2026-07-11.md`; 16 focused temp-repo tests cover AC1–AC6 and the full suite is 502/502 |
 | Coordination foundation | `docs/handoff/evidence/phase11-coordination-foundation-2026-07-11.md`; 23 focused contracts plus the 526/526 full suite cover mandatory durable authority, fatal dual-stream writes, claim/trust-batch crash recovery, refinement replay, atomic task/artifact and invalidation/contamination writes, named promotion/provenance, untrusted worker artifact claims, coordinator-mediated Scratch claims/facts/reads with fence and idempotency enforcement, Scratch terminal expiry, logged `ReadBy` recall, and refusal auditing; remaining CK9 seams stay explicit |
+| Authenticated web command vertical | `docs/handoff/evidence/phase12-web-northbound-2026-07-11.md`; 10 focused contracts plus the 536/536 full suite cover auth/origin/CSRF/scope checks, strict envelopes, independent harness/model forwarding, durable restart-safe idempotency, fail-closed audit completion, bounded HTTP/CORS, non-leaking errors, TLS/auth server refusal, and real stale-fence stop/reap behavior; streaming/session/adversarial WN gates remain explicit |
 | Credential discipline | GLM checked by presence only and recorded `PENDING-LIVE-no-credential`; no credential value was logged |
 
 The three-vendor capstone checks were: no harness error; Claude/Codex/Grok all completed; every
@@ -156,9 +157,10 @@ These are absent, not implied by the green suite:
    fork/rewind schemas remain `planned`, and checkpoint/rewind depth remains incomplete.
 5. **GLM live proof.** `GlmSessionCli` is built to the credential boundary, but no credential was
    present in this run.
-6. **Production runtime and northbound surfaces.** The implementation remains dependency-free Node
-   ESM; MCP and the authenticated HTTPS/WebSocket user-to-orchestrator control connection have not
-   shipped, nor has the eventual Go/Elixir production core.
+6. **Production runtime and complete northbound surfaces.** The implementation remains
+   dependency-free Node ESM. The first authenticated HTTPS command vertical ships, but durable
+   session lifecycle, resumable WebSocket/SSE delivery, MCP, browser/adversarial proof, and the
+   eventual Go/Elixir production core remain incomplete.
 7. **Cross-vendor decorrelation eval (E2).** The fleet required to run it now exists; the eval is a
    phase-11 research decision, not evidence retroactively required for phase-10 wiring completion.
 

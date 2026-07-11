@@ -4,6 +4,21 @@ This specification adds a secure human user ↔ orchestrator connection without 
 second fleet state machine. It implements goal catalog J and uses the durable coordination stream
 from CK1–CK9. It has no homelab or deployment-specific runtime dependency.
 
+## Implementation status — first command vertical
+
+The first WN1/WN3/WN4/WN5/WN7/WN8 command vertical is executable in
+`impl/src/web-northbound.mjs`. It provides the TLS-only server assembly, bounded JSON HTTP adapter,
+injectable stable authenticator, exact origin/CSRF and capability/repository authorization,
+strict command schemas, independent harness/exact-model forwarding, fence-required worker
+control, durable restart-safe command admission/completion/idempotency, derived audit actors, and
+fail-closed audit writes. Focused evidence is in
+`docs/handoff/evidence/phase12-web-northbound-2026-07-11.md`.
+
+This is not WN1–WN10 completion. Durable login/session issuance and revocation, request and
+connection quotas, resumable WebSocket/SSE delivery with bounded backpressure, trusted-proxy
+configuration, command-status reconciliation for admitted-but-incomplete commands, browser UI
+automation, and the full adversarial gate remain active scope.
+
 ## WN1 — one authority, two web transports
 
 The web tier is an adapter over the existing coordinator and coordination store. HTTPS accepts

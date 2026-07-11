@@ -73,6 +73,8 @@ export class CoordinationStore {
     this._knowledgeEdges = new Map();
     this._knowledgeReads = [];
     this._contamination = [];
+    this._webCommands = new Map();
+    this._webCommandScopes = new Map();
     this._operationalRead = opts.operationalRead ?? null;
     mkdirSync(root, { recursive: true });
     this._load();
@@ -200,6 +202,15 @@ export class CoordinationStore {
       }
     } else if (event.kind === 'knowledge.contamination_record') {
       this._contamination.push(freeze({ ...clone(p), eventSeq: event.seq, ts: event.ts }));
+    } else if (event.kind === 'web.command_admitted') {
+      const command = freeze({ ...clone(p), status: 'admitted', admittedEvent: event.seq, admittedAt: event.ts, outcome: null, completedEvent: null });
+      this._webCommands.set(p.commandId, command);
+      this._webCommandScopes.set(p.scopeKey, p.commandId);
+    } else if (event.kind === 'web.command_completed' || event.kind === 'web.command_failed') {
+      const old = this._webCommands.get(p.commandId);
+      this._webCommands.set(p.commandId, freeze({ ...clone(old), status: event.kind === 'web.command_completed' ? 'completed' : 'failed', outcome: clone(p.outcome), completedEvent: event.seq, completedAt: event.ts }));
+    } else if (event.kind === 'web.audit') {
+      // Append-only security/audit record; it deliberately owns no command authority.
     }
   }
 
@@ -209,6 +220,41 @@ export class CoordinationStore {
   readyTasks() {
     return [...this._tasks.values()].filter((task) => task.status === 'pending' && task.assignee == null
       && task.deps.every((dep) => this._tasks.get(dep)?.status === 'completed')).map(clone);
+  }
+
+  webCommand(id) { return clone(this._webCommands.get(id) ?? null); }
+
+  admitWebCommand(fields, auth) {
+    if (!fields?.commandId || !fields?.scopeKey || !fields?.requestDigest) throw new TypeError('web command identity, scope, and digest required');
+    const priorId = this._webCommandScopes.get(fields.scopeKey);
+    if (priorId) {
+      const prior = this._webCommands.get(priorId);
+      if (prior.requestDigest !== fields.requestDigest) return freeze({ ok: false, result: 'idempotency_conflict' });
+      return freeze({ ok: true, result: 'replay', command: clone(prior) });
+    }
+    if (this._webCommands.has(fields.commandId)) return freeze({ ok: false, result: 'command_id_conflict' });
+    const event = this._append('web.command_admitted', clone(fields), auth);
+    return freeze({ ok: true, result: 'admitted', event: clone(event), command: this.webCommand(fields.commandId) });
+  }
+
+  completeWebCommand(commandId, outcome, auth) {
+    const command = this._webCommands.get(commandId);
+    if (!command) throw new CoordinationRefusal(`unknown web command ${commandId}`, 'not_found');
+    if (command.status !== 'admitted') return freeze({ ok: true, result: 'replay', command: clone(command) });
+    const event = this._append('web.command_completed', { commandId, outcome: clone(outcome) }, auth);
+    return freeze({ ok: true, result: 'completed', event: clone(event), command: this.webCommand(commandId) });
+  }
+
+  failWebCommand(commandId, outcome, auth) {
+    const command = this._webCommands.get(commandId);
+    if (!command) throw new CoordinationRefusal(`unknown web command ${commandId}`, 'not_found');
+    if (command.status !== 'admitted') return freeze({ ok: true, result: 'replay', command: clone(command) });
+    const event = this._append('web.command_failed', { commandId, outcome: clone(outcome) }, auth);
+    return freeze({ ok: true, result: 'failed', event: clone(event), command: this.webCommand(commandId) });
+  }
+
+  recordWebAudit(fields, auth) {
+    return clone(this._append('web.audit', clone(fields), auth));
   }
 
   createTask(fields, auth) {

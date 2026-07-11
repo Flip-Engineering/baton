@@ -1,8 +1,8 @@
 // index.mjs — the public entry point. `createDriver()` assembles the whole fleet driver
 // (log + fences + worktree manager + trust gate + router + story + coordinator) into one
 // runnable object, wiring the real modules to the coordinator's dependency contract.
-// This is the "how to run the whole thing" — a program (or your CLI agent, over MCP later)
-// calls the coordinator's 8 commands; everything underneath is deterministic code.
+// This is the "how to run the whole thing" — a program, authenticated web northbound, or future
+// MCP adapter calls the coordinator's commands; everything underneath is deterministic code.
 
 import { join, basename, sep } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -29,6 +29,7 @@ export { verify, accept } from './referee.mjs';
 export { AdaptiveRouter } from './router.mjs';
 export { RuntimeIsolation, isSecretEnvName } from './runtime-isolation.mjs';
 export { CoordinationStore, CoordinationIntegrityError, CoordinationRefusal, coordinationForLog } from './coordination-store.mjs';
+export { WebNorthbound, createAuthenticatedWebServer, validateWebCommandEnvelope } from './web-northbound.mjs';
 
 /** worktree.mjs's real functions wrapped into the coordinator's manager interface. */
 function worktreeManager(repoRoot) {
