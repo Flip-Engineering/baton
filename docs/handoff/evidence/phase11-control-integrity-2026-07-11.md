@@ -40,9 +40,12 @@ a real temporary Git repository. A 150 ms wall budget produces exactly one timeo
 kill then returns boundedly, the PID no longer exists, and `.baton/wt/timeout-reap`, its metadata,
 and `baton/timeout-reap` are absent.
 
-This is zero-provider-quota evidence. A provider-backed timeout/reap probe remains required before
-recursive live multi-vendor work, and exact model mapping receives its own live probe after
-MS1-MS5.
+Provider-backed evidence then ran
+`docs/reference/evidence/phase11-grok-timeout-reap-2026-07-11/run.mjs` through the same public
+assembly. Real Grok PID 79032 started a real turn, hit the six-second wall budget, emitted one
+timeout crash, and exited. Policy kill returned `already_dead`; the task failed honestly; the PID,
+worktree, metadata, and task branch were all absent. Every recorded check passed. Exact model
+mapping still receives its own live probe after MS1-MS5.
 
 ## Validation
 

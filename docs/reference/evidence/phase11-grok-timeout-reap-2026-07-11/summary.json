@@ -1,0 +1,31 @@
+{
+  "at": "2026-07-11T08:56:23.571Z",
+  "repoHead": "f3e1c8a12270ec2439450703909d57956e8023ac",
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "taskId": "phase11-grok-timeout-reap",
+  "workerId": "w-1",
+  "pid": 79032,
+  "policyKill": {
+    "ok": true,
+    "result": "already_dead"
+  },
+  "result": {
+    "ready": true,
+    "status": "failed",
+    "verdict": null
+  },
+  "checks": {
+    "noHarnessError": true,
+    "providerChildSpawned": true,
+    "providerTurnStarted": true,
+    "oneTimeoutCrash": true,
+    "processGone": true,
+    "boundedPolicyKill": true,
+    "taskFailedHonestly": true,
+    "worktreeGone": true,
+    "metadataGone": true,
+    "branchGone": true
+  },
+  "fatal": null,
+  "pass": true
+}
