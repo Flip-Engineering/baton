@@ -52,9 +52,10 @@ Atlas compared `HEAD:impl/src/index.mjs` with the current working source and ret
 
 ## Remaining Atlas and representation work
 
-- Shared content-addressed base index plus per-worktree dirty overlay and staleness carding.
-- Structural search/rewrite, resumable artifact retrieval, cancellation, and coordination/KG
-  registration of representation artifacts.
-- Symbol/reference/call graph with LSP/SCIP interchange and repo-map/scorecard consumption.
+- Shared content-addressed base indexing, dirty overlays, bounded/resumable lexical and orientation
+  queries, symbol/call graph, and SCIP JSON interchange now ship in
+  `docs/handoff/evidence/phase13-atlas-index-symbols-2026-07-11.md`.
+- Structural search/rewrite and coordination/KG registration of representation artifacts.
+- Live LSP and binary SCIP protobuf interoperability beyond the current deterministic JSON shape.
 - Measured CPG/dataflow, compiler IR, behavioral fingerprint, structured/semantic merge, and
   e-graph rungs under their explicit evaluation/retirement gates.

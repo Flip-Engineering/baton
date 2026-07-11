@@ -32,6 +32,7 @@ export { CoordinationStore, CoordinationIntegrityError, CoordinationRefusal, coo
 export { WebNorthbound, createAuthenticatedWebServer, validateWebCommandEnvelope } from './web-northbound.mjs';
 export { WebSessionStore, WebSessionIntegrityError, WEB_SESSION_COOKIE_NAME } from './web-auth.mjs';
 export { AtlasStructuralDelta } from './atlas-structural.mjs';
+export { AtlasCodeIndex } from './atlas-index.mjs';
 
 /** worktree.mjs's real functions wrapped into the coordinator's manager interface. */
 function worktreeManager(repoRoot) {
