@@ -130,6 +130,7 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 | Acceptance/integration | `docs/handoff/evidence/phase11-acceptance-integration-2026-07-11.md`; 16 focused temp-repo tests cover AC1–AC6 and the full suite is 502/502 |
 | Coordination foundation | `docs/handoff/evidence/phase11-coordination-foundation-2026-07-11.md`; 25 focused contracts plus the 544/544 full suite cover mandatory durable authority, centralized fail-closed coordination mutation, injected create/claim/trust crash recovery, fatal dual-stream writes, refinement replay, atomic task/artifact and invalidation/contamination writes, named promotion/provenance, untrusted worker artifact claims, coordinator-mediated Scratch claims/facts/reads with fence and idempotency enforcement, Scratch terminal expiry, logged `ReadBy` recall, and refusal auditing; remaining CK9 seams stay explicit |
 | Authenticated web command/auth vertical | `docs/handoff/evidence/phase12-web-northbound-2026-07-11.md`; 16 focused contracts plus the 542/542 full suite cover durable cookie/Bearer issue/expiry/revocation with hashed secrets, auth/origin/CSRF/scope checks, strict envelopes, independent harness/model forwarding, restart-safe idempotency, fail-closed audit completion, bounded HTTP/CORS, non-leaking errors, TLS/auth server refusal, and real stale-fence stop/reap behavior; streaming/login/rotation/adversarial WN gates remain explicit |
+| Atlas structural delta | `docs/handoff/evidence/phase13-atlas-structural-2026-07-11.md`; 7 focused contracts plus the 551/551 full suite use pinned real ast-grep parsing for confined, deterministic, token-bounded, content-addressed JS/TS-family AST deltas and live-prove Baton's own added export; shared index/overlay, search, symbols/SCIP, and later representation rungs remain explicit |
 | Credential discipline | GLM checked by presence only and recorded `PENDING-LIVE-no-credential`; no credential value was logged |
 
 The three-vendor capstone checks were: no harness error; Claude/Codex/Grok all completed; every
@@ -163,6 +164,10 @@ These are absent, not implied by the green suite:
    eventual Go/Elixir production core remain incomplete.
 7. **Cross-vendor decorrelation eval (E2).** The fleet required to run it now exists; the eval is a
    phase-11 research decision, not evidence retroactively required for phase-10 wiring completion.
+8. **Atlas and representation depth.** The first real AST/CST structural-delta vertical ships for
+   the built-in JS/TS-family grammars. Shared base/overlay indexing, structural search/rewrite,
+   symbol/SCIP graphs, CPG/dataflow, IR, behavioral fingerprints, semantic diff/merge, and e-graph
+   evaluation remain incomplete and explicitly catalogued.
 
 The full researched-versus-shipped inventory and phase boundary are in
 `docs/25-capability-gap.md`.
