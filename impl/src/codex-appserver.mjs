@@ -95,6 +95,8 @@ export class CodexAppServerCli {
 
     /** @type {Map<string, object>} worker -> session */
     this._sessions = new Map();
+    /** SC12: worker -> synchronous reservation held across worktreeReady. */
+    this._pendingSpawns = new Map();
     this._cb = null;
   }
 
@@ -124,6 +126,17 @@ export class CodexAppServerCli {
 
   onEvent(cb) {
     this._cb = cb;
+  }
+
+  _emitPendingStop(worker, kind) {
+    const pending = this._pendingSpawns.get(worker);
+    if (!pending || pending.cancelled) return false;
+    pending.cancelled = true;
+    this._pendingSpawns.delete(worker);
+    if (this._cb) {
+      this._cb({ worker, harness: 'codex', turnEpoch: 0, actor: 'orchestrator', kind, payload: { phase: 'spawn' } });
+    }
+    return true;
   }
 
   // -------------------------------------------------------------------------
@@ -185,6 +198,8 @@ export class CodexAppServerCli {
   }
 
   _onClose(session) {
+    session.terminal = true;
+    if (session.wallTimer) clearTimeout(session.wallTimer);
     // XA11: kill.confirmed is emitted from the child's 'close' handler, once the OS confirms
     // the process is gone — never from the Ack itself (D1: confirmed-stop is always an event).
     if (session.killing && !session.killConfirmed) {
@@ -322,6 +337,7 @@ export class CodexAppServerCli {
           // XA8/D9: NOT lifecycle.turn_completed — this is the confirmed-stop event the
           // coordinator awaits; the thread survives (activeTurn cleared above, session stays).
           const result = makeResult('cancelled', 'interrupted', session.lastTokenUsage);
+          if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
           this._emit(session, 'control.interrupt_confirmed', { threadId: params.threadId, turnId, result });
           this._maybeIssueFollowUp(session, turnId);
           return;
@@ -372,9 +388,12 @@ export class CodexAppServerCli {
 
   async spawn(worker, brief, opts = {}) {
     const existing = this._sessions.get(worker);
-    if (existing && !existing.terminal) {
+    if ((existing && !existing.terminal) || this._pendingSpawns.has(worker)) {
       return { ok: false, reason: `worker ${worker} already has an active session` };
     }
+    const pending = { cancelled: false };
+    this._pendingSpawns.set(worker, pending);
+    try {
 
     // SC1: resolve the working directory BEFORE any child exists. JSON.stringify silently drops
     // an undefined cwd from thread/start, which ran the thread wherever the app-server sat —
@@ -386,6 +405,7 @@ export class CodexAppServerCli {
         if (r && r.path) cwd = r.path;
       } catch { /* fall through to the refusal below */ }
     }
+    if (pending.cancelled || opts.signal?.aborted) return { ok: false, reason: 'spawn cancelled before child creation', cancelled: true };
     if (!cwd) return { ok: false, reason: 'spawn requires a worktree (opts.worktree, or opts.worktreeReady resolving {path})' };
 
     const child = this._spawnFn(this._cmd, this._args, {
@@ -408,6 +428,10 @@ export class CodexAppServerCli {
     };
     this._sessions.set(worker, session);
     this._attachChild(session);
+    if (opts.timeoutMs > 0) {
+      session.wallTimer = setTimeout(() => this._onWallTimeout(session, opts.timeoutMs), opts.timeoutMs);
+      if (typeof session.wallTimer.unref === 'function') session.wallTimer.unref();
+    }
 
     try {
       await this._sendRequest(session, 'initialize', { clientInfo: { name: 'baton', version: '0.1.0' } });
@@ -445,6 +469,8 @@ export class CodexAppServerCli {
         input: [{ type: 'text', text: renderBrief(brief, 'codex-v2') }],
       });
     } catch (err) {
+      this._killChild(session);
+      this._sessions.delete(worker);
       return { ok: false, reason: err.message, code: err.code };
     }
     // XA6: the Ack resolves once turn/start's response arrives (turn accepted), not once the
@@ -452,6 +478,9 @@ export class CodexAppServerCli {
     session.activeTurn = { id: turnResult.turn.id };
     session.turnEpoch = 1;
     return { ok: true };
+    } finally {
+      if (this._pendingSpawns.get(worker) === pending) this._pendingSpawns.delete(worker);
+    }
   }
 
   _killChild(session) {
@@ -513,6 +542,7 @@ export class CodexAppServerCli {
   // -------------------------------------------------------------------------
 
   async interrupt(worker, then) {
+    if (this._emitPendingStop(worker, 'control.interrupt_confirmed')) return { ok: true };
     const session = this._sessions.get(worker);
     if (!session) return { ok: false, reason: `unknown worker ${worker}` };
     if (!session.activeTurn) return { ok: true, reason: 'no active turn to interrupt' };
@@ -576,6 +606,7 @@ export class CodexAppServerCli {
   // -------------------------------------------------------------------------
 
   async kill(worker) {
+    if (this._emitPendingStop(worker, 'kill.confirmed')) return { ok: true };
     const session = this._sessions.get(worker);
     if (!session || !session.child) return { ok: true }; // already gone — a moot no-op, not a failure
     session.stopGeneration += 1;
@@ -584,5 +615,15 @@ export class CodexAppServerCli {
     session.killing = true;
     this._killChild(session);
     return { ok: true };
+  }
+
+  _onWallTimeout(session, timeoutMs) {
+    if (session.terminal) return;
+    this._emit(session, 'lifecycle.crashed', {
+      error: `session wall-time budget exceeded (${timeoutMs}ms)`,
+      phase: 'timeout',
+    });
+    session.killing = true;
+    this._killChild(session);
   }
 }

@@ -197,11 +197,13 @@ test('SC1c: grok pins the worktreeReady-resolved path as BOTH the child OS cwd a
 
 test('SC1d: a refused adapter spawn fails the task — never a zombie stuck in "working"', async () => {
   const bad = stubAdapter({ spawn: async () => ({ ok: false, reason: 'auth gate closed' }) });
-  const { coordinator } = makeCoordinator({ adapters: { v: bad } });
+  const { coordinator, log } = makeCoordinator({ adapters: { v: bad } });
   const h = await coordinator.spawn('v', brief('x'));
   await sleep(50); // the fire-and-forget ack settles
   const r = await coordinator.result(h.id);
   assert.equal(r.status, 'failed', `RED-today: the spawn Ack is discarded (.catch(noop), coordinator.mjs:226) so a refused spawn leaves the task "${r.status}" forever`);
+  const crash = log.read(h.id).filter((e) => e.kind === 'lifecycle.crashed' && e.payload?.phase === 'spawn');
+  assert.equal(crash.length, 1, 'SC19/C-1: spawn refusal must be durable and replayable, not only an in-memory status write');
 });
 
 // ---------------------------------------------------------------------------
@@ -408,10 +410,9 @@ const CARD_CASES = [
   ['ClaudeCli (one-shot)', () => new ClaudeCli(), ONE_SHOT_VERBS],
   ['ZCodeCli (one-shot)', () => new ZCodeCli(), ONE_SHOT_VERBS],
   ['PiCli (unconfigured)', () => new PiCli(), { ...ONE_SHOT_VERBS, spawn: 'unsupported' }],
-  // Session cards are already canonical — locked as-is (values pinned by their own suites).
-  ['ClaudeSessionCli (session)', () => new ClaudeSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE] }), null],
-  ['CodexAppServerCli (session)', () => new CodexAppServerCli({ cmd: process.execPath, args: [FAKE_CODEX, '--serve'], requestTimeoutMs: 2000, versionProbe: () => 'x' }), null],
-  ['GrokAcpCli (session)', () => new GrokAcpCli({ cmd: process.execPath, args: [FAKE_GROK, '--serve'], requestTimeoutMs: 2000, versionProbe: () => 'x' }), null],
+  ['ClaudeSessionCli (session)', () => new ClaudeSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE] }), { spawn: 'native', prompt: 'native', steer: 'native', interrupt: 'native', approve: 'unsupported', answer: 'unsupported', kill: 'native', pause: 'unsupported' }],
+  ['CodexAppServerCli (session)', () => new CodexAppServerCli({ cmd: process.execPath, args: [FAKE_CODEX, '--serve'], requestTimeoutMs: 2000, versionProbe: () => 'x' }), { spawn: 'native', prompt: 'native', steer: 'native', interrupt: 'native', approve: 'native', answer: 'native', kill: 'native', pause: 'unsupported' }],
+  ['GrokAcpCli (session)', () => new GrokAcpCli({ cmd: process.execPath, args: [FAKE_GROK, '--serve'], requestTimeoutMs: 2000, versionProbe: () => 'x' }), { spawn: 'native', prompt: 'native', steer: 'emulated', interrupt: 'native', approve: 'native', answer: 'unsupported', kill: 'native', pause: 'unsupported' }],
 ];
 
 for (const [name, make, expected] of CARD_CASES) {

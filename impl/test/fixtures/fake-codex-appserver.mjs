@@ -12,6 +12,7 @@
 //
 // Scripting surface (all zero-quota, no vendor CLI involved):
 //   - env FAKE_CODEX_BUSY=1        -> the FIRST `thread/start` fails with a real -32001
+//   - env FAKE_CODEX_TURN_START_FAIL=1 -> every `turn/start` fails after thread creation
 //                                     ("Shared Codex broker is busy.") busy error, then normal.
 //   - env FAKE_CODEX_HANG=1        -> `initialize` is received but NEVER answered (tests the
 //                                     adapter's per-request timeout / id-less-error hazard).
@@ -49,6 +50,7 @@ if (!process.argv.includes('--serve') && !process.argv.includes('app-server')) {
 }
 
 const BUSY = process.env.FAKE_CODEX_BUSY === '1';
+const TURN_START_FAIL = process.env.FAKE_CODEX_TURN_START_FAIL === '1';
 const HANG = process.env.FAKE_CODEX_HANG === '1';
 const MALFORMED = process.env.FAKE_CODEX_MALFORMED === '1';
 
@@ -294,6 +296,10 @@ rl.on('line', (line) => {
       break;
     }
     case 'turn/start': {
+      if (TURN_START_FAIL) {
+        send({ id: obj.id, error: { code: -32099, message: 'phase10.1 forced turn/start failure' } });
+        break;
+      }
       turnSeq += 1;
       const turnId = `turn-${turnSeq}`;
       activeTurn = { id: turnId, timer: null };

@@ -40,7 +40,8 @@ export class DependencyCycleError extends Error {
   }
 }
 
-const TERMINAL_TASK_STATUSES = new Set(['completed', 'failed']);
+// SC13: cancellation is terminal too. No late spawn/delivery/turn continuation may revive it.
+const TERMINAL_TASK_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
 function minimalBrief() {
   return { goal: '', constraints: [], pathScope: [], definitionOfDone: '', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 0, usd: 0, wallMin: 0 } };
@@ -208,8 +209,16 @@ export class Coordinator {
     // 'working' and the adapter is invoked synchronously below (so a bare tick() dispatches
     // in one turn), while the worker's actual work is gated on the worktree being ready.
     const worktreeReady = Promise.resolve(this._worktrees.create(task.id))
-      .then((res) => {
+      .then(async (res) => {
         if (res && res.path) { task.worktree = res.path; handle.worktree = res.path; }
+        // SC12 adversarial erratum: a stop can reap before async creation finishes. Once the
+        // late worktree exists, reap again while the adapter's cancelled reservation prevents
+        // any child from entering it.
+        if (handle.status === 'stopping' || handle.status === 'dead' || TERMINAL_TASK_STATUSES.has(task.status)) {
+          if (this._worktrees && typeof this._worktrees.remove === 'function') {
+            await Promise.resolve(this._worktrees.remove(task.id)).catch(noop);
+          }
+        }
         return res;
       })
       .catch(() => null);
@@ -220,14 +229,25 @@ export class Coordinator {
     const stamp = this._fences.bumpTurn(workerId);
 
     const wallMin = task.brief && task.brief.budget && task.brief.budget.wallMin;
+    // SC12: adapters receive an explicit cancellation signal in addition to their verb call.
+    // Session adapters own the stronger pending-spawn reservation, while this signal makes the
+    // coordinator's authority visible across the async worktree boundary.
+    const spawnAbort = new AbortController();
+    handle.spawnAbort = spawnAbort;
     // SC1d: the spawn Ack is consumed, not discarded — a refused spawn must fail the task
     // instead of leaving a zombie in 'working' (the G1 audit's silent failure mode).
     Promise.resolve(this._adapters[vendor].spawn(workerId, task.brief, {
       worktreeReady,
       timeoutMs: wallMin ? wallMin * 60000 : undefined,
+      signal: spawnAbort.signal,
     })).then((ack) => {
+      if (handle.spawnAbort === spawnAbort) handle.spawnAbort = null;
       if (ack && ack.ok === false) this._onSpawnRefused(handle, task, harness, ack);
-    }).catch(noop);
+    }).catch((err) => {
+      if (handle.spawnAbort === spawnAbort) handle.spawnAbort = null;
+      // SC15: rejection and resolved refusal are the same durable failure channel.
+      this._onSpawnRefused(handle, task, harness, { ok: false, reason: String(err?.message ?? err) });
+    });
 
     this._log.append({ worker: workerId, harness, turnEpoch: stamp.turnEpoch, kind: 'lifecycle.turn_started', actor: 'orchestrator', payload: {} });
 
@@ -240,7 +260,10 @@ export class Coordinator {
    * terminal-transitions on it; payload phase:'spawn' says exactly what died and when. Skipped
    * if an adapter event already ended the worker (both paths racing is benign). */
   _onSpawnRefused(handle, task, harness, ack) {
-    if (handle.status === 'exited') return;
+    // SC13: a concurrent stop or earlier lifecycle terminal owns the outcome. Refusal is allowed
+    // to fail only a still-live spawn; it may never clobber cancellation or duplicate a crash.
+    if (TERMINAL_TASK_STATUSES.has(task.status)) return;
+    if (handle.status === 'stopping' || handle.status === 'dead' || handle.status === 'idle' || handle.status === 'exited') return;
     this._log.append({
       worker: handle.id,
       harness,
@@ -293,6 +316,7 @@ export class Coordinator {
       pendingApprovalId: null,
       pendingQuestionId: null,
       budgetUsed: { tokens: 0, usd: 0 },
+      spawnAbort: null,
       createdAt: new Date(this._now()).toISOString(),
     };
     this._workers.set(workerId, handle);
@@ -384,7 +408,14 @@ export class Coordinator {
 
   async _deliver(handle, message, mode, opts) {
     const workerId = handle.id;
+    const task = this._tasks.get(handle.taskId);
+    // SC14: delivery-slot acquisition is the authority boundary. A queued continuation cannot
+    // cross a finalized stop, and a terminal task cannot be resurrected by a surviving session.
     if (handle.status === 'stopping') return { ok: false, result: 'worker_stopping' };
+    if (handle.status === 'idle' || handle.status === 'dead' || handle.status === 'exited' || handle.status === 'pending') {
+      return { ok: false, result: 'worker_not_active' };
+    }
+    if (!task || TERMINAL_TASK_STATUSES.has(task.status)) return { ok: false, result: 'task_terminal' };
 
     // C3: pre-check against an externally-supplied fence, BEFORE any delivery attempt —
     // re-evaluated HERE at delivery-slot acquisition, not at send() entry (SC4b).
@@ -429,6 +460,10 @@ export class Coordinator {
         payload: { op: 'send', mode, message, deliveredDespiteStale: true, attempted: stamp, current: check.current },
       });
       return { ok: false, result: 'stale_fence', current: check.current };
+    }
+
+    if (ack && ack.ok === false) {
+      return { ok: false, result: ack.reason ?? 'delivery_refused', reason: ack.reason };
     }
 
     const kind = mode === 'nudge' ? 'control.nudge' : mode === 'steer' ? 'control.steer' : 'control.send';
@@ -479,6 +514,9 @@ export class Coordinator {
     }
 
     this._fences.bumpHuman(handle.id);
+    if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) {
+      handle.spawnAbort.abort({ mode, actor });
+    }
     handle.status = 'stopping';
 
     const harness = this._harnessOf(handle.vendor);
@@ -795,6 +833,8 @@ export class Coordinator {
       case 'question.asked': {
         const requestId = payload?.requestId;
         this._log.append({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        const task = this._tasks.get(handle.taskId);
+        if (task && TERMINAL_TASK_STATUSES.has(task.status)) break;
         this._pending.set(requestId, {
           kind: 'question',
           worker: workerId,
@@ -807,7 +847,6 @@ export class Coordinator {
         if (payload?.blocking !== false) {
           handle.status = 'blocked';
           handle.pendingQuestionId = requestId;
-          const task = this._tasks.get(handle.taskId);
           if (task) task.status = 'input_required';
         }
         break;
@@ -815,6 +854,8 @@ export class Coordinator {
       case 'approval.requested': {
         const requestId = payload?.requestId;
         this._log.append({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        const task = this._tasks.get(handle.taskId);
+        if (task && TERMINAL_TASK_STATUSES.has(task.status)) break;
         this._pending.set(requestId, {
           kind: 'approval',
           worker: workerId,
@@ -827,7 +868,6 @@ export class Coordinator {
         if (payload?.blocking !== false) {
           handle.status = 'blocked';
           handle.pendingApprovalId = requestId;
-          const task = this._tasks.get(handle.taskId);
           if (task) task.status = 'input_required';
         }
         break;
@@ -850,6 +890,8 @@ export class Coordinator {
   async _runTrustGate(handle, workerResult) {
     const task = this._tasks.get(handle.taskId);
     if (!task) return;
+    // SC13/SC14: a late terminal event from a stopped session cannot reopen a terminal task.
+    if (TERMINAL_TASK_STATUSES.has(task.status)) return;
     task.status = 'verifying';
     task.result = workerResult;
     const harness = this._harnessOf(handle.vendor);
@@ -942,27 +984,31 @@ export class Coordinator {
             brief = e.payload?.brief ?? brief;
             break;
           case 'lifecycle.turn_started':
-            terminalStatus = 'working';
+            if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) terminalStatus = 'working';
             break;
           case 'lifecycle.turn_completed':
-            lastResult = e.payload;
-            terminalStatus = 'verifying';
+            if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) {
+              lastResult = e.payload;
+              terminalStatus = 'verifying';
+            }
             break;
           case 'verify.reverified':
-            verdict = e.payload?.verdict ?? null;
-            terminalStatus = e.payload?.accept ? 'completed' : 'failed';
+            if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) {
+              verdict = e.payload?.verdict ?? null;
+              terminalStatus = e.payload?.accept ? 'completed' : 'failed';
+            }
             break;
           case 'lifecycle.crashed':
           case 'control.forced_stop':
-            terminalStatus = 'failed';
+            if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) terminalStatus = 'failed';
             break;
           case 'kill.confirmed':
           case 'control.interrupt_confirmed':
-            terminalStatus = 'cancelled';
+            if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) terminalStatus = 'cancelled';
             break;
           case 'question.asked':
           case 'approval.requested':
-            if (e.payload?.blocking !== false) terminalStatus = 'input_required';
+            if (!TERMINAL_TASK_STATUSES.has(terminalStatus) && e.payload?.blocking !== false) terminalStatus = 'input_required';
             break;
           case 'question.answered':
           case 'approval.resolved':
@@ -1005,6 +1051,7 @@ export class Coordinator {
         pendingApprovalId: null,
         pendingQuestionId: null,
         budgetUsed: { tokens: 0, usd: 0 },
+        spawnAbort: null,
         createdAt: new Date(0).toISOString(),
       });
     }

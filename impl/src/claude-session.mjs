@@ -68,6 +68,8 @@ export class ClaudeSessionCli {
     };
     /** @type {Map<string, object>} worker -> session */
     this._sessions = new Map();
+    /** SC12: worker -> synchronous reservation held across worktreeReady. */
+    this._pendingSpawns = new Map();
     this._cb = null;
   }
 
@@ -92,6 +94,20 @@ export class ClaudeSessionCli {
   }
 
   onEvent(cb) { this._cb = cb; }
+
+  _emitPendingStop(worker, kind) {
+    const pending = this._pendingSpawns.get(worker);
+    if (!pending || pending.cancelled) return false;
+    pending.cancelled = true;
+    this._pendingSpawns.delete(worker);
+    if (this._cb) {
+      this._cb({
+        worker, harness: this._cfg.harness, turnEpoch: 0,
+        actor: 'orchestrator', kind, payload: { phase: 'spawn' },
+      });
+    }
+    return true;
+  }
 
   _actorFor(kind) {
     return kind.startsWith('control.') || kind.startsWith('kill.') ? 'orchestrator' : 'worker';
@@ -120,9 +136,12 @@ export class ClaudeSessionCli {
 
   async spawn(worker, brief, opts = {}) {
     const existing = this._sessions.get(worker);
-    if (existing && !existing.deadEmitted) {
+    if ((existing && !existing.deadEmitted) || this._pendingSpawns.has(worker)) {
       return { ok: false, reason: `worker ${worker} already has an active session` };
     }
+    const pending = { cancelled: false };
+    this._pendingSpawns.set(worker, pending);
+    try {
     // SC1: one spawn contract — the coordinator dispatches {worktreeReady}; direct callers may
     // pass a ready opts.worktree. Resolve BEFORE the child exists; refuse when neither yields a
     // path — a session must never start in an unspecified cwd (G1: silent wrong-cwd).
@@ -133,6 +152,7 @@ export class ClaudeSessionCli {
         if (r && r.path) cwd = r.path;
       } catch { /* fall through to the refusal below */ }
     }
+    if (pending.cancelled || opts.signal?.aborted) return { ok: false, reason: 'spawn cancelled before child creation', cancelled: true };
     if (!cwd) return { ok: false, reason: 'spawn requires a worktree (opts.worktree, or opts.worktreeReady resolving {path})' };
 
     const argv = [
@@ -178,6 +198,10 @@ export class ClaudeSessionCli {
       wireToAdapterId: new Map(),
     };
     this._sessions.set(worker, session);
+    if (opts.timeoutMs > 0) {
+      session.wallTimer = setTimeout(() => this._onWallTimeout(session, opts.timeoutMs), opts.timeoutMs);
+      if (typeof session.wallTimer.unref === 'function') session.wallTimer.unref();
+    }
 
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => this._onData(session, chunk));
@@ -191,6 +215,9 @@ export class ClaudeSessionCli {
     this._writeUserFrame(session, renderPrompt(brief));
 
     return { ok: true };
+    } finally {
+      if (this._pendingSpawns.get(worker) === pending) this._pendingSpawns.delete(worker);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -369,11 +396,13 @@ export class ClaudeSessionCli {
   // ---------------------------------------------------------------------------
 
   async interrupt(worker) {
+    if (this._emitPendingStop(worker, 'control.interrupt_confirmed')) return { ok: true };
     const session = this._sessions.get(worker);
     if (!session || session.terminal) return { ok: true }; // D9: interrupt always resolves
     const confirmed = this._sendInterrupt(session);
     confirmed.then(() => {
       if (session.terminal) return;
+      if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
       this._emit(session, 'control.interrupt_confirmed', {});
     });
     return { ok: true }; // native — a real control-plane primitive, not a signal (CS9)
@@ -446,6 +475,7 @@ export class ClaudeSessionCli {
   }
 
   async kill(worker) {
+    if (this._emitPendingStop(worker, 'kill.confirmed')) return { ok: true };
     const session = this._sessions.get(worker);
     if (!session || session.terminal) return { ok: true }; // D9: kill always resolves
     if (!session.stopping) {
@@ -469,6 +499,7 @@ export class ClaudeSessionCli {
     if (session.terminal) return;
     session.terminal = true;
     if (session.killTimer) clearTimeout(session.killTimer);
+    if (session.wallTimer) clearTimeout(session.wallTimer);
     if (session.stopping) {
       this._emit(session, 'kill.confirmed', { signal });
     } else if (code === 0) {
@@ -482,7 +513,18 @@ export class ClaudeSessionCli {
     if (session.terminal) return;
     session.terminal = true;
     if (session.killTimer) clearTimeout(session.killTimer);
+    if (session.wallTimer) clearTimeout(session.wallTimer);
     this._emit(session, 'lifecycle.crashed', { error: String(err?.message ?? err) });
+  }
+
+  _onWallTimeout(session, timeoutMs) {
+    if (session.terminal || session.deadEmitted) return;
+    this._emit(session, 'lifecycle.crashed', {
+      error: `session wall-time budget exceeded (${timeoutMs}ms)`,
+      phase: 'timeout',
+    });
+    session.stopping = true;
+    this._signal(session, 'SIGKILL');
   }
 }
 

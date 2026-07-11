@@ -102,6 +102,8 @@ export class GrokAcpCli {
 
     /** @type {Map<string, object>} worker -> session */
     this._sessions = new Map();
+    /** SC12: worker -> synchronous reservation held across worktreeReady. */
+    this._pendingSpawns = new Map();
     this._cb = null;
   }
 
@@ -131,6 +133,17 @@ export class GrokAcpCli {
 
   onEvent(cb) {
     this._cb = cb;
+  }
+
+  _emitPendingStop(worker, kind) {
+    const pending = this._pendingSpawns.get(worker);
+    if (!pending || pending.cancelled) return false;
+    pending.cancelled = true;
+    this._pendingSpawns.delete(worker);
+    if (this._cb) {
+      this._cb({ worker, harness: 'grok', turnEpoch: 0, actor: 'orchestrator', kind, payload: { phase: 'spawn' } });
+    }
+    return true;
   }
 
   // -------------------------------------------------------------------------
@@ -200,6 +213,7 @@ export class GrokAcpCli {
 
   _onClose(session) {
     session.closed = true;
+    if (session.wallTimer) clearTimeout(session.wallTimer);
     // GA11: kill.confirmed fires once the OS confirms the process is gone (D1: an event, never
     // the Ack); the pending-request settlement below then absorbs the prompt silently (killing).
     if (session.killing && !session.killConfirmed) {
@@ -359,6 +373,7 @@ export class GrokAcpCli {
         return;
       }
       const res = makeResult('cancelled', 'interrupted', tokens);
+      if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
       this._emit(session, 'control.interrupt_confirmed', { sessionId: session.sessionId, turnId, result: res });
       this._maybeIssueFollowUp(session, turnId);
       return;
@@ -399,9 +414,12 @@ export class GrokAcpCli {
 
   async spawn(worker, brief, opts = {}) {
     const existing = this._sessions.get(worker);
-    if (existing && !existing.closed) {
+    if ((existing && !existing.closed) || this._pendingSpawns.has(worker)) {
       return { ok: false, reason: `worker ${worker} already has an active session` };
     }
+    const pending = { cancelled: false };
+    this._pendingSpawns.set(worker, pending);
+    try {
 
     // SC1: resolve the working directory BEFORE the child exists — grok indexes its OS cwd at
     // startup, so an undefined cwd silently inherited the orchestrator's own directory (G1).
@@ -412,6 +430,7 @@ export class GrokAcpCli {
         if (r && r.path) cwd = r.path;
       } catch { /* fall through to the refusal below */ }
     }
+    if (pending.cancelled || opts.signal?.aborted) return { ok: false, reason: 'spawn cancelled before child creation', cancelled: true };
     if (!cwd) return { ok: false, reason: 'spawn requires a worktree (opts.worktree, or opts.worktreeReady resolving {path})' };
 
     const child = this._spawnFn(this._cmd, this._args, {
@@ -435,6 +454,10 @@ export class GrokAcpCli {
     };
     this._sessions.set(worker, session);
     this._attachChild(session);
+    if (opts.timeoutMs > 0) {
+      session.wallTimer = setTimeout(() => this._onWallTimeout(session, opts.timeoutMs), opts.timeoutMs);
+      if (typeof session.wallTimer.unref === 'function') session.wallTimer.unref();
+    }
 
     try {
       // GA6: baton delegates no client-side fs/terminal to the worker's agent — the worker does
@@ -467,6 +490,9 @@ export class GrokAcpCli {
     // no separate turn-accepted response; completion is exclusively an onEvent fact.
     this._startTurn(session, renderBrief(brief, 'grok-acp'));
     return { ok: true };
+    } finally {
+      if (this._pendingSpawns.get(worker) === pending) this._pendingSpawns.delete(worker);
+    }
   }
 
   _killChild(session) {
@@ -515,6 +541,7 @@ export class GrokAcpCli {
   // -------------------------------------------------------------------------
 
   async interrupt(worker, then) {
+    if (this._emitPendingStop(worker, 'control.interrupt_confirmed')) return { ok: true };
     const session = this._sessions.get(worker);
     if (!session) return { ok: false, reason: `unknown worker ${worker}` };
     if (!session.activeTurn) return { ok: true, reason: 'no active turn to interrupt' };
@@ -569,6 +596,7 @@ export class GrokAcpCli {
   // -------------------------------------------------------------------------
 
   async kill(worker) {
+    if (this._emitPendingStop(worker, 'kill.confirmed')) return { ok: true };
     const session = this._sessions.get(worker);
     if (!session || !session.child) return { ok: true }; // already gone — a moot no-op
     session.steerPending = null;
@@ -577,5 +605,15 @@ export class GrokAcpCli {
     session.killing = true;
     this._killChild(session);
     return { ok: true };
+  }
+
+  _onWallTimeout(session, timeoutMs) {
+    if (session.closed) return;
+    this._emit(session, 'lifecycle.crashed', {
+      error: `session wall-time budget exceeded (${timeoutMs}ms)`,
+      phase: 'timeout',
+    });
+    session.killing = true;
+    this._killChild(session);
   }
 }

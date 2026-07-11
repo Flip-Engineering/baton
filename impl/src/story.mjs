@@ -57,6 +57,8 @@
  * @property {{id:string, kind:string}[]} approvalsPending
  * @property {Set<string>} warnings
  * @property {number} spawnedAtSeq
+ * @property {boolean} crashed
+ * @property {{accept:boolean}|null} lastVerdict
  */
 
 /** @typedef {Object} StoryState
@@ -122,6 +124,7 @@ function newWorkerStory(workerId, harness, spawnedAtSeq) {
     taskId: null,
     brief: null,
     lastVerdict: null, // SC5c: {accept:boolean} once verify.reverified folds in
+    crashed: false, // SC17: lifecycle fact, never inferred from unrelated warning signals
     turnEpoch: 0,
     turnCount: 0,
     lastEventSeq: 0,
@@ -314,6 +317,7 @@ function handleKnownKind(w, kind, payload, event) {
       w.taskId = payload.taskId ?? null;
       w.brief = payload.brief ?? null;
       w.status = 'idle';
+      w.crashed = false;
       break;
     }
     case KIND.TURN_STARTED: {
@@ -322,6 +326,8 @@ function handleKnownKind(w, kind, payload, event) {
       w.turnEpoch = event.turnEpoch;
       w.recentActionSignatures = [];
       w.turnStartedAtTs = event.ts;
+      // SC17: a verdict belongs to the turn that produced it, never its successor.
+      w.lastVerdict = null;
       break;
     }
     case KIND.TURN_COMPLETED: {
@@ -335,9 +341,13 @@ function handleKnownKind(w, kind, payload, event) {
     case KIND.SESSION_COMPACTED: {
       break;
     }
-    case KIND.EXITED:
+    case KIND.EXITED: {
+      w.status = 'exited';
+      break;
+    }
     case KIND.CRASHED: {
       w.status = 'exited';
+      w.crashed = true;
       break;
     }
     case KIND.INTERRUPT_REQUESTED: {
@@ -566,6 +576,7 @@ function budgetPct(w) {
 }
 
 function statusPhrase(w) {
+  if (w.status === 'exited' && w.crashed) return 'crashed';
   if (w.status === 'working') {
     return `working (turn ${w.turnCount}, ${budgetPct(w)}% budget)`;
   }
@@ -619,7 +630,7 @@ export function renderNarrative(state, opts = {}) {
   const ACTIVE_STATUSES = ['working', 'stopping', 'blocked', 'input_required'];
   const activeCount = workers.filter((w) => ACTIVE_STATUSES.includes(w.status)).length;
   const doneCount = workers.filter(
-    (w) => (w.status === 'exited' && !hasCrashWarning(signalsByWorker.get(w.workerId))) || (w.lastVerdict && w.lastVerdict.accept === true)
+    (w) => !w.crashed && (w.status === 'exited' || (w.lastVerdict && w.lastVerdict.accept === true))
   ).length;
 
   let header = `${activeCount} worker(s) active`;
@@ -639,10 +650,6 @@ export function renderNarrative(state, opts = {}) {
   });
 
   return [header, ...lines].join('\n');
-}
-
-function hasCrashWarning(signals) {
-  return Array.isArray(signals) && signals.length > 0;
 }
 
 // ---------------------------------------------------------------------------
