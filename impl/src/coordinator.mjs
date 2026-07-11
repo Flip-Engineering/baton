@@ -290,6 +290,7 @@ export class Coordinator {
     this._recoveryTimeoutMs = opts.recoveryTimeoutMs ?? 15000;
     this._budgetThresholds = Object.freeze([...(opts.budgetPolicy?.thresholds ?? [0.5, 0.8, 1])].sort((a, b) => a - b));
     this._budgetHardStopAt = opts.budgetPolicy?.hardStopAt ?? 1;
+    this._budgetTerminalGraceMs = opts.budgetPolicy?.terminalGraceMs ?? 250;
     this._watchdog = Object.freeze({
       stallMs: opts.watchdog?.stallMs ?? 120000,
       loopThreshold: opts.watchdog?.loopThreshold ?? 3,
@@ -587,6 +588,8 @@ export class Coordinator {
 
     task.status = 'working';
     handle.status = 'working';
+    handle.turnTerminalObserved = false;
+    this._clearBudgetStop(handle);
     this._resetWatchdogTurn(handle);
   }
 
@@ -730,6 +733,8 @@ export class Coordinator {
       budgetUsed: { tokens: 0, usd: 0 },
       budgetThresholdsFired: new Set(),
       usageCumulative: new Map(),
+      budgetStopTimer: null,
+      turnTerminalObserved: false,
       watchdogActions: new Set(),
       recentFailedActions: [],
       watchdogGeneration: 0,
@@ -772,7 +777,8 @@ export class Coordinator {
         taskId: task.id, worktree: null,
         status: durable.status === 'pending' ? 'pending' : (TERMINAL_TASK_STATUSES.has(durable.status) ? 'idle' : 'orphaned'), pendingApprovalId: null,
         pendingQuestionId: null, budgetUsed: { tokens: 0, usd: 0 }, budgetThresholdsFired: new Set(),
-        usageCumulative: new Map(), watchdogActions: new Set(), recentFailedActions: [],
+        usageCumulative: new Map(), budgetStopTimer: null, turnTerminalObserved: false,
+        watchdogActions: new Set(), recentFailedActions: [],
         watchdogGeneration: 0, watchdogTimer: null, runtimeScope: null, runtimeLease: null,
         spawnAbort: null, createdAt: new Date(0).toISOString(),
       });
@@ -984,6 +990,8 @@ export class Coordinator {
     activeTask.sessionRequest = session;
     activeTask.sessionContext = context;
     handle.status = 'working';
+    handle.turnTerminalObserved = false;
+    this._clearBudgetStop(handle);
     handle.sessionRequest = session;
     handle.sessionContext = context;
     handle.turnAdmission = null;
@@ -1357,6 +1365,8 @@ export class Coordinator {
     activeTask.result = null;
     activeTask.verdict = null;
     handle.status = 'working';
+    handle.turnTerminalObserved = false;
+    this._clearBudgetStop(handle);
     handle.turnAdmission = null;
     this._resetWatchdogTurn(handle);
     this._log.append({
@@ -1462,6 +1472,7 @@ export class Coordinator {
       handle.spawnAbort.abort({ mode, actor });
     }
     handle.status = 'stopping';
+    this._clearBudgetStop(handle);
     this._clearWatchdog(handle);
 
     const waiter = {
@@ -1693,7 +1704,18 @@ export class Coordinator {
         },
       });
     }
-    if (hard && handle.status === 'working') this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+    if (hard && handle.status === 'working' && !handle.turnTerminalObserved && handle.budgetStopTimer == null) {
+      handle.budgetStopTimer = this._setTimeout(() => {
+        handle.budgetStopTimer = null;
+        if (handle.status === 'working' && !handle.turnTerminalObserved) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+      }, this._budgetTerminalGraceMs);
+      if (handle.budgetStopTimer && typeof handle.budgetStopTimer.unref === 'function') handle.budgetStopTimer.unref();
+    }
+  }
+
+  _clearBudgetStop(handle) {
+    if (handle.budgetStopTimer != null) this._clearTimeout(handle.budgetStopTimer);
+    handle.budgetStopTimer = null;
   }
 
   _relativeActionPath(handle, path) {
@@ -1806,6 +1828,8 @@ export class Coordinator {
           if (waiter.then !== undefined) {
             const stamp = this._fences.bumpTurn(handle.id);
             handle.status = 'working';
+            handle.turnTerminalObserved = false;
+            this._clearBudgetStop(handle);
             if (task) {
               task.status = 'working';
               task.result = null;
@@ -2346,6 +2370,13 @@ export class Coordinator {
     if (actor === 'worker' && kind === 'lifecycle.turn_started' && typeof turnEpoch === 'number') {
       const currentEpoch = this._safeTurnEpoch(handle);
       if (handle.wireEpochOffset == null) handle.wireEpochOffset = currentEpoch - turnEpoch;
+    }
+    if (kind === 'lifecycle.turn_started') {
+      handle.turnTerminalObserved = false;
+      this._clearBudgetStop(handle);
+    } else if (['lifecycle.turn_completed', 'lifecycle.crashed', 'lifecycle.exited'].includes(kind)) {
+      handle.turnTerminalObserved = true;
+      this._clearBudgetStop(handle);
     }
 
     if (kind === 'lifecycle.spawned' && actor === 'worker') {
@@ -2969,6 +3000,8 @@ export class Coordinator {
         budgetUsed,
         budgetThresholdsFired,
         usageCumulative,
+        budgetStopTimer: null,
+        turnTerminalObserved: false,
         watchdogActions: new Set(),
         recentFailedActions: [],
         watchdogGeneration: 0,

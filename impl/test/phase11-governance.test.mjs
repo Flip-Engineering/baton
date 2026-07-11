@@ -45,6 +45,7 @@ function system(ad, opts = {}) {
     },
     referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'stub',
     stopDeadlineMs: 100, approvalTimeoutMs: 1000,
+    budgetPolicy: opts.budgetPolicy,
     watchdog: opts.watchdog,
     setTimeout: opts.setTimeout,
     clearTimeout: opts.clearTimeout,
@@ -67,14 +68,31 @@ test('GV1/GV2: cumulative snapshots become monotonic deltas and thresholds fire 
 
 test('GV3: 100 percent budget invokes confirmed two-phase kill exactly once', async () => {
   const ad = adapter();
-  const { c, log } = system(ad);
+  const { c, log } = system(ad, { budgetPolicy: { terminalGraceMs: 5 } });
   const h = await c.spawn('stub', brief());
   ad.emit(h.id, 'resource.tokens', { source: 'delta', accounting: 'delta', tokens: 101, usd: 0 });
+  assert.equal(c.list()[0].status, 'working', 'hard stop allows only the bounded terminal-frame grace');
+  await sleep(10);
   assert.equal(c.list()[0].status, 'stopping');
   assert.equal(ad.calls.kill, 1);
   ad.emit(h.id, 'kill.confirmed');
   await sleep(0);
   assert.equal(c.list()[0].status, 'dead');
+  assert.equal(log.read(h.id).filter((event) => event.kind === 'resource.budget_threshold' && event.payload.hardStop).length, 1);
+});
+
+test('GV3: a terminal claim adjacent to final over-budget usage cancels the pending kill', async () => {
+  const ad = adapter();
+  const { c, log } = system(ad, { budgetPolicy: { terminalGraceMs: 20 } });
+  const h = await c.spawn('stub', brief());
+  ad.emit(h.id, 'resource.tokens', { source: 'delta', accounting: 'delta', tokens: 101, usd: 0 });
+  ad.emit(h.id, 'lifecycle.turn_completed', {
+    status: 'completed', summary: 'finished before budget stop', artifacts: { files: [] },
+    verification: { command: 'true', claimedExit: 0 },
+  });
+  await sleep(30);
+  assert.equal(ad.calls.kill, 0);
+  assert.equal((await c.result(h.id)).status, 'completed');
   assert.equal(log.read(h.id).filter((event) => event.kind === 'resource.budget_threshold' && event.payload.hardStop).length, 1);
 });
 

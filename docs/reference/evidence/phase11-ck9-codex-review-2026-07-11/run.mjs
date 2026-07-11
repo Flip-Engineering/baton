@@ -34,7 +34,8 @@ const adapter = new CodexAppServerCli({ requestTimeoutMs: 30000, ceiling: 1 });
 const { coordinator, log } = createDriver({
   repoRoot: REPO, logDir: LOG_DIR, adapters: { codex: adapter },
   runtimeIsolation: { credentialFiles: { codex: [AUTH] } },
-  approvalTimeoutMs: 60000, stopDeadlineMs: 15000, watchdog: { stallMs: 180000 },
+  approvalTimeoutMs: 60000, stopDeadlineMs: 15000,
+  budgetPolicy: { terminalGraceMs: 2000 }, watchdog: { stallMs: 180000 },
 });
 const brief = createBrief({
   goal: `Adversarially review commit c8a272e's coordination crash-window changes against spec/phase11/coordination-knowledge.md and docs/26-full-system-goal.md. Inspect impl/src/coordinator.mjs plus phase11 coordination, persistent-session, and acceptance/integration tests. Write ${TARGET} with exact headings "## Verdict", "## Crash-window matrix", "## Remaining major findings", and "## Required next actions". Try to falsify pre-effect intent ordering, bounded post-effect ambiguity, restart closure, single-consumer behavior, adapter/PID cleanup, integration Git safety, publication authorization, and claims that CK9 is green. Distinguish this deterministic gate from still-missing product features.`,

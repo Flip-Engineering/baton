@@ -68,7 +68,7 @@ node --test impl/test/phase11-acceptance-integration.test.mjs
 20/20 passing
 
 cd impl && node --test
-561/561 passing
+562/562 passing
 ```
 
 The recursive exact-model Grok spec and implementation reviews passed every Baton lifecycle check.

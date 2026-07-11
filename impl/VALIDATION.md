@@ -55,6 +55,11 @@ lines, and a nonzero all-killed mutation population. Independent oracle/review t
 immutable original brief plus captured Git references rather than implementer prose; a required
 oracle must complete through its own trust gate under a different vendor/model family.
 
+Hard token/USD stops retain authority while allowing a bounded terminal-frame grace (250ms by
+default): final cumulative usage can no longer kill a worker between its finished output and the
+adjacent terminal protocol frame. A terminal claim only cancels the transport kill; it still enters
+the same independent trust gate.
+
 ### Explicit integration and publication authority
 
 `integrate(worker, {strategy:'ff-only'})` accepts only a captured, trust-gated result, reaps the
@@ -128,7 +133,7 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 | Persistent two-turn Grok | `docs/reference/evidence/phase11-grok-persistent-session-2026-07-11/summary.json` has all 16 checks true; same session/PID, two fresh verdicts, full reap |
 | Isolated governance Grok | `docs/reference/evidence/phase11-grok-governance-2026-07-11/summary.json` has all 16 checks true; private credential scope, real sandbox denial, canonical usage, automatic budget kill, full reap |
 | Acceptance/integration | `docs/handoff/evidence/phase11-acceptance-integration-2026-07-11.md`; 16 focused temp-repo tests cover AC1–AC6 and the full suite is 502/502 |
-| Coordination foundation | `docs/handoff/evidence/phase11-coordination-foundation-2026-07-11.md`; 28 coordination, 20 persistent-session, and 20 acceptance/integration focused contracts plus the 561/561 full suite cover mandatory durable authority, centralized fail-closed mutations, pre-effect intents, bounded post-effect ambiguity, injected create/claim/input/stop/cancel/follow-up/recovery/review/trust/integration/publication/read crash windows, fatal dual-stream writes, atomic artifact/contamination writes, named promotion/provenance, mediated Scratch, logged `ReadBy` recall, and refusal auditing; fresh recursive provider review remains pending Grok reauthentication |
+| Coordination foundation | `docs/handoff/evidence/phase11-coordination-foundation-2026-07-11.md`; 28 coordination, 20 persistent-session, and 20 acceptance/integration focused contracts plus the 562/562 full suite cover mandatory durable authority, centralized fail-closed mutations, pre-effect intents, bounded post-effect ambiguity, injected create/claim/input/stop/cancel/follow-up/recovery/review/trust/integration/publication/read crash windows, fatal dual-stream writes, atomic artifact/contamination writes, named promotion/provenance, mediated Scratch, logged `ReadBy` recall, and refusal auditing; fresh recursive provider review remains pending Grok reauthentication |
 | Authenticated web command/auth vertical | `docs/handoff/evidence/phase12-web-northbound-2026-07-11.md`; 16 focused contracts plus the 542/542 full suite cover durable cookie/Bearer issue/expiry/revocation with hashed secrets, auth/origin/CSRF/scope checks, strict envelopes, independent harness/model forwarding, restart-safe idempotency, fail-closed audit completion, bounded HTTP/CORS, non-leaking errors, TLS/auth server refusal, and real stale-fence stop/reap behavior; streaming/login/rotation/adversarial WN gates remain explicit |
 | Atlas structural delta | `docs/handoff/evidence/phase13-atlas-structural-2026-07-11.md`; 7 focused contracts plus the 551/551 full suite use pinned real ast-grep parsing for confined, deterministic, token-bounded, content-addressed JS/TS-family AST deltas and live-prove Baton's own added export; shared index/overlay, search, symbols/SCIP, and later representation rungs remain explicit |
 | Credential discipline | GLM checked by presence only and recorded `PENDING-LIVE-no-credential`; no credential value was logged |
