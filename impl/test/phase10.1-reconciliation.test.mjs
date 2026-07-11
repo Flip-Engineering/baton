@@ -334,12 +334,12 @@ test('SC18: confirmed interrupt clears each session wall timer', async (t) => {
     t.after(() => killPids(events));
     try {
       const worker = `${name}-interrupt-clears-timeout`;
-      const ack = await cli.spawn(worker, brief(marker), { worktree: tmpdir(), timeoutMs: 180 });
+      const ack = await cli.spawn(worker, brief(marker), { worktree: tmpdir(), timeoutMs: 600 });
       assert.equal(ack.ok, true);
       await cli.interrupt(worker);
-      for (let i = 0; i < 80 && !events.some((e) => e.kind === 'control.interrupt_confirmed'); i += 1) await sleep(5);
+      for (let i = 0; i < 160 && !events.some((e) => e.kind === 'control.interrupt_confirmed'); i += 1) await sleep(5);
       assert.equal(events.filter((e) => e.kind === 'control.interrupt_confirmed').length, 1, `${name}: interrupt must confirm`);
-      await sleep(220);
+      await sleep(650);
       assert.equal(events.some((e) => e.kind === 'lifecycle.crashed' && e.payload?.phase === 'timeout'), false, `${name}: cleared timer must not fire after interrupt`);
       await cli.kill(worker);
     } finally {

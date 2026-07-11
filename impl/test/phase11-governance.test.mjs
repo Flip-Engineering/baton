@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { Coordinator } from '../src/coordinator.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
+import { withGrokModelArgs } from '../src/grok-acp.mjs';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const brief = (budget = { tokens: 100, usd: 1, wallMin: 5 }) => ({
@@ -184,4 +185,11 @@ test('GV6: runtime scope creation failure becomes a durable failed task before a
   assert.equal(ad.calls.spawn.length, 0);
   assert.deepEqual(removed, [h.id]);
   assert.ok(log.read(h.id).some((event) => event.kind === 'lifecycle.crashed' && event.payload?.phase === 'runtime_scope'));
+});
+
+test('GV7: Grok sandbox is top-level while exact model and effort remain agent flags', () => {
+  assert.deepEqual(
+    withGrokModelArgs(['agent', 'stdio'], { sandbox: 'workspace', model: 'grok-x', reasoningEffort: 'high' }),
+    ['--sandbox', 'workspace', 'agent', '--model', 'grok-x', '--reasoning-effort', 'high', 'stdio'],
+  );
 });

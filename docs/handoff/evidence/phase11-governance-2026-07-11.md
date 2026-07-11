@@ -28,7 +28,7 @@ Scope: GV1-GV7 in `spec/phase11/governance.md`.
 
 - Focused governance/runtime suite: 13/13 passing.
 - Adapter/model/governance selection: 83/83 passing.
-- Bare `node --test` from `impl/`: 485/485 passing, 0 failed.
+- Bare `node --test` from `impl/`: 486/486 passing, 0 failed.
 - `git diff --check`: clean.
 
 ## Provider-backed boundary

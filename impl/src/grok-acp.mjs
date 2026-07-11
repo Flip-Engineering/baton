@@ -68,11 +68,17 @@ function pickOption(options, decision) {
 
 export function withGrokModelArgs(baseArgs, { model, reasoningEffort, sandbox } = {}) {
   const args = [...baseArgs];
-  const insertion = args[0] === 'agent' ? 1 : args.length;
+  // `--sandbox` is a top-level Grok flag and is rejected after `agent`; model/effort are agent
+  // flags and belong between `agent` and `stdio`. The live governance probe caught this split.
+  let agentIndex = args.indexOf('agent');
+  if (sandbox && agentIndex >= 0) {
+    args.splice(agentIndex, 0, '--sandbox', sandbox);
+    agentIndex += 2;
+  }
+  const insertion = agentIndex >= 0 ? agentIndex + 1 : args.length;
   const selection = [];
   if (model) selection.push('--model', model);
   if (reasoningEffort) selection.push('--reasoning-effort', reasoningEffort);
-  if (sandbox) selection.push('--sandbox', sandbox);
   args.splice(insertion, 0, ...selection);
   return args;
 }
