@@ -12,10 +12,12 @@ import { createBrief, createDriver, GrokAcpCli } from '../../../../impl/src/inde
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '../../../..');
+const REVIEW_KIND = process.env.BATON_REVIEW_KIND ?? 'spec';
+const OUTPUT_DIR = process.env.BATON_EVIDENCE_DIR ? resolve(REPO, process.env.BATON_EVIDENCE_DIR) : HERE;
 const AUTH = join(homedir(), '.grok', 'auth.json');
 const LOG_DIR = join(tmpdir(), `baton-coordination-review-${Date.now()}`);
-const TASK_ID = 'grok-coordination-spec-review';
-const TARGET = 'reviews/dogfood/grok-coordination-spec-review.md';
+const TASK_ID = REVIEW_KIND === 'implementation' ? 'grok-coordination-implementation-review' : 'grok-coordination-spec-review';
+const TARGET = REVIEW_KIND === 'implementation' ? 'reviews/dogfood/grok-coordination-implementation-review.md' : 'reviews/dogfood/grok-coordination-spec-review.md';
 const MODEL = 'grok-composer-2.5-fast';
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 
@@ -48,7 +50,9 @@ const { coordinator, log } = createDriver({
 });
 
 const brief = createBrief({
-  goal: `Adversarially review spec/phase11/coordination-knowledge.md against docs/26-full-system-goal.md, docs/08-shared-memory-and-pm.md, docs/capabilities/coordination-repl.md, and the current impl/src/log.mjs + impl/src/coordinator.mjs. Write ${TARGET} with exact headings "## Verdict", "## Critical and major findings", "## Contract corrections", and "## Implementation order". Focus on crash consistency, replay, CAS/leases, bitemporal causality, poisoning/read provenance, task/artifact integration, and whether CK9 can catch built-not-wired behavior.`,
+  goal: REVIEW_KIND === 'implementation'
+    ? `Adversarially review the CK1-CK8 implementation in impl/src/coordination-store.mjs, impl/src/coordinator.mjs, impl/src/index.mjs, and the phase11 coordination/acceptance/persistent tests against spec/phase11/coordination-knowledge.md. Write ${TARGET} with exact headings "## Verdict", "## Critical and major findings", "## Contract corrections", and "## Implementation order". Reproduce or source-trace crash atomicity, replay authority, refinement/recovery, artifact provenance, Scratch overlap/expiry, bitemporal causality, multi-event contamination, failed read logging, and built-not-wired paths. Treat 519/519 as evidence to attack, not proof.`
+    : `Adversarially review spec/phase11/coordination-knowledge.md against docs/26-full-system-goal.md, docs/08-shared-memory-and-pm.md, docs/capabilities/coordination-repl.md, and the current impl/src/log.mjs + impl/src/coordinator.mjs. Write ${TARGET} with exact headings "## Verdict", "## Critical and major findings", "## Contract corrections", and "## Implementation order". Focus on crash consistency, replay, CAS/leases, bitemporal causality, poisoning/read provenance, task/artifact integration, and whether CK9 can catch built-not-wired behavior.`,
   constraints: [
     `Edit only ${TARGET}.`,
     'Do not change specs or implementation; do not commit, push, deploy, or use network tools.',
@@ -141,8 +145,8 @@ const summary = {
   grokVersion: execFileSync('grok', ['--version'], { encoding: 'utf8' }).trim(),
   result, integration, approvals, checks, fatal, pass: Object.values(checks).every(Boolean),
 };
-mkdirSync(HERE, { recursive: true });
-writeFileSync(join(HERE, 'events.jsonl'), events.map((event) => JSON.stringify(event)).join('\n') + (events.length ? '\n' : ''));
-writeFileSync(join(HERE, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
+mkdirSync(OUTPUT_DIR, { recursive: true });
+writeFileSync(join(OUTPUT_DIR, 'events.jsonl'), events.map((event) => JSON.stringify(event)).join('\n') + (events.length ? '\n' : ''));
+writeFileSync(join(OUTPUT_DIR, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
 console.log(JSON.stringify({ pass: summary.pass, checks, pid, fatal }, null, 2));
 if (!summary.pass) process.exitCode = 1;
