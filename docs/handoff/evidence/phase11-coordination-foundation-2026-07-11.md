@@ -42,7 +42,7 @@ node --test impl/test/phase11-coordination-store.test.mjs
 19/19 passing
 
 cd impl && node --test
-521/521 passing
+522/522 passing
 ```
 
 The recursive exact-model Grok spec and implementation reviews passed every Baton lifecycle check.
@@ -61,3 +61,10 @@ contamination is not one atomic batch; Scratch participation is not yet an ambie
 tool; named promotion events/scorecards remain incomplete; and forced coordination-write failure
 has not yet been injected at every public state boundary. A second recursive provider review of
 these repairs, including concurrent Grok spawn/kill/reap evidence, is still required before CK9.
+
+The zero-quota concurrent Grok ACP boundary is now green: two distinct fake-wire child PIDs ran
+simultaneously, both kills confirmed, both durable tasks cancelled, and every PID/worktree/branch
+was reaped. A real-provider rerun was attempted with isolated credential projection but the
+provider credential had expired before `session/new`; that attempt is preserved as
+`PENDING-LIVE-grok-reauth` rather than weakening authentication or overwriting the earlier passing
+live evidence.

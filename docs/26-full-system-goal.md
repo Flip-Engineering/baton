@@ -193,6 +193,8 @@ negative result retires a rung through a recorded Decision, never through omissi
   rate limits, reconnect cursors, backpressure, and disconnect semantics are contract-tested.
   Browser loss never cancels work implicitly, and the web tier cannot bypass approval, sandbox,
   budget, or trust gates. A richer visual UI is optional; the secure control connection is not.
+  Numbered contracts and its adversarial gate live in
+  `spec/phase12/authenticated-web-northbound.md` (WN1–WN10).
 - Observability exports use OpenTelemetry GenAI conventions.
 - One-machine production first, with a reliable Go or Elixir/OTP core after the executable-spec
   contracts stabilize. Remote/multi-machine execution remains catalogued but is not allowed to

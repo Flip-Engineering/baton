@@ -1,6 +1,6 @@
 # The Baton System — complete design
 
-*The single, authoritative design. It synthesizes everything explored across `docs/`, `spec/`, `docs/capabilities/`, the reviews, and the prototype into one coherent, correctly-steered, deeply-engineered whole. Plain language throughout (see [GLOSSARY.md](GLOSSARY.md) for any leftover codewords). Where a subsystem has a deeper spec, it's linked. If this doc and an older doc disagree, this doc wins.*
+*The single, authoritative design. It synthesizes everything explored across `docs/`, `spec/`, `docs/capabilities/`, the reviews, and the prototype into one coherent, correctly-steered, deeply-engineered whole. Plain language throughout (see [GLOSSARY.md](GLOSSARY.md) for any leftover codewords). The lossless capability/status catalog is [`docs/26-full-system-goal.md`](docs/26-full-system-goal.md); a later/fenced/research label never deletes an item. Where this document and an older document disagree, this document plus that catalog wins.*
 
 ---
 
@@ -170,7 +170,7 @@ Each adapter publishes a **card** saying which controls it supports natively vs.
 ## 7. How it's built
 
 - **Language** (`docs/17`): the coordinator's job — managing many crash-prone workers, restarting them, keeping commands ordered — is exactly what **Elixir/OTP** was built for, and you already run it; **Go** is the simpler alternative. The current **prototype is TypeScript** (fast to move; keep for the MVP). Heavy code-analysis tools, when added, are best in **Rust** (where those tools already live). Python for any eval/stats.
-- **Protocols:** up to the orchestrator, the coordinator exposes its eight commands as tools the AI can call (MCP). Down to workers, it uses each vendor's real interface (subprocess or Codex's app-server), with the ACP standard as a fallback. No new protocol is invented — baton is a compatibility layer over what already exists.
+- **Protocols:** up to the orchestrator, the coordinator exposes its eight commands as tools the AI can call (MCP). The human user also gets an authenticated HTTPS command surface plus resumable WebSocket/event delivery over the *same* coordinator authority: harness and exact model selection, steer/turn, approval/question response, interrupt/kill, goals/tasks, budgets, narrative, and emergency stop all retain the ordinary fence, idempotency, audit, sandbox, and trust gates. Down to workers, Baton uses each vendor's real interface (subprocess or Codex's app-server), with the ACP standard as a fallback. No new southbound protocol is invented — Baton is a compatibility layer over what already exists. The secure human↔orchestrator contract is `spec/phase12/authenticated-web-northbound.md`.
 - **Deployment:** start on one machine (coordinator + workers together). Later, the coordinator can live on a bigger box you reach over SSH/Tailscale, with your orchestrator attaching remotely. Multi-machine meshing is deferred until one box actually hurts.
 
 ---
@@ -192,8 +192,8 @@ Optional at any point: a cheap side experiment on your real tasks to see whether
 
 - **Solid and dependable:** the coordinator core, interrupt/steer, re-verification, messaging, per-vendor adapters. These are specified, red-teamed, and partly prototyped.
 - **Real but earned later:** routing, memory, the worker tools — good, but switched on when there's a reason.
-- **Genuine bets (flagged, not hidden):** semantic *merge* at scale (merging by meaning, not text lines) could make large fleets far smoother but is unproven; math proof only pays off on small critical pieces (turning an English spec into a provable statement is the unsolved part — never claim "proven" over a spec a worker could have weakened); "the fleet gets smarter on its own" is measured, not assumed.
-- **Things that will move under us:** vendors are building pieces of this themselves and models keep improving, so build *deep* only the parts that stay valuable as models get better — dependable cross-vendor control and trustworthy verification — and keep the rest thin and swappable. A frontier-research pass ([`docs/21`](docs/21-frontier-features.md)) sorted the shiny 2025-26 ideas into keepers (the hardened trust gate, the structured brief, the story monitor, semantic-diff review) and an explicit **cut list** (a full analysis engine, an effect-type system, self-improving worker tools, a monitoring-dashboard product, e-graph/fingerprint exotica) — the cuts matter as much as the adds, and the rule that falls out is: **nothing self-modifies the coordinator or the trust gate; the driver evolves only its periphery, and only through the same re-verification everything else passes.**
+- **Genuine bets (flagged, not hidden):** semantic *merge* at scale (merging by meaning, not text lines) could make large fleets far smoother but is unproven; math proof only pays off on small critical pieces (turning an English spec into a provable statement is the unsolved part — never claim "proven" over a spec a worker could have weakened); "the fleet gets smarter on its own" is measured, not assumed. AST/CST, symbol/SCIP, CPG, IR, behavioral fingerprints, semantic merge, and e-graphs remain catalogued representation rungs with explicit evaluation/retirement gates.
+- **Things that will move under us:** vendors are building pieces of this themselves and models keep improving, so build *deep* only the parts that stay valuable as models get better — dependable cross-vendor control and trustworthy verification — and keep the rest thin and swappable. A frontier-research pass ([`docs/21`](docs/21-frontier-features.md)) proposed a historical cut list; the full-system goal now treats those entries as sequenced research rungs, not silent deletions. They may be retired only by a recorded evidence-backed Decision. The durable rule is: **nothing self-modifies the coordinator or the trust gate; the driver evolves only its periphery, and only through the same re-verification everything else passes.**
 
 ---
 
@@ -234,6 +234,8 @@ Every feature the exploration produced, with honest status. **Core** = the drive
 | OS-sandbox boundary, scoped secrets, contagion tracking | Safety | MVP-adjacent | `docs/09` §C, `docs/14` |
 | Trust ramp (dry-run → autonomous) | Safety | Grows with use | `docs/14` #18 |
 | Story-style operator monitor + takeover seat | Operate | Phase 2 | `docs/14` #16, `docs/05` §7 |
+| Authenticated HTTPS commands + resumable web event stream | Core/Operate/Safety | Required northbound | `spec/phase12/authenticated-web-northbound.md`, `docs/26` §J |
+| AST/CST → symbol/SCIP → CPG → IR → behavior → semantic diff/merge → e-graph ladder | Tools/Trust | Staged, no silent deletion | `docs/26` §§H–I, `docs/15`, capability specs |
 | Semantic merge at scale | Bet | Research | `docs/15` §4b |
 | Computer-use (GUI) worker tier | Tools | Bet (flaky) | `docs/capabilities/skills-computeruse.md` |
 

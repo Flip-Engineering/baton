@@ -117,13 +117,14 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 
 | Gate | Current evidence |
 |---|---|
-| Zero-quota suite | **521/521 passing** via bare `node --test` in `impl/` |
+| Zero-quota suite | **522/522 passing** via bare `node --test` in `impl/`; the added two-Grok ACP process test proves concurrent native child PIDs, confirmed kills, and process/worktree/branch reap |
 | U-1…U-11 | All reproduced before repair; verdict ledger in `docs/handoff/evidence/phase10.1-reverification.md` |
 | Fresh adversarial review | No unresolved critical/major finding; `docs/handoff/evidence/phase10.1-adversarial-review.md` |
 | Three-vendor live fleet | `docs/reference/evidence/phase10.1-capstone-2026-07-10/summary.json` has every check true; 573-event raw ledger beside it |
 | Recursive output | Three trust-gated review artifacts under `reviews/dogfood/`, authored by real Claude, Codex, and Grok workers and integrated into `master` |
 | Multi-Grok kill/reap | `docs/reference/evidence/grok-multi-reap-2026-07-10/summary.json` has every check true; raw ledger beside it |
 | Concurrent exact models | `docs/reference/evidence/phase11-grok-model-selection-2026-07-11/summary.json` has every check true |
+| Current Grok rerun | `docs/reference/evidence/phase11-grok-model-selection-2026-07-11/attempt-2026-07-11-auth-expired.md` is honestly `PENDING-LIVE-grok-reauth`; provider rejected both isolated sessions before PID/model establishment, while cleanup remained complete |
 | Persistent two-turn Grok | `docs/reference/evidence/phase11-grok-persistent-session-2026-07-11/summary.json` has all 16 checks true; same session/PID, two fresh verdicts, full reap |
 | Isolated governance Grok | `docs/reference/evidence/phase11-grok-governance-2026-07-11/summary.json` has all 16 checks true; private credential scope, real sandbox denial, canonical usage, automatic budget kill, full reap |
 | Acceptance/integration | `docs/handoff/evidence/phase11-acceptance-integration-2026-07-11.md`; 16 focused temp-repo tests cover AC1–AC6 and the full suite is 502/502 |
