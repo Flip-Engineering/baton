@@ -18,8 +18,9 @@ product to one machine or knowledge service.
 
 ## Definition of complete
 
-Baton is complete when one orchestrator can choose harness **and model**, direct persistent
-multi-vendor workers through a durable northbound surface, observe and govern them safely, accept
+Baton is complete when one orchestrator can choose **harness, exact model, and model effort** as
+independent route axes, direct persistent multi-vendor workers through a durable northbound
+surface, observe and govern them safely, accept
 and integrate only independently established work, share operational/coordinative/epistemic
 knowledge, and give workers the complete capability and representation planes below. Every claim
 must be reachable through the public assembly, test-locked, adversarially reviewed, and live-proven
@@ -39,6 +40,10 @@ The implementation loop for every increment is:
 Recursive dogfooding resumes only after the lifecycle, provenance, and credential gates relevant
 to the recursive run are green.
 
+After those gates, dogfooding is continuous: Baton implements, verifies, reviews, integrates,
+kills, and reaps the workers that improve Baton itself. Manual diagnosis may explain a rejected
+result but may not bypass Baton's normal fresh-verification and integration authority.
+
 ## Complete capability catalog
 
 ### A. Fleet control and reliability
@@ -53,14 +58,15 @@ to the recursive run are green.
 - Dependency DAG, refinement links, idempotent claims, artifact registry, path leases, and
   deterministic ready-work selection.
 
-### B. Harness and model selection
+### B. Harness, model, and effort selection
 
-Harness/CLI and model are independent axes. The orchestrator can:
+Harness/CLI, exact model, and model effort are independent axes. The orchestrator can:
 
 - name an exact harness and exact model;
 - select a model while leaving harness routing automatic;
 - constrain allowed/denied models or families and express ordered preferences;
-- select reasoning/service tier where the harness exposes it;
+- select reasoning effort and service tier where the harness exposes them, without encoding either
+  as an accidental property of the harness name;
 - inspect available/default/current model information and the provenance/freshness of that card;
 - see requested, resolved, observed, and rerouted model identities in handles, events, results,
   verification, routing statistics, replay, scorecards, and commit attribution; and
@@ -68,6 +74,20 @@ Harness/CLI and model are independent axes. The orchestrator can:
 
 Selection must map to real controls: Claude/GLM `--model`, Codex thread/turn model overrides, Grok
 `--model`/ACP model state, and future adapters’ native mechanism.
+
+The current recursive-dogfood route is `CodexAppServerCli` + exact `gpt-5.6-sol` + `low` effort for
+efficient implementation work. `gpt-5.6` is not an alias and was correctly rejected by the live
+ChatGPT transport; Baton may not silently substitute it or any older default. Once isolated Grok
+authentication is available, Grok 4.5 through Grok Build is the intended cross-family,
+Opus-class review/implementation stand-in. These are operator policy inputs backed by live cards,
+not timeless model folklore. GitHub issue
+[#2](https://github.com/wahargis/baton/issues/2) tracks end-to-end route-tuple completion.
+
+Concurrent-provider acceptance includes starting multiple Grok workers at once, observing the
+configured concurrency/card limits, interrupting and killing selected workers, and proving native
+process, worktree, runtime scope, branch, and coordinator-state reap. Missing provider credentials
+remain a typed live-evidence blocker; they are never grounds to project ambient secrets or weaken
+runtime isolation.
 
 ### C. Southbound harness depth
 

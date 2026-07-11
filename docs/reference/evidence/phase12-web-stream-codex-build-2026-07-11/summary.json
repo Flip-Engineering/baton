@@ -1,18 +1,18 @@
 {
-  "at": "2026-07-11T21:17:35.279Z",
-  "repoHead": "0aad538f96b82e632e3e7c4af7e05d5b376590c1",
+  "at": "2026-07-11T21:26:48.444Z",
+  "repoHead": "3510af8d91556a194b291010fe31154e7bb8bb41",
   "workerId": "w-1",
-  "pid": 74186,
+  "pid": 6912,
   "model": "gpt-5.6-sol",
   "result": {
     "ready": true,
-    "status": "failed",
+    "status": "completed",
     "verdict": {
       "reverified": true,
-      "observedExit": 1,
+      "observedExit": 0,
       "hadClaim": false,
       "matchesClaim": true,
-      "passed": false,
+      "passed": true,
       "locus": "fresh_sandbox",
       "redGreen": null,
       "baseExit": null,
@@ -21,9 +21,9 @@
       "mutationStrength": null,
       "mutationPassed": null,
       "survivedMutants": [],
-      "observedOutputTail": "node:internal/modules/package_json_reader:301\n  throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);\n        ^\n\nError [ERR_MODULE_NOT_FOUND]: Cannot find package '@ast-grep/napi' imported from /Users/wahargis/Development/Experiments/baton/.baton/verify/codex-web-stream-build-80394f42/impl/src/atlas-structural.mjs\n    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:301:9)\n    at packageResolve (node:internal/modules/esm/resolve:764:81)\n    at moduleResolve (node:internal/modules/esm/resolve:855:18)\n    at defaultResolve (node:internal/modules/esm/resolve:988:11)\n    at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)\n    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)\n    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:746:52)\n    at #resolve (node:internal/modules/esm/loader:679:17)\n    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:599:35)\n    at ModuleJob.syncLink (node:internal/modules/esm/module_job:160:33) {\n  code: 'ERR_MODULE_NOT_FOUND'\n}\n\nNode.js v25.8.0\n✖ impl/test/phase12-web-auth.test.mjs (67.202667ms)\nnode:internal/modules/package_json_reader:301\n  throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);\n        ^\n\nError [ERR_MODULE_NOT_FOUND]: Cannot find package '@ast-grep/napi' imported from /Users/wahargis/Development/Experiments/baton/.baton/verify/codex-web-stream-build-80394f42/impl/src/atlas-structural.mjs\n    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:301:9)\n    at packageResolve (node:internal/modules/esm/resolve:764:81)\n    at moduleResolve (node:internal/modules/esm/resolve:855:18)\n    at defaultResolve (node:internal/modules/esm/resolve:988:11)\n    at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)\n    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)\n    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:746:52)\n    at #resolve (node:internal/modules/esm/loader:679:17)\n    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:599:35)\n    at ModuleJob.syncLink (node:internal/modules/esm/module_job:160:33) {\n  code: 'ERR_MODULE_NOT_FOUND'\n}\n\nNode.js v25.8.0\n✖ impl/test/phase12-web-northbound.test.mjs (65.629875ms)\n✔ WN6: tickets are short-lived, single-use, and bound to exact session/origin/repo (2.70325ms)\n✔ WN6/WN7: snapshot boundary, ordered reconnect, expiry, backpressure and disconnect are audited without worker control (0.791458ms)\nℹ tests 4\nℹ suites 0\nℹ pass 2\nℹ fail 2\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 71.455667\n\n✖ failing tests:\n\ntest at impl/test/phase12-web-auth.test.mjs:1:1\n✖ impl/test/phase12-web-auth.test.mjs (67.202667ms)\n  'test failed'\n\ntest at impl/test/phase12-web-northbound.test.mjs:1:1\n✖ impl/test/phase12-web-northbound.test.mjs (65.629875ms)\n  'test failed'\n",
-      "note": "FAIL: observed exit 1, expected 0.",
-      "durationMs": 122
+      "observedOutputTail": "✔ WN2/WN8: issued cookie credentials are random, hashed at rest, and use strict host-only attributes (7.137583ms)\n✔ WN2: cookie and bearer authentication return sanitized stable identity, never the raw credential (1.486625ms)\n✔ WN2/WN7: revocation is immediate, audited, and survives restart (1.490584ms)\n✔ WN2/WN5: expired, malformed, mixed, and overlong credentials fail closed (0.933166ms)\n✔ WN2: duplicate revoke is idempotent and unknown sessions do not reveal existence (0.995417ms)\n✔ WN2/WN5: the session registry protects the command northbound and revocation blocks the next command (6.034208ms)\nPreparing worktree (new branch 'baton/fenced-web-stop')\n✔ WN2/WN3/WN5: authentication, exact origin, CSRF, capability, and repo scope fail before dispatch (8.660042ms)\n✔ WN1/WN4: spawn forwards harness and exact model independently and derives the audit actor from auth (3.154833ms)\n✔ WN4: an identical retry executes once and a same-key different body conflicts without mutation (1.949791ms)\n✔ WN4/WN5/WN7: unknown fields, unknown model policy, and client-supplied audit identity are rejected before admission (1.533459ms)\n✔ WN4: admitted and completed idempotency state survives coordination-store restart (1.40625ms)\n✔ WN1/WN4: fence-sensitive control forwards the expected fence and refuses a missing fence (0.893083ms)\n✔ WN4/WN7: durable completion append failure never returns a successful command result (0.696042ms)\n✔ WN7: coordinator precondition errors become typed, non-leaking invalid-command outcomes (0.796ms)\n✔ WN1/WN2/WN5/WN8: the HTTP adapter authenticates a bounded JSON command and the server refuses missing TLS/auth (3.428541ms)\n✔ WN4/WN9: the real coordinator rejects stale web stop fences before adapter mutation (90.242417ms)\n✔ WN2/WN5/WN6: stream tickets are short-lived, single-use, hashed, and exactly bound (2.756042ms)\n✔ WN6: snapshot boundary and reconnect provide ordered at-least-once coordination delivery (1.627375ms)\n✔ WN6/WN7/WN9: expired cursors and bounded backpressure are typed and audited (0.487708ms)\n✔ WN6/WN9: browser disconnect audits closure and never invokes worker control (0.286458ms)\nℹ tests 20\nℹ suites 0\nℹ pass 20\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1040.238416\n",
+      "note": "PASS: observed exit 0 matches expected 0.",
+      "durationMs": 1092
     },
     "artifacts": {
       "commits": [],
@@ -40,14 +40,14 @@
     "sessionRef": {
       "vendor": "codex",
       "kind": "thread",
-      "id": "019f5309-363f-70f1-ac41-0e931637a4c4",
+      "id": "019f5311-0f9a-79c1-8075-a34052a50a08",
       "persistence": "native",
       "source": "wire"
     },
     "sessionContext": {
       "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-web-stream-build",
       "repoRoot": "/Users/wahargis/Development/Experiments/baton",
-      "baseSha": "0aad538f96b82e632e3e7c4af7e05d5b376590c1",
+      "baseSha": "785be1f620d5c74ae0617d692fcedd92c9fe1387",
       "branch": "baton/codex-web-stream-build",
       "ownerTaskId": "codex-web-stream-build"
     },
@@ -57,21 +57,31 @@
     "publication": null,
     "retainedResultRef": null
   },
-  "integration": null,
+  "integration": {
+    "ok": true,
+    "result": "integrated",
+    "integration": {
+      "beforeSha": "785be1f620d5c74ae0617d692fcedd92c9fe1387",
+      "resultSha": "3510af8d91556a194b291010fe31154e7bb8bb41",
+      "afterSha": "3510af8d91556a194b291010fe31154e7bb8bb41",
+      "strategy": "ff-only",
+      "actor": "orchestrator"
+    }
+  },
   "approvals": [],
   "steer": null,
   "checks": {
-    "noHarnessError": false,
+    "noHarnessError": true,
     "exactModelObserved": true,
-    "freshVerified": false,
-    "integrated": false,
-    "integrationIntent": false,
+    "freshVerified": true,
+    "integrated": true,
+    "integrationIntent": true,
     "killConfirmed": true,
     "processGone": true,
     "worktreeGone": true,
     "runtimeGone": true,
     "branchGone": true
   },
-  "fatal": "Error: implementation failed trust gate: {\"ready\":true,\"status\":\"failed\",\"verdict\":{\"reverified\":true,\"observedExit\":1,\"hadClaim\":false,\"matchesClaim\":true,\"passed\":false,\"locus\":\"fresh_sandbox\",\"redGreen\":null,\"baseExit\":null,\"coverageOfChange\":null,\"uncoveredChangedLines\":[],\"mutationStrength\":null,\"mutationPassed\":null,\"survivedMutants\":[],\"observedOutputTail\":\"node:internal/modules/package_json_reader:301\\n  throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);\\n        ^\\n\\nError [ERR_MODULE_NOT_FOUND]: Cannot find package '@ast-grep/napi' imported from /Users/wahargis/Development/Experiments/baton/.baton/verify/codex-web-stream-build-80394f42/impl/src/atlas-structural.mjs\\n    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:301:9)\\n    at packageResolve (node:internal/modules/esm/resolve:764:81)\\n    at moduleResolve (node:internal/modules/esm/resolve:855:18)\\n    at defaultResolve (node:internal/modules/esm/resolve:988:11)\\n    at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)\\n    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)\\n    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:746:52)\\n    at #resolve (node:internal/modules/esm/loader:679:17)\\n    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:599:35)\\n    at ModuleJob.syncLink (node:internal/modules/esm/module_job:160:33) {\\n  code: 'ERR_MODULE_NOT_FOUND'\\n}\\n\\nNode.js v25.8.0\\n✖ impl/test/phase12-web-auth.test.mjs (67.202667ms)\\nnode:internal/modules/package_json_reader:301\\n  throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);\\n        ^\\n\\nError [ERR_MODULE_NOT_FOUND]: Cannot find package '@ast-grep/napi' imported from /Users/wahargis/Development/Experiments/baton/.baton/verify/codex-web-stream-build-80394f42/impl/src/atlas-structural.mjs\\n    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:301:9)\\n    at packageResolve (node:internal/modules/esm/resolve:764:81)\\n    at moduleResolve (node:internal/modules/esm/resolve:855:18)\\n    at defaultResolve (node:internal/modules/esm/resolve:988:11)\\n    at #cachedDefaultResolve (node:internal/modules/esm/loader:697:20)\\n    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:714:38)\\n    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:746:52)\\n    at #resolve (node:internal/modules/esm/loader:679:17)\\n    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:599:35)\\n    at ModuleJob.syncLink (node:internal/modules/esm/module_job:160:33) {\\n  code: 'ERR_MODULE_NOT_FOUND'\\n}\\n\\nNode.js v25.8.0\\n✖ impl/test/phase12-web-northbound.test.mjs (65.629875ms)\\n✔ WN6: tickets are short-lived, single-use, and bound to exact session/origin/repo (2.70325ms)\\n✔ WN6/WN7: snapshot boundary, ordered reconnect, expiry, backpressure and disconnect are audited without worker control (0.791458ms)\\nℹ tests 4\\nℹ suites 0\\nℹ pass 2\\nℹ fail 2\\nℹ cancelled 0\\nℹ skipped 0\\nℹ todo 0\\nℹ duration_ms 71.455667\\n\\n✖ failing tests:\\n\\ntest at impl/test/phase12-web-auth.test.mjs:1:1\\n✖ impl/test/phase12-web-auth.test.mjs (67.202667ms)\\n  'test failed'\\n\\ntest at impl/test/phase12-web-northbound.test.mjs:1:1\\n✖ impl/test/phase12-web-northbound.test.mjs (65.629875ms)\\n  'test failed'\\n\",\"note\":\"FAIL: observed exit 1, expected 0.\",\"durationMs\":122},\"artifacts\":{\"commits\":[],\"files\":[]},\"vendor\":\"codex\",\"modelRequested\":\"gpt-5.6-sol\",\"modelResolved\":\"gpt-5.6-sol\",\"modelObserved\":\"gpt-5.6-sol\",\"modelMismatch\":null,\"sessionRequest\":{\"mode\":\"new\"},\"sessionRef\":{\"vendor\":\"codex\",\"kind\":\"thread\",\"id\":\"019f5309-363f-70f1-ac41-0e931637a4c4\",\"persistence\":\"native\",\"source\":\"wire\"},\"sessionContext\":{\"worktree\":\"/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-web-stream-build\",\"repoRoot\":\"/Users/wahargis/Development/Experiments/baton\",\"baseSha\":\"0aad538f96b82e632e3e7c4af7e05d5b376590c1\",\"branch\":\"baton/codex-web-stream-build\",\"ownerTaskId\":\"codex-web-stream-build\"},\"lineage\":null,\"review\":null,\"integration\":null,\"publication\":null,\"retainedResultRef\":null}\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase12-web-stream-codex-build-2026-07-11/run.mjs:28:520",
-  "pass": false
+  "fatal": null,
+  "pass": true
 }

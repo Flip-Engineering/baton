@@ -15,9 +15,15 @@ harness/exact-model forwarding, fence-required worker control, durable restart-s
 admission/completion/idempotency, derived audit actors, and fail-closed audit writes. Focused evidence is in
 `docs/handoff/evidence/phase12-web-northbound-2026-07-11.md`.
 
+The WN6 SSE fallback is also executable. It uses authenticated, origin/session/repository-bound,
+single-use connection tickets; emits a snapshot boundary and stable coordination cursors; resumes
+at-least-once delivery from `Last-Event-ID`; rejects expired cursors; bounds replay and pending
+bytes; and disconnects without fleet-control side effects. Its recursive Baton build evidence is
+in `docs/reference/evidence/phase12-web-stream-codex-build-2026-07-11/`.
+
 This is not WN1–WN10 completion. Identity-provider login/bootstrap, refresh/key rotation and a
-logout HTTP route, request and connection quotas, resumable WebSocket/SSE delivery with bounded
-backpressure, trusted-proxy configuration, command-status reconciliation for
+logout HTTP route, complete request/connection quotas, optional resumable WebSocket parity,
+trusted-proxy configuration, command-status reconciliation for
 admitted-but-incomplete commands, browser UI automation, and the full adversarial gate remain
 active scope.
 
@@ -102,6 +108,29 @@ Slow clients receive bounded buffers and explicit lag/gap notifications before d
 Attention and terminal/control events are not silently dropped to preserve prose. Browser loss,
 tab suspension, stream timeout, or reconnect never interrupts or kills workers. A separate,
 authenticated command is required for that effect.
+
+An event-stream instance is bound to exactly one repository coordination authority. It may not
+relabel one unpartitioned snapshot or event log under several repository IDs. Multi-repository
+control requires an explicit repository-to-authority router, not a broader allowlist over one
+store.
+
+Connection tickets are non-credential, single-purpose nonces: session credentials remain in the
+authenticated cookie/Bearer channel and never enter the URL. Ticket state is hashed, short-lived,
+single-use, bounded, and expired entries are pruned. Ticket refusal/issuance and stream refusal,
+snapshot-required, connection, lag, and disconnect outcomes are audited. A ticket is not made live
+until its issuance audit commits, and no success headers or snapshot bytes are sent until the
+connection audit commits.
+
+The initial snapshot and every subsequent frame are subject to explicit byte ceilings. If a
+snapshot cannot fit, the server returns a typed bounded failure before starting SSE; it never writes
+an unbounded initial frame. Lag metadata has a separately fixed small control-frame ceiling so the
+notification itself cannot turn a full data buffer into unbounded growth. Ticket and active
+connection counts also have explicit ceilings.
+
+Trust labels distinguish the authoritative occurrence/order of a coordination event from the
+grounding of its content. Scratch claims and claimed/derived knowledge may never be relabeled as
+authoritative merely because the coordination store transported them; snapshot frames declare
+mixed content trust.
 
 ## WN7 — responses, errors, and audit provenance
 
