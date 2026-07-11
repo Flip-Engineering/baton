@@ -7,6 +7,29 @@ that proposal — a pinned objective in the spirit of the goal surfaces the harn
 grew this year (codex `thread/goal/set`, grok's `/goal` runtime command): objective, definition
 of done, and the standing constraints that govern pursuit.*
 
+## Completion record — 2026-07-10
+
+**Status: COMPLETE.** Phase 10 C+D landed SC1–SC10, but its first adversarial review exposed the
+async spawn/stop cluster U-1…U-11. Phase 10.1 reproduced every finding, specified SC12–SC20,
+captured the red state, implemented the repair, and passed a fresh review with no unresolved
+critical/major finding. Bare `node --test` is **427/427 green**.
+
+Plan F then ran recursively on the Baton repository through `createDriver()`:
+
+- real Claude, Codex, and Grok turns overlapped;
+- Claude accepted a native mid-turn steer;
+- a separate Codex worker confirmed interrupt and ended `cancelled`;
+- real Claude and Grok approvals were answered through the coordinator;
+- all three completed artifacts passed fresh-worktree verification and were integrated; and
+- GLM was checked by credential presence only and recorded `PENDING-LIVE-no-credential`, which is
+  the goal's allowed credential-bound outcome.
+
+A follow-up ran four real Grok sessions concurrently through one adapter, confirmed two interrupts
+and four kills, and proved every PID, worktree, and stress branch reaped. Evidence is committed
+under `docs/reference/evidence/phase10.1-capstone-2026-07-10/` and
+`docs/reference/evidence/grok-multi-reap-2026-07-10/`. The current record is
+`impl/VALIDATION.md`; researched-but-unshipped phase-11 work is `docs/25-capability-gap.md`.
+
 ## The goal, pinned
 
 > **Every subsystem baton has built is wired, gated, and live-proven — no built-not-wired gaps —
@@ -160,5 +183,5 @@ retired with evidence.
 
 ---
 
-*Goal pinned. Phase B closed 5 of 12 believed gaps by evidence and confirmed the remaining 7 as
-real work; pursuit continues C → F.*
+*Goal completed. The C→F pursuit required the phase-10.1 reconciliation erratum before recursive
+live proof; the evidence above is authoritative over the earlier prospective wording.*

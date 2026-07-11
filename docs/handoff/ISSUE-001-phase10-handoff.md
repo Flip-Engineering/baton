@@ -1,6 +1,7 @@
-# ISSUE-001 — Phase-10 handoff (RESERVED for Fable 5 / GPT-5.6 Sol xHigh)
+# ISSUE-001 — Phase-10 handoff (RESOLVED)
 
-> **Status:** OPEN · **Owner-tier:** high-capability model only (Fable 5, or GPT-5.6 Sol xHigh) ·
+> **Status:** RESOLVED 2026-07-10 · **Resolution:** phase 10.1 (`a0a37e0`) plus recursive live
+> capstone and multi-Grok reap evidence ·
 > **Opened:** 2026-07-10 by Fable 5 · **Reason for handoff:** Fable 5 hit its usage-credit ceiling
 > **mid-review**. This is a local-repo issue (no GitHub remote) committed to version control so the
 > entirety of the design intent, current state, and next steps survive the model switch.
@@ -10,6 +11,12 @@
 > unverified** concurrency findings that must be re-verified and fixed **before** the live capstone
 > (which spends real quota and, per the findings below, could spawn genuinely unkillable orphan CLI
 > processes). Do not run the live capstone until §5 is resolved.
+>
+> **Resolution note:** U-1 through U-11 were all re-reproduced and fixed under SC12–SC20; the
+> zero-quota suite reached 427/427 and a fresh review closed the safety gate. The subsequent real
+> Claude/Codex/Grok capstone passed every check, and four concurrent Grok sessions were killed and
+> reaped cleanly. This document is retained as historical incident evidence; current judgment is
+> `impl/VALIDATION.md` and current debt is `docs/25-capability-gap.md`.
 
 ---
 

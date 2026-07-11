@@ -1,6 +1,6 @@
 # 02 — Harness Control Surfaces
 
-*What each harness actually exposes for programmatic control. Primary-source evidence from locally installed binaries unless marked otherwise. Verified 2026-07-09 against: Codex CLI **0.144.0**, Claude Code **2.1.205**; Grok Build CLI **0.1.216** added 2026-07-10.*
+*What each harness actually exposes for programmatic control. Primary-source evidence from locally installed binaries unless marked otherwise. Verified 2026-07-10 against: Codex CLI **0.144.0**, Claude Code **2.1.206**, and Grok Build CLI **0.1.216**.*
 
 ## The capability vocabulary
 
@@ -49,7 +49,7 @@ Beyond the minimum vocabulary, notable extras:
 
 **Evidence from OpenAI's own Claude Code plugin (installed locally, v1.0.6):** their bridge runs a persistent `app-server` behind a Unix-socket broker (`app-server-broker.mjs`), single-flights requests, and — the telling detail — carves out an exception so `turn/interrupt` is allowed from a *different* client socket while a stream is active. Interruption is treated as a cross-client control-plane right. Orchestrator-side, the companion (`codex-companion.mjs`) is a file-backed job ledger: `task [--background]`, `status --wait` (2s poll), `result`, `cancel`, jobs keyed to the calling Claude session ID. That's their answer to the event-loop problem: **poll, don't push** (see doc 04).
 
-## Claude Code 2.1.205 (locally verified flags; SDK semantics from docs)
+## Claude Code 2.1.206 (locally verified flags; SDK semantics from docs)
 
 No public JSON-RPC schema dump, but three overlapping surfaces:
 
@@ -80,7 +80,7 @@ Mapping to the vocabulary:
 There is **no first-party "Z-code" CLI**. Z.ai's GLM Coding Plan (GLM-5.2, GLM-5-Turbo, GLM-4.7) officially supports *third-party* harnesses — **Claude Code, Cline, and OpenCode** — auto-configured by `npx @z_ai/coding-helper`. The Anthropic-compatible endpoint is confirmed from official docs: `ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic` + `ANTHROPIC_AUTH_TOKEN`, with model mapping via `ANTHROPIC_DEFAULT_*_MODEL` (e.g. `ANTHROPIC_DEFAULT_OPUS_MODEL=glm-5.2[1m]` for 1M context); Z.ai recommends a 3,000,000 ms timeout and 1M-token auto-compact window — explicitly agent-session-oriented.
 
 So **Claude Code as the GLM harness is not a hack, it's the vendor's blessed configuration** — the glm-adapter is the claude-adapter with env overrides, exactly as hoped. Two caveats survive:
-- Harness/model mismatch still costs quality (Claude-tuned prompts and tool descriptions driving GLM); Z.ai's own compat verification trails Claude Code releases (2.0.14 vs today's 2.1.205). OpenCode is the officially-supported alternative harness if the mismatch proves expensive.
+- Harness/model mismatch still costs quality (Claude-tuned prompts and tool descriptions driving GLM); Z.ai's own compat verification trails Claude Code releases (2.0.14 vs today's 2.1.206). OpenCode is the officially-supported alternative harness if the mismatch proves expensive.
 - The plan is **contractually locked to supported harnesses** and enforces per-tier *concurrency* limits (Pro-tier reports of a single in-flight request; peak-hour 3× quota multipliers on GLM-5.2). Fleet math changes accordingly — see doc 01 §7 and doc 06 Q7.
 
 ## Grok Build CLI 0.1.216 — native ACP, shipped by the vendor (added 2026-07-10)
@@ -116,9 +116,9 @@ Notable extras: first-party **shared leader process** (`grok agent leader`, clie
 | spawn | ✅ native | ✅ native | ✅ (env override) | ✅ session/new | ✅ session/new |
 | stream | ✅ rich (deltas, diffs, plans) | ✅ rich | ✅ | ✅ session/update | ✅ session/update + `x.ai/*` notifs |
 | interrupt | ✅ `turn/interrupt` | ✅ SDK interrupt | ✅ | ✅ session/cancel | ✅ session/cancel (**live-proven**) |
-| steer mid-turn | ✅ **`turn/steer`** | ✅ **native mid-turn user frame** (phase-8 live re-eval; absorbed at next tool boundary) | ✅ same | ❌ (ACP has no steer) | ❌ → emulate (probe splice post-auth) |
+| steer mid-turn | ✅ **`turn/steer`** | ✅ **native mid-turn user frame** (phase-8 live re-eval; absorbed at next tool boundary) | ✅ same | ❌ (ACP has no steer) | ❌ → emulate (cancel first, then re-prompt; live-proven) |
 | inject context | ✅ `thread/inject_items` | ⚠️ between turns | ⚠️ | ❌ | ⚠️ between turns |
-| approvals → client | ✅ JSON-RPC requests | ✅ canUseTool | ✅ | ✅ session/request_permission | ✅ session/request_permission (config caveat) |
+| approvals → client | ✅ JSON-RPC requests | ✅ canUseTool | ✅ | ✅ session/request_permission | ✅ session/request_permission (fires under default config; live-proven) |
 | resume/fork/rollback | ✅ / ✅ / ✅ | ✅ / ✅ / ❌ | ✅ | ✅ resume (capability-gated) / adapter-dependent / ❌ | ✅ load / ✅ `x.ai/session/fork` / ✅ **`x.ai/rewind/*` w/ file snapshots** |
 | goal pinning | ✅ `thread/goal/*` | ❌ (emulate via system prompt) | ❌ | ❌ | ⚠️ `goal` runtime command (live-listed post-auth; unprobed) |
 | usage/rate-limit telemetry | ✅ push notifications | ✅ OTel + result events | ⚠️ (Z.ai side unknown) | ❌ (not in ACP) | ✅ **usage `_meta` on every prompt response (live)** |
@@ -128,3 +128,19 @@ Notable extras: first-party **shared leader process** (`grok agent leader`, clie
 Legend: ✅ native · ⚠️ emulable with adapter work · ❌ absent. (Gemini column reflects the verified ACP spec — doc 01 §1. Grok column **live-verified 2026-07-10 post-auth** — authenticated smoke + adapter E2E, 8/8 verdicts; steer stays emulated because mid-turn prompts QUEUE rather than splice, and cancel kills active+queued together — reference/grok-build-cli.md post-auth erratum. Claude steer upgraded to native per docs/23 phase-8 live re-eval.)
 
 **Design consequence:** the common denominator is poor but the union is rich. A lowest-common-denominator protocol wastes Codex's steering and Claude's hooks; the hub should expose a **capability-negotiated** surface (each adapter publishes a "harness card" of supported primitives, and the orchestrator's tools degrade gracefully — e.g. `steer` falls back to interrupt+reprompt with an explicit `emulated: true` flag in telemetry).
+
+## Baton implementation status (phase 10.1, live)
+
+The matrix above is no longer only adapter research. `ClaudeSessionCli`, `CodexAppServerCli`, and
+`GrokAcpCli` are exported through `impl/src/index.mjs` and driven by `createDriver()` in the shipped
+reference path. The 2026-07-10 recursive capstone ran all three concurrently on isolated Baton
+worktrees, landed native Claude steer, native Codex interrupt, and real Claude/Grok approvals, and
+fresh-worktree trust-gated all three completions. Evidence:
+`reference/evidence/phase10.1-capstone-2026-07-10/`.
+
+A second live stress ran one Grok adapter at its four-session ceiling. Four distinct PIDs reached
+active turns; two interrupts and four kills confirmed; all processes, worktrees, and stress
+branches were reaped. Evidence: `reference/evidence/grok-multi-reap-2026-07-10/`.
+
+Capabilities still absent from the driver despite vendor support—resume/fork, token/USD governance,
+red→green base execution, and merge/push lifecycle—are tracked in `25-capability-gap.md`.

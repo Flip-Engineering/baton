@@ -20,13 +20,18 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 
 ## Status
 
-Research + a runnable prototype skeleton, several review rounds applied and then **re-centered on the actual goal** ([docs/19](docs/19-north-star-corrected.md) — read this first; it corrects framing drift in docs 13/16/18).
+**Phase 10.1 complete.** Baton is a runnable dependency-free Node ESM reference implementation,
+not a prototype skeleton. Bare `node --test` in `impl/` is **427/427 green**. Its public
+`createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
+concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
+worktrees, and fresh-worktree trust gates. A separate run proved four concurrent real Grok sessions
+can all be interrupted/killed and fully reaped.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 
 **Everything else supports the driver, and none of it is dropped:** independent verification (re-running a worker's tests so "done" can be trusted), learned routing (which vendor is good at what), a reliable coordination core (so "interrupt worker 3" always lands), telemetry/replay, and worker tools (search, debug, semantic diff). Earlier docs over-billed the *verification* as the product and demoted the *driving* to optional — doc 19 turns that right-side-up.
 
-**Architecture, plainly:** you drive from your CLI agent (Claude Code or Codex is the orchestrator — it decides); underneath, a small reliable program carries out those decisions and does the bookkeeping (dispatch, making interrupts land, re-checking worker claims, the event log). The AI drives; the plumbing makes the driving safe. Southbound, workers are reached via subprocess (`claude -p`, `codex exec`) or the richer app-server, with ACP as a fallback tier. Grounded in primary-source inspection of the installed CLIs and four review campaigns. **Next step: build the smallest useful fleet driver — drive two workers, watch them, interrupt/steer them, trust the result via re-verification — then grow it.**
+**Architecture, plainly:** you drive from your CLI agent (Claude Code or Codex is the orchestrator — it decides); underneath, a small reliable program carries out those decisions and does the bookkeeping (dispatch, making interrupts land, re-checking worker claims, the event log). The AI drives; the plumbing makes the driving safe. Southbound, the product tier uses persistent Claude stream-json, Codex app-server, and Grok ACP sessions; one-shot subprocess adapters remain an explicitly limited fire-and-forget tier. The next phase is depth, not basic assembly: session resume/fork, token/USD governance and watchdog action, red→green base verification, and structured integration. See [docs/25](docs/25-capability-gap.md).
 
 **Design docs** (`docs/`):
 
@@ -48,11 +53,15 @@ Research + a runnable prototype skeleton, several review rounds applied and then
 | [13-revision-log-r2](docs/13-revision-log-r2.md) | Round-2 red/blue/explore: the Referee-not-Conductor reframe + all six REVISE verdicts |
 | [14-practitioner-addenda](docs/14-practitioner-addenda.md) | 30 net-new directions/critiques/features in my own voice: agent experience, context/harness craft, operator DX, the subtractive thesis |
 | [15-representation-and-computation](docs/15-representation-and-computation.md) | Re-anchor (Conductor is the ask; Referee is its trust spine) + the representation ladder (AST→CPG→IR→e-graph) and beyond-frontier self-ideated ideas (semantic diff/merge, behavioral fingerprint, attestation-overlay) |
+| [19-north-star-corrected](docs/19-north-star-corrected.md) | The fleet driver is the product; verification/routing/memory support it |
+| [22-completeness-audit](docs/22-completeness-audit.md) | The built-not-wired audit that drove phases 8–10 |
+| [24-goal-system-completion](docs/24-goal-system-completion.md) | Phase-10 whole-system goal and completion record |
+| [25-capability-gap](docs/25-capability-gap.md) | Current researched-versus-shipped inventory and phase-11 boundary |
 
 Capability module designs: [docs/capabilities/](docs/capabilities/). Context/harness angle designs: [docs/reference/context-harness/](docs/reference/context-harness/).
 
-**Specs** (`spec/`): [adapter-contract](spec/adapter-contract.md) (verb→real-API mapping per harness), [supervisor-state-machine](spec/supervisor-state-machine.md) (the durable control plane: fencing, cursors, two-phase stop, hub-run verification).
+**Specs** (`spec/`): [adapter-contract](spec/adapter-contract.md) (verb→real-API mapping per harness), [supervisor-state-machine](spec/supervisor-state-machine.md) (the durable control plane), and [phase-10.1 reconciliation](spec/phase10.1/spawn-stop-reconciliation.md) (async spawn/stop ownership and the recursive-live safety gate).
 
 **Reviews** (`reviews/`): [codex-external-review](reviews/codex-external-review.md) (cross-vendor red-team), [steering-interruption-redteam](reviews/steering-interruption-redteam.md) (the subordination-reliability red-team).
 
-**Reference** (`docs/reference/`): implementation-grade dossiers on each harness's real APIs, file formats, and limitations — see its [README](docs/reference/README.md).
+**Reference** (`docs/reference/`): implementation-grade dossiers plus committed live ledgers. The completed recursive fleet and four-Grok reap runs are under `docs/reference/evidence/`.

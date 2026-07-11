@@ -68,10 +68,23 @@
 
 **[local — primary-source, this machine; not part of the verified web run]** xAI's Grok Build CLI (`grok` 0.1.216) inverts the §1 pattern that flagship ACP adapters are maintained by the protocol org rather than the model vendors: **the vendor ships ACP as the product's own agent surface** (`grok agent stdio`), extended by 72 documented `x.ai/*` methods (git worktrees, session fork, rewind-with-file-snapshots, terminal, auth) plus first-party multi-client modes (WebSocket `serve`, WS relay, shared leader process). Its initialize handshake was live-verified here unauthenticated — it returns the full harness card (model `grok-build`, 500K context) before login; `session/new` is the auth gate. The CLI's control flags deliberately mirror Claude Code's (annotated equivalences in `--help`, identical `--permission-mode` enum). Consequence for §1's ecosystem read: ACP is graduating from "IDE-integration adapter layer" to a vendor-shipped control plane, which strengthens the case for baton speaking ACP natively as one southbound dialect. Control-surface detail and capability-matrix row: doc 02; full dossier: [reference/grok-build-cli.md](reference/grok-build-cli.md).
 
+## 9. Baton implementation addendum — the control-plane bet was exercised
+
+The phase-10.1 reference implementation now speaks the three load-bearing southbound dialects
+described above through one public driver: Claude stream-json, Codex app-server, and Grok ACP. A
+real recursive capstone ran all three concurrently, including steer, interrupt, approvals, isolated
+worktrees, and fresh verification. A separate four-session Grok run confirmed same-adapter
+concurrency plus process/worktree reap. See `docs/reference/evidence/phase10.1-capstone-2026-07-10/`
+and `docs/reference/evidence/grok-multi-reap-2026-07-10/`.
+
+This resolves the local half of the former “has any orchestrator adopted ACP as a control plane?”
+question: Baton now uses vendor-native Grok ACP as one southbound control dialect. Whether an
+external production orchestrator has independently converged remains an ecosystem question.
+
 ## Open questions carried forward
 
 1. Exact current stream-json control-frame vocabulary of Claude Code (only indirectly evidenced via claude-agent-acp source; local schema introspection unavailable). Track the adapter repo as the de-facto documentation.
 2. Whether Codex's `turn/steer` semantics (queue vs immediate context splice) are documented anywhere beyond the schema — behavioral testing needed in M0.
-3. Whether any existing orchestrator has adopted ACP as a *control plane* (none found — claude-squad is protocol-less; agent teams is Anthropic-internal; the codex plugin is bespoke app-server). Baton would apparently be first; that's either an opportunity or a warning.
+3. Whether any external production orchestrator has adopted ACP as a *control plane*. Baton now has a live reference implementation; none was found in the surveyed ecosystem.
 4. GLM-5.2 quality-in-Claude-harness vs native tools (Z.ai's own compat verification was against Claude Code 2.0.14, months stale).
 5. MCP tasks-extension adoption timeline in Claude Code / Codex MCP *clients* (would let `fleet_*` become native tasks).

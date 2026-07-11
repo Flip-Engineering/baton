@@ -1,147 +1,127 @@
-# Phase 6 — Qualitative Validation & Judgment
+# System Validation — phase 10.1 and the live recursive capstone
 
-*The methodology's final phase: not "do the tests pass" (they do — 259/259) but "does the thing actually work, and is it what it claims to be." Judged by driving the real assembled system and observing behavior (`node demo.mjs`), then assessing honestly.*
+Validated 2026-07-10 against `master` after phase 10.1. This file replaces the former phase-6
+judgment and its accumulated addenda; those historical corrections remain in docs/22–24 and the
+committed evidence ledgers.
 
-## What was built
+## Verdict
 
-A runnable fleet-driver coordinator in ~3,500 lines of dependency-free ESM JavaScript, across 9 modules, assembled by `createDriver()` (`src/index.mjs`) and exercised by 259 tests plus a narrated demo. It runs with `node` — no build step, no external packages, no model quota (workers are a deterministic `MockAdapter`; real Codex/Claude/GLM adapters implement the same interface as the next increment).
+**Baton's reference implementation now does what the phase-10 fleet-driver goal claims.** Through
+the public `createDriver()` assembly, real Claude Code, Codex app-server, and Grok ACP session
+workers ran concurrently in isolated git worktrees; Claude accepted a native mid-turn steer; Codex
+confirmed a real interrupt; Claude and Grok permission requests were approved through the
+coordinator; and every completing worker was accepted only after the hub re-ran its pinned check in
+a fresh worktree. The live capstone passed every machine-checked gate.
 
-## The four claims, judged against observed behavior
+The result is a reference implementation/executable specification, not yet the intended Go or
+Elixir production port. The important durable assets are its numbered contracts, wire-faithful
+fakes, event/replay semantics, and live protocol ledgers.
 
-1. **"The driver directs workers and the reliability holds."** — **TRUE.** `spawn/send/wait/respond/interrupt/result/list/kill` all work; version-stamps reject stale commands; the append-only log is the sole source of truth and the coordinator rebuilds its state from it on restart. Verified by 48 coordinator tests including the adversarial ones (stale-fence race, double-interrupt resolves, construction replay from log alone).
+## What is shipped and proven
 
-2. **"'Done' is hard to fool."** — **TRUE, and this is the strongest result.** The demo's scenario 2 shows a worker that *claims* `completed` with `claimedExit=0` while its committed code never creates `done.txt`. The driver re-runs the pinned check itself in a fresh git worktree the worker never touched, observes the failure, and marks the task **`failed`** — and the router records a **loss**, not the worker's claimed win. The referee test proves *freshness* is the mechanism (a `.gitignore`'d `done.txt`, real in the worker's own dir but absent from the fresh checkout, is caught). This is the durable core, working.
+### One assembled session fleet
 
-3. **"Interruption is dependable, not hopeful."** — **TRUE.** The demo's scenario 3 shows the status flip to `stopping` synchronously, the promise resolving only on the worker's `confirmed` stop, and the slow second edit (scheduled after the interrupt) never reaching disk. Two-phase stop is real.
+`createDriver()` assembles the event log, fencing, worktree manager, referee/accept gate, adaptive
+router, story compiler, coordinator, and the exported session adapter surface:
 
-4. **"Routing learns, from verified outcomes only."** — **TRUE.** The router recorded the honest run as a win (weight 1) and the forged run as a loss (weight 0), keyed by `harness@version` and task type — never from worker self-report.
+- `ClaudeSessionCli` — Claude Code 2.1.206 stream-json, native mid-turn user-frame steering,
+  interrupt, approvals/questions, multi-turn sessions, and process-group kill;
+- `CodexAppServerCli` — Codex CLI 0.144.0 app-server, native turn steer/interrupt, keyed approvals
+  and questions, token/rate-limit telemetry, and persistent threads;
+- `GrokAcpCli` — Grok Build 0.1.216 ACP, native prompt/interrupt/approval/kill, explicit
+  cancel-then-reprompt steer emulation, and prompt `_meta` usage;
+- `GlmSessionCli` — the Claude-session implementation with Z.ai's supported Anthropic-compatible
+  environment and capability tag. It is built and fake-proven to the credential boundary; this
+  machine had no Z.ai credential, so live GLM is honestly `PENDING-LIVE`.
 
-## Real vendor spin-up — now proven live (phase 7)
+The legacy one-shot adapters remain an explicitly limited fire-and-forget tier. They are not the
+phase-10 product posture or the live-capstone path.
 
-The MVP drove only a deterministic `MockAdapter`. That gap is now closed for two vendors. `src/cli-adapters.mjs` adds real subprocess adapters (`CodexCli`, `ClaudeCli`, `ZCodeCli`, `PiCli`) that spin up full vendor harnesses as workers on the same session Adapter contract, and both a **real Codex CLI worker** and a **real Claude Code CLI worker** have been driven end-to-end through `createDriver`:
+### The trust gate is the done gate
 
-- Each spun up headless in its own isolated `.baton/wt/<taskId>` git worktree, created `done.txt`, and streamed real events (`turn_started` → `content.tool_call` (Write/Bash) → `turn_completed`) parsed from `codex exec --json` / `claude -p --output-format stream-json`.
-- The task reached `completed` **only because the hub independently re-ran the pinned check in a fresh sandbox** (`verify.reverified`, `observedExit:0`, `locus:"fresh_sandbox"`) — never on the worker's word. The trust gate is real against real workers.
-- A quota-exhausted Codex run surfaced correctly as `lifecycle.crashed` → task `failed`, with **no false completion** — the driver handles a real vendor error cleanly.
-- Two correctness fixes fell out of the live runs: the referee no longer flags a no-claim worker (`claimedExit=null`) as "Diverged," and the adapter's stdout path no longer double-emits terminal events. Both are locked in by tests (273/273 green).
+When a worker reports completion, Baton captures its work, creates a fresh detached verification
+worktree, runs the brief's pinned command there, passes the resulting verdict through `accept()`,
+and records the result in routing only as a verified win/loss. A worker's text or exit claim cannot
+mark the task complete by itself. Vendor attribution is threaded into snapshot commits.
 
-## Honest limitations (what a green suite does NOT prove)
+The red→green and coverage policies are real `accept()` options, but red→green remains phase-11
+debt because `createDriver()` does not yet build/pass the base sandbox required to produce a
+non-null `verdict.redGreen`. The default fresh-result check is fully wired and live-proven.
 
-- **GLM/Z-Code and Pi not yet driven live.** `ZCodeCli` is structurally identical to `ClaudeCli` plus the Z.ai endpoint env (unit-tested), but needs a Z.ai key to run; `PiCli` is a configurable placeholder (Pi not installed). Codex + Claude Code are the two proven-live vendors.
-- **One-shot mode only.** These adapters use `codex exec` / `claude -p` (headless one-shot). Mid-run steering/answers/approvals return "unsupported" — live steering needs the codex app-server / Claude Agent SDK session mode, a later increment. Interrupt/kill work (process-group signal, confirmed-stop on close).
-- **`.baton/` exclusion is a setup requirement.** The driver keeps worktrees under `<repo>/.baton/`; a repo must exclude it (the demo/e2e do) or `pinBaseSha` sees the repo as dirty. A production driver should add this to `.git/info/exclude` on first touch — a small gap to close.
-- **One cosmetic gap:** the story narrative still shows a completed worker as "active" (the completion is a trust-gate event, not a lifecycle one the story counts). Correctness is unaffected; the narrative fold needs a `verify.reverified`→done transition.
-- **Not yet built (by design):** the hardened trust-gate rungs above basic re-verify (red→green/coverage/mutation are specced in `docs/21` and partly in the referee, but not wired into the demo path), live steering, the capability/knowledge planes, the MCP northbound surface, and the Elixir/OTP production port (`docs/17`). These are earned-by-demand, gated on the eval.
-- **The eval itself is not run.** The whole design (doc 18/kill-case) says the *decisive* next experiment is E2 — does cross-vendor verification catch defects same-vendor misses? That needs real vendors, which this MVP doesn't yet drive.
+### Stop and delivery authority is reconciled
 
-## Judgment
+Phase 10's assembly introduced an async-spawn race cluster that the then-green suite missed. Phase
+10.1 re-reproduced U-1 through U-11 and pinned SC12–SC20:
 
-**The MVP does what it set out to do, and its center of gravity is in the right place.** The single most valuable, most-tested, most-demonstrated property is the one that matters most and is hardest to fake: *the driver does not trust a worker's "done" — it re-derives the truth itself, in isolation, and a lie is caught.* Everything else (dispatch, messaging, two-phase interrupt, recency-biased routing, the story) is real and tested, but that trust gate is the thing that makes an autonomous fleet safe to run at all, and it works as observed.
+- each session adapter synchronously reserves a worker before awaiting `worktreeReady`;
+- interrupt/kill while pending confirms the stop and prevents child creation;
+- duplicate same-worker spawn cannot create an unreachable second child;
+- late-created worktrees are reaped after an early stop;
+- cancellation is terminal and monotonic in memory and replay;
+- queued delivery cannot cross a finalized interrupt/kill or revive a task;
+- refused and rejected spawn share one durable failure channel;
+- Codex first-turn setup failure reaps its child before refusal;
+- session wall-time budgets emit an observable timeout crash and reap the child;
+- confirmed interrupt clears that wall timer; and
+- story completion follows crash/exit/turn facts rather than stale warning/verdict proxies.
 
-The build followed the methodology honestly: spec → tests-first → red-team (which found the real cross-module seams before a line of implementation) → blue-hardening → implementation → this validation. The seams the red team predicted (divergent adapter/Brief/event contracts, the trust-gate-not-wired-to-the-referee, the router-not-wired) were exactly the integration bugs that surfaced and were fixed. That is the methodology earning its keep.
+A fresh adversarial pass found four further seams—late worktree cleanup, replay monotonicity,
+accepted-verdict crash inheritance, and interrupt timer cleanup—and closed each before live spend.
 
-**Recommended next step:** driving a real vendor pair through the harness is now *done* (phase 7 — Codex + Claude Code, live, verified). The decisive experiment that remains is **E2** — does independent *cross-vendor* verification catch material defects a strong same-vendor baseline misses, at a decorrelation rate that justifies a second vendor's cost? That needs ~50 real diffs graded against a human-pinned spec in a sandbox no worker controls; the scaffolding to run it (real workers, isolated worktrees, fresh-sandbox re-verify, verified-only routing) is now real, tested, and runnable. Everything above the control/verification plane stays gated on E2's number surviving its own adversarial review.
+### Multiple real workers can be stopped and reaped
 
----
+The dedicated Grok stress ran one `GrokAcpCli` instance at its four-session ceiling. Four distinct
+real Grok PIDs reached active turns concurrently; two workers confirmed native interrupt; all four
+then confirmed kill. The test independently proved all PIDs gone, all task worktree directories and
+git worktree registrations gone, every task terminal, and all temporary stress branches deleted.
 
-## Addendum — completeness audit corrections (2026-07-10)
+## Verification evidence
 
-A 24-agent adversarial completeness audit (see `docs/22-completeness-audit.md`) re-tested this document's "TRUE" claims and **downgraded six**. This addendum records the corrections so VALIDATION.md stops overclaiming; the audit doc is the authoritative gap list.
+| Gate | Current evidence |
+|---|---|
+| Zero-quota suite | **427/427 passing** via bare `node --test` in `impl/` |
+| U-1…U-11 | All reproduced before repair; verdict ledger in `docs/handoff/evidence/phase10.1-reverification.md` |
+| Fresh adversarial review | No unresolved critical/major finding; `docs/handoff/evidence/phase10.1-adversarial-review.md` |
+| Three-vendor live fleet | `docs/reference/evidence/phase10.1-capstone-2026-07-10/summary.json` has every check true; 573-event raw ledger beside it |
+| Recursive output | Three trust-gated review artifacts under `reviews/dogfood/`, authored by real Claude, Codex, and Grok workers and integrated into `master` |
+| Multi-Grok kill/reap | `docs/reference/evidence/grok-multi-reap-2026-07-10/summary.json` has every check true; raw ledger beside it |
+| Credential discipline | GLM checked by presence only and recorded `PENDING-LIVE-no-credential`; no credential value was logged |
 
-- **"'Done' is hard to fool" — still TRUE, but the wording "re-runs the pinned check itself" is the real mechanism, NOT `accept()`.** The coordinator gates on an *inline* re-implementation (`coordinator.mjs`), and `index.mjs:50` **discards `accept()`'s return value**. So `accept()`'s `requireRedGreen`/`requireCoverage` hardening is built and tested but **never actually gates "done."** The freshness/forge-catch safety property holds; the "accept() is the gate" framing does not.
-- **"Interruption is dependable" — PARTIAL.** `_forceStop` fires only inside `tick()`; with no background timer, if the adapter never confirms and the caller stops issuing commands, `interrupt()`/`kill()` can hang. The real-CLI stop path has **zero automated coverage** (on one-shot CLIs interrupt≈kill — a process death, not a graceful cancel).
-- **"Reliability holds / fencing rejects stale commands" — PARTIAL.** `send()` delivers to the worker and *then* rechecks the fence; human>orchestrator ordering holds over the **log**, not over actual **delivery** (the message already reached the worker before `stale_fence` is returned).
-- **"Routing learns from verified outcomes only" — TRUE that it LEARNS, but it never ROUTES.** `router.pick()` is never called in `src/` (dispatch is first-fit `route()` → `candidates[0]`). Verified win/loss buckets accumulate but do not influence selection.
-- **Vendor attribution — BROKEN in the shipped path.** `index.mjs:33` calls `captureCommit(repoRoot, taskId, {})` with no vendor, so the `Baton-Vendor` commit trailer is never written and the author is `baton-snapshot`, not `baton-worker-<vendor>`. Attribution is only asserted in a unit test that passes `{vendor}` explicitly.
-- **Real CLI adapters — proven live by hand (phase 7), but zero automated runtime coverage.** Only argv-builders and parsers are tested; the spawn/stream/interrupt/kill runtime path runs only under `live:true` (never in CI).
-- **`createDriver()` has no direct tests.** `e2e.test.mjs` hand-wires the modules and its inline `routeFn` has already drifted from the shipped `route()`.
+The three-vendor capstone checks were: no harness error; Claude/Codex/Grok all completed; every
+completion had `verify.reverified.accept:true`; native Claude steer landed; native Codex interrupt
+confirmed and ended `cancelled`; real approvals were consumed; and all three vendor turns
+overlapped before the earliest terminal.
 
-**Bottom line:** the deterministic trust spine is real and well-tested; the overclaims are all in the *wiring* (built-and-tested modules — `accept()` hardening, `router.pick()` — not plumbed into the live path) and in the *real-vendor control surface* (one-shot adapters under-implement 4 of 8 Adapter verbs). See `docs/22` §6 for the ranked fix list.
+## Honest remaining limits
 
----
+These are absent, not implied by the green suite:
 
-## Addendum — phase-8 live re-evaluation (2026-07-10)
+1. **Worker-session resume/fork through the driver.** All three vendors expose it, but the
+   coordinator always cold-spawns and cannot recover/fork a durable vendor session.
+2. **Token/USD governance and watchdog action.** Wall-time is enforced. Usage is observed, but
+   `handle.budgetUsed`, threshold events, hard spend stops, and automatic stall/loop response are
+   not wired end to end.
+3. **Red→green base-sandbox execution.** The acceptance policy exists; the public assembly cannot
+   currently generate the required base verdict.
+4. **Merge/push lifecycle.** Baton ends at a verified task branch. Integration remains an explicit
+   operator action; irreversible push approval is absent. Retaining completed branches enables
+   review/integration, while cancelled stress branches were cleaned explicitly.
+5. **Restart reattachment.** Replay reconstructs terminal task truth, but a new coordinator process
+   cannot reattach to already-running vendor processes/threads.
+6. **GLM live proof.** `GlmSessionCli` is built to the credential boundary, but no credential was
+   present in this run.
+7. **Production runtime and northbound surface.** The implementation remains dependency-free Node
+   ESM; no Go/Elixir port or MCP northbound server has shipped.
+8. **Cross-vendor decorrelation eval (E2).** The fleet required to run it now exists; the eval is a
+   phase-11 research decision, not evidence retroactively required for phase-10 wiring completion.
 
-Phase 8's session adapters shipped green against fake binaries (336/336) but had never touched a
-real vendor. A skeptical live re-evaluation (docs/23) re-derived every protocol claim from
-independent ground truth and drove both adapters against the real CLIs. Result:
+The full researched-versus-shipped inventory and phase boundary are in
+`docs/25-capability-gap.md`.
 
-- **The codex app-server adapter survived contact with reality almost untouched** — methods,
-  shapes, enums, steer/interrupt/thread-survival all reproduced live. Two error-code details in
-  the FAKE were fiction (`-32010`; "id-less -32600") and were corrected to the live-observed
-  id-matched `-32600`s; unmapped server→client requests are now answered (anti-wedge) and
-  pending approvals are keyed, not single-slotted.
-- **The claude session adapter had three live-breaking defects the fake could not see**: no
-  permission mode at all (worker couldn't edit files — E1), a steer emulation built on a false
-  premise (mid-turn injection is native on this wire — E2), and an approve() shape the CLI
-  silently re-asks forever (missing `updatedInput`/`toolUseID` — E3). All three are fixed,
-  test-locked against a live-faithful fake, and **re-proven live**: `probe.txt` written under
-  `acceptEdits`; a running turn absorbed `prompt(...,'steer')` and answered `REDIRECTED` as its
-  single terminal with zero interrupt events; approve-allow ran the tool on the first ask and
-  approve-deny blocked it gracefully.
+## Final judgment
 
-Suite: **340/340**. All eight session verbs are now live-proven on Claude except `answer()`
-(elicitation — statically derived) and `pause` (unsupported by design); codex live-proven for
-spawn/prompt/steer/interrupt/kill with approvals statically exact against the schema bundle.
-The standing rule this earned: **fake-binary green is not "done" — every verb an adapter
-declares `native` gets a live smoke, and the fake is corrected to what the live run shows.**
-
----
-
-## Addendum — phase 9: Grok Build ACP session adapter (2026-07-10)
-
-Grok Build CLI 0.1.216 (xAI) joined the harness matrix (dossier:
-`docs/reference/grok-build-cli.md`; spec: `spec/phase9/grok-acp-adapter.md`). `GrokAcpCli`
-(`src/grok-acp.mjs`) drives `grok agent stdio` — the first vendor-native ACP surface in the fleet —
-one child per worker, JSON-RPC 2.0 **with** the `jsonrpc` member (live-verified difference from
-codex), and the ACP turn shape faithfully modeled: **the `session/prompt` response IS the turn
-terminal** (unbounded by the setup timeout; settled by resolution, cancel, or child death), and
-`session/cancel` is a response-less notification.
-
-- **TDD red→green**: 29 new conformance tests (`test/grok-acp.test.mjs`) against a protocol-level
-  fake (`test/fixtures/fake-grok-acp.mjs`) that reproduces the two [live]-pinned frames verbatim
-  (initialize handshake; `session/new` → `-32000 "Authentication required"`). Red observed
-  (341/342 with the adapter absent), then green: **suite 370/370**.
-- **Steer is emulated and says so** (card + per-Ack `emulated:true`): cancel-then-reprompt with
-  the E2 lesson enforced structurally — the emulation's internal cancel emits `control.steer`,
-  never a phantom `control.interrupt_confirmed`. `answer()` is `unsupported` (ACP has no ask-user
-  primitive) — a named gap, not an emulation.
-- **X3/X4 lessons applied from day one**: unmapped server→client `x.ai/*` requests are
-  auto-answered `-32601` + observable error event (anti-wedge); pending permissions live in a
-  keyed map (answer-exactly-once). Refusal terminals are surfaced as `lifecycle.crashed` with
-  `stopReason:'refusal'` — the router-visible signal the non-refuser routing tier needs.
-- **⛔ NOT "done" per the phase-8.1 live-smoke gate.** This machine is unauthenticated to grok
-  (`session/new` → -32000, live), so every model-side contract (prompt/cancel/permission/update
-  shapes) is [acp-spec]+[doc]-grade — precisely the circular-validation trap docs/23 documented.
-  The post-auth smoke checklist is pinned at the top of the spec (first items: `session/cancel`
-  conformance, the undocumented live-advertised `cancelRewind:true`, whether
-  `session/request_permission` fires under default config, mid-turn `session/prompt` behavior —
-  the last one can upgrade steer to native, exactly like claude E2). **Unlock: `grok login` or
-  `XAI_API_KEY`, then live-smoke before trusting `native` verbs.**
-- **No wire usage telemetry** is documented for this surface — the adapter emits no
-  `resource.tokens` yet (named gap GA20; the on-disk `signals.json` is the post-hoc source).
-- Assembly into `createDriver()` remains the shared next milestone for all three session adapters
-  (docs/23 re-steer item 2); GrokAcpCli joins that batch deliberately unwired.
-
-### Phase-9 follow-up — live-smoke gate CLOSED (2026-07-10, same day, post-`grok login`)
-
-The user authenticated and the full smoke ran: raw-wire probes #3/#4 + an **8/8-verdict live E2E
-driving GrokAcpCli itself** against the real binary (spawn→approve(allow)×2→probe.txt created;
-multi-turn same session; steer mid-tool-loop → `control.steer` → redirected turn answered
-STEER-OK with zero phantom interrupts — the 20-file task stopped at g2; interrupt mid-tool-loop →
-`control.interrupt_confirmed{status:'cancelled'}` → session survived a further turn; kill →
-`kill.confirmed`, no crash event). Evidence: `docs/reference/evidence/grok-0.1.216/`
-(`grok-acp-probe{3,4}.*`, `grok-adapter-live-e2e.*`).
-
-Checklist outcomes: cancel conforms exactly as GA8 assumed; permissions FIRE under default config
-(config-doc ambiguity dead; live option list pinned into the fake — `allow_always` first);
-mid-turn prompts QUEUE and **cancel kills active+queued together** — steer stays `emulated` and
-GA13's cancel-first ordering is mandatory, live-validated; `cancelRewind` does not auto-revert
-files. Two contracts corrected by live: **GA20 overturned** (usage `_meta` rides every prompt
-response → new `resource.tokens {source:'promptMeta'}` + real `budgetUsed.tokens`, F1) and
-**`tool_call_update`** is a second update kind carrying status/diff (mapped, F2). Post-auth model
-card: grok-4.5 (500K ctx) + grok-composer-2.5-fast. Fleet note: user-level MCP/hooks bleed into
-sessions — workers should isolate via `GROK_HOME`.
-
-Suite: **372/372**. GrokAcpCli's card is now fully live-backed: spawn/prompt/interrupt/approve/
-kill native-and-live-proven, steer emulated-and-live-proven, answer unsupported-by-design.
+Phase 10 is complete as a wiring-and-live-proof milestone. The system is no longer a set of
+unit-green modules or hand-run vendor adapters: the public driver controlled a heterogeneous live
+fleet recursively on its own repository, accepted only independently verified work, and then
+proved it could stop and reap four same-vendor sessions concurrently. The next work should deepen
+session continuity and governance rather than reopen phase-10 assembly.
