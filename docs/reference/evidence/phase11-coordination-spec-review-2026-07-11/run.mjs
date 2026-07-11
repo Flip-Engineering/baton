@@ -62,7 +62,10 @@ const brief = createBrief({
     expectExit: 0,
     timeoutMs: 10000,
   },
-  budget: { tokens: 25000, usd: 2, wallMin: 4 },
+  // The first attempted review consumed 62,828 wire tokens (62,063 cached-read) in its opening
+  // repository-reading frame and was correctly hard-stopped at 25k. This explicit cap is derived
+  // from that measurement with room for the actual review/write turn; it is not a disabled gate.
+  budget: { tokens: 150000, usd: 2, wallMin: 4 },
 });
 
 let workerId = null;
