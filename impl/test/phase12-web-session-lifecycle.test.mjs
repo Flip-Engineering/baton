@@ -137,3 +137,43 @@ test('IL4: bearer login and refresh return one-time JSON tokens while the predec
   assert.equal(s.sessions.authenticate(bearer(login.body.token)), null);
   assert.ok(s.sessions.authenticate(bearer(refreshed.body.token)));
 });
+
+test('IL2/IL5: session append is file-synced before in-memory apply and credential return', () => {
+  const operations = []; const directory = root();
+  const sessions = new WebSessionStore(directory, {
+    now: () => now,
+    appendFile(path, value, options) { operations.push('append'); appendFileSync(path, value, options); },
+    syncPath(path) { operations.push(path.endsWith('sessions.jsonl') ? 'sync-file' : 'sync-dir'); },
+  });
+  operations.length = 0;
+  const issued = sessions.issue({ userId: 'u', authMethod: 'bearer', capabilities: ['observe'], repoIds: ['repo-a'], ttlMs: 60_000 }, { actor: 'provider' });
+  assert.deepEqual(operations, ['append', 'sync-file']);
+  assert.ok(sessions.authenticate(bearer(issued.token)));
+});
+
+test('IL1/IL5: coordination audit failure occurs before login/refresh mutation and returns no credential', async () => {
+  const s = system(async () => ({ userId: 'u', authMethod: 'bearer', capabilities: ['observe'], repoIds: ['repo-a'], ttlMs: 60_000 }));
+  const original = s.coordination.recordWebAudit.bind(s.coordination);
+  s.coordination.recordWebAudit = () => { throw new Error('audit unavailable'); };
+  const login = await request(s.web, '/v1/auth/login', {});
+  assert.equal(login.status, 503); assert.equal(Object.hasOwn(login.body, 'token'), false); assert.equal(s.sessions.events().length, 0);
+  s.coordination.recordWebAudit = original;
+  const issued = s.sessions.issue({ userId: 'u', authMethod: 'bearer', capabilities: ['observe'], repoIds: ['repo-a'], ttlMs: 60_000 }, { actor: 'provider' });
+  s.coordination.recordWebAudit = () => { throw new Error('audit unavailable'); };
+  const refresh = await request(s.web, '/v1/auth/refresh', {}, { authorization: `Bearer ${issued.token}` });
+  assert.equal(refresh.status, 503); assert.equal(Object.hasOwn(refresh.body, 'token'), false);
+  assert.ok(s.sessions.authenticate(bearer(issued.token)), 'predecessor remains active because audit failed before rotation');
+});
+
+test('IL1: provider output outside session policy is the same bounded refusal with no issuance', async () => {
+  for (const claims of [
+    { userId: 'bad user', authMethod: 'bearer', capabilities: ['observe'], repoIds: ['repo-a'], ttlMs: 60_000 },
+    { userId: 'u', authMethod: 'bearer', capabilities: ['bad capability'], repoIds: ['repo-a'], ttlMs: 60_000 },
+    { userId: 'u', authMethod: 'bearer', capabilities: ['observe'], repoIds: ['repo-a'], ttlMs: 86_400_001 },
+  ]) {
+    const s = system(async () => claims);
+    const response = await request(s.web, '/v1/auth/login', {});
+    assert.equal(response.status, 401); assert.equal(response.body.error.code, 'unauthenticated');
+    assert.equal(s.sessions.events().length, 0); assert.deepEqual(s.fleetCalls, []);
+  }
+});

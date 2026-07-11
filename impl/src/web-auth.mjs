@@ -1,4 +1,4 @@
-import { appendFileSync, chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
@@ -34,13 +34,17 @@ export class WebSessionStore {
     this.maxTtlMs = opts.maxTtlMs ?? 24 * 60 * 60 * 1000;
     this.maxCredentialBytes = opts.maxCredentialBytes ?? 512;
     this._appendFile = opts.appendFile ?? appendFileSync;
+    this._syncPath = opts.syncPath ?? ((path) => { const fd = openSync(path, 'r'); try { fsyncSync(fd); } finally { closeSync(fd); } });
     this._events = [];
     this._sessions = new Map();
     this._byDigest = new Map();
     mkdirSync(root, { recursive: true, mode: 0o700 });
     chmodSync(root, 0o700);
-    if (!existsSync(this.file)) closeSync(openSync(this.file, 'a', 0o600));
+    const created = !existsSync(this.file);
+    if (created) closeSync(openSync(this.file, 'a', 0o600));
     chmodSync(this.file, 0o600);
+    this._syncPath(this.file);
+    if (created) this._syncPath(this.root);
     this._load();
   }
 
@@ -63,6 +67,7 @@ export class WebSessionStore {
     if (!validId(actor)) throw new TypeError('session audit actor required');
     const event = freeze({ schemaVersion: 1, seq: this._events.length + 1, ts: new Date(this.now()).toISOString(), kind, actor, payload: freeze(clone(payload)) });
     this._appendFile(this.file, `${JSON.stringify(event)}\n`, { encoding: 'utf8', mode: 0o600 });
+    this._syncPath(this.file);
     this._apply(event);
     this._events.push(event);
     return event;
@@ -105,11 +110,19 @@ export class WebSessionStore {
 
   events() { return this._events.map(clone); }
 
-  issue(fields, auth = {}) {
+  validateIssue(fields) {
+    try { this._assertIssue(fields); return true; } catch { return false; }
+  }
+
+  _assertIssue(fields) {
     if (!validId(fields?.userId)) throw new TypeError('session userId required');
     if (!['cookie', 'bearer'].includes(fields.authMethod)) throw new TypeError('session authMethod must be cookie or bearer');
     if (!validStringArray(fields.capabilities) || !validStringArray(fields.repoIds)) throw new TypeError('session capabilities and repoIds are required');
     if (!Number.isInteger(fields.ttlMs) || fields.ttlMs <= 0 || fields.ttlMs > this.maxTtlMs) throw new TypeError('session ttlMs is outside policy');
+  }
+
+  issue(fields, auth = {}) {
+    this._assertIssue(fields);
     const rawToken = token();
     const rawCsrf = fields.authMethod === 'cookie' ? token() : null;
     const issuedAtMs = this.now();

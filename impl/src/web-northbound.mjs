@@ -357,29 +357,29 @@ export class WebNorthbound {
     if (!this.sessions || typeof this.identityProvider !== 'function') return refused();
     let claims;
     try { claims = await this.identityProvider(json(body), Object.freeze({ origin: ctx.origin, transport: 'https' })); } catch { return refused(); }
-    if (!claims || !validProviderClaims(claims)) return refused();
+    if (!claims || !validProviderClaims(claims) || !this.sessions.validateIssue?.(claims)) return refused();
+    try { this._audit('login_authorized', { ...ctx, principal: { userId: claims.userId, sessionId: 'pending', credentialId: 'pending' } }, { authMethod: claims.authMethod }); }
+    catch { return this._write(res, error(503, 'temporarily_unavailable'), ctx.origin); }
     let issued;
     try { issued = this.sessions.issue(claims, { actor: `web:${claims.userId}:login` }); } catch { return this._write(res, error(503, 'temporarily_unavailable'), ctx.origin); }
-    try { this._audit('login_issued', { ...ctx, principal: { userId: claims.userId, sessionId: issued.sessionId, credentialId: issued.credentialId } }, { authMethod: claims.authMethod, expiresAt: issued.expiresAt }); }
-    catch { return this._write(res, error(503, 'temporarily_unavailable'), ctx.origin); }
     return this._credentialResponse(res, claims, issued, ctx.origin, 201);
   }
 
   _refresh(res, principal, origin) {
     if (!this.sessions) return this._write(res, error(503, 'temporarily_unavailable'), origin);
+    try { this._audit('refresh_authorized', { principal, origin }, { authMethod: principal.authMethod }); }
+    catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
     let issued;
     try { issued = this.sessions?.rotate(principal.sessionId, { actor: actor(principal) }); } catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
     if (!issued) return this._write(res, error(401, 'unauthenticated'), origin);
-    try { this._audit('session_rotated', { principal, origin }, { successorCredentialId: issued.credentialId, expiresAt: issued.expiresAt }); }
-    catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
     return this._credentialResponse(res, principal, issued, origin, 200);
   }
 
   _logout(res, principal, origin) {
     if (!this.sessions) return this._write(res, error(503, 'temporarily_unavailable'), origin);
-    try { this.sessions?.revoke(principal.sessionId, { actor: actor(principal), reason: 'logout' }); }
+    try { this._audit('logout_authorized', { principal, origin }, { authMethod: principal.authMethod }); }
     catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
-    try { this._audit('session_revoked', { principal, origin }, { reason: 'logout' }); }
+    try { this.sessions?.revoke(principal.sessionId, { actor: actor(principal), reason: 'logout' }); }
     catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
     const headers = principal.authMethod === 'cookie' ? { 'set-cookie': '__Host-baton_session=; Max-Age=0; Secure; HttpOnly; SameSite=Strict; Path=/' } : {};
     return this._write(res, result(200, { ok: true }), origin, headers);
