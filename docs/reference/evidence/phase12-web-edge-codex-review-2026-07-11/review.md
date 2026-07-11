@@ -1,87 +1,57 @@
-# Independent adversarial review — Phase 12 web edge policy (EP1–EP9)
+# Phase 12 web-edge adversarial review — 2026-07-11
 
-Date: 2026-07-11  
-Scope reviewed: `spec/phase12/web-edge-policy.md`, `spec/phase12/authenticated-web-northbound.md`, `spec/phase12/authenticated-web-session-lifecycle.md`, `impl/src/web-edge.mjs`, `impl/src/web-northbound.mjs`, `impl/src/web-stream.mjs`, `impl/src/web-auth.mjs`, and the five Phase 12 web test files named by the acceptance command. Prior evidence logs were not read. No source, fleet, homelab, or network action was performed.
+## Scope and method
 
-## Executive verdict
-
-EP1–EP9 are not clean. I found two high-severity and three medium-severity defects. The strongest implemented seams are canonical IPv4/IPv6 address identity, bounded forwarding grammar, ordinary quota expiry/cardinality, authorization-before-ticket-quota ordering, readiness response non-disclosure, and stream terminal cleanup. The release claim in EP8 should remain unsatisfied until the regressions below are added and pass.
+Independent review of `spec/phase12/web-edge-policy.md` (EP1–EP9), the current Phase 12 web edge, northbound, authentication/session, and stream implementations, and the five Phase 12 test files named by the required verification command. Prior evidence logs were not read. No source, network, homelab, or fleet action was performed.
 
 ## Findings
 
-### F1 — High — EP4 transport trust is not enforced for health/readiness
+### HIGH — EP1/EP4: duplicate `Forwarded` field-lines are accepted as one trusted chain
 
-- Source: `spec/phase12/web-edge-policy.md:53-59`; `impl/src/web-edge.mjs:170-173`; `impl/src/web-northbound.mjs:292-310`.
-- Failure: in proxy mode, `resolveEdgeRequest` returns `{ transport: "http", proxied: false }` for an untrusted cleartext peer instead of refusing it. `handle` then applies the address/probe quota and returns `/healthz` or `/readyz` before any HTTPS check. Thus an untrusted cleartext backend peer can receive a successful liveness response and, when dependencies are healthy, a successful readiness response. Forwarded headers do not upgrade its identity, but the socket is nevertheless accepted contrary to “only when the immediate peer is trusted and ... proves ... HTTPS.” Direct-policy `handle` has the same plaintext probe behavior outside the TLS server assembly.
-- Impact: backend trust and transport policy become route-dependent. If the cleartext listener is reachable beyond the intended proxy boundary, unauthenticated parties can probe process/readiness state; more importantly, the implementation does not establish EP4's single listener-wide admission invariant.
-- Regression: construct a proxy-mode `WebNorthbound`; send cleartext `GET /healthz` and `GET /readyz` from an untrusted IPv4 peer, an untrusted IPv6 peer, a trusted peer with no forwarding signal, and a trusted peer with `proto=http`. Require a typed audited transport/proxy refusal for each. Require success only for a trusted peer with the configured exact HTTPS signal. Also exercise plaintext direct-policy `handle` and assert refusal, even though production assembly normally supplies TLS.
+- **Source:** `impl/src/web-edge.mjs:130-151`, especially the use of `req.headers.forwarded` at line 134 and comma splitting at lines 106-110; `impl/src/web-northbound.mjs:301-318` passes the real request directly to this resolver. The current EP1 tests in `impl/test/phase12-web-edge.test.mjs:25-47` construct only the already-normalized `headers` object and do not exercise duplicate wire field-lines through `rawHeaders` or a real HTTP listener.
+- **Failure:** Node may combine repeated `Forwarded` field-lines into a comma-separated value in `req.headers`. The resolver does not inspect `req.rawHeaders` to distinguish one deliberately supplied forwarding chain from multiple duplicate field-lines. Consequently two individually valid duplicate `Forwarded` lines become a syntactically valid two-element chain. With `forwardedHop` selecting from the right, the accepted client address and selected `proto` can differ from what a proxy or intermediary treats as the authoritative field-line. This contradicts EP1's requirement that ambiguous forms fail typed and EP4's requirement for an exact forwarding signal. Because this occurs only after exact immediate-peer trust, it is not an untrusted-peer upgrade, but it is a high-impact ambiguity at the sole trusted boundary.
+- **Regression:** Reject repeated occurrences of `forwarded`, `x-forwarded-for`, and `x-forwarded-proto` using the wire-level header list before parsing; retain the existing mixed-family rejection. Add a real HTTP proxy-mode test that sends duplicate field-lines (including equivalent comma-join outcomes), proves a typed audited refusal, proves no provider/session/fleet work, and proves neither supplied address appears in audit. Also retain positive single-field multi-hop IPv4/IPv6 cases.
 
-### F2 — High — EP3 address-first refusal is bypassed for malformed request targets
+No other actionable implementation defect was found.
 
-- Source: `spec/phase12/web-edge-policy.md:37-49`; `impl/src/web-northbound.mjs:278-308`; existing test `impl/test/phase12-web-edge.test.mjs` (“EP3/EP7: malformed request targets ...”).
-- Failure: request-target parsing and its durable audit occur before edge address resolution and before the address quota. An attacker can send unlimited malformed/overlong targets without consuming the bounded per-address request quota. Each request instead performs a durable audit append, creating an unthrottled storage/IO amplification path. This contradicts “all HTTP requests per address,” “address quota runs before ... expensive work,” and the statement that policy-invalid requests use the ordinary address quota.
-- Impact: a remote client can evade the abuse counter and turn cheap malformed requests into unbounded append-only audit growth. Audit failure changes the response but does not bound attempts.
-- Regression: set address limit to one, submit two malformed targets from the same canonical address, and require the second response to be `429 rate_limited` with bounded `Retry-After` and no second request-refusal append. Repeat with equivalent expanded/compressed IPv6 and IPv4-mapped IPv6 spellings to prove one canonical bucket. Verify address resolution failure remains safely audited without raw peer/header data.
+## EP verdicts
 
-### F3 — Medium — combined principal/cost quota is not failure-atomic across quota clocks
+### EP1 — canonical client address: **finding above; otherwise clean**
 
-- Source: `spec/phase12/web-edge-policy.md:29-33`; `impl/src/web-edge.mjs:28-32,68-75,178-187`.
-- Failure: `takeCommand` calls `principal.canTake` and then `cost.canTake` using one sampled value. Each `canTake` immediately mutates that quota's `lastNow`. If the two quota instances have diverged (their public `take` API permits independent use) and the sampled value is monotonic for principal but regresses for cost, the call throws after advancing principal's clock state. EP2 requires an invalid/regressing sample to fail before any quota mutation. The later two-commit sequence also relies on an invariant throw rather than an explicit atomic transaction.
-- Impact: a failed combined check can poison one quota's accepted clock frontier and cause later valid samples to be rejected. This is operational denial of service and violates deterministic failure atomicity, even though counters are not incremented in the demonstrated path.
-- Regression: advance only `policy.quotas.cost` to time 2000, set the injected clock to 1500, snapshot both maps and `lastNow` fields, call `takeCommand`, and assert it throws with every snapshot unchanged. Then set time to 2000 and prove a valid command succeeds. Prefer a transaction implementation that validates both clocks/windows/capacity before mutating either authority.
+Direct mode ignores forwarding headers and derives transport/address from the socket. Proxy trust is exact after canonicalization; expanded IPv6 and IPv4-mapped IPv6 converge, while zones and address ports are rejected. Trusted parsing bounds length and hops, rejects mixed header families, unknown/duplicate parameters, controls/escapes, malformed quoting, invalid protocols, and hop underflow. Address audits use a keyed digest and classification rather than raw peer/client values. The unresolved wire-level duplicate-header ambiguity is the finding above.
 
-### F4 — Medium — cleartext proxy production assembly accepts a non-policy duck type
+### EP2 — quota authority: **clean**
 
-- Source: `spec/phase12/web-edge-policy.md:56-59`; `impl/src/web-northbound.mjs:113`; `impl/src/web-northbound.mjs:553-576`.
-- Failure: direct TLS assembly requires `northbound.edge instanceof WebEdgePolicy`, but proxy assembly checks only truthy `proxyMode` and a nonempty `trustedProxies`. A caller can inject `{ proxyMode: true, trustedProxies: ["..."] }`; production assembly creates a cleartext server, then the first request fails because `peerDigest`, `resolve`, and quota methods are absent. More dangerous partial duck types can implement inconsistent trust or quota behavior while passing assembly.
-- Impact: EP4's production configuration gate does not guarantee that the cleartext listener is guarded by the reviewed edge authority. This is a fail-late availability defect and a policy-substitution seam.
-- Regression: pass a plain object and partial/malicious edge lookalikes to proxy assembly and require construction-time refusal. Assert both production modes require an actual `WebEdgePolicy` bound to the northbound instance.
+Configuration rejects non-positive/non-safe limits, windows, cardinality, and unknown quota names. Fixed windows have injected monotonic safe-integer clocks, deterministic expiry, bounded active keys, bounded positive `Retry-After`, and no random eviction. Address, login, principal count, weighted cost, ticket issuance, health, readiness, and concurrent connection policies are separated. Combined command preflight samples once and does not mutate either authority when either clock/capacity/limit check fails. Ticket reservations roll back on issuance/audit/capacity failure and synchronous HTTP header/body delivery failure; rollback is tied to the exact quota entry and ticket state. Connection leases are acquired before ticket consumption, refusals preserve tickets, and every terminal stream path releases once.
 
-### F5 — Medium — stream-ticket quota commits before HTTP delivery and cannot roll back response failure
+### EP3 — refusal ordering: **clean**
 
-- Source: `spec/phase12/web-edge-policy.md:32-33`; `impl/src/web-northbound.mjs:349-360,513-518`; `impl/src/web-stream.mjs:73-98`.
-- Failure: successful `stream.issue` audits and installs live ticket state; the edge reservation is then committed before `_write` writes response headers/body. If `writeHead` or `end` throws (broken/reset client), `handle` rejects, the ticket remains live, and credential ticket quota remains consumed. This is an “other issuance failure” for the client-facing operation but is not rolled back. The existing rollback test covers capacity and issuance-audit failure only.
-- Impact: repeated response-path failures can exhaust a credential's ticket quota and `maxTickets` without the client ever receiving usable ticket material. Simply rolling back the quota is insufficient unless the newly installed ticket is also revoked atomically.
-- Regression: use a response that throws from `writeHead` and another that throws from `end`; assert no live ticket and no consumed reservation remain. Add an issuance transaction/API that can remove the exact ticket on delivery failure, without removing another request's state.
+Canonical edge identity and ordinary address quota precede target parsing, authentication, bodies, providers, session mutation, command admission, dispatch, and stream work. Login quota is consumed only after HTTPS, Origin, content type, bounded JSON, and object validation, and before the provider. Authentication and authorization precede principal/cost quota, which precedes durable command admission and dispatch. Ticket Origin/repository/capability/live-principal checks precede ticket quota. Client IDs do not select buckets. Refusal audit failure converts the response to fail-closed 503, and tested refusals leave provider/session/command/fleet/stream state unchanged.
 
-## EP-by-EP seam verdict
+### EP4 — explicit transport/server modes: **finding above; otherwise clean**
 
-### EP1 — canonical address/trusted proxy: clean except where inherited by F1/F2
+Direct policy cannot carry proxy trust or forwarding hops and the production direct listener requires TLS material. Cleartext assembly requires an actual proxy-mode `WebEdgePolicy` with a nonempty exact peer allowlist; TLS and cleartext-proxy postures cannot be combined or substituted with lookalikes. All routes, including probes, pass listener-wide canonical HTTPS enforcement. Untrusted forwarding cannot upgrade transport or choose address identity. The duplicate-field exact-signal defect is shared with EP1.
 
-Canonicalization uses `node:net.isIP`, normalizes equivalent IPv6 spellings, and maps `::ffff:a.b.c.d` to IPv4 before exact proxy membership, digesting, and quota selection (`web-edge.mjs:8-19,129-150`). The bounded 16-element/512-character forwarding parsers reject mixed `Forwarded`/XFF, mixed `Forwarded`/XFP, duplicate/unknown `Forwarded` parameters, zones, ports, controls, and missing/out-of-range hops. Untrusted headers do not affect address or transport identity. Audit on forwarding failure retains only a keyed peer digest/classification (`web-northbound.mjs:293-305`). No additional EP1 defect found. Tests cover IPv4, compressed/expanded IPv6, mapped IPv6, quoting, ports, escapes, mixed families, and raw-header/address non-leakage; F2's canonical malformed-target quota regression is still needed.
+### EP5 — health/readiness: **clean**
 
-### EP2 — quota authority: findings F3 and F5; otherwise clean
+Health discloses only `{ok:true}`. Readiness discloses only `{ready:boolean}` and fails closed for closed admission, coordination/audit health, session health, authentication/liveness health, or configured admission checks. Production assembly verifies that readiness holds the listener's identical coordination, session, and authenticator objects. Probe quotas are independent. Transition state advances only after successful transition audit, so failed appends retry without disclosing dependency details.
 
-Configuration rejects non-positive/non-safe integer limits/windows/cardinality and unknown limit names. Fixed-window expiry and key cardinality are bounded per policy; capacity refusal does not insert a key. Retry values are positive integers bounded by the window. Reservation rollback is idempotent and removes a zero-use entry. Concurrent leases are bounded per credential and cardinality, with release deleting zero-count keys. The ordinary single-quota invalid/regressing-clock path validates before map expiry/counter mutation. Combined atomicity and complete ticket issuance rollback are not clean (F3, F5).
+### EP6 — shutdown/drain/backpressure/no-fleet-effects: **clean**
 
-### EP3 — ordering/refusal: finding F2; otherwise clean
+Admission flags close synchronously before asynchronous shutdown work; provider completion races cannot issue credentials afterward, and stream acceptance closes permanently. Shutdown is memoized, audits start/terminal state, closes streams, drains the listener, force-closes after the deadline, and returns a bounded degraded result for audit or synchronous stream-cleanup failure. Stream shutdown and lag controls enforce both frame and buffered-byte ceilings; write refusal/throw leads to one cleanup/end attempt and exactly-once lease release. Repeated stream or northbound shutdown is idempotent. No path invokes worker interruption, kill, or changes worker truth, and tests assert no fleet calls.
 
-For syntactically valid targets, address quota precedes body parsing/auth/provider/session/coordinator work. Login quota follows TLS, Origin, content type, bounded valid object JSON and precedes provider invocation. Principal/count and weighted cost follow authentication, schema validation, and authorization, but precede durable command admission/dispatch. Ticket Origin/repository/capability/live-session authorization precedes ticket quota. Buckets use server-derived address digests or authenticated credential IDs, not client command IDs. Refusals are typed and fail closed on audit failure. Malformed-target traffic bypasses the promised ordinary address quota (F2).
+### EP7 — audit/restart posture: **clean**
 
-### EP4 — server/transport modes: findings F1 and F4
+Proxy, transport, target, quota, readiness, stream, and shutdown events are append-only through the coordination authority and admission fails closed where audit durability is required. Address and credential identifiers are HMAC-digested; forwarding values and raw addresses are not persisted. Responses do not surface audit/dependency causes. Quota maps are process-local operational state; command/session/idempotency state remains in the durable authorities and is not inferred from quota state.
 
-Direct production assembly requires key+certificate, rejects proxy policy, and pins TLS >=1.2. Proxy assembly rejects TLS material, requires a configured proxy posture, and the edge constructor refuses empty proxy trust or proxy fields in direct mode. However, transport enforcement is not listener-wide (F1), and proxy production assembly does not require a genuine policy instance (F4).
+### EP8 — deterministic acceptance: **clean for the reviewed Phase 12 scope, with the regression addition above**
 
-### EP5 — readiness/non-disclosure: clean except transport exposure in F1
+The current suites cover IPv4/IPv6 canonicalization, mapped addresses, direct/trusted/untrusted forwarding, malformed/mixed chains, TLS postures, quota ordering/expiry/cardinality/clock regression/atomicity, ticket compensation, non-disclosure, authority binding, connection cleanup, drain deadlines, shutdown races/idempotency/degradation, and no-fleet-effects. Add the real-listener duplicate-wire-header regression described in the finding. Recursive Baton orchestration claims are process/evidence procedure rather than an additional runtime trust seam and were not independently claimed here.
 
-Responses expose only `{ok:true}` for liveness and `{ready:boolean}` for readiness. Readiness is grounded in the same coordination, session, and authenticator authorities at production assembly; checks cover coordination health (including the durable command/audit store), session health, authenticator health/live-principal capability, extra configured checks, and admission. Probe audit failure yields only `{ready:false}`. Transition state advances only after both probe and transition appends succeed, so a failed transition append is retried. Health/readiness have independent quota maps. No fleet/repository/provider/path/dependency details are returned. F1 still permits these bits over a disallowed transport/peer.
+### EP9 — deferred scope: **not an EP defect**
 
-### EP6 — shutdown/admission/drain/backpressure: clean
+OIDC redirect/callback mechanics, optional WebSocket parity, browser automation, MCP, and operator UI remain explicitly deferred. Nothing in the reviewed implementation silently claims those surfaces. Their absence is therefore separated from the EP1 duplicate-header defect and is not reported as a Phase 12 web-edge failure.
 
-Admission flags close synchronously before the shutdown promise is created, and lifecycle/provider completion rechecks admission before mutation. Stream admission closes synchronously; existing streams attempt one dual-ceiling shutdown frame, then exactly-once disconnect, lease release, and socket end. Lag handling uses the same frame/buffer ceilings and terminal guard. Listener drain is deadline-bounded, force-closes connections, and records completion only after the close callback; synchronous stream cleanup and audit failures degrade without skipping listener closure. The shutdown promise is memoized. Coordinator methods are not invoked by shutdown. Accepted commands already dispatching are drained rather than reclassified, and no worker truth is fabricated. No additional EP6 defect found.
+## Overall verdict
 
-### EP7 — audit/restart/leakage: clean except amplification in F2
-
-Required refusal/transition/shutdown events are append-only through coordination audit. Address values are HMAC digests; credential identifiers are separately prefixed and HMAC-digested; raw forwarding headers are never included. Failure returns no new admission success, while shutdown correctly reports a bounded degraded outcome after still closing resources. Operational counters are in-memory only; session and command/idempotency truth remain in their durable authorities. F2 makes malformed-target audit append volume unquota-bounded, but no additional raw-address/credential leakage was found.
-
-### EP8 — acceptance claim: not satisfied
-
-The focused tests are broad and the mandated Phase 12 command passes only when all listed files pass, but current coverage encodes neither F1, F3, F4, nor F5 and asserts the F2 ordering without checking ordinary quota consumption. EP8 cannot claim complete adversarial acceptance until all five regressions are present and passing. Recursive build/integration/kill/reap claims were outside the permitted verification command and no such actions were taken.
-
-### EP9 — deferred scope: correctly separated
-
-OIDC redirect/callback behavior, optional WebSocket parity, browser automation/UI behavior, and MCP/operator UI remain deferred WN9 work. None of F1–F5 depends on those deferred features: they are defects in the shipped HTTP edge/quota/server/ticket transaction seams. No EP9 scope-collapse defect found.
-
-## Required disposition
-
-Fix F1–F5 and add the exact regressions above. Keep OIDC, WebSocket, browser automation/UI, and MCP/operator UI work tracked separately; those deferred items neither block identifying these defects nor repair them.
+EP1 and EP4 have one shared high-severity trusted-proxy header-ambiguity defect. EP2, EP3, EP5, EP6, EP7, and the implemented acceptance surface of EP8 are clean under the reviewed code and tests. EP9 items are deferred scope, not defects.
