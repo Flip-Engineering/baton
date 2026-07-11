@@ -1,8 +1,8 @@
 {
-  "at": "2026-07-11T20:23:04.086Z",
-  "repoHead": "a6ed6728c65aed00456c747368017f82e1d7df37",
+  "at": "2026-07-11T20:25:44.649Z",
+  "repoHead": "4a9478469524246891e200c5ed3bc4b0cb02e5ac",
   "workerId": "w-1",
-  "pid": 72336,
+  "pid": 79580,
   "model": "gpt-5.4",
   "result": {
     "ready": true,
@@ -19,14 +19,14 @@
     "sessionRef": {
       "vendor": "codex",
       "kind": "thread",
-      "id": "019f52d5-e72b-7db2-be2a-d5cf321606f9",
+      "id": "019f52d9-bc7d-7243-a62d-b745c6733d00",
       "persistence": "native",
       "source": "wire"
     },
     "sessionContext": {
       "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-ck9-crash-window-review",
       "repoRoot": "/Users/wahargis/Development/Experiments/baton",
-      "baseSha": "a6ed6728c65aed00456c747368017f82e1d7df37",
+      "baseSha": "4a9478469524246891e200c5ed3bc4b0cb02e5ac",
       "branch": "baton/codex-ck9-crash-window-review",
       "ownerTaskId": "codex-ck9-crash-window-review"
     },
@@ -43,11 +43,7 @@
     "result": "ok",
     "emulated": false
   },
-  "completionSteer": {
-    "ok": true,
-    "result": "ok",
-    "emulated": false
-  },
+  "completionSteer": null,
   "checks": {
     "noHarnessError": false,
     "exactModelObserved": true,
@@ -60,6 +56,6 @@
     "runtimeGone": true,
     "branchGone": true
   },
-  "fatal": "Error: review failed trust gate: {\"ready\":true,\"status\":\"cancelled\",\"verdict\":null,\"vendor\":\"codex\",\"modelRequested\":\"gpt-5.4\",\"modelResolved\":\"gpt-5.4\",\"modelObserved\":\"gpt-5.4\",\"modelMismatch\":null,\"sessionRequest\":{\"mode\":\"new\"},\"sessionRef\":{\"vendor\":\"codex\",\"kind\":\"thread\",\"id\":\"019f52d5-e72b-7db2-be2a-d5cf321606f9\",\"persistence\":\"native\",\"source\":\"wire\"},\"sessionContext\":{\"worktree\":\"/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-ck9-crash-window-review\",\"repoRoot\":\"/Users/wahargis/Development/Experiments/baton\",\"baseSha\":\"a6ed6728c65aed00456c747368017f82e1d7df37\",\"branch\":\"baton/codex-ck9-crash-window-review\",\"ownerTaskId\":\"codex-ck9-crash-window-review\"},\"lineage\":null,\"review\":null,\"integration\":null,\"publication\":null,\"retainedResultRef\":null}\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase11-ck9-codex-review-2026-07-11/run.mjs:100:44\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
+  "fatal": "Error: review failed trust gate: {\"ready\":true,\"status\":\"cancelled\",\"verdict\":null,\"vendor\":\"codex\",\"modelRequested\":\"gpt-5.4\",\"modelResolved\":\"gpt-5.4\",\"modelObserved\":\"gpt-5.4\",\"modelMismatch\":null,\"sessionRequest\":{\"mode\":\"new\"},\"sessionRef\":{\"vendor\":\"codex\",\"kind\":\"thread\",\"id\":\"019f52d9-bc7d-7243-a62d-b745c6733d00\",\"persistence\":\"native\",\"source\":\"wire\"},\"sessionContext\":{\"worktree\":\"/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-ck9-crash-window-review\",\"repoRoot\":\"/Users/wahargis/Development/Experiments/baton\",\"baseSha\":\"4a9478469524246891e200c5ed3bc4b0cb02e5ac\",\"branch\":\"baton/codex-ck9-crash-window-review\",\"ownerTaskId\":\"codex-ck9-crash-window-review\"},\"lineage\":null,\"review\":null,\"integration\":null,\"publication\":null,\"retainedResultRef\":null}\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase11-ck9-codex-review-2026-07-11/run.mjs:100:44",
   "pass": false
 }
