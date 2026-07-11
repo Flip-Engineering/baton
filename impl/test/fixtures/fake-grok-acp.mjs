@@ -280,6 +280,16 @@ rl.on('line', (line) => {
       send({ id: obj.id, result: { sessionId } });
       break;
     }
+    case 'session/load': {
+      if (UNAUTH) {
+        send({ id: obj.id, error: { code: -32000, message: 'Authentication required', data: 'no auth method id provided' } });
+        break;
+      }
+      sessionId = obj.params?.sessionId ?? null;
+      sessCwd = obj.params?.cwd ?? null;
+      send({ id: obj.id, result: { sessionId } });
+      break;
+    }
     case 'session/prompt': {
       activePrompt = { id: obj.id, sessionId: obj.params?.sessionId, timer: null, stayOpen: false };
       setImmediate(() => runPrompt(textOf(obj.params?.prompt)));

@@ -118,6 +118,7 @@ export class CodexAppServerCli {
         reasoningEffort: ['minimal', 'low', 'medium', 'high', 'xhigh'], serviceTier: ['fast', 'flex'],
         provenance: 'adapter-configuration', refreshedAt: null,
       },
+      sessions: { multiTurn: 'native', resume: 'native', fork: 'native', rejoin: 'native' },
       verbs: {
         spawn: 'native',
         prompt: 'native',
@@ -455,14 +456,21 @@ export class CodexAppServerCli {
 
     let threadResult;
     try {
-      threadResult = await this._sendRequest(session, 'thread/start', {
+      const sessionRequest = opts.session;
+      const threadMethod = sessionRequest?.mode === 'resume'
+        ? 'thread/resume'
+        : sessionRequest?.mode === 'fork' ? 'thread/fork' : 'thread/start';
+      const threadParams = {
         cwd,
         model: session.modelRequested ?? undefined,
         sandbox: opts.sandbox ?? 'workspace-write',
         approvalPolicy: opts.approvalPolicy ?? 'never',
         serviceTier: session.serviceTier ?? undefined,
-        ephemeral: true,
-      });
+        ...(threadMethod !== 'thread/resume' ? { ephemeral: true } : {}),
+        ...(threadMethod !== 'thread/start' ? { threadId: sessionRequest.id } : {}),
+        ...(threadMethod === 'thread/fork' && sessionRequest.lastTurnId ? { lastTurnId: sessionRequest.lastTurnId } : {}),
+      };
+      threadResult = await this._sendRequest(session, threadMethod, threadParams);
     } catch (err) {
       // XA10: -32001 (or any thread/start failure) kills the now-useless child and resolves a
       // typed failure — never retried internally, never a crash-loop.

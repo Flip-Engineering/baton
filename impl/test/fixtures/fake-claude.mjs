@@ -74,12 +74,14 @@ function parseArgs(argv) {
     if (a === '--resume' || a === '-r') out.resume = argv[i + 1];
     else if (a === '--session-id') out.sessionId = argv[i + 1];
     else if (a === '--model') out.model = argv[i + 1];
+    else if (a === '--fork-session') out.forkSession = true;
   }
   return out;
 }
 
 const args = parseArgs(process.argv.slice(2));
-const sessionId = args.resume || args.sessionId || process.env.FAKE_CLAUDE_SESSION_ID || randomUUID();
+const resumedId = args.resume || args.sessionId || process.env.FAKE_CLAUDE_SESSION_ID;
+const sessionId = args.forkSession && resumedId ? `${resumedId}-fork` : (resumedId || randomUUID());
 
 if (process.env.FAKE_CLAUDE_IGNORE_SIGTERM === '1') {
   process.on('SIGTERM', () => { /* deliberately unresponsive, for kill() escalation tests */ });

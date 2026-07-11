@@ -26,8 +26,8 @@ function brief(goal = 'x') { return { goal, constraints: [], pathScope: ['**'], 
 function makeAdapters() {
   return [
     ['claude', () => new ClaudeSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], killGraceMs: 20 }), 'HOLD_UNTIL_INTERRUPT'],
-    ['codex', () => new CodexAppServerCli({ cmd: process.execPath, args: [FAKE_CODEX, '--serve'], requestTimeoutMs: 500, versionProbe: () => 'fake' }), 'FAKE:STAY_OPEN'],
-    ['grok', () => new GrokAcpCli({ cmd: process.execPath, args: [FAKE_GROK, '--serve'], requestTimeoutMs: 500, versionProbe: () => 'fake' }), 'FAKE:STAY_OPEN'],
+    ['codex', () => new CodexAppServerCli({ cmd: process.execPath, args: [FAKE_CODEX, '--serve'], requestTimeoutMs: 1500, versionProbe: () => 'fake' }), 'FAKE:STAY_OPEN'],
+    ['grok', () => new GrokAcpCli({ cmd: process.execPath, args: [FAKE_GROK, '--serve'], requestTimeoutMs: 1500, versionProbe: () => 'fake' }), 'FAKE:STAY_OPEN'],
   ];
 }
 
@@ -314,7 +314,9 @@ test('SC18: timeoutMs is enforced by every session adapter', async (t) => {
     const events = collect(cli);
     t.after(() => killPids(events));
     try {
-      const ack = await cli.spawn(`${name}-timeout`, brief(marker), { worktree: tmpdir(), timeoutMs: 150 });
+      // The bare suite starts many fixture processes in parallel. Keep this above ordinary host
+      // scheduler latency so the assertion measures an active-session timeout, not setup jitter.
+      const ack = await cli.spawn(`${name}-timeout`, brief(marker), { worktree: tmpdir(), timeoutMs: 600 });
       assert.equal(ack.ok, true);
       for (let i = 0; i < 160 && !events.some((e) => e.kind === 'lifecycle.crashed' && e.payload?.phase === 'timeout'); i += 1) await sleep(5);
       assert.equal(events.filter((e) => e.kind === 'lifecycle.crashed' && e.payload?.phase === 'timeout').length, 1, `${name}: timeout must be observable exactly once`);

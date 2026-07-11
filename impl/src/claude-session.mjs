@@ -14,7 +14,7 @@ import { renderPrompt } from './cli-adapters.mjs';
 // buildClaudeSessionArgs — pure function (no process spawned), CS1.
 // ---------------------------------------------------------------------------
 
-export function buildClaudeSessionArgs({ approvals = false, sessionId, model, effort, permissionMode = 'acceptEdits' } = {}) {
+export function buildClaudeSessionArgs({ approvals = false, sessionId, forkSession = false, model, effort, permissionMode = 'acceptEdits' } = {}) {
   // stream-json "only works with --print"; --verbose is required alongside it (CS1/§1).
   const args = ['--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'];
   // Erratum E1 (live-caught 2026-07-10): without a permission mode, a --print session's tool
@@ -25,6 +25,7 @@ export function buildClaudeSessionArgs({ approvals = false, sessionId, model, ef
   if (permissionMode != null) args.push('--permission-mode', permissionMode);
   if (approvals) args.push('--permission-prompt-tool', 'stdio'); // magic value per the Agent SDK source (§0)
   if (sessionId) args.push('--resume', sessionId);
+  if (forkSession) args.push('--fork-session');
   if (model) args.push('--model', model);
   if (effort) args.push('--effort', effort);
   return args;
@@ -93,6 +94,7 @@ export class ClaudeSessionCli {
         provenance: 'adapter-configuration',
         refreshedAt: null,
       },
+      sessions: { multiTurn: 'native', resume: 'native', fork: 'native' },
       verbs: {
         spawn: 'native',
         prompt: 'native',
@@ -172,7 +174,8 @@ export class ClaudeSessionCli {
       ...(this._cfg.args ?? []),
       ...buildClaudeSessionArgs({
         approvals: this._cfg.approvals,
-        sessionId: this._cfg.sessionId,
+        sessionId: opts.session?.id ?? this._cfg.sessionId,
+        forkSession: opts.session?.mode === 'fork',
         model: opts.model ?? this._cfg.model,
         effort: opts.reasoningEffort,
         permissionMode: this._cfg.permissionMode,

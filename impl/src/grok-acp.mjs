@@ -136,6 +136,10 @@ export class GrokAcpCli {
         reasoningEffort: ['low', 'medium', 'high'], serviceTier: null,
         provenance: 'adapter-configuration+promptMeta', refreshedAt: null,
       },
+      // Resume is implemented below through standard ACP session/load. The x.ai fork/rewind
+      // methods are documented vendor capabilities, but Baton does not yet have their exact
+      // request/result schemas pinned, so advertising them as native would be a lying card.
+      sessions: { multiTurn: 'native', resume: 'native', fork: 'planned', rewind: 'planned' },
       verbs: {
         spawn: 'native',
         prompt: 'native',
@@ -501,15 +505,22 @@ export class GrokAcpCli {
 
     let newResult;
     try {
-      newResult = await this._sendRequest(session, 'session/new', { cwd, mcpServers: [] });
+      const sessionRequest = opts.session;
+      const sessionMethod = sessionRequest?.mode === 'resume' ? 'session/load' : 'session/new';
+      const sessionParams = sessionMethod === 'session/load'
+        ? { sessionId: sessionRequest.id, cwd, mcpServers: [] }
+        : { cwd, mcpServers: [] };
+      newResult = await this._sendRequest(session, sessionMethod, sessionParams);
     } catch (err) {
-      // GA10: the [live]-pinned -32000 auth gate (and any other session/new failure) kills the
+      // GA10: the [live]-pinned -32000 auth gate (and any other setup failure) kills the
       // now-useless child and resolves a typed failure — never retried internally.
       this._killChild(session);
       this._sessions.delete(worker);
       return { ok: false, reason: err.message, code: err.code };
     }
-    session.sessionId = newResult.sessionId;
+    // ACP load responses should echo the identity, but retain the requested durable reference
+    // if an implementation returns only replay metadata.
+    session.sessionId = newResult.sessionId ?? opts.session?.id;
     this._emit(session, 'lifecycle.spawned', {
       sessionId: session.sessionId, pid: child.pid,
       modelRequested: session.modelRequested, modelObserved: session.modelObserved,

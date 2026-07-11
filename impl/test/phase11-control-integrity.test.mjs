@@ -278,7 +278,9 @@ test('CI3: driver-level wall timeout reaps the real child, worktree, metadata, a
     stopDeadlineMs: 250,
   });
   const timed = brief('HOLD_UNTIL_INTERRUPT');
-  timed.budget.wallMin = 0.0025;
+  // Keep the integration budget above fixture process startup jitter in the bare parallel suite;
+  // the assertion is about real timeout cleanup after a wire session exists.
+  timed.budget.wallMin = 0.01;
   const h = await coordinator.spawn('claude', timed, { taskId: 'timeout-reap' });
   const crashed = await until(() => log.read(h.id).find((e) => e.kind === 'lifecycle.crashed' && e.payload?.phase === 'timeout'));
   const pid = log.read(h.id).find((e) => e.kind === 'lifecycle.spawned' && e.actor === 'worker')?.payload?.pid;

@@ -42,6 +42,14 @@ export class ModelSelectionError extends Error {
   }
 }
 
+export class SessionSelectionError extends Error {
+  constructor(message, code = 'session_mode_unavailable') {
+    super(message);
+    this.name = 'SessionSelectionError';
+    this.code = code;
+  }
+}
+
 export class DependencyCycleError extends Error {
   constructor(message) {
     super(message);
@@ -136,6 +144,55 @@ function modelRouteKey(card, model) {
   return model ? `${harness}#${model}` : harness;
 }
 
+function normalizeSessionRequest(request) {
+  if (request == null) return Object.freeze({ mode: 'new' });
+  if (typeof request !== 'object' || Array.isArray(request)) {
+    throw new SessionSelectionError('session must be an object', 'invalid_session_request');
+  }
+  const mode = request.mode ?? 'new';
+  if (!['new', 'resume', 'fork'].includes(mode)) {
+    throw new SessionSelectionError(`unknown session mode "${mode}"`, 'invalid_session_request');
+  }
+  if (mode !== 'new' && (typeof request.id !== 'string' || request.id.length === 0)) {
+    throw new SessionSelectionError(`session.${mode} requires a non-empty id`, 'invalid_session_request');
+  }
+  if (request.lastTurnId !== undefined && (mode !== 'fork' || typeof request.lastTurnId !== 'string' || request.lastTurnId.length === 0)) {
+    throw new SessionSelectionError('session.lastTurnId is valid only for fork and must be a non-empty string', 'invalid_session_request');
+  }
+  let context;
+  if (request.context !== undefined) {
+    if (typeof request.context !== 'object' || request.context === null || Array.isArray(request.context)) {
+      throw new SessionSelectionError('session.context must be an object', 'invalid_session_request');
+    }
+    if (typeof request.context.worktree !== 'string' || request.context.worktree.length === 0) {
+      throw new SessionSelectionError('session.context.worktree must be a non-empty path', 'invalid_session_request');
+    }
+    for (const key of ['repoRoot', 'baseSha', 'branch', 'ownerTaskId']) {
+      if (request.context[key] !== undefined && (typeof request.context[key] !== 'string' || request.context[key].length === 0)) {
+        throw new SessionSelectionError(`session.context.${key} must be a non-empty string`, 'invalid_session_request');
+      }
+    }
+    context = Object.freeze({
+      worktree: request.context.worktree,
+      ...(request.context.repoRoot ? { repoRoot: request.context.repoRoot } : {}),
+      ...(request.context.baseSha ? { baseSha: request.context.baseSha } : {}),
+      ...(request.context.branch ? { branch: request.context.branch } : {}),
+      ...(request.context.ownerTaskId ? { ownerTaskId: request.context.ownerTaskId } : {}),
+    });
+  }
+  return Object.freeze({
+    mode,
+    ...(request.id ? { id: request.id } : {}),
+    ...(request.lastTurnId ? { lastTurnId: request.lastTurnId } : {}),
+    ...(context ? { context } : {}),
+  });
+}
+
+function cardSupportsSession(card, request) {
+  if (!request || request.mode === 'new') return true;
+  return card?.sessions?.[request.mode] === 'native' || card?.sessions?.[request.mode] === 'emulated';
+}
+
 /** C1: the default done-gate, behavior-preserving-by-construction for every caller that
  * doesn't override it — exactly today's inline check, moved into an injectable, named
  * function. `acceptOpts.expectExit` carries the per-task expected exit code. */
@@ -153,9 +210,11 @@ export class Coordinator {
     this._referee = opts.referee;
     this._route = opts.route;
     this._story = opts.story ?? null;
+    this._repoRoot = opts.repoRoot ?? null;
     this._now = opts.now || Date.now;
     this._approvalTimeoutMs = opts.approvalTimeoutMs ?? 60000;
     this._stopDeadlineMs = opts.stopDeadlineMs ?? 15000;
+    this._recoveryTimeoutMs = opts.recoveryTimeoutMs ?? 15000;
     this._waitPollMs = opts.waitPollMs ?? 25;
     // C1: the sole done-gate, and the driver-level policy passed to every accept() call.
     this._accept = opts.accept ?? defaultAccept;
@@ -264,6 +323,7 @@ export class Coordinator {
   _resolveVendor(task) {
     if (task.vendorRequested !== 'auto') {
       const vendor = task.vendorRequested;
+      if (!cardSupportsSession(this._adapters[vendor]?.card(), task.sessionRequest)) return null;
       const resolved = resolveCardModel(this._adapters[vendor]?.card(), task.modelRequested, task.modelPolicy, { explicit: true });
       return resolved.ok ? { vendor, model: resolved.model } : null;
     }
@@ -271,6 +331,7 @@ export class Coordinator {
     const resolvedModels = {};
     for (const [name, ad] of Object.entries(this._adapters)) {
       const card = ad.card();
+      if (!cardSupportsSession(card, task.sessionRequest)) continue;
       const resolved = resolveCardModel(card, task.modelRequested, task.modelPolicy, { explicit: false });
       if (resolved.ok) {
         cards[name] = {
@@ -313,15 +374,39 @@ export class Coordinator {
     // worker waits for its checkout to exist before touching disk. Status still flips to
     // 'working' and the adapter is invoked synchronously below (so a bare tick() dispatches
     // in one turn), while the worker's actual work is gated on the worktree being ready.
-    const worktreeReady = Promise.resolve(this._worktrees.create(task.id))
+    const worktreeSource = task.sessionRequest?.mode === 'resume'
+      ? Promise.resolve({
+          path: task.sessionContext.worktree,
+          branch: task.sessionContext.branch,
+          baseSha: task.sessionContext.baseSha,
+          ownerTaskId: task.sessionContext.ownerTaskId,
+        })
+      : Promise.resolve(this._worktrees.create(task.id));
+    const worktreeReady = worktreeSource
       .then(async (res) => {
-        if (res && res.path) { task.worktree = res.path; handle.worktree = res.path; }
+        if (res && res.path) {
+          task.worktree = res.path;
+          handle.worktree = res.path;
+          const sessionContext = Object.freeze({
+            worktree: res.path,
+            ...(this._repoRoot ? { repoRoot: this._repoRoot } : {}),
+            ...(res.baseSha ? { baseSha: res.baseSha } : {}),
+            ...(res.branch ? { branch: res.branch } : {}),
+            ownerTaskId: res.ownerTaskId ?? task.sessionContext?.ownerTaskId ?? task.id,
+          });
+          task.sessionContext = sessionContext;
+          handle.sessionContext = sessionContext;
+          this._log.append({
+            worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'worktree.ready', actor: 'orchestrator',
+            payload: sessionContext,
+          });
+        }
         // SC12 adversarial erratum: a stop can reap before async creation finishes. Once the
         // late worktree exists, reap again while the adapter's cancelled reservation prevents
         // any child from entering it.
         if (handle.status === 'stopping' || handle.status === 'dead' || TERMINAL_TASK_STATUSES.has(task.status)) {
           if (this._worktrees && typeof this._worktrees.remove === 'function') {
-            await Promise.resolve(this._worktrees.remove(task.id)).catch(noop);
+            await this._removeTaskWorktree(task);
           }
         }
         return res;
@@ -334,6 +419,8 @@ export class Coordinator {
       payload: {
         taskId: task.id, brief: task.brief, vendorRequested: task.vendorRequested, vendorResolved: vendor,
         modelRequested: task.modelRequested, modelResolved: task.modelResolved, modelPolicy: task.modelPolicy,
+        sessionRequest: task.sessionRequest,
+        lineage: task.lineage,
       },
     });
 
@@ -354,6 +441,7 @@ export class Coordinator {
       model: task.modelResolved ?? undefined,
       reasoningEffort: task.modelPolicy?.reasoningEffort,
       serviceTier: task.modelPolicy?.serviceTier,
+      session: task.sessionRequest?.mode === 'new' ? undefined : task.sessionRequest,
     })).then((ack) => {
       if (handle.spawnAbort === spawnAbort) handle.spawnAbort = null;
       if (ack && ack.ok === false) this._onSpawnRefused(handle, task, harness, ack);
@@ -405,10 +493,14 @@ export class Coordinator {
     // allow a malformed raw object to become a task merely because the caller skipped createBrief.
     const admittedBrief = createBrief(brief);
     const modelPolicy = normalizeModelPolicy(opts.model, opts.modelPolicy);
+    let sessionRequest = normalizeSessionRequest(opts.session);
 
     const taskId = opts.taskId ?? this._autoTaskId();
     if (this._tasks.has(taskId)) throw new DuplicateTaskIdError(`duplicate taskId "${taskId}"`);
     if (vendor !== 'auto' && !this._adapters[vendor]) throw new UnknownVendorError(`unknown vendor "${vendor}"`);
+    if (vendor !== 'auto' && !cardSupportsSession(this._adapters[vendor].card(), sessionRequest)) {
+      throw new SessionSelectionError(`harness "${vendor}" does not support session mode "${sessionRequest.mode}"`);
+    }
     if (vendor !== 'auto') {
       const resolved = resolveCardModel(this._adapters[vendor].card(), opts.model, modelPolicy, { explicit: true });
       if (!resolved.ok) {
@@ -417,6 +509,27 @@ export class Coordinator {
     } else if (opts.model !== undefined || modelPolicy) {
       const anyCapable = Object.values(this._adapters).some((ad) => resolveCardModel(ad.card(), opts.model, modelPolicy, { explicit: false }).ok);
       if (!anyCapable) throw new ModelSelectionError(`no harness can honor model "${opts.model ?? '(policy)'}"`, 'model_unavailable');
+    }
+    if (vendor === 'auto' && sessionRequest.mode !== 'new') {
+      const anySessionCapable = Object.values(this._adapters).some((ad) => cardSupportsSession(ad.card(), sessionRequest));
+      if (!anySessionCapable) throw new SessionSelectionError(`no harness supports session mode "${sessionRequest.mode}"`);
+    }
+
+    // PS8: conversational history is not permission to guess at filesystem state. Resume must
+    // reuse a validated, explicitly-owned context (or one already observed for the same native
+    // session), and must not attach while another live handle owns that session/worktree.
+    if (sessionRequest.mode === 'resume') {
+      const known = this._knownSessionContext(sessionRequest.id, vendor);
+      if (!sessionRequest.context && known?.context) {
+        sessionRequest = normalizeSessionRequest({ ...sessionRequest, context: known.context });
+      }
+      if (!sessionRequest.context?.ownerTaskId) {
+        throw new SessionSelectionError('resume requires session.context.worktree and ownerTaskId', 'session_context_required');
+      }
+      if (known?.handle && ['pending', 'working', 'blocked', 'stopping', 'idle'].includes(known.handle.status)) {
+        throw new SessionSelectionError(`session "${sessionRequest.id}" is already attached`, 'session_already_attached');
+      }
+      await this._validateSessionContext(sessionRequest.context);
     }
 
     const deps = opts.deps ? [...opts.deps] : [];
@@ -432,6 +545,14 @@ export class Coordinator {
       modelResolved: null,
       modelObserved: null,
       modelPolicy,
+      sessionRequest,
+      sessionContext: sessionRequest.mode === 'resume' ? sessionRequest.context : null,
+      lineage: sessionRequest.mode === 'new' ? null : Object.freeze({
+        relation: sessionRequest.mode,
+        parentSessionId: sessionRequest.id,
+        parentTaskId: opts.refines ?? this._knownSessionContext(sessionRequest.id, vendor)?.handle?.taskId ?? null,
+      }),
+      refines: opts.refines ?? null,
       status: 'pending',
       assignee: workerId,
       worktree: null,
@@ -449,6 +570,9 @@ export class Coordinator {
       modelResolved: null,
       modelObserved: null,
       modelPolicy,
+      sessionRequest,
+      sessionContext: task.sessionContext,
+      lineage: task.lineage,
       taskId,
       worktree: null,
       status: 'pending',
@@ -467,6 +591,138 @@ export class Coordinator {
 
   _autoTaskId() {
     return `task-${++this._taskSeq}`;
+  }
+
+  _knownSessionContext(sessionId, vendor) {
+    for (const handle of this._workers.values()) {
+      if (handle.sessionRef?.id !== sessionId) continue;
+      if (vendor !== 'auto' && handle.vendor !== vendor) continue;
+      return { handle, context: handle.sessionContext ?? null };
+    }
+    return null;
+  }
+
+  async _validateSessionContext(context) {
+    if (this._repoRoot && context.repoRoot && context.repoRoot !== this._repoRoot) {
+      throw new SessionSelectionError('session context belongs to a different repository', 'session_context_mismatch');
+    }
+    if (typeof this._worktrees?.validateSessionContext === 'function') {
+      const verdict = await this._worktrees.validateSessionContext(context);
+      if (!verdict?.ok) {
+        throw new SessionSelectionError(verdict?.reason ?? 'session worktree is not reusable', 'session_context_mismatch');
+      }
+      return;
+    }
+    if (!existsSync(context.worktree)) {
+      throw new SessionSelectionError(`session worktree does not exist: ${context.worktree}`, 'session_context_missing');
+    }
+  }
+
+  /** PS7: explicitly reattach a replayed native session. Recovery never trusts a stale PID;
+   * authority comes only from a fresh adapter handshake that reports the expected native ID. */
+  async recover(workerId, opts = {}) {
+    this.tick();
+    const handle = this._getWorker(workerId);
+    const task = this._tasks.get(handle.taskId);
+    if (handle.status !== 'orphaned') return { ok: false, result: 'worker_not_orphaned' };
+    if (!task || !handle.sessionRef || handle.sessionRef.persistence !== 'native') {
+      return { ok: false, result: 'session_not_resumable' };
+    }
+    const adapter = this._adapters[handle.vendor];
+    if (!adapter || !cardSupportsSession(adapter.card(), { mode: 'resume' })) {
+      return { ok: false, result: 'session_not_resumable' };
+    }
+    const rawContext = opts.context ?? handle.sessionContext;
+    const context = rawContext
+      ? normalizeSessionRequest({ mode: 'resume', id: handle.sessionRef.id, context: rawContext }).context
+      : null;
+    if (!context) return { ok: false, result: 'session_context_required' };
+    try {
+      await this._validateSessionContext(context);
+    } catch (err) {
+      return { ok: false, result: err.code ?? 'session_context_mismatch', reason: err.message };
+    }
+
+    const timeoutMs = opts.timeoutMs ?? this._recoveryTimeoutMs;
+    const admission = { events: [] };
+    admission.spawned = new Promise((resolve) => { admission.resolveSpawned = resolve; });
+    handle.turnAdmission = admission;
+    const session = normalizeSessionRequest({ mode: 'resume', id: handle.sessionRef.id, context });
+    this._log.append({
+      worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+      kind: 'control.recovery_requested', actor: opts.actor ?? 'orchestrator',
+      payload: { sessionRef: handle.sessionRef, context },
+    });
+
+    let timerHandle;
+    let timedOut = false;
+    const timeout = new Promise((resolve) => {
+      timerHandle = this._setTimeout(() => { timedOut = true; resolve({ timeout: true }); }, timeoutMs);
+      if (timerHandle && typeof timerHandle.unref === 'function') timerHandle.unref();
+    });
+    const attempt = Promise.resolve(adapter.spawn(workerId, task.brief, {
+      worktree: context.worktree,
+      timeoutMs: task.brief?.budget?.wallMin ? task.brief.budget.wallMin * 60000 : undefined,
+      model: handle.modelResolved ?? undefined,
+      reasoningEffort: handle.modelPolicy?.reasoningEffort,
+      serviceTier: handle.modelPolicy?.serviceTier,
+      session,
+    })).then((ack) => ({ ack }), (error) => ({ error }));
+
+    let outcome = await Promise.race([attempt, timeout]);
+    if (outcome?.ack?.ok === true && !timedOut) {
+      outcome = await Promise.race([
+        admission.spawned.then((event) => ({ ack: outcome.ack, spawned: event })),
+        timeout,
+      ]);
+    }
+    if (timerHandle != null) this._clearTimeout(timerHandle);
+
+    const expectedId = handle.sessionRef.id;
+    const observedId = outcome?.spawned?.payload?.threadId ?? outcome?.spawned?.payload?.sessionId;
+    const failed = outcome?.timeout
+      ? { result: 'recovery_timeout', reason: `native reattachment exceeded ${timeoutMs}ms` }
+      : outcome?.error
+        ? { result: 'recovery_exception', reason: String(outcome.error?.message ?? outcome.error) }
+        : outcome?.ack?.ok !== true
+          ? { result: 'recovery_refused', reason: outcome?.ack?.reason ?? 'adapter refused recovery' }
+          : observedId !== expectedId
+            ? { result: 'session_identity_mismatch', reason: `expected ${expectedId}, observed ${observedId ?? '(none)'}` }
+            : null;
+
+    if (failed) {
+      if (handle.turnAdmission === admission) handle.turnAdmission = null;
+      handle.status = 'orphaned';
+      this._log.append({
+        worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'control.recovery_failed', actor: 'policy', payload: { ...failed, action: 'kill_untrusted_transport' },
+      });
+      Promise.resolve(adapter.kill(workerId)).catch(noop);
+      return { ok: false, ...failed };
+    }
+
+    const stamp = this._fences.bumpTurn(workerId);
+    task.status = 'working';
+    task.result = null;
+    task.verdict = null;
+    task.sessionRequest = session;
+    task.sessionContext = context;
+    handle.status = 'working';
+    handle.sessionRequest = session;
+    handle.sessionContext = context;
+    handle.turnAdmission = null;
+    this._log.append({
+      worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: stamp.turnEpoch,
+      kind: 'control.recovery_attached', actor: 'orchestrator',
+      payload: { sessionRef: handle.sessionRef, context },
+    });
+    this._log.append({
+      worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: stamp.turnEpoch,
+      kind: 'lifecycle.turn_started', actor: 'orchestrator', payload: { recovery: true },
+      modelRequested: handle.modelRequested ?? null, modelResolved: handle.modelResolved ?? null, modelObserved: handle.modelObserved ?? null,
+    });
+    for (const event of admission.events) this._handleEvent(event);
+    return { ok: true, result: 'attached', handle: this._publicHandle(handle) };
   }
 
   _allocWorkerId() {
@@ -514,6 +770,10 @@ export class Coordinator {
       modelObserved: handle.modelObserved ?? null,
       modelMismatch: handle.modelMismatch ?? null,
       modelPolicy: handle.modelPolicy ?? null,
+      sessionRequest: handle.sessionRequest ?? { mode: 'new' },
+      sessionRef: handle.sessionRef ?? null,
+      sessionContext: handle.sessionContext ?? null,
+      lineage: handle.lineage ?? null,
       taskId: handle.taskId,
       worktree: handle.worktree,
       fence,
@@ -556,10 +816,18 @@ export class Coordinator {
     // SC14: delivery-slot acquisition is the authority boundary. A queued continuation cannot
     // cross a finalized stop, and a terminal task cannot be resurrected by a surviving session.
     if (handle.status === 'stopping') return { ok: false, result: 'worker_stopping' };
-    if (handle.status === 'idle' || handle.status === 'dead' || handle.status === 'exited' || handle.status === 'pending') {
+    const card = this._adapters[handle.vendor]?.card();
+    const reusableFollowUp = mode === 'turn'
+      && handle.status === 'idle'
+      && task && TERMINAL_TASK_STATUSES.has(task.status)
+      && ['native', 'emulated'].includes(card?.sessions?.multiTurn);
+    if (handle.status === 'idle' && !reusableFollowUp) return { ok: false, result: 'worker_not_active' };
+    if (handle.status === 'dead' || handle.status === 'exited' || handle.status === 'orphaned' || handle.status === 'pending') {
       return { ok: false, result: 'worker_not_active' };
     }
-    if (!task || TERMINAL_TASK_STATUSES.has(task.status)) return { ok: false, result: 'task_terminal' };
+    if (!task || (TERMINAL_TASK_STATUSES.has(task.status) && !reusableFollowUp)) return { ok: false, result: 'task_terminal' };
+
+    if (reusableFollowUp) return this._deliverFollowUp(handle, task, message, opts);
 
     // C3: pre-check against an externally-supplied fence, BEFORE any delivery attempt —
     // re-evaluated HERE at delivery-slot acquisition, not at send() entry (SC4b).
@@ -617,6 +885,67 @@ export class Coordinator {
     return { ok: true, result: 'ok', emulated: ack && ack.emulated === true };
   }
 
+  async _deliverFollowUp(handle, task, message, opts) {
+    const workerId = handle.id;
+    if (opts.expectedFence !== undefined) {
+      const preCheck = this._fences.check(workerId, { fence: opts.expectedFence });
+      if (!preCheck.ok) return { ok: false, result: 'stale_fence', current: preCheck.current };
+    }
+
+    // A native adapter can emit turn_started synchronously inside prompt(), before returning its
+    // Ack. Queue those events until admission commits; refusal leaves the prior terminal view.
+    const admission = { events: [] };
+    handle.turnAdmission = admission;
+    let ack;
+    try {
+      ack = await this._adapters[handle.vendor].prompt(workerId, message, 'turn');
+    } catch (err) {
+      if (handle.turnAdmission === admission) handle.turnAdmission = null;
+      if (admission.events.length > 0) this._rejectContradictoryAdmission(handle, admission, err);
+      return { ok: false, result: 'delivery_exception', reason: String(err?.message ?? err) };
+    }
+    // A crash/exit is intentionally processed immediately instead of queued. It wins over an Ack
+    // from the same call and can never be overwritten by reopening the prior terminal task.
+    if (handle.status !== 'idle') {
+      if (handle.turnAdmission === admission) handle.turnAdmission = null;
+      return { ok: false, result: 'worker_not_active' };
+    }
+    if (!ack || ack.ok !== true) {
+      if (handle.turnAdmission === admission) handle.turnAdmission = null;
+      if (admission.events.length > 0) this._rejectContradictoryAdmission(handle, admission, ack?.reason);
+      return { ok: false, result: ack?.reason ?? 'delivery_refused', reason: ack?.reason };
+    }
+
+    const stamp = this._fences.bumpTurn(workerId);
+    task.status = 'working';
+    task.result = null;
+    task.verdict = null;
+    handle.status = 'working';
+    handle.turnAdmission = null;
+    this._log.append({
+      worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: stamp.turnEpoch,
+      kind: 'lifecycle.turn_started', actor: 'orchestrator',
+      modelRequested: handle.modelRequested ?? null, modelResolved: handle.modelResolved ?? null, modelObserved: handle.modelObserved ?? null,
+      payload: { followUp: true, message },
+    });
+    for (const event of admission.events) this._handleEvent(event);
+    return { ok: true, result: 'ok', emulated: ack.emulated === true };
+  }
+
+  _rejectContradictoryAdmission(handle, admission, reason) {
+    this._log.append({
+      worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+      kind: 'control.protocol_violation', actor: 'policy',
+      payload: {
+        op: 'follow_up_admission', reason: String(reason ?? 'adapter refused after emitting turn events'),
+        queuedKinds: admission.events.map((event) => event.kind), action: 'kill',
+      },
+    });
+    // The old result remains authoritative, but the session is no longer safe to reuse: its wire
+    // advanced despite refusing admission. Confirmed two-phase kill owns transport cleanup.
+    this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+  }
+
   // =========================================================================
   // Command: interrupt() / kill() — two-phase stop (D9)
   // =========================================================================
@@ -644,9 +973,7 @@ export class Coordinator {
     // terminal event as the confirmation, finish cleanup now, and never arm an unfulfillable wait.
     if (handle.status === 'exited') {
       handle.status = 'dead';
-      if (this._worktrees && typeof this._worktrees.remove === 'function') {
-        await Promise.resolve(this._worktrees.remove(handle.taskId)).catch(noop);
-      }
+      await this._removeTaskWorktree(this._tasks.get(handle.taskId));
       return { ok: true, result: 'already_dead' };
     }
     return this._beginStop(handle, 'kill', undefined, actor);
@@ -697,6 +1024,7 @@ export class Coordinator {
       confirmReceived: false,
       finalized: false,
       timerHandle: null,
+      then: mode === 'interrupt' ? then : undefined,
     };
     this._stopWaiters.set(handle.id, waiter);
 
@@ -720,6 +1048,12 @@ export class Coordinator {
     } catch {
       return 0;
     }
+  }
+
+  async _removeTaskWorktree(task) {
+    if (!task || !this._worktrees || typeof this._worktrees.remove !== 'function') return;
+    const ownerTaskId = task.sessionContext?.ownerTaskId ?? task.id;
+    await Promise.resolve(this._worktrees.remove(ownerTaskId)).catch(noop);
   }
 
   _wireAck(waiter, call) {
@@ -762,12 +1096,25 @@ export class Coordinator {
       if (waiter.mode === 'kill') {
         handle.status = 'dead';
         if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'cancelled';
-        if (this._worktrees && typeof this._worktrees.remove === 'function') {
-          Promise.resolve(this._worktrees.remove(handle.taskId)).catch(noop);
-        }
+        this._removeTaskWorktree(task).catch(noop);
       } else {
-        handle.status = 'idle';
-        if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'cancelled';
+        if (waiter.then !== undefined) {
+          const stamp = this._fences.bumpTurn(handle.id);
+          handle.status = 'working';
+          if (task) {
+            task.status = 'working';
+            task.result = null;
+            task.verdict = null;
+          }
+          this._log.append({
+            worker: workerId, harness, turnEpoch: stamp.turnEpoch, kind: 'lifecycle.turn_started', actor: 'orchestrator',
+            modelRequested: handle.modelRequested ?? null, modelResolved: handle.modelResolved ?? null, modelObserved: handle.modelObserved ?? null,
+            payload: { followUp: true, afterInterrupt: true },
+          });
+        } else {
+          handle.status = 'idle';
+          if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'cancelled';
+        }
       }
     }
 
@@ -793,9 +1140,7 @@ export class Coordinator {
       handle.status = 'dead';
       const task = this._tasks.get(handle.taskId);
       if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'failed';
-      if (this._worktrees && typeof this._worktrees.remove === 'function') {
-        Promise.resolve(this._worktrees.remove(handle.taskId)).catch(noop);
-      }
+      this._removeTaskWorktree(task).catch(noop);
     }
 
     const result = { ok: true, result: 'forced' };
@@ -930,6 +1275,10 @@ export class Coordinator {
       modelResolved: handle.modelResolved ?? null,
       modelObserved: handle.modelObserved ?? null,
       modelMismatch: handle.modelMismatch ?? null,
+      sessionRequest: handle.sessionRequest ?? { mode: 'new' },
+      sessionRef: handle.sessionRef ?? null,
+      sessionContext: handle.sessionContext ?? null,
+      lineage: handle.lineage ?? null,
     };
     if (!task) return { ready: false, status: handle.status, ...attribution };
     if (!TERMINAL_TASK_STATUSES.has(task.status)) return { ready: false, status: task.status, ...attribution };
@@ -1058,6 +1407,44 @@ export class Coordinator {
     const { worker: workerId, kind, harness, turnEpoch, payload, actor } = event;
     const handle = this._workers.get(workerId);
     if (!handle) return;
+    if (handle.turnAdmission && actor === 'worker' && !['lifecycle.crashed', 'lifecycle.exited', 'kill.confirmed'].includes(kind)) {
+      handle.turnAdmission.events.push(event);
+      if (kind === 'lifecycle.spawned') handle.turnAdmission.resolveSpawned?.(event);
+      return;
+    }
+
+    if (actor === 'worker' && ['lifecycle.turn_completed', 'question.asked', 'approval.requested'].includes(kind)) {
+      const currentEpoch = this._safeTurnEpoch(handle);
+      if (handle.wireEpochOffset == null && typeof turnEpoch === 'number') handle.wireEpochOffset = currentEpoch - turnEpoch;
+      const normalizedEpoch = typeof turnEpoch === 'number' ? turnEpoch + (handle.wireEpochOffset ?? 0) : currentEpoch;
+      if (normalizedEpoch < currentEpoch) {
+        this._log.append({
+          worker: workerId, harness, turnEpoch: currentEpoch, kind: 'control.stale_rejected', actor: 'policy',
+          modelRequested: handle.modelRequested ?? null, modelResolved: handle.modelResolved ?? null, modelObserved: handle.modelObserved ?? null,
+          payload: { op: kind === 'lifecycle.turn_completed' ? 'terminal' : kind, attemptedTurnEpoch: normalizedEpoch, currentTurnEpoch: currentEpoch },
+        });
+        return;
+      }
+    }
+    if (actor === 'worker' && kind === 'lifecycle.turn_started' && typeof turnEpoch === 'number') {
+      const currentEpoch = this._safeTurnEpoch(handle);
+      if (handle.wireEpochOffset == null) handle.wireEpochOffset = currentEpoch - turnEpoch;
+    }
+
+    if (kind === 'lifecycle.spawned' && actor === 'worker') {
+      const nativeId = payload?.threadId ?? payload?.sessionId;
+      if (typeof nativeId === 'string' && nativeId.length > 0) {
+        handle.sessionRef = {
+          vendor: handle.vendor,
+          kind: payload?.threadId ? 'thread' : 'session',
+          id: nativeId,
+          persistence: this._adapters[handle.vendor]?.card()?.sessions?.resume === 'native' ? 'native' : 'process',
+          source: 'wire',
+        };
+        const refTask = this._tasks.get(handle.taskId);
+        if (refTask) refTask.sessionRef = handle.sessionRef;
+      }
+    }
     const observedModel = payload?.modelObserved ?? payload?.modelId ?? payload?.model;
     if (typeof observedModel === 'string' && observedModel.length > 0) {
       handle.modelObserved = observedModel;
@@ -1271,6 +1658,10 @@ export class Coordinator {
       let modelObserved = null;
       let modelPolicy = null;
       let modelMismatch = null;
+      let sessionRequest = Object.freeze({ mode: 'new' });
+      let sessionRef = null;
+      let sessionContext = null;
+      let lineage = null;
 
       for (const e of events) {
         if (typeof e.turnEpoch === 'number' && e.turnEpoch > maxTurnEpoch) maxTurnEpoch = e.turnEpoch;
@@ -1287,7 +1678,33 @@ export class Coordinator {
             modelRequested = e.payload?.modelRequested ?? modelRequested;
             modelResolved = e.payload?.modelResolved ?? modelResolved;
             modelPolicy = e.payload?.modelPolicy ?? modelPolicy;
+            sessionRequest = e.payload?.sessionRequest ?? sessionRequest;
+            lineage = e.payload?.lineage ?? lineage;
             modelObserved = e.payload?.modelObserved ?? e.payload?.model ?? modelObserved;
+            if (e.actor === 'worker') {
+              const nativeId = e.payload?.threadId ?? e.payload?.sessionId;
+              if (typeof nativeId === 'string' && nativeId.length > 0) {
+                sessionRef = {
+                  vendor: vendorResolved,
+                  kind: e.payload?.threadId ? 'thread' : 'session',
+                  id: nativeId,
+                  persistence: this._adapters[vendorResolved]?.card()?.sessions?.resume === 'native' ? 'native' : 'process',
+                  source: 'wire',
+                };
+              }
+            }
+            break;
+          case 'worktree.ready':
+            sessionContext = e.payload ?? sessionContext;
+            break;
+          case 'control.recovery_attached':
+            terminalStatus = 'working';
+            lastResult = null;
+            verdict = null;
+            sessionContext = e.payload?.context ?? sessionContext;
+            sessionRequest = sessionRef?.id
+              ? { mode: 'resume', id: sessionRef.id, ...(sessionContext ? { context: sessionContext } : {}) }
+              : sessionRequest;
             break;
           case 'lifecycle.turn_started':
             if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) terminalStatus = 'working';
@@ -1363,11 +1780,20 @@ export class Coordinator {
           modelObserved,
           modelPolicy,
           modelMismatch,
+          sessionRequest,
+          sessionRef,
+          sessionContext,
+          lineage,
         };
         task.assignee = workerId;
         task.status = terminalStatus;
         task.result = lastResult ?? task.result;
         task.verdict = verdict ?? task.verdict;
+        task.sessionRequest = sessionRequest;
+        task.sessionRef = sessionRef;
+        task.sessionContext = sessionContext;
+        task.lineage = lineage;
+        task.worktree = sessionContext?.worktree ?? task.worktree;
         this._tasks.set(taskId, task);
         if (!this._taskOrder.includes(taskId)) this._taskOrder.push(taskId);
       }
@@ -1380,9 +1806,15 @@ export class Coordinator {
         modelObserved,
         modelPolicy,
         modelMismatch,
+        sessionRequest,
+        sessionRef,
+        sessionContext,
+        lineage,
         taskId,
-        worktree: null,
-        status: recoveryTerminalized ? 'orphaned' : this._deriveWorkerStatus(terminalStatus),
+        worktree: sessionContext?.worktree ?? null,
+        // A durable native reference is not a live transport. Even a terminal task that was
+        // reusable before restart must remain uncontrollable until PS7 proves reattachment.
+        status: (recoveryTerminalized || sessionRef) ? 'orphaned' : this._deriveWorkerStatus(terminalStatus),
         pendingApprovalId: null,
         pendingQuestionId: null,
         budgetUsed: { tokens: 0, usd: 0 },

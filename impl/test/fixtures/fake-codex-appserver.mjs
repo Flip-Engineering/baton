@@ -295,6 +295,32 @@ rl.on('line', (line) => {
       });
       break;
     }
+    case 'thread/resume': {
+      threadId = obj.params.threadId;
+      threadCwd = obj.params?.cwd ?? null;
+      send({
+        id: obj.id,
+        result: {
+          thread: { id: threadId, sessionId: threadId, cwd: threadCwd ?? '/work', cliVersion: '0.144.0-fake', createdAt: Date.now(), updatedAt: Date.now(), ephemeral: false, source: 'appServer', status: { type: 'idle' }, turns: [], modelProvider: 'fake' },
+          model: obj.params?.model ?? 'fake-model', modelProvider: 'fake', cwd: threadCwd ?? '/work',
+          sandbox: obj.params?.sandbox ?? 'workspace-write', approvalPolicy: obj.params?.approvalPolicy ?? 'never', approvalsReviewer: 'user', instructionSources: [],
+        },
+      });
+      break;
+    }
+    case 'thread/fork': {
+      threadId = `${obj.params.threadId}-fork`;
+      threadCwd = obj.params?.cwd ?? null;
+      send({
+        id: obj.id,
+        result: {
+          thread: { id: threadId, sessionId: threadId, forkedFromId: obj.params.threadId, cwd: threadCwd ?? '/work', cliVersion: '0.144.0-fake', createdAt: Date.now(), updatedAt: Date.now(), ephemeral: true, source: 'appServer', status: { type: 'idle' }, turns: [], modelProvider: 'fake' },
+          model: obj.params?.model ?? 'fake-model', modelProvider: 'fake', cwd: threadCwd ?? '/work',
+          sandbox: obj.params?.sandbox ?? 'workspace-write', approvalPolicy: obj.params?.approvalPolicy ?? 'never', approvalsReviewer: 'user', instructionSources: [],
+        },
+      });
+      break;
+    }
     case 'turn/start': {
       if (TURN_START_FAIL) {
         send({ id: obj.id, error: { code: -32099, message: 'phase10.1 forced turn/start failure' } });

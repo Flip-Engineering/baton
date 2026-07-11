@@ -4,9 +4,9 @@
 // This is the "how to run the whole thing" — a program (or your CLI agent, over MCP later)
 // calls the coordinator's 8 commands; everything underneath is deterministic code.
 
-import { join, basename } from 'node:path';
+import { join, basename, sep } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { rmSync } from 'node:fs';
+import { existsSync, realpathSync, rmSync } from 'node:fs';
 
 import { Log } from './log.mjs';
 import { FenceTable } from './fence.mjs';
@@ -16,7 +16,7 @@ import { verify, accept } from './referee.mjs';
 import { AdaptiveRouter } from './router.mjs';
 import { StoryCompiler } from './story.mjs';
 
-export { Coordinator, ModelSelectionError } from './coordinator.mjs';
+export { Coordinator, ModelSelectionError, SessionSelectionError } from './coordinator.mjs';
 export { MockAdapter, CodexAdapter, ClaudeAdapter, GlmAdapter } from './adapter.mjs';
 // SC2: the session tier IS the product surface — constructible from the entry point.
 export { ClaudeSessionCli, GlmSessionCli } from './claude-session.mjs';
@@ -47,6 +47,29 @@ function worktreeManager(repoRoot) {
     },
     // Terminal policy cleanup owns non-evidence task branches as well as their checkout/metadata.
     async remove(taskId) { try { await worktreeMod.reap(repoRoot, taskId, { force: true, deleteBranch: true }); } catch { /* noop */ } },
+    async validateSessionContext(context) {
+      try {
+        if (!existsSync(context.worktree)) return { ok: false, reason: 'session worktree no longer exists' };
+        const root = realpathSync(repoRoot);
+        const worktree = realpathSync(context.worktree);
+        const managedRoot = realpathSync(join(repoRoot, '.baton', 'wt'));
+        if (context.repoRoot && realpathSync(context.repoRoot) !== root) return { ok: false, reason: 'session repository identity mismatch' };
+        if (worktree !== managedRoot && !worktree.startsWith(`${managedRoot}${sep}`)) return { ok: false, reason: 'session worktree is outside Baton ownership' };
+        if (context.ownerTaskId && basename(worktree) !== context.ownerTaskId) return { ok: false, reason: 'session worktree owner mismatch' };
+        const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: worktree, encoding: 'utf8' }).trim();
+        if (realpathSync(top) !== worktree) return { ok: false, reason: 'session path is not the recorded git worktree root' };
+        if (context.branch) {
+          const branch = execFileSync('git', ['branch', '--show-current'], { cwd: worktree, encoding: 'utf8' }).trim();
+          if (branch !== context.branch) return { ok: false, reason: 'session worktree branch mismatch' };
+        }
+        if (context.baseSha) {
+          execFileSync('git', ['merge-base', '--is-ancestor', context.baseSha, 'HEAD'], { cwd: worktree, stdio: 'ignore' });
+        }
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, reason: `session context validation failed: ${err?.message ?? err}` };
+      }
+    },
     async reconcile() { try { await worktreeMod.reconcile(repoRoot, []); } catch { /* noop */ } },
   };
 }
@@ -113,6 +136,7 @@ export function createDriver(opts) {
     now,
     approvalTimeoutMs: opts.approvalTimeoutMs ?? 60000,
     stopDeadlineMs: opts.stopDeadlineMs ?? 15000,
+    recoveryTimeoutMs: opts.recoveryTimeoutMs ?? 15000,
   });
 
   return { coordinator, story, router, log };
