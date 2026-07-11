@@ -42,12 +42,16 @@ const TARGETS = [
   'impl/test/fixtures/fake-grok-acp.mjs',
 ];
 const brief = createBrief({
-  goal: 'Implement spec/phase14/harness-model-effort-routing.md RT1-RT11 as a complete deterministic vertical. Add top-level effort to Coordinator and strict web spawn; normalize compatibility with modelPolicy.reasoningEffort and reject conflicts before allocation; resolve model+effort per harness candidate; make assembled adaptive candidate and verified-outcome keys use the identical stable resolved tuple; expose harness/model/effort requested-resolved-observed fields through handles, events, results, replay, story, review and verification; add effort mismatch fail+two-phase-stop; add Baton-Effort commit trailers; and prove Codex/Claude/Grok native mapping. Preserve existing APIs and tests while adding red-first route-tuple coverage.',
+  goal: 'Harden the integrated b7f2749 Phase 14 route-tuple candidate to complete spec/phase14/harness-model-effort-routing.md RT1-RT11. Preserve its centralized stable tuple key and top-level Coordinator effort support, then add the missing red-first RT11 suite; forward web args.effort; durably create and replay effort/route fields; attribute effort through spawn, result, verification, review and story; expose mismatch state; restrict observed-effort authority to native lifecycle/usage metadata; keep candidate and verified outcome keys identical; verify low/high bucket separation; and prove commit trailers plus Codex/Claude/Grok native controls. Preserve all existing tests.',
   constraints: [
     `Edit only: ${TARGETS.join(', ')}.`,
     'Use Node built-ins only; no new dependencies.',
     'Keep legacy modelPolicy.reasoningEffort behavior, but top-level effort is canonical and conflict fails before allocation.',
     'Do not silently infer effortObserved from effortRequested; only adapter/native metadata may establish observation.',
+    'Do not treat arbitrary content/result payload effort fields as native observation; only adapter-mapped lifecycle or usage metadata may trigger mismatch policy.',
+    'Add impl/test/phase14-route-tuple.test.mjs and cover every RT11 item; passing legacy tests alone is insufficient.',
+    'Web _dispatch must forward args.effort independently from modelPolicy.',
+    'Replay and durable task creation must retain effortRequested/Resolved/Observed and routeKey, with null compatibility for older ledgers.',
     'Candidate scoring and verified outcome recording must use the same resolved harness/model/effort key; do not key learning by observed aliases.',
     'Low and high effort for one harness/model/task type must be distinct router buckets.',
     'Preserve ordinary confirmed kill/reap for model or effort mismatch and never verify a mismatched task.',
