@@ -27,6 +27,11 @@ trusted-proxy configuration, command-status reconciliation for
 admitted-but-incomplete commands, browser UI automation, and the full adversarial gate remain
 active scope.
 
+The next numbered implementation vertical is IL1–IL8 in
+`spec/phase12/authenticated-web-session-lifecycle.md`: injected-provider login, atomic credential
+rotation, and logout over the existing HTTPS authority. Rate/proxy/browser gates remain explicit
+after it.
+
 ## WN1 — one authority, two web transports
 
 The web tier is an adapter over the existing coordinator and coordination store. HTTPS accepts
