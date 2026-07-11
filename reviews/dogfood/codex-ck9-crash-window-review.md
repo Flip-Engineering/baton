@@ -1,0 +1,34 @@
+## Verdict
+CK9 is not green yet. The current repairs materially improve the crash-window story, and several high-risk seams now have direct tests, but there is still one major correctness gap in replay authority for post-publication recovery.
+
+No finding:
+- `impl/src/coordinator.mjs:1047` records `integration.requested` before `local_git_merge`, and `impl/test/phase11-acceptance-integration.test.mjs:360` proves an injected append failure prevents the merge. That satisfies the pre-effect integration Git safety slice of `spec/phase11/coordination-knowledge.md`.
+- `impl/src/coordinator.mjs:1360` and `impl/src/coordinator.mjs:980` now abort failed follow-up/recovery refinements without rewriting the prior terminal task, and `impl/test/phase11-persistent-sessions.test.mjs:156` and `impl/test/phase11-persistent-sessions.test.mjs:471` exercise those paths.
+- `impl/src/coordinator.mjs:2120` commits accepted input as single-consumer on append failure, and `impl/test/phase11-control-integrity.test.mjs:219` proves the racing responder is released without redelivery.
+
+## Crash-window matrix
+No finding:
+- Pre-effect intent ordering: `integration.requested`, `publication.authorized`, follow-up/recovery request logging, and stop/budget paths all write intent before external effect. Evidence: `impl/src/coordinator.mjs:1047`, `impl/src/coordinator.mjs:2001`, `impl/src/coordinator.mjs:1330`, `impl/src/coordinator.mjs:977`, `impl/src/coordinator.mjs:1717`. Tests: `impl/test/phase11-acceptance-integration.test.mjs:360`, `impl/test/phase11-acceptance-integration.test.mjs:396`, `impl/test/phase11-persistent-sessions.test.mjs:156`.
+- Bounded post-effect ambiguity: publication completion now lands through `coordination.completePublication()` so the knowledge promotion and driver completion share one append batch. Evidence: `impl/src/coordination-store.mjs:388`, `impl/src/coordinator.mjs:2025`. Tests: `impl/test/phase11-acceptance-integration.test.mjs:413`.
+- Restart closure: replay force-terminalizes missing coordination terminal batches and marks unattached persistent workers orphaned instead of reviving them as working. Evidence: `impl/src/coordinator.mjs:2921`, `impl/src/coordinator.mjs:2942`. Tests: `impl/test/phase11-control-integrity.test.mjs:239`, `impl/test/phase11-persistent-sessions.test.mjs:174`, `impl/test/phase11-acceptance-integration.test.mjs:434`.
+- Accepted-input single-consumer behavior: accepted delivery is not redelivered after append failure, and replay closes the durable task failed. Evidence: `impl/src/coordinator.mjs:2132`. Test: `impl/test/phase11-control-integrity.test.mjs:219`.
+- Refinement abort/replay: failed post-native refinement creation records `control.refinement_aborted`, kills the transport, preserves the predecessor, and replays orphaned. Evidence: `impl/src/coordinator.mjs:981`, `impl/src/coordinator.mjs:1360`. Tests: `impl/test/phase11-persistent-sessions.test.mjs:156`, `impl/test/phase11-persistent-sessions.test.mjs:471`.
+- Adapter/PID cleanup: repair paths now kill/quarantine the untrusted transport and remove runtime scope on recovery failure or refinement abort. Evidence: `impl/src/coordinator.mjs:973`, `impl/src/coordinator.mjs:989`, `impl/src/coordinator.mjs:1369`. Tests: `impl/test/phase11-governance.test.mjs:175`, `impl/test/phase11-persistent-sessions.test.mjs:542`.
+- Integration Git safety: the coordinator explicitly states integration is local-only and never pushes, and the pre-effect append-failure test holds HEAD/worktree stable. Evidence: `impl/src/coordinator.mjs:1018`, `impl/test/phase11-acceptance-integration.test.mjs:364`.
+- Deterministic gate versus missing product features: `docs/26-full-system-goal.md` still lists broader persistent session, authenticated web, capability-plane, and richer governance work. Their absence is not a CK9 failure by itself; the gate is about deterministic crash-window safety, not feature completeness.
+
+Major finding:
+- Atomic publication authority replay is still too weak. `impl/src/coordinator.mjs:2875` accepts operational `publication.completed` telemetry whenever replay finds the promoted decision node `decision:publish:<task>:<seq>`. It does not also require the matching authoritative coordination `driver.recorded{kind:'publication.completed'}` event that `spec/phase11/coordination-knowledge.md` requires for the post-effect atomic authority record. Because replay keys only on the knowledge node, a split-brain/corrupt authority state containing `knowledge.promoted` without the paired `driver.recorded` would be replayed as successful publication. The focused tests do not catch this: `impl/test/phase11-acceptance-integration.test.mjs:413` only covers the simpler case where both authority records are absent.
+
+## Remaining major findings
+Major:
+- `impl/src/coordinator.mjs:2880` should verify both halves of the authoritative coordination batch before reconstructing `task.publication`. Today it checks only `knowledge.promoted`. That does not fully implement the spec sentence “Replay accepts `publication.completed` telemetry only when that atomic authority record exists” in `spec/phase11/coordination-knowledge.md`. The repair in `impl/src/coordination-store.mjs:388` makes the normal write path atomic, but the replay acceptance rule is still under-specified in code.
+
+Minor:
+- The CK9 evidence in focused tests is convincing for question-answer delivery, but there is no equivalent post-accept append-failure test for approval delivery in `impl/test/phase11-control-integrity.test.mjs`. Given the shared code path in `impl/src/coordinator.mjs:2096`, this is not a separate correctness bug, but it leaves one public single-consumer surface unproved by the gate.
+
+## Required next actions
+1. Tighten replay in `impl/src/coordinator.mjs:2875` so operational `publication.completed` is accepted only if replay finds both the publication decision node and the matching coordination `driver.recorded` completion event for the same publication authority batch.
+2. Add a focused AC6 seam test that synthesizes the asymmetric authority case the current code mishandles: operational `publication.completed` present, `knowledge.promoted` present, but no `driver.recorded{kind:'publication.completed'}`. Expected replay result: completed task, `publication === null`, no republish.
+3. Add the missing approval-delivery post-effect crash-window test parallel to `impl/test/phase11-control-integrity.test.mjs:219` so CK9 proves single-consumer behavior across both question and approval public inputs.
+4. Do not claim CK9 green until the replay authority check above is fixed and the new asymmetric-authority test passes. The broader missing product items in `docs/26-full-system-goal.md` remain out of scope for this gate and should not be used either to block or to justify CK9.
