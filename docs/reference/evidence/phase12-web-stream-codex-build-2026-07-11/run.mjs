@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { CodexAppServerCli, createBrief, createDriver } from '../../../../impl/src/index.mjs';
 
 const HERE=dirname(fileURLToPath(import.meta.url)); const REPO=resolve(HERE,'../../../..'); const AUTH=join(homedir(),'.codex','auth.json');
-const LOG_DIR=join(tmpdir(),`baton-web-stream-build-${Date.now()}`); const TASK_ID='codex-web-stream-build'; const MODEL='gpt-5.4';
+const LOG_DIR=join(tmpdir(),`baton-web-stream-build-${Date.now()}`); const TASK_ID='codex-web-stream-build'; const MODEL='gpt-5.6';
 const sleep=(ms)=>new Promise(r=>setTimeout(r,ms)); const git=(args)=>execFileSync('git',args,{cwd:REPO,encoding:'utf8'}).trim();
 const alive=(pid)=>{try{process.kill(pid,0);return true;}catch{return false;}};
 async function until(fn,label,timeout=600000){const end=Date.now()+timeout;while(Date.now()<end){const v=await fn();if(v)return v;await sleep(100);}throw new Error(`timeout waiting for ${label}`);}
