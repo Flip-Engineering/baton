@@ -101,3 +101,11 @@ protection, resumable event cursors, backpressure, reconnect/disconnect behavior
 an audit edge from every accepted/rejected web command to its user/session. Harness and exact model
 selection are available over this surface. No browser endpoint can bypass approval, sandbox,
 budget, verification, or irreversible-action gates.
+
+## Registered completion — explicit effort route axis
+
+Phase 14.1 (`spec/phase14/harness-model-effort-routing.md`) extends MS1–MS5 so effort is a
+first-class orchestrator and web request axis, part of the adaptive route bucket, and attributed as
+requested/resolved/observed through replay, verification, and commit trailers. The legacy
+`modelPolicy.reasoningEffort` field remains a compatible constraint but is no longer the only way
+to request effort.
