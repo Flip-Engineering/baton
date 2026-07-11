@@ -214,7 +214,10 @@ export class CoordinationStore {
     }
   }
 
-  events(fromSeq = 1) { return this._events.filter((event) => event.seq >= fromSeq).map(clone); }
+  events(fromSeq = 1) {
+    const start = Number.isSafeInteger(fromSeq) ? Math.max(0, fromSeq - 1) : 0;
+    return this._events.slice(start).map(clone);
+  }
   task(id) { return clone(this._tasks.get(id) ?? null); }
   snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
   readyTasks() {
