@@ -1,5 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer as createHttpsServer } from 'node:https';
+import { createServer as createHttpServer } from 'node:http';
 import { WebEventStream } from './web-stream.mjs';
 import { WebEdgePolicy } from './web-edge.mjs';
 
@@ -110,7 +111,8 @@ export class WebNorthbound {
     this.isPrincipalActive = opts.isPrincipalActive ?? this.authenticate?.isPrincipalActive ?? null;
     this.maxBodyBytes = opts.maxBodyBytes ?? 64 * 1024;
     this.edge = opts.edge ?? (opts.edgePolicy ? new WebEdgePolicy(opts.edgePolicy) : null);
-    this.ready = true;
+    this.admitting = true;
+    this.readinessChecks = opts.readinessChecks ?? [];
     this.stream = opts.stream ?? new WebEventStream({
       ...opts, coordination: this.coordination,
       allowedOrigins: [...this.allowedOrigins], repoIds: [...this.repoIds],
@@ -124,7 +126,7 @@ export class WebNorthbound {
     return this.coordination.recordWebAudit({
       kind, userId: principal?.userId ?? null, sessionId: principal?.sessionId ?? null,
       credentialId: principal?.credentialId ?? null, origin: ctx?.origin ?? null,
-      remoteAddressClass: ctx?.remoteAddress ? 'present' : 'absent', ...json(details),
+      remoteAddressClass: ctx?.remoteAddress ? 'present' : 'absent', addressDigest: ctx?.addressDigest ?? null, ...json(details),
     }, { actor: auditActor, key: `web.audit:${randomUUID()}` });
   }
 
@@ -135,6 +137,16 @@ export class WebNorthbound {
     if (principal.revoked === true || !string(principal.expiresAt) || !Number.isFinite(expiresAt) || expiresAt <= this.now()) return error(401, 'unauthenticated');
     if (ctx.transport !== 'https') return error(503, 'temporarily_unavailable', 'secure transport required');
     return null;
+  }
+
+  _isReady() {
+    if (!this.admitting || (this.edge && !this.edge.admitting)) return false;
+    try {
+      if (typeof this.coordination.snapshot === 'function' && !this.coordination.snapshot()) return false;
+      if (this.sessions && typeof this.sessions.events === 'function') this.sessions.events();
+      if (typeof this.authenticate !== 'function') return false;
+      return this.readinessChecks.every((check) => check() === true);
+    } catch { return false; }
   }
 
   _authorize(ctx, envelope) {
@@ -258,6 +270,7 @@ export class WebNorthbound {
         return this._write(res, error(400, 'invalid_forwarding'));
       }
       req.edgeIdentity = identity;
+      req.edgeAddressDigest = this.edge.digest(identity.address);
       const name = url.pathname === '/readyz' ? 'readiness' : 'address';
       const quota = this.edge.take(name, this.edge.digest(identity.address));
       if (!quota.ok) {
@@ -273,8 +286,8 @@ export class WebNorthbound {
       }
     }
     if (req.method === 'GET' && url.pathname === '/healthz') return this._write(res, result(200, { ok: true }));
-    if (req.method === 'GET' && url.pathname === '/readyz') return this._write(res, this.ready && (!this.edge || this.edge.admitting) ? result(200, { ready: true }) : result(503, { ready: false }));
-    if (this.edge && !this.edge.admitting) return this._write(res, error(503, 'temporarily_unavailable'));
+    if (req.method === 'GET' && url.pathname === '/readyz') return this._write(res, this._isReady() ? result(200, { ready: true }) : result(503, { ready: false }));
+    if (!this.admitting || (this.edge && !this.edge.admitting)) return this._write(res, error(503, 'temporarily_unavailable'));
     if (req.method === 'POST' && AUTH_PATHS.has(url.pathname)) {
       return this._handleLifecycle(req, res, url.pathname, origin);
     }
@@ -296,7 +309,7 @@ export class WebNorthbound {
       try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
       let body;
       try { body = await this._readBody(req); } catch { return this._write(res, error(400, 'invalid_command'), origin); }
-      const ctx = { principal, origin, csrfToken: req.headers['x-baton-csrf'] ?? null, transport: req.socket?.encrypted ? 'https' : 'http' };
+      const ctx = { principal, origin, csrfToken: req.headers['x-baton-csrf'] ?? null, addressDigest: req.edgeAddressDigest ?? null, transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http') };
       const authFailure = this._authenticate(ctx);
       if (authFailure) return this._write(res, authFailure, origin);
       if (principal.authMethod === 'cookie') {
@@ -305,12 +318,20 @@ export class WebNorthbound {
           : ctx.csrfToken === principal.csrfToken);
         if (!csrfValid) return this._write(res, error(403, 'forbidden'), origin);
       }
+      if (this.edge) {
+        const ticketQuota = this.edge.take('ticket', principal.credentialId);
+        if (!ticketQuota.ok) {
+          try { this._audit('quota_refused', { principal, origin, addressDigest: req.edgeAddressDigest ?? null }, { quota: 'ticket' }); }
+          catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+          return this._write(res, error(429, 'rate_limited'), origin, { 'retry-after': String(ticketQuota.retryAfter) });
+        }
+      }
       return this._write(res, this.stream.issue(principal, origin, body?.repoId), origin);
     }
     if (req.method === 'GET' && url.pathname === '/v1/events') {
       let principal;
       try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
-      const authFailure = this._authenticate({ principal, transport: req.socket?.encrypted ? 'https' : 'http' });
+      const authFailure = this._authenticate({ principal, transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http') });
       if (authFailure) return this._write(res, authFailure, origin);
       const responseValue = this.stream.open({
         ticket: url.searchParams.get('ticket'), principal, origin,
@@ -330,18 +351,18 @@ export class WebNorthbound {
     }
     const response = await this.execute({
       principal, origin, csrfToken: req.headers['x-baton-csrf'] ?? null,
-      remoteAddress: req.socket?.remoteAddress ?? null, transport: req.socket?.encrypted ? 'https' : 'http',
+      remoteAddress: req.edgeAddressDigest ? 'canonical' : (req.socket?.remoteAddress ?? null), addressDigest: req.edgeAddressDigest ?? null, transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http'),
     }, envelope);
     return this._write(res, response, origin);
   }
 
   async _handleLifecycle(req, res, pathname, origin) {
-    const ctx = { origin, remoteAddress: req.socket?.remoteAddress ?? null };
+    const ctx = { origin, remoteAddress: req.edgeAddressDigest ? 'canonical' : (req.socket?.remoteAddress ?? null), addressDigest: req.edgeAddressDigest ?? null, transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http') };
     const audit = (kind, principal = null, details = {}) => this._audit(kind, { ...ctx, principal }, details);
-    if (!req.socket?.encrypted || !this.allowedOrigins.has(origin)) {
+    if (ctx.transport !== 'https' || !this.allowedOrigins.has(origin)) {
       try { audit(pathname.endsWith('login') ? 'login_refused' : pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', null, { reason: 'request_policy' }); }
       catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
-      return this._write(res, error(!req.socket?.encrypted ? 503 : 403, !req.socket?.encrypted ? 'temporarily_unavailable' : 'forbidden'), origin);
+      return this._write(res, error(ctx.transport !== 'https' ? 503 : 403, ctx.transport !== 'https' ? 'temporarily_unavailable' : 'forbidden'), origin);
     }
     if (req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
       try { audit(pathname.endsWith('login') ? 'login_refused' : pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', null, { reason: 'content_type' }); }
@@ -454,7 +475,7 @@ export class WebNorthbound {
   async shutdown({ server, drainMs = 5_000 } = {}) {
     if (this._shutdown) return this._shutdown;
     if (!Number.isSafeInteger(drainMs) || drainMs <= 0) throw new TypeError('drainMs must be a positive safe integer');
-    this.ready = false; this.edge?.closeAdmission();
+    this.admitting = false; this.edge?.closeAdmission();
     this._shutdown = (async () => {
       try { this._audit('shutdown_started', {}); } catch {}
       this.stream.shutdown?.();
@@ -467,9 +488,19 @@ export class WebNorthbound {
 
 export function createAuthenticatedWebServer(northbound, opts = {}) {
   if (!(northbound instanceof WebNorthbound)) throw new TypeError('WebNorthbound required');
-  if (!opts.tls?.key || !opts.tls?.cert) throw new TypeError('TLS key and certificate are required');
   if (typeof northbound.authenticate !== 'function') throw new TypeError('an authenticator is required');
-  return createHttpsServer({ key: opts.tls.key, cert: opts.tls.cert, minVersion: 'TLSv1.2' }, (req, res) => northbound.handle(req, res));
+  const proxyCleartext = opts.proxy?.cleartextBackend === true;
+  let server;
+  if (proxyCleartext) {
+    if (!northbound.edge?.proxyMode || northbound.edge.trustedProxies.length === 0) throw new TypeError('cleartext proxy backend requires an explicit trusted-proxy edge policy');
+    if (opts.tls?.key || opts.tls?.cert) throw new TypeError('choose direct TLS or cleartext trusted-proxy backend, not both');
+    server = createHttpServer((req, res) => northbound.handle(req, res));
+  } else {
+    if (!opts.tls?.key || !opts.tls?.cert) throw new TypeError('TLS key and certificate are required');
+    server = createHttpsServer({ key: opts.tls.key, cert: opts.tls.cert, minVersion: 'TLSv1.2' }, (req, res) => northbound.handle(req, res));
+  }
+  server.batonShutdown = (shutdownOpts = {}) => northbound.shutdown({ ...shutdownOpts, server });
+  return server;
 }
 
 export { validateEnvelope as validateWebCommandEnvelope };

@@ -61,7 +61,11 @@ export class WebEdgePolicy {
     this.quotas = Object.fromEntries(Object.entries(limits).map(([name, limit]) => [name, new FixedWindowQuota({ limit, windowMs, maxKeys, now })]));
     this.admitting = true;
   }
-  resolve(req) { return resolveEdgeRequest(req, { trustedProxies: this.trustedProxies, forwardedHop: this.forwardedHop, requireForwardedHttps: this.proxyMode }); }
+  resolve(req) {
+    const resolved = resolveEdgeRequest(req, { trustedProxies: this.trustedProxies, forwardedHop: this.forwardedHop, requireForwardedHttps: this.proxyMode });
+    if (!this.proxyMode) return { ...resolved, transport: req?.socket?.encrypted ? 'https' : 'http' };
+    return resolved;
+  }
   digest(value) { return createHmac('sha256', this.addressKey).update(value).digest('hex'); }
   take(kind, key, cost) { return this.quotas[kind].take(key, cost); }
   closeAdmission() { this.admitting = false; }
