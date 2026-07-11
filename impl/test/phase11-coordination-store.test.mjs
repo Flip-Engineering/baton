@@ -40,7 +40,7 @@ test('CK8: direct Coordinator construction refuses an optional coordination side
 test('CK1: append failure is fatal and leaves event/task projections unchanged', () => {
   const store = new CoordinationStore(dir(), { appendFile: () => { throw new Error('disk full'); } });
   assert.throws(() => store.createTask(fields('a'), { actor: 'orchestrator', key: 'a' }), /disk full/);
-  assert.deepEqual(store.snapshot(), { tasks: [], artifacts: [], evidence: [], scratch: { facts: [], claims: [] }, knowledge: { nodes: [], edges: [], reads: [], contamination: [] }, lastSeq: 0 });
+  assert.deepEqual(store.snapshot(), { tasks: [], artifacts: [], evidence: [], scratch: { facts: [], claims: [], reads: [] }, knowledge: { nodes: [], edges: [], reads: [], contamination: [] }, lastSeq: 0 });
 });
 
 test('CK1/CK9: operational append failure poisons the coordinator and restart closes the claimed task', async () => {
@@ -431,9 +431,10 @@ test('CK7/CK9: invalidation and contamination commit atomically', () => {
   assert.equal(store.events().slice(-2).map((event) => event.kind).join(','), 'knowledge.invalidated,knowledge.contamination_record');
 });
 
-test('CK7: a failed read append returns no recalled content', () => {
+test('CK7: failed knowledge and Scratch read appends return no recalled content', () => {
   const store = new CoordinationStore(dir(), { appendFile: () => { throw new Error('read log unavailable'); } });
   assert.throws(() => store.readKnowledge({}, { readerActor: 'x' }, { actor: 'x', key: 'read' }), /read log unavailable/);
+  assert.throws(() => store.readScratch('path:x', { repoId: 'repo', treeSha: 'deadbeef' }, { readerActor: 'x' }, { actor: 'x', key: 'scratch-read' }), /read log unavailable/);
 });
 
 test('CK2/CK8: confirmed kill durably cancels an active public task', async () => {
@@ -450,10 +451,20 @@ test('CK2/CK8: confirmed kill durably cancels an active public task', async () =
   const brief = { goal: 'cancel durably', constraints: [], pathScope: ['slow.txt'], definitionOfDone: 'cancel', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } };
   const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'durable-cancel' });
   await until(() => driver.coordinator.list()[0]?.status === 'working');
-  const lease = driver.coordination.claimScratch({
-    resource: 'path:slow.txt', ownerWorker: handle.id, ownerTask: 'durable-cancel', intent: 'edit',
-    envRef: { repoId: 'repo', treeSha: 'deadbeef' }, fence: 1, leaseDeadline: 'terminal',
-  }, { actor: handle.id, key: 'claim-slow-file' });
+  const active = driver.coordinator.list()[0];
+  const envRef = { repoId: 'repo', treeSha: 'deadbeef' };
+  const lease = driver.coordinator.claimScratch(handle.id, {
+    resource: 'path:slow.txt', intent: 'edit', envRef, leaseDeadline: 'terminal',
+  }, { actor: 'orchestrator', expectedFence: active.fence, idempotencyKey: 'claim-slow-file' });
+  assert.equal(driver.coordinator.claimScratch(handle.id, { resource: 'path:other.txt', intent: 'edit', envRef }, { expectedFence: active.fence - 1, idempotencyKey: 'stale-claim' }).result, 'stale_fence');
+  const fact = driver.coordinator.postScratchFact(handle.id, {
+    namespace: 'tests', key: 'slow-test', value: { state: 'running' }, grounding: 'observed', envRef,
+  }, { expectedFence: active.fence, idempotencyKey: 'post-slow-fact' });
+  assert.equal(fact.fact.ownerTask, 'durable-cancel');
+  const scratchRead = driver.coordinator.readScratch(handle.id, 'path:slow.txt', envRef, { idempotencyKey: 'read-slow-claim', runId: 'cancel-run' });
+  assert.equal(scratchRead.result.clear, false);
+  assert.equal(scratchRead.result.claims[0].ownerWorker, handle.id);
+  assert.equal(driver.coordination.events().some((event) => event.kind === 'scratch.read' && event.payload.taskId === 'durable-cancel'), true);
   const stopped = await driver.coordinator.kill(handle.id, 'human');
   assert.equal(stopped.result, 'confirmed');
   assert.equal(driver.coordination.task('durable-cancel').status, 'cancelled');

@@ -68,6 +68,7 @@ export class CoordinationStore {
     this._evidence = new Map();
     this._scratchFacts = new Map();
     this._scratchClaims = new Map();
+    this._scratchReads = [];
     this._knowledgeNodes = new Map();
     this._knowledgeEdges = new Map();
     this._knowledgeReads = [];
@@ -169,6 +170,8 @@ export class CoordinationStore {
     } else if (event.kind === 'scratch.claim_expired') {
       const old = this._scratchClaims.get(p.id);
       this._scratchClaims.set(p.id, freeze({ ...clone(old), active: false, expiredEvent: event.seq, version: old.version + 1 }));
+    } else if (event.kind === 'scratch.read') {
+      this._scratchReads.push(freeze({ ...clone(p), eventSeq: event.seq, ts: event.ts }));
     } else if (event.kind === 'knowledge.node_added' || event.kind === 'knowledge.promoted') {
       this._knowledgeNodes.set(p.id, freeze({ ...clone(p), observedSeq: event.seq, observedAt: event.ts, ...eventTime(this._events, p.evidence, event), validFrom: p.validFrom ?? event.ts, validTo: p.validTo ?? null, validityVersion: 1 }));
       for (const sourceId of p.informedBy ?? []) {
@@ -202,7 +205,7 @@ export class CoordinationStore {
 
   events(fromSeq = 1) { return this._events.filter((event) => event.seq >= fromSeq).map(clone); }
   task(id) { return clone(this._tasks.get(id) ?? null); }
-  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
+  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
   readyTasks() {
     return [...this._tasks.values()].filter((task) => task.status === 'pending' && task.assignee == null
       && task.deps.every((dep) => this._tasks.get(dep)?.status === 'completed')).map(clone);
@@ -390,6 +393,14 @@ export class CoordinationStore {
       ...clone(fact), warning: fact.envRef.treeSha === envRef.treeSha ? null : `observed on ${fact.envRef.treeSha} — not your tree`,
     }));
     return freeze({ clear: claims.length === 0, claims, facts });
+  }
+
+  readScratch(resource, envRef, reader, auth) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) return freeze({ event: clone(prior), result: clone(prior.payload.result) });
+    const result = this.checkScratch(resource, envRef);
+    const event = this._append('scratch.read', { ...clone(reader), resource, envRef: clone(envRef), result: clone(result) }, auth);
+    return freeze({ event: clone(event), result });
   }
 
   _validateKnowledgeEvidence(evidence = []) {

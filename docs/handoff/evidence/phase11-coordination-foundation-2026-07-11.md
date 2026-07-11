@@ -24,8 +24,10 @@ remaining CK8/CK9 authority and recursive gates remain active work.
   immutable task-linked manifests; accepted manifests require digest-validated, accepted
   `verify.reverified` provenance, and `artifact.superseded` records corrections without erasure.
 - Scratch facts/claims are immutable-tree scoped, conservatively conflict checked (including a
-  glob/glob witness fixture), cross-tree warned, and expired by explicit events; confirmed task
-  terminalization now emits claim-expiry events.
+  glob/glob witness fixture), cross-tree warned, and expired by explicit events. Public coordinator
+  methods now mediate claims, facts, and reads: active-task ownership and the current worker fence
+  are authoritative, mutations are idempotent, and a `scratch.read` record is durably appended
+  before content returns. Confirmed task terminalization emits claim-expiry events.
 - Typed causal nodes/edges carry distinct observation/event/valid time, materialize `Informed` and
   `ReadBy` edges, support bitemporal queries, supersession/invalidation, logged pull-only reads,
   affected-reader status joins, contamination records, and a metric-breakdown audit. Coordinator
@@ -54,9 +56,10 @@ fully reaped; the measured reruns were verified and integrated by Baton itself.
 
 ## Remaining before CK9
 
-Scratch participation is not yet an ambient mediated worker tool; automatic scorecards and
-Scratch promotion candidates remain incomplete; and forced coordination-write failure has not yet
-been injected at every public state boundary. A second recursive provider review of
+Scratch participation is not yet automatically injected into every adapter worker as an ambient
+tool/notification channel; automatic scorecards and Scratch promotion candidates remain
+incomplete; and forced coordination-write failure has not yet been injected at every public state
+boundary. A second recursive provider review of
 these repairs, including concurrent Grok spawn/kill/reap evidence, is still required before CK9.
 
 The zero-quota concurrent Grok ACP boundary is now green: two distinct fake-wire child PIDs ran

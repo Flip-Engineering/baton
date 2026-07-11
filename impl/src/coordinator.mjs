@@ -251,7 +251,7 @@ export class Coordinator {
   /** @param {object} opts */
   constructor(opts) {
     if (!opts?.coordination) throw new TypeError('Coordinator requires a durable coordination store');
-    for (const method of ['snapshot', 'task', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent', 'recordDriver', 'registerArtifact', 'artifact', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
+    for (const method of ['snapshot', 'task', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent', 'recordDriver', 'registerArtifact', 'artifact', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
       if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
     }
     this._log = opts.log;
@@ -2020,6 +2020,50 @@ export class Coordinator {
       taskId,
       runId: reader.runId ?? null,
     }, { actor, key });
+  }
+
+  claimScratch(workerId, fields, opts = {}) {
+    this.tick();
+    const handle = this._getWorker(workerId);
+    const task = this._tasks.get(handle.taskId);
+    if (!task || !['working', 'input_required'].includes(task.status)) return { ok: false, result: 'task_not_active' };
+    if (opts.expectedFence === undefined) throw new TypeError('Scratch claim requires expectedFence');
+    const check = this._fences.check(workerId, { fence: opts.expectedFence });
+    if (!check.ok) return { ok: false, result: 'stale_fence', current: check.current };
+    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Scratch claim requires idempotencyKey');
+    return this._coordination.claimScratch({
+      ...fields,
+      ownerWorker: workerId,
+      ownerTask: task.id,
+      fence: check.current.fence,
+    }, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey });
+  }
+
+  postScratchFact(workerId, fields, opts = {}) {
+    this.tick();
+    const handle = this._getWorker(workerId);
+    const task = this._tasks.get(handle.taskId);
+    if (!task || !['working', 'input_required'].includes(task.status)) return { ok: false, result: 'task_not_active' };
+    if (opts.expectedFence === undefined) throw new TypeError('Scratch fact requires expectedFence');
+    const check = this._fences.check(workerId, { fence: opts.expectedFence });
+    if (!check.ok) return { ok: false, result: 'stale_fence', current: check.current };
+    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Scratch fact requires idempotencyKey');
+    return this._coordination.postScratchFact({
+      ...fields,
+      ownerWorker: workerId,
+      ownerTask: task.id,
+      fence: check.current.fence,
+    }, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey });
+  }
+
+  readScratch(workerId, resource, envRef, opts = {}) {
+    this.tick();
+    const handle = this._getWorker(workerId);
+    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Scratch read requires idempotencyKey');
+    return this._coordination.readScratch(resource, envRef, {
+      readerActor: opts.actor ?? 'orchestrator', readerWorker: workerId,
+      taskId: handle.taskId, runId: opts.runId ?? null,
+    }, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey });
   }
 
   list() {
