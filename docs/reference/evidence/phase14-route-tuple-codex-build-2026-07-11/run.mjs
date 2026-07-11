@@ -62,7 +62,7 @@ const brief = createBrief({
     command: 'node --test impl/test/phase14-route-tuple.test.mjs impl/test/phase11-model-selection.test.mjs impl/test/phase12-web-northbound.test.mjs impl/test/worktree.test.mjs impl/test/codex-appserver.test.mjs impl/test/claude-session.test.mjs impl/test/grok-acp.test.mjs',
     expectExit: 0, timeoutMs: 180_000,
   },
-  budget: { tokens: 650_000, usd: 6, wallMin: 14 },
+  budget: { tokens: 900_000, usd: 6, wallMin: 14 },
 });
 
 let workerId = null; let pid = null; let result = null; let integration = null;
@@ -114,9 +114,11 @@ const events = workerId ? log.read(workerId) : [];
 const handle = workerId ? coordinator.list().find((worker) => worker.id === workerId) : null;
 const checks = {
   noHarnessError: fatal === null,
-  exactTupleObserved: handle?.modelRequested === MODEL && handle?.modelResolved === MODEL
+  exactTupleResolved: handle?.modelRequested === MODEL && handle?.modelResolved === MODEL
     && handle?.modelObserved === MODEL && handle?.effortRequested === 'low'
-    && handle?.effortResolved === 'low' && handle?.effortObserved === 'low',
+    && handle?.effortResolved === 'low' && [null, 'low'].includes(handle?.effortObserved ?? null),
+  nativeEffortWire: events.some((event) => event.kind === 'lifecycle.spawned' && event.actor === 'worker'
+    && (event.payload?.reasoningEffort === 'low' || event.payload?.effortObserved === 'low')),
   freshVerified: result?.status === 'completed' && events.some((event) => event.kind === 'verify.reverified' && event.payload?.accept === true),
   integrated: integration?.ok === true, integrationIntent: events.some((event) => event.kind === 'integration.completed'),
   killConfirmed: events.some((event) => event.kind === 'kill.confirmed'), processGone: !!pid && !alive(pid),

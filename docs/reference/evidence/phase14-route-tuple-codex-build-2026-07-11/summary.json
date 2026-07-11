@@ -1,0 +1,61 @@
+{
+  "at": "2026-07-11T21:58:52.000Z",
+  "repoHead": "d1f870499e54d8a4503490d012d10f49940968de",
+  "workerId": "w-1",
+  "pid": 95169,
+  "model": "gpt-5.6-sol",
+  "effort": "low",
+  "result": {
+    "ready": true,
+    "status": "cancelled",
+    "verdict": null,
+    "vendor": "codex",
+    "modelRequested": "gpt-5.6-sol",
+    "modelResolved": "gpt-5.6-sol",
+    "modelObserved": "gpt-5.6-sol",
+    "modelMismatch": null,
+    "sessionRequest": {
+      "mode": "new"
+    },
+    "sessionRef": {
+      "vendor": "codex",
+      "kind": "thread",
+      "id": "019f532e-6484-7223-8891-ac7adccbf367",
+      "persistence": "native",
+      "source": "wire"
+    },
+    "sessionContext": {
+      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-route-tuple-build",
+      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "baseSha": "d1f870499e54d8a4503490d012d10f49940968de",
+      "branch": "baton/codex-route-tuple-build",
+      "ownerTaskId": "codex-route-tuple-build"
+    },
+    "lineage": null,
+    "review": null,
+    "integration": null,
+    "publication": null,
+    "retainedResultRef": null
+  },
+  "integration": null,
+  "approvals": [],
+  "steer": {
+    "ok": true,
+    "result": "ok",
+    "emulated": false
+  },
+  "checks": {
+    "noHarnessError": false,
+    "exactTupleObserved": false,
+    "freshVerified": false,
+    "integrated": false,
+    "integrationIntent": false,
+    "killConfirmed": true,
+    "processGone": true,
+    "worktreeGone": true,
+    "runtimeGone": true,
+    "branchGone": true
+  },
+  "fatal": "Error: route tuple failed trust gate: {\"ready\":true,\"status\":\"cancelled\",\"verdict\":null,\"vendor\":\"codex\",\"modelRequested\":\"gpt-5.6-sol\",\"modelResolved\":\"gpt-5.6-sol\",\"modelObserved\":\"gpt-5.6-sol\",\"modelMismatch\":null,\"sessionRequest\":{\"mode\":\"new\"},\"sessionRef\":{\"vendor\":\"codex\",\"kind\":\"thread\",\"id\":\"019f532e-6484-7223-8891-ac7adccbf367\",\"persistence\":\"native\",\"source\":\"wire\"},\"sessionContext\":{\"worktree\":\"/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-route-tuple-build\",\"repoRoot\":\"/Users/wahargis/Development/Experiments/baton\",\"baseSha\":\"d1f870499e54d8a4503490d012d10f49940968de\",\"branch\":\"baton/codex-route-tuple-build\",\"ownerTaskId\":\"codex-route-tuple-build\"},\"lineage\":null,\"review\":null,\"integration\":null,\"publication\":null,\"retainedResultRef\":null}\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase14-route-tuple-codex-build-2026-07-11/run.mjs:96:44\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
+  "pass": false
+}
