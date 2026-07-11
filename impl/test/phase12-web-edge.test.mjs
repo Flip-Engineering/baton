@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CoordinationStore, FixedWindowQuota, WebEdgePolicy, WebNorthbound, WebSessionStore, createAuthenticatedWebServer, resolveEdgeRequest } from '../src/index.mjs';
+import { CoordinationStore, FixedWindowQuota, WebEdgePolicy, WebNorthbound, WebReadinessAuthority, WebSessionStore, createAuthenticatedWebServer, resolveEdgeRequest } from '../src/index.mjs';
 
 const ORIGIN = 'https://control.test';
 const root = () => mkdtempSync(join(tmpdir(), 'baton-web-edge-'));
@@ -247,12 +247,15 @@ test('EP6: shutdown wins races with provider completion and permanently refuses 
   assert.equal(s.web.stream.open({ ticket: 'never', principal, origin: ORIGIN }, new StreamResponse()).status, 503);
 });
 
-test('EP4/EP6: server assembly permits cleartext only behind explicit trusted proxy policy and exposes bounded shutdown', () => {
+test('EP4/EP6: production server assembly accepts only the two explicit transport/edge postures', () => {
   const trusted = system({ edgePolicy: edge({ proxyMode: true, trustedProxies: ['127.0.0.1'] }) });
   const server = createAuthenticatedWebServer(trusted.web, { proxy: { cleartextBackend: true } });
   assert.equal(typeof server.batonShutdown, 'function');
   const direct = system({ edgePolicy: edge() });
+  assert.throws(() => createAuthenticatedWebServer(direct.web, { tls: { key: 'x', cert: 'y' } }), (cause) => cause?.code === 'ERR_OSSL_PEM_NO_START_LINE', 'direct policy reaches TLS material validation');
   assert.throws(() => createAuthenticatedWebServer(direct.web, { proxy: { cleartextBackend: true } }), /trusted-proxy edge policy/);
+  assert.throws(() => createAuthenticatedWebServer(trusted.web, { tls: { key: 'x', cert: 'y' } }), /direct-mode edge policy/);
+  assert.throws(() => createAuthenticatedWebServer(trusted.web, { proxy: { cleartextBackend: true }, tls: { key: 'x', cert: 'y' } }), /not both/);
   const customAuth = Object.assign(async () => null, { isPrincipalActive: () => true, healthCheck: () => true });
   const missingEdge = new WebNorthbound({ coordinator: {}, coordination: new CoordinationStore(root()), authenticate: customAuth });
   assert.throws(() => createAuthenticatedWebServer(missingEdge, { tls: { key: 'x', cert: 'y' } }), /WebEdgePolicy/);
@@ -264,6 +267,15 @@ test('EP5: custom authentication without live health authority stays unready and
   const response = await request(web, { method: 'GET', path: '/readyz' });
   assert.equal(response.status, 503); assert.deepEqual(response.body, { ready: false });
   assert.throws(() => createAuthenticatedWebServer(web, { tls: { key: 'x', cert: 'y' } }), /WebReadinessAuthority/);
+});
+
+test('EP5: production readiness must be bound to the server session, auth, and coordination authorities', () => {
+  const s = system();
+  assert.throws(() => new WebReadinessAuthority({ coordination: s.coordination, authenticate: s.web.authenticate }), /session healthCheck/);
+  const otherSessions = new WebSessionStore(root(), { now: () => 1_000 });
+  const mismatched = new WebReadinessAuthority({ coordination: s.coordination, sessions: otherSessions, authenticate: s.web.authenticate });
+  s.web.readinessAuthority = mismatched;
+  assert.throws(() => createAuthenticatedWebServer(s.web, { tls: { key: 'x', cert: 'y' } }), /bound to its coordination, session, and authentication authorities/);
 });
 
 test('EP1/EP7: malformed trusted forwarding audits a keyed peer digest without raw address/header leakage', async () => {

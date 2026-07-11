@@ -292,3 +292,36 @@ test('WN6: malformed/future cursors fail typed and close/error cleanup is exactl
   assert.equal(output.output, beforeClose);
   assert.equal(coordination.events().filter((event) => event.payload.kind === 'stream_disconnected').length, 1);
 });
+
+test('EP6: shutdown control obeys frame/buffer bounds and closes broken streams exactly once', () => {
+  let acquired = 0; let released = 0;
+  const { coordination, stream } = fixture({
+    maxFrameBytes: 100_000, maxControlFrameBytes: 64, maxBufferedBytes: 100_000,
+    acquireConnection: () => { acquired += 1; return { ok: true }; },
+    releaseConnection: () => { released += 1; },
+  });
+  class ShutdownResponse extends Response {
+    constructor() { super(0, true); this.throws = false; this.writeCount = 0; this.endCount = 0; }
+    write(value) { this.writeCount += 1; if (this.throws) throw new Error('broken socket'); return super.write(value); }
+    end() { this.endCount += 1; super.end(); }
+  }
+  const responses = [new ShutdownResponse(), new ShutdownResponse(), new ShutdownResponse()];
+  for (const output of responses) {
+    const cursor = coordination.snapshot().lastSeq;
+    stream.open({ ticket: stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test', cursor }, output);
+  }
+  assert.equal(acquired, 3);
+  responses[0].writableLength = 100_001;
+  responses[1].throws = true;
+  responses[2].writeResult = false;
+  for (const output of responses) output.writeCount = 0;
+  stream.shutdown();
+  stream.shutdown();
+  assert.equal(responses[0].writeCount, 0, 'an already-full socket receives no shutdown write');
+  assert.equal(responses[1].writeCount, 1, 'a throwing socket receives at most one bounded shutdown write');
+  assert.equal(responses[2].writeCount, 1, 'a backpressured socket receives at most one bounded shutdown write');
+  assert.deepEqual(responses.map((output) => output.endCount), [1, 1, 1]);
+  assert.equal(released, 3);
+  assert.equal(stream.activeConnections, 0);
+  assert.equal(coordination.events().filter((event) => event.payload.kind === 'stream_shutdown').length, 3);
+});

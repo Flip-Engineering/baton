@@ -183,7 +183,17 @@ export class WebEventStream {
       if (lease && this.releaseConnection) { this.releaseConnection(principal); lease = null; }
       try { this._audit(kind, principal, origin, { repoId: grant.repoId, streamId, cursor: next - 1 }); } catch { /* never turn stream loss into fleet control */ }
     };
-    const closeForShutdown = () => { try { res.write('event: shutdown\ndata: {"reconnect":true}\n\n'); } catch {} disconnect('stream_shutdown'); try { res.end(); } catch {} };
+    const closeForShutdown = () => {
+      if (closed) return;
+      const control = 'event: shutdown\ndata: {"reconnect":true}\n\n';
+      const bytes = Buffer.byteLength(control);
+      try {
+        if (bytes <= this.maxControlFrameBytes
+          && (res.writableLength ?? 0) + bytes <= this.maxBufferedBytes) res.write(control);
+      } catch { /* broken sockets still close and release authority below */ }
+      disconnect('stream_shutdown');
+      try { res.end(); } catch { /* broken sockets are already terminal */ }
+    };
     const send = (event) => {
       const value = frame('coordination', event.seq, `coordination:${event.seq}`, event);
       const encoded = encode('coordination', event.seq, value);

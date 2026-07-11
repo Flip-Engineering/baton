@@ -62,16 +62,16 @@ export class ConcurrentQuota {
 }
 
 export class WebReadinessAuthority {
-  constructor({ coordination, sessions = null, authenticate, checks = [] }) {
+  constructor({ coordination, sessions, authenticate, checks = [] }) {
     if (typeof coordination?.healthCheck !== 'function') throw new TypeError('readiness requires coordination healthCheck');
     if (typeof authenticate !== 'function' || typeof authenticate.isPrincipalActive !== 'function' || typeof authenticate.healthCheck !== 'function') throw new TypeError('readiness requires live authentication health');
-    if (sessions && typeof sessions.healthCheck !== 'function') throw new TypeError('readiness requires session healthCheck');
+    if (typeof sessions?.healthCheck !== 'function') throw new TypeError('readiness requires session healthCheck');
     if (!Array.isArray(checks) || checks.some((check) => typeof check !== 'function')) throw new TypeError('readiness checks must be functions');
     this.coordination = coordination; this.sessions = sessions; this.authenticate = authenticate; this.checks = checks;
   }
   check() {
     try { return this.coordination.healthCheck() === true && this.authenticate.healthCheck() === true
-      && (!this.sessions || this.sessions.healthCheck() === true) && this.checks.every((check) => check() === true); }
+      && this.sessions.healthCheck() === true && this.checks.every((check) => check() === true); }
     catch { return false; }
   }
 }

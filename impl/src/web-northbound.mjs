@@ -525,17 +525,26 @@ export class WebNorthbound {
 export function createAuthenticatedWebServer(northbound, opts = {}) {
   if (!(northbound instanceof WebNorthbound)) throw new TypeError('WebNorthbound required');
   if (typeof northbound.authenticate !== 'function') throw new TypeError('an authenticator is required');
+  const requireReadiness = () => {
+    if (!(northbound.readinessAuthority instanceof WebReadinessAuthority)
+      || northbound.readinessAuthority.coordination !== northbound.coordination
+      || northbound.readinessAuthority.sessions !== northbound.sessions
+      || northbound.readinessAuthority.authenticate !== northbound.authenticate) {
+      throw new TypeError('production web server requires a WebReadinessAuthority bound to its coordination, session, and authentication authorities');
+    }
+  };
   const proxyCleartext = opts.proxy?.cleartextBackend === true;
   let server;
   if (proxyCleartext) {
     if (!northbound.edge?.proxyMode || northbound.edge.trustedProxies.length === 0) throw new TypeError('cleartext proxy backend requires an explicit trusted-proxy edge policy');
-    if (!(northbound.readinessAuthority instanceof WebReadinessAuthority)) throw new TypeError('production web server requires a WebReadinessAuthority');
+    requireReadiness();
     if (opts.tls?.key || opts.tls?.cert) throw new TypeError('choose direct TLS or cleartext trusted-proxy backend, not both');
     server = createHttpServer((req, res) => northbound.handle(req, res));
   } else {
     if (!opts.tls?.key || !opts.tls?.cert) throw new TypeError('TLS key and certificate are required');
     if (!(northbound.edge instanceof WebEdgePolicy)) throw new TypeError('production web server requires a WebEdgePolicy');
-    if (!(northbound.readinessAuthority instanceof WebReadinessAuthority)) throw new TypeError('production web server requires a WebReadinessAuthority');
+    requireReadiness();
+    if (northbound.edge.proxyMode) throw new TypeError('direct TLS requires a direct-mode edge policy');
     server = createHttpsServer({ key: opts.tls.key, cert: opts.tls.cert, minVersion: 'TLSv1.2' }, (req, res) => northbound.handle(req, res));
   }
   server.batonShutdown = (shutdownOpts = {}) => northbound.shutdown({ ...shutdownOpts, server });

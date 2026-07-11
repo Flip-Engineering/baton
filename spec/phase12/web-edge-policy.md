@@ -40,7 +40,9 @@ Direct production mode requires TLS on the accepted socket. Proxy mode may accep
 backend socket only when the immediate peer is trusted and an exact configured forwarding signal
 proves the original request was HTTPS. Untrusted `Forwarded`/`X-Forwarded-*` headers never upgrade
 transport, alter address quotas, or enter audit identity. The server refuses proxy mode without a
-nonempty peer allowlist and refuses direct mode without TLS key/certificate material.
+nonempty peer allowlist, refuses direct mode without TLS key/certificate material, and refuses a
+proxy-mode policy on the direct TLS listener. Production assembly admits exactly direct-policy/TLS
+or proxy-policy/trusted-cleartext, never a hybrid.
 
 ## EP5 — health and readiness reveal no fleet state
 
@@ -49,6 +51,8 @@ fails when operational log/coordination authority, session ledger/liveness verif
 idempotency storage, or admission state is unavailable. Neither endpoint returns worker, task,
 repository, credential, provider, path, error, or dependency detail. Readiness probes are
 independently quota-bounded.
+Production readiness is bound to the same coordination, session/revocation, and authentication
+authorities used by the listener; none may be replaced by an optional or unrelated health object.
 
 ## EP6 — graceful shutdown changes admission, not worker truth
 
@@ -56,7 +60,9 @@ Shutdown atomically stops new login, refresh, command, ticket, and stream admiss
 turns false; accepted HTTP responses receive a bounded drain interval; open streams receive a
 bounded reconnect/shutdown control frame and close; the HTTPS listener closes. Shutdown never
 interrupts/kills workers and never claims worker death. Repeated shutdown is idempotent and
-bounded, including broken sockets and audit failures.
+bounded, including broken sockets and audit failures. The shutdown control frame obeys both its
+control-frame byte ceiling and the connection's buffered-byte ceiling; refusal or write failure
+causes immediate exactly-once close and lease release with no additional socket writes.
 
 ## EP7 — durable audit and restart posture
 
