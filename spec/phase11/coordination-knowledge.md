@@ -20,6 +20,28 @@ they are never silently reset or skipped. Replay produces byte-equivalent public
 The store path is explicitly supplied by the assembly and never derived from a worker cwd. It has
 no network, PM, or homelab dependency.
 
+### CK1a — relation to per-worker operational logs
+
+Existing `<worker>.jsonl` streams remain lossless high-volume operational telemetry with local
+per-worker sequence numbers. They are not a second task/KG truth. Every state-changing driver path
+first appends its typed coordination mutation; only then may the in-memory task/artifact/Scratch/KG
+projection change. Operational evidence is referenced as `{worker, seq, digest}` and becomes
+cross-worker comparable only through an `evidence.mapped` coordination event whose global sequence
+is the observation order. Knowledge temporal checks use the global coordination sequence, never a
+bare per-worker sequence.
+
+The two files cannot be transactionally committed together. Reconciliation therefore scans
+operational evidence references at startup: an operational event with no coordination mutation is
+telemetry only and cannot affect task/KG truth; a coordination event pointing to missing or
+digest-mismatched operational evidence fails integrity validation. Coordination append failure is
+fatal to the requested state mutation and leaves its projection unchanged. It may not use the
+legacy warning-and-drop behavior of the telemetry sink.
+
+Construction validates the complete coordination stream immediately: JSON parse, schema version,
+gap-free sequence, unique idempotency key, and final newline. A truncated/torn tail is an
+actionable startup error and is never auto-truncated. Schema migration is explicit versioned event
+translation into a new store, not in-place reinterpretation.
+
 ## CK2 — typed durable task DAG and claims
 
 A task record contains:
@@ -37,10 +59,18 @@ wins; stale, blocked, already-assigned, and terminal claims are typed refusals a
 Refinement creates a new task with `refines`; it never reopens a terminal task.
 
 Coordinator `spawn()` durably creates the task before returning a handle, including when the task
-will remain queued. Dispatch durably claims it. Input waits, recovery, cancellation, verification
+will remain queued. It may preallocate a public pending worker handle as a local reservation, but
+the durable task `assignee` remains null until dispatch wins `claimTask`; reservation is not claim.
+Dispatch durably claims it. Input waits, recovery, cancellation, verification
 accept/reject, and integration/publication outcomes are reflected by typed events. Restart rebuilds
 queued tasks, dependency readiness, assignments, terminal state, and automatic identifiers before
 dispatching anything.
+
+`task.created` persists `brief`, `deps`, `refines`, `taskType`, requested vendor/model/session
+policy, and the reserved public handle ID. `task.claimed` persists assignee, resolved vendor/model,
+and expected/new versions. Refusal codes are `stale_version | already_assigned |
+deps_unsatisfied | terminal | cycle`; refusals append no event. Recovery terminalization refines or
+terminates the durable record and may never reopen a terminal predecessor.
 
 ## CK3 — immutable artifact manifest
 
@@ -53,15 +83,19 @@ id, taskId, kind, refs, mediaType, digest, size?, provenance[], createdEvent
 Kinds include `commit | diff | verification | coverage | mutation | review | report |
 counterexample | representation | skill | bench-result`. `refs` are Git SHAs/refs or explicit
 content-addressed paths owned by Baton. Registration validates the task, snapshots caller-owned
-data, and is idempotent by manifest identity. Manifests are immutable; correction creates a new
-artifact linked by knowledge edges. Accepted capture, verdict, independent review, integration,
-and publication register/link their artifacts through the public driver.
+data, and is idempotent by manifest identity. `artifact.registered` names the immutable manifest;
+`artifact.superseded` links a correction without mutation. Failed/cancelled tasks may register
+counterexamples, logs, and reports, but an artifact marked `accepted` must cite the accepting
+verification/review event. Accepted capture, verdict, independent review, integration, and
+publication payloads carry manifest IDs through the public driver rather than leaving provenance
+split across `capturedSha` and worker prose.
 
 ## CK4 — Scratch is an event-derived operational projection
 
 Scratch supports the smallest worker-useful primitives:
 
-- append-only facts with namespace/key, `envRef`, `observed | derived` grounding, evidence refs,
+- append-only facts with namespace/key, immutable `envRef:{repoId,treeSha}`, `observed | derived`
+  grounding, evidence refs,
   and optional explicit expiry event;
 - advisory claims with resource glob, owner worker/task, intent, `envRef`, supervisor fence,
   version, and lease deadline;
@@ -77,6 +111,15 @@ OS resources remain the sandbox/allocator's job, not an advisory Scratch claim.
 
 Worker-facing participation is eventually ambient through mediated tool results; until that tool
 path ships, the public store exposes deterministic point checks rather than a polling/watch loop.
+Live worktree paths are invalid environment references; callers snapshot `git write-tree` (or an
+equivalent content digest) before posting. A different `treeSha` always produces the exact warning
+frame `observed on <treeSha> — not your tree`.
+
+Normative path-claim overlap is conservative: normalize repository-relative POSIX paths; exact
+paths overlap on equality; a glob overlaps an exact path if the path matches; two globs overlap if
+either literal prefix before its first wildcard is a prefix of the other or an implementation can
+exhibit a matching witness. If disjointness cannot be proven, they conflict. This may false-positive
+but may not false-negative a known overlap.
 
 ## CK5 — self-contained typed bitemporal causal knowledge graph
 
@@ -111,18 +154,25 @@ asserted`) and never taken from a model confidence float.
 token-bounded at the caller, contradiction-aware, provenance-framed, and logged with `ReadBy`;
 nothing is automatically injected into a worker context.
 
+The durable read record is `knowledge.read{readerActor, readerWorker, runId, taskId, nodeIds[],
+query, asOf, observedAt, validityVersions}`. Its append must succeed before recalled content is
+returned. The graph projection creates `ReadBy` edges from every returned node to the reader task/
+run. An unlogged read is a failed operation, never a degraded success.
+
 ## CK6 — selective promotion and health
 
 Promotion is deterministic candidate generation, not an LLM in the control path:
 
-- terminal task + verification/artifact → Finding;
+- accepted terminal task + verification/artifact → `knowledge.promoted{kind:'Finding'}`;
 - consequential human/orchestrator spawn, reroute, accept, integrate, publish, abort → Decision;
 - run boundary → Run scorecard;
 - repeated verified outcome → RouteStat/Playbook candidate;
-- cited observed Scratch fact → Finding candidate;
+- cited observed Scratch fact → `knowledge.promotion_candidate{kind:'Finding'}`;
 - derived/formal Scratch fact remains quarantined until an independent oracle links it.
 
-The first vertical implements explicit node/edge writes plus task/artifact auto-promotion hooks.
+The first vertical implements explicit node/edge writes plus named task/artifact auto-promotion
+hooks. Failed/unaccepted tasks never auto-promote a positive Finding; they may promote a
+Counterexample or failure Finding with explicit grounding.
 Later scorecard/recall promotion uses the same schema. `auditKnowledge()` reports causal
 completeness, temporal coherence, orphan nodes, contradiction resolution, invalid references,
 recall utility, and read-contamination blast radius separately—never one unexplained green bit.
@@ -130,15 +180,22 @@ recall utility, and read-contamination blast radius separately—never one unexp
 ## CK7 — contamination and read provenance
 
 Every knowledge or Scratch read that crosses into an orchestrator/worker context records reader,
-run/task, returned IDs, query/as-of boundary, and source validity versions. If a node is later
-invalidated, `affectedReaders(id)` identifies every downstream task/run that consumed it. A
+run/task, returned IDs, query/as-of boundary, and source validity versions through
+`knowledge.read`. If a node is later invalidated,
+`knowledge.contamination_record{nodeId, invalidationEvent, affectedReadEvents[]}` is appended and
+`affectedReaders(id)` projects every downstream task/run that consumed it, including current task
+status. A
 cross-tree Scratch read is labeled “observed on X — not your tree.” This is required before shared
 knowledge can influence routing or acceptance.
 
 ## CK8 — authority and public assembly
 
-The store is constructed by `createDriver()` and exposed as `coordination`; coordinator task and
-artifact events flow into it automatically. Direct mutation methods require an actor and
+The store is mandatory in `createDriver()` and returned as `{coordinator, story, router, log,
+coordination}`. The coordinator receives it in its constructor and invokes one non-optional
+state-changing integration point for spawn/create, dispatch/claim, input wait/resume, terminal,
+capture/verification, review, integration, and publication. A driver state mutation with no
+coordination event is a contract failure, not an optional sink failure. Direct mutation methods
+require an actor and
 idempotency key; future MCP/web surfaces map authenticated identity into that same actor field and
 do not bypass coordinator fences or approvals. Knowledge export/import is ordinary data I/O behind
 future approval gates, not a special PM/homelab integration.
@@ -158,6 +215,18 @@ Temp-directory and temp-Git tests must prove before provider dogfooding:
 8. public-driver task creation, terminal verdict, captured commit, review, and integration appear
    in the durable substrate; and
 9. a full restart has identical task/artifact/Scratch/KG projections before any new dispatch.
+10. an unsatisfied-dependency task crashes before dispatch and replays pending, unassigned, with
+    its exact `deps[]`, brief, requested vendor/model/session, and reserved handle identity;
+11. a multi-task DAG replays with the same ready set and cannot dispatch a dependent early;
+12. a truncated tail, sequence gap, duplicate key, missing operational evidence, and injected
+    append failure all fail visibly without projection mutation;
+13. every public spawn/claim/input/terminal/capture/review/integration/publication state change has
+    a coordination event, and the test fails if coordinator state is nonempty while the substrate
+    stream is empty;
+14. operational evidence mapping gives two worker-local events a comparable global observation
+    order without treating their local sequences as globally ordered; and
+15. after a logged knowledge read, invalidating the node yields a nonempty contamination record
+    and `affectedReaders()` result; a forced read-log append failure returns no recalled content.
 
 After CK9 is green and committed, Baton may recursively run a real provider review against this
 spec and implementation. The recursive task must use isolated runtime credentials/budgets, exact

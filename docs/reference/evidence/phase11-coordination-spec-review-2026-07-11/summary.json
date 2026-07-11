@@ -1,0 +1,142 @@
+{
+  "at": "2026-07-11T10:23:32.860Z",
+  "repoHead": "a698c1b068275ddb91f4210f76daef7607256211",
+  "workerId": "w-1",
+  "pid": 82376,
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "result": {
+    "ready": true,
+    "status": "completed",
+    "verdict": {
+      "reverified": true,
+      "observedExit": 0,
+      "hadClaim": false,
+      "matchesClaim": true,
+      "passed": true,
+      "locus": "fresh_sandbox",
+      "redGreen": null,
+      "baseExit": null,
+      "coverageOfChange": null,
+      "uncoveredChangedLines": [],
+      "mutationStrength": null,
+      "mutationPassed": null,
+      "survivedMutants": [],
+      "observedOutputTail": "",
+      "note": "PASS: observed exit 0 matches expected 0.",
+      "durationMs": 14
+    },
+    "artifacts": {
+      "commits": [],
+      "files": []
+    },
+    "vendor": "grok",
+    "modelRequested": "grok-composer-2.5-fast",
+    "modelResolved": "grok-composer-2.5-fast",
+    "modelObserved": "grok-composer-2.5-fast",
+    "modelMismatch": null,
+    "sessionRequest": {
+      "mode": "new"
+    },
+    "sessionRef": {
+      "vendor": "grok",
+      "kind": "session",
+      "id": "019f50b3-422c-7bd1-a438-1028072acbf3",
+      "persistence": "native",
+      "source": "wire"
+    },
+    "sessionContext": {
+      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-coordination-spec-review",
+      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "baseSha": "a281017e559618163e8f8c5824357b940a24e0b6",
+      "branch": "baton/grok-coordination-spec-review",
+      "ownerTaskId": "grok-coordination-spec-review"
+    },
+    "lineage": null,
+    "review": null,
+    "integration": null,
+    "publication": null,
+    "retainedResultRef": null
+  },
+  "integration": {
+    "ok": true,
+    "result": "integrated",
+    "integration": {
+      "beforeSha": "a281017e559618163e8f8c5824357b940a24e0b6",
+      "resultSha": "a698c1b068275ddb91f4210f76daef7607256211",
+      "afterSha": "a698c1b068275ddb91f4210f76daef7607256211",
+      "strategy": "ff-only",
+      "actor": "orchestrator"
+    }
+  },
+  "approvals": [
+    {
+      "requestId": "w-1:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "requestId": "w-1:apr:2",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "requestId": "w-1:apr:3",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "requestId": "w-1:apr:4",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "requestId": "w-1:apr:5",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "requestId": "w-1:apr:6",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "requestId": "w-1:apr:7",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "requestId": "w-1:apr:8",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    }
+  ],
+  "checks": {
+    "noHarnessError": true,
+    "exactModelObserved": true,
+    "freshVerified": true,
+    "integrated": true,
+    "killConfirmed": true,
+    "processGone": true,
+    "worktreeGone": true,
+    "runtimeGone": true,
+    "branchGone": true
+  },
+  "fatal": null,
+  "pass": true
+}
