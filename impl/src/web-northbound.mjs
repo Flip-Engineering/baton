@@ -117,6 +117,8 @@ export class WebNorthbound {
       ...opts, coordination: this.coordination,
       allowedOrigins: [...this.allowedOrigins], repoIds: [...this.repoIds],
       isPrincipalActive: this.isPrincipalActive,
+      acquireConnection: this.edge ? (principal) => this.edge.acquireConnection(principal.credentialId) : null,
+      releaseConnection: this.edge ? (principal) => this.edge.releaseConnection(principal.credentialId) : null,
     });
   }
 
@@ -143,11 +145,24 @@ export class WebNorthbound {
     if (!this.admitting || (this.edge && !this.edge.admitting)) return false;
     try {
       if (typeof this.coordination.snapshot === 'function' && !this.coordination.snapshot()) return false;
-      if (this.sessions && typeof this.sessions.events === 'function') this.sessions.events();
+      if (this.sessions && (typeof this.sessions.healthCheck !== 'function' || this.sessions.healthCheck() !== true)) return false;
       if (typeof this.authenticate !== 'function') return false;
+      if (this.sessions && typeof this.isPrincipalActive !== 'function') return false;
       return this.readinessChecks.every((check) => check() === true);
     } catch { return false; }
   }
+
+  _readinessResponse(ctx) {
+    let ready = this._isReady();
+    try {
+      this._audit('readiness_probe', ctx, { ready });
+      if (this._lastReady !== ready) this._audit('readiness_transition', ctx, { ready });
+    } catch { ready = false; }
+    this._lastReady = ready;
+    return ready ? result(200, { ready: true }) : result(503, { ready: false });
+  }
+
+  _admissionOpen() { return this.admitting && (!this.edge || this.edge.admitting); }
 
   _authorize(ctx, envelope) {
     const principal = ctx.principal;
@@ -164,6 +179,7 @@ export class WebNorthbound {
   }
 
   async execute(ctx, envelope) {
+    if (!this._admissionOpen()) return error(503, 'temporarily_unavailable');
     const authFailure = this._authenticate(ctx);
     if (authFailure) {
       try { this._audit('authentication_refused', ctx); } catch { return error(503, 'temporarily_unavailable'); }
@@ -269,7 +285,7 @@ export class WebNorthbound {
       }
       req.edgeIdentity = identity;
       req.edgeAddressDigest = this.edge.digest(identity.address);
-      const name = url.pathname === '/readyz' ? 'readiness' : 'address';
+      const name = url.pathname === '/readyz' ? 'readiness' : url.pathname === '/healthz' ? 'health' : 'address';
       const quota = this.edge.take(name, this.edge.digest(identity.address));
       if (!quota.ok) {
         try { this._audit('quota_refused', { origin }, { quota: name, addressDigest: this.edge.digest(identity.address) }); } catch { return this._write(res, error(503, 'temporarily_unavailable')); }
@@ -284,8 +300,8 @@ export class WebNorthbound {
       }
     }
     if (req.method === 'GET' && url.pathname === '/healthz') return this._write(res, result(200, { ok: true }));
-    if (req.method === 'GET' && url.pathname === '/readyz') return this._write(res, this._isReady() ? result(200, { ready: true }) : result(503, { ready: false }));
-    if (!this.admitting || (this.edge && !this.edge.admitting)) return this._write(res, error(503, 'temporarily_unavailable'));
+    if (req.method === 'GET' && url.pathname === '/readyz') return this._write(res, this._readinessResponse({ origin, remoteAddress: req.edgeAddressDigest ? 'canonical' : (req.socket?.remoteAddress ?? null), addressDigest: req.edgeAddressDigest ?? null }));
+    if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'));
     if (req.method === 'POST' && AUTH_PATHS.has(url.pathname)) {
       return this._handleLifecycle(req, res, url.pathname, origin);
     }
@@ -307,6 +323,7 @@ export class WebNorthbound {
       try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
       let body;
       try { body = await this._readBody(req); } catch { return this._write(res, error(400, 'invalid_command'), origin); }
+      if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), origin);
       const ctx = { principal, origin, csrfToken: req.headers['x-baton-csrf'] ?? null, addressDigest: req.edgeAddressDigest ?? null, transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http') };
       const authFailure = this._authenticate(ctx);
       if (authFailure) return this._write(res, authFailure, origin);
@@ -329,6 +346,7 @@ export class WebNorthbound {
     if (req.method === 'GET' && url.pathname === '/v1/events') {
       let principal;
       try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
+      if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), origin);
       const authFailure = this._authenticate({ principal, transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http') });
       if (authFailure) return this._write(res, authFailure, origin);
       const responseValue = this.stream.open({
@@ -347,6 +365,7 @@ export class WebNorthbound {
       try { this._audit('command_body_refused', { principal, origin, remoteAddress: req.socket?.remoteAddress ?? null }, { reason: cause?.code ?? 'invalid_json' }); } catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
       return this._write(res, error(cause?.code === 'body_too_large' ? 413 : 400, 'invalid_command'), origin);
     }
+    if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), origin);
     const response = await this.execute({
       principal, origin, csrfToken: req.headers['x-baton-csrf'] ?? null,
       remoteAddress: req.edgeAddressDigest ? 'canonical' : (req.socket?.remoteAddress ?? null), addressDigest: req.edgeAddressDigest ?? null, transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http'),
@@ -371,6 +390,7 @@ export class WebNorthbound {
     if (pathname !== '/v1/auth/login') {
       try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
     }
+    if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), origin);
     let body;
     try { body = await this._readBody(req); }
     catch (cause) {
@@ -378,6 +398,7 @@ export class WebNorthbound {
       catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
       return this._write(res, error(cause?.code === 'body_too_large' ? 413 : 400, 'invalid_request'), origin);
     }
+    if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), origin);
     if (!isRecord(body)) {
       try { audit(pathname.endsWith('login') ? 'login_refused' : pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', principal, { reason: 'invalid_body' }); }
       catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
@@ -413,6 +434,7 @@ export class WebNorthbound {
     if (!this.sessions || typeof this.identityProvider !== 'function') return refused();
     let claims;
     try { claims = await this.identityProvider(json(body), Object.freeze({ origin: ctx.origin, transport: 'https' })); } catch { return refused(); }
+    if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), ctx.origin);
     if (!claims || !validProviderClaims(claims) || !this.sessions.validateIssue?.(claims)) return refused();
     try { this._audit('login_authorized', { ...ctx, principal: { userId: claims.userId, sessionId: 'pending', credentialId: 'pending' } }, { authMethod: claims.authMethod }); }
     catch { return this._write(res, error(503, 'temporarily_unavailable'), ctx.origin); }
@@ -477,8 +499,20 @@ export class WebNorthbound {
     this._shutdown = (async () => {
       try { this._audit('shutdown_started', {}); } catch {}
       this.stream.shutdown?.();
-      await Promise.race([new Promise((resolve) => server?.close ? server.close(resolve) : resolve()), new Promise((resolve) => setTimeout(resolve, drainMs))]);
-      try { this._audit('shutdown_completed', {}); } catch {}
+      let closed = !server?.close;
+      const closePromise = new Promise((resolve) => {
+        if (!server?.close) return resolve(true);
+        try { server.close(() => { closed = true; resolve(true); }); } catch { resolve(false); }
+      });
+      const timedOut = await Promise.race([closePromise.then(() => false), new Promise((resolve) => setTimeout(() => resolve(true), drainMs))]);
+      if (timedOut && !closed) {
+        try { server.closeIdleConnections?.(); } catch {}
+        try { server.closeAllConnections?.(); } catch {}
+        await Promise.race([closePromise, new Promise((resolve) => setTimeout(resolve, Math.min(1_000, drainMs)))]);
+      }
+      const outcome = closed ? 'shutdown_completed' : 'shutdown_timed_out';
+      try { this._audit(outcome, {}); } catch {}
+      return { ok: closed, result: closed ? 'closed' : 'timed_out' };
     })();
     return this._shutdown;
   }

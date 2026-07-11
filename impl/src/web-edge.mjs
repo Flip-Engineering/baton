@@ -42,6 +42,16 @@ export class FixedWindowQuota {
   get size() { return this.keys.size; }
 }
 
+export class ConcurrentQuota {
+  constructor({ limit, maxKeys }) { this.limit = positive(limit, 'limit'); this.maxKeys = positive(maxKeys, 'maxKeys'); this.keys = new Map(); }
+  acquire(key) {
+    const current = this.keys.get(key) ?? 0;
+    if (current >= this.limit || (!this.keys.has(key) && this.keys.size >= this.maxKeys)) return { ok: false, retryAfter: 1 };
+    this.keys.set(key, current + 1); return { ok: true, key };
+  }
+  release(key) { const current = this.keys.get(key) ?? 0; if (current <= 1) this.keys.delete(key); else this.keys.set(key, current - 1); }
+}
+
 const parseForwarded = (value) => {
   if (typeof value !== 'string' || value.length === 0 || value.length > 512) throw new TypeError('invalid forwarding chain');
   const elements = value.split(',');
@@ -49,13 +59,16 @@ const parseForwarded = (value) => {
   return elements.map((element) => {
     const fields = Object.create(null);
     for (const parameter of element.split(';')) {
-      const match = /^([a-z]+)=([^\s;,]+)$/i.exec(parameter.trim());
+      const match = /^([a-z]+)=("[^"]+"|[^\s;,]+)$/i.exec(parameter.trim());
       if (!match || Object.hasOwn(fields, match[1].toLowerCase())) throw new TypeError('invalid forwarding chain');
       fields[match[1].toLowerCase()] = match[2];
     }
-    if (!fields.for || !fields.proto || !['http', 'https'].includes(fields.proto)) throw new TypeError('invalid forwarding chain');
-    if (fields.for.startsWith('"') || fields.for.includes(':') || Object.keys(fields).some((key) => !['for', 'proto'].includes(key))) throw new TypeError('invalid forwarding chain');
-    return { address: address(fields.for), proto: fields.proto };
+    if (!fields.for || !fields.proto || !['http', 'https'].includes(fields.proto) || Object.keys(fields).some((key) => !['for', 'proto'].includes(key))) throw new TypeError('invalid forwarding chain');
+    let client = fields.for;
+    if (client.startsWith('"')) client = client.slice(1, -1);
+    if (client.startsWith('[') && client.endsWith(']')) client = client.slice(1, -1);
+    if (client.includes(']') || client.includes('[') || client.includes('%')) throw new TypeError('invalid forwarding chain');
+    return { address: address(client), proto: fields.proto };
   });
 };
 
@@ -89,15 +102,20 @@ export class WebEdgePolicy {
     this.addressKey = opts.addressKey; this.trustedProxies = opts.trustedProxies ?? [];
     this.forwardedHop = opts.forwardedHop ?? 0; this.proxyMode = opts.proxyMode ?? false;
     if (this.proxyMode && this.trustedProxies.length === 0) throw new TypeError('proxy mode requires trusted proxies');
+    if (!this.proxyMode && (this.trustedProxies.length > 0 || this.forwardedHop !== 0)) throw new TypeError('direct mode cannot configure proxy trust or forwarding hops');
     const now = opts.now ?? Date.now; const windowMs = opts.windowMs ?? 60_000; const maxKeys = opts.maxKeys ?? 10_000;
-    const limits = { address: 1000, login: 10, principal: 100, cost: 100, ticket: 30, readiness: 60, ...(opts.limits ?? {}) };
-    this.quotas = Object.fromEntries(Object.entries(limits).map(([name, limit]) => [name, new FixedWindowQuota({ limit, windowMs, maxKeys, now })]));
+    const allowedLimits = new Set(['address', 'login', 'principal', 'cost', 'ticket', 'health', 'readiness', 'connection']);
+    const unknownLimit = Object.keys(opts.limits ?? {}).find((name) => !allowedLimits.has(name));
+    if (unknownLimit) throw new TypeError(`unknown quota policy: ${unknownLimit}`);
+    const limits = { address: 1000, login: 10, principal: 100, cost: 100, ticket: 30, health: 60, readiness: 60, connection: 4, ...(opts.limits ?? {}) };
+    const { connection, ...windowLimits } = limits;
+    this.quotas = Object.fromEntries(Object.entries(windowLimits).map(([name, limit]) => [name, new FixedWindowQuota({ limit, windowMs, maxKeys, now })]));
+    this.connections = new ConcurrentQuota({ limit: connection, maxKeys });
     this.admitting = true;
   }
   resolve(req) {
-    const resolved = resolveEdgeRequest(req, { trustedProxies: this.trustedProxies, forwardedHop: this.forwardedHop, requireForwardedHttps: this.proxyMode });
-    if (!this.proxyMode) return { ...resolved, transport: req?.socket?.encrypted ? 'https' : 'http' };
-    return resolved;
+    if (!this.proxyMode) return { address: address(req?.socket?.remoteAddress), transport: req?.socket?.encrypted ? 'https' : 'http', proxied: false };
+    return resolveEdgeRequest(req, { trustedProxies: this.trustedProxies, forwardedHop: this.forwardedHop, requireForwardedHttps: true });
   }
   digest(value) { return createHmac('sha256', this.addressKey).update(value).digest('hex'); }
   take(kind, key, cost) { return this.quotas[kind].take(key, cost); }
@@ -109,5 +127,7 @@ export class WebEdgePolicy {
     this.quotas.principal.take(key); this.quotas.cost.take(key, cost);
     return { ok: true };
   }
+  acquireConnection(key) { return this.connections.acquire(key); }
+  releaseConnection(key) { this.connections.release(key); }
   closeAdmission() { this.admitting = false; }
 }

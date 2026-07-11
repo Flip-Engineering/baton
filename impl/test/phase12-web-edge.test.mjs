@@ -9,6 +9,7 @@ import { CoordinationStore, FixedWindowQuota, WebEdgePolicy, WebNorthbound, WebS
 const ORIGIN = 'https://control.test';
 const root = () => mkdtempSync(join(tmpdir(), 'baton-web-edge-'));
 class Response { writeHead(status, headers) { this.status = status; this.headers = headers; } end(body = '') { this.body = body ? JSON.parse(body) : null; } }
+class StreamResponse extends EventEmitter { constructor() { super(); this.output = ''; this.writableLength = 0; } writeHead(status, headers) { this.status = status; this.headers = headers; } write(value) { this.output += value; return true; } end() { this.ended = true; } }
 async function request(web, { path, body, headers = {}, encrypted = true, address = '127.0.0.1', method = 'POST' }) {
   const req = new EventEmitter(); Object.assign(req, { method, url: path, headers: { origin: ORIGIN, 'content-type': 'application/json', ...headers }, socket: { encrypted, remoteAddress: address }, destroy() {} });
   const res = new Response(); const pending = web.handle(req, res); queueMicrotask(() => { if (body !== undefined) req.emit('data', Buffer.from(JSON.stringify(body))); req.emit('end'); }); await pending; return res;
@@ -28,8 +29,13 @@ test('EP1/EP4: untrusted forwarding is ignored; trusted proxy selects a bounded 
   assert.deepEqual(proxied, { address: '198.51.100.2', transport: 'https', proxied: true });
   const standard = resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1', encrypted: false }, headers: { forwarded: 'for=198.51.100.2;proto=https, for=192.0.2.9;proto=https' } }, { trustedProxies: ['192.0.2.1'], forwardedHop: 1, requireForwardedHttps: true });
   assert.deepEqual(standard, { address: '198.51.100.2', transport: 'https', proxied: true });
-  const directPolicy = edge({ trustedProxies: ['192.0.2.1'], proxyMode: false });
-  assert.equal(directPolicy.resolve({ socket: { remoteAddress: '192.0.2.1', encrypted: false }, headers: { 'x-forwarded-for': '198.51.100.2', 'x-forwarded-proto': 'https' } }).transport, 'http');
+  const directPolicy = edge();
+  assert.deepEqual(directPolicy.resolve({ socket: { remoteAddress: '192.0.2.1', encrypted: false }, headers: { 'x-forwarded-for': '198.51.100.2', 'x-forwarded-proto': 'https' } }), { address: '192.0.2.1', transport: 'http', proxied: false });
+  assert.throws(() => edge({ trustedProxies: ['192.0.2.1'], proxyMode: false }), /direct mode/);
+  const ipv6 = resolveEdgeRequest({ socket: { remoteAddress: '2001:db8::ff', encrypted: false }, headers: { forwarded: 'for="[2001:db8::1]";proto=https' } }, { trustedProxies: ['2001:db8::ff'], requireForwardedHttps: true });
+  assert.equal(ipv6.address, '2001:db8::1');
+  assert.throws(() => resolveEdgeRequest({ socket: { remoteAddress: '2001:db8::ff' }, headers: { forwarded: 'for="[2001:db8::1]:443";proto=https' } }, { trustedProxies: ['2001:db8::ff'] }), /invalid forwarding/);
+  assert.equal(resolveEdgeRequest({ socket: { remoteAddress: '::ffff:127.0.0.1', encrypted: true }, headers: {} }, { trustedProxies: ['127.0.0.1'] }).proxied, false, 'mapped and unmapped addresses are intentionally exact, not aliases');
   assert.throws(() => resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1' }, headers: { forwarded: 'for=1.2.3.4', 'x-forwarded-for': '1.2.3.4' } }, { trustedProxies: ['192.0.2.1'] }), /mixed forwarding/);
 });
 
@@ -38,6 +44,12 @@ test('EP2: quota windows expire deterministically and key cardinality remains bo
   assert.equal(quota.take('a', 2).ok, true); assert.equal(quota.take('a', 2).ok, false);
   assert.equal(quota.take('b').reason, 'capacity'); assert.equal(quota.size, 1);
   now = 1_001; assert.equal(quota.take('b', 3).ok, true); assert.equal(quota.size, 1);
+});
+
+test('EP2/EP7: edge configuration is closed and direct/proxy postures cannot be mixed', () => {
+  assert.throws(() => edge({ limits: { invented: 1 } }), /unknown quota policy/);
+  assert.throws(() => edge({ proxyMode: true }), /trusted proxies/);
+  assert.throws(() => edge({ forwardedHop: 1 }), /direct mode/);
 });
 
 test('EP3: login address quota refuses before a second provider call or session/fleet mutation', async () => {
@@ -87,11 +99,68 @@ test('EP5/EP6: readiness is non-disclosing and shutdown is bounded/idempotent wi
   assert.equal(response.status, 200); assert.deepEqual(response.body, { ready: true });
   ready = false; response = await request(s.web, { method: 'GET', path: '/readyz' });
   assert.equal(response.status, 503); assert.deepEqual(response.body, { ready: false });
+  assert.equal(s.coordination.events().filter((event) => event.payload?.kind === 'readiness_transition').length, 2);
   const server = { close(cb) { serverCloses += 1; cb(); } };
   const first = s.web.shutdown({ server, drainMs: 50 }); const second = s.web.shutdown({ server, drainMs: 50 });
   await Promise.all([first, second]);
   assert.equal(streamStops, 1); assert.equal(serverCloses, 1); assert.deepEqual(s.fleetCalls, []);
   assert.equal((await request(s.web, { path: '/v1/auth/login', body: {} })).status, 503);
+});
+
+test('EP5: readiness fails closed when session health or durable audit probing is unavailable', async () => {
+  const s = system();
+  s.sessions.healthCheck = () => false;
+  assert.equal((await request(s.web, { method: 'GET', path: '/readyz' })).status, 503);
+  s.sessions.healthCheck = () => true;
+  s.coordination.recordWebAudit = () => { throw new Error('audit unavailable'); };
+  const refused = await request(s.web, { method: 'GET', path: '/readyz' });
+  assert.equal(refused.status, 503); assert.deepEqual(refused.body, { ready: false });
+});
+
+test('EP6/EP7: drain deadline forces connections and never reports completion before listener closure', async () => {
+  const s = system(); let callback; let forced = 0;
+  const server = { close(cb) { callback = cb; }, closeIdleConnections() {}, closeAllConnections() { forced += 1; callback(); } };
+  const outcome = await s.web.shutdown({ server, drainMs: 5 });
+  assert.deepEqual(outcome, { ok: true, result: 'closed' }); assert.equal(forced, 1);
+  const terminal = s.coordination.events().filter((event) => ['shutdown_completed', 'shutdown_timed_out'].includes(event.payload?.kind));
+  assert.equal(terminal.length, 1); assert.equal(terminal[0].payload.kind, 'shutdown_completed');
+});
+
+test('EP4/EP5: health has an independent quota and never consumes the ordinary address bucket', async () => {
+  const s = system({ edgePolicy: edge({ limits: { health: 1, address: 1 } }) });
+  assert.equal((await request(s.web, { method: 'GET', path: '/healthz' })).status, 200);
+  assert.equal((await request(s.web, { method: 'GET', path: '/healthz' })).status, 429);
+  assert.equal((await request(s.web, { path: '/v1/auth/login', body: {} })).status, 401);
+});
+
+test('EP2/EP6: per-credential connection leases are fair, preserve refused tickets, and release exactly once', () => {
+  const s = system({ edgePolicy: edge({ limits: { connection: 1 } }) });
+  const issue = (user) => {
+    const token = s.sessions.issue({ userId: user, authMethod: 'bearer', capabilities: ['observe'], repoIds: ['repo-a'], ttlMs: 60_000 }, { actor: 'provider' });
+    return s.sessions.authenticate({ headers: { authorization: `Bearer ${token.token}` } });
+  };
+  const a = issue('a'); const b = issue('b');
+  const ticketA1 = s.web.stream.issue(a, ORIGIN, 'repo-a'); const ticketA2 = s.web.stream.issue(a, ORIGIN, 'repo-a'); const ticketB = s.web.stream.issue(b, ORIGIN, 'repo-a');
+  const outA = new StreamResponse(); assert.equal(s.web.stream.open({ ticket: ticketA1.body.ticket, principal: a, origin: ORIGIN }, outA), null);
+  const refused = s.web.stream.open({ ticket: ticketA2.body.ticket, principal: a, origin: ORIGIN }, new StreamResponse());
+  assert.equal(refused.status, 429); assert.equal(refused.headers['retry-after'], '1');
+  const outB = new StreamResponse(); assert.equal(s.web.stream.open({ ticket: ticketB.body.ticket, principal: b, origin: ORIGIN }, outB), null);
+  outA.emit('close');
+  const retried = new StreamResponse(); assert.equal(s.web.stream.open({ ticket: ticketA2.body.ticket, principal: a, origin: ORIGIN }, retried), null);
+  outB.emit('close'); retried.emit('close');
+  assert.equal(s.web.stream.activeConnections, 0);
+});
+
+test('EP6: shutdown wins races with provider completion and permanently refuses future stream opens', async () => {
+  let release; const provider = new Promise((resolve) => { release = resolve; });
+  const s = system({ identityProvider: async () => provider });
+  const pending = request(s.web, { path: '/v1/auth/login', body: {} });
+  await new Promise((resolve) => setImmediate(resolve));
+  const shutdown = s.web.shutdown({ server: { close(cb) { cb(); } }, drainMs: 50 });
+  release({ userId: 'u', authMethod: 'bearer', capabilities: ['observe'], repoIds: ['repo-a'], ttlMs: 60_000 });
+  assert.equal((await pending).status, 503); assert.equal(s.sessions.events().length, 0); await shutdown;
+  const principal = { userId: 'u', sessionId: 's', credentialId: 'c', expiresAt: '2099-01-01T00:00:00.000Z', capabilities: ['observe'], repoIds: ['repo-a'] };
+  assert.equal(s.web.stream.open({ ticket: 'never', principal, origin: ORIGIN }, new StreamResponse()).status, 503);
 });
 
 test('EP4/EP6: server assembly permits cleartext only behind explicit trusted proxy policy and exposes bounded shutdown', () => {

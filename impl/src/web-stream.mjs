@@ -37,9 +37,14 @@ export class WebEventStream {
     this.pollMs = positiveInteger(opts.pollMs ?? 100, 'pollMs');
     if (opts.isPrincipalActive != null && typeof opts.isPrincipalActive !== 'function') throw new TypeError('isPrincipalActive must be a function');
     this.isPrincipalActive = opts.isPrincipalActive ?? null;
+    if (opts.acquireConnection != null && typeof opts.acquireConnection !== 'function') throw new TypeError('acquireConnection must be a function');
+    if (opts.releaseConnection != null && typeof opts.releaseConnection !== 'function') throw new TypeError('releaseConnection must be a function');
+    this.acquireConnection = opts.acquireConnection ?? null;
+    this.releaseConnection = opts.releaseConnection ?? null;
     this.tickets = new Map();
     this.activeConnections = 0;
     this.connections = new Set();
+    this.accepting = true;
   }
 
   _audit(kind, principal, origin, details = {}) {
@@ -66,6 +71,7 @@ export class WebEventStream {
   }
 
   issue(principal, origin, repoId) {
+    if (!this.accepting) return response(503, 'temporarily_unavailable');
     this._pruneTickets();
     if (!this._authorized(principal, origin, repoId)) {
       try { this._audit('stream_ticket_refused', principal, origin, { repoId, reason: 'forbidden' }); }
@@ -112,24 +118,36 @@ export class WebEventStream {
   }
 
   open({ ticket, principal, origin, cursor }, res) {
+    if (!this.accepting) return response(503, 'temporarily_unavailable');
+    let lease = null;
+    if (this.acquireConnection) {
+      lease = this.acquireConnection(principal);
+      if (!lease?.ok) {
+        try { this._audit('stream_refused', principal, origin, { reason: 'principal_connection_limit' }); }
+        catch { return response(503, 'temporarily_unavailable'); }
+        return { ...response(429, 'rate_limited'), headers: { 'retry-after': String(lease?.retryAfter ?? 1) } };
+      }
+    }
+    if (this.activeConnections >= this.maxConnections) {
+      if (lease && this.releaseConnection) this.releaseConnection(principal);
+      try { this._audit('stream_refused', principal, origin, { reason: 'connection_limit' }); }
+      catch { return response(503, 'temporarily_unavailable'); }
+      return { ...response(429, 'rate_limited'), headers: { 'retry-after': '1' } };
+    }
     const grant = this.consume(ticket, principal, origin);
     if (!grant) {
+      if (lease && this.releaseConnection) this.releaseConnection(principal);
       try { this._audit('stream_refused', principal, origin, { reason: 'invalid_ticket' }); }
       catch { return response(503, 'temporarily_unavailable'); }
       return response(principal ? 403 : 401, principal ? 'forbidden' : 'unauthenticated');
-    }
-
-    if (this.activeConnections >= this.maxConnections) {
-      try { this._audit('stream_refused', principal, origin, { repoId: grant.repoId, reason: 'connection_limit' }); }
-      catch { return response(503, 'temporarily_unavailable'); }
-      return response(429, 'rate_limited');
     }
 
     let snapshot;
     try { snapshot = this.coordination.snapshot(); }
     catch {
       try { this._audit('stream_refused', principal, origin, { repoId: grant.repoId, reason: 'snapshot_unavailable' }); }
-      catch { return response(503, 'temporarily_unavailable'); }
+      catch { if (lease && this.releaseConnection) this.releaseConnection(principal); return response(503, 'temporarily_unavailable'); }
+      if (lease && this.releaseConnection) this.releaseConnection(principal);
       return response(503, 'temporarily_unavailable');
     }
     const boundary = snapshot.lastSeq;
@@ -138,7 +156,8 @@ export class WebEventStream {
       || requested < Math.max(0, boundary - this.replayLimit) || requested > boundary)) {
       try { this._audit('stream_snapshot_required', principal, origin, {
         repoId: grant.repoId, requestedCursor: Number.isSafeInteger(requested) ? requested : null, boundary,
-      }); } catch { return response(503, 'temporarily_unavailable'); }
+      }); } catch { if (lease && this.releaseConnection) this.releaseConnection(principal); return response(503, 'temporarily_unavailable'); }
+      if (lease && this.releaseConnection) this.releaseConnection(principal);
       return response(409, 'snapshot_required', { snapshotCursor: boundary });
     }
 
@@ -159,6 +178,7 @@ export class WebEventStream {
       this.activeConnections -= 1;
       if (timer) clearInterval(timer);
       this.connections.delete(closeForShutdown);
+      if (lease && this.releaseConnection) { this.releaseConnection(principal); lease = null; }
       try { this._audit(kind, principal, origin, { repoId: grant.repoId, streamId, cursor: next - 1 }); } catch { /* never turn stream loss into fleet control */ }
     };
     const closeForShutdown = () => { try { res.write('event: shutdown\ndata: {"reconnect":true}\n\n'); } catch {} disconnect('stream_shutdown'); try { res.end(); } catch {} };
@@ -195,12 +215,13 @@ export class WebEventStream {
       if (initialBytes > this.maxFrameBytes
         || (res.writableLength ?? 0) + initialBytes > this.maxBufferedBytes) {
         try { this._audit('stream_refused', principal, origin, { repoId: grant.repoId, reason: 'snapshot_too_large', boundary }); }
-        catch { return response(503, 'temporarily_unavailable'); }
+        catch { if (lease && this.releaseConnection) this.releaseConnection(principal); return response(503, 'temporarily_unavailable'); }
+        if (lease && this.releaseConnection) this.releaseConnection(principal);
         return response(503, 'temporarily_unavailable', { snapshotCursor: boundary });
       }
     }
     try { this._audit('stream_connected', principal, origin, { repoId: grant.repoId, streamId, cursor: requested ?? boundary }); }
-    catch { return response(503, 'temporarily_unavailable'); }
+    catch { if (lease && this.releaseConnection) this.releaseConnection(principal); return response(503, 'temporarily_unavailable'); }
     this.activeConnections += 1;
     this.connections.add(closeForShutdown);
     const pump = () => {
@@ -259,7 +280,7 @@ export class WebEventStream {
     return null;
   }
 
-  shutdown() { for (const close of [...this.connections]) close(); }
+  shutdown() { this.accepting = false; for (const close of [...this.connections]) close(); }
 
   _contentTrust(event) {
     const kind = event?.kind ?? '';

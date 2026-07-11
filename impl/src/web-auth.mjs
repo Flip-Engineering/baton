@@ -109,6 +109,10 @@ export class WebSessionStore {
   }
 
   events() { return this._events.map(clone); }
+  healthCheck() {
+    try { const raw = readFileSync(this.file, 'utf8'); return raw.length === 0 || raw.endsWith('\n'); }
+    catch { return false; }
+  }
 
   validateIssue(fields) {
     try { this._assertIssue(fields); return true; } catch { return false; }
