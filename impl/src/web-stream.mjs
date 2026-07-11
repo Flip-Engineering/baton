@@ -99,7 +99,8 @@ export class WebEventStream {
   }
 
   authorizeIssue(principal, origin, repoId) {
-    return this.accepting && this._liveAuthorized(principal, origin, repoId);
+    try { return this.accepting && this._liveAuthorized(principal, origin, repoId); }
+    catch { return false; }
   }
 
   _pruneTickets() {

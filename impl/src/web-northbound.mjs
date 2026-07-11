@@ -276,8 +276,19 @@ export class WebNorthbound {
   }
 
   async handle(req, res) {
-    const origin = req.headers.origin ?? null;
-    const url = new URL(req.url, 'https://baton.invalid');
+    const origin = req.headers?.origin ?? null;
+    let url;
+    try {
+      if (typeof req.url !== 'string' || req.url.length === 0 || req.url.length > 4_096
+        || !req.url.startsWith('/') || req.url.startsWith('//') || /[\u0000-\u001f\u007f]/.test(req.url)
+        || /%(?![0-9a-f]{2})/i.test(req.url)) throw new TypeError('invalid request target');
+      url = new URL(req.url, 'https://baton.invalid');
+      if (url.origin !== 'https://baton.invalid' || url.hash) throw new TypeError('invalid request target');
+    } catch {
+      try { this._audit('request_refused', { origin: this.allowedOrigins.has(origin) ? origin : null }, { reason: 'invalid_target' }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+      return this._write(res, error(400, 'invalid_request'));
+    }
     if (this.edge) {
       let peerDigest = null;
       try { peerDigest = this.edge.peerDigest(req); } catch { /* bounded invalid-peer audit below */ }
@@ -336,12 +347,17 @@ export class WebNorthbound {
         return this._write(res, error(403, 'forbidden'), origin);
       }
       if (this.edge) {
-        const ticketQuota = this.edge.take('ticket', principal.credentialId);
+        const ticketQuota = this.edge.reserve('ticket', principal.credentialId);
         if (!ticketQuota.ok) {
           try { this._audit('quota_refused', { principal, origin, addressDigest: req.edgeAddressDigest ?? null }, { quota: 'ticket' }); }
           catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
           return this._write(res, error(429, 'rate_limited'), origin, { 'retry-after': String(ticketQuota.retryAfter) });
         }
+        let issued;
+        try { issued = this.stream.issue(principal, origin, body?.repoId); }
+        catch { ticketQuota.rollback(); return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+        if (issued?.status !== 201) ticketQuota.rollback(); else ticketQuota.commit();
+        return this._write(res, issued ?? error(503, 'temporarily_unavailable'), origin);
       }
       return this._write(res, this.stream.issue(principal, origin, body?.repoId), origin);
     }
@@ -502,14 +518,15 @@ export class WebNorthbound {
     res.end(body);
   }
 
-  async shutdown({ server, drainMs = 5_000 } = {}) {
+  shutdown({ server, drainMs = 5_000 } = {}) {
     if (this._shutdown) return this._shutdown;
     if (!Number.isSafeInteger(drainMs) || drainMs <= 0) throw new TypeError('drainMs must be a positive safe integer');
     this.admitting = false; this.edge?.closeAdmission();
     this._shutdown = (async () => {
       let auditOk = true;
       try { this._audit('shutdown_started', {}); } catch { auditOk = false; }
-      this.stream.shutdown?.();
+      let streamOk = true;
+      try { this.stream.shutdown?.(); } catch { streamOk = false; }
       let closed = !server?.close;
       const closePromise = new Promise((resolve) => {
         if (!server?.close) return resolve(true);
@@ -522,8 +539,12 @@ export class WebNorthbound {
         await Promise.race([closePromise, new Promise((resolve) => setTimeout(resolve, Math.min(1_000, drainMs)))]);
       }
       const outcome = closed ? 'shutdown_completed' : 'shutdown_timed_out';
-      try { this._audit(outcome, {}); } catch { auditOk = false; }
-      return { ok: closed && auditOk, result: !closed ? 'timed_out' : auditOk ? 'closed' : 'closed_audit_unavailable' };
+      try { this._audit(outcome, {}, { streamShutdownOk: streamOk }); } catch { auditOk = false; }
+      return {
+        ok: closed && auditOk && streamOk,
+        result: !closed ? 'timed_out' : !auditOk && !streamOk ? 'closed_degraded'
+          : !auditOk ? 'closed_audit_unavailable' : !streamOk ? 'closed_stream_unavailable' : 'closed',
+      };
     })();
     return this._shutdown;
   }

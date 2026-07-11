@@ -38,7 +38,11 @@ test('EP1/EP4: untrusted forwarding is ignored; trusted proxy selects a bounded 
   const ipv6 = resolveEdgeRequest({ socket: { remoteAddress: '2001:db8::ff', encrypted: false }, headers: { forwarded: 'for="[2001:db8::1]";proto=https' } }, { trustedProxies: ['2001:db8::ff'], requireForwardedHttps: true });
   assert.equal(ipv6.address, '2001:db8::1');
   assert.throws(() => resolveEdgeRequest({ socket: { remoteAddress: '2001:db8::ff' }, headers: { forwarded: 'for="[2001:db8::1]:443";proto=https' } }, { trustedProxies: ['2001:db8::ff'] }), /invalid forwarding/);
-  assert.equal(resolveEdgeRequest({ socket: { remoteAddress: '::ffff:127.0.0.1', encrypted: true }, headers: {} }, { trustedProxies: ['127.0.0.1'] }).proxied, false, 'mapped and unmapped addresses are intentionally exact, not aliases');
+  const mapped = resolveEdgeRequest({ socket: { remoteAddress: '::ffff:127.0.0.1', encrypted: false }, headers: { 'x-forwarded-for': '198.51.100.7', 'x-forwarded-proto': 'https' } }, { trustedProxies: ['127.0.0.1'], requireForwardedHttps: true });
+  assert.deepEqual(mapped, { address: '198.51.100.7', transport: 'https', proxied: true });
+  const expandedPeer = resolveEdgeRequest({ socket: { remoteAddress: '2001:db8::ff', encrypted: false }, headers: { 'x-forwarded-for': '2001:db8::1', 'x-forwarded-proto': 'https' } }, { trustedProxies: ['2001:0db8:0000:0000:0000:0000:0000:00ff'], requireForwardedHttps: true });
+  assert.equal(expandedPeer.proxied, true);
+  assert.equal(edge().resolve({ socket: { remoteAddress: '2001:0db8:0000:0000:0000:0000:0000:0001', encrypted: true }, headers: {} }).address, '2001:db8::1');
   assert.throws(() => resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1' }, headers: { forwarded: 'for=1.2.3.4', 'x-forwarded-for': '1.2.3.4' } }, { trustedProxies: ['192.0.2.1'] }), /mixed forwarding/);
 });
 
@@ -153,6 +157,25 @@ test('EP3: unauthorized stream-ticket requests do not consume credential ticket 
   assert.equal((await request(s.web, { path: '/v1/stream-tickets', body: { repoId: 'repo-a' }, headers: { authorization } })).status, 429);
 });
 
+test('EP2/EP3: failed ticket issuance rolls back its credential quota reservation', async () => {
+  const s = system({ edgePolicy: edge({ limits: { ticket: 1 } }) });
+  const issued = s.sessions.issue({ userId: 'u', authMethod: 'bearer', capabilities: ['observe'], repoIds: ['repo-a'], ttlMs: 60_000 }, { actor: 'provider' });
+  const options = { path: '/v1/stream-tickets', body: { repoId: 'repo-a' }, headers: { authorization: `Bearer ${issued.token}` } };
+  s.web.stream.maxTickets = 1;
+  s.web.stream.tickets.set('occupied', { expiresAt: 2_000 });
+  assert.equal((await request(s.web, options)).status, 429);
+  s.web.stream.tickets.clear();
+  const record = s.coordination.recordWebAudit.bind(s.coordination);
+  s.coordination.recordWebAudit = (event, auth) => {
+    if (event.kind === 'stream_ticket_issued') throw new Error('audit unavailable');
+    return record(event, auth);
+  };
+  assert.equal((await request(s.web, options)).status, 503);
+  s.coordination.recordWebAudit = record;
+  assert.equal((await request(s.web, options)).status, 201);
+  assert.equal((await request(s.web, options)).status, 429);
+});
+
 test('EP2/EP3: weighted refusal does not consume the separate command-count bucket', () => {
   const policy = edge({ limits: { principal: 1, cost: 1 } });
   assert.equal(policy.takeCommand('credential', 2).quota, 'cost');
@@ -210,6 +233,19 @@ test('EP7: a failed readiness transition audit is retried after audit recovery',
   assert.equal(transitions[0].payload.ready, false);
 });
 
+test('EP3/EP7: malformed request targets fail typed and audited before auth/provider/fleet work', async () => {
+  let providerCalls = 0;
+  const s = system({ identityProvider: async () => { providerCalls += 1; return null; } });
+  for (const path of [null, '/bad%ZZ', 'https://evil.test/v1/auth/login', '//evil.test/path', `/${'x'.repeat(4_096)}`, '/bad\npath']) {
+    const response = await request(s.web, { path, body: {} });
+    assert.equal(response.status, 400); assert.equal(response.body.error.code, 'invalid_request');
+  }
+  assert.equal(providerCalls, 0); assert.equal(s.sessions.events().length, 0); assert.deepEqual(s.fleetCalls, []);
+  assert.equal(s.coordination.events().filter((event) => event.payload?.kind === 'request_refused').length, 6);
+  s.coordination.recordWebAudit = () => { throw new Error('audit unavailable'); };
+  assert.equal((await request(s.web, { path: '/still%ZZ', body: {} })).status, 503);
+});
+
 test('EP6/EP7: drain deadline forces connections and never reports completion before listener closure', async () => {
   const s = system(); let callback; let forced = 0;
   const server = { close(cb) { callback = cb; }, closeIdleConnections() {}, closeAllConnections() { forced += 1; callback(); } };
@@ -226,6 +262,19 @@ test('EP7: shutdown audit failure produces one bounded degraded result while sti
   assert.deepEqual(await first, { ok: false, result: 'closed_audit_unavailable' });
   assert.deepEqual(await s.web.shutdown(), { ok: false, result: 'closed_audit_unavailable' });
   assert.equal(closed, 1); assert.equal(streamClosed, 1); assert.deepEqual(s.fleetCalls, []);
+});
+
+test('EP6/EP7: throwing stream shutdown still closes the listener and memoizes a degraded result', async () => {
+  let streamCalls = 0; let listenerCalls = 0;
+  const s = system({ stream: { shutdown() { streamCalls += 1; throw new Error('stream cleanup failed'); } } });
+  const server = { close(cb) { listenerCalls += 1; cb(); } };
+  const first = s.web.shutdown({ server, drainMs: 10 });
+  const second = s.web.shutdown({ server, drainMs: 10 });
+  assert.equal(first, second);
+  assert.deepEqual(await first, { ok: false, result: 'closed_stream_unavailable' });
+  assert.equal(streamCalls, 1); assert.equal(listenerCalls, 1); assert.deepEqual(s.fleetCalls, []);
+  assert.equal(s.web.admitting, false); assert.equal(s.web.edge.admitting, false);
+  assert.equal(s.coordination.events().filter((event) => event.payload?.kind === 'shutdown_completed').length, 1);
 });
 
 test('EP4/EP5: health has an independent quota and never consumes the ordinary address bucket', async () => {

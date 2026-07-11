@@ -12,6 +12,9 @@ accept one bounded, strictly parsed forwarding chain and select the configured h
 overlong, ambiguous, or mixed forwarding headers fail typed before authentication/provider/body
 work. Audit records retain only a presence/classification and a keyed address digest, never the raw
 address. Empty proxy trust means direct mode.
+All accepted addresses are canonicalized before exact allowlist membership, quota keys, or digests.
+Equivalent IPv6 spellings share one identity, and IPv4-mapped IPv6 is explicitly canonicalized to
+IPv4; normalization never grants subnet, implicit loopback, or non-exact trust.
 Quoted `Forwarded` values are accepted only through a deliberately small escape-free grammar;
 protocol tokens are case-insensitive HTTP/HTTPS after decoding, while controls, escapes, duplicate
 or unknown parameters, zones, ports, and ambiguous forms remain refused.
@@ -26,6 +29,8 @@ configuration rejects zero, negative, non-integer, unbounded, or internally inco
 Every clock sample must be a non-negative safe integer and monotonic for its quota; an invalid or
 regressing sample fails before expiry, key, or counter mutation and can never produce refusal
 metadata. `Retry-After` is always a positive finite integer bounded by the configured window.
+Ticket quota uses an in-process reservation that commits only when issuance succeeds and rolls back
+on capacity, clock/randomness, audit, or other issuance failure.
 
 ## EP3 — refusal precedes expensive or privileged work
 
@@ -39,6 +44,9 @@ validated before it is consumed. Preflight, invalid methods, and other policy-in
 the ordinary address quota but cannot consume login attempts. Stream-ticket Origin, repository,
 capability, and live-principal authorization likewise precede the credential ticket quota.
 Client-supplied IDs cannot choose a quota bucket.
+Request targets are bounded origin-form strings with valid percent encoding; malformed, overlong,
+non-string, control-bearing, absolute, scheme-relative, or fragment-bearing targets fail as one
+typed audited refusal before authentication, provider, session, or fleet work.
 
 ## EP4 — trusted-proxy and TLS modes are explicit
 
@@ -70,6 +78,8 @@ bounded, including broken sockets and audit failures. The shutdown control frame
 control-frame byte ceiling and the connection's buffered-byte ceiling; refusal or write failure
 causes immediate exactly-once close and lease release with no additional socket writes.
 Lag/backpressure controls use the same dual ceiling and exactly-once terminal cleanup invariant.
+A synchronous stream-cleanup failure degrades but cannot reject or short-circuit shutdown: listener
+drain/force-close and terminal audit still run, and repeated callers receive the same bounded result.
 
 ## EP7 — durable audit and restart posture
 

@@ -7,7 +7,15 @@ const positive = (value, name) => {
 };
 const address = (value) => {
   if (typeof value !== 'string' || value.length === 0 || value.length > 64 || value.trim() !== value || !isIP(value)) throw new TypeError('invalid client address');
-  return value;
+  if (isIP(value) === 4) return value.split('.').map((part) => String(Number(part))).join('.');
+  const normalized = new URL(`http://[${value}]/`).hostname.slice(1, -1).toLowerCase();
+  const [left, right = ''] = normalized.split('::');
+  const lhs = left ? left.split(':') : []; const rhs = right ? right.split(':') : [];
+  const words = [...lhs, ...Array(8 - lhs.length - rhs.length).fill('0'), ...rhs].map((part) => Number.parseInt(part, 16));
+  if (words.length === 8 && words.slice(0, 5).every((word) => word === 0) && words[5] === 0xffff) {
+    return [words[6] >> 8, words[6] & 0xff, words[7] >> 8, words[7] & 0xff].join('.');
+  }
+  return normalized;
 };
 
 export class FixedWindowQuota {
@@ -38,6 +46,24 @@ export class FixedWindowQuota {
     if (entry.used + cost > this.limit) return { ok: false, retryAfter: this._retryAfter(now) };
     entry.used += cost;
     return { ok: true };
+  }
+  reserve(key, cost = 1, nowMs = this.now()) {
+    const taken = this.take(key, cost, nowMs);
+    if (!taken.ok) return taken;
+    const entry = this.keys.get(key);
+    let active = true;
+    return {
+      ok: true,
+      commit: () => { if (!active) return false; active = false; return true; },
+      rollback: () => {
+        if (!active) return false;
+        active = false;
+        if (this.keys.get(key) !== entry) return false;
+        entry.used -= cost;
+        if (entry.used === 0) this.keys.delete(key);
+        return true;
+      },
+    };
   }
   canTake(key, cost = 1, nowMs = this.now()) {
     positive(cost, 'cost');
@@ -148,6 +174,7 @@ export class WebEdgePolicy {
   digest(value) { return createHmac('sha256', this.addressKey).update(value).digest('hex'); }
   peerDigest(req) { return this.digest(address(req?.socket?.remoteAddress)); }
   take(kind, key, cost) { return this.quotas[kind].take(key, cost); }
+  reserve(kind, key, cost) { return this.quotas[kind].reserve(key, cost); }
   takeCommand(key, cost) {
     const now = this.now();
     const count = this.quotas.principal.canTake(key, 1, now);
