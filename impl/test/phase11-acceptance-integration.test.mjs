@@ -270,7 +270,7 @@ test('AC5: ff-only integration reaps the worker/worktree/branch and records exac
 test('AC5: a non-fast-forward main refuses without rewriting either tip', async () => {
   const root = repo();
   commitBase(root, { 'README.md': 'base\n' });
-  const { coordinator, log, handle } = await completedTask(root, 'diverged-task');
+  const { coordinator, coordination, log, handle } = await completedTask(root, 'diverged-task');
   writeFileSync(join(root, 'main-only.txt'), 'main advanced\n');
   git(['add', 'main-only.txt'], root);
   git(['commit', '-q', '-m', 'advance main independently'], root);
@@ -290,6 +290,7 @@ test('AC5: a non-fast-forward main refuses without rewriting either tip', async 
   assert.equal(refusedResult.integration, null);
   assert.equal(refusedResult.retainedResultRef, `refs/baton/results/${taskSha}`);
   assert.equal(git(['show-ref', '--verify', refusedResult.retainedResultRef], root).split(' ')[0], taskSha);
+  assert.equal(coordination.events().some((entry) => entry.kind === 'driver.recorded' && entry.payload.kind === 'integration.refused'), true);
 });
 
 test('AC5: a dirty main refuses without touching the index or working tree', async () => {

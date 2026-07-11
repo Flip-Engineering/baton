@@ -1,0 +1,93 @@
+{
+  "at": "2026-07-11T18:43:02.764Z",
+  "repoHead": "d0a637e8e7b8de9c7b6d31984dac45b8c2500b94",
+  "workerId": "w-1",
+  "pid": 12790,
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "result": {
+    "ready": true,
+    "status": "completed",
+    "verdict": {
+      "reverified": true,
+      "observedExit": 0,
+      "hadClaim": false,
+      "matchesClaim": true,
+      "passed": true,
+      "locus": "fresh_sandbox",
+      "redGreen": null,
+      "baseExit": null,
+      "coverageOfChange": null,
+      "uncoveredChangedLines": [],
+      "mutationStrength": null,
+      "mutationPassed": null,
+      "survivedMutants": [],
+      "observedOutputTail": "",
+      "note": "PASS: observed exit 0 matches expected 0.",
+      "durationMs": 9
+    },
+    "artifacts": {
+      "commits": [],
+      "files": []
+    },
+    "vendor": "grok",
+    "modelRequested": "grok-composer-2.5-fast",
+    "modelResolved": "grok-composer-2.5-fast",
+    "modelObserved": "grok-composer-2.5-fast",
+    "modelMismatch": null,
+    "sessionRequest": {
+      "mode": "new"
+    },
+    "sessionRef": {
+      "vendor": "grok",
+      "kind": "session",
+      "id": "019f527c-2484-7b91-8115-f9333226f690",
+      "persistence": "native",
+      "source": "wire"
+    },
+    "sessionContext": {
+      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-coordination-implementation-review",
+      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "baseSha": "4c77fc7ac4fed52d510bf128db5cac0eca27e40a",
+      "branch": "baton/grok-coordination-implementation-review",
+      "ownerTaskId": "grok-coordination-implementation-review"
+    },
+    "lineage": null,
+    "review": null,
+    "integration": null,
+    "publication": null,
+    "retainedResultRef": null
+  },
+  "integration": {
+    "ok": true,
+    "result": "integrated",
+    "integration": {
+      "beforeSha": "4c77fc7ac4fed52d510bf128db5cac0eca27e40a",
+      "resultSha": "d0a637e8e7b8de9c7b6d31984dac45b8c2500b94",
+      "afterSha": "d0a637e8e7b8de9c7b6d31984dac45b8c2500b94",
+      "strategy": "ff-only",
+      "actor": "orchestrator"
+    }
+  },
+  "approvals": [
+    {
+      "requestId": "w-1:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    }
+  ],
+  "checks": {
+    "noHarnessError": true,
+    "exactModelObserved": true,
+    "freshVerified": true,
+    "integrated": true,
+    "killConfirmed": true,
+    "processGone": true,
+    "worktreeGone": true,
+    "runtimeGone": true,
+    "branchGone": true
+  },
+  "fatal": null,
+  "pass": true
+}

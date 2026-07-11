@@ -91,7 +91,7 @@ function completed(summary = 'done') {
 
 test('PS1/PS4: a verified worker accepts a public follow-up turn and verifies it independently', async () => {
   const ad = adapter();
-  const { c, verifyCalls, coordination } = harness(ad);
+  const { c, log, verifyCalls, coordination } = harness(ad);
   const h = await c.spawn('session', brief(), { taskId: 'follow-up' });
   ad.emit(h.id, 'lifecycle.spawned', { sessionId: 'session-1', pid: 123 }, 1);
   ad.emit(h.id, 'lifecycle.turn_completed', completed('first'), 1);
@@ -111,6 +111,15 @@ test('PS1/PS4: a verified worker accepts a public follow-up turn and verifies it
   assert.equal(coordination.snapshot().tasks.length, 2);
   assert.deepEqual(coordination.snapshot().tasks.map((task) => task.status), ['completed', 'completed']);
   assert.equal(coordination.snapshot().tasks[1].refines, 'follow-up');
+
+  const replay = new Coordinator({
+    log, fences: new FenceTable(), adapters: { session: adapter() }, coordination,
+    worktrees: { create: async () => ({}), capture: async () => ({}), createVerifyWorktree: async () => ({}), removeVerifyWorktree: async () => {}, remove: async () => {}, reconcile: async () => {} },
+    referee: async () => ({}), route: () => 'session', approvalTimeoutMs: 1000, stopDeadlineMs: 100,
+  });
+  assert.equal(replay.list()[0].taskId, coordination.snapshot().tasks[1].id);
+  assert.equal((await replay.result(h.id)).status, 'completed');
+  assert.equal((await replay.result(h.id)).ready, true);
 });
 
 test('PS2: a refused follow-up restores the previous terminal result and logs no new turn', async () => {

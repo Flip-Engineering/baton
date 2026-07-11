@@ -397,8 +397,8 @@ test('C2: with all ceilings saturated, router.pick is consulted (and returns nul
   const driver = createDriver({ repoRoot, logDir, adapters: { vendorA: adapterA, vendorB: adapterB } });
   const pickCalls = spyOn(driver.router, ['pick']);
 
-  await driver.coordinator.spawn('vendorA', makeBrief(), { taskId: 'sat-a', taskType: 'general' });
-  await driver.coordinator.spawn('vendorB', makeBrief(), { taskId: 'sat-b', taskType: 'general' });
+  const handleA = await driver.coordinator.spawn('vendorA', makeBrief(), { taskId: 'sat-a', taskType: 'general' });
+  const handleB = await driver.coordinator.spawn('vendorB', makeBrief(), { taskId: 'sat-b', taskType: 'general' });
 
   const handleC = await driver.coordinator.spawn('auto', makeBrief(), { taskId: 'sat-c', taskType: 'general' });
 
@@ -407,6 +407,12 @@ test('C2: with all ceilings saturated, router.pick is consulted (and returns nul
     pickCalls.pick.length >= 1,
     'router.pick() must actually be consulted at dispatch time, even when the outcome is "queue" — today it is never called anywhere in src/'
   );
+
+  // This test deliberately creates long-running workers. Quiesce all three before suite-level
+  // temp cleanup; deleting the authoritative log while workers can still emit is itself an
+  // integrity failure and must not be hidden by production code.
+  await Promise.all([driver.coordinator.kill(handleA.id, 'policy'), driver.coordinator.kill(handleB.id, 'policy')]);
+  await driver.coordinator.kill(handleC.id, 'policy');
 });
 
 // ============================================================

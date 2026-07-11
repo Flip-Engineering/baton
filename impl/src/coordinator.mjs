@@ -283,29 +283,33 @@ export class Coordinator {
     this._setTimeout = opts.setTimeout ?? globalThis.setTimeout;
     this._clearTimeout = opts.clearTimeout ?? globalThis.clearTimeout;
 
-    // D8: feed the optional story sink — wrap log.append so every logged event also reaches
-    // the story compiler. Also guards the raw append itself: a write that fails because the
-    // log destination was torn down out from under an in-flight background continuation
-    // (e.g. a worker's scheduled completion racing external cleanup) must never crash the
-    // process — matching the same "a broken sink never affects correctness" philosophy the
-    // story wiring already applies, extended to the log destination itself.
+    // D8/CK1: feed the optional story sink, but never turn an authoritative-log failure into a
+    // warning-and-drop. Once an append fails the coordinator is poisoned: every public command
+    // fails closed until process restart/replay, and any not-yet-entered spawn is aborted. A
+    // caller may tear storage down only after it has quiesced the coordinator; racing teardown
+    // is an integrity failure, not a benign sink failure.
     {
       const rawAppend = this._log.append.bind(this._log);
       this._appendFailures = 0;
+      this._fatalError = null;
       this._log.append = (partial) => {
         let e;
         try {
           e = rawAppend(partial);
         } catch (err) {
-          // Log-is-truth means a dropped event may NOT be invisible: count every drop and warn
-          // on the first. (The swallow exists for one benign race — a fire-and-forget adapter
-          // continuation writing after external teardown — but a real append failure mid-run,
-          // e.g. disk full, must be observable, not silent data loss.)
           this._appendFailures += 1;
-          if (this._appendFailures === 1) {
-            try { process.emitWarning(`baton coordinator: log.append failed and the event was dropped: ${err?.message ?? err}`); } catch { /* never throws */ }
+          if (!this._fatalError) {
+            const fatal = new Error(`authoritative operational log append failed: ${err?.message ?? err}`, { cause: err });
+            fatal.name = 'OperationalLogIntegrityError';
+            fatal.code = 'operational_log_unavailable';
+            this._fatalError = fatal;
+            for (const handle of this._workers?.values?.() ?? []) {
+              if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) {
+                handle.spawnAbort.abort({ reason: 'operational_log_unavailable' });
+              }
+            }
           }
-          return undefined;
+          throw this._fatalError;
         }
         if (this._story && typeof this._story.record === 'function') {
           try { this._story.record(e); } catch { /* a broken story sink never affects correctness */ }
@@ -334,7 +338,7 @@ export class Coordinator {
     this._publicationSeq = 0;
     this._refinementSeq = 0;
 
-    this._seedQueuedCoordinationTasks();
+    this._seedCoordinationTasks();
 
     for (const adapter of Object.values(this._adapters)) {
       adapter.onEvent((e) => this._handleEvent(e));
@@ -348,6 +352,7 @@ export class Coordinator {
       Promise.resolve(this._runtimeScopes.reconcile([])).catch(noop);
     }
     this._replay();
+    this._terminalizeUnattachedCoordinationTasks();
   }
 
   // =========================================================================
@@ -355,6 +360,7 @@ export class Coordinator {
   // =========================================================================
 
   tick() {
+    if (this._fatalError) throw this._fatalError;
     this._sweepDeadlines();
     this._dispatchPass();
   }
@@ -709,10 +715,10 @@ export class Coordinator {
     return this._publicHandle(handle);
   }
 
-  _seedQueuedCoordinationTasks() {
+  _seedCoordinationTasks() {
     if (!this._coordination) return;
     for (const durable of this._coordination.snapshot().tasks) {
-      if (durable.status !== 'pending' || this._tasks.has(durable.id)) continue;
+      if (this._tasks.has(durable.id)) continue;
       const workerId = durable.reservedWorkerId;
       if (!workerId) continue;
       const task = {
@@ -721,7 +727,7 @@ export class Coordinator {
         modelResolved: null, modelObserved: null, modelPolicy: durable.modelPolicy,
         sessionRequest: durable.sessionRequest ?? Object.freeze({ mode: 'new' }),
         sessionContext: null, lineage: null, refines: durable.refines ?? null,
-        status: 'pending', assignee: workerId, worktree: null, result: null, verdict: null,
+        status: durable.status, assignee: workerId, worktree: null, result: null, verdict: null,
         capturedSha: null, integration: null, retainedResultRef: null, publication: null,
         review: null, taskType: durable.taskType ?? 'general', coordinationVersion: durable.version,
       };
@@ -732,7 +738,8 @@ export class Coordinator {
         modelRequested: durable.modelRequested ?? null, modelResolved: null, modelObserved: null,
         modelPolicy: durable.modelPolicy ?? null, modelMismatch: null,
         sessionRequest: task.sessionRequest, sessionContext: null, lineage: null,
-        taskId: task.id, worktree: null, status: 'pending', pendingApprovalId: null,
+        taskId: task.id, worktree: null,
+        status: durable.status === 'pending' ? 'pending' : (TERMINAL_TASK_STATUSES.has(durable.status) ? 'idle' : 'orphaned'), pendingApprovalId: null,
         pendingQuestionId: null, budgetUsed: { tokens: 0, usd: 0 }, budgetThresholdsFired: new Set(),
         usageCumulative: new Map(), watchdogActions: new Set(), recentFailedActions: [],
         watchdogGeneration: 0, watchdogTimer: null, runtimeScope: null, runtimeLease: null,
@@ -999,11 +1006,16 @@ export class Coordinator {
     try {
       integrated = await this._worktrees.integrate(task.capturedSha, { strategy });
     } catch (err) {
-      this._log.append({
+      const refusedEvent = this._log.append({
         worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
         kind: 'integration.refused', actor: 'policy',
         payload: { strategy, sha: task.capturedSha, retainedResultRef: task.retainedResultRef, reason: String(err?.message ?? err) },
       });
+      const refusedEvidence = this._coordMapEvent(refusedEvent);
+      this._coordRecord('integration.refused', {
+        taskId: task.id, strategy, sha: task.capturedSha, retainedResultRef: task.retainedResultRef,
+        reason: String(err?.message ?? err), evidence: refusedEvidence,
+      }, `driver.integration.refused:${task.id}:${refusedEvent.seq}`, 'policy');
       throw new IntegrationError(String(err?.message ?? err), 'non_fast_forward_or_dirty');
     }
     if (task.retainedResultRef && typeof this._worktrees.releaseResult === 'function') {
@@ -1017,13 +1029,18 @@ export class Coordinator {
     });
     const integrationEvidence = this._coordMapEvent(integrationEvent);
     if (this._coordination) {
+      const acceptingEvidence = this._coordination.task(task.id).artifactIds
+        .map((artifactId) => this._coordination.artifact(artifactId))
+        .filter((artifact) => artifact?.accepted === true)
+        .flatMap((artifact) => artifact.provenance ?? []);
       this._coordination.registerArtifact({
         taskId: task.id, kind: 'report', refs: { beforeSha: task.integration.beforeSha, resultSha: task.integration.resultSha, afterSha: task.integration.afterSha },
-        mediaType: 'application/vnd.baton.integration+json', accepted: true, provenance: [integrationEvidence],
+        mediaType: 'application/vnd.baton.integration+json', accepted: true, provenance: [integrationEvidence, ...acceptingEvidence],
       }, { actor: opts.actor ?? 'orchestrator', key: `artifact.integration:${task.id}:${task.integration.afterSha}` });
       this._coordination.addKnowledgeNode({
         id: `decision:integrate:${task.id}:${integrationEvent.seq}`, type: 'Decision',
         body: `Integrated task ${task.id} at ${task.integration.afterSha}`, grounding: 'observed',
+        informedBy: [`task:${task.id}`],
         evidence: [{ coordinationSeq: integrationEvidence.coordinationSeq }],
       }, { actor: opts.actor ?? 'orchestrator', key: `knowledge.integration:${task.id}:${integrationEvent.seq}` });
       this._coordRecord('integration.completed', { taskId: task.id, integration: task.integration, evidence: integrationEvidence }, `driver.integration:${task.id}:${integrationEvent.seq}`, opts.actor ?? 'orchestrator');
@@ -1180,7 +1197,7 @@ export class Coordinator {
       const preCheck = this._fences.check(workerId, { fence: opts.expectedFence });
       if (!preCheck.ok) {
         const harness = this._harnessOf(handle.vendor);
-        this._log.append({
+        const recoveryEvent = this._log.append({
           worker: workerId,
           harness,
           turnEpoch: this._fences.current(workerId).turnEpoch,
@@ -1405,6 +1422,10 @@ export class Coordinator {
     if (!durable || durable.status === to) return durable;
     const result = this._coordination.transitionTask(task.id, to, task.coordinationVersion ?? durable.version, { actor, key }, evidence);
     task.coordinationVersion = result.task.version;
+    if (TERMINAL_TASK_STATUSES.has(to)) {
+      const handle = this._workers.get(task.assignee);
+      this._expireScratchClaims(handle, task, `task_${to}`);
+    }
     return result.task;
   }
 
@@ -1444,6 +1465,16 @@ export class Coordinator {
     this._taskOrder.push(id);
     handle.taskId = id;
     return next;
+  }
+
+  _expireScratchClaims(handle, task, reason) {
+    if (!this._coordination || !task) return;
+    const workerId = handle?.id ?? task.assignee ?? null;
+    for (const claim of this._coordination.activeScratchClaims({ workerId, taskId: task.id })) {
+      this._coordination.expireScratchClaim(claim.id, claim.version, {
+        actor: 'policy', key: `scratch.claim_expired:${claim.id}:${claim.version}:${reason}`,
+      });
+    }
   }
 
   async _removeTaskWorktree(task) {
@@ -1831,7 +1862,8 @@ export class Coordinator {
       this._coordination?.addKnowledgeNode({
         id: `decision:publish:${task.id}:${publicationEvent.seq}`, type: 'Decision',
         body: `Published task ${task.id} to ${task.publication.remote}/${task.publication.ref}`,
-        grounding: 'observed', evidence: [{ coordinationSeq: publicationEvidence.coordinationSeq }],
+        grounding: 'observed', informedBy: [`task:${task.id}`],
+        evidence: [{ coordinationSeq: publicationEvidence.coordinationSeq }],
       }, { actor, key: `knowledge.publication:${task.id}:${publicationEvent.seq}` });
       this._coordRecord('publication.completed', { taskId: task.id, publication: task.publication, evidence: publicationEvidence }, `driver.publication:${task.id}:${publicationEvent.seq}`, actor);
       finishResolving();
@@ -1948,6 +1980,29 @@ export class Coordinator {
     if (!task) return { ready: false, status: handle.status, ...attribution };
     if (!TERMINAL_TASK_STATUSES.has(task.status)) return { ready: false, status: task.status, ...attribution };
     return { ready: true, status: task.status, verdict: task.verdict, artifacts: task.result ? task.result.artifacts : undefined, ...attribution };
+  }
+
+  /** Pull-only causal recall. The coordination append is the authority boundary: if the read
+   * audit cannot be durably written, no recalled content is returned to the caller. */
+  recallKnowledge(query, reader = {}, opts = {}) {
+    this.tick();
+    if (!this._coordination) throw new Error('coordination store is required for knowledge recall');
+    const actor = opts.actor ?? 'orchestrator';
+    const key = opts.idempotencyKey;
+    if (typeof key !== 'string' || key.length === 0) throw new TypeError('knowledge recall requires idempotencyKey');
+    let taskId = reader.taskId ?? null;
+    const workerId = reader.workerId ?? reader.readerWorker ?? null;
+    if (workerId) {
+      const handle = this._getWorker(workerId);
+      if (taskId && taskId !== handle.taskId) throw new Error('knowledge reader task does not match worker ownership');
+      taskId = handle.taskId;
+    }
+    return this._coordination.readKnowledge(query, {
+      readerActor: actor,
+      readerWorker: workerId,
+      taskId,
+      runId: reader.runId ?? null,
+    }, { actor, key });
   }
 
   list() {
@@ -2538,13 +2593,24 @@ export class Coordinator {
         }
       }
 
+      // A persistent worker can own a chain of immutable refinement tasks. Only the first turn
+      // carries lifecycle.spawned.taskId; later native turns deliberately reuse the same worker
+      // and wire session. The coordination stream is authoritative for which refinement is
+      // current after restart, so associate the replayed terminal/result state with the newest
+      // durable task reserved for this worker instead of silently snapping back to turn one.
+      const durableWorkerTasks = this._coordination?.snapshot().tasks
+        .filter((task) => (task.reservedWorkerId ?? task.assignee) === workerId)
+        .sort((a, b) => a.createdEvent - b.createdEvent) ?? [];
+      const currentDurableTask = durableWorkerTasks.at(-1) ?? null;
+      if (currentDurableTask) taskId = currentDurableTask.id;
+
       // CI6: replay cannot resurrect an adapter session. Until the persistent-session phase can
       // prove native reattachment, any nonterminal reconstructed task is durably failed and its
       // worker is marked orphaned (uncontrollable), never presented as working/input_required.
       if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) {
         recoveryTerminalized = true;
         terminalStatus = 'failed';
-        this._log.append({
+        const recoveryEvent = this._log.append({
           worker: workerId,
           harness: events.at(-1)?.harness ?? '',
           turnEpoch: maxTurnEpoch,
@@ -2552,6 +2618,18 @@ export class Coordinator {
           actor: 'policy',
           payload: { reason: 'session_not_reattached', priorStatus: events.at(-1)?.kind ?? 'unknown' },
         });
+        const durable = taskId ? this._coordination?.task(taskId) : null;
+        if (durable && !TERMINAL_TASK_STATUSES.has(durable.status)) {
+          const evidence = this._coordMapEvent(recoveryEvent);
+          const transitioned = this._coordination.transitionTask(taskId, 'failed', durable.version, {
+            actor: 'policy', key: `task.failed:${taskId}:replay:${recoveryEvent?.seq ?? maxTurnEpoch}`,
+          }, evidence ?? { reason: 'session_not_reattached' });
+          const seeded = this._tasks.get(taskId);
+          if (seeded) {
+            seeded.coordinationVersion = transitioned.task.version;
+            this._expireScratchClaims(this._workers.get(workerId), seeded, 'replay_failed');
+          }
+        }
       }
 
       this._fences.register(workerId);
@@ -2584,8 +2662,11 @@ export class Coordinator {
           publication,
           review,
         };
-        task.assignee = workerId;
-        task.status = terminalStatus;
+        const durable = this._coordination?.task(taskId);
+        task.assignee = durable?.reservedWorkerId ?? workerId;
+        task.deps = durable ? [...durable.deps] : task.deps;
+        task.coordinationVersion = durable?.version ?? task.coordinationVersion ?? null;
+        task.status = durable?.status ?? terminalStatus;
         task.result = lastResult ?? task.result;
         task.verdict = verdict ?? task.verdict;
         task.sessionRequest = sessionRequest;
@@ -2653,6 +2734,27 @@ export class Coordinator {
         return 'blocked';
       default:
         return 'working';
+    }
+  }
+
+  _terminalizeUnattachedCoordinationTasks() {
+    if (!this._coordination) return;
+    for (const durable of this._coordination.snapshot().tasks) {
+      if (!['working', 'input_required'].includes(durable.status)) continue;
+      const workerId = durable.assignee ?? durable.reservedWorkerId;
+      const events = workerId ? this._log.read(workerId) : [];
+      if (events.some((event) => event.kind === 'lifecycle.spawned')) continue;
+      const recorded = this._coordRecord('recovery.claimed_without_spawn', { taskId: durable.id, workerId }, `driver.recovery:${durable.id}:claimed_without_spawn`);
+      const transitioned = this._coordination.transitionTask(durable.id, 'failed', durable.version, {
+        actor: 'policy', key: `task.failed:${durable.id}:claimed_without_spawn`,
+      }, { coordinationSeq: recorded?.seq ?? null, reason: 'claimed_without_operational_spawn' });
+      const task = this._tasks.get(durable.id);
+      if (task) {
+        task.status = 'failed'; task.coordinationVersion = transitioned.task.version;
+        this._expireScratchClaims(this._workers.get(workerId), task, 'claimed_without_spawn');
+      }
+      const handle = workerId ? this._workers.get(workerId) : null;
+      if (handle) handle.status = 'exited';
     }
   }
 }
