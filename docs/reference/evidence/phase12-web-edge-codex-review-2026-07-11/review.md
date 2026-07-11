@@ -2,66 +2,43 @@
 
 ## Scope and method
 
-Independently reviewed the current EP1–EP9 specification (`spec/phase12/web-edge-policy.md`), the Phase 12 lifecycle/northbound specifications, `impl/src/web-edge.mjs`, `impl/src/web-northbound.mjs`, `impl/src/web-stream.mjs`, `impl/src/web-auth.mjs`, and the five Phase 12 web test files named by the acceptance command. Prior evidence logs were not read. No source, fleet, homelab, or network action was taken.
+Independent source-and-test review of EP1–EP9 against `spec/phase12/web-edge-policy.md`, the current Phase 12 northbound/session specifications, `impl/src/web-edge.mjs`, `web-northbound.mjs`, `web-stream.mjs`, `web-auth.mjs`, the coordination authority used for readiness/idempotency, and the five Phase 12 test files named by the acceptance command. Prior evidence logs were not read. No source, network, homelab, or fleet action was performed.
 
 ## Findings
 
-### F1 — Medium — command count/cost quota transaction can split across fixed windows
+### MEDIUM — EP3 login quota is charged by pathname before method/route validation
 
-- **Source:** EP2 requires deterministic fixed-window enforcement and EP3 treats principal/cost quota as one refusal boundary (`spec/phase12/web-edge-policy.md:16-30`). `WebEdgePolicy.takeCommand()` performs two `canTake()` calls followed by two independent `take()` calls (`impl/src/web-edge.mjs:138-144`); every call obtains a new clock value (`impl/src/web-edge.mjs:20-40`).
-- **Failure:** If the injected clock crosses a window boundary between these calls (or is merely stateful), validation and mutation need not concern the same window. For example, principal validation may occur in window N, cost validation in N+1, and the two commits can occur in still different windows. `takeCommand()` then returns success without atomically establishing that both limits admitted the command in one deterministic window. There is also no check of either commit result after the preflight checks. This is observable without concurrency because the injected clock is called four times.
-- **Impact/severity:** Medium. Normal `Date.now()` makes the race narrow, but boundary behavior is part of quota correctness and an injected clock is explicitly contractual. A successful expensive command can be charged inconsistently across buckets/windows, weakening one limit and making replay of boundary behavior nondeterministic.
-- **Action:** Capture one validated timestamp/window at the start of `takeCommand()` and implement a single commit operation across the principal and cost entries, or add quota operations that accept the captured timestamp and only mutate after both checks pass. Assert both commits rather than ignoring their results.
-- **Regression:** Add a test whose injected clock advances across the four current calls. Seed principal and cost near their limits on both sides of the boundary, invoke `takeCommand()`, and assert either one atomic refusal with neither bucket changed or one success with both charges recorded in the same window. Also assert the clock is sampled once per combined transaction.
+- Source: `impl/src/web-northbound.mjs:289-301`, with route selection only later at `:306-317`.
+- Failure: every request whose parsed pathname is `/v1/auth/login` consumes both the ordinary address quota and the login quota, regardless of method. In particular, permitted CORS `OPTIONS /v1/auth/login`, `GET`, and other non-login requests burn the same address login bucket as a real `POST`. An unauthenticated caller sharing a canonical address can exhaust the login limit without making provider calls or submitting a login attempt, refusing subsequent legitimate login with `429` for the remainder of the window. This contradicts the EP2/EP3 policy's “unauthenticated login attempts” authority and turns harmless/preflight traffic into a login-denial primitive.
+- Regression: set `login: 1`; send an allowed-origin `OPTIONS /v1/auth/login`; then send a valid `POST /v1/auth/login`. The preflight must be `204`, must not consume the login bucket, and the POST must reach the provider. Also cover GET/unknown methods and confirm they do not consume login quota.
+- Action: apply the login quota only after confirming the request is the admitted login method/path (while retaining it before body parsing and provider invocation).
 
-### F2 — Medium — durable audit records contain raw credential identifiers contrary to EP7's literal non-disclosure rule
+### MEDIUM — EP2 injected clock output is unchecked, allowing non-expiring keys and invalid `Retry-After`
 
-- **Source:** EP7 says the listed edge audit events are append-only audited “without raw addresses or credentials” (`spec/phase12/web-edge-policy.md:56-61`). The shared northbound audit envelope writes `credentialId` verbatim (`impl/src/web-northbound.mjs:127-134`), including quota refusals (`impl/src/web-northbound.mjs:196-201`, `337-341`). Stream audit records do the same (`impl/src/web-stream.mjs:50-54`), including connection-limit/refusal and shutdown disconnect events. The command admission record also persists the raw credential identifier (`impl/src/web-northbound.mjs:210-214`).
-- **Failure:** Any authenticated quota refusal or stream audit places the stable raw credential identifier in the durable coordination log. Address values receive a keyed digest, but credential identifiers receive no equivalent minimization. If EP7 intended only credential *secrets*, the specification is ambiguous and the implementation/tests do not establish that narrower meaning.
-- **Impact/severity:** Medium. This does not expose bearer/cookie secret material, but it creates durable, correlatable credential-level data in the exact audit boundary that claims credentials are absent. Log readers gain session/credential correlation beyond the stated disclosure posture.
-- **Action:** Replace audit `credentialId` with a domain-separated keyed digest (or omit it where the actor/session already supplies sufficient provenance), and clarify EP7 to distinguish credential identifiers from credential secret material. Keep raw identifiers only in durable authorization/idempotency state where required, not general audit payloads.
-- **Regression:** Issue an authenticated quota refusal and connection refusal with a distinctive credential ID, serialize all resulting audit events, and assert the raw ID and all credential/token material are absent while a stable keyed classification/digest remains. Repeat for shutdown-driven stream closure.
+- Source: `impl/src/web-edge.mjs:14-18`, `:20-40`, and the shared command timestamp at `:138-146`.
+- Failure: configuration validates only that `now` is a function. `take()` and `canTake()` accept `NaN`, infinities, unsafe values, or a regressing clock without validation. With `NaN`, the window start is `NaN`; expiry comparison is permanently false, a new entry is stored with `start: NaN`, and refusals expose `retryAfter: NaN` (serialized by HTTP as `Retry-After: NaN`). At cardinality capacity those poisoned entries never expire. A backward clock jump similarly retains future-window usage and can produce retry intervals far beyond the configured window. This violates deterministic expiry, bounded cardinality behavior, and bounded valid refusal metadata.
+- Regression: inject clocks returning `NaN`, `Infinity`, an unsafe integer, and a value earlier than the last accepted sample. Assert fail-closed typed behavior, no key insertion/counter mutation, and no invalid `Retry-After`. Add a boundary test proving every emitted retry value is a positive finite integer no larger than the configured window rounding.
+- Action: validate every sampled/explicit timestamp as a non-negative safe integer and define/enforce monotonic-clock behavior (reject regression without mutation, or clamp to the last accepted sample).
 
-## EP-by-EP verdicts
+### LOW — EP7 readiness transition can become permanently unaudited after a transition-write failure
 
-### EP1 — clean
+- Source: `impl/src/web-northbound.mjs:152-162` (`_readinessResponse`).
+- Failure: the probe audit and transition audit share one `try`. If `readiness_probe` succeeds but `readiness_transition` throws, the catch changes the response to not-ready; then `_lastReady` is nevertheless set to that derived false value. On the next healthy probe, an actually false dependency state compares equal to `_lastReady`, so no transition audit is retried. Thus an append failure can erase the required readiness transition even after audit service recovers. The response remains non-disclosing and fail-closed, but EP7's append-only transition record is missing.
+- Regression: make `recordWebAudit` succeed for `readiness_probe`, fail once for `readiness_transition`, then recover while readiness remains false. The first response must be `503`, and a subsequent probe must append exactly one false `readiness_transition` rather than treating it as recorded.
+- Action: update the last-audited readiness state only after the transition append commits; keep response readiness separate from audit bookkeeping.
 
-Direct mode uses the socket peer and ignores all forwarding headers. Proxy trust is an exact string allowlist match, deliberately treating IPv4 and IPv4-mapped IPv6 as different peers. Both native IPv6 and bracketed RFC `Forwarded` IPv6 are accepted; zone IDs, bracket/port ambiguity, whitespace, duplicate parameters, mixed standard/legacy families, excessive length/hops, missing protocol, and an out-of-range configured hop fail before authentication, provider execution, or body parsing. The selected hop is counted from the trusted-proxy end. Malformed-forwarding audit retains only a keyed peer digest/classification. No additional EP1 defect found.
+## EP verdicts
 
-Operational caution, not a defect: deployments must configure the address form actually presented by Node (for example `::ffff:127.0.0.1`, not `127.0.0.1`), because the exact-match rule intentionally performs no canonical alias conversion.
+- EP1 — Clean apart from no finding: direct requests use the socket peer; untrusted forwarding is ignored; trusted peers require one bounded chain; mixed `Forwarded`/`X-Forwarded-*` forms fail; exact-hop selection and IPv4/IPv6 parsing are explicit. IPv4-mapped IPv6 is intentionally not aliased. Proxy-refusal audit retains only classification and keyed peer digest.
+- EP2 — Findings above: unchecked clock output. Otherwise limits reject non-positive/non-integer/unsafe configuration; fixed-window maps are bounded; expiry pruning is deterministic for a valid monotonic clock; principal and weighted cost use one sampled timestamp and commit synchronously; concurrent leases are bounded and delete zero-count keys.
+- EP3 — Finding above: method-independent login charging. Otherwise address refusal precedes authentication/body/provider/session/coordinator work; login refusal precedes provider work; command count/cost refusal precedes durable admission/dispatch; quota refusal audit is fail-closed; cost refusal does not consume count; connection refusal occurs before ticket consumption; client IDs do not select buckets.
+- EP4 — Clean. Direct production assembly requires key/certificate and an edge/readiness authority. Cleartext assembly requires proxy mode plus a nonempty exact peer allowlist and rejects simultaneous TLS configuration. Trusted cleartext requests require exact forwarded HTTPS; untrusted peers remain socket-derived HTTP and cannot upgrade transport or address identity.
+- EP5 — Clean. Health returns only `{ok:true}` and readiness only `{ready:boolean}`. Readiness is grounded in coordination/log health, live authentication/session health, optional injected dependency checks, admission state, and a successful probe audit (thereby exercising durable append/idempotency storage). Health/readiness have separate address quotas. No fleet/dependency detail is disclosed. The transition-audit bookkeeping defect is recorded under EP7.
+- EP6 — Clean. Admission closes synchronously before shutdown work; login rechecks after provider completion; ticket/command paths recheck after awaited authentication/body work; streams stop accepting, receive a fixed shutdown/reconnect frame, release leases once, and close; listener drain is deadline-bounded with idle/all-connection forcing; repeated shutdown returns one promise; no coordinator/worker operation is invoked. Accepted command dispatch is allowed to drain rather than being falsely cancelled.
+- EP7 — Finding above: readiness transition retry bookkeeping. Otherwise quota/proxy/shutdown audits exclude raw addresses and credential IDs, use keyed digests where identity is needed, and admission-success paths fail closed on required audit errors. Quota state is in-memory abuse state and is not used as durable command/session/idempotency truth.
+- EP8 — Acceptance coverage is substantial for all named seams, but lacks the three regression cases above. The exact required verification result is recorded below.
+- EP9 — Deferred, not EP defects: concrete OIDC redirect/callback behavior, optional WebSocket parity, browser automation/UI, and MCP/operator UI remain explicitly outside this vertical. No finding above depends on those deferred facilities.
 
-### EP2 — finding F1; otherwise clean
+## Verification
 
-All configured limits, window size, cardinality, costs, replay/stream ceilings, and connection limits reject non-positive, non-integer, or non-safe values; unknown quota names fail closed. Fixed-window expiry is deterministic, expired keys are pruned before capacity decisions, new keys cannot evict live keys, ticket state is TTL/cardinality bounded, and connection keys disappear on final release. Principal count, weighted cost, ticket, address, login, health, readiness, and concurrent connection authorities are separate. F1 is the only EP2 defect found.
-
-### EP3 — clean
-
-Canonical address resolution and the address/login quotas precede body parsing and provider execution. Command authentication, validation, and authorization precede the credential-derived principal/cost bucket, which precedes durable command admission and coordinator dispatch. Ticket quota uses the authenticated credential ID rather than a client field; connection quota does likewise. Refusals return typed 429 plus `Retry-After`, and audit failure converts the refusal to 503 without session/command/worker/stream admission. Weighted-cost preflight refusal does not consume the principal-count bucket. No additional EP3 defect found.
-
-### EP4 — clean
-
-Production assembly requires key and certificate for direct HTTPS and an edge/readiness authority. Cleartext assembly requires explicit proxy mode, a nonempty trusted peer allowlist, and no TLS material. In proxy mode, only an exactly trusted immediate peer can supply a strictly parsed HTTPS signal; an untrusted peer remains direct HTTP regardless of spoofed forwarding headers and therefore cannot pass secure lifecycle/authentication checks. Standard and legacy forwarding families cannot be mixed. No EP4 defect found.
-
-### EP5 — clean
-
-Health returns only `{ok:true}` and uses an independent health quota. Readiness returns only `{ready:true|false}`, has an independent readiness quota, and is grounded in coordination health, authenticator health/liveness support, session-ledger health when present, optional explicit checks, and both admission flags. Probe/audit failure forces not-ready without dependency detail. No worker, task, repository, credential, provider, path, error, or dependency detail enters either response. No EP5 defect found.
-
-### EP6 — clean
-
-Shutdown flips northbound and edge admission synchronously before awaiting audit or listener work; lifecycle rechecks after body parsing and after an awaited provider, commands recheck after body parsing, tickets recheck after body parsing, and event streams check both northbound admission and stream acceptance. Existing streams receive the fixed reconnect shutdown event, close exactly once, release leases, and stop polling. Listener close has a drain deadline followed by idle/all-connection closure and a second bounded wait. Repeated calls share one promise. Audit and broken-socket failures remain bounded. No coordinator interrupt/kill or worker-state assertion occurs. Backpressure is byte-bounded, emits a bounded lag control when possible, closes, and releases capacity. No EP6 defect found.
-
-### EP7 — finding F2; otherwise clean
-
-Quota refusal, proxy refusal, readiness transition, shutdown start, and terminal shutdown outcome are durable audit events. Address material is keyed-digested and forwarding values are not copied. Audit failure yields no admission success; shutdown still closes resources and returns a degraded result. Quota state is process-local and is not consulted as session, command, idempotency, or fleet truth. F2 is the only EP7 defect found.
-
-### EP8 — acceptance gap from F1/F2; otherwise clean
-
-The Phase 12 edge tests exercise the claimed direct/trusted/untrusted proxy paths, IPv4/IPv6 exactness, malformed and mixed forwarding, HTTPS proof, quota expiry/cardinality/separation/ordering, provider and shutdown races, readiness non-disclosure, configuration refusal, drain/idempotency/audit failure, connection lease cleanup, and no-fleet effects. They do not exercise a clock transition inside the combined principal/cost transaction or assert absence of raw credential identifiers from authenticated audit records. Those are the exact regressions requested in F1 and F2. Recursive Baton build/integration/kill/reap claims were outside this review's permitted actions and are not re-claimed here.
-
-### EP9 — correctly deferred, not EP defects
-
-OIDC redirect/callback protocol details, optional WebSocket parity, real-browser automation, and MCP/operator UI remain explicit deferred scope. Login uses an injected identity provider and the reviewed stream transport is SSE; neither is represented as completing those deferred surfaces. No EP9 scope-claim defect found.
-
-## Overall verdict
-
-Two medium findings: combined command quota atomicity at clock boundaries (F1) and literal EP7 credential-identifier leakage in durable audit (F2). No high or critical findings. Every other reviewed EP trust seam has an explicit clean verdict above.
+The required command was run exactly as specified after writing this review; result is reported in the handoff response.
