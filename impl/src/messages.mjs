@@ -24,6 +24,29 @@ function deepFreeze(o) {
   return o;
 }
 
+// Briefs are persisted to the append-only JSON log, so admission accepts data rather than live
+// object graphs. Clone every extension field too: otherwise a future nested field would either
+// remain caller-owned or be frozen in the caller when deepFreeze() walks the admitted brief.
+function cloneBriefData(value, path = 'brief', ancestors = new Set()) {
+  if (value == null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value !== 'object') {
+    throw new ValidationError([`${path} must contain only JSON-compatible data`]);
+  }
+  if (ancestors.has(value)) throw new ValidationError([`${path} must not contain a cycle`]);
+
+  const nextAncestors = new Set(ancestors);
+  nextAncestors.add(value);
+  if (Array.isArray(value)) return value.map((item, i) => cloneBriefData(item, `${path}[${i}]`, nextAncestors));
+
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) {
+    throw new ValidationError([`${path} must contain only plain objects and arrays`]);
+  }
+  const copy = {};
+  for (const [key, item] of Object.entries(value)) copy[key] = cloneBriefData(item, `${path}.${key}`, nextAncestors);
+  return copy;
+}
+
 const defaultOpts = () => ({ now: () => new Date().toISOString(), idGen: () => randomUUID() });
 
 // ---------------------------------------------------------------------------
@@ -57,18 +80,22 @@ export function validateBrief(fields) {
 export function createBrief(fields) {
   const { ok, errors } = validateBrief(fields);
   if (!ok) throw new ValidationError(errors);
+  const snapshot = cloneBriefData(fields);
   const brief = {
-    goal: fields.goal,
-    constraints: [...(fields.constraints ?? [])],
-    pathScope: [...(fields.pathScope ?? [])],
-    tools: [...(fields.tools ?? [])],
-    outputFormat: fields.outputFormat ?? '',
-    definitionOfDone: fields.definitionOfDone ?? '',
-    verification: { command: fields.verification.command, expectExit: fields.verification.expectExit },
-    budget: { ...(fields.budget ?? { tokens: 0, usd: 0, wallMin: 0 }) },
+    ...snapshot,
+    goal: snapshot.goal,
+    constraints: [...(snapshot.constraints ?? [])],
+    pathScope: [...(snapshot.pathScope ?? [])],
+    tools: [...(snapshot.tools ?? [])],
+    outputFormat: snapshot.outputFormat ?? '',
+    definitionOfDone: snapshot.definitionOfDone ?? '',
+    // CI1: preserve the whole verification contract (timeout, coverage command, and future
+    // numbered extensions) while still owning a detached snapshot of the nested object.
+    verification: { ...snapshot.verification },
+    budget: { ...(snapshot.budget ?? { tokens: 0, usd: 0, wallMin: 0 }) },
   };
-  if (fields.briefTemplate) brief.briefTemplate = fields.briefTemplate;
-  if (fields.orientationRef) brief.orientationRef = fields.orientationRef;
+  if (snapshot.briefTemplate) brief.briefTemplate = snapshot.briefTemplate;
+  if (snapshot.orientationRef) brief.orientationRef = snapshot.orientationRef;
   return deepFreeze(brief);
 }
 

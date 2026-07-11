@@ -314,20 +314,27 @@ function transitionStatus(w, kind, target) {
 function handleKnownKind(w, kind, payload, event) {
   switch (kind) {
     case KIND.SPAWNED: {
-      w.taskId = payload.taskId ?? null;
-      w.brief = payload.brief ?? null;
-      w.status = 'idle';
-      w.crashed = false;
+      // CI5: coordinator spawn owns task identity; the adapter's later wire-spawn event enriches
+      // it with session metadata and must never erase it with absent fields.
+      if (payload.taskId != null) w.taskId = payload.taskId;
+      if (payload.brief != null) w.brief = payload.brief;
+      if (w.status !== 'working') w.status = 'idle';
+      if (payload.taskId != null) w.crashed = false;
       break;
     }
     case KIND.TURN_STARTED: {
+      // Dispatch intent and wire acceptance are two observations of one initial turn. When the
+      // worker confirms a turn while the story is already working, enrich timing/epoch only.
+      const duplicateWireConfirmation = w.status === 'working' && event.actor === 'worker';
       transitionStatus(w, kind, 'working');
-      w.turnCount += 1;
-      w.turnEpoch = event.turnEpoch;
-      w.recentActionSignatures = [];
-      w.turnStartedAtTs = event.ts;
-      // SC17: a verdict belongs to the turn that produced it, never its successor.
-      w.lastVerdict = null;
+      if (!duplicateWireConfirmation) {
+        w.turnCount += 1;
+        w.recentActionSignatures = [];
+        // SC17: a verdict belongs to the turn that produced it, never its successor.
+        w.lastVerdict = null;
+      }
+      w.turnEpoch = Math.max(w.turnEpoch ?? 0, event.turnEpoch ?? 0);
+      if (!w.turnStartedAtTs || !duplicateWireConfirmation) w.turnStartedAtTs = event.ts;
       break;
     }
     case KIND.TURN_COMPLETED: {

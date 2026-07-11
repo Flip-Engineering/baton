@@ -1338,10 +1338,10 @@ test('construction replay (D10): a normally-constructed Coordinator rebuilds tas
     { turnEpoch: 1, actor: 'worker', kind: 'control.interrupt_confirmed', payload: {} },
   ]);
 
-  // Row 4: turn_started with no terminal event -> working (resumable).
+  // Row 4: turn_started with no terminal event -> failed/orphaned until native reattachment exists.
   seedWorker('w-working', 'task-working', [{ turnEpoch: 1, actor: 'orchestrator', kind: 'lifecycle.turn_started', payload: {} }]);
 
-  // Row 5: question.asked unanswered -> input_required.
+  // Row 5: question.asked unanswered -> failed/orphaned until pending interaction replay exists.
   seedWorker('w-blocked', 'task-blocked', [
     { turnEpoch: 1, actor: 'orchestrator', kind: 'lifecycle.turn_started', payload: {} },
     {
@@ -1382,15 +1382,15 @@ test('construction replay (D10): a normally-constructed Coordinator rebuilds tas
   const cancelled = await coordinator.result('w-cancelled');
   assert.ok(['cancelled', 'idle'].includes(cancelled.status));
 
-  // Row 4 — working (resumable), not ready.
+  // Row 4 — phase-11 CI6 correction: replay must not fabricate a controllable live session.
   const working = await coordinator.result('w-working');
-  assert.equal(working.ready, false);
-  assert.equal(working.status, 'working');
+  assert.equal(working.ready, true);
+  assert.equal(working.status, 'failed');
 
-  // Row 5 — input_required, not ready.
+  // Row 5 — likewise, a pending prompt cannot survive without adapter/session reattachment.
   const blocked = await coordinator.result('w-blocked');
-  assert.equal(blocked.ready, false);
-  assert.equal(blocked.status, 'input_required');
+  assert.equal(blocked.ready, true);
+  assert.equal(blocked.status, 'failed');
 
   // The FenceTable must be genuinely repopulated by replay (register() + max turnEpoch seen)
   // — NOT left unknown_worker, which is what a constructor with no replay logic would leave.
@@ -1418,6 +1418,7 @@ test('construction replay (D10): a normally-constructed Coordinator rebuilds tas
     const entry = table.find((w) => w.id === workerId);
     assert.ok(entry, `list() must include ${workerId}, replayed purely from the log`);
     assert.equal(entry.taskId, taskId);
+    if (workerId === 'w-working' || workerId === 'w-blocked') assert.equal(entry.status, 'orphaned');
   }
 });
 
@@ -1588,10 +1589,16 @@ test('at-least-once wait() (D11): a digest not yet followed by a subsequent wait
   if (coordinator2.ready) await coordinator2.ready;
 
   const replayed = await coordinator2.wait(50);
+  const replayedSeqs = replayed.facts.map((f) => f.seq);
   assert.deepEqual(
-    replayed.facts.map((f) => f.seq),
+    replayedSeqs.slice(0, first.facts.length),
     first.facts.map((f) => f.seq),
-    'an un-acked digest must be re-served after a simulated restart, because the floor is on disk, not in memory (C8)'
+    'an un-acked digest must be re-served after restart before the new recovery-terminalization fact (C8)'
+  );
+  assert.equal(
+    replayed.facts.filter((f) => f.kind === 'control.recovery_terminalized').length,
+    1,
+    'CI6 adds one durable fact explaining why the unattached session is no longer controllable'
   );
 });
 

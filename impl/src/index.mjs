@@ -43,7 +43,8 @@ function worktreeManager(repoRoot) {
       try { execFileSync('git', ['worktree', 'remove', '--force', verifyPath], { cwd: repoRoot, stdio: 'ignore' }); } catch { /* noop */ }
       try { rmSync(verifyPath, { recursive: true, force: true }); } catch { /* noop */ }
     },
-    async remove(taskId) { try { await worktreeMod.reap(repoRoot, taskId, { force: true }); } catch { /* noop */ } },
+    // Terminal policy cleanup owns non-evidence task branches as well as their checkout/metadata.
+    async remove(taskId) { try { await worktreeMod.reap(repoRoot, taskId, { force: true, deleteBranch: true }); } catch { /* noop */ } },
     async reconcile() { try { await worktreeMod.reconcile(repoRoot, []); } catch { /* noop */ } },
   };
 }

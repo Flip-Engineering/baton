@@ -7,6 +7,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Cursor } from './log.mjs';
+import { createBrief, createDigest, wrapFact, wrapProse } from './messages.mjs';
 
 // ---------------------------------------------------------------------------
 // Error taxonomy (thrown, not returned) — programmer-error / precondition failures.
@@ -284,6 +285,10 @@ export class Coordinator {
   async spawn(vendor, brief, opts = {}) {
     this.tick();
 
+    // CI1: admission is the pinning boundary. Never retain caller-owned mutable state and never
+    // allow a malformed raw object to become a task merely because the caller skipped createBrief.
+    const admittedBrief = createBrief(brief);
+
     const taskId = opts.taskId ?? this._autoTaskId();
     if (this._tasks.has(taskId)) throw new DuplicateTaskIdError(`duplicate taskId "${taskId}"`);
     if (vendor !== 'auto' && !this._adapters[vendor]) throw new UnknownVendorError(`unknown vendor "${vendor}"`);
@@ -294,7 +299,7 @@ export class Coordinator {
     const workerId = this._allocWorkerId();
     const task = {
       id: taskId,
-      brief,
+      brief: admittedBrief,
       deps,
       vendorRequested: vendor,
       status: 'pending',
@@ -480,6 +485,12 @@ export class Coordinator {
   async interrupt(workerId, then, actor = 'orchestrator') {
     this.tick();
     const handle = this._getWorker(workerId);
+    if (handle.status === 'dead' || handle.status === 'exited') {
+      return { ok: true, result: handle.status === 'dead' ? 'already_dead' : 'already_stopped' };
+    }
+    if (handle.status === 'orphaned') {
+      return { ok: false, result: 'session_not_attached', reason: 'restart replay found no controllable adapter session' };
+    }
     return this._beginStop(handle, 'interrupt', then, actor);
   }
 
@@ -487,6 +498,18 @@ export class Coordinator {
     this.tick();
     const handle = this._getWorker(workerId);
     if (handle.status === 'dead') return { ok: true, result: 'already_dead' };
+    if (handle.status === 'orphaned') {
+      return { ok: false, result: 'session_not_attached', reason: 'restart replay found no controllable adapter session' };
+    }
+    // CI3: a crashed/exited child cannot emit another kill.confirmed. Treat its authoritative
+    // terminal event as the confirmation, finish cleanup now, and never arm an unfulfillable wait.
+    if (handle.status === 'exited') {
+      handle.status = 'dead';
+      if (this._worktrees && typeof this._worktrees.remove === 'function') {
+        await Promise.resolve(this._worktrees.remove(handle.taskId)).catch(noop);
+      }
+      return { ok: true, result: 'already_dead' };
+    }
     return this._beginStop(handle, 'kill', undefined, actor);
   }
 
@@ -650,11 +673,26 @@ export class Coordinator {
   async _resolveRecord(requestId, answer, actor) {
     const record = this._pending.get(requestId);
     if (!record) return { ok: false, result: 'not_found' };
+    if (record.state === 'resolving') {
+      // Wait for the reserved delivery. Echo its winner if it commits; retry fairly if the
+      // delivery rolls back to pending.
+      await record.resolvingDone;
+      if (record.state === 'resolved') {
+        return { ok: false, result: 'already_resolved', resolution: record.resolution };
+      }
+      return this._resolveRecord(requestId, answer, actor);
+    }
     if (record.state !== 'pending') return { ok: false, result: 'already_resolved', resolution: record.resolution };
 
-    record.state = 'resolved';
-    record.consumer = actor;
-    record.resolution = answer;
+    // CI2: reserve the single-consumer slot, but do not COMMIT resolution until the adapter
+    // accepts delivery. A failed/throwing wire operation rolls back to pending for retry.
+    record.state = 'resolving';
+    let releaseResolving;
+    record.resolvingDone = new Promise((resolve) => { releaseResolving = resolve; });
+    const finishResolving = () => {
+      releaseResolving();
+      delete record.resolvingDone;
+    };
 
     const handle = this._workers.get(record.worker);
 
@@ -670,7 +708,11 @@ export class Coordinator {
     };
 
     if (!handle) {
+      record.state = 'resolved';
+      record.consumer = actor;
+      record.resolution = answer;
       clearPending();
+      finishResolving();
       return { ok: true, result: 'applied' };
     }
 
@@ -680,24 +722,55 @@ export class Coordinator {
 
     if (stale) {
       this._log.append({ worker: handle.id, harness, turnEpoch: currentTurnEpoch, kind: 'control.stale_rejected', actor, payload: { op: 'respond', requestId } });
+      record.state = 'resolved';
+      record.consumer = actor;
+      record.resolution = answer;
       clearPending();
+      finishResolving();
       return { ok: true, result: 'applied', note: 'answer arrived after the asking turn ended; discarded per fencing' };
     }
 
+    let ack;
+    try {
+      if (record.kind === 'question') {
+        ack = await this._adapters[handle.vendor].answer(handle.id, requestId, answer);
+      } else {
+        const decision = answer && answer.decision;
+        ack = await this._adapters[handle.vendor].approve(handle.id, requestId, decision, answer && answer.payload);
+      }
+    } catch (err) {
+      record.state = 'pending';
+      record.consumer = null;
+      record.resolution = null;
+      finishResolving();
+      throw err;
+    }
+
+    if (!ack || ack.ok !== true) {
+      record.state = 'pending';
+      record.consumer = null;
+      record.resolution = null;
+      finishResolving();
+      return { ok: false, result: 'delivery_refused', reason: ack?.reason ?? 'adapter did not affirm response delivery' };
+    }
+
+    record.state = 'resolved';
+    record.consumer = actor;
+    record.resolution = answer;
+
     if (record.kind === 'question') {
-      const ack = await this._adapters[handle.vendor].answer(handle.id, requestId, answer);
       const ev = { worker: handle.id, harness, turnEpoch: currentTurnEpoch, kind: 'question.answered', actor, payload: { requestId, answer } };
       if (ack && ack.emulated === true) ev.emulated = true;
       this._log.append(ev);
     } else {
       const decision = answer && answer.decision;
-      const ack = await this._adapters[handle.vendor].approve(handle.id, requestId, decision, answer && answer.payload);
       const ev = { worker: handle.id, harness, turnEpoch: currentTurnEpoch, kind: 'approval.resolved', actor, payload: { requestId, decision } };
       if (ack && ack.emulated === true) ev.emulated = true;
       this._log.append(ev);
     }
 
     clearPending();
+    finishResolving();
     return { ok: true, result: 'applied' };
   }
 
@@ -769,6 +842,7 @@ export class Coordinator {
   _collectDigest() {
     const attention = [];
     const facts = [];
+    const prose = [];
     const attentionKinds = {
       'question.asked': 'question',
       'approval.requested': 'approval',
@@ -792,14 +866,39 @@ export class Coordinator {
         const attType = attentionKinds[e.kind];
         if (attType) {
           attention.push({ type: attType, worker: workerId, requestId: e.payload?.requestId, payload: e.payload });
+        } else if (e.kind === 'content.message') {
+          // CI4: transport through the hub does not transmute model prose into trusted fact.
+          prose.push({ ...wrapProse(workerId, e.payload?.text ?? ''), kind: e.kind, seq: e.seq, ts: e.ts, payload: e.payload });
+        } else if (e.kind === 'lifecycle.turn_completed') {
+          // The lifecycle observation is a hub fact; the worker's result narrative is not. Keep
+          // model-written summary/blocker/questions out of the fact payload entirely.
+          const result = e.payload ?? {};
+          facts.push({
+            ...wrapFact(workerId, e.kind, {
+              status: result.status ?? null,
+              artifactCount: Array.isArray(result.artifacts?.files) ? result.artifacts.files.length : null,
+              hasVerificationClaim: result.verification != null,
+            }),
+            seq: e.seq,
+            ts: e.ts,
+          });
+          for (const [field, value] of [
+            ['summary', result.summary],
+            ['blocker', result.blocker],
+            ...((result.openQuestions ?? []).map((value) => ['openQuestion', value])),
+          ]) {
+            if (typeof value === 'string' && value.length > 0) {
+              prose.push({ ...wrapProse(workerId, value), kind: 'result.prose', field, seq: e.seq, ts: e.ts });
+            }
+          }
         } else {
-          facts.push({ worker: workerId, kind: e.kind, seq: e.seq, ts: e.ts, payload: e.payload, provenance: 'hub-computed', untrusted: false });
+          facts.push({ ...wrapFact(workerId, e.kind, e.payload), seq: e.seq, ts: e.ts, payload: e.payload });
         }
       }
       this._pendingAck.set(workerId, maxSeq);
     }
 
-    return { attention, facts, prose: [], more: false };
+    return createDigest({ cursor: null, attention, facts, prose, more: false });
   }
 
   // =========================================================================
@@ -827,7 +926,7 @@ export class Coordinator {
         this._log.append({ worker: workerId, harness, turnEpoch, kind, actor, payload });
         const task = this._tasks.get(handle.taskId);
         if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'failed';
-        if (handle.status !== 'dead') handle.status = 'idle';
+        if (handle.status !== 'dead') handle.status = 'exited';
         break;
       }
       case 'question.asked': {
@@ -975,6 +1074,7 @@ export class Coordinator {
       let terminalStatus = 'working';
       let verdict = null;
       let lastResult = null;
+      let recoveryTerminalized = false;
 
       for (const e of events) {
         if (typeof e.turnEpoch === 'number' && e.turnEpoch > maxTurnEpoch) maxTurnEpoch = e.turnEpoch;
@@ -1000,6 +1100,7 @@ export class Coordinator {
             break;
           case 'lifecycle.crashed':
           case 'control.forced_stop':
+          case 'control.recovery_terminalized':
             if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) terminalStatus = 'failed';
             break;
           case 'kill.confirmed':
@@ -1017,6 +1118,22 @@ export class Coordinator {
           default:
             break;
         }
+      }
+
+      // CI6: replay cannot resurrect an adapter session. Until the persistent-session phase can
+      // prove native reattachment, any nonterminal reconstructed task is durably failed and its
+      // worker is marked orphaned (uncontrollable), never presented as working/input_required.
+      if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) {
+        recoveryTerminalized = true;
+        terminalStatus = 'failed';
+        this._log.append({
+          worker: workerId,
+          harness: events.at(-1)?.harness ?? '',
+          turnEpoch: maxTurnEpoch,
+          kind: 'control.recovery_terminalized',
+          actor: 'policy',
+          payload: { reason: 'session_not_reattached', priorStatus: events.at(-1)?.kind ?? 'unknown' },
+        });
       }
 
       this._fences.register(workerId);
@@ -1047,13 +1164,20 @@ export class Coordinator {
         vendor: null,
         taskId,
         worktree: null,
-        status: this._deriveWorkerStatus(terminalStatus),
+        status: recoveryTerminalized ? 'orphaned' : this._deriveWorkerStatus(terminalStatus),
         pendingApprovalId: null,
         pendingQuestionId: null,
         budgetUsed: { tokens: 0, usd: 0 },
         spawnAbort: null,
         createdAt: new Date(0).toISOString(),
       });
+
+      // CI6: replayed auto identifiers reserve their numeric slots. A subsequent allocation may
+      // never collide with or overwrite reconstructed state.
+      const workerMatch = /^w-(\d+)$/.exec(workerId);
+      if (workerMatch) this._workerSeq = Math.max(this._workerSeq, Number(workerMatch[1]));
+      const taskMatch = /^task-(\d+)$/.exec(taskId ?? '');
+      if (taskMatch) this._taskSeq = Math.max(this._taskSeq, Number(taskMatch[1]));
     }
   }
 

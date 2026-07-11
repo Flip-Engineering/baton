@@ -294,10 +294,12 @@ test('E2E happy path: a real task runs the whole spawn->trust-gate->completed pi
   const handle = await sys.coordinator.spawn('mock', brief, { taskId: 'happy-1', taskType: 'build' });
   assert.equal(handle.status, 'working');
 
-  // EFFECT, not status: the adapter's spawn() was actually invoked, with the SAME Brief object
-  // messages.createBrief() produced (D2) — no copy anywhere on the way in.
+  // CI1 EFFECT: admission snapshots even a previously-created Brief. The adapter gets identical
+  // content but never a caller-owned object whose nested verification could change mid-run.
   assert.equal(sys.adapterCalls.spawn.length, 1);
-  assert.equal(sys.adapterCalls.spawn[0][1], brief, 'adapter.spawn() must receive the identical Brief object, not a clone');
+  assert.notEqual(sys.adapterCalls.spawn[0][1], brief, 'CI1: adapter receives an admission-owned snapshot');
+  assert.deepEqual(sys.adapterCalls.spawn[0][1], brief, 'CI1: snapshot preserves the delegation contract');
+  assert.ok(Object.isFrozen(sys.adapterCalls.spawn[0][1]), 'CI1: admitted snapshot is immutable');
 
   await waitUntil(async () => (await sys.coordinator.result(handle.id)).ready);
   const outcome = await sys.coordinator.result(handle.id);
@@ -313,12 +315,12 @@ test('E2E happy path: a real task runs the whole spawn->trust-gate->completed pi
   assert.equal(sys.refereeCalls.verify.length, 1);
   assert.ok(sys.refereeCalls.accept.length >= 1);
 
-  // D2 identity: the trust gate re-ran the EXACT SAME verification object createBrief() froze —
-  // never a re-hydrated copy — proving the "same done command" invariant is structural, not
-  // merely value-equal.
+  // CI1/D2 identity: the trust gate re-runs the exact ADMITTED verification object that the
+  // adapter received, not caller-owned mutable state.
   const verifiedTaskArg = sys.refereeCalls.verify[0][0];
   const gateVerification = verifiedTaskArg.verification ?? verifiedTaskArg.brief?.verification;
-  assert.equal(gateVerification, brief.verification, 'D2: the trust gate must reference the identical verification object, not a copy');
+  assert.equal(gateVerification, sys.adapterCalls.spawn[0][1].verification, 'CI1: adapter and gate share the immutable admitted definition of done');
+  assert.notEqual(gateVerification, brief.verification, 'CI1: caller-owned verification is outside the admitted trust boundary');
 
   // D6: the sandbox referee.verify() actually ran in must never be the worker's own worktree.
   const sandboxArg = sys.refereeCalls.verify[0][2];
