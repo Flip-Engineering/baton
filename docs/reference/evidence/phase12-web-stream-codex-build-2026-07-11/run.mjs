@@ -1,0 +1,31 @@
+#!/usr/bin/env node
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { CodexAppServerCli, createBrief, createDriver } from '../../../../impl/src/index.mjs';
+
+const HERE=dirname(fileURLToPath(import.meta.url)); const REPO=resolve(HERE,'../../../..'); const AUTH=join(homedir(),'.codex','auth.json');
+const LOG_DIR=join(tmpdir(),`baton-web-stream-build-${Date.now()}`); const TASK_ID='codex-web-stream-build'; const MODEL='gpt-5.4';
+const sleep=(ms)=>new Promise(r=>setTimeout(r,ms)); const git=(args)=>execFileSync('git',args,{cwd:REPO,encoding:'utf8'}).trim();
+const alive=(pid)=>{try{process.kill(pid,0);return true;}catch{return false;}};
+async function until(fn,label,timeout=600000){const end=Date.now()+timeout;while(Date.now()<end){const v=await fn();if(v)return v;await sleep(100);}throw new Error(`timeout waiting for ${label}`);}
+if(!existsSync(AUTH))throw new Error('PENDING-LIVE-no-codex-auth-file');
+const adapter=new CodexAppServerCli({requestTimeoutMs:30000,ceiling:1});
+const {coordinator,log}=createDriver({repoRoot:REPO,logDir:LOG_DIR,adapters:{codex:adapter},runtimeIsolation:{credentialFiles:{codex:[AUTH]}},approvalTimeoutMs:60000,stopDeadlineMs:15000,budgetPolicy:{terminalGraceMs:2000},watchdog:{stallMs:240000}});
+const TARGETS=['impl/src/web-stream.mjs','impl/src/web-northbound.mjs','impl/src/index.mjs','impl/test/phase12-web-stream.test.mjs'];
+const brief=createBrief({
+  goal:'Implement Phase 12 WN6 as an authenticated SSE event stream over the existing WebNorthbound/coordinator/coordination authority. Add single-use short-lived stream tickets (never credentials in URLs), exact origin/session/repo authorization, snapshot boundary, global monotonic coordination cursor, Last-Event-ID/query cursor reconnect with at-least-once delivery, typed snapshot_required for expired cursors, bounded replay and backpressure disconnect, audit events, and disconnect semantics that never stop workers. Integrate the endpoint into WebNorthbound without creating a second fleet state machine.',
+  constraints:[`Edit only: ${TARGETS.join(', ')}.`,'Use Node built-ins only; no new dependencies.','Preserve existing command/auth behavior and strict no-store/CORS posture.','Do not add homelab/deployment integration.','Do not commit, push, or use network tools.','Ground implementation in spec/phase12/authenticated-web-northbound.md WN1/WN2/WN5/WN6/WN7/WN9.'],
+  pathScope:TARGETS,
+  definitionOfDone:'Focused tests prove authenticated ticket issuance/consumption, ordered reconnect, snapshot expiry, bounded backpressure, audit, and browser disconnect without coordinator stop',
+  verification:{command:'node --test impl/test/phase12-web-stream.test.mjs impl/test/phase12-web-northbound.test.mjs impl/test/phase12-web-auth.test.mjs',expectExit:0,timeoutMs:120000},
+  budget:{tokens:450000,usd:4,wallMin:10},
+});
+let workerId=null,pid=null,result=null,integration=null,fatal=null,pumping=true,steer=null;const approvals=[];
+const pump=(async()=>{const seen=new Set();while(pumping){for(const w of coordinator.list()){const id=w.pendingApprovalId??w.pendingQuestionId;if(!id||seen.has(id))continue;seen.add(id);approvals.push({id,response:await coordinator.respond(id,w.pendingApprovalId?{decision:'allow'}:{text:'Proceed within the pinned implementation scope.'},'human')});}if(workerId&&!steer&&log.read(workerId).some(e=>e.kind==='resource.budget_threshold'&&e.payload?.threshold>=0.8))steer=await coordinator.send(workerId,'Budget steer: stop exploring, finish the scoped implementation and tests, run only the pinned verification, then return.','steer',{actor:'orchestrator'});await sleep(100);}})();
+try{const h=await coordinator.spawn('codex',brief,{taskId:TASK_ID,taskType:'implementation',model:MODEL,modelPolicy:{allow:[MODEL],allowFamilies:['openai'],reasoningEffort:'low'}});workerId=h.id;const spawned=await until(()=>log.read(workerId).find(e=>e.kind==='lifecycle.spawned'&&e.actor==='worker'),'native spawn');pid=spawned.payload?.pid??null;await until(async()=>(await coordinator.result(workerId)).ready,'verified implementation');result=await coordinator.result(workerId);if(result.status!=='completed')throw new Error(`implementation failed trust gate: ${JSON.stringify(result)}`);integration=await coordinator.integrate(workerId,{strategy:'ff-only',actor:'orchestrator'});}
+catch(error){fatal=String(error?.stack??error);}finally{pumping=false;await pump.catch(()=>{});if(workerId)await Promise.resolve(coordinator.kill(workerId,'policy')).catch(()=>{});if(workerId)try{await until(()=>(!pid||!alive(pid))&&!existsSync(join(REPO,'.baton','wt',TASK_ID))&&!existsSync(join(REPO,'.baton','runtime',workerId))&&git(['branch','--list',`baton/${TASK_ID}`])==='', 'full reap',30000);}catch(error){fatal=`${fatal??''}\ncleanup:${error?.stack??error}`.trim();}}
+const events=workerId?log.read(workerId):[];const handle=workerId?coordinator.list().find(w=>w.id===workerId):null;const checks={noHarnessError:fatal===null,exactModelObserved:handle?.modelRequested===MODEL&&handle?.modelResolved===MODEL&&handle?.modelObserved===MODEL,freshVerified:result?.status==='completed'&&events.some(e=>e.kind==='verify.reverified'&&e.payload?.accept===true),integrated:integration?.ok===true,integrationIntent:events.some(e=>e.kind==='integration.completed'),killConfirmed:events.some(e=>e.kind==='kill.confirmed'),processGone:!!pid&&!alive(pid),worktreeGone:!existsSync(join(REPO,'.baton','wt',TASK_ID)),runtimeGone:workerId?!existsSync(join(REPO,'.baton','runtime',workerId)):false,branchGone:git(['branch','--list',`baton/${TASK_ID}`])===''};
+const summary={at:new Date().toISOString(),repoHead:git(['rev-parse','HEAD']),workerId,pid,model:MODEL,result,integration,approvals,steer,checks,fatal,pass:Object.values(checks).every(Boolean)};mkdirSync(HERE,{recursive:true});writeFileSync(join(HERE,'events.jsonl'),events.map((event)=>JSON.stringify(event)).join('\n')+(events.length?'\n':''));writeFileSync(join(HERE,'summary.json'),`${JSON.stringify(summary,null,2)}\n`);console.log(JSON.stringify({pass:summary.pass,checks,pid,fatal},null,2));if(!summary.pass)process.exitCode=1;
