@@ -53,7 +53,7 @@ const brief = createBrief({
     command: `test -s ${TARGET} && grep -q '^## Verdict$' ${TARGET} && grep -q '^## Crash-window matrix$' ${TARGET} && grep -q '^## Remaining major findings$' ${TARGET} && grep -q '^## Required next actions$' ${TARGET} && grep -q 'CK9' ${TARGET}`,
     expectExit: 0, timeoutMs: 10000,
   },
-  budget: { tokens: 500000, usd: 3, wallMin: 6 },
+  budget: { tokens: 300000, usd: 3, wallMin: 6 },
 });
 
 let workerId = null; let pid = null; let result = null; let integration = null; let fatal = null; let pumping = true;
@@ -90,7 +90,7 @@ const pump = inputPump();
 try {
   const handle = await coordinator.spawn('codex', brief, {
     taskId: TASK_ID, taskType: 'adversarial-review', model: MODEL,
-    modelPolicy: { allow: [MODEL], allowFamilies: ['openai'], reasoningEffort: 'high' },
+    modelPolicy: { allow: [MODEL], allowFamilies: ['openai'], reasoningEffort: 'medium' },
   });
   workerId = handle.id;
   const spawned = await until(() => log.read(workerId).find((event) => event.kind === 'lifecycle.spawned' && event.actor === 'worker'), 'native Codex spawn');
