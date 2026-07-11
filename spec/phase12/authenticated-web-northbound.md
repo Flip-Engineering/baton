@@ -21,16 +21,15 @@ at-least-once delivery from `Last-Event-ID`; rejects expired cursors; bounds rep
 bytes; and disconnects without fleet-control side effects. Its recursive Baton build evidence is
 in `docs/reference/evidence/phase12-web-stream-codex-build-2026-07-11/`.
 
-This is not WN1–WN10 completion. Identity-provider login/bootstrap, refresh/key rotation and a
-logout HTTP route, complete request/connection quotas, optional resumable WebSocket parity,
-trusted-proxy configuration, command-status reconciliation for
+The IL1–IL8 injected-provider login, refresh/credential rotation, and logout lifecycle now ships.
+This is not WN1–WN10 completion. OIDC redirect/callback details, login throttling, complete
+request/connection quotas, optional resumable WebSocket parity, trusted-proxy configuration,
+command-status reconciliation for
 admitted-but-incomplete commands, browser UI automation, and the full adversarial gate remain
 active scope.
 
-The next numbered implementation vertical is IL1–IL8 in
-`spec/phase12/authenticated-web-session-lifecycle.md`: injected-provider login, atomic credential
-rotation, and logout over the existing HTTPS authority. Rate/proxy/browser gates remain explicit
-after it.
+The shipped lifecycle contracts are IL1–IL8 in
+`spec/phase12/authenticated-web-session-lifecycle.md`. Rate/proxy/browser gates remain explicit.
 
 ## WN1 — one authority, two web transports
 

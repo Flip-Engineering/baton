@@ -233,9 +233,11 @@ and Phase 14 supplies the first-class `{harness, exactModel, effort}` route tupl
 direct and automatic dispatch, authenticated web commands, native wires, durable attribution,
 learning, replay, recovery, review, verification, integration, and commit trailers. The recursive
 Codex route/review gates used exact `gpt-5.6-sol` at `low` effort and fully reaped every worker.
-Authenticated concurrent Grok 4.5 route/kill/reap is retained as `PENDING-LIVE` until isolated
-provider authentication is available. The active next increment is the remaining authenticated
-identity/proxy/browser/MCP/operator surface, followed by the next measured Atlas representation
+The injected-provider login, atomic refresh/credential rotation, logout, and live stream
+revocation lifecycle also ships under IL1–IL8 with fsynced session truth and fail-closed audit
+ordering. Authenticated concurrent Grok 4.5 route/kill/reap is retained as `PENDING-LIVE` until
+isolated provider authentication is available. The active next increment is the remaining
+rate-limit/trusted-proxy/browser/MCP/operator surface, followed by the next measured Atlas representation
 rungs. These checkpoints narrow sequence only; they do not retire any later capability below.
 
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
