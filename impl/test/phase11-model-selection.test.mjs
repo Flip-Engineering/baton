@@ -16,6 +16,7 @@ import { CodexAppServerCli } from '../src/codex-appserver.mjs';
 import { GrokAcpCli, withGrokModelArgs } from '../src/grok-acp.mjs';
 import { captureCommit, createFromBase, reap } from '../src/worktree.mjs';
 import { foldEvent, initialState } from '../src/story.mjs';
+import { coordinationForLog } from '../src/coordination-store.mjs';
 
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const FAKE_CODEX = fileURLToPath(new URL('./fixtures/fake-codex-appserver.mjs', import.meta.url));
@@ -56,7 +57,7 @@ function stubAdapter(harness, models, calls = []) {
 function coordinator(adapters, route = () => Object.keys(adapters)[0]) {
   const log = new Log(mkdtempSync(join(tmpdir(), 'baton-ms-log-')));
   const c = new Coordinator({
-    log, fences: new FenceTable(), adapters,
+    log, coordination: coordinationForLog(log), fences: new FenceTable(), adapters,
     worktrees: {
       create: async (taskId) => ({ path: `/tmp/${taskId}` }), capture: async () => ({ sha: 'x' }),
       createVerifyWorktree: async () => ({ path: tmpdir() }), removeVerifyWorktree: async () => {},
@@ -244,6 +245,7 @@ test('MS5: model attribution reaches verification, router learning, and terminal
   const route = () => 'stub';
   route.record = (...args) => routeRecords.push(args);
   const log = new Log(mkdtempSync(join(tmpdir(), 'baton-ms5-log-')));
+  const coordination = coordinationForLog(log);
   const worktrees = {
     create: async (taskId) => ({ path: `/tmp/${taskId}` }),
     capture: async (_path, opts) => { captureOpts.push(opts); return { sha: 'captured', snapshotted: true }; },
@@ -251,7 +253,7 @@ test('MS5: model attribution reaches verification, router learning, and terminal
     remove: async () => {}, reconcile: async () => {},
   };
   const build = (adapter = ad) => new Coordinator({
-    log, fences: new FenceTable(), adapters: { stub: adapter }, worktrees,
+    log, coordination, fences: new FenceTable(), adapters: { stub: adapter }, worktrees,
     referee: async () => ({ reverified: true, observedExit: 0 }), route,
     approvalTimeoutMs: 1000, stopDeadlineMs: 100,
   });

@@ -17,6 +17,7 @@ import { Log } from '../src/log.mjs';
 import { createBrief, isFact, isProse } from '../src/messages.mjs';
 import { initialState, foldEvent } from '../src/story.mjs';
 import { ClaudeSessionCli } from '../src/claude-session.mjs';
+import { coordinationForLog } from '../src/coordination-store.mjs';
 
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -99,6 +100,7 @@ function harness({ ad = adapter(), log, worktrees: worktreeOver = {}, stopDeadli
   };
   const coordinator = new Coordinator({
     log: actualLog,
+    coordination: coordinationForLog(actualLog),
     fences: new FenceTable(),
     adapters: { stub: ad },
     worktrees,

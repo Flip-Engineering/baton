@@ -39,10 +39,10 @@ Validation:
 
 ```text
 node --test impl/test/phase11-coordination-store.test.mjs
-19/19 passing
+20/20 passing
 
 cd impl && node --test
-522/522 passing
+523/523 passing
 ```
 
 The recursive exact-model Grok spec and implementation reviews passed every Baton lifecycle check.
@@ -54,9 +54,8 @@ fully reaped; the measured reruns were verified and integrated by Baton itself.
 
 ## Remaining before CK9
 
-Direct `Coordinator` construction still permits omission of the coordination store even though the
-public assembly does not; accepted artifact registration still needs a terminal-task/atomic-batch
-gate; adapter-reported artifact claims need explicit untrusted manifests; invalidation plus
+Accepted artifact registration still needs a terminal-task/atomic-batch gate; adapter-reported
+artifact claims need explicit untrusted manifests; invalidation plus
 contamination is not one atomic batch; Scratch participation is not yet an ambient mediated worker
 tool; named promotion events/scorecards remain incomplete; and forced coordination-write failure
 has not yet been injected at every public state boundary. A second recursive provider review of

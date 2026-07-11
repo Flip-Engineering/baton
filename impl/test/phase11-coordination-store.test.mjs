@@ -32,6 +32,11 @@ test('CK1: duplicate idempotency key returns the original event without mutation
   assert.deepEqual(store.snapshot().tasks.map((task) => task.id), ['a']);
 });
 
+test('CK8: direct Coordinator construction refuses an optional coordination sidecar', () => {
+  assert.throws(() => new Coordinator({}), /requires a durable coordination store/);
+  assert.throws(() => new Coordinator({ coordination: {} }), /missing snapshot/);
+});
+
 test('CK1: append failure is fatal and leaves event/task projections unchanged', () => {
   const store = new CoordinationStore(dir(), { appendFile: () => { throw new Error('disk full'); } });
   assert.throws(() => store.createTask(fields('a'), { actor: 'orchestrator', key: 'a' }), /disk full/);

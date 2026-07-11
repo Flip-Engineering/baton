@@ -250,12 +250,16 @@ function defaultAccept(verdict, acceptOpts) {
 export class Coordinator {
   /** @param {object} opts */
   constructor(opts) {
+    if (!opts?.coordination) throw new TypeError('Coordinator requires a durable coordination store');
+    for (const method of ['snapshot', 'task', 'createTask', 'claimTask', 'transitionTask', 'mapOperationalEvent', 'recordDriver']) {
+      if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
+    }
     this._log = opts.log;
     this._fences = opts.fences;
     this._adapters = opts.adapters;
     this._worktrees = opts.worktrees;
     this._runtimeScopes = opts.runtimeScopes ?? null;
-    this._coordination = opts.coordination ?? null;
+    this._coordination = opts.coordination;
     this._referee = opts.referee;
     this._route = opts.route;
     this._story = opts.story ?? null;

@@ -25,6 +25,7 @@ import { FenceTable } from '../src/fence.mjs';
 import { createDriver, MockAdapter } from '../src/index.mjs';
 import { verify, accept } from '../src/referee.mjs';
 import * as worktreeMod from '../src/worktree.mjs';
+import { coordinationForLog } from '../src/coordination-store.mjs';
 
 // ============================================================
 // Shared fixtures / helpers
@@ -187,7 +188,7 @@ function setupCoordinator(overrides = {}) {
   const now = overrides.now ?? (() => t);
   const advance = (ms) => { t += ms; };
   const coordinator = new Coordinator({
-    log, fences, adapters, worktrees, referee, route, now,
+    log, coordination: coordinationForLog(log), fences, adapters, worktrees, referee, route, now,
     approvalTimeoutMs: overrides.approvalTimeoutMs ?? 60000,
     stopDeadlineMs: overrides.stopDeadlineMs ?? 15000,
     accept: overrides.accept,

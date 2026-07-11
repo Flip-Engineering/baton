@@ -24,6 +24,7 @@ import { GrokAcpCli } from '../src/grok-acp.mjs';
 import { MockAdapter, CodexAdapter, ClaudeAdapter, GlmAdapter } from '../src/adapter.mjs';
 import { CodexCli, ClaudeCli, ZCodeCli, PiCli } from '../src/cli-adapters.mjs';
 import { initialState, foldEvent, renderNarrative } from '../src/story.mjs';
+import { coordinationForLog } from '../src/coordination-store.mjs';
 
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const FAKE_CODEX = fileURLToPath(new URL('./fixtures/fake-codex-appserver.mjs', import.meta.url));
@@ -113,7 +114,7 @@ function makeCoordinator({ adapters, route } = {}) {
   const referee = async () => ({ reverified: true, observedExit: 0 });
   const routeFn = route ?? ((task, cards) => Object.keys(cards)[0]);
   const coordinator = new Coordinator({
-    log, fences, adapters, worktrees, repoRoot: tmpdir(), referee,
+    log, coordination: coordinationForLog(log), fences, adapters, worktrees, repoRoot: tmpdir(), referee,
     route: routeFn, now: Date.now, approvalTimeoutMs: 2000, stopDeadlineMs: 2000,
   });
   return { coordinator, log };

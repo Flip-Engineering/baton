@@ -8,6 +8,7 @@ import { Coordinator } from '../src/coordinator.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
 import { withGrokModelArgs } from '../src/grok-acp.mjs';
+import { coordinationForLog } from '../src/coordination-store.mjs';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const brief = (budget = { tokens: 100, usd: 1, wallMin: 5 }) => ({
@@ -36,7 +37,7 @@ function adapter() {
 function system(ad, opts = {}) {
   const log = opts.log ?? new Log(mkdtempSync(join(tmpdir(), 'baton-gv-log-')));
   const c = new Coordinator({
-    log, fences: new FenceTable(), adapters: { stub: ad },
+    log, coordination: coordinationForLog(log), fences: new FenceTable(), adapters: { stub: ad },
     worktrees: {
       create: async (taskId) => ({ path: `/tmp/${taskId}` }), capture: async () => ({ sha: 'x' }),
       createVerifyWorktree: async () => ({ path: tmpdir() }), removeVerifyWorktree: async () => {},

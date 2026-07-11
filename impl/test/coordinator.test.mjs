@@ -39,6 +39,7 @@ import {
 } from '../src/coordinator.mjs';
 import { Log } from '../src/log.mjs';
 import { FenceTable } from '../src/fence.mjs';
+import { coordinationForLog } from '../src/coordination-store.mjs';
 
 // ============================================================
 // Test fixtures — local fakes for Adapter / WorktreeManager / RefereeFn / RouteFn
@@ -233,6 +234,7 @@ function setup(overrides = {}) {
   };
   const coordinator = new Coordinator({
     log,
+    coordination: overrides.coordination ?? coordinationForLog(log),
     fences,
     adapters,
     worktrees,
@@ -327,12 +329,11 @@ test('a task with an unsatisfied dep stays pending even with free concurrency he
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapters: { mock: adapter } });
 
-  const dependent = await coordinator.spawn('mock', makeBrief(), { taskId: 't1', deps: ['t0'] });
-  assert.equal(dependent.status, 'pending');
-  assert.equal(adapter.calls.spawn.length, 0);
-
   const base = await coordinator.spawn('mock', makeBrief(), { taskId: 't0' });
   assert.equal(base.status, 'working');
+  const dependent = await coordinator.spawn('mock', makeBrief(), { taskId: 't1', deps: ['t0'] });
+  assert.equal(dependent.status, 'pending');
+  assert.equal(adapter.calls.spawn.length, 1, 'the dependent must not consume free headroom before its existing dependency completes');
 
   adapter.emit({
     worker: base.id,
@@ -351,32 +352,27 @@ test('a task with an unsatisfied dep stays pending even with free concurrency he
 
 // core#10 / D11: dependency cycles are validated OUT at spawn() time, never left as a
 // silent permanent-pending deadlock. D11 pins the exact behavior and error class.
-test('D11/core#10: spawn() rejects a task whose deps would close a dependency cycle with DependencyCycleError, never a silent permanent-pending deadlock', async () => {
+test('D11/core#10: spawn() rejects a self-cycle with DependencyCycleError and missing deps before durable creation', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapters: { mock: adapter } });
 
-  // t1 depends on t2, which does not exist yet — queueing it is entirely legitimate.
-  const t1 = await coordinator.spawn('mock', makeBrief(), { taskId: 't1', deps: ['t2'] });
-  assert.equal(t1.status, 'pending');
-
-  // t2 depending back on t1 closes a 2-cycle: t1 -> t2 -> t1. This must be rejected
-  // outright on the call that completes the cycle, not silently left pending forever.
+  // Durable DAG authority rejects references to nonexistent tasks, so a transitive cycle cannot
+  // be assembled incrementally. The directly expressible cycle still receives the public typed
+  // error before any coordination event is written.
   await assert.rejects(
-    () => coordinator.spawn('mock', makeBrief(), { taskId: 't2', deps: ['t1'] }),
+    () => coordinator.spawn('mock', makeBrief(), { taskId: 't1', deps: ['t1'] }),
     DependencyCycleError
   );
 
   // The rejected cyclic spawn must not have registered a task or dispatched anything.
   const table = coordinator.list();
-  assert.ok(!table.some((w) => w.taskId === 't2'), 'a rejected cyclic spawn must not leave a task behind');
-  assert.equal(adapter.calls.spawn.length, 0, 'no worker was ever dispatched for either half of the cycle');
+  assert.ok(!table.some((w) => w.taskId === 't1'), 'a rejected cyclic spawn must not leave a task behind');
+  assert.equal(adapter.calls.spawn.length, 0, 'no worker was dispatched for the rejected cycle');
 
-  // Repeated tick()s must not eventually "resolve" the cycle by any other means — t1 stays
-  // legitimately pending on its (never-satisfiable, since t2 was rejected) dep forever, but
-  // that is a distinct, non-silent outcome from what a real cycle would have caused.
+  // Repeated ticks cannot resurrect a rejected task.
   coordinator.tick();
   coordinator.tick();
-  assert.equal(coordinator.list().find((w) => w.id === t1.id).status, 'pending');
+  assert.equal(coordinator.list().length, 0);
 });
 
 // core#7: proves the tick()-driven deadline sweep still works as a redundant backup path,
@@ -1294,8 +1290,11 @@ test('a throwing referee ends the task at failed (never stuck verifying, never c
 test('construction replay (D10): a normally-constructed Coordinator rebuilds task/worker status per the D10 event-kind table, with no manual fences.register or spawn()', async () => {
   const dir = tmpDir();
   const log = new Log(join(dir, 'log'));
+  const coordination = coordinationForLog(log);
 
   function seedWorker(workerId, taskId, events) {
+    const created = coordination.createTask({ id: taskId, brief: makeBrief(), deps: [], refines: null, taskType: 'test', reservedWorkerId: workerId, vendorRequested: 'mock' }, { actor: 'orchestrator', key: `create:${taskId}` });
+    const claimed = coordination.claimTask(taskId, workerId, created.task.version, { actor: 'orchestrator', key: `claim:${taskId}` });
     const common = { worker: workerId, harness: 'mock@1.0.0' };
     log.append({
       ...common,
@@ -1305,6 +1304,12 @@ test('construction replay (D10): a normally-constructed Coordinator rebuilds tas
       payload: { taskId, brief: makeBrief() },
     });
     for (const e of events) log.append({ ...common, ...e });
+    const verify = events.find((event) => event.kind === 'verify.reverified');
+    const stopped = events.find((event) => ['kill.confirmed', 'control.interrupt_confirmed'].includes(event.kind));
+    const blocked = events.find((event) => ['question.asked', 'approval.requested'].includes(event.kind));
+    if (verify) coordination.transitionTask(taskId, verify.payload.accept ? 'completed' : 'failed', claimed.task.version, { actor: 'policy', key: `terminal:${taskId}` });
+    else if (stopped) coordination.transitionTask(taskId, 'cancelled', claimed.task.version, { actor: 'policy', key: `terminal:${taskId}` });
+    else if (blocked) coordination.transitionTask(taskId, 'input_required', claimed.task.version, { actor: 'policy', key: `blocked:${taskId}` });
   }
 
   // Row 1: turn_completed + later verify.reverified{accept:true} -> completed.
@@ -1359,6 +1364,7 @@ test('construction replay (D10): a normally-constructed Coordinator rebuilds tas
   const worktrees = new SpyWorktreeManager();
   const coordinator = new Coordinator({
     log,
+    coordination,
     fences,
     adapters,
     worktrees,
@@ -1552,6 +1558,7 @@ test('at-least-once wait() (D11): a digest not yet followed by a subsequent wait
   const worktrees1 = new SpyWorktreeManager();
   const coordinator1 = new Coordinator({
     log: log1,
+    coordination: coordinationForLog(log1),
     fences: fences1,
     adapters: { mock: adapter1 },
     worktrees: worktrees1,
@@ -1579,6 +1586,7 @@ test('at-least-once wait() (D11): a digest not yet followed by a subsequent wait
   const worktrees2 = new SpyWorktreeManager();
   const coordinator2 = new Coordinator({
     log: log2,
+    coordination: coordinationForLog(log2),
     fences: fences2,
     adapters: { mock: new ScriptableAdapter() },
     worktrees: worktrees2,

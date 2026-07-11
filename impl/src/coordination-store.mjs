@@ -463,3 +463,12 @@ export class CoordinationStore {
     });
   }
 }
+
+/** Convenience for explicit hand-wired assemblies and tests. Production `createDriver()` still
+ * chooses and owns the path itself; Coordinator never synthesizes an optional sidecar. */
+export function coordinationForLog(log, root = join(log.dir, 'coordination')) {
+  if (!log || typeof log.read !== 'function' || typeof log.dir !== 'string') throw new TypeError('coordinationForLog requires a durable Log');
+  return new CoordinationStore(root, {
+    operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
+  });
+}

@@ -52,6 +52,7 @@ import { verify, accept } from '../src/referee.mjs';
 import { AdaptiveRouter } from '../src/router.mjs';
 import { StoryCompiler } from '../src/story.mjs';
 import { createBrief, isFact, isProse } from '../src/messages.mjs';
+import { coordinationForLog } from '../src/coordination-store.mjs';
 
 // ============================================================
 // Helpers
@@ -241,6 +242,7 @@ function setupSystem({ adapter, adapterVendor = 'mock', now } = {}) {
 
   const coordinator = new Coordinator({
     log,
+    coordination: coordinationForLog(log),
     fences,
     adapters: { [adapterVendor]: spiedAdapter },
     worktrees: worktreeManager, // D7 — worktree.mjs wrapped into the coordinator's manager interface, spied

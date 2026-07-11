@@ -15,6 +15,7 @@ import { ClaudeSessionCli } from '../src/claude-session.mjs';
 import { CodexAppServerCli } from '../src/codex-appserver.mjs';
 import { GrokAcpCli } from '../src/grok-acp.mjs';
 import { initialState, foldEvent, renderNarrative } from '../src/story.mjs';
+import { coordinationForLog } from '../src/coordination-store.mjs';
 
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const FAKE_CODEX = fileURLToPath(new URL('./fixtures/fake-codex-appserver.mjs', import.meta.url));
@@ -69,7 +70,7 @@ function makeCoordinator(a, opts = {}) {
     removeVerifyWorktree: async () => {}, remove: async () => {}, reconcile: async () => {},
   };
   const build = () => new Coordinator({
-    log, fences: new FenceTable(), adapters: { v: a }, worktrees,
+    log, coordination: coordinationForLog(log), fences: new FenceTable(), adapters: { v: a }, worktrees,
     referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'v',
     approvalTimeoutMs: 100, stopDeadlineMs: opts.stopDeadlineMs ?? 100,
   });

@@ -201,7 +201,7 @@ test('PS4: a late terminal from the prior wire epoch cannot overwrite the active
 
 test('PS5: wire sessionRef reaches handle/result and survives terminal replay', async () => {
   const ad = adapter();
-  const { c, log } = harness(ad);
+  const { c, log, coordination } = harness(ad);
   const h = await c.spawn('session', brief(), { taskId: 'session-ref' });
   ad.emit(h.id, 'lifecycle.spawned', { sessionId: 'native-session-7', pid: 123 }, 1);
   ad.emit(h.id, 'lifecycle.turn_completed', completed(), 1);
@@ -211,7 +211,7 @@ test('PS5: wire sessionRef reaches handle/result and survives terminal replay', 
   assert.deepEqual((await c.result(h.id)).sessionRef, expected);
 
   const replay = new Coordinator({
-    log, fences: new FenceTable(), adapters: { session: adapter() },
+    log, coordination, fences: new FenceTable(), adapters: { session: adapter() },
     worktrees: { create: async () => ({}), capture: async () => ({}), createVerifyWorktree: async () => ({}), removeVerifyWorktree: async () => {}, remove: async () => {}, reconcile: async () => {} },
     referee: async () => ({}), route: () => 'session', approvalTimeoutMs: 1000, stopDeadlineMs: 100,
   });
@@ -232,8 +232,11 @@ test('PS1-PS5: Claude, Codex, and Grok each run two public turns on one native s
   for (const [name, make] of definitions) {
     const ad = make();
     const log = new Log(mkdtempSync(join(tmpdir(), `baton-ps-${name}-`)));
+    const coordination = new CoordinationStore(mkdtempSync(join(tmpdir(), `baton-ps-${name}-coordination-`)), {
+      operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
+    });
     const c = new Coordinator({
-      log, fences: new FenceTable(), adapters: { [name]: ad },
+      log, coordination, fences: new FenceTable(), adapters: { [name]: ad },
       worktrees: {
         create: async () => ({ path: mkdtempSync(join(tmpdir(), `baton-ps-${name}-wt-`)) }),
         capture: async () => ({ sha: 'x', snapshotted: false }),
@@ -376,7 +379,7 @@ test('PS8: fork gets a fresh worktree and a durable parent-session lineage edge'
 test('PS7: replayed session is reattached only after bounded handshake proves the same native identity', async () => {
   const wt = mkdtempSync(join(tmpdir(), 'baton-ps-recover-wt-'));
   const original = adapter();
-  const { c, log } = harness(original, undefined, {
+  const { c, log, coordination } = harness(original, undefined, {
     create: async () => ({ path: wt, branch: 'baton/recover-task', baseSha: 'base-1' }),
   });
   const h = await c.spawn('session', brief(), { taskId: 'recover-task' });
@@ -392,7 +395,7 @@ test('PS7: replayed session is reattached only after bounded handshake proves th
     return { ok: true };
   };
   const replay = new Coordinator({
-    log, fences: new FenceTable(), adapters: { session: resumed }, repoRoot: null,
+    log, coordination, fences: new FenceTable(), adapters: { session: resumed }, repoRoot: null,
     worktrees: {
       create: async () => ({}), capture: async () => ({ sha: 'x' }), createVerifyWorktree: async () => ({ path: tmpdir() }),
       removeVerifyWorktree: async () => {}, remove: async () => {}, reconcile: async () => {},
@@ -413,7 +416,7 @@ test('PS7: replayed session is reattached only after bounded handshake proves th
 test('PS7: a reattachment identity mismatch is refused and the untrusted transport is killed', async () => {
   const wt = mkdtempSync(join(tmpdir(), 'baton-ps-recover-bad-wt-'));
   const original = adapter();
-  const { c, log } = harness(original, undefined, { create: async () => ({ path: wt }) });
+  const { c, log, coordination } = harness(original, undefined, { create: async () => ({ path: wt }) });
   const h = await c.spawn('session', brief(), { taskId: 'recover-bad-task' });
   await until(() => c.list()[0].sessionContext);
   original.emit(h.id, 'lifecycle.spawned', { sessionId: 'expected-native', pid: 111 }, 1);
@@ -426,7 +429,7 @@ test('PS7: a reattachment identity mismatch is refused and the untrusted transpo
     return { ok: true };
   };
   const replay = new Coordinator({
-    log, fences: new FenceTable(), adapters: { session: resumed },
+    log, coordination, fences: new FenceTable(), adapters: { session: resumed },
     worktrees: { validateSessionContext: async () => ({ ok: true }), remove: async () => {}, reconcile: async () => {} },
     referee: async () => ({}), route: () => 'session', recoveryTimeoutMs: 100, stopDeadlineMs: 100,
   });
@@ -441,7 +444,7 @@ test('PS7: a reattachment identity mismatch is refused and the untrusted transpo
 test('PS7: a hung reattachment is bounded, remains orphaned, and invokes adapter cleanup', async () => {
   const wt = mkdtempSync(join(tmpdir(), 'baton-ps-recover-timeout-wt-'));
   const original = adapter();
-  const { c, log } = harness(original, undefined, { create: async () => ({ path: wt }) });
+  const { c, log, coordination } = harness(original, undefined, { create: async () => ({ path: wt }) });
   const h = await c.spawn('session', brief(), { taskId: 'recover-timeout-task' });
   await until(() => c.list()[0].sessionContext);
   original.emit(h.id, 'lifecycle.spawned', { sessionId: 'timeout-native', pid: 111 }, 1);
@@ -451,7 +454,7 @@ test('PS7: a hung reattachment is bounded, remains orphaned, and invokes adapter
   const resumed = adapter();
   resumed.spawn = async () => new Promise(() => {});
   const replay = new Coordinator({
-    log, fences: new FenceTable(), adapters: { session: resumed },
+    log, coordination, fences: new FenceTable(), adapters: { session: resumed },
     worktrees: { validateSessionContext: async () => ({ ok: true }), remove: async () => {}, reconcile: async () => {} },
     referee: async () => ({}), route: () => 'session', recoveryTimeoutMs: 20, stopDeadlineMs: 100,
   });

@@ -28,7 +28,7 @@ export { createBrief } from './messages.mjs';
 export { verify, accept } from './referee.mjs';
 export { AdaptiveRouter } from './router.mjs';
 export { RuntimeIsolation, isSecretEnvName } from './runtime-isolation.mjs';
-export { CoordinationStore, CoordinationIntegrityError, CoordinationRefusal } from './coordination-store.mjs';
+export { CoordinationStore, CoordinationIntegrityError, CoordinationRefusal, coordinationForLog } from './coordination-store.mjs';
 
 /** worktree.mjs's real functions wrapped into the coordinator's manager interface. */
 function worktreeManager(repoRoot) {
