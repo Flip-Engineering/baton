@@ -41,6 +41,8 @@ export class WebEventStream {
     if (opts.releaseConnection != null && typeof opts.releaseConnection !== 'function') throw new TypeError('releaseConnection must be a function');
     this.acquireConnection = opts.acquireConnection ?? null;
     this.releaseConnection = opts.releaseConnection ?? null;
+    if (opts.credentialDigest != null && typeof opts.credentialDigest !== 'function') throw new TypeError('credentialDigest must be a function');
+    this.credentialDigest = opts.credentialDigest ?? null;
     this.tickets = new Map();
     this.activeConnections = 0;
     this.connections = new Set();
@@ -50,7 +52,7 @@ export class WebEventStream {
   _audit(kind, principal, origin, details = {}) {
     return this.coordination.recordWebAudit({
       kind, userId: principal?.userId ?? null, sessionId: principal?.sessionId ?? null,
-      credentialId: principal?.credentialId ?? null, origin, ...clone(details),
+      credentialDigest: principal?.credentialId && this.credentialDigest ? this.credentialDigest(principal.credentialId) : null, origin, ...clone(details),
     }, { actor: principal ? actor(principal) : 'web:anonymous', key: `web.audit:${randomUUID()}` });
   }
 

@@ -91,6 +91,13 @@ test('EP2/EP3: weighted refusal does not consume the separate command-count buck
   assert.equal(policy.takeCommand('credential', 1).ok, true);
 });
 
+test('EP2: combined principal/cost transaction samples one clock and commits one window', () => {
+  let calls = 0; const policy = edge({ now: () => { calls += 1; return calls === 1 ? 999 : 1_001; }, limits: { principal: 2, cost: 2 } });
+  assert.equal(policy.takeCommand('credential', 2).ok, true); assert.equal(calls, 1);
+  assert.equal(policy.quotas.principal.keys.get('credential').start, 0);
+  assert.equal(policy.quotas.cost.keys.get('credential').start, 0);
+});
+
 test('EP5/EP6: readiness is non-disclosing and shutdown is bounded/idempotent with no fleet effect', async () => {
   let ready = true; let streamStops = 0; let serverCloses = 0;
   const stream = { shutdown() { streamStops += 1; } };
@@ -153,11 +160,26 @@ test('EP2/EP6: per-credential connection leases are fair, preserve refused ticke
   const outA = new StreamResponse(); assert.equal(s.web.stream.open({ ticket: ticketA1.body.ticket, principal: a, origin: ORIGIN }, outA), null);
   const refused = s.web.stream.open({ ticket: ticketA2.body.ticket, principal: a, origin: ORIGIN }, new StreamResponse());
   assert.equal(refused.status, 429); assert.equal(refused.headers['retry-after'], '1');
+  const streamAudits = s.coordination.events().filter((event) => event.kind === 'web.audit');
+  assert.equal(JSON.stringify(streamAudits).includes(a.credentialId), false);
+  assert.match(streamAudits.find((event) => event.payload?.kind === 'stream_refused').payload.credentialDigest, /^[a-f0-9]{64}$/);
   const outB = new StreamResponse(); assert.equal(s.web.stream.open({ ticket: ticketB.body.ticket, principal: b, origin: ORIGIN }, outB), null);
   outA.emit('close');
   const retried = new StreamResponse(); assert.equal(s.web.stream.open({ ticket: ticketA2.body.ticket, principal: a, origin: ORIGIN }, retried), null);
   outB.emit('close'); retried.emit('close');
   assert.equal(s.web.stream.activeConnections, 0);
+});
+
+test('EP7: authenticated quota audits digest rather than persist raw credential identifiers', async () => {
+  const s = system({ edgePolicy: edge({ limits: { principal: 1 } }) });
+  const principal = { userId: 'u', sessionId: 's', credentialId: 'distinctive-credential-id', authMethod: 'bearer', expiresAt: '2099-01-01T00:00:00.000Z', capabilities: ['observe'], repoIds: ['repo-a'] };
+  const envelope = (id) => ({ schemaVersion: 1, commandId: id, idempotencyKey: id, command: 'list', args: {}, repoId: 'repo-a', origin: ORIGIN });
+  const ctx = { principal, origin: ORIGIN, transport: 'https' };
+  assert.equal((await s.web.execute(ctx, envelope('audit-one'))).status, 200);
+  assert.equal((await s.web.execute(ctx, envelope('audit-two'))).status, 429);
+  const audits = s.coordination.events().filter((event) => event.kind === 'web.audit');
+  assert.equal(JSON.stringify(audits).includes(principal.credentialId), false);
+  assert.match(audits.find((event) => event.payload?.kind === 'quota_refused').payload.credentialDigest, /^[a-f0-9]{64}$/);
 });
 
 test('EP6: shutdown wins races with provider completion and permanently refuses future stream opens', async () => {

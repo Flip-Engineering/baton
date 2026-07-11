@@ -17,9 +17,9 @@ export class FixedWindowQuota {
     if (typeof now !== 'function') throw new TypeError('now must be a function');
     this.now = now; this.keys = new Map();
   }
-  take(key, cost = 1) {
+  take(key, cost = 1, nowMs = this.now()) {
     positive(cost, 'cost');
-    const now = this.now(); const start = Math.floor(now / this.windowMs) * this.windowMs;
+    const now = nowMs; const start = Math.floor(now / this.windowMs) * this.windowMs;
     for (const [k, v] of this.keys) if (v.start < start) this.keys.delete(k);
     let entry = this.keys.get(key);
     if (!entry) {
@@ -30,9 +30,9 @@ export class FixedWindowQuota {
     entry.used += cost;
     return { ok: true };
   }
-  canTake(key, cost = 1) {
+  canTake(key, cost = 1, nowMs = this.now()) {
     positive(cost, 'cost');
-    const now = this.now(); const start = Math.floor(now / this.windowMs) * this.windowMs;
+    const now = nowMs; const start = Math.floor(now / this.windowMs) * this.windowMs;
     for (const [k, v] of this.keys) if (v.start < start) this.keys.delete(k);
     const entry = this.keys.get(key);
     if (!entry && this.keys.size >= this.maxKeys) return { ok: false, retryAfter: Math.max(1, Math.ceil((start + this.windowMs - now) / 1000)), reason: 'capacity' };
@@ -118,7 +118,7 @@ export class WebEdgePolicy {
     this.forwardedHop = opts.forwardedHop ?? 0; this.proxyMode = opts.proxyMode ?? false;
     if (this.proxyMode && this.trustedProxies.length === 0) throw new TypeError('proxy mode requires trusted proxies');
     if (!this.proxyMode && (this.trustedProxies.length > 0 || this.forwardedHop !== 0)) throw new TypeError('direct mode cannot configure proxy trust or forwarding hops');
-    const now = opts.now ?? Date.now; const windowMs = opts.windowMs ?? 60_000; const maxKeys = opts.maxKeys ?? 10_000;
+    const now = opts.now ?? Date.now; this.now = now; const windowMs = opts.windowMs ?? 60_000; const maxKeys = opts.maxKeys ?? 10_000;
     const allowedLimits = new Set(['address', 'login', 'principal', 'cost', 'ticket', 'health', 'readiness', 'connection']);
     const unknownLimit = Object.keys(opts.limits ?? {}).find((name) => !allowedLimits.has(name));
     if (unknownLimit) throw new TypeError(`unknown quota policy: ${unknownLimit}`);
@@ -136,11 +136,14 @@ export class WebEdgePolicy {
   peerDigest(req) { return this.digest(address(req?.socket?.remoteAddress)); }
   take(kind, key, cost) { return this.quotas[kind].take(key, cost); }
   takeCommand(key, cost) {
-    const count = this.quotas.principal.canTake(key);
+    const now = this.now();
+    const count = this.quotas.principal.canTake(key, 1, now);
     if (!count.ok) return { ...count, quota: 'principal' };
-    const weighted = this.quotas.cost.canTake(key, cost);
+    const weighted = this.quotas.cost.canTake(key, cost, now);
     if (!weighted.ok) return { ...weighted, quota: 'cost' };
-    this.quotas.principal.take(key); this.quotas.cost.take(key, cost);
+    const countCommit = this.quotas.principal.take(key, 1, now);
+    const costCommit = this.quotas.cost.take(key, cost, now);
+    if (!countCommit.ok || !costCommit.ok) throw new Error('quota transaction invariant violated');
     return { ok: true };
   }
   acquireConnection(key) { return this.connections.acquire(key); }

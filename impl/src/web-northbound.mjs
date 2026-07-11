@@ -121,6 +121,7 @@ export class WebNorthbound {
       isPrincipalActive: this.isPrincipalActive,
       acquireConnection: this.edge ? (principal) => this.edge.acquireConnection(principal.credentialId) : null,
       releaseConnection: this.edge ? (principal) => this.edge.releaseConnection(principal.credentialId) : null,
+      credentialDigest: this.edge ? (credentialId) => this.edge.digest(`credential:${credentialId}`) : null,
     });
   }
 
@@ -129,7 +130,7 @@ export class WebNorthbound {
     const auditActor = principal ? actor(principal) : 'web:anonymous';
     return this.coordination.recordWebAudit({
       kind, userId: principal?.userId ?? null, sessionId: principal?.sessionId ?? null,
-      credentialId: principal?.credentialId ?? null, origin: ctx?.origin ?? null,
+      credentialDigest: principal?.credentialId && this.edge ? this.edge.digest(`credential:${principal.credentialId}`) : null, origin: ctx?.origin ?? null,
       remoteAddressClass: ctx?.remoteAddress ? 'present' : 'absent', addressDigest: ctx?.addressDigest ?? null, ...json(details),
     }, { actor: auditActor, key: `web.audit:${randomUUID()}` });
   }
