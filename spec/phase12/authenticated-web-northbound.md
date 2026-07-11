@@ -129,7 +129,9 @@ The initial snapshot and every subsequent frame are subject to explicit byte cei
 snapshot cannot fit, the server returns a typed bounded failure before starting SSE; it never writes
 an unbounded initial frame. Lag metadata has a separately fixed small control-frame ceiling so the
 notification itself cannot turn a full data buffer into unbounded growth. Ticket and active
-connection counts also have explicit ceilings.
+connection counts also have explicit ceilings. Each poll reads a bounded event count and rechecks
+live authorization before every event is emitted, so a large replay suffix cannot extend access
+past credential expiry within one synchronous batch.
 
 Trust labels distinguish the authoritative occurrence/order of a coordination event from the
 grounding of its content. Scratch claims and claimed/derived knowledge may never be relabeled as

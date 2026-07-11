@@ -144,7 +144,8 @@ test('WN6: one authority and bounded snapshot/control frames with split trust', 
 test('WN6: invalid ceilings fail closed and response setup failures release connection authority', () => {
   for (const invalid of [
     { maxBufferedBytes: 0 }, { maxFrameBytes: Infinity }, { maxControlFrameBytes: -1 },
-    { maxTickets: 0 }, { maxConnections: 0 }, { ticketTtlMs: 1.5 }, { replayLimit: -1 }, { pollMs: 0 },
+    { maxTickets: 0 }, { maxConnections: 0 }, { maxEventsPerPump: 0 },
+    { ticketTtlMs: 1.5 }, { replayLimit: -1 }, { pollMs: 0 },
   ]) assert.throws(() => fixture(invalid), /safe integer/);
 
   const { coordination, stream } = fixture({ maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
@@ -239,4 +240,31 @@ test('WN6/WN7: later coordination-read and socket-write exceptions close without
   assert.equal(secondResponse.ended, true);
   assert.equal(second.stream.activeConnections, 0);
   assert.equal(second.coordination.events().some((event) => event.payload.kind === 'stream_read_failed'), true);
+});
+
+test('WN2/WN6: replay is count-bounded and rechecks authorization before every emitted event', () => {
+  clock = Date.parse('2026-07-11T12:00:00.000Z');
+  const { coordination, stream } = fixture({
+    maxFrameBytes: 100_000, maxBufferedBytes: 100_000, maxEventsPerPump: 2,
+  });
+  const first = coordination.recordWebAudit({ kind: 'batch-one' }, { actor: 'test', key: 'batch-one' });
+  coordination.recordWebAudit({ kind: 'batch-two' }, { actor: 'test', key: 'batch-two' });
+  const expiring = principal({ expiresAt: new Date(clock + 10).toISOString() });
+  class ExpireAfterFirst extends Response {
+    write(value) {
+      const accepted = super.write(value);
+      if (value.includes('batch-one')) clock += 11;
+      return accepted;
+    }
+  }
+  const output = new ExpireAfterFirst();
+  stream.open({
+    ticket: stream.issue(expiring, 'https://control.test', 'repo-a').body.ticket,
+    principal: expiring, origin: 'https://control.test', cursor: first.seq - 1,
+  }, output);
+  assert.match(output.output, /batch-one/);
+  assert.equal(output.output.includes('batch-two'), false);
+  assert.equal(output.ended, true);
+  assert.equal(stream.activeConnections, 0);
+  assert.equal(coordination.events().some((event) => event.payload.kind === 'stream_authorization_lost'), true);
 });

@@ -33,6 +33,7 @@ export class WebEventStream {
     this.maxControlFrameBytes = positiveInteger(opts.maxControlFrameBytes ?? 2 * 1024, 'maxControlFrameBytes');
     this.maxTickets = positiveInteger(opts.maxTickets ?? 1_000, 'maxTickets');
     this.maxConnections = positiveInteger(opts.maxConnections ?? 100, 'maxConnections');
+    this.maxEventsPerPump = positiveInteger(opts.maxEventsPerPump ?? 100, 'maxEventsPerPump');
     this.pollMs = positiveInteger(opts.pollMs ?? 100, 'pollMs');
     if (opts.isPrincipalActive != null && typeof opts.isPrincipalActive !== 'function') throw new TypeError('isPrincipalActive must be a function');
     this.isPrincipalActive = opts.isPrincipalActive ?? null;
@@ -206,7 +207,14 @@ export class WebEventStream {
           try { res.end(); } catch { /* connection is already unusable */ }
           return;
         }
-        for (const event of this.coordination.events(next)) if (!send(event)) break;
+        for (const event of this.coordination.events(next, this.maxEventsPerPump)) {
+          if (!this._liveAuthorized(principal, origin, grant.repoId)) {
+            disconnect('stream_authorization_lost');
+            try { res.end(); } catch { /* connection is already unusable */ }
+            return;
+          }
+          if (!send(event)) break;
+        }
       } catch {
         disconnect('stream_read_failed');
         try { res.end(); } catch { /* connection is already unusable */ }
