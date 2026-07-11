@@ -127,7 +127,9 @@ export function createDriver(opts) {
     repoRoot: opts.repoRoot,
     ...(opts.runtimeIsolation ?? {}),
   });
-  const coordination = opts.coordination ?? new CoordinationStore(join(opts.logDir, 'coordination'));
+  const coordination = opts.coordination ?? new CoordinationStore(join(opts.logDir, 'coordination'), {
+    operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
+  });
   const publisher = Object.hasOwn(opts, 'publisher') ? opts.publisher : async ({ remote, ref, sha }) => {
     execFileSync('git', ['push', '--porcelain', remote, `${sha}:${ref}`], { cwd: opts.repoRoot, stdio: 'ignore' });
     return { transport: 'git-push' };

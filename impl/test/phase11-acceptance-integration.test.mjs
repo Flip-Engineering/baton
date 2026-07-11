@@ -243,7 +243,7 @@ test('AC5: ff-only integration reaps the worker/worktree/branch and records exac
   const root = repo();
   commitBase(root, { 'README.md': 'base\n' });
   const beforeSha = git(['rev-parse', 'HEAD'], root);
-  const { coordinator, log, handle } = await completedTask(root);
+  const { coordinator, coordination, log, handle } = await completedTask(root);
   const taskWorktree = coordinator.list().find((worker) => worker.id === handle.id)?.worktree;
   assert.equal(typeof taskWorktree, 'string');
 
@@ -262,6 +262,9 @@ test('AC5: ff-only integration reaps the worker/worktree/branch and records exac
   const event = log.read(handle.id).find((entry) => entry.kind === 'integration.completed');
   assert.equal(event.actor, 'test-orchestrator');
   assert.equal(event.payload.afterSha, response.integration.afterSha);
+  assert.equal(coordination.snapshot().artifacts.some((artifact) => artifact.mediaType === 'application/vnd.baton.integration+json'), true);
+  assert.equal(coordination.events().some((entry) => entry.kind === 'driver.recorded' && entry.payload.kind === 'integration.completed'), true);
+  assert.equal(coordination.queryKnowledge({ types: ['Decision'] }).some((node) => node.id.startsWith('decision:integrate:')), true);
 });
 
 test('AC5: a non-fast-forward main refuses without rewriting either tip', async () => {
@@ -323,7 +326,7 @@ test('AC5: integration refuses an unaccepted captured result', async () => {
 });
 
 test('AC6: publication has no side effect before approval and allow publishes the exact integrated SHA once', async () => {
-  const { coordinator, log, handle, calls } = await integratedPublicationTask();
+  const { coordinator, coordination, log, handle, calls } = await integratedPublicationTask();
   const requested = coordinator.requestPublication(handle.id, { remote: 'origin', ref: 'refs/heads/main' }, 'test-user');
   assert.equal(calls.length, 0);
   assert.deepEqual(requested.target, {
@@ -342,6 +345,8 @@ test('AC6: publication has no side effect before approval and allow publishes th
   assert.deepEqual(new Set([a.result, b.result]), new Set(['published', 'already_resolved']));
   assert.equal((await coordinator.result(handle.id)).publication.sha, requested.target.sha);
   assert.equal(log.read(handle.id).filter((entry) => entry.kind === 'publication.completed').length, 1);
+  assert.equal(coordination.events().some((entry) => entry.kind === 'driver.recorded' && entry.payload.kind === 'publication.completed'), true);
+  assert.equal(coordination.queryKnowledge({ types: ['Decision'] }).some((node) => node.id.startsWith('decision:publish:')), true);
 });
 
 test('AC6: deny and timeout are fail-closed and never call the publisher', async () => {

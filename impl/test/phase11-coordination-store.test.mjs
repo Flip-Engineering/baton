@@ -10,6 +10,15 @@ import { createDriver, MockAdapter } from '../src/index.mjs';
 
 const dir = () => mkdtempSync(join(tmpdir(), 'baton-coordination-'));
 const fields = (id, deps = []) => ({ id, brief: { goal: id }, deps, refines: null, taskType: 'test', reservedWorkerId: `w-${id}` });
+async function until(fn, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await fn();
+    if (value) return value;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('condition not met');
+}
 
 test('CK1: duplicate idempotency key returns the original event without mutation', () => {
   const store = new CoordinationStore(dir());
@@ -23,7 +32,7 @@ test('CK1: duplicate idempotency key returns the original event without mutation
 test('CK1: append failure is fatal and leaves event/task projections unchanged', () => {
   const store = new CoordinationStore(dir(), { appendFile: () => { throw new Error('disk full'); } });
   assert.throws(() => store.createTask(fields('a'), { actor: 'orchestrator', key: 'a' }), /disk full/);
-  assert.deepEqual(store.snapshot(), { tasks: [], lastSeq: 0 });
+  assert.deepEqual(store.snapshot(), { tasks: [], artifacts: [], evidence: [], scratch: { facts: [], claims: [] }, knowledge: { nodes: [], edges: [], reads: [], contamination: [] }, lastSeq: 0 });
 });
 
 test('CK1: startup rejects truncated tails, sequence gaps, and duplicate keys', () => {
@@ -104,4 +113,175 @@ test('CK8/CK9: public driver exposes coordination and queued DAG survives restar
   assert.deepEqual(replay.coordination.task('child').deps, ['base']);
   assert.equal(replay.coordination.task('child').assignee, null);
   assert.deepEqual(replay.coordination.readyTasks().map((task) => task.id), ['base']);
+});
+
+test('CK1a: operational evidence gets a global coordination order and digest validation', () => {
+  const events = new Map();
+  const store = new CoordinationStore(dir(), { operationalRead: (worker, seq) => events.get(`${worker}:${seq}`) });
+  const a = { worker: 'w-a', seq: 7, ts: '2026-01-01T00:00:00Z', kind: 'verify.reverified', payload: { accept: true } };
+  const b = { worker: 'w-b', seq: 1, ts: '2026-01-01T00:00:01Z', kind: 'review.completed', payload: { accepted: true } };
+  events.set('w-a:7', a); events.set('w-b:1', b);
+  const ma = store.mapOperationalEvent(a, { actor: 'policy', key: 'map-a' });
+  const mb = store.mapOperationalEvent(b, { actor: 'policy', key: 'map-b' });
+  assert.ok(ma.evidence.coordinationSeq < mb.evidence.coordinationSeq);
+  assert.throws(() => store.mapOperationalEvent({ ...a, payload: { accept: false } }, { actor: 'policy', key: 'bad' }), (error) => error.code === 'evidence_mismatch');
+});
+
+test('CK3: artifact manifests are immutable, task-linked, and accepted artifacts require provenance', () => {
+  const store = new CoordinationStore(dir());
+  store.createTask(fields('a'), { actor: 'orchestrator', key: 'a' });
+  assert.throws(() => store.registerArtifact({ taskId: 'a', kind: 'commit', refs: { sha: 'abc' }, accepted: true }, { actor: 'policy', key: 'bad-artifact' }), (error) => error.code === 'missing_provenance');
+  const registered = store.registerArtifact({ taskId: 'a', kind: 'commit', refs: { sha: 'abc' }, accepted: true, provenance: [{ coordinationSeq: 1 }] }, { actor: 'policy', key: 'artifact-a' });
+  assert.equal(store.task('a').artifactIds[0], registered.artifact.id);
+  assert.equal(store.artifact(registered.artifact.id).refs.sha, 'abc');
+  const copy = store.artifact(registered.artifact.id); copy.refs.sha = 'mutated';
+  assert.equal(store.artifact(registered.artifact.id).refs.sha, 'abc');
+  const replay = new CoordinationStore(store.root);
+  assert.deepEqual(replay.artifact(registered.artifact.id), store.artifact(registered.artifact.id));
+});
+
+test('CK8/CK9: completed public task maps verification evidence, terminal state, and manifests', async () => {
+  const repo = dir();
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  writeFileSync(join(repo, 'README.md'), 'base\n');
+  execFileSync('git', ['add', '.'], { cwd: repo });
+  execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: repo });
+  const driver = createDriver({
+    repoRoot: repo, logDir: dir(),
+    adapters: { mock: new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'done.txt', content: 'done\n' }] } }) },
+    watchdog: { stallMs: 0 },
+  });
+  const brief = { goal: 'complete durably', constraints: [], pathScope: ['done.txt'], definitionOfDone: 'done', verification: { command: 'test -s done.txt', expectExit: 0 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } };
+  const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'durable-complete' });
+  await until(async () => (await driver.coordinator.result(handle.id)).ready);
+  assert.equal(driver.coordination.task('durable-complete').status, 'completed');
+  const snapshot = driver.coordination.snapshot();
+  assert.equal(snapshot.evidence.some((item) => item.kind === 'verify.reverified'), true);
+  assert.deepEqual(snapshot.artifacts.map((artifact) => artifact.kind).sort(), ['commit', 'verification']);
+  assert.equal(snapshot.artifacts.every((artifact) => artifact.accepted === true && artifact.provenance.length === 1), true);
+  assert.equal(snapshot.tasks[0].artifactIds.length, 2);
+  assert.equal(snapshot.knowledge.nodes.some((node) => node.type === 'Finding' && node.id.startsWith('outcome:durable-complete')), true);
+  const replay = new CoordinationStore(driver.coordination.root, {
+    operationalRead: (worker, seq) => driver.log.read(worker, seq).find((event) => event.seq === seq) ?? null,
+  });
+  assert.deepEqual(replay.snapshot(), driver.coordination.snapshot());
+});
+
+test('CK2/CK8: blocking input and resolution transition durably before terminal verification', async () => {
+  const repo = dir();
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  writeFileSync(join(repo, 'README.md'), 'base\n');
+  execFileSync('git', ['add', '.'], { cwd: repo });
+  execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: repo });
+  const driver = createDriver({
+    repoRoot: repo, logDir: dir(),
+    adapters: { mock: new MockAdapter({ scenario: {
+      outcome: 'completed', edits: [{ path: 'asked.txt', content: 'asked\n' }],
+      ask: { kind: 'question', question: 'continue?', blocking: true, afterEditIndex: 1 },
+    } }) }, watchdog: { stallMs: 0 },
+  });
+  const brief = { goal: 'input durably', constraints: [], pathScope: ['asked.txt'], definitionOfDone: 'asked', verification: { command: 'test -s asked.txt', expectExit: 0 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } };
+  const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'durable-input' });
+  await until(() => driver.coordinator.list()[0]?.pendingQuestionId);
+  assert.equal(driver.coordination.task('durable-input').status, 'input_required');
+  const requestId = driver.coordinator.list()[0].pendingQuestionId;
+  await driver.coordinator.respond(requestId, { text: 'yes' }, 'human');
+  assert.equal(driver.coordination.events().some((event) => event.kind === 'task.transitioned' && event.payload.to === 'working'), true);
+  await until(async () => (await driver.coordinator.result(handle.id)).ready);
+  assert.equal(driver.coordination.task('durable-input').status, 'completed');
+});
+
+test('CK4: Scratch claims conservatively conflict, warn cross-tree, and expire only by event', () => {
+  const root = dir();
+  const store = new CoordinationStore(root);
+  const envA = { repoId: 'repo', treeSha: 'aaaa1111' };
+  const envB = { repoId: 'repo', treeSha: 'bbbb2222' };
+  const first = store.claimScratch({ resource: 'path:payments/**', ownerWorker: 'w1', ownerTask: 't1', intent: 'edit', envRef: envA, fence: 3, leaseDeadline: 'later' }, { actor: 'w1', key: 'claim-a' });
+  assert.equal(store.claimScratch({ resource: 'changed', envRef: envB }, { actor: 'w1', key: 'claim-a' }).result, 'idempotent');
+  const conflict = store.claimScratch({ resource: 'path:payments/stripe.js', ownerWorker: 'w2', ownerTask: 't2', intent: 'edit', envRef: envB, fence: 4, leaseDeadline: 'later' }, { actor: 'w2', key: 'claim-b' });
+  assert.equal(conflict.ok, false);
+  assert.equal(conflict.conflict.id, first.claim.id);
+  const check = store.checkScratch('path:payments/stripe.js', envB);
+  assert.equal(check.clear, false);
+  assert.equal(check.claims[0].warning, 'observed on aaaa1111 — not your tree');
+  assert.equal(new CoordinationStore(root).checkScratch('path:payments/stripe.js', envB).clear, false, 'wall-clock replay never expires a lease');
+  store.expireScratchClaim(first.claim.id, 1, { actor: 'policy', key: 'expire-a' });
+  assert.equal(store.checkScratch('path:payments/stripe.js', envB).clear, true);
+  assert.equal(new CoordinationStore(root).checkScratch('path:payments/stripe.js', envB).clear, true);
+});
+
+test('CK4: Scratch facts are tree-scoped, grounded, immutable, and explicitly expired', () => {
+  const root = dir();
+  const store = new CoordinationStore(root);
+  const fact = store.postScratchFact({ namespace: 'tests', key: 'test:flaky', value: { seed: 42 }, grounding: 'observed', envRef: { repoId: 'repo', treeSha: 'cafe1234' }, evidence: [{ coordinationSeq: 1 }] }, { actor: 'w1', key: 'fact-a' });
+  const crossTree = store.checkScratch('test:flaky', { repoId: 'repo', treeSha: 'dead5678' });
+  assert.equal(crossTree.facts[0].warning, 'observed on cafe1234 — not your tree');
+  assert.throws(() => store.postScratchFact({ namespace: 'x', key: 'x', value: 1, grounding: 'asserted', envRef: { repoId: 'repo', treeSha: 'cafe1234' } }, { actor: 'w1', key: 'bad' }), (error) => error.code === 'invalid_grounding');
+  store.expireScratchFact(fact.fact.id, { actor: 'policy', key: 'expire-fact' });
+  assert.equal(store.checkScratch('test:flaky', { repoId: 'repo', treeSha: 'cafe1234' }).facts.length, 0);
+});
+
+test('CK5: causal evidence and temporal coherence are enforced', () => {
+  const store = new CoordinationStore(dir());
+  store.createTask(fields('a'), { actor: 'orchestrator', key: 'task-a' });
+  assert.throws(() => store.addKnowledgeNode({ type: 'Decision', id: 'D1', body: 'choose A', grounding: 'asserted' }, { actor: 'human', key: 'd1' }), (error) => error.code === 'causal_orphan');
+  assert.throws(() => store.addKnowledgeNode({ type: 'Finding', id: 'Ffuture', body: 'future', grounding: 'verified', evidence: [{ coordinationSeq: 99 }] }, { actor: 'policy', key: 'future' }), (error) => error.code === 'temporal_incoherence');
+  const finding = store.addKnowledgeNode({ type: 'Finding', id: 'F1', body: 'verified outcome', grounding: 'verified', evidence: [{ coordinationSeq: 1 }], validFrom: '2026-01-01T00:00:00Z' }, { actor: 'policy', key: 'f1' });
+  const decision = store.addKnowledgeNode({ type: 'Decision', id: 'D1', body: 'choose A', grounding: 'asserted', evidence: [{ coordinationSeq: finding.event.seq }], validFrom: '2026-01-02T00:00:00Z' }, { actor: 'human', key: 'd1-ok' });
+  store.addKnowledgeEdge({ type: 'Informed', from: decision.node.id, to: finding.node.id }, { actor: 'policy', key: 'edge-informed' });
+  assert.equal(store.traceKnowledge('D1').edges[0].type, 'Informed');
+});
+
+test('CK5/CK7: bitemporal query, supersession, logged reads, and contamination survive replay', () => {
+  const root = dir();
+  const store = new CoordinationStore(root);
+  store.createTask(fields('a'), { actor: 'orchestrator', key: 'task-a' });
+  store.addKnowledgeNode({ type: 'Finding', id: 'old', body: 'old belief', grounding: 'observed', evidence: [{ coordinationSeq: 1 }], validFrom: '2026-01-01T00:00:00Z' }, { actor: 'policy', key: 'old' });
+  store.addKnowledgeNode({ type: 'Finding', id: 'new', body: 'new belief', grounding: 'verified', evidence: [{ coordinationSeq: 1 }], validFrom: '2026-02-01T00:00:00Z' }, { actor: 'policy', key: 'new' });
+  const read = store.readKnowledge({ types: ['Finding'], asOf: '2026-01-15T00:00:00Z' }, { readerActor: 'orchestrator', readerWorker: 'w1', taskId: 'a', runId: 'r1' }, { actor: 'orchestrator', key: 'read-old' });
+  assert.deepEqual(read.nodes.map((node) => node.id), ['old']);
+  assert.match(read.frame, /UNTRUSTED_RECALLED_MEMORY/);
+  const superseded = store.addKnowledgeEdge({ type: 'Supersedes', from: 'new', to: 'old', expectedValidityVersion: 1, validFrom: '2026-02-01T00:00:00Z' }, { actor: 'policy', key: 'supersede' });
+  assert.deepEqual(superseded.contamination.payload.affectedReadEvents, [read.event.seq]);
+  assert.deepEqual(store.queryKnowledge({ types: ['Finding'], asOf: '2026-01-15T00:00:00Z' }).map((node) => node.id), ['old']);
+  assert.deepEqual(store.queryKnowledge({ types: ['Finding'], asOf: '2026-02-15T00:00:00Z' }).map((node) => node.id), ['new']);
+  const invalidated = store.invalidateKnowledge('new', 1, 'refuted later', { actor: 'human', key: 'invalidate-new' });
+  assert.equal(invalidated.contamination.payload.affectedReadEvents.length, 0);
+  assert.equal(store.affectedReaders('old').length, 1);
+  const replay = new CoordinationStore(root);
+  assert.deepEqual(replay.snapshot(), store.snapshot());
+  assert.equal(replay.affectedReaders('old')[0].taskId, 'a');
+  const audit = replay.auditKnowledge();
+  assert.equal(audit.temporalCoherence.invalidEvidence, 0);
+  assert.equal(audit.recallUtility.reads, 1);
+  assert.equal(audit.contamination.affectedReads, 1);
+});
+
+test('CK7: a failed read append returns no recalled content', () => {
+  const store = new CoordinationStore(dir(), { appendFile: () => { throw new Error('read log unavailable'); } });
+  assert.throws(() => store.readKnowledge({}, { readerActor: 'x' }, { actor: 'x', key: 'read' }), /read log unavailable/);
+});
+
+test('CK2/CK8: confirmed kill durably cancels an active public task', async () => {
+  const repo = dir();
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'base'], { cwd: repo });
+  const driver = createDriver({
+    repoRoot: repo, logDir: dir(), stopDeadlineMs: 1000,
+    adapters: { mock: new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'slow.txt', content: 'x', delayMs: 5000 }] } }) },
+    watchdog: { stallMs: 0 },
+  });
+  const brief = { goal: 'cancel durably', constraints: [], pathScope: ['slow.txt'], definitionOfDone: 'cancel', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } };
+  const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'durable-cancel' });
+  await until(() => driver.coordinator.list()[0]?.status === 'working');
+  const stopped = await driver.coordinator.kill(handle.id, 'human');
+  assert.equal(stopped.result, 'confirmed');
+  assert.equal(driver.coordination.task('durable-cancel').status, 'cancelled');
+  assert.equal(driver.coordination.snapshot().evidence.some((item) => item.kind === 'kill.confirmed'), true);
 });

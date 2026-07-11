@@ -332,6 +332,7 @@ export class Coordinator {
     this._workerSeq = 0;
     this._taskSeq = 0;
     this._publicationSeq = 0;
+    this._refinementSeq = 0;
 
     this._seedQueuedCoordinationTasks();
 
@@ -446,10 +447,12 @@ export class Coordinator {
       runtime = this._ensureRuntimeScope(handle);
     } catch (err) {
       try { this._runtimeScopes?.remove?.(workerId); } catch { /* best effort */ }
-      this._log.append({
+      const crashEvent = this._log.append({
         worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'lifecycle.crashed', actor: 'policy',
         payload: { phase: 'runtime_scope', error: String(err?.message ?? err) },
       });
+      const evidence = this._coordMapEvent(crashEvent);
+      this._coordTransition(task, 'failed', `task.failed:${task.id}:runtime_scope`, evidence);
       task.status = 'failed';
       handle.status = 'exited';
       return;
@@ -559,7 +562,7 @@ export class Coordinator {
     // to fail only a still-live spawn; it may never clobber cancellation or duplicate a crash.
     if (TERMINAL_TASK_STATUSES.has(task.status)) return;
     if (handle.status === 'stopping' || handle.status === 'dead' || handle.status === 'idle' || handle.status === 'exited') return;
-    this._log.append({
+    const crashEvent = this._log.append({
       worker: handle.id,
       harness,
       turnEpoch: this._safeTurnEpoch(handle),
@@ -567,6 +570,8 @@ export class Coordinator {
       actor: 'orchestrator',
       payload: { error: ack.reason ?? 'spawn refused', phase: 'spawn' },
     });
+    const evidence = this._coordMapEvent(crashEvent);
+    this._coordTransition(task, 'failed', `task.failed:${task.id}:spawn`, evidence, 'orchestrator');
     handle.status = 'exited';
     task.status = 'failed';
     this._removeRuntimeScope(handle);
@@ -922,11 +927,12 @@ export class Coordinator {
     }
 
     const stamp = this._fences.bumpTurn(workerId);
-    task.status = 'working';
-    task.result = null;
-    task.verdict = null;
-    task.sessionRequest = session;
-    task.sessionContext = context;
+    const activeTask = this._createCoordinationRefinement(handle, task, 'recovery');
+    activeTask.status = 'working';
+    activeTask.result = null;
+    activeTask.verdict = null;
+    activeTask.sessionRequest = session;
+    activeTask.sessionContext = context;
     handle.status = 'working';
     handle.sessionRequest = session;
     handle.sessionContext = context;
@@ -1005,10 +1011,23 @@ export class Coordinator {
       task.retainedResultRef = null;
     }
     task.integration = Object.freeze({ ...integrated, strategy, actor: opts.actor ?? 'orchestrator' });
-    this._log.append({
+    const integrationEvent = this._log.append({
       worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
       kind: 'integration.completed', actor: opts.actor ?? 'orchestrator', payload: task.integration,
     });
+    const integrationEvidence = this._coordMapEvent(integrationEvent);
+    if (this._coordination) {
+      this._coordination.registerArtifact({
+        taskId: task.id, kind: 'report', refs: { beforeSha: task.integration.beforeSha, resultSha: task.integration.resultSha, afterSha: task.integration.afterSha },
+        mediaType: 'application/vnd.baton.integration+json', accepted: true, provenance: [integrationEvidence],
+      }, { actor: opts.actor ?? 'orchestrator', key: `artifact.integration:${task.id}:${task.integration.afterSha}` });
+      this._coordination.addKnowledgeNode({
+        id: `decision:integrate:${task.id}:${integrationEvent.seq}`, type: 'Decision',
+        body: `Integrated task ${task.id} at ${task.integration.afterSha}`, grounding: 'observed',
+        evidence: [{ coordinationSeq: integrationEvidence.coordinationSeq }],
+      }, { actor: opts.actor ?? 'orchestrator', key: `knowledge.integration:${task.id}:${integrationEvent.seq}` });
+      this._coordRecord('integration.completed', { taskId: task.id, integration: task.integration, evidence: integrationEvidence }, `driver.integration:${task.id}:${integrationEvent.seq}`, opts.actor ?? 'orchestrator');
+    }
     return { ok: true, result: 'integrated', integration: task.integration };
   }
 
@@ -1243,9 +1262,10 @@ export class Coordinator {
     }
 
     const stamp = this._fences.bumpTurn(workerId);
-    task.status = 'working';
-    task.result = null;
-    task.verdict = null;
+    const activeTask = this._createCoordinationRefinement(handle, task, 'follow_up');
+    activeTask.status = 'working';
+    activeTask.result = null;
+    activeTask.verdict = null;
     handle.status = 'working';
     handle.turnAdmission = null;
     this._resetWatchdogTurn(handle);
@@ -1377,6 +1397,53 @@ export class Coordinator {
     } catch {
       return 0;
     }
+  }
+
+  _coordTransition(task, to, key, evidence = null, actor = 'policy') {
+    if (!this._coordination || !task) return null;
+    const durable = this._coordination.task(task.id);
+    if (!durable || durable.status === to) return durable;
+    const result = this._coordination.transitionTask(task.id, to, task.coordinationVersion ?? durable.version, { actor, key }, evidence);
+    task.coordinationVersion = result.task.version;
+    return result.task;
+  }
+
+  _coordMap(event, key) {
+    if (!this._coordination || !event) return null;
+    return this._coordination.mapOperationalEvent(event, { actor: 'policy', key }).evidence;
+  }
+
+  _coordMapEvent(event) {
+    if (!event) return null;
+    return this._coordMap(event, `evidence:${event.worker}:${event.seq}`);
+  }
+
+  _coordRecord(kind, payload, key, actor = 'policy') {
+    if (!this._coordination) return null;
+    return this._coordination.recordDriver(kind, payload, { actor, key }).event;
+  }
+
+  _createCoordinationRefinement(handle, prior, relation) {
+    if (!this._coordination) return prior;
+    const id = `${prior.id}:refinement-${++this._refinementSeq}`;
+    const created = this._coordination.createTask({
+      id, brief: prior.brief, deps: [], refines: prior.id, taskType: prior.taskType,
+      reservedWorkerId: handle.id, vendorRequested: handle.vendor,
+      modelRequested: handle.modelRequested, modelPolicy: handle.modelPolicy,
+      sessionRequest: handle.sessionRequest, relation,
+    }, { actor: 'orchestrator', key: `task.created:${id}` });
+    const claimed = this._coordination.claimTask(id, handle.id, created.task.version, {
+      actor: 'orchestrator', key: `task.claimed:${id}:${created.task.version}`,
+    });
+    const next = {
+      ...prior, id, deps: [], refines: prior.id, status: 'working', result: null, verdict: null,
+      capturedSha: null, integration: null, retainedResultRef: null, publication: null, review: null,
+      coordinationVersion: claimed.task.version,
+    };
+    this._tasks.set(id, next);
+    this._taskOrder.push(id);
+    handle.taskId = id;
+    return next;
   }
 
   async _removeTaskWorktree(task) {
@@ -1593,11 +1660,15 @@ export class Coordinator {
       modelRequested: handle?.modelRequested ?? null, modelResolved: handle?.modelResolved ?? null, modelObserved: handle?.modelObserved ?? null,
     };
     if (waiter.emulated) ev.emulated = true;
-    this._log.append(ev);
+    const stopEvent = this._log.append(ev);
 
     if (handle) {
       const task = this._tasks.get(handle.taskId);
       if (waiter.mode === 'kill') {
+        if (task && !TERMINAL_TASK_STATUSES.has(task.status)) {
+          const evidence = this._coordMapEvent(stopEvent);
+          this._coordTransition(task, 'cancelled', `task.cancelled:${task.id}:${stopEvent.seq}`, evidence);
+        }
         handle.status = 'dead';
         this._removeRuntimeScope(handle);
         if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'cancelled';
@@ -1618,6 +1689,10 @@ export class Coordinator {
           });
           this._resetWatchdogTurn(handle);
         } else {
+          if (task && !TERMINAL_TASK_STATUSES.has(task.status)) {
+            const evidence = this._coordMapEvent(stopEvent);
+            this._coordTransition(task, 'cancelled', `task.cancelled:${task.id}:${stopEvent.seq}`, evidence);
+          }
           handle.status = 'idle';
           if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'cancelled';
         }
@@ -1636,7 +1711,7 @@ export class Coordinator {
     if (waiter.timerHandle != null) this._clearTimeout(waiter.timerHandle);
     const handle = this._workers.get(workerId);
     const harness = handle ? this._harnessOf(handle.vendor) : '';
-    this._log.append({ worker: workerId, harness, turnEpoch: handle ? this._safeTurnEpoch(handle) : 0, kind: 'control.forced_stop', actor: 'policy', payload: {} });
+    const forcedEvent = this._log.append({ worker: workerId, harness, turnEpoch: handle ? this._safeTurnEpoch(handle) : 0, kind: 'control.forced_stop', actor: 'policy', payload: {} });
 
     if (handle && this._adapters[handle.vendor]) {
       Promise.resolve(this._adapters[handle.vendor].kill(workerId)).catch(noop);
@@ -1646,6 +1721,10 @@ export class Coordinator {
       handle.status = 'dead';
       this._removeRuntimeScope(handle);
       const task = this._tasks.get(handle.taskId);
+      if (task && !TERMINAL_TASK_STATUSES.has(task.status)) {
+        const evidence = this._coordMapEvent(forcedEvent);
+        this._coordTransition(task, 'failed', `task.failed:${task.id}:${forcedEvent.seq}`, evidence);
+      }
       if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'failed';
       this._removeTaskWorktree(task).catch(noop);
     }
@@ -1744,10 +1823,17 @@ export class Coordinator {
       const task = this._tasks.get(handle.taskId);
       void published;
       task.publication = Object.freeze({ requestId, ...record.publication, actor });
-      this._log.append({
+      const publicationEvent = this._log.append({
         worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
         kind: 'publication.completed', actor, payload: task.publication,
       });
+      const publicationEvidence = this._coordMapEvent(publicationEvent);
+      this._coordination?.addKnowledgeNode({
+        id: `decision:publish:${task.id}:${publicationEvent.seq}`, type: 'Decision',
+        body: `Published task ${task.id} to ${task.publication.remote}/${task.publication.ref}`,
+        grounding: 'observed', evidence: [{ coordinationSeq: publicationEvidence.coordinationSeq }],
+      }, { actor, key: `knowledge.publication:${task.id}:${publicationEvent.seq}` });
+      this._coordRecord('publication.completed', { taskId: task.id, publication: task.publication, evidence: publicationEvidence }, `driver.publication:${task.id}:${publicationEvent.seq}`, actor);
       finishResolving();
       return { ok: true, result: 'published', publication: task.publication };
     }
@@ -1814,15 +1900,21 @@ export class Coordinator {
     record.consumer = actor;
     record.resolution = answer;
 
+    let resolvedEvent;
     if (record.kind === 'question') {
       const ev = { worker: handle.id, harness, turnEpoch: currentTurnEpoch, kind: 'question.answered', actor, payload: { requestId, answer } };
       if (ack && ack.emulated === true) ev.emulated = true;
-      this._log.append(ev);
+      resolvedEvent = this._log.append(ev);
     } else {
       const decision = answer && answer.decision;
       const ev = { worker: handle.id, harness, turnEpoch: currentTurnEpoch, kind: 'approval.resolved', actor, payload: { requestId, decision } };
       if (ack && ack.emulated === true) ev.emulated = true;
-      this._log.append(ev);
+      resolvedEvent = this._log.append(ev);
+    }
+    const task = this._tasks.get(handle.taskId);
+    if (task && this._coordination?.task(task.id)?.status === 'input_required') {
+      const evidence = this._coordMapEvent(resolvedEvent);
+      this._coordTransition(task, 'working', `task.working:${task.id}:${resolvedEvent.seq}`, evidence, actor);
     }
 
     clearPending();
@@ -2031,13 +2123,17 @@ export class Coordinator {
         const mismatchTask = this._tasks.get(handle.taskId);
         if (mismatchTask) {
           mismatchTask.modelMismatch = handle.modelMismatch;
-          if (!TERMINAL_TASK_STATUSES.has(mismatchTask.status)) mismatchTask.status = 'failed';
         }
-        this._log.append({
+        const mismatchEvent = this._log.append({
           worker: workerId, harness, turnEpoch, kind: 'model.mismatch', actor: 'policy',
           modelRequested: handle.modelRequested ?? null, modelResolved: handle.modelResolved, modelObserved: observedModel,
           payload: { requested: handle.modelResolved, observed: observedModel, action: 'fail_and_kill' },
         });
+        if (mismatchTask && !TERMINAL_TASK_STATUSES.has(mismatchTask.status)) {
+          const evidence = this._coordMapEvent(mismatchEvent);
+          this._coordTransition(mismatchTask, 'failed', `task.failed:${mismatchTask.id}:${mismatchEvent.seq}`, evidence);
+          mismatchTask.status = 'failed';
+        }
         // Use the ordinary confirmed two-phase stop so process/worktree ownership remains live
         // until the adapter proves the mismatched session is gone.
         this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
@@ -2067,8 +2163,12 @@ export class Coordinator {
       }
       case 'lifecycle.crashed':
       case 'lifecycle.exited': {
-        appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        const terminalEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
         const task = this._tasks.get(handle.taskId);
+        if (task && !TERMINAL_TASK_STATUSES.has(task.status)) {
+          const evidence = this._coordMapEvent(terminalEvent);
+          if (evidence) this._coordTransition(task, 'failed', `task.failed:${task.id}:${evidence.coordinationSeq}`, evidence);
+        }
         if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'failed';
         if (handle.status !== 'dead') handle.status = 'exited';
         this._clearWatchdog(handle);
@@ -2077,7 +2177,7 @@ export class Coordinator {
       }
       case 'question.asked': {
         const requestId = payload?.requestId;
-        appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        const askedEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
         const task = this._tasks.get(handle.taskId);
         if (task && TERMINAL_TASK_STATUSES.has(task.status)) break;
         this._pending.set(requestId, {
@@ -2090,6 +2190,10 @@ export class Coordinator {
           deadlineAt: null,
         });
         if (payload?.blocking !== false) {
+          if (task) {
+            const evidence = this._coordMapEvent(askedEvent);
+            this._coordTransition(task, 'input_required', `task.input_required:${task.id}:${askedEvent.seq}`, evidence);
+          }
           handle.status = 'blocked';
           handle.pendingQuestionId = requestId;
           if (task) task.status = 'input_required';
@@ -2098,7 +2202,7 @@ export class Coordinator {
       }
       case 'approval.requested': {
         const requestId = payload?.requestId;
-        appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        const askedEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
         const task = this._tasks.get(handle.taskId);
         if (task && TERMINAL_TASK_STATUSES.has(task.status)) break;
         this._pending.set(requestId, {
@@ -2111,9 +2215,23 @@ export class Coordinator {
           deadlineAt: this._now() + this._approvalTimeoutMs,
         });
         if (payload?.blocking !== false) {
+          if (task) {
+            const evidence = this._coordMapEvent(askedEvent);
+            this._coordTransition(task, 'input_required', `task.input_required:${task.id}:${askedEvent.seq}`, evidence);
+          }
           handle.status = 'blocked';
           handle.pendingApprovalId = requestId;
           if (task) task.status = 'input_required';
+        }
+        break;
+      }
+      case 'question.answered':
+      case 'approval.resolved': {
+        const resolvedEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        const task = this._tasks.get(handle.taskId);
+        if (task && this._coordination?.task(task.id)?.status === 'input_required') {
+          const evidence = this._coordMapEvent(resolvedEvent);
+          this._coordTransition(task, 'working', `task.working:${task.id}:${resolvedEvent.seq}`, evidence, actor ?? 'worker');
         }
         break;
       }
@@ -2174,7 +2292,7 @@ export class Coordinator {
       // C1: referee.accept() (or an injected equivalent) is the SOLE done-gate.
       const acceptOpts = { ...this._acceptOpts, expectExit: task.brief.verification.expectExit };
       const accept = this._accept(verdict, acceptOpts);
-      this._log.append({
+      const verifyEvent = this._log.append({
         worker: handle.id,
         harness,
         turnEpoch: this._safeTurnEpoch(handle),
@@ -2197,6 +2315,34 @@ export class Coordinator {
           },
         },
       });
+      if (!verifyEvent) throw new Error('operational verification event was not durably appended');
+      const evidence = this._coordMapEvent(verifyEvent);
+      if (this._coordination && captured?.sha) {
+        this._coordination.registerArtifact({
+          taskId: task.id, kind: 'commit', refs: { sha: captured.sha }, mediaType: 'application/vnd.git.commit',
+          accepted: accept, provenance: [evidence],
+        }, { actor: 'policy', key: `artifact.commit:${task.id}:${captured.sha}` });
+        this._coordination.registerArtifact({
+          taskId: task.id, kind: 'verification', refs: { worker: handle.id, workerSeq: verifyEvent.seq },
+          mediaType: 'application/vnd.baton.verdict+json', accepted: accept,
+          provenance: [evidence], verdict,
+        }, { actor: 'policy', key: `artifact.verification:${task.id}:${verifyEvent.seq}` });
+        if (task.review) {
+          this._coordination.registerArtifact({
+            taskId: task.id, kind: 'review', refs: { sha: captured.sha, parentTaskId: task.review.parentTaskId },
+            mediaType: 'application/vnd.baton.review+json', accepted: accept,
+            provenance: [evidence], review: task.review,
+          }, { actor: 'policy', key: `artifact.review:${task.id}:${captured.sha}` });
+        }
+        const artifactEvidence = this._coordination.task(task.id).artifactIds.map((artifactId) => ({ artifactId }));
+        this._coordination.addKnowledgeNode({
+          id: `outcome:${task.id}:${verifyEvent.seq}`,
+          type: accept ? 'Finding' : 'Counterexample',
+          body: accept ? `Task ${task.id} passed its hub verification` : `Task ${task.id} failed its hub verification`,
+          grounding: 'verified', evidence: [{ coordinationSeq: evidence.coordinationSeq }, ...artifactEvidence],
+        }, { actor: 'policy', key: `knowledge.outcome:${task.id}:${verifyEvent.seq}` });
+      }
+      this._coordTransition(task, accept ? 'completed' : 'failed', `task.${accept ? 'completed' : 'failed'}:${task.id}:${verifyEvent.seq}`, evidence);
       task.status = accept ? 'completed' : 'failed';
       task.capturedSha = captured?.sha ?? null;
 

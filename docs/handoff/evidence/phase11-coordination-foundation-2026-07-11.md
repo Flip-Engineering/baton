@@ -2,7 +2,8 @@
 
 ## Verdict
 
-PASS for the CK1/CK2 foundation slice; CK3–CK9 remain active work.
+PASS for the CK1–CK7 implementation slice and the current CK8 public wiring; CK9 adversarial and
+recursive gates remain active work.
 
 - `CoordinationStore` owns a separately validated, globally sequenced coordination event stream.
 - Idempotency keys replay the original event; append failure leaves event and projection state
@@ -13,15 +14,25 @@ PASS for the CK1/CK2 foundation slice; CK3–CK9 remain active work.
 - Queued tasks with no per-worker operational log survive a full `createDriver()` reconstruction
   with exact dependency readiness and null durable assignee.
 - `createDriver()` returns the mandatory `coordination` substrate.
+- Blocking input/resolution, crashes, verification outcomes, confirmed cancellation, persistent
+  follow-up refinement, integration, and publication write durable task/evidence/driver records.
+- Captured commits, verification verdicts, independent reviews, and integration reports are
+  immutable task-linked manifests.
+- Scratch facts/claims are immutable-tree scoped, conservatively conflict checked, cross-tree
+  warned, and expired only by explicit events.
+- Typed causal nodes/edges support bitemporal queries, supersession/invalidation, logged pull-only
+  reads, affected-reader tracing, contamination records, and a metric-breakdown audit.
+- Task/artifact events materialize graph nodes; verified outcomes and integrate/publish decisions
+  promote deterministically.
 
 Validation:
 
 ```text
 node --test impl/test/phase11-coordination-store.test.mjs
-7/7 passing
+17/17 passing
 
 cd impl && node --test
-509/509 passing
+519/519 passing
 ```
 
 The recursive exact-model Grok review preceding implementation passed every lifecycle check and is
@@ -31,6 +42,6 @@ Baton itself.
 
 ## Remaining before CK9
 
-Durable terminal/input/recovery transitions, operational evidence mapping, artifact manifests,
-Scratch, the bitemporal KG, read contamination, and the complete built-not-wired event matrix are
-not claimed by this slice.
+The fresh adversarial implementation review, atomic multi-event invalidation/contamination seam,
+complete recovery/restart association for refinement tasks, forced coordination-write failure at
+each public state boundary, and recursive provider implementation proof are not yet claimed.

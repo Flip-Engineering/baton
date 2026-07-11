@@ -13,6 +13,7 @@ import { Log } from '../src/log.mjs';
 import { ClaudeSessionCli } from '../src/claude-session.mjs';
 import { CodexAppServerCli } from '../src/codex-appserver.mjs';
 import { GrokAcpCli } from '../src/grok-acp.mjs';
+import { CoordinationStore } from '../src/coordination-store.mjs';
 
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const FAKE_CODEX = fileURLToPath(new URL('./fixtures/fake-codex-appserver.mjs', import.meta.url));
@@ -55,9 +56,12 @@ function adapter(over = {}) {
 
 function harness(ad, referee = async () => ({ reverified: true, observedExit: 0 }), worktreeOverrides = {}) {
   const log = new Log(mkdtempSync(join(tmpdir(), 'baton-ps-log-')));
+  const coordination = new CoordinationStore(mkdtempSync(join(tmpdir(), 'baton-ps-coordination-')), {
+    operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
+  });
   const verifyCalls = [];
   const c = new Coordinator({
-    log, fences: new FenceTable(), adapters: { session: ad },
+    log, fences: new FenceTable(), adapters: { session: ad }, coordination,
     worktrees: {
       create: async (taskId) => ({ path: `/tmp/${taskId}` }),
       capture: async () => ({ sha: 'x', snapshotted: false }),
@@ -68,7 +72,7 @@ function harness(ad, referee = async () => ({ reverified: true, observedExit: 0 
     referee: async (...args) => { verifyCalls.push(args); return referee(...args); },
     route: () => 'session', approvalTimeoutMs: 1000, stopDeadlineMs: 100,
   });
-  return { c, log, verifyCalls };
+  return { c, log, verifyCalls, coordination };
 }
 
 async function until(fn, timeoutMs = 2000) {
@@ -87,7 +91,7 @@ function completed(summary = 'done') {
 
 test('PS1/PS4: a verified worker accepts a public follow-up turn and verifies it independently', async () => {
   const ad = adapter();
-  const { c, verifyCalls } = harness(ad);
+  const { c, verifyCalls, coordination } = harness(ad);
   const h = await c.spawn('session', brief(), { taskId: 'follow-up' });
   ad.emit(h.id, 'lifecycle.spawned', { sessionId: 'session-1', pid: 123 }, 1);
   ad.emit(h.id, 'lifecycle.turn_completed', completed('first'), 1);
@@ -104,6 +108,9 @@ test('PS1/PS4: a verified worker accepts a public follow-up turn and verifies it
   ad.emit(h.id, 'lifecycle.turn_completed', completed('second'), 2);
   await until(async () => (await c.result(h.id)).ready && verifyCalls.length === 2);
   assert.equal((await c.result(h.id)).status, 'completed');
+  assert.equal(coordination.snapshot().tasks.length, 2);
+  assert.deepEqual(coordination.snapshot().tasks.map((task) => task.status), ['completed', 'completed']);
+  assert.equal(coordination.snapshot().tasks[1].refines, 'follow-up');
 });
 
 test('PS2: a refused follow-up restores the previous terminal result and logs no new turn', async () => {
