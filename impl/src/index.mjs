@@ -146,7 +146,10 @@ export function createDriver(opts) {
   // set — no first-fit fallback. `pick()` already returns null when nothing is eligible,
   // which is exactly "queue" (the coordinator's own ceiling re-check catches it too).
   const route = (task, cards, inFlight) => {
-    let feasible = Object.keys(opts.adapters).filter((v) => (inFlight[v] ?? 0) < cards[v].concurrencyCeiling);
+    // `cards` is already the coordinator's exact model/effort/session/policy-filtered
+    // candidate set. Re-expanding from every registered adapter would resurrect rejected
+    // candidates and dereference absent cards in heterogeneous fleets.
+    let feasible = Object.keys(cards).filter((v) => (inFlight[v] ?? 0) < cards[v].concurrencyCeiling);
     // SC7: the explicit capability tag beats operator folklore — when any feasible card lists
     // the task's taskType in nonRefuserFor, restrict to those vendors. Feasibility is computed
     // FIRST (a capable-but-saturated vendor never restricts) and an unlisted taskType leaves

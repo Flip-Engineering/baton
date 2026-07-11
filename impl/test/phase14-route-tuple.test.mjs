@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +12,7 @@ import { coordinationForLog } from '../src/coordination-store.mjs';
 import { buildClaudeSessionArgs } from '../src/claude-session.mjs';
 import { withGrokModelArgs } from '../src/grok-acp.mjs';
 import { WebNorthbound, validateWebCommandEnvelope } from '../src/web-northbound.mjs';
+import { createDriver } from '../src/index.mjs';
 
 const card = (efforts = ['low', 'high']) => ({
   harness: 'codex', version: '2',
@@ -30,6 +32,14 @@ const until = async (fn, timeoutMs = 2000) => {
   while (Date.now() < end) { const value = await fn(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 5)); }
   throw new Error('timed out');
 };
+function repo() {
+  const dir = mkdtempSync(join(tmpdir(), 'baton-rt-repo-'));
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  execFileSync('git', ['config', 'user.email', 'baton@test.invalid'], { cwd: dir });
+  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: dir });
+  execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'base'], { cwd: dir });
+  return dir;
+}
 function stubAdapter(name, efforts, calls = []) {
   return {
     cb: null,
@@ -146,6 +156,36 @@ test('RT11.3: auto routing filters by effort and returns the tuple it scored', a
   assert.equal(highCalls[0].opts.reasoningEffort, 'high');
   assert.equal(lowCalls.length, 0);
   assert.equal(handle.routeKey, routeTupleKey(routed.card, 'gpt-exact', 'high', 'build'));
+});
+
+test('RT11.1/3/9: assembled direct and web auto routing dispatch only cards surviving exact effort filtering', async () => {
+  const lowCalls = []; const highCalls = [];
+  const low = stubAdapter('low-harness', ['low'], lowCalls);
+  const high = stubAdapter('high-harness', ['high'], highCalls);
+  const repoRoot = repo();
+  const { coordinator } = createDriver({
+    repoRoot, logDir: mkdtempSync(join(tmpdir(), 'baton-rt-driver-log-')), adapters: { low, high },
+    stopDeadlineMs: 100,
+  });
+  const direct = await coordinator.spawn('auto', brief(), {
+    taskId: 'assembled-direct-high', taskType: 'build', model: 'gpt-exact', effort: 'high',
+  });
+  assert.equal(direct.vendor, 'high');
+  assert.equal(highCalls.length, 1);
+  assert.equal(lowCalls.length, 0);
+
+  const northbound = Object.create(WebNorthbound.prototype);
+  northbound.coordinator = coordinator;
+  const response = await northbound._dispatch({ command: 'spawn', commandId: 'assembled-web', args: {
+    taskId: 'assembled-web-high', harness: 'auto', model: 'gpt-exact', effort: 'high', brief: brief(),
+  } }, 'web:u:s');
+  assert.equal(response.status, 200);
+  assert.equal(response.body.result.vendor, 'high');
+  assert.equal(highCalls.length, 2);
+  assert.equal(lowCalls.length, 0);
+
+  await Promise.all([coordinator.kill(direct.id, 'policy'), coordinator.kill(response.body.result.id, 'policy')]);
+  await until(() => coordinator.list().filter((handle) => [direct.id, response.body.result.id].includes(handle.id)).every((handle) => handle.status === 'dead'));
 });
 
 test('RT11.4/5: verified low/high runs learn distinct resolved tuple keys and replay full attribution', async () => {
