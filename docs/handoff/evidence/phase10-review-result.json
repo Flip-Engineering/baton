@@ -1,0 +1,150 @@
+{
+  "confirmed": [
+    {
+      "title": "SC1d test asserts only in-memory task status, not the durable lifecycle.crashed event — replay contract untested",
+      "file": "impl/test/phase10-completion.test.mjs",
+      "line": 204,
+      "claim": "The SC1d test ('a refused adapter spawn fails the task') asserts only `r.status === 'failed'`, which reads the in-memory `task.status` set directly at coordinator.mjs:253. It never asserts the `lifecycle.crashed` (payload.phase:'spawn') log event appended at coordinator.mjs:244-251, even though the implementation comment and spec justify the design by 'replay already folds it to failed'. No other test in the suite pins this event (grep for 'crashed'/'_onSpawnRefused' across coordinator.test.mjs, phase8-correctness.test.mjs, e2e.test.mjs finds nothing for this producer).",
+      "evidence": "impl/test/phase10-completion.test.mjs:198-205 (only assertion is on r.status); impl/src/coordinator.mjs:242-255 (_onSpawnRefused appends lifecycle.crashed AND sets task.status independently); impl/src/coordinator.mjs:944-961 (_replay derives 'failed' only from the logged lifecycle.crashed/forced_stop kinds; spawned+turn_started alone replays to 'working')",
+      "failureScenario": "Regression deletes (or typos the kind of) the `this._log.append({... kind: 'lifecycle.crashed', payload: {phase: 'spawn'} ...})` call in _onSpawnRefused while keeping `task.status = 'failed'`. All 411 tests stay green (SC1d passes on the in-memory status). A coordinator restart then replays a log containing only lifecycle.spawned + lifecycle.turn_started for the refused-spawn worker, and _replay() rebuilds the task as status 'working' with a 'working' handle — the exact zombie-stuck-in-working failure mode SC1d exists to kill, resurrected across every restart, and invisible to the story compiler.",
+      "severity": "major",
+      "dimension": "test-honesty",
+      "votes": [
+        {
+          "refuted": false,
+          "reasoning": "Verified by execution, not just code-reading. (1) The SC1d test (impl/test/phase10-completion.test.mjs:198-205) asserts only r.status === 'failed', and coordinator.result() (impl/src/coordinator.mjs:670-677) returns the in-memory task.status that _onSpawnRefused sets directly at coordinator.mjs:253, independent of the log append at 244-251. (2) Mutation test: I deleted the lifecycle.crashed append in _onSpawnRefused while keeping the status assignments and ran the full suite — 411/411 green (baseline also 411/411). No test pins this producer: all other 'crashed' assertions in the suite are adapter-tier (grok-acp, codex-appserver, claude-session, cli-adapters, adapter) or story tests that construct their own logs. (3) Replay consequence demonstrated end-to-end with a real file-backed Log: under the mutant, a refused spawn reads 'failed' before restart, but a second Coordinator over the same log dir replays the worker to status 'working' (result() = {ready:false,status:'working'}) because _replay (coordinator.mjs:944-958) folds spawned+turn_started to 'working' and derives 'failed' only from the logged lifecycle.crashed/control.forced_stop; with the original code the same restart correctly replays 'failed'. Every factual assertion in the claim holds, and the failure scenario (silent regression removing the append survives all 411 tests and resurrects the zombie-stuck-in-'working' mode across restarts) is concretely reproducible. The durable contract the commit itself cites as SC1d's justification is untested — a real, unhandled, uncaught test-coverage defect in the commit's new test. Working tree restored to HEAD after the experiment.",
+          "confidence": "high"
+        },
+        {
+          "refuted": false,
+          "reasoning": "VERIFIED REAL — the claim survived a full mutation-test reproduction in a hermetic checkout of b85c58d.\n\nEvery factual assertion checks out:\n(1) SC1d's only assertion is `r.status === 'failed'` (impl/test/phase10-completion.test.mjs:204), and `result()` reads in-memory `task.status` (impl/src/coordinator.mjs:663-670), never the log.\n(2) No test anywhere pins `lifecycle.crashed` from the coordinator's `_onSpawnRefused` producer — every `lifecycle.crashed` assertion in the suite is adapter-level (grok-acp.test.mjs, claude-session.test.mjs CS17, codex-appserver.test.mjs XA19, cli-adapters.test.mjs, adapter.test.mjs) or a story-kind constant. Notably, the D10 construction-replay test (coordinator.test.mjs:1294) exercises its 'failed' row via `verify.reverified{accept:false}`, not `lifecycle.crashed`, so even the generic crashed→failed replay mapping is untested with this producer.\n(3) The spec contract explicitly requires the durable event (spec/phase10/system-completion.md:48-53: \"appends `lifecycle.crashed` with `payload:{ error: reason, phase:'spawn' }`\" with the rationale resting on replay/story folding), so the untested half is contract surface, not incidental implementation.\n\nEmpirical kill attempt failed on both halves of the failure scenario. In a hermetic `git worktree` at b85c58d I applied the exact mutation (deleted the `_log.append` in `_onSpawnRefused`, coordinator.mjs:244-251, keeping `task.status='failed'`): the full suite ran 411/411 GREEN — the regression is invisible. Then a two-session repro against the mutated copy: session 1 spawns via a stub adapter returning `{ok:false}`; in-memory result is `failed` (SC1d would pass) but the log holds only `lifecycle.spawned` + `lifecycle.turn_started`; constructing a fresh Coordinator over the same log directory replays the task to `{ready:false, status:'working'}` with a 'working' handle — the exact zombie SC1d exists to kill, resurrected on restart. Against pristine b85c58d the same repro shows `lifecycle.crashed` in the log and replay preserving 'failed', confirming the shipped code is correct today and the defect is purely the missing durable-event assertion (a one-line `log.read(h.id)` check in SC1d would close it).\n\nCaveat for the orchestrator: the shared main working tree at /Users/wahargis/Development/Experiments/baton was being concurrently mutated/restored on this same code path by another process during my run (I observed `_onSpawnRefused`'s append deleted with a \"MUTATION-FOR-REVIEW\" marker, then restored); my verdict rests solely on the hermetic detached-worktree runs, and I removed that scratch worktree afterward. Main tree ended clean vs HEAD.",
+          "confidence": "high"
+        },
+        {
+          "refuted": true,
+          "reasoning": "The claim's factual predicates are true but it identifies no defect in commit b85c58d. (1) The committed code fully implements SC1d: _onSpawnRefused (coordinator.mjs:242-255) appends lifecycle.crashed with payload.phase:'spawn', sets task failed and handle exited; _replay (coordinator.mjs:955-957) folds lifecycle.crashed -> failed unconditionally (no turnEpoch/fence filtering in replay), so the refused-spawn log sequence (spawned e1, turn_started e2, crashed e2) replays to 'failed'. No input or state of the committed system produces the zombie — I traced the full path. (2) The test asserts exactly what the contract demands of it: spec/phase10/system-completion.md:58 defines the SC1d red test as 'coordinator zombie test (stub adapter returns ok:false -> task must become failed)', which phase10-completion.test.mjs:204 implements verbatim. The spec's replay discussion (lines 51-53) is the rationale for reusing the lifecycle.crashed kind, citing pre-existing, evidence-verified consumer behavior (coordinator.mjs replay, story.mjs CRASHED transition — the latter pinned by story.test.mjs:589); it creates no test obligation the commit failed. The finding misreads a design-rationale citation as an untested contract. (3) The stated failure scenario requires a hypothetical future regression that deletes the append — a code mutation, not an inputs/state -> wrong-behavior scenario, which the review's defect definition explicitly requires. Mutation-robustness arguments of this form indict nearly any single assertion in any suite. What remains is a test-hardening suggestion (assert the event in SC1d, or add a crashed row to the pre-existing D10 replay-table test, which predates this commit and never covered crashed), not a major defect in the change.",
+          "confidence": "high"
+        }
+      ],
+      "survives": true
+    },
+    {
+      "title": "SC8 session-card rows check shape only; the claimed 'values pinned by their own suites' backstop has holes (claude pause, codex answer/kill)",
+      "file": "impl/test/phase10-completion.test.mjs",
+      "line": 411,
+      "claim": "For the three session adapters, CARD_CASES sets expected=null (lines 412-414), so the SC8 test asserts only the 8-key shape and closed-set membership — any of native/emulated/unsupported passes for every verb. The justifying comment says values are 'pinned by their own suites', but claude-session.test.mjs pins 7 of 8 verbs (pause is never asserted) and codex-appserver.test.mjs pins 6 of 8 (answer and kill are never asserted); only grok-acp.test.mjs pins all 8.",
+      "evidence": "impl/test/phase10-completion.test.mjs:411-414, 427-429 (expected=null skips the value deepEqual); impl/test/claude-session.test.mjs:115-131 (no verbs.pause assertion); impl/test/codex-appserver.test.mjs:113-118 (no verbs.answer or verbs.kill assertion)",
+      "failureScenario": "ClaudeSessionCli.card() is edited to claim pause:'native' (no pause method exists), or CodexAppServerCli.card() drifts answer to 'native' without an implementation. All 411 tests stay green — 'native' is inside the closed set and the vendor suites never touch those keys — so a fleet operator's card claims a verb its adapter stubs out: the exact docs/22 overclaim pattern SC8 states it exists to prevent ('values honest to the implemented surface').",
+      "severity": "minor",
+      "dimension": "test-honesty",
+      "votes": [
+        {
+          "refuted": false,
+          "reasoning": "Empirically confirmed, not refuted. (1) Code trace matches every cited line: phase10-completion.test.mjs:412-414 set expected=null for ClaudeSessionCli/CodexAppServerCli/GrokAcpCli, and line 427's `if (expected)` skips the value deepEqual, so SC8 asserts only 8-key shape + closed-set membership for the session tier. (2) The line-411 comment's backstop claim is false for 3 slots: claude-session.test.mjs:115-131 pins 7/8 verbs (verbs.pause never asserted for ClaudeSessionCli anywhere in the suite — repo-wide grep shows verbs.pause only at codex-appserver.test.mjs:118 and grok-acp.test.mjs:127); codex-appserver.test.mjs:113-118 pins 6/8 (verbs.answer and verbs.kill asserted nowhere); grok-acp.test.mjs:120-127 pins all 8. glm-session.test.mjs:82-86 checks card key shape only. No runtime code reads card().verbs (grep over impl/src shows .verbs only at the card definition sites), so no behavioral test indirectly pins the values. (3) Decisive mutation run: with claude-session.mjs pause:'native' (no pause method exists anywhere in src or tests) and codex-appserver.mjs answer/kill:'emulated', bare `node --test` in impl/ passes 411/411 — the exact overclaim pattern SC8's spec contract (system-completion.md:215-217, 'each value is honest to the implemented surface') exists to prevent goes uncaught. One nuance the claim slightly overstates: for codex answer/kill the method-deleted overclaim direction would fail behavioral tests (codex-appserver.test.mjs:398 calls answer()), but the card-value drift direction is uncaught, and the claude pause scenario is a pure uncaught overclaim. Severity minor (test-coverage gap; shipped card values at b85c58d are honest) is accurate. Note: I found the working tree already carrying this exact labeled mutation (impl/src/claude-session.mjs, impl/src/codex-appserver.mjs modified before I touched anything, comments marked MUTATION-TEST) — placed by the verification workflow; I left it as found.",
+          "confidence": "high"
+        },
+        {
+          "refuted": false,
+          "reasoning": "Defect verified real and uncaught by direct mutation experiment. (1) Coverage counts confirmed: claude-session.test.mjs:115-131 pins 7/8 verbs (pause never asserted); codex-appserver.test.mjs:113-118 pins 6/8 (answer and kill card values never asserted — line 398 exercises the methods, not the card); grok-acp.test.mjs:120-127 pins all 8. (2) No backstop elsewhere: phase10-completion.test.mjs:412-414 sets expected=null so the line-427 deepEqual is skipped for all three session adapters; glm-session.test.mjs:82-86 checks only sorted keys; adapter.test.mjs/cli-adapters.test.mjs pin legacy/one-shot tiers only; coordinator/phase8 use fixture adapters. (3) No runtime code reads verb values (sole 'verbs.' reference in impl/src is a comment at grok-acp.mjs:563), so no behavioral test can detect card drift. (4) Reproduction: mutated claude-session.mjs:89 pause->'native' and codex-appserver.mjs:118-119 answer/kill->'emulated'; full suite ran 411/411 green (baseline also 411/411). Mutations reverted, tree clean, suite green. Minor imprecision in the claim: codex answer is already 'native' WITH an implementation, and stubbing the method would trip D1 behavioral tests — but the stated coverage hole is about card values, and any closed-set value passes unpinned for those keys, so the core claim stands. Severity 'minor' is appropriate: test-coverage gap in a lock-in test, no shipped behavior is wrong today.",
+          "confidence": "high"
+        },
+        {
+          "refuted": false,
+          "reasoning": "Every factual sub-claim verified, and the failure scenario was confirmed empirically by mutation. (1) phase10-completion.test.mjs:411-414 sets expected=null for ClaudeSessionCli/CodexAppServerCli/GrokAcpCli, so the SC8 test asserts only 8-key shape + closed-set membership for session tiers; the value deepEqual at :427-429 is skipped. (2) The justifying comment at :411 ('values pinned by their own suites') is verifiably false for 3 of 24 session verb values: claude-session.test.mjs pins 7/8 verbs (verbs.pause is never asserted anywhere — lines 117-131 cover approve/answer/steer/spawn/prompt/interrupt/kill only), codex-appserver.test.mjs pins 6/8 (verbs.answer and verbs.kill never asserted — lines 113-118 cover spawn/prompt/steer/interrupt/approve/pause); only grok-acp.test.mjs:120-127 pins all 8. A repo-wide grep over impl/test/ confirms no other test pins these three values, and card verbs are consumed nowhere in impl/src (comments only), so no behavioral test provides indirect coverage. (3) Mutation test: with ClaudeSessionCli.card() claiming pause:'native' (no pause method exists — verified: methods are spawn/prompt/interrupt/approve/answer/kill) and CodexAppServerCli answer/kill drifted to 'emulated' (both are real native implementations at codex-appserver.mjs:556/:578), the full suite runs 411/411 green — the exact scenario the claim describes. Contract-lens refutation attempts fail: SC8's stated red test is a 'card-shape + honesty assertion over every exported class', and the table's '(already canonical — locked as-is)' for session tiers demands the values stay fixed — an argument FOR pinning, not an exemption from it; the delivered test discharges the session-tier honesty obligation by pointing at vendor-suite pins that partially do not exist. This is precisely the docs/22 overclaim pattern SC8 says it closes. Severity 'minor' is correctly calibrated: current shipped values ARE honest (claude pause:'unsupported' matches the missing method; codex answer/kill:'native' match real implementations), so there is no live defect today — the defect is an unenforced lock in the commit's own SC8 test, justified by a false comment. That is a real, unhandled, uncaught test-gap finding of exactly the type this review targets. Working tree was restored to HEAD after the mutation experiment.",
+          "confidence": "high"
+        }
+      ],
+      "survives": true
+    }
+  ],
+  "killed": [
+    {
+      "title": "SC1d refusal handler clobbers a finalized kill: 'cancelled' task flips to 'failed' and a spurious lifecycle.crashed enters the log",
+      "severity": "critical",
+      "killedBy": []
+    },
+    {
+      "title": "SC4 queued send outlives the stop window: delivered to a cancelled worker and the trust gate resurrects the cancelled task to 'completed'",
+      "severity": "critical",
+      "killedBy": []
+    },
+    {
+      "title": "Dup-session guard is no longer atomic: the new await on worktreeReady lets two racing spawns for one worker create two children, leaking one unmanaged process",
+      "severity": "major",
+      "killedBy": []
+    },
+    {
+      "title": "worktreeReady resolving after a forced stop spawns a live, unmanaged worker for a dead handle",
+      "severity": "major",
+      "killedBy": []
+    },
+    {
+      "title": "Codex turn/start-failure refusal leaves a live child and a non-terminal session that the SC1d consumer never reaps",
+      "severity": "major",
+      "killedBy": []
+    },
+    {
+      "title": "Narrative counts one worker as both active and done, and 'done (verified)' persists from a stale verdict after later work fails",
+      "severity": "minor",
+      "killedBy": []
+    },
+    {
+      "title": "SC5d: 'non-crashed exited' is proxied by unrelated warning signals — crashed workers count as done; clean exits with budget warnings are dropped from doneCount",
+      "severity": "major",
+      "killedBy": []
+    },
+    {
+      "title": "SC1d half-implemented: a spawn() that REJECTS (rather than resolving {ok:false}) is still swallowed by .catch(noop) — the zombie stuck-in-'working' task the contract exists to eliminate",
+      "severity": "major",
+      "killedBy": []
+    },
+    {
+      "title": "Codex wire-stage spawn refusal (turn/start failure) now fails the task but leaks a live app-server child that neither side ever kills",
+      "severity": "minor",
+      "killedBy": []
+    },
+    {
+      "title": "kill()/interrupt() during spawn's worktreeReady await is a silent no-op; the vendor child is created afterward and becomes a permanently unkillable orphan",
+      "severity": "critical",
+      "killedBy": []
+    },
+    {
+      "title": "_deliver's slot-acquisition guard only checks 'stopping': a queued send delivers after the stop completes — resurrecting a cancelled task or claiming ok:true delivery to a dead worker",
+      "severity": "major",
+      "killedBy": []
+    },
+    {
+      "title": "codex turn/start failure refuses the spawn but leaks a live app-server child and a non-terminal session — SC1d marks the task failed while a real process (possibly a running turn) survives",
+      "severity": "major",
+      "killedBy": []
+    },
+    {
+      "title": "Session adapters ignore opts.timeoutMs — the wallMin budget the coordinator passes at dispatch is silently unenforced on the entire session tier",
+      "severity": "minor",
+      "killedBy": []
+    },
+    {
+      "title": "_onSpawnRefused's dedup guard checks a status ('exited') no other coordinator path ever sets, and it overwrites terminal state unconditionally",
+      "severity": "minor",
+      "killedBy": []
+    },
+    {
+      "title": "GLM env-probe tests can print a REAL ANTHROPIC_AUTH_TOKEN in test output on their failure path",
+      "severity": "major",
+      "killedBy": [
+        "The leak path cannot occur in the code as written. GlmSessionCli's constructor (impl/src/claude-session.mjs:518) unconditionally sets ANTHROPIC_AUTH_TOKEN in cfg.env (`token ?? ''`), and the child env",
+        "The claim's factual observations are accurate (the assertion messages at impl/test/glm-session.test.mjs:123/157 do interpolate the child-reported summary; saveEnv covers only Z_AI_API_KEY/ZHIPU_API_KE",
+        "The claimed leak is unreachable under commit b85c58d for any input or environment state; the reviewer's failure scenario requires a hypothetical FUTURE source mutation, not a state of the committed co"
+      ]
+    },
+    {
+      "title": "Claude driver-e2e tests carry no cwd proof — a wrong-cwd claude worker passes both SC3 driver tests",
+      "severity": "minor",
+      "killedBy": [
+        "The claim's observations are factually accurate but do not constitute a defect in commit b85c58d. (1) The governing contract explicitly assigns driver-level cwd-echo only to codex/grok: spec/phase10/s",
+        "The claim's factual observations are all accurate — both claude driver tests (phase10-driver-e2e.test.mjs:88-112) use HOLD_UNTIL_INTERRUPT with no cwd echo, the trust gate (verification 'true' in a fr",
+        "Refuted on the contract lens plus code verification. (1) The governing contract allocates the driver-level cwd-echo to SC10 (codex, grok) only: spec/phase10/system-completion.md:85-87 states \"The turn"
+      ]
+    }
+  ]
+}

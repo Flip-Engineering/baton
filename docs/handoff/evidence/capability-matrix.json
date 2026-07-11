@@ -1,0 +1,802 @@
+{
+  "counts": {
+    "SHIPPED": 41,
+    "UNSHIPPED-DEBT": 44,
+    "DELIBERATELY-FENCED": 22
+  },
+  "rows": [
+    {
+      "capability": "ACP core session lifecycle as a control plane (initialize, session/new, session/prompt, session/cancel, session/update, session/request_permission)",
+      "surface": "acp/grok",
+      "status": "SHIPPED",
+      "rationale": "impl/src/grok-acp.mjs drives the full ACP baseline against grok agent stdio: initialize handshake (protocolVersion 1), session/new spawn with cwd pinning, long-lived unbounded session/prompt as the turn, session/cancel interrupt (live-proven stopReason:'cancelled', session survives), session/update stream mapped to content.*, request_permission mapped to approve(). 8/8 live E2E verdicts. Driver-reachable via createDriver.",
+      "researchedSource": "docs/01-landscape.md §1; docs/reference/grok-build-cli.md"
+    },
+    {
+      "capability": "ACP session/load + session/resume (worker session resume without respawn)",
+      "surface": "acp/grok",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "high",
+      "rationale": "Researched and live-verified (loadSession capability advertised, sessions survive process kill and are session/load-able), but grok-acp.mjs never issues session/load — grep confirms zero occurrences. Every task pays a fresh spawn; a crashed worker's durable session is unrecoverable through the driver. Coordinator-restart persistence is fenced by docs/24 non-goals, but mid-run worker-session resume is not fenced anywhere.",
+      "researchedSource": "docs/reference/grok-build-cli.md §3.3; docs/01-landscape.md §1"
+    },
+    {
+      "capability": "ACP authenticate method / programmatic login (x.ai/auth get_url + submit_code, device auth)",
+      "surface": "acp/grok",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Adapter classifies the -32000 session/new auth gate as a typed spawn failure and stops; no programmatic authenticate flow. Quota-discipline constraint (creds presence-checked only) covers the testing posture but a headless fleet re-auth path is absent.",
+      "researchedSource": "docs/reference/grok-build-cli.md §3.2, §6"
+    },
+    {
+      "capability": "ACP bridge production patterns (orphan-result ledger, single-terminal-per-turn, keyed approval waits, anti-wedge auto-answer)",
+      "surface": "acp",
+      "status": "SHIPPED",
+      "rationale": "The claude-agent-acp/codex-acp lessons landed as contracts: CS11 trailing-result discard and CS16 no-events-after-terminal (claude-session.mjs), X3 -32601 auto-answer for unmapped server requests + X4 keyed waits map (codex-appserver.mjs), GA16 terminalTurns set (grok-acp.mjs). Test-locked.",
+      "researchedSource": "docs/reference/acp-bridge-lessons.md; docs/23-phase8-live-reeval.md"
+    },
+    {
+      "capability": "ACP _meta lossless side-channel consumption (per-turn usage telemetry)",
+      "surface": "acp/grok",
+      "status": "SHIPPED",
+      "rationale": "grok-acp.mjs maps the prompt response's _meta token accounting (totalTokens/input/output/cachedRead/reasoning/modelId) to resource.tokens{source:'promptMeta'} — the GA20 overturn, test-locked (F1).",
+      "researchedSource": "docs/reference/grok-build-cli.md erratum #2; docs/24 methodology item 4"
+    },
+    {
+      "capability": "Additional ACP vendor adapters (Gemini CLI --acp, Qwen Code, opencode acp, arbitrary agent_servers, PiCli)",
+      "surface": "acp",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "docs/24-goal-system-completion.md Non-goals: 'New vendor adapters (Gemini CLI ACP, Qwen Code, …) — matrix-documented, not adapter-built.' PiCli ships only as an honest-card placeholder in cli-adapters.mjs (spawn 'unsupported' until configured).",
+      "researchedSource": "docs/01-landscape.md §1; docs/02 §Also installed here; docs/24 §Non-goals"
+    },
+    {
+      "capability": "A2A five/six-state task lifecycle vocabulary (working, input_required, completed, failed, cancelled; immutable terminals)",
+      "surface": "a2a/coordinator",
+      "status": "SHIPPED",
+      "rationale": "Adopted verbatim into coordinator.mjs task statuses per docs/08. Honesty note: TERMINAL_TASK_STATUSES = {completed, failed} only, so result() on a cancelled task reports ready:false forever — a deviation from the researched immutable-terminal-cancelled semantics.",
+      "researchedSource": "docs/01-landscape.md §2; docs/08-shared-memory-and-pm.md line 38"
+    },
+    {
+      "capability": "A2A input-required pause/resume semantic (ask primitive, fleet_respond)",
+      "surface": "a2a/coordinator",
+      "status": "SHIPPED",
+      "rationale": "question.asked/approval.requested → task input_required + worker blocked; coordinator.respond(requestId, answer) resumes via adapter.answer()/approve() with single-consumer CAS and turn-epoch fencing (coordinator.mjs).",
+      "researchedSource": "docs/01 §2; docs/09-revision-log.md E1"
+    },
+    {
+      "capability": "A2A refinements-as-new-tasks (refines / referenceTaskIds links)",
+      "surface": "a2a/coordinator",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Task schema has deps[] for dependencies but no refines/referenceTaskIds link field; the researched refinement-lineage pattern (docs/08 'refinements are new tasks with refines: links') is absent. Low cost, low urgency for a single-box fleet.",
+      "researchedSource": "docs/01 §2; docs/08 line 38"
+    },
+    {
+      "capability": "A2A streaming/subscribe/status-artifact events (message-vs-artifact split)",
+      "surface": "a2a/coordinator",
+      "status": "SHIPPED",
+      "rationale": "The pattern doc 03 recommended stealing is shipped as the in-process analog: append-only JSONL ledger + wait() digest with attention/facts split, and WorkerResult.artifacts kept distinct from content.message events.",
+      "researchedSource": "docs/01 §2; docs/03-protocol-analysis.md §A2A"
+    },
+    {
+      "capability": "A2A federation between hubs, remote fleet, foreman posture, AgentCard serialization",
+      "surface": "a2a",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "docs/22 §5: 'Multi-machine / remote fleet, foreman posture, A2A federation, remote-control daemon + pairing — single box only.' docs/03: A2A is the designated inter-hub wire 'deferred until a second machine actually hurts.'",
+      "researchedSource": "docs/22-completeness-audit.md §5; docs/03 §A2A"
+    },
+    {
+      "capability": "MCP northbound: hub-as-MCP-server, hub daemon, fleet_* tools, fleet_wait long-poll bridge, resumable wait cursors, fleet_review/bakeoff",
+      "surface": "mcp/coordinator",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "docs/24 Non-goals: 'MCP northbound (baton exposed as an MCP server to other agents) — phase-11 candidate; this goal is the southbound control plane.' Confirmed 0 occurrences in src (docs/22 §6 item 2). Baton ships as an in-process library; wait() + durable Cursor floors are the in-process analog of fleet_wait, already shipped.",
+      "researchedSource": "docs/00-brief.md; docs/03 §MCP; docs/22 §6 item 2; docs/24 §Non-goals"
+    },
+    {
+      "capability": "MCP tasks extension mapping (tasks/get|update|cancel, notifications/tasks, task-augmented fleet verbs)",
+      "surface": "mcp",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "The five-status vocabulary is shipped in the coordinator so the DAG is exposable 'with no translation' the day the northbound lands, but the northbound itself is the phase-11 fenced item (docs/24 Non-goals). Adoption timeline in host clients remains a tracked open question (docs/01 §3).",
+      "researchedSource": "docs/01 §3; docs/03 §MCP; docs/24 §Non-goals"
+    },
+    {
+      "capability": "Harness-as-MCP-tool southbound (codex mcp-server, claude mcp serve)",
+      "surface": "mcp",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "Researched and rejected on evidence: codex-runtime dossier §9 records that OpenAI's own plugin never uses it, the codex/event surface is slated for removal, and 'app-server is the only production control surface.' Baton drives app-server/stream-json/ACP instead.",
+      "researchedSource": "docs/reference/codex-runtime.md §2, §9"
+    },
+    {
+      "capability": "Codex app-server session control plane (initialize handshake, thread/start, turn/start multi-turn, NDJSON framing without jsonrpc member)",
+      "surface": "codex",
+      "status": "SHIPPED",
+      "rationale": "impl/src/codex-appserver.mjs: initialize{clientInfo} → initialized → thread/start{cwd, sandbox, approvalPolicy, ephemeral:true} → turn/start with renderBrief(brief,'codex-v2'); multi-turn via new turn/start per prompt. Protocol model verified FAITHFUL against the real 0.144.0 schema bundle (docs/23). Driver-reachable.",
+      "researchedSource": "docs/reference/codex-app-server.md §3-§5; docs/23"
+    },
+    {
+      "capability": "codex turn/steer (native mid-turn redirection with expectedTurnId precondition)",
+      "surface": "codex",
+      "status": "SHIPPED",
+      "rationale": "prompt(mode:'steer') issues turn/steer{threadId, expectedTurnId, input}; live-verified mid-turn redirect and id-matched -32600 stale failure (docs/23 X1/X2). Reachable via coordinator.send(worker, msg, 'steer').",
+      "researchedSource": "docs/02 §Codex table; docs/reference/codex-app-server.md §5; docs/23"
+    },
+    {
+      "capability": "codex turn/interrupt with thread survival + 'then' follow-up",
+      "surface": "codex",
+      "status": "SHIPPED",
+      "rationale": "turn/interrupt RPC; confirmed stop is exclusively the turn/completed status:'interrupted' event (XA8/D9); thread and child survive; interrupt(worker, then) auto-issues the follow-up as a new turn after confirmation (R5.1). Live-reproduced.",
+      "researchedSource": "docs/reference/codex-app-server.md §5; docs/23"
+    },
+    {
+      "capability": "codex approval surface (commandExecution/fileChange requestApproval; accept/decline/cancel vocabulary; central answering)",
+      "surface": "codex",
+      "status": "SHIPPED",
+      "rationale": "approve() maps allow→accept, deny→decline, cancel→cancel over a keyed waits map, answer-exactly-once (XA9/X4); item/tool/requestUserInput answered via answer() (first-question-only, documented MVP scope XA12). Unmapped requests (item/permissions/requestApproval, item/tool/call) auto-answered -32601 + observable error — safe under the driver's hardcoded approvalPolicy:'never' but would auto-decline legit escalations if a caller opened approvals via direct adapter.spawn.",
+      "researchedSource": "docs/reference/codex-app-server.md §6; docs/23 X3/X4"
+    },
+    {
+      "capability": "codex per-thread sandbox/approvalPolicy configuration",
+      "surface": "codex",
+      "status": "SHIPPED",
+      "rationale": "Adapter-only: spawn() honors opts.sandbox/opts.approvalPolicy on thread/start, but coordinator._dispatch only passes {worktreeReady, timeoutMs}, so through createDriver every thread runs workspace-write + approvalPolicy 'never' + ephemeral:true (ephemeral not overridable at all). Policy variation requires direct adapter calls.",
+      "researchedSource": "docs/reference/codex-app-server.md §4"
+    },
+    {
+      "capability": "codex thread/inject_items (native context injection)",
+      "surface": "codex",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "medium",
+      "rationale": "Researched as baton's context-injection primitive; the shipped nudge is an emulated in-adapter buffer (nudgeQueue, XA7) prepended to the next turn — grep confirms inject_items is never called. Native injection would make nudges land in model-visible history immediately instead of waiting for the next turn/start.",
+      "researchedSource": "docs/reference/codex-app-server.md §4 thread/inject_items; docs/02 §Codex table"
+    },
+    {
+      "capability": "codex thread/resume, thread/fork, rejoin-running-thread semantics",
+      "surface": "codex",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "high",
+      "rationale": "Heavily researched (resume precedence rules, fork lastTurnId truncation, rejoin as the daemon reattach primitive) but codex-appserver.mjs never calls thread/resume or thread/fork — the comment at line 11 acknowledges the protocol is 'designed for exactly that'. Combined with claude/grok this is the fleet-wide session-reuse gap: every task is a cold spawn, no branch-and-explore, no crash recovery of a live thread.",
+      "researchedSource": "docs/reference/codex-app-server.md §4; docs/02 §Codex table"
+    },
+    {
+      "capability": "codex usage/rate-limit push telemetry (thread/tokenUsage/updated, account/rateLimits/updated)",
+      "surface": "codex",
+      "status": "SHIPPED",
+      "rationale": "Both wire sources mapped to resource.tokens{source:'tokenUsage'|'rateLimit'} (XA18) and logged as digest facts. The consumption side is the budget-enforcement debt row.",
+      "researchedSource": "docs/reference/codex-app-server.md §8"
+    },
+    {
+      "capability": "Quota-aware scheduling (account/usage/read, rateLimits/read polling, usageLimitExceeded handling, claude usage_EXPERIMENTAL, time-aware/peak-hour dispatch, degrade-to-fewer-seats)",
+      "surface": "cross-cutting/coordinator",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "medium",
+      "rationale": "Researched across all vendors (codex rateLimits snapshots, claude rate_limits utilization, GLM 3x peak multipliers) and designed into the harness-card/scheduler consequence in docs/01 §7 — but no proactive quota read, no time-aware dispatch, and no quota-driven seat reduction exists; only static concurrencyCeiling is enforced. Not fenced anywhere.",
+      "researchedSource": "docs/01 §7 design consequences; docs/reference/codex-app-server.md §8"
+    },
+    {
+      "capability": "codex schema introspection for runtime feature detection (generate-json-schema diff, features list probing)",
+      "surface": "codex",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Used as offline methodology (docs/23 verified the fake against the schema bundle) but the shipped card is static (verbs hardcoded, versionProbe = codex --version only); no schema-diff or features-list capability probe at construction, contradicting the interop doc's 'cards probed from installed binaries so they cannot drift'.",
+      "researchedSource": "docs/02 §Codex; docs/reference/context-harness/interop-unification.md §unified card"
+    },
+    {
+      "capability": "Harness-native goal pinning (codex thread/goal/set|get|clear, grok /goal command)",
+      "surface": "cross-cutting",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Researched on both wires; unused by both adapters. The brief's definitionOfDone/verification pinned at spawn already keeps the done-definition outside the transcript, so the marginal value is a periodic re-assert (which the unbuilt governance firewall would own).",
+      "researchedSource": "docs/02 §Codex extras; docs/reference/grok-build-cli.md erratum #10; docs/24 preamble"
+    },
+    {
+      "capability": "codex remote PTY control (command/exec, process/spawn|writeStdin|kill|resizePty)",
+      "surface": "codex",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "docs/22 §5: 'PTY/tmux tier-3' correctly cut. The exec/process notification family is also in the adapter's documented silent-ignore table (XA17/D3).",
+      "researchedSource": "docs/02 §Codex extras; docs/22 §5"
+    },
+    {
+      "capability": "codex remote-control daemon + pairing, cloud task submission, SSH foreman proxy topology",
+      "surface": "codex",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "docs/22 §5 defers 'remote-control daemon + pairing' with the whole multi-machine posture; single box only. The SSH-proxy foreman design is recorded for the fenced future.",
+      "researchedSource": "docs/reference/codex-app-server.md §11; docs/22 §5"
+    },
+    {
+      "capability": "codex shared-daemon/broker topology (unix-socket broker, single-flight -32001 contention, degrade-to-private-child fallback)",
+      "surface": "codex",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "medium",
+      "rationale": "docs/22 §4 planned '-32001 contention by falling back to a private child process'; the shipped adapter spawns one private child per worker unconditionally and treats -32001 during setup as a fatal typed failure, never retried (XA10). Works on a single box but wastes a process per worker and forfeits the researched OpenAI-plugin broker pattern. No fencing text found.",
+      "researchedSource": "docs/reference/codex-app-server.md §12; docs/22 §4"
+    },
+    {
+      "capability": "codex exec one-shot tier (exec --json typed events, exec resume, exec review)",
+      "surface": "codex",
+      "status": "SHIPPED",
+      "rationale": "Adapter-only: CodexCli in cli-adapters.mjs (parseCodexEvent unit-tested against real captures, live-gated, kill native/interrupt emulated) — D1-conformant but not exported from index.mjs and never registered in any adapters map at HEAD. Expansion is explicitly fenced: docs/24 Non-goals 'One-shot tier expansion — G10 normalizes its card honesty; nothing more.'",
+      "researchedSource": "docs/reference/codex-runtime.md §1; docs/22 §4"
+    },
+    {
+      "capability": "Structured result contracts (codex --output-schema / turn outputSchema, claude outputFormat json_schema)",
+      "surface": "cross-cutting",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "medium",
+      "rationale": "Researched as native result-contract enforcement (doc 06 Q6) on both vendors; neither session adapter passes an output schema, and WorkerResult.summary is free text truncated at 500 chars. Would harden the trust-gate handoff and machine-readable progress. Not fenced.",
+      "researchedSource": "docs/02 §Codex extras; docs/reference/claude-agent-sdk.md §2"
+    },
+    {
+      "capability": "Per-worker home/config isolation (CODEX_HOME, GROK_HOME, CLAUDE_CONFIG_DIR; user-config bleed prevention)",
+      "surface": "cross-cutting",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "medium",
+      "rationale": "Live-proven hazard: grok ACP sessions connected the user's global MCP servers and ran settings.local hooks despite mcpServers:[] (erratum #9 — 'fleet workers must isolate with GROK_HOME'). No adapter sets an isolated home dir by default; callers can pass env but nothing derives the minimal config dir. A fleet worker inheriting operator hooks/MCP servers is a correctness and safety leak.",
+      "researchedSource": "docs/reference/grok-build-cli.md erratum #9; docs/reference/codex-runtime.md §5; docs/reference/claude-agent-sdk.md §1"
+    },
+    {
+      "capability": "Cross-harness session migration (codex externalAgentConfig/detect|import, grok import)",
+      "surface": "cross-cutting",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Researched on both vendors as roadmap-grade; no baton consumer and no obvious fleet need until resume itself ships. Not fenced.",
+      "researchedSource": "docs/02 §Codex extras; docs/reference/grok-build-cli.md §2"
+    },
+    {
+      "capability": "Claude stream-json session control plane (dual-plane NDJSON, control_request/response, invocation constraints)",
+      "surface": "claude",
+      "status": "SHIPPED",
+      "rationale": "impl/src/claude-session.mjs speaks the full researched protocol: --print --input-format stream-json --output-format stream-json --verbose, persistent stdin, content+control planes, pendingControlRequests correlation, malformed-line tolerance, benign error responses for unknown control subtypes. Driver-reachable.",
+      "researchedSource": "docs/reference/claude-agent-sdk.md §7; docs/02 §Claude Code"
+    },
+    {
+      "capability": "Claude native mid-turn steer (user frame absorbed at next tool boundary)",
+      "surface": "claude",
+      "status": "SHIPPED",
+      "rationale": "The phase-8 flagship correction (CS7/E2): prompt(mode:'steer') writes the frame mid-turn with control.steer{midTurn} — no interrupt round-trip, no phantom events; live-proven ('REDIRECTED' single terminal). turn/nudge are wire-identical native frames.",
+      "researchedSource": "docs/23-phase8-live-reeval.md CS7/E2; docs/reference/claude-harness.md erratum (1)"
+    },
+    {
+      "capability": "Claude native interrupt (control_request subtype interrupt, <100ms, session survives, trailing-result discard)",
+      "surface": "claude",
+      "status": "SHIPPED",
+      "rationale": "interrupt() sends the control_request, correlates the control_response, marks the in-flight turn's result frame for discard (CS11). Documented decline inside the row: the coordinator's `then` follow-up argument is dropped by this adapter (codex/grok honor it) — a small intra-fleet asymmetry. still_queued receipt is not consumed (no queued-message model in the adapter).",
+      "researchedSource": "docs/reference/claude-harness.md erratum (4); docs/23"
+    },
+    {
+      "capability": "Claude interactive approvals (canUseTool via --permission-prompt-tool stdio; allow-with-updatedInput+toolUseID; deny; emulated cancel)",
+      "surface": "claude",
+      "status": "SHIPPED",
+      "rationale": "approve() implements the E3 wedge fix (bare allow is silently re-asked forever); cancel emulated as deny+interrupt:true with emulated:true (D1 no-silent-emulation). Gated on constructor approvals:true, honestly carded 'unsupported' otherwise (CS18).",
+      "researchedSource": "docs/reference/claude-agent-sdk.md §5; docs/23 CS12/E3"
+    },
+    {
+      "capability": "Claude MCP elicitation answering (question channel)",
+      "surface": "claude",
+      "status": "SHIPPED",
+      "rationale": "answer() replies to elicitation control_requests with {action, content:{value}}; question.asked/question.answered wired through coordinator.respond(). Requires approvals:true.",
+      "researchedSource": "docs/reference/claude-agent-sdk.md §2,§7"
+    },
+    {
+      "capability": "Claude permission modes + print-mode auto-deny default fix",
+      "surface": "claude",
+      "status": "SHIPPED",
+      "rationale": "E1: --permission-mode acceptEdits default (opt-out permissionMode:null) — the live-breaking auto-deny gap closed and live-proven. Full mode enum and mid-session setPermissionMode researched but only the spawn-time flag is used (mid-session reconfiguration is a separate debt row).",
+      "researchedSource": "docs/23 CS1/E1; docs/reference/claude-agent-sdk.md §2"
+    },
+    {
+      "capability": "Worker session resume/fork through the driver (claude --resume/--fork-session/resumeSessionAt, codex thread/resume|fork, grok session/load + x.ai/session/fork)",
+      "surface": "cross-cutting/coordinator",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "high",
+      "rationale": "The resume/fork primitive is one of the researched ten; every vendor ships it natively and all three dossiers pin it live/doc-grade. Shipped reality: ClaudeSessionCli has a constructor-time sessionId→--resume only (adapter-only, coordinator never sets it); codex and grok adapters never call their resume verbs; the coordinator has no resume/fork command at all. Result: no worker crash-recovery, no session reuse across tasks, no fork-and-explore. docs/24 fences only coordinator-process persistence, not worker session resume.",
+      "researchedSource": "docs/02 capability matrix resume/fork row; all three vendor dossiers"
+    },
+    {
+      "capability": "Claude hooks surface for orchestration (30-event enum, PreToolUse input rewrite, PostToolUse output rewrite, stop-gate decision:block, --include-hook-events observation, CLAUDE_ENV_FILE)",
+      "surface": "claude",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "medium",
+      "rationale": "The deepest single research vein (two dossiers' worth) with zero shipped consumers: claude-session.mjs registers no hooks, passes no --include-hook-events, and the production-grade stop-gate template (codex plugin pattern) is unused. Per-tool-call policy enforcement stronger than approvals is available and unexploited. Not fenced; docs/02 called PreToolUse 'steering stronger than message injection'.",
+      "researchedSource": "docs/reference/claude-harness.md §1; docs/02 §Claude Code"
+    },
+    {
+      "capability": "Claude inject-without-turn (SDKUserMessage shouldQuery:false, priority now|next|later)",
+      "surface": "claude",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Researched as 'baton's inject primitive'; the shipped adapter has no append-context-without-turn path (nudge starts or joins a turn). Low priority because mid-turn steer covers most redirection needs; true inject matters for governance-firewall-style context refresh.",
+      "researchedSource": "docs/reference/claude-agent-sdk.md §4 [d.ts:4401]"
+    },
+    {
+      "capability": "Mid-session reconfiguration (claude setModel/setPermissionMode/applyFlagSettings/setMcpPermissionModeOverride; codex sticky per-turn overrides)",
+      "surface": "cross-cutting",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Researched on both wires; no coordinator verb exists to reconfigure a live worker (model, effort, permission mode). Workers keep spawn-time config for life. Not fenced; low urgency for probe-sized MVP tasks.",
+      "researchedSource": "docs/02 §Claude Code; docs/reference/codex-app-server.md §5"
+    },
+    {
+      "capability": "Compaction awareness + governance firewall (constraint re-injection on compact; compact_boundary/thread/compacted telemetry)",
+      "surface": "cross-cutting",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "medium",
+      "rationale": "Researched on both wires (claude compact_boundary with preserved anchor, codex thread/compacted) and designed in docs/21 ('compaction loses guardrails, not just objectives'); no adapter surfaces compaction events and nothing re-injects constraints/DoD afterward. Long-running workers silently lose their guardrails. Not fenced.",
+      "researchedSource": "docs/21-frontier-features.md §Context; docs/reference/claude-agent-sdk.md §4"
+    },
+    {
+      "capability": "Claude control-plane introspection extras (getContextUsage, readFile, seedReadState, register_repo_root, mcp_call/mcp_message, dynamic MCP management)",
+      "surface": "claude",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "A large researched verb set with no shipped consumer. getContextUsage would feed the (also unbuilt) budget watchdog; the rest are conveniences. Not fenced.",
+      "researchedSource": "docs/reference/claude-agent-sdk.md §3,§7"
+    },
+    {
+      "capability": "File checkpointing / rollback (claude rewindFiles, grok x.ai/rewind/* snapshots)",
+      "surface": "cross-cutting",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Researched on both vendors (grok is 'the only harness with true file-level rollback'); unused. Largely redundant in baton's architecture: workers run in disposable git worktrees and the trust gate snapshots via captureCommit, so rollback = discard the worktree.",
+      "researchedSource": "docs/reference/claude-agent-sdk.md §2; docs/reference/grok-build-cli.md §3.4"
+    },
+    {
+      "capability": "Vendor-native multi-agent prior art (claude agent teams, --bg background agents, claude-squad, codex plugin broker/companion, stop-hook review gate)",
+      "surface": "cross-cutting",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "Studied as prior art to position baton, not as capabilities to ship: docs/01 §6 records agent-teams' 'single-vendor boundary is baton's reason to exist'; the broker/companion/stop-gate patterns were mined for contracts (X4, stop-gate template) rather than adopted wholesale. No doc proposes shipping them.",
+      "researchedSource": "docs/01-landscape.md §6; docs/02 §Codex plugin evidence"
+    },
+    {
+      "capability": "Claude adapter-as-daemon owning N children (per-process control asymmetry answer)",
+      "surface": "claude/coordinator",
+      "status": "SHIPPED",
+      "rationale": "The researched shape ('a small daemon owning N child processes') landed as the coordinator process itself: one ClaudeSessionCli child per worker inside one driver process. A standalone reattachable daemon is fenced with the MCP-northbound/hub-daemon non-goal (docs/24) and coordinator-persistence non-goal.",
+      "researchedSource": "docs/02 §Key asymmetry; docs/24 §Non-goals"
+    },
+    {
+      "capability": "Claude reinitialize daemon-reattach primitive",
+      "surface": "claude",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "Researched as 'the reattach primitive baton doc 02 said Claude lacked', but its only baton use-case is surviving a coordinator/transport restart — docs/24 Non-goals: 'Coordinator persistence/resume across process restarts — out unless a confirmed gap forces it (none does).'",
+      "researchedSource": "docs/reference/claude-agent-sdk.md §3; docs/24 §Non-goals"
+    },
+    {
+      "capability": "GLM harness via Claude Code + Z.ai Anthropic endpoint (env wiring, model mapping, ceiling 1)",
+      "surface": "glm",
+      "status": "SHIPPED",
+      "rationale": "GlmSessionCli (claude-session.mjs subclass, SC6) driver-reachable and index-exported: ANTHROPIC_BASE_URL/AUTH_TOKEN from Z_AI_API_KEY/ZHIPU_API_KEY, model→OPUS/SONNET map env vars, harness 'glm-via-claude-session', concurrencyCeiling 1 derived from Z.ai Pro. Every session verb (steer/interrupt/approvals) inherited. One-shot ZCodeCli duplicate exists adapter-only.",
+      "researchedSource": "docs/01 §5; docs/02 §GLM; docs/24 DoD item 6"
+    },
+    {
+      "capability": "GLM non-refuser capability tags + deterministic domain routing (SC7)",
+      "surface": "glm/coordinator",
+      "status": "SHIPPED",
+      "rationale": "card().nonRefuserFor defaults to ['ml-ai-inference-training','cybersecurity']; createDriver's route() restricts the feasible pool to capable vendors when taskType matches, feasibility-first so a saturated vendor never strands a task. Closes the G11 gap doc 24 recorded as open.",
+      "researchedSource": "docs/23 re-steer item 3; docs/24 G11/DoD item 5"
+    },
+    {
+      "capability": "GLM live verification (Z.ai credential smoke of the session tier)",
+      "surface": "glm",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "medium",
+      "rationale": "Doc 24 DoD gates the GLM live smoke on credential presence and records PENDING-LIVE if absent; G11 found Z.ai env unset. The GlmSessionCli code path is fake/conformance-tested but has never run against the real endpoint — per the standing live-smoke rule the adapter 'is not done' until it does.",
+      "researchedSource": "docs/24 DoD item 6, §Standing constraints"
+    },
+    {
+      "capability": "GLM contractual/concurrency constraints as scheduler inputs (quota tiers, peak multipliers, ToS harness restriction)",
+      "surface": "glm",
+      "status": "SHIPPED",
+      "rationale": "The parts the design demanded of the harness card are shipped: ceiling 1 encoded, officially-sanctioned harness (Claude Code) used, auth token never printed. The time-aware/quota-aware remainder is covered by the quota-aware-scheduling debt row.",
+      "researchedSource": "docs/01 §7; docs/02 §GLM"
+    },
+    {
+      "capability": "Grok ACP adapter full verb set (spawn/prompt/interrupt/approve/kill native; live 8/8 E2E)",
+      "surface": "grok",
+      "status": "SHIPPED",
+      "rationale": "impl/src/grok-acp.mjs, driver-reachable and index-exported; live E2E ledger at docs/reference/evidence/grok-0.1.216/. Includes the auth-gate typed failure, adapter-minted turn ids, single-terminal policy, and the refusal→lifecycle.crashed signal that feeds the non-refuser routing story (GA18).",
+      "researchedSource": "docs/reference/grok-build-cli.md §9 + erratum"
+    },
+    {
+      "capability": "Grok steer emulation with mandatory cancel-first ordering (queue-not-splice finding)",
+      "surface": "grok",
+      "status": "SHIPPED",
+      "rationale": "Live probe settled the semantics (mid-turn prompts queue; cancel kills active+queued); the adapter implements GA13 cancel-then-reprompt with steerPending marker, emits control.steer{emulated:true}, and the card honestly declares steer 'emulated'. The one-turn-at-a-time guard protects against the silent-queue footgun.",
+      "researchedSource": "docs/reference/grok-build-cli.md erratum #4; docs/24 methodology item 4"
+    },
+    {
+      "capability": "Grok ask-user / answer() verb",
+      "surface": "grok",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "GA12 named gap: 'answer() unsupported on the grok ACP wire — no ask-user primitive', deliberately not emulated per D1 no-silent-emulation; carded 'unsupported'. This is documented fencing in the adapter contract, not an oversight.",
+      "researchedSource": "docs/reference/grok-build-cli.md §9 GA12"
+    },
+    {
+      "capability": "Grok client fs/terminal capability delegation (x.ai fs/terminal server→client traffic)",
+      "surface": "grok",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "GA6 deliberate decline: adapter initializes with fs.readTextFile:false, writeTextFile:false, terminal:false and mcpServers:[] — 'baton deliberately delegates NO client-side fs/terminal to the worker's agent'; anything sent anyway is -32601 auto-answered observably.",
+      "researchedSource": "impl/src/grok-acp.mjs GA6; docs/reference/grok-build-cli.md §3.1"
+    },
+    {
+      "capability": "Grok x.ai/* extension surface usage (git/worktree, search, prompt_history, compact_conversation, share_session, telemetry)",
+      "surface": "grok",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "72-method catalog researched; none invoked. Baton's own worktree manager and log substrate cover the worktree/history needs; programmatic compaction could matter for long sessions but nothing consumes it. Not fenced beyond the GA6 client-delegation decline.",
+      "researchedSource": "docs/reference/grok-build-cli.md §3.4"
+    },
+    {
+      "capability": "Grok multi-client attach (agent serve WebSocket, agent leader shared process)",
+      "surface": "grok",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Researched with leader multiplexing semantics flagged as an open unknown; adapter uses a private stdio child per worker, which is sufficient single-box. Multi-machine attach is fenced with the remote-fleet cut; local observer attach is unfenced but low value until a monitor UI exists.",
+      "researchedSource": "docs/reference/grok-build-cli.md §2, Open unknowns"
+    },
+    {
+      "capability": "Grok --best-of-n parallel attempts / --check self-verification",
+      "surface": "grok",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "docs/22 §5 retired framings include 'best-of-N ensemble — correctly stood down'; self-verification by the worker contradicts the trust-gate principle (driver re-runs checks itself, never worker self-report).",
+      "researchedSource": "docs/reference/grok-build-cli.md §4; docs/22 §5"
+    },
+    {
+      "capability": "Harness sandbox configuration (grok kernel profiles/GROK_SANDBOX, codex named permission profiles, claude sandbox settings)",
+      "surface": "cross-cutting",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Researched in depth on all three; baton's isolation story is the git worktree + trust gate, and codex threads do get sandbox 'workspace-write'. Kernel-grade sandboxing of fleet workers is unconfigured and the grok silent-degrade-to-unenforced warning is unmonitored. Not fenced.",
+      "researchedSource": "docs/reference/grok-build-cli.md §7; docs/reference/codex-runtime.md §6"
+    },
+    {
+      "capability": "Harness version pinning / auto-update control for fleet workers",
+      "surface": "cross-cutting",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Dossiers recommend disabling grok auto-update and regenerating codex schemas per release; shipped cards carry a probed or static version string but nothing pins or verifies binaries at spawn. SDK/CLI lockstep hazards documented for claude.",
+      "researchedSource": "docs/reference/grok-build-cli.md Limitations #7; docs/reference/claude-agent-sdk.md Limitations(2)"
+    },
+    {
+      "capability": "Fleet driver core loop (spawn/watch/steer/interrupt/answer/re-verify across vendors)",
+      "surface": "coordinator",
+      "status": "SHIPPED",
+      "rationale": "createDriver() + Coordinator's 8 commands over three live-proven session adapters (Claude, Codex, Grok) plus GLM subclass and MockAdapter; the north-star loop exists end-to-end at driver level. Caveat: live multi-vendor capstone evidence is the doc-24 DoD; fake-backed E2E is what tests exercise.",
+      "researchedSource": "docs/19-north-star-corrected.md; docs/24 §The goal"
+    },
+    {
+      "capability": "AI-drives / deterministic-plumbing split",
+      "surface": "coordinator",
+      "status": "SHIPPED",
+      "rationale": "The coordinator is a deterministic non-LLM program: injectable clock, no process.env reads, no model calls; dispatch/fencing/verification/event-log are exact. The orchestrating agent sits above createDriver as designed.",
+      "researchedSource": "docs/19 §The one reconciliation"
+    },
+    {
+      "capability": "Independent verification trust gate (fresh-worktree re-run, forge-catch, claim-divergence, pinned verification)",
+      "surface": "coordinator",
+      "status": "SHIPPED",
+      "rationale": "referee.verify() in a freshVerifySandbox with SameWorktreeError guard; verification command pinned from the brief at spawn; forged 'completed' yields failed (R4); claim divergence detected without trusting worker exit codes (R2). Wired as the sole done-gate via referee.accept() (C1, doc-24-verified fixed).",
+      "researchedSource": "docs/19; docs/21 headline; docs/22 §2"
+    },
+    {
+      "capability": "Red→green gate (acceptance test fails at base sha, passes after change)",
+      "surface": "coordinator",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "high",
+      "rationale": "Built-but-unwired in the classic sense: referee supports opts.baseSandbox and computes redGreen, but index.refereeFn passes opts={} and never builds a base sandbox — verdict.redGreen is ALWAYS null through createDriver, so createDriver({requireRedGreen:true}) would reject every task. A headline docs/21 feature whose flag is exposed on the public API yet cannot work. No fencing text.",
+      "researchedSource": "docs/21 headline table; docs/23 C1 row; impl referee.mjs baseSandbox"
+    },
+    {
+      "capability": "Coverage-of-change gate",
+      "surface": "coordinator",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "medium",
+      "rationale": "Implemented in referee but unreachable twice over: createBrief() silently strips verification.coverageCommand, and nothing computes task.changedLines (worktree.changedLines() has no caller). requireCoverage:true is likewise a poisoned flag. Not fenced.",
+      "researchedSource": "docs/21 headline table; impl referee.mjs/messages.mjs/worktree.mjs"
+    },
+    {
+      "capability": "Mutation probe (plant faults in changed lines, verify tests catch them)",
+      "surface": "coordinator",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Researched (Meta ACH basis), never started; no fencing text. Ranks below red→green/coverage since those are prerequisites in the same hardening ladder.",
+      "researchedSource": "docs/21 headline table"
+    },
+    {
+      "capability": "Independent oracle (different vendor writes gate tests blind from the pinned spec)",
+      "surface": "cross-cutting",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "medium",
+      "rationale": "Researched as the defeat of worker-grades-own-homework; absent. The E2 decorrelation EVAL is fenced to phase 11 (docs/24) but the oracle FEATURE has no fencing text; it is now buildable since the multi-vendor session fleet exists.",
+      "researchedSource": "docs/21 headline table (Independent oracle)"
+    },
+    {
+      "capability": "Impact-selected test re-run (regression test selection in the trust gate)",
+      "surface": "coordinator",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Researched; the trust gate re-runs only the single pinned command, which already bounds cost for MVP briefs. No fencing text.",
+      "researchedSource": "docs/21 headline table"
+    },
+    {
+      "capability": "Cross-vendor review pass before the trust gate",
+      "surface": "cross-cutting",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "medium",
+      "rationale": "Called 'the value the whole cross-vendor premise rests on' (docs/21) and now mechanically possible with three vendors live, but no review step exists in the pipeline. Its preferred representation (semantic diff) is fenced (docs/22 §5), but a plain-diff cross-vendor review is not fenced anywhere.",
+      "researchedSource": "docs/21 §Cross-vendor review; docs/22 §5"
+    },
+    {
+      "capability": "Semantic diff, structured (syntax-aware) merge, effect tripwire",
+      "surface": "cross-cutting",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "docs/22 §5: 'semantic diff/merge, structured merge + effect tripwire — deferred bets.'",
+      "researchedSource": "docs/21 §Representation; docs/22 §5"
+    },
+    {
+      "capability": "Merge/integration step + git-push approval gate (lifecycle beyond a verified branch)",
+      "surface": "coordinator",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "high",
+      "rationale": "docs/22 §6 item 5 names these missing MVP behaviors explicitly (not deferred): the lifecycle stops at a verified baton/<taskId> branch with no merge step, and git push is not approval-gated (the irreversible-side-effect gate is absent). Of the three named items only .baton git-exclusion was fixed (doc 24 G8). Branches also accumulate (reap never deletes them). Without merge, a 'completed' fleet task still requires manual integration.",
+      "researchedSource": "docs/22 §6 item 5; docs/24 G8"
+    },
+    {
+      "capability": "Delegation-contract brief (objective, scope paths, DoD, exact verification command, per-vendor rendering)",
+      "surface": "cross-cutting",
+      "status": "SHIPPED",
+      "rationale": "createBrief()/validateBrief() (D2, deep-frozen, index-exported) + renderBrief dialects codex-v2/grok-acp + renderPrompt for claude sessions. Caveat: coordinator.spawn() accepts raw un-validated brief objects without calling validateBrief.",
+      "researchedSource": "docs/21 §Better briefs; docs/22 §2"
+    },
+    {
+      "capability": "Plan-gate (worker plan approved before budget spend)",
+      "surface": "coordinator",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "medium",
+      "rationale": "docs/22 §3 records it as STUB — 'brief typedef mentions planGate, no enforcement code' — and nothing changed at HEAD; plan session/update variants from grok are even in the deliberate-ignore table. Reuses the existing question channel, so the build cost is low relative to burn-prevention value. Not fenced.",
+      "researchedSource": "docs/21 §Better briefs; docs/22 §3"
+    },
+    {
+      "capability": "Structured machine-readable task-ledger in the worker's worktree",
+      "surface": "cross-cutting",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Researched (crash-resumed worker reads it back; coordinator reads real progress); absent. Value is coupled to the also-absent resume path. Not fenced.",
+      "researchedSource": "docs/21 §Better briefs"
+    },
+    {
+      "capability": "Story compiler (deterministic narrative fold, dedup/gap/legal-transition guards, renderNarrative)",
+      "surface": "coordinator",
+      "status": "SHIPPED",
+      "rationale": "story.mjs pure fold wired as the coordinator's log sink; verify.reverified folds into 'done (verified)' (SC5c/d, closing the doc-24 G7 render gap); kill.confirmed is in the KIND vocabulary (G12 closed). Narrative renders via driver.story.narrative().",
+      "researchedSource": "docs/21 §Monitoring; docs/22 §2; docs/24 G7/G12"
+    },
+    {
+      "capability": "Hub watchdog: stall/loop/budget signals wired to action (health.* attention, loop-auto-interrupt)",
+      "surface": "coordinator",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "high",
+      "rationale": "story.signals() computes stalled/looping/over_budget/out_of_scope, but the coordinator NEVER consumes signals — its digest listens for health.stall_suspected/health.loop_suspected/resource.budget_threshold kinds that nothing emits (grep-verified), and the live adapters' payload field names (tokenUsage, {command,exit}, {changes}) don't match what signals() expects, so at driver level three of four signals are fed only by MockAdapter. docs/22 §6 item 4 names the watchdog 'that runs without a model turn' as a top gap. A hung or looping real worker today burns quota until a human notices.",
+      "researchedSource": "docs/22 §6 item 4; impl story.mjs/coordinator.mjs"
+    },
+    {
+      "capability": "Budget enforcement end-to-end (accumulate budgetUsed, emit resource.budget_threshold, budget_alarm attention, hard-stop; session wall-clock bound)",
+      "surface": "coordinator",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "high",
+      "rationale": "docs/22 §6 item 4 named it; still open at HEAD: handle.budgetUsed is permanently zeros, resource.budget_threshold is never emitted, and brief.budget.wallMin→timeoutMs is passed to spawn but IGNORED by all three session adapters (unit-only), so session workers have NO wall-clock, token, or dollar bound — only interrupt/kill/stopDeadline. All the inputs exist (claude result usage, codex tokenUsage, grok _meta) and are already logged as resource.tokens; the fold into enforcement is the missing piece. The operator's 'budget enforcement' suspicion is confirmed.",
+      "researchedSource": "docs/22 §3, §6 item 4; impl coordinator.mjs budget surface"
+    },
+    {
+      "capability": "OpenTelemetry GenAI telemetry emission (rented dashboards)",
+      "surface": "cross-cutting",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Explicit 'rental' decision in docs/21 (emit OTel GenAI, no in-house dashboard) — the decision not to build a dashboard is documented, but the emission side was affirmed and never built. The JSONL ledger is the sole telemetry sink. Low priority until a monitoring consumer exists.",
+      "researchedSource": "docs/21 §Monitoring"
+    },
+    {
+      "capability": "Live fleet graph with lease/fact provenance; path leases",
+      "surface": "coordinator",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Depends on the leases + shared-scratchpad substrate; only fragments exist (brief.pathScope, story out_of_scope signal, unit-only pathScopeCollisions()). Fleet memory / shared blackboard it visualizes is itself fenced as 'vision, unbuilt' (docs/22 §5), so this trails it.",
+      "researchedSource": "docs/21 §Monitoring; docs/22 §5"
+    },
+    {
+      "capability": "Structured postmortem on trust-gate rejection",
+      "surface": "coordinator",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "medium",
+      "rationale": "Researched (log + failed re-run → reusable fact for the next worker); shipped reality is verdict.observedOutputTail (4000 chars) and note fields on the verdict — raw material, no synthesis, and nothing hands it to a retry worker. Not fenced; value rises as soon as retries/refinements exist.",
+      "researchedSource": "docs/21 §Debugging"
+    },
+    {
+      "capability": "Bug-signature memory + fleet cross-run memory, contradiction-gated recall",
+      "surface": "coordinator",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "Bug-signature memory is 'labeled a BET — unproven payoff' (docs/21) and docs/22 §5 fences 'Fleet memory (cross-run) … — vision, unbuilt'; contradiction-gated recall guards that same unbuilt memory plane.",
+      "researchedSource": "docs/21 §Debugging, §Context; docs/22 §5"
+    },
+    {
+      "capability": "Tools-as-code bridge (run(code) surface / code-mode northbound)",
+      "surface": "cross-cutting",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "docs/21: 'labeled rental, deferred until several tools exist'; also rides the fenced MCP northbound.",
+      "researchedSource": "docs/21 §Context; docs/reference/context-harness/interop-unification.md"
+    },
+    {
+      "capability": "Periphery-only self-evolution rule (nothing self-modifies coordinator or trust gate)",
+      "surface": "coordinator",
+      "status": "SHIPPED",
+      "rationale": "Honored trivially and structurally: no self-modification path exists anywhere in impl; the walled-off research bets (behavioral fingerprinting, e-graphs, edit-level bisect, learned brief-evolution, Salsa substrate) remain unbuilt as mandated.",
+      "researchedSource": "docs/21 §Add/subtract/modify"
+    },
+    {
+      "capability": "Adaptive routing: (model-version, task-type) buckets, exponential decay, predecessor seeding, UCB bandit, verified-wins-only learning",
+      "surface": "coordinator",
+      "status": "SHIPPED",
+      "rationale": "AdaptiveRouter (router.mjs) implements all five docs/20 rules and is genuinely wired (doc-24 G6 verified fixed): createDriver's route() calls router.pick() for vendor 'auto' with null-means-queue, and route.record() learns strictly from the trust gate's accept boolean (throws on self-report). EPSILON gate judged acceptable (docs/23).",
+      "researchedSource": "docs/20-adaptive-routing.md; docs/24 G6"
+    },
+    {
+      "capability": "Operator routing overrides (pin/exclude/newest-first)",
+      "surface": "coordinator",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Researched as a layer on top of learned routing; not implemented — the only override-like mechanism is fixed-vendor spawn and SC7 nonRefuserFor restriction. Not fenced.",
+      "researchedSource": "docs/20 §What it looks like in practice"
+    },
+    {
+      "capability": "Router state persisted in the event log (replayable routing)",
+      "surface": "coordinator",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "docs/20 designed the router to read verified outcomes from the log so routing is replayable; shipped router learns live from _runTrustGate but is in-memory only — snapshot() exists, nothing persists it, and _replay does not refeed router buckets. Partially shadowed by the fenced coordinator-persistence non-goal, but the 'operator can see why it routed' half is independent and unbuilt.",
+      "researchedSource": "docs/20 §Where it lives; docs/24 §Non-goals"
+    },
+    {
+      "capability": "Elixir/OTP (or Go) coordination core",
+      "surface": "coordinator",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "docs/22 §5: 'Elixir/OTP production core port — cut; MVP stays TypeScript (doc 17).'",
+      "researchedSource": "docs/17; docs/19 table; docs/22 §5"
+    },
+    {
+      "capability": "Capability plane / worker capability tools (search, repo_map, test-rung ladder, ACI envelope, ledger-cost, atlas, scorecard)",
+      "surface": "cross-cutting",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "docs/22 §5: 'Entire capability plane … Deferred by design (doc 19)', with the recorded caveat that its mvp-contract labels still weigh on the contract percentage — deferred, but the docs themselves flag it as counted debt.",
+      "researchedSource": "docs/11; docs/19 table; docs/22 §5"
+    },
+    {
+      "capability": "Ten-primitive capability vocabulary as the adapter contract",
+      "surface": "coordinator",
+      "status": "SHIPPED",
+      "rationale": "Landed as the 8-verb D1 contract (card/spawn/prompt/interrupt/approve/answer/kill/onEvent) + prompt modes: spawn/prompt/stream(onEvent)/interrupt/steer/approve are fully live; inject survives only as emulated nudge; resume/fork is the high-priority debt row; usage is events-only (no enforcement); health is partial (crash/exit live, stall/loop unfed). Roughly 6.5 of 10 primitives are real at driver level.",
+      "researchedSource": "docs/02 §The capability vocabulary; spec/adapter-contract.md"
+    },
+    {
+      "capability": "Capability-negotiated hub: harness cards with per-verb native/emulated/unsupported + graceful degradation with emulated:true telemetry",
+      "surface": "coordinator",
+      "status": "SHIPPED",
+      "rationale": "Every adapter publishes card().verbs; grok steer is honestly 'emulated' with cancel-first emulation flagged emulated:true in events and results; one-shot cards normalized to the canonical 8 keys (G10/SC8). The 'support atom' from the interop doc is the shipped negotiation mechanism. Runtime probing of cards (vs static declaration) remains thin — only version is probed.",
+      "researchedSource": "docs/02 §Design consequence; docs/22 §4; docs/24 G10"
+    },
+    {
+      "capability": "Per-vendor concurrency ceilings enforced in dispatch",
+      "surface": "coordinator",
+      "status": "SHIPPED",
+      "rationale": "card().concurrencyCeiling checked on every dispatch (in-flight = working+stopping+blocked); GLM 1, others 4. The auth-posture knob is informational-only on cards (no API-key fallback switching), covered under quota-aware-scheduling debt.",
+      "researchedSource": "docs/01 §7; impl coordinator.mjs dispatch"
+    },
+    {
+      "capability": "Coordinator durability spine: append-only JSONL ledger, gap-free seq, construction replay (D10), durable ack cursors (D11), fence primitives, approvals CAS, two-phase confirmed-stop with real deadline timer, append-failure observability",
+      "surface": "coordinator",
+      "status": "SHIPPED",
+      "rationale": "All verified in docs/22 §2 and doc-24 phase B (G2/G4 fixed): log-is-truth replay rebuilds statuses cross-process, cursors re-serve un-acked digests, C4 unref'd timer drives forced stop. Known shipped gaps recorded honestly: replayed handles lose vendor/worktree/budget, _pending not rebuilt (respond() after crash → not_found), fences reset to baseline — all shadows of the fenced coordinator-persistence non-goal.",
+      "researchedSource": "docs/22 §2; docs/24 G2/G4"
+    },
+    {
+      "capability": "Worktree lifecycle mechanics (pin base sha, createFromBase, captureCommit with vendor trailers, fresh verify sandbox, reap, boot reconcile, .baton exclusion)",
+      "surface": "coordinator",
+      "status": "SHIPPED",
+      "rationale": "worktree.mjs fully driver-wired including C5 vendor attribution (doc-24 G3 fixed) and G8 ensureBatonExcluded. Shipped-but-inert edges: markStopped/changedLines/listWorktrees/audit-events have no driver caller; reconcile always runs with expected=[] so surviving worker worktrees are zombie-swept on restart (consistent with the persistence non-goal).",
+      "researchedSource": "docs/22 §2; docs/24 G3/G8"
+    },
+    {
+      "capability": "Stigmergic-coordination cuts (worker↔worker chat, fleet_chat, public BatonProtocol spec, approve(edit), pause verb)",
+      "surface": "coordinator",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "docs/22 §5: 'correctly cut; coordination stays stigmergic.' The pause verb's fencing is enforced in code: every card declares pause 'unsupported' (R3 deliberate decline).",
+      "researchedSource": "docs/22 §5; R3 in adapter cards"
+    },
+    {
+      "capability": "Eval program: M0 steer/interrupt latency, M1 arms, E2 cross-vendor decorrelation",
+      "surface": "cross-cutting",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "docs/24 Non-goals: 'E2 cross-vendor decorrelation eval (docs/23) — phase 11; it needs the completed fleet this goal delivers.' M0-class behavioral questions (turn/steer splice semantics, grok queueing) were meanwhile answered by the phase-8 live probes.",
+      "researchedSource": "docs/22 §6 item 8; docs/24 §Non-goals"
+    },
+    {
+      "capability": "Verification methodology assets: provenance-tagged dossiers, numbered contracts (D/R/X/GA/SC), live-capture-shaped fakes, evidence ledger, live-smoke gate, re-derive-never-re-read, gap-verify agents",
+      "surface": "cross-cutting",
+      "status": "SHIPPED",
+      "rationale": "Process capabilities fully in force: docs/reference/<harness>.md with [live]/[help]/[doc] tags, contract-ID tests and errata, protocol doubles corrected from live captures (F1/F2/GA20 overturns), raw JSONL under docs/reference/evidence/, 372/372 green with three live-proven session adapters.",
+      "researchedSource": "docs/23 §Why this document exists; docs/24 §Methodology"
+    },
+    {
+      "capability": "Session-mode as product posture (one-shot as labeled fire-and-forget tier only)",
+      "surface": "cross-cutting",
+      "status": "SHIPPED",
+      "rationale": "Session adapters are index-exported (SC2 'the session tier IS the product surface'); one-shot CliAdapter family is honest-carded, live-gated, unregistered at HEAD, and its expansion is fenced (docs/24). route() first-listed-wins collision rule lets both tiers share a harness@version deterministically.",
+      "researchedSource": "docs/22 §4 Recommendation; docs/24 §Standing constraints"
+    },
+    {
+      "capability": "wait()-digest long-poll with provenance-typed facts and attention items",
+      "surface": "coordinator",
+      "status": "SHIPPED",
+      "rationale": "wait(timeoutMs) polls tick+digest with durable per-worker cursors, attention mapping for question/approval, hub-computed fact stamping. Shipped stubs noted: prose:[] and more:false are hardcoded; budget/stall/loop attention kinds are declared-but-unfed (see watchdog row); the messages.mjs createDigest/ATTENTION_TYPES helpers are bypassed (coordinator hand-builds, uses 'stall'/'loop' strings not in ATTENTION_TYPES).",
+      "researchedSource": "docs/03 §MCP; docs/22 §2; impl coordinator.mjs _collectDigest"
+    },
+    {
+      "capability": "Typed message envelope layer (createMessage, createNudge/Steer/Ask/Answer/Result, isStale, wrapFact/wrapProse)",
+      "surface": "coordinator",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Built and unit-tested in messages.mjs but bypassed by the shipped path: coordinator.send takes free-form strings, digest facts are hand-built, staleness runs through FenceTable instead of isStale. Harmless duplication today; becomes real debt if the northbound ever serializes these envelopes. Not fenced.",
+      "researchedSource": "docs/22 §2 pure message/story layer"
+    },
+    {
+      "capability": "Grok live capability card from unauthenticated initialize handshake",
+      "surface": "grok",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Researched: 'baton's card() can be populated from a real handshake instead of hardcoding.' Shipped card is static except maxContext (500K taken from the live handshake, GA4) and a version probe; models/authMethods/slash-command inventory are not surfaced. Not fenced.",
+      "researchedSource": "docs/reference/grok-build-cli.md §3.1"
+    },
+    {
+      "capability": "Refusal signal routed to the non-refuser tier (grok stopReason 'refusal' → lifecycle.crashed → router learning)",
+      "surface": "coordinator",
+      "status": "SHIPPED",
+      "rationale": "GA18 maps refusal to a router-visible crash; combined with SC7 nonRefuserFor restriction and record()-on-accept, the deterministic capable-non-refuser routing loop is closed at the mechanism level. The classifier that assigns taskType to incoming work remains the caller's job (spawn opts.taskType).",
+      "researchedSource": "docs/reference/grok-build-cli.md GA18; docs/23 re-steer item 3"
+    },
+    {
+      "capability": "SKILL.md open-standard skill portability (discovery, placement, portability linting)",
+      "surface": "cross-cutting",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "low",
+      "rationale": "Researched (agentskills.io adopted by ~40 clients; 'components baton must build'); nothing skill-related exists in impl. Adjacent to the fenced capability plane but the interop doc treats it as distinct unbuilt work; no fencing text names it.",
+      "researchedSource": "docs/reference/context-harness/interop-unification.md frontier table"
+    },
+    {
+      "capability": "Knowledge plane as MCP resources (kg/blackboard/skills reads)",
+      "surface": "coordinator",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "Rides two fenced items simultaneously: the MCP northbound (docs/24 Non-goals) and fleet memory 'vision, unbuilt' (docs/22 §5).",
+      "researchedSource": "docs/reference/context-harness/interop-unification.md §three planes; docs/22 §5; docs/24 §Non-goals"
+    },
+    {
+      "capability": "Proof-ladder verification rungs above test (proptest → fuzz → BMC → SMT → proof)",
+      "surface": "cross-cutting",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "docs/22 §5: 'Proof-ladder rungs above test … deferred bets.'",
+      "researchedSource": "docs/22 §5"
+    },
+    {
+      "capability": "Human seat / takeover, monitor UI, web dashboard",
+      "surface": "coordinator",
+      "status": "DELIBERATELY-FENCED",
+      "rationale": "docs/22 §5: 'human seat/takeover, fancy monitor UI, web dashboard — vision, unbuilt' listed under intentionally deferred/cut. The actor:'human' plumbing in respond()/interrupt() is shipped groundwork.",
+      "researchedSource": "docs/22 §5"
+    },
+    {
+      "capability": "No-dead-surface completion property (every emitted kind consumed or visibly forwarded)",
+      "surface": "coordinator",
+      "status": "UNSHIPPED-DEBT",
+      "priority": "medium",
+      "rationale": "Doc-24 DoD item 7 states the property; HEAD violates it in known places this matrix itemizes: budget/health attention kinds declared but never emitted, spawn timeoutMs passed but ignored by all session adapters, handle.budgetUsed never updated, prose/more digest stubs, messages.mjs constructors unconsumed. Each is honest (documented in code) but the completion property itself is not yet met.",
+      "researchedSource": "docs/24 DoD item 7"
+    }
+  ]
+}
