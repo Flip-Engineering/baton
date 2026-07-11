@@ -68,6 +68,10 @@ Grok rerun remains pending provider reauthentication and is not inferred from th
   paired driver completion; valid paired authority survives restart.
 - Adapter callback failures caused by an already-poisoned authoritative store are contained at
   the callback boundary rather than escaping as uncaught process exceptions.
+- A real exact-model provider-limit event proved that a failed Codex turn can leave its app-server
+  process alive. `lifecycle.crashed` now fails the task but automatically enters two-phase transport
+  kill; runtime/worktree ownership remains until confirmation or bounded force, and concurrent kill
+  callers join rather than receiving an unproved `already_dead`.
 - Follow-up and recovery refinement-fault fixtures verify adapter kill invocation, runtime-scope
   removal, explicit aborted-attempt telemetry, terminal-predecessor preservation, and orphaned
   restart state. A live exact-model recursive run separately proves native PID/worktree/runtime/
@@ -86,7 +90,7 @@ node --test impl/test/phase11-acceptance-integration.test.mjs
 20/20 passing
 
 cd impl && node --test
-567/567 passing
+575/575 passing
 ```
 
 The recursive exact-model Grok spec and implementation reviews passed every Baton lifecycle check.

@@ -2476,7 +2476,21 @@ export class Coordinator {
         }
         break;
       }
-      case 'lifecycle.crashed':
+      case 'lifecycle.crashed': {
+        const terminalEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        const task = this._tasks.get(handle.taskId);
+        if (task && !TERMINAL_TASK_STATUSES.has(task.status)) {
+          const evidence = this._coordMapEvent(terminalEvent);
+          if (evidence) this._coordTransition(task, 'failed', `task.failed:${task.id}:${evidence.coordinationSeq}`, evidence);
+        }
+        if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'failed';
+        this._clearWatchdog(handle);
+        // A crashed TURN does not prove a session-shaped adapter process exited. Codex app-server,
+        // for example, reports quota/turn failures while its native child remains alive. Keep
+        // ownership and runtime scope until the ordinary two-phase kill confirms transport death.
+        if (handle.status !== 'dead' && handle.status !== 'stopping') this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+        break;
+      }
       case 'lifecycle.exited': {
         const terminalEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
         const task = this._tasks.get(handle.taskId);

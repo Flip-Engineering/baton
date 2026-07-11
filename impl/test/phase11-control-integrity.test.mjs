@@ -272,9 +272,15 @@ test('CI2/CK9: accepted approval append failure also releases one racing consume
   assert.throws(() => coordinator.list(), (error) => error.code === 'operational_log_unavailable');
 });
 
-test('CI3: kill after a crash settles already_dead without waiting for a new confirmation', async () => {
+test('CI3/CK9: a crashed turn triggers confirmed transport kill before cleanup', async () => {
   let removed = 0;
-  const ad = adapter({ kill: async () => ({ ok: true }) });
+  let kills = 0;
+  let ad;
+  ad = adapter({ kill: async (worker) => {
+    kills += 1;
+    queueMicrotask(() => ad._cb({ worker, harness: 'stub', turnEpoch: 2, actor: 'worker', kind: 'kill.confirmed', payload: {} }));
+    return { ok: true };
+  } });
   const { coordinator } = harness({
     ad,
     worktrees: { remove: async () => { removed += 1; } },
@@ -282,11 +288,10 @@ test('CI3: kill after a crash settles already_dead without waiting for a new con
   });
   const h = await coordinator.spawn('stub', brief(), { taskId: 'already-crashed' });
   ad._cb({ worker: h.id, harness: 'stub', turnEpoch: 2, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: 'timeout' } });
-  const result = await Promise.race([
-    coordinator.kill(h.id, 'policy'),
-    new Promise((resolve) => setTimeout(() => resolve({ result: 'test_timeout' }), 50)),
-  ]);
-  assert.equal(result.result, 'already_dead');
+  const result = await Promise.race([coordinator.kill(h.id, 'policy'), sleep(50).then(() => ({ result: 'test_timeout' }))]);
+  assert.equal(result.result, 'confirmed');
+  assert.equal(kills, 1);
+  assert.equal(coordinator.list()[0].status, 'dead');
   assert.equal(removed, 1);
 });
 
@@ -353,7 +358,8 @@ test('CI3: driver-level wall timeout reaps the real child, worktree, metadata, a
   assert.ok(crashed);
 
   const killed = await coordinator.kill(h.id, 'policy');
-  assert.equal(killed.result, 'already_dead');
+  assert.ok(['confirmed', 'forced'].includes(killed.result), 'turn crash never substitutes for transport-death confirmation');
+  assert.equal(log.read(h.id).some((event) => event.kind === 'kill.requested'), true);
   await until(() => {
     try { process.kill(pid, 0); return false; } catch { return true; }
   });

@@ -75,6 +75,11 @@ typed coordination-unavailable result, kills or quarantines the ambiguous transp
 closes the still-nonterminal durable task. Asynchronous adapter callbacks may not turn an already
 recorded fatal coordination fault into an uncaught process exception.
 
+`lifecycle.crashed` is a turn/task failure, not proof that a session-shaped adapter process exited.
+The coordinator begins ordinary two-phase kill, keeps runtime/worktree ownership until
+`kill.confirmed`, a real `lifecycle.exited`, or bounded forced cleanup, and a concurrent public
+`kill()` joins that waiter. It may return `already_dead` only when transport death is authoritative.
+
 A refinement that cannot be materialized after native advancement records an explicit aborted
 attempt, preserves its terminal predecessor without pretending the attempted turn succeeded, and
 replays the native session as orphaned. An input delivery accepted before an authoritative append

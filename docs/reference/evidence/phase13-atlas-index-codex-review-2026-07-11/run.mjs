@@ -59,7 +59,16 @@ try {
   if (result.status !== 'completed') throw new Error(`review failed trust gate: ${JSON.stringify(result)}`);
   integration = await coordinator.integrate(workerId, { strategy: 'ff-only', actor: 'orchestrator' });
   await until(() => pid && !pidAlive(pid) && !existsSync(join(REPO, '.baton', 'wt', TASK_ID)) && !existsSync(join(REPO, '.baton', 'runtime', workerId)) && git(['branch', '--list', `baton/${TASK_ID}`]) === '', 'full reap', 30000);
-} catch (error) { fatal = String(error?.stack ?? error); } finally { pumping = false; await pump.catch(() => {}); if (workerId) await Promise.resolve(coordinator.kill(workerId, 'policy')).catch(() => {}); }
+} catch (error) { fatal = String(error?.stack ?? error); } finally {
+  pumping = false; await pump.catch(() => {});
+  if (workerId) {
+    await Promise.resolve(coordinator.kill(workerId, 'policy')).catch(() => {});
+    try {
+      await until(() => (!pid || !pidAlive(pid)) && !existsSync(join(REPO, '.baton', 'wt', TASK_ID))
+        && !existsSync(join(REPO, '.baton', 'runtime', workerId)) && git(['branch', '--list', `baton/${TASK_ID}`]) === '', 'failure-path full reap', 30000);
+    } catch (cleanupError) { fatal = `${fatal ?? ''}\ncleanup: ${cleanupError?.stack ?? cleanupError}`.trim(); }
+  }
+}
 
 const events = workerId ? log.read(workerId) : []; const handle = workerId ? coordinator.list().find((worker) => worker.id === workerId) : null;
 const checks = {
