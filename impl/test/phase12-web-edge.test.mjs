@@ -136,6 +136,22 @@ test('EP3/EP4: a trusted cleartext backend uses forwarded HTTPS while an untrust
   assert.equal(providerCalls, 1);
 });
 
+test('EP4/EP5: secure transport is listener-wide for direct and proxy health/readiness probes', async () => {
+  const proxy = system({ edgePolicy: edge({ proxyMode: true, trustedProxies: ['192.0.2.1'] }) });
+  for (const address of ['203.0.113.9', '2001:db8::9']) {
+    assert.equal((await request(proxy.web, { method: 'GET', path: '/healthz', encrypted: false, address })).status, 503);
+  }
+  assert.equal((await request(proxy.web, { method: 'GET', path: '/healthz', encrypted: false, address: '192.0.2.1' })).status, 400);
+  assert.equal((await request(proxy.web, { method: 'GET', path: '/readyz', encrypted: false, address: '192.0.2.1', headers: { 'x-forwarded-for': '198.51.100.8', 'x-forwarded-proto': 'http' } })).status, 400);
+  const forwarded = { 'x-forwarded-for': '198.51.100.8', 'x-forwarded-proto': 'https' };
+  assert.equal((await request(proxy.web, { method: 'GET', path: '/healthz', encrypted: false, address: '192.0.2.1', headers: forwarded })).status, 200);
+  assert.equal((await request(proxy.web, { method: 'GET', path: '/readyz', encrypted: false, address: '192.0.2.1', headers: forwarded })).status, 200);
+  const direct = system();
+  assert.equal((await request(direct.web, { method: 'GET', path: '/healthz', encrypted: false })).status, 503);
+  assert.equal(proxy.coordination.events().filter((event) => event.payload?.kind === 'transport_refused').length, 2);
+  assert.equal(direct.coordination.events().filter((event) => event.payload?.kind === 'transport_refused').length, 1);
+});
+
 test('EP3: authenticated principal and weighted cost quotas refuse before durable command admission', async () => {
   const policy = edge({ limits: { principal: 1, cost: 1 } }); const s = system({ edgePolicy: policy });
   const issued = s.sessions.issue({ userId: 'u', authMethod: 'bearer', capabilities: ['observe'], repoIds: ['repo-a'], ttlMs: 60_000 }, { actor: 'provider' });
@@ -187,6 +203,21 @@ test('EP2: combined principal/cost transaction samples one clock and commits one
   assert.equal(policy.takeCommand('credential', 2).ok, true); assert.equal(calls, 1);
   assert.equal(policy.quotas.principal.keys.get('credential').start, 0);
   assert.equal(policy.quotas.cost.keys.get('credential').start, 0);
+});
+
+test('EP2: combined command quota preflight is failure-atomic across divergent clock frontiers', () => {
+  let now = 1_500; const policy = edge({ now: () => now });
+  assert.equal(policy.quotas.cost.take('credential', 1, 2_000).ok, true);
+  const before = {
+    principal: structuredClone([...policy.quotas.principal.keys]), principalNow: policy.quotas.principal.lastNow,
+    cost: structuredClone([...policy.quotas.cost.keys]), costNow: policy.quotas.cost.lastNow,
+  };
+  assert.throws(() => policy.takeCommand('credential', 1), /monotonic/);
+  assert.deepEqual({
+    principal: [...policy.quotas.principal.keys], principalNow: policy.quotas.principal.lastNow,
+    cost: [...policy.quotas.cost.keys], costNow: policy.quotas.cost.lastNow,
+  }, before);
+  now = 2_000; assert.equal(policy.takeCommand('credential', 1).ok, true);
 });
 
 test('EP5/EP6: readiness is non-disclosing and shutdown is bounded/idempotent with no fleet effect', async () => {
@@ -244,6 +275,18 @@ test('EP3/EP7: malformed request targets fail typed and audited before auth/prov
   assert.equal(s.coordination.events().filter((event) => event.payload?.kind === 'request_refused').length, 6);
   s.coordination.recordWebAudit = () => { throw new Error('audit unavailable'); };
   assert.equal((await request(s.web, { path: '/still%ZZ', body: {} })).status, 503);
+});
+
+test('EP1/EP3: malformed targets share the canonical ordinary-address quota before durable audit', async () => {
+  const ipv6 = system({ edgePolicy: edge({ limits: { address: 1 } }) });
+  assert.equal((await request(ipv6.web, { path: '/bad%ZZ', address: '2001:0db8:0000:0000:0000:0000:0000:0001' })).status, 400);
+  const ipv6Refused = await request(ipv6.web, { path: '/still%ZZ', address: '2001:db8::1' });
+  assert.equal(ipv6Refused.status, 429); assert.equal(ipv6Refused.headers['retry-after'], '59');
+  assert.equal(ipv6.coordination.events().filter((event) => event.payload?.kind === 'request_refused').length, 1);
+  const mapped = system({ edgePolicy: edge({ limits: { address: 1 } }) });
+  assert.equal((await request(mapped.web, { path: '/bad%ZZ', address: '::ffff:127.0.0.1' })).status, 400);
+  assert.equal((await request(mapped.web, { path: '/still%ZZ', address: '127.0.0.1' })).status, 429);
+  assert.equal(mapped.coordination.events().filter((event) => event.payload?.kind === 'request_refused').length, 1);
 });
 
 test('EP6/EP7: drain deadline forces connections and never reports completion before listener closure', async () => {
@@ -341,6 +384,14 @@ test('EP4/EP6: production server assembly accepts only the two explicit transpor
   const customAuth = Object.assign(async () => null, { isPrincipalActive: () => true, healthCheck: () => true });
   const missingEdge = new WebNorthbound({ coordinator: {}, coordination: new CoordinationStore(root()), authenticate: customAuth });
   assert.throws(() => createAuthenticatedWebServer(missingEdge, { tls: { key: 'x', cert: 'y' } }), /WebEdgePolicy/);
+  for (const lookalike of [
+    { proxyMode: true, trustedProxies: ['127.0.0.1'] },
+    { proxyMode: true, trustedProxies: ['127.0.0.1'], resolve() {}, take() {}, digest() {}, peerDigest() {} },
+  ]) {
+    const substituted = system({ edgePolicy: edge({ proxyMode: true, trustedProxies: ['127.0.0.1'] }) });
+    substituted.web.edge = lookalike;
+    assert.throws(() => createAuthenticatedWebServer(substituted.web, { proxy: { cleartextBackend: true } }), /trusted-proxy edge policy/);
+  }
 });
 
 test('EP5: custom authentication without live health authority stays unready and production assembly refuses it', async () => {
@@ -367,4 +418,30 @@ test('EP1/EP7: malformed trusted forwarding audits a keyed peer digest without r
   const audit = s.coordination.events().find((event) => event.payload?.kind === 'proxy_refused');
   assert.match(audit.payload.addressDigest, /^[a-f0-9]{64}$/); assert.equal(audit.payload.remoteAddressClass, 'present');
   assert.equal(JSON.stringify(audit).includes('192.0.2.1'), false); assert.equal(JSON.stringify(audit).includes('198.51.100.2'), false);
+});
+
+test('EP2/EP3: ticket quota and exact ticket state roll back when HTTP delivery fails', async () => {
+  const s = system({ edgePolicy: edge({ limits: { ticket: 1 } }) });
+  const issued = s.sessions.issue({ userId: 'u', authMethod: 'bearer', capabilities: ['observe'], repoIds: ['repo-a'], ttlMs: 60_000 }, { actor: 'provider' });
+  const invoke = async (res) => {
+    const req = new EventEmitter(); Object.assign(req, {
+      method: 'POST', url: '/v1/stream-tickets',
+      headers: { origin: ORIGIN, 'content-type': 'application/json', authorization: `Bearer ${issued.token}` },
+      socket: { encrypted: true, remoteAddress: '127.0.0.1' }, destroy() {},
+    });
+    const pending = s.web.handle(req, res);
+    queueMicrotask(() => { req.emit('data', Buffer.from('{"repoId":"repo-a"}')); req.emit('end'); });
+    await pending;
+  };
+  class BrokenHead extends Response { writeHead() { throw new Error('reset before headers'); } }
+  class BrokenEnd extends Response { end() { throw new Error('reset during body'); } }
+  for (const res of [new BrokenHead(), new BrokenEnd()]) {
+    await invoke(res);
+    assert.equal(s.web.stream.tickets.size, 0);
+    assert.equal(s.web.edge.quotas.ticket.size, 0);
+  }
+  const options = { path: '/v1/stream-tickets', body: { repoId: 'repo-a' }, headers: { authorization: `Bearer ${issued.token}` } };
+  assert.equal((await request(s.web, options)).status, 201);
+  assert.equal((await request(s.web, options)).status, 429);
+  assert.equal(s.coordination.events().filter((event) => event.payload?.kind === 'stream_ticket_delivery_failed').length, 2);
 });

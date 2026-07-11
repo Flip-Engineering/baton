@@ -30,7 +30,11 @@ Every clock sample must be a non-negative safe integer and monotonic for its quo
 regressing sample fails before expiry, key, or counter mutation and can never produce refusal
 metadata. `Retry-After` is always a positive finite integer bounded by the configured window.
 Ticket quota uses an in-process reservation that commits only when issuance succeeds and rolls back
-on capacity, clock/randomness, audit, or other issuance failure.
+on capacity, clock/randomness, audit, or other issuance failure. Ticket creation itself is
+transactional through HTTP delivery: a header/body write failure deletes only that exact ticket,
+compensating-audits the failed delivery, and rolls back the matching quota reservation.
+Combined command quota preflight validates both quota clocks/windows/capacity without mutating
+either authority; only after both pass are count and cost committed on the shared sample.
 
 ## EP3 — refusal precedes expensive or privileged work
 
@@ -46,7 +50,9 @@ capability, and live-principal authorization likewise precede the credential tic
 Client-supplied IDs cannot choose a quota bucket.
 Request targets are bounded origin-form strings with valid percent encoding; malformed, overlong,
 non-string, control-bearing, absolute, scheme-relative, or fragment-bearing targets fail as one
-typed audited refusal before authentication, provider, session, or fleet work.
+typed audited refusal before authentication, provider, session, or fleet work. Canonical edge
+identity is resolved first, and malformed targets consume the ordinary address quota before their
+durable refusal audit, preventing audit-write amplification.
 
 ## EP4 — trusted-proxy and TLS modes are explicit
 
@@ -56,7 +62,9 @@ proves the original request was HTTPS. Untrusted `Forwarded`/`X-Forwarded-*` hea
 transport, alter address quotas, or enter audit identity. The server refuses proxy mode without a
 nonempty peer allowlist, refuses direct mode without TLS key/certificate material, and refuses a
 proxy-mode policy on the direct TLS listener. Production assembly admits exactly direct-policy/TLS
-or proxy-policy/trusted-cleartext, never a hybrid.
+or proxy-policy/trusted-cleartext, never a hybrid or policy lookalike. Every route, including health
+and readiness, requires canonical HTTPS transport; trusted-proxy peers must supply the exact
+configured HTTPS forwarding signal and untrusted cleartext peers are refused listener-wide.
 
 ## EP5 — health and readiness reveal no fleet state
 

@@ -25,10 +25,9 @@ export class FixedWindowQuota {
     if (typeof now !== 'function') throw new TypeError('now must be a function');
     this.now = now; this.keys = new Map(); this.lastNow = null;
   }
-  _sample(nowMs) {
+  _validateSample(nowMs) {
     if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new TypeError('quota clock must return a non-negative safe integer');
     if (this.lastNow !== null && nowMs < this.lastNow) throw new RangeError('quota clock must be monotonic');
-    this.lastNow = nowMs;
     return nowMs;
   }
   _retryAfter(now) {
@@ -36,7 +35,8 @@ export class FixedWindowQuota {
   }
   take(key, cost = 1, nowMs = this.now()) {
     positive(cost, 'cost');
-    const now = this._sample(nowMs); const start = Math.floor(now / this.windowMs) * this.windowMs;
+    const now = this._validateSample(nowMs); const start = Math.floor(now / this.windowMs) * this.windowMs;
+    this.lastNow = now;
     for (const [k, v] of this.keys) if (v.start < start) this.keys.delete(k);
     let entry = this.keys.get(key);
     if (!entry) {
@@ -67,10 +67,11 @@ export class FixedWindowQuota {
   }
   canTake(key, cost = 1, nowMs = this.now()) {
     positive(cost, 'cost');
-    const now = this._sample(nowMs); const start = Math.floor(now / this.windowMs) * this.windowMs;
-    for (const [k, v] of this.keys) if (v.start < start) this.keys.delete(k);
-    const entry = this.keys.get(key);
-    if (!entry && this.keys.size >= this.maxKeys) return { ok: false, retryAfter: this._retryAfter(now), reason: 'capacity' };
+    const now = this._validateSample(nowMs); const start = Math.floor(now / this.windowMs) * this.windowMs;
+    const current = this.keys.get(key); const entry = current?.start >= start ? current : null;
+    let activeKeys = 0;
+    for (const value of this.keys.values()) if (value.start >= start) activeKeys += 1;
+    if (!entry && activeKeys >= this.maxKeys) return { ok: false, retryAfter: this._retryAfter(now), reason: 'capacity' };
     if ((entry?.used ?? 0) + cost > this.limit) return { ok: false, retryAfter: this._retryAfter(now) };
     return { ok: true };
   }

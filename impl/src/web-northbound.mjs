@@ -277,18 +277,6 @@ export class WebNorthbound {
 
   async handle(req, res) {
     const origin = req.headers?.origin ?? null;
-    let url;
-    try {
-      if (typeof req.url !== 'string' || req.url.length === 0 || req.url.length > 4_096
-        || !req.url.startsWith('/') || req.url.startsWith('//') || /[\u0000-\u001f\u007f]/.test(req.url)
-        || /%(?![0-9a-f]{2})/i.test(req.url)) throw new TypeError('invalid request target');
-      url = new URL(req.url, 'https://baton.invalid');
-      if (url.origin !== 'https://baton.invalid' || url.hash) throw new TypeError('invalid request target');
-    } catch {
-      try { this._audit('request_refused', { origin: this.allowedOrigins.has(origin) ? origin : null }, { reason: 'invalid_target' }); }
-      catch { return this._write(res, error(503, 'temporarily_unavailable')); }
-      return this._write(res, error(400, 'invalid_request'));
-    }
     if (this.edge) {
       let peerDigest = null;
       try { peerDigest = this.edge.peerDigest(req); } catch { /* bounded invalid-peer audit below */ }
@@ -299,11 +287,37 @@ export class WebNorthbound {
       }
       req.edgeIdentity = identity;
       req.edgeAddressDigest = this.edge.digest(identity.address);
+    }
+    const takeEdgeQuota = (name) => {
+      if (!this.edge) return null;
+      const quota = this.edge.take(name, req.edgeAddressDigest);
+      if (quota.ok) return null;
+      try { this._audit('quota_refused', { origin }, { quota: name, addressDigest: req.edgeAddressDigest }); }
+      catch { return error(503, 'temporarily_unavailable'); }
+      return { ...error(429, 'rate_limited'), headers: { 'retry-after': String(quota.retryAfter) } };
+    };
+    let url;
+    try {
+      if (typeof req.url !== 'string' || req.url.length === 0 || req.url.length > 4_096
+        || !req.url.startsWith('/') || req.url.startsWith('//') || /[\u0000-\u001f\u007f]/.test(req.url)
+        || /%(?![0-9a-f]{2})/i.test(req.url)) throw new TypeError('invalid request target');
+      url = new URL(req.url, 'https://baton.invalid');
+      if (url.origin !== 'https://baton.invalid' || url.hash) throw new TypeError('invalid request target');
+    } catch {
+      const quotaRefusal = takeEdgeQuota('address');
+      if (quotaRefusal) return this._write(res, quotaRefusal);
+      try { this._audit('request_refused', { origin: this.allowedOrigins.has(origin) ? origin : null }, { reason: 'invalid_target' }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+      return this._write(res, error(400, 'invalid_request'));
+    }
+    if (this.edge) {
       const name = url.pathname === '/readyz' ? 'readiness' : url.pathname === '/healthz' ? 'health' : 'address';
-      const quota = this.edge.take(name, this.edge.digest(identity.address));
-      if (!quota.ok) {
-        try { this._audit('quota_refused', { origin }, { quota: name, addressDigest: this.edge.digest(identity.address) }); } catch { return this._write(res, error(503, 'temporarily_unavailable')); }
-        return this._write(res, error(429, 'rate_limited'), origin, { 'retry-after': String(quota.retryAfter) });
+      const quotaRefusal = takeEdgeQuota(name);
+      if (quotaRefusal) return this._write(res, quotaRefusal, origin);
+      if (req.edgeIdentity.transport !== 'https') {
+        try { this._audit('transport_refused', { origin, remoteAddress: 'canonical', addressDigest: req.edgeAddressDigest }, { reason: 'secure_transport_required' }); }
+        catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+        return this._write(res, error(503, 'temporarily_unavailable'));
       }
     }
     if (req.method === 'GET' && url.pathname === '/healthz') return this._write(res, result(200, { ok: true }));
@@ -353,11 +367,21 @@ export class WebNorthbound {
           catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
           return this._write(res, error(429, 'rate_limited'), origin, { 'retry-after': String(ticketQuota.retryAfter) });
         }
-        let issued;
-        try { issued = this.stream.issue(principal, origin, body?.repoId); }
+        let issuance;
+        try {
+          if (typeof this.stream.beginIssue !== 'function') throw new TypeError('transactional ticket issuance required');
+          issuance = this.stream.beginIssue(principal, origin, body?.repoId);
+        }
         catch { ticketQuota.rollback(); return this._write(res, error(503, 'temporarily_unavailable'), origin); }
-        if (issued?.status !== 201) ticketQuota.rollback(); else ticketQuota.commit();
-        return this._write(res, issued ?? error(503, 'temporarily_unavailable'), origin);
+        const issued = issuance?.response ?? error(503, 'temporarily_unavailable');
+        if (issued.status !== 201) {
+          issuance?.rollback?.(); ticketQuota.rollback();
+          return this._write(res, issued, origin);
+        }
+        try { this._write(res, issued, origin); }
+        catch { issuance.rollback(); ticketQuota.rollback(); return; }
+        issuance.commit(); ticketQuota.commit();
+        return;
       }
       return this._write(res, this.stream.issue(principal, origin, body?.repoId), origin);
     }
@@ -564,7 +588,7 @@ export function createAuthenticatedWebServer(northbound, opts = {}) {
   const proxyCleartext = opts.proxy?.cleartextBackend === true;
   let server;
   if (proxyCleartext) {
-    if (!northbound.edge?.proxyMode || northbound.edge.trustedProxies.length === 0) throw new TypeError('cleartext proxy backend requires an explicit trusted-proxy edge policy');
+    if (!(northbound.edge instanceof WebEdgePolicy) || !northbound.edge.proxyMode || northbound.edge.trustedProxies.length === 0) throw new TypeError('cleartext proxy backend requires an explicit trusted-proxy edge policy');
     requireReadiness();
     if (opts.tls?.key || opts.tls?.cert) throw new TypeError('choose direct TLS or cleartext trusted-proxy backend, not both');
     server = createHttpServer((req, res) => northbound.handle(req, res));

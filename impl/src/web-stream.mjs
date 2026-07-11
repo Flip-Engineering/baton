@@ -98,6 +98,26 @@ export class WebEventStream {
     return { status: 201, body: { ok: true, ticket: `${id}.${secret}`, expiresAt: new Date(expiresAt).toISOString() } };
   }
 
+  beginIssue(principal, origin, repoId) {
+    const issued = this.issue(principal, origin, repoId);
+    if (issued.status !== 201) return { response: issued, commit: () => false, rollback: () => false };
+    const id = issued.body.ticket.slice(0, issued.body.ticket.indexOf('.'));
+    const state = this.tickets.get(id);
+    let active = true;
+    return {
+      response: issued,
+      commit: () => { if (!active) return false; active = false; return true; },
+      rollback: () => {
+        if (!active) return false;
+        active = false;
+        if (this.tickets.get(id) !== state) return false;
+        this.tickets.delete(id);
+        try { this._audit('stream_ticket_delivery_failed', principal, origin, { repoId, ticketId: id }); } catch { /* compensating cleanup cannot be undone */ }
+        return true;
+      },
+    };
+  }
+
   authorizeIssue(principal, origin, repoId) {
     try { return this.accepting && this._liveAuthorized(principal, origin, repoId); }
     catch { return false; }
