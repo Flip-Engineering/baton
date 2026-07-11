@@ -1,5 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer as createHttpsServer } from 'node:https';
+import { WebEventStream } from './web-stream.mjs';
 
 const COMMAND_CAPABILITY = Object.freeze({
   spawn: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', respond: 'approve',
@@ -91,6 +92,10 @@ export class WebNorthbound {
     this.now = opts.now ?? Date.now;
     this.authenticate = opts.authenticate ?? null;
     this.maxBodyBytes = opts.maxBodyBytes ?? 64 * 1024;
+    this.stream = opts.stream ?? new WebEventStream({
+      ...opts, coordination: this.coordination,
+      allowedOrigins: [...this.allowedOrigins], repoIds: [...this.repoIds],
+    });
   }
 
   _audit(kind, ctx, details = {}) {
@@ -215,7 +220,8 @@ export class WebNorthbound {
 
   async handle(req, res) {
     const origin = req.headers.origin ?? null;
-    if (req.method === 'OPTIONS' && req.url === '/v1/commands') {
+    const url = new URL(req.url, 'https://baton.invalid');
+    if (req.method === 'OPTIONS' && ['/v1/commands', '/v1/stream-tickets'].includes(url.pathname)) {
       if (!this.allowedOrigins.has(origin)) return this._write(res, error(403, 'forbidden'));
       res.writeHead(204, {
         'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true',
@@ -223,6 +229,37 @@ export class WebNorthbound {
         'access-control-max-age': '300', vary: 'Origin', 'cache-control': 'no-store',
       });
       res.end();
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/stream-tickets') {
+      if (req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
+        return this._write(res, error(400, 'invalid_command', 'application/json required'), origin);
+      }
+      let principal;
+      try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
+      let body;
+      try { body = await this._readBody(req); } catch { return this._write(res, error(400, 'invalid_command'), origin); }
+      const ctx = { principal, origin, csrfToken: req.headers['x-baton-csrf'] ?? null, transport: req.socket?.encrypted ? 'https' : 'http' };
+      const authFailure = this._authenticate(ctx);
+      if (authFailure) return this._write(res, authFailure, origin);
+      if (principal.authMethod === 'cookie') {
+        const csrfValid = string(ctx.csrfToken) && (principal.csrfTokenDigest
+          ? equalDigest(tokenHash(ctx.csrfToken), principal.csrfTokenDigest)
+          : ctx.csrfToken === principal.csrfToken);
+        if (!csrfValid) return this._write(res, error(403, 'forbidden'), origin);
+      }
+      return this._write(res, this.stream.issue(principal, origin, body?.repoId), origin);
+    }
+    if (req.method === 'GET' && url.pathname === '/v1/events') {
+      let principal;
+      try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
+      const authFailure = this._authenticate({ principal, transport: req.socket?.encrypted ? 'https' : 'http' });
+      if (authFailure) return this._write(res, authFailure, origin);
+      const responseValue = this.stream.open({
+        ticket: url.searchParams.get('ticket'), principal, origin,
+        cursor: req.headers['last-event-id'] ?? url.searchParams.get('cursor'),
+      }, res);
+      if (responseValue) return this._write(res, responseValue, origin);
       return;
     }
     if (req.method !== 'POST' || req.url !== '/v1/commands') return this._write(res, error(404, 'not_found'));

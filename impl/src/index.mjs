@@ -30,6 +30,7 @@ export { AdaptiveRouter } from './router.mjs';
 export { RuntimeIsolation, isSecretEnvName } from './runtime-isolation.mjs';
 export { CoordinationStore, CoordinationIntegrityError, CoordinationRefusal, coordinationForLog } from './coordination-store.mjs';
 export { WebNorthbound, createAuthenticatedWebServer, validateWebCommandEnvelope } from './web-northbound.mjs';
+export { WebEventStream } from './web-stream.mjs';
 export { WebSessionStore, WebSessionIntegrityError, WEB_SESSION_COOKIE_NAME } from './web-auth.mjs';
 export { AtlasStructuralDelta } from './atlas-structural.mjs';
 export { AtlasCodeIndex } from './atlas-index.mjs';
