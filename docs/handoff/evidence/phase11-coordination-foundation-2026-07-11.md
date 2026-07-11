@@ -39,10 +39,10 @@ Validation:
 
 ```text
 node --test impl/test/phase11-coordination-store.test.mjs
-22/22 passing
+23/23 passing
 
 cd impl && node --test
-525/525 passing
+526/526 passing
 ```
 
 The recursive exact-model Grok spec and implementation reviews passed every Baton lifecycle check.

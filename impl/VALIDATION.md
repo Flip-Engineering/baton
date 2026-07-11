@@ -117,7 +117,7 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 
 | Gate | Current evidence |
 |---|---|
-| Zero-quota suite | **525/525 passing** via bare `node --test` in `impl/`; every direct Coordinator fixture supplies durable authority, terminal task state plus manifests and invalidation plus contamination each commit as one batch, worker artifact claims remain untrusted manifests, named promotions are durable, and the two-Grok ACP process test proves concurrent native child PIDs, confirmed kills, and process/worktree/branch reap |
+| Zero-quota suite | **526/526 passing** via bare `node --test` in `impl/`; every direct Coordinator fixture supplies durable authority, terminal task state plus manifests and invalidation plus contamination each commit as one batch, trust-gate coordination failure poisons then restarts durably failed, worker artifact claims remain untrusted manifests, named promotions are durable, and the two-Grok ACP process test proves concurrent native child PIDs, confirmed kills, and process/worktree/branch reap |
 | U-1…U-11 | All reproduced before repair; verdict ledger in `docs/handoff/evidence/phase10.1-reverification.md` |
 | Fresh adversarial review | No unresolved critical/major finding; `docs/handoff/evidence/phase10.1-adversarial-review.md` |
 | Three-vendor live fleet | `docs/reference/evidence/phase10.1-capstone-2026-07-10/summary.json` has every check true; 573-event raw ledger beside it |
@@ -128,7 +128,7 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 | Persistent two-turn Grok | `docs/reference/evidence/phase11-grok-persistent-session-2026-07-11/summary.json` has all 16 checks true; same session/PID, two fresh verdicts, full reap |
 | Isolated governance Grok | `docs/reference/evidence/phase11-grok-governance-2026-07-11/summary.json` has all 16 checks true; private credential scope, real sandbox denial, canonical usage, automatic budget kill, full reap |
 | Acceptance/integration | `docs/handoff/evidence/phase11-acceptance-integration-2026-07-11.md`; 16 focused temp-repo tests cover AC1–AC6 and the full suite is 502/502 |
-| Coordination foundation | `docs/handoff/evidence/phase11-coordination-foundation-2026-07-11.md`; 22 focused contracts plus the 525/525 full suite cover mandatory durable authority, fatal dual-stream writes, claim-crash recovery, refinement replay, atomic task/artifact and invalidation/contamination writes, named promotion/provenance, untrusted worker artifact claims, Scratch terminal expiry, logged `ReadBy` recall, and refusal auditing; remaining CK9 seams stay explicit |
+| Coordination foundation | `docs/handoff/evidence/phase11-coordination-foundation-2026-07-11.md`; 23 focused contracts plus the 526/526 full suite cover mandatory durable authority, fatal dual-stream writes, claim/trust-batch crash recovery, refinement replay, atomic task/artifact and invalidation/contamination writes, named promotion/provenance, untrusted worker artifact claims, Scratch terminal expiry, logged `ReadBy` recall, and refusal auditing; remaining CK9 seams stay explicit |
 | Credential discipline | GLM checked by presence only and recorded `PENDING-LIVE-no-credential`; no credential value was logged |
 
 The three-vendor capstone checks were: no harness error; Claude/Codex/Grok all completed; every

@@ -1448,6 +1448,19 @@ export class Coordinator {
     return this._coordination.recordDriver(kind, payload, { actor, key }).event;
   }
 
+  _poisonCoordination(err) {
+    if (!this._fatalError) {
+      const fatal = new Error(`authoritative coordination mutation failed: ${err?.message ?? err}`, { cause: err });
+      fatal.name = 'CoordinationWriteIntegrityError';
+      fatal.code = 'coordination_write_unavailable';
+      this._fatalError = fatal;
+      for (const handle of this._workers.values()) {
+        if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) handle.spawnAbort.abort({ reason: 'coordination_write_unavailable' });
+      }
+    }
+    return this._fatalError;
+  }
+
   _createCoordinationRefinement(handle, prior, relation) {
     if (!this._coordination) return prior;
     const id = `${prior.id}:refinement-${++this._refinementSeq}`;
@@ -2321,6 +2334,7 @@ export class Coordinator {
 
     let verifyPath = null;
     let baseVerifyPath = null;
+    let trustPhase = 'capture';
     try {
       // C5: thread the dispatching vendor through to captureCommit so the snapshot
       // commit (when one is made) is genuinely attributed.
@@ -2375,6 +2389,7 @@ export class Coordinator {
         },
       });
       if (!verifyEvent) throw new Error('operational verification event was not durably appended');
+      trustPhase = 'evidence_mapping';
       const evidence = this._coordMapEvent(verifyEvent);
       const manifests = [];
       if (captured?.sha) {
@@ -2405,6 +2420,7 @@ export class Coordinator {
         });
       }
       const terminalStatus = accept ? 'completed' : 'failed';
+      trustPhase = 'terminal_batch';
       const terminal = this._coordination.transitionTaskWithArtifacts(
         task.id, terminalStatus, task.coordinationVersion,
         manifests, { actor: 'policy', key: `task.${terminalStatus}:${task.id}:${verifyEvent.seq}` }, evidence,
@@ -2412,12 +2428,14 @@ export class Coordinator {
       task.coordinationVersion = terminal.task.version;
       this._expireScratchClaims(handle, task, `task_${terminalStatus}`);
       const artifactEvidence = terminal.artifacts.map((artifact) => ({ artifactId: artifact.id }));
+      trustPhase = 'promotion';
       this._coordination.promoteKnowledgeNode({
         id: `outcome:${task.id}:${verifyEvent.seq}`,
         type: accept ? 'Finding' : 'Counterexample',
         body: accept ? `Task ${task.id} passed its hub verification` : `Task ${task.id} failed its hub verification`,
         grounding: 'verified', evidence: [{ coordinationSeq: evidence.coordinationSeq }, ...artifactEvidence],
       }, { kind: accept ? 'Finding' : 'Counterexample', trigger: 'verified_task_outcome' }, { actor: 'policy', key: `knowledge.outcome:${task.id}:${verifyEvent.seq}` });
+      trustPhase = 'complete';
       task.status = accept ? 'completed' : 'failed';
       task.capturedSha = captured?.sha ?? null;
 
@@ -2450,16 +2468,31 @@ export class Coordinator {
         }
       }
     } catch (err) {
-      task.verdict = null;
-      task.status = 'failed';
-      this._log.append({
+      const errorEvent = this._log.append({
         worker: handle.id,
         harness,
         turnEpoch: this._safeTurnEpoch(handle),
         kind: 'error',
         actor: 'policy',
-        payload: { message: String((err && err.message) || err), phase: 'trust_gate' },
+        payload: { message: String((err && err.message) || err), phase: 'trust_gate', trustPhase },
       });
+      let durable = this._coordination.task(task.id);
+      if (durable && !TERMINAL_TASK_STATUSES.has(durable.status)) {
+        try {
+          const evidence = this._coordMapEvent(errorEvent);
+          const transitioned = this._coordination.transitionTask(task.id, 'failed', durable.version, {
+            actor: 'policy', key: `task.failed:${task.id}:trust_gate:${errorEvent.seq}`,
+          }, evidence ?? { reason: 'trust_gate_exception', trustPhase });
+          task.coordinationVersion = transitioned.task.version;
+          durable = transitioned.task;
+        } catch (coordinationError) {
+          this._poisonCoordination(coordinationError);
+          durable = this._coordination.task(task.id);
+        }
+      }
+      if (['evidence_mapping', 'terminal_batch', 'promotion'].includes(trustPhase)) this._poisonCoordination(err);
+      task.status = durable?.status ?? 'failed';
+      if (task.status !== 'completed') task.verdict = null;
     } finally {
       if (verifyPath != null) await this._worktrees.removeVerifyWorktree(verifyPath);
       if (baseVerifyPath != null) await this._worktrees.removeVerifyWorktree(baseVerifyPath);
@@ -2623,6 +2656,27 @@ export class Coordinator {
         .sort((a, b) => a.createdEvent - b.createdEvent) ?? [];
       const currentDurableTask = durableWorkerTasks.at(-1) ?? null;
       if (currentDurableTask) taskId = currentDurableTask.id;
+
+      // Operational completion without its authoritative coordination terminal batch is a crash
+      // gap, never permission to infer success from telemetry. Fail the claimed task durably so a
+      // restart cannot leave it working forever or fabricate its missing accepted manifests.
+      if (currentDurableTask && !TERMINAL_TASK_STATUSES.has(currentDurableTask.status)
+        && TERMINAL_TASK_STATUSES.has(terminalStatus)) {
+        recoveryTerminalized = true;
+        const priorOperationalStatus = terminalStatus;
+        terminalStatus = 'failed';
+        const gapEvent = this._log.append({
+          worker: workerId, harness: events.at(-1)?.harness ?? '', turnEpoch: maxTurnEpoch,
+          kind: 'control.recovery_terminalized', actor: 'policy',
+          payload: { reason: 'coordination_terminal_batch_missing', priorStatus: priorOperationalStatus },
+        });
+        const gapEvidence = this._coordMapEvent(gapEvent);
+        const transitioned = this._coordination.transitionTask(currentDurableTask.id, 'failed', currentDurableTask.version, {
+          actor: 'policy', key: `task.failed:${currentDurableTask.id}:coordination_gap:${gapEvent.seq}`,
+        }, gapEvidence ?? { reason: 'coordination_terminal_batch_missing' });
+        const seeded = this._tasks.get(currentDurableTask.id);
+        if (seeded) seeded.coordinationVersion = transitioned.task.version;
+      }
 
       // CI6: replay cannot resurrect an adapter session. Until the persistent-session phase can
       // prove native reattachment, any nonterminal reconstructed task is durably failed and its

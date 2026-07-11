@@ -69,6 +69,38 @@ test('CK1/CK9: operational append failure poisons the coordinator and restart cl
   assert.equal(replay.list()[0].status, 'exited');
 });
 
+test('CK1/CK9: terminal artifact-batch failure poisons the driver and restarts as durable failed', async () => {
+  const repo = dir();
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  writeFileSync(join(repo, 'README.md'), 'base\n');
+  execFileSync('git', ['add', '.'], { cwd: repo });
+  execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: repo });
+  const logDir = dir();
+  const make = (adapters) => createDriver({ repoRoot: repo, logDir, adapters, watchdog: { stallMs: 0 } });
+  const driver = make({ mock: new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'atomic.txt', content: 'atomic\n', delayMs: 20 }] } }) });
+  const rawAppend = driver.coordination._appendFile;
+  let injected = false;
+  driver.coordination._appendFile = (file, body, encoding) => {
+    if (!injected && body.includes('"task.transitioned"') && body.includes('"artifact.registered"')) {
+      injected = true;
+      throw new Error('terminal batch disk full');
+    }
+    return rawAppend(file, body, encoding);
+  };
+  const brief = { goal: 'atomic terminal', constraints: [], pathScope: ['atomic.txt'], definitionOfDone: 'atomic', verification: { command: 'test -s atomic.txt', expectExit: 0 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } };
+  const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'terminal-batch-failure' });
+  await until(() => driver.coordination.task('terminal-batch-failure')?.status === 'failed');
+  assert.equal(injected, true);
+  assert.equal(driver.coordination.snapshot().artifacts.length, 0);
+  assert.throws(() => driver.coordinator.list(), (error) => error.code === 'coordination_write_unavailable');
+
+  const replay = make({ mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) });
+  assert.equal(replay.coordination.task('terminal-batch-failure').status, 'failed');
+  assert.equal((await replay.coordinator.result(handle.id)).status, 'failed');
+});
+
 test('CK1: startup rejects truncated tails, sequence gaps, and duplicate keys', () => {
   const truncated = dir();
   writeFileSync(join(truncated, 'events.jsonl'), '{"schemaVersion":1');
