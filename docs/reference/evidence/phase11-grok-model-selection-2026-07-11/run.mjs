@@ -3,7 +3,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,6 +12,7 @@ import { createBrief, createDriver, GrokAcpCli } from '../../../../impl/src/inde
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '../../../..');
 const LOG_DIR = join(tmpdir(), `baton-grok-model-proof-${Date.now()}`);
+const AUTH = join(homedir(), '.grok', 'auth.json');
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 const TASKS = [
   { taskId: 'grok-model-proof-45', model: 'grok-4.5', path: 'reviews/dogfood/grok-model-proof-45.md' },
@@ -52,10 +53,15 @@ function taskBrief(task) {
 }
 
 const adapter = new GrokAcpCli({ requestTimeoutMs: 30000, ceiling: 2 });
+if (!existsSync(AUTH)) {
+  console.log(JSON.stringify({ pass: false, pending: 'PENDING-LIVE-no-grok-auth-file' }, null, 2));
+  process.exit(2);
+}
 const { coordinator, log } = createDriver({
   repoRoot: REPO,
   logDir: LOG_DIR,
   adapters: { grok: adapter },
+  runtimeIsolation: { credentialFiles: { grok: [AUTH] } },
   approvalTimeoutMs: 60000,
   stopDeadlineMs: 15000,
 });
