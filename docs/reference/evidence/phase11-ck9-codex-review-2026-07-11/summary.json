@@ -1,8 +1,8 @@
 {
-  "at": "2026-07-11T20:52:02.975Z",
-  "repoHead": "c60f0b88627a96d1a06e30ace6978a137de60dbb",
+  "at": "2026-07-11T20:54:28.671Z",
+  "repoHead": "74a202af299a14b550390da7ac7a241ad822f3d6",
   "workerId": "w-1",
-  "pid": 39709,
+  "pid": 49315,
   "model": "gpt-5.4",
   "result": {
     "ready": true,
@@ -23,7 +23,7 @@
       "survivedMutants": [],
       "observedOutputTail": "",
       "note": "PASS: observed exit 0 matches expected 0.",
-      "durationMs": 11
+      "durationMs": 22
     },
     "artifacts": {
       "commits": [],
@@ -40,14 +40,14 @@
     "sessionRef": {
       "vendor": "codex",
       "kind": "thread",
-      "id": "019f52f2-67b9-78a1-98ac-ad3960df09ff",
+      "id": "019f52f4-94ac-7a62-badb-38ea1a5c9858",
       "persistence": "native",
       "source": "wire"
     },
     "sessionContext": {
       "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-ck9-crash-window-review",
       "repoRoot": "/Users/wahargis/Development/Experiments/baton",
-      "baseSha": "57285212af7c28982832d69797f8cb3fd286884d",
+      "baseSha": "47a9750e8d27f3e8450f6c1cd162d2efb0da42bb",
       "branch": "baton/codex-ck9-crash-window-review",
       "ownerTaskId": "codex-ck9-crash-window-review"
     },
@@ -61,9 +61,9 @@
     "ok": true,
     "result": "integrated",
     "integration": {
-      "beforeSha": "57285212af7c28982832d69797f8cb3fd286884d",
-      "resultSha": "c60f0b88627a96d1a06e30ace6978a137de60dbb",
-      "afterSha": "c60f0b88627a96d1a06e30ace6978a137de60dbb",
+      "beforeSha": "47a9750e8d27f3e8450f6c1cd162d2efb0da42bb",
+      "resultSha": "74a202af299a14b550390da7ac7a241ad822f3d6",
+      "afterSha": "74a202af299a14b550390da7ac7a241ad822f3d6",
       "strategy": "ff-only",
       "actor": "orchestrator"
     }

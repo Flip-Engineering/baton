@@ -2,9 +2,9 @@
 
 ## Verdict
 
-PASS for CK1–CK9's deterministic zero-quota coordination and public-authority gate. The fresh
-recursive real-provider review remains pending Grok reauthentication and is not inferred from
-these tests.
+PASS for CK1–CK9's deterministic coordination and public-authority gate. A fresh exact-model Codex
+review and evidence-correction review passed every Baton lifecycle gate; the requested additional
+Grok rerun remains pending provider reauthentication and is not inferred from these tests.
 
 - `CoordinationStore` owns a separately validated, globally sequenced coordination event stream.
 - Idempotency keys replay the original event; append failure leaves event and projection state
@@ -101,15 +101,18 @@ The fresh exact-model Codex CK9 review at
 and fully reaped by Baton. It found a major decision-only replay seam and a minor missing approval
 fixture. Both are now closed: replay requires both halves of the atomic publication batch plus
 matching evidence/payload identity, and question and approval delivery each have post-accept
-single-consumer fault tests. A final recursive rerun of those repairs remains required before this
-review cycle is closed.
+single-consumer fault tests. A later verified review repeated claims contradicted by those exact
+tests; Baton preserved that false-negative evidence and ran a new exact-model correction review.
+The integrated correction directly inspected the named tests, reports no remaining CK9 major
+finding, and again passed exact-model observation, fresh verification, ff-only integration,
+confirmed kill, and complete process/runtime/worktree/branch reap.
 
 ## Remaining beyond the deterministic CK9 gate
 
 Scratch participation is not yet automatically injected into every adapter worker as an ambient
 tool/notification channel; automatic scorecards and Scratch promotion candidates remain
-incomplete. A second recursive provider review of these repairs is still required before recursive
-dogfooding is considered fully re-opened. The requested Grok run remains gated on provider
+incomplete. Recursive Codex dogfooding is re-opened for the next scoped phase. The requested Grok
+run remains gated on provider
 reauthentication; no authentication bypass or silent model fallback is allowed.
 
 The zero-quota concurrent Grok ACP boundary is now green: two distinct fake-wire child PIDs ran
