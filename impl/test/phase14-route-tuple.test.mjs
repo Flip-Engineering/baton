@@ -55,6 +55,8 @@ function system(adapters, route, hooks = {}) {
       create: async (taskId) => ({ path: `/tmp/${taskId}` }),
       capture: async (_path, opts) => { captureOpts.push(opts); return { sha: `sha-${captureOpts.length}`, snapshotted: true }; },
       createVerifyWorktree: async () => ({ path: tmpdir() }), removeVerifyWorktree: async () => {},
+      integrate: async (sha) => ({ beforeSha: 'base', resultSha: sha, afterSha: sha }),
+      retainResult: async () => 'refs/baton/test', releaseResult: async () => {},
       remove: async () => {}, reconcile: async () => {},
     },
     referee: async () => ({ reverified: true, observedExit: 0 }), route,
@@ -101,13 +103,21 @@ test('RT11.7: Claude and Grok native controls preserve exact effort', () => {
 test('RT11.1/2: direct spawn forwards exact effort and conflicts/refusals allocate nothing', async () => {
   const calls = [];
   const adapter = stubAdapter('codex', ['low', 'high'], calls);
-  const { coordinator } = system({ codex: adapter }, () => 'codex');
+  const { coordinator, coordination } = system({ codex: adapter }, () => 'codex');
   const handle = await coordinator.spawn('codex', brief(), { taskId: 'direct-high', model: 'gpt-exact', effort: 'high' });
   assert.equal(handle.harnessRequested, 'codex');
   assert.equal(handle.harnessResolved, 'codex@2');
   assert.equal(handle.effortRequested, 'high');
   assert.equal(handle.effortResolved, 'high');
   assert.equal(calls[0].opts.reasoningEffort, 'high');
+  assert.deepEqual(
+    Object.fromEntries(['harnessRequested', 'harnessResolved', 'modelRequested', 'modelResolved', 'modelObserved', 'effortRequested', 'effortResolved', 'effortObserved', 'routeKey']
+      .map((field) => [field, coordination.task('direct-high')[field]])),
+    {
+      harnessRequested: 'codex', harnessResolved: 'codex@2', modelRequested: 'gpt-exact', modelResolved: 'gpt-exact', modelObserved: null,
+      effortRequested: 'high', effortResolved: 'high', effortObserved: null, routeKey: handle.routeKey,
+    },
+  );
 
   const rejected = system({ codex: stubAdapter('codex', ['low']) }, () => 'codex').coordinator;
   await assert.rejects(
@@ -145,7 +155,9 @@ test('RT11.4/5: verified low/high runs learn distinct resolved tuple keys and re
   const first = system({ codex: adapter }, route, { captureOpts });
   const complete = async (taskId, effort) => {
     const handle = await first.coordinator.spawn('codex', brief(), { taskId, taskType: 'build', model: 'gpt-exact', effort });
-    adapter.cb({ worker: handle.id, harness: 'codex', turnEpoch: 2, actor: 'worker', kind: 'lifecycle.spawned', payload: { effortObserved: effort } });
+    adapter.cb({ worker: handle.id, harness: 'codex', turnEpoch: 2, actor: 'worker', kind: 'lifecycle.spawned', payload: { modelObserved: 'gpt-exact', effortObserved: effort } });
+    adapter.cb({ worker: handle.id, harness: 'codex', turnEpoch: 2, actor: 'worker', kind: 'lifecycle.turn_started', payload: {} });
+    adapter.cb({ worker: handle.id, harness: 'codex', turnEpoch: 2, actor: 'worker', kind: 'resource.tokens', payload: { tokens: 1 } });
     adapter.cb({
       worker: handle.id, harness: 'codex', turnEpoch: 2, actor: 'worker', kind: 'lifecycle.turn_completed',
       payload: { status: 'completed', artifacts: { files: [] }, verification: { command: 'true', claimedExit: 0 } },
@@ -162,6 +174,14 @@ test('RT11.4/5: verified low/high runs learn distinct resolved tuple keys and re
   assert.equal(verified.effortResolved, 'low');
   assert.equal(verified.effortObserved, 'low');
   assert.equal(verified.payload.capture.routeKey, low.result.routeKey);
+  const durableObservation = first.coordination.events().find((event) =>
+    event.kind === 'driver.recorded' && event.payload?.kind === 'route.observed' && event.payload?.taskId === 'verified-low');
+  assert.equal(durableObservation.payload.harnessRequested, 'codex');
+  assert.equal(durableObservation.payload.harnessResolved, 'codex@2');
+  assert.equal(durableObservation.payload.modelObserved, 'gpt-exact');
+  assert.equal(durableObservation.payload.effortObserved, 'low');
+  assert.equal(durableObservation.payload.routeKey, low.result.routeKey);
+  assert.ok(durableObservation.payload.evidence?.coordinationSeq);
 
   const replay = system({ codex: stubAdapter('codex', ['low', 'high']) }, route, {
     log: first.log, coordination: first.coordination, captureOpts,
@@ -180,6 +200,24 @@ test('RT11.4/5: verified low/high runs learn distinct resolved tuple keys and re
   assert.equal(review.effortResolved, 'high');
   const requested = first.log.read(low.handle.id).find((event) => event.kind === 'review.requested');
   assert.equal(requested.payload.reviewerEffortRequested, 'high');
+
+  const integrated = await first.coordinator.integrate(low.handle.id, { actor: 'orchestrator' });
+  assert.equal(integrated.ok, true);
+  const namedEvents = first.log.read(low.handle.id).filter((event) =>
+    ['lifecycle.spawned', 'lifecycle.turn_started', 'resource.tokens', 'lifecycle.turn_completed', 'verify.reverified', 'integration.completed'].includes(event.kind));
+  assert.ok(namedEvents.length >= 7);
+  for (const event of namedEvents) {
+    for (const field of ['harnessRequested', 'harnessResolved', 'modelRequested', 'modelResolved', 'modelObserved', 'effortRequested', 'effortResolved', 'effortObserved', 'routeKey']) {
+      assert.equal(Object.hasOwn(event, field), true, `${event.kind} must expose ${field}`);
+    }
+    assert.equal(event.harnessRequested, 'codex');
+    assert.equal(event.harnessResolved, 'codex@2');
+    assert.equal(event.modelRequested, 'gpt-exact');
+    assert.equal(event.modelResolved, 'gpt-exact');
+    assert.equal(event.effortRequested, 'low');
+    assert.equal(event.effortResolved, 'low');
+    assert.equal(event.routeKey, low.result.routeKey);
+  }
 });
 
 test('RT11.6: native effort mismatch fails and kills, while result prose cannot forge observation', async () => {
@@ -195,14 +233,27 @@ test('RT11.6: native effort mismatch fails and kills, while result prose cannot 
   await until(() => mismatch.list().find((worker) => worker.id === handle.id)?.status === 'dead');
 
   const proseAdapter = stubAdapter('codex', ['high']);
-  const prose = system({ codex: proseAdapter }, () => 'codex').coordinator;
+  const proseSystem = system({ codex: proseAdapter }, () => 'codex');
+  const prose = proseSystem.coordinator;
   const safe = await prose.spawn('codex', brief(), { taskId: 'untrusted-effort', model: 'gpt-exact', effort: 'high' });
   proseAdapter.cb({
+    worker: safe.id, harness: 'codex', turnEpoch: 2, actor: 'worker', kind: 'content.message',
+    payload: { model: 'forged-model', modelId: 'forged-id', modelObserved: 'forged-observed', effortObserved: 'low' },
+  });
+  proseAdapter.cb({
     worker: safe.id, harness: 'codex', turnEpoch: 2, actor: 'worker', kind: 'lifecycle.turn_completed',
-    payload: { status: 'completed', effortObserved: 'low', artifacts: { files: [] }, verification: { command: 'true', claimedExit: 0 } },
+    payload: { status: 'completed', model: 'forged-result-model', modelId: 'forged-result-id', modelObserved: 'forged-result-observed', effortObserved: 'low', artifacts: { files: [] }, verification: { command: 'true', claimedExit: 0 } },
   });
   const completed = await until(async () => { const result = await prose.result(safe.id); return result.ready ? result : null; });
   assert.equal(completed.status, 'completed');
   assert.equal(completed.effortObserved, null);
   assert.equal(completed.effortMismatch, null);
+  assert.equal(completed.modelObserved, null);
+  assert.equal(completed.modelMismatch, null);
+  const safeReplay = system({ codex: stubAdapter('codex', ['high']) }, () => 'codex', {
+    log: proseSystem.log, coordination: proseSystem.coordination,
+  }).coordinator;
+  const replayed = await safeReplay.result(safe.id);
+  assert.equal(replayed.modelObserved, null);
+  assert.equal(replayed.modelMismatch, null);
 });

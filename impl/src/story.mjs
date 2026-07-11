@@ -123,12 +123,15 @@ function newWorkerStory(workerId, harness, spawnedAtSeq) {
     status: 'idle',
     taskId: null,
     brief: null,
+    harnessRequested: null,
+    harnessResolved: null,
     modelRequested: null,
     modelResolved: null,
     modelObserved: null,
     effortRequested: null,
     effortResolved: null,
     effortObserved: null,
+    routeKey: null,
     effortMismatch: null,
     modelMismatch: null,
     lastVerdict: null, // SC5c: {accept:boolean} once verify.reverified folds in
@@ -300,15 +303,22 @@ function applyEvent(state, event) {
 
   // MS5 attribution is monotonic enrichment regardless of event kind. Coordinator events carry
   // these fields at the envelope; adapter lifecycle payloads may carry the wire observation.
-  w.modelRequested = event.modelRequested ?? payload.modelRequested ?? w.modelRequested;
-  w.modelResolved = event.modelResolved ?? payload.modelResolved ?? w.modelResolved;
-  w.modelObserved = event.modelObserved ?? payload.modelObserved ?? payload.modelId ?? payload.model ?? w.modelObserved;
-  w.effortRequested = event.effortRequested ?? payload.effortRequested ?? w.effortRequested;
-  w.effortResolved = event.effortResolved ?? payload.effortResolved ?? w.effortResolved;
+  const spawnAttribution = kind === 'lifecycle.spawned' ? payload : {};
+  w.harnessRequested = event.harnessRequested ?? spawnAttribution.harnessRequested ?? spawnAttribution.vendorRequested ?? w.harnessRequested;
+  w.harnessResolved = event.harnessResolved ?? spawnAttribution.harnessResolved ?? w.harnessResolved;
+  w.modelRequested = event.modelRequested ?? spawnAttribution.modelRequested ?? w.modelRequested;
+  w.modelResolved = event.modelResolved ?? spawnAttribution.modelResolved ?? w.modelResolved;
+  const nativeModel = event.actor === 'worker' && (kind === 'lifecycle.spawned' || kind === 'resource.tokens')
+    ? (payload.modelObserved ?? payload.modelId ?? payload.model)
+    : null;
+  w.modelObserved = event.modelObserved ?? nativeModel ?? w.modelObserved;
+  w.effortRequested = event.effortRequested ?? spawnAttribution.effortRequested ?? w.effortRequested;
+  w.effortResolved = event.effortResolved ?? spawnAttribution.effortResolved ?? w.effortResolved;
   const nativeEffort = event.actor === 'worker' && (kind === 'lifecycle.spawned' || kind === 'resource.tokens')
     ? payload.effortObserved
     : null;
   w.effortObserved = event.effortObserved ?? nativeEffort ?? w.effortObserved;
+  w.routeKey = event.routeKey ?? spawnAttribution.routeKey ?? w.routeKey;
   if (kind === 'model.mismatch') w.modelMismatch = payload;
   if (kind === 'effort.mismatch') w.effortMismatch = payload;
 

@@ -143,7 +143,11 @@ export class CoordinationStore {
       this._knowledgeNodes.set(`task:${p.id}`, freeze({ id: `task:${p.id}`, type: 'Task', grounding: 'observed', body: `Task ${p.id}`, evidence: [{ coordinationSeq: event.seq }], observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: event.seq, eventTime: event.ts, validFrom: event.ts, validTo: null, validityVersion: 1 }));
     } else if (event.kind === 'task.claimed') {
       const old = this._tasks.get(p.id);
-      this._tasks.set(p.id, freeze({ ...clone(old), status: 'working', assignee: p.worker, version: p.newVersion, claimedEvent: event.seq }));
+      const route = Object.fromEntries([
+        'harnessRequested', 'harnessResolved', 'modelRequested', 'modelResolved', 'modelObserved',
+        'effortRequested', 'effortResolved', 'effortObserved', 'routeKey',
+      ].filter((field) => Object.hasOwn(p, field)).map((field) => [field, clone(p[field])]));
+      this._tasks.set(p.id, freeze({ ...clone(old), ...route, status: 'working', assignee: p.worker, version: p.newVersion, claimedEvent: event.seq }));
     } else if (event.kind === 'task.transitioned') {
       const old = this._tasks.get(p.id);
       this._tasks.set(p.id, freeze({ ...clone(old), status: p.to, version: p.newVersion, ...(TERMINAL.has(p.to) ? { terminalEvent: event.seq } : {}) }));
@@ -273,7 +277,7 @@ export class CoordinationStore {
     return { ok: true, result: 'created', event: clone(event), task: this.task(fields.id) };
   }
 
-  claimTask(id, worker, expectedVersion, auth) {
+  claimTask(id, worker, expectedVersion, auth, attribution = {}) {
     const prior = this._byKey.get(auth?.key);
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), task: this.task(id) };
     const task = this._tasks.get(id);
@@ -282,7 +286,11 @@ export class CoordinationStore {
     if (task.version !== expectedVersion) throw new CoordinationRefusal(`stale task version ${expectedVersion}`, 'stale_version');
     if (task.assignee != null) throw new CoordinationRefusal(`already assigned ${id}`, 'already_assigned');
     if (!task.deps.every((dep) => this._tasks.get(dep)?.status === 'completed')) throw new CoordinationRefusal(`dependencies unsatisfied for ${id}`, 'deps_unsatisfied');
-    const event = this._append('task.claimed', { id, worker, expectedVersion, newVersion: expectedVersion + 1 }, auth);
+    const route = Object.fromEntries([
+      'harnessRequested', 'harnessResolved', 'modelRequested', 'modelResolved', 'modelObserved',
+      'effortRequested', 'effortResolved', 'effortObserved', 'routeKey',
+    ].filter((field) => Object.hasOwn(attribution, field)).map((field) => [field, clone(attribution[field])]));
+    const event = this._append('task.claimed', { id, worker, expectedVersion, newVersion: expectedVersion + 1, ...route }, auth);
     return { ok: true, result: 'claimed', event: clone(event), task: this.task(id) };
   }
 

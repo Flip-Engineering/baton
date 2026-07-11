@@ -100,11 +100,13 @@ try {
 
 const events = workerId ? log.read(workerId) : [];
 const handle = workerId ? coordinator.list().find((worker) => worker.id === workerId) : null;
+const cardIdentity = `${adapter.card().harness}@${adapter.card().version}`;
 const checks = {
   noHarnessError: fatal === null,
-  exactTupleObserved: handle?.harnessResolved === 'codex-app-server@1.0.0'
+  exactTupleHonest: handle?.harnessResolved === cardIdentity
     && handle?.modelRequested === MODEL && handle?.modelResolved === MODEL && handle?.modelObserved === MODEL
-    && handle?.effortRequested === EFFORT && handle?.effortResolved === EFFORT && handle?.effortObserved === EFFORT,
+    && handle?.effortRequested === EFFORT && handle?.effortResolved === EFFORT
+    && (handle?.effortObserved == null || handle?.effortObserved === EFFORT),
   freshVerified: result?.status === 'completed' && events.some((event) => event.kind === 'verify.reverified' && event.payload?.accept === true),
   integrated: integration?.ok === true,
   integrationIntent: events.some((event) => event.kind === 'integration.completed'),

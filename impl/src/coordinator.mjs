@@ -467,12 +467,31 @@ export class Coordinator {
     return card ? `${card.harness}@${card.version}` : '';
   }
 
+  _routeAttribution(handle, task = this._tasks.get(handle.taskId)) {
+    return {
+      harnessRequested: task?.vendorRequested ?? null,
+      harnessResolved: handle.vendor ? this._harnessOf(handle.vendor) : null,
+      modelRequested: handle.modelRequested ?? null,
+      modelResolved: handle.modelResolved ?? null,
+      modelObserved: handle.modelObserved ?? null,
+      effortRequested: handle.effortRequested ?? null,
+      effortResolved: handle.effortResolved ?? null,
+      effortObserved: handle.effortObserved ?? null,
+      routeKey: handle.routeKey ?? task?.routeKey ?? null,
+    };
+  }
+
   _dispatch(task, vendor, model, effort) {
     const handle = this._workers.get(task.assignee);
     const workerId = handle.id;
     if (this._coordination) {
       const claim = this._coordination.claimTask(task.id, workerId, task.coordinationVersion, {
         actor: 'orchestrator', key: `task.claimed:${task.id}:${task.coordinationVersion}`,
+      }, {
+        harnessRequested: task.vendorRequested, harnessResolved: this._harnessOf(vendor),
+        modelRequested: task.modelRequested ?? null, modelResolved: model ?? null, modelObserved: null,
+        effortRequested: task.effortRequested ?? null, effortResolved: effort ?? null, effortObserved: null,
+        routeKey: routeTupleKey(this._adapters[vendor]?.card(), model, effort, task.taskType),
       });
       task.coordinationVersion = claim.task.version;
     }
@@ -492,6 +511,7 @@ export class Coordinator {
       try { this._runtimeScopes?.remove?.(workerId); } catch { /* best effort */ }
       const crashEvent = this._log.append({
         worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'lifecycle.crashed', actor: 'policy',
+        ...this._routeAttribution(handle, task),
         payload: { phase: 'runtime_scope', error: String(err?.message ?? err) },
       });
       const evidence = this._coordMapEvent(crashEvent);
@@ -593,7 +613,7 @@ export class Coordinator {
 
     this._log.append({
       worker: workerId, harness, turnEpoch: stamp.turnEpoch, kind: 'lifecycle.turn_started', actor: 'orchestrator', payload: {},
-      modelRequested: handle.modelRequested ?? null, modelResolved: handle.modelResolved ?? null, modelObserved: handle.modelObserved ?? null,
+      ...this._routeAttribution(handle, task),
     });
 
     task.status = 'working';
@@ -618,6 +638,7 @@ export class Coordinator {
       turnEpoch: this._safeTurnEpoch(handle),
       kind: 'lifecycle.crashed',
       actor: 'orchestrator',
+      ...this._routeAttribution(handle, task),
       payload: { error: ack.reason ?? 'spawn refused', phase: 'spawn' },
     });
     const evidence = this._coordMapEvent(crashEvent);
@@ -967,7 +988,7 @@ export class Coordinator {
       worktree: context.worktree,
       timeoutMs: task.brief?.budget?.wallMin ? task.brief.budget.wallMin * 60000 : undefined,
       model: handle.modelResolved ?? undefined,
-      reasoningEffort: handle.modelPolicy?.reasoningEffort,
+      reasoningEffort: handle.effortResolved ?? undefined,
       serviceTier: handle.modelPolicy?.serviceTier,
       session,
       env: runtime?.env,
@@ -1041,7 +1062,7 @@ export class Coordinator {
     this._log.append({
       worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: stamp.turnEpoch,
       kind: 'lifecycle.turn_started', actor: 'orchestrator', payload: { recovery: true },
-      modelRequested: handle.modelRequested ?? null, modelResolved: handle.modelResolved ?? null, modelObserved: handle.modelObserved ?? null,
+      ...this._routeAttribution(handle, activeTask),
     });
     for (const event of admission.events) this._handleEvent(event);
     return { ok: true, result: 'attached', handle: this._publicHandle(handle) };
@@ -1102,6 +1123,7 @@ export class Coordinator {
       const refusedEvent = this._log.append({
         worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
         kind: 'integration.refused', actor: 'policy',
+        ...this._routeAttribution(handle, task),
         payload: { strategy, sha: task.capturedSha, retainedResultRef: task.retainedResultRef, reason: String(err?.message ?? err) },
       });
       const refusedEvidence = this._coordMapEvent(refusedEvent);
@@ -1119,6 +1141,7 @@ export class Coordinator {
     const integrationEvent = this._log.append({
       worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
       kind: 'integration.completed', actor: opts.actor ?? 'orchestrator', payload: integration,
+      ...this._routeAttribution(handle, task),
     });
     const integrationEvidence = this._coordMapEvent(integrationEvent);
     if (this._coordination) {
@@ -1423,7 +1446,7 @@ export class Coordinator {
     this._log.append({
       worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: stamp.turnEpoch,
       kind: 'lifecycle.turn_started', actor: 'orchestrator',
-      modelRequested: handle.modelRequested ?? null, modelResolved: handle.modelResolved ?? null, modelObserved: handle.modelObserved ?? null,
+      ...this._routeAttribution(handle, activeTask),
       payload: { followUp: true, message },
     });
     for (const event of admission.events) this._handleEvent(event);
@@ -1728,17 +1751,9 @@ export class Coordinator {
     const payload = this._normalizeUsage(handle, event.payload ?? {});
     handle.budgetUsed.tokens += payload.tokens;
     handle.budgetUsed.usd += payload.usd;
-    this._log.append({
+    const usageEvent = this._log.append({
       ...event, payload,
-      modelRequested: handle.modelRequested ?? null,
-      modelResolved: handle.modelResolved ?? null,
-      modelObserved: handle.modelObserved ?? null,
-      harnessRequested: task?.vendorRequested ?? null,
-      harnessResolved: handle.vendor ? this._harnessOf(handle.vendor) : null,
-      effortRequested: handle.effortRequested ?? null,
-      effortResolved: handle.effortResolved ?? null,
-      effortObserved: handle.effortObserved ?? null,
-      routeKey: handle.routeKey ?? task?.routeKey ?? null,
+      ...this._routeAttribution(handle, task),
     });
     const tokenLimit = Number(task?.brief?.budget?.tokens ?? 0);
     const usdLimit = Number(task?.brief?.budget?.usd ?? 0);
@@ -1754,6 +1769,7 @@ export class Coordinator {
       this._log.append({
         worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
         kind: 'resource.budget_threshold', actor: 'policy',
+        ...this._routeAttribution(handle, task),
         payload: {
           threshold, hardStop, action: hardStop ? 'kill' : 'notify',
           used: { ...handle.budgetUsed }, limits: { tokens: tokenLimit, usd: usdLimit }, ratio,
@@ -1768,6 +1784,7 @@ export class Coordinator {
       }, this._budgetTerminalGraceMs);
       if (handle.budgetStopTimer && typeof handle.budgetStopTimer.unref === 'function') handle.budgetStopTimer.unref();
     }
+    return usageEvent;
   }
 
   _clearBudgetStop(handle) {
@@ -1864,7 +1881,7 @@ export class Coordinator {
     const kind = waiter.mode === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed';
     const ev = {
       worker: workerId, harness, turnEpoch: handle ? this._safeTurnEpoch(handle) : 0, kind, actor: 'worker', payload: {},
-      modelRequested: handle?.modelRequested ?? null, modelResolved: handle?.modelResolved ?? null, modelObserved: handle?.modelObserved ?? null,
+      ...(handle ? this._routeAttribution(handle) : {}),
     };
     if (waiter.emulated) ev.emulated = true;
     const stopEvent = this._log.append(ev);
@@ -1894,7 +1911,7 @@ export class Coordinator {
             }
             this._log.append({
               worker: workerId, harness, turnEpoch: stamp.turnEpoch, kind: 'lifecycle.turn_started', actor: 'orchestrator',
-              modelRequested: handle.modelRequested ?? null, modelResolved: handle.modelResolved ?? null, modelObserved: handle.modelObserved ?? null,
+              ...this._routeAttribution(handle, task),
               payload: { followUp: true, afterInterrupt: true },
             });
             this._resetWatchdogTurn(handle);
@@ -2477,7 +2494,10 @@ export class Coordinator {
         if (refTask) refTask.sessionRef = handle.sessionRef;
       }
     }
-    const observedModel = payload?.modelObserved ?? payload?.modelId ?? payload?.model;
+    // Only adapter-mapped native lifecycle/usage metadata may establish provider identity.
+    // Result/content/unknown worker payloads are untrusted and cannot forge a policy mismatch.
+    const nativeObservation = actor === 'worker' && (kind === 'lifecycle.spawned' || kind === 'resource.tokens');
+    const observedModel = nativeObservation ? (payload?.modelObserved ?? payload?.modelId ?? payload?.model) : null;
     if (typeof observedModel === 'string' && observedModel.length > 0) {
       handle.modelObserved = observedModel;
       const task = this._tasks.get(handle.taskId);
@@ -2493,7 +2513,7 @@ export class Coordinator {
         }
         const mismatchEvent = this._log.append({
           worker: workerId, harness, turnEpoch, kind: 'model.mismatch', actor: 'policy',
-          modelRequested: handle.modelRequested ?? null, modelResolved: handle.modelResolved, modelObserved: observedModel,
+          ...this._routeAttribution(handle, mismatchTask),
           payload: { requested: handle.modelResolved, observed: observedModel, action: 'fail_and_kill' },
         });
         if (mismatchTask && !TERMINAL_TASK_STATUSES.has(mismatchTask.status)) {
@@ -2508,8 +2528,7 @@ export class Coordinator {
     }
     // Only an adapter's explicitly mapped native lifecycle/usage observation is authoritative.
     // In particular, worker result/content fields named `effort` are untrusted prose/data.
-    const observedEffort = (actor === 'worker' && (kind === 'lifecycle.spawned' || kind === 'resource.tokens'))
-      ? payload?.effortObserved : null;
+    const observedEffort = nativeObservation ? payload?.effortObserved : null;
     if (typeof observedEffort === 'string' && observedEffort.length > 0) {
       handle.effortObserved = observedEffort;
       const effortTask = this._tasks.get(handle.taskId);
@@ -2517,7 +2536,7 @@ export class Coordinator {
       if (handle.effortResolved && observedEffort !== handle.effortResolved && !handle.effortMismatch) {
         handle.effortMismatch = { requested: handle.effortResolved, observed: observedEffort };
         const mismatchEvent = this._log.append({ worker: workerId, harness, turnEpoch, kind: 'effort.mismatch', actor: 'policy',
-          effortRequested: handle.effortRequested, effortResolved: handle.effortResolved, effortObserved: observedEffort,
+          ...this._routeAttribution(handle, effortTask),
           payload: { requested: handle.effortResolved, observed: observedEffort, action: 'fail_and_kill' } });
         if (effortTask && !TERMINAL_TASK_STATUSES.has(effortTask.status)) {
           const evidence = this._coordMapEvent(mismatchEvent);
@@ -2527,19 +2546,13 @@ export class Coordinator {
         this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
       }
     }
-    const attribution = {
-      modelRequested: handle.modelRequested ?? null,
-      modelResolved: handle.modelResolved ?? null,
-      modelObserved: handle.modelObserved ?? null,
-      effortRequested: handle.effortRequested ?? null,
-      effortResolved: handle.effortResolved ?? null,
-      effortObserved: handle.effortObserved ?? null,
-    };
+    const attribution = this._routeAttribution(handle);
     const appendAttributed = (partial) => this._log.append({ ...partial, ...attribution });
+    let nativeObservationEvent = null;
 
     switch (kind) {
       case 'resource.tokens':
-        this._recordUsage(handle, event);
+        nativeObservationEvent = this._recordUsage(handle, event);
         break;
       case 'lifecycle.turn_completed': {
         // Adapters may wrap the WorkerResult as { result } (MockAdapter) or emit it directly
@@ -2657,7 +2670,15 @@ export class Coordinator {
         this._onStopConfirmed(handle, 'kill');
         break;
       default:
-        appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        nativeObservationEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+    }
+    if (nativeObservation && nativeObservationEvent
+      && ((typeof observedModel === 'string' && observedModel.length > 0) || (typeof observedEffort === 'string' && observedEffort.length > 0))) {
+      const task = this._tasks.get(handle.taskId);
+      const evidence = this._coordMapEvent(nativeObservationEvent);
+      this._coordRecord('route.observed', {
+        taskId: task?.id ?? handle.taskId, workerId, ...this._routeAttribution(handle, task), evidence,
+      }, `driver.route_observed:${task?.id ?? handle.taskId}:${nativeObservationEvent.seq}`);
     }
     this._observeWatchdogEvent(handle, event);
   }
@@ -2715,13 +2736,7 @@ export class Coordinator {
         turnEpoch: this._safeTurnEpoch(handle),
         kind: 'verify.reverified',
         actor: 'policy',
-        modelRequested: handle.modelRequested ?? null,
-        modelResolved: handle.modelResolved ?? null,
-        modelObserved: handle.modelObserved ?? null,
-        effortRequested: handle.effortRequested ?? null,
-        effortResolved: handle.effortResolved ?? null,
-        effortObserved: handle.effortObserved ?? null,
-        routeKey: handle.routeKey ?? null,
+        ...this._routeAttribution(handle, task),
         payload: {
           verdict,
           accept,
@@ -2925,7 +2940,9 @@ export class Coordinator {
             sessionRequest = e.payload?.sessionRequest ?? sessionRequest;
             lineage = e.payload?.lineage ?? lineage;
             review = e.payload?.review ?? review;
-            modelObserved = e.payload?.modelObserved ?? e.payload?.model ?? modelObserved;
+            if (e.actor === 'worker') {
+              modelObserved = e.payload?.modelObserved ?? e.payload?.modelId ?? e.payload?.model ?? modelObserved;
+            }
             if (e.actor === 'worker') {
               const nativeId = e.payload?.threadId ?? e.payload?.sessionId;
               if (typeof nativeId === 'string' && nativeId.length > 0) {
@@ -3016,7 +3033,6 @@ export class Coordinator {
             if (terminalStatus === 'input_required') terminalStatus = 'working';
             break;
           default:
-            modelObserved = e.payload?.modelObserved ?? e.payload?.modelId ?? e.payload?.model ?? modelObserved;
             break;
         }
       }

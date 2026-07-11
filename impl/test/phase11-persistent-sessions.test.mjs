@@ -32,7 +32,7 @@ function card() {
   return {
     harness: 'session', version: '1', authPosture: 'none', concurrencyCeiling: 2, maxContext: 1000,
     verbs: { spawn: 'native', prompt: 'native', steer: 'native', interrupt: 'native', approve: 'native', answer: 'native', kill: 'native', pause: 'unsupported' },
-    modelSelection: { mode: 'exact', configuredDefault: null, available: null, family: 'test', acceptedPrefixes: ['test-'], acceptedAliases: [], reasoningEffort: null, serviceTier: null, provenance: 'test', refreshedAt: null },
+    modelSelection: { mode: 'exact', configuredDefault: null, available: null, family: 'test', acceptedPrefixes: ['test-'], acceptedAliases: [], reasoningEffort: ['low', 'high'], configuredEffort: 'low', serviceTier: null, provenance: 'test', refreshedAt: null },
     sessions: { multiTurn: 'native', resume: 'native', fork: 'native' },
   };
 }
@@ -419,14 +419,16 @@ test('PS7: replayed session is reattached only after bounded handshake proves th
   const { c, log, coordination } = harness(original, undefined, {
     create: async () => ({ path: wt, branch: 'baton/recover-task', baseSha: 'base-1' }),
   });
-  const h = await c.spawn('session', brief(), { taskId: 'recover-task' });
+  const h = await c.spawn('session', brief(), { taskId: 'recover-task', model: 'test-recover', effort: 'high' });
   await until(() => c.list()[0].sessionContext);
   original.emit(h.id, 'lifecycle.spawned', { sessionId: 'recover-native', pid: 111 }, 1);
   original.emit(h.id, 'lifecycle.turn_completed', completed('before restart'), 1);
   await until(async () => (await c.result(h.id)).ready);
 
   const resumed = adapter();
-  resumed.spawn = async (worker) => {
+  let recoveryOpts;
+  resumed.spawn = async (worker, _brief, opts) => {
+    recoveryOpts = opts;
     resumed.emit(worker, 'lifecycle.spawned', { sessionId: 'recover-native', pid: 222 }, 1);
     resumed.emit(worker, 'lifecycle.turn_started', { sessionId: 'recover-native' }, 1);
     return { ok: true };
@@ -445,6 +447,8 @@ test('PS7: replayed session is reattached only after bounded handshake proves th
   const recovered = await replay.recover(h.id);
   assert.equal(recovered.ok, true);
   assert.equal(recovered.result, 'attached');
+  assert.equal(recoveryOpts.model, 'test-recover');
+  assert.equal(recoveryOpts.reasoningEffort, 'high', 'recovery must preserve the resolved top-level effort');
   assert.equal(replay.list()[0].status, 'working');
   assert.equal(replay.list()[0].sessionRef.id, 'recover-native');
   assert.ok(log.read(h.id).some((event) => event.kind === 'control.recovery_attached'));

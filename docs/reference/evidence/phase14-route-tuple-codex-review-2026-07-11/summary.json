@@ -1,0 +1,95 @@
+{
+  "at": "2026-07-11T22:17:29.069Z",
+  "repoHead": "32cf739df369584f99c7d638b78be6349f0643e4",
+  "workerId": "w-1",
+  "pid": 33537,
+  "model": "gpt-5.6-sol",
+  "effort": "low",
+  "result": {
+    "ready": true,
+    "status": "completed",
+    "verdict": {
+      "reverified": true,
+      "observedExit": 0,
+      "hadClaim": false,
+      "matchesClaim": true,
+      "passed": true,
+      "locus": "fresh_sandbox",
+      "redGreen": null,
+      "baseExit": null,
+      "coverageOfChange": null,
+      "uncoveredChangedLines": [],
+      "mutationStrength": null,
+      "mutationPassed": null,
+      "survivedMutants": [],
+      "observedOutputTail": "aring end to end (104.457084ms)\n✔ decayedStat: null stat has no decayed values (bucket does not exist) (2.442333ms)\n✔ decayedStat: exactly one half-life halves weight and count (hand-computed example) (0.216958ms)\n✔ decayedStat: no elapsed time returns the stat unchanged (0.095125ms)\n✔ decayedStat: two half-lives quarters weight and count (0.053167ms)\n✔ scoreCandidate: rate falls back to defaultPriorSuccessRate when count is 0 (0.069583ms)\n✔ scoreCandidate: higher decayed weight/count (all wins) scores higher than a losing candidate at equal count (0.0435ms)\n✔ mode:round-robin cycles through eligible candidates in given order, wrapping, independently per taskType (0.159833ms)\n✔ candidates at concurrencyCeiling are filtered before selection; sole remaining eligible candidate is returned regardless of mode (0.305875ms)\n✔ pick() returns null for an empty candidates array or when all candidates are at ceiling (0.188833ms)\n✔ respects concurrency: a maxed vendor is skipped in favor of one with headroom (0.299958ms)\n✔ mode:auto stays round-robin while totalDecayedCount < minSamplesForAdaptive, then switches to score-based selection (0.1975ms)\n✔ record(..., true) increases decayed weight and count; record(..., false) increases count only (rate falls) (0.123416ms)\n✔ record() decays the existing bucket by elapsed time before adding the new observation (hand-computed half-life example) (0.124458ms)\n✔ decay is a read-time projection: a bucket recorded once at t=0 shows continued decay toward the prior at t=10*halfLifeMs via getStat/pick, without another record() (0.095959ms)\n✔ D5/recency bias: an old losing streak is outweighed by recent wins — hand-computed exact numbers, not just a qualitative threshold (0.179875ms)\n✔ recency bias: pick() favors a candidate with a stale losing history over one with none, once its recent wins are recorded (0.137916ms)\n✔ a brand-new modelVersion in a family/taskType with prior history seeds at seedDiscount * predecessor decayed weight/count (0.128042ms)\n✔ D5: a new modelVersion gets tried, not starved — hand-computed exact scores via decayedStat()/scoreCandidate() prove WHY pick() favors it, not just that it happens to win (0.233041ms)\n✔ a modelVersion in a different family never seeds from another family's bucket, even with an identical taskType (0.075792ms)\n✔ no predecessor exists in family+taskType: bucket starts at {weight:0,count:0,seededFrom:null} and scoring falls back to defaultPriorSuccessRate (0.063708ms)\n✔ seeding reads a predecessor bucket but never mutates it; seeding is idempotent on re-touch (0.094ms)\n✔ learns only from verified wins: record() has no code path that accepts or derives from a worker self-report field (0.394333ms)\n✔ record() throws RouterUsageError when verifiedWin is not strictly boolean (e.g. a truthy string) (0.153958ms)\n✔ a worker self-report alone (no explicit record(verifiedWin) call) never moves the stats (0.061458ms)\n✔ record() with a repeated taskId applies at most once; snapshot() is identical after the 2nd identical call (0.197875ms)\n✔ record() calls without taskId are never deduped — every call applies (at-least-once tradeoff) (0.069834ms)\n✔ the first record() call for a fresh taskId returns {applied:true} (0.072917ms)\n✔ getStat() for a never-recorded, never-seeded bucket returns null, not a zeroed object (0.04925ms)\n✔ snapshot() returns a deep copy; mutating it does not affect router state (0.090625ms)\n✔ no Math.random() anywhere: tie-breaking among equal scores is deterministic (first candidate wins) (0.093458ms)\n✔ route-tuple candidates fall back to legacy learning evidence when no exact tuple bucket exists (0.158208ms)\n✔ exact route-tuple evidence takes precedence over a stronger legacy alias (0.181042ms)\n✔ two AdaptiveRouter instances fed the identical sequence of record()/pick() calls with the same injected now values produce identical snapshots (0.120083ms)\nℹ tests 84\nℹ suites 0\nℹ pass 84\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1123.631625\n",
+      "note": "PASS: observed exit 0 matches expected 0.",
+      "durationMs": 1179
+    },
+    "artifacts": {
+      "commits": [],
+      "files": []
+    },
+    "vendor": "codex",
+    "harnessRequested": "codex",
+    "harnessResolved": "codex@codex-cli 0.144.0",
+    "modelRequested": "gpt-5.6-sol",
+    "modelResolved": "gpt-5.6-sol",
+    "modelObserved": "gpt-5.6-sol",
+    "modelMismatch": null,
+    "effortRequested": "low",
+    "effortResolved": "low",
+    "effortObserved": null,
+    "effortMismatch": null,
+    "routeKey": "[\"codex\",\"codex-cli 0.144.0\",\"gpt-5.6-sol\",\"low\",\"openai\",\"review\"]",
+    "sessionRequest": {
+      "mode": "new"
+    },
+    "sessionRef": {
+      "vendor": "codex",
+      "kind": "thread",
+      "id": "019f5340-a224-7d01-9c40-762e82b64dcf",
+      "persistence": "native",
+      "source": "wire"
+    },
+    "sessionContext": {
+      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-route-tuple-review",
+      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "baseSha": "20a208f934a2dd7fa8b2f636a5d5282a6464bdd3",
+      "branch": "baton/codex-route-tuple-review",
+      "ownerTaskId": "codex-route-tuple-review"
+    },
+    "lineage": null,
+    "review": null,
+    "integration": null,
+    "publication": null,
+    "retainedResultRef": null
+  },
+  "integration": {
+    "ok": true,
+    "result": "integrated",
+    "integration": {
+      "beforeSha": "20a208f934a2dd7fa8b2f636a5d5282a6464bdd3",
+      "resultSha": "32cf739df369584f99c7d638b78be6349f0643e4",
+      "afterSha": "32cf739df369584f99c7d638b78be6349f0643e4",
+      "strategy": "ff-only",
+      "actor": "orchestrator"
+    }
+  },
+  "approvals": [],
+  "steer": null,
+  "checks": {
+    "noHarnessError": true,
+    "exactTupleObserved": false,
+    "freshVerified": true,
+    "integrated": true,
+    "integrationIntent": true,
+    "killConfirmed": true,
+    "processGone": true,
+    "worktreeGone": true,
+    "runtimeGone": true,
+    "branchGone": true
+  },
+  "fatal": null,
+  "pass": false
+}

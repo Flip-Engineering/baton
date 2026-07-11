@@ -320,24 +320,32 @@ test('MS5: story keeps requested, resolved, observed, and mismatch model identit
   state = foldEvent(state, {
     worker: 'w-model', harness: 'stub@1', seq: 1, ts: '2026-01-01T00:00:00Z', turnEpoch: 1,
     actor: 'orchestrator', kind: 'lifecycle.spawned',
+    harnessRequested: 'stub-registry', harnessResolved: 'stub@1', routeKey: '["stub","1","stub-exact","high"]',
     modelRequested: 'stub-exact', modelResolved: 'stub-exact', modelObserved: null,
     effortRequested: 'high', effortResolved: 'high', effortObserved: null,
     payload: { taskId: 't-model', brief: brief() },
   });
   state = foldEvent(state, {
     worker: 'w-model', harness: 'stub@1', seq: 2, ts: '2026-01-01T00:00:01Z', turnEpoch: 1,
+    actor: 'worker', kind: 'content.message', payload: { model: 'forged-prose-model', effortObserved: 'forged-prose-effort' },
+  });
+  state = foldEvent(state, {
+    worker: 'w-model', harness: 'stub@1', seq: 3, ts: '2026-01-01T00:00:02Z', turnEpoch: 1,
     actor: 'worker', kind: 'resource.tokens', modelObserved: 'stub-fallback', payload: { modelId: 'stub-fallback' },
     effortObserved: 'low',
   });
   state = foldEvent(state, {
-    worker: 'w-model', harness: 'stub@1', seq: 3, ts: '2026-01-01T00:00:02Z', turnEpoch: 1,
+    worker: 'w-model', harness: 'stub@1', seq: 4, ts: '2026-01-01T00:00:03Z', turnEpoch: 1,
     actor: 'policy', kind: 'model.mismatch', payload: { requested: 'stub-exact', observed: 'stub-fallback' },
   });
   state = foldEvent(state, {
-    worker: 'w-model', harness: 'stub@1', seq: 4, ts: '2026-01-01T00:00:03Z', turnEpoch: 1,
+    worker: 'w-model', harness: 'stub@1', seq: 5, ts: '2026-01-01T00:00:04Z', turnEpoch: 1,
     actor: 'policy', kind: 'effort.mismatch', payload: { requested: 'high', observed: 'low' },
   });
   const worker = state.workers.get('w-model');
+  assert.equal(worker.harnessRequested, 'stub-registry');
+  assert.equal(worker.harnessResolved, 'stub@1');
+  assert.equal(worker.routeKey, '["stub","1","stub-exact","high"]');
   assert.equal(worker.modelRequested, 'stub-exact');
   assert.equal(worker.modelResolved, 'stub-exact');
   assert.equal(worker.modelObserved, 'stub-fallback');
