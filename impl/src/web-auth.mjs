@@ -141,7 +141,24 @@ export class WebSessionStore {
     });
   }
 
-  authenticator() { return (req) => this.authenticate(req); }
+  isPrincipalActive(principal, context = {}) {
+    const session = this._sessions.get(principal?.sessionId);
+    if (!session || session.revoked || Date.parse(session.expiresAt) <= this.now()) return false;
+    if (session.userId !== principal.userId || session.credentialId !== principal.credentialId
+      || session.authMethod !== principal.authMethod || session.expiresAt !== principal.expiresAt) return false;
+    if (context.repoId && !session.repoIds.includes(context.repoId)) return false;
+    if (!Array.isArray(principal.capabilities)
+      || principal.capabilities.some((capability) => !session.capabilities.includes(capability))) return false;
+    if (!Array.isArray(principal.repoIds)
+      || principal.repoIds.some((repoId) => !session.repoIds.includes(repoId))) return false;
+    return true;
+  }
+
+  authenticator() {
+    const authenticate = (req) => this.authenticate(req);
+    authenticate.isPrincipalActive = (principal, context) => this.isPrincipalActive(principal, context);
+    return authenticate;
+  }
 }
 
 export { COOKIE_NAME as WEB_SESSION_COOKIE_NAME };

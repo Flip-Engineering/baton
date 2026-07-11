@@ -34,6 +34,8 @@ export class WebEventStream {
     this.maxTickets = positiveInteger(opts.maxTickets ?? 1_000, 'maxTickets');
     this.maxConnections = positiveInteger(opts.maxConnections ?? 100, 'maxConnections');
     this.pollMs = positiveInteger(opts.pollMs ?? 100, 'pollMs');
+    if (opts.isPrincipalActive != null && typeof opts.isPrincipalActive !== 'function') throw new TypeError('isPrincipalActive must be a function');
+    this.isPrincipalActive = opts.isPrincipalActive ?? null;
     this.tickets = new Map();
     this.activeConnections = 0;
   }
@@ -52,6 +54,13 @@ export class WebEventStream {
       && this.allowedOrigins.has(origin) && this.repoIds.has(repoId)
       && Array.isArray(principal.repoIds) && principal.repoIds.includes(repoId)
       && Array.isArray(principal.capabilities) && principal.capabilities.includes('observe');
+  }
+
+  _liveAuthorized(principal, origin, repoId) {
+    if (!this._authorized(principal, origin, repoId)) return false;
+    if (!this.isPrincipalActive) return true;
+    try { return this.isPrincipalActive(principal, { origin, repoId }) === true; }
+    catch { return false; }
   }
 
   issue(principal, origin, repoId) {
@@ -94,7 +103,7 @@ export class WebEventStream {
     const valid = found && found.expiresAt > this.now()
       && timingSafeEqual(presented, found.hash)
       && found.sessionId === principal?.sessionId && found.credentialId === principal?.credentialId
-      && found.origin === origin && this._authorized(principal, origin, found.repoId);
+      && found.origin === origin && this._liveAuthorized(principal, origin, found.repoId);
     if (!valid) return null;
     this.tickets.delete(id);
     return { id, repoId: found.repoId };
@@ -185,6 +194,11 @@ export class WebEventStream {
     this.activeConnections += 1;
     const pump = () => {
       if (closed) return;
+      if (!this._liveAuthorized(principal, origin, grant.repoId)) {
+        disconnect('stream_authorization_lost');
+        try { res.end(); } catch { /* connection is already unusable */ }
+        return;
+      }
       for (const event of this.coordination.events(next)) if (!send(event)) break;
     };
     let headersStarted = false;

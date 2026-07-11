@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { mkdtempSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -100,4 +101,35 @@ test('WN2/WN5: the session registry protects the command northbound and revocati
   assert.deepEqual(calls, ['list']);
   assert.equal(JSON.stringify(coordination.events()).includes(issued.token), false);
   assert.equal(JSON.stringify(coordination.events()).includes(issued.csrfToken), false);
+});
+
+test('WN2/WN6: the session authenticator terminates an established stream after durable revocation', async () => {
+  let clock = now;
+  const sessions = new WebSessionStore(root(), { now: () => clock });
+  const issued = sessions.issue({ userId: 'user-1', authMethod: 'bearer', capabilities: ['observe'], repoIds: ['repo-a'], ttlMs: 60_000 }, { actor: 'bootstrap' });
+  const authenticate = sessions.authenticator();
+  const req = request({ authorization: `Bearer ${issued.token}` });
+  const principal = authenticate(req);
+  const coordination = new CoordinationStore(root());
+  const web = new WebNorthbound({
+    coordinator: { list() { return []; } }, coordination, authenticate,
+    repoIds: ['repo-a'], allowedOrigins: ['https://control.example.test'], now: () => clock,
+    pollMs: 5, maxFrameBytes: 100_000, maxBufferedBytes: 100_000,
+  });
+  class Response extends EventEmitter {
+    constructor() { super(); this.output = ''; this.writableLength = 0; }
+    writeHead(status) { this.status = status; }
+    write(value) { this.output += value; return true; }
+    end() { this.ended = true; }
+  }
+  const response = new Response();
+  const ticket = web.stream.issue(principal, 'https://control.example.test', 'repo-a');
+  web.stream.open({ ticket: ticket.body.ticket, principal, origin: 'https://control.example.test' }, response);
+  sessions.revoke(issued.sessionId, { actor: 'security-admin', reason: 'logout' });
+  coordination.recordWebAudit({ kind: 'after-revocation-secret' }, { actor: 'test', key: 'after-revocation-secret' });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(response.ended, true);
+  assert.equal(web.stream.activeConnections, 0);
+  assert.equal(response.output.includes('after-revocation-secret'), false);
+  assert.equal(coordination.events().some((event) => event.payload.kind === 'stream_authorization_lost'), true);
 });

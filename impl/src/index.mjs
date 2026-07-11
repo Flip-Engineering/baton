@@ -40,7 +40,7 @@ function worktreeManager(repoRoot, opts = {}) {
   return {
     async create(taskId) {
       const base = await worktreeMod.pinBaseSha(repoRoot, {});
-      const r = await worktreeMod.createFromBase(repoRoot, taskId, base.sha, {});
+      const r = await worktreeMod.createFromBase(repoRoot, taskId, base.sha, { dependencyDirs: opts.workerDependencyDirs ?? [] });
       return { path: r.dir, branch: r.branch, baseSha: r.baseSha };
     },
     async capture(worktreePath, opts = {}) {
@@ -173,7 +173,10 @@ export function createDriver(opts) {
   const coordinator = new Coordinator({
     log, fences,
     adapters: opts.adapters,
-    worktrees: worktreeManager(opts.repoRoot, { verifyDependencyDirs: opts.verifyDependencyDirs }),
+    worktrees: worktreeManager(opts.repoRoot, {
+      workerDependencyDirs: opts.workerDependencyDirs,
+      verifyDependencyDirs: opts.verifyDependencyDirs,
+    }),
     runtimeScopes,
     coordination,
     repoRoot: opts.repoRoot,

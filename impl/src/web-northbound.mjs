@@ -92,10 +92,12 @@ export class WebNorthbound {
     if (this.repoIds.size > 1) throw new TypeError('one web northbound authority may serve at most one repository');
     this.now = opts.now ?? Date.now;
     this.authenticate = opts.authenticate ?? null;
+    this.isPrincipalActive = opts.isPrincipalActive ?? this.authenticate?.isPrincipalActive ?? null;
     this.maxBodyBytes = opts.maxBodyBytes ?? 64 * 1024;
     this.stream = opts.stream ?? new WebEventStream({
       ...opts, coordination: this.coordination,
       allowedOrigins: [...this.allowedOrigins], repoIds: [...this.repoIds],
+      isPrincipalActive: this.isPrincipalActive,
     });
   }
 

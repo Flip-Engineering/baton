@@ -83,6 +83,29 @@ function logEvent(opts, worker, kind, payload) {
   opts.log.append({ worker, harness: 'n/a', turnEpoch: 0, kind, actor: 'orchestrator', payload });
 }
 
+function dependencySources(repoRoot, dependencyDirs = []) {
+  const realRepo = realpathSync(repoRoot);
+  return dependencyDirs.map((rel) => {
+    if (typeof rel !== 'string' || rel.length === 0 || isAbsolute(rel)) throw new TypeError('dependency directory must be relative');
+    const source = pathResolve(realRepo, rel); const within = pathRelative(realRepo, source);
+    if (within === '' || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) throw new TypeError('dependency directory escapes repository');
+    if (!existsSync(source)) throw new TypeError('dependency directory does not exist');
+    const realSource = realpathSync(source); const realWithin = pathRelative(realRepo, realSource);
+    if (realWithin === '..' || realWithin.startsWith(`..${sep}`) || isAbsolute(realWithin) || !lstatSync(realSource).isDirectory()) throw new TypeError('dependency directory is not confined');
+    return { rel, realSource };
+  });
+}
+
+function materializeDependencies(dir, sources) {
+  const copied = [];
+  for (const { rel, realSource } of sources) {
+    const target = pathResolve(dir, rel); mkdirSync(dirname(target), { recursive: true });
+    cpSync(realSource, target, { recursive: true, dereference: true, force: false, errorOnExist: true });
+    copied.push(rel);
+  }
+  return copied;
+}
+
 // ---------------------------------------------------------------------------
 // ensureBatonExcluded
 // ---------------------------------------------------------------------------
@@ -134,14 +157,15 @@ export async function pinBaseSha(repoRoot, opts = {}) {
  * @param {string} repoRoot
  * @param {string} taskId
  * @param {string} baseSha
- * @param {{log?: object}} [opts]
- * @returns {Promise<{taskId:string, dir:string, branch:string, baseSha:string, createdAt:string}>}
+ * @param {{log?: object, dependencyDirs?: string[]}} [opts]
+ * @returns {Promise<{taskId:string, dir:string, branch:string, baseSha:string, createdAt:string,copiedDependencies:string[]}>}
  */
 export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
   const dir = wtDirFor(repoRoot, taskId);
   if (existsSync(dir)) {
     throw new WorktreeAlreadyExistsError(`createFromBase: ${dir} already exists`);
   }
+  const sources = dependencySources(repoRoot, opts.dependencyDirs ?? []);
   const branch = `baton/${taskId}`;
   mkdirSync(join(repoRoot, '.baton', 'wt'), { recursive: true });
   try {
@@ -153,10 +177,20 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
     }
     throw err;
   }
+  let copiedDependencies;
+  try {
+    copiedDependencies = materializeDependencies(dir, sources);
+  } catch (err) {
+    try { sh('git', ['worktree', 'remove', '--force', dir], repoRoot); }
+    catch { rmSync(dir, { recursive: true, force: true }); }
+    try { sh('git', ['branch', '-D', branch], repoRoot); } catch { /* best-effort */ }
+    try { sh('git', ['worktree', 'prune'], repoRoot); } catch { /* best-effort */ }
+    throw err;
+  }
   const createdAt = new Date().toISOString();
   writeMeta(repoRoot, taskId, { taskId, branch, baseSha, createdAt, stoppedAt: null });
-  logEvent(opts, taskId, 'worktree.created', { dir, branch, baseSha });
-  return { taskId, dir, branch, baseSha, createdAt };
+  logEvent(opts, taskId, 'worktree.created', { dir, branch, baseSha, copiedDependencies });
+  return { taskId, dir, branch, baseSha, createdAt, copiedDependencies };
 }
 
 // ---------------------------------------------------------------------------
@@ -213,16 +247,7 @@ export async function freshVerifySandbox(repoRoot, label, sha, opts = {}) {
   }
   // Validate every source before registering a worktree. Invalid configuration therefore cannot
   // create a detached checkout that no caller has a cleanup handle for.
-  const realRepo = realpathSync(repoRoot);
-  const dependencySources = (opts.dependencyDirs ?? []).map((rel) => {
-    if (typeof rel !== 'string' || rel.length === 0 || isAbsolute(rel)) throw new TypeError('verification dependency directory must be relative');
-    const source = pathResolve(realRepo, rel); const within = pathRelative(realRepo, source);
-    if (within === '' || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) throw new TypeError('verification dependency directory escapes repository');
-    if (!existsSync(source)) throw new TypeError('verification dependency directory does not exist');
-    const realSource = realpathSync(source); const realWithin = pathRelative(realRepo, realSource);
-    if (realWithin === '..' || realWithin.startsWith(`..${sep}`) || isAbsolute(realWithin) || !lstatSync(realSource).isDirectory()) throw new TypeError('verification dependency directory is not confined');
-    return { rel, realSource };
-  });
+  const sources = dependencySources(repoRoot, opts.dependencyDirs ?? []);
 
   const verifyRoot = join(repoRoot, '.baton', 'verify');
   mkdirSync(verifyRoot, { recursive: true });
@@ -249,11 +274,7 @@ export async function freshVerifySandbox(repoRoot, label, sha, opts = {}) {
   try {
     sh('git', ['worktree', 'add', '--detach', dir, fullSha], repoRoot);
     registered = true;
-    for (const { rel, realSource } of dependencySources) {
-      const target = pathResolve(dir, rel); mkdirSync(dirname(target), { recursive: true });
-      cpSync(realSource, target, { recursive: true, dereference: true, force: false, errorOnExist: true });
-      copiedDependencies.push(rel);
-    }
+    copiedDependencies.push(...materializeDependencies(dir, sources));
   } catch (err) {
     await cleanup();
     throw err;

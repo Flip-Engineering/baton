@@ -1,0 +1,60 @@
+{
+  "at": "2026-07-11T21:39:01.080Z",
+  "repoHead": "4ebcfc26ecb2ac7582245620d29cb459be906759",
+  "workerId": "w-1",
+  "pid": 31102,
+  "model": "gpt-5.6-sol",
+  "result": {
+    "ready": true,
+    "status": "cancelled",
+    "verdict": null,
+    "vendor": "codex",
+    "modelRequested": "gpt-5.6-sol",
+    "modelResolved": "gpt-5.6-sol",
+    "modelObserved": "gpt-5.6-sol",
+    "modelMismatch": null,
+    "sessionRequest": {
+      "mode": "new"
+    },
+    "sessionRef": {
+      "vendor": "codex",
+      "kind": "thread",
+      "id": "019f531d-0bfc-7393-9487-4fd1cc31d6ed",
+      "persistence": "native",
+      "source": "wire"
+    },
+    "sessionContext": {
+      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-web-stream-review",
+      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "baseSha": "4ebcfc26ecb2ac7582245620d29cb459be906759",
+      "branch": "baton/codex-web-stream-review",
+      "ownerTaskId": "codex-web-stream-review"
+    },
+    "lineage": null,
+    "review": null,
+    "integration": null,
+    "publication": null,
+    "retainedResultRef": null
+  },
+  "integration": null,
+  "approvals": [],
+  "steer": {
+    "ok": true,
+    "result": "ok",
+    "emulated": false
+  },
+  "checks": {
+    "noHarnessError": false,
+    "exactModelObserved": true,
+    "freshVerified": false,
+    "integrated": false,
+    "integrationIntent": false,
+    "killConfirmed": true,
+    "processGone": true,
+    "worktreeGone": true,
+    "runtimeGone": true,
+    "branchGone": true
+  },
+  "fatal": "Error: review failed trust gate: {\"ready\":true,\"status\":\"cancelled\",\"verdict\":null,\"vendor\":\"codex\",\"modelRequested\":\"gpt-5.6-sol\",\"modelResolved\":\"gpt-5.6-sol\",\"modelObserved\":\"gpt-5.6-sol\",\"modelMismatch\":null,\"sessionRequest\":{\"mode\":\"new\"},\"sessionRef\":{\"vendor\":\"codex\",\"kind\":\"thread\",\"id\":\"019f531d-0bfc-7393-9487-4fd1cc31d6ed\",\"persistence\":\"native\",\"source\":\"wire\"},\"sessionContext\":{\"worktree\":\"/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-web-stream-review\",\"repoRoot\":\"/Users/wahargis/Development/Experiments/baton\",\"baseSha\":\"4ebcfc26ecb2ac7582245620d29cb459be906759\",\"branch\":\"baton/codex-web-stream-review\",\"ownerTaskId\":\"codex-web-stream-review\"},\"lineage\":null,\"review\":null,\"integration\":null,\"publication\":null,\"retainedResultRef\":null}\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase12-web-stream-codex-review-2026-07-11/run.mjs:80:44\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
+  "pass": false
+}

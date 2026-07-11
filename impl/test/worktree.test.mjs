@@ -135,6 +135,19 @@ test('createFromBase called twice with the same taskId throws WorktreeAlreadyExi
   await assert.rejects(() => createFromBase(dir, 't1', baseSha), WorktreeAlreadyExistsError);
 });
 
+test('createFromBase materializes isolated worker dependencies when explicitly configured', async (t) => {
+  const { dir, baseSha } = makeRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, 'impl', 'node_modules', 'fixture-package'), { recursive: true });
+  writeFileSync(join(dir, 'impl', 'node_modules', 'fixture-package', 'index.js'), 'worker dependency\n');
+  const handle = await createFromBase(dir, 'worker-deps', baseSha, { dependencyDirs: ['impl/node_modules'] });
+  const copied = join(handle.dir, 'impl', 'node_modules', 'fixture-package', 'index.js');
+  assert.equal(readFileSync(copied, 'utf8'), 'worker dependency\n');
+  writeFileSync(copied, 'worker mutation\n');
+  assert.equal(readFileSync(join(dir, 'impl', 'node_modules', 'fixture-package', 'index.js'), 'utf8'), 'worker dependency\n');
+  assert.deepEqual(handle.copiedDependencies, ['impl/node_modules']);
+});
+
 test('createFromBase throws BranchAlreadyCheckedOutError when baton/<taskId> is already checked out elsewhere', async (t) => {
   const { dir, baseSha } = makeRepo();
   t.after(() => rmSync(dir, { recursive: true, force: true }));

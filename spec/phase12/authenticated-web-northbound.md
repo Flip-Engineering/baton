@@ -51,6 +51,10 @@ subprotocol values.
 Login/bootstrap, refresh, logout, expiry, key rotation, and immediate revocation are explicit.
 Revocation terminates future commands and stream reconnects but does not implicitly cancel fleet
 work. A session re-authenticates or fails closed; it never silently becomes anonymous.
+Credential expiry also terminates an already-open event stream before any later event is read.
+Authenticators backed by a live session registry expose a fail-closed liveness check so explicit
+revocation terminates established streams as well as future requests; custom identity providers
+must supply the equivalent hook if they promise live revocation.
 
 ## WN3 — authorization is command- and resource-scoped
 

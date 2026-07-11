@@ -178,3 +178,20 @@ test('WN6: write backpressure stops immediately and claimed content never inheri
   assert.match(output.output, /"contentTrust":"claimed"/);
   output.emit('close');
 });
+
+test('WN2/WN6: an established stream stops at credential expiry before reading later events', async () => {
+  clock = Date.parse('2026-07-11T12:00:00.000Z');
+  const { coordination, stream } = fixture({ maxFrameBytes: 100_000, maxBufferedBytes: 100_000, pollMs: 5 });
+  const expiring = principal({ expiresAt: new Date(clock + 10).toISOString() });
+  const output = new Response();
+  stream.open({ ticket: stream.issue(expiring, 'https://control.test', 'repo-a').body.ticket, principal: expiring, origin: 'https://control.test' }, output);
+  const beforeExpiry = output.output;
+  clock += 11;
+  coordination.recordWebAudit({ kind: 'after-expiry-secret' }, { actor: 'test', key: 'after-expiry-secret' });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(output.ended, true);
+  assert.equal(stream.activeConnections, 0);
+  assert.equal(output.output.includes('after-expiry-secret'), false);
+  assert.ok(output.output.length >= beforeExpiry.length);
+  assert.equal(coordination.events().some((event) => event.payload.kind === 'stream_authorization_lost'), true);
+});

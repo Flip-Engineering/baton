@@ -27,14 +27,16 @@ const adapter = new CodexAppServerCli({ requestTimeoutMs: 30_000, ceiling: 1 });
 const { coordinator, log } = createDriver({
   repoRoot: REPO, logDir: LOG_DIR, adapters: { codex: adapter },
   runtimeIsolation: { credentialFiles: { codex: [AUTH] } },
+  workerDependencyDirs: ['impl/node_modules'],
   verifyDependencyDirs: ['impl/node_modules'], approvalTimeoutMs: 60_000, stopDeadlineMs: 15_000,
   budgetPolicy: { terminalGraceMs: 2_000 }, watchdog: { stallMs: 240_000 },
 });
 const brief = createBrief({
-  goal: 'Perform an independent adversarial review of the complete authenticated WN6 SSE vertical after commit 4d9d386. Trace HTTP authentication and CORS into ticket issue/consume, snapshot/reconnect cursor semantics, replay retention, audit failure ordering, repository scope, trust/provenance framing, backpressure and setup failure, timer/connection cleanup, and coordination-store interaction. Look for CSRF/IDOR/replay/confused-deputy/token leakage/privilege escalation/DoS seams and test false positives. Write a concise but exhaustive report with severity, exact source locations, exploit/failure sequence, and missing regression. If no actionable findings remain, say so explicitly and list residual Phase 12 scope that is not a WN6 defect.',
+  goal: 'Perform an independent adversarial review of the current authenticated WN6 SSE vertical after the WN6-1 live-expiry/revocation correction. Trace HTTP authentication and CORS into ticket issue/consume, snapshot/reconnect cursor semantics, replay retention, audit failure ordering, repository scope, trust/provenance framing, backpressure and setup failure, authorization lifetime, timer/connection cleanup, and coordination-store interaction. Look for CSRF/IDOR/replay/confused-deputy/token leakage/privilege escalation/DoS seams and test false positives. Write a concise but exhaustive report with severity, exact source locations, exploit/failure sequence, and missing regression. If no actionable findings remain, say so explicitly and list residual Phase 12 scope that is not a WN6 defect.',
   constraints: [
     `Write only ${REPORT}; do not edit source, tests, specs, or other evidence.`,
     'Review actual current files and tests, not only prior reports.',
+    'Limit review reads to spec/phase12/authenticated-web-northbound.md, impl/src/web-{stream,northbound,auth}.mjs, impl/src/coordination-store.mjs, and their Phase 11/12 tests; do not scan prior evidence logs.',
     'Treat authoritative event occurrence separately from payload claim grounding.',
     'Do not add homelab/deployment integration.',
     'Do not commit, push, or use network tools.',
@@ -46,7 +48,7 @@ const brief = createBrief({
     command: `test -s ${REPORT} && node --test impl/test/phase12-web-stream.test.mjs impl/test/phase12-web-northbound.test.mjs impl/test/phase12-web-auth.test.mjs impl/test/phase11-coordination-store.test.mjs`,
     expectExit: 0, timeoutMs: 120_000,
   },
-  budget: { tokens: 300_000, usd: 4, wallMin: 8 },
+  budget: { tokens: 450_000, usd: 4, wallMin: 8 },
 });
 
 let workerId = null; let pid = null; let result = null; let integration = null;
