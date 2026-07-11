@@ -34,7 +34,11 @@ Scope: PS1-PS8 in `spec/phase11/persistent-sessions.md`.
 
 ## Provider-backed proof
 
-Pending execution of
-`docs/reference/evidence/phase11-grok-persistent-session-2026-07-11/run.mjs` after the zero-quota
-implementation commit. The gate requires two independently verified public turns on one exact
-Grok native session/PID followed by confirmed process, worktree, metadata, and branch cleanup.
+`docs/reference/evidence/phase11-grok-persistent-session-2026-07-11/run.mjs` passed all 16 checks
+against Grok 0.1.216. Baton ran two public turns on native session
+`019f5084-e47a-7813-bad6-2434166c5efd` and PID 8310 with exact model
+`grok-composer-2.5-fast`. Both turns received independent fresh-worktree verification and distinct
+captured commits (`d64e2f5`, `ddbbeaf`); the second capture contained the required `turn=2` marker.
+Only one worker-side spawn occurred, the session reference and PID remained identical, and the
+policy kill confirmed. Independent postconditions proved the PID, task worktree, metadata file,
+and task branch absent. `summary.json` and the raw `events.jsonl` are committed beside the runner.

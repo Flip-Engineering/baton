@@ -1,8 +1,8 @@
-# System Validation — phase 10.1 and the live recursive capstone
+# System Validation — phase 11 control, model, and persistent-session gates
 
-Validated 2026-07-10 against `master` after phase 10.1. This file replaces the former phase-6
-judgment and its accumulated addenda; those historical corrections remain in docs/22–24 and the
-committed evidence ledgers.
+Validated 2026-07-11 against `master` through phase 11 persistent sessions. Phase 10.1's assembled
+fleet baseline remains below; the phase-11 additions are control integrity, exact orchestrator
+model selection, and persistent follow-up/resume/fork/recovery contracts.
 
 ## Verdict
 
@@ -16,6 +16,11 @@ a fresh worktree. The live capstone passed every machine-checked gate.
 The result is a reference implementation/executable specification, not yet the intended Go or
 Elixir production port. The important durable assets are its numbered contracts, wire-faithful
 fakes, event/replay semantics, and live protocol ledgers.
+
+Phase 11 additionally proves that model selection is an orchestrator-level choice independent of
+harness selection, and that an attached verified session can execute another public turn without
+respawning. Durable session references replay honestly as orphaned; explicit bounded recovery
+requires a fresh exact-identity handshake and validated worktree ownership.
 
 ## What is shipped and proven
 
@@ -75,16 +80,32 @@ real Grok PIDs reached active turns concurrently; two workers confirmed native i
 then confirmed kill. The test independently proved all PIDs gone, all task worktree directories and
 git worktree registrations gone, every task terminal, and all temporary stress branches deleted.
 
+### Exact model and persistent-session control
+
+`spawn(vendor, brief, {model, modelPolicy})` filters model eligibility before routing, maps exact
+model/effort/service controls to native harness wires, carries requested/resolved/observed identity
+through replay and verification, and kills silent non-alias fallbacks. Two real Grok models ran
+concurrently and were fully reaped.
+
+`send(worker, text, 'turn')` now reopens an idle verified attached session only after a truthful
+adapter Ack, advances the coordinator generation, and independently verifies the new turn. Claude
+and Codex support explicit resume/fork mappings; Grok supports ACP `session/load`. Resume requires
+the recorded worktree owner/context, while fork allocates a fresh worktree and lineage edge.
+Restart replay never trusts a stored PID. `recover()` is bounded and attaches only when a fresh
+native handshake reports the exact persisted identity; ambiguity triggers cleanup.
+
 ## Verification evidence
 
 | Gate | Current evidence |
 |---|---|
-| Zero-quota suite | **427/427 passing** via bare `node --test` in `impl/` |
+| Zero-quota suite | **472/472 passing** via bare `node --test` in `impl/` |
 | U-1…U-11 | All reproduced before repair; verdict ledger in `docs/handoff/evidence/phase10.1-reverification.md` |
 | Fresh adversarial review | No unresolved critical/major finding; `docs/handoff/evidence/phase10.1-adversarial-review.md` |
 | Three-vendor live fleet | `docs/reference/evidence/phase10.1-capstone-2026-07-10/summary.json` has every check true; 573-event raw ledger beside it |
 | Recursive output | Three trust-gated review artifacts under `reviews/dogfood/`, authored by real Claude, Codex, and Grok workers and integrated into `master` |
 | Multi-Grok kill/reap | `docs/reference/evidence/grok-multi-reap-2026-07-10/summary.json` has every check true; raw ledger beside it |
+| Concurrent exact models | `docs/reference/evidence/phase11-grok-model-selection-2026-07-11/summary.json` has every check true |
+| Persistent two-turn Grok | `docs/reference/evidence/phase11-grok-persistent-session-2026-07-11/summary.json` has all 16 checks true; same session/PID, two fresh verdicts, full reap |
 | Credential discipline | GLM checked by presence only and recorded `PENDING-LIVE-no-credential`; no credential value was logged |
 
 The three-vendor capstone checks were: no harness error; Claude/Codex/Grok all completed; every
@@ -96,23 +117,23 @@ overlapped before the earliest terminal.
 
 These are absent, not implied by the green suite:
 
-1. **Worker-session resume/fork through the driver.** All three vendors expose it, but the
-   coordinator always cold-spawns and cannot recover/fork a durable vendor session.
-2. **Token/USD governance and watchdog action.** Wall-time is enforced. Usage is observed, but
+1. **Token/USD governance and watchdog action.** Wall-time is enforced. Usage is observed, but
    `handle.budgetUsed`, threshold events, hard spend stops, and automatic stall/loop response are
    not wired end to end.
-3. **Red→green base-sandbox execution.** The acceptance policy exists; the public assembly cannot
+2. **Red→green base-sandbox execution.** The acceptance policy exists; the public assembly cannot
    currently generate the required base verdict.
-4. **Merge/push lifecycle.** Baton ends at a verified task branch. Integration remains an explicit
+3. **Merge/push lifecycle.** Baton ends at a verified task branch. Integration remains an explicit
    operator action; irreversible push approval is absent. Retaining completed branches enables
    review/integration, while cancelled stress branches were cleaned explicitly.
-5. **Restart reattachment.** Replay reconstructs terminal task truth, but a new coordinator process
-   cannot reattach to already-running vendor processes/threads.
-6. **GLM live proof.** `GlmSessionCli` is built to the credential boundary, but no credential was
+4. **Automatic rejoin and remaining vendor depth.** Explicit native resume/recovery is shipped;
+   automatic startup rejoin to an already-running broker/process is not. Grok's vendor-specific
+   fork/rewind schemas remain `planned`, and checkpoint/rewind depth remains incomplete.
+5. **GLM live proof.** `GlmSessionCli` is built to the credential boundary, but no credential was
    present in this run.
-7. **Production runtime and northbound surface.** The implementation remains dependency-free Node
-   ESM; no Go/Elixir port or MCP northbound server has shipped.
-8. **Cross-vendor decorrelation eval (E2).** The fleet required to run it now exists; the eval is a
+6. **Production runtime and northbound surfaces.** The implementation remains dependency-free Node
+   ESM; MCP and the authenticated HTTPS/WebSocket user-to-orchestrator control connection have not
+   shipped, nor has the eventual Go/Elixir production core.
+7. **Cross-vendor decorrelation eval (E2).** The fleet required to run it now exists; the eval is a
    phase-11 research decision, not evidence retroactively required for phase-10 wiring completion.
 
 The full researched-versus-shipped inventory and phase boundary are in
@@ -120,8 +141,10 @@ The full researched-versus-shipped inventory and phase boundary are in
 
 ## Final judgment
 
-Phase 10 is complete as a wiring-and-live-proof milestone. The system is no longer a set of
+Phase 10 is complete as a wiring-and-live-proof milestone, and the first three phase-11 gates are
+complete. The system is no longer a set of
 unit-green modules or hand-run vendor adapters: the public driver controlled a heterogeneous live
 fleet recursively on its own repository, accepted only independently verified work, and then
-proved it could stop and reap four same-vendor sessions concurrently. The next work should deepen
-session continuity and governance rather than reopen phase-10 assembly.
+proved it could stop and reap four same-vendor sessions concurrently, select exact models, and run
+two independently verified turns on one native session. The next pursuit is enforcement:
+credential/home isolation, token/USD budgets, watchdog action, and hardened acceptance.

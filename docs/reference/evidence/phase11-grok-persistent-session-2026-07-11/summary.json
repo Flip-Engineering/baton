@@ -1,0 +1,263 @@
+{
+  "at": "2026-07-11T09:32:23.824Z",
+  "repoHead": "774a396695a6f4b9dad60e862093d832e41dd762",
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "taskId": "grok-persistent-session-proof",
+  "workerId": "w-1",
+  "pid": 8310,
+  "first": {
+    "ready": true,
+    "status": "completed",
+    "verdict": {
+      "reverified": true,
+      "observedExit": 0,
+      "hadClaim": false,
+      "matchesClaim": true,
+      "passed": true,
+      "locus": "fresh_sandbox",
+      "redGreen": null,
+      "baseExit": null,
+      "coverageOfChange": null,
+      "uncoveredChangedLines": [],
+      "observedOutputTail": "",
+      "note": "PASS: observed exit 0 matches expected 0.",
+      "durationMs": 7
+    },
+    "artifacts": {
+      "commits": [],
+      "files": []
+    },
+    "vendor": "grok",
+    "modelRequested": "grok-composer-2.5-fast",
+    "modelResolved": "grok-composer-2.5-fast",
+    "modelObserved": "grok-composer-2.5-fast",
+    "modelMismatch": null,
+    "sessionRequest": {
+      "mode": "new"
+    },
+    "sessionRef": {
+      "vendor": "grok",
+      "kind": "session",
+      "id": "019f5084-e47a-7813-bad6-2434166c5efd",
+      "persistence": "native",
+      "source": "wire"
+    },
+    "sessionContext": {
+      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-persistent-session-proof",
+      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "baseSha": "774a396695a6f4b9dad60e862093d832e41dd762",
+      "branch": "baton/grok-persistent-session-proof",
+      "ownerTaskId": "grok-persistent-session-proof"
+    },
+    "lineage": null
+  },
+  "second": {
+    "ready": true,
+    "status": "completed",
+    "verdict": {
+      "reverified": true,
+      "observedExit": 0,
+      "hadClaim": false,
+      "matchesClaim": true,
+      "passed": true,
+      "locus": "fresh_sandbox",
+      "redGreen": null,
+      "baseExit": null,
+      "coverageOfChange": null,
+      "uncoveredChangedLines": [],
+      "observedOutputTail": "",
+      "note": "PASS: observed exit 0 matches expected 0.",
+      "durationMs": 6
+    },
+    "artifacts": {
+      "commits": [],
+      "files": []
+    },
+    "vendor": "grok",
+    "modelRequested": "grok-composer-2.5-fast",
+    "modelResolved": "grok-composer-2.5-fast",
+    "modelObserved": "grok-composer-2.5-fast",
+    "modelMismatch": null,
+    "sessionRequest": {
+      "mode": "new"
+    },
+    "sessionRef": {
+      "vendor": "grok",
+      "kind": "session",
+      "id": "019f5084-e47a-7813-bad6-2434166c5efd",
+      "persistence": "native",
+      "source": "wire"
+    },
+    "sessionContext": {
+      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-persistent-session-proof",
+      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "baseSha": "774a396695a6f4b9dad60e862093d832e41dd762",
+      "branch": "baton/grok-persistent-session-proof",
+      "ownerTaskId": "grok-persistent-session-proof"
+    },
+    "lineage": null
+  },
+  "firstHandle": {
+    "id": "w-1",
+    "vendor": "grok",
+    "modelRequested": "grok-composer-2.5-fast",
+    "modelResolved": "grok-composer-2.5-fast",
+    "modelObserved": "grok-composer-2.5-fast",
+    "modelMismatch": null,
+    "modelPolicy": {
+      "allow": [
+        "grok-composer-2.5-fast"
+      ],
+      "allowFamilies": [
+        "grok"
+      ]
+    },
+    "sessionRequest": {
+      "mode": "new"
+    },
+    "sessionRef": {
+      "vendor": "grok",
+      "kind": "session",
+      "id": "019f5084-e47a-7813-bad6-2434166c5efd",
+      "persistence": "native",
+      "source": "wire"
+    },
+    "sessionContext": {
+      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-persistent-session-proof",
+      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "baseSha": "774a396695a6f4b9dad60e862093d832e41dd762",
+      "branch": "baton/grok-persistent-session-proof",
+      "ownerTaskId": "grok-persistent-session-proof"
+    },
+    "lineage": null,
+    "taskId": "grok-persistent-session-proof",
+    "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-persistent-session-proof",
+    "fence": 2,
+    "turnEpoch": 2,
+    "status": "idle",
+    "pendingApprovalId": null,
+    "pendingQuestionId": null,
+    "budgetUsed": {
+      "tokens": 0,
+      "usd": 0
+    },
+    "createdAt": "2026-07-11T09:31:53.515Z"
+  },
+  "secondHandle": {
+    "id": "w-1",
+    "vendor": "grok",
+    "modelRequested": "grok-composer-2.5-fast",
+    "modelResolved": "grok-composer-2.5-fast",
+    "modelObserved": "grok-composer-2.5-fast",
+    "modelMismatch": null,
+    "modelPolicy": {
+      "allow": [
+        "grok-composer-2.5-fast"
+      ],
+      "allowFamilies": [
+        "grok"
+      ]
+    },
+    "sessionRequest": {
+      "mode": "new"
+    },
+    "sessionRef": {
+      "vendor": "grok",
+      "kind": "session",
+      "id": "019f5084-e47a-7813-bad6-2434166c5efd",
+      "persistence": "native",
+      "source": "wire"
+    },
+    "sessionContext": {
+      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-persistent-session-proof",
+      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "baseSha": "774a396695a6f4b9dad60e862093d832e41dd762",
+      "branch": "baton/grok-persistent-session-proof",
+      "ownerTaskId": "grok-persistent-session-proof"
+    },
+    "lineage": null,
+    "taskId": "grok-persistent-session-proof",
+    "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-persistent-session-proof",
+    "fence": 3,
+    "turnEpoch": 3,
+    "status": "idle",
+    "pendingApprovalId": null,
+    "pendingQuestionId": null,
+    "budgetUsed": {
+      "tokens": 0,
+      "usd": 0
+    },
+    "createdAt": "2026-07-11T09:31:53.515Z"
+  },
+  "followUpAck": {
+    "ok": true,
+    "result": "ok",
+    "emulated": false
+  },
+  "approvals": [
+    {
+      "worker": "w-1",
+      "requestId": "w-1:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "worker": "w-1",
+      "requestId": "w-1:apr:2",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "worker": "w-1",
+      "requestId": "w-1:apr:3",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    }
+  ],
+  "stopResult": {
+    "ok": true,
+    "result": "confirmed",
+    "emulated": false
+  },
+  "verifyCaptures": [
+    {
+      "sha": "d64e2f530c765a7dbc3f8d3c287058a3bb95f70d",
+      "snapshotted": true,
+      "vendor": "grok",
+      "model": "grok-composer-2.5-fast"
+    },
+    {
+      "sha": "ddbbeafa5a0683cdf95994c24f85b206f497f01e",
+      "snapshotted": true,
+      "vendor": "grok",
+      "model": "grok-composer-2.5-fast"
+    }
+  ],
+  "finalContent": "# Grok persistent-session proof — safety boundary\n\nBaton's Phase 11.1 persistent-session safety boundary is defined by contracts PS1–PS8 and an explicit safety gate before live provider proof.\n\nThe coordinator reuses a verified session for follow-up turns only while the handle stays attached and idle; kill, crash, timeout, or unattached replay ends reuse. Follow-up admission commits after `Ack{ok:true}`; refusal restores prior state. Coordinator turn epochs fence stale adapter events. Each accepted turn gets fresh capture, verification, and verdict.\n\nResume and fork are explicit spawn policies with typed pre-allocation failure. Grok `session/load` is carded native; `x.ai/session/fork` stays `planned` until wire schemas are fixture-pinned. `recover()` requires a native handshake matching the persisted `sessionRef` before leaving `orphaned`; PID alone is never trusted.\n\nThe safety gate requires fake-backed driver tests for PS1–PS5 (Claude, Codex, Grok), protocol fixtures for PS6–PS8 before provider probes, and live proof of verified first turn, same-session/PID follow-up, second verification, then kill/reap. Resume/fork probes follow only after persisted references and worktree-coherence checks pass.\n\nThis edit is the second public Baton turn on the same persistent session, exercising PS1 follow-up reuse after the first turn was verified.\n\nturn=2",
+  "checks": {
+    "noHarnessError": true,
+    "followUpAccepted": true,
+    "firstFreshVerified": true,
+    "secondFreshVerified": true,
+    "twoIndependentVerifications": true,
+    "twoWorkerTurns": true,
+    "oneNativeSpawn": true,
+    "sameSessionRef": true,
+    "samePid": true,
+    "exactModelObserved": true,
+    "finalTurnMarker": true,
+    "killConfirmed": true,
+    "processGone": true,
+    "worktreeGone": true,
+    "metadataGone": true,
+    "branchGone": true
+  },
+  "fatal": null,
+  "pass": true
+}
