@@ -17,7 +17,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -235,6 +235,49 @@ test('two freshVerifySandbox calls with the same label produce two non-colliding
   assert.notEqual(s1.dir, s2.dir);
   assert.ok(existsSync(s1.dir));
   assert.ok(existsSync(s2.dir));
+});
+
+test('freshVerifySandbox copies explicit dependencies without linking writes to the main checkout', async (t) => {
+  const { dir, baseSha } = makeRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, 'impl', 'node_modules', 'fixture-package'), { recursive: true });
+  writeFileSync(join(dir, 'impl', 'node_modules', 'fixture-package', 'index.js'), 'export const value = 1;\n');
+  const sandbox = await freshVerifySandbox(dir, 'deps-result', baseSha, { dependencyDirs: ['impl/node_modules'] });
+  t.after(() => sandbox.cleanup());
+  const copied = join(sandbox.dir, 'impl', 'node_modules', 'fixture-package', 'index.js');
+  assert.equal(readFileSync(copied, 'utf8'), 'export const value = 1;\n');
+  writeFileSync(copied, 'sandbox mutation\n');
+  assert.equal(readFileSync(join(dir, 'impl', 'node_modules', 'fixture-package', 'index.js'), 'utf8'), 'export const value = 1;\n');
+  assert.deepEqual(sandbox.copiedDependencies, ['impl/node_modules']);
+});
+
+test('freshVerifySandbox rejects escaping dependency paths before registering a worktree', async (t) => {
+  const { dir, baseSha } = makeRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const before = sh('git', ['worktree', 'list', '--porcelain'], dir);
+  await assert.rejects(
+    () => freshVerifySandbox(dir, 'escaping-deps', baseSha, { dependencyDirs: ['../outside'] }),
+    /escapes repository/,
+  );
+  assert.equal(sh('git', ['worktree', 'list', '--porcelain'], dir), before);
+});
+
+test('freshVerifySandbox reaps its worktree when dependency materialization fails', async (t) => {
+  const { dir } = makeRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const deps = join(dir, 'tracked-deps');
+  mkdirSync(deps, { recursive: true });
+  writeFileSync(join(deps, 'index.js'), 'tracked dependency\n');
+  sh('git', ['add', '-A'], dir);
+  sh('git', ['commit', '-q', '-m', 'track dependency fixture'], dir);
+  const resultSha = sh('git', ['rev-parse', 'HEAD'], dir);
+  const before = sh('git', ['worktree', 'list', '--porcelain'], dir);
+  await assert.rejects(
+    () => freshVerifySandbox(dir, 'broken-deps', resultSha, { dependencyDirs: ['tracked-deps'] }),
+  );
+  assert.equal(sh('git', ['worktree', 'list', '--porcelain'], dir), before);
+  const verifyRoot = join(dir, '.baton', 'verify');
+  assert.ok(!existsSync(verifyRoot) || readdirSync(verifyRoot).length === 0);
 });
 
 test('sandbox.cleanup() removes the directory and is idempotent', async (t) => {

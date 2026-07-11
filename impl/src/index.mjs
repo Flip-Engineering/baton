@@ -35,7 +35,7 @@ export { AtlasStructuralDelta } from './atlas-structural.mjs';
 export { AtlasCodeIndex } from './atlas-index.mjs';
 
 /** worktree.mjs's real functions wrapped into the coordinator's manager interface. */
-function worktreeManager(repoRoot) {
+function worktreeManager(repoRoot, opts = {}) {
   return {
     async create(taskId) {
       const base = await worktreeMod.pinBaseSha(repoRoot, {});
@@ -46,11 +46,11 @@ function worktreeManager(repoRoot) {
       return worktreeMod.captureCommit(repoRoot, basename(worktreePath), { vendor: opts.vendor, model: opts.model });
     },
     async createVerifyWorktree(taskId, sha) {
-      const r = await worktreeMod.freshVerifySandbox(repoRoot, taskId, sha, {});
+      const r = await worktreeMod.freshVerifySandbox(repoRoot, taskId, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [] });
       return { path: r.dir ?? r.path };
     },
     async createBaseVerifyWorktree(taskId, sha) {
-      const r = await worktreeMod.freshVerifySandbox(repoRoot, `${taskId}-base`, sha, {});
+      const r = await worktreeMod.freshVerifySandbox(repoRoot, `${taskId}-base`, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [] });
       return { path: r.dir ?? r.path };
     },
     async changedLines(baseSha, resultSha) {
@@ -172,7 +172,7 @@ export function createDriver(opts) {
   const coordinator = new Coordinator({
     log, fences,
     adapters: opts.adapters,
-    worktrees: worktreeManager(opts.repoRoot),
+    worktrees: worktreeManager(opts.repoRoot, { verifyDependencyDirs: opts.verifyDependencyDirs }),
     runtimeScopes,
     coordination,
     repoRoot: opts.repoRoot,

@@ -12,10 +12,10 @@
 
 import { execFileSync } from 'node:child_process';
 import {
-  existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync, statSync, realpathSync,
+  cpSync, existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync, statSync, lstatSync, realpathSync,
 } from 'node:fs';
 import {
-  join, dirname, resolve as pathResolve, relative as pathRelative,
+  join, dirname, isAbsolute, sep, resolve as pathResolve, relative as pathRelative,
 } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
@@ -200,8 +200,8 @@ export async function captureCommit(repoRoot, taskId, opts = {}) {
  * @param {string} repoRoot
  * @param {string} label
  * @param {string} sha
- * @param {{log?: object}} [opts]
- * @returns {Promise<{dir:string, sha:string, cleanup:() => Promise<void>}>}
+ * @param {{log?: object, dependencyDirs?: string[]}} [opts]
+ * @returns {Promise<{dir:string, sha:string, copiedDependencies:string[], cleanup:() => Promise<void>}>}
  * @throws {InvalidShaError}
  */
 export async function freshVerifySandbox(repoRoot, label, sha, opts = {}) {
@@ -211,24 +211,56 @@ export async function freshVerifySandbox(repoRoot, label, sha, opts = {}) {
   } catch {
     throw new InvalidShaError(`freshVerifySandbox: "${sha}" does not resolve to a commit in ${repoRoot}`);
   }
+  // Validate every source before registering a worktree. Invalid configuration therefore cannot
+  // create a detached checkout that no caller has a cleanup handle for.
+  const realRepo = realpathSync(repoRoot);
+  const dependencySources = (opts.dependencyDirs ?? []).map((rel) => {
+    if (typeof rel !== 'string' || rel.length === 0 || isAbsolute(rel)) throw new TypeError('verification dependency directory must be relative');
+    const source = pathResolve(realRepo, rel); const within = pathRelative(realRepo, source);
+    if (within === '' || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) throw new TypeError('verification dependency directory escapes repository');
+    if (!existsSync(source)) throw new TypeError('verification dependency directory does not exist');
+    const realSource = realpathSync(source); const realWithin = pathRelative(realRepo, realSource);
+    if (realWithin === '..' || realWithin.startsWith(`..${sep}`) || isAbsolute(realWithin) || !lstatSync(realSource).isDirectory()) throw new TypeError('verification dependency directory is not confined');
+    return { rel, realSource };
+  });
+
   const verifyRoot = join(repoRoot, '.baton', 'verify');
   mkdirSync(verifyRoot, { recursive: true });
   const suffix = randomBytes(4).toString('hex');
   const dir = join(verifyRoot, `${label}-${suffix}`);
-  sh('git', ['worktree', 'add', '--detach', dir, fullSha], repoRoot);
+  let registered = false;
 
   const cleanup = async () => {
-    if (!existsSync(dir)) return;
-    try {
-      sh('git', ['worktree', 'remove', '--force', dir], repoRoot);
-    } catch {
-      rmSync(dir, { recursive: true, force: true });
+    if (registered || existsSync(dir)) {
+      try {
+        sh('git', ['worktree', 'remove', '--force', dir], repoRoot);
+      } catch {
+        rmSync(dir, { recursive: true, force: true });
+      }
     }
     try { sh('git', ['worktree', 'prune'], repoRoot); } catch { /* best-effort */ }
   };
 
-  logEvent(opts, 'worktree', 'worktree.verify_sandbox_created', { dir, sha: fullSha, label });
-  return { dir, sha: fullSha, cleanup };
+  // Source stays commit-fresh while explicitly configured installed dependencies are copied into
+  // the sandbox. Never symlink/hardlink the main checkout: the pinned verification command must
+  // not be able to mutate the orchestrator's toolchain through its dependency path. Any copy
+  // failure removes and prunes the worktree before the error escapes.
+  const copiedDependencies = [];
+  try {
+    sh('git', ['worktree', 'add', '--detach', dir, fullSha], repoRoot);
+    registered = true;
+    for (const { rel, realSource } of dependencySources) {
+      const target = pathResolve(dir, rel); mkdirSync(dirname(target), { recursive: true });
+      cpSync(realSource, target, { recursive: true, dereference: true, force: false, errorOnExist: true });
+      copiedDependencies.push(rel);
+    }
+  } catch (err) {
+    await cleanup();
+    throw err;
+  }
+
+  logEvent(opts, 'worktree', 'worktree.verify_sandbox_created', { dir, sha: fullSha, label, copiedDependencies });
+  return { dir, sha: fullSha, copiedDependencies, cleanup };
 }
 
 // ---------------------------------------------------------------------------
