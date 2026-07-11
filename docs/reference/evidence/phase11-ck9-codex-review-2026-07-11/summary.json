@@ -1,0 +1,55 @@
+{
+  "at": "2026-07-11T19:59:49.876Z",
+  "repoHead": "9806cb6c581e00fb3bd47b06e8934f1d7951f2f8",
+  "workerId": "w-1",
+  "pid": 36284,
+  "model": "gpt-5.4",
+  "result": {
+    "ready": true,
+    "status": "cancelled",
+    "verdict": null,
+    "vendor": "codex",
+    "modelRequested": "gpt-5.4",
+    "modelResolved": "gpt-5.4",
+    "modelObserved": "gpt-5.4",
+    "modelMismatch": null,
+    "sessionRequest": {
+      "mode": "new"
+    },
+    "sessionRef": {
+      "vendor": "codex",
+      "kind": "thread",
+      "id": "019f52c3-1f79-7833-8753-ea3b56c47076",
+      "persistence": "native",
+      "source": "wire"
+    },
+    "sessionContext": {
+      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-ck9-crash-window-review",
+      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "baseSha": "9806cb6c581e00fb3bd47b06e8934f1d7951f2f8",
+      "branch": "baton/codex-ck9-crash-window-review",
+      "ownerTaskId": "codex-ck9-crash-window-review"
+    },
+    "lineage": null,
+    "review": null,
+    "integration": null,
+    "publication": null,
+    "retainedResultRef": null
+  },
+  "integration": null,
+  "approvals": [],
+  "checks": {
+    "noHarnessError": false,
+    "exactModelObserved": true,
+    "freshVerified": false,
+    "integrated": false,
+    "integrationIntent": false,
+    "killConfirmed": true,
+    "processGone": true,
+    "worktreeGone": true,
+    "runtimeGone": true,
+    "branchGone": true
+  },
+  "fatal": "Error: review failed trust gate: {\"ready\":true,\"status\":\"cancelled\",\"verdict\":null,\"vendor\":\"codex\",\"modelRequested\":\"gpt-5.4\",\"modelResolved\":\"gpt-5.4\",\"modelObserved\":\"gpt-5.4\",\"modelMismatch\":null,\"sessionRequest\":{\"mode\":\"new\"},\"sessionRef\":{\"vendor\":\"codex\",\"kind\":\"thread\",\"id\":\"019f52c3-1f79-7833-8753-ea3b56c47076\",\"persistence\":\"native\",\"source\":\"wire\"},\"sessionContext\":{\"worktree\":\"/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-ck9-crash-window-review\",\"repoRoot\":\"/Users/wahargis/Development/Experiments/baton\",\"baseSha\":\"9806cb6c581e00fb3bd47b06e8934f1d7951f2f8\",\"branch\":\"baton/codex-ck9-crash-window-review\",\"ownerTaskId\":\"codex-ck9-crash-window-review\"},\"lineage\":null,\"review\":null,\"integration\":null,\"publication\":null,\"retainedResultRef\":null}\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase11-ck9-codex-review-2026-07-11/run.mjs:84:44\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
+  "pass": false
+}
