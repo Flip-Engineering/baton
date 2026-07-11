@@ -83,6 +83,7 @@ export class CodexAppServerCli {
     this._spawnFn = opts.spawnFn ?? spawn;
     this._ceiling = opts.ceiling ?? 4;
     this._maxContext = opts.maxContext ?? 200000;
+    this._model = opts.model;
 
     // XA15: probed once, synchronously, at construction; cached; never throws (a harness card
     // must always be producible even when `codex` isn't installed on this machine).
@@ -111,6 +112,12 @@ export class CodexAppServerCli {
       authPosture: 'subscription',
       concurrencyCeiling: this._ceiling,
       maxContext: this._maxContext,
+      modelSelection: {
+        mode: 'exact', configuredDefault: this._model ?? null, available: null, family: 'openai',
+        acceptedPrefixes: ['gpt-', 'o1', 'o3', 'o4', 'codex-'], acceptedAliases: [],
+        reasoningEffort: ['minimal', 'low', 'medium', 'high', 'xhigh'], serviceTier: ['fast', 'flex'],
+        provenance: 'adapter-configuration', refreshedAt: null,
+      },
       verbs: {
         spawn: 'native',
         prompt: 'native',
@@ -425,6 +432,10 @@ export class CodexAppServerCli {
       lastTokenUsage: null,
       stopGeneration: 0, pendingFollowUp: null, // R5.1
       killing: false, killConfirmed: false, terminal: false,
+      modelRequested: opts.model ?? this._model ?? null,
+      modelObserved: null,
+      reasoningEffort: opts.reasoningEffort ?? null,
+      serviceTier: opts.serviceTier ?? null,
     };
     this._sessions.set(worker, session);
     this._attachChild(session);
@@ -446,8 +457,10 @@ export class CodexAppServerCli {
     try {
       threadResult = await this._sendRequest(session, 'thread/start', {
         cwd,
+        model: session.modelRequested ?? undefined,
         sandbox: opts.sandbox ?? 'workspace-write',
         approvalPolicy: opts.approvalPolicy ?? 'never',
+        serviceTier: session.serviceTier ?? undefined,
         ephemeral: true,
       });
     } catch (err) {
@@ -458,14 +471,22 @@ export class CodexAppServerCli {
       return { ok: false, reason: err.message, code: err.code };
     }
     session.threadId = threadResult.thread.id;
+    session.modelObserved = threadResult.model ?? session.modelRequested;
     // R6.1: parity with the Claude session adapter's lifecycle.spawned — the wire's own
     // testimony to its session identifier, additive alongside the coordinator's own record.
-    this._emit(session, 'lifecycle.spawned', { threadId: session.threadId, pid: child.pid });
+    this._emit(session, 'lifecycle.spawned', {
+      threadId: session.threadId, pid: child.pid,
+      modelRequested: session.modelRequested, modelObserved: session.modelObserved,
+      reasoningEffort: session.reasoningEffort, serviceTier: session.serviceTier,
+    });
 
     let turnResult;
     try {
       turnResult = await this._sendRequest(session, 'turn/start', {
         threadId: session.threadId,
+        model: session.modelRequested ?? undefined,
+        effort: session.reasoningEffort ?? undefined,
+        serviceTier: session.serviceTier ?? undefined,
         input: [{ type: 'text', text: renderBrief(brief, 'codex-v2') }],
       });
     } catch (err) {
@@ -527,6 +548,9 @@ export class CodexAppServerCli {
     try {
       const turnResult = await this._sendRequest(session, 'turn/start', {
         threadId: session.threadId,
+        model: session.modelRequested ?? undefined,
+        effort: session.reasoningEffort ?? undefined,
+        serviceTier: session.serviceTier ?? undefined,
         input: [{ type: 'text', text: String(text) }],
       });
       session.activeTurn = { id: turnResult.turn.id };

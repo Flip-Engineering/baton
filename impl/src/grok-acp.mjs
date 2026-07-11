@@ -66,6 +66,16 @@ function pickOption(options, decision) {
   return byKind ?? opts[opts.length - 1];
 }
 
+export function withGrokModelArgs(baseArgs, { model, reasoningEffort } = {}) {
+  const args = [...baseArgs];
+  const insertion = args[0] === 'agent' ? 1 : args.length;
+  const selection = [];
+  if (model) selection.push('--model', model);
+  if (reasoningEffort) selection.push('--reasoning-effort', reasoningEffort);
+  args.splice(insertion, 0, ...selection);
+  return args;
+}
+
 // ---------------------------------------------------------------------------
 // GrokAcpCli
 // ---------------------------------------------------------------------------
@@ -91,6 +101,8 @@ export class GrokAcpCli {
     this._ceiling = opts.ceiling ?? 4;
     // GA4: 500000 is the live handshake's totalContextTokens for grok-build, not a guess.
     this._maxContext = opts.maxContext ?? 500000;
+    this._model = opts.model;
+    this._reasoningEffort = opts.reasoningEffort;
 
     // GA15: probed once, synchronously, cached; never throws.
     const versionProbe = opts.versionProbe ?? (() => execFileSync('grok', ['--version']).toString().trim());
@@ -118,6 +130,12 @@ export class GrokAcpCli {
       authPosture: 'subscription',
       concurrencyCeiling: this._ceiling,
       maxContext: this._maxContext,
+      modelSelection: {
+        mode: 'exact', configuredDefault: this._model ?? null, available: null, family: 'grok',
+        acceptedPrefixes: ['grok-'], acceptedAliases: [],
+        reasoningEffort: ['low', 'medium', 'high'], serviceTier: null,
+        provenance: 'adapter-configuration+promptMeta', refreshedAt: null,
+      },
       verbs: {
         spawn: 'native',
         prompt: 'native',
@@ -356,6 +374,7 @@ export class GrokAcpCli {
     // accounting — surfaced as the one D3 resource kind, tagged by source (XA18 discipline).
     const meta = result._meta ?? null;
     if (meta) {
+      session.modelObserved = meta.modelId ?? session.modelObserved;
       this._emit(session, 'resource.tokens', { source: 'promptMeta', sessionId: session.sessionId, turnId, ...meta });
     }
     const tokens = meta?.totalTokens ?? 0;
@@ -433,7 +452,12 @@ export class GrokAcpCli {
     if (pending.cancelled || opts.signal?.aborted) return { ok: false, reason: 'spawn cancelled before child creation', cancelled: true };
     if (!cwd) return { ok: false, reason: 'spawn requires a worktree (opts.worktree, or opts.worktreeReady resolving {path})' };
 
-    const child = this._spawnFn(this._cmd, this._args, {
+    const modelRequested = opts.model ?? this._model ?? null;
+    const childArgs = withGrokModelArgs(this._args, {
+      model: modelRequested,
+      reasoningEffort: opts.reasoningEffort ?? this._reasoningEffort,
+    });
+    const child = this._spawnFn(this._cmd, childArgs, {
       env: { ...process.env, ...(this._env ?? {}) },
       cwd, // grok indexes its cwd at startup; session/new pins it again below
       detached: true, // owns its own process group (GA11: kill() signals the group)
@@ -451,6 +475,8 @@ export class GrokAcpCli {
       steerPending: null, // GA13
       pendingFollowUp: null, // R5.1
       killing: false, killConfirmed: false, closed: false,
+      modelRequested,
+      modelObserved: null,
     };
     this._sessions.set(worker, session);
     this._attachChild(session);
@@ -484,7 +510,10 @@ export class GrokAcpCli {
       return { ok: false, reason: err.message, code: err.code };
     }
     session.sessionId = newResult.sessionId;
-    this._emit(session, 'lifecycle.spawned', { sessionId: session.sessionId, pid: child.pid });
+    this._emit(session, 'lifecycle.spawned', {
+      sessionId: session.sessionId, pid: child.pid,
+      modelRequested: session.modelRequested, modelObserved: session.modelObserved,
+    });
 
     // GA6: the Ack resolves once the first prompt is DISPATCHED after a live handshake — ACP has
     // no separate turn-accepted response; completion is exclusively an onEvent fact.

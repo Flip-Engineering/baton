@@ -43,6 +43,8 @@ if (!process.argv.includes('--serve') && !process.argv.includes('agent')) {
 const UNAUTH = process.env.FAKE_GROK_UNAUTH === '1';
 const HANG = process.env.FAKE_GROK_HANG === '1';
 const MALFORMED = process.env.FAKE_GROK_MALFORMED === '1';
+const modelArgIndex = process.argv.indexOf('--model');
+const MODEL = modelArgIndex >= 0 ? process.argv[modelArgIndex + 1] : 'grok-4.5-fake';
 
 let sessionSeq = 0;
 let serverReqSeq = 0;
@@ -82,7 +84,7 @@ function textOf(prompt) {
 function usageMeta(outputTokens) {
   return {
     sessionId, requestId: 'req-fake', promptId: 'req-fake',
-    totalTokens: 100 + outputTokens, modelId: 'grok-4.5-fake',
+    totalTokens: 100 + outputTokens, modelId: MODEL,
     inputTokens: 100, outputTokens, cachedReadTokens: 50, reasoningTokens: 0,
   };
 }

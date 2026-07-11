@@ -73,6 +73,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '--resume' || a === '-r') out.resume = argv[i + 1];
     else if (a === '--session-id') out.sessionId = argv[i + 1];
+    else if (a === '--model') out.model = argv[i + 1];
   }
   return out;
 }
@@ -234,7 +235,7 @@ send({
   session_id: sessionId,
   cwd: process.cwd(),
   tools: [],
-  model: 'claude-sonnet-5-fake',
+  model: args.model ?? 'claude-sonnet-5-fake',
   permissionMode: 'acceptEdits',
   apiKeySource: 'user',
   claude_code_version: '2.1.206-fake',

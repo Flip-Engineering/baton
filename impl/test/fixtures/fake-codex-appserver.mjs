@@ -288,7 +288,7 @@ rl.on('line', (line) => {
         id: obj.id,
         result: {
           thread: { id: threadId, sessionId: threadId, cwd: obj.params?.cwd ?? '/work', cliVersion: '0.144.0-fake', createdAt: Date.now(), updatedAt: Date.now(), ephemeral: true, source: 'appServer', status: { type: 'idle' }, turns: [], modelProvider: 'fake' },
-          model: 'fake-model', modelProvider: 'fake', cwd: obj.params?.cwd ?? '/work',
+          model: obj.params?.model ?? 'fake-model', modelProvider: 'fake', cwd: obj.params?.cwd ?? '/work',
           sandbox: obj.params?.sandbox ?? 'workspace-write', approvalPolicy: obj.params?.approvalPolicy ?? 'never',
           approvalsReviewer: 'user', instructionSources: [],
         },

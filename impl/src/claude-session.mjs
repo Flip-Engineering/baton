@@ -14,7 +14,7 @@ import { renderPrompt } from './cli-adapters.mjs';
 // buildClaudeSessionArgs — pure function (no process spawned), CS1.
 // ---------------------------------------------------------------------------
 
-export function buildClaudeSessionArgs({ approvals = false, sessionId, model, permissionMode = 'acceptEdits' } = {}) {
+export function buildClaudeSessionArgs({ approvals = false, sessionId, model, effort, permissionMode = 'acceptEdits' } = {}) {
   // stream-json "only works with --print"; --verbose is required alongside it (CS1/§1).
   const args = ['--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'];
   // Erratum E1 (live-caught 2026-07-10): without a permission mode, a --print session's tool
@@ -26,6 +26,7 @@ export function buildClaudeSessionArgs({ approvals = false, sessionId, model, pe
   if (approvals) args.push('--permission-prompt-tool', 'stdio'); // magic value per the Agent SDK source (§0)
   if (sessionId) args.push('--resume', sessionId);
   if (model) args.push('--model', model);
+  if (effort) args.push('--effort', effort);
   return args;
 }
 
@@ -80,6 +81,18 @@ export class ClaudeSessionCli {
       authPosture: 'subscription',
       concurrencyCeiling: this._cfg.ceiling,
       maxContext: this._cfg.maxContext,
+      modelSelection: {
+        mode: 'exact',
+        configuredDefault: this._cfg.model ?? null,
+        available: null,
+        family: 'claude',
+        acceptedPrefixes: ['claude-'],
+        acceptedAliases: ['sonnet', 'opus', 'haiku'],
+        reasoningEffort: ['low', 'medium', 'high', 'xhigh', 'max'],
+        serviceTier: null,
+        provenance: 'adapter-configuration',
+        refreshedAt: null,
+      },
       verbs: {
         spawn: 'native',
         prompt: 'native',
@@ -160,7 +173,8 @@ export class ClaudeSessionCli {
       ...buildClaudeSessionArgs({
         approvals: this._cfg.approvals,
         sessionId: this._cfg.sessionId,
-        model: this._cfg.model,
+        model: opts.model ?? this._cfg.model,
+        effort: opts.reasoningEffort,
         permissionMode: this._cfg.permissionMode,
       }),
     ];
@@ -196,6 +210,8 @@ export class ClaudeSessionCli {
       // adapter-minted requestId -> {wireId, input?, toolUseID?} (R4 + erratum E3: approve()
       // must echo the request's own input and tool_use_id back on an allow)
       wireToAdapterId: new Map(),
+      modelRequested: opts.model ?? this._cfg.model ?? null,
+      modelObserved: null,
     };
     this._sessions.set(worker, session);
     if (opts.timeoutMs > 0) {
@@ -265,7 +281,11 @@ export class ClaudeSessionCli {
           // CS3: lifecycle.spawned carries the WIRE session_id, never a client-generated one.
           session.spawnedEmitted = true;
           session.sessionIdWire = obj.session_id;
-          this._emit(session, 'lifecycle.spawned', { sessionId: obj.session_id, pid: session.pid });
+          session.modelObserved = obj.model ?? null;
+          this._emit(session, 'lifecycle.spawned', {
+            sessionId: obj.session_id, pid: session.pid,
+            modelRequested: session.modelRequested, modelObserved: session.modelObserved,
+          });
         }
         return;
       case 'assistant': {
@@ -302,6 +322,8 @@ export class ClaudeSessionCli {
     this._emit(session, 'lifecycle.turn_completed', {
       result: makeResult(status, obj.result, obj.usage, obj.total_cost_usd),
       pid: session.pid,
+      modelRequested: session.modelRequested,
+      modelObserved: session.modelObserved,
     });
   }
 
@@ -566,6 +588,17 @@ export class GlmSessionCli extends ClaudeSessionCli {
   }
 
   card() {
-    return { ...super.card(), nonRefuserFor: [...this._nonRefuserFor] };
+    const base = super.card();
+    return {
+      ...base,
+      modelSelection: {
+        ...base.modelSelection,
+        family: 'glm',
+        acceptedPrefixes: ['glm-'],
+        acceptedAliases: [],
+        provenance: 'adapter-configuration+zai-model-mapping',
+      },
+      nonRefuserFor: [...this._nonRefuserFor],
+    };
   }
 }

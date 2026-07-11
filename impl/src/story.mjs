@@ -123,6 +123,10 @@ function newWorkerStory(workerId, harness, spawnedAtSeq) {
     status: 'idle',
     taskId: null,
     brief: null,
+    modelRequested: null,
+    modelResolved: null,
+    modelObserved: null,
+    modelMismatch: null,
     lastVerdict: null, // SC5c: {accept:boolean} once verify.reverified folds in
     crashed: false, // SC17: lifecycle fact, never inferred from unrelated warning signals
     turnEpoch: 0,
@@ -289,6 +293,13 @@ function applyEvent(state, event) {
   if (seq !== undefined && seq !== null && w.lastEventSeq > 0 && seq > w.lastEventSeq + 1) {
     w.sawGap = true;
   }
+
+  // MS5 attribution is monotonic enrichment regardless of event kind. Coordinator events carry
+  // these fields at the envelope; adapter lifecycle payloads may carry the wire observation.
+  w.modelRequested = event.modelRequested ?? payload.modelRequested ?? w.modelRequested;
+  w.modelResolved = event.modelResolved ?? payload.modelResolved ?? w.modelResolved;
+  w.modelObserved = event.modelObserved ?? payload.modelObserved ?? payload.modelId ?? payload.model ?? w.modelObserved;
+  if (kind === 'model.mismatch') w.modelMismatch = payload;
 
   const isKnownKind = Object.values(KIND).includes(kind);
 

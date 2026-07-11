@@ -34,6 +34,14 @@ export class UnknownVendorError extends Error {
   }
 }
 
+export class ModelSelectionError extends Error {
+  constructor(message, code = 'model_unavailable') {
+    super(message);
+    this.name = 'ModelSelectionError';
+    this.code = code;
+  }
+}
+
 export class DependencyCycleError extends Error {
   constructor(message) {
     super(message);
@@ -49,6 +57,84 @@ function minimalBrief() {
 }
 
 function noop() {}
+
+function normalizeModelPolicy(model, policy) {
+  if (model !== undefined && (typeof model !== 'string' || model.length === 0)) {
+    throw new ModelSelectionError('model must be a non-empty exact identifier', 'invalid_model');
+  }
+  if (policy == null) return null;
+  if (typeof policy !== 'object' || Array.isArray(policy)) {
+    throw new ModelSelectionError('modelPolicy must be an object', 'invalid_model_policy');
+  }
+  const normalized = {};
+  for (const key of ['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies']) {
+    if (policy[key] === undefined) continue;
+    if (!Array.isArray(policy[key]) || policy[key].some((v) => typeof v !== 'string' || v.length === 0)) {
+      throw new ModelSelectionError(`modelPolicy.${key} must be a non-empty string[]`, 'invalid_model_policy');
+    }
+    normalized[key] = [...policy[key]];
+  }
+  for (const key of ['reasoningEffort', 'serviceTier']) {
+    if (policy[key] !== undefined && (typeof policy[key] !== 'string' || policy[key].length === 0)) {
+      throw new ModelSelectionError(`modelPolicy.${key} must be a non-empty string`, 'invalid_model_policy');
+    }
+    if (policy[key] !== undefined) normalized[key] = policy[key];
+  }
+  if (model !== undefined && normalized.allow && !normalized.allow.includes(model)) {
+    throw new ModelSelectionError(`exact model "${model}" is excluded by modelPolicy.allow`, 'model_policy_conflict');
+  }
+  if (model !== undefined && normalized.deny?.includes(model)) {
+    throw new ModelSelectionError(`exact model "${model}" is excluded by modelPolicy.deny`, 'model_policy_conflict');
+  }
+  return Object.freeze(normalized);
+}
+
+function cardAcceptsExactModel(card, model, { explicit = false } = {}) {
+  const selection = card?.modelSelection;
+  if (!selection || selection.mode !== 'exact') return false;
+  if (Array.isArray(selection.available)) return selection.available.includes(model);
+  if (explicit) return true; // native wire is authoritative when discovery is unavailable
+  if (selection.acceptedAliases?.includes(model)) return true;
+  return (selection.acceptedPrefixes ?? []).some((prefix) => model.startsWith(prefix));
+}
+
+function resolveCardModel(card, requested, policy, { explicit = false } = {}) {
+  const selection = card?.modelSelection;
+  const family = selection?.family ?? null;
+  if (policy?.allowFamilies && !policy.allowFamilies.includes(family)) return { ok: false, reason: 'family_not_allowed' };
+  if (policy?.denyFamilies?.includes(family)) return { ok: false, reason: 'family_denied' };
+  if (policy?.reasoningEffort && !selection?.reasoningEffort?.includes(policy.reasoningEffort)) {
+    return { ok: false, reason: 'reasoning_effort_unsupported' };
+  }
+  if (policy?.serviceTier && !selection?.serviceTier?.includes(policy.serviceTier)) {
+    return { ok: false, reason: 'service_tier_unsupported' };
+  }
+
+  if (requested != null) {
+    return cardAcceptsExactModel(card, requested, { explicit })
+      ? { ok: true, model: requested }
+      : { ok: false, reason: 'model_unavailable' };
+  }
+
+  const permitted = (model) => model == null
+    ? !(policy?.allow?.length)
+    : (!policy?.allow || policy.allow.includes(model)) && !policy?.deny?.includes(model);
+  for (const preferred of policy?.prefer ?? []) {
+    if (permitted(preferred) && cardAcceptsExactModel(card, preferred, { explicit })) return { ok: true, model: preferred };
+  }
+  const configured = selection?.configuredDefault ?? null;
+  if (permitted(configured)) return { ok: true, model: configured };
+  if (Array.isArray(selection?.available)) {
+    const candidate = selection.available.find(permitted);
+    if (candidate !== undefined) return { ok: true, model: candidate };
+  }
+  return { ok: false, reason: 'model_policy_unmatched' };
+}
+
+function modelRouteKey(card, model) {
+  const harness = card ? `${card.harness}@${card.version}` : 'unknown';
+  return model ? `${harness}#${model}` : harness;
+}
 
 /** C1: the default done-gate, behavior-preserving-by-construction for every caller that
  * doesn't override it — exactly today's inline check, moved into an injectable, named
@@ -152,11 +238,12 @@ export class Coordinator {
       const task = this._tasks.get(taskId);
       if (!task || task.status !== 'pending') continue;
       if (task.deps.some((d) => this._tasks.get(d)?.status !== 'completed')) continue;
-      const vendor = this._resolveVendor(task);
+      const selection = this._resolveVendor(task);
+      const vendor = selection?.vendor;
       if (!vendor || !this._adapters[vendor]) continue;
       const card = this._adapters[vendor].card();
       if (this._inFlightCount(vendor) >= card.concurrencyCeiling) continue;
-      this._dispatch(task, vendor);
+      this._dispatch(task, vendor, selection.model);
     }
   }
 
@@ -175,14 +262,29 @@ export class Coordinator {
   }
 
   _resolveVendor(task) {
-    if (task.vendorRequested !== 'auto') return task.vendorRequested;
+    if (task.vendorRequested !== 'auto') {
+      const vendor = task.vendorRequested;
+      const resolved = resolveCardModel(this._adapters[vendor]?.card(), task.modelRequested, task.modelPolicy, { explicit: true });
+      return resolved.ok ? { vendor, model: resolved.model } : null;
+    }
     const cards = {};
-    for (const [name, ad] of Object.entries(this._adapters)) cards[name] = ad.card();
+    const resolvedModels = {};
+    for (const [name, ad] of Object.entries(this._adapters)) {
+      const card = ad.card();
+      const resolved = resolveCardModel(card, task.modelRequested, task.modelPolicy, { explicit: false });
+      if (resolved.ok) {
+        cards[name] = {
+          ...card,
+          modelSelection: { ...(card.modelSelection ?? {}), resolved: resolved.model ?? null },
+        };
+        resolvedModels[name] = resolved.model;
+      }
+    }
     const inFlight = {};
     for (const name of Object.keys(this._adapters)) inFlight[name] = this._inFlightCount(name);
     const chosen = this._route(task, cards, inFlight);
-    if (!chosen || !this._adapters[chosen]) return null;
-    return chosen;
+    if (!chosen || !this._adapters[chosen] || !Object.hasOwn(resolvedModels, chosen)) return null;
+    return { vendor: chosen, model: resolvedModels[chosen] };
   }
 
   _inFlightCount(vendor) {
@@ -198,11 +300,13 @@ export class Coordinator {
     return card ? `${card.harness}@${card.version}` : '';
   }
 
-  _dispatch(task, vendor) {
+  _dispatch(task, vendor, model) {
     const handle = this._workers.get(task.assignee);
     const workerId = handle.id;
     this._fences.register(workerId);
     handle.vendor = vendor;
+    handle.modelResolved = model ?? null;
+    task.modelResolved = model ?? null;
     const harness = this._harnessOf(vendor);
 
     // Create the worktree; the returned readiness promise is handed to the adapter so the
@@ -225,7 +329,13 @@ export class Coordinator {
       .catch(() => null);
 
     const spawnTurnEpoch = this._fences.current(workerId).turnEpoch;
-    this._log.append({ worker: workerId, harness, turnEpoch: spawnTurnEpoch, kind: 'lifecycle.spawned', actor: 'orchestrator', payload: { taskId: task.id, brief: task.brief } });
+    this._log.append({
+      worker: workerId, harness, turnEpoch: spawnTurnEpoch, kind: 'lifecycle.spawned', actor: 'orchestrator',
+      payload: {
+        taskId: task.id, brief: task.brief, vendorRequested: task.vendorRequested, vendorResolved: vendor,
+        modelRequested: task.modelRequested, modelResolved: task.modelResolved, modelPolicy: task.modelPolicy,
+      },
+    });
 
     const stamp = this._fences.bumpTurn(workerId);
 
@@ -241,6 +351,9 @@ export class Coordinator {
       worktreeReady,
       timeoutMs: wallMin ? wallMin * 60000 : undefined,
       signal: spawnAbort.signal,
+      model: task.modelResolved ?? undefined,
+      reasoningEffort: task.modelPolicy?.reasoningEffort,
+      serviceTier: task.modelPolicy?.serviceTier,
     })).then((ack) => {
       if (handle.spawnAbort === spawnAbort) handle.spawnAbort = null;
       if (ack && ack.ok === false) this._onSpawnRefused(handle, task, harness, ack);
@@ -250,7 +363,10 @@ export class Coordinator {
       this._onSpawnRefused(handle, task, harness, { ok: false, reason: String(err?.message ?? err) });
     });
 
-    this._log.append({ worker: workerId, harness, turnEpoch: stamp.turnEpoch, kind: 'lifecycle.turn_started', actor: 'orchestrator', payload: {} });
+    this._log.append({
+      worker: workerId, harness, turnEpoch: stamp.turnEpoch, kind: 'lifecycle.turn_started', actor: 'orchestrator', payload: {},
+      modelRequested: handle.modelRequested ?? null, modelResolved: handle.modelResolved ?? null, modelObserved: handle.modelObserved ?? null,
+    });
 
     task.status = 'working';
     handle.status = 'working';
@@ -288,10 +404,20 @@ export class Coordinator {
     // CI1: admission is the pinning boundary. Never retain caller-owned mutable state and never
     // allow a malformed raw object to become a task merely because the caller skipped createBrief.
     const admittedBrief = createBrief(brief);
+    const modelPolicy = normalizeModelPolicy(opts.model, opts.modelPolicy);
 
     const taskId = opts.taskId ?? this._autoTaskId();
     if (this._tasks.has(taskId)) throw new DuplicateTaskIdError(`duplicate taskId "${taskId}"`);
     if (vendor !== 'auto' && !this._adapters[vendor]) throw new UnknownVendorError(`unknown vendor "${vendor}"`);
+    if (vendor !== 'auto') {
+      const resolved = resolveCardModel(this._adapters[vendor].card(), opts.model, modelPolicy, { explicit: true });
+      if (!resolved.ok) {
+        throw new ModelSelectionError(`harness "${vendor}" cannot honor model "${opts.model ?? '(policy)'}"`, resolved.reason);
+      }
+    } else if (opts.model !== undefined || modelPolicy) {
+      const anyCapable = Object.values(this._adapters).some((ad) => resolveCardModel(ad.card(), opts.model, modelPolicy, { explicit: false }).ok);
+      if (!anyCapable) throw new ModelSelectionError(`no harness can honor model "${opts.model ?? '(policy)'}"`, 'model_unavailable');
+    }
 
     const deps = opts.deps ? [...opts.deps] : [];
     this._assertNoCycle(taskId, deps);
@@ -302,6 +428,10 @@ export class Coordinator {
       brief: admittedBrief,
       deps,
       vendorRequested: vendor,
+      modelRequested: opts.model,
+      modelResolved: null,
+      modelObserved: null,
+      modelPolicy,
       status: 'pending',
       assignee: workerId,
       worktree: null,
@@ -315,6 +445,10 @@ export class Coordinator {
     const handle = {
       id: workerId,
       vendor: vendor === 'auto' ? null : vendor,
+      modelRequested: opts.model ?? null,
+      modelResolved: null,
+      modelObserved: null,
+      modelPolicy,
       taskId,
       worktree: null,
       status: 'pending',
@@ -375,6 +509,11 @@ export class Coordinator {
     return {
       id: handle.id,
       vendor: handle.vendor,
+      modelRequested: handle.modelRequested ?? null,
+      modelResolved: handle.modelResolved ?? null,
+      modelObserved: handle.modelObserved ?? null,
+      modelMismatch: handle.modelMismatch ?? null,
+      modelPolicy: handle.modelPolicy ?? null,
       taskId: handle.taskId,
       worktree: handle.worktree,
       fence,
@@ -611,7 +750,10 @@ export class Coordinator {
     const handle = this._workers.get(workerId);
     const harness = handle ? this._harnessOf(handle.vendor) : '';
     const kind = waiter.mode === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed';
-    const ev = { worker: workerId, harness, turnEpoch: handle ? this._safeTurnEpoch(handle) : 0, kind, actor: 'worker', payload: {} };
+    const ev = {
+      worker: workerId, harness, turnEpoch: handle ? this._safeTurnEpoch(handle) : 0, kind, actor: 'worker', payload: {},
+      modelRequested: handle?.modelRequested ?? null, modelResolved: handle?.modelResolved ?? null, modelObserved: handle?.modelObserved ?? null,
+    };
     if (waiter.emulated) ev.emulated = true;
     this._log.append(ev);
 
@@ -782,9 +924,16 @@ export class Coordinator {
     this.tick();
     const handle = this._getWorker(workerId);
     const task = this._tasks.get(handle.taskId);
-    if (!task) return { ready: false, status: handle.status };
-    if (!TERMINAL_TASK_STATUSES.has(task.status)) return { ready: false, status: task.status };
-    return { ready: true, status: task.status, verdict: task.verdict, artifacts: task.result ? task.result.artifacts : undefined };
+    const attribution = {
+      vendor: handle.vendor,
+      modelRequested: handle.modelRequested ?? null,
+      modelResolved: handle.modelResolved ?? null,
+      modelObserved: handle.modelObserved ?? null,
+      modelMismatch: handle.modelMismatch ?? null,
+    };
+    if (!task) return { ready: false, status: handle.status, ...attribution };
+    if (!TERMINAL_TASK_STATUSES.has(task.status)) return { ready: false, status: task.status, ...attribution };
+    return { ready: true, status: task.status, verdict: task.verdict, artifacts: task.result ? task.result.artifacts : undefined, ...attribution };
   }
 
   list() {
@@ -909,13 +1058,44 @@ export class Coordinator {
     const { worker: workerId, kind, harness, turnEpoch, payload, actor } = event;
     const handle = this._workers.get(workerId);
     if (!handle) return;
+    const observedModel = payload?.modelObserved ?? payload?.modelId ?? payload?.model;
+    if (typeof observedModel === 'string' && observedModel.length > 0) {
+      handle.modelObserved = observedModel;
+      const task = this._tasks.get(handle.taskId);
+      if (task) task.modelObserved = observedModel;
+
+      const selection = this._adapters[handle.vendor]?.card()?.modelSelection;
+      const requestedAlias = selection?.acceptedAliases?.includes(handle.modelResolved);
+      if (handle.modelResolved && observedModel !== handle.modelResolved && !requestedAlias && !handle.modelMismatch) {
+        handle.modelMismatch = { requested: handle.modelResolved, observed: observedModel };
+        const mismatchTask = this._tasks.get(handle.taskId);
+        if (mismatchTask) {
+          mismatchTask.modelMismatch = handle.modelMismatch;
+          if (!TERMINAL_TASK_STATUSES.has(mismatchTask.status)) mismatchTask.status = 'failed';
+        }
+        this._log.append({
+          worker: workerId, harness, turnEpoch, kind: 'model.mismatch', actor: 'policy',
+          modelRequested: handle.modelRequested ?? null, modelResolved: handle.modelResolved, modelObserved: observedModel,
+          payload: { requested: handle.modelResolved, observed: observedModel, action: 'fail_and_kill' },
+        });
+        // Use the ordinary confirmed two-phase stop so process/worktree ownership remains live
+        // until the adapter proves the mismatched session is gone.
+        this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+      }
+    }
+    const attribution = {
+      modelRequested: handle.modelRequested ?? null,
+      modelResolved: handle.modelResolved ?? null,
+      modelObserved: handle.modelObserved ?? null,
+    };
+    const appendAttributed = (partial) => this._log.append({ ...partial, ...attribution });
 
     switch (kind) {
       case 'lifecycle.turn_completed': {
         // Adapters may wrap the WorkerResult as { result } (MockAdapter) or emit it directly
         // (coordinator.test). Normalize so the logged claim and the gate both see the WorkerResult.
         const wr = (payload && payload.result !== undefined && payload.status === undefined) ? payload.result : payload;
-        this._log.append({ worker: workerId, harness, turnEpoch, kind, actor, payload: wr });
+        appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload: wr });
         if (handle.status !== 'stopping' && handle.status !== 'dead') {
           this._runTrustGate(handle, wr).catch(noop);
         }
@@ -923,7 +1103,7 @@ export class Coordinator {
       }
       case 'lifecycle.crashed':
       case 'lifecycle.exited': {
-        this._log.append({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
         const task = this._tasks.get(handle.taskId);
         if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'failed';
         if (handle.status !== 'dead') handle.status = 'exited';
@@ -931,7 +1111,7 @@ export class Coordinator {
       }
       case 'question.asked': {
         const requestId = payload?.requestId;
-        this._log.append({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
         const task = this._tasks.get(handle.taskId);
         if (task && TERMINAL_TASK_STATUSES.has(task.status)) break;
         this._pending.set(requestId, {
@@ -952,7 +1132,7 @@ export class Coordinator {
       }
       case 'approval.requested': {
         const requestId = payload?.requestId;
-        this._log.append({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
         const task = this._tasks.get(handle.taskId);
         if (task && TERMINAL_TASK_STATUSES.has(task.status)) break;
         this._pending.set(requestId, {
@@ -978,7 +1158,7 @@ export class Coordinator {
         this._onStopConfirmed(handle, 'kill');
         break;
       default:
-        this._log.append({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
     }
   }
 
@@ -999,7 +1179,10 @@ export class Coordinator {
     try {
       // C5: thread the dispatching vendor through to captureCommit so the snapshot
       // commit (when one is made) is genuinely attributed.
-      const captured = await this._worktrees.capture(handle.worktree ?? task.worktree, { vendor: handle.vendor });
+      const captured = await this._worktrees.capture(handle.worktree ?? task.worktree, {
+        vendor: handle.vendor,
+        model: handle.modelObserved ?? handle.modelResolved,
+      });
       const sha = captured && captured.sha;
       const created = await this._worktrees.createVerifyWorktree(task.id, sha);
       verifyPath = created && created.path;
@@ -1021,6 +1204,9 @@ export class Coordinator {
         turnEpoch: this._safeTurnEpoch(handle),
         kind: 'verify.reverified',
         actor: 'policy',
+        modelRequested: handle.modelRequested ?? null,
+        modelResolved: handle.modelResolved ?? null,
+        modelObserved: handle.modelObserved ?? null,
         payload: {
           verdict,
           accept,
@@ -1028,7 +1214,10 @@ export class Coordinator {
             requireRedGreen: this._acceptOpts.requireRedGreen ?? false,
             requireCoverage: this._acceptOpts.requireCoverage ?? false,
           },
-          capture: { sha: captured && captured.sha, snapshotted: captured && captured.snapshotted, vendor: handle.vendor ?? null },
+          capture: {
+            sha: captured && captured.sha, snapshotted: captured && captured.snapshotted,
+            vendor: handle.vendor ?? null, model: handle.modelObserved ?? handle.modelResolved ?? null,
+          },
         },
       });
       task.status = accept ? 'completed' : 'failed';
@@ -1036,7 +1225,7 @@ export class Coordinator {
       if (this._route && typeof this._route.record === 'function') {
         const card = this._adapters[handle.vendor]?.card();
         try {
-          this._route.record(card ? `${card.harness}@${card.version}` : undefined, task.taskType ?? 'general', accept);
+          this._route.record(modelRouteKey(card, handle.modelObserved ?? handle.modelResolved), task.taskType ?? 'general', accept);
         } catch {
           // never let a broken router affect coordinator correctness
         }
@@ -1075,13 +1264,30 @@ export class Coordinator {
       let verdict = null;
       let lastResult = null;
       let recoveryTerminalized = false;
+      let vendorRequested = null;
+      let vendorResolved = null;
+      let modelRequested = null;
+      let modelResolved = null;
+      let modelObserved = null;
+      let modelPolicy = null;
+      let modelMismatch = null;
 
       for (const e of events) {
         if (typeof e.turnEpoch === 'number' && e.turnEpoch > maxTurnEpoch) maxTurnEpoch = e.turnEpoch;
+        modelRequested = e.modelRequested ?? modelRequested;
+        modelResolved = e.modelResolved ?? modelResolved;
+        modelObserved = e.modelObserved ?? modelObserved;
+        if (e.kind === 'model.mismatch') modelMismatch = e.payload ?? modelMismatch;
         switch (e.kind) {
           case 'lifecycle.spawned':
             taskId = e.payload?.taskId ?? taskId;
             brief = e.payload?.brief ?? brief;
+            vendorRequested = e.payload?.vendorRequested ?? vendorRequested;
+            vendorResolved = e.payload?.vendorResolved ?? vendorResolved;
+            modelRequested = e.payload?.modelRequested ?? modelRequested;
+            modelResolved = e.payload?.modelResolved ?? modelResolved;
+            modelPolicy = e.payload?.modelPolicy ?? modelPolicy;
+            modelObserved = e.payload?.modelObserved ?? e.payload?.model ?? modelObserved;
             break;
           case 'lifecycle.turn_started':
             if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) terminalStatus = 'working';
@@ -1116,6 +1322,7 @@ export class Coordinator {
             if (terminalStatus === 'input_required') terminalStatus = 'working';
             break;
           default:
+            modelObserved = e.payload?.modelObserved ?? e.payload?.modelId ?? e.payload?.model ?? modelObserved;
             break;
         }
       }
@@ -1150,6 +1357,12 @@ export class Coordinator {
           result: null,
           verdict: null,
           taskType: 'general',
+          vendorRequested,
+          modelRequested,
+          modelResolved,
+          modelObserved,
+          modelPolicy,
+          modelMismatch,
         };
         task.assignee = workerId;
         task.status = terminalStatus;
@@ -1161,7 +1374,12 @@ export class Coordinator {
 
       this._workers.set(workerId, {
         id: workerId,
-        vendor: null,
+        vendor: vendorResolved,
+        modelRequested,
+        modelResolved,
+        modelObserved,
+        modelPolicy,
+        modelMismatch,
         taskId,
         worktree: null,
         status: recoveryTerminalized ? 'orphaned' : this._deriveWorkerStatus(terminalStatus),

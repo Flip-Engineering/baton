@@ -16,7 +16,7 @@ import { verify, accept } from './referee.mjs';
 import { AdaptiveRouter } from './router.mjs';
 import { StoryCompiler } from './story.mjs';
 
-export { Coordinator } from './coordinator.mjs';
+export { Coordinator, ModelSelectionError } from './coordinator.mjs';
 export { MockAdapter, CodexAdapter, ClaudeAdapter, GlmAdapter } from './adapter.mjs';
 // SC2: the session tier IS the product surface — constructible from the entry point.
 export { ClaudeSessionCli, GlmSessionCli } from './claude-session.mjs';
@@ -34,7 +34,9 @@ function worktreeManager(repoRoot) {
       const r = await worktreeMod.createFromBase(repoRoot, taskId, base.sha, {});
       return { path: r.dir, branch: r.branch, baseSha: r.baseSha };
     },
-    async capture(worktreePath, opts = {}) { return worktreeMod.captureCommit(repoRoot, basename(worktreePath), { vendor: opts.vendor }); },
+    async capture(worktreePath, opts = {}) {
+      return worktreeMod.captureCommit(repoRoot, basename(worktreePath), { vendor: opts.vendor, model: opts.model });
+    },
     async createVerifyWorktree(taskId, sha) {
       const r = await worktreeMod.freshVerifySandbox(repoRoot, taskId, sha, {});
       return { path: r.dir ?? r.path };
@@ -79,9 +81,13 @@ export function createDriver(opts) {
     // the pool untouched — the restriction can never strand a task.
     const capable = feasible.filter((v) => Array.isArray(cards[v].nonRefuserFor) && cards[v].nonRefuserFor.includes(task.taskType));
     if (capable.length > 0) feasible = capable;
+    const candidateKey = (v) => {
+      const base = `${cards[v].harness}@${cards[v].version}`;
+      return cards[v].modelSelection?.resolved ? `${base}#${cards[v].modelSelection.resolved}` : base;
+    };
     const candidates = feasible.map((v) => ({
-      modelVersion: `${cards[v].harness}@${cards[v].version}`,
-      family: 'default',
+      modelVersion: candidateKey(v),
+      family: cards[v].modelSelection?.family ?? 'default',
       concurrencyCeiling: cards[v].concurrencyCeiling,
       inFlight: inFlight[v] ?? 0,
     }));
@@ -90,7 +96,7 @@ export function createDriver(opts) {
     // First-listed feasible vendor wins a modelVersion collision: two adapters CAN share
     // harness@version (e.g. one-shot ClaudeCli and session ClaudeSessionCli for the same CLI),
     // and a last-wins Map would silently flip which vendor key receives the dispatch.
-    return feasible.find((v) => `${cards[v].harness}@${cards[v].version}` === chosen) ?? null;
+    return feasible.find((v) => candidateKey(v) === chosen) ?? null;
   };
   route.record = (mv, tt, win) => router.record(mv, tt, win);
 
