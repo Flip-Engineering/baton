@@ -363,17 +363,17 @@ test('E2E happy path: a real task runs the whole spawn->trust-gate->completed pi
   }
 
   // D5: the router learned from the VERIFIED win — record() called exactly once, with the
-  // adapter's own modelVersion (card().harness + '@' + card().version, the same convention
-  // BatonEvent.harness already uses everywhere else in this suite), this task's taskType, and
+  // adapter's resolved route tuple, this task's taskType, and
   // verifiedWin === referee.accept(verdict) — never the worker's self-reported status.
   assert.equal(sys.routerCalls.record.length, 1);
   const [modelVersion, taskType, verifiedWin] = sys.routerCalls.record[0];
-  assert.equal(modelVersion, 'mock@1.0.0');
+  const routeKey = '["mock","1.0.0","default","default","default","build"]';
+  assert.equal(modelVersion, routeKey);
   assert.equal(taskType, 'build');
   assert.equal(verifiedWin, true);
   assert.equal(verifiedWin, accept(outcome.verdict));
 
-  const stat = sys.router.getStat('mock@1.0.0', 'build');
+  const stat = sys.router.getStat(routeKey, 'build');
   assert.ok(stat !== null && stat.count >= 1, 'the router bucket must actually reflect the recorded win');
 });
 

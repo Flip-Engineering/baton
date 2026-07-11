@@ -153,6 +153,22 @@ export class AdaptiveRouter {
   }
 
   /**
+   * Resolve read-only routing evidence for a candidate. Exact tuple evidence
+   * always wins. Legacy aliases are consulted only when that tuple has never
+   * been recorded, so upgrades retain useful history without collapsing new
+   * harness/model/effort buckets back together.
+   */
+  _candidateBucket(candidate, taskType) {
+    const exact = this._buckets.get(bucketKey(candidate.family, candidate.modelVersion, taskType));
+    if (exact) return exact;
+    for (const alias of candidate.legacyModelVersions ?? []) {
+      const legacy = this._buckets.get(bucketKey(candidate.family, alias, taskType));
+      if (legacy) return legacy;
+    }
+    return null;
+  }
+
+  /**
    * @param {{taskType:string}} task
    * @param {RouteCandidate[]} candidates
    * @param {{now?:number}} [opts]
@@ -179,8 +195,7 @@ export class AdaptiveRouter {
     if (this.mode === 'adaptive') return 'adaptive';
     // mode === 'auto'
     const totalDecayedCount = eligible.reduce((sum, c) => {
-      const key = bucketKey(c.family, c.modelVersion, taskType);
-      const bucket = this._buckets.get(key);
+      const bucket = this._candidateBucket(c, taskType);
       return sum + decayedStat(bucket, nowMs, this.halfLifeMs).count;
     }, 0);
     return totalDecayedCount < this.minSamplesForAdaptive ? 'round-robin' : 'adaptive';
@@ -199,7 +214,8 @@ export class AdaptiveRouter {
     // bucket so scoring/seeding is consistent, then score using decayed
     // projections read at `nowMs`.
     const decoratedCandidates = eligible.map((c) => {
-      const bucket = this._ensureBucket(c.family, c.modelVersion, taskType, nowMs);
+      const bucket = this._candidateBucket(c, taskType)
+        ?? this._ensureBucket(c.family, c.modelVersion, taskType, nowMs);
       return { candidate: c, bucket };
     });
 

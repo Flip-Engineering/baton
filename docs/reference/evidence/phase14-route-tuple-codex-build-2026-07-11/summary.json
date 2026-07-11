@@ -1,8 +1,8 @@
 {
-  "at": "2026-07-11T22:02:13.745Z",
-  "repoHead": "b7f27493bc803e62097783877151ad1e4c263e03",
+  "at": "2026-07-11T22:05:46.402Z",
+  "repoHead": "a0cf6a26a0acc5fb6a6c6f5aa83553f8ed71b27a",
   "workerId": "w-1",
-  "pid": 9154,
+  "pid": 35408,
   "model": "gpt-5.6-sol",
   "effort": "low",
   "result": {
@@ -22,9 +22,9 @@
       "mutationStrength": null,
       "mutationPassed": null,
       "survivedMutants": [],
-      "observedOutputTail": "e (new branch 'baton/t1')\nPreparing worktree (new branch 'baton/t1')\n✔ pinBaseSha on a clean repo returns {sha: HEAD, stashed:false} (79.067542ms)\n✔ pinBaseSha on a dirty repo with autoStash:false (default) throws DirtyRepoError and leaves the repo untouched (75.3955ms)\n✔ pinBaseSha on a dirty repo with autoStash:true stashes and returns a clean repo at the same sha (122.352334ms)\n✔ createFromBase produces <repoRoot>/.baton/wt/<taskId> on branch baton/<taskId> at baseSha (64.632459ms)\n✔ createFromBase called twice with the same taskId throws WorktreeAlreadyExistsError (56.41175ms)\n✔ createFromBase materializes isolated worker dependencies when explicitly configured (56.739ms)\n✔ createFromBase throws BranchAlreadyCheckedOutError when baton/<taskId> is already checked out elsewhere (60.979416ms)\n✔ captureCommit on an already-committed worktree: snapshotted:false, sha equals the worker's own commit (82.957583ms)\n✔ captureCommit on a dirty worktree snapshots a commit with the vendor trailer and leaves it clean (100.378292ms)\n✔ captureCommit on an unchanged worktree does not create an empty commit (67.129625ms)\n✔ freshVerifySandbox produces a directory distinct from the worker worktree, detached at sha, with that commit's content (111.580708ms)\n✔ two freshVerifySandbox calls with the same label produce two non-colliding directories (72.138958ms)\n✔ freshVerifySandbox copies explicit dependencies without linking writes to the main checkout (57.54325ms)\n✔ freshVerifySandbox rejects escaping dependency paths before registering a worktree (54.0785ms)\n✔ freshVerifySandbox reaps its worktree when dependency materialization fails (89.740083ms)\n✔ sandbox.cleanup() removes the directory and is idempotent (66.094ms)\n✔ freshVerifySandbox with a garbage sha throws InvalidShaError before creating any directory (37.6315ms)\n✔ reap() on a worktree that was never markStopped throws WorktreeLockedError and leaves the directory intact (53.45975ms)\n✔ reap() after markStopped succeeds: the directory is gone and git worktree list no longer shows it (59.351625ms)\n✔ reap() with opts.force:true succeeds even without markStopped (60.431459ms)\n✔ reap() called twice on the same taskId is a no-op both times (53.253125ms)\nPreparing worktree (new branch 'baton/t1')\n✔ interrupt-then-reap sequencing: an aborted MockAdapter run can be markStopped + reaped, discarding the partial commit (99.778833ms)\nPreparing worktree (new branch 'baton/zombie1')\nPreparing worktree (new branch 'baton/zombie2')\nPreparing worktree (new branch 'baton/keep-me')\nPreparing worktree (new branch 'baton/remove-me')\nPreparing worktree (new branch 'baton/zombie1')\nPreparing worktree (new branch 'baton/zombie2')\nPreparing worktree (new branch 'baton/t1')\nPreparing worktree (new branch 'baton/t2')\nPreparing worktree (detached HEAD ae3fa41)\nPreparing worktree (new branch 'baton/t1')\nPreparing worktree (detached HEAD ae3fa41)\nPreparing worktree (new branch 'baton/zombie')\n✔ a same-tick abort (delayMs:0) during a MockAdapter run never leaves a git lockfile behind, and the worktree can still be markStopped + reaped cleanly (97.735125ms)\n✔ reconcile removes leftover .baton/wt/* directories not in expectedActiveTaskIds, then is idempotent (90.283792ms)\n✔ reconcile leaves directories whose taskId is in expectedActiveTaskIds alone (80.98125ms)\n✔ reconcile() emits one worktree.reconciled event per removed directory, each attributed to that directory's own taskId (82.826583ms)\n✔ changedLines reports added lines in a new file and modified lines in an existing file (59.333292ms)\n✔ changedLines between identical SHAs returns {} (39.677791ms)\n✔ listWorktrees reports created worktrees and verify sandboxes with correct fields (92.654625ms)\n✔ createFromBase, captureCommit, freshVerifySandbox, reap, reconcile each append at least one documented-prefix log event, correctly attributed via `worker` (131.468334ms)\nℹ tests 135\nℹ suites 0\nℹ pass 135\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 3260.833416\n",
+      "observedOutputTail": " branch 'baton/t1')\nPreparing worktree (new branch 'baton/t1')\n✔ pinBaseSha on a clean repo returns {sha: HEAD, stashed:false} (81.273542ms)\n✔ pinBaseSha on a dirty repo with autoStash:false (default) throws DirtyRepoError and leaves the repo untouched (84.879542ms)\n✔ pinBaseSha on a dirty repo with autoStash:true stashes and returns a clean repo at the same sha (127.871083ms)\n✔ createFromBase produces <repoRoot>/.baton/wt/<taskId> on branch baton/<taskId> at baseSha (71.469125ms)\n✔ createFromBase called twice with the same taskId throws WorktreeAlreadyExistsError (62.485625ms)\n✔ createFromBase materializes isolated worker dependencies when explicitly configured (59.2825ms)\n✔ createFromBase throws BranchAlreadyCheckedOutError when baton/<taskId> is already checked out elsewhere (58.123583ms)\n✔ captureCommit on an already-committed worktree: snapshotted:false, sha equals the worker's own commit (90.482292ms)\n✔ captureCommit on a dirty worktree snapshots a commit with the vendor trailer and leaves it clean (96.533041ms)\n✔ captureCommit on an unchanged worktree does not create an empty commit (76.156459ms)\n✔ freshVerifySandbox produces a directory distinct from the worker worktree, detached at sha, with that commit's content (102.321167ms)\n✔ two freshVerifySandbox calls with the same label produce two non-colliding directories (71.452334ms)\n✔ freshVerifySandbox copies explicit dependencies without linking writes to the main checkout (54.780625ms)\n✔ freshVerifySandbox rejects escaping dependency paths before registering a worktree (63.321208ms)\n✔ freshVerifySandbox reaps its worktree when dependency materialization fails (83.369375ms)\n✔ sandbox.cleanup() removes the directory and is idempotent (65.069833ms)\n✔ freshVerifySandbox with a garbage sha throws InvalidShaError before creating any directory (37.7225ms)\n✔ reap() on a worktree that was never markStopped throws WorktreeLockedError and leaves the directory intact (54.355042ms)\n✔ reap() after markStopped succeeds: the directory is gone and git worktree list no longer shows it (60.309666ms)\n✔ reap() with opts.force:true succeeds even without markStopped (56.703291ms)\n✔ reap() called twice on the same taskId is a no-op both times (54.241834ms)\nPreparing worktree (new branch 'baton/t1')\n✔ interrupt-then-reap sequencing: an aborted MockAdapter run can be markStopped + reaped, discarding the partial commit (93.698417ms)\nPreparing worktree (new branch 'baton/zombie1')\nPreparing worktree (new branch 'baton/zombie2')\nPreparing worktree (new branch 'baton/keep-me')\nPreparing worktree (new branch 'baton/remove-me')\nPreparing worktree (new branch 'baton/zombie1')\nPreparing worktree (new branch 'baton/zombie2')\nPreparing worktree (new branch 'baton/t1')\nPreparing worktree (new branch 'baton/t2')\nPreparing worktree (detached HEAD 2137464)\nPreparing worktree (new branch 'baton/t1')\nPreparing worktree (detached HEAD 2137464)\nPreparing worktree (new branch 'baton/zombie')\n✔ a same-tick abort (delayMs:0) during a MockAdapter run never leaves a git lockfile behind, and the worktree can still be markStopped + reaped cleanly (93.604459ms)\n✔ reconcile removes leftover .baton/wt/* directories not in expectedActiveTaskIds, then is idempotent (88.9715ms)\n✔ reconcile leaves directories whose taskId is in expectedActiveTaskIds alone (81.483708ms)\n✔ reconcile() emits one worktree.reconciled event per removed directory, each attributed to that directory's own taskId (83.240708ms)\n✔ changedLines reports added lines in a new file and modified lines in an existing file (57.208ms)\n✔ changedLines between identical SHAs returns {} (39.920541ms)\n✔ listWorktrees reports created worktrees and verify sandboxes with correct fields (98.462875ms)\n✔ createFromBase, captureCommit, freshVerifySandbox, reap, reconcile each append at least one documented-prefix log event, correctly attributed via `worker` (127.811583ms)\nℹ tests 139\nℹ suites 0\nℹ pass 139\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 3259.651667\n",
       "note": "PASS: observed exit 0 matches expected 0.",
-      "durationMs": 3312
+      "durationMs": 3322
     },
     "artifacts": {
       "commits": [],
@@ -41,14 +41,14 @@
     "sessionRef": {
       "vendor": "codex",
       "kind": "thread",
-      "id": "019f5331-89f6-7b22-adad-f640a65cfcd6",
+      "id": "019f5335-51a0-7ec1-9bd9-8ee5995c9f71",
       "persistence": "native",
       "source": "wire"
     },
     "sessionContext": {
       "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-route-tuple-build",
       "repoRoot": "/Users/wahargis/Development/Experiments/baton",
-      "baseSha": "882b0770474d50656b5d656eaf469fa36f53b672",
+      "baseSha": "8adce87f1d0b78c09cc343f96fe261738cdad799",
       "branch": "baton/codex-route-tuple-build",
       "ownerTaskId": "codex-route-tuple-build"
     },
@@ -62,9 +62,9 @@
     "ok": true,
     "result": "integrated",
     "integration": {
-      "beforeSha": "882b0770474d50656b5d656eaf469fa36f53b672",
-      "resultSha": "b7f27493bc803e62097783877151ad1e4c263e03",
-      "afterSha": "b7f27493bc803e62097783877151ad1e4c263e03",
+      "beforeSha": "8adce87f1d0b78c09cc343f96fe261738cdad799",
+      "resultSha": "a0cf6a26a0acc5fb6a6c6f5aa83553f8ed71b27a",
+      "afterSha": "a0cf6a26a0acc5fb6a6c6f5aa83553f8ed71b27a",
       "strategy": "ff-only",
       "actor": "orchestrator"
     }
@@ -73,7 +73,7 @@
   "steer": null,
   "checks": {
     "noHarnessError": true,
-    "exactTupleResolved": false,
+    "exactTupleResolved": true,
     "nativeEffortWire": true,
     "freshVerified": true,
     "integrated": true,
@@ -85,5 +85,5 @@
     "branchGone": true
   },
   "fatal": null,
-  "pass": false
+  "pass": true
 }

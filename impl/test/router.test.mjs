@@ -469,6 +469,31 @@ test('no Math.random() anywhere: tie-breaking among equal scores is deterministi
   assert.equal(picked, 'first');
 });
 
+test('route-tuple candidates fall back to legacy learning evidence when no exact tuple bucket exists', () => {
+  const router = new AdaptiveRouter({ mode: 'adaptive', now: () => T0, explorationConstant: 0 });
+  for (let i = 0; i < 5; i += 1) router.record('vendor-b@1', 'build', true, { family: 'fam', now: T0 });
+  const picked = router.pick({ taskType: 'build' }, [
+    candidate({ modelVersion: 'tuple-a', family: 'fam' }),
+    candidate({ modelVersion: 'tuple-b', family: 'fam', legacyModelVersions: ['vendor-b@1'] }),
+  ], { now: T0 });
+  assert.equal(picked, 'tuple-b');
+  assert.equal(router.getStat('tuple-b', 'build'), null, 'read fallback must not write or merge the new tuple bucket');
+});
+
+test('exact route-tuple evidence takes precedence over a stronger legacy alias', () => {
+  const router = new AdaptiveRouter({ mode: 'adaptive', now: () => T0, explorationConstant: 0 });
+  for (let i = 0; i < 10; i += 1) {
+    router.record('legacy-a', 'build', true, { family: 'fam', now: T0 });
+    router.record('tuple-a', 'build', false, { family: 'fam', now: T0 });
+    router.record('tuple-b', 'build', true, { family: 'fam', now: T0 });
+  }
+  const picked = router.pick({ taskType: 'build' }, [
+    candidate({ modelVersion: 'tuple-a', family: 'fam', legacyModelVersions: ['legacy-a'] }),
+    candidate({ modelVersion: 'tuple-b', family: 'fam' }),
+  ], { now: T0 });
+  assert.equal(picked, 'tuple-b');
+});
+
 test('two AdaptiveRouter instances fed the identical sequence of record()/pick() calls with the same injected now values produce identical snapshots', () => {
   function run() {
     const router = new AdaptiveRouter({ mode: 'adaptive', now: () => T0 });

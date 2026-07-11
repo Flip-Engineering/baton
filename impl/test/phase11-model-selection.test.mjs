@@ -135,11 +135,12 @@ test('MS2: Codex exact model reaches thread/start and is reported from its respo
   const events = [];
   cli.onEvent((e) => events.push(e));
   t.after(() => cli.kill('codex-model').catch(() => {}));
-  const ack = await cli.spawn('codex-model', brief(), { worktree: tmpdir(), model: 'gpt-task-fake' });
+  const ack = await cli.spawn('codex-model', brief(), { worktree: tmpdir(), model: 'gpt-task-fake', reasoningEffort: 'high' });
   assert.equal(ack.ok, true);
   const spawned = await until(events, (e) => e.kind === 'lifecycle.spawned');
   assert.equal(spawned.payload.modelRequested, 'gpt-task-fake');
   assert.equal(spawned.payload.modelObserved, 'gpt-task-fake');
+  assert.equal(spawned.payload.effortObserved, 'high');
 });
 
 test('MS2: Grok exact model reaches argv and prompt usage reports the observed model', async (t) => {
@@ -306,10 +307,11 @@ test('MS5: snapshot commits carry Baton-Model independently of Baton-Vendor', as
   const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
   const wt = await createFromBase(repo, 'model-trailer', base);
   writeFileSync(join(wt.dir, 'model.txt'), 'attributed\n');
-  await captureCommit(repo, 'model-trailer', { vendor: 'grok', model: 'grok-exact' });
+  await captureCommit(repo, 'model-trailer', { vendor: 'grok', model: 'grok-exact', effort: 'high' });
   const message = execFileSync('git', ['log', '-1', '--format=%B'], { cwd: wt.dir, encoding: 'utf8' });
   assert.match(message, /Baton-Vendor: grok/);
   assert.match(message, /Baton-Model: grok-exact/);
+  assert.match(message, /Baton-Effort: high/);
   await reap(repo, 'model-trailer', { force: true, deleteBranch: true });
 });
 
@@ -319,19 +321,29 @@ test('MS5: story keeps requested, resolved, observed, and mismatch model identit
     worker: 'w-model', harness: 'stub@1', seq: 1, ts: '2026-01-01T00:00:00Z', turnEpoch: 1,
     actor: 'orchestrator', kind: 'lifecycle.spawned',
     modelRequested: 'stub-exact', modelResolved: 'stub-exact', modelObserved: null,
+    effortRequested: 'high', effortResolved: 'high', effortObserved: null,
     payload: { taskId: 't-model', brief: brief() },
   });
   state = foldEvent(state, {
     worker: 'w-model', harness: 'stub@1', seq: 2, ts: '2026-01-01T00:00:01Z', turnEpoch: 1,
     actor: 'worker', kind: 'resource.tokens', modelObserved: 'stub-fallback', payload: { modelId: 'stub-fallback' },
+    effortObserved: 'low',
   });
   state = foldEvent(state, {
     worker: 'w-model', harness: 'stub@1', seq: 3, ts: '2026-01-01T00:00:02Z', turnEpoch: 1,
     actor: 'policy', kind: 'model.mismatch', payload: { requested: 'stub-exact', observed: 'stub-fallback' },
   });
+  state = foldEvent(state, {
+    worker: 'w-model', harness: 'stub@1', seq: 4, ts: '2026-01-01T00:00:03Z', turnEpoch: 1,
+    actor: 'policy', kind: 'effort.mismatch', payload: { requested: 'high', observed: 'low' },
+  });
   const worker = state.workers.get('w-model');
   assert.equal(worker.modelRequested, 'stub-exact');
   assert.equal(worker.modelResolved, 'stub-exact');
   assert.equal(worker.modelObserved, 'stub-fallback');
+  assert.equal(worker.effortRequested, 'high');
+  assert.equal(worker.effortResolved, 'high');
+  assert.equal(worker.effortObserved, 'low');
   assert.deepEqual(worker.modelMismatch, { requested: 'stub-exact', observed: 'stub-fallback' });
+  assert.deepEqual(worker.effortMismatch, { requested: 'high', observed: 'low' });
 });

@@ -28,6 +28,7 @@ export { GrokAcpCli } from './grok-acp.mjs';
 export { createBrief } from './messages.mjs';
 export { verify, accept } from './referee.mjs';
 export { AdaptiveRouter } from './router.mjs';
+export { routeTupleKey, resolveEffort } from './route-tuple.mjs';
 export { RuntimeIsolation, isSecretEnvName } from './runtime-isolation.mjs';
 export { CoordinationStore, CoordinationIntegrityError, CoordinationRefusal, coordinationForLog } from './coordination-store.mjs';
 export { WebNorthbound, createAuthenticatedWebServer, validateWebCommandEnvelope } from './web-northbound.mjs';
@@ -157,6 +158,14 @@ export function createDriver(opts) {
     };
     const candidates = feasible.map((v) => ({
       modelVersion: candidateKey(v),
+      // Read-only migration aliases for router state written before the full
+      // harness/model/effort tuple became the canonical learning identity.
+      legacyModelVersions: [
+        ...(cards[v].modelSelection?.resolved
+          ? [`${cards[v].harness}@${cards[v].version}#${cards[v].modelSelection.resolved}`]
+          : []),
+        `${cards[v].harness}@${cards[v].version}`,
+      ],
       family: cards[v].modelSelection?.family ?? 'default',
       concurrencyCeiling: cards[v].concurrencyCeiling,
       inFlight: inFlight[v] ?? 0,

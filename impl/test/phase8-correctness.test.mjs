@@ -664,7 +664,7 @@ test('C7: createDriver() end-to-end — an honest task completes, is attributed,
     'an honest, verification-satisfying task must complete end to end through the real createDriver(), even with a pre-existing un-excluded .baton/ dir'
   );
 
-  const stat = driver.router.getStat('honestvendor@1.0.0', 'general');
+  const stat = driver.router.getStat('["honestvendor","1.0.0","default","default","default","general"]', 'general');
   assert.ok(stat && stat.count >= 1, 'the router bucket must have been updated by the real createDriver() record() wiring');
 
   const worktreeDir = join(repoRoot, '.baton', 'wt', 'c7-honest');

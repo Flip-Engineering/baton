@@ -195,11 +195,6 @@ function resolveCardModel(card, requested, policy, { explicit = false } = {}) {
   return { ok: false, reason: 'model_policy_unmatched' };
 }
 
-function modelRouteKey(card, model) {
-  const harness = card ? `${card.harness}@${card.version}` : 'unknown';
-  return model ? `${harness}#${model}` : harness;
-}
-
 function normalizeSessionRequest(request) {
   if (request == null) return Object.freeze({ mode: 'new' });
   if (typeof request !== 'object' || Array.isArray(request)) {
@@ -553,9 +548,14 @@ export class Coordinator {
     const spawnTurnEpoch = this._fences.current(workerId).turnEpoch;
     this._log.append({
       worker: workerId, harness, turnEpoch: spawnTurnEpoch, kind: 'lifecycle.spawned', actor: 'orchestrator',
+      harnessRequested: task.vendorRequested, harnessResolved: harness,
+      modelRequested: task.modelRequested ?? null, modelResolved: task.modelResolved ?? null, modelObserved: null,
+      effortRequested: task.effortRequested ?? null, effortResolved: task.effortResolved ?? null, effortObserved: null,
+      routeKey: task.routeKey ?? null,
       payload: {
         taskId: task.id, brief: task.brief, vendorRequested: task.vendorRequested, vendorResolved: vendor,
         modelRequested: task.modelRequested, modelResolved: task.modelResolved, modelPolicy: task.modelPolicy,
+        effortRequested: task.effortRequested, effortResolved: task.effortResolved, routeKey: task.routeKey,
         sessionRequest: task.sessionRequest,
         lineage: task.lineage,
         review: task.review,
@@ -656,8 +656,12 @@ export class Coordinator {
         throw new ModelSelectionError(`harness "${vendor}" cannot honor model "${opts.model ?? '(policy)'}"`, resolved.reason);
       }
     } else if (opts.model !== undefined || modelPolicy || effortRequested) {
-      const anyCapable = Object.values(this._adapters).some((ad) => resolveCardModel(ad.card(), opts.model, modelPolicy, { explicit: false }).ok && resolveEffort(ad.card(), effortRequested).ok);
-      if (!anyCapable) throw new ModelSelectionError(`no harness can honor model "${opts.model ?? '(policy)'}"`, 'model_unavailable');
+      const modelCapable = Object.values(this._adapters).filter((ad) => resolveCardModel(ad.card(), opts.model, modelPolicy, { explicit: false }).ok);
+      const anyCapable = modelCapable.some((ad) => resolveEffort(ad.card(), effortRequested).ok);
+      if (!anyCapable) {
+        const code = effortRequested && modelCapable.length > 0 ? 'effort_unavailable' : 'model_unavailable';
+        throw new ModelSelectionError(`no harness can honor route model="${opts.model ?? '(policy)'}" effort="${effortRequested ?? '(default)'}"`, code);
+      }
     }
     if (vendor === 'auto' && sessionRequest.mode !== 'new') {
       const anySessionCapable = Object.values(this._adapters).some((ad) => cardSupportsSession(ad.card(), sessionRequest));
@@ -866,6 +870,7 @@ export class Coordinator {
     const child = await this.spawn(vendor, reviewBrief, {
       taskId: opts.taskId,
       model: opts.model,
+      effort: opts.effort,
       modelPolicy: opts.modelPolicy,
       taskType: kind,
       refines: parent.id,
@@ -874,7 +879,10 @@ export class Coordinator {
     this._log.append({
       worker: workerId, harness: this._harnessOf(parentHandle.vendor), turnEpoch: this._safeTurnEpoch(parentHandle),
       kind: 'review.requested', actor: opts.actor ?? 'orchestrator',
-      payload: { ...review, reviewerWorkerId: child.id, reviewerModelRequested: opts.model ?? null },
+      payload: {
+        ...review, reviewerWorkerId: child.id, reviewerModelRequested: opts.model ?? null,
+        reviewerEffortRequested: opts.effort ?? opts.modelPolicy?.reasoningEffort ?? null,
+      },
     });
     return child;
   }
@@ -1227,6 +1235,7 @@ export class Coordinator {
       effortObserved: handle.effortObserved ?? null,
       routeKey: handle.routeKey ?? null,
       modelMismatch: handle.modelMismatch ?? null,
+      effortMismatch: handle.effortMismatch ?? null,
       modelPolicy: handle.modelPolicy ?? null,
       sessionRequest: handle.sessionRequest ?? { mode: 'new' },
       sessionRef: handle.sessionRef ?? null,
@@ -2209,10 +2218,17 @@ export class Coordinator {
     const task = this._tasks.get(handle.taskId);
     const attribution = {
       vendor: handle.vendor,
+      harnessRequested: task?.vendorRequested ?? null,
+      harnessResolved: handle.vendor ? this._harnessOf(handle.vendor) : null,
       modelRequested: handle.modelRequested ?? null,
       modelResolved: handle.modelResolved ?? null,
       modelObserved: handle.modelObserved ?? null,
       modelMismatch: handle.modelMismatch ?? null,
+      effortRequested: handle.effortRequested ?? null,
+      effortResolved: handle.effortResolved ?? null,
+      effortObserved: handle.effortObserved ?? null,
+      effortMismatch: handle.effortMismatch ?? null,
+      routeKey: handle.routeKey ?? task?.routeKey ?? null,
       sessionRequest: handle.sessionRequest ?? { mode: 'new' },
       sessionRef: handle.sessionRef ?? null,
       sessionContext: handle.sessionContext ?? null,
@@ -2702,6 +2718,10 @@ export class Coordinator {
         modelRequested: handle.modelRequested ?? null,
         modelResolved: handle.modelResolved ?? null,
         modelObserved: handle.modelObserved ?? null,
+        effortRequested: handle.effortRequested ?? null,
+        effortResolved: handle.effortResolved ?? null,
+        effortObserved: handle.effortObserved ?? null,
+        routeKey: handle.routeKey ?? null,
         payload: {
           verdict,
           accept,
@@ -2713,6 +2733,8 @@ export class Coordinator {
           capture: {
             sha: captured && captured.sha, snapshotted: captured && captured.snapshotted,
             vendor: handle.vendor ?? null, model: handle.modelObserved ?? handle.modelResolved ?? null,
+            effort: handle.effortObserved ?? handle.effortResolved ?? null,
+            routeKey: handle.routeKey ?? null,
           },
         },
       });
@@ -2781,6 +2803,9 @@ export class Coordinator {
               reviewerWorkerId: handle.id,
               reviewerModelResolved: handle.modelResolved ?? null,
               reviewerModelObserved: handle.modelObserved ?? null,
+              reviewerEffortResolved: handle.effortResolved ?? null,
+              reviewerEffortObserved: handle.effortObserved ?? null,
+              reviewerRouteKey: handle.routeKey ?? null,
               accepted: accept,
             },
           });
@@ -2880,9 +2905,11 @@ export class Coordinator {
         modelRequested = e.modelRequested ?? modelRequested;
         modelResolved = e.modelResolved ?? modelResolved;
         modelObserved = e.modelObserved ?? modelObserved;
-        effortRequested = e.effortRequested ?? e.payload?.effortRequested ?? effortRequested;
-        effortResolved = e.effortResolved ?? e.payload?.effortResolved ?? effortResolved;
-        effortObserved = e.effortObserved ?? e.payload?.effortObserved ?? effortObserved;
+        effortRequested = e.effortRequested ?? (e.kind === 'lifecycle.spawned' ? e.payload?.effortRequested : null) ?? effortRequested;
+        effortResolved = e.effortResolved ?? (e.kind === 'lifecycle.spawned' ? e.payload?.effortResolved : null) ?? effortResolved;
+        effortObserved = e.effortObserved
+          ?? (e.actor === 'worker' && (e.kind === 'lifecycle.spawned' || e.kind === 'resource.tokens') ? e.payload?.effortObserved : null)
+          ?? effortObserved;
         routeKey = e.routeKey ?? e.payload?.routeKey ?? routeKey;
         if (e.kind === 'model.mismatch') modelMismatch = e.payload ?? modelMismatch;
         if (e.kind === 'effort.mismatch') effortMismatch = e.payload ?? effortMismatch;
