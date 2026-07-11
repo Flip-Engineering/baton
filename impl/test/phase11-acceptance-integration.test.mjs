@@ -265,6 +265,7 @@ test('AC5: ff-only integration reaps the worker/worktree/branch and records exac
   assert.equal(coordination.snapshot().artifacts.some((artifact) => artifact.mediaType === 'application/vnd.baton.integration+json'), true);
   assert.equal(coordination.events().some((entry) => entry.kind === 'driver.recorded' && entry.payload.kind === 'integration.completed'), true);
   assert.equal(coordination.queryKnowledge({ types: ['Decision'] }).some((node) => node.id.startsWith('decision:integrate:')), true);
+  assert.equal(coordination.events().some((entry) => entry.kind === 'knowledge.promoted' && entry.payload.promotion?.trigger === 'integration'), true);
 });
 
 test('AC5: a non-fast-forward main refuses without rewriting either tip', async () => {
@@ -348,6 +349,7 @@ test('AC6: publication has no side effect before approval and allow publishes th
   assert.equal(log.read(handle.id).filter((entry) => entry.kind === 'publication.completed').length, 1);
   assert.equal(coordination.events().some((entry) => entry.kind === 'driver.recorded' && entry.payload.kind === 'publication.completed'), true);
   assert.equal(coordination.queryKnowledge({ types: ['Decision'] }).some((node) => node.id.startsWith('decision:publish:')), true);
+  assert.equal(coordination.events().some((entry) => entry.kind === 'knowledge.promoted' && entry.payload.promotion?.trigger === 'publication'), true);
 });
 
 test('AC6: deny and timeout are fail-closed and never call the publisher', async () => {

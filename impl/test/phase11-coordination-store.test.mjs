@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -195,11 +195,14 @@ test('CK3: artifact manifests are immutable, task-linked, and accepted artifacts
   const events = new Map();
   const store = new CoordinationStore(dir(), { operationalRead: (worker, seq) => events.get(`${worker}:${seq}`) });
   store.createTask(fields('a'), { actor: 'orchestrator', key: 'a' });
+  const claimed = store.claimTask('a', 'w-a', 1, { actor: 'orchestrator', key: 'claim-a-for-artifacts' });
   assert.throws(() => store.registerArtifact({ taskId: 'a', kind: 'commit', refs: { sha: 'abc' }, accepted: true }, { actor: 'policy', key: 'bad-artifact' }), (error) => error.code === 'missing_provenance');
-  assert.throws(() => store.registerArtifact({ taskId: 'a', kind: 'commit', refs: { sha: 'abc' }, accepted: true, provenance: [{ coordinationSeq: 1 }] }, { actor: 'policy', key: 'wrong-provenance' }), (error) => error.code === 'unverified_provenance');
   const verifyEvent = { worker: 'w-a', seq: 1, ts: '2026-01-01T00:00:00Z', kind: 'verify.reverified', actor: 'policy', payload: { accept: true } };
   events.set('w-a:1', verifyEvent);
   const mapped = store.mapOperationalEvent(verifyEvent, { actor: 'policy', key: 'map-verify-a' });
+  assert.throws(() => store.registerArtifact({ taskId: 'a', kind: 'commit', refs: { sha: 'abc' }, accepted: true, provenance: [mapped.evidence] }, { actor: 'policy', key: 'premature-artifact' }), (error) => error.code === 'task_not_completed');
+  store.transitionTask('a', 'completed', claimed.task.version, { actor: 'policy', key: 'complete-a-for-artifacts' }, mapped.evidence);
+  assert.throws(() => store.registerArtifact({ taskId: 'a', kind: 'commit', refs: { sha: 'abc' }, accepted: true, provenance: [{ coordinationSeq: 1 }] }, { actor: 'policy', key: 'wrong-provenance' }), (error) => error.code === 'unverified_provenance');
   const registered = store.registerArtifact({ taskId: 'a', kind: 'commit', refs: { sha: 'abc' }, accepted: true, provenance: [mapped.evidence] }, { actor: 'policy', key: 'artifact-a' });
   assert.equal(store.task('a').artifactIds[0], registered.artifact.id);
   assert.equal(store.artifact(registered.artifact.id).refs.sha, 'abc');
@@ -212,6 +215,36 @@ test('CK3: artifact manifests are immutable, task-linked, and accepted artifacts
   assert.throws(() => store.supersedeArtifact(registered.artifact.id, correction.artifact.id, 1, { actor: 'policy', key: 'supersede-artifact-a-again' }), (error) => error.code === 'stale_version');
   const replay = new CoordinationStore(store.root, { operationalRead: (worker, seq) => events.get(`${worker}:${seq}`) });
   assert.deepEqual(replay.artifact(registered.artifact.id), store.artifact(registered.artifact.id));
+});
+
+test('CK3/CK9: terminal task and accepted manifests commit in one append batch', () => {
+  const root = dir();
+  const operational = new Map();
+  let fail = false;
+  const store = new CoordinationStore(root, {
+    operationalRead: (worker, seq) => operational.get(`${worker}:${seq}`),
+    appendFile: (...args) => {
+      if (fail) throw new Error('batch disk full');
+      return appendFileSync(...args);
+    },
+  });
+  store.createTask(fields('atomic'), { actor: 'orchestrator', key: 'create-atomic' });
+  const claimed = store.claimTask('atomic', 'w-atomic', 1, { actor: 'orchestrator', key: 'claim-atomic' });
+  const verify = { worker: 'w-atomic', seq: 1, ts: '2026-01-01T00:00:00Z', kind: 'verify.reverified', actor: 'policy', payload: { accept: true } };
+  operational.set('w-atomic:1', verify);
+  const mapped = store.mapOperationalEvent(verify, { actor: 'policy', key: 'map-atomic' });
+  const manifests = [{ taskId: 'atomic', kind: 'verification', refs: { worker: 'w-atomic', workerSeq: 1 }, accepted: true, provenance: [mapped.evidence] }];
+  const before = store.events().length;
+  fail = true;
+  assert.throws(() => store.transitionTaskWithArtifacts('atomic', 'completed', claimed.task.version, manifests, { actor: 'policy', key: 'atomic-terminal' }, mapped.evidence), /batch disk full/);
+  assert.equal(store.events().length, before);
+  assert.equal(store.task('atomic').status, 'working');
+  assert.equal(store.snapshot().artifacts.length, 0);
+  fail = false;
+  const completed = store.transitionTaskWithArtifacts('atomic', 'completed', claimed.task.version, manifests, { actor: 'policy', key: 'atomic-terminal' }, mapped.evidence);
+  assert.equal(completed.task.status, 'completed');
+  assert.equal(completed.artifacts.length, 1);
+  assert.equal(new CoordinationStore(root, { operationalRead: (worker, seq) => operational.get(`${worker}:${seq}`) }).snapshot().artifacts.length, 1);
 });
 
 test('CK8/CK9: completed public task maps verification evidence, terminal state, and manifests', async () => {
@@ -233,10 +266,12 @@ test('CK8/CK9: completed public task maps verification evidence, terminal state,
   assert.equal(driver.coordination.task('durable-complete').status, 'completed');
   const snapshot = driver.coordination.snapshot();
   assert.equal(snapshot.evidence.some((item) => item.kind === 'verify.reverified'), true);
-  assert.deepEqual(snapshot.artifacts.map((artifact) => artifact.kind).sort(), ['commit', 'verification']);
-  assert.equal(snapshot.artifacts.every((artifact) => artifact.accepted === true && artifact.provenance.length === 1), true);
-  assert.equal(snapshot.tasks[0].artifactIds.length, 2);
+  assert.deepEqual(snapshot.artifacts.map((artifact) => artifact.kind).sort(), ['commit', 'report', 'verification']);
+  assert.equal(snapshot.artifacts.filter((artifact) => artifact.kind !== 'report').every((artifact) => artifact.accepted === true && artifact.provenance.length === 1), true);
+  assert.equal(snapshot.artifacts.find((artifact) => artifact.kind === 'report').accepted, false, 'worker artifact claims stay explicitly untrusted');
+  assert.equal(snapshot.tasks[0].artifactIds.length, 3);
   assert.equal(snapshot.knowledge.nodes.some((node) => node.type === 'Finding' && node.id.startsWith('outcome:durable-complete')), true);
+  assert.equal(driver.coordination.events().some((event) => event.kind === 'knowledge.promoted' && event.payload.promotion?.trigger === 'verified_task_outcome'), true);
   const recalled = driver.coordinator.recallKnowledge({ types: ['Finding'] }, { workerId: handle.id, runId: 'run-durable' }, { actor: 'orchestrator', idempotencyKey: 'recall-durable-outcome' });
   assert.equal(recalled.nodes.length, 1);
   assert.match(recalled.frame, /UNTRUSTED_RECALLED_MEMORY/);
@@ -340,6 +375,28 @@ test('CK5/CK7: bitemporal query, supersession, logged reads, and contamination s
   assert.equal(audit.temporalCoherence.invalidEvidence, 0);
   assert.equal(audit.recallUtility.reads, 1);
   assert.equal(audit.contamination.affectedReads, 1);
+});
+
+test('CK7/CK9: invalidation and contamination commit atomically', () => {
+  const root = dir();
+  let fail = false;
+  const store = new CoordinationStore(root, { appendFile: (...args) => {
+    if (fail) throw new Error('invalidation disk full');
+    return appendFileSync(...args);
+  } });
+  store.createTask(fields('reader'), { actor: 'orchestrator', key: 'create-reader' });
+  store.addKnowledgeNode({ type: 'Finding', id: 'fragile', body: 'fragile belief', grounding: 'observed', evidence: [{ coordinationSeq: 1 }] }, { actor: 'policy', key: 'fragile' });
+  store.readKnowledge({ types: ['Finding'] }, { readerActor: 'orchestrator', taskId: 'reader', runId: 'r' }, { actor: 'orchestrator', key: 'read-fragile' });
+  const before = store.events().length;
+  fail = true;
+  assert.throws(() => store.invalidateKnowledge('fragile', 1, 'refuted', { actor: 'human', key: 'invalidate-fragile' }), /invalidation disk full/);
+  assert.equal(store.events().length, before);
+  assert.equal(store.traceKnowledge('fragile').node.validTo, null);
+  assert.equal(store.snapshot().knowledge.contamination.length, 0);
+  fail = false;
+  const invalidated = store.invalidateKnowledge('fragile', 1, 'refuted', { actor: 'human', key: 'invalidate-fragile' });
+  assert.equal(invalidated.contamination.payload.affectedReadEvents.length, 1);
+  assert.equal(store.events().slice(-2).map((event) => event.kind).join(','), 'knowledge.invalidated,knowledge.contamination_record');
 });
 
 test('CK7: a failed read append returns no recalled content', () => {

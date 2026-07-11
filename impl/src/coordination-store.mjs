@@ -110,6 +110,29 @@ export class CoordinationStore {
     return event;
   }
 
+  _appendBatch(entries) {
+    if (!Array.isArray(entries) || entries.length === 0) throw new TypeError('coordination batch requires entries');
+    const keys = new Set();
+    for (const entry of entries) {
+      if (typeof entry.auth?.actor !== 'string' || entry.auth.actor.length === 0) throw new TypeError('coordination actor required');
+      if (typeof entry.auth?.key !== 'string' || entry.auth.key.length === 0) throw new TypeError('coordination idempotency key required');
+      if (keys.has(entry.auth.key) || this._byKey.has(entry.auth.key)) throw new CoordinationRefusal(`duplicate batch key ${entry.auth.key}`, 'duplicate_key');
+      keys.add(entry.auth.key);
+    }
+    const start = this._events.length;
+    const events = entries.map((entry, index) => freeze({
+      schemaVersion: 1, seq: start + index + 1, ts: this._clock(), kind: entry.kind,
+      actor: entry.auth.actor, idempotencyKey: entry.auth.key, payload: freeze(clone(entry.payload)),
+    }));
+    this._appendFile(this.file, `${events.map((event) => JSON.stringify(event)).join('\n')}\n`, 'utf8');
+    for (const event of events) {
+      this._events.push(event);
+      this._byKey.set(event.idempotencyKey, event);
+      this._apply(event);
+    }
+    return events;
+  }
+
   _apply(event) {
     const p = event.payload;
     if (event.kind === 'task.created') {
@@ -146,7 +169,7 @@ export class CoordinationStore {
     } else if (event.kind === 'scratch.claim_expired') {
       const old = this._scratchClaims.get(p.id);
       this._scratchClaims.set(p.id, freeze({ ...clone(old), active: false, expiredEvent: event.seq, version: old.version + 1 }));
-    } else if (event.kind === 'knowledge.node_added') {
+    } else if (event.kind === 'knowledge.node_added' || event.kind === 'knowledge.promoted') {
       this._knowledgeNodes.set(p.id, freeze({ ...clone(p), observedSeq: event.seq, observedAt: event.ts, ...eventTime(this._events, p.evidence, event), validFrom: p.validFrom ?? event.ts, validTo: p.validTo ?? null, validityVersion: 1 }));
       for (const sourceId of p.informedBy ?? []) {
         const id = `knowledge-edge:informed:${p.id}:${sourceId}`;
@@ -239,6 +262,12 @@ export class CoordinationStore {
   registerArtifact(fields, auth) {
     const prior = this._byKey.get(auth?.key);
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), artifact: clone(this._artifacts.get(prior.payload.id)) };
+    const manifest = this._prepareArtifact(fields, this._tasks.get(fields?.taskId)?.status);
+    const event = this._append('artifact.registered', manifest, auth);
+    return { ok: true, result: 'registered', event: clone(event), artifact: clone(this._artifacts.get(manifest.id)) };
+  }
+
+  _prepareArtifact(fields, terminalStatus) {
     const task = this._tasks.get(fields?.taskId);
     if (!task) throw new CoordinationRefusal(`unknown artifact task ${fields?.taskId}`, 'not_found');
     const manifest = clone(fields);
@@ -249,6 +278,7 @@ export class CoordinationStore {
       throw new CoordinationRefusal('accepted artifact requires provenance', 'missing_provenance');
     }
     if (manifest.accepted === true) {
+      if (terminalStatus !== 'completed') throw new CoordinationRefusal('accepted artifact requires a completed task', 'task_not_completed');
       const verified = manifest.provenance.some((ref) => {
         if (!Number.isInteger(ref?.coordinationSeq)) return false;
         const mapped = this._events[ref.coordinationSeq - 1];
@@ -258,8 +288,28 @@ export class CoordinationStore {
       });
       if (!verified) throw new CoordinationRefusal('accepted artifact requires accepted hub-verification provenance', 'unverified_provenance');
     }
-    const event = this._append('artifact.registered', manifest, auth);
-    return { ok: true, result: 'registered', event: clone(event), artifact: clone(this._artifacts.get(manifest.id)) };
+    return manifest;
+  }
+
+  transitionTaskWithArtifacts(id, to, expectedVersion, fields, auth, evidence = null) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) return { ok: true, result: 'idempotent', event: clone(prior), task: this.task(id), artifacts: this.task(id).artifactIds.map((artifactId) => this.artifact(artifactId)) };
+    const task = this._tasks.get(id);
+    if (!task) throw new CoordinationRefusal(`unknown task ${id}`, 'not_found');
+    if (TERMINAL.has(task.status)) throw new CoordinationRefusal(`terminal task ${id}`, 'terminal');
+    if (task.version !== expectedVersion) throw new CoordinationRefusal(`stale task version ${expectedVersion}`, 'stale_version');
+    if (!TRANSITIONS.get(task.status)?.has(to)) throw new CoordinationRefusal(`invalid transition ${task.status}->${to}`, 'invalid_transition');
+    const manifests = (fields ?? []).map((manifest) => this._prepareArtifact(manifest, to));
+    const entries = [{
+      kind: 'task.transitioned',
+      payload: { id, from: task.status, to, expectedVersion, newVersion: expectedVersion + 1, evidence: clone(evidence) },
+      auth,
+    }, ...manifests.map((manifest) => ({
+      kind: 'artifact.registered', payload: manifest,
+      auth: { actor: auth.actor, key: `${auth.key}:artifact:${manifest.id}` },
+    }))];
+    const events = this._appendBatch(entries);
+    return { ok: true, result: 'transitioned', event: clone(events[0]), task: this.task(id), artifacts: manifests.map((manifest) => this.artifact(manifest.id)) };
   }
 
   artifact(id) { return clone(this._artifacts.get(id) ?? null); }
@@ -355,6 +405,12 @@ export class CoordinationStore {
   addKnowledgeNode(fields, auth) {
     const prior = this._byKey.get(auth?.key);
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), node: clone(this._knowledgeNodes.get(prior.payload.id)) };
+    const payload = this._prepareKnowledgeNode(fields);
+    const event = this._append('knowledge.node_added', payload, auth);
+    return { ok: true, event: clone(event), node: clone(this._knowledgeNodes.get(payload.id)) };
+  }
+
+  _prepareKnowledgeNode(fields) {
     if (!KNOWLEDGE_NODE_TYPES.has(fields?.type)) throw new CoordinationRefusal(`unknown knowledge node type ${fields?.type}`, 'invalid_node_type');
     const evidence = clone(fields.evidence ?? []);
     this._validateKnowledgeEvidence(evidence);
@@ -365,7 +421,15 @@ export class CoordinationStore {
     if (fields.type === 'Finding' && fields.grounding === 'verified' && evidence.length === 0) throw new CoordinationRefusal('verified Finding requires evidence', 'causal_orphan');
     const payload = { ...clone(fields), evidence, id: fields.id ?? `knowledge:${fields.type}:${digest(fields)}` };
     if (this._knowledgeNodes.has(payload.id)) throw new CoordinationRefusal(`duplicate knowledge node ${payload.id}`, 'duplicate_node');
-    const event = this._append('knowledge.node_added', payload, auth);
+    return payload;
+  }
+
+  promoteKnowledgeNode(fields, promotion, auth) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) return { ok: true, result: 'idempotent', event: clone(prior), node: clone(this._knowledgeNodes.get(prior.payload.id)) };
+    if (typeof promotion?.kind !== 'string' || promotion.kind.length === 0) throw new CoordinationRefusal('knowledge promotion kind required', 'invalid_promotion');
+    const payload = { ...this._prepareKnowledgeNode(fields), promotion: clone(promotion) };
+    const event = this._append('knowledge.promoted', payload, auth);
     return { ok: true, event: clone(event), node: clone(this._knowledgeNodes.get(payload.id)) };
   }
 
@@ -379,12 +443,16 @@ export class CoordinationStore {
       if (fields.expectedValidityVersion !== target.validityVersion) throw new CoordinationRefusal('stale validity version', 'stale_version');
     }
     const payload = { ...clone(fields), id: fields.id ?? `knowledge-edge:${digest(fields)}` };
-    const event = this._append('knowledge.edge_added', payload, auth);
     let contamination = null;
+    let event;
     if (fields.type === 'Supersedes') {
       const affectedReadEvents = this._knowledgeReads.filter((read) => read.nodeIds.includes(fields.to)).map((read) => read.eventSeq);
-      contamination = this._append('knowledge.contamination_record', { nodeId: fields.to, invalidationEvent: event.seq, affectedReadEvents }, { actor: auth.actor, key: `${auth.key}:contamination` });
-    }
+      const invalidationEvent = this._events.length + 1;
+      [event, contamination] = this._appendBatch([
+        { kind: 'knowledge.edge_added', payload, auth },
+        { kind: 'knowledge.contamination_record', payload: { nodeId: fields.to, invalidationEvent, affectedReadEvents }, auth: { actor: auth.actor, key: `${auth.key}:contamination` } },
+      ]);
+    } else event = this._append('knowledge.edge_added', payload, auth);
     return { ok: true, event: clone(event), edge: clone(this._knowledgeEdges.get(payload.id)), contamination: clone(contamination) };
   }
 
@@ -420,9 +488,12 @@ export class CoordinationStore {
     const node = this._knowledgeNodes.get(nodeId);
     if (!node) throw new CoordinationRefusal(`unknown knowledge node ${nodeId}`, 'not_found');
     if (node.validityVersion !== expectedValidityVersion || node.validTo) throw new CoordinationRefusal('stale validity version', 'stale_version');
-    const invalidation = this._append('knowledge.invalidated', { nodeId, expectedValidityVersion, reason }, auth);
     const affectedReadEvents = this._knowledgeReads.filter((read) => read.nodeIds.includes(nodeId)).map((read) => read.eventSeq);
-    const contamination = this._append('knowledge.contamination_record', { nodeId, invalidationEvent: invalidation.seq, affectedReadEvents }, { actor: auth.actor, key: `${auth.key}:contamination` });
+    const invalidationEvent = this._events.length + 1;
+    const [invalidation, contamination] = this._appendBatch([
+      { kind: 'knowledge.invalidated', payload: { nodeId, expectedValidityVersion, reason }, auth },
+      { kind: 'knowledge.contamination_record', payload: { nodeId, invalidationEvent, affectedReadEvents }, auth: { actor: auth.actor, key: `${auth.key}:contamination` } },
+    ]);
     return { ok: true, invalidation: clone(invalidation), contamination: clone(contamination), node: clone(this._knowledgeNodes.get(nodeId)) };
   }
 

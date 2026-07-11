@@ -251,7 +251,7 @@ export class Coordinator {
   /** @param {object} opts */
   constructor(opts) {
     if (!opts?.coordination) throw new TypeError('Coordinator requires a durable coordination store');
-    for (const method of ['snapshot', 'task', 'createTask', 'claimTask', 'transitionTask', 'mapOperationalEvent', 'recordDriver']) {
+    for (const method of ['snapshot', 'task', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent', 'recordDriver', 'registerArtifact', 'artifact', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
       if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
     }
     this._log = opts.log;
@@ -1041,12 +1041,12 @@ export class Coordinator {
         taskId: task.id, kind: 'report', refs: { beforeSha: task.integration.beforeSha, resultSha: task.integration.resultSha, afterSha: task.integration.afterSha },
         mediaType: 'application/vnd.baton.integration+json', accepted: true, provenance: [integrationEvidence, ...acceptingEvidence],
       }, { actor: opts.actor ?? 'orchestrator', key: `artifact.integration:${task.id}:${task.integration.afterSha}` });
-      this._coordination.addKnowledgeNode({
+      this._coordination.promoteKnowledgeNode({
         id: `decision:integrate:${task.id}:${integrationEvent.seq}`, type: 'Decision',
         body: `Integrated task ${task.id} at ${task.integration.afterSha}`, grounding: 'observed',
         informedBy: [`task:${task.id}`],
         evidence: [{ coordinationSeq: integrationEvidence.coordinationSeq }],
-      }, { actor: opts.actor ?? 'orchestrator', key: `knowledge.integration:${task.id}:${integrationEvent.seq}` });
+      }, { kind: 'Decision', trigger: 'integration' }, { actor: opts.actor ?? 'orchestrator', key: `knowledge.integration:${task.id}:${integrationEvent.seq}` });
       this._coordRecord('integration.completed', { taskId: task.id, integration: task.integration, evidence: integrationEvidence }, `driver.integration:${task.id}:${integrationEvent.seq}`, opts.actor ?? 'orchestrator');
     }
     return { ok: true, result: 'integrated', integration: task.integration };
@@ -1863,12 +1863,12 @@ export class Coordinator {
         kind: 'publication.completed', actor, payload: task.publication,
       });
       const publicationEvidence = this._coordMapEvent(publicationEvent);
-      this._coordination?.addKnowledgeNode({
+      this._coordination?.promoteKnowledgeNode({
         id: `decision:publish:${task.id}:${publicationEvent.seq}`, type: 'Decision',
         body: `Published task ${task.id} to ${task.publication.remote}/${task.publication.ref}`,
         grounding: 'observed', informedBy: [`task:${task.id}`],
         evidence: [{ coordinationSeq: publicationEvidence.coordinationSeq }],
-      }, { actor, key: `knowledge.publication:${task.id}:${publicationEvent.seq}` });
+      }, { kind: 'Decision', trigger: 'publication' }, { actor, key: `knowledge.publication:${task.id}:${publicationEvent.seq}` });
       this._coordRecord('publication.completed', { taskId: task.id, publication: task.publication, evidence: publicationEvidence }, `driver.publication:${task.id}:${publicationEvent.seq}`, actor);
       finishResolving();
       return { ok: true, result: 'published', publication: task.publication };
@@ -2376,32 +2376,48 @@ export class Coordinator {
       });
       if (!verifyEvent) throw new Error('operational verification event was not durably appended');
       const evidence = this._coordMapEvent(verifyEvent);
-      if (this._coordination && captured?.sha) {
-        this._coordination.registerArtifact({
+      const manifests = [];
+      if (captured?.sha) {
+        manifests.push({
           taskId: task.id, kind: 'commit', refs: { sha: captured.sha }, mediaType: 'application/vnd.git.commit',
           accepted: accept, provenance: [evidence],
-        }, { actor: 'policy', key: `artifact.commit:${task.id}:${captured.sha}` });
-        this._coordination.registerArtifact({
-          taskId: task.id, kind: 'verification', refs: { worker: handle.id, workerSeq: verifyEvent.seq },
-          mediaType: 'application/vnd.baton.verdict+json', accepted: accept,
-          provenance: [evidence], verdict,
-        }, { actor: 'policy', key: `artifact.verification:${task.id}:${verifyEvent.seq}` });
+        });
         if (task.review) {
-          this._coordination.registerArtifact({
+          manifests.push({
             taskId: task.id, kind: 'review', refs: { sha: captured.sha, parentTaskId: task.review.parentTaskId },
             mediaType: 'application/vnd.baton.review+json', accepted: accept,
             provenance: [evidence], review: task.review,
-          }, { actor: 'policy', key: `artifact.review:${task.id}:${captured.sha}` });
+          });
         }
-        const artifactEvidence = this._coordination.task(task.id).artifactIds.map((artifactId) => ({ artifactId }));
-        this._coordination.addKnowledgeNode({
-          id: `outcome:${task.id}:${verifyEvent.seq}`,
-          type: accept ? 'Finding' : 'Counterexample',
-          body: accept ? `Task ${task.id} passed its hub verification` : `Task ${task.id} failed its hub verification`,
-          grounding: 'verified', evidence: [{ coordinationSeq: evidence.coordinationSeq }, ...artifactEvidence],
-        }, { actor: 'policy', key: `knowledge.outcome:${task.id}:${verifyEvent.seq}` });
       }
-      this._coordTransition(task, accept ? 'completed' : 'failed', `task.${accept ? 'completed' : 'failed'}:${task.id}:${verifyEvent.seq}`, evidence);
+      manifests.push({
+        taskId: task.id, kind: 'verification', refs: { worker: handle.id, workerSeq: verifyEvent.seq },
+        mediaType: 'application/vnd.baton.verdict+json', accepted: accept,
+        provenance: [evidence], verdict,
+      });
+      if ((workerResult?.artifacts?.files?.length ?? 0) > 0 || (workerResult?.artifacts?.commits?.length ?? 0) > 0) {
+        const claimEvent = this._log.read(handle.id).filter((event) => event.kind === 'lifecycle.turn_completed').at(-1);
+        const claimEvidence = this._coordMapEvent(claimEvent);
+        manifests.push({
+          taskId: task.id, kind: 'report', refs: { claimedArtifacts: workerResult.artifacts },
+          mediaType: 'application/vnd.baton.worker-artifact-claim+json', accepted: false,
+          provenance: claimEvidence ? [claimEvidence] : [], grounding: 'worker_prose',
+        });
+      }
+      const terminalStatus = accept ? 'completed' : 'failed';
+      const terminal = this._coordination.transitionTaskWithArtifacts(
+        task.id, terminalStatus, task.coordinationVersion,
+        manifests, { actor: 'policy', key: `task.${terminalStatus}:${task.id}:${verifyEvent.seq}` }, evidence,
+      );
+      task.coordinationVersion = terminal.task.version;
+      this._expireScratchClaims(handle, task, `task_${terminalStatus}`);
+      const artifactEvidence = terminal.artifacts.map((artifact) => ({ artifactId: artifact.id }));
+      this._coordination.promoteKnowledgeNode({
+        id: `outcome:${task.id}:${verifyEvent.seq}`,
+        type: accept ? 'Finding' : 'Counterexample',
+        body: accept ? `Task ${task.id} passed its hub verification` : `Task ${task.id} failed its hub verification`,
+        grounding: 'verified', evidence: [{ coordinationSeq: evidence.coordinationSeq }, ...artifactEvidence],
+      }, { kind: accept ? 'Finding' : 'Counterexample', trigger: 'verified_task_outcome' }, { actor: 'policy', key: `knowledge.outcome:${task.id}:${verifyEvent.seq}` });
       task.status = accept ? 'completed' : 'failed';
       task.capturedSha = captured?.sha ?? null;
 

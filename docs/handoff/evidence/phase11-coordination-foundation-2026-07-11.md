@@ -31,7 +31,7 @@ remaining CK8/CK9 authority and recursive gates remain active work.
   affected-reader status joins, contamination records, and a metric-breakdown audit. Coordinator
   recall appends its read record before returning an explicitly untrusted frame.
 - Task/artifact events materialize graph nodes; verified outcomes and integrate/publish decisions
-  promote deterministically.
+  promote deterministically through named `knowledge.promoted` events.
 - Failed integration is no longer telemetry-only; it maps evidence and records an audited
   coordination refusal.
 
@@ -39,10 +39,10 @@ Validation:
 
 ```text
 node --test impl/test/phase11-coordination-store.test.mjs
-20/20 passing
+22/22 passing
 
 cd impl && node --test
-523/523 passing
+525/525 passing
 ```
 
 The recursive exact-model Grok spec and implementation reviews passed every Baton lifecycle check.
@@ -54,11 +54,9 @@ fully reaped; the measured reruns were verified and integrated by Baton itself.
 
 ## Remaining before CK9
 
-Accepted artifact registration still needs a terminal-task/atomic-batch gate; adapter-reported
-artifact claims need explicit untrusted manifests; invalidation plus
-contamination is not one atomic batch; Scratch participation is not yet an ambient mediated worker
-tool; named promotion events/scorecards remain incomplete; and forced coordination-write failure
-has not yet been injected at every public state boundary. A second recursive provider review of
+Scratch participation is not yet an ambient mediated worker tool; automatic scorecards and
+Scratch promotion candidates remain incomplete; and forced coordination-write failure has not yet
+been injected at every public state boundary. A second recursive provider review of
 these repairs, including concurrent Grok spawn/kill/reap evidence, is still required before CK9.
 
 The zero-quota concurrent Grok ACP boundary is now green: two distinct fake-wire child PIDs ran
