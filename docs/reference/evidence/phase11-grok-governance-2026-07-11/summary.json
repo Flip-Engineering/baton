@@ -1,0 +1,138 @@
+{
+  "at": "2026-07-11T09:56:56.264Z",
+  "repoHead": "a3816f7c08d2cb67b665a977513c5eaddea8f3ee",
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "workerId": "w-1",
+  "pid": 31942,
+  "scope": {
+    "root": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-1",
+    "home": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-1/home",
+    "tmp": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-1/tmp",
+    "config": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-1/home/.grok",
+    "family": "grok",
+    "strippedEnvKeys": [
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+      "GEMINI_API_KEY",
+      "OPENROUTER_API_KEY",
+      "SECURITYSESSIONID",
+      "SSH_AUTH_SOCK"
+    ],
+    "projectedEnvKeys": [],
+    "projectedFiles": [
+      "auth.json"
+    ],
+    "permissions": {
+      "directories": "0700",
+      "credentialFiles": "0600"
+    },
+    "sandboxPolicy": "native-workspace-profile",
+    "active": true
+  },
+  "usage": [
+    {
+      "source": "promptMeta",
+      "accounting": "delta",
+      "tokens": 11811,
+      "usd": 0,
+      "sessionId": "019f509b-a9b9-70e2-b4f2-506b86b61f63",
+      "turnId": "t1",
+      "requestId": "9273b4ce-f446-4abb-9600-ac9d38bdedb7",
+      "promptId": "9273b4ce-f446-4abb-9600-ac9d38bdedb7",
+      "totalTokens": 11811,
+      "modelId": "grok-composer-2.5-fast",
+      "inputTokens": 11606,
+      "outputTokens": 205,
+      "cachedReadTokens": 11089,
+      "reasoningTokens": 0,
+      "wireAccounting": "delta",
+      "wireTokens": 11811,
+      "wireUsd": 0
+    }
+  ],
+  "thresholds": [
+    {
+      "threshold": 0.5,
+      "hardStop": false,
+      "action": "notify",
+      "used": {
+        "tokens": 11811,
+        "usd": 0
+      },
+      "limits": {
+        "tokens": 1,
+        "usd": 1
+      },
+      "ratio": 11811,
+      "dimensions": {
+        "tokens": 11811,
+        "usd": 0
+      }
+    },
+    {
+      "threshold": 0.8,
+      "hardStop": false,
+      "action": "notify",
+      "used": {
+        "tokens": 11811,
+        "usd": 0
+      },
+      "limits": {
+        "tokens": 1,
+        "usd": 1
+      },
+      "ratio": 11811,
+      "dimensions": {
+        "tokens": 11811,
+        "usd": 0
+      }
+    },
+    {
+      "threshold": 1,
+      "hardStop": true,
+      "action": "kill",
+      "used": {
+        "tokens": 11811,
+        "usd": 0
+      },
+      "limits": {
+        "tokens": 1,
+        "usd": 1
+      },
+      "ratio": 11811,
+      "dimensions": {
+        "tokens": 11811,
+        "usd": 0
+      }
+    }
+  ],
+  "approvals": [
+    {
+      "requestId": "w-1:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    }
+  ],
+  "checks": {
+    "noHarnessError": true,
+    "privateScopeCreated": true,
+    "credentialProjectedByNameOnly": true,
+    "credentialSourceNotLogged": true,
+    "nativeWorkspaceSandboxRequested": true,
+    "outsideWriteDenied": true,
+    "canonicalUsageObserved": true,
+    "allThresholdsObserved": true,
+    "hardThresholdKilled": true,
+    "taskCancelledNotVerified": true,
+    "exactModelObserved": true,
+    "processGone": true,
+    "worktreeGone": true,
+    "metadataGone": true,
+    "runtimeGone": true,
+    "branchGone": true
+  },
+  "fatal": null,
+  "pass": true
+}

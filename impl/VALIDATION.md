@@ -1,8 +1,9 @@
 # System Validation — phase 11 control, model, and persistent-session gates
 
-Validated 2026-07-11 against `master` through phase 11 persistent sessions. Phase 10.1's assembled
-fleet baseline remains below; the phase-11 additions are control integrity, exact orchestrator
-model selection, and persistent follow-up/resume/fork/recovery contracts.
+Validated 2026-07-11 against `master` through phase 11 governance. Phase 10.1's assembled fleet
+baseline remains below; the phase-11 additions are control integrity, exact orchestrator model
+selection, persistent follow-up/resume/fork/recovery, isolated runtime homes, canonical budgets,
+and deterministic watchdog actions.
 
 ## Verdict
 
@@ -94,11 +95,18 @@ the recorded worktree owner/context, while fork allocates a fresh worktree and l
 Restart replay never trusts a stored PID. `recover()` is bounded and attaches only when a fresh
 native handshake reports the exact persisted identity; ambiguity triggers cleanup.
 
+Each driver worker now receives a private home/tmp/vendor-config scope. Ambient provider secrets,
+proxy credentials, and code-injection environment variables are stripped; credentials are
+explicit projections whose values never enter public state or logs. Claude, Codex, and Grok map
+their available sandbox controls with honest cards. Canonical token/USD deltas drive durable
+50/80/100% thresholds and confirmed hard stops. Mechanical stall, repeated-failure loop, and
+out-of-scope edit rules invoke bounded interrupt/kill without pretending to judge semantics.
+
 ## Verification evidence
 
 | Gate | Current evidence |
 |---|---|
-| Zero-quota suite | **472/472 passing** via bare `node --test` in `impl/` |
+| Zero-quota suite | **486/486 passing** via bare `node --test` in `impl/` |
 | U-1…U-11 | All reproduced before repair; verdict ledger in `docs/handoff/evidence/phase10.1-reverification.md` |
 | Fresh adversarial review | No unresolved critical/major finding; `docs/handoff/evidence/phase10.1-adversarial-review.md` |
 | Three-vendor live fleet | `docs/reference/evidence/phase10.1-capstone-2026-07-10/summary.json` has every check true; 573-event raw ledger beside it |
@@ -106,6 +114,7 @@ native handshake reports the exact persisted identity; ambiguity triggers cleanu
 | Multi-Grok kill/reap | `docs/reference/evidence/grok-multi-reap-2026-07-10/summary.json` has every check true; raw ledger beside it |
 | Concurrent exact models | `docs/reference/evidence/phase11-grok-model-selection-2026-07-11/summary.json` has every check true |
 | Persistent two-turn Grok | `docs/reference/evidence/phase11-grok-persistent-session-2026-07-11/summary.json` has all 16 checks true; same session/PID, two fresh verdicts, full reap |
+| Isolated governance Grok | `docs/reference/evidence/phase11-grok-governance-2026-07-11/summary.json` has all 16 checks true; private credential scope, real sandbox denial, canonical usage, automatic budget kill, full reap |
 | Credential discipline | GLM checked by presence only and recorded `PENDING-LIVE-no-credential`; no credential value was logged |
 
 The three-vendor capstone checks were: no harness error; Claude/Codex/Grok all completed; every
@@ -117,23 +126,28 @@ overlapped before the earliest terminal.
 
 These are absent, not implied by the green suite:
 
-1. **Token/USD governance and watchdog action.** Wall-time is enforced. Usage is observed, but
-   `handle.budgetUsed`, threshold events, hard spend stops, and automatic stall/loop response are
-   not wired end to end.
-2. **Red→green base-sandbox execution.** The acceptance policy exists; the public assembly cannot
+1. **Quota-window and fleet-seat governance.** Per-task wall/token/USD budgets and mechanical
+   watchdog actions ship. Proactive account/rate-limit reads, quota-window scheduling, and
+   automatic seat degradation remain incomplete; provider cost is zero where the wire reports no
+   USD amount.
+2. **Cross-harness sandbox parity.** Grok workspace sandbox denial is live-proven and Codex's
+   native network-denied workspace policy is wire-mapped. Claude's isolated sandbox settings and
+   Codex's effect require dedicated live denial probes; Grok child-network restriction is not
+   available under macOS workspace mode and remains honestly carded uncontrolled.
+3. **Red→green base-sandbox execution.** The acceptance policy exists; the public assembly cannot
    currently generate the required base verdict.
-3. **Merge/push lifecycle.** Baton ends at a verified task branch. Integration remains an explicit
+4. **Merge/push lifecycle.** Baton ends at a verified task branch. Integration remains an explicit
    operator action; irreversible push approval is absent. Retaining completed branches enables
    review/integration, while cancelled stress branches were cleaned explicitly.
-4. **Automatic rejoin and remaining vendor depth.** Explicit native resume/recovery is shipped;
+5. **Automatic rejoin and remaining vendor depth.** Explicit native resume/recovery is shipped;
    automatic startup rejoin to an already-running broker/process is not. Grok's vendor-specific
    fork/rewind schemas remain `planned`, and checkpoint/rewind depth remains incomplete.
-5. **GLM live proof.** `GlmSessionCli` is built to the credential boundary, but no credential was
+6. **GLM live proof.** `GlmSessionCli` is built to the credential boundary, but no credential was
    present in this run.
-6. **Production runtime and northbound surfaces.** The implementation remains dependency-free Node
+7. **Production runtime and northbound surfaces.** The implementation remains dependency-free Node
    ESM; MCP and the authenticated HTTPS/WebSocket user-to-orchestrator control connection have not
    shipped, nor has the eventual Go/Elixir production core.
-7. **Cross-vendor decorrelation eval (E2).** The fleet required to run it now exists; the eval is a
+8. **Cross-vendor decorrelation eval (E2).** The fleet required to run it now exists; the eval is a
    phase-11 research decision, not evidence retroactively required for phase-10 wiring completion.
 
 The full researched-versus-shipped inventory and phase boundary are in
@@ -141,10 +155,11 @@ The full researched-versus-shipped inventory and phase boundary are in
 
 ## Final judgment
 
-Phase 10 is complete as a wiring-and-live-proof milestone, and the first three phase-11 gates are
-complete. The system is no longer a set of
+Phase 10 is complete as a wiring-and-live-proof milestone, and the control/model/session/governance
+phase-11 gates are complete. The system is no longer a set of
 unit-green modules or hand-run vendor adapters: the public driver controlled a heterogeneous live
 fleet recursively on its own repository, accepted only independently verified work, and then
 proved it could stop and reap four same-vendor sessions concurrently, select exact models, and run
-two independently verified turns on one native session. The next pursuit is enforcement:
-credential/home isolation, token/USD budgets, watchdog action, and hardened acceptance.
+two independently verified turns on one native session, isolate a live credentialed Grok worker,
+deny an outside-worktree write in its native sandbox, and auto-kill/reap it at a hard token budget.
+The next pursuit is hardened acceptance and structured integration.

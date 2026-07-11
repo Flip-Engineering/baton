@@ -33,8 +33,13 @@ Scope: GV1-GV7 in `spec/phase11/governance.md`.
 
 ## Provider-backed boundary
 
-Pending execution of
-`docs/reference/evidence/phase11-grok-governance-2026-07-11/run.mjs` after the implementation
-commit. It presence-checks (never reads/logs) the existing Grok credential, projects only that
-file into a private runtime home, runs the native workspace sandbox, proves canonical usage and an
-automatic one-token hard-budget kill, then checks process/worktree/runtime/metadata/branch reap.
+`docs/reference/evidence/phase11-grok-governance-2026-07-11/run.mjs` passed all 16 checks against
+Grok 0.1.216. It presence-checked (never read/logged) the existing Grok credential and projected
+only `auth.json` into PID 31942's private mode-0700 `$HOME/.grok` with a mode-0600 credential file.
+The native `workspace` sandbox denied an intentional `touch` outside the worker worktree with
+`Operation not permitted`; the forbidden path remained absent. The exact requested model
+`grok-composer-2.5-fast` then reported a canonical 11,811-token delta. Baton's deliberately tiny
+one-token limit emitted the 50/80/100% threshold facts and automatically entered confirmed policy
+kill. No verification verdict was fabricated for the killed task. Independent postconditions
+proved the PID, runtime scope, task worktree, metadata file, and task branch absent. The credential
+source path and value are absent from the raw event ledger.
