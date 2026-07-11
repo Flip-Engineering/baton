@@ -250,6 +250,45 @@ test('WN3/WN6: the HTTP adapter issues and consumes an authenticated SSE nonce f
   }), /at most one repository/);
 });
 
+test('WN5/WN6: cookie ticket CSRF fails before issue and Last-Event-ID wins over query cursor', async () => {
+  const calls = [];
+  const stream = {
+    issue(...args) { calls.push({ op: 'issue', args }); return { status: 201, body: { ok: true, ticket: 'ticket' } }; },
+    open(args) { calls.push({ op: 'open', args }); return { status: 409, body: { ok: false, error: { code: 'snapshot_required' } } }; },
+  };
+  const web = new WebNorthbound({
+    coordinator: {}, coordination: new CoordinationStore(root()), stream,
+    repoIds: ['repo-a'], allowedOrigins: ['https://control.example.test'],
+    authenticate: async () => principal(), now: () => Date.parse('2026-07-11T12:00:00.000Z'),
+  });
+  const requestTicket = async (csrfToken) => {
+    const req = Readable.from([Buffer.from(JSON.stringify({ repoId: 'repo-a' }))]);
+    Object.assign(req, {
+      method: 'POST', url: '/v1/stream-tickets',
+      headers: { 'content-type': 'application/json', origin: 'https://control.example.test', ...(csrfToken ? { 'x-baton-csrf': csrfToken } : {}) },
+      socket: { encrypted: true },
+    });
+    return new Promise((resolve, reject) => {
+      const res = { writeHead(status) { this.status = status; }, end(payload) { resolve({ status: this.status, body: JSON.parse(payload) }); } };
+      web.handle(req, res).catch(reject);
+    });
+  };
+  assert.equal((await requestTicket()).status, 403);
+  assert.equal((await requestTicket('wrong')).status, 403);
+  assert.equal(calls.length, 0);
+  assert.equal((await requestTicket('csrf-1')).status, 201);
+  assert.equal(calls.filter((call) => call.op === 'issue').length, 1);
+
+  const req = Readable.from([]);
+  Object.assign(req, {
+    method: 'GET', url: '/v1/events?ticket=opaque&cursor=3',
+    headers: { origin: 'https://control.example.test', 'last-event-id': '7' }, socket: { encrypted: true },
+  });
+  const res = { writeHead(status) { this.status = status; }, end() {} };
+  await web.handle(req, res);
+  assert.equal(calls.find((call) => call.op === 'open').args.cursor, '7');
+});
+
 test('WN4/WN9: the real coordinator rejects stale web stop fences before adapter mutation', async () => {
   const repo = root();
   execFileSync('git', ['init', '-q'], { cwd: repo });

@@ -135,6 +135,7 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 | Acceptance/integration | `docs/handoff/evidence/phase11-acceptance-integration-2026-07-11.md`; 16 focused temp-repo tests cover AC1–AC6 and the full suite is 502/502 |
 | Coordination foundation | `docs/handoff/evidence/phase11-coordination-foundation-2026-07-11.md`; 28 coordination, 20 persistent-session, and 23 acceptance/integration focused contracts plus the 575/575 full suite cover mandatory durable authority, centralized fail-closed mutations, pre-effect intents, bounded post-effect ambiguity, accepted question/approval single-consumer release, injected create/claim/input/stop/cancel/follow-up/recovery/review/trust/integration/publication/read crash windows, turn-crash versus process-exit cleanup, fatal dual-stream writes, atomic artifact/contamination/integration/publication writes, post-merge authority-loss replay, refinement runtime cleanup, replay refusal of telemetry-only and asymmetric decision-only success, named promotion/provenance, mediated Scratch, logged `ReadBy` recall, and refusal auditing; exact-model Codex review and correction review passed full lifecycle/reap gates with no remaining CK9 major, while reauthenticated Grok remains pending |
 | Authenticated web command/auth vertical | `docs/handoff/evidence/phase12-web-northbound-2026-07-11.md`; 16 focused contracts plus the 542/542 full suite cover durable cookie/Bearer issue/expiry/revocation with hashed secrets, auth/origin/CSRF/scope checks, strict envelopes, independent harness/model forwarding, restart-safe idempotency, fail-closed audit completion, bounded HTTP/CORS, non-leaking errors, TLS/auth server refusal, and real stale-fence stop/reap behavior; streaming/login/rotation/adversarial WN gates remain explicit |
+| Authenticated web SSE WN6 | `docs/handoff/evidence/phase12-web-stream-2026-07-11.md`; 62 focused Phase 11/12 contracts plus the 598/598 full suite cover authenticated single-use stream nonces, exact binding, snapshot/reconnect cursors, bounded replay/backpressure/tickets/connections, fail-closed audit/read/write/setup behavior, split trust labels, live expiry/revocation including per-event replay checks, HTTP/CORS integration, and disconnect-without-fleet-control; four exact-model recursive Baton turns all integrated or rejected honestly and fully reaped, ending in a no-actionable-finding review |
 | Atlas structural delta | `docs/handoff/evidence/phase13-atlas-structural-2026-07-11.md`; 7 focused contracts plus the 551/551 full suite use pinned real ast-grep parsing for confined, deterministic, token-bounded, content-addressed JS/TS-family AST deltas and live-prove Baton's own added export; shared index/overlay, search, symbols/SCIP, and later representation rungs remain explicit |
 | Atlas index/symbol/SCIP | `docs/handoff/evidence/phase13-atlas-index-symbols-2026-07-11.md`; 9 focused contracts plus the 576/576 full suite cover projection-committing explicit epochs, artifact/epoch tamper refusal, base-plus-worktree overlay reconciliation/staleness, lexical/repo-map/code-seed orientation, parsed symbol/reference/call graphs, SCIP JSON artifacts, bounded resumable output, cancellation/confinement, result ceilings, typed ambiguity, deterministic reverify, and a live 75-document Baton self-index; exact-model semantic review awaits quota reset, while live LSP, structural rewrite, semantic/CPG/IR/merge rungs remain explicit |
 | Credential discipline | GLM checked by presence only and recorded `PENDING-LIVE-no-credential`; no credential value was logged |
@@ -165,15 +166,17 @@ These are absent, not implied by the green suite:
 5. **GLM live proof.** `GlmSessionCli` is built to the credential boundary, but no credential was
    present in this run.
 6. **Production runtime and complete northbound surfaces.** The implementation remains
-   dependency-free Node ESM. The first authenticated HTTPS command vertical ships, but durable
-   session lifecycle, resumable WebSocket/SSE delivery, MCP, browser/adversarial proof, and the
+   dependency-free Node ESM. The authenticated HTTPS command vertical and resumable SSE WN6
+   delivery ship, but complete identity lifecycle, optional WebSocket parity, MCP,
+   browser/end-to-end adversarial proof, and the
    eventual Go/Elixir production core remain incomplete.
 7. **Cross-vendor decorrelation eval (E2).** The fleet required to run it now exists; the eval is a
    phase-11 research decision, not evidence retroactively required for phase-10 wiring completion.
-8. **Atlas and representation depth.** The first real AST/CST structural-delta vertical ships for
-   the built-in JS/TS-family grammars. Shared base/overlay indexing, structural search/rewrite,
-   symbol/SCIP graphs, CPG/dataflow, IR, behavioral fingerprints, semantic diff/merge, and e-graph
-   evaluation remain incomplete and explicitly catalogued.
+8. **Atlas and representation depth.** The real AST/CST structural-delta vertical plus shared
+   base/worktree indexing, lexical/repo-map/code-seed orientation, symbol/reference/call graphs,
+   and SCIP JSON interchange ship. Structural rewrite, live LSP, semantic retrieval, CPG/dataflow,
+   IR, behavioral fingerprints, semantic diff/merge, and e-graph evaluation remain incomplete and
+   explicitly catalogued.
 
 The full researched-versus-shipped inventory and phase boundary are in
 `docs/25-capability-gap.md`.
@@ -187,5 +190,6 @@ fleet recursively on its own repository, accepted only independently verified wo
 proved it could stop and reap four same-vendor sessions concurrently, select exact models, and run
 two independently verified turns on one native session, isolate a live credentialed Grok worker,
 deny an outside-worktree write in its native sandbox, and auto-kill/reap it at a hard token budget.
-The next pursuit is the durable task/artifact/Scratch/shared-knowledge-graph substrate, followed by
-the first Atlas AST/symbol-graph vertical and the authenticated northbound control surface.
+Those coordination/knowledge, Atlas index/symbol, and authenticated SSE milestones now ship. The
+next active pursuit is end-to-end harness + exact-model + effort route specificity (issue #2),
+followed by the remaining identity/quota/proxy/browser/MCP/operator and representation ladders.

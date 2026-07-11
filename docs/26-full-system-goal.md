@@ -222,6 +222,14 @@ negative result retires a rung through a recorded Decision, never through omissi
 
 ## Current pursuit order
 
+Current shipped checkpoints as of 2026-07-11: CK1–CK9 supplies the deployment-neutral task,
+artifact, Scratch, and typed causal knowledge authority; Atlas supplies AST structural delta plus
+shared base/worktree index, lexical orientation, symbol/reference/call graph, and SCIP JSON; and
+Phase 12 WN6 supplies the authenticated resumable SSE user-to-orchestrator observation channel.
+The active next increment is GitHub issue #2's first-class `{harness, exactModel, effort}` route
+tuple across cards, dispatch, web/API schemas, attribution, and tests. These checkpoints narrow
+sequence only; they do not retire any later capability below.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship harness-independent exact model selection and attribution.

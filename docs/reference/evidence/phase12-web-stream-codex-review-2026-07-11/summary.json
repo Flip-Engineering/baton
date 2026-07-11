@@ -1,8 +1,8 @@
 {
-  "at": "2026-07-11T21:47:10.094Z",
-  "repoHead": "1a4ae2f9452882ac5bcff63407722814fcd85e0e",
+  "at": "2026-07-11T21:49:52.869Z",
+  "repoHead": "17c4abe1682bda623065c90d8b76af1ec8a443d8",
   "workerId": "w-1",
-  "pid": 64264,
+  "pid": 77682,
   "model": "gpt-5.6-sol",
   "result": {
     "ready": true,
@@ -21,9 +21,9 @@
       "mutationStrength": null,
       "mutationPassed": null,
       "survivedMutants": [],
-      "observedOutputTail": "ee (new branch 'baton/durable-cancel')\n✔ CK8/CK9: cancellation completion failure resolves bounded, keeps stop intent, and restart closes task (102.659833ms)\n✔ CK4: Scratch claims conservatively conflict, warn cross-tree, and expire only by event (0.729541ms)\n✔ CK4: Scratch facts are tree-scoped, grounded, immutable, and explicitly expired (0.34125ms)\n✔ CK5: causal evidence and temporal coherence are enforced (0.367542ms)\n✔ CK5/CK7: bitemporal query, supersession, logged reads, and contamination survive replay (0.85025ms)\n✔ CK7/CK9: invalidation and contamination commit atomically (0.418709ms)\n✔ CK7: failed knowledge and Scratch read appends return no recalled content (0.15125ms)\n✔ CK2/CK8: confirmed kill durably cancels an active public task (81.844ms)\n✔ WN2/WN8: issued cookie credentials are random, hashed at rest, and use strict host-only attributes (2.388167ms)\n✔ WN2: cookie and bearer authentication return sanitized stable identity, never the raw credential (0.55625ms)\n✔ WN2/WN7: revocation is immediate, audited, and survives restart (0.507167ms)\n✔ WN2/WN5: expired, malformed, mixed, and overlong credentials fail closed (0.305083ms)\n✔ WN2: duplicate revoke is idempotent and unknown sessions do not reveal existence (0.305583ms)\n✔ WN2/WN5: the session registry protects the command northbound and revocation blocks the next command (2.084167ms)\n✔ WN2/WN6: the session authenticator terminates an established stream after durable revocation (22.101708ms)\nPreparing worktree (new branch 'baton/fenced-web-stop')\n✔ WN2/WN3/WN5: authentication, exact origin, CSRF, capability, and repo scope fail before dispatch (2.984958ms)\n✔ WN1/WN4: spawn forwards harness and exact model independently and derives the audit actor from auth (1.356375ms)\n✔ WN4: an identical retry executes once and a same-key different body conflicts without mutation (0.538459ms)\n✔ WN4/WN5/WN7: unknown fields, unknown model policy, and client-supplied audit identity are rejected before admission (0.367167ms)\n✔ WN4: admitted and completed idempotency state survives coordination-store restart (0.443708ms)\n✔ WN1/WN4: fence-sensitive control forwards the expected fence and refuses a missing fence (0.343166ms)\n✔ WN4/WN7: durable completion append failure never returns a successful command result (0.274458ms)\n✔ WN7: coordinator precondition errors become typed, non-leaking invalid-command outcomes (0.384ms)\n✔ WN1/WN2/WN5/WN8: the HTTP adapter authenticates a bounded JSON command and the server refuses missing TLS/auth (1.630584ms)\n✔ WN3/WN6: the HTTP adapter issues and consumes an authenticated SSE nonce for one repo authority (1.764416ms)\n✔ WN4/WN9: the real coordinator rejects stale web stop fences before adapter mutation (94.9175ms)\n✔ WN2/WN5/WN6: stream tickets are short-lived, single-use, hashed, and exactly bound (3.545125ms)\n✔ WN6: snapshot boundary and reconnect provide ordered at-least-once coordination delivery (2.0485ms)\n✔ WN6/WN7/WN9: expired cursors and bounded backpressure are typed and audited (0.577375ms)\n✔ WN6/WN9: browser disconnect audits closure and never invokes worker control (0.424042ms)\n✔ WN6: audit ordering fails closed before live ticket state or SSE headers (0.345042ms)\n✔ WN6: pruning and ticket/connection ceilings are enforced (0.492167ms)\n✔ WN6: one authority and bounded snapshot/control frames with split trust (0.908208ms)\n✔ WN6: invalid ceilings fail closed and response setup failures release connection authority (1.063125ms)\n✔ WN6: write backpressure stops immediately and claimed content never inherits authoritative trust (0.75125ms)\n✔ WN2/WN6: an established stream stops at credential expiry before reading later events (21.186916ms)\n✔ WN6/WN7: snapshot acquisition failure is typed and audited before SSE setup (0.492458ms)\n✔ WN6/WN7: later coordination-read and socket-write exceptions close without escaping or stranding capacity (42.029625ms)\nℹ tests 58\nℹ suites 0\nℹ pass 58\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1139.423958\n",
+      "observedOutputTail": "op intent, and restart closes task (78.284709ms)\n✔ CK4: Scratch claims conservatively conflict, warn cross-tree, and expire only by event (0.689833ms)\n✔ CK4: Scratch facts are tree-scoped, grounded, immutable, and explicitly expired (0.318833ms)\n✔ CK5: causal evidence and temporal coherence are enforced (0.344875ms)\n✔ CK5/CK7: bitemporal query, supersession, logged reads, and contamination survive replay (0.791833ms)\n✔ CK7/CK9: invalidation and contamination commit atomically (0.52675ms)\n✔ CK7: failed knowledge and Scratch read appends return no recalled content (0.230333ms)\n✔ CK2/CK8: confirmed kill durably cancels an active public task (78.809834ms)\n✔ WN2/WN8: issued cookie credentials are random, hashed at rest, and use strict host-only attributes (3.215542ms)\n✔ WN2: cookie and bearer authentication return sanitized stable identity, never the raw credential (0.623792ms)\n✔ WN2/WN7: revocation is immediate, audited, and survives restart (0.579708ms)\n✔ WN2/WN5: expired, malformed, mixed, and overlong credentials fail closed (0.455542ms)\n✔ WN2: duplicate revoke is idempotent and unknown sessions do not reveal existence (0.381334ms)\n✔ WN2/WN5: the session registry protects the command northbound and revocation blocks the next command (2.20175ms)\n✔ WN2/WN6: the session authenticator terminates an established stream after durable revocation (22.359917ms)\nPreparing worktree (new branch 'baton/fenced-web-stop')\n✔ WN2/WN3/WN5: authentication, exact origin, CSRF, capability, and repo scope fail before dispatch (3.059667ms)\n✔ WN1/WN4: spawn forwards harness and exact model independently and derives the audit actor from auth (1.616292ms)\n✔ WN4: an identical retry executes once and a same-key different body conflicts without mutation (0.716917ms)\n✔ WN4/WN5/WN7: unknown fields, unknown model policy, and client-supplied audit identity are rejected before admission (0.353292ms)\n✔ WN4: admitted and completed idempotency state survives coordination-store restart (0.40225ms)\n✔ WN1/WN4: fence-sensitive control forwards the expected fence and refuses a missing fence (0.336791ms)\n✔ WN4/WN7: durable completion append failure never returns a successful command result (0.259041ms)\n✔ WN7: coordinator precondition errors become typed, non-leaking invalid-command outcomes (0.346625ms)\n✔ WN1/WN2/WN5/WN8: the HTTP adapter authenticates a bounded JSON command and the server refuses missing TLS/auth (1.81825ms)\n✔ WN3/WN6: the HTTP adapter issues and consumes an authenticated SSE nonce for one repo authority (1.706125ms)\n✔ WN4/WN9: the real coordinator rejects stale web stop fences before adapter mutation (91.263917ms)\n✔ WN2/WN5/WN6: stream tickets are short-lived, single-use, hashed, and exactly bound (4.808459ms)\n✔ WN6: snapshot boundary and reconnect provide ordered at-least-once coordination delivery (3.2065ms)\n✔ WN6/WN7/WN9: expired cursors and bounded backpressure are typed and audited (0.976625ms)\n✔ WN6/WN9: browser disconnect audits closure and never invokes worker control (0.432917ms)\n✔ WN6: audit ordering fails closed before live ticket state or SSE headers (0.333292ms)\n✔ WN6: pruning and ticket/connection ceilings are enforced (0.623709ms)\n✔ WN6: one authority and bounded snapshot/control frames with split trust (1.650375ms)\n✔ WN6: invalid ceilings fail closed and response setup failures release connection authority (2.860208ms)\n✔ WN6: write backpressure stops immediately and claimed content never inherits authoritative trust (1.2605ms)\n✔ WN2/WN6: an established stream stops at credential expiry before reading later events (21.693666ms)\n✔ WN6/WN7: snapshot acquisition failure is typed and audited before SSE setup (0.440125ms)\n✔ WN6/WN7: later coordination-read and socket-write exceptions close without escaping or stranding capacity (43.455875ms)\n✔ WN2/WN6: replay is count-bounded and rechecks authorization before every emitted event (0.684125ms)\nℹ tests 59\nℹ suites 0\nℹ pass 59\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 1102.430708\n",
       "note": "PASS: observed exit 0 matches expected 0.",
-      "durationMs": 1197
+      "durationMs": 1164
     },
     "artifacts": {
       "commits": [],
@@ -40,14 +40,14 @@
     "sessionRef": {
       "vendor": "codex",
       "kind": "thread",
-      "id": "019f5324-fb44-70d1-b31c-888077a32958",
+      "id": "019f5327-4f43-78b1-81d2-79eeca8535e7",
       "persistence": "native",
       "source": "wire"
     },
     "sessionContext": {
       "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-web-stream-review",
       "repoRoot": "/Users/wahargis/Development/Experiments/baton",
-      "baseSha": "7aa666f945b1af518183c7f3fe4558dea431c112",
+      "baseSha": "89b15516cca02e55737eef4399b58edf1e6d5a5d",
       "branch": "baton/codex-web-stream-review",
       "ownerTaskId": "codex-web-stream-review"
     },
@@ -61,9 +61,9 @@
     "ok": true,
     "result": "integrated",
     "integration": {
-      "beforeSha": "7aa666f945b1af518183c7f3fe4558dea431c112",
-      "resultSha": "1a4ae2f9452882ac5bcff63407722814fcd85e0e",
-      "afterSha": "1a4ae2f9452882ac5bcff63407722814fcd85e0e",
+      "beforeSha": "89b15516cca02e55737eef4399b58edf1e6d5a5d",
+      "resultSha": "17c4abe1682bda623065c90d8b76af1ec8a443d8",
+      "afterSha": "17c4abe1682bda623065c90d8b76af1ec8a443d8",
       "strategy": "ff-only",
       "actor": "orchestrator"
     }

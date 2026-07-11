@@ -133,3 +133,38 @@ test('WN2/WN6: the session authenticator terminates an established stream after 
   assert.equal(response.output.includes('after-revocation-secret'), false);
   assert.equal(coordination.events().some((event) => event.payload.kind === 'stream_authorization_lost'), true);
 });
+
+test('WN2/WN6: durable revocation during a replay withholds the remaining synchronous suffix', () => {
+  let clock = now;
+  const sessions = new WebSessionStore(root(), { now: () => clock });
+  const issued = sessions.issue({ userId: 'user-1', authMethod: 'bearer', capabilities: ['observe'], repoIds: ['repo-a'], ttlMs: 60_000 }, { actor: 'bootstrap' });
+  const authenticate = sessions.authenticator();
+  const principal = authenticate(request({ authorization: `Bearer ${issued.token}` }));
+  const coordination = new CoordinationStore(root());
+  const first = coordination.recordWebAudit({ kind: 'registry-batch-one' }, { actor: 'test', key: 'registry-batch-one' });
+  coordination.recordWebAudit({ kind: 'registry-batch-two' }, { actor: 'test', key: 'registry-batch-two' });
+  const web = new WebNorthbound({
+    coordinator: {}, coordination, authenticate, repoIds: ['repo-a'],
+    allowedOrigins: ['https://control.example.test'], now: () => clock,
+    maxFrameBytes: 100_000, maxBufferedBytes: 100_000,
+  });
+  class Response extends EventEmitter {
+    constructor() { super(); this.output = ''; this.writableLength = 0; }
+    writeHead() {}
+    write(value) {
+      this.output += value;
+      if (value.includes('registry-batch-one')) sessions.revoke(issued.sessionId, { actor: 'security-admin', reason: 'mid-replay' });
+      return true;
+    }
+    end() { this.ended = true; }
+  }
+  const response = new Response();
+  web.stream.open({
+    ticket: web.stream.issue(principal, 'https://control.example.test', 'repo-a').body.ticket,
+    principal, origin: 'https://control.example.test', cursor: first.seq - 1,
+  }, response);
+  assert.match(response.output, /registry-batch-one/);
+  assert.equal(response.output.includes('registry-batch-two'), false);
+  assert.equal(response.ended, true);
+  assert.equal(web.stream.activeConnections, 0);
+});

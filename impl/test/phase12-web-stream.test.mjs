@@ -268,3 +268,27 @@ test('WN2/WN6: replay is count-bounded and rechecks authorization before every e
   assert.equal(stream.activeConnections, 0);
   assert.equal(coordination.events().some((event) => event.payload.kind === 'stream_authorization_lost'), true);
 });
+
+test('WN6: malformed/future cursors fail typed and close/error cleanup is exactly once with no later polling', async () => {
+  clock = Date.parse('2026-07-11T12:00:00.000Z');
+  const { coordination, stream } = fixture({ maxFrameBytes: 100_000, maxBufferedBytes: 100_000, pollMs: 5 });
+  for (const cursor of ['not-a-cursor', Number.MAX_SAFE_INTEGER]) {
+    const refusal = stream.open({
+      ticket: stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket,
+      principal: principal(), origin: 'https://control.test', cursor,
+    }, new Response());
+    assert.equal(refusal.status, 409);
+    assert.equal(refusal.body.error.code, 'snapshot_required');
+  }
+
+  const output = new Response();
+  stream.open({ ticket: stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test' }, output);
+  const beforeClose = output.output;
+  output.emit('close');
+  output.emit('error', new Error('late socket error'));
+  coordination.recordWebAudit({ kind: 'after-close' }, { actor: 'test', key: 'after-close' });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(stream.activeConnections, 0);
+  assert.equal(output.output, beforeClose);
+  assert.equal(coordination.events().filter((event) => event.payload.kind === 'stream_disconnected').length, 1);
+});
