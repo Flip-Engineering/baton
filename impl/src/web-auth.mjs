@@ -79,6 +79,16 @@ export class WebSessionStore {
       const old = this._sessions.get(p.sessionId);
       if (!old || old.revoked) throw new WebSessionIntegrityError('revocation does not reference an active session', 'invalid_revocation');
       this._sessions.set(p.sessionId, freeze({ ...clone(old), revoked: true, revokedEvent: event.seq, revokedReason: p.reason ?? null }));
+    } else if (event.kind === 'session.rotated') {
+      const old = this._sessions.get(p.predecessorSessionId);
+      const next = p.successor;
+      if (!old || old.revoked || this._sessions.has(next.sessionId) || this._byDigest.has(next.tokenDigest)) {
+        throw new WebSessionIntegrityError('rotation does not reference one active predecessor and fresh successor', 'invalid_rotation');
+      }
+      this._sessions.set(old.sessionId, freeze({ ...clone(old), revoked: true, revokedEvent: event.seq, revokedReason: 'rotated' }));
+      const session = freeze({ ...clone(next), revoked: false, issuedEvent: event.seq, revokedEvent: null });
+      this._sessions.set(next.sessionId, session);
+      this._byDigest.set(next.tokenDigest, next.sessionId);
     } else throw new WebSessionIntegrityError(`unknown session event ${event.kind}`, 'unknown_event');
   }
 
@@ -98,6 +108,7 @@ export class WebSessionStore {
       sessionId, credentialId, userId: fields.userId, authMethod: fields.authMethod,
       capabilities: [...fields.capabilities], repoIds: [...fields.repoIds], tokenDigest: digest(rawToken),
       ...(rawCsrf ? { csrfTokenDigest: digest(rawCsrf) } : {}),
+      ttlMs: fields.ttlMs,
       issuedAt: new Date(issuedAtMs).toISOString(), expiresAt: new Date(issuedAtMs + fields.ttlMs).toISOString(),
     };
     this._append('session.issued', auth.actor, payload);
@@ -114,6 +125,28 @@ export class WebSessionStore {
     if (!session || session.revoked) return freeze({ ok: true, result: 'not_active' });
     const event = this._append('session.revoked', auth.actor, { sessionId, reason: auth.reason ?? null });
     return freeze({ ok: true, result: 'revoked', event: clone(event), clearCookie: `${COOKIE_NAME}=; Max-Age=0; Secure; HttpOnly; SameSite=Strict; Path=/` });
+  }
+
+  rotate(sessionId, auth = {}) {
+    const old = this._sessions.get(sessionId);
+    if (!old || old.revoked || Date.parse(old.expiresAt) <= this.now()) return null;
+    const rawToken = token();
+    const rawCsrf = old.authMethod === 'cookie' ? token() : null;
+    const issuedAtMs = this.now();
+    const originalTtl = Date.parse(old.expiresAt) - Date.parse(old.issuedAt);
+    const ttlMs = Math.min(this.maxTtlMs, Math.max(1, old.ttlMs ?? originalTtl));
+    const successor = {
+      sessionId: randomUUID(), credentialId: randomUUID(), userId: old.userId, authMethod: old.authMethod,
+      capabilities: [...old.capabilities], repoIds: [...old.repoIds], tokenDigest: digest(rawToken),
+      ...(rawCsrf ? { csrfTokenDigest: digest(rawCsrf) } : {}), ttlMs,
+      issuedAt: new Date(issuedAtMs).toISOString(), expiresAt: new Date(issuedAtMs + ttlMs).toISOString(),
+    };
+    this._append('session.rotated', auth.actor, { predecessorSessionId: old.sessionId, successor });
+    return freeze({
+      sessionId: successor.sessionId, credentialId: successor.credentialId, token: rawToken,
+      ...(rawCsrf ? { csrfToken: rawCsrf } : {}), expiresAt: successor.expiresAt,
+      ...(old.authMethod === 'cookie' ? { setCookie: `${COOKIE_NAME}=${rawToken}; Max-Age=${Math.floor(ttlMs / 1000)}; Secure; HttpOnly; SameSite=Strict; Path=/` } : {}),
+    });
   }
 
   authenticate(req) {

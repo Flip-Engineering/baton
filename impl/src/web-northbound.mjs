@@ -45,6 +45,15 @@ function containsForbiddenKey(value) {
   return Object.entries(value).some(([key, child]) => FORBIDDEN_KEY.test(key) || containsForbiddenKey(child));
 }
 function string(value) { return typeof value === 'string' && value.length > 0; }
+function validProviderClaims(value) {
+  if (!isRecord(value)) return false;
+  const allowed = new Set(['userId', 'authMethod', 'capabilities', 'repoIds', 'ttlMs']);
+  return !Object.keys(value).some((key) => !allowed.has(key))
+    && string(value.userId) && ['cookie', 'bearer'].includes(value.authMethod)
+    && Array.isArray(value.capabilities) && value.capabilities.length > 0 && value.capabilities.every(string)
+    && Array.isArray(value.repoIds) && value.repoIds.length > 0 && value.repoIds.every(string)
+    && Number.isSafeInteger(value.ttlMs) && value.ttlMs > 0;
+}
 
 function validateEnvelope(envelope) {
   if (!isRecord(envelope)) return 'command envelope must be an object';
@@ -93,6 +102,9 @@ export class WebNorthbound {
     if (this.repoIds.size > 1) throw new TypeError('one web northbound authority may serve at most one repository');
     this.now = opts.now ?? Date.now;
     this.authenticate = opts.authenticate ?? null;
+    this.sessions = opts.sessions ?? opts.sessionStore ?? null;
+    this.identityProvider = opts.identityProvider ?? opts.provider ?? null;
+    if (!this.authenticate && this.sessions) this.authenticate = this.sessions.authenticator();
     this.isPrincipalActive = opts.isPrincipalActive ?? this.authenticate?.isPrincipalActive ?? null;
     this.maxBodyBytes = opts.maxBodyBytes ?? 64 * 1024;
     this.stream = opts.stream ?? new WebEventStream({
@@ -225,6 +237,9 @@ export class WebNorthbound {
   async handle(req, res) {
     const origin = req.headers.origin ?? null;
     const url = new URL(req.url, 'https://baton.invalid');
+    if (req.method === 'POST' && ['/v1/auth/login', '/v1/auth/refresh', '/v1/auth/logout'].includes(url.pathname)) {
+      return this._handleLifecycle(req, res, url.pathname, origin);
+    }
     if (req.method === 'OPTIONS' && ['/v1/commands', '/v1/stream-tickets'].includes(url.pathname)) {
       if (!this.allowedOrigins.has(origin)) return this._write(res, error(403, 'forbidden'));
       res.writeHead(204, {
@@ -282,6 +297,91 @@ export class WebNorthbound {
     return this._write(res, response, origin);
   }
 
+  async _handleLifecycle(req, res, pathname, origin) {
+    const ctx = { origin, remoteAddress: req.socket?.remoteAddress ?? null };
+    const audit = (kind, principal = null, details = {}) => this._audit(kind, { ...ctx, principal }, details);
+    if (!req.socket?.encrypted || !this.allowedOrigins.has(origin)) {
+      try { audit(pathname.endsWith('login') ? 'login_refused' : pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', null, { reason: 'request_policy' }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+      return this._write(res, error(!req.socket?.encrypted ? 503 : 403, !req.socket?.encrypted ? 'temporarily_unavailable' : 'forbidden'), origin);
+    }
+    if (req.headers['content-type']?.trim().toLowerCase() !== 'application/json') {
+      try { audit(pathname.endsWith('login') ? 'login_refused' : pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', null, { reason: 'content_type' }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+      return this._write(res, error(415, 'unsupported_media_type'), origin);
+    }
+    let principal = null;
+    if (pathname !== '/v1/auth/login') {
+      try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
+    }
+    let body;
+    try { body = await this._readBody(req); }
+    catch (cause) {
+      try { audit(pathname.endsWith('login') ? 'login_refused' : pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', principal, { reason: cause?.code ?? 'invalid_json' }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+      return this._write(res, error(cause?.code === 'body_too_large' ? 413 : 400, 'invalid_request'), origin);
+    }
+    if (!isRecord(body)) return this._write(res, error(400, 'invalid_request'), origin);
+    if (pathname === '/v1/auth/login') return this._login(res, body, ctx);
+    if (!principal) {
+      try { audit(pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', null, { reason: 'unauthenticated' }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+      return this._write(res, error(401, 'unauthenticated'), origin);
+    }
+    if (principal.authMethod === 'cookie') {
+      const supplied = req.headers['x-baton-csrf'];
+      if (!string(supplied) || !principal.csrfTokenDigest || !equalDigest(tokenHash(supplied), principal.csrfTokenDigest)) {
+        try { audit(pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', principal, { reason: 'csrf' }); }
+        catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+        return this._write(res, error(403, 'forbidden'), origin);
+      }
+    }
+    if (Object.keys(body).length !== 0) return this._write(res, error(400, 'invalid_request'), origin);
+    return pathname === '/v1/auth/refresh' ? this._refresh(res, principal, origin) : this._logout(res, principal, origin);
+  }
+
+  async _login(res, body, ctx) {
+    const refused = async () => {
+      try { this._audit('login_refused', ctx, { reason: 'unauthenticated' }); } catch { return this._write(res, error(503, 'temporarily_unavailable'), ctx.origin); }
+      return this._write(res, error(401, 'unauthenticated'), ctx.origin);
+    };
+    if (!this.sessions || typeof this.identityProvider !== 'function') return refused();
+    let claims;
+    try { claims = await this.identityProvider(json(body), Object.freeze({ origin: ctx.origin, transport: 'https' })); } catch { return refused(); }
+    if (!claims || !validProviderClaims(claims)) return refused();
+    let issued;
+    try { issued = this.sessions.issue(claims, { actor: `web:${claims.userId}:login` }); } catch { return this._write(res, error(503, 'temporarily_unavailable'), ctx.origin); }
+    try { this._audit('login_issued', { ...ctx, principal: { userId: claims.userId, sessionId: issued.sessionId, credentialId: issued.credentialId } }, { authMethod: claims.authMethod, expiresAt: issued.expiresAt }); }
+    catch { return this._write(res, error(503, 'temporarily_unavailable'), ctx.origin); }
+    return this._credentialResponse(res, claims, issued, ctx.origin, 201);
+  }
+
+  _refresh(res, principal, origin) {
+    let issued;
+    try { issued = this.sessions?.rotate(principal.sessionId, { actor: actor(principal) }); } catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+    if (!issued) return this._write(res, error(401, 'unauthenticated'), origin);
+    try { this._audit('session_rotated', { principal, origin }, { successorCredentialId: issued.credentialId, expiresAt: issued.expiresAt }); }
+    catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+    return this._credentialResponse(res, principal, issued, origin, 200);
+  }
+
+  _logout(res, principal, origin) {
+    try { this.sessions?.revoke(principal.sessionId, { actor: actor(principal), reason: 'logout' }); }
+    catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+    try { this._audit('session_revoked', { principal, origin }, { reason: 'logout' }); }
+    catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+    const headers = principal.authMethod === 'cookie' ? { 'set-cookie': '__Host-baton_session=; Max-Age=0; Secure; HttpOnly; SameSite=Strict; Path=/' } : {};
+    return this._write(res, result(200, { ok: true }), origin, headers);
+  }
+
+  _credentialResponse(res, identity, issued, origin, status) {
+    const body = { ok: true, identity: { userId: identity.userId, capabilities: [...identity.capabilities], repoIds: [...identity.repoIds] }, expiresAt: issued.expiresAt };
+    const headers = {};
+    if (identity.authMethod === 'cookie') { body.csrfToken = issued.csrfToken; headers['set-cookie'] = issued.setCookie; }
+    else body.token = issued.token;
+    return this._write(res, result(status, body), origin, headers);
+  }
+
   _readBody(req) {
     return new Promise((resolve, reject) => {
       let size = 0; const chunks = [];
@@ -295,9 +395,9 @@ export class WebNorthbound {
     });
   }
 
-  _write(res, response, origin = null) {
+  _write(res, response, origin = null, extraHeaders = {}) {
     const body = JSON.stringify(response.body);
-    const headers = { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
+    const headers = { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...extraHeaders };
     if (origin && this.allowedOrigins.has(origin)) Object.assign(headers, { 'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true', vary: 'Origin' });
     res.writeHead(response.status, headers);
     res.end(body);
