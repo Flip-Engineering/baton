@@ -1,78 +1,55 @@
 # Phase 12 web-edge adversarial review — 2026-07-11
 
-## Scope and method
+## Review boundary and method
 
-Reviewed the current EP1–EP9 contract in `spec/phase12/web-edge-policy.md`, the related WN/IL contracts, `impl/src/web-edge.mjs`, `impl/src/web-northbound.mjs`, `impl/src/web-stream.mjs`, `impl/src/web-auth.mjs`, and the Phase 12 edge, lifecycle, authentication, northbound, and stream tests. Prior evidence logs were not read. This was a read-only source/test review apart from this report; no source, network, homelab, or fleet action was taken.
+Reviewed the current EP1–EP9 contract in `spec/phase12/web-edge-policy.md`, its parent northbound and lifecycle contracts, `impl/src/web-edge.mjs`, `web-northbound.mjs`, `web-stream.mjs`, `web-auth.mjs`, the session/coordination authorities they call, and the five Phase 12 test files named by the acceptance command. Prior evidence logs were not read. No source, fleet, homelab, or network action was performed.
 
 ## Findings
 
-### F1 — High — production server assembly permits a proxy policy on the direct-TLS listener
+### F1 — High — invalid login requests can exhaust the admitted-login quota
 
-- **EP/source:** EP4, `impl/src/web-northbound.mjs:525-540`; `impl/src/web-edge.mjs:115-122,134-137`.
-- **Failure:** The cleartext branch correctly requires `edge.proxyMode`, but the TLS branch only checks `edge instanceof WebEdgePolicy`; it does not require `proxyMode === false`. Consequently `createAuthenticatedWebServer()` accepts a proxy-mode edge with TLS material. On that listener, an untrusted direct TLS peer is resolved as a non-proxied HTTPS client by `resolveEdgeRequest()` and is admitted, while a trusted peer is forced to provide forwarding headers. This is neither the explicit direct posture nor the explicit proxy posture, and makes the allowlist change request semantics based only on peer address. It also contradicts EP4's mutually explicit modes and the assembly's own “choose direct TLS or cleartext trusted-proxy backend” error.
-- **Action:** In the TLS assembly branch reject `northbound.edge.proxyMode` (and therefore any proxy trust/hop configuration), or define and validate a distinct TLS-to-proxy mode in the spec and assembly. Do not silently treat proxy mode as direct mode for untrusted peers.
-- **Regression:** Construct `edge({proxyMode:true,trustedProxies:['127.0.0.1']})` and assert direct TLS server assembly throws. Also make a production-mode table test: direct+TLS succeeds; direct+cleartext fails; proxy+cleartext succeeds; proxy+TLS fails; missing edge/readiness/authenticator fails.
+- **Source:** `impl/src/web-northbound.mjs:291-303` takes both the ordinary address quota and the login-attempt quota before transport, Origin, content type, or body validation at `:379-410`.
+- **Policy:** EP3 says the login-attempt quota applies only to the admitted `POST` login route. EP4 requires transport proof, and the lifecycle contract requires exact Origin and JSON, before a request is an admissible login attempt.
+- **Failure:** any client sharing a canonical address can send `POST /v1/auth/login` with cleartext transport, a wrong/missing Origin, or a wrong content type and consume the scarce login bucket without reaching the identity provider. It can then deny legitimate logins from that address for the window. This is especially material behind a proxy/NAT. The ordinary address quota already bounds these invalid requests, so consuming the login bucket adds no required protection.
+- **Required regression:** with `login: 1`, send wrong-transport, wrong-Origin, wrong-content-type, malformed-JSON, oversized-body, `OPTIONS`, and wrong-method requests, then prove one policy-valid login reaches the provider. Also prove two policy-valid admitted login attempts cause exactly one provider call and then `429`.
+- **Action:** retain the ordinary address take before parsing, but move the login take after route/method, canonical HTTPS, exact Origin, content-type, and bounded successful JSON/object validation, immediately before provider invocation.
 
-### F2 — High — production readiness can omit session-ledger/revocation health
+### F2 — Medium — stream-ticket quota is charged before ticket authorization
 
-- **EP/source:** EP5, `impl/src/web-edge.mjs:52-64`; `impl/src/web-northbound.mjs:112-117,525-540`.
-- **Failure:** `WebReadinessAuthority` explicitly permits `sessions = null` and then skips session health. Server assembly accepts any instance of that class. A northbound with a custom live authenticator can therefore be assembled for production with `new WebReadinessAuthority({coordination, authenticate})`, and `/readyz` can report ready without grounding session ledger/liveness verification, contrary to EP5. The automatic constructor path happens to require sessions, but the public injected-authority path bypasses that grounding.
-- **Action:** Make session/revocation health a mandatory readiness dependency for this authenticated production server, or replace the optional concrete `sessions` parameter with a mandatory named session-liveness health check. Validate that dependency in server assembly rather than relying only on `instanceof`.
-- **Regression:** Assemble a production server with a healthy custom authenticator and a `WebReadinessAuthority` lacking sessions; assert configuration refusal. Assert a session health false/throw yields only `{ready:false}`.
+- **Source:** `impl/src/web-northbound.mjs:321-347` authenticates transport and cookie CSRF but does not authorize Origin/repository before taking the ticket bucket at `:339-345`; `WebEventStream.issue()` performs those checks later in `impl/src/web-stream.mjs:69-77`.
+- **Policy:** EP3 requires ordered refusal and separate stream-ticket issuance quota. Client-supplied resource values must not enable denial of service against an otherwise valid credential.
+- **Failure:** requests bearing a valid credential but an unapproved Origin or arbitrary/out-of-scope `repoId` consume the credential's ticket quota despite being ineligible for issuance. For bearer clients, a cross-site or malformed client can burn the bucket; for any client, a bad repository value can do so. No ticket is created, but later valid issuance is denied.
+- **Required regression:** with `ticket: 1`, submit wrong-Origin and wrong/out-of-scope-repository ticket requests, then prove a valid ticket can still be issued; prove a second valid authorized issuance receives `429`.
+- **Action:** perform the same authorization used by `issue()` before quota mutation, or provide an authorization-only check and take/issue transaction whose successful ordering is explicit.
 
-### F3 — Medium — shutdown control writes bypass the configured control-frame and backpressure bounds
+### F3 — High — lag control frames can exceed the connection buffered-byte ceiling
 
-- **EP/source:** EP6, `impl/src/web-stream.mjs:177-186,285`; compare bounded lag handling at `190-207,261-266`.
-- **Failure:** `closeForShutdown()` directly calls `res.write()` with the shutdown frame and ignores both `maxControlFrameBytes`, `writableLength`, and a `false` write result. It then calls `end()`, so it remains terminating and the literal is currently small, but shutdown is not implemented through the declared bounded/backpressure control path. A socket already over its bounded buffer is given another write during global shutdown. EP6 specifically requires bounded shutdown behavior including broken sockets and backpressure.
-- **Action:** Pre-encode the shutdown frame, enforce `maxControlFrameBytes` and available-buffer policy, and treat `false`/throw as immediate close without additional writes. Keep lease release and disconnect audit exactly once.
-- **Regression:** Open a stream whose response has `writableLength > maxBufferedBytes` and whose `write()` returns false (and separately throws), call shutdown twice, and assert bounded write count/bytes, one end, one lease release, one terminal stream audit, and no fleet call.
+- **Source:** both backpressure branches in `impl/src/web-stream.mjs:205-219` and the initial-write branch at `:271-278` check only `maxControlFrameBytes` before another `res.write(control)`. They do not check `(res.writableLength + controlBytes) <= maxBufferedBytes`. The shutdown path at `:180-184` correctly checks both.
+- **Policy:** EP6 expressly requires shutdown control to obey both ceilings; WN6/EP8 require bounded backpressure generally. A control frame must not add bytes to an already-full connection.
+- **Failure:** once `writableLength` is at or beyond the configured buffer ceiling, the implementation deliberately writes a lag frame, increasing queued bytes beyond the declared bound. Repeated connections permit attacker-controlled aggregate excess and the behavior contradicts the same invariant correctly applied during shutdown. The existing test `WN6/WN7/WN9: expired cursors and bounded backpressure are typed and audited` sets `writableLength` above the ceiling and expects a lag write, thereby locking in the defect.
+- **Required regression:** cover pre-full, exactly-full, `write() === false`, and throwing sockets; assert zero additional writes whenever the control frame would exceed either ceiling, one exactly-once close/audit/lease release, and no later writes/polls. When room exists, allow at most one bounded lag control frame.
+- **Action:** use one bounded-control helper for lag and shutdown that checks both ceilings and always performs exactly-once terminal cleanup whether it writes, refuses, or throws.
+
+### F4 — Low — valid quoted `Forwarded` protocol values are rejected
+
+- **Source:** `impl/src/web-edge.mjs:79-101` syntactically permits quoted parameter values but strips quotes only from `for`; it compares `fields.proto` directly with `http`/`https`. Thus `Forwarded: for=198.51.100.2;proto="https"` fails although quoted-string is valid RFC 7239 syntax.
+- **Policy:** EP1 requires a strictly parsed, unambiguous chain; strictness need not reject a valid unambiguous representation. This is availability/interop, not a trust-boundary bypass.
+- **Failure:** a conforming trusted proxy that emits quoted `proto` values causes every request to fail `400 invalid_forwarding`; proxy-mode service is unavailable. No address or transport spoof succeeds.
+- **Required regression:** accept `proto="https"` and case-insensitive protocol tokens after quoted-string decoding; continue rejecting escapes/control characters, duplicate parameters, unknown parameters, malformed brackets/ports/zones, mixed header families, multiple protocol values, and non-HTTP(S) schemes.
+- **Action:** decode allowed quoted strings uniformly before semantic validation, with a deliberately small grammar.
 
 ## EP-by-EP verdict
 
-### EP1 — canonical client address
-
-Clean apart from F1's mode confusion. Direct resolution uses the socket peer and ignores all forwarding headers. Trusted resolution requires an exact configured peer, rejects mixed `Forwarded`/`X-Forwarded-*`, bounds bytes/elements, rejects duplicate/unknown `Forwarded` parameters, selects one configured hop, and handles IPv4 and bracketed IPv6. IPv4-mapped IPv6 is deliberately exact rather than aliased. Malformed trusted forwarding fails before quota/auth/provider/body work and audits only classification plus a keyed peer digest. No raw address was found in the edge audit path.
-
-The tests cover untrusted spoofing, exact trusted hop selection, mixed headers, IPv4, IPv6, mapped-address non-aliasing, and invalid bracket/port syntax. No additional EP1 defect found.
-
-### EP2 — quotas, expiry, atomicity, and cardinality
-
-Clean. Fixed-window configuration and clock samples reject non-positive/non-integer/unsafe values; regression fails before expiry/key/counter mutation. Expiry is deterministic, each quota map is cardinality-bounded, and refusal metadata is positive and window-bounded. Principal count and weighted cost share one sampled clock, preflight both buckets, and synchronously commit both, so a weighted refusal does not consume command count. Connection keys disappear on final release and are cardinality-bounded.
-
-The authority is intentionally process-local abuse state and does not become command/session truth. No additional EP2 defect found.
-
-### EP3 — refusal ordering and mutation
-
-Clean. Canonical-address quota precedes route body parsing, authentication, provider calls, session mutation, ticket state, durable command admission, and dispatch. Login quota applies only to admitted-shape `POST /v1/auth/login`; preflight and invalid methods use only address quota. Authentication/authorization precede credential-keyed principal/cost quota, and both quota buckets precede durable command admission and coordinator dispatch. Credential IDs, not client command/idempotency IDs, select authenticated buckets. Ticket quota precedes ticket generation/live state.
-
-Tests establish provider-call bounding, no session/fleet mutation, preflight/method behavior, count/cost separation, and refusal audit failure closing. No additional EP3 defect found.
-
-### EP4 — transport and server mode
-
-F1 is an EP4 defect. Otherwise trusted cleartext requires an exact trusted immediate peer plus exact `https` forwarding signal; untrusted forwarding cannot upgrade cleartext or alter identity. Direct mode policy configuration rejects proxy trust/hops and direct server assembly requires key/certificate material. Proxy cleartext assembly requires a nonempty trusted allowlist. IPv4/IPv6 selection itself is clean.
-
-### EP5 — health/readiness
-
-F2 is an EP5 defect. Endpoint payloads are non-disclosing (`{ok:true}` and one `{ready:boolean}`), probes have independent quotas, and readiness also grounds coordination/authentication plus configured checks and admission state. Readiness audit failure returns only not-ready and a failed transition append is retried rather than suppressing the transition. No dependency error detail, fleet inventory, path, provider, credential, repository, worker, or task data is returned.
-
-### EP6 — shutdown
-
-F3 is an EP6 defect. Admission closes synchronously before the first await and covers login, refresh, logout, commands, tickets, and future stream opens; readiness consequently turns false. Provider completion loses to shutdown before session issue. Listener close is deadline-bounded, then idle/all connections are forced and bounded again. Repeated shutdown returns the same promise/result. Stream lease release is exactly-once, and neither northbound nor stream shutdown invokes coordinator/worker operations or asserts worker death.
-
-The shutdown frame is semantically reconnecting and socket exceptions are swallowed, but its backpressure bound is the defect described in F3. No other EP6 defect found.
-
-### EP7 — audit and restart posture
-
-Clean. Proxy/quota/readiness/shutdown outcomes are appended through the coordination audit authority; address and credential quota identities are HMAC digests, not raw values. Refusal/audit failure never returns admission success. Session, command, and idempotency state remain durable authorities separate from resettable quotas. Readiness transition state advances only after the transition append succeeds. Shutdown audit failure yields one bounded degraded result while resources still close. No additional EP7 defect or sensitive value leakage found in the reviewed EP paths.
-
-### EP8 — deterministic acceptance
-
-The focused tests substantially cover the enumerated trust seams: proxy/address/HTTPS ambiguity, provider throttling, quota separation/clock/cardinality, refusal mutation, readiness disclosure/audit retry, connection fairness/release, shutdown drain/idempotency/audit/no-fleet-effects, and server refusal. Missing regressions corresponding to F1–F3 prevent a clean EP8 verdict. Recursive Baton construction/integration/kill/reap language is an external acceptance-process requirement, not a runtime source defect, and was not exercised because this review explicitly forbids fleet actions.
-
-### EP9 — deferred scope, not EP defects
-
-OIDC redirect/callback mechanics, optional WebSocket parity, real browser automation/UI behavior, and MCP/operator UI remain explicitly deferred. None is reported above as an EP implementation defect. Their future implementations must consume, not bypass, the corrected EP4/EP5/EP6 authorities.
+- **EP1 — finding F4; otherwise clean.** Direct mode uses the exact socket peer and ignores all forwarding headers. Proxy mode trusts only an exact immediate-peer allowlist, bounds chain bytes/elements, rejects mixed standard/X-forwarded families and duplicate/unknown standard parameters, selects one configured right-relative hop, and handles bare IPv4 plus bracketed IPv6. IPv4-mapped IPv6 and IPv4 are intentionally distinct. Malformed proxy audit uses only presence classification and a keyed peer digest. No header value or raw address is persisted.
+- **EP2 — clean.** Fixed-window configuration rejects non-positive/non-safe limits, windows, costs, and cardinality. Clock validation/regression occurs before expiry or map mutation. Expiry and capacity are deterministic and bounded. Principal/count and weighted cost preflight on one clock sample and commit together; refusal leaves the other bucket unchanged. Retry metadata is a positive bounded integer. Concurrent leases have bounded per-key/global cardinality and idempotent effective release. No defect found in expiry, atomicity, or cardinality.
+- **EP3 — findings F1 and F2; command ordering otherwise clean.** Address refusal precedes authentication, body parsing, provider work, session mutation, durable command admission, and dispatch. Authenticated command authorization precedes principal/cost quota, which precedes durable admission/dispatch. Refusal audit failure changes success/refusal into bounded `503`, and refused commands do not mutate command/session/worker/stream truth. Credential quota keys are server-authenticated credential IDs, not request IDs.
+- **EP4 — finding F4 interoperability only; security posture clean.** Proxy cleartext requires a nonempty trusted-peer policy and selected forwarded HTTPS signal. An untrusted peer cannot upgrade transport or address. Direct production assembly requires TLS key/certificate material and rejects proxy policy; proxy assembly rejects TLS/hybrid configuration. Exact IP matching, including mapped/unmapped distinction, is explicit and safe.
+- **EP5 — clean.** Health returns only `{ok:true}` and readiness only `{ready:boolean}`. Readiness is grounded in the listener's identical coordination, session, and authentication objects, including live auth/session health and injected operational checks; production rejects missing/mismatched authority. Admission closure makes readiness false. Probe quotas are independent. Audit failure fails readiness closed, and a failed transition append does not advance the remembered transition, so it is retried. No dependency/fleet detail is disclosed.
+- **EP6 — finding F3 for general lag backpressure; shutdown seam clean.** Admission closes synchronously before asynchronous shutdown work; provider completion rechecks admission before session issue. Streams stop accepting, receive at most one shutdown write subject to both ceilings, close, and release leases exactly once even on broken/backpressured sockets. Listener drain is bounded, escalates only connection closure, and returns a stable idempotent promise/result. No coordinator/fleet method is invoked and no worker truth is changed or claimed.
+- **EP7 — clean.** Proxy/quota/readiness/shutdown events use append-only coordination audit. Address and credential identities are keyed digests, not raw values. Audit failure prevents admission success; shutdown still closes resources and reports a bounded degraded result. Quotas are process-local abuse state and are not used as session, command, idempotency, or fleet truth. No leakage/failure defect found beyond findings above.
+- **EP8 — not clean because acceptance currently misses F1, F2, and F4 and positively regresses F3.** Existing tests otherwise cover the stated direct/proxy IPv4/IPv6 selection, mixed headers, clock/cardinality/atomic command quotas, audit failure, readiness grounding/non-disclosure, server modes, shutdown races/drain/idempotency/no-fleet-effects, and lease release. Add the regressions specified in each finding.
+- **EP9 — correctly deferred, not an EP defect.** OIDC redirect/callback behavior, optional WebSocket parity/hijack defenses, real-browser automation, UI, and MCP/operator surfaces were not treated as defects in this review. They remain consumers of this edge policy and must not be claimed by EP1–EP8.
 
 ## Overall verdict
 
-Three actionable findings: two High (server-mode ambiguity and incomplete readiness grounding) and one Medium (shutdown control-frame backpressure bound). All other reviewed EP trust seams have an explicit clean verdict above.
+Four actionable findings: two high, one medium, one low. No critical finding and no evidence of raw credential/address leakage, forwarded-header trust bypass, fleet side effects, or shutdown-induced worker mutation. EP2, EP5, and EP7 are clean on the reviewed seams; EP1/EP4 have the quoted-protocol interop defect; EP3 has two quota-ordering defects; EP6 has the lag-control buffer defect; EP8 is incomplete until the listed regressions pass. Deferred EP9 scope is separate and does not change these verdicts.
