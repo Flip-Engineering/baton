@@ -2,8 +2,9 @@
 
 ## Verdict
 
-PASS for the hardened CK1–CK7 implementation slice and current CK8 public-driver wiring; the
-remaining CK8/CK9 authority and recursive gates remain active work.
+PASS for CK1–CK9's deterministic zero-quota coordination and public-authority gate. The fresh
+recursive real-provider review remains pending Grok reauthentication and is not inferred from
+these tests.
 
 - `CoordinationStore` owns a separately validated, globally sequenced coordination event stream.
 - Idempotency keys replay the original event; append failure leaves event and projection state
@@ -41,15 +42,33 @@ remaining CK8/CK9 authority and recursive gates remain active work.
   typed semantic refusals remain ordinary refusals. Injected task-create failure publishes no
   handle or task projection, while injected claim failure reaches neither adapter nor worktree and
   leaves the durable task pending/unassigned for restart.
+- Blocking input becomes pending/blocked only after its mapped durable transition. Persistent
+  follow-up and recovery write intent before native calls; if the native session advances or
+  attaches but refinement creation fails, Baton kills/quarantines that ambiguous transport.
+- Stop intent is durable before interrupt/kill calls. A cancel-terminal append failure returns a
+  bounded `coordination_unavailable`, preserves the stop intent, and restart terminalizes the
+  durable task instead of hanging or claiming cancellation.
+- Review creation inherits task-create authority and is fault-proven to call no reviewer when its
+  durable task cannot append. Integration writes intent before retaining refs, stopping/reaping,
+  or changing Git. Publication request and exact-fence authorization are durable before the
+  publisher; authorization failure invokes no publisher.
+- Adapter callback failures caused by an already-poisoned authoritative store are contained at
+  the callback boundary rather than escaping as uncaught process exceptions.
 
 Validation:
 
 ```text
 node --test impl/test/phase11-coordination-store.test.mjs
-25/25 passing
+28/28 passing
+
+node --test impl/test/phase11-persistent-sessions.test.mjs
+20/20 passing
+
+node --test impl/test/phase11-acceptance-integration.test.mjs
+20/20 passing
 
 cd impl && node --test
-544/544 passing
+561/561 passing
 ```
 
 The recursive exact-model Grok spec and implementation reviews passed every Baton lifecycle check.
@@ -59,14 +78,13 @@ dual-stream write, claim-before-spawn, replay-authority, artifact, Scratch, reca
 closed in this hardening slice. The earlier first spec-review run was correctly budget-stopped and
 fully reaped; the measured reruns were verified and integrated by Baton itself.
 
-## Remaining before CK9
+## Remaining beyond the deterministic CK9 gate
 
 Scratch participation is not yet automatically injected into every adapter worker as an ambient
 tool/notification channel; automatic scorecards and Scratch promotion candidates remain
-incomplete; and although the central mutator boundary plus create/claim/trust failure windows are
-injected, dedicated input/resume/cancel/review/integration/publication crash-window cases remain.
-A second recursive provider review of
-these repairs, including concurrent Grok spawn/kill/reap evidence, is still required before CK9.
+incomplete. A second recursive provider review of these repairs is still required before recursive
+dogfooding is considered fully re-opened. The requested Grok run remains gated on provider
+reauthentication; no authentication bypass or silent model fallback is allowed.
 
 The zero-quota concurrent Grok ACP boundary is now green: two distinct fake-wire child PIDs ran
 simultaneously, both kills confirmed, both durable tasks cancelled, and every PID/worktree/branch

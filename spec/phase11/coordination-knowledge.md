@@ -66,6 +66,15 @@ accept/reject, and integration/publication outcomes are reflected by typed event
 queued tasks, dependency readiness, assignments, terminal state, and automatic identifiers before
 dispatching anything.
 
+Every adapter- or outside-world-reaching action has a durable intent before the effect: stop,
+persistent follow-up, recovery attach, review-task creation, local integration, publication
+request, and publication authorization. If intent append fails, no adapter, worktree/Git merge, or
+publisher is called. If an adapter has already confirmed stop/attach/turn advancement when a later
+terminal/refinement append fails, the coordinator is poisoned, resolves any public waiter with a
+typed coordination-unavailable result, kills or quarantines the ambiguous transport, and restart
+closes the still-nonterminal durable task. Asynchronous adapter callbacks may not turn an already
+recorded fatal coordination fault into an uncaught process exception.
+
 `task.created` persists `brief`, `deps`, `refines`, `taskType`, requested vendor/model/session
 policy, and the reserved public handle ID. `task.claimed` persists assignee, resolved vendor/model,
 and expected/new versions. Refusal codes are `stale_version | already_assigned |
@@ -227,6 +236,11 @@ Temp-directory and temp-Git tests must prove before provider dogfooding:
     order without treating their local sequences as globally ordered; and
 15. after a logged knowledge read, invalidating the node yields a nonempty contamination record
     and `affectedReaders()` result; a forced read-log append failure returns no recalled content.
+16. injected append failures cover create, claim, input wait/resume, stop intent, cancel terminal,
+    persistent follow-up/recovery refinement, review creation, terminal artifact batch,
+    integration intent, publication authorization, and knowledge/Scratch reads. Pre-effect
+    failures call no adapter/Git/publisher; post-effect failures are bounded, poison authority,
+    preserve the earlier intent, and replay to a non-success terminal state.
 
 After CK9 is green and committed, Baton may recursively run a real provider review against this
 spec and implementation. The recursive task must use isolated runtime credentials/budgets, exact

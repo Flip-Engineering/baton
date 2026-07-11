@@ -239,6 +239,29 @@ test('AC4: visible same-family fallback cannot satisfy a required independent or
   );
 });
 
+test('CK8/CK9: review task creation failure reaches no reviewer adapter and preserves parent evidence', async () => {
+  const root = repo();
+  commitBase(root);
+  const implementer = familyAdapter('family-a', { outcome: 'completed', edits: [{ path: 'src/reviewed.txt', content: 'review me\n' }] });
+  const reviewer = familyAdapter('family-b', { outcome: 'completed' });
+  let reviewerSpawns = 0;
+  const rawSpawn = reviewer.spawn.bind(reviewer);
+  reviewer.spawn = async (...args) => { reviewerSpawns += 1; return rawSpawn(...args); };
+  const driver = createDriver({ repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-review-fault-log-')), adapters: { implementer, reviewer }, watchdog: { stallMs: 0 } });
+  const parent = await driver.coordinator.spawn('implementer', brief({ command: 'test -f src/reviewed.txt', expectExit: 0 }), { taskId: 'review-fault-parent' });
+  await until(async () => (await driver.coordinator.result(parent.id)).ready);
+  const rawAppend = driver.coordination._appendFile;
+  driver.coordination._appendFile = (file, body, encoding) => {
+    if (body.includes('"task.created"') && body.includes('"review"')) throw new Error('review task disk full');
+    return rawAppend(file, body, encoding);
+  };
+  await assert.rejects(driver.coordinator.spawnReview(parent.id, 'reviewer', {
+    kind: 'review', taskId: 'review-fault-child', verification: { command: 'true', expectExit: 0 },
+  }), (error) => error.code === 'coordination_write_unavailable');
+  assert.equal(reviewerSpawns, 0);
+  assert.deepEqual(driver.coordination.snapshot().tasks.map((task) => [task.id, task.status]), [['review-fault-parent', 'completed']]);
+});
+
 test('AC5: ff-only integration reaps the worker/worktree/branch and records exact SHAs', async () => {
   const root = repo();
   commitBase(root, { 'README.md': 'base\n' });
@@ -327,6 +350,24 @@ test('AC5: integration refuses an unaccepted captured result', async () => {
   );
 });
 
+test('CK8/CK9: integration intent append failure leaves Git and worker ownership untouched', async () => {
+  const root = repo();
+  commitBase(root);
+  const { coordinator, coordination, handle } = await completedTask(root, 'integration-intent-failure');
+  const headBefore = git(['rev-parse', 'HEAD'], root);
+  const workerBefore = coordinator._workers.get(handle.id);
+  const rawAppend = coordination._appendFile;
+  coordination._appendFile = (file, body, encoding) => {
+    if (body.includes('"kind":"integration.requested"')) throw new Error('integration intent disk full');
+    return rawAppend(file, body, encoding);
+  };
+  await assert.rejects(coordinator.integrate(handle.id), (error) => error.code === 'coordination_write_unavailable');
+  assert.equal(git(['rev-parse', 'HEAD'], root), headBefore);
+  assert.equal(workerBefore.status, 'idle');
+  assert.equal(existsSync(workerBefore.worktree), true);
+  assert.equal(coordination.events().some((event) => event.kind === 'driver.recorded' && event.payload.kind === 'integration.requested'), false);
+});
+
 test('AC6: publication has no side effect before approval and allow publishes the exact integrated SHA once', async () => {
   const { coordinator, coordination, log, handle, calls } = await integratedPublicationTask();
   const requested = coordinator.requestPublication(handle.id, { remote: 'origin', ref: 'refs/heads/main' }, 'test-user');
@@ -350,6 +391,41 @@ test('AC6: publication has no side effect before approval and allow publishes th
   assert.equal(coordination.events().some((entry) => entry.kind === 'driver.recorded' && entry.payload.kind === 'publication.completed'), true);
   assert.equal(coordination.queryKnowledge({ types: ['Decision'] }).some((node) => node.id.startsWith('decision:publish:')), true);
   assert.equal(coordination.events().some((entry) => entry.kind === 'knowledge.promoted' && entry.payload.promotion?.trigger === 'publication'), true);
+});
+
+test('CK8/CK9: publication authorization append failure invokes no publisher', async () => {
+  const { coordinator, coordination, handle, calls } = await integratedPublicationTask();
+  const requested = coordinator.requestPublication(handle.id, { remote: 'origin', ref: 'refs/heads/main' }, 'test-user');
+  const rawAppend = coordination._appendFile;
+  coordination._appendFile = (file, body, encoding) => {
+    if (body.includes('"kind":"publication.authorized"')) throw new Error('publication authorization disk full');
+    return rawAppend(file, body, encoding);
+  };
+  await assert.rejects(
+    coordinator.respond(requested.requestId, { decision: 'allow', fence: requested.fence }, 'test-user'),
+    (error) => error.code === 'coordination_write_unavailable',
+  );
+  assert.equal(calls.length, 0);
+  assert.equal(coordinator._pending.get(requested.requestId).state, 'pending');
+  assert.equal(coordination.events().some((event) => event.kind === 'driver.recorded' && event.payload.kind === 'publication.completed'), false);
+});
+
+test('CK8/CK9: post-publish completion failure is bounded and preserves prior authorization', async () => {
+  const { coordinator, coordination, handle, calls } = await integratedPublicationTask();
+  const requested = coordinator.requestPublication(handle.id, { remote: 'origin', ref: 'refs/heads/main' }, 'test-user');
+  const rawAppend = coordination._appendFile;
+  coordination._appendFile = (file, body, encoding) => {
+    if (body.includes('"kind":"publication.completed"')) throw new Error('publication completion disk full');
+    return rawAppend(file, body, encoding);
+  };
+  await assert.rejects(
+    coordinator.respond(requested.requestId, { decision: 'allow', fence: requested.fence }, 'test-user'),
+    (error) => error.code === 'coordination_write_unavailable',
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(coordinator._pending.get(requested.requestId).state, 'resolved');
+  assert.equal(coordination.events().some((event) => event.kind === 'driver.recorded' && event.payload.kind === 'publication.authorized'), true);
+  assert.equal(coordination.events().some((event) => event.kind === 'driver.recorded' && event.payload.kind === 'publication.completed'), false);
 });
 
 test('AC6: deny and timeout are fail-closed and never call the publisher', async () => {

@@ -375,6 +375,84 @@ test('CK2/CK8: blocking input and resolution transition durably before terminal 
   assert.equal(driver.coordination.task('durable-input').status, 'completed');
 });
 
+test('CK8/CK9: input transition append failure poisons before pending/blocked state becomes visible', async () => {
+  const repo = dir();
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'base'], { cwd: repo });
+  const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'slow.txt', content: 'x', delayMs: 5000 }] } });
+  const driver = createDriver({ repoRoot: repo, logDir: dir(), adapters: { mock: adapter }, watchdog: { stallMs: 0 } });
+  const brief = { goal: 'input crash window', constraints: [], pathScope: ['slow.txt'], definitionOfDone: 'none', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } };
+  const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'input-write-failure' });
+  const rawAppend = driver.coordination._appendFile;
+  driver.coordination._appendFile = (file, body, encoding) => {
+    if (body.includes('"task.transitioned"') && body.includes('"input_required"')) throw new Error('input transition disk full');
+    return rawAppend(file, body, encoding);
+  };
+  assert.throws(() => driver.coordinator._handleEvent({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: driver.coordinator.list()[0].turnEpoch,
+    kind: 'question.asked', actor: 'worker', payload: { requestId: 'q-crash', question: 'continue?', blocking: true },
+  }), (error) => error.code === 'coordination_write_unavailable');
+  assert.equal(driver.coordination.task('input-write-failure').status, 'working');
+  assert.equal(driver.coordinator._pending.size, 0);
+  assert.equal(driver.coordinator._workers.get(handle.id).status, 'working');
+  await adapter.kill(handle.id);
+});
+
+test('CK8/CK9: stop-intent append failure calls no adapter and leaves durable task working', async () => {
+  const repo = dir();
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'base'], { cwd: repo });
+  const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'slow.txt', content: 'x', delayMs: 5000 }] } });
+  let adapterKills = 0;
+  const rawKill = adapter.kill.bind(adapter);
+  adapter.kill = async (...args) => { adapterKills += 1; return rawKill(...args); };
+  const driver = createDriver({ repoRoot: repo, logDir: dir(), adapters: { mock: adapter }, watchdog: { stallMs: 0 } });
+  const brief = { goal: 'stop crash window', constraints: [], pathScope: ['slow.txt'], definitionOfDone: 'none', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } };
+  const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'stop-write-failure' });
+  const rawAppend = driver.coordination._appendFile;
+  driver.coordination._appendFile = (file, body, encoding) => {
+    if (body.includes('"kind":"control.stop_requested"')) throw new Error('stop intent disk full');
+    return rawAppend(file, body, encoding);
+  };
+  await assert.rejects(driver.coordinator.kill(handle.id, 'human'), (error) => error.code === 'coordination_write_unavailable');
+  assert.equal(adapterKills, 0);
+  assert.equal(driver.coordination.task('stop-write-failure').status, 'working');
+  assert.equal(driver.coordinator._workers.get(handle.id).status, 'working');
+  driver.coordination._appendFile = rawAppend;
+  await rawKill(handle.id);
+});
+
+test('CK8/CK9: cancellation completion failure resolves bounded, keeps stop intent, and restart closes task', async () => {
+  const repo = dir();
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
+  execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'base'], { cwd: repo });
+  const logDir = dir();
+  const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'slow.txt', content: 'x', delayMs: 5000 }] } });
+  const driver = createDriver({ repoRoot: repo, logDir, adapters: { mock: adapter }, watchdog: { stallMs: 0 } });
+  const brief = { goal: 'cancel completion crash', constraints: [], pathScope: ['slow.txt'], definitionOfDone: 'none', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } };
+  const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'cancel-completion-failure' });
+  const rawAppend = driver.coordination._appendFile;
+  driver.coordination._appendFile = (file, body, encoding) => {
+    if (body.includes('"task.transitioned"') && body.includes('"cancelled"')) throw new Error('cancel completion disk full');
+    return rawAppend(file, body, encoding);
+  };
+  const stopped = await driver.coordinator.kill(handle.id, 'human');
+  assert.deepEqual(stopped, { ok: false, result: 'coordination_unavailable' });
+  assert.equal(driver.coordination.task('cancel-completion-failure').status, 'working');
+  assert.equal(driver.coordination.events().some((event) => event.kind === 'driver.recorded' && event.payload.kind === 'control.stop_requested'), true);
+  assert.equal(driver.coordinator._workers.get(handle.id).status, 'dead');
+  assert.throws(() => driver.coordinator.list(), (error) => error.code === 'coordination_write_unavailable');
+  driver.coordination._appendFile = rawAppend;
+  const replay = createDriver({ repoRoot: repo, logDir, coordination: driver.coordination, adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 0 } });
+  assert.equal(replay.coordination.task('cancel-completion-failure').status, 'failed');
+});
+
 test('CK4: Scratch claims conservatively conflict, warn cross-tree, and expire only by event', () => {
   const root = dir();
   const store = new CoordinationStore(root);

@@ -149,6 +149,26 @@ test('PS2: a follow-up exception is a refused Ack and preserves the prior result
   assert.equal(c.list()[0].status, 'idle');
 });
 
+test('CK8/CK9: follow-up refinement failure kills an already-advanced native session', async () => {
+  const ad = adapter();
+  const { c, coordination } = harness(ad);
+  const h = await c.spawn('session', brief(), { taskId: 'follow-refinement-failure' });
+  ad.emit(h.id, 'lifecycle.turn_completed', completed('first'), 1);
+  await until(async () => (await c.result(h.id)).ready);
+  const rawAppend = coordination._appendFile;
+  coordination._appendFile = (file, body, encoding) => {
+    if (body.includes('"task.created"') && body.includes('refinement-')) throw new Error('follow-up refinement disk full');
+    return rawAppend(file, body, encoding);
+  };
+  await assert.rejects(c.send(h.id, 'advance native state', 'turn'), (error) => error.code === 'coordination_write_unavailable');
+  assert.equal(ad.calls.prompt.length, 1);
+  assert.equal(ad.calls.kill.length, 1);
+  assert.equal(c._workers.get(h.id).status, 'dead');
+  assert.equal(coordination.snapshot().tasks.length, 1);
+  assert.equal(coordination.snapshot().tasks[0].status, 'completed');
+  assert.equal(coordination.events().some((event) => event.kind === 'driver.recorded' && event.payload.kind === 'follow_up.requested'), true);
+});
+
 test('PS2: emitted turn facts followed by refusal are a protocol violation and kill the ambiguous session', async () => {
   let ad;
   ad = adapter({
@@ -411,6 +431,64 @@ test('PS7: replayed session is reattached only after bounded handshake proves th
   assert.equal(replay.list()[0].status, 'working');
   assert.equal(replay.list()[0].sessionRef.id, 'recover-native');
   assert.ok(log.read(h.id).some((event) => event.kind === 'control.recovery_attached'));
+});
+
+test('CK8/CK9: recovery intent append failure reaches no native adapter', async () => {
+  const wt = mkdtempSync(join(tmpdir(), 'baton-ps-recover-intent-wt-'));
+  const original = adapter();
+  const { c, log, coordination } = harness(original, undefined, { create: async () => ({ path: wt }) });
+  const h = await c.spawn('session', brief(), { taskId: 'recover-intent-task' });
+  await until(() => c.list()[0].sessionContext);
+  original.emit(h.id, 'lifecycle.spawned', { sessionId: 'intent-native', pid: 111 }, 1);
+  original.emit(h.id, 'lifecycle.turn_completed', completed(), 1);
+  await until(async () => (await c.result(h.id)).ready);
+
+  const resumed = adapter();
+  let spawnCalls = 0;
+  resumed.spawn = async () => { spawnCalls += 1; return { ok: true }; };
+  const replay = new Coordinator({
+    log, coordination, fences: new FenceTable(), adapters: { session: resumed },
+    worktrees: { validateSessionContext: async () => ({ ok: true }), remove: async () => {}, reconcile: async () => {} },
+    referee: async () => ({}), route: () => 'session', recoveryTimeoutMs: 100, stopDeadlineMs: 100,
+  });
+  const rawAppend = coordination._appendFile;
+  coordination._appendFile = (file, body, encoding) => {
+    if (body.includes('"kind":"recovery.requested"')) throw new Error('recovery intent disk full');
+    return rawAppend(file, body, encoding);
+  };
+  await assert.rejects(replay.recover(h.id), (error) => error.code === 'coordination_write_unavailable');
+  assert.equal(spawnCalls, 0);
+  assert.equal(replay._workers.get(h.id).status, 'orphaned');
+});
+
+test('CK8/CK9: recovery refinement failure kills a native transport that already attached', async () => {
+  const wt = mkdtempSync(join(tmpdir(), 'baton-ps-recover-refine-wt-'));
+  const original = adapter();
+  const { c, log, coordination } = harness(original, undefined, { create: async () => ({ path: wt }) });
+  const h = await c.spawn('session', brief(), { taskId: 'recover-refine-task' });
+  await until(() => c.list()[0].sessionContext);
+  original.emit(h.id, 'lifecycle.spawned', { sessionId: 'refine-native', pid: 111 }, 1);
+  original.emit(h.id, 'lifecycle.turn_completed', completed(), 1);
+  await until(async () => (await c.result(h.id)).ready);
+
+  const resumed = adapter();
+  resumed.spawn = async (worker) => {
+    resumed.emit(worker, 'lifecycle.spawned', { sessionId: 'refine-native', pid: 222 }, 1);
+    return { ok: true };
+  };
+  const replay = new Coordinator({
+    log, coordination, fences: new FenceTable(), adapters: { session: resumed },
+    worktrees: { validateSessionContext: async () => ({ ok: true }), remove: async () => {}, reconcile: async () => {} },
+    referee: async () => ({}), route: () => 'session', recoveryTimeoutMs: 100, stopDeadlineMs: 100,
+  });
+  const rawAppend = coordination._appendFile;
+  coordination._appendFile = (file, body, encoding) => {
+    if (body.includes('"task.created"') && body.includes('refinement-')) throw new Error('recovery refinement disk full');
+    return rawAppend(file, body, encoding);
+  };
+  await assert.rejects(replay.recover(h.id), (error) => error.code === 'coordination_write_unavailable');
+  await until(() => resumed.calls.kill.length === 1);
+  assert.equal(replay._workers.get(h.id).status, 'orphaned');
 });
 
 test('PS7: a reattachment identity mismatch is refused and the untrusted transport is killed', async () => {
