@@ -36,15 +36,20 @@ remaining CK8/CK9 authority and recursive gates remain active work.
   promote deterministically through named `knowledge.promoted` events.
 - Failed integration is no longer telemetry-only; it maps evidence and records an audited
   coordination refusal.
+- Every coordinator-facing coordination mutator now crosses one fail-closed wrapper. Storage or
+  integrity exceptions poison all subsequent public commands and abort live spawn admission;
+  typed semantic refusals remain ordinary refusals. Injected task-create failure publishes no
+  handle or task projection, while injected claim failure reaches neither adapter nor worktree and
+  leaves the durable task pending/unassigned for restart.
 
 Validation:
 
 ```text
 node --test impl/test/phase11-coordination-store.test.mjs
-23/23 passing
+25/25 passing
 
 cd impl && node --test
-526/526 passing
+544/544 passing
 ```
 
 The recursive exact-model Grok spec and implementation reviews passed every Baton lifecycle check.
@@ -58,8 +63,9 @@ fully reaped; the measured reruns were verified and integrated by Baton itself.
 
 Scratch participation is not yet automatically injected into every adapter worker as an ambient
 tool/notification channel; automatic scorecards and Scratch promotion candidates remain
-incomplete; and forced coordination-write failure has not yet been injected at every public state
-boundary. A second recursive provider review of
+incomplete; and although the central mutator boundary plus create/claim/trust failure windows are
+injected, dedicated input/resume/cancel/review/integration/publication crash-window cases remain.
+A second recursive provider review of
 these repairs, including concurrent Grok spawn/kill/reap evidence, is still required before CK9.
 
 The zero-quota concurrent Grok ACP boundary is now green: two distinct fake-wire child PIDs ran

@@ -43,6 +43,41 @@ test('CK1: append failure is fatal and leaves event/task projections unchanged',
   assert.deepEqual(store.snapshot(), { tasks: [], artifacts: [], evidence: [], scratch: { facts: [], claims: [], reads: [] }, knowledge: { nodes: [], edges: [], reads: [], contamination: [] }, lastSeq: 0 });
 });
 
+test('CK8/CK9: public spawn poisons before publishing any handle when task creation cannot append', async () => {
+  const repo = dir();
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  const coordination = new CoordinationStore(dir(), { appendFile: () => { throw new Error('coordination disk full'); } });
+  const driver = createDriver({ repoRoot: repo, logDir: dir(), coordination, adapters: { mock: new MockAdapter({ scenario: { outcome: 'completed' } }) }, watchdog: { stallMs: 0 } });
+  const brief = { goal: 'must not publish', constraints: [], pathScope: [], definitionOfDone: 'none', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1, usd: 1, wallMin: 1 } };
+  await assert.rejects(driver.coordinator.spawn('mock', brief, { taskId: 'create-write-failure' }), (error) => error.code === 'coordination_write_unavailable');
+  assert.deepEqual(coordination.snapshot().tasks, []);
+  assert.throws(() => driver.coordinator.list(), (error) => error.code === 'coordination_write_unavailable');
+});
+
+test('CK8/CK9: claim append failure poisons before adapter/worktree dispatch and replays pending', async () => {
+  const repo = dir();
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  const coordination = new CoordinationStore(dir(), {
+    appendFile: (file, body, encoding) => {
+      if (body.includes('"task.claimed"')) throw new Error('claim disk full');
+      appendFileSync(file, body, encoding);
+    },
+  });
+  const adapter = new MockAdapter({ scenario: { outcome: 'completed' } });
+  let worktrees = 0;
+  const coordinator = new Coordinator({
+    log: new Log(dir()), fences: new FenceTable(), adapters: { mock: adapter }, coordination,
+    worktrees: { create: async () => { worktrees += 1; return { path: dir() }; }, remove: async () => {}, reconcile: async () => {} },
+    referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'mock', watchdog: { stallMs: 0 },
+  });
+  const brief = { goal: 'stay pending', constraints: [], pathScope: [], definitionOfDone: 'none', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1, usd: 1, wallMin: 1 } };
+  await assert.rejects(coordinator.spawn('mock', brief, { taskId: 'claim-write-failure' }), (error) => error.code === 'coordination_write_unavailable');
+  assert.equal(coordination.task('claim-write-failure').status, 'pending');
+  assert.equal(coordination.task('claim-write-failure').assignee, null);
+  assert.equal(worktrees, 0);
+  assert.throws(() => coordinator.list(), (error) => error.code === 'coordination_write_unavailable');
+});
+
 test('CK1/CK9: operational append failure poisons the coordinator and restart closes the claimed task', async () => {
   const logRoot = dir();
   const coordination = new CoordinationStore(dir());

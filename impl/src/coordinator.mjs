@@ -83,6 +83,12 @@ export class DependencyCycleError extends Error {
 
 // SC13: cancellation is terminal too. No late spawn/delivery/turn continuation may revive it.
 const TERMINAL_TASK_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+const COORDINATION_MUTATORS = new Set([
+  'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent',
+  'recordDriver', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
+  'readScratch', 'expireScratchClaim', 'expireScratchFact', 'addKnowledgeNode', 'promoteKnowledgeNode',
+  'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination',
+]);
 
 function minimalBrief() {
   return { goal: '', constraints: [], pathScope: [], definitionOfDone: '', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 0, usd: 0, wallMin: 0 } };
@@ -259,7 +265,21 @@ export class Coordinator {
     this._adapters = opts.adapters;
     this._worktrees = opts.worktrees;
     this._runtimeScopes = opts.runtimeScopes ?? null;
-    this._coordination = opts.coordination;
+    const rawCoordination = opts.coordination;
+    this._coordination = new Proxy(rawCoordination, {
+      get: (target, property, receiver) => {
+        const value = Reflect.get(target, property, receiver);
+        if (typeof value !== 'function') return value;
+        const bound = value.bind(target);
+        if (!COORDINATION_MUTATORS.has(property)) return bound;
+        return (...args) => {
+          try { return bound(...args); } catch (err) {
+            if (err?.name === 'CoordinationRefusal' || err instanceof TypeError) throw err;
+            throw this._poisonCoordination(err);
+          }
+        };
+      },
+    });
     this._referee = opts.referee;
     this._route = opts.route;
     this._story = opts.story ?? null;
