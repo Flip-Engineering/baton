@@ -199,7 +199,7 @@ export class WebNorthbound {
     let value;
     if (envelope.command === 'spawn') {
       value = await this.coordinator.spawn(a.harness, a.brief, {
-        model: a.model, modelPolicy: a.modelPolicy, taskId: a.taskId ?? `web-${envelope.commandId}`,
+        model: a.model, effort: a.effort, modelPolicy: a.modelPolicy, taskId: a.taskId ?? `web-${envelope.commandId}`,
         deps: a.deps, taskType: a.taskType, session: a.session, refines: a.refines,
         actor: webActor, idempotencyKey: `web.command:${envelope.commandId}`,
       });

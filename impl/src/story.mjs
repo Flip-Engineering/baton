@@ -304,7 +304,7 @@ function applyEvent(state, event) {
   w.modelObserved = event.modelObserved ?? payload.modelObserved ?? payload.modelId ?? payload.model ?? w.modelObserved;
   w.effortRequested = event.effortRequested ?? payload.effortRequested ?? w.effortRequested;
   w.effortResolved = event.effortResolved ?? payload.effortResolved ?? w.effortResolved;
-  w.effortObserved = event.effortObserved ?? payload.effortObserved ?? payload.reasoningEffort ?? payload.effort ?? w.effortObserved;
+  w.effortObserved = event.effortObserved ?? payload.effortObserved ?? w.effortObserved;
   if (kind === 'model.mismatch') w.modelMismatch = payload;
 
   const isKnownKind = Object.values(KIND).includes(kind);

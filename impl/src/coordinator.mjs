@@ -691,6 +691,7 @@ export class Coordinator {
         id: taskId, brief: admittedBrief, deps, refines: opts.refines ?? null,
         taskType: opts.taskType ?? 'general', reservedWorkerId: workerId,
         vendorRequested: vendor, modelRequested: opts.model ?? null, modelPolicy,
+        effortRequested, effortResolved: null, effortObserved: null, routeKey: null,
         sessionRequest,
       }, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey ?? `task.created:${taskId}` });
       coordinationVersion = created.task.version;
@@ -779,7 +780,9 @@ export class Coordinator {
       const task = {
         id: durable.id, brief: durable.brief, deps: [...durable.deps],
         vendorRequested: durable.vendorRequested, modelRequested: durable.modelRequested,
-        modelResolved: null, modelObserved: null, modelPolicy: durable.modelPolicy,
+        modelResolved: durable.modelResolved ?? null, modelObserved: durable.modelObserved ?? null, modelPolicy: durable.modelPolicy,
+        effortRequested: durable.effortRequested ?? null, effortResolved: durable.effortResolved ?? null,
+        effortObserved: durable.effortObserved ?? null, routeKey: durable.routeKey ?? null,
         sessionRequest: durable.sessionRequest ?? Object.freeze({ mode: 'new' }),
         sessionContext: null, lineage: null, refines: durable.refines ?? null,
         status: durable.status, assignee: workerId, worktree: null, result: null, verdict: null,
@@ -792,6 +795,8 @@ export class Coordinator {
         id: workerId, vendor: durable.vendorRequested === 'auto' ? null : durable.vendorRequested,
         modelRequested: durable.modelRequested ?? null, modelResolved: null, modelObserved: null,
         modelPolicy: durable.modelPolicy ?? null, modelMismatch: null,
+        effortRequested: durable.effortRequested ?? null, effortResolved: durable.effortResolved ?? null,
+        effortObserved: durable.effortObserved ?? null, routeKey: durable.routeKey ?? null, effortMismatch: null,
         sessionRequest: task.sessionRequest, sessionContext: null, lineage: null,
         taskId: task.id, worktree: null,
         status: durable.status === 'pending' ? 'pending' : (TERMINAL_TASK_STATUSES.has(durable.status) ? 'idle' : 'orphaned'), pendingApprovalId: null,
@@ -2485,7 +2490,10 @@ export class Coordinator {
         this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
       }
     }
-    const observedEffort = payload?.effortObserved ?? payload?.reasoningEffort ?? payload?.effort;
+    // Only an adapter's explicitly mapped native lifecycle/usage observation is authoritative.
+    // In particular, worker result/content fields named `effort` are untrusted prose/data.
+    const observedEffort = (actor === 'worker' && (kind === 'lifecycle.spawned' || kind === 'resource.tokens'))
+      ? payload?.effortObserved : null;
     if (typeof observedEffort === 'string' && observedEffort.length > 0) {
       handle.effortObserved = observedEffort;
       const effortTask = this._tasks.get(handle.taskId);
@@ -2847,6 +2855,11 @@ export class Coordinator {
       let modelObserved = null;
       let modelPolicy = null;
       let modelMismatch = null;
+      let effortRequested = null;
+      let effortResolved = null;
+      let effortObserved = null;
+      let effortMismatch = null;
+      let routeKey = null;
       let sessionRequest = Object.freeze({ mode: 'new' });
       let sessionRef = null;
       let sessionContext = null;
@@ -2867,7 +2880,12 @@ export class Coordinator {
         modelRequested = e.modelRequested ?? modelRequested;
         modelResolved = e.modelResolved ?? modelResolved;
         modelObserved = e.modelObserved ?? modelObserved;
+        effortRequested = e.effortRequested ?? e.payload?.effortRequested ?? effortRequested;
+        effortResolved = e.effortResolved ?? e.payload?.effortResolved ?? effortResolved;
+        effortObserved = e.effortObserved ?? e.payload?.effortObserved ?? effortObserved;
+        routeKey = e.routeKey ?? e.payload?.routeKey ?? routeKey;
         if (e.kind === 'model.mismatch') modelMismatch = e.payload ?? modelMismatch;
+        if (e.kind === 'effort.mismatch') effortMismatch = e.payload ?? effortMismatch;
         switch (e.kind) {
           case 'lifecycle.spawned':
             taskId = e.payload?.taskId ?? taskId;
@@ -3056,6 +3074,11 @@ export class Coordinator {
           modelObserved,
           modelPolicy,
           modelMismatch,
+          effortRequested,
+          effortResolved,
+          effortObserved,
+          effortMismatch,
+          routeKey,
           sessionRequest,
           sessionRef,
           sessionContext,
@@ -3095,6 +3118,11 @@ export class Coordinator {
         modelObserved,
         modelPolicy,
         modelMismatch,
+        effortRequested,
+        effortResolved,
+        effortObserved,
+        effortMismatch,
+        routeKey,
         sessionRequest,
         sessionRef,
         sessionContext,

@@ -481,6 +481,7 @@ export class CodexAppServerCli {
       const threadParams = {
         cwd,
         model: session.modelRequested ?? undefined,
+        effort: session.reasoningEffort ?? undefined,
         sandbox: opts.sandbox ?? 'workspace-write',
         approvalPolicy: opts.approvalPolicy ?? 'never',
         serviceTier: session.serviceTier ?? undefined,
@@ -503,7 +504,7 @@ export class CodexAppServerCli {
     this._emit(session, 'lifecycle.spawned', {
       threadId: session.threadId, pid: child.pid,
       modelRequested: session.modelRequested, modelObserved: session.modelObserved,
-      reasoningEffort: session.reasoningEffort, serviceTier: session.serviceTier,
+      effortObserved: threadResult.effort ?? null, serviceTier: session.serviceTier,
     });
 
     let turnResult;
