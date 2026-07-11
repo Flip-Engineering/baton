@@ -38,14 +38,14 @@ const { coordinator, log } = createDriver({
   budgetPolicy: { terminalGraceMs: 2000 }, watchdog: { stallMs: 180000 },
 });
 const brief = createBrief({
-  goal: `Adversarially review current commit 1a99abb and the CK9 repairs since c8a272e against spec/phase11/coordination-knowledge.md and docs/26-full-system-goal.md. Inspect impl/src/coordinator.mjs, impl/src/coordination-store.mjs, and the focused phase11 tests. Write ${TARGET} with exact headings "## Verdict", "## Crash-window matrix", "## Remaining major findings", and "## Required next actions". Try to falsify pre-effect intent ordering, bounded post-effect ambiguity, restart closure, accepted question/approval single-consumer behavior, refinement abort/replay, the complete paired publication authority verifier, adapter/PID cleanup, integration Git safety, and claims that CK9 is green. Distinguish this deterministic gate from still-missing product features.`,
+  goal: `Adversarially review current commit 2fb8872 and the CK9 repairs since c8a272e against spec/phase11/coordination-knowledge.md and docs/26-full-system-goal.md. Inspect impl/src/coordinator.mjs, impl/src/coordination-store.mjs, and the focused phase11 tests. Write ${TARGET} with exact headings "## Verdict", "## Crash-window matrix", "## Remaining major findings", and "## Required next actions". Try to falsify pre-effect intent ordering, bounded post-effect ambiguity, restart closure, accepted question/approval single-consumer behavior, refinement abort/replay and runtime cleanup, complete paired integration/publication authority verification, post-merge Git safety, adapter/PID cleanup, and claims that CK9 is green. Distinguish this deterministic gate from still-missing product features.`,
   constraints: [
     `Edit only ${TARGET}.`,
     'Do not modify implementation, tests, specs, task state, or evidence files.',
     'Do not commit, push, deploy, or use network tools.',
     'Ground every finding in exact repository paths and classify critical, major, minor, or no finding.',
     'Keep the review under 1800 words; do not accept green tests as sufficient evidence.',
-    'Use at most 10 repository-read/tool calls. Once enough evidence is available, stop exploring and write the review.',
+    'Use at most 8 repository-read/tool calls. Once enough evidence is available, stop exploring and write the review.',
   ],
   pathScope: [TARGET],
   definitionOfDone: 'The four exact headings exist and the review explicitly evaluates CK9 crash windows',
@@ -53,7 +53,7 @@ const brief = createBrief({
     command: `test -s ${TARGET} && grep -q '^## Verdict$' ${TARGET} && grep -q '^## Crash-window matrix$' ${TARGET} && grep -q '^## Remaining major findings$' ${TARGET} && grep -q '^## Required next actions$' ${TARGET} && grep -q 'CK9' ${TARGET}`,
     expectExit: 0, timeoutMs: 10000,
   },
-  budget: { tokens: 300000, usd: 3, wallMin: 5 },
+  budget: { tokens: 400000, usd: 3, wallMin: 5 },
 });
 
 let workerId = null; let pid = null; let result = null; let integration = null; let fatal = null; let pumping = true;
@@ -68,9 +68,9 @@ async function inputPump() {
       const answer = worker.pendingApprovalId ? { decision: 'allow' } : { text: 'Proceed within the pinned review-only scope.' };
       approvals.push({ requestId, response: await coordinator.respond(requestId, answer, 'human') });
     }
-    if (workerId && !budgetSteer && log.read(workerId).filter((event) => event.kind === 'content.tool_call').length >= 8) {
+    if (workerId && !budgetSteer && log.read(workerId).filter((event) => event.kind === 'content.tool_call').length >= 6) {
       budgetSteer = await coordinator.send(workerId,
-        `Tool-count steer: eight repository calls are complete. Stop all further exploration now. Write ${TARGET} immediately from the evidence already collected, with the four exact required headings, then run only the pinned verification command.`,
+        `Tool-count steer: six repository calls are complete. Stop all further exploration now. Write ${TARGET} immediately from the evidence already collected, with the four exact required headings, then run only the pinned verification command.`,
         'steer', { actor: 'orchestrator' });
     }
     await sleep(100);
