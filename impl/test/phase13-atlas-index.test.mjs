@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -131,4 +131,23 @@ test('AT10/AT12: unknown epochs, ambiguous names, and missing symbols are typed 
   await assert.rejects(f.atlas.invoke('symbol.references', { indexEpoch: epoch, name: 'missing' }, { budgetTokens: 100 }), (error) => error.code === 'symbol_not_found');
   await assert.rejects(f.atlas.invoke('search.lexical', { indexEpoch: '0'.repeat(64), query: 'x' }, { budgetTokens: 100 }), (error) => error.code === 'unknown_epoch');
   await assert.rejects(f.atlas.invoke('unknown', {}, { budgetTokens: 100 }), (error) => error.code === 'unsupported_op');
+});
+
+test('AT9/AT14: tampered index/result artifacts and pathological result volume fail closed', async () => {
+  const f = fixture(); const built = await build(f); const epoch = built.provenance.index_epoch;
+  const indexPath = built.refs.find((ref) => ref.kind === 'atlas_index').path;
+  const index = JSON.parse(readFileSync(indexPath, 'utf8'));
+  index.files[0].definitions.push({ symbol: 'forged', name: 'forged', kind: 'function', path: index.files[0].path });
+  writeFileSync(indexPath, `${JSON.stringify(index)}\n`);
+  await assert.rejects(f.atlas.invoke('symbol.search', { indexEpoch: epoch, query: 'greet' }, { budgetTokens: 100 }), (error) => error.code === 'index_integrity');
+
+  const clean = fixture(); const cleanEpoch = (await build(clean)).provenance.index_epoch;
+  const bounded = new AtlasCodeIndex({ artifactRoot: dir('atlas-small-results'), maxResults: 1 });
+  const boundedBuild = await bounded.invoke('index.build', {}, { baseRoot: clean.base, budgetTokens: 1000 });
+  await assert.rejects(bounded.invoke('search.lexical', { indexEpoch: boundedBuild.provenance.index_epoch, query: 'greet' }, { budgetTokens: 100 }), (error) => error.code === 'result_too_large');
+
+  const result = await clean.atlas.invoke('search.lexical', { indexEpoch: cleanEpoch, query: 'greet' }, { budgetTokens: 1 });
+  const resultPath = result.refs[0].path; writeFileSync(resultPath, `${readFileSync(resultPath, 'utf8')} `);
+  await assert.rejects(clean.atlas.resume(result.refs[0], result.cursor, { budgetTokens: 100 }), (error) => error.code === 'result_integrity');
+  assert.ok(readdirSync(join(clean.artifacts, 'indexes')).length > 0);
 });

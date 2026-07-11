@@ -29,21 +29,25 @@ retrieval, structural rewrite, CPG/dataflow, IR, behavioral analysis, or semanti
 - All result payloads are token-bounded, complete results are immutable artifacts, cursors resume
   from matching artifact handles, operations emit audit events, cancellation is checked during
   walks, and deterministic claims can be reverified by artifact digest.
+- Epochs commit to the complete derived projection, not only source inputs. Load and resume verify
+  artifact filename digests, extractor/schema, epoch projection, and handle/cursor identity;
+  tampered artifacts and pathological result volume fail typed without returning content.
 
 ## Validation
 
 ```text
 node --test impl/test/phase13-atlas-index.test.mjs
-8/8 passing
+9/9 passing
 
 cd impl && node --test
-575/575 passing
+576/576 passing
 ```
 
 The focused suite covers deterministic epoch/artifact reuse; overlay replacement/addition/deletion
 without base mutation; base-snapshot versus overlay staleness; lexical, symbol, reference, call,
 repo-map, and seed results; SCIP artifact shape/ranges/roles; bounded/resumed results; cancellation;
-symlink exclusion; file ceilings; ambiguity; unknown epochs; and exact rerun verification.
+symlink exclusion; file/result ceilings; ambiguity; unknown epochs; tamper refusal; and exact rerun
+verification.
 
 ## Live Baton self-index
 
@@ -52,16 +56,16 @@ held in a temporary external directory:
 
 ```json
 {
-  "index_epoch": "4934131a2f3d3a044a5070a9eac048a5e28a0cb51b9e07ebeee3df353144d162",
-  "indexed_files": 74,
-  "index_digest": "0ffa3146ed0be6a10d728db54ed96de3bb0de61461fff9a0b37f44984165abcd",
+  "index_epoch": "c7b19cc47875396676a011c80524c3655cb527b690b8d85f1a00d27b2a8602d6",
+  "indexed_files": 75,
+  "index_digest": "bf1468b21c16d9ea26f589b792d27a5fdc9d499480be7934cb5417e31c9f377f",
   "exact_symbol": "scip-baton npm workspace 0 impl%2Fsrc%2Fatlas-index.mjs/AtlasCodeIndex%23",
-  "reference_count": 4,
+  "reference_count": 5,
   "reference_paths": ["impl/src/atlas-index.mjs", "impl/src/index.mjs", "impl/test/phase13-atlas-index.test.mjs"],
-  "seed_files": ["impl/test/phase13-atlas-index.test.mjs", "impl/src/atlas-index.mjs", "impl/test/phase13-atlas-structural.test.mjs", "impl/src/atlas-structural.mjs", "impl/src/index.mjs"],
+  "seed_files": ["impl/src/atlas-index.mjs", "impl/test/phase13-atlas-index.test.mjs", "impl/test/phase13-atlas-structural.test.mjs", "impl/src/atlas-structural.mjs", "docs/reference/evidence/phase13-atlas-index-codex-review-2026-07-11/run.mjs"],
   "scip_inline_documents": 35,
-  "scip_total_documents": 74,
-  "scip_digest": "fe4481411c4042afd485e1900a606f7dea03d592a3e59542acb7b1332a4c850f"
+  "scip_total_documents": 75,
+  "scip_digest": "31a772c588df76e94ae845d561ac3cd76a94ad0eae54f7ea80768988b56a4b8f"
 }
 ```
 
@@ -76,3 +80,6 @@ held in a temporary external directory:
   behavioral fingerprints, semantic merge, and later representation-rung evaluation gates.
 - Coordinator policy that injects/retracts Atlas views in worker context and promotes selected
   repository-map findings into the shared knowledge graph.
+- The first exact-model recursive Atlas review was blocked by provider quota before reading source;
+  its failure exposed and closed a control-plane turn-crash/process-reap defect. A fresh Atlas
+  semantic review remains pending quota reset, with no fallback model substituted.

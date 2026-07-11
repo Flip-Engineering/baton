@@ -8,9 +8,10 @@ live LSP control, CPG/dataflow, or semantic merge.
 
 `index.build` walks a confined base root deterministically, ignores symlinks and generated control
 directories, parses only the declared language set, and writes one content-addressed index artifact.
-The epoch is derived from ordered path/content digests plus the extractor version. Callers select an
-epoch explicitly; Atlas has no hidden mutable "current" index. Rebuilding identical content returns
-the identical epoch and artifact.
+The epoch commits to the extractor version and complete deterministic file/symbol/reference/call
+projection, which itself carries ordered path/content digests. Artifact filename digest and epoch
+projection are both rechecked on load. Callers select an epoch explicitly; Atlas has no hidden
+mutable "current" index. Rebuilding identical content returns the identical epoch and artifact.
 
 ## AT10 — per-worktree overlay reconciliation
 
@@ -55,8 +56,8 @@ compares the primary artifact digest.
 ## AT15 — confinement and honest limits
 
 Roots are realpath-confined. Symlinks, binaries, oversized sources, unsupported extensions, and
-ignored `.git`, `.baton`, and `node_modules` content never enter the index. Maximum file count and
-source bytes are explicit constructor policy. The capability card declares `snapshot+overlay`, exact
+ignored `.git`, `.baton`, and `node_modules` content never enter the index. Maximum file count,
+source bytes, and query-result volume are explicit constructor policy. The capability card declares `snapshot+overlay`, exact
 parser version, supported operations/languages, recomputed-overlay cost, and missing live-LSP,
 semantic, CPG, IR, and semantic-merge rungs.
 
@@ -65,4 +66,5 @@ semantic, CPG, IR, and semantic-merge rungs.
 Focused tests prove deterministic epoch reuse; lexical/symbol/reference/call results; dirty overlay
 replacement/addition/deletion without base mutation; staleness provenance; bounded full artifacts;
 SCIP JSON shape/ranges/roles; repo-map and code-seed orientation; cancellation/confinement; and
-reverification. Full-suite non-regression is required before the gate is green.
+reverification. Tampered index/result artifacts and pathological result volume fail typed before
+content returns. Full-suite non-regression is required before the gate is green.

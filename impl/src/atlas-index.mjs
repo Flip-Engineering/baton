@@ -150,9 +150,12 @@ function resolveGraph(files) {
 }
 
 function baseRecord(files) {
-  const inputs = files.map((file) => ({ path: file.path, digest: file.digest }));
-  const epoch = sha(stable({ extractor: EXTRACTOR_VERSION, inputs }));
-  return { schemaVersion: 1, extractor: EXTRACTOR_VERSION, epoch, files: resolveGraph(files), inputs };
+  const resolved = resolveGraph(files);
+  const inputs = resolved.map((file) => ({ path: file.path, digest: file.digest }));
+  // The epoch commits to derived symbols/occurrences/calls as well as source inputs. A valid JSON
+  // file cannot preserve an epoch while silently changing the index projection.
+  const epoch = sha(stable({ extractor: EXTRACTOR_VERSION, files: resolved }));
+  return { schemaVersion: 1, extractor: EXTRACTOR_VERSION, epoch, files: resolved, inputs };
 }
 function overlay(base, worktreeRoot, opts, ctx) {
   if (!worktreeRoot) return { files: structuredClone(base.files), applied: false, digest: null, changed: [], added: [], deleted: [] };
@@ -181,6 +184,7 @@ export class AtlasCodeIndex {
     this.artifactRoot = opts.artifactRoot;
     this.indexRoot = join(opts.artifactRoot, 'indexes'); this.resultRoot = join(opts.artifactRoot, 'results');
     this.maxSourceBytes = opts.maxSourceBytes ?? 2 * 1024 * 1024; this.maxFiles = opts.maxFiles ?? 20000;
+    this.maxResults = opts.maxResults ?? 100000;
     this.now = opts.now ?? Date.now; this.record = opts.record ?? null;
     mkdirSync(this.indexRoot, { recursive: true, mode: 0o700 }); mkdirSync(this.resultRoot, { recursive: true, mode: 0o700 });
   }
@@ -199,7 +203,7 @@ export class AtlasCodeIndex {
       },
       languages: [...new Set(Object.values(LANGUAGE).map(([name]) => name))], shared_state: { code_index: 'snapshot+overlay' },
       sandbox_required: 'read_only_worktree', cost_model: 'cpu_bound_local',
-      limitations: ['overlay recomputed per query', 'SCIP JSON interchange only; no live LSP/protobuf', 'no semantic retrieval', 'no CPG/IR/semantic merge'],
+      limitations: [`overlay recomputed per query`, `hard result ceiling ${this.maxResults}`, 'SCIP JSON interchange only; no live LSP/protobuf', 'no semantic retrieval', 'no CPG/IR/semantic merge'],
     });
   }
   _write(root, value) {
@@ -209,12 +213,22 @@ export class AtlasCodeIndex {
   }
   _load(epoch) {
     if (typeof epoch !== 'string' || !/^[a-f0-9]{64}$/.test(epoch)) throw typed('valid Atlas indexEpoch required', 'invalid_epoch');
-    const matches = readdirSync(this.indexRoot).filter((name) => name.endsWith('.json'));
+    const matches = readdirSync(this.indexRoot).filter((name) => name.endsWith('.json')).sort();
+    let found = null;
     for (const name of matches) {
-      const value = JSON.parse(readFileSync(join(this.indexRoot, name), 'utf8'));
-      if (value.epoch === epoch) return value;
+      const raw = readFileSync(join(this.indexRoot, name), 'utf8');
+      let value;
+      try { value = JSON.parse(raw); } catch { continue; }
+      if (value.epoch !== epoch) continue;
+      if (found) throw typed(`multiple Atlas artifacts claim epoch ${epoch}`, 'index_integrity');
+      if (sha(raw) !== name.slice(0, -'.json'.length)) throw typed('Atlas index artifact digest mismatch', 'index_integrity');
+      if (value.schemaVersion !== 1 || value.extractor !== EXTRACTOR_VERSION || !Array.isArray(value.files)) throw typed('Atlas index schema/extractor mismatch', 'index_integrity');
+      const observedEpoch = sha(stable({ extractor: value.extractor, files: value.files }));
+      if (observedEpoch !== epoch) throw typed('Atlas index epoch projection mismatch', 'index_integrity');
+      found = value;
     }
-    throw typed(`unknown Atlas epoch ${epoch}`, 'unknown_epoch');
+    if (!found) throw typed(`unknown Atlas epoch ${epoch}`, 'unknown_epoch');
+    return found;
   }
   _result(op, full, ctx, started, provenance, kind = 'atlas_results', extraRefs = []) {
     const complete = { ...full, op, provenance };
@@ -292,6 +306,7 @@ export class AtlasCodeIndex {
       summary = `SCIP JSON interchange for ${documents.length} documents`; resultKind = 'scip_export_results';
     }
     checkAbort(ctx);
+    if (items.length > this.maxResults) throw typed(`Atlas result ceiling ${this.maxResults} exceeded`, 'result_too_large');
     return this._result(op, { schemaVersion: 1, summary, items }, ctx, started, provenance, resultKind, extraRefs);
   }
   async reverify(claim, op, args, ctx) {
@@ -305,10 +320,12 @@ export class AtlasCodeIndex {
     if (!match || requested !== `art:sha256:${match[1]}`) throw typed('cursor and artifact handle do not match', 'invalid_cursor');
     const path = join(this.resultRoot, `${match[1]}.json`);
     if (!existsSync(path)) throw typed('Atlas result artifact is unavailable', 'unknown_cursor');
-    const full = JSON.parse(readFileSync(path, 'utf8')); const offset = Number(match[2]);
+    const raw = readFileSync(path, 'utf8');
+    if (sha(raw) !== match[1]) throw typed('Atlas result artifact digest mismatch', 'result_integrity');
+    const full = JSON.parse(raw); const offset = Number(match[2]);
     if (!Array.isArray(full.items) || offset < 0 || offset > full.items.length) throw typed('Atlas cursor offset is invalid', 'invalid_cursor');
     const payload = budgetPayload(full.items.slice(offset), ctx.budgetTokens); const next = offset + payload.length;
-    const truncated = next < full.items.length; const bytes = Buffer.byteLength(readFileSync(path));
+    const truncated = next < full.items.length; const bytes = Buffer.byteLength(raw);
     return Object.freeze({
       op: full.op, status: truncated ? 'needs_resume' : 'ok', summary: full.summary, payload,
       refs: [{ handle: requested, kind: 'atlas_results', digest: match[1], bytes, mediaType: 'application/vnd.baton.atlas-index+json', path }],
