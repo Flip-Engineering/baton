@@ -126,6 +126,9 @@ function newWorkerStory(workerId, harness, spawnedAtSeq) {
     modelRequested: null,
     modelResolved: null,
     modelObserved: null,
+    effortRequested: null,
+    effortResolved: null,
+    effortObserved: null,
     modelMismatch: null,
     lastVerdict: null, // SC5c: {accept:boolean} once verify.reverified folds in
     crashed: false, // SC17: lifecycle fact, never inferred from unrelated warning signals
@@ -299,6 +302,9 @@ function applyEvent(state, event) {
   w.modelRequested = event.modelRequested ?? payload.modelRequested ?? w.modelRequested;
   w.modelResolved = event.modelResolved ?? payload.modelResolved ?? w.modelResolved;
   w.modelObserved = event.modelObserved ?? payload.modelObserved ?? payload.modelId ?? payload.model ?? w.modelObserved;
+  w.effortRequested = event.effortRequested ?? payload.effortRequested ?? w.effortRequested;
+  w.effortResolved = event.effortResolved ?? payload.effortResolved ?? w.effortResolved;
+  w.effortObserved = event.effortObserved ?? payload.effortObserved ?? payload.reasoningEffort ?? payload.effort ?? w.effortObserved;
   if (kind === 'model.mismatch') w.modelMismatch = payload;
 
   const isKnownKind = Object.values(KIND).includes(kind);

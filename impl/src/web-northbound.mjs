@@ -9,7 +9,7 @@ const COMMAND_CAPABILITY = Object.freeze({
 const FENCE_REQUIRED = new Set(['send', 'interrupt', 'kill']);
 const TOP_LEVEL = new Set(['schemaVersion', 'commandId', 'idempotencyKey', 'command', 'args', 'repoId', 'runId', 'expectedFence', 'origin', 'clientObservedCursor']);
 const ARG_FIELDS = Object.freeze({
-  spawn: new Set(['harness', 'model', 'modelPolicy', 'brief', 'taskId', 'deps', 'taskType', 'session', 'refines']),
+  spawn: new Set(['harness', 'model', 'effort', 'modelPolicy', 'brief', 'taskId', 'deps', 'taskType', 'session', 'refines']),
   send: new Set(['workerId', 'message', 'mode']),
   interrupt: new Set(['workerId', 'then']),
   kill: new Set(['workerId']),
@@ -62,6 +62,7 @@ function validateEnvelope(envelope) {
   if (envelope.command === 'spawn') {
     if (!string(envelope.args.harness) || !isRecord(envelope.args.brief)) return 'spawn requires harness and brief';
     if (Object.hasOwn(envelope.args, 'model') && !string(envelope.args.model)) return 'model must be a non-empty string';
+    if (Object.hasOwn(envelope.args, 'effort') && !string(envelope.args.effort)) return 'effort must be a non-empty string';
     if (Object.hasOwn(envelope.args, 'modelPolicy') && !isRecord(envelope.args.modelPolicy)) return 'modelPolicy must be an object';
     if (isRecord(envelope.args.modelPolicy)) {
       const unknownPolicy = Object.keys(envelope.args.modelPolicy).find((key) => !MODEL_POLICY_FIELDS.has(key));

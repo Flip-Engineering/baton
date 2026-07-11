@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import { Cursor } from './log.mjs';
 import { createBrief, createDigest, wrapFact, wrapProse } from './messages.mjs';
+import { resolveEffort, routeTupleKey } from './route-tuple.mjs';
 
 // ---------------------------------------------------------------------------
 // Error taxonomy (thrown, not returned) — programmer-error / precondition failures.
@@ -119,7 +120,8 @@ function pathInScope(scopes, path) {
   return scopes.some((scope) => scope === '**' || scope === '.' || scope === './' || globRegex(scope).test(path));
 }
 
-function normalizeModelPolicy(model, policy) {
+function normalizeModelPolicy(model, policy, effort) {
+  if (effort !== undefined && (typeof effort !== 'string' || effort.length === 0)) throw new ModelSelectionError('effort must be a non-empty exact identifier', 'invalid_effort');
   if (model !== undefined && (typeof model !== 'string' || model.length === 0)) {
     throw new ModelSelectionError('model must be a non-empty exact identifier', 'invalid_model');
   }
@@ -147,6 +149,7 @@ function normalizeModelPolicy(model, policy) {
   if (model !== undefined && normalized.deny?.includes(model)) {
     throw new ModelSelectionError(`exact model "${model}" is excluded by modelPolicy.deny`, 'model_policy_conflict');
   }
+  if (effort !== undefined && normalized.reasoningEffort !== undefined && effort !== normalized.reasoningEffort) throw new ModelSelectionError('effort conflicts with modelPolicy.reasoningEffort', 'effort_policy_conflict');
   return Object.freeze(normalized);
 }
 
@@ -407,7 +410,7 @@ export class Coordinator {
       if (!vendor || !this._adapters[vendor]) continue;
       const card = this._adapters[vendor].card();
       if (this._inFlightCount(vendor) >= card.concurrencyCeiling) continue;
-      this._dispatch(task, vendor, selection.model);
+      this._dispatch(task, vendor, selection.model, selection.effort);
     }
   }
 
@@ -430,7 +433,8 @@ export class Coordinator {
       const vendor = task.vendorRequested;
       if (!cardSupportsSession(this._adapters[vendor]?.card(), task.sessionRequest)) return null;
       const resolved = resolveCardModel(this._adapters[vendor]?.card(), task.modelRequested, task.modelPolicy, { explicit: true });
-      return resolved.ok ? { vendor, model: resolved.model } : null;
+      const effort = resolveEffort(this._adapters[vendor]?.card(), task.effortRequested);
+      return resolved.ok && effort.ok ? { vendor, model: resolved.model, effort: effort.effort } : null;
     }
     const cards = {};
     const resolvedModels = {};
@@ -438,19 +442,21 @@ export class Coordinator {
       const card = ad.card();
       if (!cardSupportsSession(card, task.sessionRequest)) continue;
       const resolved = resolveCardModel(card, task.modelRequested, task.modelPolicy, { explicit: false });
-      if (resolved.ok) {
+      const effort = resolveEffort(card, task.effortRequested);
+      if (resolved.ok && effort.ok) {
         cards[name] = {
           ...card,
-          modelSelection: { ...(card.modelSelection ?? {}), resolved: resolved.model ?? null },
+          modelSelection: { ...(card.modelSelection ?? {}), resolved: resolved.model ?? null, resolvedEffort: effort.effort ?? null },
         };
         resolvedModels[name] = resolved.model;
+        cards[name]._resolvedEffort = effort.effort;
       }
     }
     const inFlight = {};
     for (const name of Object.keys(this._adapters)) inFlight[name] = this._inFlightCount(name);
     const chosen = this._route(task, cards, inFlight);
     if (!chosen || !this._adapters[chosen] || !Object.hasOwn(resolvedModels, chosen)) return null;
-    return { vendor: chosen, model: resolvedModels[chosen] };
+    return { vendor: chosen, model: resolvedModels[chosen], effort: cards[chosen]._resolvedEffort ?? null };
   }
 
   _inFlightCount(vendor) {
@@ -466,7 +472,7 @@ export class Coordinator {
     return card ? `${card.harness}@${card.version}` : '';
   }
 
-  _dispatch(task, vendor, model) {
+  _dispatch(task, vendor, model, effort) {
     const handle = this._workers.get(task.assignee);
     const workerId = handle.id;
     if (this._coordination) {
@@ -479,6 +485,10 @@ export class Coordinator {
     handle.vendor = vendor;
     handle.modelResolved = model ?? null;
     task.modelResolved = model ?? null;
+    handle.effortResolved = effort ?? null;
+    task.effortResolved = effort ?? null;
+    task.routeKey = routeTupleKey(this._adapters[vendor]?.card(), task.modelResolved, task.effortResolved, task.taskType);
+    handle.routeKey = task.routeKey;
     const harness = this._harnessOf(vendor);
     let runtime;
     try {
@@ -567,7 +577,7 @@ export class Coordinator {
       timeoutMs: wallMin ? wallMin * 60000 : undefined,
       signal: spawnAbort.signal,
       model: task.modelResolved ?? undefined,
-      reasoningEffort: task.modelPolicy?.reasoningEffort,
+      reasoningEffort: task.effortResolved ?? undefined,
       serviceTier: task.modelPolicy?.serviceTier,
       session: task.sessionRequest?.mode === 'new' ? undefined : task.sessionRequest,
       env: runtime?.env,
@@ -628,7 +638,8 @@ export class Coordinator {
     // CI1: admission is the pinning boundary. Never retain caller-owned mutable state and never
     // allow a malformed raw object to become a task merely because the caller skipped createBrief.
     const admittedBrief = createBrief(brief);
-    const modelPolicy = normalizeModelPolicy(opts.model, opts.modelPolicy);
+    const modelPolicy = normalizeModelPolicy(opts.model, opts.modelPolicy, opts.effort);
+    const effortRequested = opts.effort ?? modelPolicy?.reasoningEffort ?? null;
     let sessionRequest = normalizeSessionRequest(opts.session);
 
     const taskId = opts.taskId ?? this._autoTaskId();
@@ -638,12 +649,14 @@ export class Coordinator {
       throw new SessionSelectionError(`harness "${vendor}" does not support session mode "${sessionRequest.mode}"`);
     }
     if (vendor !== 'auto') {
+      const effort = resolveEffort(this._adapters[vendor].card(), effortRequested);
+      if (!effort.ok) throw new ModelSelectionError(`harness "${vendor}" cannot honor effort "${effortRequested}"`, effort.reason);
       const resolved = resolveCardModel(this._adapters[vendor].card(), opts.model, modelPolicy, { explicit: true });
       if (!resolved.ok) {
         throw new ModelSelectionError(`harness "${vendor}" cannot honor model "${opts.model ?? '(policy)'}"`, resolved.reason);
       }
-    } else if (opts.model !== undefined || modelPolicy) {
-      const anyCapable = Object.values(this._adapters).some((ad) => resolveCardModel(ad.card(), opts.model, modelPolicy, { explicit: false }).ok);
+    } else if (opts.model !== undefined || modelPolicy || effortRequested) {
+      const anyCapable = Object.values(this._adapters).some((ad) => resolveCardModel(ad.card(), opts.model, modelPolicy, { explicit: false }).ok && resolveEffort(ad.card(), effortRequested).ok);
       if (!anyCapable) throw new ModelSelectionError(`no harness can honor model "${opts.model ?? '(policy)'}"`, 'model_unavailable');
     }
     if (vendor === 'auto' && sessionRequest.mode !== 'new') {
@@ -690,6 +703,9 @@ export class Coordinator {
       modelRequested: opts.model,
       modelResolved: null,
       modelObserved: null,
+      effortRequested,
+      effortResolved: null,
+      effortObserved: null,
       modelPolicy,
       sessionRequest,
       sessionContext: sessionRequest.mode === 'resume' ? sessionRequest.context : null,
@@ -721,6 +737,9 @@ export class Coordinator {
       modelRequested: opts.model ?? null,
       modelResolved: null,
       modelObserved: null,
+      effortRequested,
+      effortResolved: null,
+      effortObserved: null,
       modelPolicy,
       sessionRequest,
       sessionContext: task.sessionContext,
@@ -1196,6 +1215,12 @@ export class Coordinator {
       modelRequested: handle.modelRequested ?? null,
       modelResolved: handle.modelResolved ?? null,
       modelObserved: handle.modelObserved ?? null,
+      harnessRequested: this._tasks.get(handle.taskId)?.vendorRequested ?? null,
+      harnessResolved: handle.vendor ? this._harnessOf(handle.vendor) : null,
+      effortRequested: handle.effortRequested ?? null,
+      effortResolved: handle.effortResolved ?? null,
+      effortObserved: handle.effortObserved ?? null,
+      routeKey: handle.routeKey ?? null,
       modelMismatch: handle.modelMismatch ?? null,
       modelPolicy: handle.modelPolicy ?? null,
       sessionRequest: handle.sessionRequest ?? { mode: 'new' },
@@ -1694,6 +1719,12 @@ export class Coordinator {
       modelRequested: handle.modelRequested ?? null,
       modelResolved: handle.modelResolved ?? null,
       modelObserved: handle.modelObserved ?? null,
+      harnessRequested: task?.vendorRequested ?? null,
+      harnessResolved: handle.vendor ? this._harnessOf(handle.vendor) : null,
+      effortRequested: handle.effortRequested ?? null,
+      effortResolved: handle.effortResolved ?? null,
+      effortObserved: handle.effortObserved ?? null,
+      routeKey: handle.routeKey ?? task?.routeKey ?? null,
     });
     const tokenLimit = Number(task?.brief?.budget?.tokens ?? 0);
     const usdLimit = Number(task?.brief?.budget?.usd ?? 0);
@@ -2454,10 +2485,31 @@ export class Coordinator {
         this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
       }
     }
+    const observedEffort = payload?.effortObserved ?? payload?.reasoningEffort ?? payload?.effort;
+    if (typeof observedEffort === 'string' && observedEffort.length > 0) {
+      handle.effortObserved = observedEffort;
+      const effortTask = this._tasks.get(handle.taskId);
+      if (effortTask) effortTask.effortObserved = observedEffort;
+      if (handle.effortResolved && observedEffort !== handle.effortResolved && !handle.effortMismatch) {
+        handle.effortMismatch = { requested: handle.effortResolved, observed: observedEffort };
+        const mismatchEvent = this._log.append({ worker: workerId, harness, turnEpoch, kind: 'effort.mismatch', actor: 'policy',
+          effortRequested: handle.effortRequested, effortResolved: handle.effortResolved, effortObserved: observedEffort,
+          payload: { requested: handle.effortResolved, observed: observedEffort, action: 'fail_and_kill' } });
+        if (effortTask && !TERMINAL_TASK_STATUSES.has(effortTask.status)) {
+          const evidence = this._coordMapEvent(mismatchEvent);
+          this._coordTransition(effortTask, 'failed', `task.failed:${effortTask.id}:${mismatchEvent.seq}`, evidence);
+          effortTask.status = 'failed';
+        }
+        this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+      }
+    }
     const attribution = {
       modelRequested: handle.modelRequested ?? null,
       modelResolved: handle.modelResolved ?? null,
       modelObserved: handle.modelObserved ?? null,
+      effortRequested: handle.effortRequested ?? null,
+      effortResolved: handle.effortResolved ?? null,
+      effortObserved: handle.effortObserved ?? null,
     };
     const appendAttributed = (partial) => this._log.append({ ...partial, ...attribution });
 
@@ -2608,6 +2660,7 @@ export class Coordinator {
       const captured = await this._worktrees.capture(handle.worktree ?? task.worktree, {
         vendor: handle.vendor,
         model: handle.modelObserved ?? handle.modelResolved,
+        ...((handle.effortObserved ?? handle.effortResolved) ? { effort: handle.effortObserved ?? handle.effortResolved } : {}),
       });
       const sha = captured && captured.sha;
       const created = await this._worktrees.createVerifyWorktree(task.id, sha);
@@ -2729,7 +2782,7 @@ export class Coordinator {
       if (this._route && typeof this._route.record === 'function') {
         const card = this._adapters[handle.vendor]?.card();
         try {
-          this._route.record(modelRouteKey(card, handle.modelObserved ?? handle.modelResolved), task.taskType ?? 'general', accept);
+          this._route.record(task.routeKey ?? routeTupleKey(card, handle.modelResolved, handle.effortResolved, task.taskType), task.taskType ?? 'general', accept);
         } catch {
           // never let a broken router affect coordinator correctness
         }

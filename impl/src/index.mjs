@@ -17,6 +17,7 @@ import { AdaptiveRouter } from './router.mjs';
 import { StoryCompiler } from './story.mjs';
 import { RuntimeIsolation } from './runtime-isolation.mjs';
 import { CoordinationStore } from './coordination-store.mjs';
+import { routeTupleKey } from './route-tuple.mjs';
 
 export { Coordinator, ModelSelectionError, SessionSelectionError, IntegrationError, ReviewSelectionError, PublicationError } from './coordinator.mjs';
 export { MockAdapter, CodexAdapter, ClaudeAdapter, GlmAdapter } from './adapter.mjs';
@@ -44,7 +45,7 @@ function worktreeManager(repoRoot, opts = {}) {
       return { path: r.dir, branch: r.branch, baseSha: r.baseSha };
     },
     async capture(worktreePath, opts = {}) {
-      return worktreeMod.captureCommit(repoRoot, basename(worktreePath), { vendor: opts.vendor, model: opts.model });
+      return worktreeMod.captureCommit(repoRoot, basename(worktreePath), { vendor: opts.vendor, model: opts.model, effort: opts.effort });
     },
     async createVerifyWorktree(taskId, sha) {
       const r = await worktreeMod.freshVerifySandbox(repoRoot, taskId, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [] });
@@ -152,8 +153,7 @@ export function createDriver(opts) {
     const capable = feasible.filter((v) => Array.isArray(cards[v].nonRefuserFor) && cards[v].nonRefuserFor.includes(task.taskType));
     if (capable.length > 0) feasible = capable;
     const candidateKey = (v) => {
-      const base = `${cards[v].harness}@${cards[v].version}`;
-      return cards[v].modelSelection?.resolved ? `${base}#${cards[v].modelSelection.resolved}` : base;
+      return routeTupleKey(cards[v], cards[v].modelSelection?.resolved, cards[v].modelSelection?.resolvedEffort, task.taskType);
     };
     const candidates = feasible.map((v) => ({
       modelVersion: candidateKey(v),

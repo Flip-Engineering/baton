@@ -217,6 +217,7 @@ export async function captureCommit(repoRoot, taskId, opts = {}) {
     const trailerLines = [`Baton-Task: ${taskId}`];
     if (vendor) trailerLines.push(`Baton-Vendor: ${vendor}`);
     if (opts.model) trailerLines.push(`Baton-Model: ${opts.model}`);
+    if (opts.effort) trailerLines.push(`Baton-Effort: ${opts.effort}`);
     const message = `baton snapshot: ${taskId}\n\n${trailerLines.join('\n')}\n`;
     sh('git', ['commit', '-q', '-m', message, `--author=${authorName} <${authorEmail}>`], dir);
     snapshotted = true;

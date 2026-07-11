@@ -271,7 +271,7 @@ test('MS5: model attribution reaches verification, router learning, and terminal
   assert.equal(verified.modelResolved, 'stub-exact');
   assert.equal(verified.modelObserved, 'stub-exact');
   assert.equal(verified.payload.capture.model, 'stub-exact');
-  assert.equal(routeRecords[0][0], 'stub@1#stub-exact');
+  assert.equal(routeRecords[0][0], '["stub","1","stub-exact","default","stub","review"]');
 
   const replayed = build(stubAdapter('stub', { default: 'stub-default', available: ['stub-exact'], family: 'stub' }));
   const result = await replayed.result(h.id);
