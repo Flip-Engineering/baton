@@ -16,6 +16,7 @@ import { verify, accept } from './referee.mjs';
 import { AdaptiveRouter } from './router.mjs';
 import { StoryCompiler } from './story.mjs';
 import { RuntimeIsolation } from './runtime-isolation.mjs';
+import { CoordinationStore } from './coordination-store.mjs';
 
 export { Coordinator, ModelSelectionError, SessionSelectionError, IntegrationError, ReviewSelectionError, PublicationError } from './coordinator.mjs';
 export { MockAdapter, CodexAdapter, ClaudeAdapter, GlmAdapter } from './adapter.mjs';
@@ -27,6 +28,7 @@ export { createBrief } from './messages.mjs';
 export { verify, accept } from './referee.mjs';
 export { AdaptiveRouter } from './router.mjs';
 export { RuntimeIsolation, isSecretEnvName } from './runtime-isolation.mjs';
+export { CoordinationStore, CoordinationIntegrityError, CoordinationRefusal } from './coordination-store.mjs';
 
 /** worktree.mjs's real functions wrapped into the coordinator's manager interface. */
 function worktreeManager(repoRoot) {
@@ -125,6 +127,7 @@ export function createDriver(opts) {
     repoRoot: opts.repoRoot,
     ...(opts.runtimeIsolation ?? {}),
   });
+  const coordination = opts.coordination ?? new CoordinationStore(join(opts.logDir, 'coordination'));
   const publisher = Object.hasOwn(opts, 'publisher') ? opts.publisher : async ({ remote, ref, sha }) => {
     execFileSync('git', ['push', '--porcelain', remote, `${sha}:${ref}`], { cwd: opts.repoRoot, stdio: 'ignore' });
     return { transport: 'git-push' };
@@ -165,6 +168,7 @@ export function createDriver(opts) {
     adapters: opts.adapters,
     worktrees: worktreeManager(opts.repoRoot),
     runtimeScopes,
+    coordination,
     repoRoot: opts.repoRoot,
     referee: refereeFn,
     route,
@@ -185,5 +189,5 @@ export function createDriver(opts) {
     watchdog: opts.watchdog,
   });
 
-  return { coordinator, story, router, log };
+  return { coordinator, story, router, log, coordination };
 }

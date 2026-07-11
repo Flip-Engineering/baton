@@ -255,6 +255,7 @@ export class Coordinator {
     this._adapters = opts.adapters;
     this._worktrees = opts.worktrees;
     this._runtimeScopes = opts.runtimeScopes ?? null;
+    this._coordination = opts.coordination ?? null;
     this._referee = opts.referee;
     this._route = opts.route;
     this._story = opts.story ?? null;
@@ -331,6 +332,8 @@ export class Coordinator {
     this._workerSeq = 0;
     this._taskSeq = 0;
     this._publicationSeq = 0;
+
+    this._seedQueuedCoordinationTasks();
 
     for (const adapter of Object.values(this._adapters)) {
       adapter.onEvent((e) => this._handleEvent(e));
@@ -427,6 +430,12 @@ export class Coordinator {
   _dispatch(task, vendor, model) {
     const handle = this._workers.get(task.assignee);
     const workerId = handle.id;
+    if (this._coordination) {
+      const claim = this._coordination.claimTask(task.id, workerId, task.coordinationVersion, {
+        actor: 'orchestrator', key: `task.claimed:${task.id}:${task.coordinationVersion}`,
+      });
+      task.coordinationVersion = claim.task.version;
+    }
     this._fences.register(workerId);
     handle.vendor = vendor;
     handle.modelResolved = model ?? null;
@@ -618,6 +627,16 @@ export class Coordinator {
     this._assertNoCycle(taskId, deps);
 
     const workerId = this._allocWorkerId();
+    let coordinationVersion = null;
+    if (this._coordination) {
+      const created = this._coordination.createTask({
+        id: taskId, brief: admittedBrief, deps, refines: opts.refines ?? null,
+        taskType: opts.taskType ?? 'general', reservedWorkerId: workerId,
+        vendorRequested: vendor, modelRequested: opts.model ?? null, modelPolicy,
+        sessionRequest,
+      }, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey ?? `task.created:${taskId}` });
+      coordinationVersion = created.task.version;
+    }
     const task = {
       id: taskId,
       brief: admittedBrief,
@@ -645,6 +664,7 @@ export class Coordinator {
       retainedResultRef: null,
       publication: null,
       review: opts.review ? Object.freeze({ ...opts.review }) : null,
+      coordinationVersion,
       taskType: opts.taskType ?? 'general',
     };
     this._tasks.set(taskId, task);
@@ -682,6 +702,42 @@ export class Coordinator {
     this.tick();
 
     return this._publicHandle(handle);
+  }
+
+  _seedQueuedCoordinationTasks() {
+    if (!this._coordination) return;
+    for (const durable of this._coordination.snapshot().tasks) {
+      if (durable.status !== 'pending' || this._tasks.has(durable.id)) continue;
+      const workerId = durable.reservedWorkerId;
+      if (!workerId) continue;
+      const task = {
+        id: durable.id, brief: durable.brief, deps: [...durable.deps],
+        vendorRequested: durable.vendorRequested, modelRequested: durable.modelRequested,
+        modelResolved: null, modelObserved: null, modelPolicy: durable.modelPolicy,
+        sessionRequest: durable.sessionRequest ?? Object.freeze({ mode: 'new' }),
+        sessionContext: null, lineage: null, refines: durable.refines ?? null,
+        status: 'pending', assignee: workerId, worktree: null, result: null, verdict: null,
+        capturedSha: null, integration: null, retainedResultRef: null, publication: null,
+        review: null, taskType: durable.taskType ?? 'general', coordinationVersion: durable.version,
+      };
+      this._tasks.set(task.id, task);
+      this._taskOrder.push(task.id);
+      this._workers.set(workerId, {
+        id: workerId, vendor: durable.vendorRequested === 'auto' ? null : durable.vendorRequested,
+        modelRequested: durable.modelRequested ?? null, modelResolved: null, modelObserved: null,
+        modelPolicy: durable.modelPolicy ?? null, modelMismatch: null,
+        sessionRequest: task.sessionRequest, sessionContext: null, lineage: null,
+        taskId: task.id, worktree: null, status: 'pending', pendingApprovalId: null,
+        pendingQuestionId: null, budgetUsed: { tokens: 0, usd: 0 }, budgetThresholdsFired: new Set(),
+        usageCumulative: new Map(), watchdogActions: new Set(), recentFailedActions: [],
+        watchdogGeneration: 0, watchdogTimer: null, runtimeScope: null, runtimeLease: null,
+        spawnAbort: null, createdAt: new Date(0).toISOString(),
+      });
+      const match = /^w-(\d+)$/.exec(workerId);
+      if (match) this._workerSeq = Math.max(this._workerSeq, Number(match[1]));
+      const taskMatch = /^task-(\d+)$/.exec(task.id);
+      if (taskMatch) this._taskSeq = Math.max(this._taskSeq, Number(taskMatch[1]));
+    }
   }
 
   /** AC4: spawn a separately-attributed oracle/review over immutable task evidence. */
