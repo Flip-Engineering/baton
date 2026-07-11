@@ -133,6 +133,17 @@ export function resolveEdgeRequest(req, { trustedProxies = [], forwardedHop = 0,
   const trusted = new Set(trustedProxies.map(address)).has(peer);
   const xff = req.headers?.['x-forwarded-for']; const forwarded = req.headers?.forwarded;
   if (!trusted) return { address: peer, transport: req.socket?.encrypted ? 'https' : 'http', proxied: false };
+  if (req.rawHeaders != null) {
+    if (!Array.isArray(req.rawHeaders) || req.rawHeaders.length % 2 !== 0) throw new TypeError('invalid forwarding headers');
+    const counts = new Map([['forwarded', 0], ['x-forwarded-for', 0], ['x-forwarded-proto', 0]]);
+    for (let index = 0; index < req.rawHeaders.length; index += 2) {
+      const name = String(req.rawHeaders[index]).toLowerCase();
+      if (counts.has(name)) counts.set(name, counts.get(name) + 1);
+    }
+    for (const [name, count] of counts) {
+      if (count > 1 || (count === 0) !== (req.headers?.[name] == null)) throw new TypeError('ambiguous forwarding headers');
+    }
+  }
   if (xff != null && forwarded != null) throw new TypeError('mixed forwarding headers');
   if (forwarded != null) {
     if (req.headers?.['x-forwarded-proto'] != null) throw new TypeError('mixed forwarding headers');

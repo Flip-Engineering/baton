@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { request as httpRequest } from 'node:http';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -418,6 +419,35 @@ test('EP1/EP7: malformed trusted forwarding audits a keyed peer digest without r
   const audit = s.coordination.events().find((event) => event.payload?.kind === 'proxy_refused');
   assert.match(audit.payload.addressDigest, /^[a-f0-9]{64}$/); assert.equal(audit.payload.remoteAddressClass, 'present');
   assert.equal(JSON.stringify(audit).includes('192.0.2.1'), false); assert.equal(JSON.stringify(audit).includes('198.51.100.2'), false);
+});
+
+test('EP1/EP4: real proxy listener rejects duplicate forwarding field-lines before work', async () => {
+  const s = system({ edgePolicy: edge({ proxyMode: true, trustedProxies: ['127.0.0.1'] }) });
+  const server = createAuthenticatedWebServer(s.web, { proxy: { cleartextBackend: true } });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const send = (headers) => new Promise((resolve, reject) => {
+    const req = httpRequest({ host: '127.0.0.1', port: server.address().port, method: 'GET', path: '/healthz', headers }, (res) => {
+      let body = ''; res.setEncoding('utf8'); res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    });
+    req.on('error', reject); req.end();
+  });
+  try {
+    const duplicateSets = [
+      { Forwarded: ['for=198.51.100.1;proto=https', 'for=198.51.100.2;proto=https'] },
+      { 'X-Forwarded-For': ['198.51.100.1', '198.51.100.2'], 'X-Forwarded-Proto': 'https' },
+      { 'X-Forwarded-For': '198.51.100.1', 'X-Forwarded-Proto': ['https', 'https'] },
+    ];
+    for (const headers of duplicateSets) assert.equal((await send(headers)).status, 400);
+    assert.equal((await send({ Forwarded: 'for=198.51.100.1;proto=https' })).status, 200);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+  assert.equal(s.sessions.events().length, 0); assert.deepEqual(s.fleetCalls, []);
+  const audits = s.coordination.events().filter((event) => event.payload?.kind === 'proxy_refused');
+  assert.equal(audits.length, 3);
+  const serialized = JSON.stringify(audits);
+  for (const address of ['198.51.100.1', '198.51.100.2', '2001:db8::1']) assert.equal(serialized.includes(address), false);
 });
 
 test('EP2/EP3: ticket quota and exact ticket state roll back when HTTP delivery fails', async () => {

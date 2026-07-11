@@ -18,6 +18,10 @@ IPv4; normalization never grants subnet, implicit loopback, or non-exact trust.
 Quoted `Forwarded` values are accepted only through a deliberately small escape-free grammar;
 protocol tokens are case-insensitive HTTP/HTTPS after decoding, while controls, escapes, duplicate
 or unknown parameters, zones, ports, and ambiguous forms remain refused.
+At a trusted peer, wire-level `rawHeaders` must contain exactly one occurrence of each forwarding
+field represented in normalized headers; duplicate `Forwarded`, `X-Forwarded-For`, or
+`X-Forwarded-Proto` field-lines are refused before chain parsing, while one field may contain the
+single explicitly parsed multi-hop chain.
 
 ## EP2 — deterministic bounded quota authority
 
