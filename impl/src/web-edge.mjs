@@ -133,16 +133,14 @@ export function resolveEdgeRequest(req, { trustedProxies = [], forwardedHop = 0,
   const trusted = new Set(trustedProxies.map(address)).has(peer);
   const xff = req.headers?.['x-forwarded-for']; const forwarded = req.headers?.forwarded;
   if (!trusted) return { address: peer, transport: req.socket?.encrypted ? 'https' : 'http', proxied: false };
-  if (req.rawHeaders != null) {
-    if (!Array.isArray(req.rawHeaders) || req.rawHeaders.length % 2 !== 0) throw new TypeError('invalid forwarding headers');
-    const counts = new Map([['forwarded', 0], ['x-forwarded-for', 0], ['x-forwarded-proto', 0]]);
-    for (let index = 0; index < req.rawHeaders.length; index += 2) {
-      const name = String(req.rawHeaders[index]).toLowerCase();
-      if (counts.has(name)) counts.set(name, counts.get(name) + 1);
-    }
-    for (const [name, count] of counts) {
-      if (count > 1 || (count === 0) !== (req.headers?.[name] == null)) throw new TypeError('ambiguous forwarding headers');
-    }
+  if (!Array.isArray(req.rawHeaders) || req.rawHeaders.length % 2 !== 0) throw new TypeError('invalid forwarding headers');
+  const counts = new Map([['forwarded', 0], ['x-forwarded-for', 0], ['x-forwarded-proto', 0]]);
+  for (let index = 0; index < req.rawHeaders.length; index += 2) {
+    const name = String(req.rawHeaders[index]).toLowerCase();
+    if (counts.has(name)) counts.set(name, counts.get(name) + 1);
+  }
+  for (const [name, count] of counts) {
+    if (count > 1 || (count === 0) !== (req.headers?.[name] == null)) throw new TypeError('ambiguous forwarding headers');
   }
   if (xff != null && forwarded != null) throw new TypeError('mixed forwarding headers');
   if (forwarded != null) {
@@ -172,10 +170,10 @@ export class WebEdgePolicy {
     if (this.proxyMode && this.trustedProxies.length === 0) throw new TypeError('proxy mode requires trusted proxies');
     if (!this.proxyMode && (this.trustedProxies.length > 0 || this.forwardedHop !== 0)) throw new TypeError('direct mode cannot configure proxy trust or forwarding hops');
     const now = opts.now ?? Date.now; this.now = now; const windowMs = opts.windowMs ?? 60_000; const maxKeys = opts.maxKeys ?? 10_000;
-    const allowedLimits = new Set(['address', 'login', 'principal', 'cost', 'ticket', 'health', 'readiness', 'connection']);
+    const allowedLimits = new Set(['peer', 'address', 'login', 'principal', 'cost', 'ticket', 'health', 'readiness', 'connection']);
     const unknownLimit = Object.keys(opts.limits ?? {}).find((name) => !allowedLimits.has(name));
     if (unknownLimit) throw new TypeError(`unknown quota policy: ${unknownLimit}`);
-    const limits = { address: 1000, login: 10, principal: 100, cost: 100, ticket: 30, health: 60, readiness: 60, connection: 4, ...(opts.limits ?? {}) };
+    const limits = { peer: 100, address: 1000, login: 10, principal: 100, cost: 100, ticket: 30, health: 60, readiness: 60, connection: 4, ...(opts.limits ?? {}) };
     const { connection, ...windowLimits } = limits;
     this.quotas = Object.fromEntries(Object.entries(windowLimits).map(([name, limit]) => [name, new FixedWindowQuota({ limit, windowMs, maxKeys, now })]));
     this.connections = new ConcurrentQuota({ limit: connection, maxKeys });

@@ -11,8 +11,11 @@ const ORIGIN = 'https://control.test';
 const root = () => mkdtempSync(join(tmpdir(), 'baton-web-edge-'));
 class Response { writeHead(status, headers) { this.status = status; this.headers = headers; } end(body = '') { this.body = body ? JSON.parse(body) : null; } }
 class StreamResponse extends EventEmitter { constructor() { super(); this.output = ''; this.writableLength = 0; } writeHead(status, headers) { this.status = status; this.headers = headers; } write(value) { this.output += value; return true; } end() { this.ended = true; } }
+const raw = (headers = {}) => Object.entries(headers).flatMap(([name, value]) => (Array.isArray(value) ? value : [value]).flatMap((item) => [name, String(item)]));
+const wire = (req) => ({ ...req, rawHeaders: raw(req.headers) });
 async function request(web, { path, body, rawBody, headers = {}, encrypted = true, address = '127.0.0.1', method = 'POST' }) {
-  const req = new EventEmitter(); Object.assign(req, { method, url: path, headers: { origin: ORIGIN, 'content-type': 'application/json', ...headers }, socket: { encrypted, remoteAddress: address }, destroy() {} });
+  const req = new EventEmitter(); const requestHeaders = { origin: ORIGIN, 'content-type': 'application/json', ...headers };
+  Object.assign(req, { method, url: path, headers: requestHeaders, rawHeaders: raw(requestHeaders), socket: { encrypted, remoteAddress: address }, destroy() {} });
   const res = new Response(); const pending = web.handle(req, res); queueMicrotask(() => { if (rawBody !== undefined) req.emit('data', Buffer.from(rawBody)); else if (body !== undefined) req.emit('data', Buffer.from(JSON.stringify(body))); req.emit('end'); }); await pending; return res;
 }
 function edge(overrides = {}) { return new WebEdgePolicy({ addressKey: 'test-address-key-material', now: () => 1_000, ...overrides }); }
@@ -26,29 +29,34 @@ function system({ edgePolicy = edge(), identityProvider, readinessChecks, stream
 test('EP1/EP4: untrusted forwarding is ignored; trusted proxy selects a bounded exact hop and HTTPS signal', () => {
   const direct = resolveEdgeRequest({ socket: { remoteAddress: '203.0.113.9', encrypted: true }, headers: { 'x-forwarded-for': '198.51.100.1', 'x-forwarded-proto': 'http' } }, { trustedProxies: ['192.0.2.1'] });
   assert.deepEqual(direct, { address: '203.0.113.9', transport: 'https', proxied: false });
-  const proxied = resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1', encrypted: false }, headers: { 'x-forwarded-for': '198.51.100.2, 192.0.2.9', 'x-forwarded-proto': 'https' } }, { trustedProxies: ['192.0.2.1'], forwardedHop: 1, requireForwardedHttps: true });
+  const proxied = resolveEdgeRequest(wire({ socket: { remoteAddress: '192.0.2.1', encrypted: false }, headers: { 'x-forwarded-for': '198.51.100.2, 192.0.2.9', 'x-forwarded-proto': 'https' } }), { trustedProxies: ['192.0.2.1'], forwardedHop: 1, requireForwardedHttps: true });
   assert.deepEqual(proxied, { address: '198.51.100.2', transport: 'https', proxied: true });
   for (const proto of ['HTTPS', 'Https', 'hTtPs']) {
-    assert.equal(resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1' }, headers: { 'x-forwarded-for': '198.51.100.2', 'x-forwarded-proto': proto } }, { trustedProxies: ['192.0.2.1'], requireForwardedHttps: true }).transport, 'https');
+    assert.equal(resolveEdgeRequest(wire({ socket: { remoteAddress: '192.0.2.1' }, headers: { 'x-forwarded-for': '198.51.100.2', 'x-forwarded-proto': proto } }), { trustedProxies: ['192.0.2.1'], requireForwardedHttps: true }).transport, 'https');
   }
-  assert.throws(() => resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1' }, headers: { 'x-forwarded-for': '198.51.100.2', 'x-forwarded-proto': 'FTP' } }, { trustedProxies: ['192.0.2.1'] }), /invalid forwarded protocol/);
-  const standard = resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1', encrypted: false }, headers: { forwarded: 'for=198.51.100.2;proto=https, for=192.0.2.9;proto=https' } }, { trustedProxies: ['192.0.2.1'], forwardedHop: 1, requireForwardedHttps: true });
+  assert.throws(() => resolveEdgeRequest(wire({ socket: { remoteAddress: '192.0.2.1' }, headers: { 'x-forwarded-for': '198.51.100.2', 'x-forwarded-proto': 'FTP' } }), { trustedProxies: ['192.0.2.1'] }), /invalid forwarded protocol/);
+  const standard = resolveEdgeRequest(wire({ socket: { remoteAddress: '192.0.2.1', encrypted: false }, headers: { forwarded: 'for=198.51.100.2;proto=https, for=192.0.2.9;proto=https' } }), { trustedProxies: ['192.0.2.1'], forwardedHop: 1, requireForwardedHttps: true });
   assert.deepEqual(standard, { address: '198.51.100.2', transport: 'https', proxied: true });
-  const quoted = resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1', encrypted: false }, headers: { forwarded: 'for="198.51.100.2";proto="HTTPS"' } }, { trustedProxies: ['192.0.2.1'], requireForwardedHttps: true });
+  const quoted = resolveEdgeRequest(wire({ socket: { remoteAddress: '192.0.2.1', encrypted: false }, headers: { forwarded: 'for="198.51.100.2";proto="HTTPS"' } }), { trustedProxies: ['192.0.2.1'], requireForwardedHttps: true });
   assert.deepEqual(quoted, { address: '198.51.100.2', transport: 'https', proxied: true });
-  assert.throws(() => resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1' }, headers: { forwarded: 'for="198.51.100.2";proto="http\\s"' } }, { trustedProxies: ['192.0.2.1'] }), /invalid forwarding/);
+  assert.throws(() => resolveEdgeRequest(wire({ socket: { remoteAddress: '192.0.2.1' }, headers: { forwarded: 'for="198.51.100.2";proto="http\\s"' } }), { trustedProxies: ['192.0.2.1'] }), /invalid forwarding/);
   const directPolicy = edge();
   assert.deepEqual(directPolicy.resolve({ socket: { remoteAddress: '192.0.2.1', encrypted: false }, headers: { 'x-forwarded-for': '198.51.100.2', 'x-forwarded-proto': 'https' } }), { address: '192.0.2.1', transport: 'http', proxied: false });
   assert.throws(() => edge({ trustedProxies: ['192.0.2.1'], proxyMode: false }), /direct mode/);
-  const ipv6 = resolveEdgeRequest({ socket: { remoteAddress: '2001:db8::ff', encrypted: false }, headers: { forwarded: 'for="[2001:db8::1]";proto=https' } }, { trustedProxies: ['2001:db8::ff'], requireForwardedHttps: true });
+  const ipv6 = resolveEdgeRequest(wire({ socket: { remoteAddress: '2001:db8::ff', encrypted: false }, headers: { forwarded: 'for="[2001:db8::1]";proto=https' } }), { trustedProxies: ['2001:db8::ff'], requireForwardedHttps: true });
   assert.equal(ipv6.address, '2001:db8::1');
-  assert.throws(() => resolveEdgeRequest({ socket: { remoteAddress: '2001:db8::ff' }, headers: { forwarded: 'for="[2001:db8::1]:443";proto=https' } }, { trustedProxies: ['2001:db8::ff'] }), /invalid forwarding/);
-  const mapped = resolveEdgeRequest({ socket: { remoteAddress: '::ffff:127.0.0.1', encrypted: false }, headers: { 'x-forwarded-for': '198.51.100.7', 'x-forwarded-proto': 'https' } }, { trustedProxies: ['127.0.0.1'], requireForwardedHttps: true });
+  assert.throws(() => resolveEdgeRequest(wire({ socket: { remoteAddress: '2001:db8::ff' }, headers: { forwarded: 'for="[2001:db8::1]:443";proto=https' } }), { trustedProxies: ['2001:db8::ff'] }), /invalid forwarding/);
+  const mapped = resolveEdgeRequest(wire({ socket: { remoteAddress: '::ffff:127.0.0.1', encrypted: false }, headers: { 'x-forwarded-for': '198.51.100.7', 'x-forwarded-proto': 'https' } }), { trustedProxies: ['127.0.0.1'], requireForwardedHttps: true });
   assert.deepEqual(mapped, { address: '198.51.100.7', transport: 'https', proxied: true });
-  const expandedPeer = resolveEdgeRequest({ socket: { remoteAddress: '2001:db8::ff', encrypted: false }, headers: { 'x-forwarded-for': '2001:db8::1', 'x-forwarded-proto': 'https' } }, { trustedProxies: ['2001:0db8:0000:0000:0000:0000:0000:00ff'], requireForwardedHttps: true });
+  const expandedPeer = resolveEdgeRequest(wire({ socket: { remoteAddress: '2001:db8::ff', encrypted: false }, headers: { 'x-forwarded-for': '2001:db8::1', 'x-forwarded-proto': 'https' } }), { trustedProxies: ['2001:0db8:0000:0000:0000:0000:0000:00ff'], requireForwardedHttps: true });
   assert.equal(expandedPeer.proxied, true);
   assert.equal(edge().resolve({ socket: { remoteAddress: '2001:0db8:0000:0000:0000:0000:0000:0001', encrypted: true }, headers: {} }).address, '2001:db8::1');
-  assert.throws(() => resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1' }, headers: { forwarded: 'for=1.2.3.4', 'x-forwarded-for': '1.2.3.4' } }, { trustedProxies: ['192.0.2.1'] }), /mixed forwarding/);
+  assert.throws(() => resolveEdgeRequest(wire({ socket: { remoteAddress: '192.0.2.1' }, headers: { forwarded: 'for=1.2.3.4', 'x-forwarded-for': '1.2.3.4' } }), { trustedProxies: ['192.0.2.1'] }), /mixed forwarding/);
+  assert.throws(() => resolveEdgeRequest({ socket: { remoteAddress: '192.0.2.1' }, headers: { forwarded: 'for=1.2.3.4;proto=https' } }, { trustedProxies: ['192.0.2.1'] }), /invalid forwarding headers/);
+  const normalized = { socket: { remoteAddress: '192.0.2.1' }, headers: { forwarded: 'for=1.2.3.4;proto=https' } };
+  for (const rawHeaders of ['not-an-array', ['Forwarded'], ['X-Forwarded-For', '1.2.3.4'], ['Forwarded', 'a', 'Forwarded', 'b']]) {
+    assert.throws(() => resolveEdgeRequest({ ...normalized, rawHeaders }, { trustedProxies: ['192.0.2.1'] }), /forwarding headers/);
+  }
 });
 
 test('EP2: quota windows expire deterministically and key cardinality remains bounded', () => {
@@ -425,8 +433,59 @@ test('EP1/EP7: malformed trusted forwarding audits a keyed peer digest without r
   assert.equal(JSON.stringify(audit).includes('192.0.2.1'), false); assert.equal(JSON.stringify(audit).includes('198.51.100.2'), false);
 });
 
-test('EP1/EP4: real proxy listener rejects duplicate forwarding field-lines before work', async () => {
-  const s = system({ edgePolicy: edge({ proxyMode: true, trustedProxies: ['127.0.0.1'] }) });
+test('EP1/EP3/EP7: immediate-peer quota bounds malformed proxy and invalid-peer audit writes', async () => {
+  const malformed = { forwarded: 'for=198.51.100.1;proto=https', 'x-forwarded-for': '198.51.100.1' };
+  const s = system({ edgePolicy: edge({ proxyMode: true, trustedProxies: ['192.0.2.1'], limits: { peer: 1 } }) });
+  assert.equal((await request(s.web, { path: '/healthz', method: 'GET', encrypted: false, address: '192.0.2.1', headers: malformed })).status, 400);
+  const second = await request(s.web, { path: '/healthz', method: 'GET', encrypted: false, address: '192.0.2.1', headers: malformed });
+  assert.equal(second.status, 429); assert.equal(second.headers['retry-after'], '59');
+  assert.equal(s.coordination.events().filter((event) => event.payload?.kind === 'proxy_refused').length, 1);
+  assert.equal(s.sessions.events().length, 0); assert.deepEqual(s.fleetCalls, []);
+
+  const invalid = system({ edgePolicy: edge({ limits: { peer: 1 } }) });
+  assert.equal((await request(invalid.web, { path: '/healthz', method: 'GET', address: 'not-an-ip' })).status, 400);
+  assert.equal((await request(invalid.web, { path: '/healthz', method: 'GET', address: 'still-not-an-ip' })).status, 429);
+  assert.equal(invalid.coordination.events().filter((event) => event.payload?.kind === 'proxy_refused').length, 1);
+
+  const unavailable = system({ edgePolicy: edge({ now: () => NaN, proxyMode: true, trustedProxies: ['192.0.2.1'] }) });
+  assert.equal((await request(unavailable.web, { path: '/healthz', method: 'GET', encrypted: false, address: '192.0.2.1', headers: malformed })).status, 503);
+  assert.equal(unavailable.coordination.events().filter((event) => event.payload?.kind === 'proxy_refused').length, 0);
+
+  const capacity = system({ edgePolicy: edge({ maxKeys: 1, proxyMode: true, trustedProxies: ['192.0.2.1', '192.0.2.2'] }) });
+  assert.equal((await request(capacity.web, { path: '/healthz', method: 'GET', encrypted: false, address: '192.0.2.1', headers: malformed })).status, 400);
+  assert.equal((await request(capacity.web, { path: '/healthz', method: 'GET', encrypted: false, address: '192.0.2.2', headers: malformed })).status, 429);
+  assert.equal(capacity.coordination.events().filter((event) => event.payload?.kind === 'proxy_refused').length, 1);
+
+  const auditFailure = system({ edgePolicy: edge({ proxyMode: true, trustedProxies: ['192.0.2.1'], limits: { peer: 1 } }) });
+  const record = auditFailure.coordination.recordWebAudit.bind(auditFailure.coordination);
+  auditFailure.coordination.recordWebAudit = () => { throw new Error('audit unavailable'); };
+  assert.equal((await request(auditFailure.web, { path: '/healthz', method: 'GET', encrypted: false, address: '192.0.2.1', headers: malformed })).status, 503);
+  auditFailure.coordination.recordWebAudit = record;
+  assert.equal((await request(auditFailure.web, { path: '/healthz', method: 'GET', encrypted: false, address: '192.0.2.1', headers: malformed })).status, 429);
+  assert.equal(auditFailure.coordination.events().filter((event) => event.payload?.kind === 'proxy_refused').length, 0);
+});
+
+test('EP7: rejected Origin values are centrally classified and never durably retained', async () => {
+  const marker = `https://credential-shaped-secret-${'x'.repeat(1_000)}.invalid`;
+  const systems = [
+    system({ edgePolicy: edge({ proxyMode: true, trustedProxies: ['192.0.2.1'] }) }),
+    system({ edgePolicy: edge({ limits: { address: 1 } }) }),
+    system(),
+  ];
+  await request(systems[0].web, { path: '/healthz', method: 'GET', encrypted: false, address: '192.0.2.1', headers: { origin: marker, forwarded: 'bad' } });
+  await request(systems[1].web, { path: '/v1/auth/login', body: {}, headers: { origin: marker } });
+  await request(systems[1].web, { path: '/v1/auth/login', body: {}, headers: { origin: marker } });
+  await request(systems[2].web, { path: '/healthz', method: 'GET', encrypted: false, headers: { origin: marker } });
+  const rejectedPrincipal = { userId: 'u', sessionId: 's', credentialId: 'c', expiresAt: '2099-01-01T00:00:00.000Z', capabilities: ['observe'], repoIds: ['repo-a'] };
+  systems[2].web.stream.issue(rejectedPrincipal, marker, 'repo-a');
+  const events = systems.flatMap((entry) => entry.coordination.events());
+  assert.equal(JSON.stringify(events).includes(marker), false);
+  const classes = events.filter((event) => event.kind === 'web.audit').map((event) => event.payload.originClass);
+  assert.ok(classes.includes('disallowed')); assert.equal(classes.every((value) => ['allowed', 'missing', 'disallowed'].includes(value)), true);
+});
+
+test('EP1/EP4: real proxy listener rejects and peer-bounds duplicate forwarding field-lines', async () => {
+  const s = system({ edgePolicy: edge({ proxyMode: true, trustedProxies: ['127.0.0.1'], limits: { peer: 5 } }) });
   const server = createAuthenticatedWebServer(s.web, { proxy: { cleartextBackend: true } });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const send = (headers) => new Promise((resolve, reject) => {
@@ -449,6 +508,7 @@ test('EP1/EP4: real proxy listener rejects duplicate forwarding field-lines befo
       assert.equal((await send({ 'X-Forwarded-For': '198.51.100.1', 'X-Forwarded-Proto': proto })).status, expected);
     }
     assert.equal((await send({ 'X-Forwarded-For': '198.51.100.1', 'X-Forwarded-Proto': 'FTP' })).status, 400);
+    assert.equal((await send(duplicateSets[0])).status, 429);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

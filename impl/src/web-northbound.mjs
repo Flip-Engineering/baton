@@ -130,7 +130,8 @@ export class WebNorthbound {
     const auditActor = principal ? actor(principal) : 'web:anonymous';
     return this.coordination.recordWebAudit({
       kind, userId: principal?.userId ?? null, sessionId: principal?.sessionId ?? null,
-      credentialDigest: principal?.credentialId && this.edge ? this.edge.digest(`credential:${principal.credentialId}`) : null, origin: ctx?.origin ?? null,
+      credentialDigest: principal?.credentialId && this.edge ? this.edge.digest(`credential:${principal.credentialId}`) : null,
+      originClass: ctx?.origin == null ? 'missing' : this.allowedOrigins.has(ctx.origin) ? 'allowed' : 'disallowed',
       remoteAddressClass: ctx?.remoteAddress ? 'present' : 'absent', addressDigest: ctx?.addressDigest ?? null, ...json(details),
     }, { actor: auditActor, key: `web.audit:${randomUUID()}` });
   }
@@ -282,6 +283,10 @@ export class WebNorthbound {
       try { peerDigest = this.edge.peerDigest(req); } catch { /* bounded invalid-peer audit below */ }
       let identity;
       try { identity = this.edge.resolve(req); } catch {
+        let peerQuota;
+        try { peerQuota = this.edge.take('peer', peerDigest ?? this.edge.digest('peer:invalid')); }
+        catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+        if (!peerQuota.ok) return this._write(res, { ...error(429, 'rate_limited'), headers: { 'retry-after': String(peerQuota.retryAfter) } });
         try { this._audit('proxy_refused', { origin, remoteAddress: peerDigest ? 'canonical' : null, addressDigest: peerDigest }, { reason: peerDigest ? 'invalid_forwarding' : 'invalid_peer' }); } catch { return this._write(res, error(503, 'temporarily_unavailable')); }
         return this._write(res, error(400, 'invalid_forwarding'));
       }

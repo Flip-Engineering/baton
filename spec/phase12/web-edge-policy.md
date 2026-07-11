@@ -24,6 +24,11 @@ At a trusted peer, wire-level `rawHeaders` must contain exactly one occurrence o
 field represented in normalized headers; duplicate `Forwarded`, `X-Forwarded-For`, or
 `X-Forwarded-Proto` field-lines are refused before chain parsing, while one field may contain the
 single explicitly parsed multi-hop chain.
+Proxy mode requires this server-owned wire representation; absent, non-array, odd-length,
+duplicate, or normalized/raw-mismatched provenance is never treated as proof of uniqueness.
+Malformed forwarding and invalid-peer refusals first consume a bounded immediate-peer quota keyed
+by the canonical peer digest, with one fixed HMAC fallback class for an unparseable peer. Once that
+quota is exhausted or unavailable, no additional durable proxy-refusal append is attempted.
 
 ## EP2 — deterministic bounded quota authority
 
@@ -61,6 +66,9 @@ identity is resolved first, and malformed targets consume the ordinary address q
 durable refusal audit, preventing audit-write amplification.
 Schema refusals use fixed bounded reason codes. Client-supplied property names are never echoed in
 HTTP errors or retained in durable audit, including near the request-body limit.
+Pre-authorization Origin values are likewise never retained: all northbound and stream audits store
+only the fixed `allowed`, `missing`, or `disallowed` classification. Raw Origin remains request-local
+for authorization, response CORS, and exact ticket binding only.
 
 ## EP4 — trusted-proxy and TLS modes are explicit
 

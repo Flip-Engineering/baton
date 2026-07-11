@@ -52,7 +52,8 @@ export class WebEventStream {
   _audit(kind, principal, origin, details = {}) {
     return this.coordination.recordWebAudit({
       kind, userId: principal?.userId ?? null, sessionId: principal?.sessionId ?? null,
-      credentialDigest: principal?.credentialId && this.credentialDigest ? this.credentialDigest(principal.credentialId) : null, origin, ...clone(details),
+      credentialDigest: principal?.credentialId && this.credentialDigest ? this.credentialDigest(principal.credentialId) : null,
+      originClass: origin == null ? 'missing' : this.allowedOrigins.has(origin) ? 'allowed' : 'disallowed', ...clone(details),
     }, { actor: principal ? actor(principal) : 'web:anonymous', key: `web.audit:${randomUUID()}` });
   }
 

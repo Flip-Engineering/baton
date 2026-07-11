@@ -1,7 +1,7 @@
 {
-  "at": "2026-07-11T23:46:45.200Z",
+  "at": "2026-07-11T23:51:44.629Z",
   "workerId": "w-1",
-  "pid": 19719,
+  "pid": 23184,
   "result": {
     "ready": true,
     "status": "completed",
@@ -19,9 +19,9 @@
       "mutationStrength": null,
       "mutationPassed": null,
       "survivedMutants": [],
-      "observedOutputTail": "084791ms)\n✔ WN1/WN4: spawn forwards harness and exact model independently and derives the audit actor from auth (10.509458ms)\n✔ WN4: an identical retry executes once and a same-key different body conflicts without mutation (10.007ms)\n✔ WN4/WN5/WN7: unknown fields, unknown model policy, and client-supplied audit identity are rejected before admission (12.256042ms)\n✔ WN4: admitted and completed idempotency state survives coordination-store restart (6.184167ms)\n✔ WN1/WN4: fence-sensitive control forwards the expected fence and refuses a missing fence (19.22325ms)\n✔ WN4/WN7: durable completion append failure never returns a successful command result (4.315084ms)\n✔ WN7: coordinator precondition errors become typed, non-leaking invalid-command outcomes (14.265875ms)\n✔ WN1/WN2/WN5/WN8: the HTTP adapter authenticates a bounded JSON command and the server refuses missing TLS/auth (12.583083ms)\n✔ WN3/WN6: the HTTP adapter issues and consumes an authenticated SSE nonce for one repo authority (14.611625ms)\n✔ WN5/WN6: cookie ticket CSRF fails before issue and Last-Event-ID wins over query cursor (4.621708ms)\n✔ WN4/WN9: the real coordinator rejects stale web stop fences before adapter mutation (256.744875ms)\n✔ IL2/IL4: rotation is one durable event, preserves claims, and never persists credentials (49.267708ms)\n✔ IL2/IL6: restart refuses a rotated predecessor and accepts only its successor (35.271ms)\n✔ IL2/IL5: failed rotation append returns no successor and leaves the predecessor active (22.234542ms)\n✔ IL1/IL3/IL4: HTTPS login uses only injected claims and returns a strict cookie without leaking credentials (26.714584ms)\n✔ IL2/IL3/IL6: cookie refresh requires CSRF, rotates atomically, and logout revokes without fleet control (51.4725ms)\n✔ IL3/IL5: lifecycle rejects insecure/wrong-origin requests before provider or session mutation and supports CORS preflight (17.166541ms)\n✔ IL4: bearer login and refresh return one-time JSON tokens while the predecessor immediately fails (28.062834ms)\n✔ IL2/IL5: session append is file-synced before in-memory apply and credential return (7.77475ms)\n✔ IL1/IL5: coordination audit failure occurs before login/refresh mutation and returns no credential (28.903333ms)\n✔ IL1: provider output outside session policy is the same bounded refusal with no issuance (39.547875ms)\n✔ WN2/WN5/WN6: stream tickets are short-lived, single-use, hashed, and exactly bound (3.974834ms)\n✔ WN6: snapshot boundary and reconnect provide ordered at-least-once coordination delivery (3.750084ms)\n✔ WN6/WN7/WN9: expired cursors and bounded backpressure are typed and audited (1.484292ms)\n✔ WN6/WN9: browser disconnect audits closure and never invokes worker control (1.106958ms)\n✔ WN6: audit ordering fails closed before live ticket state or SSE headers (0.85525ms)\n✔ WN6: pruning and ticket/connection ceilings are enforced (0.720708ms)\n✔ WN6: one authority and bounded snapshot/control frames with split trust (2.206792ms)\n✔ WN6: invalid ceilings fail closed and response setup failures release connection authority (1.927ms)\n✔ WN6: write backpressure stops immediately and claimed content never inherits authoritative trust (0.7745ms)\n✔ WN6/EP6: lag control shares the control-frame and buffered-byte close invariant (2.15775ms)\n✔ WN2/WN6: an established stream stops at credential expiry before reading later events (21.551541ms)\n✔ WN6/WN7: snapshot acquisition failure is typed and audited before SSE setup (0.527125ms)\n✔ WN6/WN7: later coordination-read and socket-write exceptions close without escaping or stranding capacity (42.841958ms)\n✔ WN2/WN6: replay is count-bounded and rechecks authorization before every emitted event (0.575625ms)\n✔ WN6: malformed/future cursors fail typed and close/error cleanup is exactly once with no later polling (21.468417ms)\n✔ EP6: shutdown control obeys frame/buffer bounds and closes broken streams exactly once (1.099625ms)\nℹ tests 79\nℹ suites 0\nℹ pass 79\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 719.659958\n",
+      "observedOutputTail": "h (22.922333ms)\n✔ WN4: an identical retry executes once and a same-key different body conflicts without mutation (16.837042ms)\n✔ WN4/WN5/WN7: unknown fields, unknown model policy, and client-supplied audit identity are rejected before admission (20.987917ms)\n✔ WN4/WN7: unknown-field refusals use fixed bounded codes and never retain client field names (17.37025ms)\n✔ WN4: admitted and completed idempotency state survives coordination-store restart (21.157791ms)\n✔ WN1/WN4: fence-sensitive control forwards the expected fence and refuses a missing fence (9.913584ms)\n✔ WN4/WN7: durable completion append failure never returns a successful command result (11.174833ms)\n✔ WN7: coordinator precondition errors become typed, non-leaking invalid-command outcomes (11.118792ms)\n✔ WN1/WN2/WN5/WN8: the HTTP adapter authenticates a bounded JSON command and the server refuses missing TLS/auth (21.71ms)\n✔ WN3/WN6: the HTTP adapter issues and consumes an authenticated SSE nonce for one repo authority (24.283375ms)\n✔ WN5/WN6: cookie ticket CSRF fails before issue and Last-Event-ID wins over query cursor (7.125292ms)\n✔ WN4/WN9: the real coordinator rejects stale web stop fences before adapter mutation (322.313542ms)\n✔ IL2/IL4: rotation is one durable event, preserves claims, and never persists credentials (53.103917ms)\n✔ IL2/IL6: restart refuses a rotated predecessor and accepts only its successor (50.670625ms)\n✔ IL2/IL5: failed rotation append returns no successor and leaves the predecessor active (27.535792ms)\n✔ IL1/IL3/IL4: HTTPS login uses only injected claims and returns a strict cookie without leaking credentials (42.796958ms)\n✔ IL2/IL3/IL6: cookie refresh requires CSRF, rotates atomically, and logout revokes without fleet control (77.49175ms)\n✔ IL3/IL5: lifecycle rejects insecure/wrong-origin requests before provider or session mutation and supports CORS preflight (26.089083ms)\n✔ IL4: bearer login and refresh return one-time JSON tokens while the predecessor immediately fails (38.215375ms)\n✔ IL2/IL5: session append is file-synced before in-memory apply and credential return (0.64275ms)\n✔ IL1/IL5: coordination audit failure occurs before login/refresh mutation and returns no credential (28.197916ms)\n✔ IL1: provider output outside session policy is the same bounded refusal with no issuance (61.138083ms)\n✔ WN2/WN5/WN6: stream tickets are short-lived, single-use, hashed, and exactly bound (4.917ms)\n✔ WN6: snapshot boundary and reconnect provide ordered at-least-once coordination delivery (2.021042ms)\n✔ WN6/WN7/WN9: expired cursors and bounded backpressure are typed and audited (0.580167ms)\n✔ WN6/WN9: browser disconnect audits closure and never invokes worker control (0.327458ms)\n✔ WN6: audit ordering fails closed before live ticket state or SSE headers (0.309833ms)\n✔ WN6: pruning and ticket/connection ceilings are enforced (0.497333ms)\n✔ WN6: one authority and bounded snapshot/control frames with split trust (1.370708ms)\n✔ WN6: invalid ceilings fail closed and response setup failures release connection authority (1.006084ms)\n✔ WN6: write backpressure stops immediately and claimed content never inherits authoritative trust (0.678417ms)\n✔ WN6/EP6: lag control shares the control-frame and buffered-byte close invariant (1.816416ms)\n✔ WN2/WN6: an established stream stops at credential expiry before reading later events (21.594625ms)\n✔ WN6/WN7: snapshot acquisition failure is typed and audited before SSE setup (1.233458ms)\n✔ WN6/WN7: later coordination-read and socket-write exceptions close without escaping or stranding capacity (43.942584ms)\n✔ WN2/WN6: replay is count-bounded and rechecks authorization before every emitted event (0.914ms)\n✔ WN6: malformed/future cursors fail typed and close/error cleanup is exactly once with no later polling (21.893ms)\n✔ EP6: shutdown control obeys frame/buffer bounds and closes broken streams exactly once (1.401041ms)\nℹ tests 80\nℹ suites 0\nℹ pass 80\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 926.111125\n",
       "note": "PASS: observed exit 0 matches expected 0.",
-      "durationMs": 774
+      "durationMs": 1019
     },
     "artifacts": {
       "commits": [],
@@ -45,14 +45,14 @@
     "sessionRef": {
       "vendor": "codex",
       "kind": "thread",
-      "id": "019f5392-2ba6-7da2-a915-6c06df541607",
+      "id": "019f5396-2bce-7d73-b658-033854aa84e5",
       "persistence": "native",
       "source": "wire"
     },
     "sessionContext": {
       "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-web-edge-review",
       "repoRoot": "/Users/wahargis/Development/Experiments/baton",
-      "baseSha": "946aac3b06838b2d80b0850d5599656d40b07c5c",
+      "baseSha": "c9b4fca4451184d83d2bf7cd1d8cafa3bb507946",
       "branch": "baton/codex-web-edge-review",
       "ownerTaskId": "codex-web-edge-review"
     },
@@ -66,9 +66,9 @@
     "ok": true,
     "result": "integrated",
     "integration": {
-      "beforeSha": "946aac3b06838b2d80b0850d5599656d40b07c5c",
-      "resultSha": "0125c7480e41ddead583b613ae94d7bc4c872942",
-      "afterSha": "0125c7480e41ddead583b613ae94d7bc4c872942",
+      "beforeSha": "c9b4fca4451184d83d2bf7cd1d8cafa3bb507946",
+      "resultSha": "4f80f39b1c6097c23aa1e1c19502376ccc924f9f",
+      "afterSha": "4f80f39b1c6097c23aa1e1c19502376ccc924f9f",
       "strategy": "ff-only",
       "actor": "orchestrator"
     }
