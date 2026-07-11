@@ -16,9 +16,9 @@ const fixture = (opts = {}) => {
   return { coordination, stream };
 };
 class Response extends EventEmitter {
-  constructor(writableLength = 0) { super(); this.writableLength = writableLength; this.output = ''; }
+  constructor(writableLength = 0, writeResult = true) { super(); this.writableLength = writableLength; this.writeResult = writeResult; this.output = ''; }
   writeHead(status, headers) { this.status = status; this.headers = headers; }
-  write(value) { this.output += value; return true; }
+  write(value) { this.output += value; return this.writeResult; }
   end() { this.ended = true; }
 }
 
@@ -125,7 +125,8 @@ test('WN6: one authority and bounded snapshot/control frames with split trust', 
   coordination.recordWebAudit({ kind: 'seed', prose: 'x'.repeat(500) }, { actor: 'test', key: 'large-seed' });
   const bounded = new Response();
   const refusal = stream.open({ ticket: stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test' }, bounded);
-  assert.equal(refusal.status, 413);
+  assert.equal(refusal.status, 503);
+  assert.equal(refusal.body.error.code, 'temporarily_unavailable');
   assert.equal(bounded.status, undefined);
   assert.equal(bounded.output, '');
   const cursor = coordination.snapshot().lastSeq;
@@ -137,5 +138,43 @@ test('WN6: one authority and bounded snapshot/control frames with split trust', 
   trusted.stream.open({ ticket: trusted.stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test' }, output);
   assert.match(output.output, /"occurrenceTrust":"authoritative"/);
   assert.match(output.output, /"contentTrust":"mixed"/);
+  output.emit('close');
+});
+
+test('WN6: invalid ceilings fail closed and response setup failures release connection authority', () => {
+  for (const invalid of [
+    { maxBufferedBytes: 0 }, { maxFrameBytes: Infinity }, { maxControlFrameBytes: -1 },
+    { maxTickets: 0 }, { maxConnections: 0 }, { ticketTtlMs: 1.5 }, { replayLimit: -1 }, { pollMs: 0 },
+  ]) assert.throws(() => fixture(invalid), /safe integer/);
+
+  const { coordination, stream } = fixture({ maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const issued = stream.issue(principal(), 'https://control.test', 'repo-a');
+  class BrokenHeaders extends Response { writeHead() { throw new Error('socket failed'); } }
+  const refused = stream.open({ ticket: issued.body.ticket, principal: principal(), origin: 'https://control.test' }, new BrokenHeaders());
+  assert.equal(refused.status, 503);
+  assert.equal(stream.activeConnections, 0);
+  assert.equal(coordination.events().some((event) => event.payload.kind === 'stream_setup_failed'), true);
+});
+
+test('WN6: write backpressure stops immediately and claimed content never inherits authoritative trust', () => {
+  const first = fixture({ maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const blocked = new Response(0, false);
+  first.stream.open({ ticket: first.stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket, principal: principal(), origin: 'https://control.test' }, blocked);
+  assert.equal(blocked.ended, true);
+  assert.equal(first.stream.activeConnections, 0);
+  assert.match(blocked.output, /event: lag/);
+
+  const second = fixture({ maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const claim = second.coordination.claimScratch({
+    resource: 'path:src/**', ownerWorker: 'w-claim', ownerTask: 't-claim', intent: 'edit',
+    envRef: { repoId: 'repo-a', treeSha: 'cafe1234' }, fence: 1, leaseDeadline: 'later',
+  }, { actor: 'w-claim', key: 'claim-for-stream' });
+  const output = new Response();
+  second.stream.open({
+    ticket: second.stream.issue(principal(), 'https://control.test', 'repo-a').body.ticket,
+    principal: principal(), origin: 'https://control.test', cursor: claim.event.seq - 1,
+  }, output);
+  assert.match(output.output, /"kind":"scratch.claimed"/);
+  assert.match(output.output, /"contentTrust":"claimed"/);
   output.emit('close');
 });

@@ -5,6 +5,14 @@ const digest = (value) => createHash('sha256').update(value).digest();
 const string = (value) => typeof value === 'string' && value.length > 0;
 const actor = (principal) => `web:${principal.userId}:${principal.sessionId}`;
 const response = (status, code, extra = {}) => ({ status, body: { ok: false, error: { code }, ...extra } });
+const positiveInteger = (value, name) => {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new TypeError(`${name} must be a positive safe integer`);
+  return value;
+};
+const nonNegativeInteger = (value, name) => {
+  if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`${name} must be a non-negative safe integer`);
+  return value;
+};
 
 export class WebEventStream {
   constructor(opts) {
@@ -18,14 +26,14 @@ export class WebEventStream {
     this.repoIds = new Set(opts.repoIds ?? []);
     if (this.repoIds.size > 1) throw new TypeError('one coordination authority may serve exactly one repository');
     this.now = opts.now ?? Date.now;
-    this.ticketTtlMs = opts.ticketTtlMs ?? 15_000;
-    this.replayLimit = opts.replayLimit ?? 1_000;
-    this.maxBufferedBytes = opts.maxBufferedBytes ?? 256 * 1024;
-    this.maxFrameBytes = opts.maxFrameBytes ?? this.maxBufferedBytes;
-    this.maxControlFrameBytes = opts.maxControlFrameBytes ?? 2 * 1024;
-    this.maxTickets = opts.maxTickets ?? 1_000;
-    this.maxConnections = opts.maxConnections ?? 100;
-    this.pollMs = opts.pollMs ?? 100;
+    this.ticketTtlMs = positiveInteger(opts.ticketTtlMs ?? 15_000, 'ticketTtlMs');
+    this.replayLimit = nonNegativeInteger(opts.replayLimit ?? 1_000, 'replayLimit');
+    this.maxBufferedBytes = positiveInteger(opts.maxBufferedBytes ?? 256 * 1024, 'maxBufferedBytes');
+    this.maxFrameBytes = positiveInteger(opts.maxFrameBytes ?? this.maxBufferedBytes, 'maxFrameBytes');
+    this.maxControlFrameBytes = positiveInteger(opts.maxControlFrameBytes ?? 2 * 1024, 'maxControlFrameBytes');
+    this.maxTickets = positiveInteger(opts.maxTickets ?? 1_000, 'maxTickets');
+    this.maxConnections = positiveInteger(opts.maxConnections ?? 100, 'maxConnections');
+    this.pollMs = positiveInteger(opts.pollMs ?? 100, 'pollMs');
     this.tickets = new Map();
     this.activeConnections = 0;
   }
@@ -147,8 +155,16 @@ export class WebEventStream {
         res.end();
         return false;
       }
-      res.write(encoded);
+      const accepted = res.write(encoded);
       next = event.seq + 1;
+      if (accepted === false) {
+        const lag = frame('lag', next - 1, `lag:${streamId}`, { code: 'backpressure', reconnect: true });
+        const control = encode('lag', next - 1, lag);
+        if (Buffer.byteLength(control) <= this.maxControlFrameBytes) res.write(control);
+        disconnect('stream_backpressure_disconnect');
+        res.end();
+        return false;
+      }
       return true;
     };
 
@@ -156,41 +172,62 @@ export class WebEventStream {
     if (requested === null) {
       const value = frame('snapshot', boundary, `snapshot:${boundary}`, { seq: boundary, snapshot: clone(snapshot) });
       initial = encode('snapshot', boundary, value);
-      if (Buffer.byteLength(initial) > this.maxFrameBytes) {
+      const initialBytes = Buffer.byteLength(initial);
+      if (initialBytes > this.maxFrameBytes
+        || (res.writableLength ?? 0) + initialBytes > this.maxBufferedBytes) {
         try { this._audit('stream_refused', principal, origin, { repoId: grant.repoId, reason: 'snapshot_too_large', boundary }); }
         catch { return response(503, 'temporarily_unavailable'); }
-        return response(413, 'snapshot_too_large', { snapshotCursor: boundary });
+        return response(503, 'temporarily_unavailable', { snapshotCursor: boundary });
       }
     }
     try { this._audit('stream_connected', principal, origin, { repoId: grant.repoId, streamId, cursor: requested ?? boundary }); }
     catch { return response(503, 'temporarily_unavailable'); }
     this.activeConnections += 1;
-    res.writeHead(200, {
-      'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store',
-      connection: 'keep-alive', 'x-accel-buffering': 'no',
-      'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true',
-      vary: 'Origin', 'x-content-type-options': 'nosniff',
-    });
-    if (initial) res.write(initial);
     const pump = () => {
       if (closed) return;
       for (const event of this.coordination.events(next)) if (!send(event)) break;
     };
-    pump();
-    if (!closed) {
-      timer = setInterval(pump, this.pollMs);
-      timer.unref?.();
+    let headersStarted = false;
+    try {
+      res.on?.('close', () => disconnect());
+      res.on?.('error', () => disconnect());
+      res.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store',
+        connection: 'keep-alive', 'x-accel-buffering': 'no',
+        'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true',
+        vary: 'Origin', 'x-content-type-options': 'nosniff',
+      });
+      headersStarted = true;
+      if (initial && res.write(initial) === false) {
+        const lag = frame('lag', next - 1, `lag:${streamId}`, { code: 'backpressure', reconnect: true });
+        const control = encode('lag', next - 1, lag);
+        if (Buffer.byteLength(control) <= this.maxControlFrameBytes) res.write(control);
+        disconnect('stream_backpressure_disconnect');
+        res.end();
+        return null;
+      }
+      pump();
+      if (!closed) {
+        timer = setInterval(pump, this.pollMs);
+        timer.unref?.();
+      }
+    } catch {
+      disconnect('stream_setup_failed');
+      if (headersStarted) {
+        try { res.end(); } catch { /* connection is already unusable */ }
+        return null;
+      }
+      return response(503, 'temporarily_unavailable');
     }
-    res.on?.('close', () => disconnect());
-    res.on?.('error', () => disconnect());
     return null;
   }
 
   _contentTrust(event) {
     const kind = event?.kind ?? '';
     if (kind === 'scratch.claimed') return 'claimed';
+    if (kind === 'scratch.fact_posted') return event?.payload?.grounding ?? 'observed';
     if (kind.startsWith('knowledge.')) return event?.payload?.grounding ?? 'derived';
-    if (kind === 'web.audit') return 'claimed';
+    if (kind === 'web.audit') return 'observed';
     return 'authoritative';
   }
 }

@@ -89,6 +89,7 @@ export class WebNorthbound {
     this.coordination = opts.coordination;
     this.allowedOrigins = new Set(opts.allowedOrigins ?? []);
     this.repoIds = new Set(opts.repoIds ?? []);
+    if (this.repoIds.size > 1) throw new TypeError('one web northbound authority may serve at most one repository');
     this.now = opts.now ?? Date.now;
     this.authenticate = opts.authenticate ?? null;
     this.maxBodyBytes = opts.maxBodyBytes ?? 64 * 1024;

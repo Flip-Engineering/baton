@@ -206,6 +206,50 @@ test('WN1/WN2/WN5/WN8: the HTTP adapter authenticates a bounded JSON command and
   assert.throws(() => createAuthenticatedWebServer(noAuth, { tls: { key: 'x', cert: 'y' } }), /authenticator/);
 });
 
+test('WN3/WN6: the HTTP adapter issues and consumes an authenticated SSE nonce for one repo authority', async () => {
+  const web = new WebNorthbound({
+    coordinator: { list() { return []; } }, coordination: new CoordinationStore(root()),
+    repoIds: ['repo-a'], allowedOrigins: ['https://control.example.test'],
+    authenticate: async (req) => req.headers.authorization === 'Bearer opaque-test-value' ? principal({ authMethod: 'bearer' }) : null,
+    now: () => Date.parse('2026-07-11T12:00:00.000Z'), maxBodyBytes: 4096,
+  });
+  const issueReq = Readable.from([Buffer.from(JSON.stringify({ repoId: 'repo-a' }))]);
+  Object.assign(issueReq, {
+    method: 'POST', url: '/v1/stream-tickets',
+    headers: { 'content-type': 'application/json', origin: 'https://control.example.test', authorization: 'Bearer opaque-test-value' },
+    socket: { encrypted: true, remoteAddress: '127.0.0.1' },
+  });
+  const issued = await new Promise((resolve, reject) => {
+    const response = { status: null, writeHead(status) { this.status = status; }, end(payload) { resolve({ status: this.status, body: JSON.parse(payload) }); } };
+    web.handle(issueReq, response).catch(reject);
+  });
+  assert.equal(issued.status, 201);
+
+  const eventReq = Readable.from([]);
+  Object.assign(eventReq, {
+    method: 'GET', url: `/v1/events?ticket=${encodeURIComponent(issued.body.ticket)}`,
+    headers: { origin: 'https://control.example.test', authorization: 'Bearer opaque-test-value' },
+    socket: { encrypted: true, remoteAddress: '127.0.0.1' },
+  });
+  class EventResponse extends Readable {
+    constructor() { super({ read() {} }); this.output = ''; }
+    writeHead(status, headers) { this.status = status; this.headers = headers; }
+    write(value) { this.output += value; return true; }
+    end(value = '') { this.output += value; this.ended = true; }
+  }
+  const eventResponse = new EventResponse();
+  await web.handle(eventReq, eventResponse);
+  assert.equal(eventResponse.status, 200);
+  assert.equal(eventResponse.headers['content-type'], 'text/event-stream; charset=utf-8');
+  assert.match(eventResponse.output, /event: snapshot/);
+  eventResponse.emit('close');
+
+  assert.throws(() => new WebNorthbound({
+    coordinator: {}, coordination: new CoordinationStore(root()), stream: {},
+    repoIds: ['repo-a', 'repo-b'], allowedOrigins: ['https://control.example.test'],
+  }), /at most one repository/);
+});
+
 test('WN4/WN9: the real coordinator rejects stale web stop fences before adapter mutation', async () => {
   const repo = root();
   execFileSync('git', ['init', '-q'], { cwd: repo });
