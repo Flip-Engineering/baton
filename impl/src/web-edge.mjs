@@ -52,6 +52,21 @@ export class ConcurrentQuota {
   release(key) { const current = this.keys.get(key) ?? 0; if (current <= 1) this.keys.delete(key); else this.keys.set(key, current - 1); }
 }
 
+export class WebReadinessAuthority {
+  constructor({ coordination, sessions = null, authenticate, checks = [] }) {
+    if (typeof coordination?.healthCheck !== 'function') throw new TypeError('readiness requires coordination healthCheck');
+    if (typeof authenticate !== 'function' || typeof authenticate.isPrincipalActive !== 'function' || typeof authenticate.healthCheck !== 'function') throw new TypeError('readiness requires live authentication health');
+    if (sessions && typeof sessions.healthCheck !== 'function') throw new TypeError('readiness requires session healthCheck');
+    if (!Array.isArray(checks) || checks.some((check) => typeof check !== 'function')) throw new TypeError('readiness checks must be functions');
+    this.coordination = coordination; this.sessions = sessions; this.authenticate = authenticate; this.checks = checks;
+  }
+  check() {
+    try { return this.coordination.healthCheck() === true && this.authenticate.healthCheck() === true
+      && (!this.sessions || this.sessions.healthCheck() === true) && this.checks.every((check) => check() === true); }
+    catch { return false; }
+  }
+}
+
 const parseForwarded = (value) => {
   if (typeof value !== 'string' || value.length === 0 || value.length > 512) throw new TypeError('invalid forwarding chain');
   const elements = value.split(',');
@@ -118,6 +133,7 @@ export class WebEdgePolicy {
     return resolveEdgeRequest(req, { trustedProxies: this.trustedProxies, forwardedHop: this.forwardedHop, requireForwardedHttps: true });
   }
   digest(value) { return createHmac('sha256', this.addressKey).update(value).digest('hex'); }
+  peerDigest(req) { return this.digest(address(req?.socket?.remoteAddress)); }
   take(kind, key, cost) { return this.quotas[kind].take(key, cost); }
   takeCommand(key, cost) {
     const count = this.quotas.principal.canTake(key);

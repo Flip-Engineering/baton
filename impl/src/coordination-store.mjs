@@ -225,6 +225,7 @@ export class CoordinationStore {
   }
   task(id) { return clone(this._tasks.get(id) ?? null); }
   snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
+  healthCheck() { try { if (!existsSync(this.file)) return this._events.length === 0; const raw = readFileSync(this.file, 'utf8'); return raw.length === 0 || raw.endsWith('\n'); } catch { return false; } }
   readyTasks() {
     return [...this._tasks.values()].filter((task) => task.status === 'pending' && task.assignee == null
       && task.deps.every((dep) => this._tasks.get(dep)?.status === 'completed')).map(clone);

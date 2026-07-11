@@ -2,7 +2,7 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer as createHttpsServer } from 'node:https';
 import { createServer as createHttpServer } from 'node:http';
 import { WebEventStream } from './web-stream.mjs';
-import { WebEdgePolicy } from './web-edge.mjs';
+import { WebEdgePolicy, WebReadinessAuthority } from './web-edge.mjs';
 
 const COMMAND_CAPABILITY = Object.freeze({
   spawn: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', respond: 'approve',
@@ -113,6 +113,8 @@ export class WebNorthbound {
     this.edge = opts.edge ?? (opts.edgePolicy ? new WebEdgePolicy(opts.edgePolicy) : null);
     this.admitting = true;
     this.readinessChecks = opts.readinessChecks ?? [];
+    this.readinessAuthority = opts.readinessAuthority ?? (this.sessions && this.authenticate?.isPrincipalActive
+      ? new WebReadinessAuthority({ coordination: this.coordination, sessions: this.sessions, authenticate: this.authenticate, checks: this.readinessChecks }) : null);
     this.stream = opts.stream ?? new WebEventStream({
       ...opts, coordination: this.coordination,
       allowedOrigins: [...this.allowedOrigins], repoIds: [...this.repoIds],
@@ -144,11 +146,7 @@ export class WebNorthbound {
   _isReady() {
     if (!this.admitting || (this.edge && !this.edge.admitting)) return false;
     try {
-      if (typeof this.coordination.snapshot === 'function' && !this.coordination.snapshot()) return false;
-      if (this.sessions && (typeof this.sessions.healthCheck !== 'function' || this.sessions.healthCheck() !== true)) return false;
-      if (typeof this.authenticate !== 'function') return false;
-      if (this.sessions && typeof this.isPrincipalActive !== 'function') return false;
-      return this.readinessChecks.every((check) => check() === true);
+      return this.readinessAuthority?.check() === true;
     } catch { return false; }
   }
 
@@ -278,9 +276,11 @@ export class WebNorthbound {
     const origin = req.headers.origin ?? null;
     const url = new URL(req.url, 'https://baton.invalid');
     if (this.edge) {
+      let peerDigest = null;
+      try { peerDigest = this.edge.peerDigest(req); } catch { /* bounded invalid-peer audit below */ }
       let identity;
       try { identity = this.edge.resolve(req); } catch {
-        try { this._audit('proxy_refused', { origin }); } catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+        try { this._audit('proxy_refused', { origin, remoteAddress: peerDigest ? 'canonical' : null, addressDigest: peerDigest }, { reason: peerDigest ? 'invalid_forwarding' : 'invalid_peer' }); } catch { return this._write(res, error(503, 'temporarily_unavailable')); }
         return this._write(res, error(400, 'invalid_forwarding'));
       }
       req.edgeIdentity = identity;
@@ -497,7 +497,8 @@ export class WebNorthbound {
     if (!Number.isSafeInteger(drainMs) || drainMs <= 0) throw new TypeError('drainMs must be a positive safe integer');
     this.admitting = false; this.edge?.closeAdmission();
     this._shutdown = (async () => {
-      try { this._audit('shutdown_started', {}); } catch {}
+      let auditOk = true;
+      try { this._audit('shutdown_started', {}); } catch { auditOk = false; }
       this.stream.shutdown?.();
       let closed = !server?.close;
       const closePromise = new Promise((resolve) => {
@@ -511,8 +512,8 @@ export class WebNorthbound {
         await Promise.race([closePromise, new Promise((resolve) => setTimeout(resolve, Math.min(1_000, drainMs)))]);
       }
       const outcome = closed ? 'shutdown_completed' : 'shutdown_timed_out';
-      try { this._audit(outcome, {}); } catch {}
-      return { ok: closed, result: closed ? 'closed' : 'timed_out' };
+      try { this._audit(outcome, {}); } catch { auditOk = false; }
+      return { ok: closed && auditOk, result: !closed ? 'timed_out' : auditOk ? 'closed' : 'closed_audit_unavailable' };
     })();
     return this._shutdown;
   }
@@ -525,10 +526,13 @@ export function createAuthenticatedWebServer(northbound, opts = {}) {
   let server;
   if (proxyCleartext) {
     if (!northbound.edge?.proxyMode || northbound.edge.trustedProxies.length === 0) throw new TypeError('cleartext proxy backend requires an explicit trusted-proxy edge policy');
+    if (!(northbound.readinessAuthority instanceof WebReadinessAuthority)) throw new TypeError('production web server requires a WebReadinessAuthority');
     if (opts.tls?.key || opts.tls?.cert) throw new TypeError('choose direct TLS or cleartext trusted-proxy backend, not both');
     server = createHttpServer((req, res) => northbound.handle(req, res));
   } else {
     if (!opts.tls?.key || !opts.tls?.cert) throw new TypeError('TLS key and certificate are required');
+    if (!(northbound.edge instanceof WebEdgePolicy)) throw new TypeError('production web server requires a WebEdgePolicy');
+    if (!(northbound.readinessAuthority instanceof WebReadinessAuthority)) throw new TypeError('production web server requires a WebReadinessAuthority');
     server = createHttpsServer({ key: opts.tls.key, cert: opts.tls.cert, minVersion: 'TLSv1.2' }, (req, res) => northbound.handle(req, res));
   }
   server.batonShutdown = (shutdownOpts = {}) => northbound.shutdown({ ...shutdownOpts, server });

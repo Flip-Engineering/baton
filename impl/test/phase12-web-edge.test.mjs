@@ -126,6 +126,15 @@ test('EP6/EP7: drain deadline forces connections and never reports completion be
   assert.equal(terminal.length, 1); assert.equal(terminal[0].payload.kind, 'shutdown_completed');
 });
 
+test('EP7: shutdown audit failure produces one bounded degraded result while still closing resources', async () => {
+  const s = system(); let closed = 0; let streamClosed = 0; s.web.stream.shutdown = () => { streamClosed += 1; };
+  s.coordination.recordWebAudit = () => { throw new Error('audit unavailable'); };
+  const first = s.web.shutdown({ server: { close(cb) { closed += 1; cb(); } }, drainMs: 10 });
+  assert.deepEqual(await first, { ok: false, result: 'closed_audit_unavailable' });
+  assert.deepEqual(await s.web.shutdown(), { ok: false, result: 'closed_audit_unavailable' });
+  assert.equal(closed, 1); assert.equal(streamClosed, 1); assert.deepEqual(s.fleetCalls, []);
+});
+
 test('EP4/EP5: health has an independent quota and never consumes the ordinary address bucket', async () => {
   const s = system({ edgePolicy: edge({ limits: { health: 1, address: 1 } }) });
   assert.equal((await request(s.web, { method: 'GET', path: '/healthz' })).status, 200);
@@ -169,4 +178,24 @@ test('EP4/EP6: server assembly permits cleartext only behind explicit trusted pr
   assert.equal(typeof server.batonShutdown, 'function');
   const direct = system({ edgePolicy: edge() });
   assert.throws(() => createAuthenticatedWebServer(direct.web, { proxy: { cleartextBackend: true } }), /trusted-proxy edge policy/);
+  const customAuth = Object.assign(async () => null, { isPrincipalActive: () => true, healthCheck: () => true });
+  const missingEdge = new WebNorthbound({ coordinator: {}, coordination: new CoordinationStore(root()), authenticate: customAuth });
+  assert.throws(() => createAuthenticatedWebServer(missingEdge, { tls: { key: 'x', cert: 'y' } }), /WebEdgePolicy/);
+});
+
+test('EP5: custom authentication without live health authority stays unready and production assembly refuses it', async () => {
+  const coordination = new CoordinationStore(root()); const custom = async () => null;
+  const web = new WebNorthbound({ coordinator: {}, coordination, authenticate: custom, edge: edge(), allowedOrigins: [ORIGIN] });
+  const response = await request(web, { method: 'GET', path: '/readyz' });
+  assert.equal(response.status, 503); assert.deepEqual(response.body, { ready: false });
+  assert.throws(() => createAuthenticatedWebServer(web, { tls: { key: 'x', cert: 'y' } }), /WebReadinessAuthority/);
+});
+
+test('EP1/EP7: malformed trusted forwarding audits a keyed peer digest without raw address/header leakage', async () => {
+  const s = system({ edgePolicy: edge({ proxyMode: true, trustedProxies: ['192.0.2.1'] }) });
+  const response = await request(s.web, { path: '/v1/auth/login', body: {}, encrypted: false, address: '192.0.2.1', headers: { forwarded: 'for=198.51.100.2;proto=https', 'x-forwarded-for': '198.51.100.2' } });
+  assert.equal(response.status, 400);
+  const audit = s.coordination.events().find((event) => event.payload?.kind === 'proxy_refused');
+  assert.match(audit.payload.addressDigest, /^[a-f0-9]{64}$/); assert.equal(audit.payload.remoteAddressClass, 'present');
+  assert.equal(JSON.stringify(audit).includes('192.0.2.1'), false); assert.equal(JSON.stringify(audit).includes('198.51.100.2'), false);
 });

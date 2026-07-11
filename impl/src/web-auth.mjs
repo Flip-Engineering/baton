@@ -218,6 +218,7 @@ export class WebSessionStore {
   authenticator() {
     const authenticate = (req) => this.authenticate(req);
     authenticate.isPrincipalActive = (principal, context) => this.isPrincipalActive(principal, context);
+    authenticate.healthCheck = () => this.healthCheck();
     return authenticate;
   }
 }
