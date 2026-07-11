@@ -149,9 +149,9 @@ test('PS2: a follow-up exception is a refused Ack and preserves the prior result
   assert.equal(c.list()[0].status, 'idle');
 });
 
-test('CK8/CK9: follow-up refinement failure kills an already-advanced native session', async () => {
+test('CK8/CK9: follow-up refinement failure kills native state and replays an explicit aborted attempt', async () => {
   const ad = adapter();
-  const { c, coordination } = harness(ad);
+  const { c, coordination, log } = harness(ad);
   const h = await c.spawn('session', brief(), { taskId: 'follow-refinement-failure' });
   ad.emit(h.id, 'lifecycle.turn_completed', completed('first'), 1);
   await until(async () => (await c.result(h.id)).ready);
@@ -163,10 +163,20 @@ test('CK8/CK9: follow-up refinement failure kills an already-advanced native ses
   await assert.rejects(c.send(h.id, 'advance native state', 'turn'), (error) => error.code === 'coordination_write_unavailable');
   assert.equal(ad.calls.prompt.length, 1);
   assert.equal(ad.calls.kill.length, 1);
-  assert.equal(c._workers.get(h.id).status, 'dead');
+  assert.equal(c._workers.get(h.id).status, 'orphaned');
   assert.equal(coordination.snapshot().tasks.length, 1);
   assert.equal(coordination.snapshot().tasks[0].status, 'completed');
   assert.equal(coordination.events().some((event) => event.kind === 'driver.recorded' && event.payload.kind === 'follow_up.requested'), true);
+  assert.equal(log.read(h.id).some((event) => event.kind === 'control.refinement_aborted' && event.payload.relation === 'follow_up'), true);
+
+  coordination._appendFile = rawAppend;
+  const replay = new Coordinator({
+    log, coordination, fences: new FenceTable(), adapters: { session: adapter() },
+    worktrees: { remove: async () => {}, reconcile: async () => {} }, referee: async () => ({}),
+    route: () => 'session', approvalTimeoutMs: 1000, stopDeadlineMs: 100,
+  });
+  assert.equal(replay.list()[0].status, 'orphaned');
+  assert.equal((await replay.result(h.id)).status, 'completed', 'the accepted prior turn remains distinct from the aborted refinement');
 });
 
 test('PS2: emitted turn facts followed by refusal are a protocol violation and kill the ambiguous session', async () => {
@@ -489,6 +499,16 @@ test('CK8/CK9: recovery refinement failure kills a native transport that already
   await assert.rejects(replay.recover(h.id), (error) => error.code === 'coordination_write_unavailable');
   await until(() => resumed.calls.kill.length === 1);
   assert.equal(replay._workers.get(h.id).status, 'orphaned');
+  assert.equal(log.read(h.id).some((event) => event.kind === 'control.refinement_aborted' && event.payload.relation === 'recovery'), true);
+
+  coordination._appendFile = rawAppend;
+  const restarted = new Coordinator({
+    log, coordination, fences: new FenceTable(), adapters: { session: adapter() },
+    worktrees: { validateSessionContext: async () => ({ ok: true }), remove: async () => {}, reconcile: async () => {} },
+    referee: async () => ({}), route: () => 'session', recoveryTimeoutMs: 100, stopDeadlineMs: 100,
+  });
+  assert.equal(restarted.list()[0].status, 'orphaned');
+  assert.equal((await restarted.result(h.id)).status, 'completed', 'the prior verified task is not rewritten as refinement success');
 });
 
 test('PS7: a reattachment identity mismatch is refused and the untrusted transport is killed', async () => {

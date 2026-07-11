@@ -44,14 +44,21 @@ these tests.
   leaves the durable task pending/unassigned for restart.
 - Blocking input becomes pending/blocked only after its mapped durable transition. Persistent
   follow-up and recovery write intent before native calls; if the native session advances or
-  attaches but refinement creation fails, Baton kills/quarantines that ambiguous transport.
+  attaches but refinement creation fails, Baton records the aborted attempt, kills/quarantines
+  that ambiguous transport, and replays it orphaned while preserving the prior verified turn.
+- If a native answer/approval is accepted and the following operational append fails, Baton
+  commits and releases the in-memory single-consumer reservation, wakes racing responders without
+  redelivery, poisons subsequent public commands, and restart terminalizes the unresolved durable
+  task as failed.
 - Stop intent is durable before interrupt/kill calls. A cancel-terminal append failure returns a
   bounded `coordination_unavailable`, preserves the stop intent, and restart terminalizes the
   durable task instead of hanging or claiming cancellation.
 - Review creation inherits task-create authority and is fault-proven to call no reviewer when its
   durable task cannot append. Integration writes intent before retaining refs, stopping/reaping,
   or changing Git. Publication request and exact-fence authorization are durable before the
-  publisher; authorization failure invokes no publisher.
+  publisher; authorization failure invokes no publisher. After the outside effect, publication's
+  knowledge decision and driver completion commit atomically. Replay ignores a telemetry-only
+  `publication.completed`, reports publication unknown, and never republishes it.
 - Adapter callback failures caused by an already-poisoned authoritative store are contained at
   the callback boundary rather than escaping as uncaught process exceptions.
 
@@ -68,7 +75,7 @@ node --test impl/test/phase11-acceptance-integration.test.mjs
 20/20 passing
 
 cd impl && node --test
-562/562 passing
+563/563 passing
 ```
 
 The recursive exact-model Grok spec and implementation reviews passed every Baton lifecycle check.

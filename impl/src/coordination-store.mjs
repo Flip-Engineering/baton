@@ -382,6 +382,26 @@ export class CoordinationStore {
     return { ok: true, event: clone(event) };
   }
 
+  /** Atomically make a post-effect publication authoritative. The operational completion may
+   * already exist because the publisher is an outside effect; neither the graph decision nor the
+   * driver completion is visible unless both append in one fs write. */
+  completePublication(fields, auth) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) return { ok: true, result: 'idempotent', event: clone(prior) };
+    if (!this._tasks.has(fields?.taskId)) throw new CoordinationRefusal(`unknown publication task ${fields?.taskId}`, 'not_found');
+    const knowledge = this._prepareKnowledgeNode(fields.knowledge);
+    const entries = [
+      { kind: 'knowledge.promoted', payload: { ...knowledge, promotion: { kind: 'Decision', trigger: 'publication' } }, auth },
+      {
+        kind: 'driver.recorded',
+        payload: { kind: 'publication.completed', taskId: fields.taskId, publication: clone(fields.publication), evidence: clone(fields.evidence) },
+        auth: { actor: auth.actor, key: `${auth.key}:driver` },
+      },
+    ];
+    const events = this._appendBatch(entries);
+    return { ok: true, result: 'completed', event: clone(events[0]), driverEvent: clone(events[1]) };
+  }
+
   postScratchFact(fields, auth) {
     const prior = this._byKey.get(auth?.key);
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), fact: clone(this._scratchFacts.get(prior.payload.id)) };

@@ -75,6 +75,18 @@ typed coordination-unavailable result, kills or quarantines the ambiguous transp
 closes the still-nonterminal durable task. Asynchronous adapter callbacks may not turn an already
 recorded fatal coordination fault into an uncaught process exception.
 
+A refinement that cannot be materialized after native advancement records an explicit aborted
+attempt, preserves its terminal predecessor without pretending the attempted turn succeeded, and
+replays the native session as orphaned. An input delivery accepted before an authoritative append
+failure commits and releases its single-consumer reservation so racing responders cannot hang or
+redeliver.
+
+Publication is a post-effect special case: authorization is durable before the publisher, while
+the knowledge decision and driver completion become authoritative in one coordination append
+batch after the effect. Replay accepts `publication.completed` telemetry only when that atomic
+authority record exists. Otherwise the already integrated task remains completed, publication is
+reported unknown/not completed, and the poisoned live coordinator fails closed.
+
 `task.created` persists `brief`, `deps`, `refines`, `taskType`, requested vendor/model/session
 policy, and the reserved public handle ID. `task.claimed` persists assignee, resolved vendor/model,
 and expected/new versions. Refusal codes are `stale_version | already_assigned |
@@ -240,7 +252,10 @@ Temp-directory and temp-Git tests must prove before provider dogfooding:
     persistent follow-up/recovery refinement, review creation, terminal artifact batch,
     integration intent, publication authorization, and knowledge/Scratch reads. Pre-effect
     failures call no adapter/Git/publisher; post-effect failures are bounded, poison authority,
-    preserve the earlier intent, and replay to a non-success terminal state.
+    preserve the earlier intent, never redeliver a single-consumer effect, and replay the affected
+    task/attempt/session/publication as failed, aborted, orphaned, or outcome-unknown rather than
+    fabricating success. A terminal predecessor is not rewritten merely because a later refinement
+    attempt failed.
 
 After CK9 is green and committed, Baton may recursively run a real provider review against this
 spec and implementation. The recursive task must use isolated runtime credentials/budgets, exact

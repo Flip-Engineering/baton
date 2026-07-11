@@ -411,7 +411,7 @@ test('CK8/CK9: publication authorization append failure invokes no publisher', a
 });
 
 test('CK8/CK9: post-publish completion failure is bounded and preserves prior authorization', async () => {
-  const { coordinator, coordination, handle, calls } = await integratedPublicationTask();
+  const { coordinator, coordination, handle, calls, root, logDir } = await integratedPublicationTask();
   const requested = coordinator.requestPublication(handle.id, { remote: 'origin', ref: 'refs/heads/main' }, 'test-user');
   const rawAppend = coordination._appendFile;
   coordination._appendFile = (file, body, encoding) => {
@@ -424,8 +424,21 @@ test('CK8/CK9: post-publish completion failure is bounded and preserves prior au
   );
   assert.equal(calls.length, 1);
   assert.equal(coordinator._pending.get(requested.requestId).state, 'resolved');
+  assert.deepEqual(coordinator._pending.get(requested.requestId).resolution, { decision: 'allow', outcome: 'unknown' });
   assert.equal(coordination.events().some((event) => event.kind === 'driver.recorded' && event.payload.kind === 'publication.authorized'), true);
   assert.equal(coordination.events().some((event) => event.kind === 'driver.recorded' && event.payload.kind === 'publication.completed'), false);
+  assert.equal(coordination.queryKnowledge({ types: ['Decision'] }).some((node) => node.id.startsWith('decision:publish:')), false);
+  assert.throws(() => coordinator.list(), (error) => error.code === 'coordination_write_unavailable');
+
+  coordination._appendFile = rawAppend;
+  const replay = createDriver({
+    repoRoot: root, logDir, coordination,
+    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) },
+    publisher: async () => { throw new Error('replay must never republish'); }, watchdog: { stallMs: 0 },
+  });
+  const replayed = await replay.coordinator.result(handle.id);
+  assert.equal(replayed.status, 'completed', 'publication ambiguity does not rewrite the already integrated task');
+  assert.equal(replayed.publication, null, 'operational completion without atomic coordination authority is not success');
 });
 
 test('AC6: deny and timeout are fail-closed and never call the publisher', async () => {

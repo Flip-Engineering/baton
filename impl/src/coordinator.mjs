@@ -85,7 +85,7 @@ export class DependencyCycleError extends Error {
 const TERMINAL_TASK_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 const COORDINATION_MUTATORS = new Set([
   'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent',
-  'recordDriver', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
+  'recordDriver', 'completePublication', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
   'readScratch', 'expireScratchClaim', 'expireScratchFact', 'addKnowledgeNode', 'promoteKnowledgeNode',
   'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination',
 ]);
@@ -257,7 +257,7 @@ export class Coordinator {
   /** @param {object} opts */
   constructor(opts) {
     if (!opts?.coordination) throw new TypeError('Coordinator requires a durable coordination store');
-    for (const method of ['snapshot', 'task', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent', 'recordDriver', 'registerArtifact', 'artifact', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
+    for (const method of ['snapshot', 'task', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent', 'recordDriver', 'completePublication', 'registerArtifact', 'artifact', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
       if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
     }
     this._log = opts.log;
@@ -981,6 +981,11 @@ export class Coordinator {
     } catch (err) {
       if (handle.turnAdmission === admission) handle.turnAdmission = null;
       handle.status = 'orphaned';
+      this._log.append({
+        worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'control.refinement_aborted', actor: 'policy',
+        payload: { relation: 'recovery', requestedSeq: recoveryRequested.seq, reason: String(err?.message ?? err), action: 'kill_untrusted_transport' },
+      });
       Promise.resolve(adapter.kill(workerId)).catch(noop).finally(() => this._removeRuntimeScope(handle));
       throw err;
     }
@@ -1355,7 +1360,12 @@ export class Coordinator {
       activeTask = this._createCoordinationRefinement(handle, task, 'follow_up');
     } catch (err) {
       if (handle.turnAdmission === admission) handle.turnAdmission = null;
-      handle.status = 'dead';
+      handle.status = 'orphaned';
+      this._log.append({
+        worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'control.refinement_aborted', actor: 'policy',
+        payload: { relation: 'follow_up', requestedSeq: requestedEvent.seq, reason: String(err?.message ?? err), action: 'kill_untrusted_transport' },
+      });
       Promise.resolve(this._adapters[handle.vendor].kill(workerId)).catch(noop);
       this._removeRuntimeScope(handle);
       this._removeTaskWorktree(task).catch(noop);
@@ -2008,31 +2018,40 @@ export class Coordinator {
         finishResolving();
         throw new PublicationError(String(err?.message ?? err), 'publisher_failed');
       }
-      record.state = 'resolved';
-      record.consumer = actor;
-      record.resolution = { decision: 'allow' };
       const task = this._tasks.get(handle.taskId);
       void published;
-      task.publication = Object.freeze({ requestId, ...record.publication, actor });
+      const publication = Object.freeze({ requestId, ...record.publication, actor });
       try {
         const publicationEvent = this._log.append({
           worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
-          kind: 'publication.completed', actor, payload: task.publication,
+          kind: 'publication.completed', actor, payload: publication,
         });
         const publicationEvidence = this._coordMapEvent(publicationEvent);
-        this._coordination?.promoteKnowledgeNode({
+        this._coordination?.completePublication({
+          taskId: task.id, publication, evidence: publicationEvidence,
+          knowledge: {
           id: `decision:publish:${task.id}:${publicationEvent.seq}`, type: 'Decision',
-          body: `Published task ${task.id} to ${task.publication.remote}/${task.publication.ref}`,
+          body: `Published task ${task.id} to ${publication.remote}/${publication.ref}`,
           grounding: 'observed', informedBy: [`task:${task.id}`],
           evidence: [{ coordinationSeq: publicationEvidence.coordinationSeq }],
-        }, { kind: 'Decision', trigger: 'publication' }, { actor, key: `knowledge.publication:${task.id}:${publicationEvent.seq}` });
-        this._coordRecord('publication.completed', { taskId: task.id, publication: task.publication, evidence: publicationEvidence }, `driver.publication:${task.id}:${publicationEvent.seq}`, actor);
+          },
+        }, { actor, key: `publication.commit:${task.id}:${publicationEvent.seq}` });
+        task.publication = publication;
       } catch (err) {
+        // The publisher may have advanced, so this reservation cannot roll back for retry. The
+        // coordinator is poisoned by either authoritative append path, replay requires the atomic
+        // coordination commit below, and a racing responder is released instead of hanging.
+        record.state = 'resolved';
+        record.consumer = actor;
+        record.resolution = { decision: 'allow', outcome: 'unknown' };
         finishResolving();
         throw err;
       }
+      record.state = 'resolved';
+      record.consumer = actor;
+      record.resolution = { decision: 'allow' };
       finishResolving();
-      return { ok: true, result: 'published', publication: task.publication };
+      return { ok: true, result: 'published', publication };
     }
 
     const clearPending = () => {
@@ -2099,15 +2118,26 @@ export class Coordinator {
     }
 
     let resolvedEvent;
-    if (record.kind === 'question') {
-      const ev = { worker: handle.id, harness, turnEpoch: currentTurnEpoch, kind: 'question.answered', actor, payload: { requestId, answer } };
-      if (ack && ack.emulated === true) ev.emulated = true;
-      resolvedEvent = this._log.append(ev);
-    } else {
-      const decision = answer && answer.decision;
-      const ev = { worker: handle.id, harness, turnEpoch: currentTurnEpoch, kind: 'approval.resolved', actor, payload: { requestId, decision } };
-      if (ack && ack.emulated === true) ev.emulated = true;
-      resolvedEvent = this._log.append(ev);
+    try {
+      if (record.kind === 'question') {
+        const ev = { worker: handle.id, harness, turnEpoch: currentTurnEpoch, kind: 'question.answered', actor, payload: { requestId, answer } };
+        if (ack && ack.emulated === true) ev.emulated = true;
+        resolvedEvent = this._log.append(ev);
+      } else {
+        const decision = answer && answer.decision;
+        const ev = { worker: handle.id, harness, turnEpoch: currentTurnEpoch, kind: 'approval.resolved', actor, payload: { requestId, decision } };
+        if (ack && ack.emulated === true) ev.emulated = true;
+        resolvedEvent = this._log.append(ev);
+      }
+    } catch (err) {
+      // Delivery was accepted by the native adapter and is not safely retryable. Commit the
+      // in-memory single-consumer reservation, release racing responders, and rely on poisoned
+      // fail-closed behavior plus replay terminalization for the missing durable resolution.
+      record.state = 'resolved';
+      record.consumer = actor;
+      record.resolution = answer;
+      finishResolving();
+      throw err;
     }
     const task = this._tasks.get(handle.taskId);
     if (task && this._coordination?.task(task.id)?.status === 'input_required') {
@@ -2740,6 +2770,7 @@ export class Coordinator {
       let verdict = null;
       let lastResult = null;
       let recoveryTerminalized = false;
+      let refinementAborted = false;
       let vendorRequested = null;
       let vendorResolved = null;
       let modelRequested = null;
@@ -2842,12 +2873,21 @@ export class Coordinator {
             retainedResultRef = e.payload?.retainedResultRef ?? retainedResultRef;
             break;
           case 'publication.completed':
-            publication = e.payload ?? publication;
+            // Operational completion follows an outside effect, but it is not authoritative by
+            // itself. The publication decision and driver completion are an atomic coordination
+            // batch; absence of that decision means replay must report outcome unknown, never
+            // fabricate a successful publication from the telemetry stream.
+            if (this._coordination?.snapshot().knowledge.nodes.some((node) =>
+              node.id === `decision:publish:${taskId}:${e.seq}`
+              && node.promotion?.trigger === 'publication')) publication = e.payload ?? publication;
             break;
           case 'lifecycle.crashed':
           case 'control.forced_stop':
           case 'control.recovery_terminalized':
             if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) terminalStatus = 'failed';
+            break;
+          case 'control.refinement_aborted':
+            refinementAborted = true;
             break;
           case 'kill.confirmed':
           case 'control.interrupt_confirmed':
@@ -2994,7 +3034,7 @@ export class Coordinator {
         worktree: sessionContext?.worktree ?? null,
         // A durable native reference is not a live transport. Even a terminal task that was
         // reusable before restart must remain uncontrollable until PS7 proves reattachment.
-        status: (recoveryTerminalized || sessionRef) ? 'orphaned' : this._deriveWorkerStatus(terminalStatus),
+        status: (recoveryTerminalized || refinementAborted || sessionRef) ? 'orphaned' : this._deriveWorkerStatus(terminalStatus),
         pendingApprovalId: null,
         pendingQuestionId: null,
         budgetUsed,

@@ -90,6 +90,7 @@ function adapter(over = {}) {
 
 function harness({ ad = adapter(), log, worktrees: worktreeOver = {}, stopDeadlineMs = 50 } = {}) {
   const actualLog = log ?? new Log(mkdtempSync(join(tmpdir(), 'baton-p11-log-')));
+  const coordination = coordinationForLog(actualLog);
   const worktrees = {
     create: worktreeOver.create ?? (async (taskId) => ({ path: `/tmp/${taskId}`, branch: `baton/${taskId}`, baseSha: 'base' })),
     capture: worktreeOver.capture ?? (async () => ({ sha: 'result', snapshotted: false })),
@@ -100,7 +101,7 @@ function harness({ ad = adapter(), log, worktrees: worktreeOver = {}, stopDeadli
   };
   const coordinator = new Coordinator({
     log: actualLog,
-    coordination: coordinationForLog(actualLog),
+    coordination,
     fences: new FenceTable(),
     adapters: { stub: ad },
     worktrees,
@@ -111,7 +112,7 @@ function harness({ ad = adapter(), log, worktrees: worktreeOver = {}, stopDeadli
     approvalTimeoutMs: 1000,
     stopDeadlineMs,
   });
-  return { coordinator, log: actualLog, ad, worktrees };
+  return { coordinator, coordination, log: actualLog, ad, worktrees };
 }
 
 test('CI1: createBrief preserves verification hardening fields and freezes them', () => {
@@ -207,6 +208,42 @@ test('CI2: a missing Ack is not treated as accepted delivery', async () => {
   const result = await coordinator.respond('q-no-ack', { text: 'answer' });
   assert.equal(result.ok, false);
   assert.equal(coordinator.list()[0].pendingQuestionId, 'q-no-ack');
+});
+
+test('CI2/CK9: accepted input followed by append failure releases one racing consumer and replay closes failed', async () => {
+  const delivery = deferred();
+  let answers = 0;
+  const ad = adapter({ answer: async () => { answers += 1; await delivery.promise; return { ok: true }; } });
+  const { coordinator, coordination, log, worktrees } = harness({ ad });
+  const h = await coordinator.spawn('stub', brief(), { taskId: 'respond-post-effect-failure' });
+  ad._cb({
+    worker: h.id, harness: 'stub', turnEpoch: 2, actor: 'worker', kind: 'question.asked',
+    payload: { requestId: 'q-post-effect', question: 'exactly once?', blocking: true },
+  });
+
+  const first = coordinator.respond('q-post-effect', { text: 'first' }, 'human');
+  await until(() => answers === 1);
+  const second = coordinator.respond('q-post-effect', { text: 'second' }, 'other-human');
+  const originalFile = log._file.bind(log);
+  log._file = () => join(tmpdir(), 'baton-missing-parent', `${Date.now()}`, 'events.jsonl');
+  delivery.resolve();
+
+  await assert.rejects(first, (error) => error.code === 'operational_log_unavailable');
+  assert.deepEqual(await Promise.race([second, sleep(100).then(() => ({ result: 'timeout' }))]), {
+    ok: false, result: 'already_resolved', resolution: { text: 'first' },
+  });
+  assert.equal(answers, 1, 'the racing consumer must never redeliver an accepted answer');
+  assert.equal(coordinator._pending.get('q-post-effect').state, 'resolved');
+  assert.throws(() => coordinator.list(), (error) => error.code === 'operational_log_unavailable');
+
+  log._file = originalFile;
+  const replay = new Coordinator({
+    log, coordination, fences: new FenceTable(), adapters: { stub: adapter({ card: { concurrencyCeiling: 0 } }) },
+    worktrees, repoRoot: tmpdir(), referee: async () => ({}), route: () => 'stub',
+    approvalTimeoutMs: 1000, stopDeadlineMs: 50,
+  });
+  assert.equal(coordination.task('respond-post-effect-failure').status, 'failed');
+  assert.equal(replay.list()[0].status, 'orphaned');
 });
 
 test('CI3: kill after a crash settles already_dead without waiting for a new confirmation', async () => {
