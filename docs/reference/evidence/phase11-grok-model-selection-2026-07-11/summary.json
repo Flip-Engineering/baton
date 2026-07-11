@@ -1,0 +1,289 @@
+{
+  "at": "2026-07-11T09:10:08.806Z",
+  "repoHead": "775898b49b90bdb2957a07d9fca5b0b9070021a0",
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "handles": [
+    {
+      "taskId": "grok-model-proof-45",
+      "model": "grok-4.5",
+      "path": "reviews/dogfood/grok-model-proof-45.md",
+      "workerId": "w-1",
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "observedOutputTail": "",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 5
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "modelMismatch": null
+      },
+      "handle": {
+        "id": "w-1",
+        "vendor": "grok",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "modelMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-4.5"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "taskId": "grok-model-proof-45",
+        "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-model-proof-45",
+        "fence": 2,
+        "turnEpoch": 2,
+        "status": "idle",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 0,
+          "usd": 0
+        },
+        "createdAt": "2026-07-11T09:09:54.310Z"
+      },
+      "pid": 91830,
+      "verify": {
+        "worker": "w-1",
+        "harness": "grok@grok 0.1.216 (b139744655)",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "observedOutputTail": "",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 5
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false
+          },
+          "capture": {
+            "sha": "4fdbb061c38feaeeeda50808078f9b9377656d94",
+            "snapshotted": true,
+            "vendor": "grok",
+            "model": "grok-4.5"
+          }
+        },
+        "seq": 144,
+        "ts": "2026-07-11T09:10:06.616Z"
+      },
+      "commitMessage": "baton snapshot: grok-model-proof-45\n\nBaton-Task: grok-model-proof-45\nBaton-Vendor: grok\nBaton-Model: grok-4.5"
+    },
+    {
+      "taskId": "grok-model-proof-composer",
+      "model": "grok-composer-2.5-fast",
+      "path": "reviews/dogfood/grok-model-proof-composer.md",
+      "workerId": "w-2",
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "observedOutputTail": "",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 5
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "modelMismatch": null
+      },
+      "handle": {
+        "id": "w-2",
+        "vendor": "grok",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "modelMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-composer-2.5-fast"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "taskId": "grok-model-proof-composer",
+        "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-model-proof-composer",
+        "fence": 2,
+        "turnEpoch": 2,
+        "status": "idle",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 0,
+          "usd": 0
+        },
+        "createdAt": "2026-07-11T09:09:54.321Z"
+      },
+      "pid": 91834,
+      "verify": {
+        "worker": "w-2",
+        "harness": "grok@grok 0.1.216 (b139744655)",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "observedOutputTail": "",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 5
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false
+          },
+          "capture": {
+            "sha": "f7d548c79e2999c754f0045c16e16e463eeab19f",
+            "snapshotted": true,
+            "vendor": "grok",
+            "model": "grok-composer-2.5-fast"
+          }
+        },
+        "seq": 152,
+        "ts": "2026-07-11T09:10:08.593Z"
+      },
+      "commitMessage": "baton snapshot: grok-model-proof-composer\n\nBaton-Task: grok-model-proof-composer\nBaton-Vendor: grok\nBaton-Model: grok-composer-2.5-fast"
+    }
+  ],
+  "approvals": [
+    {
+      "worker": "w-1",
+      "requestId": "w-1:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "worker": "w-1",
+      "requestId": "w-1:apr:2",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "worker": "w-2",
+      "requestId": "w-2:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    }
+  ],
+  "stopResults": [
+    {
+      "taskId": "grok-model-proof-45",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "grok-model-proof-composer",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "concurrency": {
+    "overlapped": true,
+    "starts": [
+      {
+        "worker": "w-1",
+        "ts": "2026-07-11T09:09:55.972Z"
+      },
+      {
+        "worker": "w-2",
+        "ts": "2026-07-11T09:09:55.972Z"
+      }
+    ]
+  },
+  "checks": {
+    "noHarnessError": true,
+    "twoWorkers": true,
+    "distinctLivePids": true,
+    "concurrentTurns": true,
+    "exactModelsObserved": true,
+    "bothFreshVerified": true,
+    "modelTrailers": true,
+    "noModelMismatch": true,
+    "bothKillsConfirmed": true,
+    "allProcessesGone": true,
+    "allWorktreesGone": true,
+    "allMetadataGone": true,
+    "allBranchesGone": true
+  },
+  "fatal": null,
+  "pass": true
+}

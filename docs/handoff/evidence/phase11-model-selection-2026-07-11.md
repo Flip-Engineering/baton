@@ -42,6 +42,12 @@ their prior behavior.
 - Bare `node --test` from `impl/`: 455/455 passing, 0 failed.
 - `git diff --check`: clean.
 
-Provider-backed exact-model proof is deliberately separate: after this zero-quota gate is
-committed, Baton will run concurrent Grok tasks with explicit model IDs and verify observed model,
-fresh-result acceptance, then PID/worktree/metadata/branch cleanup.
+## Provider-backed exact-model proof
+
+`docs/reference/evidence/phase11-grok-model-selection-2026-07-11/run.mjs` ran two workers
+concurrently through one real Grok adapter at ceiling two. Baton requested `grok-4.5` and
+`grok-composer-2.5-fast`; the prompt metadata observed those exact identifiers. Both tasks passed
+fresh-worktree verification, both snapshot commits carried their exact `Baton-Model` trailer, and
+no `model.mismatch` event occurred. PIDs 91830 and 91834 were distinct and overlapped. Both policy
+kills confirmed, and both PIDs, worktrees, metadata files, and task branches were absent afterward.
+All 13 live checks passed.
