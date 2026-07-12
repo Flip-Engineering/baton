@@ -402,7 +402,7 @@ Both operations use the sole Coordinator-owned ACI registry, bounded resume, can
 confinement, exact reverify, authenticated generic web/MCP reachability, and false authority. A
 recursive Baton-on-Baton run exposed and fixed path-token broadening and then passed exact epoch,
 self-orientation, grounded reuse, honest miss, resume, reverify, audit, and zero-worker-effect gates.
-Addressed `orient_worker`, automatic scope drift, dependency-vetting oracles, TTL/advisory updates,
+Addressed `orient_worker`, dependency-vetting oracles, TTL/advisory updates,
 license/provenance/reachability policy, immutable decisions, SBOMs, and knowledge promotion remain
 explicit later contracts. No homelab or project-manager runtime is introduced.
 
@@ -416,7 +416,19 @@ operational event. Existing web and MCP `capability_invoke` unions gain a restri
 not a second command/state machine. A recursive scoped Baton-on-Baton run delivered the real
 Cartographer implementation map to an active worker and then confirmed kill plus complete
 worktree/metadata/runtime/branch reap. Automatic scope-drift detection, dedup, cooldown, and refresh
-policy remain the next contract; no automatic worker intervention is implied by this rung.
+policy remained the next contract at that checkpoint; no automatic worker intervention was
+implied by the addressed-push rung alone.
+
+Phase 34 adds that automatic intervention as an explicit deployment policy, not as capability
+autonomy. The authoritative worker `content.file_edit` projection is compared to the immutable
+Brief scope. Outside-scope paths are considered once per native turn; one exact Atlas epoch/focus
+may be refreshed at a time under configured cooldown and per-turn ceilings. Delivery reuses
+Phase 33's fenced addressed nudge, and a concurrent stop voids the result. Mechanical violation,
+suppression, refusal, and acknowledged map delivery are distinct durable facts. The default remains
+immediate kill, and neither semantic scope inference nor authority expansion is claimed. The live
+recursive proof also exposed a separate lifecycle defect—failed worktree readiness is swallowed
+before adapter spawn—which remains the next repair rather than being obscured by the clean-repo
+proof.
 
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.

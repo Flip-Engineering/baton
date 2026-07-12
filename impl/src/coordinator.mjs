@@ -321,10 +321,32 @@ export class Coordinator {
     this._budgetThresholds = Object.freeze([...(opts.budgetPolicy?.thresholds ?? [0.5, 0.8, 1])].sort((a, b) => a - b));
     this._budgetHardStopAt = opts.budgetPolicy?.hardStopAt ?? 1;
     this._budgetTerminalGraceMs = opts.budgetPolicy?.terminalGraceMs ?? 250;
+    const scopeAction = opts.watchdog?.scopeAction ?? 'kill';
+    let scopeOrientation = null;
+    if (scopeAction === 'orient') {
+      const policy = opts.watchdog?.orientation;
+      if (!policy || !/^[a-f0-9]{64}$/.test(policy.indexEpoch ?? '')
+        || typeof policy.focus !== 'string' || policy.focus.length === 0 || Buffer.byteLength(policy.focus) > 2_048 || policy.focus.includes('\0')
+        || !['brief', 'map'].includes(policy.shape ?? 'brief')
+        || !Number.isSafeInteger(policy.budgetTokens) || policy.budgetTokens <= 0
+        || !Number.isSafeInteger(policy.cooldownMs) || policy.cooldownMs < 0
+        || !Number.isSafeInteger(policy.maxRefreshesPerTurn) || policy.maxRefreshesPerTurn <= 0
+        || (policy.notePrefix !== undefined && (typeof policy.notePrefix !== 'string' || policy.notePrefix.length === 0 || Buffer.byteLength(policy.notePrefix) > 1_024 || policy.notePrefix.includes('\0')))) {
+        throw new TypeError('scope orientation policy requires exact epoch, bounded focus/shape/budget/cooldown/maxRefreshesPerTurn');
+      }
+      scopeOrientation = Object.freeze({
+        indexEpoch: policy.indexEpoch, focus: policy.focus, shape: policy.shape ?? 'brief', budgetTokens: policy.budgetTokens,
+        cooldownMs: policy.cooldownMs, maxRefreshesPerTurn: policy.maxRefreshesPerTurn,
+        notePrefix: policy.notePrefix ?? 'Scope drift detected; re-anchor on the configured boundary.',
+      });
+      const orientationCard = this._capabilities?.cards().find((card) => card.name === 'cartographer-quartermaster');
+      if (!orientationCard?.ops?.['orientation.slice']) throw new TypeError('scope orientation policy requires registered cartographer-quartermaster/orientation.slice');
+    }
     this._watchdog = Object.freeze({
       stallMs: opts.watchdog?.stallMs ?? 120000,
       loopThreshold: opts.watchdog?.loopThreshold ?? 3,
-      scopeAction: opts.watchdog?.scopeAction ?? 'kill',
+      scopeAction,
+      orientation: scopeOrientation,
       loopAction: opts.watchdog?.loopAction ?? 'interrupt',
       stallAction: opts.watchdog?.stallAction ?? 'interrupt',
     });
@@ -1978,6 +2000,7 @@ export class Coordinator {
   _resetWatchdogTurn(handle) {
     handle.watchdogActions = new Set();
     handle.recentFailedActions = [];
+    handle.scopeOrientation = { count: 0, lastScheduledAt: null, inFlight: new Set(), violations: new Set(), suppressed: new Set() };
     this._armWatchdog(handle);
   }
 
@@ -1989,6 +2012,57 @@ export class Coordinator {
     if (handle.status !== 'working' && handle.status !== 'blocked') return;
     if (action === 'kill') this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
     else if (action === 'interrupt') this._beginStop(handle, 'interrupt', undefined, 'policy').catch(noop);
+  }
+
+  _scheduleScopeOrientation(handle, path) {
+    const policy = this._watchdog.orientation;
+    if (!policy) return { scheduled: false, reason: 'policy_unavailable' };
+    const state = handle.scopeOrientation ??= { count: 0, lastScheduledAt: null, inFlight: new Set(), violations: new Set(), suppressed: new Set() };
+    const key = String(path);
+    if (state.violations.has(key)) return { scheduled: false, reason: 'duplicate_path' };
+    state.violations.add(key);
+    const now = this._now();
+    let reason = null;
+    if (state.inFlight.size > 0) reason = 'refresh_in_flight';
+    else if (state.lastScheduledAt !== null && now - state.lastScheduledAt < policy.cooldownMs) reason = 'cooldown';
+    else if (state.count >= policy.maxRefreshesPerTurn) reason = 'turn_limit';
+    if (reason) {
+      const suppression = `${reason}:${key}`;
+      if (!state.suppressed.has(suppression)) {
+        state.suppressed.add(suppression);
+        this._log.append({
+          worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+          kind: 'health.scope_refresh_suppressed', actor: 'policy',
+          payload: { path: key, reason, cooldownMs: policy.cooldownMs, maxRefreshesPerTurn: policy.maxRefreshesPerTurn, mechanical: true },
+        });
+      }
+      return { scheduled: false, reason };
+    }
+    state.count += 1; state.lastScheduledAt = now; state.inFlight.add(key);
+    const expectedFence = this._fences.current(handle.id).fence;
+    let observed = key.slice(0, 512);
+    let note = `${policy.notePrefix} Observed outside-scope path: ${observed}`;
+    while (Buffer.byteLength(note) > 2_048 && observed.length > 0) {
+      observed = observed.slice(0, -1);
+      note = `${policy.notePrefix} Observed outside-scope path: ${observed}`;
+    }
+    Promise.resolve().then(() => this.orientWorker(handle.id, {
+      indexEpoch: policy.indexEpoch, focus: policy.focus, shape: policy.shape,
+    }, note, { actor: 'policy', budgetTokens: policy.budgetTokens, expectedFence })).then((ack) => {
+      if (ack?.ok === true) return;
+      this._log.append({
+        worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'health.scope_refresh_refused', actor: 'policy',
+        payload: { path: key, reason: ack?.result ?? 'orientation_refused', mechanical: true },
+      });
+    }).catch((error) => {
+      this._log.append({
+        worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'health.scope_refresh_refused', actor: 'policy',
+        payload: { path: key, reason: typeof error?.code === 'string' ? error.code : 'orientation_failed', mechanical: true },
+      });
+    }).finally(() => state.inFlight.delete(key)).catch(noop);
+    return { scheduled: true, reason: null };
   }
 
   _normalizeUsage(handle, payload) {
@@ -2103,6 +2177,16 @@ export class Coordinator {
       for (const rawPath of rawPaths) {
         const path = this._relativeActionPath(handle, rawPath);
         if (!path || pathInScope(task?.brief?.pathScope, path)) continue;
+        if (this._watchdog.scopeAction === 'orient') {
+          const refresh = this._scheduleScopeOrientation(handle, path);
+          if (refresh.reason === 'duplicate_path') continue;
+          this._log.append({
+            worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+            kind: 'health.scope_violation', actor: 'policy',
+            payload: { path, observedPath: rawPath, action: 'orient', refresh: refresh.scheduled ? 'scheduled' : refresh.reason, mechanical: true },
+          });
+          continue;
+        }
         if (handle.watchdogActions.has('scope')) break;
         handle.watchdogActions.add('scope');
         this._log.append({
