@@ -23,8 +23,8 @@ structured literal `if` stays unreachable. The real `JSON.parse` to `server.hand
 
 - Numbered contract: `spec/phase22/atlas-cpg-path-sensitive.md`.
 - Phase 22 focused red/green result: 10/10.
-- Combined Phase 18/19/20/22 R3 gate: 30/30.
-- Canonical suite: 732/732; owned suite root reaped.
+- Combined Phase 18/19/20/22 R3 gate: 31/31.
+- Canonical suite: 733/733; owned suite root reaped.
 - Baton-on-Baton proof: every check in
   `docs/reference/evidence/phase22-atlas-cpg-path-sensitive-2026-07-11/summary.json` is true. It
   built a 2,000-plus-node graph of the implementation itself, observed real CFG/may-def/copy
@@ -61,6 +61,30 @@ text-based prune. Literal recognition now unwraps the AST and ignores comment ch
 arms no longer emit tail-to-join edges. The red regression covers leading/trailing comments on
 both boolean values. Those independent reports are preserved under
 `docs/reference/evidence/phase22-atlas-cpg-final-grok-review-2026-07-11/`.
+
+The first closure replay then exposed a Baton proof-runner defect rather than a CPG defect: one
+Grok 4.5 review exceeded the shared deadline after Composer had already completed and passed fresh
+verification, but `Promise.all` aborted collection before the successful row's model, PID,
+verification, and report could be copied into the summary. That failed-as-a-whole run remains
+preserved under
+`docs/reference/evidence/phase22-atlas-cpg-closure-grok-review-2026-07-11/`. The runner now uses
+settled waits, hydrates every completed row before reporting failures, records stop results on all
+paths, and accepts exact-model, focus, and timeout controls for bounded closure retries.
+
+Two targeted closure replays at the same committed head then passed independently through Baton:
+exact `grok-4.5` and exact `grok-composer-2.5-fast` were each requested, resolved, and
+provider-observed; both reports stated that no actionable PS1–PS8 defect remains; the 30-test
+fresh-sandbox verification gate passed for both; and each native process, task worktree, runtime
+scope, and task branch was killed/reaped. The durable summaries and captured reports are under
+`docs/reference/evidence/phase22-atlas-cpg-targeted-closure-grok45-2026-07-11/` and
+`docs/reference/evidence/phase22-atlas-cpg-targeted-closure-composer-2026-07-11/`.
+
+The reviewers' non-defect coverage suggestions were still useful. The Phase 22 red now directly
+checks dead-tail absence for both literal values, nested parenthesized/comment literals, and null
+anchors on dead calls. A Phase 19/PS7 red also requires a literal branch change to surface both
+`CFG_TRUE` and `REACHING_DEF` edge removal in the delta while retaining the explicit
+non-behavioral-proof impact claim. This raised the combined R3 gate to 31/31 and the owned
+canonical suite to 733/733 without changing the shipped semantics.
 
 The implementation deliberately rejected one proposal that would have removed a source-to-sink
 path whenever the source occurred in a conditional branch. That is must-path reasoning, not

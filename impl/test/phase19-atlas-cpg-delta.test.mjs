@@ -60,3 +60,13 @@ test('CD6: delta artifact ceiling is deployment-bound', async () => {
   const f = fixture(`function a(){return 1}\n`, `function a(){let x=1; return x}\n`, { maxDeltaBytes: 64 });
   await assert.rejects(f.atlas.invoke('cpg.delta', f.args, f.ctx), (error) => error.code === 'delta_too_large');
 });
+
+test('CD3/CD4/PS7: literal branch pruning surfaces CFG and reaching-definition edge changes', async () => {
+  const before = `function readInput(){} function safe(){} function send(v){}\nfunction run(flag){ let value; if(flag){ value=readInput() } else { value=safe() } send(value) }\n`;
+  const after = `function readInput(){} function safe(){} function send(v){}\nfunction run(flag){ let value; if(false){ value=readInput() } else { value=safe() } send(value) }\n`;
+  const f = fixture(before, after); const result = await f.atlas.invoke('cpg.delta', f.args, f.ctx); const artifact = JSON.parse(readFileSync(result.refs[0].path, 'utf8'));
+  assert.equal(artifact.edgeChanges.some((item) => item.change === 'removed' && item.type === 'CFG_TRUE'), true);
+  assert.equal(artifact.edgeChanges.some((item) => item.change === 'removed' && item.type === 'REACHING_DEF'), true);
+  assert.equal(artifact.impact.some((item) => item.reason === 'changed' && item.nodeKey.includes('identifier')), true);
+  assert.equal(result.provenance.impactMeaning, 'seed_graph_reachability_not_behavioral_proof');
+});
