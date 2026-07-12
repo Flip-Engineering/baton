@@ -263,6 +263,14 @@ export class Coordinator {
     this._adapters = opts.adapters;
     this._worktrees = opts.worktrees;
     this._runtimeScopes = opts.runtimeScopes ?? null;
+    this._capabilities = opts.capabilities ?? null;
+    if (this._capabilities) {
+      for (const method of ['cards', 'invoke', 'resume', 'reverify']) {
+        if (typeof this._capabilities[method] !== 'function') {
+          throw new TypeError(`Coordinator capability registry is missing ${method}()`);
+        }
+      }
+    }
     const rawCoordination = opts.coordination;
     this._coordination = new Proxy(rawCoordination, {
       get: (target, property, receiver) => {
@@ -402,6 +410,19 @@ export class Coordinator {
     if (this._fatalError) throw this._fatalError;
     this._sweepDeadlines();
     this._dispatchPass();
+  }
+
+  /** Keep fleet capabilities behind the same coordinator health boundary as every other
+   * public command. Northbounds call these methods; they never receive a second controller. */
+  _assertOperational() {
+    this.tick();
+  }
+
+  _capabilityRegistry() {
+    if (this._capabilities) return this._capabilities;
+    const error = new Error('capability registry is unavailable');
+    error.code = 'capability_unavailable';
+    throw error;
   }
 
   _dispatchPass() {
@@ -2408,6 +2429,30 @@ export class Coordinator {
     if (!task) return { ready: false, status: handle.status, ...attribution };
     if (!TERMINAL_TASK_STATUSES.has(task.status)) return { ready: false, status: task.status, ...attribution };
     return { ready: true, status: task.status, verdict: task.verdict, artifacts: task.result ? task.result.artifacts : undefined, ...attribution };
+  }
+
+  /** Return the closed, deployment-owned fleet capability inventory. */
+  capabilityCards() {
+    this._assertOperational();
+    return this._capabilities ? this._capabilities.cards() : [];
+  }
+
+  /** Invoke an advertised ACI operation through the coordinator-owned registry. */
+  async invokeCapability(name, op, args, ctx = {}) {
+    this._assertOperational();
+    return this._capabilityRegistry().invoke(name, op, args, ctx);
+  }
+
+  /** Resume a bounded ACI operation through the same coordinator-owned registry. */
+  async resumeCapability(name, op, ref, cursor, ctx = {}) {
+    this._assertOperational();
+    return this._capabilityRegistry().resume(name, op, ref, cursor, ctx);
+  }
+
+  /** Reverify an ACI claim without granting the capability verification authority. */
+  async reverifyCapability(name, op, claim, args, ctx = {}) {
+    this._assertOperational();
+    return this._capabilityRegistry().reverify(name, op, claim, args, ctx);
   }
 
   /** Pull-only causal recall. The coordination append is the authority boundary: if the read

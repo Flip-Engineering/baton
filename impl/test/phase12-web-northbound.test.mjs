@@ -46,6 +46,10 @@ function fixture(overrides = {}) {
     async interrupt(workerId, then, actor, opts) { calls.push({ op: 'interrupt', workerId, then, actor, opts }); return { ok: true, result: 'confirmed' }; },
     async kill(workerId, actor, opts) { calls.push({ op: 'kill', workerId, actor, opts }); return { ok: true, result: 'confirmed' }; },
     async wait(timeoutMs) { calls.push({ op: 'wait', timeoutMs }); return { attention: [], facts: [] }; },
+    capabilityCards() { calls.push({ op: 'capabilities' }); return [{ name: 'atlas', ops: { 'symbols.search': {} } }]; },
+    async invokeCapability(name, op, args, ctx) { calls.push({ action: 'invoke', name, capabilityOp: op, args, ctx }); return { op, status: 'ok' }; },
+    async resumeCapability(name, op, ref, cursor, ctx) { calls.push({ action: 'resume', name, capabilityOp: op, ref, cursor, ctx }); return { op, status: 'ok' }; },
+    async reverifyCapability(name, op, claim, args, ctx) { calls.push({ action: 'reverify', name, capabilityOp: op, claim, args, ctx }); return { op, status: 'ok' }; },
     ...overrides.coordinator,
   };
   const coordination = new CoordinationStore(root());
@@ -89,6 +93,78 @@ test('WN1/WN4: spawn forwards harness and exact model independently and derives 
   assert.equal(admitted.actor, 'web:user-1:session-1');
   assert.equal(admitted.payload.credentialId, 'cred-1');
   assert.equal(JSON.stringify(admitted).includes('csrf-1'), false);
+});
+
+test('CI6: capability cards require observe while bounded invocation requires control and forwards the authenticated actor', async () => {
+  const { web, calls } = fixture();
+  const cards = await web.execute(context({ principal: principal({ capabilities: ['observe'] }) }), envelope({
+    commandId: 'cards-1', idempotencyKey: 'cards-1', command: 'capabilities', args: {},
+  }));
+  assert.equal(cards.status, 200);
+  assert.deepEqual(cards.body.result, [{ name: 'atlas', ops: { 'symbols.search': {} } }]);
+
+  const refused = await web.execute(context({ principal: principal({ capabilities: ['observe'] }) }), envelope({
+    commandId: 'invoke-refused', idempotencyKey: 'invoke-refused', command: 'capability_invoke',
+    args: { name: 'atlas', op: 'symbols.search', args: { query: 'Coordinator' }, budgetTokens: 80 },
+  }));
+  assert.equal(refused.status, 403);
+  assert.deepEqual(calls.map((call) => call.op ?? call.action), ['capabilities']);
+
+  const invoked = await web.execute(context(), envelope({
+    commandId: 'invoke-1', idempotencyKey: 'invoke-1', command: 'capability_invoke',
+    args: { name: 'atlas', op: 'symbols.search', args: { query: 'Coordinator' }, budgetTokens: 80 },
+  }));
+  assert.equal(invoked.status, 200);
+  assert.deepEqual(calls.at(-1), {
+    action: 'invoke', name: 'atlas', capabilityOp: 'symbols.search', args: { query: 'Coordinator' },
+    ctx: { budgetTokens: 80, actor: 'web:user-1:session-1' },
+  });
+});
+
+test('CI3/CI6: capability resume and reverify are strict durable control commands with actor and budget context', async () => {
+  const { web, calls, coordination } = fixture();
+  const resumed = await web.execute(context(), envelope({
+    commandId: 'resume-1', idempotencyKey: 'resume-1', command: 'capability_invoke',
+    args: { name: 'atlas', op: 'symbols.search', action: 'resume', ref: { digest: 'abc' }, cursor: 'next-1', budgetTokens: 40 },
+  }));
+  assert.equal(resumed.status, 200);
+  assert.deepEqual(calls.at(-1), {
+    action: 'resume', name: 'atlas', capabilityOp: 'symbols.search', ref: { digest: 'abc' }, cursor: 'next-1',
+    ctx: { budgetTokens: 40, actor: 'web:user-1:session-1' },
+  });
+
+  const reverified = await web.execute(context(), envelope({
+    commandId: 'reverify-1', idempotencyKey: 'reverify-1', command: 'capability_invoke',
+    args: { name: 'atlas', op: 'symbols.search', action: 'reverify', claim: { digest: 'abc' }, args: { strict: true }, budgetTokens: 20 },
+  }));
+  assert.equal(reverified.status, 200);
+  assert.deepEqual(calls.at(-1), {
+    action: 'reverify', name: 'atlas', capabilityOp: 'symbols.search', claim: { digest: 'abc' }, args: { strict: true },
+    ctx: { budgetTokens: 20, actor: 'web:user-1:session-1' },
+  });
+  assert.deepEqual(coordination.events().filter((event) => event.kind === 'web.command_admitted').map((event) => event.payload.command), ['capability_invoke', 'capability_invoke']);
+});
+
+test('CI2/CI3/CI6: capability command validation rejects malformed and action-ambiguous envelopes before admission', async () => {
+  const { web, calls, coordination } = fixture();
+  const invalidArgs = [
+    { name: 'atlas', op: 'symbols.search', args: {}, budgetTokens: 0 },
+    { name: 'atlas', op: 'symbols.search', action: 'other', args: {}, budgetTokens: 1 },
+    { name: 'atlas', op: 'symbols.search', action: 'resume', ref: {}, cursor: '', budgetTokens: 1 },
+    { name: 'atlas', op: 'symbols.search', action: 'resume', ref: {}, cursor: 'next', args: {}, budgetTokens: 1 },
+    { name: 'atlas', op: 'symbols.search', action: 'reverify', claim: {}, budgetTokens: 1 },
+    { name: 'atlas', op: 'symbols.search', args: {}, ref: {}, budgetTokens: 1 },
+  ];
+  for (const [index, args] of invalidArgs.entries()) {
+    const response = await web.execute(context(), envelope({
+      commandId: `invalid-capability-${index}`, idempotencyKey: `invalid-capability-${index}`,
+      command: 'capability_invoke', args,
+    }));
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error.code, 'invalid_command');
+  }
+  assert.deepEqual(calls, []);
+  assert.equal(coordination.events().some((event) => event.kind === 'web.command_admitted'), false);
 });
 
 test('WN4: an identical retry executes once and a same-key different body conflicts without mutation', async () => {

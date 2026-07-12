@@ -3,9 +3,10 @@ import { createHash, randomUUID } from 'node:crypto';
 const PROTOCOL_VERSION = '2025-11-25';
 const CAPABILITY = Object.freeze({
   fleet_spawn: 'control', fleet_send: 'control', fleet_wait: 'observe', fleet_respond: 'approve',
-  fleet_interrupt: 'control', fleet_result: 'observe', fleet_list: 'observe', fleet_kill: 'emergency_stop',
+  fleet_interrupt: 'control', fleet_result: 'observe', fleet_list: 'observe', fleet_capabilities: 'observe',
+  fleet_capability_invoke: 'control', fleet_kill: 'emergency_stop',
 });
-const STATEFUL = new Set(['fleet_spawn', 'fleet_send', 'fleet_respond', 'fleet_interrupt', 'fleet_kill']);
+const STATEFUL = new Set(['fleet_spawn', 'fleet_send', 'fleet_respond', 'fleet_interrupt', 'fleet_capability_invoke', 'fleet_kill']);
 const FENCED = new Set(['fleet_send', 'fleet_interrupt', 'fleet_kill']);
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
 const SESSION_FIELDS = new Set(['mode', 'id', 'lastTurnId', 'context']);
@@ -36,6 +37,10 @@ function toolResult(value, isError = false) {
 function toolError(code) { return toolResult({ ok: false, error: { code } }, true); }
 function stateFailureCode(cause) {
   if (cause?.mcpCode === 'stale_fence') return 'stale_fence';
+  if (['capability_not_found', 'capability_op_unavailable', 'capability_budget_invalid', 'cancelled',
+    'capability_result_invalid', 'capability_result_oversize', 'capability_authority_forbidden', 'capability_args_invalid',
+    'capability_resume_invalid', 'capability_reverify_invalid', 'capability_actor_invalid',
+    'capability_resume_unavailable', 'capability_reverify_unavailable'].includes(cause?.code)) return cause.code;
   if (['ModelSelectionError', 'SessionSelectionError', 'DuplicateTaskIdError', 'UnknownVendorError', 'DependencyCycleError', 'TypeError'].includes(cause?.name)) return 'invalid_command';
   if (cause?.name === 'WorkerNotFoundError') return 'not_found';
   return 'command_outcome_unknown';
@@ -61,6 +66,11 @@ const TOOL_DEFINITIONS = Object.freeze([
   { name: 'fleet_interrupt', description: 'Interrupt a fenced worker, optionally with a follow-up instruction.', inputSchema: schema({ ...repo, ...idem, ...fence, workerId: text, then: text }, ['repoId', 'idempotencyKey', 'expectedFence', 'workerId']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_result', description: 'Read the current or terminal result for one worker.', inputSchema: schema({ ...repo, workerId: text }, ['repoId', 'workerId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_list', description: 'List workers visible to the injected repository authority.', inputSchema: schema({ ...repo }, ['repoId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_capabilities', description: 'List capability cards visible through the coordinator-owned registry.', inputSchema: schema({ ...repo }, ['repoId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_capability_invoke', description: 'Invoke, resume, or reverify one coordinator-owned fleet capability.', inputSchema: schema({
+    ...repo, ...idem, name: text, op: text, action: { type: 'string', enum: ['invoke', 'resume', 'reverify'] },
+    args: { type: 'object' }, budgetTokens: { type: 'integer', minimum: 1 }, ref: { type: 'object' }, cursor: text, claim: { type: 'object' },
+  }, ['repoId', 'idempotencyKey', 'name', 'op', 'budgetTokens']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_kill', description: 'Kill and reap one fenced worker.', inputSchema: schema({ ...repo, ...idem, ...fence, workerId: text }, ['repoId', 'idempotencyKey', 'expectedFence', 'workerId']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
 ].map((tool) => Object.freeze({ ...tool, execution: Object.freeze({ taskSupport: 'forbidden' }) })));
 const TOOL_BY_NAME = new Map(TOOL_DEFINITIONS.map((tool) => [tool.name, tool]));
@@ -101,6 +111,15 @@ function validateArguments(name, args) {
   if (name === 'fleet_send' && (!nonempty(args.message) || !['turn', 'steer', 'nudge'].includes(args.mode))) return 'invalid_send';
   if (name === 'fleet_respond' && !nonempty(args.requestId)) return 'invalid_request';
   if (name === 'fleet_wait' && Object.hasOwn(args, 'timeoutMs') && (!Number.isSafeInteger(args.timeoutMs) || args.timeoutMs < 0)) return 'invalid_timeout';
+  if (name === 'fleet_capability_invoke') {
+    if (!/^[A-Za-z0-9._:-]{1,128}$/.test(args.name ?? '') || !nonempty(args.op) || args.op.length > 256
+      || !Number.isSafeInteger(args.budgetTokens) || args.budgetTokens <= 0) return 'invalid_capability_invocation';
+    const action = args.action ?? 'invoke';
+    if (!['invoke', 'resume', 'reverify'].includes(action)) return 'invalid_capability_invocation';
+    if (action === 'invoke' && (!record(args.args) || Object.hasOwn(args, 'ref') || Object.hasOwn(args, 'cursor') || Object.hasOwn(args, 'claim'))) return 'invalid_capability_invocation';
+    if (action === 'resume' && (!record(args.ref) || !nonempty(args.cursor) || args.cursor.length > 4_096 || Object.hasOwn(args, 'args') || Object.hasOwn(args, 'claim'))) return 'invalid_capability_invocation';
+    if (action === 'reverify' && (!record(args.claim) || !record(args.args) || Object.hasOwn(args, 'ref') || Object.hasOwn(args, 'cursor'))) return 'invalid_capability_invocation';
+  }
   return null;
 }
 
@@ -237,6 +256,14 @@ export class McpFleetServer {
     else if (name === 'fleet_interrupt') value = await this.coordinator.interrupt(args.workerId, args.then, actor, { expectedFence: args.expectedFence });
     else if (name === 'fleet_result') value = await this.coordinator.result(args.workerId);
     else if (name === 'fleet_list') value = this.coordinator.list();
+    else if (name === 'fleet_capabilities') value = this.coordinator.capabilityCards();
+    else if (name === 'fleet_capability_invoke') {
+      const context = { budgetTokens: args.budgetTokens, actor };
+      const action = args.action ?? 'invoke';
+      if (action === 'invoke') value = await this.coordinator.invokeCapability(args.name, args.op, args.args, context);
+      else if (action === 'resume') value = await this.coordinator.resumeCapability(args.name, args.op, args.ref, args.cursor, context);
+      else value = await this.coordinator.reverifyCapability(args.name, args.op, args.claim, args.args, context);
+    }
     else if (name === 'fleet_kill') value = await this.coordinator.kill(args.workerId, actor, { expectedFence: args.expectedFence });
     if (value?.result === 'stale_fence') throw Object.assign(new Error('stale fence'), { mcpCode: 'stale_fence' });
     return normalized(value);

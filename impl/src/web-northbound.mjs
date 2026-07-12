@@ -8,7 +8,7 @@ import { operatorAsset } from './web-operator.mjs';
 
 const COMMAND_CAPABILITY = Object.freeze({
   spawn: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', respond: 'approve',
-  list: 'observe', result: 'observe', wait: 'observe',
+  list: 'observe', result: 'observe', wait: 'observe', capabilities: 'observe', capability_invoke: 'control',
 });
 const FENCE_REQUIRED = new Set(['send', 'interrupt', 'kill']);
 const TOP_LEVEL = new Set(['schemaVersion', 'commandId', 'idempotencyKey', 'command', 'args', 'repoId', 'runId', 'expectedFence', 'origin', 'clientObservedCursor']);
@@ -21,6 +21,8 @@ const ARG_FIELDS = Object.freeze({
   list: new Set(),
   result: new Set(['workerId']),
   wait: new Set(['timeoutMs']),
+  capabilities: new Set(),
+  capability_invoke: new Set(['name', 'op', 'action', 'args', 'budgetTokens', 'ref', 'cursor', 'claim']),
 });
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
@@ -40,6 +42,11 @@ function result(status, body) { return Object.freeze({ status, body: Object.free
 function error(status, code, message = code) { return result(status, { ok: false, error: { code, message } }); }
 function dispatchFailure(cause) {
   if (['ModelSelectionError', 'SessionSelectionError', 'DuplicateTaskIdError', 'UnknownVendorError', 'DependencyCycleError', 'TypeError'].includes(cause?.name)) {
+    return { httpStatus: 400, body: { ok: false, error: { code: 'invalid_command', message: 'command precondition failed' } } };
+  }
+  if (cause?.code === 'capability_not_found') return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'resource not found' } } };
+  if (['capability_op_unavailable', 'capability_resume_unavailable', 'capability_reverify_unavailable', 'capability_args_invalid',
+    'capability_resume_invalid', 'capability_reverify_invalid', 'capability_budget_invalid', 'capability_actor_invalid'].includes(cause?.code)) {
     return { httpStatus: 400, body: { ok: false, error: { code: 'invalid_command', message: 'command precondition failed' } } };
   }
   if (cause?.name === 'WorkerNotFoundError') return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'resource not found' } } };
@@ -90,6 +97,25 @@ function validateEnvelope(envelope) {
   if (['send', 'interrupt', 'kill', 'result'].includes(envelope.command) && !string(envelope.args.workerId)) return `${envelope.command} requires workerId`;
   if (envelope.command === 'send' && (!string(envelope.args.message) || !['turn', 'steer', 'nudge'].includes(envelope.args.mode))) return 'send requires message and a valid mode';
   if (envelope.command === 'respond' && (!string(envelope.args.requestId) || !Object.hasOwn(envelope.args, 'answer'))) return 'respond requires requestId and answer';
+  if (envelope.command === 'capability_invoke') {
+    const action = envelope.args.action ?? 'invoke';
+    if (!/^[A-Za-z0-9._:-]{1,128}$/.test(envelope.args.name ?? '')
+      || typeof envelope.args.op !== 'string' || envelope.args.op.length === 0 || envelope.args.op.length > 256) return 'capability_invoke requires a valid name and op';
+    if (!['invoke', 'resume', 'reverify'].includes(action)) return 'capability_invoke requires a valid action';
+    if (!Number.isSafeInteger(envelope.args.budgetTokens) || envelope.args.budgetTokens <= 0) return 'capability_invoke requires a positive budgetTokens';
+    if (action === 'invoke') {
+      if (!isRecord(envelope.args.args)) return 'capability invoke requires args';
+      if (Object.hasOwn(envelope.args, 'ref') || Object.hasOwn(envelope.args, 'cursor') || Object.hasOwn(envelope.args, 'claim')) return 'capability invoke received action-inapplicable fields';
+    }
+    if (action === 'resume') {
+      if (!isRecord(envelope.args.ref) || !string(envelope.args.cursor) || envelope.args.cursor.length > 4_096) return 'capability resume requires ref and cursor';
+      if (Object.hasOwn(envelope.args, 'args') || Object.hasOwn(envelope.args, 'claim')) return 'capability resume received action-inapplicable fields';
+    }
+    if (action === 'reverify') {
+      if (!isRecord(envelope.args.claim) || !isRecord(envelope.args.args)) return 'capability reverify requires claim and args';
+      if (Object.hasOwn(envelope.args, 'ref') || Object.hasOwn(envelope.args, 'cursor')) return 'capability reverify received action-inapplicable fields';
+    }
+  }
   return null;
 }
 
@@ -211,7 +237,7 @@ export class WebNorthbound {
     }
     if (this.edge) {
       const key = ctx.principal.credentialId;
-      const quota = this.edge.takeCommand(key, ({ spawn: 10, send: 2, interrupt: 2, kill: 2, respond: 2 }[envelope.command] ?? 1));
+      const quota = this.edge.takeCommand(key, ({ spawn: 10, capability_invoke: 10, send: 2, interrupt: 2, kill: 2, respond: 2 }[envelope.command] ?? 1));
       if (!quota.ok) {
         try { this._audit('quota_refused', ctx, { quota: quota.quota }); } catch { return error(503, 'temporarily_unavailable'); }
         return { ...error(429, 'rate_limited'), headers: { 'retry-after': String(quota.retryAfter) } };
@@ -284,6 +310,14 @@ export class WebNorthbound {
       value = await this.coordinator.result(a.workerId);
     } else if (envelope.command === 'wait') {
       value = await this.coordinator.wait(Math.min(Number(a.timeoutMs ?? 25000), 30000));
+    } else if (envelope.command === 'capabilities') {
+      value = this.coordinator.capabilityCards();
+    } else if (envelope.command === 'capability_invoke') {
+      const capabilityCtx = { budgetTokens: a.budgetTokens, actor: webActor };
+      const action = a.action ?? 'invoke';
+      if (action === 'invoke') value = await this.coordinator.invokeCapability(a.name, a.op, a.args, capabilityCtx);
+      else if (action === 'resume') value = await this.coordinator.resumeCapability(a.name, a.op, a.ref, a.cursor, capabilityCtx);
+      else value = await this.coordinator.reverifyCapability(a.name, a.op, a.claim, a.args, capabilityCtx);
     }
     if (value?.result === 'stale_fence') return error(409, 'stale_fence');
     return result(200, { ok: true, commandId: envelope.commandId, result: json(value) });

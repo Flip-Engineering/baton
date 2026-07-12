@@ -238,6 +238,7 @@ function setup(overrides = {}) {
     fences,
     adapters,
     worktrees,
+    capabilities: overrides.capabilities ?? null,
     referee,
     route,
     now,
@@ -246,6 +247,69 @@ function setup(overrides = {}) {
   });
   return { dir, log, fences, adapters, worktrees, referee, route, now, advance, coordinator };
 }
+
+// ============================================================
+// coordinator-owned fleet capability plane
+// ============================================================
+
+test('CI1/CI7: Coordinator exposes one capability registry through its public command boundary', async () => {
+  const calls = [];
+  const cards = [{ name: 'atlas', version: '1', ops: { 'atlas.inspect': {} } }];
+  const result = {
+    op: 'atlas.inspect', status: 'ok', summary: 'inspected', payload: [], refs: [],
+    cost: { tokens_out: 1, wall_ms: 1, usd: 0, underlying: 'test' },
+    provenance: { mergeAuthority: false, verificationAuthority: false },
+  };
+  const capabilities = {
+    cards() { calls.push(['cards']); return cards; },
+    async invoke(...args) { calls.push(['invoke', ...args]); return result; },
+    async resume(...args) { calls.push(['resume', ...args]); return result; },
+    async reverify(...args) { calls.push(['reverify', ...args]); return result; },
+  };
+  const { coordinator } = setup({ capabilities });
+  const ctx = { budgetTokens: 50, actor: 'operator' };
+
+  assert.equal(coordinator.capabilityCards(), cards);
+  assert.equal(await coordinator.invokeCapability('atlas', 'atlas.inspect', { path: 'a.js' }, ctx), result);
+  assert.equal(await coordinator.resumeCapability('atlas', 'atlas.inspect', { digest: 'sha256:a' }, 'next', ctx), result);
+  assert.equal(await coordinator.reverifyCapability('atlas', 'atlas.inspect', { digest: 'sha256:a' }, { path: 'a.js' }, ctx), result);
+  assert.deepEqual(calls, [
+    ['cards'],
+    ['invoke', 'atlas', 'atlas.inspect', { path: 'a.js' }, ctx],
+    ['resume', 'atlas', 'atlas.inspect', { digest: 'sha256:a' }, 'next', ctx],
+    ['reverify', 'atlas', 'atlas.inspect', { digest: 'sha256:a' }, { path: 'a.js' }, ctx],
+  ]);
+});
+
+test('CI1/CI7: absent or malformed capability registries fail closed without a side plane', async () => {
+  const { coordinator } = setup();
+  assert.deepEqual(coordinator.capabilityCards(), []);
+  await assert.rejects(
+    coordinator.invokeCapability('atlas', 'atlas.inspect', {}, { budgetTokens: 1 }),
+    (error) => error.code === 'capability_unavailable',
+  );
+  assert.throws(() => setup({ capabilities: { cards() {} } }), /capability registry is missing invoke\(\)/);
+});
+
+test('CI1: capability commands observe coordinator poison before touching the registry', async () => {
+  let touched = false;
+  const capabilities = {
+    cards() { touched = true; return []; },
+    async invoke() { touched = true; },
+    async resume() { touched = true; },
+    async reverify() { touched = true; },
+  };
+  const { coordinator } = setup({ capabilities });
+  const fatal = Object.assign(new Error('coordination unavailable'), { code: 'coordination_write_unavailable' });
+  coordinator._fatalError = fatal;
+
+  assert.throws(() => coordinator.capabilityCards(), (error) => error === fatal);
+  await assert.rejects(
+    coordinator.invokeCapability('atlas', 'atlas.inspect', {}, { budgetTokens: 1 }),
+    (error) => error === fatal,
+  );
+  assert.equal(touched, false);
+});
 
 // ============================================================
 // dispatch — behaviors 19-24

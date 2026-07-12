@@ -18,6 +18,7 @@ import { StoryCompiler } from './story.mjs';
 import { RuntimeIsolation } from './runtime-isolation.mjs';
 import { CoordinationStore } from './coordination-store.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
+import { CapabilityRegistry } from './capability-registry.mjs';
 
 export { Coordinator, ModelSelectionError, SessionSelectionError, IntegrationError, ReviewSelectionError, PublicationError } from './coordinator.mjs';
 export { MockAdapter, CodexAdapter, ClaudeAdapter, GlmAdapter } from './adapter.mjs';
@@ -48,6 +49,7 @@ export { AtlasEGraphEvaluation } from './atlas-egraph-evaluation.mjs';
 export { AtlasBehaviorFingerprint } from './atlas-behavior-fingerprint.mjs';
 export { AtlasCodeIndex } from './atlas-index.mjs';
 export { MergirafResolver } from './structured-merge.mjs';
+export { CapabilityRegistry } from './capability-registry.mjs';
 
 function localGitEnv() {
   const env = {}; for (const [key, value] of Object.entries(process.env)) if (!key.startsWith('GIT_')) env[key] = value;
@@ -162,6 +164,18 @@ export function createDriver(opts) {
   const coordination = opts.coordination ?? new CoordinationStore(join(opts.logDir, 'coordination'), {
     operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
   });
+  const configuredCapabilities = opts.capabilities ?? {};
+  if (!opts.capabilityRegistry && Object.keys(configuredCapabilities).length > 0
+    && (!Number.isSafeInteger(opts.maxCapabilityBudgetTokens) || !Number.isSafeInteger(opts.maxCapabilityEnvelopeBytes))) {
+    throw new TypeError('maxCapabilityBudgetTokens and maxCapabilityEnvelopeBytes must be deployment-derived for a non-empty capability registry');
+  }
+  const capabilities = opts.capabilityRegistry ?? new CapabilityRegistry({
+    capabilities: configuredCapabilities, maxBudgetTokens: opts.maxCapabilityBudgetTokens ?? 1, maxEnvelopeBytes: opts.maxCapabilityEnvelopeBytes ?? 1, root: opts.repoRoot,
+    record: (event) => {
+      const logged = log.append({ worker: 'hub-capability', harness: 'baton', turnEpoch: 0, actor: event.actor, kind: event.kind, payload: Object.fromEntries(Object.entries(event).filter(([key]) => !['kind', 'actor'].includes(key))) });
+      coordination.mapOperationalEvent(logged, { actor: event.actor, key: `evidence:${logged.worker}:${logged.seq}` });
+    },
+  });
   const publisher = Object.hasOwn(opts, 'publisher') ? opts.publisher : async ({ remote, ref, sha }) => {
     execFileSync('git', ['push', '--porcelain', remote, `${sha}:${ref}`], { cwd: opts.repoRoot, stdio: 'ignore' });
     return { transport: 'git-push' };
@@ -217,6 +231,7 @@ export function createDriver(opts) {
       structuredMerge: opts.structuredMerge,
     }),
     runtimeScopes,
+    capabilities,
     coordination,
     repoRoot: opts.repoRoot,
     referee: refereeFn,
@@ -238,5 +253,5 @@ export function createDriver(opts) {
     watchdog: opts.watchdog,
   });
 
-  return { coordinator, story, router, log, coordination };
+  return { coordinator, story, router, log, coordination, capabilities };
 }

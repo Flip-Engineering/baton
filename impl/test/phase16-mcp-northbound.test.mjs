@@ -24,6 +24,10 @@ function setup(overrides = {}) {
     async interrupt(workerId, then, actor, opts) { calls.push(['interrupt', workerId, then, actor, opts]); return { result: 'interrupted' }; },
     async result(workerId) { calls.push(['result', workerId]); return { id: workerId, state: 'working' }; },
     list() { calls.push(['list']); return [{ id: 'worker-1' }]; },
+    capabilityCards() { calls.push(['capabilityCards']); return [{ name: 'atlas', ops: { 'atlas.inspect': {} } }]; },
+    async invokeCapability(name, op, args, ctx) { calls.push(['invokeCapability', name, op, args, ctx]); return { op, status: 'ok', summary: 'invoked' }; },
+    async resumeCapability(name, op, ref, cursor, ctx) { calls.push(['resumeCapability', name, op, ref, cursor, ctx]); return { op, status: 'ok', summary: 'resumed' }; },
+    async reverifyCapability(name, op, claim, args, ctx) { calls.push(['reverifyCapability', name, op, claim, args, ctx]); return { op, status: 'ok', summary: 'reverified' }; },
     async kill(workerId, actor, opts) { calls.push(['kill', workerId, actor, opts]); return { result: 'killed' }; },
     ...overrides.coordinator,
   };
@@ -39,16 +43,55 @@ async function initialized(server) {
   assert.deepEqual(await server.handle({ jsonrpc: '2.0', method: 'notifications/initialized' }), null);
 }
 
-test('MN1/MN4: handshake and deterministic closed eight-tool inventory', async () => {
+test('MN1/MN4/CI6: handshake and deterministic closed ten-tool inventory', async () => {
   const { server } = setup(); await initialized(server);
   const response = await request(server, 2, 'tools/list', {});
-  assert.deepEqual(response.result.tools.map((tool) => tool.name), ['fleet_spawn', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt', 'fleet_result', 'fleet_list', 'fleet_kill']);
+  assert.deepEqual(response.result.tools.map((tool) => tool.name), ['fleet_spawn', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt', 'fleet_result', 'fleet_list', 'fleet_capabilities', 'fleet_capability_invoke', 'fleet_kill']);
   assert.equal(response.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
   assert.equal(response.result.tools.every((tool) => tool.execution.taskSupport === 'forbidden'), true);
   assert.equal(response.result.tools[0].inputSchema.properties.modelPolicy.additionalProperties, false);
   assert.equal(response.result.tools[0].inputSchema.properties.session.additionalProperties, false);
   const duplicate = await request(server, 3, 'initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
   assert.equal(duplicate.error.code, -32600);
+});
+
+test('CI6: capability cards are observed and invoke, resume, and reverify preserve actor and budget', async () => {
+  const s = setup(); await initialized(s.server);
+  const cards = await request(s.server, 2, 'tools/call', { name: 'fleet_capabilities', arguments: { repoId: 'repo-a' } });
+  assert.deepEqual(cards.result.structuredContent, { result: [{ name: 'atlas', ops: { 'atlas.inspect': {} } }] });
+  const common = { repoId: 'repo-a', name: 'atlas', op: 'atlas.inspect', budgetTokens: 1200 };
+  const invokeArgs = { ...common, idempotencyKey: 'cap-invoke', args: { path: 'src' } };
+  const invoked = await request(s.server, 3, 'tools/call', { name: 'fleet_capability_invoke', arguments: invokeArgs });
+  const resumed = await request(s.server, 4, 'tools/call', { name: 'fleet_capability_invoke', arguments: { ...common, idempotencyKey: 'cap-resume', action: 'resume', ref: { digest: 'abc' }, cursor: 'next' } });
+  const reverified = await request(s.server, 5, 'tools/call', { name: 'fleet_capability_invoke', arguments: { ...common, idempotencyKey: 'cap-reverify', action: 'reverify', claim: { digest: 'def' }, args: { strict: true } } });
+  const replayed = await request(s.server, 6, 'tools/call', { name: 'fleet_capability_invoke', arguments: invokeArgs });
+  assert.equal(invoked.result.isError, false); assert.equal(resumed.result.isError, false); assert.equal(reverified.result.isError, false);
+  assert.deepEqual(replayed.result, invoked.result);
+  assert.deepEqual(s.calls, [
+    ['capabilityCards'],
+    ['invokeCapability', 'atlas', 'atlas.inspect', { path: 'src' }, { budgetTokens: 1200, actor: 'mcp:operator-a:stdio-a' }],
+    ['resumeCapability', 'atlas', 'atlas.inspect', { digest: 'abc' }, 'next', { budgetTokens: 1200, actor: 'mcp:operator-a:stdio-a' }],
+    ['reverifyCapability', 'atlas', 'atlas.inspect', { digest: 'def' }, { strict: true }, { budgetTokens: 1200, actor: 'mcp:operator-a:stdio-a' }],
+  ]);
+});
+
+test('CI6: capability invocation validation and control authority fail closed before dispatch', async () => {
+  const s = setup({ principal: principal({ capabilities: ['observe'] }) }); await initialized(s.server);
+  const invalid = [
+    { repoId: 'repo-a', idempotencyKey: 'bad-1', name: 'atlas', op: 'atlas.inspect', budgetTokens: 0, args: {} },
+    { repoId: 'repo-a', idempotencyKey: 'bad-2', name: 'atlas', op: 'atlas.inspect', budgetTokens: 5, action: 'resume', ref: {}, cursor: '' },
+    { repoId: 'repo-a', idempotencyKey: 'bad-3', name: 'atlas', op: 'atlas.inspect', budgetTokens: 5, action: 'reverify', claim: {}, args: [], },
+    { repoId: 'repo-a', idempotencyKey: 'bad-4', name: 'atlas', op: 'atlas.inspect', budgetTokens: 5, args: {}, claim: {} },
+  ];
+  for (let i = 0; i < invalid.length; i += 1) {
+    const response = await request(s.server, 10 + i, 'tools/call', { name: 'fleet_capability_invoke', arguments: invalid[i] });
+    assert.equal(response.result.isError, true); assert.match(response.result.content[0].text, /invalid_capability_invocation/);
+  }
+  const forbidden = await request(s.server, 20, 'tools/call', { name: 'fleet_capability_invoke', arguments: {
+    repoId: 'repo-a', idempotencyKey: 'forbidden', name: 'atlas', op: 'atlas.inspect', budgetTokens: 5, args: {},
+  } });
+  assert.equal(forbidden.result.isError, true); assert.match(forbidden.result.content[0].text, /forbidden/);
+  assert.deepEqual(s.calls, []);
 });
 
 test('MN3/MN5/MN6: spawn preserves exact harness/model/effort under injected authority', async () => {
@@ -216,5 +259,5 @@ test('MN2/MN3: the packaged subprocess entry runs a configured MCP handshake wit
   const stdout = execFileSync(process.execPath, ['scripts/mcp-stdio.mjs', configPath], { cwd: new URL('..', import.meta.url), input: `${frames.map(JSON.stringify).join('\n')}\n`, encoding: 'utf8' });
   const responses = stdout.trim().split('\n').map(JSON.parse);
   assert.deepEqual(responses.map((response) => response.id), [1, 2]);
-  assert.equal(responses[1].result.tools.length, 8);
+  assert.equal(responses[1].result.tools.length, 10);
 });
