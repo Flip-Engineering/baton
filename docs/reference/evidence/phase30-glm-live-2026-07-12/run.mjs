@@ -37,6 +37,17 @@ function classify(error) {
   return { code: typeof error?.code === 'string' ? error.code : 'live_gate_failed', name: error?.name ?? 'Error' };
 }
 
+function terminalCategory(event) {
+  const detail = String(event?.payload?.error ?? event?.payload?.reason ?? '');
+  if (/dirty/i.test(detail)) return 'dirty_repo';
+  if (/worktree/i.test(detail)) return 'worktree';
+  if (/branch/i.test(detail)) return 'branch';
+  if (/ENOENT|not found/i.test(detail)) return 'missing_executable';
+  if (/spawn/i.test(detail)) return 'spawn';
+  if (/exited\s+\d+/i.test(detail)) return 'child_exit';
+  return 'unclassified';
+}
+
 function boundedEvents(events) {
   const allowed = new Set([
     'runtime.scope_created', 'lifecycle.spawned', 'lifecycle.turn_started', 'lifecycle.exited', 'lifecycle.crashed',
@@ -56,6 +67,7 @@ function boundedEvents(events) {
     usd: event.kind === 'resource.tokens' ? event.payload?.usd ?? null : null,
     accept: event.kind === 'verify.reverified' ? event.payload?.accept ?? null : null,
     status: event.kind === 'lifecycle.turn_completed' ? event.payload?.result?.status ?? null : null,
+    terminalCategory: ['lifecycle.exited', 'lifecycle.crashed'].includes(event.kind) ? terminalCategory(event) : null,
   }));
 }
 
@@ -66,7 +78,9 @@ function spawnedOrTerminal(log, workerId) {
   const terminal = events.find((event) => ['lifecycle.exited', 'lifecycle.crashed'].includes(event.kind));
   if (terminal) {
     const error = new Error('GLM child terminated before provider initialization');
-    error.code = terminal.kind === 'lifecycle.crashed' ? 'child_crashed_before_init' : 'child_exited_before_init';
+    const owner = terminal.actor === 'worker' ? 'child' : 'coordinator';
+    const state = terminal.kind === 'lifecycle.crashed' ? 'crashed' : 'exited';
+    error.code = `${owner}_${state}_before_init_${terminalCategory(terminal)}`;
     throw error;
   }
   return null;
