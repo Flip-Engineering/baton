@@ -10,13 +10,13 @@ const dir = (name) => mkdtempSync(join(tmpdir(), `baton-${name}-`));
 function fixture(source, opts = {}) {
   const root = dir('cpg-root'); const artifacts = dir('cpg-artifacts');
   mkdirSync(join(root, 'src'), { recursive: true }); writeFileSync(join(root, 'src/a.js'), source);
-  const atlas = new AtlasCpgSlice({ artifactRoot: artifacts, maxSourceBytes: 64 * 1024, maxArtifactBytes: 512 * 1024, ...opts });
+  const atlas = new AtlasCpgSlice({ artifactRoot: artifacts, maxSourceBytes: 64 * 1024, maxArtifactBytes: 512 * 1024, maxReachDefPairs: 4096, ...opts });
   return { root, artifacts, atlas, args: { path: 'src/a.js' }, ctx: { root, budgetTokens: 10000 } };
 }
 
 test('CG1/CG2: card and deterministic graph identity are honest', async () => {
   const f = fixture(`function helper(x) { return x }\nfunction run(v) { let out = helper(v); return out }\n`);
-  const card = f.atlas.card(); assert.equal(card.ops['cpg.build'].deterministic, true); assert.ok(card.limitations.some((item) => item.includes('no SSA/path-sensitive PDG/taint')));
+  const card = f.atlas.card(); assert.equal(card.ops['cpg.build'].deterministic, true); assert.ok(card.limitations.some((item) => item.includes('not SSA/must-def/full PDG')));
   const one = await f.atlas.invoke('cpg.build', f.args, f.ctx); const two = await f.atlas.invoke('cpg.build', f.args, f.ctx);
   assert.equal(one.provenance.graphDigest, two.provenance.graphDigest);
   assert.deepEqual(one.payload, two.payload);

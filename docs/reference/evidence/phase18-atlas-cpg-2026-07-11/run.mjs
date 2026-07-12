@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AtlasCpgSlice } from '../../../../impl/src/index.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url)); const REPO = resolve(HERE, '../../../..'); const artifacts = mkdtempSync(join(tmpdir(), 'baton-cpg-live-')); const events = [];
-const atlas = new AtlasCpgSlice({ artifactRoot: artifacts, maxSourceBytes: 1024 * 1024, maxArtifactBytes: 16 * 1024 * 1024, record: (event) => events.push(event) });
+const atlas = new AtlasCpgSlice({ artifactRoot: artifacts, maxSourceBytes: 1024 * 1024, maxArtifactBytes: 16 * 1024 * 1024, maxReachDefPairs: 100_000, record: (event) => events.push(event) });
 const args = { path: 'impl/src/mcp-northbound.mjs' }; const ctx = { root: REPO, budgetTokens: 500_000, actor: 'orchestrator' };
 let result; let reverified; let fatal = null;
 try { result = await atlas.invoke('cpg.build', args, ctx); reverified = await atlas.reverify(result, args, ctx); } catch (error) { fatal = String(error?.stack ?? error); }

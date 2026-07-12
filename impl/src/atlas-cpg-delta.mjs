@@ -93,9 +93,9 @@ function impact(before, after, changes, depth) {
 export class AtlasCpgDelta {
   constructor(opts = {}) {
     if (!opts.artifactRoot) throw new TypeError('CPG delta artifactRoot required');
-    for (const key of ['maxSourceBytes', 'maxGraphBytes', 'maxDeltaBytes', 'maxImpactDepth']) if (!Number.isSafeInteger(opts[key]) || opts[key] <= 0) throw new TypeError(`${key} must be deployment-derived`);
+    for (const key of ['maxSourceBytes', 'maxGraphBytes', 'maxDeltaBytes', 'maxImpactDepth', 'maxReachDefPairs']) if (!Number.isSafeInteger(opts[key]) || opts[key] <= 0) throw new TypeError(`${key} must be deployment-derived`);
     this.artifactRoot = opts.artifactRoot; this.maxDeltaBytes = opts.maxDeltaBytes; this.maxImpactDepth = opts.maxImpactDepth; this.now = opts.now ?? Date.now; this.record = opts.record ?? null;
-    mkdirSync(this.artifactRoot, { recursive: true, mode: 0o700 }); this.cpg = new AtlasCpgSlice({ artifactRoot: join(this.artifactRoot, 'graphs'), maxSourceBytes: opts.maxSourceBytes, maxArtifactBytes: opts.maxGraphBytes, now: this.now, record: this.record });
+    mkdirSync(this.artifactRoot, { recursive: true, mode: 0o700 }); this.cpg = new AtlasCpgSlice({ artifactRoot: join(this.artifactRoot, 'graphs'), maxSourceBytes: opts.maxSourceBytes, maxArtifactBytes: opts.maxGraphBytes, maxReachDefPairs: opts.maxReachDefPairs, now: this.now, record: this.record });
   }
   card() { return Object.freeze({ name: 'atlas-cpg-delta', version: '0.1.0', underlying: this.cpg.card().underlying, ops: { 'cpg.delta': { deterministic: true, latency_class: 'interactive', side_effects: 'writes_content_addressed_artifacts', reverifiable: true } }, limitations: ['semantic keys use named occurrence ordinals', 'impact is graph reachability, not behavioral proof', ...this.cpg.card().limitations] }); }
   async invoke(op, args, ctx) {
