@@ -290,7 +290,7 @@ may-reaching definitions, direct identifier-copy flow, immediate-only nested val
 literal-dead-branch pruning, including reachable `else if` chains and conservative may-unions
 inside atomic unsupported control. AST boolean leaves prune comment-bearing dead arms without
 orphan join edges. The combined R3 gate is 31/31 focused and the current canonical suite is
-770/770 green. Independent exact-model closure passes from Grok 4.5 and Grok Composer both found
+776/776 green. Independent exact-model closure passes from Grok 4.5 and Grok Composer both found
 no remaining actionable PS1–PS8 defect; their freshly verified reports and complete kill/reap
 evidence are retained with the Phase 22 handoff.
 
@@ -364,6 +364,13 @@ and a live external-tool proof remains pending. A final concurrent exact-model p
 found no remaining actionable SM1–SM10 defect; both reports were provider-observed, freshly
 verified, normally killed, and fully reaped. True data/control-flow semantic merge stays catalogued
 behind adoptable-engine, measured-demand, and false-clean evaluation gates.
+Phase 27 makes the remaining R7 e-graph bet executable rather than silently dropping it. Native
+whole-repo equality saturation is retired; whole-function equivalence redirects to the shipped
+behavioral fingerprint plus pinned verification; expression/kernel equality saturation stays
+conditional external research behind exact demand, translation, scale, accuracy, and incremental-
+value gates. `AtlasEGraphEvaluation` builds no graph and proves no equivalence. It emits a
+content-addressed Decision and refuses native build/saturation/proof, verification bypass, and
+merge authority typed. The focused gate is 6/6 and the canonical suite is 776/776.
 Baton-on-Baton proofs cover a `sha` helper node/edge delta with reverse-caller impact and the real
 MCP `JSON.parse` assignment reaching `server.handle`. SSA, full path-condition feasibility/PDG,
 shadowing-aware bindings, aliases, heap/implicit flows, exceptions, interprocedural returns,

@@ -220,6 +220,7 @@ Every feature the exploration produced, with honest status. **Core** = the drive
 | Standard telemetry out (OpenTelemetry GenAI) | Monitoring | Later | `docs/21` |
 | Structured postmortem on gate-reject | Debugging | Later | `docs/21` |
 | Structured (syntax-aware) merge rung | Tools | Shipped Phase 26 | `spec/phase26/structured-merge.md`, `docs/21`, `docs/15` |
+| E-graph/equality-saturation evaluation | Tools/Trust | Shipped Phase 27 negative gate: native repo/function engine retired or redirected; external expression/kernel research conditionally catalogued | `spec/phase27/egraph-evaluation.md`, `docs/15`, `reviews/frontier-features/representation.md` |
 | Governance firewall (re-inject constraints on compaction) | Context | MVP-adjacent | `docs/21`, `docs/12` |
 | Deeper check ladder (proptest→fuzz→proof) | Trust | Later | `docs/capabilities/math-proof.md` |
 | Adaptive, recency-biased routing | Smart | Later | `docs/20` |
