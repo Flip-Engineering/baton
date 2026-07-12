@@ -116,6 +116,9 @@ Zero-quota tests prove:
 
 After deterministic tests pass, recursive Baton dogfood uses
 `CodexAppServerCli + gpt-5.6-sol + low` and checks exact observed attribution plus complete reap.
-When isolated Grok authentication is available, concurrent Grok 4.5/Grok Build workers repeat the
-route, kill, and reap proof. Missing authentication is recorded `PENDING-LIVE`; ambient credentials
-are never projected and isolation is never weakened.
+The isolated concurrent Grok proof is complete. Baton requested and provider-observed
+`grok-4.5` and `grok-composer-2.5-fast` on distinct live workers, interrupted both, resumed one
+native session into a second turn, killed it while working, and reaped both process groups,
+worktrees, runtime scopes, metadata, and branches. Evidence lives under
+`docs/reference/evidence/phase21-grok-concurrent-reap-2026-07-11/`; ambient credentials were not
+projected and isolation was not weakened.

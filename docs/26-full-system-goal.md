@@ -87,8 +87,9 @@ authentication is available, Grok 4.5 through Grok Build is the intended cross-f
 Opus-class review/implementation stand-in. These are operator policy inputs backed by live cards,
 not timeless model folklore. GitHub issue
 [#2](https://github.com/wahargis/baton/issues/2) records the completed deterministic and recursive
-route-tuple implementation gate; the isolated concurrent Grok rerun remains separate live evidence
-pending provider re-authentication.
+route-tuple implementation gate. The isolated concurrent Grok rerun is now also complete: Baton
+requested and provider-observed exact `grok-4.5` and `grok-composer-2.5-fast` routes, resumed one
+session, killed it while working, and fully reaped both workers.
 
 Concurrent-provider acceptance includes starting multiple Grok workers at once, observing the
 configured concurrency/card limits, interrupting and killing selected workers, and proving native
@@ -244,12 +245,13 @@ revocation lifecycle also ships under IL1–IL8 with fsynced session truth and f
 ordering. EP1–EP9 now ships the canonical direct/trusted-proxy identity boundary, listener-wide
 HTTPS enforcement, bounded request/login/principal/cost/ticket/connection quotas,
 dependency-grounded readiness, audit-amplification controls, and bounded shutdown/stream cleanup.
-It is locally green at 82 focused edge-policy tests and the current 678-test full suite after eleven recursive
-corrective reviews. A twelfth clean Codex review was refused by the provider usage limit before a
-verdict, so the clean independent-review gate remains pending. Authenticated concurrent Grok 4.5
-route/kill/reap is likewise `PENDING-LIVE` until isolated provider authentication is available;
-the latest two-worker attempt reached both worktrees and then reaped every resource after both
-authentication refusals. That dogfood also exposed a false-green missing-test command and 14,070
+It is locally green at 82 focused edge-policy tests after eleven recursive corrective reviews. A
+twelfth clean Codex review was refused by the provider usage limit before a verdict, so the clean
+independent-review gate remains pending. Authenticated concurrent Grok route/kill/reap now passes
+for exact `grok-4.5` and `grok-composer-2.5-fast`: both provider identities were observed, one
+session resumed, a live second turn was killed, and every owned resource was reaped. The first
+rerun also exposed and closed linked-Git-worktree exclusion-path handling. Earlier dogfood exposed
+a false-green missing-test command and 14,070
 unowned temporary fixture directories that exhausted the host disk; fixture lifecycle ownership
 is therefore an explicit reliability gate, not housekeeping. TF1–TF4 now makes `npm test` own a
 private suite root, preserve pass/fail/signal truth, terminate the complete test process group, and
@@ -283,7 +285,8 @@ the next measured Atlas representation rungs. Proposal-only structural rewrite n
 9/9 focused gate, 701/701 full suite, and a Baton-on-Baton immutable proposal proof. Direct apply
 and live-LSP depth remain, while CPG/dataflow, IR, behavioral fingerprints, semantic diff/merge,
 and e-graphs stay in the catalog. The CPG seed, delta/impact, and operator-specified lexical taint
-continuation now ship. The combined R3 gate is 20/20 focused and 721/721 full-suite green.
+continuation now ship. The combined R3 gate is 20/20 focused and the current canonical suite is
+722/722 green.
 Baton-on-Baton proofs cover a `sha` helper node/edge delta with reverse-caller impact and the real
 MCP `JSON.parse` assignment reaching `server.handle`. SSA, path-sensitive PDG, aliases,
 heap/implicit flows, interprocedural returns, dynamic dispatch, and repository-wide CPG overlays

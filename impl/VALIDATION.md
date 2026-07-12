@@ -123,14 +123,14 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 
 | Gate | Current evidence |
 |---|---|
-| Zero-quota suite | **526/526 passing** via bare `node --test` in `impl/`; every direct Coordinator fixture supplies durable authority, terminal task state plus manifests and invalidation plus contamination each commit as one batch, trust-gate coordination failure poisons then restarts durably failed, worker artifact claims remain untrusted manifests, named promotions are durable, and the two-Grok ACP process test proves concurrent native child PIDs, confirmed kills, and process/worktree/branch reap |
+| Canonical zero-quota suite | **722/722 passing** via `npm test` in `impl/`; its lifecycle owner reaps the private suite root, and the real linked-worktree regression covers recursive Baton execution without relying on a directory-shaped `.git` |
 | U-1…U-11 | All reproduced before repair; verdict ledger in `docs/handoff/evidence/phase10.1-reverification.md` |
 | Fresh adversarial review | No unresolved critical/major finding; `docs/handoff/evidence/phase10.1-adversarial-review.md` |
 | Three-vendor live fleet | `docs/reference/evidence/phase10.1-capstone-2026-07-10/summary.json` has every check true; 573-event raw ledger beside it |
 | Recursive output | Three trust-gated review artifacts under `reviews/dogfood/`, authored by real Claude, Codex, and Grok workers and integrated into `master` |
 | Multi-Grok kill/reap | `docs/reference/evidence/grok-multi-reap-2026-07-10/summary.json` has every check true; raw ledger beside it |
 | Concurrent exact models | `docs/reference/evidence/phase11-grok-model-selection-2026-07-11/summary.json` has every check true |
-| Current Grok rerun | `docs/reference/evidence/phase11-grok-model-selection-2026-07-11/attempt-reauth-required-2026-07-11.md` is honestly `PENDING-LIVE-grok-reauth`; Baton concurrently allocated both exact-model tasks and isolated worktrees, the provider rejected both before PID/model establishment, both kills were confirmed, and all process/worktree/runtime/metadata/branch cleanup checks passed |
+| Current concurrent Grok rerun | `docs/handoff/evidence/phase21-grok-concurrent-reap-2026-07-11.md`; exact `grok-4.5` and `grok-composer-2.5-fast` were concurrently requested/resolved/provider-observed on distinct PIDs, both first turns were interrupted, one session resumed and was killed while working, idempotent kills passed, and all process/worktree/runtime/metadata/branch checks passed |
 | Persistent two-turn Grok | `docs/reference/evidence/phase11-grok-persistent-session-2026-07-11/summary.json` has all 16 checks true; same session/PID, two fresh verdicts, full reap |
 | Isolated governance Grok | `docs/reference/evidence/phase11-grok-governance-2026-07-11/summary.json` has all 16 checks true; private credential scope, real sandbox denial, canonical usage, automatic budget kill, full reap |
 | Acceptance/integration | `docs/handoff/evidence/phase11-acceptance-integration-2026-07-11.md`; 16 focused temp-repo tests cover AC1–AC6 and the full suite is 502/502 |
@@ -150,7 +150,7 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 | Browser OIDC and operator seat | `docs/handoff/evidence/phase12-browser-control-2026-07-11.md`; 12 new BO/BU contracts, 100/100 combined Phase 12 tests, and the 678/678 full suite cover browser-bound PKCE state, exact verified identity, provider/mapper timeouts and capacity, durable session/CSRF cookies, clean callback redirect, delivery-failure revocation, authenticated no-store/CSP assets, sanitized session projection, exact harness/model/effort inputs, fenced controls, and existing SSE/logout wiring. A real TLS socket proof passes eight end-to-end redirect/cookie/command/SSE/revocation gates and fully cleans up; in-app browser interaction and provider-backed review remain pending because their execution/quota providers were unavailable |
 | Durable web command reconciliation | `docs/handoff/evidence/phase12-web-command-reconciliation-2026-07-11.md`; 6 RC contracts, 22/22 focused status/operator/northbound tests, and 678/678 full-suite tests cover server-derived durable user ownership, admitted/completed/failed sanitized reads, restart and same-user credential rotation, cross-user/legacy/malformed hidden-object posture, observe/repo scope, audit failure, zero coordinator calls, bounded routable IDs, and same-ID browser polling |
 | MCP stdio northbound | `docs/handoff/evidence/phase16-mcp-northbound-2026-07-11.md`; MN1–MN10, 14/14 focused tests, and 692/692 full-suite tests cover the stable 2025-11-25 handshake, eight closed fleet tools, the packaged subprocess, fixed injected authority and deployment quota, exact harness/model/effort dispatch, fences, bounded wait, durable pre-effect admission, restart replay, typed versus ambiguous post-effect refusal, structured/text results, fatal UTF-8 and output failures, and deployment-bounded newline stdio framing. Recursive exact-route review reached native `gpt-5.6-sol` then hit the provider usage limit; full reap passed but no review verdict is claimed |
-| Credential discipline | GLM checked by presence only and recorded `PENDING-LIVE-no-credential`; no credential value was logged |
+| Credential discipline | Grok auth was presence-checked and explicitly projected into private runtime homes without logging values. An ignored operator-owned GLM credential file is present and remains unread; live GLM evidence is not inferred from presence |
 
 The three-vendor capstone checks were: no harness error; Claude/Codex/Grok all completed; every
 completion had `verify.reverified.accept:true`; native Claude steer landed; native Codex interrupt
@@ -217,7 +217,7 @@ harness + exact-model + effort route specificity gate (issue #2) now also ships.
 the quota/proxy/readiness/shutdown edge-policy increment locally; its final detached clean review
 is pending a provider reset. The next active pursuit is real-browser OIDC/control proof,
 WebSocket parity, MCP, and deeper operator surfaces, followed by the next measured
-representation rungs. Isolated authenticated concurrent Grok 4.5 route/kill/reap remains pending
-live re-authentication rather than being inferred from deterministic coverage. Canonical test
+representation rungs. Isolated authenticated concurrent Grok exact-route/interrupt/resume/kill/reap
+now passes with provider-observed identities and complete cleanup. Canonical test
 fixture lifecycle is now owned and green; stale-root reconciliation after uncatchable wrapper
 death remains explicit runtime depth.

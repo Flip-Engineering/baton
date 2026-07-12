@@ -42,9 +42,11 @@ Baton-owned worktrees with isolated credentials and dependency materialization.
 Raw events, summaries, runner, and the final report are under
 `docs/reference/evidence/phase14-route-tuple-codex-{build,review}-2026-07-11/`.
 
-## Remaining live evidence
+## Completed concurrent Grok evidence
 
-Prior evidence already proves concurrent real Grok workers and complete kill/reap. Repeating the
-new exact Grok 4.5 route tuple under current credentials remains
-`PENDING-LIVE-grok-reauth`; isolated authentication is unavailable. Baton does not project ambient
+The isolated exact-route rerun now passes. Baton concurrently requested and provider-observed
+`grok-4.5` and `grok-composer-2.5-fast`, interrupted both active first turns, resumed one native
+session into a second turn, killed that worker while it was working, and fully reaped both native
+process groups, worktrees, runtime scopes, metadata, and branches. See
+`docs/handoff/evidence/phase21-grok-concurrent-reap-2026-07-11.md`. Baton did not project ambient
 credentials or weaken runtime isolation. No homelab integration or dependency was added.

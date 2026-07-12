@@ -20,12 +20,17 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 
 ## Status
 
-**Phase 10.1 complete.** Baton is a runnable dependency-free Node ESM reference implementation,
-not a prototype skeleton. Bare `node --test` in `impl/` is **427/427 green**. Its public
+**Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **722/722
+green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
-worktrees, and fresh-worktree trust gates. A separate run proved four concurrent real Grok sessions
-can all be interrupted/killed and fully reaped.
+worktrees, and fresh-worktree trust gates. Live proofs include four concurrent real Grok sessions
+that were interrupted/killed and fully reaped, plus exact concurrent `grok-4.5` and
+`grok-composer-2.5-fast` routes with provider-observed identity, native session resume, live kill,
+idempotent cleanup, and complete process/worktree/runtime/branch reap. The active complete scope,
+including AST/CPG/IR/behavior/semantic-merge/e-graph rungs and the deployment-neutral causal
+knowledge graph, is preserved in [docs/26](docs/26-full-system-goal.md).
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 
