@@ -77,3 +77,5 @@ task-class operations requiring the future task plane; task-class operations typ
 than running synchronously without control-plane cancellation; and MCP/Web require an explicit
 invoke/resume/reverify action, with MCP JSON Schema expressing the mutually exclusive shapes.
 Formal ACI, Phase-16 MCP, `createDriver()` JSDoc, and current-status prose now match that behavior.
+The executable closure, recursive findings, and remaining post-fix reauthentication gate are in
+`docs/handoff/evidence/phase29-aci-contract-closure-2026-07-12.md`.
