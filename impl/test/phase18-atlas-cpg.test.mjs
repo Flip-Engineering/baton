@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -41,6 +42,14 @@ test('CG5: duplicate and dynamic callees remain unresolved with candidates', asy
   assert.equal(same.resolved, null); assert.ok(same.candidates.length > 1); assert.equal(dynamic.resolved, null);
 });
 
+test('CG2/CG5: parameterized arrow functions use their binding name, not their first parameter', async () => {
+  const f = fixture(`const helper = (value) => value\nfunction run(v) { return helper(v) }\n`);
+  const result = await f.atlas.invoke('cpg.build', f.args, f.ctx); const graph = JSON.parse(readFileSync(result.refs[0].path, 'utf8'));
+  assert.equal(graph.nodes.some((node) => node.type === 'function' && node.name === 'helper'), true);
+  assert.equal(graph.nodes.some((node) => node.type === 'function' && node.name === 'value'), false);
+  assert.equal(graph.nodes.find((node) => node.type === 'call' && node.calleeName === 'helper').resolved !== null, true);
+});
+
 test('CG6: parse errors are partial and cancellation/unsupported language fail typed', async () => {
   const broken = fixture(`function bad( { return 1 }`); const result = await broken.atlas.invoke('cpg.build', broken.args, broken.ctx);
   assert.equal(result.status, 'partial'); assert.ok(result.provenance.parseErrors > 0);
@@ -58,6 +67,8 @@ test('CG7: bounded result resumes, detects tamper, and reverifies', async () => 
   assert.equal((await f.atlas.reverify(result, f.args, f.ctx)).ok, true);
   writeFileSync(result.refs[0].path, `${readFileSync(result.refs[0].path, 'utf8')} `);
   await assert.rejects(f.atlas.resume(result.refs[0], result.cursor, { budgetTokens: 1000 }), (error) => error.code === 'artifact_integrity');
+  const forged = '{}\n'; const digest = createHash('sha256').update(forged).digest('hex'); const path = join(f.artifacts, `${digest}.json`); writeFileSync(path, forged);
+  await assert.rejects(f.atlas.resume({ digest, path }, `atlas-cpg:${digest}:0`, { budgetTokens: 1000 }), (error) => error.code === 'artifact_integrity');
 });
 
 test('CG6: source and graph deployment ceilings fail typed', async () => {

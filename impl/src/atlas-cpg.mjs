@@ -13,6 +13,12 @@ function typed(message, code) { return Object.assign(new Error(message), { code 
 function abort(ctx) { if (ctx?.signal?.aborted) throw typed('CPG build cancelled', 'cancelled'); }
 function range(node) { const r = node.range(); return { start: { line: r.start.line + 1, column: r.start.column + 1 }, end: { line: r.end.line + 1, column: r.end.column + 1 } }; }
 function id(type, node) { const r = node.range(); return `${type}:${r.start.index}:${r.end.index}`; }
+function fingerprint(node) {
+  if (node.kind() === 'comment' || node.kind() === ';') return '';
+  const children = node.children().filter((child) => child.kind() !== 'comment');
+  if (children.length === 0) return `${node.kind()}:${JSON.stringify(node.text())}`;
+  return `${node.kind()}(${children.map(fingerprint).filter(Boolean).join(',')})`;
+}
 function firstName(node) {
   try { const value = node.field('name'); if (value) return value.text(); } catch { /* grammar variance */ }
   return node.children().find((child) => ['identifier', 'property_identifier'].includes(child.kind()))?.text() ?? null;
@@ -51,7 +57,7 @@ export class AtlasCpgSlice {
       abort(ctx); const kind = node.kind(); if (kind === 'ERROR') errors.push(range(node));
       let fn = state.fn; let block = state.block;
       if (FUNCTION_KINDS.has(kind)) {
-        const name = firstName(node) ?? (state.parent?.kind() === 'variable_declarator' ? firstName(state.parent) : null) ?? '<anonymous>';
+        const name = (state.parent?.kind() === 'variable_declarator' ? firstName(state.parent) : null) ?? firstName(node) ?? '<anonymous>';
         fn = nodeId('function', node); const entry = `${fn}:entry`; const exit = `${fn}:exit`;
         nodes.push({ id: fn, type: 'function', kind, name, path: args.path, range: range(node) }, { id: entry, type: 'entry', function: fn }, { id: exit, type: 'exit', function: fn });
         functions.push({ id: fn, name, node, entry, exit, bodyBlock: null });
@@ -59,7 +65,7 @@ export class AtlasCpgSlice {
       if (kind === 'statement_block') { block = nodeId('block', node); const owner = functions.find((item) => item.id === fn); if (owner && !owner.bodyBlock) owner.bodyBlock = block; }
       const isStatement = kind.endsWith('_statement') || ['lexical_declaration', 'variable_declaration'].includes(kind);
       if (isStatement && fn) {
-        const sid = nodeId('statement', node); nodes.push({ id: sid, type: 'statement', kind, function: fn, path: args.path, range: range(node), textDigest: sha(node.text()) }); edge('CONTAINS', fn, sid);
+        const sid = nodeId('statement', node); nodes.push({ id: sid, type: 'statement', kind, function: fn, path: args.path, range: range(node), textDigest: sha(node.text()), syntaxDigest: sha(fingerprint(node)) }); edge('CONTAINS', fn, sid);
         const list = blockStatements.get(block) ?? []; list.push({ id: sid, node, kind, fn, block }); blockStatements.set(block, list);
       }
       if (kind === 'identifier' && fn) {
@@ -105,7 +111,7 @@ export class AtlasCpgSlice {
   }
   async resume(ref, cursor, ctx) {
     if (!ctx || !Number.isSafeInteger(ctx.budgetTokens) || ctx.budgetTokens <= 0) throw new TypeError('positive budgetTokens required'); const match = /^atlas-cpg:([a-f0-9]{64}):(\d+)$/.exec(cursor ?? ''); if (!match || match[1] !== ref?.digest) throw typed('invalid CPG cursor', 'invalid_cursor');
-    let path; try { path = realpathSync(ref.path); } catch { throw typed('CPG artifact unavailable', 'artifact_integrity'); } const root = realpathSync(this.artifactRoot); if (!path.startsWith(`${root}${sep}`)) throw typed('CPG artifact path escape', 'artifact_integrity'); const bytes = readFileSync(path); if (sha(bytes) !== ref.digest) throw typed('CPG artifact digest mismatch', 'artifact_integrity'); const graph = JSON.parse(bytes); const items = [...graph.nodes.map((node) => ({ recordType: 'node', ...node })), ...graph.edges.map((edge) => ({ recordType: 'edge', ...edge }))]; const offset = Number(match[2]); if (!Number.isSafeInteger(offset) || offset < 0 || offset > items.length) throw typed('invalid CPG cursor offset', 'invalid_cursor'); const payload = bounded(items.slice(offset), ctx.budgetTokens); const next = offset + payload.length; const truncated = next < items.length; return Object.freeze({ op: 'cpg.build', status: truncated ? 'needs_resume' : 'ok', summary: `resumed ${payload.length} CPG records`, payload, refs: [ref], ...(truncated ? { cursor: `atlas-cpg:${ref.digest}:${next}` } : {}), cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), wall_ms: 0, usd: 0, underlying: `@ast-grep/napi@${VERSION}` }, provenance: { graphDigest: ref.digest, resumed_from: offset, deterministic: true } });
+    let path; try { path = realpathSync(ref.path); } catch { throw typed('CPG artifact unavailable', 'artifact_integrity'); } const root = realpathSync(this.artifactRoot); if (path !== join(root, `${ref.digest}.json`)) throw typed('CPG artifact path escape', 'artifact_integrity'); const bytes = readFileSync(path); if (sha(bytes) !== ref.digest) throw typed('CPG artifact digest mismatch', 'artifact_integrity'); let graph; try { graph = JSON.parse(bytes); } catch { throw typed('CPG artifact JSON invalid', 'artifact_integrity'); } if (graph.schemaVersion !== 1 || graph.op !== 'cpg.build' || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) throw typed('CPG artifact schema mismatch', 'artifact_integrity'); const items = [...graph.nodes.map((node) => ({ recordType: 'node', ...node })), ...graph.edges.map((edge) => ({ recordType: 'edge', ...edge }))]; const offset = Number(match[2]); if (!Number.isSafeInteger(offset) || offset < 0 || offset > items.length) throw typed('invalid CPG cursor offset', 'invalid_cursor'); const payload = bounded(items.slice(offset), ctx.budgetTokens); const next = offset + payload.length; const truncated = next < items.length; return Object.freeze({ op: 'cpg.build', status: truncated ? 'needs_resume' : 'ok', summary: `resumed ${payload.length} CPG records`, payload, refs: [ref], ...(truncated ? { cursor: `atlas-cpg:${ref.digest}:${next}` } : {}), cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), wall_ms: 0, usd: 0, underlying: `@ast-grep/napi@${VERSION}` }, provenance: { graphDigest: ref.digest, resumed_from: offset, deterministic: true } });
   }
   async reverify(claim, args, ctx) { const rerun = await this.invoke('cpg.build', args, ctx); return Object.freeze({ ok: rerun.provenance.graphDigest === claim?.provenance?.graphDigest, observedGraphDigest: rerun.provenance.graphDigest }); }
 }

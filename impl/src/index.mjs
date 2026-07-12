@@ -41,6 +41,7 @@ export { McpFleetServer, serveMcpStdio } from './mcp-northbound.mjs';
 export { AtlasStructuralDelta } from './atlas-structural.mjs';
 export { AtlasStructuralRewrite } from './atlas-rewrite.mjs';
 export { AtlasCpgSlice } from './atlas-cpg.mjs';
+export { AtlasCpgDelta } from './atlas-cpg-delta.mjs';
 export { AtlasCodeIndex } from './atlas-index.mjs';
 
 /** worktree.mjs's real functions wrapped into the coordinator's manager interface. */

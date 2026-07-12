@@ -281,10 +281,12 @@ The active next increment is the real-browser OIDC/control/stream/logout proof w
 available, plus optional WebSocket parity, Streamable HTTP MCP/tasks/daemon depth, and deeper operator surfaces. It is followed by
 the next measured Atlas representation rungs. Proposal-only structural rewrite now ships with a
 9/9 focused gate, 701/701 full suite, and a Baton-on-Baton immutable proposal proof. Direct apply
-and live-LSP depth remain, while CPG/dataflow, IR, behavioral fingerprints, semantic diff/merge, and e-graphs stay in the
-catalog. The CPG seed is 6/6 focused and 707/707 full-suite green with a Baton-on-Baton graph proof;
-SSA, path-sensitive PDG, aliases, interprocedural dataflow, taint, and CPG deltas remain unclaimed.
-catalog. These checkpoints narrow sequence only; they do not retire any later capability below.
+and live-LSP depth remain, while CPG/dataflow, IR, behavioral fingerprints, semantic diff/merge,
+and e-graphs stay in the catalog. The CPG seed and its delta/impact continuation now ship. The combined CPG gate is 13/13 focused and
+714/714 full-suite green, with a Baton-on-Baton `sha` helper delta proving node/edge changes,
+reverse-caller impact, and reverify. SSA, path-sensitive PDG, aliases, interprocedural dataflow,
+dynamic dispatch, taint, and repository-wide CPG overlays remain unclaimed.
+These checkpoints narrow sequence only; they do not retire any later capability below.
 
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
