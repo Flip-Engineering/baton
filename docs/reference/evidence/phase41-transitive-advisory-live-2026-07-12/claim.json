@@ -6,10 +6,10 @@
   "refs": [
     {
       "kind": "transitive-advisory-projection",
-      "handle": "art:sha256:4a69af93b3b97c44d4ef2b2f33e5f0fab662b3f1016ba0877ffed2a6423c8620",
-      "digest": "4a69af93b3b97c44d4ef2b2f33e5f0fab662b3f1016ba0877ffed2a6423c8620",
+      "handle": "art:sha256:25970767d557f741d504160b4636a7c29fe8b08b948a0338eccd4eafc5f96b94",
+      "digest": "25970767d557f741d504160b4636a7c29fe8b08b948a0338eccd4eafc5f96b94",
       "bytes": 3303,
-      "path": "artifacts/quartermaster/4a69af93b3b97c44d4ef2b2f33e5f0fab662b3f1016ba0877ffed2a6423c8620.json",
+      "path": "artifacts/quartermaster/25970767d557f741d504160b4636a7c29fe8b08b948a0338eccd4eafc5f96b94.json",
       "mediaType": "application/vnd.baton.transitive-advisories+json"
     },
     {
@@ -23,10 +23,10 @@
     {
       "kind": "advisory-scan-manifest",
       "mediaType": "application/vnd.baton.advisory-scan+json",
-      "handle": "art:sha256:1f356dad83b0735cb3ad4aa021ca03337465c57eff6930179745c7dad5a44580",
-      "digest": "1f356dad83b0735cb3ad4aa021ca03337465c57eff6930179745c7dad5a44580",
+      "handle": "art:sha256:5cc893e67a0214b02ae99166e9bc804f9b380da373120d6a4f1c5c9f40705321",
+      "digest": "5cc893e67a0214b02ae99166e9bc804f9b380da373120d6a4f1c5c9f40705321",
       "bytes": 2732,
-      "path": "artifacts/quartermaster/1f356dad83b0735cb3ad4aa021ca03337465c57eff6930179745c7dad5a44580.blob"
+      "path": "artifacts/quartermaster/5cc893e67a0214b02ae99166e9bc804f9b380da373120d6a4f1c5c9f40705321.blob"
     },
     {
       "kind": "advisory-import-observation",
@@ -39,7 +39,7 @@
   ],
   "cost": {
     "tokens_out": 1,
-    "wall_ms": 493,
+    "wall_ms": 461,
     "usd": 0,
     "underlying": "npm-package-lock-v3+osv-querybatch-exact-input+atlas-static-import-observation"
   },
@@ -47,7 +47,7 @@
     "deterministic": false,
     "grounding": "actual_lockfile",
     "graphDigest": "73562812e62156629fce84765fd776e268b0313a7607e686c1e748a39d7b705a",
-    "scanDigest": "1f356dad83b0735cb3ad4aa021ca03337465c57eff6930179745c7dad5a44580",
+    "scanDigest": "5cc893e67a0214b02ae99166e9bc804f9b380da373120d6a4f1c5c9f40705321",
     "importDigest": "cad2711dbc64f7f363ec5f5ad3e9f8425194161320fd8d2ece1d547267cdd526",
     "advisoryRefs": [
       {
@@ -60,8 +60,8 @@
       {
         "kind": "advisory-scan-manifest",
         "mediaType": "application/vnd.baton.advisory-scan+json",
-        "handle": "art:sha256:1f356dad83b0735cb3ad4aa021ca03337465c57eff6930179745c7dad5a44580",
-        "digest": "1f356dad83b0735cb3ad4aa021ca03337465c57eff6930179745c7dad5a44580",
+        "handle": "art:sha256:5cc893e67a0214b02ae99166e9bc804f9b380da373120d6a4f1c5c9f40705321",
+        "digest": "5cc893e67a0214b02ae99166e9bc804f9b380da373120d6a4f1c5c9f40705321",
         "bytes": 2732
       },
       {
@@ -114,14 +114,14 @@
       "maxLockfileBytes": 2097152,
       "maxComponents": 256
     },
-    "observedAt": "2026-07-12T23:46:16.997Z",
+    "observedAt": "2026-07-12T23:50:01.599Z",
     "index_epoch": "37efeea4437dfb137f99e101d8d72e400debb23ee97d6eb938b2fc2908eaf745",
     "overlay_digest": "a577e1b46d491445e8ccb5bb90f0521de6ee5261155c398e37cfcb89fcb2540e",
     "staleness": "base_plus_worktree_overlay",
     "atlasArtifactDigest": "4ac737a9a78e1e6a7493231534dcb5edf43f59de92d7037980712baa6fd72e0f",
     "atlasCardDigest": "f653a83f724d337674cd77edfa1c1429d987c7056b16a9fb8f426e2b81482b26",
     "underlying": "npm-package-lock-v3+osv-querybatch-exact-input+atlas-static-import-observation",
-    "artifactDigest": "4a69af93b3b97c44d4ef2b2f33e5f0fab662b3f1016ba0877ffed2a6423c8620",
+    "artifactDigest": "25970767d557f741d504160b4636a7c29fe8b08b948a0338eccd4eafc5f96b94",
     "mergeAuthority": false,
     "verificationAuthority": false
   }
