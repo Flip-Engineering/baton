@@ -1,0 +1,381 @@
+{
+  "at": "2026-07-12T22:57:03.280Z",
+  "repoHead": "40786724a3d90960eb15b2e885e842fc5e5d38f9",
+  "runId": "phase41-contract-review",
+  "rows": [
+    {
+      "taskId": "phase41-review-codex",
+      "harness": "codex",
+      "model": "gpt-5.6-sol",
+      "target": "reviews/dogfood/phase41-contract-review-codex.md",
+      "focus": "actual/proposed source binding, OSV batch completeness, artifact/replay semantics, and ACI authority",
+      "workerId": "w-1",
+      "handle": {
+        "id": "w-1",
+        "vendor": "codex",
+        "modelRequested": "gpt-5.6-sol",
+        "modelResolved": "gpt-5.6-sol",
+        "modelObserved": "gpt-5.6-sol",
+        "harnessRequested": "codex",
+        "harnessResolved": "codex@codex-cli 0.144.1",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null,
+        "routeKey": "[\"codex\",\"codex-cli 0.144.1\",\"gpt-5.6-sol\",\"low\",\"openai\",\"phase41-contract-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "gpt-5.6-sol"
+          ],
+          "allowFamilies": [
+            "openai"
+          ],
+          "reasoningEffort": "low"
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "codex",
+          "kind": "thread",
+          "id": "019f588b-3069-7123-b09c-f71d7c6b4ca5",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-phase41-review-outer.7NLlpQ/.baton/wt/phase41-review-codex",
+          "repoRoot": "/private/tmp/baton-phase41-review-outer.7NLlpQ",
+          "baseSha": "40786724a3d90960eb15b2e885e842fc5e5d38f9",
+          "branch": "baton/phase41-review-codex",
+          "ownerTaskId": "phase41-review-codex"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-phase41-review-outer.7NLlpQ/.baton/runtime/w-1",
+          "home": "/private/tmp/baton-phase41-review-outer.7NLlpQ/.baton/runtime/w-1/home",
+          "tmp": "/private/tmp/baton-phase41-review-outer.7NLlpQ/.baton/runtime/w-1/tmp",
+          "config": "/private/tmp/baton-phase41-review-outer.7NLlpQ/.baton/runtime/w-1/config/codex",
+          "family": "codex",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "BATON_GLM_AUTH_FILE",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "SECURITYSESSIONID",
+            "SSH_AUTH_SOCK"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "wire-workspaceWrite-network-deny",
+          "active": false
+        },
+        "review": null,
+        "taskId": "phase41-review-codex",
+        "runId": "phase41-contract-review",
+        "worktree": "/private/tmp/baton-phase41-review-outer.7NLlpQ/.baton/wt/phase41-review-codex",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 141412,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T22:55:43.671Z"
+      },
+      "result": {
+        "ready": true,
+        "status": "cancelled",
+        "verdict": null,
+        "taskId": "phase41-review-codex",
+        "runId": "phase41-contract-review",
+        "vendor": "codex",
+        "harnessRequested": "codex",
+        "harnessResolved": "codex@codex-cli 0.144.1",
+        "modelRequested": "gpt-5.6-sol",
+        "modelResolved": "gpt-5.6-sol",
+        "modelObserved": "gpt-5.6-sol",
+        "modelMismatch": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"codex\",\"codex-cli 0.144.1\",\"gpt-5.6-sol\",\"low\",\"openai\",\"phase41-contract-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "codex",
+          "kind": "thread",
+          "id": "019f588b-3069-7123-b09c-f71d7c6b4ca5",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-phase41-review-outer.7NLlpQ/.baton/wt/phase41-review-codex",
+          "repoRoot": "/private/tmp/baton-phase41-review-outer.7NLlpQ",
+          "baseSha": "40786724a3d90960eb15b2e885e842fc5e5d38f9",
+          "branch": "baton/phase41-review-codex",
+          "ownerTaskId": "phase41-review-codex"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "pid": 91350,
+      "verify": null,
+      "reportCaptured": false
+    },
+    {
+      "taskId": "phase41-review-glm",
+      "harness": "glm",
+      "model": "glm-4.7",
+      "target": "reviews/dogfood/phase41-contract-review-glm.md",
+      "focus": "negative reachability semantics, nested component ambiguity, fail-closed tests, and backlog non-disappearance",
+      "workerId": "w-2",
+      "handle": {
+        "id": "w-2",
+        "vendor": "glm",
+        "modelRequested": "glm-4.7",
+        "modelResolved": "glm-4.7",
+        "modelObserved": "glm-4.7",
+        "harnessRequested": "glm",
+        "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null,
+        "routeKey": "[\"glm-via-claude-session\",\"claude-code-2.1.206+zai-anthropic\",\"glm-4.7\",\"low\",\"glm\",\"phase41-contract-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "glm-4.7"
+          ],
+          "allowFamilies": [
+            "glm"
+          ],
+          "reasoningEffort": "low"
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "glm",
+          "kind": "session",
+          "id": "7f0f4f1a-7b41-4446-8232-44f1700af96c",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-phase41-review-outer.7NLlpQ/.baton/wt/phase41-review-glm",
+          "repoRoot": "/private/tmp/baton-phase41-review-outer.7NLlpQ",
+          "baseSha": "40786724a3d90960eb15b2e885e842fc5e5d38f9",
+          "branch": "baton/phase41-review-glm",
+          "ownerTaskId": "phase41-review-glm"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-phase41-review-outer.7NLlpQ/.baton/runtime/w-2",
+          "home": "/private/tmp/baton-phase41-review-outer.7NLlpQ/.baton/runtime/w-2/home",
+          "tmp": "/private/tmp/baton-phase41-review-outer.7NLlpQ/.baton/runtime/w-2/tmp",
+          "config": "/private/tmp/baton-phase41-review-outer.7NLlpQ/.baton/runtime/w-2/config/glm",
+          "family": "glm",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "BATON_GLM_AUTH_FILE",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "SECURITYSESSIONID",
+            "SSH_AUTH_SOCK"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "settings-enabled-network-deny",
+          "active": false
+        },
+        "review": null,
+        "taskId": "phase41-review-glm",
+        "runId": "phase41-contract-review",
+        "worktree": "/private/tmp/baton-phase41-review-outer.7NLlpQ/.baton/wt/phase41-review-glm",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 70285,
+          "usd": 0.8751300000000001
+        },
+        "createdAt": "2026-07-12T22:55:43.808Z"
+      },
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutants": [],
+          "observedOutputTail": "",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 8
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "taskId": "phase41-review-glm",
+        "runId": "phase41-contract-review",
+        "vendor": "glm",
+        "harnessRequested": "glm",
+        "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+        "modelRequested": "glm-4.7",
+        "modelResolved": "glm-4.7",
+        "modelObserved": "glm-4.7",
+        "modelMismatch": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"glm-via-claude-session\",\"claude-code-2.1.206+zai-anthropic\",\"glm-4.7\",\"low\",\"glm\",\"phase41-contract-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "glm",
+          "kind": "session",
+          "id": "7f0f4f1a-7b41-4446-8232-44f1700af96c",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-phase41-review-outer.7NLlpQ/.baton/wt/phase41-review-glm",
+          "repoRoot": "/private/tmp/baton-phase41-review-outer.7NLlpQ",
+          "baseSha": "40786724a3d90960eb15b2e885e842fc5e5d38f9",
+          "branch": "baton/phase41-review-glm",
+          "ownerTaskId": "phase41-review-glm"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "pid": 91356,
+      "verify": {
+        "worker": "w-2",
+        "harness": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "taskId": "phase41-review-glm",
+        "runId": "phase41-contract-review",
+        "harnessRequested": "glm",
+        "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+        "modelRequested": "glm-4.7",
+        "modelResolved": "glm-4.7",
+        "modelObserved": "glm-4.7",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null,
+        "routeKey": "[\"glm-via-claude-session\",\"claude-code-2.1.206+zai-anthropic\",\"glm-4.7\",\"low\",\"glm\",\"phase41-contract-review\"]",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutants": [],
+            "observedOutputTail": "",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 8
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false,
+            "requireMutation": false
+          },
+          "capture": {
+            "sha": "158092a3fe6d7d6a36611a0ed098ec4ad6e36da0",
+            "snapshotted": true,
+            "vendor": "glm",
+            "model": "glm-4.7",
+            "effort": "low",
+            "routeKey": "[\"glm-via-claude-session\",\"claude-code-2.1.206+zai-anthropic\",\"glm-4.7\",\"low\",\"glm\",\"phase41-contract-review\"]"
+          }
+        },
+        "seq": 40,
+        "ts": "2026-07-12T22:57:02.867Z"
+      },
+      "reportCaptured": true
+    }
+  ],
+  "responses": [],
+  "kills": [
+    {
+      "taskId": "phase41-review-codex",
+      "ack": {
+        "ok": true,
+        "result": "already_dead"
+      }
+    },
+    {
+      "taskId": "phase41-review-glm",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "checks": {
+    "noHarnessError": false,
+    "expectedWorkers": true,
+    "distinctNativePids": true,
+    "concurrentTurns": false,
+    "exactRoutesObserved": true,
+    "freshVerified": false,
+    "reportsCaptured": false,
+    "killsConfirmed": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimesGone": true,
+    "branchesGone": true
+  },
+  "fatal": "Error: review trust gate failed: [{\"taskId\":\"phase41-review-codex\",\"status\":\"cancelled\",\"report\":false},{\"taskId\":\"phase41-review-glm\",\"status\":\"completed\",\"report\":true}]\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase41-baton-contract-review-2026-07-12/run.mjs:113:84\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
+  "pass": false
+}

@@ -1,9 +1,21 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 const typed = (message, code) => Object.assign(new Error(message), { code });
 const sha = (value) => createHash('sha256').update(value).digest('hex');
+const boundedRead = (path, expectedBytes, ceiling, code = 'artifact_integrity') => {
+  if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0 || !Number.isSafeInteger(ceiling) || ceiling <= 0 || expectedBytes > ceiling) throw typed('artifact exceeded deployment ceiling', code);
+  let fd;
+  try {
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size !== expectedBytes || stat.size > ceiling) throw typed('artifact size or type mismatch', code);
+    const raw = Buffer.alloc(expectedBytes); let offset = 0;
+    while (offset < raw.length) { const count = readSync(fd, raw, offset, raw.length - offset, offset); if (count === 0) break; offset += count; }
+    if (offset !== raw.length || readSync(fd, Buffer.alloc(1), 0, 1, offset) !== 0) throw typed('artifact changed during bounded read', code);
+    return raw;
+  } finally { if (fd !== undefined) closeSync(fd); }
+};
 const stable = (value) => {
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
   if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stable(value[key])}`).join(',')}}`;
@@ -47,6 +59,8 @@ const artifactType = (op) => op === 'reuse.vet'
     ? { kind: 'lockfile-sbom', mediaType: 'application/vnd.cyclonedx+json' }
   : op === 'provenance.plan'
     ? { kind: 'proposed-install-plan', mediaType: 'application/vnd.baton.proposed-install-plan+json' }
+  : op === 'provenance.advisories'
+    ? { kind: 'transitive-advisory-projection', mediaType: 'application/vnd.baton.transitive-advisories+json' }
   : { kind: 'orientation-reuse', mediaType: 'application/vnd.baton.orientation-reuse+json' };
 const exactList = (value, field) => {
   if (!Array.isArray(value) || value.length > 256 || value.some((item) => typeof item !== 'string' || item.length === 0 || Buffer.byteLength(item) > 256 || item.includes('\0'))) throw new TypeError(`${field} must be a bounded string[]`);
@@ -92,6 +106,22 @@ const validDependencyMaps = (item) => ['dependencies', 'optionalDependencies', '
   item[field] === undefined || (item[field] && typeof item[field] === 'object' && !Array.isArray(item[field])
     && Object.entries(item[field]).every(([name, spec]) => /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(name) && registrySpec(spec))));
 const validResolutionMetadata = (item) => validDependencyMaps(item) && ['workspaces', 'overrides', 'resolutions', 'pnpm'].every((field) => !Object.hasOwn(item, field));
+const publicNpmRegistryResolution = (value, name, version) => {
+  try {
+    const url = new URL(value); const basename = name.includes('/') ? name.slice(name.lastIndexOf('/') + 1) : name;
+    return url.protocol === 'https:' && url.username === '' && url.password === '' && url.port === '' && url.hostname === 'registry.npmjs.org' && url.search === '' && url.hash === ''
+      && decodeURIComponent(url.pathname) === `/${name}/-/${basename}-${version}.tgz`;
+  }
+  catch { return false; }
+};
+const rfc3339Utc = (value) => {
+  if (typeof value !== 'string') return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/.exec(value); if (!match) return false;
+  const [year, month, day, hour, minute, second] = match.slice(1).map(Number);
+  if (month < 1 || month > 12 || day < 1 || hour > 23 || minute > 59 || second > 59) return false;
+  const parsed = new Date(0); parsed.setUTCFullYear(year, month - 1, day); parsed.setUTCHours(hour, minute, second, 0);
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day && parsed.getUTCHours() === hour && parsed.getUTCMinutes() === minute && parsed.getUTCSeconds() === second;
+};
 const prop = (component, name) => component.properties.find((item) => item.name === name)?.value ?? null;
 function npmGraph(raw, policy, grounding, { requireRegistry = false, allowedOrigins = [] } = {}) {
   if (raw.length > policy.maxLockfileBytes) throw typed('lockfile exceeds deployment ceiling', grounding === 'actual_lockfile' ? 'sbom_oversize' : 'proposal_oversize');
@@ -102,8 +132,9 @@ function npmGraph(raw, policy, grounding, { requireRegistry = false, allowedOrig
   const components = [];
   for (const [key, item] of entries) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) throw typed('package entry invalid', grounding === 'actual_lockfile' ? 'sbom_schema_invalid' : 'proposal_schema_invalid');
-    const name = lockPackageName(key, item); const version = typeof item.version === 'string' ? item.version : null;
+    const name = lockPackageName(key, item); const version = typeof item.version === 'string' ? item.version : null; const derivedName = pathPackageName(key);
     if (!name || (!version && item.link !== true)) throw typed('package identity unavailable', grounding === 'actual_lockfile' ? 'sbom_schema_invalid' : 'proposal_schema_invalid');
+    if (derivedName && typeof item.name === 'string' && item.name !== derivedName) throw typed('package path and name disagree', grounding === 'actual_lockfile' ? 'sbom_schema_invalid' : 'proposal_policy_violation');
     const resolved = typeof item.resolved === 'string' ? item.resolved : null; const integrity = typeof item.integrity === 'string' ? item.integrity : null;
     if (requireRegistry) {
       const derivedName = pathPackageName(key); const postureValid = ['dev', 'optional', 'peer', 'devOptional'].every((field) => item[field] === undefined || typeof item[field] === 'boolean');
@@ -116,6 +147,7 @@ function npmGraph(raw, policy, grounding, { requireRegistry = false, allowedOrig
       ...(integrity ? [{ name: 'baton:integrity', value: integrity }] : []), ...(resolved ? [{ name: 'baton:resolved', value: resolved }] : []),
       ...(item.dev === true ? [{ name: 'baton:dev', value: 'true' }] : []), ...(item.optional === true ? [{ name: 'baton:optional', value: 'true' }] : []),
       ...(item.peer === true ? [{ name: 'baton:peer', value: 'true' }] : []), ...(item.devOptional === true ? [{ name: 'baton:devOptional', value: 'true' }] : []),
+      ...(item.link === true ? [{ name: 'baton:link', value: 'true' }] : []),
     ] });
   }
   const componentByPath = new Map(components.map((component) => [prop(component, 'baton:lockfile_path'), component]));
@@ -168,6 +200,98 @@ function planProjection(delta, proposed) {
   return { deltaRows, findings };
 }
 
+const coordinateKey = (coordinate) => `${coordinate.ecosystem}\0${coordinate.package}\0${coordinate.version}`;
+function advisoryGraphSnapshot(graph, grounding, source, policy) {
+  const components = graph.sbom.components.map((component) => ({
+    path: prop(component, 'baton:lockfile_path'), bomRef: component['bom-ref'], name: component.name,
+    version: component.version ?? null, dev: prop(component, 'baton:dev') === 'true', optional: prop(component, 'baton:optional') === 'true',
+    peer: prop(component, 'baton:peer') === 'true', devOptional: prop(component, 'baton:devOptional') === 'true', link: prop(component, 'baton:link') === 'true',
+    resolved: prop(component, 'baton:resolved'),
+    registryEligible: prop(component, 'baton:link') !== 'true' && validPackagePath(prop(component, 'baton:lockfile_path')) && pathPackageName(prop(component, 'baton:lockfile_path')) === component.name && validSri(prop(component, 'baton:integrity')) && publicNpmRegistryResolution(prop(component, 'baton:resolved'), component.name, component.version),
+  })).sort((a, b) => a.path.localeCompare(b.path));
+  const sourceLockfilePath = source.lockfilePath ?? source.planQuery?.lockfilePath ?? '';
+  if (Buffer.byteLength(sourceLockfilePath) > policy.maxPathBytes || components.some((component) => Buffer.byteLength(component.path) > policy.maxPathBytes)
+    || graph.requestEdges.some((edge) => Buffer.byteLength(edge.from) > policy.maxPathBytes || Buffer.byteLength(edge.to) > policy.maxPathBytes)) throw typed('advisory graph path exceeded deployment ceiling', 'advisory_projection_oversize');
+  return { schemaVersion: 1, grounding, source, root: { name: graph.root.name, version: graph.root.version, ref: graph.root.ref }, components, requestEdges: graph.requestEdges, unresolvedEdges: graph.unresolvedEdges };
+}
+function shortestDependencyPaths(snapshot, maxDepth, abort = () => {}) {
+  const adjacency = new Map();
+  for (const edge of snapshot.requestEdges) { const rows = adjacency.get(edge.from) ?? []; rows.push(edge); adjacency.set(edge.from, rows); }
+  for (const rows of adjacency.values()) rows.sort((a, b) => stable(a).localeCompare(stable(b)));
+  const paths = new Map([['', []]]); const depths = new Map([['', 0]]); const depthExceeded = new Set(); const queue = [''];
+  while (queue.length) {
+    abort();
+    const from = queue.shift(); const depth = depths.get(from); const prefix = paths.get(from) ?? null;
+    for (const edge of adjacency.get(from) ?? []) if (!depths.has(edge.to)) {
+      const nextDepth = depth + 1; depths.set(edge.to, nextDepth);
+      if (nextDepth <= maxDepth && prefix) paths.set(edge.to, [...prefix, edge]); else depthExceeded.add(edge.to);
+      queue.push(edge.to);
+    }
+  }
+  return { paths, depthExceeded };
+}
+function npmImportPackage(source) {
+  if (typeof source !== 'string' || source.length === 0 || source.startsWith('.') || source.startsWith('/') || source.startsWith('#') || source.includes('\\')) return null;
+  const parts = source.split('/'); const name = source.startsWith('@') ? parts.length >= 2 ? `${parts[0]}/${parts[1]}` : null : parts[0];
+  return name && exactNpm(name, '0.0.0') ? name : null;
+}
+function advisoryImportSnapshot(full, atlasProvenance, atlasCard, relevantPackages, policy, abort = () => {}) {
+  const files = full.items.map((item) => {
+    abort();
+    if (!item || typeof item.path !== 'string' || !stringArray(item.imports) || !Number.isSafeInteger(item.parseErrors) || item.parseErrors < 0 || typeof item.language !== 'string') throw typed('Atlas advisory map schema mismatch', 'advisory_atlas_integrity');
+    if (Buffer.byteLength(item.path) > policy.maxPathBytes || item.imports.some((source) => Buffer.byteLength(source) > policy.maxImportSourceBytes)) throw typed('Atlas advisory map text exceeded deployment ceiling', 'advisory_projection_oversize');
+    return { path: item.path, language: item.language, imports: [...item.imports].filter((source) => relevantPackages.has(npmImportPackage(source))).sort(), parseErrors: item.parseErrors };
+  }).sort((a, b) => a.path.localeCompare(b.path));
+  return { schemaVersion: 1, indexEpoch: atlasProvenance.index_epoch, overlayDigest: atlasProvenance.overlay_digest ?? null, staleness: atlasProvenance.staleness, atlasArtifactDigest: atlasProvenance.artifactDigest, atlasCardDigest: sha(stable(atlasCard)), atlasUnderlying: atlasCard.underlying, supportedLanguages: atlasCard.languages, indexedLanguages: [...new Set(files.map((file) => file.language))].sort(), coverageMeaning: 'addressed_atlas_indexed_files_only_not_repository_completeness', files };
+}
+function advisoryProjection(snapshot, scan, imports, policy, abort = () => {}) {
+  if (!scan || scan.schemaVersion !== 1 || !Array.isArray(scan.coordinates) || !Array.isArray(scan.results) || scan.coordinates.length !== scan.results.length) throw typed('advisory scan manifest is invalid', 'advisory_scan_schema_invalid');
+  const resultByCoordinate = new Map();
+  for (let index = 0; index < scan.coordinates.length; index += 1) {
+    const coordinate = scan.coordinates[index]; const row = scan.results[index];
+    if (stable(row?.coordinate) !== stable(coordinate) || coordinate?.ecosystem !== 'npm' || !exactNpm(coordinate?.package, coordinate?.version) || !Array.isArray(row.advisories)) throw typed('advisory scan coordinate projection is invalid', 'advisory_scan_schema_invalid');
+    resultByCoordinate.set(coordinateKey(coordinate), row.advisories);
+  }
+  const { paths, depthExceeded } = shortestDependencyPaths(snapshot, policy.maxDepth, abort); const packageInstances = new Map();
+  for (const component of snapshot.components) { const rows = packageInstances.get(component.name) ?? []; rows.push(component.path); packageInstances.set(component.name, rows); }
+  const ambiguousPackageNames = new Set([...packageInstances].filter(([, rows]) => rows.length > 1).map(([name]) => name));
+  const importRows = new Map(); let parseErrors = 0;
+  for (const file of imports.files) {
+    abort();
+    parseErrors += file.parseErrors;
+    for (const source of file.imports) { const packageName = npmImportPackage(source); if (!packageName) continue; const rows = importRows.get(packageName) ?? []; rows.push({ path: file.path, source }); importRows.set(packageName, rows); }
+  }
+  for (const rows of importRows.values()) rows.sort((a, b) => stable(a).localeCompare(stable(b)));
+  const items = [];
+  for (const component of snapshot.components) {
+    abort(); if (!component.registryEligible || !component.version || !exactNpm(component.name, component.version)) continue;
+    const coordinate = { ecosystem: 'npm', package: component.name, version: component.version }; const advisories = resultByCoordinate.get(coordinateKey(coordinate));
+    if (!advisories) throw typed('advisory scan omitted a graph coordinate', 'advisory_scan_incomplete');
+    const dependencyPath = paths.get(component.path) ?? null; const pathDepthExceeded = depthExceeded.has(component.path); const allWitnesses = importRows.get(component.name) ?? [];
+    if (allWitnesses.length > policy.maxImportWitnesses) throw typed('advisory import witnesses exceeded deployment ceiling', 'advisory_projection_oversize');
+    const instanceCount = packageInstances.get(component.name)?.length ?? 0;
+    const importWitnesses = instanceCount > 1 ? [] : allWitnesses;
+    const packageReferenceObservation = instanceCount > 1 ? 'unknown' : allWitnesses.length > 0 ? 'observed_in_supported_static_imports' : parseErrors > 0 ? 'unknown' : 'not_observed_in_indexed_supported_static_imports';
+    for (const advisory of advisories) {
+      abort();
+      if (!advisory || Object.keys(advisory).sort().join(',') !== 'id,modified' || typeof advisory.id !== 'string' || advisory.id.length === 0 || advisory.id.trim() !== advisory.id || Buffer.byteLength(advisory.id) > 512 || /[\0\r\n]/.test(advisory.id) || !rfc3339Utc(advisory.modified)) throw typed('advisory scan fact is invalid', 'advisory_scan_schema_invalid');
+      const findings = [...new Set(['known_advisory', ...(dependencyPath ? ['root_dependency_path_observed'] : ['analysis_incomplete']), ...(importWitnesses.length ? ['direct_import_observed'] : []), ...(instanceCount > 1 ? ['analysis_incomplete'] : []), ...(snapshot.grounding === 'proposed_not_installed' ? ['proposed_component'] : []), ...(snapshot.unresolvedEdges.length ? ['unresolved_dependency_graph'] : []), ...(parseErrors ? ['analysis_incomplete'] : [])])].sort();
+      items.push({
+        coordinate, component: { path: component.path, bomRef: component.bomRef, posture: { dev: component.dev, optional: component.optional, peer: component.peer, devOptional: component.devOptional } },
+        advisory: { id: advisory.id, modified: advisory.modified }, grounding: snapshot.grounding,
+        dependencyGraphReachability: dependencyPath ? 'root_path_observed' : pathDepthExceeded ? 'unknown' : 'no_root_path_observed', dependencyPath,
+        packageReferenceObservation, importWitnesses,
+        installedInstanceResolution: instanceCount > 1 ? 'unknown' : 'single_graph_instance', vulnerableFunctionReachability: 'unknown',
+        findings, authority: { install: false, approval: false, decision: false, merge: false, verification: false, clearance: false },
+      });
+      if (items.length > policy.maxProjectionRows) throw typed('advisory projection exceeded deployment ceiling', 'advisory_projection_oversize');
+    }
+  }
+  items.sort((a, b) => stable(a).localeCompare(stable(b)));
+  const incompleteReasons = [...new Set([...(snapshot.unresolvedEdges.length ? ['unresolved_dependency_graph'] : []), ...(snapshot.components.some((component) => !component.registryEligible || !component.version || !exactNpm(component.name, component.version ?? '')) ? ['unsupported_component_identity'] : []), ...(ambiguousPackageNames.size ? ['ambiguous_package_instance_resolution'] : []), ...(snapshot.components.filter((component) => component.registryEligible).some((component) => depthExceeded.has(component.path)) ? ['path_depth_ceiling_exceeded'] : []), ...(snapshot.components.filter((component) => component.registryEligible).some((component) => !paths.has(component.path) && !depthExceeded.has(component.path)) ? ['component_without_root_path'] : []), ...(parseErrors ? ['atlas_parse_errors'] : [])])].sort();
+  return { items, incompleteReasons, counts: { components: snapshot.components.length, coordinates: scan.coordinates.length, advisories: scan.results.reduce((sum, row) => sum + row.advisories.length, 0), rows: items.length, importWitnesses: [...importRows.values()].reduce((sum, rows) => sum + rows.length, 0), unresolvedEdges: snapshot.unresolvedEdges.length, atlasParseErrors: parseErrors } };
+}
+
 export class CartographerQuartermaster {
   constructor(opts = {}) {
     if (!opts.atlas || typeof opts.atlas.invoke !== 'function') throw new TypeError('Cartographer/Quartermaster requires AtlasCodeIndex');
@@ -209,6 +333,24 @@ export class CartographerQuartermaster {
       const allowedRegistryOrigins = exactList(policy.allowedRegistryOrigins, 'allowedRegistryOrigins').map((value) => { const url = new URL(value); if (url.protocol !== 'https:' || url.origin !== value) throw new TypeError('allowed registry origins must be exact HTTPS origins'); return value; });
       this.proposalPolicy = Object.freeze({ resolverId: card.resolverId, tool: card.tool, toolVersion: card.toolVersion, allowedRegistryOrigins, maxEdges: policy.maxEdges, maxDeltaRows: policy.maxDeltaRows });
     }
+    this.advisoryScanner = opts.advisoryScanner ?? null; this.advisoryPolicy = null;
+    if (this.advisoryScanner !== null) {
+      if (!this.sbomPolicy || typeof this.advisoryScanner?.card !== 'function' || typeof this.advisoryScanner?.scan !== 'function' || typeof this.advisoryScanner?.verifyScan !== 'function') throw new TypeError('advisory scanner requires SBOM policy and card/scan/verifyScan methods');
+      const card = this.advisoryScanner.card(); const atlasCard = this.atlas.card(); const policy = opts.advisoryPolicy;
+      if (!card || card.schemaVersion !== 1 || typeof card.scan?.scannerId !== 'string' || card.scan.scannerId.length === 0 || Buffer.byteLength(card.scan.scannerId) > 128 || card.scan.ecosystem !== 'npm' || card.scan.provider !== 'osv.dev' || card.scan.operation !== 'QueryBatch' || card.scan.method !== 'POST' || card.scan.url !== 'https://api.osv.dev/v1/querybatch' || card.scan.versionSemantics !== 'exact_input_provider_fuzzy_match'
+        || card.sourceStore?.kind !== 'private-cas-request-response-session-v1' || card.sourceStore?.transactionMediaType !== 'application/vnd.baton.osv-querybatch-transaction+json' || card.sourceStore?.sessionMediaType !== 'application/vnd.baton.osv-querybatch-session+json'
+        || !Number.isSafeInteger(card.ceilings?.maxScanComponents) || card.ceilings.maxScanComponents <= 0 || !Number.isSafeInteger(card.ceilings?.maxBatchSize) || card.ceilings.maxBatchSize <= 0 || card.ceilings.maxBatchSize > card.ceilings.maxScanComponents || !Number.isSafeInteger(card.ceilings?.maxScanAdvisories) || card.ceilings.maxScanAdvisories <= 0
+        || !Number.isSafeInteger(card.ceilings?.maxResponseBytes) || card.ceilings.maxResponseBytes <= 0 || !Number.isSafeInteger(card.ceilings?.maxTransactionBytes) || card.ceilings.maxTransactionBytes <= 0 || !Number.isSafeInteger(card.ceilings?.perResponseTimeoutMs) || card.ceilings.perResponseTimeoutMs <= 0 || !Number.isSafeInteger(card.ceilings?.maxScanWallMs) || card.ceilings.maxScanWallMs <= 0
+        || !policy || !Number.isSafeInteger(policy.maxEdges) || policy.maxEdges <= 0
+        || !Number.isSafeInteger(policy.maxDepth) || policy.maxDepth <= 0
+        || !Number.isSafeInteger(policy.maxProjectionRows) || policy.maxProjectionRows <= 0
+        || !Number.isSafeInteger(policy.maxImportWitnesses) || policy.maxImportWitnesses <= 0
+        || !Number.isSafeInteger(policy.maxArtifactBytes) || policy.maxArtifactBytes <= 0
+        || !Number.isSafeInteger(policy.maxPathBytes) || policy.maxPathBytes <= 0
+        || !Number.isSafeInteger(policy.maxImportSourceBytes) || policy.maxImportSourceBytes <= 0
+        || !Number.isSafeInteger(atlasCard?.ceilings?.maxSourceBytes) || atlasCard.ceilings.maxSourceBytes <= 0 || !Number.isSafeInteger(atlasCard?.ceilings?.maxFiles) || atlasCard.ceilings.maxFiles <= 0 || !Number.isSafeInteger(atlasCard?.ceilings?.maxResults) || atlasCard.ceilings.maxResults <= 0) throw new TypeError('advisory scanner identity/policy is invalid');
+      this.advisoryPolicy = Object.freeze({ scannerId: card.scan.scannerId, scannerCardDigest: sha(stable(card)), scannerCeilings: card.ceilings, atlasCardDigest: sha(stable(atlasCard)), atlasCeilings: atlasCard.ceilings, maxEdges: policy.maxEdges, maxDepth: policy.maxDepth, maxProjectionRows: policy.maxProjectionRows, maxImportWitnesses: policy.maxImportWitnesses, maxArtifactBytes: policy.maxArtifactBytes, maxPathBytes: policy.maxPathBytes, maxImportSourceBytes: policy.maxImportSourceBytes });
+    }
   }
 
   card() {
@@ -220,12 +362,14 @@ export class CartographerQuartermaster {
         ...(this.externalOracle ? { 'reuse.vet': { latency_class: 'bounded_batch', deterministic: false, side_effects: ['external_api', 'content_addressed_artifact'], reverifiable: 'fresh_observation' } } : {}),
         ...(this.sbomPolicy ? { 'provenance.sbom': { latency_class: 'bounded_batch', deterministic: true, side_effects: ['content_addressed_artifact'], reverifiable: true } } : {}),
         ...(this.proposalResolver ? { 'provenance.plan': { latency_class: 'bounded_batch', deterministic: false, side_effects: ['isolated_registry_resolution', 'content_addressed_artifact'], reverifiable: true } } : {}),
+        ...(this.advisoryScanner ? { 'provenance.advisories': { latency_class: 'bounded_batch', deterministic: false, side_effects: ['external_api', 'content_addressed_artifact'], reverifiable: true } } : {}),
       },
       underlying: ['atlas-index:code.seed', 'atlas-index:repo.map'],
       limitations: [
         this.externalOracle ? 'External dossier is fail-closed and package-level; import observation is not vulnerable-function reachability' : 'External vet is not deployment-configured',
         this.sbomPolicy ? 'SBOM is exact npm package-lock v3 actual state only' : 'SBOM is not deployment-configured',
         this.proposalResolver ? 'Proposed graph is hypothetical and grants no install or decision authority' : 'Proposed graph resolver is not deployment-configured',
+        this.advisoryScanner ? 'Advisory projection is package/dependency/import attention evidence; vulnerable-function reachability remains unknown' : 'Transitive advisory scanner is not deployment-configured',
         'no auto-install; reuse-decision authority remains Coordinator-owned; no true vulnerability reachability or third-party prose',
       ],
     };
@@ -233,7 +377,40 @@ export class CartographerQuartermaster {
 
   _abort(ctx) { if (ctx?.signal?.aborted) throw typed('orientation/reuse cancelled', 'cancelled'); }
 
-  _inner(result) {
+  async _advisorySource(args, ctx) {
+    if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).sort().join(',') !== 'indexEpoch,source' || typeof args.indexEpoch !== 'string'
+      || !args.source || typeof args.source !== 'object' || Array.isArray(args.source) || !['actual', 'proposed'].includes(args.source.kind)) throw typed('advisory request shape is invalid', 'invalid_advisory_request');
+    if (typeof ctx.worktreeRoot !== 'string' || ctx.worktreeRoot.length === 0) throw typed('advisory projection requires trusted worktree root', 'advisory_context_required');
+    const graphPolicy = { ...this.sbomPolicy, maxEdges: this.advisoryPolicy.maxEdges };
+    if (args.source.kind === 'actual') {
+      if (Object.keys(args.source).sort().join(',') !== 'kind,lockfilePath') throw typed('actual advisory source shape is invalid', 'invalid_advisory_request');
+      const requested = normalizedText(args.source.lockfilePath, 'invalid_sbom_path').replace(/^\.\//, '');
+      if (isAbsolute(requested) || requested.split('/').includes('..')) throw typed('advisory lockfile path escapes worktree', 'invalid_sbom_path');
+      if (Buffer.byteLength(requested) > this.advisoryPolicy.maxPathBytes) throw typed('advisory lockfile path exceeded deployment ceiling', 'advisory_projection_oversize');
+      let root; let path; let raw;
+      try { root = realpathSync(ctx.worktreeRoot); path = realpathSync(join(root, requested)); } catch { throw typed('advisory lockfile unavailable', 'sbom_unavailable'); }
+      const rel = relative(root, path); if (rel.startsWith('..') || isAbsolute(rel)) throw typed('advisory lockfile escaped worktree', 'invalid_sbom_path');
+      raw = boundedRead(path, statSync(path).size, this.sbomPolicy.maxLockfileBytes, 'sbom_oversize');
+      const graph = npmGraph(raw, graphPolicy, 'actual_lockfile'); const digest = sha(raw);
+      const query = { kind: 'actual', lockfilePath: requested };
+      const recheck = async () => { try { const rereadPath = realpathSync(join(root, requested)); const current = boundedRead(path, statSync(path).size, this.sbomPolicy.maxLockfileBytes, 'sbom_oversize'); return rereadPath === path && current.equals(raw); } catch { return false; } };
+      return { graph, query, source: { kind: 'actual', lockfilePath: requested, lockfileDigest: digest }, recheck };
+    }
+    if (Object.keys(args.source).sort().join(',') !== 'kind,plan' || !args.source.plan || typeof args.source.plan !== 'object' || Array.isArray(args.source.plan)
+      || Object.keys(args.source.plan).sort().join(',') !== 'args,claim' || !this.proposalResolver) throw typed('proposed advisory source shape is invalid', 'invalid_advisory_request');
+    const planArgs = args.source.plan.args; const claim = args.source.plan.claim;
+    if (Buffer.byteLength(planArgs?.lockfilePath ?? '') > this.advisoryPolicy.maxPathBytes) throw typed('proposed advisory lockfile path exceeded deployment ceiling', 'advisory_projection_oversize');
+    const checked = await this.reverify(claim, 'provenance.plan', planArgs, ctx); this._abort(ctx); if (!checked?.ok) throw typed('proposed advisory plan diverged', 'advisory_plan_diverged');
+    const prior = this._loadArtifact(claim?.refs?.[0], 'provenance.plan', this.advisoryPolicy.maxArtifactBytes); const refs = prior.provenance?.planRefs;
+    if (!Array.isArray(refs) || refs.length !== 4) throw typed('proposed advisory plan references invalid', 'artifact_integrity');
+    const raw = this._loadRaw(refs[0], 'proposed-lockfile', 'application/vnd.npm.package-lock+json', Math.min(this.advisoryPolicy.maxArtifactBytes, this.sbomPolicy.maxLockfileBytes));
+    const graph = npmGraph(raw, graphPolicy, 'proposed_lockfile', { requireRegistry: true, allowedOrigins: this.proposalPolicy.allowedRegistryOrigins });
+    const query = { kind: 'proposed', planDigest: claim.refs[0].digest, planQuery: prior.query };
+    const recheck = async () => { const result = await this.reverify(claim, 'provenance.plan', planArgs, ctx); this._abort(ctx); return result?.ok === true; };
+    return { graph, query, source: { kind: 'proposed', planDigest: claim.refs[0].digest, planQuery: prior.query, baseLockfileDigest: prior.provenance.baseLockfileDigest, proposedLockfileDigest: sha(raw) }, recheck };
+  }
+
+  _inner(result, maxBytes = null) {
     const ref = result?.refs?.[0];
     if (!ref || ref.kind !== 'atlas_results' || ref.mediaType !== 'application/vnd.baton.atlas-index+json'
       || typeof ref.path !== 'string' || !/^[a-f0-9]{64}$/.test(ref.digest ?? '')
@@ -242,7 +419,8 @@ export class CartographerQuartermaster {
     }
     let path; try { path = realpathSync(ref.path); } catch { throw typed('Atlas result artifact unavailable', 'orientation_source_integrity'); }
     if (path !== join(this.atlasResultRoot, `${ref.digest}.json`)) throw typed('Atlas result artifact escaped result root', 'orientation_source_integrity');
-    const raw = readFileSync(path);
+    if (maxBytes !== null && (!Number.isSafeInteger(ref.bytes) || ref.bytes > maxBytes)) throw typed('Atlas result exceeded deployment ceiling', 'advisory_projection_oversize');
+    const raw = maxBytes === null ? readFileSync(path) : boundedRead(path, ref.bytes, maxBytes, 'advisory_projection_oversize');
     if (sha(raw) !== ref.digest || ref.bytes !== raw.length) throw typed('Atlas result digest mismatch', 'orientation_source_integrity');
     let full; try { full = JSON.parse(raw); } catch { throw typed('Atlas result JSON invalid', 'orientation_source_integrity'); }
     if (full.schemaVersion !== 1 || !Array.isArray(full.items) || full.op !== result.op
@@ -274,21 +452,24 @@ export class CartographerQuartermaster {
 
   _rawRef(bytes, kind, mediaType) { const artifact = this._writeRaw(bytes); return { kind, mediaType, handle: `art:sha256:${artifact.digest}`, digest: artifact.digest, bytes: artifact.bytes }; }
 
-  _loadRaw(ref, expectedKind = null, expectedMediaType = null) {
+  _loadRaw(ref, expectedKind = null, expectedMediaType = null, maxBytes = null) {
     if (!ref || (expectedKind !== null && ref.kind !== expectedKind) || (expectedMediaType !== null && ref.mediaType !== expectedMediaType)
       || !/^[a-f0-9]{64}$/.test(ref.digest ?? '') || ref.handle !== `art:sha256:${ref.digest}` || !Number.isSafeInteger(ref.bytes) || ref.bytes < 0) throw typed('plan artifact reference invalid', 'artifact_integrity');
-    const raw = readFileSync(join(this.artifactRoot, `${ref.digest}.blob`)); if (raw.length !== ref.bytes || sha(raw) !== ref.digest) throw typed('plan artifact digest mismatch', 'artifact_integrity'); return raw;
+    if (maxBytes !== null && ref.bytes > maxBytes) throw typed('artifact exceeded deployment ceiling', 'advisory_projection_oversize');
+    const raw = maxBytes === null ? readFileSync(join(this.artifactRoot, `${ref.digest}.blob`)) : boundedRead(join(this.artifactRoot, `${ref.digest}.blob`), ref.bytes, maxBytes, 'advisory_projection_oversize'); if (raw.length !== ref.bytes || sha(raw) !== ref.digest) throw typed('plan artifact digest mismatch', 'artifact_integrity'); return raw;
   }
 
-  _loadArtifact(ref, expectedOp = null) {
+  _loadArtifact(ref, expectedOp = null, maxBytes = null) {
     const expectedType = expectedOp === null ? null : artifactType(expectedOp);
-    const knownType = [artifactType('orientation.slice'), artifactType('reuse.vet'), artifactType('provenance.sbom'), artifactType('provenance.plan')].find((candidate) => candidate.kind === ref?.kind && candidate.mediaType === ref?.mediaType);
+    const knownType = [artifactType('orientation.slice'), artifactType('reuse.vet'), artifactType('provenance.sbom'), artifactType('provenance.plan'), artifactType('provenance.advisories')].find((candidate) => candidate.kind === ref?.kind && candidate.mediaType === ref?.mediaType);
     if (!ref || !knownType || (expectedType && (ref.kind !== expectedType.kind || ref.mediaType !== expectedType.mediaType))
       || !/^[a-f0-9]{64}$/.test(ref.digest ?? '') || ref.handle !== `art:sha256:${ref.digest}`) throw typed('orientation artifact reference invalid', 'artifact_integrity');
     const expected = join(this.artifactRoot, `${ref.digest}.json`); let path;
-    try { path = realpathSync(ref.path); } catch { throw typed('orientation artifact unavailable', 'artifact_integrity'); }
+    try { path = realpathSync(expected); } catch { throw typed('orientation artifact unavailable', 'artifact_integrity'); }
     if (path !== expected) throw typed('orientation artifact path mismatch', 'artifact_integrity');
-    const raw = readFileSync(path); if (sha(raw) !== ref.digest || ref.bytes !== raw.length) throw typed('orientation artifact digest mismatch', 'artifact_integrity');
+    if (ref.path !== undefined) { let supplied; try { supplied = realpathSync(ref.path); } catch { throw typed('orientation artifact supplied path unavailable', 'artifact_integrity'); } if (supplied !== expected) throw typed('orientation artifact supplied path mismatch', 'artifact_integrity'); }
+    if (maxBytes !== null && (!Number.isSafeInteger(ref.bytes) || ref.bytes > maxBytes)) throw typed('artifact exceeded deployment ceiling', 'advisory_projection_oversize');
+    const raw = maxBytes === null ? readFileSync(path) : boundedRead(path, ref.bytes, maxBytes, 'advisory_projection_oversize'); if (sha(raw) !== ref.digest || ref.bytes !== raw.length) throw typed('orientation artifact digest mismatch', 'artifact_integrity');
     let document; try { document = JSON.parse(raw); } catch { throw typed('orientation artifact JSON invalid', 'artifact_integrity'); }
     if (document.schemaVersion !== 1 || !this.card().ops[document.op] || !Array.isArray(document.items)
       || (expectedOp !== null && document.op !== expectedOp)) throw typed('orientation artifact schema invalid', 'artifact_integrity');
@@ -302,10 +483,12 @@ export class CartographerQuartermaster {
       ? document.items[0].sources.map((source) => ({ kind: 'supply-chain-source', handle: source.handle, digest: source.digest, bytes: source.bytes, mediaType: source.mediaType }))
       : [];
     const planRefs = document.op === 'provenance.plan' ? (document.provenance.planRefs ?? []).map((ref) => ({ ...ref, path: join(this.artifactRoot, `${ref.digest}.blob`) })) : [];
-    const resumable = !['reuse.vet', 'provenance.sbom', 'provenance.plan'].includes(document.op);
+    const advisoryRefs = document.op === 'provenance.advisories' ? (document.provenance.advisoryRefs ?? []).map((ref) => ({ ...ref, path: join(this.artifactRoot, `${ref.digest}.blob`) })) : [];
+    const resumable = !['reuse.vet', 'provenance.sbom', 'provenance.plan', 'provenance.advisories'].includes(document.op);
+    const declaredPartial = document.op === 'provenance.advisories' && Array.isArray(document.incompleteReasons) && document.incompleteReasons.length > 0;
     return Object.freeze({
-      op: document.op, status: truncated ? (resumable ? 'needs_resume' : 'partial') : 'ok', summary: document.summary, payload,
-      refs: [{ kind: type.kind, handle: `art:sha256:${artifact.digest}`, digest: artifact.digest, bytes: artifact.bytes, path: artifact.path, mediaType: type.mediaType }, ...sourceRefs, ...planRefs],
+      op: document.op, status: truncated ? (resumable ? 'needs_resume' : 'partial') : declaredPartial ? 'partial' : 'ok', summary: document.summary, payload,
+      refs: [{ kind: type.kind, handle: `art:sha256:${artifact.digest}`, digest: artifact.digest, bytes: artifact.bytes, path: artifact.path, mediaType: type.mediaType }, ...sourceRefs, ...planRefs, ...advisoryRefs],
       ...(truncated && resumable ? { cursor: `orientation:${artifact.digest}:${payload.length}` } : {}),
       cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), wall_ms: Math.max(0, this.now() - started), usd: 0, underlying: document.provenance.underlying ?? 'atlas-index:orientation-reuse-r0' },
       provenance: { ...document.provenance, ...runtimeProvenance, artifactDigest: artifact.digest, deterministic: document.provenance.deterministic ?? true, mergeAuthority: false, verificationAuthority: false },
@@ -400,6 +583,41 @@ export class CartographerQuartermaster {
         provenance: { index_epoch: innerResult.provenance.index_epoch, overlay_digest: innerResult.provenance.overlay_digest ?? null, staleness: innerResult.provenance.staleness, atlasArtifactDigest: ref.digest, externalLookup: true, evidenceAsOf: asOf, evidenceExpiresAt: expiresAt, policyHash: this.vetPolicyHash, cacheIdentity: cacheKey, underlying: 'deps.dev+osv.dev+atlas-import-observation', deterministic: false } };
       this.vetCache.set(cacheKey, document);
       return this._result(document, ctx, started, { cache: 'miss' });
+    }
+    if (op === 'provenance.advisories' && this.advisoryScanner) {
+      if (sha(stable(this.advisoryScanner.card())) !== this.advisoryPolicy.scannerCardDigest) throw typed('advisory scanner policy changed', 'advisory_policy_changed');
+      if (sha(stable(this.atlas.card())) !== this.advisoryPolicy.atlasCardDigest || stable(this.atlas.card().ceilings) !== stable(this.advisoryPolicy.atlasCeilings)) throw typed('Atlas advisory policy changed', 'advisory_policy_changed');
+      const selected = await this._advisorySource(args, ctx); this._abort(ctx);
+      const grounding = selected.source.kind === 'actual' ? 'actual_lockfile' : 'proposed_not_installed';
+      const snapshot = advisoryGraphSnapshot(selected.graph, grounding, selected.source, this.advisoryPolicy);
+      const coordinates = [...new Map(snapshot.components.filter((component) => component.registryEligible && component.version && exactNpm(component.name, component.version))
+        .map((component) => { const coordinate = { ecosystem: 'npm', package: component.name, version: component.version }; return [coordinateKey(coordinate), coordinate]; })).values()]
+        .sort((a, b) => coordinateKey(a).localeCompare(coordinateKey(b)));
+      if (coordinates.length > this.advisoryPolicy.scannerCeilings.maxScanComponents) throw typed('advisory graph exceeded scanner component ceiling', 'advisory_projection_oversize');
+      const scan = await this.advisoryScanner.scan({ coordinates }, { signal: ctx.signal }); this._abort(ctx);
+      if (scan?.scannerId !== this.advisoryPolicy.scannerId || stable(scan.coordinates) !== stable(coordinates)) throw typed('advisory scanner returned a different manifest', 'advisory_scan_coordinate_mismatch');
+      const scanCheck = await this.advisoryScanner.verifyScan(scan); if (!scanCheck?.ok || stable(scanCheck.normalized) !== stable(scan)) throw typed('advisory scanner evidence failed immediate replay', 'advisory_scan_incomplete');
+      const atlasResult = await this.atlas.invoke('repo.map', { indexEpoch: args.indexEpoch }, ctx); this._abort(ctx);
+      const { full: atlasFull, ref: atlasRef } = this._inner(atlasResult, this.advisoryPolicy.maxArtifactBytes);
+      const relevantPackages = new Set(coordinates.map((coordinate) => coordinate.package)); const atlasCard = this.atlas.card();
+      const imports = advisoryImportSnapshot(atlasFull, { ...atlasResult.provenance, artifactDigest: atlasRef.digest }, atlasCard, relevantPackages, this.advisoryPolicy, () => this._abort(ctx));
+      const projection = advisoryProjection(snapshot, scan, imports, this.advisoryPolicy, () => this._abort(ctx));
+      if (!(await selected.recheck())) throw typed('advisory graph source changed during observation', 'advisory_source_changed');
+      this._abort(ctx);
+      const boundedRaw = (value, kind, mediaType) => { const raw = `${stable(value)}\n`; if (Buffer.byteLength(raw) > this.advisoryPolicy.maxArtifactBytes) throw typed('advisory artifact exceeded deployment ceiling', 'advisory_projection_oversize'); return this._rawRef(raw, kind, mediaType); };
+      const graphRef = boundedRaw(snapshot, 'advisory-selected-graph', 'application/vnd.baton.advisory-graph+json');
+      const scanRef = boundedRaw(scan, 'advisory-scan-manifest', 'application/vnd.baton.advisory-scan+json');
+      const importRef = boundedRaw(imports, 'advisory-import-observation', 'application/vnd.baton.advisory-imports+json');
+      const advisoryRefs = [graphRef, scanRef, importRef];
+      const document = {
+        schemaVersion: 1, op, query: { source: selected.query, indexEpoch: args.indexEpoch },
+        summary: `${projection.counts.advisories} known advisory records across ${projection.counts.coordinates} exact-input npm coordinates; vulnerable-function reachability unknown`,
+        items: projection.items, incompleteReasons: projection.incompleteReasons, counts: projection.counts,
+        authority: { install: false, approval: false, decision: false, merge: false, verification: false, clearance: false },
+        provenance: { deterministic: false, grounding, graphDigest: graphRef.digest, scanDigest: scanRef.digest, importDigest: importRef.digest, advisoryRefs, scannerId: scan.scannerId, scannerCardDigest: this.advisoryPolicy.scannerCardDigest, scannerCeilings: this.advisoryPolicy.scannerCeilings, projectionPolicy: this.advisoryPolicy, sbomPolicy: this.sbomPolicy, observedAt: scan.observedAt, index_epoch: imports.indexEpoch, overlay_digest: imports.overlayDigest, staleness: imports.staleness, atlasArtifactDigest: imports.atlasArtifactDigest, atlasCardDigest: imports.atlasCardDigest, underlying: 'npm-package-lock-v3+osv-querybatch-exact-input+atlas-static-import-observation' },
+      };
+      if (Buffer.byteLength(`${stable(document)}\n`) > this.advisoryPolicy.maxArtifactBytes) throw typed('advisory main artifact exceeded deployment ceiling', 'advisory_projection_oversize');
+      return this._result(document, ctx, started);
     }
     if (op === 'provenance.plan' && this.proposalResolver) {
       if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).sort().join(',') !== 'ecosystem,lockfilePath,package,version') throw typed('proposal request shape is invalid', 'invalid_proposal');
@@ -515,7 +733,7 @@ export class CartographerQuartermaster {
     const match = /^orientation:([a-f0-9]{64}):(\d+)$/.exec(cursor ?? '');
     if (!match || match[1] !== ref?.digest || ref?.handle !== `art:sha256:${match[1]}`) throw typed('orientation cursor mismatch', 'invalid_cursor');
     const document = this._loadArtifact(ref);
-    if (['reuse.vet', 'provenance.sbom', 'provenance.plan'].includes(document.op)) throw typed('artifact is ref-addressed, not cursor-resumable', 'capability_resume_unavailable');
+    if (['reuse.vet', 'provenance.sbom', 'provenance.plan', 'provenance.advisories'].includes(document.op)) throw typed('artifact is ref-addressed, not cursor-resumable', 'capability_resume_unavailable');
     const offset = Number(match[2]); if (!Number.isSafeInteger(offset) || offset < 0 || offset > document.items.length) throw typed('orientation cursor offset invalid', 'invalid_cursor');
     const payload = bounded(document.items.slice(offset), ctx.budgetTokens); const next = offset + payload.length; const truncated = next < document.items.length;
     return Object.freeze({ op: document.op, status: truncated ? 'needs_resume' : 'ok', summary: document.summary, payload, refs: [ref], ...(truncated ? { cursor: `orientation:${match[1]}:${next}` } : {}),
@@ -525,7 +743,8 @@ export class CartographerQuartermaster {
   async reverify(claim, op, args, ctx) {
     if (claim?.op !== op) return { ok: false, reason: 'operation_mismatch' };
     try {
-      const prior = this._loadArtifact(claim?.refs?.[0], op);
+      const replayCeiling = op === 'provenance.advisories' ? this.advisoryPolicy.maxArtifactBytes : op === 'provenance.plan' ? this.sbomPolicy.maxLockfileBytes * 8 : null;
+      const prior = this._loadArtifact(claim?.refs?.[0], op, replayCeiling);
       if (op === 'reuse.vet') {
         if (prior.query?.ecosystem !== args?.ecosystem || prior.query?.package !== args?.package || prior.query?.version !== args?.version
           || prior.query?.indexEpoch !== args?.indexEpoch) return { ok: false, reason: 'query_mismatch' };
@@ -549,6 +768,38 @@ export class CartographerQuartermaster {
           } } : {}),
         };
       }
+      if (op === 'provenance.advisories') {
+        if (sha(stable(this.advisoryScanner.card())) !== this.advisoryPolicy.scannerCardDigest) return { ok: false, reason: 'advisory_policy_changed' };
+        if (sha(stable(this.atlas.card())) !== this.advisoryPolicy.atlasCardDigest || stable(this.atlas.card().ceilings) !== stable(this.advisoryPolicy.atlasCeilings)) return { ok: false, reason: 'advisory_policy_changed' };
+        const selected = await this._advisorySource(args, ctx); const grounding = selected.source.kind === 'actual' ? 'actual_lockfile' : 'proposed_not_installed';
+        const query = { source: selected.query, indexEpoch: args?.indexEpoch };
+        if (stable(prior.query) !== stable(query) || !Array.isArray(prior.provenance?.advisoryRefs) || prior.provenance.advisoryRefs.length !== 3 || !Array.isArray(claim?.refs) || claim.refs.length !== 4) return { ok: false, reason: 'query_mismatch' };
+        const expectedRefs = [
+          ['advisory-selected-graph', 'application/vnd.baton.advisory-graph+json'],
+          ['advisory-scan-manifest', 'application/vnd.baton.advisory-scan+json'],
+          ['advisory-import-observation', 'application/vnd.baton.advisory-imports+json'],
+        ];
+        for (let index = 0; index < expectedRefs.length; index += 1) {
+          const ref = prior.provenance.advisoryRefs[index]; const claimRef = claim.refs[index + 1];
+          if (ref.kind !== expectedRefs[index][0] || ref.mediaType !== expectedRefs[index][1] || claimRef?.kind !== ref.kind || claimRef?.mediaType !== ref.mediaType || claimRef?.handle !== ref.handle || claimRef?.digest !== ref.digest || claimRef?.bytes !== ref.bytes) return { ok: false, reason: 'artifact_reference_mismatch' };
+        }
+        const parseRaw = (ref, expected) => { const raw = this._loadRaw(ref, ...expected, this.advisoryPolicy.maxArtifactBytes); try { return { raw, value: JSON.parse(raw) }; } catch { throw typed('advisory replay artifact JSON invalid', 'artifact_integrity'); } };
+        const graphLoaded = parseRaw(prior.provenance.advisoryRefs[0], expectedRefs[0]); const scanLoaded = parseRaw(prior.provenance.advisoryRefs[1], expectedRefs[1]); const importsLoaded = parseRaw(prior.provenance.advisoryRefs[2], expectedRefs[2]);
+        const snapshot = advisoryGraphSnapshot(selected.graph, grounding, selected.source, this.advisoryPolicy);
+        if (!graphLoaded.raw.equals(Buffer.from(`${stable(snapshot)}\n`)) || stable(graphLoaded.value) !== stable(snapshot)) return { ok: false, reason: 'advisory_graph_diverged' };
+        const scanCheck = await this.advisoryScanner.verifyScan(scanLoaded.value); if (!scanCheck?.ok || stable(scanCheck.normalized) !== stable(scanLoaded.value)) return { ok: false, reason: scanCheck?.reason ?? 'advisory_scan_diverged' };
+        const atlasResult = await this.atlas.invoke('repo.map', { indexEpoch: args.indexEpoch }, ctx); this._abort(ctx); const { full: atlasFull, ref: atlasRef } = this._inner(atlasResult, this.advisoryPolicy.maxArtifactBytes);
+        const relevantPackages = new Set(scanLoaded.value.coordinates.map((coordinate) => coordinate.package)); const atlasCard = this.atlas.card();
+        const imports = advisoryImportSnapshot(atlasFull, { ...atlasResult.provenance, artifactDigest: atlasRef.digest }, atlasCard, relevantPackages, this.advisoryPolicy, () => this._abort(ctx));
+        if (!importsLoaded.raw.equals(Buffer.from(`${stable(imports)}\n`)) || stable(importsLoaded.value) !== stable(imports)) return { ok: false, reason: 'advisory_atlas_diverged' };
+        const projection = advisoryProjection(snapshot, scanLoaded.value, imports, this.advisoryPolicy, () => this._abort(ctx));
+        if (!(await selected.recheck())) return { ok: false, reason: 'advisory_source_changed' };
+        this._abort(ctx);
+        const expectedProvenance = { deterministic: false, grounding, graphDigest: prior.provenance.advisoryRefs[0].digest, scanDigest: prior.provenance.advisoryRefs[1].digest, importDigest: prior.provenance.advisoryRefs[2].digest, advisoryRefs: prior.provenance.advisoryRefs, scannerId: scanLoaded.value.scannerId, scannerCardDigest: this.advisoryPolicy.scannerCardDigest, scannerCeilings: this.advisoryPolicy.scannerCeilings, projectionPolicy: this.advisoryPolicy, sbomPolicy: this.sbomPolicy, observedAt: scanLoaded.value.observedAt, index_epoch: imports.indexEpoch, overlay_digest: imports.overlayDigest, staleness: imports.staleness, atlasArtifactDigest: imports.atlasArtifactDigest, atlasCardDigest: imports.atlasCardDigest, underlying: 'npm-package-lock-v3+osv-querybatch-exact-input+atlas-static-import-observation' };
+        const expectedDocument = { schemaVersion: 1, op, query, summary: `${projection.counts.advisories} known advisory records across ${projection.counts.coordinates} exact-input npm coordinates; vulnerable-function reachability unknown`, items: projection.items, incompleteReasons: projection.incompleteReasons, counts: projection.counts, authority: { install: false, approval: false, decision: false, merge: false, verification: false, clearance: false }, provenance: expectedProvenance };
+        if (Buffer.byteLength(`${stable(expectedDocument)}\n`) > this.advisoryPolicy.maxArtifactBytes || stable(prior) !== stable(expectedDocument) || claim.refs[0]?.kind !== artifactType(op).kind || claim.refs[0]?.mediaType !== artifactType(op).mediaType || claim.refs[0]?.digest !== sha(`${stable(prior)}\n`) || claim.refs[0]?.handle !== `art:sha256:${claim.refs[0].digest}`) return { ok: false, reason: 'advisory_projection_diverged' };
+        return { ok: true, observedDigest: claim.refs[0].digest, snapshot: { grounding, graphDigest: expectedProvenance.graphDigest, scanDigest: expectedProvenance.scanDigest, knownAdvisories: projection.counts.advisories, vulnerableFunctionReachability: 'unknown', clearanceAuthority: false } };
+      }
       if (op === 'provenance.plan') {
         const query = { lockfilePath: args?.lockfilePath?.replace(/^\.\//, ''), ecosystem: args?.ecosystem, package: args?.package, version: args?.version };
         if (stable(prior.query) !== stable(query) || query.ecosystem !== 'npm' || !exactNpm(query.package, query.version)
@@ -564,15 +815,15 @@ export class CartographerQuartermaster {
         const graphPolicy = { ...this.sbomPolicy, maxEdges: this.proposalPolicy.maxEdges };
         const maxExpandedBytes = this.sbomPolicy.maxLockfileBytes * 8;
         if (lockRef.bytes > this.sbomPolicy.maxLockfileBytes || receiptRef.bytes > this.sbomPolicy.maxLockfileBytes || sbomRef.bytes > maxExpandedBytes || deltaRef.bytes > maxExpandedBytes) return { ok: false, reason: 'proposal_oversize' };
-        const proposedRaw = this._loadRaw(lockRef, ...expectedRefs[0]); const proposed = npmGraph(proposedRaw, graphPolicy, 'proposed_lockfile', { requireRegistry: true, allowedOrigins: this.proposalPolicy.allowedRegistryOrigins });
-        const sbomRaw = this._loadRaw(sbomRef, ...expectedRefs[1]); const receiptRaw = this._loadRaw(receiptRef, ...expectedRefs[2]); const deltaRaw = this._loadRaw(deltaRef, ...expectedRefs[3]);
+        const proposedRaw = this._loadRaw(lockRef, ...expectedRefs[0], this.sbomPolicy.maxLockfileBytes); const proposed = npmGraph(proposedRaw, graphPolicy, 'proposed_lockfile', { requireRegistry: true, allowedOrigins: this.proposalPolicy.allowedRegistryOrigins });
+        const sbomRaw = this._loadRaw(sbomRef, ...expectedRefs[1], maxExpandedBytes); const receiptRaw = this._loadRaw(receiptRef, ...expectedRefs[2], this.sbomPolicy.maxLockfileBytes); const deltaRaw = this._loadRaw(deltaRef, ...expectedRefs[3], maxExpandedBytes);
         if (!sbomRaw.equals(Buffer.from(`${stable(proposed.sbom)}\n`))) return { ok: false, reason: 'proposed_sbom_diverged' };
         let receipt; let storedDelta; try { receipt = JSON.parse(receiptRaw); storedDelta = JSON.parse(deltaRaw); } catch { return { ok: false, reason: 'artifact_integrity' }; }
         let root; let actualPath; let manifestPath;
         try { root = realpathSync(ctx.worktreeRoot); actualPath = realpathSync(join(root, query.lockfilePath)); manifestPath = realpathSync(join(dirname(actualPath), 'package.json')); } catch { return { ok: false, reason: 'sbom_unavailable' }; }
         if (relative(root, actualPath).startsWith('..') || isAbsolute(relative(root, actualPath)) || relative(root, manifestPath).startsWith('..') || isAbsolute(relative(root, manifestPath))) return { ok: false, reason: 'invalid_sbom_path' };
         let actualRaw; let currentManifest; let rereadActualPath; let rereadManifestPath;
-        try { actualRaw = readFileSync(actualPath); currentManifest = readFileSync(manifestPath); rereadActualPath = realpathSync(join(root, query.lockfilePath)); rereadManifestPath = realpathSync(join(dirname(actualPath), 'package.json')); } catch { return { ok: false, reason: 'sbom_source_changed' }; }
+        try { actualRaw = boundedRead(actualPath, statSync(actualPath).size, this.sbomPolicy.maxLockfileBytes, 'sbom_oversize'); currentManifest = boundedRead(manifestPath, statSync(manifestPath).size, this.sbomPolicy.maxLockfileBytes, 'sbom_oversize'); rereadActualPath = realpathSync(join(root, query.lockfilePath)); rereadManifestPath = realpathSync(join(dirname(actualPath), 'package.json')); } catch { return { ok: false, reason: 'sbom_source_changed' }; }
         if (rereadActualPath !== actualPath || rereadManifestPath !== manifestPath) return { ok: false, reason: 'sbom_source_changed' };
         const actualDigest = sha(actualRaw); const actual = npmGraph(actualRaw, graphPolicy, 'actual_lockfile');
         if (actualDigest !== prior.provenance.baseLockfileDigest || sha(currentManifest) !== prior.provenance.baseManifestDigest || receipt.baseDigest !== actualDigest

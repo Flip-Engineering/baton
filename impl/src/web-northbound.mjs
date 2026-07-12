@@ -33,6 +33,11 @@ const OIDC_START_PATH = '/v1/auth/oidc/start';
 const OIDC_CALLBACK_PATH = '/v1/auth/oidc/callback';
 
 function json(value) { return JSON.parse(JSON.stringify(value)); }
+function transportCapability(value) {
+  const copy = json(value);
+  if (copy && typeof copy === 'object' && !Array.isArray(copy) && Array.isArray(copy.refs)) copy.refs = copy.refs.map(({ path: _path, ...ref }) => ref);
+  return copy;
+}
 function hash(value) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
 function tokenHash(value) { return createHash('sha256').update(value).digest('hex'); }
 function equalDigest(left, right) {
@@ -55,7 +60,10 @@ function dispatchFailure(cause) {
     return { httpStatus: 502, body: { ok: false, error: { code: 'capability_refused', message: 'capability result refused by policy' } } };
   }
   if (['invalid_proposal', 'invalid_sbom_path', 'proposal_context_required'].includes(cause?.code)) return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'proposal precondition failed' } } };
+  if (['invalid_advisory_request', 'advisory_context_required', 'invalid_package_identity'].includes(cause?.code)) return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'advisory precondition failed' } } };
   if (['proposal_receipt_invalid', 'proposal_schema_invalid', 'proposal_policy_violation', 'proposal_network_violation', 'proposal_root_changed', 'proposal_coordinate_mismatch', 'proposal_oversize', 'proposal_timeout', 'proposal_resolver_failed', 'proposal_cleanup_failed', 'proposal_supervisor_busy', 'proposal_reconcile_failed', 'sbom_schema_invalid', 'sbom_oversize', 'sbom_source_changed', 'sbom_unavailable', 'artifact_integrity'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'provenance evidence refused' } } };
+  if (['advisory_plan_diverged', 'advisory_policy_changed', 'advisory_scan_coordinate_mismatch', 'advisory_scan_schema_invalid', 'advisory_scan_incomplete', 'advisory_source_changed', 'advisory_atlas_integrity', 'advisory_projection_oversize', 'oracle_response_oversize', 'oracle_schema_invalid', 'oracle_coordinate_mismatch', 'oracle_incomplete', 'oracle_source_integrity', 'oracle_clock_invalid'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'advisory evidence refused' } } };
+  if (['oracle_unavailable', 'oracle_timeout'].includes(cause?.code)) return { httpStatus: 503, body: { ok: false, error: { code: cause.code, message: 'advisory source unavailable' } } };
   if (cause?.code === 'cancelled') return { httpStatus: 409, body: { ok: false, error: { code: 'cancelled', message: 'capability invocation cancelled' } } };
   if (['run_sealed', 'run_not_terminal', 'run_membership_changed', 'run_prefix_changed'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'run state conflict' } } };
   if (['invalid_run_id', 'run_not_found'].includes(cause?.code)) return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'run precondition failed' } } };
@@ -359,6 +367,7 @@ export class WebNorthbound {
       else if (action === 'resume') value = await this.coordinator.resumeCapability(a.name, a.op, a.ref, a.cursor, capabilityCtx);
       else if (action === 'reverify') value = await this.coordinator.reverifyCapability(a.name, a.op, a.claim, a.args, capabilityCtx);
       else value = await this.coordinator.orientWorker(a.workerId, a.args, a.note, { ...capabilityCtx, expectedFence: envelope.expectedFence });
+      value = transportCapability(value);
     } else if (envelope.command === 'reuse_decide') {
       value = await this.coordinator.decideReuse(a, { actor: webActor, repoId: envelope.repoId, budgetTokens: a.budgetTokens, idempotencyKey: `web.command:${envelope.commandId}` });
     } else if (envelope.command === 'reuse_recheck') {

@@ -213,7 +213,7 @@ This ledger prevents the short summaries from silently shrinking the design. Dep
 part of the contract; grouping here does not authorize a mega-phase.
 
 1. **Safety closure:** policy-hash invalidation across durable Decisions and fences.
-2. **Read-only risk evidence:** Phase 41 exact transitive advisory projection over separately
+2. **Read-only risk evidence — shipped Phase 41:** exact-input OSV transitive advisory projection over separately
    grounded actual and proposed npm graphs, deterministic dependency-path witnesses, and narrowly
    named supported-static-import observation. It never claims vulnerable-function reachability or
    waives an advisory.

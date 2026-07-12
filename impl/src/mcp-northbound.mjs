@@ -29,6 +29,11 @@ function containsForbidden(value) {
   return Object.entries(value).some(([key, child]) => FORBIDDEN_KEY.test(key) || containsForbidden(child));
 }
 function normalized(value) { return value === undefined ? null : clone(value); }
+function transportCapability(value) {
+  const copy = normalized(value);
+  if (record(copy) && Array.isArray(copy.refs)) copy.refs = copy.refs.map(({ path: _path, ...ref }) => ref);
+  return copy;
+}
 function toolResult(value, isError = false) {
   const normalizedValue = normalized(value);
   const structuredContent = record(normalizedValue) ? normalizedValue : { result: normalizedValue };
@@ -43,6 +48,8 @@ function stateFailureCode(cause) {
     'capability_context_invalid', 'capability_context_forbidden', 'capability_record_unavailable',
     'invalid_proposal', 'invalid_sbom_path', 'proposal_context_required', 'proposal_receipt_invalid', 'proposal_schema_invalid',
     'proposal_policy_violation', 'proposal_network_violation', 'proposal_root_changed', 'proposal_coordinate_mismatch', 'proposal_oversize', 'proposal_timeout', 'proposal_resolver_failed', 'proposal_cleanup_failed', 'proposal_supervisor_busy', 'proposal_reconcile_failed', 'sbom_schema_invalid', 'sbom_oversize', 'sbom_source_changed', 'sbom_unavailable', 'artifact_integrity',
+    'invalid_advisory_request', 'advisory_context_required', 'invalid_package_identity', 'advisory_plan_diverged', 'advisory_policy_changed', 'advisory_scan_coordinate_mismatch', 'advisory_scan_schema_invalid', 'advisory_scan_incomplete', 'advisory_source_changed', 'advisory_atlas_integrity', 'advisory_projection_oversize',
+    'oracle_unavailable', 'oracle_timeout', 'oracle_response_oversize', 'oracle_schema_invalid', 'oracle_coordinate_mismatch', 'oracle_incomplete', 'oracle_source_integrity', 'oracle_clock_invalid',
     'capability_resume_unavailable', 'capability_reverify_unavailable', 'capability_task_requires_task_plane',
     'run_sealed', 'run_not_terminal', 'run_not_found', 'invalid_run_id', 'run_membership_changed', 'run_prefix_changed',
     'reuse_decision_unavailable', 'reuse_decision_forbidden', 'invalid_reuse_decision', 'reuse_evidence_invalid', 'reuse_evidence_diverged',
@@ -311,6 +318,7 @@ export class McpFleetServer {
       else if (action === 'resume') value = await this.coordinator.resumeCapability(args.name, args.op, args.ref, args.cursor, context);
       else if (action === 'reverify') value = await this.coordinator.reverifyCapability(args.name, args.op, args.claim, args.args, context);
       else value = await this.coordinator.orientWorker(args.workerId, args.args, args.note, { ...context, expectedFence: args.expectedFence });
+      value = transportCapability(value);
     }
     else if (name === 'fleet_reuse_decide') value = await this.coordinator.decideReuse({ need: args.need, choice: args.choice, rationale: args.rationale, dossier: args.dossier, sbom: args.sbom, ...(args.supersedes ? { supersedes: args.supersedes } : {}) }, { actor, repoId: args.repoId, budgetTokens: args.budgetTokens, idempotencyKey: `mcp.call:${callId}` });
     else if (name === 'fleet_reuse_recheck') value = await this.coordinator.recheckReuseDecision({ decisionId: args.decisionId, expectedValidityVersion: args.expectedValidityVersion, trigger: args.trigger, budgetTokens: args.budgetTokens }, { actor, repoId: args.repoId, budgetTokens: args.budgetTokens, idempotencyKey: `mcp.call:${callId}` });

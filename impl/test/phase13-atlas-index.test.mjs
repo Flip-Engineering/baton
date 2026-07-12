@@ -26,6 +26,7 @@ test('AT9/AT15: card declares snapshot+overlay, exact parser, operations, and ho
   assert.equal(card.ops['index.build'].interruptible, true);
   assert.equal(card.ops['symbol.references'].reverifiable, true);
   assert.equal(card.ops['scip.export'].deterministic, true);
+  assert.equal(card.ceilings.maxArtifactBytes, 64 * 1024 * 1024);
   assert.ok(card.limitations.some((item) => item.includes('no live LSP')));
   assert.ok(card.limitations.includes('no CPG/IR/semantic merge'));
 });
@@ -123,6 +124,11 @@ test('AT14/AT15: cancellation, symlink skipping, and file ceilings fail safely',
   await assert.rejects(f.atlas.invoke('index.build', {}, { ...f.ctx, signal: abort.signal }), (error) => error.code === 'cancelled');
   const small = fixture({ maxFiles: 1 });
   await assert.rejects(build(small), (error) => error.code === 'index_too_large');
+  const bounded = fixture({ maxSourceBytes: 128 }); write(bounded.base, 'src/huge.js', `export const huge = '${'x'.repeat(4_096)}'\n`); const boundedBuild = await build(bounded);
+  assert.equal(boundedBuild.payload.some((file) => file.path === 'src/huge.js'), false);
+  const overlay = dir('atlas-oversize-overlay'); cpSync(bounded.base, overlay, { recursive: true }); write(overlay, 'src/a.js', `export const huge = '${'x'.repeat(4_096)}'\n`);
+  const over = await bounded.atlas.invoke('repo.map', { indexEpoch: boundedBuild.provenance.index_epoch }, { worktreeRoot: overlay, budgetTokens: 1_000 });
+  assert.equal(over.payload.some((file) => file.path === 'src/a.js'), false); assert.ok(over.provenance.overlay_deleted.includes('src/a.js'));
 });
 
 test('AT10/AT12: unknown epochs, ambiguous names, and missing symbols are typed refusals', async () => {

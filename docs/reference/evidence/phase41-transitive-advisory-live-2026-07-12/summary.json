@@ -1,0 +1,56 @@
+{
+  "at": "2026-07-12T23:46:17.582Z",
+  "repoHead": null,
+  "scanner": {
+    "schemaVersion": 1,
+    "oracleId": "public-supply-chain-oracle",
+    "scan": {
+      "scannerId": "osv-querybatch-v1",
+      "provider": "osv.dev",
+      "operation": "QueryBatch",
+      "method": "POST",
+      "url": "https://api.osv.dev/v1/querybatch",
+      "ecosystem": "npm",
+      "versionSemantics": "exact_input_provider_fuzzy_match"
+    },
+    "ceilings": {
+      "maxScanComponents": 256,
+      "maxBatchSize": 100,
+      "maxScanAdvisories": 1000,
+      "maxResponseBytes": 2097152,
+      "maxTransactionBytes": 262144,
+      "perResponseTimeoutMs": 15000,
+      "maxScanWallMs": 30000
+    },
+    "sourceStore": {
+      "kind": "private-cas-request-response-session-v1",
+      "transactionMediaType": "application/vnd.baton.osv-querybatch-transaction+json",
+      "sessionMediaType": "application/vnd.baton.osv-querybatch-session+json"
+    }
+  },
+  "status": "ok",
+  "summary": "0 known advisory records across 10 exact-input npm coordinates; vulnerable-function reachability unknown",
+  "counts": {
+    "advisories": 0,
+    "atlasParseErrors": 0,
+    "components": 10,
+    "coordinates": 10,
+    "importWitnesses": 0,
+    "rows": 0,
+    "unresolvedEdges": 0
+  },
+  "incompleteReasons": [],
+  "checks": {
+    "officialFixedScanner": true,
+    "exactActualGrounding": true,
+    "completeCoordinateManifest": true,
+    "separateArtifacts": true,
+    "rawOfficialSourcesBound": true,
+    "conservativeSemantics": true,
+    "noSafetyOverclaim": true,
+    "offlineSemanticReverify": true,
+    "sourceUnchanged": true,
+    "boundedExternalCalls": true
+  },
+  "pass": true
+}

@@ -10,11 +10,17 @@ Phase 39 risk fence.
 ## TA1 — deployment-owned scan boundary
 
 `provenance.advisories` is advertised only when Quartermaster has Phase 37 SBOM policy and a
-deployment-injected advisory scanner whose card, methods, official HTTPS endpoints, response-byte
-ceiling, component/advisory/batch ceilings, deadline, and source-artifact root are valid. The
+deployment-injected advisory scanner whose card, methods, official HTTPS endpoints, response and
+transaction-envelope byte ceilings, component/advisory/batch ceilings, per-response and whole-scan deadlines, and source-
+artifact root are valid. The
 shipped public scanner uses OSV `POST /v1/querybatch` for exact npm coordinates. It persists each
-raw response privately by digest and returns only bounded, prose-free facts and source references.
-Redirect, timeout, cancellation, non-JSON, schema mismatch, response reordering/omission,
+raw response privately by digest plus a scanner-authored request/response transaction envelope
+binding exact request body, endpoint, method, scanner identity, response digest, scan ID,
+observation time, full-coordinate digest, card digest, and batch position. A separate session CAS
+root binds the complete batch/source set, including empty scans, so timestamps and valid batches
+cannot be edited or spliced across scan runs. It returns
+only bounded, prose-free facts and transaction references.
+Redirect, timeout, cancellation, non-JSON, schema mismatch, positional result-count mismatch,
 pagination, source-integrity failure, or any exceeded ceiling fails closed. Pagination is not
 silently truncated: this rung treats it as incomplete and refuses the scan.
 
@@ -41,17 +47,31 @@ receipt, proposed graph, and delta, then loads only the content-addressed propos
 The scan cannot turn a hypothetical component into installed state. The source is rechecked after
 all external and Atlas observations; drift discards the result.
 
-## TA3 — complete exact-coordinate batch
+## TA3 — complete exact-input coordinate batch
 
-Every non-link graph component must have an exact npm package name and SemVer. Links/workspaces are
-unsupported in this rung and make the graph incomplete rather than becoming registry coordinates.
+Every queried graph component must have an exact npm package name and SemVer, a canonical
+`node_modules` path/name match, valid SRI, and an authenticated HTTPS tarball resolution whose
+canonical public `registry.npmjs.org` path exactly matches that package name and version (including
+scoped-package basename rules). Links, workspaces, file/git/alias/arbitrary-tarball/private-registry
+sources, missing resolution provenance, and path/name mismatches are unsupported in this rung and
+make the graph incomplete rather than becoming public npm/OSV coordinates.
 Duplicate package paths sharing the same coordinate are queried once but remain distinct graph
 instances in the projection; repository evidence cannot choose which nested/hoisted instance Node
 would load. The scanner canonicalizes a deterministic coordinate order, splits it only by the
-deployment batch ceiling, and requires one ordered result for every query. Each result contains
-only bounded unique advisory IDs and provider modification timestamps. A missing, duplicate,
-additional, reordered, malformed, or paginated result makes the whole observation incomplete and
+deployment batch ceiling, and binds the official API's guaranteed positional response order to one
+result for every query. The provider does not echo coordinates, so Baton does not claim to detect a
+malicious official endpoint reordering same-shaped results; endpoint identity and TLS remain part
+of the oracle trust boundary. Each result contains
+only bounded unique advisory IDs and strict calendar-valid UTC RFC3339 provider modification
+timestamps. A missing, duplicate,
+additional, malformed, or paginated result makes the whole observation incomplete and
 fails closed.
+
+“Exact” describes Baton's package/version input and graph identity, not stronger canonicalization
+than OSV provides. QueryBatch inherits OSV's fuzzy upstream-version matching rules. The output is
+therefore an `exact_input_osv_observation`, never independently canonicalized or exact-version-
+proven. A later contract may cross-check canonical direct-version advisory keys through deps.dev or
+another independently grounded source.
 
 An empty advisory list means only `no_known_advisories_in_observed_components_as_of`. It is never
 named `safe`, `clean`, `cleared`, or `borrow_ok`, and it cannot clear durable adverse state.
@@ -70,8 +90,10 @@ and provider prose is never parsed for symbols. Multiple shortest paths use dete
 tie-breaking and remain bounded by deployment depth/path/result ceilings.
 
 Unresolved graph edges, links, unreachable installed entries, ambiguous component identities, or
-exceeded path ceilings remain explicit. They force a partial/incomplete projection; they can never
-be represented as evidence that an advisory is unreachable.
+exceeded path ceilings remain explicit. A real root path deeper than the deployment ceiling is
+`dependencyGraphReachability: unknown` with `path_depth_ceiling_exceeded`; only a graph component
+with no root path at all may say `no_root_path_observed`. These conditions force a
+partial/incomplete projection and can never become evidence that an advisory is unreachable.
 
 ## TA5 — repository import observation, not function proof
 
@@ -88,7 +110,10 @@ The projection carries three separate fields:
 
 - `dependencyGraphReachability`: `root_path_observed|no_root_path_observed|unknown`;
 - `packageReferenceObservation`: `observed_in_supported_static_imports|not_observed_in_indexed_supported_static_imports|unknown`;
-- `installedInstanceResolution`: always `unknown` when multiple component paths share a coordinate;
+- `installedInstanceResolution`: always `unknown` when a package name maps to multiple component
+  paths or versions, including unsupported/link/workspace instances; instance-specific import
+  witnesses are withheld under that ambiguity and the projection carries
+  `ambiguous_package_instance_resolution`;
 - `vulnerableFunctionReachability`: always `unknown` in Phase 41.
 
 No composite boolean named `reachable` or `unreachable` may collapse those meanings. A zero CPG
@@ -115,11 +140,18 @@ capability cannot perform that transaction itself.
 The main advisory-projection document, selected graph snapshot, oracle scan manifest, and import-
 observation snapshot are distinct content-addressed artifacts. The main document binds their exact
 kind, media type, digest, byte count, order, graph grounding, lockfile/plan identity, Atlas
-epoch/overlay, oracle identity, observation time, component/query/result counts, incompleteness,
-and all deployment ceilings. Raw official responses remain separate private source artifacts and
-are referenced by the scan manifest; provider prose and URLs are not copied into fleet context.
+epoch/overlay, Atlas card/extractor, supported languages, source/file/result/artifact ceilings, oracle
+identity, scanner-authored session/observation time, component/query/result counts, incompleteness,
+request/response transactions, and all deployment ceilings. Raw official responses remain separate private source artifacts and
+are referenced through scan-manifest transactions; provider prose and URLs are not copied into
+fleet context. Deployment policy bounds graph/import/scan/main artifact bytes, path bytes, import-
+source bytes, component/advisory/projection rows, witnesses, depth, and total scan wall time before
+materialization or publication.
 
-All output and error surfaces are bounded and sanitized. The capability result may be `partial`
+CAS byte counts are refused before allocation/read/JSON materialization, and component, edge,
+requested-lockfile, and import paths share the path ceiling. All output and error surfaces are
+bounded and sanitized. Authenticated web/MCP refs omit local filesystem paths and remain replayable
+through opaque digest/handle resolution inside Quartermaster's private artifact root. The capability result may be `partial`
 only with complete addressed evidence and explicit incomplete reasons; it is never cursor-
 resumable. Cancellation returns ref-only or nothing, never a caller-spliced partial scan.
 
@@ -128,7 +160,7 @@ resumable. Cancellation returns ref-only or nothing, never a caller-spliced part
 Reverify performs no network request. It reopens every addressed artifact, checks exact ref
 order/kind/media/digest/bytes, verifies the oracle source manifest against its private raw CAS,
 revalidates the original actual or proposed source, offline-reverifies a proposed plan when used,
-reparses every bound raw OSV batch response rather than trusting its normalized projection,
+reparses every bound raw OSV batch response and scanner session root rather than trusting its normalized projection,
 reinvokes Atlas at the exact effective epoch/overlay, and recomputes coordinate deduplication,
 dependency paths, import observations, findings, counts, incompleteness, summaries, and complete
 main-document semantics under current deployment ceilings. Any tamper, source drift, Atlas drift,
@@ -152,17 +184,21 @@ provider bodies, filesystem paths, proxy data, or credentials.
 Tests must prove at least:
 
 1. exact actual and proposed graph selection, grounding, and source-drift refusal;
-2. unique-coordinate batching with duplicate path projection and exact response-order binding;
+2. unique-coordinate batching with duplicate path projection, exact positional result-count
+   binding, and explicit official-provider order trust;
 3. direct, transitive, optional/dev/peer, unresolved, and graph-unreachable component cases;
 4. scoped/bare/subpath import recognition without prefix confusion;
 5. duplicate nested/hoisted coordinates remain separate, instance resolution remains unknown, and
    no import witness, zero CPG path, or missing dependency path can suppress or clear an advisory;
 6. `vulnerableFunctionReachability` remains exactly `unknown` and false authority is absent;
-7. timeout, redirect, cancellation, pagination, malformed/reordered/short/extra responses, byte,
+7. per-response/whole-scan timeout, redirect, cancellation, pagination, duplicate advisory IDs,
+   malformed/short/extra responses, strict invalid calendar timestamps, request/response and
+   cross-scan/time transaction splicing, DOM-exception aborts, response/envelope byte,
    component, advisory, batch, path, result, and artifact ceilings fail closed;
 8. raw/main/graph/import artifact tamper, forged refs, source change, Atlas drift, plan
    substitution, stale plan base, and semantic-main-document forgery fail offline reverify;
-9. generic authenticated web/MCP invocation and actor attribution; and
+9. generic authenticated web/MCP invoke-then-reverify with actor attribution, opaque replayable
+   refs, and no local filesystem path disclosure; and
 10. official OSV live evidence over Baton's actual lockfile, with zero source mutation and complete
     process/worktree/runtime cleanup under recursive Baton dogfood.
 

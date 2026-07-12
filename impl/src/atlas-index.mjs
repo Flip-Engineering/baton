@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { Lang, parse } from '@ast-grep/napi';
 
@@ -15,6 +15,17 @@ const LANGUAGE = Object.freeze({
   '.html': ['html', Lang.Html], '.htm': ['html', Lang.Html], '.css': ['css', Lang.Css],
 });
 const IGNORE_DIRS = new Set(['.git', '.baton', 'node_modules']);
+function readSourceBounded(path, ceiling) {
+  let fd;
+  try {
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > ceiling) return null;
+    const bytes = Buffer.alloc(stat.size); let offset = 0;
+    while (offset < bytes.length) { const count = readSync(fd, bytes, offset, bytes.length - offset, offset); if (count === 0) break; offset += count; }
+    if (offset !== bytes.length || readSync(fd, Buffer.alloc(1), 0, 1, offset) !== 0) throw typed('Atlas source changed during bounded read', 'source_changed');
+    return bytes;
+  } finally { if (fd !== undefined) closeSync(fd); }
+}
 const DEF_KINDS = new Map([
   ['function_declaration', 'function'], ['generator_function_declaration', 'function'],
   ['class_declaration', 'class'], ['method_definition', 'method'],
@@ -118,8 +129,8 @@ function scan(root, opts, ctx) {
       if (!entry.isFile()) continue;
       const language = LANGUAGE[extname(entry.name).toLowerCase()];
       if (!language) continue;
-      const bytes = readFileSync(full);
-      if (bytes.includes(0) || bytes.length > opts.maxSourceBytes) continue;
+      const bytes = readSourceBounded(full, opts.maxSourceBytes);
+      if (bytes === null || bytes.includes(0)) continue;
       files.push(extractFile(slash(rel), bytes, ...language));
       if (files.length > opts.maxFiles) throw typed(`Atlas file ceiling ${opts.maxFiles} exceeded`, 'index_too_large');
     }
@@ -184,7 +195,8 @@ export class AtlasCodeIndex {
     this.artifactRoot = opts.artifactRoot;
     this.indexRoot = join(opts.artifactRoot, 'indexes'); this.resultRoot = join(opts.artifactRoot, 'results');
     this.maxSourceBytes = opts.maxSourceBytes ?? 2 * 1024 * 1024; this.maxFiles = opts.maxFiles ?? 20000;
-    this.maxResults = opts.maxResults ?? 100000;
+    this.maxResults = opts.maxResults ?? 100000; this.maxArtifactBytes = opts.maxArtifactBytes ?? 64 * 1024 * 1024;
+    for (const key of ['maxSourceBytes', 'maxFiles', 'maxResults', 'maxArtifactBytes']) if (!Number.isSafeInteger(this[key]) || this[key] <= 0) throw new TypeError(`Atlas ${key} must be a positive safe integer`);
     this.now = opts.now ?? Date.now; this.record = opts.record ?? null;
     mkdirSync(this.indexRoot, { recursive: true, mode: 0o700 }); mkdirSync(this.resultRoot, { recursive: true, mode: 0o700 });
   }
@@ -202,12 +214,14 @@ export class AtlasCodeIndex {
         'scip.export': { latency_class: 'interactive', deterministic: true, side_effects: 'writes_content_addressed_artifact', reverifiable: true },
       },
       languages: [...new Set(Object.values(LANGUAGE).map(([name]) => name))], shared_state: { code_index: 'snapshot+overlay' },
+      ceilings: { maxSourceBytes: this.maxSourceBytes, maxFiles: this.maxFiles, maxResults: this.maxResults, maxArtifactBytes: this.maxArtifactBytes },
       sandbox_required: 'read_only_worktree', cost_model: 'cpu_bound_local',
       limitations: [`overlay recomputed per query`, `hard result ceiling ${this.maxResults}`, 'SCIP JSON interchange only; no live LSP/protobuf', 'no semantic retrieval', 'no CPG/IR/semantic merge'],
     });
   }
   _write(root, value) {
     const serialized = `${stable(value)}\n`; const digest = sha(serialized); const path = join(root, `${digest}.json`);
+    if (Buffer.byteLength(serialized) > this.maxArtifactBytes) throw typed('Atlas artifact exceeded deployment ceiling', 'artifact_too_large');
     if (!existsSync(path)) { try { writeFileSync(path, serialized, { encoding: 'utf8', mode: 0o600, flag: 'wx' }); } catch (error) { if (error?.code !== 'EEXIST') throw error; } }
     return { digest, path, bytes: Buffer.byteLength(serialized) };
   }
@@ -216,7 +230,7 @@ export class AtlasCodeIndex {
     const matches = readdirSync(this.indexRoot).filter((name) => name.endsWith('.json')).sort();
     let found = null;
     for (const name of matches) {
-      const raw = readFileSync(join(this.indexRoot, name), 'utf8');
+      const bytes = readSourceBounded(join(this.indexRoot, name), this.maxArtifactBytes); if (bytes === null) throw typed('Atlas index artifact exceeded deployment ceiling', 'index_too_large'); const raw = bytes.toString('utf8');
       let value;
       try { value = JSON.parse(raw); } catch { continue; }
       if (value.epoch !== epoch) continue;
@@ -320,7 +334,7 @@ export class AtlasCodeIndex {
     if (!match || requested !== `art:sha256:${match[1]}`) throw typed('cursor and artifact handle do not match', 'invalid_cursor');
     const path = join(this.resultRoot, `${match[1]}.json`);
     if (!existsSync(path)) throw typed('Atlas result artifact is unavailable', 'unknown_cursor');
-    const raw = readFileSync(path, 'utf8');
+    const bytesBuffer = readSourceBounded(path, this.maxArtifactBytes); if (bytesBuffer === null) throw typed('Atlas result artifact exceeded deployment ceiling', 'result_too_large'); const raw = bytesBuffer.toString('utf8');
     if (sha(raw) !== match[1]) throw typed('Atlas result artifact digest mismatch', 'result_integrity');
     const full = JSON.parse(raw); const offset = Number(match[2]);
     if (!Array.isArray(full.items) || offset < 0 || offset > full.items.length) throw typed('Atlas cursor offset is invalid', 'invalid_cursor');
