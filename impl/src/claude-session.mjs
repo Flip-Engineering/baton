@@ -13,8 +13,22 @@ import { renderPrompt } from './cli-adapters.mjs';
 
 const credentialError = (message, code) => Object.assign(new Error(message), { code });
 
+function jsonPointerSegments(pointer) {
+  if (typeof pointer !== 'string' || !pointer.startsWith('/') || pointer.length > 512) {
+    throw credentialError('GLM auth token JSON pointer invalid', 'credential_file_invalid');
+  }
+  const segments = pointer.slice(1).split('/').map((segment) => {
+    if (/~(?![01])/u.test(segment)) throw credentialError('GLM auth token JSON pointer invalid', 'credential_file_invalid');
+    return segment.replaceAll('~1', '/').replaceAll('~0', '~');
+  });
+  if (segments.length === 0 || segments.length > 8 || segments.some((segment) => !segment || ['__proto__', 'prototype', 'constructor'].includes(segment))) {
+    throw credentialError('GLM auth token JSON pointer invalid', 'credential_file_invalid');
+  }
+  return segments;
+}
+
 /** Load one bounded local credential without ever including its value in diagnostics. */
-export function loadGlmAuthTokenFile(path) {
+export function loadGlmAuthTokenFile(path, { jsonPointer = '/env/ANTHROPIC_AUTH_TOKEN' } = {}) {
   if (typeof path !== 'string' || path.length === 0) throw credentialError('GLM auth token file path required', 'credential_file_invalid');
   let stat;
   try { stat = lstatSync(path); } catch { throw credentialError('GLM auth token file unavailable', 'credential_file_unavailable'); }
@@ -31,12 +45,16 @@ export function loadGlmAuthTokenFile(path) {
   let parsed;
   try { parsed = JSON.parse(text); } catch { throw credentialError('GLM auth token JSON invalid', 'credential_file_invalid'); }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw credentialError('GLM auth token JSON must be an object', 'credential_file_invalid');
-  const env = parsed.env;
-  const token = env !== null && typeof env === 'object' && !Array.isArray(env)
-    ? env.ANTHROPIC_AUTH_TOKEN
-    : undefined;
+  let token = parsed;
+  for (const segment of jsonPointerSegments(jsonPointer)) {
+    if (token === null || typeof token !== 'object' || Array.isArray(token) || !Object.hasOwn(token, segment)) {
+      token = undefined;
+      break;
+    }
+    token = token[segment];
+  }
   if (typeof token !== 'string' || token.length === 0 || /\s/.test(token)) {
-    throw credentialError('GLM auth token JSON requires env.ANTHROPIC_AUTH_TOKEN', 'credential_file_invalid');
+    throw credentialError('GLM auth token JSON does not contain the selected token', 'credential_file_invalid');
   }
   return token;
 }
@@ -617,7 +635,7 @@ export class ClaudeSessionCli {
  */
 export class GlmSessionCli extends ClaudeSessionCli {
   constructor(opts = {}) {
-    const token = opts.authToken ?? (opts.authTokenFile ? loadGlmAuthTokenFile(opts.authTokenFile) : undefined) ?? process.env.Z_AI_API_KEY ?? process.env.ZHIPU_API_KEY;
+    const token = opts.authToken ?? (opts.authTokenFile ? loadGlmAuthTokenFile(opts.authTokenFile, { jsonPointer: opts.authTokenJsonPointer }) : undefined) ?? process.env.Z_AI_API_KEY ?? process.env.ZHIPU_API_KEY;
     super({
       ...opts,
       harness: opts.harness ?? 'glm-via-claude-session',

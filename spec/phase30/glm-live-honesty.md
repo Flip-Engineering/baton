@@ -4,7 +4,8 @@
 `GlmSessionCli` may receive `authTokenFile` as an alternative to an in-memory token or environment
 fallback. The file must be a regular non-symlink, owner-only (`0600` or stricter), non-empty, and
 bounded. It may contain one raw token or the official JSON shape
-`{ "env": { "ANTHROPIC_AUTH_TOKEN": "..." } }`; generic guessed key names are refused. Values never enter cards,
+`{ "env": { "ANTHROPIC_AUTH_TOKEN": "..." } }`. A deployment may explicitly select a different
+bounded JSON Pointer; generic guessed key names are refused. Values never enter cards,
 events, errors, summaries, evidence, or committed files.
 
 ## GL2 — current exact model identity

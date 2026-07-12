@@ -114,12 +114,14 @@ test('GL1: owner-only raw/JSON credential files load without values entering dia
   assert.throws(() => loadGlmAuthTokenFile(link), (error) => error.code === 'credential_file_invalid');
   const unsupported = join(root, 'unsupported.json'); writeFileSync(unsupported, JSON.stringify({ key: 'fake-a', token: 'fake-b' })); chmodSync(unsupported, 0o600);
   assert.throws(() => loadGlmAuthTokenFile(unsupported), (error) => error.code === 'credential_file_invalid' && !String(error).includes('fake-a'));
+  assert.equal(loadGlmAuthTokenFile(unsupported, { jsonPointer: '/key' }), 'fake-a', 'a deployment may explicitly select a nonstandard local schema');
+  assert.throws(() => loadGlmAuthTokenFile(unsupported, { jsonPointer: '/__proto__/key' }), (error) => error.code === 'credential_file_invalid');
 });
 
 test('GL1/GL2: authTokenFile and exact GLM model mapping reach only the fake child boundary', async () => {
   const GlmSessionCli = await importGlm(); const key = join(mkdtempSync(join(tmpdir(), 'baton-glm-key-wire-')), 'key.json');
   writeFileSync(key, JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: 'fake-file-token' } })); chmodSync(key, 0o600);
-  const cli = new GlmSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], authTokenFile: key, model: 'glm-4.7' });
+  const cli = new GlmSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], authTokenFile: key, authTokenJsonPointer: '/env/ANTHROPIC_AUTH_TOKEN', model: 'glm-4.7' });
   const c = collect(cli); const wt = mkdtempSync(join(tmpdir(), 'baton-glm-key-wt-'));
   try {
     assert.equal(cli.card().modelSelection.configuredDefault, 'glm-4.7');

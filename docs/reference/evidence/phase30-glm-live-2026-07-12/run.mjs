@@ -11,6 +11,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(process.env.BATON_REPO ?? resolve(HERE, '../../../..'));
 const OUTPUT = resolve(process.env.BATON_EVIDENCE_DIR ?? HERE);
 const AUTH = resolve(process.env.BATON_GLM_AUTH_FILE ?? 'glm_key.json');
+const AUTH_JSON_POINTER = process.env.BATON_GLM_AUTH_JSON_POINTER ?? '/env/ANTHROPIC_AUTH_TOKEN';
 const MODEL = process.env.BATON_GLM_MODEL ?? 'glm-4.7';
 const MAX_USD = process.env.BATON_GLM_MAX_BUDGET_USD ?? '0.10';
 const TASK_ID = 'glm-phase30-live-review';
@@ -66,6 +67,7 @@ if (!existsSync(AUTH)) {
 
 const adapter = new GlmSessionCli({
   authTokenFile: AUTH,
+  authTokenJsonPointer: AUTH_JSON_POINTER,
   model: MODEL,
   approvals: false,
   permissionMode: 'acceptEdits',
