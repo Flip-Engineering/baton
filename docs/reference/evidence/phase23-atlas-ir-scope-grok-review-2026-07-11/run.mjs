@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statfsSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,8 +10,8 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(process.env.BATON_REPO ?? resolve(HERE, '../../../..'));
 const OUTPUT = resolve(process.env.BATON_EVIDENCE_DIR ?? HERE);
 const AUTH = join(homedir(), '.grok', 'auth.json');
-const LOG_DIR = mkdtempSync(join(tmpdir(), 'baton-ir-scope-review-'));
 const TIMEOUT_MS = Number(process.env.BATON_REVIEW_TIMEOUT_MS ?? 360000);
+const MIN_FREE_BYTES = Number(process.env.BATON_MIN_FREE_BYTES ?? 256 * 1024 * 1024);
 const TASKS = [
   { taskId: 'grok-ir-scope-45', model: 'grok-4.5', path: 'reviews/dogfood/grok-ir-scope-45.md', stance: 'constructive' },
   { taskId: 'grok-ir-scope-composer', model: 'grok-composer-2.5-fast', path: 'reviews/dogfood/grok-ir-scope-composer.md', stance: 'adversarial' },
@@ -46,7 +46,7 @@ function brief(task) {
     pathScope: [task.path],
     definitionOfDone: 'The four exact headings exist, the decision is unambiguous, and the proposed contract is falsifiable',
     verification: {
-      command: `test -s ${task.path} && grep -Fq '## Proposed numbered contract' ${task.path} && grep -Fq '## Risks and rejection criteria' ${task.path} && cd impl && npm test`,
+      command: `test -s ${task.path} && grep -Fq '## Proposed numbered contract' ${task.path} && grep -Fq '## Risks and rejection criteria' ${task.path} && git diff --check -- ${task.path}`,
       expectExit: 0,
       timeoutMs: 180000,
     },
@@ -56,14 +56,16 @@ function brief(task) {
 
 if (!existsSync(AUTH)) throw new Error('PENDING-LIVE-no-grok-auth-file');
 if (!Number.isFinite(TIMEOUT_MS) || TIMEOUT_MS <= 0) throw new Error('BATON_REVIEW_TIMEOUT_MS must be positive');
+if (!Number.isFinite(MIN_FREE_BYTES) || MIN_FREE_BYTES <= 0) throw new Error('BATON_MIN_FREE_BYTES must be positive');
+const fs = statfsSync(REPO); const freeBytes = fs.bavail * fs.bsize;
+if (freeBytes < MIN_FREE_BYTES) throw new Error(`PENDING-LIVE-insufficient-disk-headroom:${freeBytes}<${MIN_FREE_BYTES}`);
+const LOG_DIR = mkdtempSync(join(tmpdir(), 'baton-ir-scope-review-'));
 const adapter = new GrokAcpCli({ requestTimeoutMs: 30000, ceiling: TASKS.length });
 const { coordinator, log } = createDriver({
   repoRoot: REPO,
   logDir: LOG_DIR,
   adapters: { grok: adapter },
   runtimeIsolation: { credentialFiles: { grok: [AUTH] } },
-  workerDependencyDirs: ['impl/node_modules'],
-  verifyDependencyDirs: ['impl/node_modules'],
   approvalTimeoutMs: 60000,
   stopDeadlineMs: 15000,
   watchdog: { stallMs: TIMEOUT_MS },
