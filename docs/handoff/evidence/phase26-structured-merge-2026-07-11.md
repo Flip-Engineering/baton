@@ -24,8 +24,8 @@ removes orphan stages because an old candidate without a live fresh verdict has 
 
 - Numbered contract: `spec/phase26/structured-merge.md` (SM1–SM10).
 - Focused gate: 14/14.
-- Existing acceptance/worktree plus Phase 26 gate: 68/68.
-- Canonical owned suite: 764/764; suite root reaped.
+- Existing acceptance/worktree plus Phase 26 gate: 69/69.
+- Canonical owned suite: 765/765; suite root reaped.
 - Reds cover unavailable resolver, marker retention, parse fallback, deployment file ceiling,
   resolver isolation, clean divergent three-way merge, false-clean syntax failure, dirty main,
   main-advance race, post-main authority failure/replay, and orphan-stage reconciliation.
@@ -75,6 +75,16 @@ the path to retain that exact canonical identity immediately before writing. A h
 refuses `structured_unsupported_path`, leaves main pinned, and leaves the external sentinel
 untouched. That report and lifecycle proof are under
 `docs/reference/evidence/phase26-structured-merge-definitive-composer-2026-07-11/`.
+
+The next closure attempt showed that even a single reviewer could exhaust the host while the trust
+gate checked out every historical evidence ledger merely to verify one report. Baton still killed
+and reaped the provider, but the report could not be trusted. `freshVerifySandbox` now supports an
+explicit list of safe relative literal paths, creates a no-checkout detached worktree, applies a
+non-cone exact sparse projection, and then verifies the same full commit identity. The recursive
+review runner selects only its exact report paths; ordinary product verification stays full by
+default. A worktree red proves the report is present, unrelated files are absent, the exact commit
+is checked out, and traversal is refused. The failed full-checkout evidence is retained under
+`docs/reference/evidence/phase26-structured-merge-sparse-red-composer-2026-07-11/`.
 
 ## Honest boundary
 

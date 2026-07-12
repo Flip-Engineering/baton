@@ -60,11 +60,11 @@ function worktreeManager(repoRoot, opts = {}) {
       return worktreeMod.captureCommit(repoRoot, basename(worktreePath), { vendor: opts.vendor, model: opts.model, effort: opts.effort });
     },
     async createVerifyWorktree(taskId, sha) {
-      const r = await worktreeMod.freshVerifySandbox(repoRoot, taskId, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [] });
+      const r = await worktreeMod.freshVerifySandbox(repoRoot, taskId, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [] });
       return { path: r.dir ?? r.path };
     },
     async createBaseVerifyWorktree(taskId, sha) {
-      const r = await worktreeMod.freshVerifySandbox(repoRoot, `${taskId}-base`, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [] });
+      const r = await worktreeMod.freshVerifySandbox(repoRoot, `${taskId}-base`, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [] });
       return { path: r.dir ?? r.path };
     },
     async changedLines(baseSha, resultSha) {
@@ -204,6 +204,7 @@ export function createDriver(opts) {
     worktrees: worktreeManager(opts.repoRoot, {
       workerDependencyDirs: opts.workerDependencyDirs,
       verifyDependencyDirs: opts.verifyDependencyDirs,
+      verifySparsePaths: opts.verifySparsePaths,
       structuredMerge: opts.structuredMerge,
     }),
     runtimeScopes,

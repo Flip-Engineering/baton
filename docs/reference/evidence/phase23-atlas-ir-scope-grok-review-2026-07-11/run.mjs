@@ -145,6 +145,7 @@ const { coordinator, log } = createDriver({
   logDir: LOG_DIR,
   adapters: { grok: adapter },
   runtimeIsolation: { credentialFiles: { grok: [AUTH] } },
+  verifySparsePaths: TASKS.map((task) => task.path),
   approvalTimeoutMs: 60000,
   stopDeadlineMs: 15000,
   watchdog: { stallMs: TIMEOUT_MS },

@@ -274,6 +274,16 @@ test('two freshVerifySandbox calls with the same label produce two non-colliding
   assert.ok(existsSync(s2.dir));
 });
 
+test('freshVerifySandbox can project exact confined sparse paths without weakening commit identity', async (t) => {
+  const { dir } = makeRepo(); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, 'reviews'), { recursive: true }); writeFileSync(join(dir, 'reviews', 'report.md'), 'verified report\n'); writeFileSync(join(dir, 'large-unneeded.txt'), 'not projected\n');
+  sh('git', ['add', '-A'], dir); sh('git', ['commit', '-q', '-m', 'add report'], dir); const sha = sh('git', ['rev-parse', 'HEAD'], dir);
+  const sandbox = await freshVerifySandbox(dir, 'sparse-report', sha, { sparsePaths: ['reviews/report.md'] }); t.after(() => sandbox.cleanup());
+  assert.equal(sh('git', ['rev-parse', 'HEAD'], sandbox.dir), sha); assert.equal(readFileSync(join(sandbox.dir, 'reviews', 'report.md'), 'utf8'), 'verified report\n');
+  assert.equal(existsSync(join(sandbox.dir, 'large-unneeded.txt')), false); assert.deepEqual(sandbox.sparsePaths, ['reviews/report.md']);
+  await assert.rejects(() => freshVerifySandbox(dir, 'bad-sparse', sha, { sparsePaths: ['../escape'] }), /escapes repository/);
+});
+
 test('freshVerifySandbox copies explicit dependencies without linking writes to the main checkout', async (t) => {
   const { dir, baseSha } = makeRepo();
   t.after(() => rmSync(dir, { recursive: true, force: true }));

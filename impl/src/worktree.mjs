@@ -124,6 +124,15 @@ function materializeDependencies(dir, sources) {
   return copied;
 }
 
+function sparseProjection(paths = []) {
+  if (!Array.isArray(paths)) throw new TypeError('sparse verification paths must be an array');
+  return paths.map((path) => {
+    if (typeof path !== 'string' || path.length === 0 || isAbsolute(path) || !/^[A-Za-z0-9._/-]+$/.test(path)) throw new TypeError('sparse verification path must be a safe relative literal');
+    const parts = path.split('/'); if (parts.some((part) => part === '' || part === '.' || part === '..')) throw new TypeError('sparse verification path escapes repository');
+    return path;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // ensureBatonExcluded
 // ---------------------------------------------------------------------------
@@ -358,8 +367,8 @@ export async function finalizeStructuredIntegration(repoRoot, stage) {
  * @param {string} repoRoot
  * @param {string} label
  * @param {string} sha
- * @param {{log?: object, dependencyDirs?: string[]}} [opts]
- * @returns {Promise<{dir:string, sha:string, copiedDependencies:string[], cleanup:() => Promise<void>}>}
+ * @param {{log?: object, dependencyDirs?: string[], sparsePaths?: string[]}} [opts]
+ * @returns {Promise<{dir:string, sha:string, copiedDependencies:string[], sparsePaths:string[], cleanup:() => Promise<void>}>}
  * @throws {InvalidShaError}
  */
 export async function freshVerifySandbox(repoRoot, label, sha, opts = {}) {
@@ -372,6 +381,7 @@ export async function freshVerifySandbox(repoRoot, label, sha, opts = {}) {
   // Validate every source before registering a worktree. Invalid configuration therefore cannot
   // create a detached checkout that no caller has a cleanup handle for.
   const sources = dependencySources(repoRoot, opts.dependencyDirs ?? []);
+  const sparsePaths = sparseProjection(opts.sparsePaths ?? []);
 
   const verifyRoot = join(repoRoot, '.baton', 'verify');
   mkdirSync(verifyRoot, { recursive: true });
@@ -396,16 +406,20 @@ export async function freshVerifySandbox(repoRoot, label, sha, opts = {}) {
   // failure removes and prunes the worktree before the error escapes.
   const copiedDependencies = [];
   try {
-    sh('git', ['worktree', 'add', '--detach', dir, fullSha], repoRoot);
+    sh('git', ['worktree', 'add', '--detach', ...(sparsePaths.length ? ['--no-checkout'] : []), dir, fullSha], repoRoot);
     registered = true;
+    if (sparsePaths.length) {
+      gitFile(['sparse-checkout', 'set', '--no-cone', '--stdin'], dir, { input: `${sparsePaths.map((path) => `/${path}`).join('\n')}\n`, encoding: 'utf8' });
+      gitFile(['checkout', '--detach', fullSha], dir, { stdio: 'pipe' });
+    }
     copiedDependencies.push(...materializeDependencies(dir, sources));
   } catch (err) {
     await cleanup();
     throw err;
   }
 
-  logEvent(opts, 'worktree', 'worktree.verify_sandbox_created', { dir, sha: fullSha, label, copiedDependencies });
-  return { dir, sha: fullSha, copiedDependencies, cleanup };
+  logEvent(opts, 'worktree', 'worktree.verify_sandbox_created', { dir, sha: fullSha, label, copiedDependencies, sparsePaths });
+  return { dir, sha: fullSha, copiedDependencies, sparsePaths, cleanup };
 }
 
 // ---------------------------------------------------------------------------

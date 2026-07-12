@@ -1,0 +1,176 @@
+{
+  "at": "2026-07-12T05:20:19.074Z",
+  "repoHead": "44ebabb7c4c2c6cc342871852902ecda04a3a348",
+  "reviewProfile": "merge-implementation",
+  "reviewTimeoutMs": 360000,
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "rows": [
+    {
+      "taskId": "grok-merge-implementation-composer",
+      "model": "grok-composer-2.5-fast",
+      "path": "reviews/dogfood/grok-merge-implementation-composer.md",
+      "stance": "security",
+      "workerId": "w-1",
+      "handle": {
+        "id": "w-1",
+        "vendor": "grok",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"merge-implementation-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-composer-2.5-fast"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f54c3-faa8-7381-8671-9d1ca63c861a",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-merge-clean-composer.kAfbil/.baton/wt/grok-merge-implementation-composer",
+          "repoRoot": "/private/tmp/baton-merge-clean-composer.kAfbil",
+          "baseSha": "44ebabb7c4c2c6cc342871852902ecda04a3a348",
+          "branch": "baton/grok-merge-implementation-composer",
+          "ownerTaskId": "grok-merge-implementation-composer"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-merge-clean-composer.kAfbil/.baton/runtime/w-1",
+          "home": "/private/tmp/baton-merge-clean-composer.kAfbil/.baton/runtime/w-1/home",
+          "tmp": "/private/tmp/baton-merge-clean-composer.kAfbil/.baton/runtime/w-1/tmp",
+          "config": "/private/tmp/baton-merge-clean-composer.kAfbil/.baton/runtime/w-1/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "SECURITYSESSIONID",
+            "SSH_AUTH_SOCK"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": false
+        },
+        "review": null,
+        "taskId": "grok-merge-implementation-composer",
+        "worktree": "/private/tmp/baton-merge-clean-composer.kAfbil/.baton/wt/grok-merge-implementation-composer",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 43384,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T05:19:16.083Z"
+      },
+      "pid": 41616,
+      "verify": null,
+      "result": {
+        "ready": true,
+        "status": "failed",
+        "verdict": null,
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "modelMismatch": null,
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"merge-implementation-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f54c3-faa8-7381-8671-9d1ca63c861a",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-merge-clean-composer.kAfbil/.baton/wt/grok-merge-implementation-composer",
+          "repoRoot": "/private/tmp/baton-merge-clean-composer.kAfbil",
+          "baseSha": "44ebabb7c4c2c6cc342871852902ecda04a3a348",
+          "branch": "baton/grok-merge-implementation-composer",
+          "ownerTaskId": "grok-merge-implementation-composer"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      }
+    }
+  ],
+  "approvals": [
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    }
+  ],
+  "stopResults": [
+    {
+      "taskId": "grok-merge-implementation-composer",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "checks": {
+    "noHarnessError": false,
+    "expectedReviews": true,
+    "distinctLivePids": true,
+    "concurrentTurns": true,
+    "exactModelsObserved": true,
+    "bothFreshVerified": false,
+    "reportsCaptured": false,
+    "allKillsConfirmed": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimeGone": true,
+    "branchesGone": true
+  },
+  "fatal": "Error: review trust gates failed: [{\"taskId\":\"grok-merge-implementation-composer\",\"result\":{\"ready\":true,\"status\":\"failed\",\"verdict\":null,\"artifacts\":{\"commits\":[],\"files\":[]},\"vendor\":\"grok\",\"harnessRequested\":\"grok\",\"harnessResolved\":\"grok@grok 0.1.216 (b139744655)\",\"modelRequested\":\"grok-composer-2.5-fast\",\"modelResolved\":\"grok-composer-2.5-fast\",\"modelObserved\":\"grok-composer-2.5-fast\",\"modelMismatch\":null,\"effortRequested\":null,\"effortResolved\":null,\"effortObserved\":null,\"effortMismatch\":null,\"routeKey\":\"[\\\"grok\\\",\\\"grok 0.1.216 (b139744655)\\\",\\\"grok-composer-2.5-fast\\\",\\\"default\\\",\\\"grok\\\",\\\"merge-implementation-review\\\"]\",\"sessionRequest\":{\"mode\":\"new\"},\"sessionRef\":{\"vendor\":\"grok\",\"kind\":\"session\",\"id\":\"019f54c3-faa8-7381-8671-9d1ca63c861a\",\"persistence\":\"native\",\"source\":\"wire\"},\"sessionContext\":{\"worktree\":\"/private/tmp/baton-merge-clean-composer.kAfbil/.baton/wt/grok-merge-implementation-composer\",\"repoRoot\":\"/private/tmp/baton-merge-clean-composer.kAfbil\",\"baseSha\":\"44ebabb7c4c2c6cc342871852902ecda04a3a348\",\"branch\":\"baton/grok-merge-implementation-composer\",\"ownerTaskId\":\"grok-merge-implementation-composer\"},\"lineage\":null,\"review\":null,\"integration\":null,\"publication\":null,\"retainedResultRef\":null}}]\n    at file:///private/tmp/baton-merge-clean-composer.kAfbil/docs/reference/evidence/phase23-atlas-ir-scope-grok-review-2026-07-11/run.mjs:229:30\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
+  "pass": false
+}
