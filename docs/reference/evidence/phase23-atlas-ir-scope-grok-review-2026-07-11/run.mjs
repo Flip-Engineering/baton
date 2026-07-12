@@ -30,9 +30,14 @@ const MERGE_IMPLEMENTATION_TASKS = [
   { taskId: 'grok-merge-implementation-45', model: 'grok-4.5', path: 'reviews/dogfood/grok-merge-implementation-45.md', stance: 'authority' },
   { taskId: 'grok-merge-implementation-composer', model: 'grok-composer-2.5-fast', path: 'reviews/dogfood/grok-merge-implementation-composer.md', stance: 'security' },
 ];
+const EGRAPH_TASKS = [
+  { taskId: 'grok-egraph-evaluation-45', model: 'grok-4.5', path: 'reviews/dogfood/grok-egraph-evaluation-45.md', stance: 'constructive' },
+  { taskId: 'grok-egraph-evaluation-composer', model: 'grok-composer-2.5-fast', path: 'reviews/dogfood/grok-egraph-evaluation-composer.md', stance: 'adversarial' },
+];
 const PROFILE_TASKS = REVIEW_PROFILE === 'behavior-implementation' ? BEHAVIOR_TASKS
   : REVIEW_PROFILE === 'merge-scope' ? MERGE_TASKS
     : REVIEW_PROFILE === 'merge-implementation' ? MERGE_IMPLEMENTATION_TASKS
+      : REVIEW_PROFILE === 'egraph-evaluation' ? EGRAPH_TASKS
     : IR_TASKS;
 const TASKS = REVIEW_MODEL ? PROFILE_TASKS.filter((task) => task.model === REVIEW_MODEL) : PROFILE_TASKS;
 const MIN_FREE_BYTES = Number(MIN_FREE_BYTES_OVERRIDE ?? (128 + 64 * TASKS.length) * 1024 * 1024);
@@ -51,6 +56,25 @@ async function until(fn, label, timeoutMs = TIMEOUT_MS) {
 }
 
 function brief(task) {
+  if (REVIEW_PROFILE === 'egraph-evaluation') {
+    const focus = task.stance === 'constructive'
+      ? 'Define the smallest executable evaluation that preserves the bet without pretending repo-scale equality saturation is ready.'
+      : 'Try to falsify any reason to build an e-graph rung now; identify the exact evidence that would justify reopening it.';
+    return createBrief({
+      goal: `Evaluate Baton's catalogued R7 e-graph/equality-saturation bet at ${git(['rev-parse', '--short', 'HEAD'])}. Read SYSTEM.md representation status, docs/15-representation-and-computation.md §§2-6, docs/21-frontier-features.md, docs/26-full-system-goal.md §§H-I, reviews/frontier-features/representation.md e-graph findings, the shipped Phase 24 R4 ceiling, Phase 25 behavioral fingerprint, and Phase 26 structured merge contracts/evidence. ${focus} Decide keep, redirect, or retire for whole-repo, whole-function, and expression/kernel domains separately. Specify falsifiable demand/domain/tool/translation/scale/soundness gates, an executable tombstone contract, and the exact reopening evidence. Write ${task.path} with exact headings "## Decision", "## Proposed numbered contract", "## Red tests and proof", and "## Risks and rejection criteria".`,
+      constraints: [
+        `Edit only ${task.path}.`,
+        'Use at most 14 repository or tool calls, then finish from collected evidence.',
+        'Do not invent an e-graph engine, rewrite rules, or semantic proof; distinguish bounded expression DSL evidence from source-program equivalence.',
+        'No homelab integration or dependency. Do not use network tools, read credentials, edit product code/specs/tests/evidence, commit, push, deploy, or install software.',
+        'Keep the report under 2800 words and make the reopening threshold machine-testable.',
+      ],
+      pathScope: [task.path],
+      definitionOfDone: 'The four exact headings exist and every e-graph domain has an explicit keep, redirect, or retire verdict with reopening evidence',
+      verification: { command: `test -s ${task.path} && grep -Fq '## Proposed numbered contract' ${task.path} && grep -Fq '## Risks and rejection criteria' ${task.path} && git diff --check -- ${task.path}`, expectExit: 0, timeoutMs: 180000 },
+      budget: { tokens: 50000, usd: 4, wallMin: 9 },
+    });
+  }
   if (REVIEW_PROFILE === 'behavior-implementation') {
     const focus = task.stance === 'security'
       ? 'Prioritize adversarial child-code attacks on permission confinement, environment stripping, output framing/intrinsic mutation, process/timeout cleanup, and artifact trust.'
@@ -213,6 +237,7 @@ try {
       taskType: REVIEW_PROFILE === 'behavior-implementation' ? 'adversarial-implementation-review'
         : REVIEW_PROFILE === 'merge-scope' ? 'merge-design-review'
           : REVIEW_PROFILE === 'merge-implementation' ? 'merge-implementation-review'
+            : REVIEW_PROFILE === 'egraph-evaluation' ? 'representation-evaluation-review'
           : 'representation-design-review',
       model: task.model,
       modelPolicy: { allow: [task.model], allowFamilies: ['grok'] },
