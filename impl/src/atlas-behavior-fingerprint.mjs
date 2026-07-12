@@ -1,13 +1,11 @@
-import { createHash } from 'node:crypto';
-import { execFile } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { promisify } from 'node:util';
 import { deserialize } from 'node:v8';
 
-const runFile = promisify(execFile);
 const sha = (value) => createHash('sha256').update(value).digest('hex');
 const typed = (message, code, fields = {}) => Object.assign(new Error(message), { code, ...fields });
 const abort = (ctx) => { if (ctx?.signal?.aborted) throw typed('behavior observation cancelled', 'cancelled'); };
@@ -30,10 +28,20 @@ const numberIsNaN = Number.isNaN.bind(Number);
 const stringValue = String;
 const bufferToString = Function.call.bind(Buffer.prototype.toString);
 const { serialize } = await import('node:v8');
+let nonce = ''; for await (const chunk of process.stdin) nonce += chunk;
 const corpus = parse(Buffer.from(encoded, 'base64').toString('utf8'));
-const module = await import(targetUrl);
-const fn = module[exportName];
-if (typeof fn !== 'function') throw Object.assign(new Error('named export is not a function'), { code: 'EXPORT_NOT_FUNCTION' });
+const finish = (payload) => {
+  const frame = bufferToString(serialize({ nonce, nodeVersion: process.version, ...payload }), 'base64');
+  removeAllListeners('beforeExit'); removeAllListeners('exit');
+  emit('\nBATON_BEHAVIOR_RESULT:' + frame + '\n'); hardExit(0);
+};
+let fn;
+try {
+  const module = await import(targetUrl); fn = module[exportName];
+  if (typeof fn !== 'function') throw Object.assign(new Error('named export is not a function'), { code: 'EXPORT_NOT_FUNCTION' });
+} catch (error) {
+  finish({ error: { name: stringValue(error?.name ?? 'Error'), message: stringValue(error?.message ?? error), code: error?.code ?? null } });
+}
 const observations = [];
 for (let caseIndex = 0; caseIndex < corpus.length; caseIndex += 1) {
   try {
@@ -52,11 +60,36 @@ for (let caseIndex = 0; caseIndex < corpus.length; caseIndex += 1) {
     arrayPush(observations, item);
   }
 }
-const frame = bufferToString(serialize({ nodeVersion: process.version, observations }), 'base64');
-removeAllListeners('beforeExit'); removeAllListeners('exit');
-emit('\nBATON_BEHAVIOR_RESULT:' + frame + '\n');
-hardExit(0);
+finish({ observations });
 `;
+
+function executeNode(nodePath, args, { timeoutMs, maxOutputBytes, signal, env, input }) {
+  return new Promise((resolve, reject) => {
+    let settled = false; let stdout = ''; let stderr = ''; let failure = null;
+    const child = spawn(nodePath, args, { stdio: ['pipe', 'pipe', 'pipe'], env });
+    const finish = (error, value) => {
+      if (settled) return; settled = true; clearTimeout(timer); signal?.removeEventListener('abort', onAbort);
+      if (error) reject(error); else resolve(value);
+    };
+    const stop = (error) => { failure ??= error; try { child.kill('SIGKILL'); } catch { /* already gone */ } };
+    const append = (which, chunk) => {
+      if (which === 'stdout') stdout += chunk; else stderr += chunk;
+      if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) > maxOutputBytes) stop(typed('behavior child output exceeds deployment budget', 'output_too_large'));
+    };
+    child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => append('stdout', chunk)); child.stderr.on('data', (chunk) => append('stderr', chunk));
+    child.on('error', (error) => finish(typed(`behavior child spawn failed: ${error.message}`, 'execution_failed')));
+    child.on('close', (code, childSignal) => {
+      if (failure) { finish(failure); return; }
+      if (code !== 0) { finish(typed(`behavior child exited ${code}${childSignal ? ` (${childSignal})` : ''}: ${stderr.slice(-1000)}`, 'execution_failed')); return; }
+      finish(null, stdout);
+    });
+    const timer = setTimeout(() => stop(typed('behavior observation exceeded execution deadline', 'execution_timeout')), timeoutMs);
+    const onAbort = () => stop(typed('behavior observation cancelled', 'cancelled'));
+    if (signal?.aborted) onAbort(); else signal?.addEventListener('abort', onAbort, { once: true });
+    child.stdin.on('error', () => {}); child.stdin.end(input);
+  });
+}
 
 function bounded(items, tokens) {
   const out = [];
@@ -145,11 +178,12 @@ export class AtlasBehaviorFingerprint {
     const targetPath = join(sandbox, 'target.mjs'); writeFileSync(targetPath, source, { mode: 0o400 });
     try {
       const encoded = Buffer.from(corpus).toString('base64');
-      const { stdout } = await runFile(this.nodePath, [
+      const nonce = randomBytes(32).toString('hex');
+      const stdout = await executeNode(this.nodePath, [
         '--permission', `--allow-fs-read=${sandbox}`, '--input-type=module', '-e', RUNNER,
         pathToFileURL(targetPath).href, exportName, encoded,
       ], {
-        encoding: 'utf8', timeout: this.timeoutMs, maxBuffer: this.maxOutputBytes, signal: ctx?.signal,
+        timeoutMs: this.timeoutMs, maxOutputBytes: this.maxOutputBytes, signal: ctx?.signal, input: nonce,
         env: { LANG: 'C', LC_ALL: 'C', TZ: 'UTC', NODE_NO_WARNINGS: '1' },
       });
       const frames = stdout.split('\n').filter((line) => line.startsWith('BATON_BEHAVIOR_RESULT:'));
@@ -157,15 +191,16 @@ export class AtlasBehaviorFingerprint {
       let envelope;
       try { envelope = deserialize(Buffer.from(frames[0].slice('BATON_BEHAVIOR_RESULT:'.length), 'base64')); }
       catch { throw typed('behavior child result frame is invalid', 'observation_protocol'); }
-      if (!envelope || typeof envelope.nodeVersion !== 'string' || !Array.isArray(envelope.observations)) throw typed('behavior child result frame has invalid schema', 'observation_protocol');
+      if (!envelope || envelope.nonce !== nonce || typeof envelope.nodeVersion !== 'string') throw typed('behavior child result frame failed runner authentication', 'observation_protocol');
+      if (envelope.error) throw typed(`behavior runner failed: ${envelope.error.message}`, envelope.error.code === 'EXPORT_NOT_FUNCTION' ? 'invalid_export' : 'execution_failed');
+      if (!Array.isArray(envelope.observations)) throw typed('behavior child result frame has invalid schema', 'observation_protocol');
       const observations = envelope.observations;
       if (Buffer.byteLength(JSON.stringify(observations)) > this.maxOutputBytes) throw typed('behavior observations exceed deployment budget', 'output_too_large');
       if (observations.some((item) => item.kind === 'throw' && item.code === 'ERR_ACCESS_DENIED')) throw typed('target attempted an operation denied by the permission sandbox', 'sandbox_violation');
       return { observations, nodeVersion: envelope.nodeVersion };
     } catch (error) {
-      if (['sandbox_violation', 'output_too_large', 'execution_failed', 'observation_protocol'].includes(error?.code)) throw error;
+      if (['sandbox_violation', 'output_too_large', 'execution_failed', 'observation_protocol', 'invalid_export', 'execution_timeout', 'cancelled'].includes(error?.code)) throw error;
       if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') throw typed('behavior observation cancelled', 'cancelled');
-      if (error?.killed || error?.signal || error?.code === 'ETIMEDOUT') throw typed('behavior observation exceeded execution deadline', 'execution_timeout');
       throw typed(`behavior child failed: ${error?.message ?? error}`, error?.message?.includes('EXPORT_NOT_FUNCTION') ? 'invalid_export' : 'execution_failed');
     } finally {
       rmSync(sandbox, { recursive: true, force: true });

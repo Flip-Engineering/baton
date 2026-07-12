@@ -24,10 +24,11 @@ crash.
 The same target/corpus is run twice in distinct child processes. Byte-different observations fail
 typed `nondeterministic`; Baton does not cache a misleading fingerprint. Return identity is pinned
 with Node's structured-value serialization so `NaN`/`null`, `-0`/`0`, infinities, and other
-runtime-distinct values do not collapse through JSON. The child emits exactly one runner-owned
-result frame and terminates before deferred target output can suffix-hijack it; multiple frames
-fail typed. Returns and throws are normalized into ordered case records, with output and wall time
-deployment-bounded.
+runtime-distinct values do not collapse through JSON. Before target import, the runner consumes a
+random parent nonce from stdin into a private closure. The child emits exactly one nonce-bound
+runner-owned result frame and terminates before deferred target output can suffix-hijack it;
+missing, unauthenticated, or multiple frames fail typed. Returns and throws are normalized into
+ordered case records, with output and wall time deployment-bounded.
 
 ## BF4 — before/after comparison
 

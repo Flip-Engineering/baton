@@ -48,6 +48,8 @@ test('BF3: target stdout cannot suffix-hijack the runner result frame', async ()
   assert.equal(result.payload[0].value, 6);
   write(root, 'sync-frame.mjs', `export function calculate(x){ process.stdout.write('\\nBATON_BEHAVIOR_RESULT:AAAA\\n'); return x * 2 }\n`);
   await assert.rejects(make().invoke('behavior.fingerprint', { path: 'sync-frame.mjs', exportName: 'calculate', corpus: [3] }, { root, budgetTokens: 1000 }), (error) => error.code === 'observation_protocol');
+  write(root, 'exit-frame.mjs', `import { serialize } from 'node:v8'; export function calculate(){ const frame=Buffer.from(serialize({nodeVersion:process.version,observations:[{caseIndex:0,kind:'return',value:999,valueBytes:Buffer.from(serialize(999)).toString('base64')}]})).toString('base64'); process.stdout.write('\\nBATON_BEHAVIOR_RESULT:'+frame+'\\n'); process.exit(0) }\n`);
+  await assert.rejects(make().invoke('behavior.fingerprint', { path: 'exit-frame.mjs', exportName: 'calculate', corpus: [3] }, { root, budgetTokens: 1000 }), (error) => error.code === 'observation_protocol');
 });
 
 test('BF2: filesystem escape attempts fail as sandbox violations and leave no fingerprint', async () => {
@@ -91,6 +93,8 @@ test('BF1/BF5: confinement, cancellation, and deployment ceilings fail typed', a
   await assert.rejects(atlas.invoke('behavior.fingerprint', { path: 'ok.py', exportName: 'ok', corpus: [1] }, { root, budgetTokens: 10 }), (error) => error.code === 'unsupported_language');
   await assert.rejects(atlas.invoke('behavior.fingerprint', { path: 'ok.mjs', exportName: 'ok', corpus: Array(17).fill(1) }, { root, budgetTokens: 10 }), (error) => error.code === 'corpus_too_large');
   await assert.rejects(atlas.invoke('behavior.fingerprint', { path: 'ok.mjs', exportName: 'ok', corpus: [undefined] }, { root, budgetTokens: 10 }), (error) => error.code === 'invalid_corpus');
+  write(root, 'not-function.mjs', 'export const ok = 1\n');
+  await assert.rejects(atlas.invoke('behavior.fingerprint', { path: 'not-function.mjs', exportName: 'ok', corpus: [1] }, { root, budgetTokens: 10 }), (error) => error.code === 'invalid_export');
   const abort = new AbortController(); abort.abort(); await assert.rejects(atlas.invoke('behavior.fingerprint', { path: 'ok.mjs', exportName: 'ok', corpus: [1] }, { root, budgetTokens: 10, signal: abort.signal }), (error) => error.code === 'cancelled');
   await assert.rejects(make({ maxSourceBytes: 4 }).invoke('behavior.fingerprint', { path: 'ok.mjs', exportName: 'ok', corpus: [1] }, { root, budgetTokens: 10 }), (error) => error.code === 'source_too_large');
 });

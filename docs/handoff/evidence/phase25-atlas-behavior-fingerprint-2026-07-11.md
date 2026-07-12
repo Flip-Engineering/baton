@@ -52,6 +52,19 @@ runtime-distinct special numbers remain distinct even when their human JSON prev
 collapse. Review-requested coverage now executes real denied network, child-process, and
 worker-thread attempts, and non-JSON corpus values fail before child launch.
 
+A second clean-at-start concurrent closure pass found two adjacent seams. A target could still
+write one structurally valid frame and call `process.exit(0)` before the runner epilogue, and the
+child's non-function export error was misclassified as `execution_failed`. The reports and full
+lifecycle evidence are under
+`docs/reference/evidence/phase25-atlas-behavior-closure-grok-review-2026-07-11/`.
+
+The control channel is now authenticated. The parent generates a random 256-bit nonce and sends
+it only over the child's stdin. The runner consumes it before importing target code and retains it
+inside its lexical closure; it is not present in argv or the child environment. The parent accepts
+exactly one frame carrying that nonce. A target-forged early-exit frame therefore fails
+`observation_protocol` even if its V8 schema is otherwise valid. Runner-owned top-level error
+frames use the same nonce, so missing/non-function exports now surface typed `invalid_export`.
+
 ## Honest boundary
 
 The corpus is operator-supplied and may be weak. This phase does not generate or shrink inputs,

@@ -322,6 +322,13 @@ collapsed runtime-distinct `NaN`/`null` and `-0`/`0` returns into false agreemen
 emits one exclusive structured-value frame and exits before deferred output; multiple frames fail
 typed. V8 structured serialization is the comparison identity, while primitive previews remain
 human-readable. Additional reds prove actual network, child-process, and worker-thread denial.
+
+The next closure pass found that single-frame cardinality still did not prove runner ownership: a
+target could forge one frame and exit before the epilogue. The parent now sends a random 256-bit
+nonce over stdin; it is consumed before target import, retained only in the runner closure, and
+required in the sole accepted frame. Early exit and forged frames fail typed. Authenticated
+top-level runner errors also make missing/non-function exports reliably `invalid_export` rather
+than generic execution failures.
 Baton-on-Baton proofs cover a `sha` helper node/edge delta with reverse-caller impact and the real
 MCP `JSON.parse` assignment reaching `server.handle`. SSA, full path-condition feasibility/PDG,
 shadowing-aware bindings, aliases, heap/implicit flows, exceptions, interprocedural returns,
