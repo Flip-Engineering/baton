@@ -42,12 +42,17 @@ const CAPABILITY_AUDIT_TASKS = [
   { taskId: 'grok-capability-audit-45', model: 'grok-4.5', path: 'reviews/dogfood/grok-capability-audit-45.md', stance: 'wiring' },
   { taskId: 'grok-capability-audit-composer', model: 'grok-composer-2.5-fast', path: 'reviews/dogfood/grok-capability-audit-composer.md', stance: 'catalog' },
 ];
+const CAPABILITY_IMPLEMENTATION_TASKS = [
+  { taskId: 'grok-capability-implementation-45', model: 'grok-4.5', path: 'reviews/dogfood/grok-capability-implementation-45.md', stance: 'authority' },
+  { taskId: 'grok-capability-implementation-composer', model: 'grok-composer-2.5-fast', path: 'reviews/dogfood/grok-capability-implementation-composer.md', stance: 'boundary' },
+];
 const PROFILE_TASKS = REVIEW_PROFILE === 'behavior-implementation' ? BEHAVIOR_TASKS
   : REVIEW_PROFILE === 'merge-scope' ? MERGE_TASKS
     : REVIEW_PROFILE === 'merge-implementation' ? MERGE_IMPLEMENTATION_TASKS
       : REVIEW_PROFILE === 'egraph-evaluation' ? EGRAPH_TASKS
         : REVIEW_PROFILE === 'egraph-implementation' ? EGRAPH_IMPLEMENTATION_TASKS
           : REVIEW_PROFILE === 'capability-audit' ? CAPABILITY_AUDIT_TASKS
+            : REVIEW_PROFILE === 'capability-implementation' ? CAPABILITY_IMPLEMENTATION_TASKS
     : IR_TASKS;
 const TASKS = REVIEW_MODEL ? PROFILE_TASKS.filter((task) => task.model === REVIEW_MODEL) : PROFILE_TASKS;
 const MIN_FREE_BYTES = Number(MIN_FREE_BYTES_OVERRIDE ?? (128 + 64 * TASKS.length) * 1024 * 1024);
@@ -66,6 +71,25 @@ async function until(fn, label, timeoutMs = TIMEOUT_MS) {
 }
 
 function brief(task) {
+  if (REVIEW_PROFILE === 'capability-implementation') {
+    const focus = task.stance === 'authority'
+      ? 'Prioritize one-control-plane ownership, coordinator poison, durable pre/post-effect provenance, replay/idempotency boundaries, auth/scope/quota enforcement, output authority smuggling, and failure classification.'
+      : 'Prioritize closed-card honesty, hostile JSON/ACI shapes, budgets/envelope/card bounds, root confinement, resume/reverify integrity, web/MCP schema ambiguity, credential leakage, and whether a real Atlas module can actually traverse the path.';
+    return createBrief({
+      goal: `Adversarially review committed Phase 29 CI1-CI8 at ${git(['rev-parse', '--short', 'HEAD'])}. Read spec/phase29/capability-invocation.md; impl/src/{capability-registry,coordinator,index,web-northbound,mcp-northbound}.mjs; impl/test/{phase29-capability-invocation,coordinator,phase12-web-northbound,phase16-mcp-northbound}.test.mjs; docs/28-exhaustive-capability-audit.md; and docs/11-capability-plane.md ACI semantics. ${focus} Construct concrete reproducible failure sequences and distinguish an actionable CI1-CI8 defect from explicit deployment injection or a later capability module. No homelab integration is in scope. Write ${task.path} with exact headings "## Decision", "## Proposed numbered contract", "## Red tests and proof", and "## Risks and rejection criteria". Under Decision state whether any actionable CI1-CI8 defect remains and whether Phase 29 truly makes deployment-injected Atlas capabilities coordinator/web/MCP reachable without granting trust or merge authority.`,
+      constraints: [
+        `Edit only ${task.path}.`,
+        'Use at most 18 repository or tool calls, then finish from collected evidence.',
+        'Ground every finding in exact source locations and a concrete failure sequence; inspect actual assembly and dispatch rather than trusting exports or prose.',
+        'No homelab integration or dependency. Do not use network tools, read credentials, edit product code/specs/tests/evidence, commit, push, deploy, or install software.',
+        'Keep the report under 3400 words. If no actionable defect remains, say so explicitly.',
+      ],
+      pathScope: [task.path],
+      definitionOfDone: 'The four exact headings exist and every CI1-CI8 authority, boundary, and northbound seam has an evidence-backed verdict',
+      verification: { command: `test -s ${task.path} && grep -Fq '## Proposed numbered contract' ${task.path} && grep -Fq '## Risks and rejection criteria' ${task.path} && git diff --check -- ${task.path}`, expectExit: 0, timeoutMs: 180000 },
+      budget: { tokens: 60000, usd: 5, wallMin: 11 },
+    });
+  }
   if (REVIEW_PROFILE === 'capability-audit') {
     const focus = task.stance === 'wiring'
       ? 'Trace public assembly and real call paths. Treat exports, cards, specs, or unit tests without coordinator/northbound wiring as partial, not shipped.'
@@ -286,6 +310,7 @@ try {
             : REVIEW_PROFILE === 'egraph-evaluation' ? 'representation-evaluation-review'
               : REVIEW_PROFILE === 'egraph-implementation' ? 'representation-implementation-review'
                 : REVIEW_PROFILE === 'capability-audit' ? 'full-system-capability-audit'
+                  : REVIEW_PROFILE === 'capability-implementation' ? 'capability-implementation-review'
           : 'representation-design-review',
       model: task.model,
       modelPolicy: { allow: [task.model], allowFamilies: ['grok'] },
