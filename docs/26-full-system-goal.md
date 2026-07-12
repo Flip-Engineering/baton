@@ -290,7 +290,7 @@ may-reaching definitions, direct identifier-copy flow, immediate-only nested val
 literal-dead-branch pruning, including reachable `else if` chains and conservative may-unions
 inside atomic unsupported control. AST boolean leaves prune comment-bearing dead arms without
 orphan join edges. The combined R3 gate is 31/31 focused and the current canonical suite is
-735/735 green. Independent exact-model closure passes from Grok 4.5 and Grok Composer both found
+740/740 green. Independent exact-model closure passes from Grok 4.5 and Grok Composer both found
 no remaining actionable PS1–PS8 defect; their freshly verified reports and complete kill/reap
 evidence are retained with the Phase 22 handoff.
 
@@ -300,6 +300,13 @@ but adds an explicit stop-only emergency kill: it can consume native confirmatio
 runtime/worktree state while reporting `confirmed_unlogged`; timeout retains ownership and never
 claims success. The recursive proof runner now handles its approval-pump rejection immediately,
 uses emergency cleanup only after storage poison, and cannot count that degraded path as a pass.
+
+After that repair, a clean concurrent exact-model R4 scope gate passed with normal durable
+kill/reap. Both Grok 4.5 and Grok Composer independently rejected a Baton-authored JS/TS compiler
+IR as relabeled CPG or an unverifiable bespoke SSA. Phase 24 makes the decision executable: all
+JS/TS-family paths report an R3 ceiling and false `ir.build`, `ir.delta`, and `tv.validate`
+operations fail typed. Real external LLVM/MIR/MLIR artifacts and Evidence-owned translation
+validation remain catalogued behind language/tool/demand gates; they were narrowed, not erased.
 Baton-on-Baton proofs cover a `sha` helper node/edge delta with reverse-caller impact and the real
 MCP `JSON.parse` assignment reaching `server.handle`. SSA, full path-condition feasibility/PDG,
 shadowing-aware bindings, aliases, heap/implicit flows, exceptions, interprocedural returns,
