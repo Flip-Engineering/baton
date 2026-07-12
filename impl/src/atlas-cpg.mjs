@@ -23,6 +23,13 @@ function firstName(node) {
   try { const value = node.field('name'); if (value) return value.text(); } catch { /* grammar variance */ }
   return node.children().find((child) => ['identifier', 'property_identifier'].includes(child.kind()))?.text() ?? null;
 }
+function booleanLiteral(node) {
+  if (!node) return null;
+  if (node.kind() === 'true' || node.kind() === 'false') return node.kind();
+  if (node.kind() !== 'parenthesized_expression') return null;
+  const children = node.children().filter((child) => child.isNamed() && child.kind() !== 'comment');
+  return children.length === 1 ? booleanLiteral(children[0]) : null;
+}
 function safe(root, path) {
   if (!path || isAbsolute(path)) throw typed('relative CPG source path required', 'path_escape');
   const rr = realpathSync(root); const candidate = resolve(rr, path); const rel = relative(rr, candidate);
@@ -120,7 +127,7 @@ export class AtlasCpgSlice {
       if (alternative && !alternativeBlock && !alternativeIf) continue;
       const consequenceList = directStatements(blockStatements.get(nodeId('block', consequence)));
       const alternativeList = alternativeBlock ? directStatements(blockStatements.get(nodeId('block', alternativeBlock))) : alternativeIf ? [statementById.get(nodeId('statement', alternativeIf))].filter(Boolean) : [];
-      const literal = condition?.text().replace(/[()\s]/g, '') ?? null;
+      const literal = booleanLiteral(condition);
       structuredIfs.set(stmt.id, { stmt, consequenceList, alternativeList, hasAlternative: !!alternative, literal, join: joinFor(stmt) });
     }
     for (const raw of blockStatements.values()) {
@@ -137,7 +144,8 @@ export class AtlasCpgSlice {
       const thenEntry = spec.consequenceList[0]?.id ?? spec.join; const elseEntry = spec.alternativeList[0]?.id ?? spec.join;
       if (spec.literal !== 'false') edge('CFG_TRUE', spec.stmt.id, thenEntry);
       if (spec.literal !== 'true') edge('CFG_FALSE', spec.stmt.id, spec.hasAlternative ? elseEntry : spec.join);
-      connectTail(spec.consequenceList.at(-1), spec.join); connectTail(spec.alternativeList.at(-1), spec.join);
+      if (spec.literal !== 'false') connectTail(spec.consequenceList.at(-1), spec.join);
+      if (spec.literal !== 'true') connectTail(spec.alternativeList.at(-1), spec.join);
     }
     const cfgTypes = new Set(['CFG_ENTRY', 'CFG_NEXT', 'CFG_TRUE', 'CFG_FALSE', 'CFG_EXIT']); const cfgOut = new Map(); const cfgIn = new Map();
     for (const item of edges.filter((candidate) => cfgTypes.has(candidate.type))) { const out = cfgOut.get(item.from) ?? []; out.push(item.to); cfgOut.set(item.from, out); const incoming = cfgIn.get(item.to) ?? []; incoming.push(item.from); cfgIn.set(item.to, incoming); }

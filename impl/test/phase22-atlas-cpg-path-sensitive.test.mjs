@@ -124,3 +124,12 @@ test('PS2/PS4: multiple same-name definitions collapsed into one atomic region r
   const f = fixture(`function readInput(){} function safe(){} function send(v){}\nfunction run(flag){ let value; switch(flag){ case 1: value=readInput(); break; default: value=safe() } send(value) }\n`);
   assert.equal((await f.taint.invoke('cpg.taint', f.args, f.ctx)).payload.length, 1);
 });
+
+test('PS1/PS4: AST boolean literals prune comment-bearing dead arms and emit no dead-tail join edge', async () => {
+  const trueCase = fixture(`function readInput(){} function send(v){}\nfunction run(){ let value; if(/*lead*/true/*tail*/){ value=1 } else { value=readInput() } send(value) }\n`);
+  assert.equal((await trueCase.taint.invoke('cpg.taint', trueCase.args, trueCase.ctx)).payload.length, 0);
+  const falseCase = fixture(`function readInput(){} function send(v){}\nfunction run(){ let value; if(false/*tail*/){ value=readInput() } send(value) }\n`);
+  assert.equal((await falseCase.taint.invoke('cpg.taint', falseCase.args, falseCase.ctx)).payload.length, 0);
+  const g = await graph(falseCase); const dead = g.nodes.find((node) => node.type === 'statement' && node.range.start.line === 2 && node.kind === 'expression_statement' && node.cfgReachable === false);
+  assert.ok(dead); assert.equal(g.edges.some((edge) => ['CFG_NEXT', 'CFG_EXIT'].includes(edge.type) && edge.from === dead.id), false);
+});

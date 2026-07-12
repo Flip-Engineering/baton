@@ -5,7 +5,8 @@
 For braced `if` statements, `CFG_TRUE` enters the consequence and `CFG_FALSE` enters the
 alternative when present, otherwise the join. An `else if` alternative enters the nested
 `if_statement`; it is not collapsed into atomic fall-through. Every non-terminal branch tail reaches the join.
-Literal `true`/`false` conditions omit the unreachable branch edge. Unbraced conditions, loops,
+Literal `true`/`false` AST leaves, including parenthesized forms with comments, omit the unreachable
+branch edge and its dead tail-to-join edge. Unbraced conditions, loops,
 switches, short-circuit expressions, ternaries, and exception constructs remain atomic unless a
 later contract expands them.
 

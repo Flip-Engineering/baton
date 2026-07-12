@@ -22,9 +22,9 @@ structured literal `if` stays unreachable. The real `JSON.parse` to `server.hand
 ## Validation
 
 - Numbered contract: `spec/phase22/atlas-cpg-path-sensitive.md`.
-- Phase 22 focused red/green result: 9/9.
-- Combined Phase 18/19/20/22 R3 gate: 29/29.
-- Canonical suite: 731/731; owned suite root reaped.
+- Phase 22 focused red/green result: 10/10.
+- Combined Phase 18/19/20/22 R3 gate: 30/30.
+- Canonical suite: 732/732; owned suite root reaped.
 - Baton-on-Baton proof: every check in
   `docs/reference/evidence/phase22-atlas-cpg-path-sensitive-2026-07-11/summary.json` is true. It
   built a 2,000-plus-node graph of the implementation itself, observed real CFG/may-def/copy
@@ -54,6 +54,13 @@ disconnected structured island to the reachable atomic parent, while literal-dea
 dead. Same-name definitions collapsed into one atomic region are retained as a may-union instead
 of source-order last-wins. The failed-as-a-whole review attempt is preserved honestly under
 `docs/reference/evidence/phase22-atlas-cpg-correction-grok-review-2026-07-11/`.
+
+A subsequent two-model gate completed and reaped cleanly. Composer reported no remaining
+actionable defect; Grok 4.5 correctly found that comment-bearing boolean literals evaded the
+text-based prune. Literal recognition now unwraps the AST and ignores comment children, and dead
+arms no longer emit tail-to-join edges. The red regression covers leading/trailing comments on
+both boolean values. Those independent reports are preserved under
+`docs/reference/evidence/phase22-atlas-cpg-final-grok-review-2026-07-11/`.
 
 The implementation deliberately rejected one proposal that would have removed a source-to-sink
 path whenever the source occurred in a conditional branch. That is must-path reasoning, not

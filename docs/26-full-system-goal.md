@@ -288,8 +288,9 @@ and e-graphs stay in the catalog. The CPG seed, delta/impact, and operator-speci
 continuation now ship. Phase 22 adds correct braced-if/else CFG, deployment-bounded CFG
 may-reaching definitions, direct identifier-copy flow, immediate-only nested value edges, and
 literal-dead-branch pruning, including reachable `else if` chains and conservative may-unions
-inside atomic unsupported control. The combined R3 gate is 29/29 focused and the current canonical
-suite is 731/731 green.
+inside atomic unsupported control. AST boolean leaves prune comment-bearing dead arms without
+orphan join edges. The combined R3 gate is 30/30 focused and the current canonical suite is
+732/732 green.
 Baton-on-Baton proofs cover a `sha` helper node/edge delta with reverse-caller impact and the real
 MCP `JSON.parse` assignment reaching `server.handle`. SSA, full path-condition feasibility/PDG,
 shadowing-aware bindings, aliases, heap/implicit flows, exceptions, interprocedural returns,
