@@ -106,8 +106,8 @@ goal explicitly excluded.
 
 1. **Durable coordination substrate:** typed task/artifact ledger, Scratch coordination, and the
    self-contained bitemporal causal shared knowledge graph.
-2. **Atlas vertical:** AST/CST parsing, symbols/references, SCIP-compatible interchange, and a first
-   code-property/impact slice backed by executable evidence.
+2. **Atlas vertical:** AST/CST parsing and proposal-only structural rewrite, symbols/references,
+   SCIP-compatible interchange, and a first code-property/impact slice backed by executable evidence.
 3. **Capability plane:** Vantage, Evidence Ladder, Skill Forge/computer use, Cartographer/
    Quartermaster, and Cairn on the same event/artifact substrate.
 4. **Representation and integration depth:** behavioral fingerprints, IR/semantic diff and merge,

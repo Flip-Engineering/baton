@@ -230,8 +230,9 @@ negative result retires a rung through a recorded Decision, never through omissi
 ## Current pursuit order
 
 Current shipped checkpoints as of 2026-07-11: CK1–CK9 supplies the deployment-neutral task,
-artifact, Scratch, and typed causal knowledge authority; Atlas supplies AST structural delta plus
-shared base/worktree index, lexical orientation, symbol/reference/call graph, and SCIP JSON; and
+artifact, Scratch, and typed causal knowledge authority; Atlas supplies AST structural delta,
+proposal-only structural pattern search/rewrite, shared base/worktree index, lexical orientation,
+symbol/reference/call graph, and SCIP JSON; and
 Phase 12 WN6 supplies the authenticated resumable SSE user-to-orchestrator observation channel;
 and Phase 14 supplies the first-class `{harness, exactModel, effort}` route tuple across cards,
 direct and automatic dispatch, authenticated web commands, native wires, durable attribution,
@@ -277,8 +278,9 @@ not exposed; the wire proof is not relabeled as a browser pass.
 
 The active next increment is the real-browser OIDC/control/stream/logout proof when its bridge is
 available, plus optional WebSocket parity, Streamable HTTP MCP/tasks/daemon depth, and deeper operator surfaces. It is followed by
-the next measured Atlas representation rungs, beginning with structural rewrite/live-LSP depth
-and retaining CPG/dataflow, IR, behavioral fingerprints, semantic diff/merge, and e-graphs in the
+the next measured Atlas representation rungs. Proposal-only structural rewrite now ships with a
+9/9 focused gate, 701/701 full suite, and a Baton-on-Baton immutable proposal proof. Direct apply
+and live-LSP depth remain, while CPG/dataflow, IR, behavioral fingerprints, semantic diff/merge, and e-graphs stay in the
 catalog. These checkpoints narrow sequence only; they do not retire any later capability below.
 
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
