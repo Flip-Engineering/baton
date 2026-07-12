@@ -290,9 +290,16 @@ may-reaching definitions, direct identifier-copy flow, immediate-only nested val
 literal-dead-branch pruning, including reachable `else if` chains and conservative may-unions
 inside atomic unsupported control. AST boolean leaves prune comment-bearing dead arms without
 orphan join edges. The combined R3 gate is 31/31 focused and the current canonical suite is
-733/733 green. Independent exact-model closure passes from Grok 4.5 and Grok Composer both found
+735/735 green. Independent exact-model closure passes from Grok 4.5 and Grok Composer both found
 no remaining actionable PS1–PS8 defect; their freshly verified reports and complete kill/reap
 evidence are retained with the Phase 22 handoff.
+
+Recursive R4 design dogfooding then encountered real host ENOSPC while the authoritative
+operational log was appending. Phase 23 ER1–ER6 preserves ordinary poison/fail-closed semantics
+but adds an explicit stop-only emergency kill: it can consume native confirmation and reap owned
+runtime/worktree state while reporting `confirmed_unlogged`; timeout retains ownership and never
+claims success. The recursive proof runner now handles its approval-pump rejection immediately,
+uses emergency cleanup only after storage poison, and cannot count that degraded path as a pass.
 Baton-on-Baton proofs cover a `sha` helper node/edge delta with reverse-caller impact and the real
 MCP `JSON.parse` assignment reaching `server.handle`. SSA, full path-condition feasibility/PDG,
 shadowing-aware bindings, aliases, heap/implicit flows, exceptions, interprocedural returns,

@@ -77,6 +77,7 @@ const stopResults = [];
 const stopped = new Set();
 let pumping = true;
 let fatal = null;
+let pumpError = null;
 
 function hydrate(row) {
   row.handle = coordinator.list().find((worker) => worker.id === row.workerId) ?? row.handle;
@@ -93,8 +94,19 @@ function hydrate(row) {
 async function stop(row) {
   if (stopped.has(row.workerId)) return;
   stopped.add(row.workerId);
-  try { stopResults.push({ taskId: row.taskId, ack: await coordinator.kill(row.workerId, 'policy') }); }
-  catch (error) { stopResults.push({ taskId: row.taskId, error: String(error?.stack ?? error) }); }
+  try {
+    stopResults.push({ taskId: row.taskId, ack: await coordinator.kill(row.workerId, 'policy') });
+  } catch (error) {
+    if (!['operational_log_unavailable', 'coordination_write_unavailable'].includes(error?.code)) {
+      stopResults.push({ taskId: row.taskId, error: String(error?.stack ?? error) });
+      return;
+    }
+    try {
+      stopResults.push({ taskId: row.taskId, degradedEmergency: true, ack: await coordinator.kill(row.workerId, 'policy', { emergency: true }), poison: error.code });
+    } catch (emergencyError) {
+      stopResults.push({ taskId: row.taskId, degradedEmergency: true, error: String(emergencyError?.stack ?? emergencyError), poison: error.code });
+    }
+  }
 }
 
 const pump = (async () => {
@@ -112,7 +124,7 @@ const pump = (async () => {
     }
     await sleep(100);
   }
-})();
+})().catch((error) => { pumpError = String(error?.stack ?? error); });
 
 try {
   const spawned = await Promise.all(TASKS.map(async (task) => {
@@ -137,9 +149,10 @@ try {
   fatal = String(error?.stack ?? error);
 } finally {
   pumping = false;
-  await pump.catch(() => {});
+  await pump;
   for (const row of rows) { hydrate(row); await stop(row); hydrate(row); }
 }
+if (pumpError) fatal = [fatal, pumpError].filter(Boolean).join('\n');
 
 try {
   await until(() => rows.every((row) =>

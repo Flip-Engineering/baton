@@ -351,6 +351,8 @@ export class Coordinator {
     this._pending = new Map();
     /** @type {Map<string, object>} workerId -> stop-waiter bookkeeping */
     this._stopWaiters = new Map();
+    /** @type {Map<string, object>} workerId -> unaudited emergency-stop waiter after poison */
+    this._fatalStopWaiters = new Map();
     /** @type {Map<string, Cursor>} */
     this._cursors = new Map();
     /** @type {Map<string, number>} workerId -> highest seq served but not yet acked */
@@ -365,11 +367,18 @@ export class Coordinator {
 
     for (const adapter of Object.values(this._adapters)) {
       adapter.onEvent((e) => {
+        if (this._fatalError) {
+          this._observeEmergencyTerminal(e);
+          return;
+        }
         try { this._handleEvent(e); } catch (err) {
           // Adapter callbacks are an asynchronous trust boundary. A fatal authoritative-write
           // failure has already poisoned this coordinator; do not let it become an uncaught
-          // process exception. The next public command observes the fatal error.
+          // process exception. The next ordinary public command observes the fatal error. An
+          // explicit emergency stop may still consume native confirmation without inventing a
+          // durable event, solely so owned process/worktree/runtime resources can be reaped.
           if (!this._fatalError) throw err;
+          this._observeEmergencyTerminal(e);
         }
       });
     }
@@ -1488,6 +1497,10 @@ export class Coordinator {
   }
 
   async kill(workerId, actor = 'orchestrator', opts = {}) {
+    if (this._fatalError) {
+      if (opts.emergency !== true) throw this._fatalError;
+      return this._emergencyKillUnlogged(this._getWorker(workerId));
+    }
     this.tick();
     const handle = this._getWorker(workerId);
     if (opts.expectedFence !== undefined) {
@@ -1507,6 +1520,70 @@ export class Coordinator {
       return { ok: true, result: 'already_dead' };
     }
     return this._beginStop(handle, 'kill', undefined, actor);
+  }
+
+  _emergencyKillUnlogged(handle) {
+    if (handle.status === 'dead' || handle.status === 'exited') {
+      this._removeRuntimeScope(handle);
+      this._removeTaskWorktree(this._tasks.get(handle.taskId)).catch(noop);
+      return Promise.resolve({ ok: true, result: 'already_dead_unlogged', auditUnavailable: true });
+    }
+    if (handle.status === 'orphaned' || !this._adapters[handle.vendor]) {
+      return Promise.resolve({ ok: false, result: 'session_not_attached', auditUnavailable: true });
+    }
+    const existing = this._fatalStopWaiters.get(handle.id);
+    if (existing) return new Promise((resolve) => existing.resolvers.push(resolve));
+
+    if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) {
+      handle.spawnAbort.abort({ mode: 'kill', actor: 'policy', emergency: true });
+    }
+    handle.status = 'stopping';
+    this._clearBudgetStop(handle);
+    this._clearWatchdog(handle);
+    const waiter = { workerId: handle.id, resolvers: [], settled: false, timerHandle: null };
+    this._fatalStopWaiters.set(handle.id, waiter);
+    waiter.timerHandle = this._setTimeout(() => {
+      if (waiter.settled) return;
+      waiter.settled = true;
+      this._fatalStopWaiters.delete(handle.id);
+      const result = { ok: false, result: 'confirmation_timeout_unlogged', auditUnavailable: true };
+      for (const resolve of waiter.resolvers) resolve(result);
+    }, this._stopDeadlineMs);
+    if (waiter.timerHandle && typeof waiter.timerHandle.unref === 'function') waiter.timerHandle.unref();
+
+    Promise.resolve(this._adapters[handle.vendor].kill(handle.id)).then((ack) => {
+      if (ack?.ok !== false || waiter.settled) return;
+      waiter.settled = true;
+      if (waiter.timerHandle != null) this._clearTimeout(waiter.timerHandle);
+      this._fatalStopWaiters.delete(handle.id);
+      const result = { ok: false, result: 'adapter_refused_unlogged', auditUnavailable: true, reason: ack.reason ?? null };
+      for (const resolve of waiter.resolvers) resolve(result);
+    }, (error) => {
+      if (waiter.settled) return;
+      waiter.settled = true;
+      if (waiter.timerHandle != null) this._clearTimeout(waiter.timerHandle);
+      this._fatalStopWaiters.delete(handle.id);
+      const result = { ok: false, result: 'adapter_failed_unlogged', auditUnavailable: true, reason: String(error?.message ?? error) };
+      for (const resolve of waiter.resolvers) resolve(result);
+    });
+    return new Promise((resolve) => waiter.resolvers.push(resolve));
+  }
+
+  _observeEmergencyTerminal(event) {
+    if (event?.kind !== 'kill.confirmed') return;
+    const waiter = this._fatalStopWaiters.get(event.worker);
+    if (!waiter || waiter.settled) return;
+    waiter.settled = true;
+    if (waiter.timerHandle != null) this._clearTimeout(waiter.timerHandle);
+    this._fatalStopWaiters.delete(event.worker);
+    const handle = this._workers.get(event.worker);
+    if (!handle) return;
+    handle.status = 'dead';
+    this._removeRuntimeScope(handle);
+    Promise.resolve(this._removeTaskWorktree(this._tasks.get(handle.taskId))).finally(() => {
+      const result = { ok: true, result: 'confirmed_unlogged', auditUnavailable: true };
+      for (const resolve of waiter.resolvers) resolve(result);
+    });
   }
 
   _beginStop(handle, mode, then, actor) {
