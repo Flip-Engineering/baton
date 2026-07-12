@@ -1,0 +1,59 @@
+{
+  "at": "2026-07-12T00:11:36.943Z",
+  "workerId": "w-1",
+  "pid": 28345,
+  "result": {
+    "ready": true,
+    "status": "failed",
+    "verdict": null,
+    "vendor": "codex",
+    "harnessRequested": "codex",
+    "harnessResolved": "codex@codex-cli 0.144.1",
+    "modelRequested": "gpt-5.6-sol",
+    "modelResolved": "gpt-5.6-sol",
+    "modelObserved": "gpt-5.6-sol",
+    "modelMismatch": null,
+    "effortRequested": "low",
+    "effortResolved": "low",
+    "effortObserved": null,
+    "effortMismatch": null,
+    "routeKey": "[\"codex\",\"codex-cli 0.144.1\",\"gpt-5.6-sol\",\"low\",\"openai\",\"review\"]",
+    "sessionRequest": {
+      "mode": "new"
+    },
+    "sessionRef": {
+      "vendor": "codex",
+      "kind": "thread",
+      "id": "019f53aa-4165-72d0-9ef6-fd4e46be7cb8",
+      "persistence": "native",
+      "source": "wire"
+    },
+    "sessionContext": {
+      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-test-fixture-review",
+      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "baseSha": "1d8bca8fc83bb735bdd949c66f64d0c0403f2751",
+      "branch": "baton/codex-test-fixture-review",
+      "ownerTaskId": "codex-test-fixture-review"
+    },
+    "lineage": null,
+    "review": null,
+    "integration": null,
+    "publication": null,
+    "retainedResultRef": null
+  },
+  "integration": null,
+  "checks": {
+    "noHarnessError": false,
+    "exactTupleHonest": true,
+    "freshVerified": false,
+    "integrated": false,
+    "integrationIntent": false,
+    "killConfirmed": true,
+    "processGone": true,
+    "worktreeGone": true,
+    "runtimeGone": true,
+    "branchGone": true
+  },
+  "fatal": "Error: review failed {\"ready\":true,\"status\":\"failed\",\"verdict\":null,\"vendor\":\"codex\",\"harnessRequested\":\"codex\",\"harnessResolved\":\"codex@codex-cli 0.144.1\",\"modelRequested\":\"gpt-5.6-sol\",\"modelResolved\":\"gpt-5.6-sol\",\"modelObserved\":\"gpt-5.6-sol\",\"modelMismatch\":null,\"effortRequested\":\"low\",\"effortResolved\":\"low\",\"effortObserved\":null,\"effortMismatch\":null,\"routeKey\":\"[\\\"codex\\\",\\\"codex-cli 0.144.1\\\",\\\"gpt-5.6-sol\\\",\\\"low\\\",\\\"openai\\\",\\\"review\\\"]\",\"sessionRequest\":{\"mode\":\"new\"},\"sessionRef\":{\"vendor\":\"codex\",\"kind\":\"thread\",\"id\":\"019f53aa-4165-72d0-9ef6-fd4e46be7cb8\",\"persistence\":\"native\",\"source\":\"wire\"},\"sessionContext\":{\"worktree\":\"/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-test-fixture-review\",\"repoRoot\":\"/Users/wahargis/Development/Experiments/baton\",\"baseSha\":\"1d8bca8fc83bb735bdd949c66f64d0c0403f2751\",\"branch\":\"baton/codex-test-fixture-review\",\"ownerTaskId\":\"codex-test-fixture-review\"},\"lineage\":null,\"review\":null,\"integration\":null,\"publication\":null,\"retainedResultRef\":null}\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase15-test-fixture-review-2026-07-11/run.mjs:102:44\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
+  "pass": false
+}

@@ -38,4 +38,7 @@ acceptance command. No process can catch its own `SIGKILL`; startup/supervisor r
 stale `baton-suite-*` root after that uncatchable death remains explicit later runtime scope.
 
 Provider-backed recursive review is still pending the Codex quota reset or Grok
-reauthentication. No homelab integration was added.
+reauthentication. Attempt 1 established and observed the exact `CodexAppServerCli` +
+`gpt-5.6-sol` + `low` route, then received the provider usage limit before review content; Baton
+confirmed kill and reaped the PID, worktree, runtime, metadata, branch, and runner log root. It is
+negative lifecycle evidence, not a clean review verdict. No homelab integration was added.
