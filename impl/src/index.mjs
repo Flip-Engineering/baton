@@ -44,6 +44,7 @@ export { AtlasCpgSlice } from './atlas-cpg.mjs';
 export { AtlasCpgDelta } from './atlas-cpg-delta.mjs';
 export { AtlasCpgTaint } from './atlas-cpg-taint.mjs';
 export { AtlasRepresentationCeiling } from './atlas-representation-ceiling.mjs';
+export { AtlasBehaviorFingerprint } from './atlas-behavior-fingerprint.mjs';
 export { AtlasCodeIndex } from './atlas-index.mjs';
 
 /** worktree.mjs's real functions wrapped into the coordinator's manager interface. */

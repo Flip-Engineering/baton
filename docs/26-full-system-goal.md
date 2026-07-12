@@ -290,7 +290,7 @@ may-reaching definitions, direct identifier-copy flow, immediate-only nested val
 literal-dead-branch pruning, including reachable `else if` chains and conservative may-unions
 inside atomic unsupported control. AST boolean leaves prune comment-bearing dead arms without
 orphan join edges. The combined R3 gate is 31/31 focused and the current canonical suite is
-740/740 green. Independent exact-model closure passes from Grok 4.5 and Grok Composer both found
+747/747 green. Independent exact-model closure passes from Grok 4.5 and Grok Composer both found
 no remaining actionable PS1–PS8 defect; their freshly verified reports and complete kill/reap
 evidence are retained with the Phase 22 handoff.
 
@@ -307,6 +307,14 @@ IR as relabeled CPG or an unverifiable bespoke SSA. Phase 24 makes the decision 
 JS/TS-family paths report an R3 ceiling and false `ir.build`, `ir.delta`, and `tv.validate`
 operations fail typed. Real external LLVM/MIR/MLIR artifacts and Evidence-owned translation
 validation remain catalogued behind language/tool/demand gates; they were narrowed, not erased.
+
+Phase 25 now supplies the first measured R5 behavioral representation. A dependency-free JS ESM
+export is run twice over a pinned JSON corpus in separate throwaway Node permission sandboxes with
+ambient credentials stripped and filesystem-write/network/child/worker authority denied.
+Before/after comparison reports exact case divergences and says
+`observed_corpus_agreement_not_semantic_equivalence`; nondeterminism, timeout, denied effects,
+resource excess, cancellation, and tamper fail typed. This is empirical differential evidence,
+not coverage, a semantic proof, or permission to auto-merge.
 Baton-on-Baton proofs cover a `sha` helper node/edge delta with reverse-caller impact and the real
 MCP `JSON.parse` assignment reaching `server.handle`. SSA, full path-condition feasibility/PDG,
 shadowing-aware bindings, aliases, heap/implicit flows, exceptions, interprocedural returns,
