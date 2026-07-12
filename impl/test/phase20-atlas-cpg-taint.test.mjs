@@ -40,7 +40,7 @@ test('CT4/CT6: deployment bounds, cancellation, and parse partials are enforced'
 
 test('CT7: bounded result resumes, detects tamper, and reverifies', async () => {
   const f = fixture(`function readInput(){}\nfunction send(v){}\nfunction run(){send(readInput());send(readInput())}\n`); const result = await f.atlas.invoke('cpg.taint', f.args, { ...f.ctx, budgetTokens: 1 }); assert.equal(result.status, 'needs_resume');
-  const resumed = await f.atlas.resume(result.refs[0], result.cursor, { budgetTokens: 1000 }); assert.ok(resumed.payload.length > 0); assert.equal((await f.atlas.reverify(result, f.args, f.ctx)).ok, true);
+  const resumed = await f.atlas.resume(result.refs[0], result.cursor, { budgetTokens: 1000 }); assert.ok(resumed.payload.length > 0); assert.equal((await f.atlas.reverify(result, 'cpg.taint', f.args, f.ctx)).ok, true);
   writeFileSync(result.refs[0].path, `${readFileSync(result.refs[0].path, 'utf8')} `); await assert.rejects(f.atlas.resume(result.refs[0], result.cursor, { budgetTokens: 1000 }), (error) => error.code === 'artifact_integrity');
 });
 

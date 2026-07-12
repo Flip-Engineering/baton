@@ -50,7 +50,7 @@ test('CD7: bounded delta resumes, detects tamper, and reverifies', async () => {
   const f = fixture(`function a(x){return x}\n`, `function a(x){let y=x+1; return y}\n`);
   const result = await f.atlas.invoke('cpg.delta', f.args, { ...f.ctx, budgetTokens: 1 }); assert.equal(result.status, 'needs_resume');
   const resumed = await f.atlas.resume(result.refs[0], result.cursor, { budgetTokens: 1000 }); assert.ok(resumed.payload.length > 0);
-  assert.equal((await f.atlas.reverify(result, f.args, f.ctx)).ok, true);
+  assert.equal((await f.atlas.reverify(result, 'cpg.delta', f.args, f.ctx)).ok, true);
   writeFileSync(result.refs[0].path, `${readFileSync(result.refs[0].path, 'utf8')} `); await assert.rejects(f.atlas.resume(result.refs[0], result.cursor, { budgetTokens: 1000 }), (error) => error.code === 'artifact_integrity');
   const forged = '{}\n'; const digest = createHash('sha256').update(forged).digest('hex'); const path = join(f.artifacts, `${digest}.json`); writeFileSync(path, forged);
   await assert.rejects(f.atlas.resume({ digest, path }, `atlas-cpg-delta:${digest}:0`, { budgetTokens: 1000 }), (error) => error.code === 'artifact_integrity');

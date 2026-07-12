@@ -104,7 +104,7 @@ test('BF5: bounded fingerprints resume, reverify, and reject tamper', async () =
   const atlas = make(); const args = { path: 'calc.mjs', exportName: 'calculate', corpus };
   const bounded = await atlas.invoke('behavior.fingerprint', args, { root, budgetTokens: 1 }); assert.equal(bounded.status, 'needs_resume');
   const resumed = await atlas.resume(bounded.refs[0], bounded.cursor, { budgetTokens: 1000 }); assert.equal(resumed.status, 'ok'); assert.equal(resumed.payload.length, 3);
-  assert.equal((await atlas.reverify(bounded, args, { root, budgetTokens: 1000 })).ok, true);
+  assert.equal((await atlas.reverify(bounded, 'behavior.fingerprint', args, { root, budgetTokens: 1000 })).ok, true);
   writeFileSync(bounded.refs[0].path, `${readFileSync(bounded.refs[0].path, 'utf8')} `);
   await assert.rejects(atlas.resume(bounded.refs[0], bounded.cursor, { budgetTokens: 1000 }), (error) => error.code === 'artifact_integrity');
 });

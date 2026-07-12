@@ -104,7 +104,7 @@ export class AtlasEGraphEvaluation {
     return Object.freeze({ op: 'egraph.evaluate', status: truncated ? 'needs_resume' : 'ok', summary: `resumed ${payload.length} e-graph Decision records`, payload, refs: [ref], ...(truncated ? { cursor: `atlas-egraph-evaluation:${ref.digest}:${next}` } : {}), cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), wall_ms: 0, usd: 0, underlying: `policy:${DECISION_ID}` }, provenance: { decisionId: DECISION_ID, resumed_from: offset, deterministic: true } });
   }
 
-  async reverify(claim, args, ctx) {
-    const rerun = await this.invoke('egraph.evaluate', args, ctx); return Object.freeze({ ok: rerun.refs[0].digest === claim?.refs?.[0]?.digest, observedDigest: rerun.refs[0].digest });
+  async reverify(claim, op, args, ctx) {
+    const rerun = await this.invoke(op, args, ctx); return Object.freeze({ ok: rerun.refs[0].digest === claim?.refs?.[0]?.digest, observedDigest: rerun.refs[0].digest });
   }
 }

@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { CapabilityRegistry, createDriver } from '../src/index.mjs';
+import { AtlasStructuralDelta, CapabilityRegistry, createDriver } from '../src/index.mjs';
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-capability-${name}-`));
 const envelope = (op, value = 1, overrides = {}) => ({
@@ -26,7 +26,7 @@ function fixture(overrides = {}) {
     card() { return { name: 'fixture', version: '1', ops: { 'fixture.read': { reverifiable: true } } }; },
     async invoke(op, args, ctx) { calls.push({ action: 'invoke', op, args, ctx }); return envelope(op); },
     async resume(ref, cursor, ctx) { calls.push({ action: 'resume', ref, cursor, ctx }); return envelope('fixture.read'); },
-    async reverify(claim, args, ctx) { calls.push({ action: 'reverify', claim, args, ctx }); return { ok: claim.digest === args.digest }; },
+    async reverify(claim, op, args, ctx) { calls.push({ action: 'reverify', claim, op, args, ctx }); return { ok: claim.digest === args.digest }; },
     ...overrides,
   };
 }
@@ -59,6 +59,7 @@ test('CI1/CI2/CI7: registration, cards, JSON inputs, operations, budgets, and en
   assert.throws(() => new CapabilityRegistry({ capabilities: {}, maxBudgetTokens: 1 }), /maxEnvelopeBytes/);
   assert.throws(() => new CapabilityRegistry({ capabilities: { bad: {} }, maxBudgetTokens: 1, maxEnvelopeBytes: 100 }), /invalid capability registration/);
   assert.throws(() => registry(fixture({ card: () => ({ ops: {} }) })), /invalid capability card/);
+  assert.throws(() => registry(fixture(), { contexts: { missing: {} } }), /context has no registration/);
   await assert.rejects(registry().invoke('missing', 'fixture.read', {}, { budgetTokens: 10 }), (error) => error.code === 'capability_not_found');
   await assert.rejects(registry().invoke('fixture', 'fixture.write', {}, { budgetTokens: 10 }), (error) => error.code === 'capability_op_unavailable');
   await assert.rejects(registry().invoke('fixture', 'fixture.read', {}, { budgetTokens: 0 }), (error) => error.code === 'capability_budget_invalid');
@@ -73,11 +74,27 @@ test('CI1/CI2/CI7: registration, cards, JSON inputs, operations, budgets, and en
   await assert.rejects(registry(oversizedEnvelope, { maxEnvelopeBytes: 1_000 }).invoke('fixture', 'fixture.read', {}, { budgetTokens: 100 }), (error) => error.code === 'capability_result_oversize');
 });
 
+test('CI2/CI7: deployment context resolves multi-root operations but cannot replace registry authority', async () => {
+  const capability = fixture();
+  const subject = registry(capability, { contexts: { fixture: ({ action, args }) => ({ beforeRoot: `/snapshots/${action}`, overlayEpoch: args.epoch }) } });
+  await subject.invoke('fixture', 'fixture.read', { epoch: 'abc' }, { budgetTokens: 100, actor: 'web:user:session' });
+  assert.deepEqual(capability.calls[0].ctx, {
+    beforeRoot: '/snapshots/invoke', overlayEpoch: 'abc', budgetTokens: 100, signal: undefined,
+    actor: 'web:user:session', root: '/trusted/repository',
+  });
+  const forbidden = registry(fixture(), { contexts: { fixture: { root: '/attacker-controlled' } } });
+  await assert.rejects(forbidden.invoke('fixture', 'fixture.read', {}, { budgetTokens: 100 }), (error) => error.code === 'capability_context_forbidden');
+  const malformed = registry(fixture(), { contexts: { fixture: () => ({ value: Infinity }) } });
+  await assert.rejects(malformed.invoke('fixture', 'fixture.read', {}, { budgetTokens: 100 }), (error) => error.code === 'capability_context_invalid');
+});
+
 test('CI2/CI4: cancellation and coordinator-authority smuggling are rejected and audited', async () => {
   const events = []; const abort = new AbortController(); abort.abort();
   await assert.rejects(registry(fixture(), { record: (event) => events.push(event) }).invoke('fixture', 'fixture.read', {}, { budgetTokens: 10, signal: abort.signal }), (error) => error.code === 'cancelled');
   const smuggler = fixture({ invoke: async (op) => envelope(op, 1, { provenance: { mergeAuthority: true, verificationAuthority: false } }) });
   await assert.rejects(registry(smuggler, { record: (event) => events.push(event) }).invoke('fixture', 'fixture.read', {}, { budgetTokens: 100 }), (error) => error.code === 'capability_authority_forbidden');
+  const stringSmuggler = fixture({ invoke: async (op) => envelope(op, 1, { provenance: { mergeAuthority: 'true' } }) });
+  await assert.rejects(registry(stringSmuggler).invoke('fixture', 'fixture.read', {}, { budgetTokens: 100 }), (error) => error.code === 'capability_authority_forbidden');
   assert.equal(events.at(-1).kind, 'capability.op.refused');
   assert.equal(events.at(-1).code, 'capability_authority_forbidden');
 });
@@ -109,4 +126,25 @@ test('CI1/CI5/CI7: createDriver explicitly assembles one registry behind Coordin
   assert.deepEqual(evidence.map((event) => event.kind), ['capability.op.started', 'capability.op.completed']);
   assert.equal(JSON.stringify(evidence).includes('private'), false);
   assert.ok(driver.coordination.snapshot().evidence.length >= 2);
+});
+
+test('CI6-CI8: a real ast-grep Atlas multi-root operation traverses createDriver and reverify', async () => {
+  const repoRoot = root('atlas-repo'); const logDir = root('atlas-log');
+  execFileSync('git', ['init', '-q'], { cwd: repoRoot });
+  writeFileSync(join(repoRoot, 'before.mjs'), 'export function value() { return 1 }\n');
+  writeFileSync(join(repoRoot, 'after.mjs'), 'export function value() { return 2 }\n');
+  execFileSync('git', ['add', '.'], { cwd: repoRoot });
+  execFileSync('git', ['-c', 'user.name=Baton Test', '-c', 'user.email=baton@example.test', 'commit', '-q', '-m', 'base'], { cwd: repoRoot });
+  const atlas = new AtlasStructuralDelta({ artifactRoot: root('atlas-artifacts'), maxSourceBytes: 64 * 1024 });
+  const driver = createDriver({
+    repoRoot, logDir, adapters: {}, capabilities: { 'atlas-structural': atlas },
+    capabilityContexts: { 'atlas-structural': { beforeRoot: repoRoot, afterRoot: repoRoot } },
+    maxCapabilityBudgetTokens: 10_000, maxCapabilityEnvelopeBytes: 128 * 1024,
+  });
+  const args = { beforePath: 'before.mjs', afterPath: 'after.mjs' }; const ctx = { budgetTokens: 2_000, actor: 'orchestrator' };
+  const result = await driver.coordinator.invokeCapability('atlas-structural', 'diff.structural', args, ctx);
+  assert.equal(result.status, 'ok'); assert.equal(result.payload.some((item) => item.change === 'modified' && item.name === 'value'), true);
+  const reverified = await driver.coordinator.reverifyCapability('atlas-structural', 'diff.structural', result, args, ctx);
+  assert.equal(reverified.status, 'ok'); assert.equal(reverified.payload[0].ok, true);
+  assert.deepEqual(driver.coordinator.capabilityCards().map((card) => card.name), ['atlas-structural']);
 });

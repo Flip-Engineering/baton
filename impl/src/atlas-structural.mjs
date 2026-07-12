@@ -143,8 +143,8 @@ export class AtlasStructuralDelta {
     this.record?.({ kind: 'capability.op.completed', actor: ctx.actor ?? 'orchestrator', op, beforeDigest, afterDigest, artifactDigest, status, wallMs });
     return result;
   }
-  async reverify(claim, args, ctx) {
-    const rerun = await this.invoke('diff.structural', args, ctx);
+  async reverify(claim, op, args, ctx) {
+    const rerun = await this.invoke(op, args, ctx);
     return Object.freeze({ ok: rerun.provenance.artifactDigest === claim?.provenance?.artifactDigest, observedDigest: rerun.provenance.artifactDigest });
   }
 }

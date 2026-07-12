@@ -17,7 +17,7 @@ try {
   mkdirSync(join(fixture, 'src'), { recursive: true });
   writeFileSync(join(fixture, 'src/path.js'), `function readInput(){} function safe(){} function sanitize(v){return v} function send(v){}\nfunction run(flag){ let value=readInput(); if(flag){ value=safe() } let copy=value; send(copy); if(false){send(readInput())}; let clean=sanitize(readInput()); send(clean) }\n`);
   fixtureResult = await taint.invoke('cpg.taint', { path: 'src/path.js', sourceNames: ['readInput'], sinkNames: ['send'], sanitizerNames: ['sanitize'], depth: 24 }, { root: fixture, budgetTokens: 100_000, actor: 'orchestrator' });
-  reverified = await taint.reverify(fixtureResult, { path: 'src/path.js', sourceNames: ['readInput'], sinkNames: ['send'], sanitizerNames: ['sanitize'], depth: 24 }, { root: fixture, budgetTokens: 100_000, actor: 'orchestrator' });
+  reverified = await taint.reverify(fixtureResult, 'cpg.taint', { path: 'src/path.js', sourceNames: ['readInput'], sinkNames: ['send'], sanitizerNames: ['sanitize'], depth: 24 }, { root: fixture, budgetTokens: 100_000, actor: 'orchestrator' });
 } catch (error) { fatal = String(error?.stack ?? error); }
 const graph = batonGraphResult ? JSON.parse(readFileSync(batonGraphResult.refs[0].path, 'utf8')) : { nodes: [], edges: [] }; const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
 const actualWitness = batonTaintResult?.payload?.[0] ?? null; const fixturePaths = fixtureResult?.payload ?? [];

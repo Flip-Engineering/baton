@@ -46,7 +46,7 @@ test('AR4/AR5: rewrite interpolates captures, emits proposal, and never mutates 
   assert.equal(readFileSync(join(f.root, f.path), 'utf8'), before);
   assert.equal(result.payload.length, 2); assert.equal(result.provenance.outputDigest, sourceRef.digest);
   assert.deepEqual(f.events.map((event) => event.kind), ['capability.op.started', 'capability.op.completed']);
-  assert.equal((await f.atlas.reverify(result, args, f.ctx)).ok, true);
+  assert.equal((await f.atlas.reverify(result, result.op, args, f.ctx)).ok, true);
 });
 
 test('AR4/AR6: missing captures fail typed and syntactically broken proposals are partial', async () => {

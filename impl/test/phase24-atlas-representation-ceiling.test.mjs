@@ -53,7 +53,7 @@ test('RG5: bounded policy results resume, reject tamper, and reverify determinis
   const atlas = make(); const args = { path: 'impl/src/coordinator.mjs' };
   const bounded = await atlas.invoke('representation.ceiling', args, { budgetTokens: 1 }); assert.equal(bounded.status, 'needs_resume'); assert.deepEqual(bounded.payload, []);
   const resumed = await atlas.resume(bounded.refs[0], bounded.cursor, ctx); assert.equal(resumed.status, 'ok'); assert.equal(resumed.payload[0].maximumRung, 'R3');
-  assert.equal((await atlas.reverify(bounded, args, ctx)).ok, true);
+  assert.equal((await atlas.reverify(bounded, 'representation.ceiling', args, ctx)).ok, true);
   writeFileSync(bounded.refs[0].path, `${readFileSync(bounded.refs[0].path, 'utf8')} `);
   await assert.rejects(atlas.resume(bounded.refs[0], bounded.cursor, ctx), (error) => error.code === 'artifact_integrity');
 });

@@ -73,7 +73,7 @@ test('CG7: bounded result resumes, detects tamper, and reverifies', async () => 
   const result = await f.atlas.invoke('cpg.build', f.args, { ...f.ctx, budgetTokens: 1 });
   assert.equal(result.status, 'needs_resume');
   const resumed = await f.atlas.resume(result.refs[0], result.cursor, { budgetTokens: 1000 }); assert.ok(resumed.payload.length > 0);
-  assert.equal((await f.atlas.reverify(result, f.args, f.ctx)).ok, true);
+  assert.equal((await f.atlas.reverify(result, 'cpg.build', f.args, f.ctx)).ok, true);
   writeFileSync(result.refs[0].path, `${readFileSync(result.refs[0].path, 'utf8')} `);
   await assert.rejects(f.atlas.resume(result.refs[0], result.cursor, { budgetTokens: 1000 }), (error) => error.code === 'artifact_integrity');
   const forged = '{}\n'; const digest = createHash('sha256').update(forged).digest('hex'); const path = join(f.artifacts, `${digest}.json`); writeFileSync(path, forged);

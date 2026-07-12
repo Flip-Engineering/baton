@@ -278,8 +278,8 @@ export class AtlasBehaviorFingerprint {
     return Object.freeze({ op: artifact.op, status: truncated ? 'needs_resume' : 'ok', summary: `resumed ${payload.length} behavior records`, payload, refs: [ref], ...(truncated ? { cursor: `atlas-behavior:${ref.digest}:${next}` } : {}), cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), wall_ms: 0, usd: 0, underlying: `node-permission-model@${process.version}` }, provenance: { artifactDigest: ref.digest, resumed_from: offset, deterministic: true } });
   }
 
-  async reverify(claim, args, ctx) {
-    const rerun = await this.invoke(claim?.op, args, ctx);
+  async reverify(claim, op, args, ctx) {
+    const rerun = await this.invoke(op, args, ctx);
     return Object.freeze({ ok: rerun.refs[0].digest === claim?.refs?.[0]?.digest, observedDigest: rerun.refs[0].digest });
   }
 }

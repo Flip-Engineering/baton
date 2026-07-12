@@ -67,7 +67,7 @@ test('AT6/AT7: bounded payload keeps a complete content-addressed artifact and r
   assert.equal(result.status, 'needs_resume'); assert.ok(result.payload.length < 20);
   const artifact = JSON.parse(readFileSync(result.refs[0].path, 'utf8'));
   assert.equal(artifact.changes.length, 20);
-  assert.equal((await atlas.reverify(result, args, { ...ctx, budgetTokens: 10000 })).ok, true);
+  assert.equal((await atlas.reverify(result, 'diff.structural', args, { ...ctx, budgetTokens: 10000 })).ok, true);
   assert.deepEqual(events.map((event) => event.kind), ['capability.op.started', 'capability.op.completed', 'capability.op.started', 'capability.op.completed']);
 });
 

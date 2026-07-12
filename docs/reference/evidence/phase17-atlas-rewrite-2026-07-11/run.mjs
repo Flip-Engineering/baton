@@ -24,7 +24,7 @@ let search; let rewrite; let reverified; let fatal = null;
 try {
   search = await atlas.invoke('search.structural', { path, pattern: 'sha($A)' }, ctx);
   rewrite = await atlas.invoke('rewrite.structural', { path, pattern: 'sha($A)', replacement: 'digest($A)' }, ctx);
-  reverified = await atlas.reverify(rewrite, { path, pattern: 'sha($A)', replacement: 'digest($A)' }, ctx);
+  reverified = await atlas.reverify(rewrite, rewrite.op, { path, pattern: 'sha($A)', replacement: 'digest($A)' }, ctx);
 } catch (error) { fatal = String(error?.stack ?? error); }
 const proposedRef = rewrite?.refs.find((ref) => ref.kind === 'proposed_source');
 const proposed = proposedRef ? readFileSync(proposedRef.path, 'utf8') : '';

@@ -59,7 +59,7 @@ test('EG6: bounded result resumes, tamper refuses, and reverify is deterministic
   const atlas = make(); const args = { domain: 'whole_repo' };
   const bounded = await atlas.invoke('egraph.evaluate', args, { budgetTokens: 1 }); assert.equal(bounded.status, 'needs_resume'); assert.deepEqual(bounded.payload, []);
   const resumed = await atlas.resume(bounded.refs[0], bounded.cursor, ctx); assert.equal(resumed.status, 'ok'); assert.equal(resumed.payload[0].decision, 'retired_native');
-  assert.equal((await atlas.reverify(bounded, args, ctx)).ok, true);
+  assert.equal((await atlas.reverify(bounded, 'egraph.evaluate', args, ctx)).ok, true);
   const outside = join(artifactRoot(), 'substituted.json'); writeFileSync(outside, readFileSync(bounded.refs[0].path));
   await assert.rejects(atlas.resume({ ...bounded.refs[0], path: outside }, bounded.cursor, ctx), (error) => error.code === 'artifact_integrity');
   writeFileSync(bounded.refs[0].path, `${readFileSync(bounded.refs[0].path, 'utf8')} `);

@@ -215,8 +215,8 @@ export class AtlasStructuralRewrite {
     return Object.freeze({ op: manifest.op, status: truncated ? 'needs_resume' : 'ok', summary: `resumed ${payload.length} structural items`, payload, refs: [ref], ...(truncated ? { cursor: `atlas-structural:${ref.digest}:${next}` } : {}), cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), wall_ms: 0, usd: 0, underlying: `@ast-grep/napi@${AST_GREP_VERSION}` }, provenance: { manifestDigest: ref.digest, resumed_from: offset, deterministic: true } });
   }
 
-  async reverify(claim, args, ctx) {
-    const rerun = await this.invoke(claim?.op ?? 'search.structural', args, ctx);
+  async reverify(claim, op, args, ctx) {
+    const rerun = await this.invoke(op, args, ctx);
     return Object.freeze({ ok: rerun.provenance.manifestDigest === claim?.provenance?.manifestDigest && rerun.provenance.outputDigest === claim?.provenance?.outputDigest, observedManifestDigest: rerun.provenance.manifestDigest, observedOutputDigest: rerun.provenance.outputDigest });
   }
 }

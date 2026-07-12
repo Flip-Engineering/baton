@@ -18,7 +18,7 @@ let fatal = null; let bounded; let resumed; let reverified; let compared;
 try {
   bounded = await atlas.invoke('behavior.fingerprint', args, { root: REPO, budgetTokens: 1, actor: 'orchestrator' });
   resumed = await atlas.resume(bounded.refs[0], bounded.cursor, { budgetTokens: 1000 });
-  reverified = await atlas.reverify(bounded, args, { root: REPO, budgetTokens: 1000, actor: 'policy' });
+  reverified = await atlas.reverify(bounded, 'behavior.fingerprint', args, { root: REPO, budgetTokens: 1000, actor: 'policy' });
   compared = await atlas.invoke('behavior.compare', { beforePath: args.path, afterPath: args.path, exportName: args.exportName, corpus: args.corpus }, { beforeRoot: REPO, afterRoot: REPO, budgetTokens: 1000, actor: 'orchestrator' });
 } catch (error) {
   fatal = String(error?.stack ?? error);

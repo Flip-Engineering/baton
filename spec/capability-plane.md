@@ -12,7 +12,7 @@ interface Capability {
   invoke(op: string, args: object, ctx: InvokeCtx): Promise<AciResult>;   // §3 — the one call shape
   resume?(handle: OpHandle, cursor: Cursor): Promise<AciResult>;          // paged / long-op continuation
   cancel?(handle: OpHandle): Promise<void>;                // control-plane interrupt of a long op
-  reverify?(claim: AciResult, ctx: InvokeCtx): Promise<Verdict>;         // §6 — hub re-runs to check a worker's claim (supervisor I7)
+  reverify?(claim: AciResult, op: string, args: object, ctx: InvokeCtx): Promise<Verdict>; // §6 — hub re-runs the exact operation and inputs
 }
 ```
 

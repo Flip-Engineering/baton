@@ -119,8 +119,8 @@ export class AtlasRepresentationCeiling {
     });
   }
 
-  async reverify(claim, args, ctx) {
-    const rerun = await this.invoke('representation.ceiling', args, ctx);
+  async reverify(claim, op, args, ctx) {
+    const rerun = await this.invoke(op, args, ctx);
     return Object.freeze({ ok: rerun.refs[0].digest === claim?.refs?.[0]?.digest, observedDigest: rerun.refs[0].digest });
   }
 }

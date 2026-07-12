@@ -18,7 +18,7 @@ let fatal = null; let bounded; let resumed; let reverified; const refusals = [];
 try {
   bounded = await atlas.invoke('representation.ceiling', args, { budgetTokens: 1, actor: 'orchestrator' });
   resumed = await atlas.resume(bounded.refs[0], bounded.cursor, { budgetTokens: 1000 });
-  reverified = await atlas.reverify(bounded, args, { budgetTokens: 1000, actor: 'policy' });
+  reverified = await atlas.reverify(bounded, 'representation.ceiling', args, { budgetTokens: 1000, actor: 'policy' });
   for (const op of ['ir.build', 'ir.delta', 'tv.validate']) {
     try { await atlas.invoke(op, args, { budgetTokens: 1000 }); }
     catch (error) { refusals.push({ op, code: error.code, maximumRung: error.maximumRung, decisionId: error.decisionId }); }

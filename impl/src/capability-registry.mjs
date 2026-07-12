@@ -25,17 +25,21 @@ function validResult(value, op) {
 export class CapabilityRegistry {
   constructor(opts = {}) {
     if (!record(opts.capabilities ?? {})) throw new TypeError('capabilities must be a closed object registry');
+    if (!record(opts.contexts ?? {})) throw new TypeError('capability contexts must be a closed object registry');
     if (!Number.isSafeInteger(opts.maxBudgetTokens) || opts.maxBudgetTokens <= 0) throw new TypeError('maxBudgetTokens must be deployment-derived');
     if (!Number.isSafeInteger(opts.maxEnvelopeBytes) || opts.maxEnvelopeBytes <= 0) throw new TypeError('maxEnvelopeBytes must be deployment-derived');
     if (opts.root !== undefined && (typeof opts.root !== 'string' || opts.root.length === 0)) throw new TypeError('capability root must be a non-empty string');
     if (opts.record !== undefined && opts.record !== null && typeof opts.record !== 'function') throw new TypeError('capability record sink must be a function');
     this.maxBudgetTokens = opts.maxBudgetTokens; this.maxEnvelopeBytes = opts.maxEnvelopeBytes; this.root = opts.root; this.record = opts.record ?? null; this.entries = new Map();
+    for (const name of Object.keys(opts.contexts ?? {})) if (!Object.hasOwn(opts.capabilities ?? {}, name)) throw new TypeError(`capability context has no registration: ${name}`);
     for (const [name, capability] of Object.entries(opts.capabilities ?? {})) {
       if (!/^[A-Za-z0-9._:-]{1,128}$/.test(name) || !capability || typeof capability.card !== 'function' || typeof capability.invoke !== 'function') throw new TypeError(`invalid capability registration: ${name}`);
       const card = capability.card(); const ops = record(card?.ops) ? Object.keys(card.ops) : [];
       if (!record(card) || card.name !== name || ops.length === 0 || ops.some((op) => !/^[A-Za-z0-9._:-]{1,256}$/.test(op))
         || !jsonValue(card) || Buffer.byteLength(JSON.stringify(card)) > this.maxEnvelopeBytes) throw new TypeError(`invalid capability card: ${name}`);
-      this.entries.set(name, { capability, card: Object.freeze(json(card)) });
+      const context = opts.contexts?.[name] ?? null;
+      if (context !== null && typeof context !== 'function' && (!record(context) || !jsonValue(context))) throw new TypeError(`invalid capability context: ${name}`);
+      this.entries.set(name, { capability, context, card: Object.freeze(json(card)) });
     }
   }
   cards() { return [...this.entries].sort(([a], [b]) => a.localeCompare(b)).map(([name, entry]) => Object.freeze({ ...json(entry.card), name })); }
@@ -52,9 +56,19 @@ export class CapabilityRegistry {
     const actor = this._actor(ctx);
     return { budgetTokens: ctx.budgetTokens, signal: ctx.signal, actor, ...(this.root === undefined ? {} : { root: this.root }) };
   }
+  _capabilityCtx(entry, request, safe) {
+    const resolved = typeof entry.context === 'function' ? entry.context(Object.freeze(json(request))) : entry.context;
+    if (resolved === null || resolved === undefined) return safe;
+    if (!record(resolved) || !jsonValue(resolved) || Buffer.byteLength(JSON.stringify(resolved)) > this.maxEnvelopeBytes) throw typed('deployment capability context invalid', 'capability_context_invalid');
+    for (const key of ['actor', 'budgetTokens', 'root', 'signal']) if (Object.hasOwn(resolved, key)) throw typed('deployment capability context attempted to override registry authority', 'capability_context_forbidden');
+    return { ...json(resolved), ...safe };
+  }
   _validate(result, op, budgetTokens) {
     if (!validResult(result, op)) throw typed('capability returned an invalid ACI envelope', 'capability_result_invalid');
-    if (result.provenance.mergeAuthority === true || result.provenance.verificationAuthority === true) throw typed('capability attempted to claim coordinator authority', 'capability_authority_forbidden');
+    if ((Object.hasOwn(result.provenance, 'mergeAuthority') && result.provenance.mergeAuthority !== false)
+      || (Object.hasOwn(result.provenance, 'verificationAuthority') && result.provenance.verificationAuthority !== false)) {
+      throw typed('capability attempted to claim coordinator authority', 'capability_authority_forbidden');
+    }
     if (Buffer.byteLength(JSON.stringify(result)) > this.maxEnvelopeBytes) throw typed('capability result exceeded deployment envelope ceiling', 'capability_result_oversize');
     if (Buffer.byteLength(JSON.stringify(result.payload)) > budgetTokens * 4) throw typed('capability payload exceeded invocation budget', 'capability_result_oversize');
     return Object.freeze(json(result));
@@ -78,7 +92,7 @@ export class CapabilityRegistry {
     return this._run('invoke', name, op, (safe) => {
       const entry = this._entry(name); this._op(entry, op);
       if (!record(args ?? {}) || !jsonValue(args ?? {}) || Buffer.byteLength(JSON.stringify(args ?? {})) > this.maxEnvelopeBytes) throw typed('capability arguments must be a bounded JSON object', 'capability_args_invalid');
-      return entry.capability.invoke(op, json(args ?? {}), safe);
+      return entry.capability.invoke(op, json(args ?? {}), this._capabilityCtx(entry, { action: 'invoke', op, args: args ?? {} }, safe));
     }, ctx);
   }
   async resume(name, op, ref, cursor, ctx) {
@@ -86,7 +100,7 @@ export class CapabilityRegistry {
       const entry = this._entry(name); this._op(entry, op);
       if (typeof entry.capability.resume !== 'function') throw typed('capability does not support resume', 'capability_resume_unavailable');
       if (!record(ref) || !jsonValue(ref) || Buffer.byteLength(JSON.stringify(ref)) > this.maxEnvelopeBytes || typeof cursor !== 'string' || cursor.length === 0 || Buffer.byteLength(cursor) > this.maxEnvelopeBytes) throw typed('capability resume reference invalid', 'capability_resume_invalid');
-      return entry.capability.resume(json(ref), cursor, safe);
+      return entry.capability.resume(json(ref), cursor, this._capabilityCtx(entry, { action: 'resume', op, ref, cursor }, safe));
     }, ctx);
   }
   async reverify(name, op, claim, args, ctx) {
@@ -94,7 +108,7 @@ export class CapabilityRegistry {
       const entry = this._entry(name); this._op(entry, op);
       if (typeof entry.capability.reverify !== 'function') throw typed('capability does not support reverify', 'capability_reverify_unavailable');
       if (!record(claim) || !jsonValue(claim) || Buffer.byteLength(JSON.stringify(claim)) > this.maxEnvelopeBytes || !record(args ?? {}) || !jsonValue(args ?? {}) || Buffer.byteLength(JSON.stringify(args ?? {})) > this.maxEnvelopeBytes) throw typed('capability reverify input invalid', 'capability_reverify_invalid');
-      const result = await entry.capability.reverify(json(claim), json(args ?? {}), safe);
+      const result = await entry.capability.reverify(json(claim), op, json(args ?? {}), this._capabilityCtx(entry, { action: 'reverify', op, claim, args: args ?? {} }, safe));
       if (!record(result) || typeof result.ok !== 'boolean' || !jsonValue(result)) throw typed('capability returned an invalid reverify result', 'capability_result_invalid');
       return { op, status: result.ok ? 'ok' : 'diverged', summary: result.ok ? 'capability evidence reverified' : 'capability evidence diverged', payload: [result], refs: [], cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(result)) / 4), wall_ms: 0, usd: 0, underlying: `capability:${name}` }, provenance: { reverified: true, mergeAuthority: false, verificationAuthority: false } };
     }, ctx);
