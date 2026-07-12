@@ -290,7 +290,7 @@ may-reaching definitions, direct identifier-copy flow, immediate-only nested val
 literal-dead-branch pruning, including reachable `else if` chains and conservative may-unions
 inside atomic unsupported control. AST boolean leaves prune comment-bearing dead arms without
 orphan join edges. The combined R3 gate is 31/31 focused and the current canonical suite is
-761/761 green. Independent exact-model closure passes from Grok 4.5 and Grok Composer both found
+763/763 green. Independent exact-model closure passes from Grok 4.5 and Grok Composer both found
 no remaining actionable PS1–PS8 defect; their freshly verified reports and complete kill/reap
 evidence are retained with the Phase 22 handoff.
 
@@ -345,7 +345,12 @@ bounds, dirty or advanced main, and fresh verification failure all refuse typed.
 candidate that passes the immutable pinned primary check in a distinct fresh worktree may
 fast-forward main. Reconcile reaps orphan stages; post-effect authority failure remains poisoned
 and replay cannot invent success. CPG and behavioral evidence have no integration-authority hook.
-The host lacks Mergiraf, so the 11/11 focused gate uses an injected wire-faithful resolver and a
+The first concurrent exact-model implementation review found three concrete SM4/SM2 seams: NUL
+binary conflicts could reach the resolver, marker detection missed delimiter-free marker debris,
+and local Git inherited ambient `GIT_*` redirects. Baton now rejects NUL conflicts before resolver
+invocation, detects any seven-or-more diff3 marker run at line start, strips all ambient Git
+control variables, disables system/global Git config and hooks for staging, and pins these with
+reds. The host lacks Mergiraf, so the 13/13 focused gate uses an injected wire-faithful resolver and a
 live external-tool proof remains pending. True data/control-flow semantic merge stays catalogued
 behind adoptable-engine, measured-demand, and false-clean evaluation gates.
 Baton-on-Baton proofs cover a `sha` helper node/edge delta with reverse-caller impact and the real

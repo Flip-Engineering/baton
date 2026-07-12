@@ -21,11 +21,11 @@ function brief() {
   return createBrief({ goal: 'change value', constraints: [], pathScope: ['src/value.js'], definitionOfDone: 'value module remains valid', verification: { command: 'node src/value.js', expectExit: 0 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } });
 }
 
-async function accepted(root, taskId, workerSource, structuredMerge) {
+async function accepted(root, taskId, workerSource, structuredMerge, taskBrief = brief()) {
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'src/value.js', content: workerSource }] } });
   const logDir = mkdtempSync(join(tmpdir(), 'baton-sm-log-'));
   const driver = createDriver({ repoRoot: root, logDir, adapters: { mock: adapter }, structuredMerge, watchdog: { stallMs: 0 } });
-  const handle = await driver.coordinator.spawn('mock', brief(), { taskId });
+  const handle = await driver.coordinator.spawn('mock', taskBrief, { taskId });
   await until(async () => (await driver.coordinator.result(handle.id)).ready);
   assert.equal((await driver.coordinator.result(handle.id)).status, 'completed');
   return { ...driver, handle, logDir };
@@ -41,13 +41,26 @@ test('SM1/SM2: missing resolver refuses a conflict without mutating main', async
 });
 
 test('SM4: resolver success with conflict markers still refuses and reaps the stage', async () => {
-  const root = repo();
-  const resolver = { maxFileBytes: 4096, identity: () => ({ tool: 'fake-mergiraf', version: 'test' }), resolve: async () => ({ status: 'resolved' }) };
-  const { coordinator, handle } = await accepted(root, 'sm-markers', 'export const values = { alpha: 2 };\n', resolver);
-  write(root, 'src/value.js', 'export const values = { alpha: 3 };\n'); commit(root, 'main diverges'); const before = git(['rev-parse', 'HEAD'], root);
-  await assert.rejects(coordinator.integrate(handle.id, { strategy: 'structured' }), (error) => error.code === 'structured_unresolved');
-  assert.equal(git(['rev-parse', 'HEAD'], root), before);
-  assert.equal(existsSync(join(root, '.baton', 'integrate')), false);
+  for (const [taskId, resolve] of [
+    ['sm-markers', async () => ({ status: 'resolved' })],
+    ['sm-marker-evasion', async ({ absolutePath }) => { writeFileSync(absolutePath, 'export const ok = 1;\n<<<<<<<ours\n'); return { status: 'resolved' }; }],
+  ]) {
+    const root = repo(); const resolver = { maxFileBytes: 4096, identity: () => ({ tool: 'fake-mergiraf', version: 'test' }), resolve };
+    const { coordinator, handle } = await accepted(root, taskId, 'export const values = { alpha: 2 };\n', resolver);
+    write(root, 'src/value.js', 'export const values = { alpha: 3 };\n'); commit(root, 'main diverges'); const before = git(['rev-parse', 'HEAD'], root);
+    await assert.rejects(coordinator.integrate(handle.id, { strategy: 'structured' }), (error) => error.code === 'structured_unresolved');
+    assert.equal(git(['rev-parse', 'HEAD'], root), before); assert.equal(existsSync(join(root, '.baton', 'integrate')), false);
+  }
+});
+
+test('SM4: Git-binary conflicts refuse before resolver invocation', async () => {
+  const root = repo(); let calls = 0;
+  const resolver = { maxFileBytes: 4096, identity: () => ({ tool: 'fake-mergiraf' }), resolve: async () => { calls += 1; return { status: 'resolved' }; } };
+  const binaryBrief = createBrief({ goal: 'change binary', constraints: [], pathScope: ['src/value.js'], definitionOfDone: 'fixture only', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } });
+  const { coordinator, handle } = await accepted(root, 'sm-binary', '\0worker\n', resolver, binaryBrief);
+  write(root, 'src/value.js', '\0main\n'); commit(root, 'main changes binary'); const before = git(['rev-parse', 'HEAD'], root);
+  await assert.rejects(coordinator.integrate(handle.id, { strategy: 'structured' }), (error) => error.code === 'structured_binary_conflict');
+  assert.equal(calls, 0); assert.equal(git(['rev-parse', 'HEAD'], root), before);
 });
 
 test('SM6: clean structured resolution is freshly verified before main moves', async () => {
@@ -77,6 +90,16 @@ test('SM3-SM7: a clean divergent three-way merge needs no resolver but still get
   assert.equal(result.integration.resolver, null); assert.equal(result.integration.verdict.passed, true);
   assert.equal(readFileSync(join(root, 'src/value.js'), 'utf8'), 'export const values = { alpha: 2 };\n');
   assert.equal(readFileSync(join(root, 'src/main-only.js'), 'utf8'), 'export const beta = 3;\n');
+});
+
+test('SM2/SM3: ambient GIT overrides cannot redirect structured staging', async () => {
+  const root = repo(); const { coordinator, handle } = await accepted(root, 'sm-git-env', 'export const values = { alpha: 2 };\n', null);
+  write(root, 'src/main-only.js', 'export const beta = 3;\n'); commit(root, 'main adds another file');
+  const prior = process.env.GIT_INDEX_FILE; process.env.GIT_INDEX_FILE = join(root, 'missing', 'poison-index');
+  try {
+    const result = await coordinator.integrate(handle.id, { strategy: 'structured' });
+    assert.equal(result.integration.verdict.passed, true); assert.equal(readFileSync(join(root, 'src/value.js'), 'utf8'), 'export const values = { alpha: 2 };\n');
+  } finally { if (prior === undefined) delete process.env.GIT_INDEX_FILE; else process.env.GIT_INDEX_FILE = prior; }
 });
 
 test('SM2: a dirty main refuses without changing its bytes or index state', async () => {

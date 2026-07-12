@@ -23,9 +23,9 @@ removes orphan stages because an old candidate without a live fresh verdict has 
 ## Validation
 
 - Numbered contract: `spec/phase26/structured-merge.md` (SM1–SM10).
-- Focused gate: 11/11.
-- Existing acceptance/worktree plus Phase 26 gate: 65/65.
-- Canonical owned suite: 761/761; suite root reaped.
+- Focused gate: 13/13.
+- Existing acceptance/worktree plus Phase 26 gate: 67/67.
+- Canonical owned suite: 763/763; suite root reaped.
 - Reds cover unavailable resolver, marker retention, parse fallback, deployment file ceiling,
   resolver isolation, clean divergent three-way merge, false-clean syntax failure, dirty main,
   main-advance race, post-main authority failure/replay, and orphan-stage reconciliation.
@@ -42,6 +42,15 @@ worktree, runtime, and branch was reaped. Both converged on isolated staging, an
 resolver, mandatory fresh verification, and an explicit ban on CPG/fingerprint merge authority.
 The reports and lifecycle ledger are under
 `docs/reference/evidence/phase26-structured-merge-scope-grok-review-2026-07-11/`.
+
+A second concurrent exact-model pass reviewed the committed implementation. Grok 4.5 found that
+NUL-containing Git-binary conflicts could reach a cooperative resolver; Composer found a
+delimiter-free marker evasion and ambient `GIT_*` control of local Git subprocesses. All three now
+have reds. Binary conflicts refuse before resolver invocation, marker scanning rejects any run of
+seven or more diff3 marker characters at line start, and local worktree Git strips ambient Git
+variables, disables system/global configuration, and disables hooks for merge/commit. The initial
+implementation reports and complete kill/reap ledger are under
+`docs/reference/evidence/phase26-structured-merge-implementation-grok-review-2026-07-11/`.
 
 ## Honest boundary
 

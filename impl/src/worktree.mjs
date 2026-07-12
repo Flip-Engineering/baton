@@ -51,7 +51,17 @@ export class StructuredMergeError extends Error {
 // ---------------------------------------------------------------------------
 
 function sh(cmd, args, cwd) {
-  return execFileSync(cmd, args, { cwd, encoding: 'utf8' }).trim();
+  return execFileSync(cmd, args, { cwd, encoding: 'utf8', ...(cmd === 'git' ? { env: localGitEnv() } : {}) }).trim();
+}
+
+function localGitEnv(extra = {}) {
+  const env = {};
+  for (const [key, value] of Object.entries(process.env)) if (!key.startsWith('GIT_')) env[key] = value;
+  return { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', ...extra };
+}
+
+function gitFile(args, cwd, opts = {}, extraEnv = {}) {
+  return execFileSync('git', args, { ...opts, cwd, env: localGitEnv(extraEnv) });
 }
 
 function isClean(dir) {
@@ -241,7 +251,7 @@ export async function captureCommit(repoRoot, taskId, opts = {}) {
 // Structured integration staging (Phase 26 SM1-SM9)
 // ---------------------------------------------------------------------------
 
-const CONFLICT_MARKER = /^(?:<{7}|\|{7}|={7}|>{7})(?: |$)/m;
+const CONFLICT_MARKER = /^(?:<{7,}|\|{7,}|={7,}|>{7,})/m;
 
 function integrationRoot(repoRoot) { return join(repoRoot, '.baton', 'integrate'); }
 
@@ -272,9 +282,9 @@ export async function stageStructuredIntegration(repoRoot, taskId, resultSha, op
   const classes = []; const resolutions = [];
   try {
     let mergeClean = true;
-    try { execFileSync('git', ['-c', 'merge.conflictStyle=diff3', 'merge', '--no-commit', '--no-ff', rightSha], { cwd: stagePath, encoding: 'utf8', stdio: 'pipe' }); }
+    try { gitFile(['-c', 'core.hooksPath=/dev/null', '-c', 'merge.conflictStyle=diff3', 'merge', '--no-verify', '--no-commit', '--no-ff', rightSha], stagePath, { encoding: 'utf8', stdio: 'pipe' }); }
     catch { mergeClean = false; }
-    const unmergedRaw = execFileSync('git', ['diff', '--name-only', '--diff-filter=U', '-z'], { cwd: stagePath, encoding: 'utf8' });
+    const unmergedRaw = gitFile(['diff', '--name-only', '--diff-filter=U', '-z'], stagePath, { encoding: 'utf8' });
     const conflictedPaths = unmergedRaw.split('\0').filter(Boolean);
     if (mergeClean) classes.push({ path: null, class: 'clean_textual' });
     else {
@@ -284,7 +294,8 @@ export async function stageStructuredIntegration(repoRoot, taskId, resultSha, op
       for (const relativePath of conflictedPaths) {
         const absolutePath = pathResolve(stagePath, relativePath); const within = pathRelative(stagePath, absolutePath);
         if (within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within) || !existsSync(absolutePath) || !lstatSync(absolutePath).isFile()) throw mergeError(`unsupported structured conflict path: ${relativePath}`, 'structured_unsupported_path');
-        const conflict = readFileSync(absolutePath); if (conflict.byteLength > opts.resolver.maxFileBytes) throw mergeError(`structured conflict exceeds file budget: ${relativePath}`, 'structured_file_too_large');
+        const conflict = readFileSync(absolutePath); if (conflict.includes(0)) throw mergeError(`structured conflict is binary: ${relativePath}`, 'structured_binary_conflict');
+        if (conflict.byteLength > opts.resolver.maxFileBytes) throw mergeError(`structured conflict exceeds file budget: ${relativePath}`, 'structured_file_too_large');
         const isolatedRoot = realpathSync(mkdtempSync(join(tmpdir(), 'baton-structured-conflict-'))); const isolatedName = basename(relativePath); const isolatedPath = join(isolatedRoot, isolatedName);
         let resolution; let merged;
         try {
@@ -301,17 +312,16 @@ export async function stageStructuredIntegration(repoRoot, taskId, resultSha, op
         const mergedText = new TextDecoder('utf-8', { fatal: true }).decode(merged);
         if (CONFLICT_MARKER.test(mergedText)) throw mergeError(`structured conflict markers remain in ${relativePath}`, 'structured_unresolved');
         writeFileSync(absolutePath, merged, { mode: 0o600 });
-        execFileSync('git', ['add', '--', relativePath], { cwd: stagePath, stdio: 'pipe' });
+        gitFile(['add', '--', relativePath], stagePath, { stdio: 'pipe' });
         classes.push({ path: relativePath, class: 'structured_resolved' });
       }
     }
-    const remaining = execFileSync('git', ['diff', '--name-only', '--diff-filter=U', '-z'], { cwd: stagePath, encoding: 'utf8' });
+    const remaining = gitFile(['diff', '--name-only', '--diff-filter=U', '-z'], stagePath, { encoding: 'utf8' });
     if (remaining.length > 0) throw mergeError('structured merge left unmerged index entries', 'structured_unresolved');
-    try { execFileSync('git', ['diff', '--check', '--cached'], { cwd: stagePath, stdio: 'pipe' }); }
+    try { gitFile(['diff', '--check', '--cached'], stagePath, { stdio: 'pipe' }); }
     catch (error) { throw mergeError('structured merge candidate fails git diff --check', 'structured_diff_invalid', error); }
-    execFileSync('git', ['commit', '-q', '-m', `baton structured integration: ${taskId}`], {
-      cwd: stagePath, stdio: 'pipe', env: { ...process.env, GIT_AUTHOR_NAME: 'baton-merge', GIT_AUTHOR_EMAIL: 'baton-merge@localhost', GIT_COMMITTER_NAME: 'baton-merge', GIT_COMMITTER_EMAIL: 'baton-merge@localhost' },
-    });
+    gitFile(['-c', 'core.hooksPath=/dev/null', 'commit', '--no-verify', '-q', '-m', `baton structured integration: ${taskId}`], stagePath, { stdio: 'pipe' },
+      { GIT_AUTHOR_NAME: 'baton-merge', GIT_AUTHOR_EMAIL: 'baton-merge@localhost', GIT_COMMITTER_NAME: 'baton-merge', GIT_COMMITTER_EMAIL: 'baton-merge@localhost' });
     const stageSha = sh('git', ['rev-parse', 'HEAD'], stagePath);
     const parents = sh('git', ['show', '-s', '--format=%P', stageSha], stagePath).split(' ');
     if (parents.length !== 2 || parents[0] !== beforeSha || parents[1] !== rightSha) throw mergeError('structured candidate does not have the exact merge parents', 'structured_parent_mismatch');
@@ -523,11 +533,7 @@ export async function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {})
  * @returns {Promise<Record<string, number[]>>}
  */
 export async function changedLines(repoRoot, fromSha, toSha) {
-  const diff = execFileSync(
-    'git',
-    ['diff', '--unified=0', '--no-color', fromSha, toSha],
-    { cwd: repoRoot, encoding: 'utf8' },
-  );
+  const diff = gitFile(['diff', '--unified=0', '--no-color', fromSha, toSha], repoRoot, { encoding: 'utf8' });
   const result = {};
   let currentFile = null;
   for (const line of diff.split('\n')) {
