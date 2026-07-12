@@ -49,6 +49,7 @@ export { AtlasEGraphEvaluation } from './atlas-egraph-evaluation.mjs';
 export { AtlasBehaviorFingerprint } from './atlas-behavior-fingerprint.mjs';
 export { AtlasCodeIndex } from './atlas-index.mjs';
 export { CairnRunScorecard } from './cairn-run-scorecard.mjs';
+export { CartographerQuartermaster } from './cartographer-quartermaster.mjs';
 export { MergirafResolver } from './structured-merge.mjs';
 export { CapabilityRegistry } from './capability-registry.mjs';
 

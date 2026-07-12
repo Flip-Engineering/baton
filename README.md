@@ -21,7 +21,7 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **797/797
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **812/812
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
@@ -42,14 +42,15 @@ contexts cannot override actor, budget, repository root, or cancellation, and ca
 cannot claim verification or merge authority. Phase 30 also live-proves the credentialed GLM leg:
 exact `glm-4.7` at native `low` effort was provider-observed, freshly verified, normally killed,
 and fully reaped without disclosing the ignored local key. Phase 31 adds Cairn's deterministic,
-sealed, content-addressed run scorecard and its atomic Run/Artifact knowledge projection. The
-current canonical suite is **805/805 green**.
+sealed, content-addressed run scorecard and its atomic Run/Artifact knowledge projection. Phase 32
+adds Cartographer/Quartermaster's focused Atlas-epoch orientation and evidence-grounded internal-
+reuse floor through the same ACI plane. The current canonical suite is **812/812 green**.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 
 **Everything else supports the driver, and none of it is dropped:** independent verification (re-running a worker's tests so "done" can be trusted), learned routing (which vendor is good at what), a reliable coordination core (so "interrupt worker 3" always lands), telemetry/replay, and worker tools (search, debug, semantic diff). Earlier docs over-billed the *verification* as the product and demoted the *driving* to optional — doc 19 turns that right-side-up.
 
-**Architecture, plainly:** you drive from your CLI agent (Claude Code or Codex is the orchestrator — it decides); underneath, a small reliable program carries out those decisions and does the bookkeeping (dispatch, making interrupts land, re-checking worker claims, the event log). The AI drives; the plumbing makes the driving safe. Southbound, the product tier uses persistent Claude stream-json, Codex app-server, and Grok ACP sessions; one-shot subprocess adapters remain an explicitly limited fire-and-forget tier. Those basic depth gates, audited ACI invocation, and Cairn Rung 0 now ship; current pursuit is the remaining capability backlog and contract/live-depth gaps. See [docs/28](docs/28-exhaustive-capability-audit.md).
+**Architecture, plainly:** you drive from your CLI agent (Claude Code or Codex is the orchestrator — it decides); underneath, a small reliable program carries out those decisions and does the bookkeeping (dispatch, making interrupts land, re-checking worker claims, the event log). The AI drives; the plumbing makes the driving safe. Southbound, the product tier uses persistent Claude stream-json, Codex app-server, and Grok ACP sessions; one-shot subprocess adapters remain an explicitly limited fire-and-forget tier. Those basic depth gates, audited ACI invocation, Cairn Rung 0, and Cartographer/Quartermaster's local Rung 0 now ship; current pursuit is the remaining capability backlog and contract/live-depth gaps. See [docs/28](docs/28-exhaustive-capability-audit.md).
 
 **Design docs** (`docs/`):
 

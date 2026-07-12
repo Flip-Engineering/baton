@@ -394,6 +394,18 @@ Reverify replays the exact bounds and rejects missing evidence, attribution drif
 or byte tamper. RouteStats, causal audit/recall, contradiction UX, and optional deployment-neutral
 export remain explicit Cairn Rungs 1–4; none is implied by the Rung 0 scorecard.
 
+Phase 32 ships the local Cartographer/Quartermaster floor without adding a second repository map.
+`orientation.slice` provides focused typed `brief` and `map` views over an explicit immutable Atlas
+epoch plus optional worktree overlay; `reuse.internal` requires projected symbol/call/lexical match
+evidence before recommending repository reuse and returns only `external_vet_required` on a miss.
+Both operations use the sole Coordinator-owned ACI registry, bounded resume, canonical artifact
+confinement, exact reverify, authenticated generic web/MCP reachability, and false authority. A
+recursive Baton-on-Baton run exposed and fixed path-token broadening and then passed exact epoch,
+self-orientation, grounded reuse, honest miss, resume, reverify, audit, and zero-worker-effect gates.
+Addressed `orient_worker`, automatic scope drift, dependency-vetting oracles, TTL/advisory updates,
+license/provenance/reachability policy, immutable decisions, SBOMs, and knowledge promotion remain
+explicit later contracts. No homelab or project-manager runtime is introduced.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**

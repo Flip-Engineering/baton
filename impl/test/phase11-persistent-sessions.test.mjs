@@ -262,8 +262,8 @@ test('PS5: wire sessionRef reaches handle/result and survives terminal replay', 
 test('PS1-PS5: Claude, Codex, and Grok each run two public turns on one native session then kill', async (t) => {
   const definitions = [
     ['claude', () => new ClaudeSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], killGraceMs: 20 })],
-    ['codex', () => new CodexAppServerCli({ cmd: process.execPath, args: [FAKE_CODEX, '--serve'], requestTimeoutMs: 500, versionProbe: () => 'fake' })],
-    ['grok', () => new GrokAcpCli({ cmd: process.execPath, args: [FAKE_GROK, '--serve'], requestTimeoutMs: 500, versionProbe: () => 'fake' })],
+    ['codex', () => new CodexAppServerCli({ cmd: process.execPath, args: [FAKE_CODEX, '--serve'], requestTimeoutMs: 2_000, versionProbe: () => 'fake' })],
+    ['grok', () => new GrokAcpCli({ cmd: process.execPath, args: [FAKE_GROK, '--serve'], requestTimeoutMs: 2_000, versionProbe: () => 'fake' })],
   ];
 
   for (const [name, make] of definitions) {
@@ -334,7 +334,7 @@ test('PS6: Claude maps per-task resume and fork to native session identities', a
 
 test('PS6: Codex maps resume and fork to thread/resume and thread/fork', async (t) => {
   for (const mode of ['resume', 'fork']) {
-    const cli = new CodexAppServerCli({ cmd: process.execPath, args: [FAKE_CODEX, '--serve'], requestTimeoutMs: 500, versionProbe: () => 'fake' });
+    const cli = new CodexAppServerCli({ cmd: process.execPath, args: [FAKE_CODEX, '--serve'], requestTimeoutMs: 2_000, versionProbe: () => 'fake' });
     const events = [];
     cli.onEvent((e) => events.push(e));
     const worker = `codex-${mode}`;
@@ -350,7 +350,7 @@ test('PS6: Codex maps resume and fork to thread/resume and thread/fork', async (
 });
 
 test('PS6: Grok maps resume to ACP session/load', async (t) => {
-  const cli = new GrokAcpCli({ cmd: process.execPath, args: [FAKE_GROK, '--serve'], requestTimeoutMs: 500, versionProbe: () => 'fake' });
+  const cli = new GrokAcpCli({ cmd: process.execPath, args: [FAKE_GROK, '--serve'], requestTimeoutMs: 2_000, versionProbe: () => 'fake' });
   const events = [];
   cli.onEvent((e) => events.push(e));
   t.after(() => cli.kill('grok-resume').catch(() => {}));

@@ -1,7 +1,8 @@
-# System Validation — living full-system ledger through Phase 31
+# System Validation — living full-system ledger through Phase 32
 
 Originally validated 2026-07-11 through Phase 11; updated through the 2026-07-12 coordinator-owned
-capability plane, credentialed GLM live gate, and Cairn Rung 0. Historical milestone counts remain in their rows;
+capability plane, credentialed GLM live gate, Cairn Rung 0, and Cartographer/Quartermaster local
+Rung 0. Historical milestone counts remain in their rows;
 the top canonical row and latest handoffs are the current authority.
 
 ## Verdict
@@ -123,7 +124,7 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 
 | Gate | Current evidence |
 |---|---|
-| Canonical zero-quota suite | **805/805 passing** via `npm test` in `impl/`; its lifecycle owner reaps the private suite root, and the real linked-worktree regression covers recursive Baton execution without relying on a directory-shaped `.git` |
+| Canonical zero-quota suite | **812/812 passing** via `npm test` in `impl/`; its lifecycle owner reaps the private suite root, and the real linked-worktree regression covers recursive Baton execution without relying on a directory-shaped `.git` |
 | U-1…U-11 | All reproduced before repair; verdict ledger in `docs/handoff/evidence/phase10.1-reverification.md` |
 | Fresh adversarial review | No unresolved critical/major finding; `docs/handoff/evidence/phase10.1-adversarial-review.md` |
 | Three-vendor live fleet | `docs/reference/evidence/phase10.1-capstone-2026-07-10/summary.json` has every check true; 573-event raw ledger beside it |
@@ -152,6 +153,7 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 | Coordinator-owned capability invocation | `docs/handoff/evidence/phase29-capability-invocation-2026-07-12.md`; CI1–CI8, 92/92 surrounding focused tests, and 793/793 canonical tests construct one non-bypassable registry from deployment registrations; enforce JSON/token/envelope/context/provenance bounds; pin exact reverify operations; poison on provenance-sink loss; run a real multi-root ast-grep Atlas operation; and expose authenticated durable web/MCP cards plus invoke/resume/reverify without verification or merge authority. Concurrent exact `grok-4.5` and `grok-composer-2.5-fast` closure passed fresh verification, normal kill, and complete reap |
 | Credentialed GLM live route | `docs/handoff/evidence/phase30-glm-live-2026-07-12.md`; exact `glm-4.7` and native `low` effort were requested/resolved, the provider independently observed the model, 37,000 tokens/$0.254129 were reported, the artifact passed fresh verification, and normal kill completely reaped PID/worktree/metadata/runtime/branch. Credential values never enter evidence or Git |
 | Cairn sealed run scorecard | `docs/handoff/evidence/phase31-cairn-run-scorecard-2026-07-12.md`; CR1–CR8 and 8 focused tests add replay-stable run identity, coordinator-owned event attribution, one-way terminal closure, deterministic verified/asserted/control/approval/normalized-cost rows, one-event atomic Run/Artifact graph materialization, content-addressed reverify, authenticated web/MCP propagation, and post-seal effect refusal. Canonical is 805/805. Recursive provider attempts proved exact routing and complete reap but remain honestly non-accepting: Grok auth was absent, Codex quota was exhausted, and GLM produced a report but exceeded its nominal cap and its clean-clone verification lacked the optional Atlas dependency. |
+| Cartographer/Quartermaster local Rung 0 | `docs/handoff/evidence/phase32-cartographer-quartermaster-2026-07-12.md`; OR1–OR8 and 7 focused tests add focused brief/map views over exact Atlas epoch+overlay identity, actual-match-only internal reuse, honest external-vet misses, bounded resume, canonical artifact/source confinement, tamper refusal, exact reverify, sole-ACI assembly, and no verification/merge authority. The recursive Baton-on-Baton pass is all green and canonical is 812/812. |
 | Harness/model/effort route tuple | `docs/handoff/evidence/phase14-route-tuple-2026-07-11.md`; 609/609 full-suite contracts plus recursive exact `CodexAppServerCli` + `gpt-5.6-sol` + `low` runs cover direct/auto/web selection, native mapping, honest nullable observation, recovery, durable event/coordination/story/result/replay/review/integration/commit attribution, exact learning buckets with read-only legacy fallback, mismatch kill/reap, and heterogeneous assembled-driver filtering; the final detached review found no actionable defect and every lifecycle/reap check passed |
 | Authenticated web session lifecycle | `docs/handoff/evidence/phase12-web-session-lifecycle-2026-07-11.md`; 44 focused contracts plus the 619/619 full suite cover injected-provider-only claims, cookie/Bearer login, fsynced atomic credential rotation, restart-safe predecessor refusal, refresh/logout TLS/origin/JSON/CSRF/CORS controls, shared claim/TTL validation, audit-before-mutation failure ordering, non-leakage, live stream revocation, and zero fleet side effects; recursive exact-model build and correction review fully reaped, ending with no actionable IL1–IL8 finding |
 | Authenticated web edge policy | `docs/handoff/evidence/phase12-web-edge-2026-07-11.md`; 82 focused Phase 12 contracts plus the current 678/678 full suite cover canonical direct/trusted-proxy identity, raw forwarding provenance, listener-wide HTTPS, bounded and ordered quotas, non-disclosing readiness, audit-amplification resistance, atomic ticket delivery, and bounded shutdown/stream cleanup. Eleven recursive exact-route corrective reviews were integrated and fully reaped; a twelfth clean review was provider-refused before verdict, so the final independent clean-review gate remains pending |
@@ -206,7 +208,9 @@ These are absent, not implied by the green suite:
    direct rewrite apply, full rule configs, live LSP, semantic retrieval, general path-condition
    solving/full PDG, IR, and true semantic merge remain incomplete and explicitly catalogued.
    Native whole-repo e-graphs are retired by Phase 27; only threshold-gated external expression/
-   kernel research remains conditional.
+   kernel research remains conditional. Cartographer/Quartermaster now exposes a local focused
+   orientation/reuse floor, but addressed push, scope-drift automation, supply-chain vetting,
+   advisory/license/provenance/reachability policy, decisions/SBOMs, and knowledge promotion remain.
 9. **Test-fixture crash reconciliation.** Repeated dogfood/full-suite runs leaked 14,070
    Baton-named temporary fixture directories and exhausted the host disk even though registered
    worker processes, worktrees, branches, and runtime scopes were clean. TF1–TF4 now gives the
@@ -229,9 +233,10 @@ deny an outside-worktree write in its native sandbox, and auto-kill/reap it at a
 Those coordination/knowledge, Atlas index/symbol, and authenticated SSE milestones now ship. The
 harness + exact-model + effort route specificity gate (issue #2) now also ships. EP1–EP9 closes
 the quota/proxy/readiness/shutdown edge-policy increment locally; its final detached clean review
-is pending a provider reset. MCP stdio, authenticated web control, audited ACI invocation, and
-Cairn Rung 0 now ship; the next active pursuit is Cartographer/Quartermaster on the same substrate,
-followed by the remaining capability, session/governance, and production northbound depth. Isolated authenticated concurrent Grok exact-route/interrupt/resume/kill/reap
+is pending a provider reset. MCP stdio, authenticated web control, audited ACI invocation, Cairn
+Rung 0, and Cartographer/Quartermaster local Rung 0 now ship; the next active pursuit is their
+catalogued later rungs and the remaining capability, session/governance, and production northbound
+depth. Isolated authenticated concurrent Grok exact-route/interrupt/resume/kill/reap
 now passes with provider-observed identities and complete cleanup. Canonical test
 fixture lifecycle is now owned and green; stale-root reconciliation after uncatchable wrapper
 death remains explicit runtime depth.

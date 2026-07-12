@@ -46,6 +46,12 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    distinguishes verified from asserted completions, aggregates normalized cost/control/approval
    evidence, emits a content-addressed artifact, and atomically materializes Run/Artifact graph
    authority in one replay-safe event.
+9. **Cartographer/Quartermaster local Rung 0:** `orientation.slice` and `reuse.internal` reuse one
+   explicit immutable Atlas epoch plus worktree overlay through the Coordinator-owned ACI plane.
+   Focused brief/map records are typed and resumable; internal reuse requires actual symbol/call/
+   lexical evidence, while a miss returns only `external_vet_required`. Artifacts are confined,
+   content-addressed, tamper-refusing, and exact-operation reverifiable; the module performs no
+   network request and claims no verification or merge authority.
 
 ## What remains partial
 
@@ -69,13 +75,17 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 - Phase 30 closes the GLM credential-backed live gate: exact `glm-4.7` at native `low` effort was
   provider-observed, freshly verified, killed, and fully reaped through the public driver. Concurrent
   GLM-seat and automatic quota discovery remain unproven.
+- Phase 32 closes the local orientation/reuse wiring gap. Addressed downward worker push, automatic
+  scope-drift updates, external dependency-vetting oracles, advisory invalidation, license/
+  provenance policy, vulnerability reachability, immutable reuse decisions, SBOMs, and knowledge
+  promotion remain later Cartographer/Quartermaster contracts.
 
 ## What remains pending
 
 - Trust ramp policy, plan gate, impact-selected reruns, structured reject postmortems, and higher
   Evidence Ladder rungs (property/fuzz/BMC/SMT/proof) under honest language/tool ceilings.
-- Vantage, Evidence Ladder as a capability module, Skill Forge/computer use, and
-  Cartographer/Quartermaster as public ACI/coordinator tools; Cairn Rungs 1–4 remain pending.
+- Vantage, Evidence Ladder as a capability module, Skill Forge/computer use, later
+  Cartographer/Quartermaster supply/orientation rungs, and Cairn Rungs 1–4 remain pending.
 - Direct structural rewrite apply, live LSP, full SSA/PDG/path solving, interprocedural/alias/heap
   CPG depth, attestation overlays, and representation choreography.
 - True semantic merge, stacked integration, deploy adapters, rollback automation, and live remote
@@ -105,9 +115,10 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    safe remote-push fixture remain.
 3. **Finish governance/session continuity:** auto-rejoin, vendor-honest fork/rewind, compaction DoD
    reinjection, quota-window/seat scheduling, route overrides, and durable router learning.
-4. **Build capability modules on shared substrate:** Cairn Rung 0 shipped in Phase 31;
-   Cartographer/Quartermaster come next, followed by demand-earned Cairn Rungs 1–4, Vantage,
-   Evidence Ladder, and Skill Forge/computer use behind stronger containment.
+4. **Build capability modules on shared substrate:** Cairn Rung 0 shipped in Phase 31 and
+   Cartographer/Quartermaster local Rung 0 shipped in Phase 32; continue their explicitly
+   catalogued later rungs, then demand-earned Cairn Rungs 1–4, Vantage, Evidence Ladder, and Skill
+   Forge/computer use behind stronger containment.
 5. **Complete northbound/runtime depth:** MCP HTTP/Tasks/daemon, WebSocket, operator takeover,
    OpenTelemetry, and only then a production-core port.
 6. **Pursue representation/trust research only through its Decisions:** higher CPG/IR/semantic
