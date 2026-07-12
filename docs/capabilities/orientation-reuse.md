@@ -6,8 +6,8 @@
 
 - **The map is a fleet artifact, not a per-worker habit.** Repo-mapping (tree-sitter+PageRank à la Aider, LSP à la Serena, SCIP à la Sourcegraph) is expensive; N workers each re-orienting to the same repo is N× compute *and* N× orchestrator-context burn. Baton builds the map **once per `(repo, commit_sha)`**, CAS-deduped like a task claim, caches it in the artifact registry, and serves **token-bounded, addressed slices** — never a whole-repo dump.
 - **Orientation is push, addressed, minimal — and the orchestrator steers it.** The marquee verb is `fleet_orient_worker(w, focus)`: "this change touches the auth boundary; here's the subgraph." This is doc 08 §2.1's rule (downward context is pushed and scoped, not a similarity fan-out into a shared brain) made into a control primitive that plugs into the doc 05 §6 steering cadence — including *re-orienting* a worker mid-task when the scope-drift derived signal fires.
-- **Reuse is a gated broker over free supply-chain oracles.** AI agents hallucinate/mis-pick dependencies at scale (Endor Labs 2025: only **1 in 5** AI-suggested dependency versions were safe). A fleet multiplies that and the blast radius (Shai-Hulud npm worm, Sept 2025). `fleet_reuse`/`fleet_vet` sit in front of every `dependency_added`, backed by **deps.dev + OSV + Socket + OpenSSF Scorecard + license/provenance**, and cache the verdict fleet-wide.
-- **One graph serves both faces.** The Cartographer's call graph is exactly the substrate the Quartermaster needs for **reachability gating** (Endor-style: only block on vulns reachable from the worker's actual call path). And "borrow" includes borrowing *internally* — before reinventing, `fleet_reuse` asks the map whether the repo already does it.
+- **Reuse is a gated broker over supply-chain evidence.** AI agents hallucinate/mis-pick dependencies at scale (Endor Labs 2025: only **1 in 5** AI-suggested dependency versions were safe). A fleet multiplies that and the blast radius (Shai-Hulud npm worm, Sept 2025). `fleet_reuse`/`fleet_vet` sit in front of every `dependency_added`, backed first by free **deps.dev + OSV + OpenSSF Scorecard + license/provenance**, with commercial Socket only as optional enrichment, and cache the verdict fleet-wide.
+- **One graph serves both faces.** The Cartographer's graph is the future substrate for **reachability prioritization**, but incomplete static reachability may never clear a known package-level advisory. And "borrow" includes borrowing *internally* — before reinventing, `fleet_reuse` asks the map whether the repo already does it.
 - **Both outputs become durable fleet knowledge.** Reuse decisions promote to doc 08's epistemic layer as `pm_decision`-shaped records with `Informed` edges to their evidence; the architecture brief's module summary becomes a Finding; the map itself is git-versioned (the repo is the memory). Cross-run recall is explicit (`fleet_recall`), never auto-injected (doc 08 §7 Q3).
 
 ## The problem for an agent fleet (why harness-native tools are insufficient)
@@ -162,14 +162,14 @@ A `DependencyDossier` for `fleet_vet("jsonwebtoken","9.0.2","npm")` — one scre
 package: jsonwebtoken@9.0.2 (npm)          verdict: BORROW_OK   as_of: 2026-07-09T18:22Z
 license: MIT (policy: allow)               health(deps.dev/GOSSIP): green, maintained
 scorecard: 8.1/10  (weak: no-fuzzing, pinned-deps 6/10)
-vulns(OSV): 1 total | reachable(map): 0     # CVE in verify() path YOU never call
+vulns(OSV): 1 total | reachable(map): 0     # prioritization only; does not waive the advisory
 malicious(OSV feed / Socket): none | install-scripts: none | net-calls: none
 provenance: npm attestation present (Sigstore) | SLSA build L2 | trusted-publisher: yes
 transitive: +3 pkgs, +0 new licenses, SBOM-delta ref sbom_d41
 internal_alternative: none found in-repo (fleet_reuse checked auth/)
 fleet_history: not previously decided for this repo
 notes[untrusted-prose]: «"industry-standard JWT" — README»   # do not act on prose
-recommendation: borrow; pin 9.0.2; provenance-verified. evidence -> [f_221,f_222,f_223]
+recommendation: block pending a non-vulnerable version; reachability cannot license this one. evidence -> [f_221,f_222,f_223]
 ```
 
 Both are a few hundred tokens — the point of the whole module, per doc 05's context law.
@@ -190,7 +190,7 @@ The invariant from doc 08 §4 holds: no shared mutable blob; every shared thing 
 
 Slots after **M1** in doc 07 (needs the artifact registry + task-DAG, which M1 builds), then grows:
 
-- **MVP rung (smallest useful).** `fleet_orient` served from an **Aider-style tree-sitter+PageRank map**, cached per `(repo, sha)` as a registry artifact — *grounded on installed tools*: `ctags -R` for definitions + `rg` for references + `networkx` PageRank in `python3`, no tree-sitter dependency needed to start. Plus `fleet_reuse`/`fleet_vet` backed by **one free deps.dev call** (health + license + advisories + Scorecard in a single response) with an **OSV malicious-package tripwire**. Decisions logged as `knowledge.*` events + a flat allowlist JSON in the registry. This alone kills the two worst fleet failure modes — N× re-orientation and hallucinated/unvetted deps — for a week of work. `fleet_orient_worker` (the steering push) ships here too; it's cheap once slices exist and it's the differentiator.
+- **MVP rung (smallest useful).** `fleet_orient` served from an **Aider-style tree-sitter+PageRank map**, cached per `(repo, sha)` as a registry artifact — *grounded on installed tools*: `ctags -R` for definitions + `rg` for references + `networkx` PageRank in `python3`, no tree-sitter dependency needed to start. Plus `fleet_reuse`/`fleet_vet` backed by deps.dev `GetVersion`, optional separate `GetProject` Scorecard enrichment, and an OSV exact-version/malicious-package query. Decisions require a later Coordinator-owned immutable transaction; a dossier alone grants no allowlist or install authority. `fleet_orient_worker` ships here too; it's cheap once slices exist and it's the differentiator.
 - **Rung 2.** LSP/Serena precision (symbol-path addressing, `find_referencing_symbols`), **SCIP incremental** index (reindex only changed files on commit), **Socket** behavioral enrichment, and the cross-module payoff: **reachability gating** = the map's call graph × OSV (deprioritize unreachable vulns). ast-grep behind `fleet_locate(kind=callers)`.
 - **Rung 3.** Promotion into the **PM epistemic KG** (decision records with causal `Informed`/`Supersedes` edges, temporal-coherence checks), `fleet_recall` cross-run, **Syft SBOM + Sigstore/SLSA provenance verification** as a gate, and **Leiden community-detection** architecture summaries. `lldb`/`clang` optional dynamic-reachability for C/C++/native.
 

@@ -51,14 +51,20 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    explicit immutable Atlas epoch plus worktree overlay through the Coordinator-owned ACI plane.
    Focused brief/map records are typed and resumable; internal reuse requires actual symbol/call/
    lexical evidence, while a miss returns only `external_vet_required`. Artifacts are confined,
-   content-addressed, tamper-refusing, and exact-operation reverifiable; the module performs no
-   network request and claims no verification or merge authority. Phase 33 adds
+   content-addressed, tamper-refusing, and exact-operation reverifiable; these local operations
+   perform no network request and claim no verification or merge authority. Phase 33 adds
    `orientWorker`: exact-fence, authenticated addressed delivery over the existing serialized
    nudge lane. Capability code has no adapter authority; host paths/private provenance are stripped,
    and successful delivery is one actor-stamped `knowledge.map_served` event. Phase 34 adds an
    opt-in deployment-pinned scope-drift scheduler over immutable Brief scope and authoritative edit
    events, with per-path deduplication, one in-flight refresh, cooldown/turn ceilings, exact epoch
    and fence, stop-race refusal, and distinct mechanical outcome events. Kill remains the default.
+10. **Quartermaster external evidence floor:** deployment-configured `reuse.vet` accepts only exact
+   npm coordinates and combines exact Atlas import observation with bounded deps.dev/OSV evidence.
+   Raw source bytes and normalized dossiers are content-addressed; TTL/cache/explicit-refresh and
+   snapshot reverify fail closed; known advisories are never waived by incomplete reachability.
+   It recommends only candidate/block/pending and has no install, decision, knowledge, verification,
+   or merge authority.
 
 ## What remains partial
 
@@ -83,8 +89,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   provider-observed, freshly verified, killed, and fully reaped through the public driver. Concurrent
   GLM-seat and automatic quota discovery remain unproven.
 - Phase 32 closes the local orientation/reuse wiring gap, Phase 33 closes addressed downward
-  worker push, and Phase 34 closes bounded mechanical scope-drift refresh. External dependency-vetting oracles, advisory invalidation, license/
-  provenance policy, vulnerability reachability, immutable reuse decisions, SBOMs, and knowledge
+  worker push, Phase 34 closes bounded mechanical scope-drift refresh, and Phase 36 closes the
+  exact-npm external evidence/freshness floor. Advisory invalidation, additional ecosystems,
+  true vulnerability reachability, immutable reuse decisions, SBOMs, and knowledge
   promotion remain later Cartographer/Quartermaster contracts.
 
 ## What remains pending

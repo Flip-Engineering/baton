@@ -438,6 +438,20 @@ concurrent stop retains terminal authority. Mock now waits before announcing a t
 duplicate the coordinator's failure. This does not auto-stash, retry, broaden repository authority,
 or delete resume-owned context.
 
+Phase 36 ships Quartermaster's external evidence/freshness floor without claiming complete supply-
+chain authority. `reuse.vet` is advertised only with deployment-injected oracle and policy. The
+dependency-free public adapter accepts exact npm package+SemVer coordinates, uses fixed HTTPS
+deps.dev GetVersion plus OSV QueryVersion and optional deps.dev GetProject, refuses redirect/
+timeout/cancellation/schema/pagination/byte/advisory/coordinate failures, and privately persists
+each raw response by digest. The bounded dossier excludes third-party prose, conservatively blocks
+known advisories/malicious packages and denied policy facts, marks missing evidence pending, caches
+only by exact epoch/overlay/coordinate/policy until TTL, requires explicit refresh after expiry,
+and snapshot-reverifies without network. Atlas contributes only npm import observation; it cannot
+claim vulnerable-function reachability or waive an advisory. Actual `@ast-grep/napi@0.44.1`
+deps.dev+OSV evidence passes the live ACI proof. Exact-lockfile SBOM, immutable decision/promotion,
+advisory invalidation, true reachability, optional Socket, and independent Sigstore verification
+remain ordered later rungs.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**

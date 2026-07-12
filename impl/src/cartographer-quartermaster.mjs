@@ -41,6 +41,13 @@ const briefItem = (item) => {
     detailTruncated: item.symbols.length > 64 || item.imports.length > 64 || item.calls.length > 64,
   };
 };
+const artifactType = (op) => op === 'reuse.vet'
+  ? { kind: 'dependency-dossier', mediaType: 'application/vnd.baton.dependency-dossier+json' }
+  : { kind: 'orientation-reuse', mediaType: 'application/vnd.baton.orientation-reuse+json' };
+const exactList = (value, field) => {
+  if (!Array.isArray(value) || value.length > 256 || value.some((item) => typeof item !== 'string' || item.length === 0 || Buffer.byteLength(item) > 256 || item.includes('\0'))) throw new TypeError(`${field} must be a bounded string[]`);
+  return [...new Set(value)].sort();
+};
 
 export class CartographerQuartermaster {
   constructor(opts = {}) {
@@ -50,6 +57,22 @@ export class CartographerQuartermaster {
     if (typeof opts.atlas.resultRoot !== 'string' || opts.atlas.resultRoot.length === 0) throw new TypeError('Cartographer/Quartermaster requires Atlas resultRoot');
     this.atlasResultRoot = realpathSync(opts.atlas.resultRoot);
     const artifactRoot = resolve(opts.artifactRoot); mkdirSync(artifactRoot, { recursive: true, mode: 0o700 }); this.artifactRoot = realpathSync(artifactRoot);
+    this.externalOracle = opts.externalOracle ?? null;
+    this.vetPolicy = null;
+    if (this.externalOracle !== null) {
+      if (typeof this.externalOracle?.vet !== 'function' || typeof this.externalOracle?.verifySources !== 'function') throw new TypeError('externalOracle must implement vet() and verifySources()');
+      const policy = opts.vetPolicy;
+      if (!policy || !Number.isSafeInteger(policy.ttlMs) || policy.ttlMs <= 0
+        || (policy.minScorecard !== undefined && (!Number.isFinite(policy.minScorecard) || policy.minScorecard < 0 || policy.minScorecard > 10))
+        || (policy.requireProviderVerifiedProvenance !== undefined && typeof policy.requireProviderVerifiedProvenance !== 'boolean')
+        || (policy.blockDeprecated !== undefined && typeof policy.blockDeprecated !== 'boolean')) throw new TypeError('external vet requires deployment ttl/license/scorecard/provenance policy');
+      const licenseAllow = exactList(policy.licenseAllow ?? [], 'licenseAllow');
+      const licenseDeny = exactList(policy.licenseDeny ?? [], 'licenseDeny');
+      if (licenseAllow.some((license) => licenseDeny.includes(license))) throw new TypeError('license allow/deny policy overlaps');
+      this.vetPolicy = Object.freeze({ ttlMs: policy.ttlMs, licenseAllow, licenseDeny, minScorecard: policy.minScorecard ?? null, requireProviderVerifiedProvenance: policy.requireProviderVerifiedProvenance ?? false, blockDeprecated: policy.blockDeprecated ?? true });
+      this.vetPolicyHash = sha(stable(this.vetPolicy));
+      this.vetCache = new Map();
+    }
   }
 
   card() {
@@ -58,9 +81,10 @@ export class CartographerQuartermaster {
       ops: {
         'orientation.slice': { latency_class: 'interactive', deterministic: true, side_effects: ['content_addressed_artifact'], reverifiable: true },
         'reuse.internal': { latency_class: 'interactive', deterministic: true, side_effects: ['content_addressed_artifact'], reverifiable: true },
+        ...(this.externalOracle ? { 'reuse.vet': { latency_class: 'bounded_batch', deterministic: false, side_effects: ['external_api', 'content_addressed_artifact'], reverifiable: 'fresh_observation' } } : {}),
       },
       underlying: ['atlas-index:code.seed', 'atlas-index:repo.map'],
-      limitations: ['Rung 0 supports brief/map orientation and internal reuse only', 'no external package vet, auto-install, SBOM, reachability gate, worker push, or semantic prose'],
+      limitations: [this.externalOracle ? 'External dossier is fail-closed and package-level; import observation is not vulnerable-function reachability' : 'External vet is not deployment-configured', 'no auto-install, SBOM, immutable reuse decision, true vulnerability reachability, or third-party prose'],
     };
   }
 
@@ -99,7 +123,9 @@ export class CartographerQuartermaster {
   }
 
   _loadArtifact(ref, expectedOp = null) {
-    if (!ref || ref.kind !== 'orientation-reuse' || ref.mediaType !== 'application/vnd.baton.orientation-reuse+json'
+    const expectedType = expectedOp === null ? null : artifactType(expectedOp);
+    const knownType = [artifactType('orientation.slice'), artifactType('reuse.vet')].find((candidate) => candidate.kind === ref?.kind && candidate.mediaType === ref?.mediaType);
+    if (!ref || !knownType || (expectedType && (ref.kind !== expectedType.kind || ref.mediaType !== expectedType.mediaType))
       || !/^[a-f0-9]{64}$/.test(ref.digest ?? '') || ref.handle !== `art:sha256:${ref.digest}`) throw typed('orientation artifact reference invalid', 'artifact_integrity');
     const expected = join(this.artifactRoot, `${ref.digest}.json`); let path;
     try { path = realpathSync(ref.path); } catch { throw typed('orientation artifact unavailable', 'artifact_integrity'); }
@@ -111,14 +137,19 @@ export class CartographerQuartermaster {
     return document;
   }
 
-  _result(document, ctx, started) {
+  _result(document, ctx, started, runtimeProvenance = {}) {
     const artifact = this._write(document); const payload = bounded(document.items, ctx.budgetTokens); const truncated = payload.length < document.items.length;
+    const type = artifactType(document.op);
+    const sourceRefs = document.op === 'reuse.vet' && Array.isArray(document.items?.[0]?.sources)
+      ? document.items[0].sources.map((source) => ({ kind: 'supply-chain-source', handle: source.handle, digest: source.digest, bytes: source.bytes, mediaType: source.mediaType }))
+      : [];
+    const resumable = document.op !== 'reuse.vet';
     return Object.freeze({
-      op: document.op, status: truncated ? 'needs_resume' : 'ok', summary: document.summary, payload,
-      refs: [{ kind: 'orientation-reuse', handle: `art:sha256:${artifact.digest}`, digest: artifact.digest, bytes: artifact.bytes, path: artifact.path, mediaType: 'application/vnd.baton.orientation-reuse+json' }],
-      ...(truncated ? { cursor: `orientation:${artifact.digest}:${payload.length}` } : {}),
-      cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), wall_ms: Math.max(0, this.now() - started), usd: 0, underlying: 'atlas-index:orientation-reuse-r0' },
-      provenance: { ...document.provenance, artifactDigest: artifact.digest, deterministic: true, mergeAuthority: false, verificationAuthority: false },
+      op: document.op, status: truncated ? (resumable ? 'needs_resume' : 'partial') : 'ok', summary: document.summary, payload,
+      refs: [{ kind: type.kind, handle: `art:sha256:${artifact.digest}`, digest: artifact.digest, bytes: artifact.bytes, path: artifact.path, mediaType: type.mediaType }, ...sourceRefs],
+      ...(truncated && resumable ? { cursor: `orientation:${artifact.digest}:${payload.length}` } : {}),
+      cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), wall_ms: Math.max(0, this.now() - started), usd: 0, underlying: document.provenance.underlying ?? 'atlas-index:orientation-reuse-r0' },
+      provenance: { ...document.provenance, ...runtimeProvenance, artifactDigest: artifact.digest, deterministic: document.provenance.deterministic ?? true, mergeAuthority: false, verificationAuthority: false },
     });
   }
 
@@ -159,6 +190,58 @@ export class CartographerQuartermaster {
       return this._result({ schemaVersion: 1, op, query: { need, indexEpoch: args.indexEpoch }, summary: candidates.length > 0 ? `${candidates.length} internal reuse candidates` : 'no internal match; external vet required', items: [verdict],
         provenance: { index_epoch: innerResult.provenance.index_epoch, overlay_digest: innerResult.provenance.overlay_digest ?? null, staleness: innerResult.provenance.staleness, atlasArtifactDigest: ref.digest, externalLookup: false } }, ctx, started);
     }
+    if (op === 'reuse.vet' && this.externalOracle) {
+      const ecosystem = normalizedText(args.ecosystem, 'invalid_package_identity').toLowerCase();
+      const packageName = normalizedText(args.package, 'invalid_package_identity');
+      const version = normalizedText(args.version, 'invalid_package_identity');
+      if (args.refresh !== undefined && typeof args.refresh !== 'boolean') throw typed('refresh must be boolean', 'invalid_package_identity');
+      const innerResult = await this.atlas.invoke('repo.map', { indexEpoch: args.indexEpoch }, ctx); this._abort(ctx);
+      const { full, ref } = this._inner(innerResult);
+      for (const item of full.items) if (!item || typeof item.path !== 'string' || !stringArray(item.imports)) throw typed('Atlas map item schema mismatch', 'orientation_source_integrity');
+      const usage = ecosystem === 'npm'
+        ? (full.items.some((item) => item.imports.some((entry) => entry === packageName || entry.startsWith(`${packageName}/`))) ? 'import_observed' : 'not_observed')
+        : 'unknown';
+      const cacheKey = sha(stable({ ecosystem, package: packageName, version, indexEpoch: innerResult.provenance.index_epoch, overlayDigest: innerResult.provenance.overlay_digest ?? null, policyHash: this.vetPolicyHash }));
+      const cached = this.vetCache.get(cacheKey);
+      if (cached && args.refresh !== true) {
+        const expiresAtMs = Date.parse(cached.items[0].expiresAt);
+        if (this.now() < expiresAtMs) return this._result(cached, ctx, started, { cache: 'hit' });
+        const prior = cached.items[0];
+        const recommendation = prior.recommendation === 'block' ? 'block' : 'blocked_pending_vet';
+        const policy = { ...prior.policy, unknown: [...new Set([...prior.policy.unknown, 'evidence_expired'])].sort() };
+        const facts = { identity: prior.identity, packageFacts: prior.packageFacts, advisories: prior.advisories, advisoryIds: prior.advisoryIds, project: prior.project, sources: prior.sources, usage: prior.usage, policy, recommendation };
+        const dossier = { ...facts, factDigest: sha(stable(facts)), asOf: prior.asOf, expiresAt: prior.expiresAt, staleAt: new Date(this.now()).toISOString() };
+        const stale = { ...cached, summary: `${prior.identity.package}@${prior.identity.version}: ${recommendation} (evidence expired)`, items: [dossier], provenance: { ...cached.provenance, evidenceStale: true } };
+        return this._result(stale, ctx, started, { cache: 'stale' });
+      }
+      const observation = await this.externalOracle.vet({ ecosystem, package: packageName, version }, ctx); this._abort(ctx);
+      if (!observation || observation.schemaVersion !== 1 || !observation.requested || !observation.resolved || !observation.packageFacts
+        || !Array.isArray(observation.packageFacts.licenses) || !Array.isArray(observation.advisories) || !Array.isArray(observation.advisoryIds)
+        || !Array.isArray(observation.sources) || observation.sources.some((source) => typeof source?.source !== 'string' || !/^[a-f0-9]{64}$/.test(source?.digest ?? '') || source?.handle !== `art:sha256:${source.digest}` || source?.mediaType !== 'application/json' || !Number.isSafeInteger(source?.bytes))) throw typed('external oracle schema mismatch', 'oracle_schema_invalid');
+      const licenses = [...new Set(observation.packageFacts.licenses)].sort();
+      const license = licenses.some((value) => this.vetPolicy.licenseDeny.includes(value)) ? 'deny'
+        : licenses.length > 0 && licenses.every((value) => this.vetPolicy.licenseAllow.includes(value)) ? 'allow' : 'unknown';
+      const malicious = observation.advisories.some((advisory) => advisory.malicious === true);
+      const score = observation.project?.scorecard?.overallScore;
+      const blocked = [];
+      if (malicious) blocked.push('known_malicious_package');
+      if (observation.advisoryIds.length > 0) blocked.push('known_vulnerability');
+      if (license === 'deny') blocked.push('license_denied');
+      if (this.vetPolicy.blockDeprecated && observation.packageFacts.deprecated === true) blocked.push('deprecated');
+      if (this.vetPolicy.minScorecard !== null && Number.isFinite(score) && score < this.vetPolicy.minScorecard) blocked.push('scorecard_below_policy');
+      const unknown = [];
+      if (license === 'unknown') unknown.push(licenses.length === 0 ? 'license_unknown' : 'license_not_allowlisted');
+      if (this.vetPolicy.minScorecard !== null && !Number.isFinite(score)) unknown.push('scorecard_unknown');
+      if (this.vetPolicy.requireProviderVerifiedProvenance && observation.packageFacts.providerVerifiedAttestations < 1) unknown.push('provider_verified_provenance_missing');
+      const recommendation = blocked.length > 0 ? 'block' : unknown.length > 0 ? 'blocked_pending_vet' : 'borrow_candidate';
+      const asOfMs = this.now(); const asOf = new Date(asOfMs).toISOString(); const expiresAt = new Date(asOfMs + this.vetPolicy.ttlMs).toISOString();
+      const facts = { identity: observation.resolved, packageFacts: observation.packageFacts, advisories: observation.advisories, advisoryIds: observation.advisoryIds, project: observation.project, sources: observation.sources, usage: { status: usage, claim: 'repository_import_observation_only' }, policy: { hash: this.vetPolicyHash, license, blocked, unknown }, recommendation };
+      const dossier = { ...facts, factDigest: sha(stable(facts)), asOf, expiresAt };
+      const document = { schemaVersion: 1, op, query: { ecosystem, package: packageName, version, indexEpoch: args.indexEpoch }, summary: `${observation.resolved.package}@${observation.resolved.version}: ${recommendation}`, items: [dossier],
+        provenance: { index_epoch: innerResult.provenance.index_epoch, overlay_digest: innerResult.provenance.overlay_digest ?? null, staleness: innerResult.provenance.staleness, atlasArtifactDigest: ref.digest, externalLookup: true, evidenceAsOf: asOf, evidenceExpiresAt: expiresAt, policyHash: this.vetPolicyHash, cacheIdentity: cacheKey, underlying: 'deps.dev+osv.dev+atlas-import-observation', deterministic: false } };
+      this.vetCache.set(cacheKey, document);
+      return this._result(document, ctx, started, { cache: 'miss' });
+    }
     throw typed(`unsupported orientation/reuse op ${op}`, 'unsupported_op');
   }
 
@@ -167,6 +250,7 @@ export class CartographerQuartermaster {
     const match = /^orientation:([a-f0-9]{64}):(\d+)$/.exec(cursor ?? '');
     if (!match || match[1] !== ref?.digest || ref?.handle !== `art:sha256:${match[1]}`) throw typed('orientation cursor mismatch', 'invalid_cursor');
     const document = this._loadArtifact(ref);
+    if (document.op === 'reuse.vet') throw typed('dependency dossier is ref-addressed, not cursor-resumable', 'capability_resume_unavailable');
     const offset = Number(match[2]); if (!Number.isSafeInteger(offset) || offset < 0 || offset > document.items.length) throw typed('orientation cursor offset invalid', 'invalid_cursor');
     const payload = bounded(document.items.slice(offset), ctx.budgetTokens); const next = offset + payload.length; const truncated = next < document.items.length;
     return Object.freeze({ op: document.op, status: truncated ? 'needs_resume' : 'ok', summary: document.summary, payload, refs: [ref], ...(truncated ? { cursor: `orientation:${match[1]}:${next}` } : {}),
@@ -176,7 +260,15 @@ export class CartographerQuartermaster {
   async reverify(claim, op, args, ctx) {
     if (claim?.op !== op) return { ok: false, reason: 'operation_mismatch' };
     try {
-      this._loadArtifact(claim?.refs?.[0], op);
+      const prior = this._loadArtifact(claim?.refs?.[0], op);
+      if (op === 'reuse.vet') {
+        if (prior.provenance?.policyHash !== this.vetPolicyHash || Date.parse(prior.provenance?.evidenceExpiresAt ?? '') <= this.now()) return { ok: false, reason: prior.provenance?.policyHash !== this.vetPolicyHash ? 'policy_mismatch' : 'evidence_expired' };
+        const dossier = prior.items[0] ?? {};
+        const sources = await this.externalOracle.verifySources(dossier.sources);
+        if (!sources?.ok) return { ok: false, reason: sources?.reason ?? 'source_integrity' };
+        const { factDigest, asOf, expiresAt, staleAt, ...facts } = dossier; void asOf; void expiresAt; void staleAt;
+        return { ok: /^[a-f0-9]{64}$/.test(factDigest ?? '') && sha(stable(facts)) === factDigest, observedDigest: claim?.refs?.[0]?.digest ?? null, observedFactDigest: factDigest ?? null };
+      }
       const rerun = await this.invoke(op, args, ctx);
       return { ok: rerun.refs[0].digest === claim?.refs?.[0]?.digest, observedDigest: rerun.refs[0].digest };
     } catch (error) { return { ok: false, reason: error?.code ?? 'reverify_failed' }; }
