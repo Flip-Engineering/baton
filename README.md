@@ -21,7 +21,7 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **796/796
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **797/797
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
@@ -42,7 +42,7 @@ contexts cannot override actor, budget, repository root, or cancellation, and ca
 cannot claim verification or merge authority. Phase 30 also live-proves the credentialed GLM leg:
 exact `glm-4.7` at native `low` effort was provider-observed, freshly verified, normally killed,
 and fully reaped without disclosing the ignored local key. The current canonical suite is
-**796/796 green**.
+**797/797 green**.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 

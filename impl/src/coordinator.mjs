@@ -4,8 +4,8 @@
 // trust gate. See spec/IMPLEMENTATION.md (CLUSTER 1 — CORE) and spec/RECONCILIATION.md
 // (D1/D9/D10/D11), which is authoritative over any conflicting cluster spec.
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join, relative } from 'node:path';
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Cursor } from './log.mjs';
 import { createBrief, createDigest, wrapFact, wrapProse } from './messages.mjs';
 import { resolveEffort, routeTupleKey } from './route-tuple.mjs';
@@ -80,6 +80,18 @@ export class DependencyCycleError extends Error {
     super(message);
     this.name = 'DependencyCycleError';
   }
+}
+
+function canonicalActionPath(path) {
+  let existing = resolve(path); const suffix = [];
+  while (!existsSync(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) return resolve(path);
+    suffix.unshift(basename(existing));
+    existing = parent;
+  }
+  try { return resolve(realpathSync(existing), ...suffix); }
+  catch { return resolve(path); }
 }
 
 // SC13: cancellation is terminal too. No late spawn/delivery/turn continuation may revive it.
@@ -1967,7 +1979,7 @@ export class Coordinator {
     if (typeof path !== 'string' || path.length === 0) return null;
     if (!isAbsolute(path)) return path.replace(/^\.\//, '');
     if (!handle.worktree) return path;
-    const rel = relative(handle.worktree, path);
+    const rel = relative(canonicalActionPath(handle.worktree), canonicalActionPath(path));
     return rel.startsWith('..') || isAbsolute(rel) ? path : rel;
   }
 

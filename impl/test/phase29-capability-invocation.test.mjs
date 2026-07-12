@@ -152,10 +152,14 @@ test('CI3: cards advertise action support and quarantine task-class ops from syn
     }),
     cancel: async () => {},
   });
-  const card = registry(capability).cards()[0];
+  const subject = registry(capability); const card = subject.cards()[0];
   assert.deepEqual(card.actions, { invoke: true, resume: true, reverify: true, cancel: true });
   assert.deepEqual(card.northbound, { inlineOps: ['fixture.read'], taskOpsRequiringTaskPlane: ['fixture.build'] });
-  await assert.rejects(registry(capability).invoke('fixture', 'fixture.build', {}, { budgetTokens: 100 }), (error) => error.code === 'capability_task_requires_task_plane');
+  const ctx = { budgetTokens: 100 };
+  await assert.rejects(subject.invoke('fixture', 'fixture.build', {}, ctx), (error) => error.code === 'capability_task_requires_task_plane');
+  await assert.rejects(subject.resume('fixture', 'fixture.build', { digest: 'a'.repeat(64) }, 'next', ctx), (error) => error.code === 'capability_task_requires_task_plane');
+  await assert.rejects(subject.reverify('fixture', 'fixture.build', { digest: 'a'.repeat(64) }, {}, ctx), (error) => error.code === 'capability_task_requires_task_plane');
+  assert.deepEqual(capability.calls, [], 'task-class actions must refuse before any capability effect');
   assert.throws(() => registry(fixture({ card: () => ({ name: 'fixture', ops: { bad: { latency_class: 'task', interruptible: false } } }) })), /invalid capability card/);
 });
 

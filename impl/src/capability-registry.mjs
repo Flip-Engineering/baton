@@ -84,7 +84,10 @@ export class CapabilityRegistry {
   }
   cards() { if (this.recordFailure) throw this.recordFailure; return [...this.entries].sort(([a], [b]) => a.localeCompare(b)).map(([name, entry]) => Object.freeze({ ...json(entry.card), name })); }
   _entry(name) { const entry = this.entries.get(name); if (!entry) throw typed('unknown capability', 'capability_not_found'); return entry; }
-  _op(entry, op) { if (typeof op !== 'string' || !Object.hasOwn(entry.card.ops, op)) throw typed('operation not advertised by capability', 'capability_op_unavailable'); }
+  _op(entry, op) {
+    if (typeof op !== 'string' || !Object.hasOwn(entry.card.ops, op)) throw typed('operation not advertised by capability', 'capability_op_unavailable');
+    if (entry.card.northbound.taskOpsRequiringTaskPlane.includes(op)) throw typed('task-class capability operation requires the durable task plane', 'capability_task_requires_task_plane');
+  }
   _actor(ctx = {}) {
     const actor = ctx.actor ?? 'orchestrator';
     if (typeof actor !== 'string' || actor.length === 0 || actor.length > 256) throw typed('capability actor invalid', 'capability_actor_invalid');
@@ -136,7 +139,6 @@ export class CapabilityRegistry {
   async invoke(name, op, args, ctx) {
     return this._run('invoke', name, op, (safe) => {
       const entry = this._entry(name); this._op(entry, op);
-      if (entry.card.northbound.taskOpsRequiringTaskPlane.includes(op)) throw typed('task-class capability operation requires the durable task plane', 'capability_task_requires_task_plane');
       if (!record(args ?? {}) || !jsonValue(args ?? {}) || Buffer.byteLength(JSON.stringify(args ?? {})) > this.maxEnvelopeBytes) throw typed('capability arguments must be a bounded JSON object', 'capability_args_invalid');
       return entry.capability.invoke(op, json(args ?? {}), this._capabilityCtx(entry, { action: 'invoke', op, args: args ?? {} }, safe));
     }, ctx);

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -39,7 +39,7 @@ function system(ad, opts = {}) {
   const c = new Coordinator({
     log, coordination: coordinationForLog(log), fences: new FenceTable(), adapters: { stub: ad },
     worktrees: {
-      create: async (taskId) => ({ path: `/tmp/${taskId}` }), capture: async () => ({ sha: 'x' }),
+      create: async (taskId) => ({ path: opts.worktreePath ?? `/tmp/${taskId}` }), capture: async () => ({ sha: 'x' }),
       createVerifyWorktree: async () => ({ path: tmpdir() }), removeVerifyWorktree: async () => {},
       remove: async () => {}, reconcile: async () => {},
     },
@@ -133,6 +133,17 @@ test('GV4/GV5: an absolute edited path outside scope kills once', async () => {
   ad.emit(h.id, 'content.file_edit', { path: '/tmp/outside/secret.txt' });
   assert.equal(ad.calls.kill, 1);
   assert.equal(log.read(h.id).filter((event) => event.kind === 'health.scope_violation').length, 1);
+});
+
+test('GV4/GV5: canonical filesystem aliases do not fabricate an out-of-scope kill', async () => {
+  const worktree = mkdtempSync('/tmp/baton-gv-path-alias-');
+  mkdirSync(join(worktree, 'src')); writeFileSync(join(worktree, 'src', 'ok.mjs'), 'export const ok = true;\n');
+  const ad = adapter();
+  const { c, log } = system(ad, { watchdog: { stallMs: 0 }, worktreePath: worktree });
+  const h = await c.spawn('stub', brief());
+  ad.emit(h.id, 'content.file_edit', { path: join(realpathSync(worktree), 'src', 'ok.mjs') });
+  assert.equal(ad.calls.kill, 0);
+  assert.equal(log.read(h.id).some((event) => event.kind === 'health.scope_violation'), false);
 });
 
 test('GV4/GV5: an empty path scope is unscoped and does not invent a violation', async () => {
