@@ -1,0 +1,59 @@
+{
+  "at": "2026-07-12T00:47:59.197Z",
+  "workerId": "w-1",
+  "pid": 90621,
+  "result": {
+    "ready": true,
+    "status": "failed",
+    "verdict": null,
+    "vendor": "codex",
+    "harnessRequested": "codex",
+    "harnessResolved": "codex@codex-cli 0.144.1",
+    "modelRequested": "gpt-5.6-sol",
+    "modelResolved": "gpt-5.6-sol",
+    "modelObserved": "gpt-5.6-sol",
+    "modelMismatch": null,
+    "effortRequested": "low",
+    "effortResolved": "low",
+    "effortObserved": null,
+    "effortMismatch": null,
+    "routeKey": "[\"codex\",\"codex-cli 0.144.1\",\"gpt-5.6-sol\",\"low\",\"openai\",\"review\"]",
+    "sessionRequest": {
+      "mode": "new"
+    },
+    "sessionRef": {
+      "vendor": "codex",
+      "kind": "thread",
+      "id": "019f53cb-8d1e-7fc1-ab29-7a6a342044c4",
+      "persistence": "native",
+      "source": "wire"
+    },
+    "sessionContext": {
+      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-mcp-northbound-review",
+      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "baseSha": "0c574aa23687216f92d6714205aca0563f29d317",
+      "branch": "baton/codex-mcp-northbound-review",
+      "ownerTaskId": "codex-mcp-northbound-review"
+    },
+    "lineage": null,
+    "review": null,
+    "integration": null,
+    "publication": null,
+    "retainedResultRef": null
+  },
+  "integration": null,
+  "checks": {
+    "noHarnessError": false,
+    "exactTupleHonest": true,
+    "freshVerified": false,
+    "integrated": false,
+    "integrationIntent": false,
+    "killConfirmed": true,
+    "processGone": true,
+    "worktreeGone": true,
+    "runtimeGone": true,
+    "branchGone": true
+  },
+  "fatal": "Error: review failed {\"ready\":true,\"status\":\"failed\",\"verdict\":null,\"vendor\":\"codex\",\"harnessRequested\":\"codex\",\"harnessResolved\":\"codex@codex-cli 0.144.1\",\"modelRequested\":\"gpt-5.6-sol\",\"modelResolved\":\"gpt-5.6-sol\",\"modelObserved\":\"gpt-5.6-sol\",\"modelMismatch\":null,\"effortRequested\":\"low\",\"effortResolved\":\"low\",\"effortObserved\":null,\"effortMismatch\":null,\"routeKey\":\"[\\\"codex\\\",\\\"codex-cli 0.144.1\\\",\\\"gpt-5.6-sol\\\",\\\"low\\\",\\\"openai\\\",\\\"review\\\"]\",\"sessionRequest\":{\"mode\":\"new\"},\"sessionRef\":{\"vendor\":\"codex\",\"kind\":\"thread\",\"id\":\"019f53cb-8d1e-7fc1-ab29-7a6a342044c4\",\"persistence\":\"native\",\"source\":\"wire\"},\"sessionContext\":{\"worktree\":\"/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-mcp-northbound-review\",\"repoRoot\":\"/Users/wahargis/Development/Experiments/baton\",\"baseSha\":\"0c574aa23687216f92d6714205aca0563f29d317\",\"branch\":\"baton/codex-mcp-northbound-review\",\"ownerTaskId\":\"codex-mcp-northbound-review\"},\"lineage\":null,\"review\":null,\"integration\":null,\"publication\":null,\"retainedResultRef\":null}\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase16-mcp-review-2026-07-11/run.mjs:84:44\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
+  "pass": false
+}

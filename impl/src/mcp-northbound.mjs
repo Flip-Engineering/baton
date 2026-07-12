@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { once } from 'node:events';
 
 const PROTOCOL_VERSION = '2025-11-25';
 const CAPABILITY = Object.freeze({
@@ -8,6 +7,9 @@ const CAPABILITY = Object.freeze({
 });
 const STATEFUL = new Set(['fleet_spawn', 'fleet_send', 'fleet_respond', 'fleet_interrupt', 'fleet_kill']);
 const FENCED = new Set(['fleet_send', 'fleet_interrupt', 'fleet_kill']);
+const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
+const SESSION_FIELDS = new Set(['mode', 'id', 'lastTurnId', 'context']);
+const SESSION_CONTEXT_FIELDS = new Set(['worktree', 'repoRoot', 'baseSha', 'branch', 'ownerTaskId']);
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization|userId|sessionId|capabilities|repoIds)$/i;
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,256}$/;
 
@@ -32,6 +34,12 @@ function toolResult(value, isError = false) {
   return Object.freeze({ content: Object.freeze([{ type: 'text', text: JSON.stringify(structuredContent) }]), structuredContent: Object.freeze(structuredContent), isError });
 }
 function toolError(code) { return toolResult({ ok: false, error: { code } }, true); }
+function stateFailureCode(cause) {
+  if (cause?.mcpCode === 'stale_fence') return 'stale_fence';
+  if (['ModelSelectionError', 'SessionSelectionError', 'DuplicateTaskIdError', 'UnknownVendorError', 'DependencyCycleError', 'TypeError'].includes(cause?.name)) return 'invalid_command';
+  if (cause?.name === 'WorkerNotFoundError') return 'not_found';
+  return 'command_outcome_unknown';
+}
 function protocolResult(id, result) { return { jsonrpc: '2.0', id, result }; }
 function protocolError(id, code, message, data) {
   if (id === undefined) return null;
@@ -41,11 +49,12 @@ function schema(properties, required = []) {
   return { type: 'object', properties, required, additionalProperties: false };
 }
 const text = { type: 'string', minLength: 1 };
+const textArray = { type: 'array', items: text };
 const repo = { repoId: text };
 const idem = { idempotencyKey: { type: 'string', minLength: 1, maxLength: 256, pattern: '^[A-Za-z0-9._:-]+$' } };
 const fence = { expectedFence: { type: 'integer' } };
 const TOOL_DEFINITIONS = Object.freeze([
-  { name: 'fleet_spawn', description: 'Spawn one Baton worker with independently selected harness, model, and effort.', inputSchema: schema({ ...repo, ...idem, harness: text, model: text, effort: text, modelPolicy: { type: 'object' }, brief: { type: 'object' }, taskId: text, deps: { type: 'array', items: text }, taskType: text, session: { type: 'object' }, refines: text }, ['repoId', 'idempotencyKey', 'harness', 'brief']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_spawn', description: 'Spawn one Baton worker with independently selected harness, model, and effort.', inputSchema: schema({ ...repo, ...idem, harness: text, model: text, effort: text, modelPolicy: schema({ allow: textArray, deny: textArray, prefer: textArray, allowFamilies: textArray, denyFamilies: textArray, reasoningEffort: text, serviceTier: text }), brief: { type: 'object' }, taskId: text, deps: textArray, taskType: text, session: schema({ mode: { type: 'string', enum: ['new', 'resume', 'fork'] }, id: text, lastTurnId: text, context: schema({ worktree: text, repoRoot: text, baseSha: text, branch: text, ownerTaskId: text }, ['worktree']) }), refines: text }, ['repoId', 'idempotencyKey', 'harness', 'brief']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_send', description: 'Send a turn, steer, or nudge to a fenced worker.', inputSchema: schema({ ...repo, ...idem, ...fence, workerId: text, message: text, mode: { type: 'string', enum: ['turn', 'steer', 'nudge'] } }, ['repoId', 'idempotencyKey', 'expectedFence', 'workerId', 'message', 'mode']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_wait', description: 'Wait for fleet events for at most the host-safe bounded interval.', inputSchema: schema({ ...repo, timeoutMs: { type: 'integer', minimum: 0 } }, ['repoId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_respond', description: 'Answer one pending approval or question.', inputSchema: schema({ ...repo, ...idem, requestId: text, answer: {} }, ['repoId', 'idempotencyKey', 'requestId', 'answer']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
@@ -70,7 +79,23 @@ function validateArguments(name, args) {
     if (Object.hasOwn(args, 'model') && !nonempty(args.model)) return 'invalid_model';
     if (Object.hasOwn(args, 'effort') && !nonempty(args.effort)) return 'invalid_effort';
     if (Object.hasOwn(args, 'modelPolicy') && !record(args.modelPolicy)) return 'invalid_model_policy';
+    if (record(args.modelPolicy)) {
+      if (Object.keys(args.modelPolicy).some((key) => !MODEL_POLICY_FIELDS.has(key))) return 'invalid_model_policy';
+      for (const key of ['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies']) {
+        if (Object.hasOwn(args.modelPolicy, key) && (!Array.isArray(args.modelPolicy[key]) || !args.modelPolicy[key].every(nonempty))) return 'invalid_model_policy';
+      }
+      for (const key of ['reasoningEffort', 'serviceTier']) if (Object.hasOwn(args.modelPolicy, key) && !nonempty(args.modelPolicy[key])) return 'invalid_model_policy';
+    }
     if (Object.hasOwn(args, 'deps') && (!Array.isArray(args.deps) || !args.deps.every(nonempty))) return 'invalid_dependencies';
+    if (Object.hasOwn(args, 'session')) {
+      if (!record(args.session) || Object.keys(args.session).some((key) => !SESSION_FIELDS.has(key))) return 'invalid_session';
+      const mode = args.session.mode ?? 'new';
+      if (!['new', 'resume', 'fork'].includes(mode) || (mode !== 'new' && !nonempty(args.session.id))) return 'invalid_session';
+      if (Object.hasOwn(args.session, 'lastTurnId') && (mode !== 'fork' || !nonempty(args.session.lastTurnId))) return 'invalid_session';
+      if (Object.hasOwn(args.session, 'context') && (!record(args.session.context)
+        || Object.keys(args.session.context).some((key) => !SESSION_CONTEXT_FIELDS.has(key))
+        || !nonempty(args.session.context.worktree))) return 'invalid_session';
+    }
   }
   if (['fleet_send', 'fleet_interrupt', 'fleet_result', 'fleet_kill'].includes(name) && !nonempty(args.workerId)) return 'invalid_worker';
   if (name === 'fleet_send' && (!nonempty(args.message) || !['turn', 'steer', 'nudge'].includes(args.mode))) return 'invalid_send';
@@ -92,9 +117,11 @@ export class McpFleetServer {
     this.repoIds = new Set(opts.repoIds ?? []);
     this.now = opts.now ?? Date.now;
     this.maxWaitMs = opts.maxWaitMs ?? 25_000;
+    this.maxMessageBytes = opts.maxMessageBytes;
     this.takeToolQuota = opts.takeToolQuota;
     if (!Number.isSafeInteger(this.maxWaitMs) || this.maxWaitMs <= 0) throw new TypeError('maxWaitMs must be a positive safe integer');
-    this.initialized = false;
+    if (!Number.isSafeInteger(this.maxMessageBytes) || this.maxMessageBytes <= 0) throw new TypeError('maxMessageBytes must be a deployment-derived positive safe integer');
+    this.lifecycle = 'new';
   }
 
   callScope(tool, args) {
@@ -126,13 +153,19 @@ export class McpFleetServer {
     if (!record(message) || message.jsonrpc !== '2.0' || !nonempty(message.method)) return protocolError(message?.id ?? null, -32600, 'Invalid Request');
     const { id, method, params } = message;
     if (method === 'initialize') {
-      if (id === undefined || !record(params) || !nonempty(params.protocolVersion) || !record(params.capabilities) || !record(params.clientInfo)) return protocolError(id, -32602, 'Invalid params');
-      this.initialized = true;
+      if (this.lifecycle !== 'new') return protocolError(id, -32600, 'Invalid Request');
+      if (id === undefined || !record(params) || !nonempty(params.protocolVersion) || !record(params.capabilities)
+        || !record(params.clientInfo) || !nonempty(params.clientInfo.name) || !nonempty(params.clientInfo.version)) return protocolError(id, -32602, 'Invalid params');
+      this.lifecycle = 'initializing';
       return protocolResult(id, { protocolVersion: PROTOCOL_VERSION, capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'baton', version: '0.1.0' } });
     }
-    if (method === 'notifications/initialized') return id === undefined ? null : protocolError(id, -32600, 'Invalid Request');
+    if (method === 'notifications/initialized') {
+      if (id !== undefined) return protocolError(id, -32600, 'Invalid Request');
+      if (this.lifecycle === 'initializing') this.lifecycle = 'ready';
+      return null;
+    }
     if (method === 'ping') return id === undefined ? null : protocolResult(id, {});
-    if (!this.initialized) return protocolError(id, -32002, 'Server not initialized');
+    if (this.lifecycle !== 'ready') return protocolError(id, -32002, 'Server not initialized');
     if (method === 'tools/list') return id === undefined ? null : protocolResult(id, { tools: TOOL_DEFINITIONS.map(clone) });
     if (method !== 'tools/call') return protocolError(id, -32601, 'Method not found');
     if (id === undefined || !record(params) || !nonempty(params.name) || !TOOL_BY_NAME.has(params.name)) return protocolError(id, -32602, 'Invalid params');
@@ -148,7 +181,7 @@ export class McpFleetServer {
       return protocolResult(id, toolError(refused));
     }
     let quota;
-    try { quota = this.takeToolQuota({ userId: this.principal.userId, sessionId: this.principal.sessionId, tool: params.name, repoId: args.repoId }); }
+    try { quota = await this.takeToolQuota({ userId: this.principal.userId, sessionId: this.principal.sessionId, tool: params.name, repoId: args.repoId }); }
     catch { return protocolResult(id, toolError('temporarily_unavailable')); }
     if (!quota?.ok) {
       try { this._audit('tool_rate_limited', params.name, args); } catch { return protocolResult(id, toolError('temporarily_unavailable')); }
@@ -180,8 +213,8 @@ export class McpFleetServer {
     if (admission.result === 'replay') return admission.call.status === 'admitted' ? toolError('call_admitted') : clone(admission.call.outcome);
     let outcome;
     try { outcome = toolResult(await this._dispatch(name, args, actor, callId)); }
-    catch {
-      outcome = toolError('command_failed');
+    catch (cause) {
+      outcome = toolError(stateFailureCode(cause));
       try { this.coordination.failMcpCall(callId, outcome, { actor, key: `mcp.fail:${callId}` }); }
       catch { return toolError('temporarily_unavailable'); }
       return outcome;
@@ -205,28 +238,31 @@ export class McpFleetServer {
     else if (name === 'fleet_result') value = await this.coordinator.result(args.workerId);
     else if (name === 'fleet_list') value = this.coordinator.list();
     else if (name === 'fleet_kill') value = await this.coordinator.kill(args.workerId, actor, { expectedFence: args.expectedFence });
-    if (value?.result === 'stale_fence') throw new Error('stale fence');
+    if (value?.result === 'stale_fence') throw Object.assign(new Error('stale fence'), { mcpCode: 'stale_fence' });
     return normalized(value);
   }
 }
 
 async function writeFrame(output, frame) {
   if (frame === null) return;
-  if (!output.write(`${JSON.stringify(frame)}\n`)) await once(output, 'drain');
+  await new Promise((resolveWrite, rejectWrite) => {
+    output.write(`${JSON.stringify(frame)}\n`, (error) => error ? rejectWrite(error) : resolveWrite());
+  });
 }
 
 export async function serveMcpStdio(server, opts = {}) {
   if (!(server instanceof McpFleetServer)) throw new TypeError('serveMcpStdio requires McpFleetServer');
   const input = opts.input ?? process.stdin;
   const output = opts.output ?? process.stdout;
-  const maxLineBytes = opts.maxLineBytes ?? 1024 * 1024;
+  const maxLineBytes = opts.maxLineBytes ?? server.maxMessageBytes;
   if (!Number.isSafeInteger(maxLineBytes) || maxLineBytes <= 0) throw new TypeError('maxLineBytes must be a positive safe integer');
   let buffered = Buffer.alloc(0);
   let discardingOversize = false;
   const processLine = async (line, oversized = false) => {
     if (oversized || line.length > maxLineBytes) return writeFrame(output, protocolError(null, -32700, 'Parse error'));
     let message;
-    try { message = JSON.parse(line.toString('utf8')); } catch { return writeFrame(output, protocolError(null, -32700, 'Parse error')); }
+    try { message = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(line)); }
+    catch { return writeFrame(output, protocolError(null, -32700, 'Parse error')); }
     if (Array.isArray(message)) return writeFrame(output, protocolError(null, -32600, 'Invalid Request'));
     return writeFrame(output, await server.handle(message));
   };

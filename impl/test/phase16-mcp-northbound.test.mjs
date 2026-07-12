@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -28,7 +29,7 @@ function setup(overrides = {}) {
   };
   const directory = overrides.directory ?? root();
   const coordination = new CoordinationStore(join(directory, 'coordination'), { clock: () => new Date(NOW).toISOString() });
-  const server = new McpFleetServer({ coordinator, coordination, principal: overrides.principal ?? principal(), repoIds: ['repo-a'], now: () => NOW, maxWaitMs: 25_000, takeToolQuota: overrides.takeToolQuota ?? (() => ({ ok: true })) });
+  const server = new McpFleetServer({ coordinator, coordination, principal: overrides.principal ?? principal(), repoIds: ['repo-a'], now: () => NOW, maxWaitMs: 25_000, maxMessageBytes: 64 * 1024, takeToolQuota: overrides.takeToolQuota ?? (() => ({ ok: true })) });
   return { calls, coordinator, coordination, directory, server };
 }
 const request = (server, id, method, params) => server.handle({ jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) });
@@ -44,6 +45,10 @@ test('MN1/MN4: handshake and deterministic closed eight-tool inventory', async (
   assert.deepEqual(response.result.tools.map((tool) => tool.name), ['fleet_spawn', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt', 'fleet_result', 'fleet_list', 'fleet_kill']);
   assert.equal(response.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
   assert.equal(response.result.tools.every((tool) => tool.execution.taskSupport === 'forbidden'), true);
+  assert.equal(response.result.tools[0].inputSchema.properties.modelPolicy.additionalProperties, false);
+  assert.equal(response.result.tools[0].inputSchema.properties.session.additionalProperties, false);
+  const duplicate = await request(server, 3, 'initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
+  assert.equal(duplicate.error.code, -32600);
 });
 
 test('MN3/MN5/MN6: spawn preserves exact harness/model/effort under injected authority', async () => {
@@ -96,6 +101,17 @@ test('MN7: a lost completion append never reports success and retry never repeat
   assert.equal(s.calls.filter(([kind]) => kind === 'interrupt').length, 1);
 });
 
+test('MN7/MN8: state failures distinguish safe stale fences from ambiguous outcomes without leaking causes', async () => {
+  const stale = setup({ coordinator: { async kill() { return { result: 'stale_fence' }; } } }); await initialized(stale.server);
+  const args = { repoId: 'repo-a', idempotencyKey: 'kill-stale', workerId: 'worker-1', expectedFence: 8 };
+  const staleResult = await request(stale.server, 2, 'tools/call', { name: 'fleet_kill', arguments: args });
+  assert.match(staleResult.result.content[0].text, /stale_fence/);
+  const unknown = setup({ coordinator: { async interrupt() { throw new Error('private after-effect detail'); } } }); await initialized(unknown.server);
+  const failed = await request(unknown.server, 3, 'tools/call', { name: 'fleet_interrupt', arguments: { ...args, idempotencyKey: 'interrupt-unknown' } });
+  assert.match(failed.result.content[0].text, /command_outcome_unknown/);
+  assert.equal(failed.result.content[0].text.includes('private after-effect detail'), false);
+});
+
 test('MN3/MN4/MN6: scope, capability, fence, unknown fields, and credential fields are rejected before dispatch', async () => {
   const s = setup({ principal: principal({ capabilities: ['observe'] }) }); await initialized(s.server);
   const cases = [
@@ -112,7 +128,7 @@ test('MN3/MN4/MN6: scope, capability, fence, unknown fields, and credential fiel
 });
 
 test('MN3/MN8: injected quota and durable audit fail closed before dispatch', async () => {
-  const limited = setup({ takeToolQuota: () => ({ ok: false }) }); await initialized(limited.server);
+  const limited = setup({ takeToolQuota: async () => ({ ok: false }) }); await initialized(limited.server);
   const response = await request(limited.server, 2, 'tools/call', { name: 'fleet_list', arguments: { repoId: 'repo-a' } });
   assert.equal(response.result.isError, true); assert.match(response.result.content[0].text, /rate_limited/);
   assert.equal(limited.coordination.events().at(-1).payload.kind, 'tool_rate_limited');
@@ -163,4 +179,42 @@ test('MN2: an oversize frame split across chunks is discarded without losing the
   input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'ping' })}\n`); input.end(); await serving;
   const frames = wire.trim().split('\n').map(JSON.parse);
   assert.equal(frames[0].error.code, -32700); assert.deepEqual(frames[1], { jsonrpc: '2.0', id: 2, result: {} });
+});
+
+test('MN2/MN9: invalid UTF-8 is a parse error and output failure rejects the transport', async () => {
+  const s = setup(); const input = new PassThrough(); const output = new PassThrough();
+  let wire = ''; output.on('data', (chunk) => { wire += chunk; });
+  const serving = serveMcpStdio(s.server, { input, output });
+  input.end(Buffer.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xff, 0x22, 0x7d, 0x0a]));
+  await serving; assert.equal(JSON.parse(wire).error.code, -32700);
+  const badInput = new PassThrough();
+  const badOutput = new PassThrough();
+  badOutput.on('error', () => {});
+  badOutput._write = (_chunk, _encoding, callback) => callback(new Error('wire closed'));
+  const failed = serveMcpStdio(setup().server, { input: badInput, output: badOutput });
+  badInput.end(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' })}\n`);
+  await assert.rejects(failed, /wire closed/);
+});
+
+test('MN2/MN3: the packaged subprocess entry runs a configured MCP handshake with stdout frame purity', () => {
+  const directory = root(); const configPath = join(directory, 'mcp-config.mjs');
+  const indexUrl = new URL('../src/index.mjs', import.meta.url).href;
+  writeFileSync(configPath, `
+    import { CoordinationStore } from ${JSON.stringify(indexUrl)};
+    export default () => ({
+      coordinator: { list() { return []; } },
+      coordination: new CoordinationStore(${JSON.stringify(join(directory, 'coordination'))}),
+      principal: { userId: 'cli-user', sessionId: 'cli-session', capabilities: ['observe'], repoIds: ['repo-a'], expiresAt: '2099-01-01T00:00:00.000Z', revoked: false },
+      repoIds: ['repo-a'], maxMessageBytes: 65536, takeToolQuota: async () => ({ ok: true }),
+    });
+  `);
+  const frames = [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'wire-test', version: '1' } } },
+    { jsonrpc: '2.0', method: 'notifications/initialized' },
+    { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+  ];
+  const stdout = execFileSync(process.execPath, ['scripts/mcp-stdio.mjs', configPath], { cwd: new URL('..', import.meta.url), input: `${frames.map(JSON.stringify).join('\n')}\n`, encoding: 'utf8' });
+  const responses = stdout.trim().split('\n').map(JSON.parse);
+  assert.deepEqual(responses.map((response) => response.id), [1, 2]);
+  assert.equal(responses[1].result.tools.length, 8);
 });

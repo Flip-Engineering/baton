@@ -28,6 +28,8 @@ export default async function createMcpServer() {
       revoked: false,
     },
     repoIds: ['repo-id'],
+    // Derive this from the embedding host's accepted frame/memory budget.
+    maxMessageBytes: 64 * 1024,
     // Derive this decision from the deployment's account/seat/request budget.
     takeToolQuota: ({ userId, tool, repoId }) => ({ ok: true }),
   };

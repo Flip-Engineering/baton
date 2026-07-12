@@ -264,7 +264,10 @@ without replaying effects. The combined Phase 12 suite is 100/100 and the full s
 678/678. Phase 16 MN1–MN10 now adds the standard MCP 2025-11-25 stdio handshake and eight
 closed fleet tools over the same coordinator, including independent harness/model/effort inputs,
 fixed injected authority, deployment-owned quota, bounded waits, durable effect admission, and
-restart-safe replay. Its 11 focused tests and the current 689/689 full suite are green. Streamable
+restart-safe replay. Its 14 focused tests and the current 692/692 full suite are green, including
+fatal UTF-8/output handling, lifecycle readiness, closed nested schemas, and deployment-derived
+frame limits. A recursive exact-route review reached native `gpt-5.6-sol` and then hit the provider
+usage limit; all owned resources were reaped but no independent verdict is claimed. Streamable
 HTTP authorization, MCP Tasks, progress heartbeats, and daemon supervision remain explicit next
 depth rather than being inferred from stdio. Real-browser interaction and provider-backed review remain pending; neither is inferred
 from the deterministic suite. A real TLS socket proof now passes OIDC redirect/PKCE/callback,

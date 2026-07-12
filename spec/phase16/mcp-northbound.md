@@ -14,7 +14,8 @@ no experimental task execution. Batches and unknown methods fail with protocol e
 
 `serveMcpStdio` accepts one UTF-8 JSON-RPC message per line, processes messages in input
 order, writes only JSON-RPC frames to stdout, and keeps diagnostics on stderr. The input
-line ceiling is configurable; over-ceiling or malformed input receives a parse error and
+line ceiling is injected from the embedding host's frame/memory budget; invalid UTF-8,
+over-ceiling, or malformed input receives a parse error and
 cannot reach the coordinator.
 
 ## MN3 — Injected authority
@@ -51,7 +52,9 @@ durably admits a call keyed by stable user, tool, repository, and a digest of th
 The ledger stores no raw key. Identical terminal replay returns the recorded outcome;
 same-key/different-arguments is a conflict; replay of an admitted-but-nonterminal call
 returns `call_admitted` and never repeats the effect. Completion must be durable before a
-successful result is returned.
+successful result is returned. A generic state-command exception is reported as
+`command_outcome_unknown`, not as a false claim that no effect occurred; typed stale-fence and
+precondition failures retain their narrower result.
 
 ## MN8 — Bounded wait and result vocabulary
 
