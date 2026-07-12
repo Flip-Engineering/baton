@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 
 const typed = (message, code) => Object.assign(new Error(message), { code });
 const sha = (value) => createHash('sha256').update(value).digest('hex');
@@ -43,10 +43,34 @@ const briefItem = (item) => {
 };
 const artifactType = (op) => op === 'reuse.vet'
   ? { kind: 'dependency-dossier', mediaType: 'application/vnd.baton.dependency-dossier+json' }
+  : op === 'provenance.sbom'
+    ? { kind: 'lockfile-sbom', mediaType: 'application/vnd.cyclonedx+json' }
   : { kind: 'orientation-reuse', mediaType: 'application/vnd.baton.orientation-reuse+json' };
 const exactList = (value, field) => {
   if (!Array.isArray(value) || value.length > 256 || value.some((item) => typeof item !== 'string' || item.length === 0 || Buffer.byteLength(item) > 256 || item.includes('\0'))) throw new TypeError(`${field} must be a bounded string[]`);
   return [...new Set(value)].sort();
+};
+const lockPackageName = (path, item) => {
+  if (typeof item?.name === 'string' && item.name.length > 0) return item.name;
+  const marker = 'node_modules/'; const index = path.lastIndexOf(marker);
+  return index < 0 ? null : path.slice(index + marker.length);
+};
+const resolveLockDependency = (packages, from, name) => {
+  let cursor = from;
+  while (true) {
+    const candidate = cursor ? `${cursor}/node_modules/${name}` : `node_modules/${name}`;
+    if (Object.hasOwn(packages, candidate)) return candidate;
+    const index = cursor.lastIndexOf('/node_modules/');
+    if (index >= 0) cursor = cursor.slice(0, index);
+    else if (cursor.startsWith('node_modules/')) cursor = '';
+    else return null;
+  }
+};
+const npmPurl = (name, version) => {
+  const path = name.startsWith('@') && name.includes('/')
+    ? `${encodeURIComponent(name.slice(0, name.indexOf('/')))}/${encodeURIComponent(name.slice(name.indexOf('/') + 1))}`
+    : encodeURIComponent(name);
+  return `pkg:npm/${path}@${encodeURIComponent(version)}`;
 };
 
 export class CartographerQuartermaster {
@@ -73,6 +97,13 @@ export class CartographerQuartermaster {
       this.vetPolicyHash = sha(stable(this.vetPolicy));
       this.vetCache = new Map();
     }
+    this.sbomPolicy = null;
+    if (opts.sbomPolicy !== undefined) {
+      const policy = opts.sbomPolicy;
+      if (!policy || !Number.isSafeInteger(policy.maxLockfileBytes) || policy.maxLockfileBytes <= 0
+        || !Number.isSafeInteger(policy.maxComponents) || policy.maxComponents <= 0) throw new TypeError('SBOM policy requires positive lockfile/component ceilings');
+      this.sbomPolicy = Object.freeze({ maxLockfileBytes: policy.maxLockfileBytes, maxComponents: policy.maxComponents });
+    }
   }
 
   card() {
@@ -82,6 +113,7 @@ export class CartographerQuartermaster {
         'orientation.slice': { latency_class: 'interactive', deterministic: true, side_effects: ['content_addressed_artifact'], reverifiable: true },
         'reuse.internal': { latency_class: 'interactive', deterministic: true, side_effects: ['content_addressed_artifact'], reverifiable: true },
         ...(this.externalOracle ? { 'reuse.vet': { latency_class: 'bounded_batch', deterministic: false, side_effects: ['external_api', 'content_addressed_artifact'], reverifiable: 'fresh_observation' } } : {}),
+        ...(this.sbomPolicy ? { 'provenance.sbom': { latency_class: 'bounded_batch', deterministic: true, side_effects: ['content_addressed_artifact'], reverifiable: true } } : {}),
       },
       underlying: ['atlas-index:code.seed', 'atlas-index:repo.map'],
       limitations: [this.externalOracle ? 'External dossier is fail-closed and package-level; import observation is not vulnerable-function reachability' : 'External vet is not deployment-configured', 'no auto-install, SBOM, immutable reuse decision, true vulnerability reachability, or third-party prose'],
@@ -124,7 +156,7 @@ export class CartographerQuartermaster {
 
   _loadArtifact(ref, expectedOp = null) {
     const expectedType = expectedOp === null ? null : artifactType(expectedOp);
-    const knownType = [artifactType('orientation.slice'), artifactType('reuse.vet')].find((candidate) => candidate.kind === ref?.kind && candidate.mediaType === ref?.mediaType);
+    const knownType = [artifactType('orientation.slice'), artifactType('reuse.vet'), artifactType('provenance.sbom')].find((candidate) => candidate.kind === ref?.kind && candidate.mediaType === ref?.mediaType);
     if (!ref || !knownType || (expectedType && (ref.kind !== expectedType.kind || ref.mediaType !== expectedType.mediaType))
       || !/^[a-f0-9]{64}$/.test(ref.digest ?? '') || ref.handle !== `art:sha256:${ref.digest}`) throw typed('orientation artifact reference invalid', 'artifact_integrity');
     const expected = join(this.artifactRoot, `${ref.digest}.json`); let path;
@@ -143,7 +175,7 @@ export class CartographerQuartermaster {
     const sourceRefs = document.op === 'reuse.vet' && Array.isArray(document.items?.[0]?.sources)
       ? document.items[0].sources.map((source) => ({ kind: 'supply-chain-source', handle: source.handle, digest: source.digest, bytes: source.bytes, mediaType: source.mediaType }))
       : [];
-    const resumable = document.op !== 'reuse.vet';
+    const resumable = !['reuse.vet', 'provenance.sbom'].includes(document.op);
     return Object.freeze({
       op: document.op, status: truncated ? (resumable ? 'needs_resume' : 'partial') : 'ok', summary: document.summary, payload,
       refs: [{ kind: type.kind, handle: `art:sha256:${artifact.digest}`, digest: artifact.digest, bytes: artifact.bytes, path: artifact.path, mediaType: type.mediaType }, ...sourceRefs],
@@ -242,6 +274,57 @@ export class CartographerQuartermaster {
       this.vetCache.set(cacheKey, document);
       return this._result(document, ctx, started, { cache: 'miss' });
     }
+    if (op === 'provenance.sbom' && this.sbomPolicy) {
+      if (typeof ctx.worktreeRoot !== 'string' || ctx.worktreeRoot.length === 0) throw typed('SBOM requires trusted worktree root', 'sbom_context_required');
+      const requested = normalizedText(args.lockfilePath, 'invalid_sbom_path').replace(/^\.\//, '');
+      if (isAbsolute(requested) || requested.split('/').includes('..')) throw typed('SBOM lockfile path escapes worktree', 'invalid_sbom_path');
+      let root; let path;
+      try { root = realpathSync(ctx.worktreeRoot); path = realpathSync(join(root, requested)); }
+      catch { throw typed('SBOM lockfile unavailable', 'sbom_unavailable'); }
+      const rel = relative(root, path);
+      if (rel.startsWith('..') || isAbsolute(rel)) throw typed('SBOM lockfile escaped worktree', 'invalid_sbom_path');
+      const raw = readFileSync(path);
+      try { if (realpathSync(path) !== path) throw new Error('identity changed'); }
+      catch { throw typed('SBOM lockfile identity changed during read', 'sbom_source_changed'); }
+      if (raw.length > this.sbomPolicy.maxLockfileBytes) throw typed('SBOM lockfile exceeds deployment ceiling', 'sbom_oversize');
+      let lock; try { lock = JSON.parse(raw); } catch { throw typed('SBOM lockfile JSON invalid', 'sbom_schema_invalid'); }
+      if (lock?.lockfileVersion !== 3 || !lock.packages || typeof lock.packages !== 'object' || Array.isArray(lock.packages)) throw typed('SBOM requires npm package-lock v3 packages map', 'sbom_schema_invalid');
+      const entries = Object.entries(lock.packages).filter(([key]) => key !== '').sort(([a], [b]) => a.localeCompare(b));
+      if (entries.length > this.sbomPolicy.maxComponents) throw typed('SBOM component count exceeds deployment ceiling', 'sbom_oversize');
+      const components = [];
+      for (const [key, item] of entries) {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) throw typed('SBOM package entry invalid', 'sbom_schema_invalid');
+        const name = lockPackageName(key, item); const version = typeof item.version === 'string' ? item.version : null;
+        if (!name || (!version && item.link !== true)) throw typed('SBOM package identity unavailable', 'sbom_schema_invalid');
+        const ref = `npm:${key}`;
+        components.push({ type: 'library', 'bom-ref': ref, name, version, ...(version ? { purl: npmPurl(name, version) } : {}), properties: [
+          { name: 'baton:lockfile_path', value: key }, { name: 'baton:grounding', value: 'actual_lockfile' },
+          ...(typeof item.integrity === 'string' ? [{ name: 'baton:integrity', value: item.integrity }] : []),
+          ...(item.dev === true ? [{ name: 'baton:dev', value: 'true' }] : []), ...(item.optional === true ? [{ name: 'baton:optional', value: 'true' }] : []),
+        ] });
+      }
+      const componentByPath = new Map(components.map((component) => [component.properties.find((property) => property.name === 'baton:lockfile_path').value, component]));
+      const unresolved = []; const dependencies = [];
+      const rootEntry = lock.packages[''] ?? {};
+      const allEntries = [['', rootEntry], ...entries];
+      const rootName = typeof rootEntry.name === 'string' ? rootEntry.name : typeof lock.name === 'string' ? lock.name : 'application';
+      const rootVersion = typeof rootEntry.version === 'string' ? rootEntry.version : typeof lock.version === 'string' ? lock.version : '0.0.0';
+      const rootRef = `application:${rootName}@${rootVersion}`;
+      for (const [key, item] of allEntries) {
+        const fromRef = key === '' ? rootRef : componentByPath.get(key)?.['bom-ref']; if (!fromRef) continue;
+        const names = [...new Set([...Object.keys(item.dependencies ?? {}), ...Object.keys(item.optionalDependencies ?? {})])].sort();
+        const dependsOn = [];
+        for (const name of names) {
+          const target = resolveLockDependency(lock.packages, key, name);
+          const targetRef = target ? componentByPath.get(target)?.['bom-ref'] : null;
+          if (targetRef) dependsOn.push(targetRef); else unresolved.push({ from: key === '' ? '' : key, name });
+        }
+        dependencies.push({ ref: fromRef, dependsOn: [...new Set(dependsOn)].sort() });
+      }
+      const sbom = { bomFormat: 'CycloneDX', specVersion: '1.6', version: 1, metadata: { component: { type: 'application', 'bom-ref': rootRef, name: rootName, version: rootVersion }, properties: [{ name: 'baton:grounding', value: 'actual_lockfile' }, { name: 'baton:source_digest', value: sha(raw) }] }, components, dependencies };
+      const item = { grounding: 'actual_lockfile', lockfile: requested, lockfileDigest: sha(raw), componentCount: components.length, unresolvedEdges: unresolved, proposedGraph: null, proposedGraphStatus: 'not_supplied', sbom };
+      return this._result({ schemaVersion: 1, op, query: { lockfilePath: requested }, summary: `${components.length} actual npm lockfile components; ${unresolved.length} unresolved edges`, items: [item], provenance: { deterministic: true, lockfileDigest: sha(raw), grounding: 'actual_lockfile', proposedGraphGrounding: 'unavailable', underlying: 'npm-package-lock-v3+cyclonedx-1.6' } }, ctx, started);
+    }
     throw typed(`unsupported orientation/reuse op ${op}`, 'unsupported_op');
   }
 
@@ -250,7 +333,7 @@ export class CartographerQuartermaster {
     const match = /^orientation:([a-f0-9]{64}):(\d+)$/.exec(cursor ?? '');
     if (!match || match[1] !== ref?.digest || ref?.handle !== `art:sha256:${match[1]}`) throw typed('orientation cursor mismatch', 'invalid_cursor');
     const document = this._loadArtifact(ref);
-    if (document.op === 'reuse.vet') throw typed('dependency dossier is ref-addressed, not cursor-resumable', 'capability_resume_unavailable');
+    if (['reuse.vet', 'provenance.sbom'].includes(document.op)) throw typed('artifact is ref-addressed, not cursor-resumable', 'capability_resume_unavailable');
     const offset = Number(match[2]); if (!Number.isSafeInteger(offset) || offset < 0 || offset > document.items.length) throw typed('orientation cursor offset invalid', 'invalid_cursor');
     const payload = bounded(document.items.slice(offset), ctx.budgetTokens); const next = offset + payload.length; const truncated = next < document.items.length;
     return Object.freeze({ op: document.op, status: truncated ? 'needs_resume' : 'ok', summary: document.summary, payload, refs: [ref], ...(truncated ? { cursor: `orientation:${match[1]}:${next}` } : {}),

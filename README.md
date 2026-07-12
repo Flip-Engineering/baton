@@ -21,7 +21,7 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **833/833
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **839/839
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
@@ -52,8 +52,9 @@ orientation refresh while preserving kill as the default and stop/fence authorit
 adapter path, worker turn, provider effect, leaked Git diagnostic, or unreaped runtime/worktree.
 Phase 36 adds Quartermaster's fail-closed exact-npm evidence floor over deployment-injected
 deps.dev+OSV transport, private raw snapshots, TTL/cache/refresh semantics, conservative policy,
-and Atlas import observation without false reachability. The current canonical suite is
-**833/833 green**.
+and Atlas import observation without false reachability. Phase 37 adds an exact npm package-lock
+v3 CycloneDX SBOM, grounded only in actual installed lockfile state and explicitly separated from
+future proposed registry graphs. The current canonical suite is **839/839 green**.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 

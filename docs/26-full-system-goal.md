@@ -452,6 +452,17 @@ deps.dev+OSV evidence passes the live ACI proof. Exact-lockfile SBOM, immutable 
 advisory invalidation, true reachability, optional Socket, and independent Sigstore verification
 remain ordered later rungs.
 
+Phase 37 adds the actual dependency inventory required before any durable reuse decision.
+Deployment-configured `provenance.sbom` reads one canonical confined npm package-lock v3 under
+byte/component ceilings, rechecks source identity after read, and emits deterministic CycloneDX
+1.6 components with exact versions/links, integrity, dev/optional posture, npm purls, root identity,
+and nested-then-hoisted dependency edges. Missing targets remain explicit unresolved edges. The
+artifact and provenance are labeled `actual_lockfile`; `proposedGraph` is explicitly absent, so a
+deps.dev hypothetical resolution can never be mistaken for installed state. Ref-only partial
+results avoid infinite cursors, and exact rerun detects lockfile change. Baton's real lockfile
+produces 10 components and re-verifies. Vulnerability scanning, mutation, proposed graph/delta,
+decision/promotion, and policy waivers remain outside this rung.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**

@@ -65,6 +65,11 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    snapshot reverify fail closed; known advisories are never waived by incomplete reachability.
    It recommends only candidate/block/pending and has no install, decision, knowledge, verification,
    or merge authority.
+11. **Exact-lockfile SBOM floor:** deployment-configured `provenance.sbom` turns a confined npm
+   package-lock v3 into a deterministic CycloneDX 1.6 inventory and dependency graph. Components,
+   integrity, dev/optional flags, nested resolution, and unresolved edges are actual-lockfile
+   grounded; proposed registry graphs remain explicitly absent. It is content-addressed and
+   reverifiable, with no mutation, advisory, decision, or promotion authority.
 
 ## What remains partial
 
@@ -90,8 +95,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   GLM-seat and automatic quota discovery remain unproven.
 - Phase 32 closes the local orientation/reuse wiring gap, Phase 33 closes addressed downward
   worker push, Phase 34 closes bounded mechanical scope-drift refresh, and Phase 36 closes the
-  exact-npm external evidence/freshness floor. Advisory invalidation, additional ecosystems,
-  true vulnerability reachability, immutable reuse decisions, SBOMs, and knowledge
+  exact-npm external evidence/freshness floor. Phase 37 adds the actual npm lockfile SBOM floor.
+  Advisory invalidation, additional ecosystems, proposed-vs-actual graph delta,
+  true vulnerability reachability, immutable reuse decisions, and knowledge
   promotion remain later Cartographer/Quartermaster contracts.
 
 ## What remains pending
