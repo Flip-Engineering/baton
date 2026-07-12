@@ -25,8 +25,13 @@ const MERGE_TASKS = [
   { taskId: 'grok-merge-scope-45', model: 'grok-4.5', path: 'reviews/dogfood/grok-merge-scope-45.md', stance: 'authority' },
   { taskId: 'grok-merge-scope-composer', model: 'grok-composer-2.5-fast', path: 'reviews/dogfood/grok-merge-scope-composer.md', stance: 'semantics' },
 ];
+const MERGE_IMPLEMENTATION_TASKS = [
+  { taskId: 'grok-merge-implementation-45', model: 'grok-4.5', path: 'reviews/dogfood/grok-merge-implementation-45.md', stance: 'authority' },
+  { taskId: 'grok-merge-implementation-composer', model: 'grok-composer-2.5-fast', path: 'reviews/dogfood/grok-merge-implementation-composer.md', stance: 'security' },
+];
 const TASKS = REVIEW_PROFILE === 'behavior-implementation' ? BEHAVIOR_TASKS
   : REVIEW_PROFILE === 'merge-scope' ? MERGE_TASKS
+    : REVIEW_PROFILE === 'merge-implementation' ? MERGE_IMPLEMENTATION_TASKS
     : IR_TASKS;
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
@@ -79,6 +84,25 @@ function brief(task) {
       definitionOfDone: 'The four exact headings exist, authority and semantic boundaries are explicit, and every proposed merge claim has a falsifiable gate',
       verification: { command: `test -s ${task.path} && grep -Fq '## Proposed numbered contract' ${task.path} && grep -Fq '## Risks and rejection criteria' ${task.path} && git diff --check -- ${task.path}`, expectExit: 0, timeoutMs: 180000 },
       budget: { tokens: 50000, usd: 4, wallMin: 9 },
+    });
+  }
+  if (REVIEW_PROFILE === 'merge-implementation') {
+    const focus = task.stance === 'authority'
+      ? 'Prioritize pre/post-effect authority ordering, main identity races, exact Git parents, intent/log/coordination replay, result pins, crash reconciliation, verification freshness, and cleanup on every throw.'
+      : 'Prioritize resolver confinement and TCB, path/symlink/binary/UTF-8/marker evasions, output/time/file bounds, malicious injected resolver returns, Git configuration/environment influence, and false-clean tests.';
+    return createBrief({
+      goal: `Adversarially review committed Phase 26 SM1-SM10 at ${git(['rev-parse', '--short', 'HEAD'])}. Read spec/phase26/structured-merge.md, impl/src/{structured-merge,worktree,coordinator,index}.mjs, impl/test/phase26-structured-merge.test.mjs, docs/handoff/evidence/phase26-structured-merge-2026-07-11.md, and Phase 11 integration/replay tests. ${focus} Construct concrete reproducible failure sequences. Distinguish an actionable implementation defect from an explicit external-tool or true-semantic-merge non-goal. Write ${task.path} with exact headings "## Decision", "## Proposed numbered contract", "## Red tests and proof", and "## Risks and rejection criteria". Under Decision state whether any actionable SM1-SM10 defect remains.`,
+      constraints: [
+        `Edit only ${task.path}.`,
+        'Use at most 16 repository or tool calls, then finish from collected evidence.',
+        'Ground every finding in exact source locations and a concrete failure sequence; do not trust resolver or worker prose.',
+        'No homelab integration or dependency. Do not use network tools, read credentials, edit product code/specs/tests/evidence, commit, push, deploy, or install software.',
+        'Keep the report under 3200 words. If no actionable defect remains, say so explicitly.',
+      ],
+      pathScope: [task.path],
+      definitionOfDone: 'The four exact headings exist and every SM1-SM10 seam has an evidence-backed implementation verdict',
+      verification: { command: `test -s ${task.path} && grep -Fq '## Proposed numbered contract' ${task.path} && grep -Fq '## Risks and rejection criteria' ${task.path} && git diff --check -- ${task.path}`, expectExit: 0, timeoutMs: 180000 },
+      budget: { tokens: 55000, usd: 4, wallMin: 9 },
     });
   }
   const stance = task.stance === 'constructive'
@@ -182,6 +206,7 @@ try {
       taskId: task.taskId,
       taskType: REVIEW_PROFILE === 'behavior-implementation' ? 'adversarial-implementation-review'
         : REVIEW_PROFILE === 'merge-scope' ? 'merge-design-review'
+          : REVIEW_PROFILE === 'merge-implementation' ? 'merge-implementation-review'
           : 'representation-design-review',
       model: task.model,
       modelPolicy: { allow: [task.model], allowFamilies: ['grok'] },
