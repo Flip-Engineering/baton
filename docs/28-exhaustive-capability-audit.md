@@ -59,7 +59,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   reverify path. Atlas is not auto-registered, so an empty deployment remains honestly empty.
 - OIDC has a real TLS socket proof, not an in-app browser interaction; the production provider
   adapter, WebSocket parity, deep operator takeover, and some edge-policy review depth remain.
-- GLM code reaches the credential boundary but lacks a credential-backed live proof.
+- Phase 30 closes the GLM credential-backed live gate: exact `glm-4.7` at native `low` effort was
+  provider-observed, freshly verified, killed, and fully reaped through the public driver. Concurrent
+  GLM-seat and automatic quota discovery remain unproven.
 
 ## What remains pending
 
@@ -91,8 +93,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 1. **Make existing Atlas real fleet tools — shipped in Phase 29:** one Coordinator-owned registry,
    deployment-bounded ACI invoke/resume/reverify, real multi-root Atlas traversal, and authenticated
    web/MCP authority with no verification/merge authority.
-2. **Close environment/live honesty gates:** GLM credentialed smoke without key disclosure; live
-   Mergiraf; real-browser OIDC; independent edge-policy review; optional safe remote-push fixture.
+2. **Close environment/live honesty gates:** GLM credentialed smoke without key disclosure shipped
+   in Phase 30; live Mergiraf, real-browser OIDC, independent edge-policy review, and an optional
+   safe remote-push fixture remain.
 3. **Finish governance/session continuity:** auto-rejoin, vendor-honest fork/rewind, compaction DoD
    reinjection, quota-window/seat scheduling, route overrides, and durable router learning.
 4. **Build capability modules on shared substrate:** Cartographer/Quartermaster and Cairn first,

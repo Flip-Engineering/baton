@@ -1,0 +1,43 @@
+{
+  "at": "2026-07-12T07:18:56.439Z",
+  "repoHead": "1699556520a6ebf857b1d294960a9fdd57941a34",
+  "adapter": {
+    "harness": "glm-via-claude-session",
+    "version": "claude-code-2.1.206+zai-anthropic",
+    "authPosture": "api_key"
+  },
+  "route": {
+    "modelRequested": "glm-4.7",
+    "modelResolved": "glm-4.7",
+    "modelObserved": "glm-4.7",
+    "effortRequested": "low",
+    "effortResolved": "low",
+    "effortObserved": null
+  },
+  "workerId": "w-1",
+  "pid": 60684,
+  "result": {
+    "ready": true,
+    "status": "completed",
+    "verdictAccept": null
+  },
+  "control": {
+    "killResult": "confirmed"
+  },
+  "checks": {
+    "noHarnessError": true,
+    "exactModelObserved": true,
+    "lowerEffortRouted": true,
+    "providerUsageObserved": true,
+    "freshVerified": true,
+    "killConfirmed": true,
+    "nativeProcessObserved": true,
+    "processGone": true,
+    "worktreeGone": true,
+    "metadataGone": true,
+    "runtimeGone": true,
+    "branchGone": true
+  },
+  "failure": null,
+  "pass": true
+}

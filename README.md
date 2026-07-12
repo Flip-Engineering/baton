@@ -21,7 +21,7 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **793/793
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **795/795
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
@@ -39,13 +39,16 @@ Phase 29 now makes deployment-injected Atlas capabilities real fleet tools throu
 Coordinator-owned registry. The same bounded invoke/resume/reverify path is available through the
 authenticated web command surface and the ten-tool MCP inventory; deployment-owned multi-root
 contexts cannot override actor, budget, repository root, or cancellation, and capability output
-cannot claim verification or merge authority. The current canonical suite is **793/793 green**.
+cannot claim verification or merge authority. Phase 30 also live-proves the credentialed GLM leg:
+exact `glm-4.7` at native `low` effort was provider-observed, freshly verified, normally killed,
+and fully reaped without disclosing the ignored local key. The current canonical suite is
+**795/795 green**.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 
 **Everything else supports the driver, and none of it is dropped:** independent verification (re-running a worker's tests so "done" can be trusted), learned routing (which vendor is good at what), a reliable coordination core (so "interrupt worker 3" always lands), telemetry/replay, and worker tools (search, debug, semantic diff). Earlier docs over-billed the *verification* as the product and demoted the *driving* to optional — doc 19 turns that right-side-up.
 
-**Architecture, plainly:** you drive from your CLI agent (Claude Code or Codex is the orchestrator — it decides); underneath, a small reliable program carries out those decisions and does the bookkeeping (dispatch, making interrupts land, re-checking worker claims, the event log). The AI drives; the plumbing makes the driving safe. Southbound, the product tier uses persistent Claude stream-json, Codex app-server, and Grok ACP sessions; one-shot subprocess adapters remain an explicitly limited fire-and-forget tier. The next phase is depth, not basic assembly: session resume/fork, token/USD governance and watchdog action, red→green base verification, and structured integration. See [docs/25](docs/25-capability-gap.md).
+**Architecture, plainly:** you drive from your CLI agent (Claude Code or Codex is the orchestrator — it decides); underneath, a small reliable program carries out those decisions and does the bookkeeping (dispatch, making interrupts land, re-checking worker claims, the event log). The AI drives; the plumbing makes the driving safe. Southbound, the product tier uses persistent Claude stream-json, Codex app-server, and Grok ACP sessions; one-shot subprocess adapters remain an explicitly limited fire-and-forget tier. Those basic depth gates now ship; current pursuit is the audited capability backlog and remaining contract/live-depth gaps. See [docs/28](docs/28-exhaustive-capability-audit.md).
 
 **Design docs** (`docs/`):
 
