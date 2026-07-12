@@ -13,7 +13,8 @@ const OUTPUT = resolve(process.env.BATON_EVIDENCE_DIR ?? HERE);
 const AUTH = resolve(process.env.BATON_GLM_AUTH_FILE ?? 'glm_key.json');
 const AUTH_JSON_POINTER = process.env.BATON_GLM_AUTH_JSON_POINTER ?? '/env/ANTHROPIC_AUTH_TOKEN';
 const MODEL = process.env.BATON_GLM_MODEL ?? 'glm-4.7';
-const MAX_USD = process.env.BATON_GLM_MAX_BUDGET_USD ?? '0.10';
+const EFFORT = process.env.BATON_GLM_EFFORT ?? 'low';
+const MAX_USD = process.env.BATON_GLM_MAX_BUDGET_USD ?? '0.40';
 const TASK_ID = 'glm-phase30-live-review';
 const TARGET = 'reviews/dogfood/phase30-glm-live-review.md';
 const LOG_DIR = mkdtempSync(join(tmpdir(), 'baton-glm-live-'));
@@ -116,6 +117,7 @@ const brief = createBrief({
     `Edit only ${TARGET}.`,
     'Do not inspect environment variables, credential files, runtime homes, or unrelated paths.',
     'Do not use network tools, commit, push, deploy, or access homelab systems.',
+    'Use at most two tool calls: read the three pinned files together, then write the review.',
     'Keep the review under 500 words and stop after writing it.',
   ],
   pathScope: [TARGET],
@@ -138,7 +140,8 @@ try {
     taskId: TASK_ID,
     taskType: 'live-routing-review',
     model: MODEL,
-    modelPolicy: { allow: [MODEL], allowFamilies: ['glm'] },
+    effort: EFFORT,
+    modelPolicy: { allow: [MODEL], allowFamilies: ['glm'], reasoningEffort: EFFORT },
   });
   workerId = handle.id;
   const spawned = await until(
@@ -176,6 +179,8 @@ const handle = workerId ? coordinator.list().find((worker) => worker.id === work
 const checks = {
   noHarnessError: failure === null,
   exactModelObserved: handle?.modelRequested === MODEL && handle?.modelResolved === MODEL && handle?.modelObserved === MODEL,
+  lowerEffortRouted: handle?.effortRequested === EFFORT && handle?.effortResolved === EFFORT
+    && (handle?.effortObserved == null || handle.effortObserved === EFFORT),
   providerUsageObserved: events.some((event) => event.kind === 'resource.tokens' && (event.payload?.tokens ?? 0) > 0),
   freshVerified: result?.status === 'completed' && events.some((event) => event.kind === 'verify.reverified' && event.payload?.accept === true),
   killConfirmed: ['confirmed', 'already_dead'].includes(killAck?.result),
@@ -190,7 +195,10 @@ const summary = {
   at: new Date().toISOString(),
   repoHead: git(['rev-parse', 'HEAD']),
   adapter: { harness: adapter.card().harness, version: adapter.card().version, authPosture: adapter.card().authPosture },
-  route: { modelRequested: MODEL, modelResolved: handle?.modelResolved ?? null, modelObserved: handle?.modelObserved ?? null },
+  route: {
+    modelRequested: MODEL, modelResolved: handle?.modelResolved ?? null, modelObserved: handle?.modelObserved ?? null,
+    effortRequested: EFFORT, effortResolved: handle?.effortResolved ?? null, effortObserved: handle?.effortObserved ?? null,
+  },
   workerId,
   pid,
   result: result ? { ready: result.ready, status: result.status, verdictAccept: result.verdict?.accept ?? null } : null,

@@ -11,8 +11,8 @@ events, errors, summaries, evidence, or committed files.
 ## GL2 — current exact model identity
 The adapter version identifies Claude Code plus the Z.ai transport, not a guessed GLM model.
 Deployments select the model explicitly. The live gate uses exact `glm-4.7`, the current efficient
-Coding Plan default, and requires requested/resolved/observed attribution without silently claiming
-an unobserved model.
+Coding Plan default, with native `low` effort, and requires requested/resolved/observed attribution
+without silently claiming an unobserved model or effort.
 
 ## GL3 — isolated runtime
 The child uses a private runtime home/config/tmp, stripped ambient provider credentials, explicit
