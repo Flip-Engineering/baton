@@ -22,7 +22,10 @@ test('EG1/EG2: card and all domains preserve the explicit retire/redirect/resear
 test('EG3/EG7: every false build/proof/bypass/merge operation refuses typed in every domain', async () => {
   const atlas = make(); const codes = { whole_repo: 'r7_domain_retired', whole_function: 'r7_redirect', expression_kernel: 'r7_reopening_required' };
   for (const domain of Object.keys(codes)) for (const op of ['egraph.build', 'egraph.saturate', 'equivalence.prove', 'verification.skip', 'semantic_merge.authorize']) {
-    await assert.rejects(atlas.invoke(op, { domain }, ctx), (error) => error.code === codes[domain] && error.decisionId === 'phase27-r7-egraph-retire-redirect' && error.domain === domain && error.redirect.length > 0);
+    await assert.rejects(atlas.invoke(op, { domain }, ctx), (error) => error.code === codes[domain] && error.decisionId === 'phase27-r7-egraph-retire-redirect' && error.domain === domain && error.redirect.length > 0 && typeof error.reopeningGates === 'object');
+  }
+  for (const domain of [undefined, '', 'source_file', { injected: true }]) {
+    await assert.rejects(atlas.invoke('egraph.build', { domain }, ctx), (error) => error.code === 'r7_domain_retired' && error.decisionId === 'phase27-r7-egraph-retire-redirect' && error.supportedDomains.length === 3);
   }
 });
 
@@ -57,6 +60,8 @@ test('EG6: bounded result resumes, tamper refuses, and reverify is deterministic
   const bounded = await atlas.invoke('egraph.evaluate', args, { budgetTokens: 1 }); assert.equal(bounded.status, 'needs_resume'); assert.deepEqual(bounded.payload, []);
   const resumed = await atlas.resume(bounded.refs[0], bounded.cursor, ctx); assert.equal(resumed.status, 'ok'); assert.equal(resumed.payload[0].decision, 'retired_native');
   assert.equal((await atlas.reverify(bounded, args, ctx)).ok, true);
+  const outside = join(artifactRoot(), 'substituted.json'); writeFileSync(outside, readFileSync(bounded.refs[0].path));
+  await assert.rejects(atlas.resume({ ...bounded.refs[0], path: outside }, bounded.cursor, ctx), (error) => error.code === 'artifact_integrity');
   writeFileSync(bounded.refs[0].path, `${readFileSync(bounded.refs[0].path, 'utf8')} `);
   await assert.rejects(atlas.resume(bounded.refs[0], bounded.cursor, ctx), (error) => error.code === 'artifact_integrity');
 });

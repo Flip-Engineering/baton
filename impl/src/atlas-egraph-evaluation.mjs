@@ -56,11 +56,16 @@ export class AtlasEGraphEvaluation {
 
   async invoke(op, args, ctx) {
     if (!ctx || !Number.isSafeInteger(ctx.budgetTokens) || ctx.budgetTokens <= 0) throw new TypeError('positive budgetTokens required');
-    abort(ctx); const domain = args?.domain; const selected = policy(domain);
+    abort(ctx); const domain = args?.domain;
     if (FALSE_OPS.has(op)) {
+      if (typeof domain !== 'string' || !Object.hasOwn(POLICIES, domain)) {
+        throw typed('native e-graph operation is retired for an absent or unsupported domain', 'r7_domain_retired', { domain: domain ?? null, decisionId: DECISION_ID, redirect: [], reopeningGates: null, supportedDomains: Object.keys(POLICIES) });
+      }
+      const selected = policy(domain);
       const code = domain === 'whole_repo' ? 'r7_domain_retired' : domain === 'whole_function' ? 'r7_redirect' : 'r7_reopening_required';
       throw typed(`native e-graph operation unavailable for ${domain}; follow the recorded redirect and reopening gates`, code, { domain, decisionId: DECISION_ID, redirect: selected.redirect, reopeningGates: selected.reopeningGates });
     }
+    const selected = policy(domain);
     if (op !== 'egraph.evaluate') throw typed(`unsupported e-graph evaluation operation: ${op}`, 'unsupported_op');
     const started = this.now(); this.record?.({ kind: 'capability.op.started', actor: ctx.actor ?? 'orchestrator', op, domain });
     const item = {
