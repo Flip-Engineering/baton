@@ -105,14 +105,14 @@ test('CI6: capability cards require observe while bounded invocation requires co
 
   const refused = await web.execute(context({ principal: principal({ capabilities: ['observe'] }) }), envelope({
     commandId: 'invoke-refused', idempotencyKey: 'invoke-refused', command: 'capability_invoke',
-    args: { name: 'atlas', op: 'symbols.search', args: { query: 'Coordinator' }, budgetTokens: 80 },
+    args: { name: 'atlas', op: 'symbols.search', action: 'invoke', args: { query: 'Coordinator' }, budgetTokens: 80 },
   }));
   assert.equal(refused.status, 403);
   assert.deepEqual(calls.map((call) => call.op ?? call.action), ['capabilities']);
 
   const invoked = await web.execute(context(), envelope({
     commandId: 'invoke-1', idempotencyKey: 'invoke-1', command: 'capability_invoke',
-    args: { name: 'atlas', op: 'symbols.search', args: { query: 'Coordinator' }, budgetTokens: 80 },
+    args: { name: 'atlas', op: 'symbols.search', action: 'invoke', args: { query: 'Coordinator' }, budgetTokens: 80 },
   }));
   assert.equal(invoked.status, 200);
   assert.deepEqual(calls.at(-1), {
@@ -154,6 +154,7 @@ test('CI2/CI3/CI6: capability command validation rejects malformed and action-am
     { name: 'atlas', op: 'symbols.search', action: 'resume', ref: {}, cursor: 'next', args: {}, budgetTokens: 1 },
     { name: 'atlas', op: 'symbols.search', action: 'reverify', claim: {}, budgetTokens: 1 },
     { name: 'atlas', op: 'symbols.search', args: {}, ref: {}, budgetTokens: 1 },
+    { name: 'atlas', op: 'symbols.search', args: {}, budgetTokens: 1 },
   ];
   for (const [index, args] of invalidArgs.entries()) {
     const response = await web.execute(context(), envelope({
@@ -173,7 +174,7 @@ test('CI4/CI6: rejected capability output is a stable non-retryable web failure'
   } });
   const response = await web.execute(context(), envelope({
     commandId: 'capability-policy-refusal', idempotencyKey: 'capability-policy-refusal', command: 'capability_invoke',
-    args: { name: 'atlas', op: 'symbols.search', args: { query: 'Coordinator' }, budgetTokens: 80 },
+    args: { name: 'atlas', op: 'symbols.search', action: 'invoke', args: { query: 'Coordinator' }, budgetTokens: 80 },
   }));
   assert.equal(response.status, 502); assert.equal(response.body.error.code, 'capability_refused');
   assert.equal(JSON.stringify(response).includes('malicious module detail'), false);

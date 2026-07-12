@@ -27,11 +27,14 @@ MCP stdio receives credentials from its host environment or embedding program, n
 from tool arguments. The embedding host must also inject a quota authority derived from
 its deployment budget; Baton does not invent an arbitrary universal request ceiling.
 
-## MN4 — One eight-tool fleet vocabulary
+## MN4 — Closed fleet vocabulary
 
-The deterministic tool inventory is `fleet_spawn`, `fleet_send`, `fleet_wait`,
+Phase 16 shipped an eight-tool deterministic inventory: `fleet_spawn`, `fleet_send`, `fleet_wait`,
 `fleet_respond`, `fleet_interrupt`, `fleet_result`, `fleet_list`, and `fleet_kill`.
-Schemas are closed. Credential-shaped fields are recursively rejected.
+Phase 29 extends that same closed inventory to ten with `fleet_capabilities` and
+`fleet_capability_invoke`; it does not create a second server or state machine. Schemas are closed,
+the capability action shapes are mutually exclusive, and credential-shaped fields are recursively
+rejected.
 
 ## MN5 — Exact route tuple
 

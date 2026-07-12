@@ -182,7 +182,7 @@ export class AtlasStructuralRewrite {
     const payload = bounded(items, ctx.budgetTokens);
     const parseErrorCount = inputErrors.length + outputErrors.length;
     const truncated = payload.length < items.length;
-    const status = parseErrorCount > 0 ? 'partial' : truncated ? 'needs_resume' : 'ok';
+    const status = truncated ? 'needs_resume' : parseErrorCount > 0 ? 'partial' : 'ok';
     const wallMs = Math.max(0, this.now() - started);
     const result = Object.freeze({
       op, status, summary: `${matches.length} structural matches${op === 'rewrite.structural' ? `; ${edits.length} proposed edits` : ''}${parseErrorCount ? `; ${parseErrorCount} parse errors` : ''}`,

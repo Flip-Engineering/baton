@@ -51,6 +51,9 @@ test('MN1/MN4/CI6: handshake and deterministic closed ten-tool inventory', async
   assert.equal(response.result.tools.every((tool) => tool.execution.taskSupport === 'forbidden'), true);
   assert.equal(response.result.tools[0].inputSchema.properties.modelPolicy.additionalProperties, false);
   assert.equal(response.result.tools[0].inputSchema.properties.session.additionalProperties, false);
+  const capabilitySchema = response.result.tools.find((tool) => tool.name === 'fleet_capability_invoke').inputSchema;
+  assert.equal(capabilitySchema.oneOf.length, 3);
+  assert.deepEqual(capabilitySchema.oneOf.map((branch) => branch.properties.action.const), ['invoke', 'resume', 'reverify']);
   const duplicate = await request(server, 3, 'initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
   assert.equal(duplicate.error.code, -32600);
 });
@@ -60,7 +63,7 @@ test('CI6: capability cards are observed and invoke, resume, and reverify preser
   const cards = await request(s.server, 2, 'tools/call', { name: 'fleet_capabilities', arguments: { repoId: 'repo-a' } });
   assert.deepEqual(cards.result.structuredContent, { result: [{ name: 'atlas', ops: { 'atlas.inspect': {} } }] });
   const common = { repoId: 'repo-a', name: 'atlas', op: 'atlas.inspect', budgetTokens: 1200 };
-  const invokeArgs = { ...common, idempotencyKey: 'cap-invoke', args: { path: 'src' } };
+  const invokeArgs = { ...common, idempotencyKey: 'cap-invoke', action: 'invoke', args: { path: 'src' } };
   const invoked = await request(s.server, 3, 'tools/call', { name: 'fleet_capability_invoke', arguments: invokeArgs });
   const resumed = await request(s.server, 4, 'tools/call', { name: 'fleet_capability_invoke', arguments: { ...common, idempotencyKey: 'cap-resume', action: 'resume', ref: { digest: 'abc' }, cursor: 'next' } });
   const reverified = await request(s.server, 5, 'tools/call', { name: 'fleet_capability_invoke', arguments: { ...common, idempotencyKey: 'cap-reverify', action: 'reverify', claim: { digest: 'def' }, args: { strict: true } } });
@@ -82,13 +85,14 @@ test('CI6: capability invocation validation and control authority fail closed be
     { repoId: 'repo-a', idempotencyKey: 'bad-2', name: 'atlas', op: 'atlas.inspect', budgetTokens: 5, action: 'resume', ref: {}, cursor: '' },
     { repoId: 'repo-a', idempotencyKey: 'bad-3', name: 'atlas', op: 'atlas.inspect', budgetTokens: 5, action: 'reverify', claim: {}, args: [], },
     { repoId: 'repo-a', idempotencyKey: 'bad-4', name: 'atlas', op: 'atlas.inspect', budgetTokens: 5, args: {}, claim: {} },
+    { repoId: 'repo-a', idempotencyKey: 'bad-5', name: 'atlas', op: 'atlas.inspect', budgetTokens: 5, args: {} },
   ];
   for (let i = 0; i < invalid.length; i += 1) {
     const response = await request(s.server, 10 + i, 'tools/call', { name: 'fleet_capability_invoke', arguments: invalid[i] });
     assert.equal(response.result.isError, true); assert.match(response.result.content[0].text, /invalid_capability_invocation/);
   }
   const forbidden = await request(s.server, 20, 'tools/call', { name: 'fleet_capability_invoke', arguments: {
-    repoId: 'repo-a', idempotencyKey: 'forbidden', name: 'atlas', op: 'atlas.inspect', budgetTokens: 5, args: {},
+    repoId: 'repo-a', idempotencyKey: 'forbidden', name: 'atlas', op: 'atlas.inspect', budgetTokens: 5, action: 'invoke', args: {},
   } });
   assert.equal(forbidden.result.isError, true); assert.match(forbidden.result.content[0].text, /forbidden/);
   assert.deepEqual(s.calls, []);

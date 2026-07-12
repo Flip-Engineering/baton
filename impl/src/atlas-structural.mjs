@@ -131,7 +131,7 @@ export class AtlasStructuralDelta {
     for (const change of changes) { if (Buffer.byteLength(JSON.stringify([...payload, change])) > budgetBytes) break; payload.push(change); }
     const parseErrorCount = left.errors.length + right.errors.length;
     const truncated = payload.length < changes.length;
-    const status = parseErrorCount > 0 ? 'partial' : (truncated ? 'needs_resume' : 'ok');
+    const status = truncated ? 'needs_resume' : (parseErrorCount > 0 ? 'partial' : 'ok');
     const wallMs = Math.max(0, this.now() - started);
     const result = Object.freeze({
       op, status, summary: `${counts.added} added, ${counts.removed} removed, ${counts.modified} modified${parseErrorCount ? `; ${parseErrorCount} parse errors` : ''}`,

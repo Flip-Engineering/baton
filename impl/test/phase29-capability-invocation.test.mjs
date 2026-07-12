@@ -43,7 +43,11 @@ const registry = (capability = fixture(), overrides = {}) => new CapabilityRegis
 test('CI1/CI2/CI5/CI7: closed cards invoke with trusted context and bounded provenance-only audit', async () => {
   const capability = fixture(); const events = [];
   const subject = registry(capability, { record: (event) => events.push(event) });
-  assert.deepEqual(subject.cards(), [{ name: 'fixture', version: '1', ops: { 'fixture.read': { reverifiable: true } } }]);
+  assert.deepEqual(subject.cards(), [{
+    name: 'fixture', version: '1', ops: { 'fixture.read': { reverifiable: true } },
+    actions: { invoke: true, resume: true, reverify: true, cancel: false },
+    northbound: { inlineOps: ['fixture.read'], taskOpsRequiringTaskPlane: [] },
+  }]);
   const result = await subject.invoke('fixture', 'fixture.read', { query: 'TOP-SECRET-ARGUMENT' }, { budgetTokens: 100, actor: 'web:user:session' });
   assert.equal(result.status, 'ok');
   assert.deepEqual(capability.calls[0], {
@@ -54,6 +58,8 @@ test('CI1/CI2/CI5/CI7: closed cards invoke with trusted context and bounded prov
   assert.equal(events[0].invocationId, events[1].invocationId);
   assert.equal(JSON.stringify(events).includes('TOP-SECRET-ARGUMENT'), false);
   assert.deepEqual(events[1].digests, ['a'.repeat(64)]);
+  assert.deepEqual(events[1].cost, { tokens_out: 4, wall_ms: 1, usd: 0, underlying: 'fixture' });
+  assert.deepEqual(events[1].refs, [{ kind: 'test', digest: 'a'.repeat(64) }]);
 });
 
 test('CI1/CI2/CI7: registration, cards, JSON inputs, operations, budgets, and envelopes fail closed', async () => {
@@ -70,6 +76,18 @@ test('CI1/CI2/CI7: registration, cards, JSON inputs, operations, budgets, and en
   await assert.rejects(registry().invoke('fixture', 'fixture.read', cyclic, { budgetTokens: 10 }), (error) => error.code === 'capability_args_invalid');
   const malformed = fixture({ invoke: async () => ({ op: 'fixture.read', status: 'ok' }) });
   await assert.rejects(registry(malformed).invoke('fixture', 'fixture.read', {}, { budgetTokens: 10 }), (error) => error.code === 'capability_result_invalid');
+  for (const result of [
+    envelope('fixture.read', 1, { status: 'invented' }),
+    envelope('fixture.read', 1, { status: 'needs_resume' }),
+    envelope('fixture.read', 1, { status: 'ok', cursor: 'unexpected' }),
+    envelope('fixture.read', 1, { refs: [{ kind: '', digest: 'bad' }] }),
+    envelope('fixture.read', 1, { cost: { tokens_out: -1, wall_ms: 0, usd: 0, underlying: 'fixture' } }),
+  ]) {
+    const invalid = fixture({ invoke: async () => result });
+    await assert.rejects(registry(invalid).invoke('fixture', 'fixture.read', {}, { budgetTokens: 100 }), (error) => error.code === 'capability_result_invalid');
+  }
+  const resumable = fixture({ invoke: async () => envelope('fixture.read', 1, { status: 'needs_resume', cursor: 'next' }) });
+  assert.equal((await registry(resumable).invoke('fixture', 'fixture.read', {}, { budgetTokens: 100 })).cursor, 'next');
   const oversizedPayload = fixture({ invoke: async (op) => envelope(op, 'x'.repeat(100)) });
   await assert.rejects(registry(oversizedPayload).invoke('fixture', 'fixture.read', {}, { budgetTokens: 2 }), (error) => error.code === 'capability_result_oversize');
   const oversizedEnvelope = fixture({ invoke: async (op) => envelope(op, 1, { summary: 'x'.repeat(2_000) }) });
@@ -121,6 +139,24 @@ test('CI3: resume and reverify share operation, input, budget, root, and authori
   await assert.rejects(subject.resume('fixture', 'fixture.write', {}, 'cursor', ctx), (error) => error.code === 'capability_op_unavailable');
   await assert.rejects(subject.resume('fixture', 'fixture.read', {}, '', ctx), (error) => error.code === 'capability_resume_invalid');
   await assert.rejects(subject.reverify('fixture', 'fixture.read', null, {}, ctx), (error) => error.code === 'capability_reverify_invalid');
+});
+
+test('CI3: cards advertise action support and quarantine task-class ops from synchronous northbounds', async () => {
+  const capability = fixture({
+    card: () => ({
+      name: 'fixture', version: '1',
+      ops: {
+        'fixture.read': { latency_class: 'interactive', reverifiable: true },
+        'fixture.build': { latency_class: 'task', interruptible: true, reverifiable: true },
+      },
+    }),
+    cancel: async () => {},
+  });
+  const card = registry(capability).cards()[0];
+  assert.deepEqual(card.actions, { invoke: true, resume: true, reverify: true, cancel: true });
+  assert.deepEqual(card.northbound, { inlineOps: ['fixture.read'], taskOpsRequiringTaskPlane: ['fixture.build'] });
+  await assert.rejects(registry(capability).invoke('fixture', 'fixture.build', {}, { budgetTokens: 100 }), (error) => error.code === 'capability_task_requires_task_plane');
+  assert.throws(() => registry(fixture({ card: () => ({ name: 'fixture', ops: { bad: { latency_class: 'task', interruptible: false } } }) })), /invalid capability card/);
 });
 
 test('CI1/CI5/CI7: createDriver explicitly assembles one registry behind Coordinator and durable log evidence', async () => {

@@ -67,3 +67,13 @@ remaining capability products. Deployments must still instantiate desired Atlas 
 artifact roots/bounds/contexts. Web/MCP do not yet expose mid-invocation cancellation. Vantage,
 Evidence Ladder, Skill Forge/computer use, Cartographer/Quartermaster, and Cairn remain pending in
 the Phase 28 dependency order.
+
+## 2026-07-12 contract-closure erratum
+
+The post-Phase-29 audit found and closed specification drift before another capability was added.
+ACI status/cursor/cost/ref invariants are now executable; completed events carry bounded normalized
+cost and artifact identities; cards derive action support and distinguish inline operations from
+task-class operations requiring the future task plane; task-class operations typed-refuse rather
+than running synchronously without control-plane cancellation; and MCP/Web require an explicit
+invoke/resume/reverify action, with MCP JSON Schema expressing the mutually exclusive shapes.
+Formal ACI, Phase-16 MCP, `createDriver()` JSDoc, and current-status prose now match that behavior.

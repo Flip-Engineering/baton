@@ -1,9 +1,8 @@
-# System Validation — phase 11 control, model, and persistent-session gates
+# System Validation — living full-system ledger through Phase 30
 
-Validated 2026-07-11 against `master` through phase 11 acceptance/integration. Phase 10.1's assembled fleet
-baseline remains below; the phase-11 additions are control integrity, exact orchestrator model
-selection, persistent follow-up/resume/fork/recovery, isolated runtime homes, canonical budgets,
-deterministic watchdog actions, hardened acceptance, local integration, and publication approval.
+Originally validated 2026-07-11 through Phase 11; updated through the 2026-07-12 coordinator-owned
+capability plane and credentialed GLM live gate. Historical milestone counts remain in their rows;
+the top canonical row and latest handoffs are the current authority.
 
 ## Verdict
 
@@ -37,8 +36,9 @@ router, story compiler, coordinator, and the exported session adapter surface:
 - `GrokAcpCli` — Grok Build 0.1.216 ACP, native prompt/interrupt/approval/kill, explicit
   cancel-then-reprompt steer emulation, and prompt `_meta` usage;
 - `GlmSessionCli` — the Claude-session implementation with Z.ai's supported Anthropic-compatible
-  environment and capability tag. It is built and fake-proven to the credential boundary; this
-  machine had no Z.ai credential, so live GLM is honestly `PENDING-LIVE`.
+  environment and capability tag. Phase 30 live-proves exact `glm-4.7` at native `low` effort,
+  fresh verification, normal kill, and complete reap through `createDriver()` without exposing the
+  ignored owner-only credential.
 
 The legacy one-shot adapters remain an explicitly limited fire-and-forget tier. They are not the
 phase-10 product posture or the live-capstone path.
@@ -123,7 +123,7 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 
 | Gate | Current evidence |
 |---|---|
-| Canonical zero-quota suite | **793/793 passing** via `npm test` in `impl/`; its lifecycle owner reaps the private suite root, and the real linked-worktree regression covers recursive Baton execution without relying on a directory-shaped `.git` |
+| Canonical zero-quota suite | **796/796 passing** via `npm test` in `impl/`; its lifecycle owner reaps the private suite root, and the real linked-worktree regression covers recursive Baton execution without relying on a directory-shaped `.git` |
 | U-1…U-11 | All reproduced before repair; verdict ledger in `docs/handoff/evidence/phase10.1-reverification.md` |
 | Fresh adversarial review | No unresolved critical/major finding; `docs/handoff/evidence/phase10.1-adversarial-review.md` |
 | Three-vendor live fleet | `docs/reference/evidence/phase10.1-capstone-2026-07-10/summary.json` has every check true; 573-event raw ledger beside it |
@@ -150,14 +150,15 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 | Structured integration | `docs/handoff/evidence/phase26-structured-merge-2026-07-11.md`; SM1–SM10, 16/16 focused tests, 71/71 surrounding acceptance/worktree tests, and 770/770 canonical tests cover explicit off-main three-way staging, injected bounded Mergiraf-class resolution over isolated single files, canonical path identity before read/write, marker/fallback/unknown/binary/bounds refusal, ambient-Git isolation and hook suppression, exact two-parent candidates, fresh post-merge verification before main update, dirty/advanced-main preservation, result pins, complete post-effect authority poisoning, replay non-invention, and orphan-stage reconcile. Recursive report verification can opt into an exact confined sparse projection while preserving the full commit identity; product task verification remains full by default. CPG/fingerprint evidence has no merge-authority hook; live Mergiraf remains pending because this host has no binary |
 | E-graph evaluation Decision | `docs/handoff/evidence/phase27-egraph-evaluation-2026-07-11.md`; EG1–EG8, 6/6 focused tests, and 776/776 canonical tests retire a native whole-repo engine, redirect whole-function claims to behavioral evidence plus verification, retain only conditional external expression/kernel research, expose exact reopening thresholds, and typed-refuse build/saturation/proof/verification-bypass/merge-authority operations. The ACI artifact is policy only and cannot enable a capability |
 | Coordinator-owned capability invocation | `docs/handoff/evidence/phase29-capability-invocation-2026-07-12.md`; CI1–CI8, 92/92 surrounding focused tests, and 793/793 canonical tests construct one non-bypassable registry from deployment registrations; enforce JSON/token/envelope/context/provenance bounds; pin exact reverify operations; poison on provenance-sink loss; run a real multi-root ast-grep Atlas operation; and expose authenticated durable web/MCP cards plus invoke/resume/reverify without verification or merge authority. Concurrent exact `grok-4.5` and `grok-composer-2.5-fast` closure passed fresh verification, normal kill, and complete reap |
+| Credentialed GLM live route | `docs/handoff/evidence/phase30-glm-live-2026-07-12.md`; exact `glm-4.7` and native `low` effort were requested/resolved, the provider independently observed the model, 37,000 tokens/$0.254129 were reported, the artifact passed fresh verification, and normal kill completely reaped PID/worktree/metadata/runtime/branch. Credential values never enter evidence or Git |
 | Harness/model/effort route tuple | `docs/handoff/evidence/phase14-route-tuple-2026-07-11.md`; 609/609 full-suite contracts plus recursive exact `CodexAppServerCli` + `gpt-5.6-sol` + `low` runs cover direct/auto/web selection, native mapping, honest nullable observation, recovery, durable event/coordination/story/result/replay/review/integration/commit attribution, exact learning buckets with read-only legacy fallback, mismatch kill/reap, and heterogeneous assembled-driver filtering; the final detached review found no actionable defect and every lifecycle/reap check passed |
 | Authenticated web session lifecycle | `docs/handoff/evidence/phase12-web-session-lifecycle-2026-07-11.md`; 44 focused contracts plus the 619/619 full suite cover injected-provider-only claims, cookie/Bearer login, fsynced atomic credential rotation, restart-safe predecessor refusal, refresh/logout TLS/origin/JSON/CSRF/CORS controls, shared claim/TTL validation, audit-before-mutation failure ordering, non-leakage, live stream revocation, and zero fleet side effects; recursive exact-model build and correction review fully reaped, ending with no actionable IL1–IL8 finding |
 | Authenticated web edge policy | `docs/handoff/evidence/phase12-web-edge-2026-07-11.md`; 82 focused Phase 12 contracts plus the current 678/678 full suite cover canonical direct/trusted-proxy identity, raw forwarding provenance, listener-wide HTTPS, bounded and ordered quotas, non-disclosing readiness, audit-amplification resistance, atomic ticket delivery, and bounded shutdown/stream cleanup. Eleven recursive exact-route corrective reviews were integrated and fully reaped; a twelfth clean review was provider-refused before verdict, so the final independent clean-review gate remains pending |
 | Owned test-fixture lifecycle | `docs/handoff/evidence/phase15-test-fixture-lifecycle-2026-07-11.md`; TF1–TF4 red/green nested process tests prove pass, fail, SIGTERM, descendant-process reap, sibling preservation, and result truth. The canonical `npm test` run passes 660/660 and leaves zero `baton-suite-*` roots in its configured parent |
 | Browser OIDC and operator seat | `docs/handoff/evidence/phase12-browser-control-2026-07-11.md`; 12 new BO/BU contracts, 100/100 combined Phase 12 tests, and the 678/678 full suite cover browser-bound PKCE state, exact verified identity, provider/mapper timeouts and capacity, durable session/CSRF cookies, clean callback redirect, delivery-failure revocation, authenticated no-store/CSP assets, sanitized session projection, exact harness/model/effort inputs, fenced controls, and existing SSE/logout wiring. A real TLS socket proof passes eight end-to-end redirect/cookie/command/SSE/revocation gates and fully cleans up; in-app browser interaction and provider-backed review remain pending because their execution/quota providers were unavailable |
 | Durable web command reconciliation | `docs/handoff/evidence/phase12-web-command-reconciliation-2026-07-11.md`; 6 RC contracts, 22/22 focused status/operator/northbound tests, and 678/678 full-suite tests cover server-derived durable user ownership, admitted/completed/failed sanitized reads, restart and same-user credential rotation, cross-user/legacy/malformed hidden-object posture, observe/repo scope, audit failure, zero coordinator calls, bounded routable IDs, and same-ID browser polling |
-| MCP stdio northbound | `docs/handoff/evidence/phase16-mcp-northbound-2026-07-11.md`; MN1–MN10, 14/14 focused tests, and 692/692 full-suite tests cover the stable 2025-11-25 handshake, eight closed fleet tools, the packaged subprocess, fixed injected authority and deployment quota, exact harness/model/effort dispatch, fences, bounded wait, durable pre-effect admission, restart replay, typed versus ambiguous post-effect refusal, structured/text results, fatal UTF-8 and output failures, and deployment-bounded newline stdio framing. Recursive exact-route review reached native `gpt-5.6-sol` then hit the provider usage limit; full reap passed but no review verdict is claimed |
-| Credential discipline | Grok auth was presence-checked and explicitly projected into private runtime homes without logging values. An ignored operator-owned GLM credential file is present and remains unread; live GLM evidence is not inferred from presence |
+| MCP stdio northbound | `docs/handoff/evidence/phase16-mcp-northbound-2026-07-11.md`; MN1–MN10 originally shipped eight tools at 692/692. Phase 29 extends the same closed inventory to ten with capability cards/invoke, explicit mutually exclusive action schemas, and no second state machine |
+| Credential discipline | Grok auth is explicitly projected into private runtime homes without logging values. Phase 30 uses the ignored owner-only GLM credential through a bounded explicit JSON pointer; only route/usage/lifecycle fields enter sanitized evidence |
 
 The three-vendor capstone checks were: no harness error; Claude/Codex/Grok all completed; every
 completion had `verify.reverified.accept:true`; native Claude steer landed; native Codex interrupt
@@ -185,8 +186,8 @@ These are absent, not implied by the green suite:
 4. **Automatic rejoin and remaining vendor depth.** Explicit native resume/recovery is shipped;
    automatic startup rejoin to an already-running broker/process is not. Grok's vendor-specific
    fork/rewind schemas remain `planned`, and checkpoint/rewind depth remains incomplete.
-5. **GLM live proof.** `GlmSessionCli` is built to the credential boundary, but no credential was
-   present in this run.
+5. **GLM concurrency/quota depth.** One credentialed exact-model/low-effort session is live-proven;
+   concurrent GLM seats, automatic quota discovery, and OpenCode-as-GLM parity remain unproven.
 6. **Production runtime and complete northbound surfaces.** The implementation remains
    dependency-free Node ESM. The authenticated HTTPS command/session vertical, resumable SSE WN6,
    EP1–EP9 edge policy, BO1–BO7 OIDC bootstrap, and BU1–BU7 minimal operator seat ship, but a
@@ -202,8 +203,9 @@ These are absent, not implied by the green suite:
    node/edge delta, bounded impact, operator-specified taint witnesses, structured braced-if CFG,
    bounded may-reaching definitions, copies, and literal dead-branch pruning now also ship;
    direct rewrite apply, full rule configs, live LSP, semantic retrieval, general path-condition
-   solving/full PDG, IR, true semantic merge, and e-graph evaluation remain incomplete and
-   explicitly catalogued.
+   solving/full PDG, IR, and true semantic merge remain incomplete and explicitly catalogued.
+   Native whole-repo e-graphs are retired by Phase 27; only threshold-gated external expression/
+   kernel research remains conditional.
 9. **Test-fixture crash reconciliation.** Repeated dogfood/full-suite runs leaked 14,070
    Baton-named temporary fixture directories and exhausted the host disk even though registered
    worker processes, worktrees, branches, and runtime scopes were clean. TF1–TF4 now gives the
@@ -226,9 +228,9 @@ deny an outside-worktree write in its native sandbox, and auto-kill/reap it at a
 Those coordination/knowledge, Atlas index/symbol, and authenticated SSE milestones now ship. The
 harness + exact-model + effort route specificity gate (issue #2) now also ships. EP1–EP9 closes
 the quota/proxy/readiness/shutdown edge-policy increment locally; its final detached clean review
-is pending a provider reset. The next active pursuit is real-browser OIDC/control proof,
-WebSocket parity, MCP, and deeper operator surfaces, followed by the next measured
-representation rungs. Isolated authenticated concurrent Grok exact-route/interrupt/resume/kill/reap
+is pending a provider reset. MCP stdio and authenticated web control now ship; the next active
+pursuit is audited ACI closure and Cairn's sealed run scorecard, followed by the remaining
+capability, session/governance, and production northbound depth. Isolated authenticated concurrent Grok exact-route/interrupt/resume/kill/reap
 now passes with provider-observed identities and complete cleanup. Canonical test
 fixture lifecycle is now owned and green; stale-root reconciliation after uncatchable wrapper
 death remains explicit runtime depth.

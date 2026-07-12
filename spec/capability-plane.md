@@ -10,19 +10,22 @@ A capability module wraps one or more underlying tools (rg, an LSP server, a DAP
 interface Capability {
   card(): CapabilityCard;                                  // §5 — cost/latency/determinism/side-effects/shared-state
   invoke(op: string, args: object, ctx: InvokeCtx): Promise<AciResult>;   // §3 — the one call shape
-  resume?(handle: OpHandle, cursor: Cursor): Promise<AciResult>;          // paged / long-op continuation
-  cancel?(handle: OpHandle): Promise<void>;                // control-plane interrupt of a long op
+  resume?(handle: OpHandle, cursor: Cursor, ctx: InvokeCtx): Promise<AciResult>; // paged continuation
+  cancel?(handle: OpHandle, ctx: InvokeCtx): Promise<void>; // task-plane interrupt when wired
   reverify?(claim: AciResult, op: string, args: object, ctx: InvokeCtx): Promise<Verdict>; // §6 — hub re-runs the exact operation and inputs
 }
 ```
 
-`InvokeCtx` carries the caller identity (`worker_id | orchestrator | human`), the `(worker, turn_epoch)` fence (so a capability op is fenced like a control op — a stale-epoch invoke is rejected), the worktree/sandbox the op must run in, and a token budget for the result.
+`InvokeCtx` always carries registry-owned caller identity, token budget, cancellation signal, and
+trusted repository root. A deployment context may add bounded worktree/sandbox/overlay roots but
+cannot override those authority fields. A `(worker, turn_epoch)` fence belongs to a durable
+task-plane capability invocation; Phase 29's synchronous registry does not fabricate one.
 
 ## 2. The five design laws (from doc 10 §5, made operational)
 
 1. **Agent-shaped output or it's a bug.** No capability returns a human artifact (REPL transcript, pixel screenshot, unbounded list, raw stack trace) where a structured, token-bounded, addressable result would serve. The human form, if needed, is an *artifact ref*, not the payload.
 2. **Every op is an event.** `invoke` emits `capability.op.started/completed` to the ledger (with `actor`, cost, refs) — capability use is as observable and auditable as control ops ("no invisible hand" extends to tool use).
-3. **Long ops live in the task-DAG.** Anything beyond a latency budget (a full index build, a fuzzing campaign, a proof search) becomes a task-DAG node with progress events and is **interruptible via the control plane** — a worker's steer/interrupt reaches its running capability op, not just its model turn.
+3. **Long ops live in the task-DAG.** Anything beyond a latency budget (a full index build, a fuzzing campaign, a proof search) becomes a task-DAG node with progress events and is **interruptible via the control plane**. Until that adapter ships, the coordinator-owned registry advertises task-class operations as `taskOpsRequiringTaskPlane` and refuses to run them; web/MCP never execute them inline.
 4. **Claims are re-runnable.** Any capability output a downstream decision trusts (a passing test, a proof, a search result the plan depends on) is re-runnable by the hub via `reverify` — a worker cannot forge a capability result the hub re-checks (supervisor I7). Determinism is declared in the card; non-deterministic capabilities declare their re-verification semantics (seed capture, tolerance).
 5. **Shared state declares its consistency.** A capability that maintains fleet-shared state (the code index, the blackboard, the skill registry) declares its consistency model in the card (§4) — silent shared mutable state is banned (doc 08 §4).
 
@@ -33,7 +36,7 @@ Every capability returns the same shape, so the orchestrator and workers learn *
 ```jsonc
 {
   "op": "search.structural",
-  "status": "ok | partial | error | needs_resume",
+  "status": "ok | partial | error | needs_resume | diverged",
   "summary": "12 defs of `authorize(`; 3 in payments/ (likely targets), 9 in tests",  // ≤ ~1 line, always present
   "payload": [ /* structured, token-BOUNDED to ctx.budget — the top-K, typed, not raw */ ],
   "refs": [ { "handle": "art:sha256:…", "kind": "full_results", "bytes": 48211 } ],   // addressable; full data in artifact store, fetched only on demand
@@ -75,7 +78,7 @@ Analogous to the harness card. Each module's `card()` declares:
 }
 ```
 
-`latency_class ∈ {interactive (< budget, returns inline), task (task-DAG node, progress events, interruptible)}`. The orchestrator consults cards to (a) pick the right rung of a ladder (e.g. the validation ladder, doc 11 — cheap `test` op vs expensive `prove` op), (b) know an op's side-effects before invoking, (c) route cost. **Cards are probed from the installed tools where possible** (version strings, feature flags) so they can't drift from reality — the same version-skew defense as adapter cards (doc 09 §G).
+`latency_class ∈ {interactive (< budget, returns inline), bounded_batch (deployment-bounded inline batch), task (task-DAG node, progress events, interruptible)}`. Registry cards add derived `actions` support and split `northbound.inlineOps` from `northbound.taskOpsRequiringTaskPlane`; modules cannot self-claim those derived affordances. The orchestrator consults cards to (a) pick the right rung of a ladder (e.g. the validation ladder, doc 11 — cheap `test` op vs expensive `prove` op), (b) know an op's side-effects before invoking, (c) route cost. **Cards are probed from the installed tools where possible** (version strings, feature flags) so they can't drift from reality — the same version-skew defense as adapter cards (doc 09 §G).
 
 ## 6. Re-runnability & the trust chain (why this ties to the control plane)
 

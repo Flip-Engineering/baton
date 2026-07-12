@@ -97,9 +97,13 @@ approval targets an exact integrated SHA, credential-free remote name, and full 
 approval means no push, and restart drops pending publication authority. Semantic conflict
 handling, stacked integration, deploy adapters, and live remote-push proof remain debt.
 
-## Deliberately fenced capability families
+## Historical Phase-10 fences (status superseded by doc 28)
 
-The 22 fenced rows should remain fenced until the control plane earns expansion. They include:
+This section records the Phase-10 decision boundary; it is not current status. Since then Baton has
+shipped MCP stdio, the authenticated web northbound, durable coordination/knowledge, broad Atlas
+representation rungs, structured integration, and the coordinator-owned ACI registry. Current
+shipped/partial/pending status lives in `docs/28-exhaustive-capability-audit.md`. The original 22
+fenced rows included:
 
 - MCP northbound exposure and A2A federation;
 - multi-machine/cloud execution backends;
@@ -111,18 +115,13 @@ The 22 fenced rows should remain fenced until the control plane earns expansion.
 Fenced does not mean bad. It means phase-10 completion must not be held hostage by features the
 goal explicitly excluded.
 
-## Remaining order of pursuit
+## Historical order of pursuit and current continuation
 
-1. **Durable coordination substrate:** typed task/artifact ledger, Scratch coordination, and the
-   self-contained bitemporal causal shared knowledge graph.
-2. **Atlas vertical:** AST/CST parsing and proposal-only structural rewrite, symbols/references,
-   SCIP-compatible interchange, and a first code-property/impact slice backed by executable evidence.
-3. **Capability plane:** Vantage, Evidence Ladder, Skill Forge/computer use, Cartographer/
-   Quartermaster, and Cairn on the same event/artifact substrate.
-4. **Representation and integration depth:** behavioral fingerprints, IR/semantic diff and merge,
-   graph rewrites/e-graphs, conflict handling, and rollback.
-5. **Northbound control:** MCP plus authenticated HTTPS/WebSocket user-to-orchestrator commands,
-   authorization, replay protection, audit, reconnect/resume, and kill/reap control.
+Items 1, 2, the ACI registry portion of 3, major bounded portions of 4, MCP stdio, and authenticated
+HTTPS/SSE control from item 5 have shipped. The current continuation is: close audited ACI contract
+drift; build Cairn Rung 0 and Cartographer/Quartermaster on the shared substrate; then Vantage,
+Evidence Ladder, and Skill Forge/computer use; deepen session/governance/northbound production
+surfaces; and pursue conditional representation research only through its explicit Decisions.
 
 Each program repeats the earned loop: current-state verification → numbered spec → red tests →
 implementation → adversarial review → live proof. No phase may infer completion from adapter-only

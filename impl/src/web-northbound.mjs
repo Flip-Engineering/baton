@@ -45,7 +45,7 @@ function dispatchFailure(cause) {
     return { httpStatus: 400, body: { ok: false, error: { code: 'invalid_command', message: 'command precondition failed' } } };
   }
   if (cause?.code === 'capability_not_found') return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'resource not found' } } };
-  if (['capability_op_unavailable', 'capability_resume_unavailable', 'capability_reverify_unavailable', 'capability_args_invalid',
+  if (['capability_op_unavailable', 'capability_resume_unavailable', 'capability_reverify_unavailable', 'capability_task_requires_task_plane', 'capability_args_invalid',
     'capability_resume_invalid', 'capability_reverify_invalid', 'capability_budget_invalid', 'capability_actor_invalid'].includes(cause?.code)) {
     return { httpStatus: 400, body: { ok: false, error: { code: 'invalid_command', message: 'command precondition failed' } } };
   }
@@ -102,7 +102,8 @@ function validateEnvelope(envelope) {
   if (envelope.command === 'send' && (!string(envelope.args.message) || !['turn', 'steer', 'nudge'].includes(envelope.args.mode))) return 'send requires message and a valid mode';
   if (envelope.command === 'respond' && (!string(envelope.args.requestId) || !Object.hasOwn(envelope.args, 'answer'))) return 'respond requires requestId and answer';
   if (envelope.command === 'capability_invoke') {
-    const action = envelope.args.action ?? 'invoke';
+    if (!Object.hasOwn(envelope.args, 'action')) return 'capability_invoke requires an explicit action';
+    const action = envelope.args.action;
     if (!/^[A-Za-z0-9._:-]{1,128}$/.test(envelope.args.name ?? '')
       || typeof envelope.args.op !== 'string' || envelope.args.op.length === 0 || envelope.args.op.length > 256) return 'capability_invoke requires a valid name and op';
     if (!['invoke', 'resume', 'reverify'].includes(action)) return 'capability_invoke requires a valid action';
@@ -318,7 +319,7 @@ export class WebNorthbound {
       value = this.coordinator.capabilityCards();
     } else if (envelope.command === 'capability_invoke') {
       const capabilityCtx = { budgetTokens: a.budgetTokens, actor: webActor };
-      const action = a.action ?? 'invoke';
+      const action = a.action;
       if (action === 'invoke') value = await this.coordinator.invokeCapability(a.name, a.op, a.args, capabilityCtx);
       else if (action === 'resume') value = await this.coordinator.resumeCapability(a.name, a.op, a.ref, a.cursor, capabilityCtx);
       else value = await this.coordinator.reverifyCapability(a.name, a.op, a.claim, a.args, capabilityCtx);

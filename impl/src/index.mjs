@@ -148,8 +148,12 @@ function refereeFn(task, result, opts) {
 /**
  * Assemble a runnable fleet driver.
  * @param {{repoRoot:string, logDir:string, adapters:Record<string,object>, now?:()=>number,
- *          approvalTimeoutMs?:number, stopDeadlineMs?:number}} opts
- * @returns {{coordinator:Coordinator, story:StoryCompiler, router:AdaptiveRouter, log:Log}}
+ *          approvalTimeoutMs?:number, stopDeadlineMs?:number,
+ *          capabilities?:Record<string,object>, capabilityContexts?:Record<string,object|Function>,
+ *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
+ *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
+ *          workerDependencyDirs?:string[], verifyDependencyDirs?:string[], verifySparsePaths?:string[]}} opts
+ * @returns {{coordinator:Coordinator, story:StoryCompiler, router:AdaptiveRouter, log:Log, coordination:CoordinationStore}}
  */
 export function createDriver(opts) {
   const now = opts.now ?? Date.now;
