@@ -154,7 +154,7 @@ function refereeFn(task, result, opts) {
  *          approvalTimeoutMs?:number, stopDeadlineMs?:number,
  *          capabilities?:Record<string,object>, capabilityFactories?:Record<string,Function>, capabilityContexts?:Record<string,object|Function>,
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
- *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,maxNeedBytes:number,maxRationaleBytes:number},
+ *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number},
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
  *          workerDependencyDirs?:string[], verifyDependencyDirs?:string[], verifySparsePaths?:string[]}} opts
  * @returns {{coordinator:Coordinator, story:StoryCompiler, router:AdaptiveRouter, log:Log, coordination:CoordinationStore}}

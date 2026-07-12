@@ -8,7 +8,7 @@ import { operatorAsset } from './web-operator.mjs';
 
 const COMMAND_CAPABILITY = Object.freeze({
   spawn: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', respond: 'approve',
-  list: 'observe', result: 'observe', wait: 'observe', capabilities: 'observe', capability_invoke: 'control', reuse_decide: 'control',
+  list: 'observe', result: 'observe', wait: 'observe', capabilities: 'observe', capability_invoke: 'control', reuse_decide: 'control', reuse_recheck: 'control',
 });
 const FENCE_REQUIRED = new Set(['send', 'interrupt', 'kill']);
 const TOP_LEVEL = new Set(['schemaVersion', 'commandId', 'idempotencyKey', 'command', 'args', 'repoId', 'runId', 'expectedFence', 'origin', 'clientObservedCursor']);
@@ -24,6 +24,7 @@ const ARG_FIELDS = Object.freeze({
   capabilities: new Set(),
   capability_invoke: new Set(['name', 'op', 'action', 'args', 'budgetTokens', 'ref', 'cursor', 'claim', 'workerId', 'note']),
   reuse_decide: new Set(['need', 'choice', 'rationale', 'dossier', 'sbom', 'supersedes', 'budgetTokens']),
+  reuse_recheck: new Set(['decisionId', 'expectedValidityVersion', 'trigger', 'budgetTokens']),
 });
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
@@ -59,6 +60,10 @@ function dispatchFailure(cause) {
   if (['invalid_reuse_decision', 'reuse_evidence_invalid'].includes(cause?.code)) return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'reuse decision precondition failed' } } };
   if (['reuse_decision_forbidden', 'reuse_repo_mismatch'].includes(cause?.code)) return { httpStatus: 403, body: { ok: false, error: { code: cause.code, message: 'reuse decision authority forbidden' } } };
   if (['reuse_decision_conflict', 'reuse_decision_exists', 'reuse_borrow_blocked', 'reuse_evidence_diverged', 'reuse_evidence_stale', 'reuse_environment_mismatch', 'reuse_tree_dirty', 'reuse_namespace_conflict', 'stale_version'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'reuse decision conflict' } } };
+  if (cause?.code === 'invalid_reuse_recheck') return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'reuse recheck precondition failed' } } };
+  if (cause?.code === 'reuse_recheck_forbidden') return { httpStatus: 403, body: { ok: false, error: { code: cause.code, message: 'reuse recheck authority forbidden' } } };
+  if (['reuse_risk_conflict', 'reuse_ttl_conflict', 'reuse_risk_guarded', 'reuse_risk_stale', 'reuse_not_expired', 'reuse_decision_not_found'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'reuse recheck conflict' } } };
+  if (cause?.code === 'reuse_recheck_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: cause.code, message: 'reuse recheck unavailable' } } };
   if (cause?.code === 'reuse_decision_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: cause.code, message: 'reuse decision unavailable' } } };
   if (cause?.name === 'WorkerNotFoundError') return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'resource not found' } } };
   return { httpStatus: 503, body: { ok: false, error: { code: 'temporarily_unavailable', message: 'command dispatch failed' } } };
@@ -116,6 +121,10 @@ function validateEnvelope(envelope) {
     || (Object.hasOwn(envelope.args, 'supersedes') && (!isRecord(envelope.args.supersedes)
       || Object.keys(envelope.args.supersedes).some((key) => !['decisionId', 'expectedValidityVersion'].includes(key))
       || !string(envelope.args.supersedes.decisionId) || !Number.isSafeInteger(envelope.args.supersedes.expectedValidityVersion) || envelope.args.supersedes.expectedValidityVersion <= 0)))) return 'reuse_decide requires bounded decision and exact evidence inputs';
+  if (envelope.command === 'reuse_recheck' && (!string(envelope.args.decisionId)
+    || !Number.isSafeInteger(envelope.args.expectedValidityVersion) || envelope.args.expectedValidityVersion <= 0
+    || !['advisory_refresh', 'ttl_expired'].includes(envelope.args.trigger)
+    || !Number.isSafeInteger(envelope.args.budgetTokens) || envelope.args.budgetTokens <= 0)) return 'reuse_recheck requires an exact decision, trigger, version, and budget';
   if (envelope.command === 'capability_invoke') {
     if (!Object.hasOwn(envelope.args, 'action')) return 'capability_invoke requires an explicit action';
     const action = envelope.args.action;
@@ -263,7 +272,9 @@ export class WebNorthbound {
     }
     if (this.edge) {
       const key = ctx.principal.credentialId;
-      const quota = this.edge.takeCommand(key, ({ spawn: 10, capability_invoke: 10, reuse_decide: 20, send: 2, interrupt: 2, kill: 2, respond: 2 }[envelope.command] ?? 1));
+      const commandCost = envelope.command === 'reuse_recheck' ? (envelope.args.trigger === 'advisory_refresh' ? 20 : 2)
+        : ({ spawn: 10, capability_invoke: 10, reuse_decide: 20, send: 2, interrupt: 2, kill: 2, respond: 2 }[envelope.command] ?? 1);
+      const quota = this.edge.takeCommand(key, commandCost);
       if (!quota.ok) {
         try { this._audit('quota_refused', ctx, { quota: quota.quota }); } catch { return error(503, 'temporarily_unavailable'); }
         return { ...error(429, 'rate_limited'), headers: { 'retry-after': String(quota.retryAfter) } };
@@ -348,6 +359,8 @@ export class WebNorthbound {
       else value = await this.coordinator.orientWorker(a.workerId, a.args, a.note, { ...capabilityCtx, expectedFence: envelope.expectedFence });
     } else if (envelope.command === 'reuse_decide') {
       value = await this.coordinator.decideReuse(a, { actor: webActor, repoId: envelope.repoId, budgetTokens: a.budgetTokens, idempotencyKey: `web.command:${envelope.commandId}` });
+    } else if (envelope.command === 'reuse_recheck') {
+      value = await this.coordinator.recheckReuseDecision(a, { actor: webActor, repoId: envelope.repoId, budgetTokens: a.budgetTokens, idempotencyKey: `web.command:${envelope.commandId}` });
     }
     if (value?.result === 'stale_fence') return error(409, 'stale_fence');
     return result(200, { ok: true, commandId: envelope.commandId, result: json(value) });

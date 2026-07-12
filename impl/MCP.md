@@ -16,9 +16,10 @@ export default async function createMcpServer() {
   const { coordinator, coordination } = createDriver({
     // repository, log, adapters, runtime isolation, and trust policy
     repoId: 'repo-id',
-    // Optional Phase 38 authority; omission disables reuse decisions.
+    // Optional Phase 38-39 authority; omission disables reuse decisions/rechecks.
     reuseDecisionPolicy: {
       authorize: ({ actor, repoId }) => actor === 'mcp:operator:local-mcp-host' && repoId === 'repo-id',
+      authorizeRecheck: ({ actor, repoId }) => actor === 'mcp:operator:local-mcp-host' && repoId === 'repo-id',
       maxNeedBytes: 2048,
       maxRationaleBytes: 8192,
     },
@@ -48,8 +49,11 @@ line. The host factory owns credential projection, fixed principal identity, quo
 and adapter construction. Tool calls can independently choose `harness`, `model`, and
 `effort`; the coordinator remains the only fleet authority.
 
-The closed inventory has eleven tools. `fleet_reuse_decide` accepts a bounded `borrow|build`
+The closed inventory has twelve tools. `fleet_reuse_decide` accepts a bounded `borrow|build`
 judgment, exact `reuse.vet` and `provenance.sbom` claims/arguments, and optional
 validity-version supersession. Baton freshly reverifies both artifacts and requires the configured
 clean repository identity. It never installs a package, mutates a lockfile, merges code, or accepts
-a caller-supplied actor.
+a caller-supplied actor. `fleet_reuse_recheck` accepts only an exact decision/version and
+`advisory_refresh|ttl_expired`: advisory facts are derived by a Coordinator-forced official refresh,
+and TTL uses the immutable stored expiry. An adverse refresh fences the exact coordinate and
+invalidates all matching live Decisions atomically; it grants no package or code authority.

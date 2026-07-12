@@ -105,6 +105,7 @@ const COORDINATION_MUTATORS = new Set([
   'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
   'readScratch', 'expireScratchClaim', 'expireScratchFact', 'addKnowledgeNode', 'promoteKnowledgeNode',
   'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination', 'recordReuseDecision',
+  'recordReuseRiskGuard', 'recordReuseTtlInvalidation',
 ]);
 
 function canonical(value) {
@@ -301,7 +302,7 @@ export class Coordinator {
   /** @param {object} opts */
   constructor(opts) {
     if (!opts?.coordination) throw new TypeError('Coordinator requires a durable coordination store');
-    for (const method of ['snapshot', 'task', 'integrationAuthority', 'publicationAuthority', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent', 'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'artifact', 'recordReuseDecision', 'reuseDecision', 'reuseDecisionAdmission', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
+    for (const method of ['snapshot', 'task', 'integrationAuthority', 'publicationAuthority', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent', 'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'artifact', 'recordReuseDecision', 'reuseDecision', 'reuseDecisionAdmission', 'reuseRiskGuard', 'recordReuseRiskGuard', 'reuseRiskAdmission', 'recordReuseTtlInvalidation', 'reuseTtlAdmission', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
       if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
     }
     this._log = opts.log;
@@ -342,7 +343,8 @@ export class Coordinator {
       const policy = opts.reuseDecisionPolicy;
       if (!policy || typeof policy.authorize !== 'function' || !Number.isSafeInteger(policy.maxNeedBytes) || policy.maxNeedBytes <= 0
         || !Number.isSafeInteger(policy.maxRationaleBytes) || policy.maxRationaleBytes <= 0) throw new TypeError('reuse decision policy requires actor authorization and text ceilings');
-      this._reuseDecisionPolicy = Object.freeze({ authorize: policy.authorize, maxNeedBytes: policy.maxNeedBytes, maxRationaleBytes: policy.maxRationaleBytes });
+      if (policy.authorizeRecheck !== undefined && typeof policy.authorizeRecheck !== 'function') throw new TypeError('reuse decision authorizeRecheck must be a function');
+      this._reuseDecisionPolicy = Object.freeze({ authorize: policy.authorize, authorizeRecheck: policy.authorizeRecheck ?? null, maxNeedBytes: policy.maxNeedBytes, maxRationaleBytes: policy.maxRationaleBytes });
     }
     this._now = opts.now || Date.now;
     this._approvalTimeoutMs = opts.approvalTimeoutMs ?? 60000;
@@ -2726,6 +2728,9 @@ export class Coordinator {
     if (!(await this._reuseDecisionPolicy.authorize({ actor, repoId: ctx.repoId, choice: request.choice, need, coordinate }))) {
       const error = new Error('reuse decision actor is not authorized for this subject'); error.code = 'reuse_decision_forbidden'; throw error;
     }
+    if (request.choice === 'borrow' && this._coordination.reuseRiskGuard(coordinate)?.blocked === true) {
+      throw Object.assign(new Error('exact package coordinate is blocked by an advisory observation'), { code: 'reuse_risk_guarded' });
+    }
     const dossierRef = decisionRef(request.dossier.claim?.refs?.[0], 'dependency-dossier', 'application/vnd.baton.dependency-dossier+json');
     const sbomRef = decisionRef(request.sbom.claim?.refs?.[0], 'lockfile-sbom', 'application/vnd.cyclonedx+json');
     if (request.supersedes != null && (typeof request.supersedes !== 'object' || Array.isArray(request.supersedes)
@@ -2771,6 +2776,57 @@ export class Coordinator {
     const priorNode = prior ? knowledgeSnapshot.nodes.find((node) => node.id === prior.nodeId) : null;
     const affectedReadEvents = prior && !priorNode?.validTo ? knowledgeSnapshot.reads.filter((read) => read.nodeIds.includes(prior.nodeId)).map((read) => read.eventSeq) : [];
     return this._coordination.recordReuseDecision({ schemaVersion: 1, id, requestDigest, decisionDigest, decisionArtifactDigest, subjectDigest, ...decisionRecord, dossierRef, sbomRef, dossierSnapshot, sbomSnapshot, reverifyEvidence, artifacts, affectedReadEvents }, { actor, key: ctx.idempotencyKey });
+  }
+
+  /** Recheck one immutable reuse lineage without accepting caller-supplied advisory facts. TTL is
+   * deterministic from the stored dossier; advisory mode forces Quartermaster's official refresh
+   * and lets the store atomically install the coordinate fence plus complete live target set. */
+  async recheckReuseDecision(request, ctx = {}) {
+    this._assertOperational();
+    if (!this._reuseDecisionPolicy?.authorizeRecheck) throw Object.assign(new Error('reuse recheck authority is not deployment-configured'), { code: 'reuse_recheck_unavailable' });
+    const actor = ctx.actor;
+    if (typeof actor !== 'string' || actor.length === 0 || actor.length > 256) throw Object.assign(new Error('reuse recheck actor is not authorized'), { code: 'reuse_recheck_forbidden' });
+    if (typeof ctx.idempotencyKey !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(ctx.idempotencyKey)
+      || typeof ctx.repoId !== 'string' || !request || typeof request !== 'object' || Array.isArray(request) || Object.hasOwn(request, 'actor')
+      || Object.keys(request).some((key) => !['decisionId', 'expectedValidityVersion', 'trigger', 'budgetTokens'].includes(key))
+      || typeof request.decisionId !== 'string' || !Number.isSafeInteger(request.expectedValidityVersion) || request.expectedValidityVersion <= 0
+      || !['advisory_refresh', 'ttl_expired'].includes(request.trigger) || !Number.isSafeInteger(ctx.budgetTokens) || ctx.budgetTokens <= 0
+      || request.budgetTokens !== ctx.budgetTokens) {
+      throw Object.assign(new TypeError('reuse recheck request is invalid'), { code: 'invalid_reuse_recheck' });
+    }
+    const seed = this._coordination.reuseDecision(request.decisionId);
+    if (!seed) throw Object.assign(new Error('reuse recheck decision was not found'), { code: 'reuse_decision_not_found' });
+    if (seed.envRef?.repoId !== ctx.repoId) throw Object.assign(new Error('reuse recheck repository authority mismatch'), { code: 'reuse_repo_mismatch' });
+    if (!(await this._reuseDecisionPolicy.authorizeRecheck({ actor, repoId: ctx.repoId, trigger: request.trigger, coordinate: seed.coordinate, decisionId: seed.id }))) {
+      throw Object.assign(new Error('reuse recheck actor is not authorized for this subject'), { code: 'reuse_recheck_forbidden' });
+    }
+    const requestDigest = canonicalDigest({ actor, repoId: ctx.repoId, decisionId: seed.id, expectedValidityVersion: request.expectedValidityVersion, trigger: request.trigger });
+    if (request.trigger === 'ttl_expired') {
+      const admitted = this._coordination.reuseTtlAdmission(ctx.idempotencyKey, requestDigest); if (admitted) return admitted;
+      return this._coordination.recordReuseTtlInvalidation({ requestDigest, decisionId: seed.id, expectedValidityVersion: request.expectedValidityVersion }, { actor, key: ctx.idempotencyKey });
+    }
+    const admitted = this._coordination.reuseRiskAdmission(ctx.idempotencyKey, requestDigest); if (admitted) return admitted;
+    const dossierArgs = { indexEpoch: seed.indexEpoch, ecosystem: seed.coordinate.ecosystem, package: seed.coordinate.package, version: seed.coordinate.version, refresh: true };
+    const verifyCtx = { budgetTokens: ctx.budgetTokens, actor };
+    const claim = await this.invokeCapability('cartographer-quartermaster', 'reuse.vet', dossierArgs, verifyCtx);
+    const dossierRef = decisionRef(claim?.refs?.[0], 'dependency-dossier', 'application/vnd.baton.dependency-dossier+json');
+    const check = await this.reverifyCapability('cartographer-quartermaster', 'reuse.vet', claim, dossierArgs, verifyCtx);
+    if (check.status !== 'ok' || check.payload?.[0]?.ok !== true || !check.payload[0].snapshot) throw Object.assign(new Error('reuse advisory refresh diverged'), { code: 'reuse_evidence_diverged' });
+    const snapshot = check.payload[0].snapshot; const dossier = claim.payload?.[0];
+    if (!dossier || dossier.factDigest !== snapshot.factDigest || dossier.identity?.ecosystem !== seed.coordinate.ecosystem
+      || dossier.identity?.package !== seed.coordinate.package || dossier.identity?.version !== seed.coordinate.version
+      || !Array.isArray(dossier.advisoryIds) || !Array.isArray(dossier.advisories)) throw Object.assign(new Error('reuse advisory projection is incomplete'), { code: 'reuse_evidence_diverged' });
+    const advisoryIds = [...new Set(dossier.advisoryIds)].sort();
+    const maliciousAdvisoryIds = [...new Set(dossier.advisories.filter((item) => item?.malicious === true).map((item) => item.id))].sort();
+    const adverse = snapshot.recommendation !== 'borrow_candidate';
+    const riskProjectionDigest = canonicalDigest({ coordinate: seed.coordinate, dossierRef, dossierSnapshot: snapshot, advisoryIds, maliciousAdvisoryIds, adverse });
+    const verifiedEvent = this._log.append({
+      worker: 'hub-capability', harness: 'baton', turnEpoch: 0, actor, kind: 'knowledge.reuse_risk_reverified',
+      payload: { requestDigest, seedDecisionId: seed.id, expectedValidityVersion: request.expectedValidityVersion, dossierDigest: dossierRef.digest, factDigest: snapshot.factDigest, recommendation: snapshot.recommendation, asOf: snapshot.asOf, expiresAt: snapshot.expiresAt, advisoryIds, maliciousAdvisoryIds, adverse, riskProjectionDigest },
+    });
+    const reverifyEvidence = this._coordMapEvent(verifiedEvent);
+    const result = this._coordination.recordReuseRiskGuard({ requestDigest, seedDecisionId: seed.id, seedExpectedValidityVersion: request.expectedValidityVersion, coordinate: seed.coordinate, dossierRef, dossierSnapshot: snapshot, advisoryIds, maliciousAdvisoryIds, reverifyEvidence, adverse, effectiveAt: snapshot.asOf }, { actor, key: ctx.idempotencyKey });
+    return Object.freeze({ ...result, dossier: claim });
   }
 
   /** Pull-only causal recall. The coordination append is the authority boundary: if the read

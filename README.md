@@ -37,7 +37,7 @@ knowledge graph, is preserved in [docs/26](docs/26-full-system-goal.md).
 
 Phase 29 now makes deployment-injected Atlas capabilities real fleet tools through one
 Coordinator-owned registry. The same bounded invoke/resume/reverify path is available through the
-authenticated web command surface and the eleven-tool MCP inventory; deployment-owned multi-root
+authenticated web command surface and the twelve-tool MCP inventory; deployment-owned multi-root
 contexts cannot override actor, budget, repository root, or cancellation, and capability output
 cannot claim verification or merge authority. Phase 30 also live-proves the credentialed GLM leg:
 exact `glm-4.7` at native `low` effort was provider-observed, freshly verified, normally killed,
@@ -57,8 +57,10 @@ v3 CycloneDX SBOM, grounded only in actual installed lockfile state and explicit
 future proposed registry graphs. Phase 38 adds the Coordinator-owned immutable `borrow|build`
 decision: fresh dossier/SBOM/effective-tree reverify, content-addressed fleet artifacts, derived
 Findings, an observed Decision, `Informed`, CAS `Supersedes`, contamination, exact retry, and real
-authenticated web/MCP actor propagation—with no install or merge authority. The current canonical
-suite is **853/853 green**.
+authenticated web/MCP actor propagation—with no install or merge authority. Phase 39 adds the
+Coordinator-owned TTL/advisory recheck: exact-expiry read safety, forced official refresh,
+coordinate-wide adverse fencing, atomic Decision/Finding invalidation, causal risk `Affects`
+projection, and affected-reader contamination. The current canonical suite is **871/871 green**.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 

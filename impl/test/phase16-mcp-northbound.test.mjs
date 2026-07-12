@@ -30,6 +30,7 @@ function setup(overrides = {}) {
     async reverifyCapability(name, op, claim, args, ctx) { calls.push(['reverifyCapability', name, op, claim, args, ctx]); return { op, status: 'ok', summary: 'reverified' }; },
     async orientWorker(workerId, args, note, ctx) { calls.push(['orientWorker', workerId, args, note, ctx]); return { ok: true, result: 'ok', sliceDigest: 'a'.repeat(64) }; },
     async decideReuse(decision, ctx) { calls.push(['decideReuse', decision, ctx]); return { ok: true, result: 'recorded', decision: { id: 'reuse-decision:test' } }; },
+    async recheckReuseDecision(recheck, ctx) { calls.push(['recheckReuseDecision', recheck, ctx]); return { ok: true, result: 'guarded', targets: [] }; },
     async kill(workerId, actor, opts) { calls.push(['kill', workerId, actor, opts]); return { result: 'killed' }; },
     ...overrides.coordinator,
   };
@@ -45,10 +46,10 @@ async function initialized(server) {
   assert.deepEqual(await server.handle({ jsonrpc: '2.0', method: 'notifications/initialized' }), null);
 }
 
-test('MN1/MN4/CI6: handshake and deterministic closed eleven-tool inventory', async () => {
+test('MN1/MN4/CI6: handshake and deterministic closed twelve-tool inventory', async () => {
   const { server } = setup(); await initialized(server);
   const response = await request(server, 2, 'tools/list', {});
-  assert.deepEqual(response.result.tools.map((tool) => tool.name), ['fleet_spawn', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt', 'fleet_result', 'fleet_list', 'fleet_capabilities', 'fleet_capability_invoke', 'fleet_reuse_decide', 'fleet_kill']);
+  assert.deepEqual(response.result.tools.map((tool) => tool.name), ['fleet_spawn', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt', 'fleet_result', 'fleet_list', 'fleet_capabilities', 'fleet_capability_invoke', 'fleet_reuse_decide', 'fleet_reuse_recheck', 'fleet_kill']);
   assert.equal(response.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
   assert.equal(response.result.tools.every((tool) => tool.execution.taskSupport === 'forbidden'), true);
   assert.equal(response.result.tools[0].inputSchema.properties.modelPolicy.additionalProperties, false);
@@ -88,6 +89,17 @@ test('RD10: authenticated MCP reuse decision preserves principal actor, repo, bu
   assert.equal(response.result.isError, false); assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].slice(0, 2), ['decideReuse', { need: args.need, choice: args.choice, rationale: args.rationale, dossier: args.dossier, sbom: args.sbom }]);
   assert.equal(calls[0][2].actor, 'mcp:operator-a:stdio-a'); assert.equal(calls[0][2].repoId, 'repo-a'); assert.equal(calls[0][2].budgetTokens, 4_000); assert.match(calls[0][2].idempotencyKey, /^mcp\.call:[0-9a-f-]+$/);
+});
+
+test('RI10: authenticated MCP reuse recheck preserves principal authority and rejects forged evidence fields', async () => {
+  const { server, calls } = setup(); await initialized(server);
+  const args = { repoId: 'repo-a', idempotencyKey: 'recheck-mcp', decisionId: 'reuse-decision:test', expectedValidityVersion: 2, trigger: 'ttl_expired', budgetTokens: 4_000 };
+  const response = await request(server, 2, 'tools/call', { name: 'fleet_reuse_recheck', arguments: args });
+  assert.equal(response.result.isError, false);
+  assert.deepEqual(calls[0][0], 'recheckReuseDecision'); assert.deepEqual(calls[0][1], { decisionId: args.decisionId, expectedValidityVersion: 2, trigger: 'ttl_expired', budgetTokens: 4_000 });
+  assert.equal(calls[0][2].actor, 'mcp:operator-a:stdio-a'); assert.equal(calls[0][2].repoId, 'repo-a');
+  const forged = await request(server, 3, 'tools/call', { name: 'fleet_reuse_recheck', arguments: { ...args, idempotencyKey: 'recheck-forged', advisoryIds: ['forged'] } });
+  assert.equal(forged.result.isError, true); assert.equal(calls.length, 1);
 });
 
 test('OR9: authenticated MCP capability push is fenced and preserves the injected actor', async () => {
@@ -288,5 +300,5 @@ test('MN2/MN3: the packaged subprocess entry runs a configured MCP handshake wit
   const stdout = execFileSync(process.execPath, ['scripts/mcp-stdio.mjs', configPath], { cwd: new URL('..', import.meta.url), input: `${frames.map(JSON.stringify).join('\n')}\n`, encoding: 'utf8' });
   const responses = stdout.trim().split('\n').map(JSON.parse);
   assert.deepEqual(responses.map((response) => response.id), [1, 2]);
-  assert.equal(responses[1].result.tools.length, 11);
+  assert.equal(responses[1].result.tools.length, 12);
 });

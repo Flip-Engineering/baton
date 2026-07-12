@@ -77,8 +77,15 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    fleet evidence/decision artifacts, derived Findings, an actor-observed Decision, `Informed` and
    provenance edges, plus optional CAS `Supersedes` and affected-reader contamination. Blocked
    evidence cannot authorize borrow. Exact direct retry performs no second reverify; authenticated
-   web and the eleventh MCP tool preserve actor/repo/idempotency. There is no install, mutation,
+   web and `fleet_reuse_decide` preserve actor/repo/idempotency. There is no install, mutation,
    merge, policy override, publication, PM export, or homelab integration.
+13. **Advisory refresh guard and TTL invalidation:** separate Coordinator recheck authority accepts
+   only an exact decision/version and closed trigger. TTL is hidden at exact expiry before the
+   durable no-network closure. Advisory mode internally forces official refresh and reverification;
+   an adverse observation atomically fences the exact coordinate, invalidates every matching stale
+   Decision/dossier Finding, records affected readers, and projects a derived risk Finding plus
+   `Affects` edges. A green check cannot clear the fence. Web and the twelfth MCP tool carry derived
+   actor/repo/idempotency with no caller-supplied evidence or package authority.
 
 ## What remains partial
 
@@ -105,10 +112,11 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 - Phase 32 closes the local orientation/reuse wiring gap, Phase 33 closes addressed downward
   worker push, Phase 34 closes bounded mechanical scope-drift refresh, and Phase 36 closes the
   exact-npm external evidence/freshness floor. Phase 37 adds the actual npm lockfile SBOM floor,
-  and Phase 38 closes the external `borrow|build` decision plus local causal-promotion transaction.
-  Advisory/TTL invalidation, the separately grounded `internal` decision, additional ecosystems,
-  proposed-vs-actual graph delta, true vulnerability reachability, optional export, and independent
-  provenance verification remain later Cartographer/Quartermaster contracts.
+  Phase 38 closes the external `borrow|build` decision plus local causal-promotion transaction, and
+  Phase 39 closes pull-to-refresh advisory fencing plus exact TTL invalidation. Provider push/feed
+  ingestion, positive clearance, policy-hash invalidation, the separately grounded `internal`
+  decision, additional ecosystems, proposed-vs-actual graph delta, true vulnerability
+  reachability, optional export, and independent provenance verification remain later contracts.
 
 ## What remains pending
 

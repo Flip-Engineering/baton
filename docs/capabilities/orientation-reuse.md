@@ -98,6 +98,12 @@ fleet_reuse_decide({ need, choice: 'borrow'|'build', rationale,
                      dossier_claim, sbom_claim, supersedes? })
     -> { decision_id }
 
+# Expire one decision or force a Coordinator-derived official refresh. The caller
+# supplies no advisory IDs, source refs, target list, verdict, or timestamp.
+fleet_reuse_recheck({ decision_id, expected_validity_version,
+                      trigger: 'advisory_refresh'|'ttl_expired' })
+    -> { result: 'checked'|'guarded'|'invalidated', targets:[...] }
+
 # `internal` remains a separate planned choice until an exact reuse.internal
 # artifact can be freshly reverified and promoted without external-dossier fiction.
 
@@ -129,6 +135,7 @@ Long operations (whole-repo SCIP index, deep transitive vet) are **DAG tasks**, 
 
 **Epistemic (knowledge plane, doc 08 §5).** These are precisely the "cheap, high-value epistemic artifacts" doc 08 says to promote selectively — not a second brain, an export at boundaries:
 - Each accepted **reuse decision** now promotes locally to an actor-observed Decision with required rationale and `Informed` edges to derived dossier/SBOM Findings. Evidence integrity, TTL, policy, effective-tree overlay, and exact lockfile are reverified; “derived” is deliberately not “verified safe.” This satisfies doc 08 §2's **temporal-coherence** invariant without claiming true vulnerable-function reachability. Optional deployment-neutral export remains later; there is no PM or homelab runtime integration.
+- Phase 39 keeps those Decisions temporally honest: current recall hides them at exact dossier expiry, explicit TTL recheck closes their validity, and a Coordinator-forced official refresh atomically installs an exact-coordinate adverse fence, closes every stale matching Decision/dossier Finding, records affected readers, and projects a local derived risk Finding with `Affects` edges. Green refresh cannot silently clear a fence.
 - The architecture brief's **module summary** (from community detection) promotes to a durable Finding per module — the reusable "what this repo *is*."
 - Cross-run recall is **explicit and pull-only**: `fleet_recall("has anyone vetted a JWT lib for this repo?")` hits the decision cache; never auto-injected into a worker's context (doc 08 §7 Q3 — avoid re-poisoning).
 
@@ -197,7 +204,7 @@ Slots after **M1** in doc 07 (needs the artifact registry + task-DAG, which M1 b
 
 - **MVP rung (smallest useful).** `fleet_orient` served from an **Aider-style tree-sitter+PageRank map**, cached per `(repo, sha)` as a registry artifact — *grounded on installed tools*: `ctags -R` for definitions + `rg` for references + `networkx` PageRank in `python3`, no tree-sitter dependency needed to start. Plus `fleet_reuse`/`fleet_vet` backed by deps.dev `GetVersion`, optional separate `GetProject` Scorecard enrichment, and an OSV exact-version/malicious-package query. The Coordinator-owned immutable decision transaction now ships: it freshly reverifies an exact dossier plus actual-lockfile SBOM, projects deployment-neutral causal knowledge, and grants no install or mutation authority. `fleet_orient_worker` ships here too; it's cheap once slices exist and it's the differentiator.
 - **Rung 2.** LSP/Serena precision (symbol-path addressing, `find_referencing_symbols`), **SCIP incremental** index (reindex only changed files on commit), **Socket** behavioral enrichment, and the cross-module payoff: **reachability gating** = the map's call graph × OSV (deprioritize unreachable vulns). ast-grep behind `fleet_locate(kind=callers)`.
-- **Rung 3.** Promotion into the **PM epistemic KG** (decision records with causal `Informed`/`Supersedes` edges, temporal-coherence checks), `fleet_recall` cross-run, **Syft SBOM + Sigstore/SLSA provenance verification** as a gate, and **Leiden community-detection** architecture summaries. `lldb`/`clang` optional dynamic-reachability for C/C++/native.
+- **Rung 3.** Promotion into **Baton's local deployment-neutral epistemic KG** (decision records with causal `Informed`/`Supersedes`/`Affects` edges and temporal-coherence checks), `fleet_recall` cross-run, **Syft SBOM + Sigstore/SLSA provenance verification** as a gate, and **Leiden community-detection** architecture summaries. Optional PM-shaped export remains separate; `lldb`/`clang` is optional dynamic-reachability for C/C++/native.
 
 ## Limitations & honest residuals
 

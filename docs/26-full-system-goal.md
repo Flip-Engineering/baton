@@ -448,9 +448,10 @@ known advisories/malicious packages and denied policy facts, marks missing evide
 only by exact epoch/overlay/coordinate/policy until TTL, requires explicit refresh after expiry,
 and snapshot-reverifies without network. Atlas contributes only npm import observation; it cannot
 claim vulnerable-function reachability or waive an advisory. Actual `@ast-grep/napi@0.44.1`
-deps.dev+OSV evidence passes the live ACI proof. Exact-lockfile SBOM, immutable decision/promotion,
-advisory invalidation, true reachability, optional Socket, and independent Sigstore verification
-remain ordered later rungs.
+deps.dev+OSV evidence passes the live ACI proof. Exact-lockfile SBOM and immutable
+decision/promotion now ship in Phases 37–38, and Phase 39 adds forced advisory refresh plus exact
+TTL invalidation. True reachability, optional Socket, and independent Sigstore verification remain
+ordered later rungs.
 
 Phase 37 adds the actual dependency inventory required before any durable reuse decision.
 Deployment-configured `provenance.sbom` reads one canonical confined npm package-lock v3 under
@@ -471,10 +472,15 @@ digest. Only a `borrow_candidate` can authorize borrow. A full evidence-projecti
 decision identity/content digests, reserved fleet artifact/graph namespaces, and replay validation
 prevent sparse-field substitution and squatting. One `knowledge.reuse_decided` event creates the
 artifacts, derived Findings, observed Decision, `Informed`/provenance edges, and optional CAS
-`Supersedes` plus contamination. Authenticated web and the eleventh MCP tool carry the real actor.
-Exact idempotent retry stops before reverify. `internal` awaits its exact local-evidence transaction;
-advisory invalidation is next. No installer, merge, policy override, PM export, or homelab integration
-is introduced.
+`Supersedes` plus contamination. Authenticated web and the decision MCP tool carry the real actor.
+Exact idempotent retry stops before reverify. `internal` awaits its exact local-evidence transaction.
+
+Phase 39 adds separate recheck authority, forced official refresh, a permanent exact-coordinate
+adverse fence, store-derived fan-out across every matching live Decision, stale dossier-Finding
+closure, causal risk `Affects` edges, affected-reader contamination, exact-expiry hiding and durable
+TTL closure, plus authenticated web/MCP controls. A green check cannot clear the fence. Provider
+push/polling, policy change, positive clearance, and `internal` remain later. No installer, merge,
+policy override, PM export, or homelab integration is introduced.
 
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.

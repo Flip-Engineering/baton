@@ -231,7 +231,8 @@ Every feature the exploration produced, with honest status. **Core** = the drive
 | Semantic diff (review by meaning) | Tools | Earlier (high value) | `docs/15` |
 | Repo orientation map | Tools | Later | `docs/capabilities/orientation-reuse.md` |
 | Exact dependency dossier + actual-lockfile SBOM | Tools/Safety | Shipped Phases 36–37 | `spec/phase36`, `spec/phase37`, `docs/capabilities/orientation-reuse.md` |
-| Immutable external `borrow\|build` decision + causal promotion | Safety/Memory | Shipped Phase 38; internal/advisory invalidation later | `spec/phase38/immutable-reuse-decision.md`, `docs/capabilities/orientation-reuse.md` |
+| Immutable external `borrow\|build` decision + causal promotion | Safety/Memory | Shipped Phase 38 | `spec/phase38/immutable-reuse-decision.md`, `docs/capabilities/orientation-reuse.md` |
+| Advisory refresh guard + exact TTL invalidation | Safety/Memory | Shipped Phase 39; provider push/policy/clearance later | `spec/phase39/advisory-ttl-invalidation.md`, `docs/capabilities/orientation-reuse.md` |
 | Reusable verified skills/recipes | Tools | Later | `docs/capabilities/skills-computeruse.md` |
 | Per-vendor briefs, context-on-demand, re-inject-on-compaction | Context | MVP-adjacent | `docs/12` |
 | OS-sandbox boundary, scoped secrets, contagion tracking | Safety | MVP-adjacent | `docs/09` §C, `docs/14` |

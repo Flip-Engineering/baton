@@ -86,7 +86,8 @@ verification acceptance, publication, policy override, PM export, or homelab int
 
 ## RD12 — next dependency
 
-Phase 39 may invalidate promoted decisions when an advisory/TTL fact changes, using the existing
-bitemporal invalidation and affected-reader contamination machinery. True vulnerable-function
+Phase 39 now invalidates promoted decisions when an advisory/TTL fact changes, using exact-expiry
+filtering, forced official refresh, coordinate-wide adverse fencing, bitemporal validity, and
+affected-reader contamination. True vulnerable-function
 reachability, proposed install graph/delta, additional ecosystems, optional Socket, and independent
 Sigstore/SLSA verification remain later explicit rungs.
