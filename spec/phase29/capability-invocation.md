@@ -1,7 +1,7 @@
 # Phase 29 — coordinator-owned capability invocation
 
 ## CI1 — one registry, no second control plane
-`CapabilityRegistry` is injected into `createDriver()` and owned by Coordinator. It lists honest cards and dispatches capability operations; it owns no task, worker, integration, or publication authority.
+`createDriver()` constructs exactly one `CapabilityRegistry` from deployment-injected capability registrations and gives its only driver-owned handle to Coordinator. It lists honest cards and dispatches capability operations; it owns no task, worker, integration, or publication authority.
 
 ## CI2 — bounded ACI calls
 Invoke requires a registered capability, advertised operation, JSON-shaped arguments, positive deployment-bounded token budget, deployment-bounded ACI envelope, and optional cancellation. Results must carry `op/status/summary/payload/refs/cost/provenance`.
@@ -13,7 +13,7 @@ Resume and reverify are public only when implemented and receive the same budget
 Capability output can never claim `mergeAuthority` or `verificationAuthority`; registry validation rejects either claim.
 
 ## CI5 — durable provenance
-Started/completed/refused calls append bounded hub events containing identity, action, status, and artifact digests—never raw arguments or payloads.
+Started/completed/refused calls append bounded hub events containing identity, action, status, and artifact digests—never raw arguments or payloads. Any provenance-sink failure poisons the capability registry before another capability call or inventory read; a post-effect sink failure is never downgraded to ordinary refusal or success.
 
 ## CI6 — authenticated northbounds
 Web exposes `capabilities` and durable `capability_invoke`; MCP exposes `fleet_capabilities` and `fleet_capability_invoke`, reusing existing scope, quota, idempotency, and audit authority.

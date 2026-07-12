@@ -49,6 +49,10 @@ function dispatchFailure(cause) {
     'capability_resume_invalid', 'capability_reverify_invalid', 'capability_budget_invalid', 'capability_actor_invalid'].includes(cause?.code)) {
     return { httpStatus: 400, body: { ok: false, error: { code: 'invalid_command', message: 'command precondition failed' } } };
   }
+  if (['capability_result_invalid', 'capability_result_oversize', 'capability_authority_forbidden'].includes(cause?.code)) {
+    return { httpStatus: 502, body: { ok: false, error: { code: 'capability_refused', message: 'capability result refused by policy' } } };
+  }
+  if (cause?.code === 'cancelled') return { httpStatus: 409, body: { ok: false, error: { code: 'cancelled', message: 'capability invocation cancelled' } } };
   if (cause?.name === 'WorkerNotFoundError') return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'resource not found' } } };
   return { httpStatus: 503, body: { ok: false, error: { code: 'temporarily_unavailable', message: 'command dispatch failed' } } };
 }

@@ -229,6 +229,7 @@ if (!existsSync(AUTH)) throw new Error('PENDING-LIVE-no-grok-auth-file');
 if (TASKS.length === 0) throw new Error(`PENDING-LIVE-review-model-not-in-profile:${REVIEW_MODEL}`);
 if (!Number.isFinite(TIMEOUT_MS) || TIMEOUT_MS <= 0) throw new Error('BATON_REVIEW_TIMEOUT_MS must be positive');
 if (!Number.isFinite(MIN_FREE_BYTES) || MIN_FREE_BYTES <= 0) throw new Error('BATON_MIN_FREE_BYTES must be positive');
+if (git(['status', '--porcelain']) !== '') throw new Error('PENDING-LIVE-dirty-review-repository; set BATON_REPO to a clean clone or worktree');
 const fs = statfsSync(REPO); const freeBytes = fs.bavail * fs.bsize;
 if (freeBytes < MIN_FREE_BYTES) throw new Error(`PENDING-LIVE-insufficient-disk-headroom:${freeBytes}<${MIN_FREE_BYTES}`);
 const LOG_DIR = mkdtempSync(join(tmpdir(), `baton-${REVIEW_PROFILE}-review-`));

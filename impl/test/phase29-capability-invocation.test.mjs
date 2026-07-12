@@ -36,6 +36,7 @@ const registry = (capability = fixture(), overrides = {}) => new CapabilityRegis
   maxBudgetTokens: 1_000,
   maxEnvelopeBytes: 64 * 1024,
   root: '/trusted/repository',
+  record: () => {},
   ...overrides,
 });
 
@@ -57,7 +58,8 @@ test('CI1/CI2/CI5/CI7: closed cards invoke with trusted context and bounded prov
 
 test('CI1/CI2/CI7: registration, cards, JSON inputs, operations, budgets, and envelopes fail closed', async () => {
   assert.throws(() => new CapabilityRegistry({ capabilities: {}, maxBudgetTokens: 1 }), /maxEnvelopeBytes/);
-  assert.throws(() => new CapabilityRegistry({ capabilities: { bad: {} }, maxBudgetTokens: 1, maxEnvelopeBytes: 100 }), /invalid capability registration/);
+  assert.throws(() => new CapabilityRegistry({ capabilities: { fixture: fixture() }, maxBudgetTokens: 1, maxEnvelopeBytes: 1_000 }), /record sink/);
+  assert.throws(() => new CapabilityRegistry({ capabilities: { bad: {} }, maxBudgetTokens: 1, maxEnvelopeBytes: 100, record: () => {} }), /invalid capability registration/);
   assert.throws(() => registry(fixture({ card: () => ({ ops: {} }) })), /invalid capability card/);
   assert.throws(() => registry(fixture(), { contexts: { missing: {} } }), /context has no registration/);
   await assert.rejects(registry().invoke('missing', 'fixture.read', {}, { budgetTokens: 10 }), (error) => error.code === 'capability_not_found');
@@ -99,6 +101,17 @@ test('CI2/CI4: cancellation and coordinator-authority smuggling are rejected and
   assert.equal(events.at(-1).code, 'capability_authority_forbidden');
 });
 
+test('CI5: provenance sink loss poisons the capability plane before any repeated effect', async () => {
+  let effects = 0; const recorded = [];
+  const capability = fixture({ invoke: async (op) => { effects += 1; return envelope(op); } });
+  const subject = registry(capability, { record: (event) => { recorded.push(event); if (event.kind === 'capability.op.completed') throw new Error('sink lost'); } });
+  await assert.rejects(subject.invoke('fixture', 'fixture.read', {}, { budgetTokens: 100 }), (error) => error.code === 'capability_record_unavailable');
+  assert.equal(effects, 1); assert.deepEqual(recorded.map((event) => event.kind), ['capability.op.started', 'capability.op.completed']);
+  await assert.rejects(subject.invoke('fixture', 'fixture.read', {}, { budgetTokens: 100 }), (error) => error.code === 'capability_record_unavailable');
+  assert.throws(() => subject.cards(), (error) => error.code === 'capability_record_unavailable');
+  assert.equal(effects, 1); assert.equal(recorded.length, 2);
+});
+
 test('CI3: resume and reverify share operation, input, budget, root, and authority policy', async () => {
   const capability = fixture(); const subject = registry(capability); const ctx = { budgetTokens: 100, actor: 'mcp:user:session' };
   const resumed = await subject.resume('fixture', 'fixture.read', { digest: 'a'.repeat(64) }, 'fixture:1', ctx);
@@ -119,6 +132,7 @@ test('CI1/CI5/CI7: createDriver explicitly assembles one registry behind Coordin
     repoRoot, logDir, adapters: {}, capabilities: { fixture: capability },
     maxCapabilityBudgetTokens: 1_000, maxCapabilityEnvelopeBytes: 64 * 1024,
   });
+  assert.equal(driver.capabilities, undefined, 'createDriver must not publish a coordinator-bypassing registry handle');
   assert.equal(driver.coordinator.capabilityCards()[0].name, 'fixture');
   const result = await driver.coordinator.invokeCapability('fixture', 'fixture.read', { query: 'private' }, { budgetTokens: 100, actor: 'orchestrator' });
   assert.equal(result.status, 'ok'); assert.equal(capability.calls[0].ctx.root, repoRoot);

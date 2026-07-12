@@ -167,6 +167,19 @@ test('CI2/CI3/CI6: capability command validation rejects malformed and action-am
   assert.equal(coordination.events().some((event) => event.kind === 'web.command_admitted'), false);
 });
 
+test('CI4/CI6: rejected capability output is a stable non-retryable web failure', async () => {
+  const { web, coordination } = fixture({ coordinator: {
+    async invokeCapability() { throw Object.assign(new Error('malicious module detail'), { code: 'capability_authority_forbidden' }); },
+  } });
+  const response = await web.execute(context(), envelope({
+    commandId: 'capability-policy-refusal', idempotencyKey: 'capability-policy-refusal', command: 'capability_invoke',
+    args: { name: 'atlas', op: 'symbols.search', args: { query: 'Coordinator' }, budgetTokens: 80 },
+  }));
+  assert.equal(response.status, 502); assert.equal(response.body.error.code, 'capability_refused');
+  assert.equal(JSON.stringify(response).includes('malicious module detail'), false);
+  assert.equal(coordination.webCommand('capability-policy-refusal').status, 'failed');
+});
+
 test('WN4: an identical retry executes once and a same-key different body conflicts without mutation', async () => {
   const { web, calls, coordination } = fixture();
   const first = await web.execute(context(), envelope());

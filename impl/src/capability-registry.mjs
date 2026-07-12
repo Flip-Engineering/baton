@@ -30,7 +30,8 @@ export class CapabilityRegistry {
     if (!Number.isSafeInteger(opts.maxEnvelopeBytes) || opts.maxEnvelopeBytes <= 0) throw new TypeError('maxEnvelopeBytes must be deployment-derived');
     if (opts.root !== undefined && (typeof opts.root !== 'string' || opts.root.length === 0)) throw new TypeError('capability root must be a non-empty string');
     if (opts.record !== undefined && opts.record !== null && typeof opts.record !== 'function') throw new TypeError('capability record sink must be a function');
-    this.maxBudgetTokens = opts.maxBudgetTokens; this.maxEnvelopeBytes = opts.maxEnvelopeBytes; this.root = opts.root; this.record = opts.record ?? null; this.entries = new Map();
+    if (Object.keys(opts.capabilities ?? {}).length > 0 && typeof opts.record !== 'function') throw new TypeError('non-empty capability registry requires a provenance record sink');
+    this.maxBudgetTokens = opts.maxBudgetTokens; this.maxEnvelopeBytes = opts.maxEnvelopeBytes; this.root = opts.root; this.record = opts.record ?? null; this.recordFailure = null; this.entries = new Map();
     for (const name of Object.keys(opts.contexts ?? {})) if (!Object.hasOwn(opts.capabilities ?? {}, name)) throw new TypeError(`capability context has no registration: ${name}`);
     for (const [name, capability] of Object.entries(opts.capabilities ?? {})) {
       if (!/^[A-Za-z0-9._:-]{1,128}$/.test(name) || !capability || typeof capability.card !== 'function' || typeof capability.invoke !== 'function') throw new TypeError(`invalid capability registration: ${name}`);
@@ -42,7 +43,17 @@ export class CapabilityRegistry {
       this.entries.set(name, { capability, context, card: Object.freeze(json(card)) });
     }
   }
-  cards() { return [...this.entries].sort(([a], [b]) => a.localeCompare(b)).map(([name, entry]) => Object.freeze({ ...json(entry.card), name })); }
+  _record(event) {
+    if (this.recordFailure) throw this.recordFailure;
+    if (!this.record) return;
+    try { this.record(event); }
+    catch (cause) {
+      this.recordFailure = typed('capability provenance sink unavailable; restart and reconcile before further capability use', 'capability_record_unavailable');
+      this.recordFailure.cause = cause;
+      throw this.recordFailure;
+    }
+  }
+  cards() { if (this.recordFailure) throw this.recordFailure; return [...this.entries].sort(([a], [b]) => a.localeCompare(b)).map(([name, entry]) => Object.freeze({ ...json(entry.card), name })); }
   _entry(name) { const entry = this.entries.get(name); if (!entry) throw typed('unknown capability', 'capability_not_found'); return entry; }
   _op(entry, op) { if (typeof op !== 'string' || !Object.hasOwn(entry.card.ops, op)) throw typed('operation not advertised by capability', 'capability_op_unavailable'); }
   _actor(ctx = {}) {
@@ -77,14 +88,14 @@ export class CapabilityRegistry {
     const invocationId = randomUUID(); const actor = this._actor(ctx);
     const auditName = typeof name === 'string' && name.length <= 128 ? name : '[invalid]';
     const auditOp = typeof op === 'string' && op.length <= 256 ? op : '[invalid]';
-    this.record?.({ kind: 'capability.op.started', actor, invocationId, action, capability: auditName, op: auditOp });
+    this._record({ kind: 'capability.op.started', actor, invocationId, action, capability: auditName, op: auditOp });
     try {
       const safe = this._ctx(ctx);
       const result = this._validate(await fn(safe), op, safe.budgetTokens);
-      this.record?.({ kind: 'capability.op.completed', actor, invocationId, action, capability: auditName, op: auditOp, status: result.status.slice(0, 128), digests: result.refs.map((ref) => ref.digest).filter((digest) => typeof digest === 'string' && digest.length <= 256).slice(0, 256) });
+      this._record({ kind: 'capability.op.completed', actor, invocationId, action, capability: auditName, op: auditOp, status: result.status.slice(0, 128), digests: result.refs.map((ref) => ref.digest).filter((digest) => typeof digest === 'string' && digest.length <= 256).slice(0, 256) });
       return result;
     } catch (error) {
-      this.record?.({ kind: 'capability.op.refused', actor, invocationId, action, capability: auditName, op: auditOp, code: typeof error?.code === 'string' && error.code.length <= 128 ? error.code : 'capability_failed' });
+      this._record({ kind: 'capability.op.refused', actor, invocationId, action, capability: auditName, op: auditOp, code: typeof error?.code === 'string' && error.code.length <= 128 ? error.code : 'capability_failed' });
       throw error;
     }
   }

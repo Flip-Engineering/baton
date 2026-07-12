@@ -40,6 +40,7 @@ function stateFailureCode(cause) {
   if (['capability_not_found', 'capability_op_unavailable', 'capability_budget_invalid', 'cancelled',
     'capability_result_invalid', 'capability_result_oversize', 'capability_authority_forbidden', 'capability_args_invalid',
     'capability_resume_invalid', 'capability_reverify_invalid', 'capability_actor_invalid',
+    'capability_context_invalid', 'capability_context_forbidden', 'capability_record_unavailable',
     'capability_resume_unavailable', 'capability_reverify_unavailable'].includes(cause?.code)) return cause.code;
   if (['ModelSelectionError', 'SessionSelectionError', 'DuplicateTaskIdError', 'UnknownVendorError', 'DependencyCycleError', 'TypeError'].includes(cause?.name)) return 'invalid_command';
   if (cause?.name === 'WorkerNotFoundError') return 'not_found';
