@@ -201,11 +201,14 @@ export class GrokAcpCli {
   // -------------------------------------------------------------------------
 
   _writeRaw(session, obj) {
-    try {
-      session.child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...obj })}\n`);
-    } catch {
-      /* pipe already closed — the caller's timeout/close handling covers it */
-    }
+    return new Promise((resolve) => {
+      const stdin = session.child?.stdin;
+      if (!stdin || session.closed || stdin.destroyed || stdin.writableEnded) { resolve(false); return; }
+      let settled = false;
+      const done = (error) => { if (settled) return; settled = true; if (error) session.stdinError = error; resolve(!error); };
+      try { stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...obj })}\n`, done); }
+      catch (error) { done(error); }
+    });
   }
 
   /**
@@ -224,7 +227,12 @@ export class GrokAcpCli {
         }, bound);
       }
       session.pendingRequests.set(id, { resolve, reject, timer });
-      this._writeRaw(session, { id, method, params });
+      this._writeRaw(session, { id, method, params }).then((written) => {
+        if (written) return;
+        const pending = session.pendingRequests.get(id); if (!pending) return;
+        session.pendingRequests.delete(id); if (pending.timer) clearTimeout(pending.timer);
+        pending.reject(new Error(`grok agent stdio closed before writing "${method}"`));
+      });
     });
   }
 
@@ -240,6 +248,10 @@ export class GrokAcpCli {
       }
     });
     session.child.stderr.on('data', () => {}); // nothing on this wire is diagnosed from stderr
+    // Writable stream errors (notably an approval racing process exit) are asynchronous and
+    // bypass try/catch around write(). Own the event so EPIPE cannot become a process-global
+    // uncaught exception; each write callback still returns the failed delivery to its caller.
+    session.child.stdin.on('error', (error) => { session.stdinError = error; });
     session.child.on('close', () => this._onClose(session));
     session.child.on('error', () => {}); // spawn-time ENOENT surfaces via the pending initialize timeout
   }
@@ -324,7 +336,7 @@ export class GrokAcpCli {
     // Any other server->client REQUEST (the x.ai/* extension surface: fs, terminal, worktree, …)
     // is outside this MVP's mapped table but must still be ANSWERED — a dangling JSON-RPC request
     // wedges its turn forever. Reply method-not-found + an observable event; never a silent drop.
-    this._writeRaw(session, { id, error: { code: -32601, message: `baton: unhandled server->client request "${method}"` } });
+    void this._writeRaw(session, { id, error: { code: -32601, message: `baton: unhandled server->client request "${method}"` } });
     this._emit(session, 'error', { message: `unmapped server->client request "${method}" auto-declined`, code: -32601, correlated: true, serverMethod: method });
   }
 
@@ -595,7 +607,8 @@ export class GrokAcpCli {
       // (the wire genuinely lacks steer — unlike claude E2, where native existed). The cancelled
       // resolution consumes this marker and dispatches `content` as the next turn.
       session.steerPending = { content: String(content) };
-      this._writeRaw(session, { method: 'session/cancel', params: { sessionId: session.sessionId } });
+      const written = await this._writeRaw(session, { method: 'session/cancel', params: { sessionId: session.sessionId } });
+      if (!written) { session.steerPending = null; return { ok: false, reason: 'grok agent stdio closed before steer delivery' }; }
       return { ok: true, emulated: true };
     }
 
@@ -626,7 +639,8 @@ export class GrokAcpCli {
 
     // GA8: a NOTIFICATION — nothing to await; the Ack is the write. The confirmed stop arrives
     // exclusively as control.interrupt_confirmed when the prompt resolves cancelled (D9).
-    this._writeRaw(session, { method: 'session/cancel', params: { sessionId: session.sessionId } });
+    const written = await this._writeRaw(session, { method: 'session/cancel', params: { sessionId: session.sessionId } });
+    if (!written) { session.pendingFollowUp = null; return { ok: false, reason: 'grok agent stdio closed before interrupt delivery' }; }
     return { ok: true };
   }
 
@@ -652,8 +666,9 @@ export class GrokAcpCli {
       return { ok: false, reason: `approve(): unknown decision "${decision}"` };
     }
     const { rawId } = wait;
-    session.waits.delete(requestId); // consumed — a request is a consumable message, not a replayable fact
-    this._writeRaw(session, { id: rawId, result: { outcome } });
+    const written = await this._writeRaw(session, { id: rawId, result: { outcome } });
+    if (!written) return { ok: false, reason: 'grok agent stdio closed before approval delivery' };
+    session.waits.delete(requestId); // consumed only after the response entered the owned wire
     this._emit(session, 'approval.resolved', { requestId, decision, payload: payload ?? null });
     return { ok: true };
   }

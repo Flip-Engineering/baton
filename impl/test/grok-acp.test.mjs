@@ -458,6 +458,20 @@ test('GA9: approve() against an unknown/already-answered requestId resolves {ok:
   }
 });
 
+test('GA9: approval racing a closed stdin returns refused delivery without process-global EPIPE', async () => {
+  const adapter = makeAdapter(); const events = collect(adapter); const worker = 'w1';
+  try {
+    await adapter.spawn(worker, makeBrief('FAKE:REQUEST_PERMISSION risky'), { worktree: freshWorktree() });
+    const req = await until(events, (e) => e.kind === 'approval.requested');
+    const pipe = adapter._sessions.get(worker).child.stdin;
+    pipe.destroy(Object.assign(new Error('simulated closed approval pipe'), { code: 'EPIPE' }));
+    await delay(10);
+    const ack = await adapter.approve(worker, req.payload.requestId, 'allow');
+    assert.equal(ack.ok, false); assert.match(ack.reason, /stdio closed/i);
+    assert.equal(events.some((event) => event.kind === 'approval.resolved' && event.payload.requestId === req.payload.requestId), false);
+  } finally { await cleanup(adapter, worker); }
+});
+
 // ---------------------------------------------------------------------------
 // GA12: answer() is a named gap on this wire
 // ---------------------------------------------------------------------------

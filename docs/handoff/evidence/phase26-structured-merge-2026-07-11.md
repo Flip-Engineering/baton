@@ -25,7 +25,7 @@ removes orphan stages because an old candidate without a live fresh verdict has 
 - Numbered contract: `spec/phase26/structured-merge.md` (SM1–SM10).
 - Focused gate: 14/14.
 - Existing acceptance/worktree plus Phase 26 gate: 69/69.
-- Canonical owned suite: 765/765; suite root reaped.
+- Canonical owned suite: 766/766; suite root reaped.
 - Reds cover unavailable resolver, marker retention, parse fallback, deployment file ceiling,
   resolver isolation, clean divergent three-way merge, false-clean syntax failure, dirty main,
   main-advance race, post-main authority failure/replay, and orphan-stage reconciliation.
@@ -85,6 +85,13 @@ review runner selects only its exact report paths; ordinary product verification
 default. A worktree red proves the report is present, unrelated files are absent, the exact commit
 is checked out, and traversal is refused. The failed full-checkout evidence is retained under
 `docs/reference/evidence/phase26-structured-merge-sparse-red-composer-2026-07-11/`.
+
+The first sparse retry then exposed an unrelated but live Baton control seam: an approval raced a
+closed Grok stdin and Node emitted an unhandled asynchronous `EPIPE`. `_writeRaw` is now an owned
+promise-based delivery, stdin has an error consumer, request RPCs reject their exact pending call,
+and steer/interrupt/approval return refused delivery instead of emitting false success. Approval
+waits are consumed only after the response enters the wire. The 32/32 Grok adapter gate includes a
+closed-pipe red and the canonical suite remains green.
 
 ## Honest boundary
 
