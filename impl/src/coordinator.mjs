@@ -1096,11 +1096,16 @@ export class Coordinator {
       }
     }
     const strategy = opts.strategy ?? 'ff-only';
-    if (strategy !== 'ff-only') {
+    if (!['ff-only', 'structured'].includes(strategy)) {
       throw new IntegrationError(`unsupported integration strategy: ${strategy}`, 'unsupported_strategy');
     }
     if (!this._worktrees || typeof this._worktrees.integrate !== 'function') {
       throw new IntegrationError('worktree manager does not implement integration', 'integration_unavailable');
+    }
+    if (strategy === 'structured' && (typeof this._worktrees.stageStructuredIntegration !== 'function'
+      || typeof this._worktrees.finalizeStructuredIntegration !== 'function'
+      || typeof this._worktrees.removeStructuredIntegration !== 'function')) {
+      throw new IntegrationError('worktree manager does not implement structured integration', 'integration_unavailable');
     }
     if (handle.status === 'working' || handle.status === 'blocked' || handle.status === 'stopping' || handle.status === 'pending') {
       throw new IntegrationError('worker must be idle, dead, exited, or orphaned before integration', 'worker_not_quiescent');
@@ -1108,7 +1113,7 @@ export class Coordinator {
 
     this._coordRecord('integration.requested', {
       taskId: task.id, workerId, strategy, sha: task.capturedSha,
-      actor: opts.actor ?? 'orchestrator', effect: 'local_git_merge',
+      actor: opts.actor ?? 'orchestrator', effect: strategy === 'structured' ? 'staged_local_git_merge' : 'local_git_merge',
     }, `driver.integration.requested:${task.id}:${task.capturedSha}`, opts.actor ?? 'orchestrator');
 
     if (typeof this._worktrees.retainResult === 'function') {
@@ -1125,10 +1130,36 @@ export class Coordinator {
     }
     await this._removeTaskWorktree(task);
 
-    let integrated;
+    let integrated; let structuredStage = null; let structuredVerifyPath = null;
     try {
-      integrated = await this._worktrees.integrate(task.capturedSha, { strategy });
+      if (strategy === 'ff-only') {
+        integrated = await this._worktrees.integrate(task.capturedSha, { strategy });
+      } else {
+        structuredStage = await this._worktrees.stageStructuredIntegration(task.id, task.capturedSha);
+        const created = await this._worktrees.createVerifyWorktree(`${task.id}-structured-merge`, structuredStage.stageSha);
+        structuredVerifyPath = created?.path ?? null;
+        const verdict = await this._referee(task, { verification: { claimedExit: null } }, {
+          pinnedVerification: task.brief.verification,
+          sandbox: structuredVerifyPath,
+        });
+        const accepted = this._accept(verdict, {
+          expectExit: task.brief.verification.expectExit,
+          requireRedGreen: false,
+          requireCoverage: false,
+          requireMutation: false,
+        });
+        this._log.append({
+          worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+          kind: 'integration.merge_reverified', actor: 'policy',
+          ...this._routeAttribution(handle, task),
+          payload: { strategy, stageSha: structuredStage.stageSha, verdict, accept: accepted },
+        });
+        if (!accepted) throw Object.assign(new Error('structured merge candidate failed fresh pinned verification'), { code: 'structured_verification_failed' });
+        integrated = { ...(await this._worktrees.finalizeStructuredIntegration(structuredStage)), verdict };
+      }
     } catch (err) {
+      if (structuredVerifyPath) await this._worktrees.removeVerifyWorktree(structuredVerifyPath);
+      if (structuredStage) await this._worktrees.removeStructuredIntegration(structuredStage);
       const refusedEvent = this._log.append({
         worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
         kind: 'integration.refused', actor: 'policy',
@@ -1140,8 +1171,10 @@ export class Coordinator {
         taskId: task.id, strategy, sha: task.capturedSha, retainedResultRef: task.retainedResultRef,
         reason: String(err?.message ?? err), evidence: refusedEvidence,
       }, `driver.integration.refused:${task.id}:${refusedEvent.seq}`, 'policy');
-      throw new IntegrationError(String(err?.message ?? err), 'non_fast_forward_or_dirty');
+      throw new IntegrationError(String(err?.message ?? err), err?.code?.startsWith('structured_') ? err.code : 'non_fast_forward_or_dirty');
     }
+    if (structuredVerifyPath) await this._worktrees.removeVerifyWorktree(structuredVerifyPath);
+    if (structuredStage) await this._worktrees.removeStructuredIntegration(structuredStage);
     if (task.retainedResultRef && typeof this._worktrees.releaseResult === 'function') {
       try { await this._worktrees.releaseResult(task.retainedResultRef); } catch { /* merged HEAD now retains the result */ }
       task.retainedResultRef = null;

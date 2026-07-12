@@ -192,7 +192,7 @@ Optional at any point: a cheap side experiment on your real tasks to see whether
 
 - **Solid and dependable:** the coordinator core, interrupt/steer, re-verification, messaging, per-vendor adapters. These are specified, red-teamed, and partly prototyped.
 - **Real but earned later:** routing, memory, the worker tools — good, but switched on when there's a reason.
-- **Genuine bets (flagged, not hidden):** semantic *merge* at scale (merging by meaning, not text lines) could make large fleets far smoother but is unproven; math proof only pays off on small critical pieces (turning an English spec into a provable statement is the unsolved part — never claim "proven" over a spec a worker could have weakened); "the fleet gets smarter on its own" is measured, not assumed. AST/CST, symbol/SCIP, CPG, IR, behavioral fingerprints, semantic merge, and e-graphs remain catalogued representation rungs with explicit evaluation/retirement gates.
+- **Genuine bets (flagged, not hidden):** true semantic *merge* at scale (merging by data/control-flow meaning, not lines or syntax trees) could make large fleets far smoother but is unproven. The lower syntax-aware structured rung now wraps Mergiraf-class tooling behind isolated staging and fresh verification; it is not relabeled semantic merge. Math proof only pays off on small critical pieces (turning an English spec into a provable statement is the unsolved part — never claim "proven" over a spec a worker could have weakened); "the fleet gets smarter on its own" is measured, not assumed. AST/CST, symbol/SCIP, CPG, IR, behavioral fingerprints, true semantic merge, and e-graphs remain catalogued representation rungs with explicit evaluation/retirement gates.
 - **Things that will move under us:** vendors are building pieces of this themselves and models keep improving, so build *deep* only the parts that stay valuable as models get better — dependable cross-vendor control and trustworthy verification — and keep the rest thin and swappable. A frontier-research pass ([`docs/21`](docs/21-frontier-features.md)) proposed a historical cut list; the full-system goal now treats those entries as sequenced research rungs, not silent deletions. They may be retired only by a recorded evidence-backed Decision. The durable rule is: **nothing self-modifies the coordinator or the trust gate; the driver evolves only its periphery, and only through the same re-verification everything else passes.**
 
 ---
@@ -219,7 +219,7 @@ Every feature the exploration produced, with honest status. **Core** = the drive
 | Story compiler (live plain-language fleet narrative) | Monitoring | Phase 2 | `docs/21`, `docs/14` #16 |
 | Standard telemetry out (OpenTelemetry GenAI) | Monitoring | Later | `docs/21` |
 | Structured postmortem on gate-reject | Debugging | Later | `docs/21` |
-| Structured (syntax-aware) merge rung | Tools | Later | `docs/21`, `docs/15` |
+| Structured (syntax-aware) merge rung | Tools | Shipped Phase 26 | `spec/phase26/structured-merge.md`, `docs/21`, `docs/15` |
 | Governance firewall (re-inject constraints on compaction) | Context | MVP-adjacent | `docs/21`, `docs/12` |
 | Deeper check ladder (proptest→fuzz→proof) | Trust | Later | `docs/capabilities/math-proof.md` |
 | Adaptive, recency-biased routing | Smart | Later | `docs/20` |

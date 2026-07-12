@@ -290,7 +290,7 @@ may-reaching definitions, direct identifier-copy flow, immediate-only nested val
 literal-dead-branch pruning, including reachable `else if` chains and conservative may-unions
 inside atomic unsupported control. AST boolean leaves prune comment-bearing dead arms without
 orphan join edges. The combined R3 gate is 31/31 focused and the current canonical suite is
-750/750 green. Independent exact-model closure passes from Grok 4.5 and Grok Composer both found
+761/761 green. Independent exact-model closure passes from Grok 4.5 and Grok Composer both found
 no remaining actionable PS1–PS8 defect; their freshly verified reports and complete kill/reap
 evidence are retained with the Phase 22 handoff.
 
@@ -335,6 +335,19 @@ Exact Grok 4.5 and Grok Composer routes were provider-observed on distinct overl
 reports were freshly trust-gated, normal kills were durably confirmed, and every owned process,
 worktree, runtime, and branch was reaped. Phase 25 is therefore closed at its deliberately bounded
 R5 contract; it does not silently acquire coverage, effect tracing, or equivalence claims.
+
+Phase 26 now ships the lower R6 syntax-aware structured-integration rung without laundering it
+into semantic merge. `ff-only` remains default. Explicit `structured` integration creates a
+detached off-main stage, attempts Git's three-way merge, and passes only unresolved regular text
+conflicts—one bounded temporary file at a time—to an injected Mergiraf-class resolver. Missing
+tools, unknown outcomes, parse fallback, remaining markers, binary/deleted paths, file/output/time
+bounds, dirty or advanced main, and fresh verification failure all refuse typed. Only a two-parent
+candidate that passes the immutable pinned primary check in a distinct fresh worktree may
+fast-forward main. Reconcile reaps orphan stages; post-effect authority failure remains poisoned
+and replay cannot invent success. CPG and behavioral evidence have no integration-authority hook.
+The host lacks Mergiraf, so the 11/11 focused gate uses an injected wire-faithful resolver and a
+live external-tool proof remains pending. True data/control-flow semantic merge stays catalogued
+behind adoptable-engine, measured-demand, and false-clean evaluation gates.
 Baton-on-Baton proofs cover a `sha` helper node/edge delta with reverse-caller impact and the real
 MCP `JSON.parse` assignment reaching `server.handle`. SSA, full path-condition feasibility/PDG,
 shadowing-aware bindings, aliases, heap/implicit flows, exceptions, interprocedural returns,

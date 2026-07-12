@@ -21,14 +21,17 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **750/750
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **761/761
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
 worktrees, and fresh-worktree trust gates. Live proofs include four concurrent real Grok sessions
 that were interrupted/killed and fully reaped, plus exact concurrent `grok-4.5` and
 `grok-composer-2.5-fast` routes with provider-observed identity, native session resume, live kill,
-idempotent cleanup, and complete process/worktree/runtime/branch reap. The active complete scope,
+idempotent cleanup, and complete process/worktree/runtime/branch reap. Opt-in structured
+integration now stages divergent accepted results off-main, wraps an injected Mergiraf-class
+resolver, freshly verifies the merge commit, and only then advances main; true data-flow semantic
+merge remains a separately measured research bet. The active complete scope,
 including AST/CPG/IR/behavior/semantic-merge/e-graph rungs and the deployment-neutral causal
 knowledge graph, is preserved in [docs/26](docs/26-full-system-goal.md).
 

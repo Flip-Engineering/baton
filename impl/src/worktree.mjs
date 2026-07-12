@@ -12,10 +12,11 @@
 
 import { execFileSync } from 'node:child_process';
 import {
-  cpSync, existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, readdirSync, statSync, lstatSync, realpathSync,
+  cpSync, existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync, readdirSync, statSync, lstatSync, realpathSync,
 } from 'node:fs';
+import { tmpdir } from 'node:os';
 import {
-  join, dirname, isAbsolute, sep, resolve as pathResolve, relative as pathRelative,
+  basename, join, dirname, isAbsolute, sep, resolve as pathResolve, relative as pathRelative,
 } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
@@ -41,6 +42,9 @@ export class InvalidShaError extends Error {
 export class WorktreeLockedError extends Error {
   constructor(message) { super(message); this.name = 'WorktreeLockedError'; }
 }
+export class StructuredMergeError extends Error {
+  constructor(message, code = 'structured_merge_failed') { super(message); this.name = 'StructuredMergeError'; this.code = code; }
+}
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -52,6 +56,10 @@ function sh(cmd, args, cwd) {
 
 function isClean(dir) {
   return sh('git', ['status', '--porcelain'], dir) === '';
+}
+
+function mergeError(message, code, cause) {
+  return Object.assign(new StructuredMergeError(message, code), cause ? { cause } : {});
 }
 
 function wtDirFor(repoRoot, taskId) {
@@ -230,6 +238,103 @@ export async function captureCommit(repoRoot, taskId, opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Structured integration staging (Phase 26 SM1-SM9)
+// ---------------------------------------------------------------------------
+
+const CONFLICT_MARKER = /^(?:<{7}|\|{7}|={7}|>{7})(?: |$)/m;
+
+function integrationRoot(repoRoot) { return join(repoRoot, '.baton', 'integrate'); }
+
+export async function removeStructuredIntegration(repoRoot, stage) {
+  const dir = typeof stage === 'string' ? stage : stage?.stagePath;
+  if (typeof dir === 'string' && dir.length > 0) {
+    try { sh('git', ['worktree', 'remove', '--force', dir], repoRoot); } catch { rmSync(dir, { recursive: true, force: true }); }
+  }
+  try { sh('git', ['worktree', 'prune'], repoRoot); } catch { /* best effort */ }
+  const root = integrationRoot(repoRoot);
+  try { if (existsSync(root) && readdirSync(root).length === 0) rmSync(root, { recursive: true, force: true }); } catch { /* best effort */ }
+}
+
+export async function stageStructuredIntegration(repoRoot, taskId, resultSha, opts = {}) {
+  ensureBatonExcluded(repoRoot);
+  if (!isClean(repoRoot)) throw mergeError('structured integration requires a clean main checkout', 'structured_main_dirty');
+  let rightSha;
+  try { rightSha = sh('git', ['rev-parse', '--verify', `${resultSha}^{commit}`], repoRoot); }
+  catch (error) { throw mergeError('structured integration result is not a commit', 'structured_invalid_result', error); }
+  const beforeSha = sh('git', ['rev-parse', 'HEAD'], repoRoot);
+  try { sh('git', ['merge-base', '--is-ancestor', rightSha, beforeSha], repoRoot); throw mergeError('structured integration result is already contained by main', 'structured_already_integrated'); }
+  catch (error) { if (error?.code === 'structured_already_integrated') throw error; }
+  const mergeBaseSha = sh('git', ['merge-base', beforeSha, rightSha], repoRoot);
+  const root = integrationRoot(repoRoot); mkdirSync(root, { recursive: true });
+  const stagePath = join(root, `${taskId}-${randomBytes(4).toString('hex')}`);
+  try { sh('git', ['worktree', 'add', '--detach', stagePath, beforeSha], repoRoot); }
+  catch (error) { throw mergeError('structured integration stage could not be created', 'structured_stage_failed', error); }
+  const classes = []; const resolutions = [];
+  try {
+    let mergeClean = true;
+    try { execFileSync('git', ['-c', 'merge.conflictStyle=diff3', 'merge', '--no-commit', '--no-ff', rightSha], { cwd: stagePath, encoding: 'utf8', stdio: 'pipe' }); }
+    catch { mergeClean = false; }
+    const unmergedRaw = execFileSync('git', ['diff', '--name-only', '--diff-filter=U', '-z'], { cwd: stagePath, encoding: 'utf8' });
+    const conflictedPaths = unmergedRaw.split('\0').filter(Boolean);
+    if (mergeClean) classes.push({ path: null, class: 'clean_textual' });
+    else {
+      if (conflictedPaths.length === 0) throw mergeError('Git merge failed without resolvable text conflicts', 'structured_merge_failed');
+      if (!opts.resolver || typeof opts.resolver.resolve !== 'function') throw mergeError('structured merge resolver is unavailable', 'structured_tool_unavailable');
+      if (!Number.isSafeInteger(opts.resolver.maxFileBytes) || opts.resolver.maxFileBytes <= 0) throw mergeError('structured resolver lacks a deployment-derived file ceiling', 'structured_policy_invalid');
+      for (const relativePath of conflictedPaths) {
+        const absolutePath = pathResolve(stagePath, relativePath); const within = pathRelative(stagePath, absolutePath);
+        if (within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within) || !existsSync(absolutePath) || !lstatSync(absolutePath).isFile()) throw mergeError(`unsupported structured conflict path: ${relativePath}`, 'structured_unsupported_path');
+        const conflict = readFileSync(absolutePath); if (conflict.byteLength > opts.resolver.maxFileBytes) throw mergeError(`structured conflict exceeds file budget: ${relativePath}`, 'structured_file_too_large');
+        const isolatedRoot = realpathSync(mkdtempSync(join(tmpdir(), 'baton-structured-conflict-'))); const isolatedName = basename(relativePath); const isolatedPath = join(isolatedRoot, isolatedName);
+        let resolution; let merged;
+        try {
+          writeFileSync(isolatedPath, conflict, { mode: 0o600 });
+          resolution = await opts.resolver.resolve({ cwd: isolatedRoot, relativePath: isolatedName, absolutePath: isolatedPath });
+          if (resolution?.status === 'resolved') {
+            if (!existsSync(isolatedPath) || !lstatSync(isolatedPath).isFile()) throw mergeError(`structured resolver replaced the candidate path: ${relativePath}`, 'structured_unsupported_path');
+            merged = readFileSync(isolatedPath); if (merged.byteLength > opts.resolver.maxFileBytes) throw mergeError(`structured resolution exceeds file budget: ${relativePath}`, 'structured_file_too_large');
+          }
+        } finally { rmSync(isolatedRoot, { recursive: true, force: true }); }
+        resolutions.push({ path: relativePath, ...resolution });
+        if (resolution?.status === 'parse_fallback') throw mergeError(`structured resolver fell back for ${relativePath}`, 'structured_parse_fallback');
+        if (resolution?.status !== 'resolved') throw mergeError(`structured resolver did not resolve ${relativePath}`, resolution?.status === 'unknown' ? 'structured_tool_unknown' : 'structured_unresolved');
+        const mergedText = new TextDecoder('utf-8', { fatal: true }).decode(merged);
+        if (CONFLICT_MARKER.test(mergedText)) throw mergeError(`structured conflict markers remain in ${relativePath}`, 'structured_unresolved');
+        writeFileSync(absolutePath, merged, { mode: 0o600 });
+        execFileSync('git', ['add', '--', relativePath], { cwd: stagePath, stdio: 'pipe' });
+        classes.push({ path: relativePath, class: 'structured_resolved' });
+      }
+    }
+    const remaining = execFileSync('git', ['diff', '--name-only', '--diff-filter=U', '-z'], { cwd: stagePath, encoding: 'utf8' });
+    if (remaining.length > 0) throw mergeError('structured merge left unmerged index entries', 'structured_unresolved');
+    try { execFileSync('git', ['diff', '--check', '--cached'], { cwd: stagePath, stdio: 'pipe' }); }
+    catch (error) { throw mergeError('structured merge candidate fails git diff --check', 'structured_diff_invalid', error); }
+    execFileSync('git', ['commit', '-q', '-m', `baton structured integration: ${taskId}`], {
+      cwd: stagePath, stdio: 'pipe', env: { ...process.env, GIT_AUTHOR_NAME: 'baton-merge', GIT_AUTHOR_EMAIL: 'baton-merge@localhost', GIT_COMMITTER_NAME: 'baton-merge', GIT_COMMITTER_EMAIL: 'baton-merge@localhost' },
+    });
+    const stageSha = sh('git', ['rev-parse', 'HEAD'], stagePath);
+    const parents = sh('git', ['show', '-s', '--format=%P', stageSha], stagePath).split(' ');
+    if (parents.length !== 2 || parents[0] !== beforeSha || parents[1] !== rightSha) throw mergeError('structured candidate does not have the exact merge parents', 'structured_parent_mismatch');
+    return Object.freeze({ taskId, beforeSha, resultSha: rightSha, mergeBaseSha, stageSha, stagePath, classes, resolutions, resolver: opts.resolver?.identity?.() ?? null });
+  } catch (error) {
+    await removeStructuredIntegration(repoRoot, { stagePath });
+    if (error?.code?.startsWith('structured_')) throw error;
+    throw mergeError(String(error?.message ?? error), 'structured_merge_failed', error);
+  }
+}
+
+export async function finalizeStructuredIntegration(repoRoot, stage) {
+  if (!stage?.beforeSha || !stage?.stageSha || !stage?.stagePath) throw mergeError('invalid structured stage descriptor', 'structured_stage_invalid');
+  if (!isClean(repoRoot)) throw mergeError('main became dirty after structured staging', 'structured_main_dirty');
+  if (sh('git', ['rev-parse', 'HEAD'], repoRoot) !== stage.beforeSha) throw mergeError('main advanced after structured staging', 'structured_main_advanced');
+  const parents = sh('git', ['show', '-s', '--format=%P', stage.stageSha], repoRoot).split(' ');
+  if (parents.length !== 2 || parents[0] !== stage.beforeSha || parents[1] !== stage.resultSha) throw mergeError('structured candidate parent identity changed', 'structured_parent_mismatch');
+  try { sh('git', ['merge', '--ff-only', stage.stageSha], repoRoot); }
+  catch (error) { throw mergeError('main could not fast-forward to verified structured candidate', 'structured_main_advanced', error); }
+  return { beforeSha: stage.beforeSha, resultSha: stage.resultSha, mergeBaseSha: stage.mergeBaseSha, stageSha: stage.stageSha, afterSha: sh('git', ['rev-parse', 'HEAD'], repoRoot), classes: stage.classes, resolutions: stage.resolutions, resolver: stage.resolver };
+}
+
+// ---------------------------------------------------------------------------
 // freshVerifySandbox
 // ---------------------------------------------------------------------------
 
@@ -342,14 +447,33 @@ export async function reap(repoRoot, taskId, opts = {}) {
  * @param {string} repoRoot
  * @param {string[]} expectedActiveTaskIds
  * @param {{log?: object}} [opts]
- * @returns {Promise<{prunedAdminEntries:string[], removedZombieDirs:string[], errors:string[]}>}
+ * @returns {Promise<{prunedAdminEntries:string[], removedZombieDirs:string[], removedIntegrationDirs:string[], errors:string[]}>}
  */
 export async function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
-  const report = { prunedAdminEntries: [], removedZombieDirs: [], errors: [] };
+  const report = { prunedAdminEntries: [], removedZombieDirs: [], removedIntegrationDirs: [], errors: [] };
   try {
     sh('git', ['worktree', 'prune'], repoRoot);
   } catch (err) {
     report.errors.push(`prune: ${err.message || err}`);
+  }
+
+  // Structured integration is never resumed after coordinator restart: without an in-memory
+  // operation holding the freshly observed verification verdict, a candidate is evidence only.
+  // Reap every detached stage and require a new attempt to reconstruct and reverify it.
+  const mergeRoot = integrationRoot(repoRoot);
+  if (existsSync(mergeRoot)) {
+    for (const entry of readdirSync(mergeRoot)) {
+      const fullDir = join(mergeRoot, entry);
+      let isDir = false; try { isDir = statSync(fullDir).isDirectory(); } catch { continue; }
+      if (!isDir) continue;
+      try {
+        try { sh('git', ['worktree', 'remove', '--force', fullDir], repoRoot); }
+        catch { rmSync(fullDir, { recursive: true, force: true }); }
+        report.removedIntegrationDirs.push(fullDir);
+        logEvent(opts, entry, 'worktree.integration_reconciled', { dir: fullDir });
+      } catch (err) { report.errors.push(`${entry}: ${err.message || err}`); }
+    }
+    try { if (readdirSync(mergeRoot).length === 0) rmSync(mergeRoot, { recursive: true, force: true }); } catch { /* best effort */ }
   }
 
   const expected = new Set(expectedActiveTaskIds);

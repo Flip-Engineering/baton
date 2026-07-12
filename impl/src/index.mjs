@@ -46,6 +46,7 @@ export { AtlasCpgTaint } from './atlas-cpg-taint.mjs';
 export { AtlasRepresentationCeiling } from './atlas-representation-ceiling.mjs';
 export { AtlasBehaviorFingerprint } from './atlas-behavior-fingerprint.mjs';
 export { AtlasCodeIndex } from './atlas-index.mjs';
+export { MergirafResolver } from './structured-merge.mjs';
 
 /** worktree.mjs's real functions wrapped into the coordinator's manager interface. */
 function worktreeManager(repoRoot, opts = {}) {
@@ -79,6 +80,11 @@ function worktreeManager(repoRoot, opts = {}) {
       const afterSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
       return { beforeSha, resultSha: sha, afterSha };
     },
+    async stageStructuredIntegration(taskId, sha) {
+      return worktreeMod.stageStructuredIntegration(repoRoot, taskId, sha, { resolver: opts.structuredMerge });
+    },
+    async finalizeStructuredIntegration(stage) { return worktreeMod.finalizeStructuredIntegration(repoRoot, stage); },
+    async removeStructuredIntegration(stage) { return worktreeMod.removeStructuredIntegration(repoRoot, stage); },
     async retainResult(sha) {
       const ref = `refs/baton/results/${sha}`;
       execFileSync('git', ['update-ref', ref, sha], { cwd: repoRoot, stdio: 'ignore' });
@@ -116,7 +122,7 @@ function worktreeManager(repoRoot, opts = {}) {
         return { ok: false, reason: `session context validation failed: ${err?.message ?? err}` };
       }
     },
-    async reconcile() { try { await worktreeMod.reconcile(repoRoot, []); } catch { /* noop */ } },
+    async reconcile() { try { return await worktreeMod.reconcile(repoRoot, []); } catch { return null; } },
   };
 }
 
@@ -198,6 +204,7 @@ export function createDriver(opts) {
     worktrees: worktreeManager(opts.repoRoot, {
       workerDependencyDirs: opts.workerDependencyDirs,
       verifyDependencyDirs: opts.verifyDependencyDirs,
+      structuredMerge: opts.structuredMerge,
     }),
     runtimeScopes,
     coordination,
