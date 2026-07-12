@@ -24,7 +24,7 @@ structured literal `if` stays unreachable. The real `JSON.parse` to `server.hand
 - Numbered contract: `spec/phase22/atlas-cpg-path-sensitive.md`.
 - Phase 22 focused red/green result: 10/10.
 - Combined Phase 18/19/20/22 R3 gate: 31/31.
-- Canonical suite at Phase 22 closure: 733/733; the current suite is 747/747 after Phase 23
+- Canonical suite at Phase 22 closure: 733/733; the current suite is 750/750 after Phase 23
   emergency-reap, Phase 24 representation-ceiling, and Phase 25 behavioral-fingerprint
   regressions, with the owned suite root reaped.
 - Baton-on-Baton proof: every check in

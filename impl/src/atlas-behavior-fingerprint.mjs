@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { deserialize } from 'node:v8';
 
 const runFile = promisify(execFile);
 const sha = (value) => createHash('sha256').update(value).digest('hex');
@@ -18,8 +19,18 @@ const stable = (value) => {
 const RUNNER = String.raw`
 const [targetUrl, exportName, encoded] = process.argv.slice(1);
 const emit = process.stdout.write.bind(process.stdout);
-const stringify = JSON.stringify.bind(JSON);
-const corpus = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
+const hardExit = process.exit.bind(process);
+const removeAllListeners = process.removeAllListeners.bind(process);
+const parse = JSON.parse.bind(JSON);
+const arrayIsArray = Array.isArray.bind(Array);
+const arrayPush = Function.call.bind(Array.prototype.push);
+const objectCreate = Object.create.bind(Object);
+const objectIs = Object.is.bind(Object);
+const numberIsNaN = Number.isNaN.bind(Number);
+const stringValue = String;
+const bufferToString = Function.call.bind(Buffer.prototype.toString);
+const { serialize } = await import('node:v8');
+const corpus = parse(Buffer.from(encoded, 'base64').toString('utf8'));
 const module = await import(targetUrl);
 const fn = module[exportName];
 if (typeof fn !== 'function') throw Object.assign(new Error('named export is not a function'), { code: 'EXPORT_NOT_FUNCTION' });
@@ -27,13 +38,24 @@ const observations = [];
 for (let caseIndex = 0; caseIndex < corpus.length; caseIndex += 1) {
   try {
     const value = await fn(corpus[caseIndex]);
-    if (value === undefined) observations.push({ caseIndex, kind: 'return', valueType: 'undefined' });
-    else observations.push({ caseIndex, kind: 'return', value: JSON.parse(stringify(value)) });
+    const item = objectCreate(null); item.caseIndex = caseIndex; item.kind = 'return'; item.valueBytes = bufferToString(serialize(value), 'base64');
+    if (value === undefined) item.valueType = 'undefined';
+    else if (typeof value === 'number' && numberIsNaN(value)) { item.valueType = 'number'; item.numberClass = 'NaN'; }
+    else if (typeof value === 'number' && objectIs(value, -0)) { item.valueType = 'number'; item.numberClass = '-0'; }
+    else if (value === Infinity || value === -Infinity) { item.valueType = 'number'; item.numberClass = stringValue(value); }
+    else if (value === null || typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number') item.value = value;
+    else if (typeof value === 'bigint') { item.valueType = 'bigint'; item.value = stringValue(value); }
+    else item.valueType = arrayIsArray(value) ? 'array' : typeof value;
+    arrayPush(observations, item);
   } catch (error) {
-    observations.push({ caseIndex, kind: 'throw', name: String(error?.name ?? 'Error'), message: String(error?.message ?? error), code: error?.code ?? null });
+    const item = objectCreate(null); item.caseIndex = caseIndex; item.kind = 'throw'; item.name = stringValue(error?.name ?? 'Error'); item.message = stringValue(error?.message ?? error); item.code = error?.code ?? error?.cause?.code ?? null;
+    arrayPush(observations, item);
   }
 }
-emit('\nBATON_BEHAVIOR_RESULT:' + stringify(observations) + '\n');
+const frame = bufferToString(serialize({ nodeVersion: process.version, observations }), 'base64');
+removeAllListeners('beforeExit'); removeAllListeners('exit');
+emit('\nBATON_BEHAVIOR_RESULT:' + frame + '\n');
+hardExit(0);
 `;
 
 function bounded(items, tokens) {
@@ -66,6 +88,19 @@ function target(root, path, maxSourceBytes) {
 function corpusBytes(corpus, maxCorpusCases, maxInputBytes) {
   if (!Array.isArray(corpus)) throw new TypeError('behavior corpus must be an array');
   if (corpus.length === 0 || corpus.length > maxCorpusCases) throw typed('behavior corpus exceeds deployment case budget', 'corpus_too_large');
+  const json = (value, seen = new Set()) => {
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
+    if (typeof value === 'number') { if (!Number.isFinite(value)) throw typed('behavior corpus must contain finite JSON numbers', 'invalid_corpus'); return; }
+    if (typeof value !== 'object' || seen.has(value)) throw typed('behavior corpus must contain only acyclic JSON values', 'invalid_corpus');
+    seen.add(value);
+    if (Array.isArray(value)) for (const item of value) json(item, seen);
+    else {
+      const proto = Object.getPrototypeOf(value); if (proto !== Object.prototype && proto !== null) throw typed('behavior corpus objects must be plain JSON objects', 'invalid_corpus');
+      for (const item of Object.values(value)) json(item, seen);
+    }
+    seen.delete(value);
+  };
+  json(corpus);
   let serialized;
   try { serialized = JSON.stringify(corpus); } catch { throw typed('behavior corpus must be JSON serializable', 'invalid_corpus'); }
   if (serialized === undefined || Buffer.byteLength(serialized) > maxInputBytes) throw typed('behavior corpus exceeds deployment byte budget', 'corpus_too_large');
@@ -117,14 +152,18 @@ export class AtlasBehaviorFingerprint {
         encoding: 'utf8', timeout: this.timeoutMs, maxBuffer: this.maxOutputBytes, signal: ctx?.signal,
         env: { LANG: 'C', LC_ALL: 'C', TZ: 'UTC', NODE_NO_WARNINGS: '1' },
       });
-      const frame = stdout.split('\n').filter((line) => line.startsWith('BATON_BEHAVIOR_RESULT:')).at(-1);
-      if (!frame) throw typed('behavior child produced no result frame', 'execution_failed');
-      const observations = JSON.parse(frame.slice('BATON_BEHAVIOR_RESULT:'.length));
+      const frames = stdout.split('\n').filter((line) => line.startsWith('BATON_BEHAVIOR_RESULT:'));
+      if (frames.length !== 1) throw typed('behavior child produced an ambiguous result channel', 'observation_protocol');
+      let envelope;
+      try { envelope = deserialize(Buffer.from(frames[0].slice('BATON_BEHAVIOR_RESULT:'.length), 'base64')); }
+      catch { throw typed('behavior child result frame is invalid', 'observation_protocol'); }
+      if (!envelope || typeof envelope.nodeVersion !== 'string' || !Array.isArray(envelope.observations)) throw typed('behavior child result frame has invalid schema', 'observation_protocol');
+      const observations = envelope.observations;
       if (Buffer.byteLength(JSON.stringify(observations)) > this.maxOutputBytes) throw typed('behavior observations exceed deployment budget', 'output_too_large');
       if (observations.some((item) => item.kind === 'throw' && item.code === 'ERR_ACCESS_DENIED')) throw typed('target attempted an operation denied by the permission sandbox', 'sandbox_violation');
-      return observations;
+      return { observations, nodeVersion: envelope.nodeVersion };
     } catch (error) {
-      if (error?.code === 'sandbox_violation' || error?.code === 'output_too_large' || error?.code === 'execution_failed') throw error;
+      if (['sandbox_violation', 'output_too_large', 'execution_failed', 'observation_protocol'].includes(error?.code)) throw error;
       if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') throw typed('behavior observation cancelled', 'cancelled');
       if (error?.killed || error?.signal || error?.code === 'ETIMEDOUT') throw typed('behavior observation exceeded execution deadline', 'execution_timeout');
       throw typed(`behavior child failed: ${error?.message ?? error}`, error?.message?.includes('EXPORT_NOT_FUNCTION') ? 'invalid_export' : 'execution_failed');
@@ -138,10 +177,10 @@ export class AtlasBehaviorFingerprint {
     const resolved = target(root, path, this.maxSourceBytes); const input = corpusBytes(corpus, this.maxCorpusCases, this.maxInputBytes);
     const first = await this._once(resolved.source, exportName, input.serialized, ctx); abort(ctx);
     const second = await this._once(resolved.source, exportName, input.serialized, ctx);
-    if (stable(first) !== stable(second)) throw typed('target observations differ across isolated repetitions', 'nondeterministic');
+    if (first.nodeVersion !== second.nodeVersion || stable(first.observations) !== stable(second.observations)) throw typed('target observations differ across isolated repetitions', 'nondeterministic');
     return {
-      path, exportName, sourceDigest: resolved.sourceDigest, corpusDigest: input.digest, observations: first,
-      nodeVersion: process.version,
+      path, exportName, sourceDigest: resolved.sourceDigest, corpusDigest: input.digest, observations: first.observations,
+      nodeVersion: first.nodeVersion,
       sandbox: { permissionModel: true, fsRead: 'isolated_target_only', fsWrite: 'denied', network: 'denied', childProcess: 'denied', workers: 'denied' },
     };
   }
@@ -159,8 +198,8 @@ export class AtlasBehaviorFingerprint {
       op, status: truncated ? 'needs_resume' : 'ok', summary: op === 'behavior.fingerprint' ? `observed ${artifact.observations.length} pinned cases` : `${artifact.divergences.length} observed divergences`, payload,
       refs: [{ handle: `art:sha256:${digest}`, kind, digest, bytes: Buffer.byteLength(serialized), mediaType: `application/vnd.baton.atlas-${kind.replaceAll('_', '-')}+json`, path }],
       ...(truncated ? { cursor: `atlas-behavior:${digest}:${payload.length}` } : {}),
-      cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), wall_ms: Math.max(0, this.now() - started), usd: 0, underlying: `node-permission-model@${process.version}` },
-      provenance: { artifactDigest: digest, sourceDigests: artifact.sourceDigests ?? [artifact.sourceDigest], corpusDigest: artifact.corpusDigest, exportName: artifact.exportName, nodeVersion: process.version, sandbox: artifact.sandbox, deterministic: true, meaning },
+      cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), wall_ms: Math.max(0, this.now() - started), usd: 0, underlying: `node-permission-model@${artifact.nodeVersion}` },
+      provenance: { artifactDigest: digest, sourceDigests: artifact.sourceDigests ?? [artifact.sourceDigest], corpusDigest: artifact.corpusDigest, exportName: artifact.exportName, nodeVersion: artifact.nodeVersion, sandbox: artifact.sandbox, deterministic: true, meaning },
     });
     this.record?.({ kind: 'capability.op.completed', actor: ctx.actor ?? 'orchestrator', op, digest, status: result.status });
     return result;
@@ -185,7 +224,7 @@ export class AtlasBehaviorFingerprint {
     const artifact = {
       schemaVersion: 1, op, exportName: args.exportName, corpusDigest: before.corpusDigest,
       sourceDigests: [before.sourceDigest, after.sourceDigest], before: { path: before.path, observations: before.observations }, after: { path: after.path, observations: after.observations },
-      sandbox: before.sandbox, divergences,
+      nodeVersion: before.nodeVersion, sandbox: before.sandbox, divergences,
     };
     return this._writeResult(op, artifact, [comparison], ctx, started);
   }

@@ -23,8 +23,8 @@ reverify.
 ## Validation
 
 - Numbered contract: `spec/phase25/atlas-behavior-fingerprint.md`.
-- Focused BF1–BF7 gate: 7/7.
-- Canonical owned suite: 747/747; suite root reaped.
+- Focused BF1–BF7 gate: 10/10.
+- Canonical owned suite: 750/750; suite root reaped.
 - Reds cover stable output, behavior-preserving textual change, divergent output, filesystem
   escape, ambient-secret stripping, nondeterminism, timeout, path/language/corpus/source bounds,
   cancellation, resume, tamper, and reverify.
@@ -33,6 +33,24 @@ reverify.
   dependency-free `impl/src/route-tuple.mjs#routeTupleKey`, resumes a deliberately bounded result,
   reverifies it, compares it with itself, balances capability events, and leaves no newly owned
   sandbox or artifact root.
+
+## Recursive review and correction
+
+Two exact-model Grok workers reviewed the committed implementation concurrently through Baton.
+Both were provider-observed, freshly verified, normally killed, and completely reaped. Grok 4.5
+reproduced a deferred stdout suffix attack: target code could append a second result frame after
+the runner's honest frame, and the parent selected the attacker's last frame in both repetitions.
+Composer found a distinct false-agreement class: JSON normalization mapped `NaN` to `null` and
+`-0` to `0`. The reports and full lifecycle evidence are under
+`docs/reference/evidence/phase25-atlas-behavior-grok-review-2026-07-11/`.
+
+Both failures now have reds. The child captures its control primitives before importing target
+code, serializes the authoritative envelope through Node's structured-value format, removes exit
+hooks, writes exactly one frame, and exits synchronously before deferred target handles run. The
+parent rejects zero or multiple frames. Each return also carries structured-value bytes, so
+runtime-distinct special numbers remain distinct even when their human JSON preview would
+collapse. Review-requested coverage now executes real denied network, child-process, and
+worker-thread attempts, and non-JSON corpus values fail before child launch.
 
 ## Honest boundary
 

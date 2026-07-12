@@ -290,7 +290,7 @@ may-reaching definitions, direct identifier-copy flow, immediate-only nested val
 literal-dead-branch pruning, including reachable `else if` chains and conservative may-unions
 inside atomic unsupported control. AST boolean leaves prune comment-bearing dead arms without
 orphan join edges. The combined R3 gate is 31/31 focused and the current canonical suite is
-747/747 green. Independent exact-model closure passes from Grok 4.5 and Grok Composer both found
+750/750 green. Independent exact-model closure passes from Grok 4.5 and Grok Composer both found
 no remaining actionable PS1–PS8 defect; their freshly verified reports and complete kill/reap
 evidence are retained with the Phase 22 handoff.
 
@@ -315,6 +315,13 @@ Before/after comparison reports exact case divergences and says
 `observed_corpus_agreement_not_semantic_equivalence`; nondeterminism, timeout, denied effects,
 resource excess, cancellation, and tamper fail typed. This is empirical differential evidence,
 not coverage, a semantic proof, or permission to auto-merge.
+
+The first concurrent exact-model Phase 25 implementation review found two real BF defects: shared
+stdout allowed a deferred target frame to replace the runner result, and JSON normalization
+collapsed runtime-distinct `NaN`/`null` and `-0`/`0` returns into false agreement. The child now
+emits one exclusive structured-value frame and exits before deferred output; multiple frames fail
+typed. V8 structured serialization is the comparison identity, while primitive previews remain
+human-readable. Additional reds prove actual network, child-process, and worker-thread denial.
 Baton-on-Baton proofs cover a `sha` helper node/edge delta with reverse-caller impact and the real
 MCP `JSON.parse` assignment reaching `server.handle`. SSA, full path-condition feasibility/PDG,
 shadowing-aware bindings, aliases, heap/implicit flows, exceptions, interprocedural returns,
