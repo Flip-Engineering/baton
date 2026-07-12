@@ -130,7 +130,7 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 | Recursive output | Three trust-gated review artifacts under `reviews/dogfood/`, authored by real Claude, Codex, and Grok workers and integrated into `master` |
 | Multi-Grok kill/reap | `docs/reference/evidence/grok-multi-reap-2026-07-10/summary.json` has every check true; raw ledger beside it |
 | Concurrent exact models | `docs/reference/evidence/phase11-grok-model-selection-2026-07-11/summary.json` has every check true |
-| Current Grok rerun | `docs/reference/evidence/phase11-grok-model-selection-2026-07-11/attempt-2026-07-11-auth-expired.md` is honestly `PENDING-LIVE-grok-reauth`; provider rejected both isolated sessions before PID/model establishment, while cleanup remained complete |
+| Current Grok rerun | `docs/reference/evidence/phase11-grok-model-selection-2026-07-11/attempt-reauth-required-2026-07-11.md` is honestly `PENDING-LIVE-grok-reauth`; Baton concurrently allocated both exact-model tasks and isolated worktrees, the provider rejected both before PID/model establishment, both kills were confirmed, and all process/worktree/runtime/metadata/branch cleanup checks passed |
 | Persistent two-turn Grok | `docs/reference/evidence/phase11-grok-persistent-session-2026-07-11/summary.json` has all 16 checks true; same session/PID, two fresh verdicts, full reap |
 | Isolated governance Grok | `docs/reference/evidence/phase11-grok-governance-2026-07-11/summary.json` has all 16 checks true; private credential scope, real sandbox denial, canonical usage, automatic budget kill, full reap |
 | Acceptance/integration | `docs/handoff/evidence/phase11-acceptance-integration-2026-07-11.md`; 16 focused temp-repo tests cover AC1–AC6 and the full suite is 502/502 |
@@ -141,6 +141,7 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 | Atlas index/symbol/SCIP | `docs/handoff/evidence/phase13-atlas-index-symbols-2026-07-11.md`; 9 focused contracts plus the 576/576 full suite cover projection-committing explicit epochs, artifact/epoch tamper refusal, base-plus-worktree overlay reconciliation/staleness, lexical/repo-map/code-seed orientation, parsed symbol/reference/call graphs, SCIP JSON artifacts, bounded resumable output, cancellation/confinement, result ceilings, typed ambiguity, deterministic reverify, and a live 75-document Baton self-index; exact-model semantic review awaits quota reset, while live LSP, structural rewrite, semantic/CPG/IR/merge rungs remain explicit |
 | Harness/model/effort route tuple | `docs/handoff/evidence/phase14-route-tuple-2026-07-11.md`; 609/609 full-suite contracts plus recursive exact `CodexAppServerCli` + `gpt-5.6-sol` + `low` runs cover direct/auto/web selection, native mapping, honest nullable observation, recovery, durable event/coordination/story/result/replay/review/integration/commit attribution, exact learning buckets with read-only legacy fallback, mismatch kill/reap, and heterogeneous assembled-driver filtering; the final detached review found no actionable defect and every lifecycle/reap check passed |
 | Authenticated web session lifecycle | `docs/handoff/evidence/phase12-web-session-lifecycle-2026-07-11.md`; 44 focused contracts plus the 619/619 full suite cover injected-provider-only claims, cookie/Bearer login, fsynced atomic credential rotation, restart-safe predecessor refusal, refresh/logout TLS/origin/JSON/CSRF/CORS controls, shared claim/TTL validation, audit-before-mutation failure ordering, non-leakage, live stream revocation, and zero fleet side effects; recursive exact-model build and correction review fully reaped, ending with no actionable IL1–IL8 finding |
+| Authenticated web edge policy | `docs/handoff/evidence/phase12-web-edge-2026-07-11.md`; 82 focused Phase 12 contracts plus the 657/657 full suite cover canonical direct/trusted-proxy identity, raw forwarding provenance, listener-wide HTTPS, bounded and ordered quotas, non-disclosing readiness, audit-amplification resistance, atomic ticket delivery, and bounded shutdown/stream cleanup. Eleven recursive exact-route corrective reviews were integrated and fully reaped; a twelfth clean review was provider-refused before verdict, so the final independent clean-review gate remains pending |
 | Credential discipline | GLM checked by presence only and recorded `PENDING-LIVE-no-credential`; no credential value was logged |
 
 The three-vendor capstone checks were: no harness error; Claude/Codex/Grok all completed; every
@@ -169,10 +170,10 @@ These are absent, not implied by the green suite:
 5. **GLM live proof.** `GlmSessionCli` is built to the credential boundary, but no credential was
    present in this run.
 6. **Production runtime and complete northbound surfaces.** The implementation remains
-   dependency-free Node ESM. The authenticated HTTPS command vertical and resumable SSE WN6
-   delivery ship, but complete identity lifecycle, optional WebSocket parity, MCP,
-   browser/end-to-end adversarial proof, and the
-   eventual Go/Elixir production core remain incomplete.
+   dependency-free Node ESM. The authenticated HTTPS command/session vertical, resumable SSE WN6,
+   and EP1–EP9 edge policy ship, but concrete OIDC redirect/callback behavior, admitted-command
+   reconciliation, optional WebSocket parity, MCP/operator surfaces, browser/end-to-end
+   adversarial proof, and the eventual Go/Elixir production core remain incomplete.
 7. **Cross-vendor decorrelation eval (E2).** The fleet required to run it now exists; the eval is a
    phase-11 research decision, not evidence retroactively required for phase-10 wiring completion.
 8. **Atlas and representation depth.** The real AST/CST structural-delta vertical plus shared
@@ -180,6 +181,11 @@ These are absent, not implied by the green suite:
    and SCIP JSON interchange ship. Structural rewrite, live LSP, semantic retrieval, CPG/dataflow,
    IR, behavioral fingerprints, semantic diff/merge, and e-graph evaluation remain incomplete and
    explicitly catalogued.
+9. **Test-fixture lifecycle ownership.** Repeated dogfood/full-suite runs leaked 14,070
+   Baton-named temporary fixture directories and exhausted the host disk even though registered
+   worker processes, worktrees, branches, and runtime scopes were clean. The leaked directories
+   were measured and removed to restore the host, but automatic per-test/per-run registration,
+   bounded retention, and reap-on-all-terminal-paths remain incomplete.
 
 The full researched-versus-shipped inventory and phase boundary are in
 `docs/25-capability-gap.md`.
@@ -194,7 +200,10 @@ proved it could stop and reap four same-vendor sessions concurrently, select exa
 two independently verified turns on one native session, isolate a live credentialed Grok worker,
 deny an outside-worktree write in its native sandbox, and auto-kill/reap it at a hard token budget.
 Those coordination/knowledge, Atlas index/symbol, and authenticated SSE milestones now ship. The
-the harness + exact-model + effort route specificity gate (issue #2) now also ships. The next active
-pursuit is the remaining quota/proxy/browser/MCP/operator surface, followed by the next
-measured representation rungs; isolated authenticated concurrent Grok 4.5 route/kill/reap remains
-pending live re-authentication rather than being inferred from deterministic coverage.
+harness + exact-model + effort route specificity gate (issue #2) now also ships. EP1–EP9 closes
+the quota/proxy/readiness/shutdown edge-policy increment locally; its final detached clean review
+is pending a provider reset. The next active pursuit is OIDC/browser/WebSocket parity,
+admitted-command reconciliation, MCP, and operator surfaces, followed by the next measured
+representation rungs. Isolated authenticated concurrent Grok 4.5 route/kill/reap remains pending
+live re-authentication rather than being inferred from deterministic coverage, and leaked test
+fixture lifecycle is now an explicit reliability defect to close.

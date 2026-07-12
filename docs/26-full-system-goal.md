@@ -55,6 +55,10 @@ result but may not bypass Baton's normal fresh-verification and integration auth
   crash recovery without fabricating uniform semantics across vendors.
 - Restart-safe task/worker identity, pending interactions, fences, adapter/session references,
   worktree ownership, story, budgets, and routing state.
+- Test and experiment resources are lifecycle-owned too: temporary repositories, worktrees,
+  branches, runtime homes, logs, sockets, and fixture directories are registered, bounded, and
+  reaped on success, refusal, crash, timeout, interrupt, and kill. Full-suite repetition must not
+  leak disk until the host fails.
 - Dependency DAG, refinement links, idempotent claims, artifact registry, path leases, and
   deterministic ready-work selection.
 
@@ -235,10 +239,23 @@ learning, replay, recovery, review, verification, integration, and commit traile
 Codex route/review gates used exact `gpt-5.6-sol` at `low` effort and fully reaped every worker.
 The injected-provider login, atomic refresh/credential rotation, logout, and live stream
 revocation lifecycle also ships under IL1–IL8 with fsynced session truth and fail-closed audit
-ordering. Authenticated concurrent Grok 4.5 route/kill/reap is retained as `PENDING-LIVE` until
-isolated provider authentication is available. The active next increment is the remaining
-rate-limit/trusted-proxy/browser/MCP/operator surface, followed by the next measured Atlas representation
-rungs. These checkpoints narrow sequence only; they do not retire any later capability below.
+ordering. EP1–EP9 now ships the canonical direct/trusted-proxy identity boundary, listener-wide
+HTTPS enforcement, bounded request/login/principal/cost/ticket/connection quotas,
+dependency-grounded readiness, audit-amplification controls, and bounded shutdown/stream cleanup.
+It is locally green at 82 focused Phase 12 tests and 657 full-suite tests after eleven recursive
+corrective reviews. A twelfth clean Codex review was refused by the provider usage limit before a
+verdict, so the clean independent-review gate remains pending. Authenticated concurrent Grok 4.5
+route/kill/reap is likewise `PENDING-LIVE` until isolated provider authentication is available;
+the latest two-worker attempt reached both worktrees and then reaped every resource after both
+authentication refusals. That dogfood also exposed a false-green missing-test command and 14,070
+unowned temporary fixture directories that exhausted the host disk; fixture lifecycle ownership
+is therefore an explicit reliability gate, not housekeeping.
+
+The active next increment is the concrete OIDC callback/browser control path plus optional
+WebSocket parity, admitted-command reconciliation, MCP, and operator surfaces. It is followed by
+the next measured Atlas representation rungs, beginning with structural rewrite/live-LSP depth
+and retaining CPG/dataflow, IR, behavioral fingerprints, semantic diff/merge, and e-graphs in the
+catalog. These checkpoints narrow sequence only; they do not retire any later capability below.
 
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
