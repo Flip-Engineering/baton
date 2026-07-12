@@ -39,7 +39,7 @@ function classify(error) {
 
 function boundedEvents(events) {
   const allowed = new Set([
-    'runtime.scope_created', 'lifecycle.spawned', 'lifecycle.turn_started',
+    'runtime.scope_created', 'lifecycle.spawned', 'lifecycle.turn_started', 'lifecycle.exited', 'lifecycle.crashed',
     'resource.tokens', 'lifecycle.turn_completed', 'verify.reverified',
     'model.mismatch', 'kill.requested', 'kill.confirmed',
   ]);
@@ -57,6 +57,19 @@ function boundedEvents(events) {
     accept: event.kind === 'verify.reverified' ? event.payload?.accept ?? null : null,
     status: event.kind === 'lifecycle.turn_completed' ? event.payload?.result?.status ?? null : null,
   }));
+}
+
+function spawnedOrTerminal(log, workerId) {
+  const events = log.read(workerId);
+  const spawned = events.find((event) => event.kind === 'lifecycle.spawned' && event.actor === 'worker');
+  if (spawned) return spawned;
+  const terminal = events.find((event) => ['lifecycle.exited', 'lifecycle.crashed'].includes(event.kind));
+  if (terminal) {
+    const error = new Error('GLM child terminated before provider initialization');
+    error.code = terminal.kind === 'lifecycle.crashed' ? 'child_crashed_before_init' : 'child_exited_before_init';
+    throw error;
+  }
+  return null;
 }
 
 if (!existsSync(AUTH)) {
@@ -115,7 +128,7 @@ try {
   });
   workerId = handle.id;
   const spawned = await until(
-    () => log.read(workerId).find((event) => event.kind === 'lifecycle.spawned' && event.actor === 'worker'),
+    () => spawnedOrTerminal(log, workerId),
     'native GLM spawn',
   );
   pid = spawned.payload?.pid ?? null;
@@ -152,7 +165,8 @@ const checks = {
   providerUsageObserved: events.some((event) => event.kind === 'resource.tokens' && (event.payload?.tokens ?? 0) > 0),
   freshVerified: result?.status === 'completed' && events.some((event) => event.kind === 'verify.reverified' && event.payload?.accept === true),
   killConfirmed: ['confirmed', 'already_dead'].includes(killAck?.result),
-  processGone: !!pid && !alive(pid),
+  nativeProcessObserved: !!pid,
+  processGone: !pid || !alive(pid),
   worktreeGone: !existsSync(join(REPO, '.baton', 'wt', TASK_ID)),
   metadataGone: !existsSync(join(REPO, '.baton', 'wt', `${TASK_ID}.meta.json`)),
   runtimeGone: workerId ? !existsSync(join(REPO, '.baton', 'runtime', workerId)) : false,
