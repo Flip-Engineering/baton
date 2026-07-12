@@ -1,0 +1,6 @@
+{"kind":"capability.op.started","actor":"orchestrator","op":"behavior.fingerprint"}
+{"kind":"capability.op.completed","actor":"orchestrator","op":"behavior.fingerprint","digest":"eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b","status":"needs_resume"}
+{"kind":"capability.op.started","actor":"policy","op":"behavior.fingerprint"}
+{"kind":"capability.op.completed","actor":"policy","op":"behavior.fingerprint","digest":"eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b","status":"ok"}
+{"kind":"capability.op.started","actor":"orchestrator","op":"behavior.compare"}
+{"kind":"capability.op.completed","actor":"orchestrator","op":"behavior.compare","digest":"c0c6c303f045a764d661d22d0968c043ec5c947e4012e5845d2fa684b3d40058","status":"ok"}

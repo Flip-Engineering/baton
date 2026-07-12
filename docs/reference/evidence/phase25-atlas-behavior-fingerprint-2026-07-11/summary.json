@@ -1,0 +1,192 @@
+{
+  "at": "2026-07-12T04:27:24.950Z",
+  "repoHead": "bd3bdc1583472319621b5fcb886a8a17036d52fc",
+  "args": {
+    "path": "impl/src/route-tuple.mjs",
+    "exportName": "routeTupleKey",
+    "corpus": [
+      {
+        "harness": "codex",
+        "version": "1"
+      },
+      {
+        "harness": "grok",
+        "version": "2"
+      }
+    ]
+  },
+  "card": {
+    "name": "atlas-behavior-fingerprint",
+    "version": "0.1.0",
+    "underlying": [
+      "node-permission-model@v25.8.0"
+    ],
+    "ops": {
+      "behavior.fingerprint": {
+        "deterministic": true,
+        "latency_class": "bounded_batch",
+        "side_effects": "executes_target_in_throwaway_permission_sandbox",
+        "reverifiable": true
+      },
+      "behavior.compare": {
+        "deterministic": true,
+        "latency_class": "bounded_batch",
+        "side_effects": "executes_targets_in_throwaway_permission_sandboxes",
+        "reverifiable": true
+      }
+    },
+    "limitations": [
+      "dependency-free JavaScript ESM named exports only",
+      "pinned-corpus observation is not semantic equivalence",
+      "no input generation or coverage claim",
+      "filesystem writes, network, child processes, and workers denied"
+    ]
+  },
+  "bounded": {
+    "op": "behavior.fingerprint",
+    "status": "needs_resume",
+    "summary": "observed 2 pinned cases",
+    "payload": [],
+    "refs": [
+      {
+        "handle": "art:sha256:eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b",
+        "kind": "behavior_fingerprint",
+        "digest": "eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b",
+        "bytes": 679,
+        "mediaType": "application/vnd.baton.atlas-behavior-fingerprint+json",
+        "path": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-behavior-proof-eWXim9/artifacts/eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b.json"
+      }
+    ],
+    "cursor": "atlas-behavior:eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b:0",
+    "cost": {
+      "tokens_out": 1,
+      "wall_ms": 93,
+      "usd": 0,
+      "underlying": "node-permission-model@v25.8.0"
+    },
+    "provenance": {
+      "artifactDigest": "eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b",
+      "sourceDigests": [
+        "2df0fa080f7c28510ed37bdb8d6e5e68716efdee344711ea6ef9184295fefcde"
+      ],
+      "corpusDigest": "1fca46450c791e6b8184d4b9bf2417d8c82b9f55c757ba1b808c1cd20f0da6fe",
+      "exportName": "routeTupleKey",
+      "nodeVersion": "v25.8.0",
+      "sandbox": {
+        "permissionModel": true,
+        "fsRead": "isolated_target_only",
+        "fsWrite": "denied",
+        "network": "denied",
+        "childProcess": "denied",
+        "workers": "denied"
+      },
+      "deterministic": true,
+      "meaning": "observed_pinned_corpus_not_semantic_equivalence"
+    }
+  },
+  "resumed": {
+    "op": "behavior.fingerprint",
+    "status": "ok",
+    "summary": "resumed 2 behavior records",
+    "payload": [
+      {
+        "caseIndex": 0,
+        "kind": "return",
+        "value": "[\"codex\",\"1\",\"default\",\"default\",\"default\",\"general\"]"
+      },
+      {
+        "caseIndex": 1,
+        "kind": "return",
+        "value": "[\"grok\",\"2\",\"default\",\"default\",\"default\",\"general\"]"
+      }
+    ],
+    "refs": [
+      {
+        "handle": "art:sha256:eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b",
+        "kind": "behavior_fingerprint",
+        "digest": "eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b",
+        "bytes": 679,
+        "mediaType": "application/vnd.baton.atlas-behavior-fingerprint+json",
+        "path": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-behavior-proof-eWXim9/artifacts/eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b.json"
+      }
+    ],
+    "cost": {
+      "tokens_out": 54,
+      "wall_ms": 0,
+      "usd": 0,
+      "underlying": "node-permission-model@v25.8.0"
+    },
+    "provenance": {
+      "artifactDigest": "eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b",
+      "resumed_from": 0,
+      "deterministic": true
+    }
+  },
+  "reverified": {
+    "ok": true,
+    "observedDigest": "eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b"
+  },
+  "compared": {
+    "op": "behavior.compare",
+    "status": "ok",
+    "summary": "0 observed divergences",
+    "payload": [
+      {
+        "recordType": "behavior_comparison",
+        "agree": true,
+        "cases": 2,
+        "divergences": []
+      }
+    ],
+    "refs": [
+      {
+        "handle": "art:sha256:c0c6c303f045a764d661d22d0968c043ec5c947e4012e5845d2fa684b3d40058",
+        "kind": "behavior_comparison",
+        "digest": "c0c6c303f045a764d661d22d0968c043ec5c947e4012e5845d2fa684b3d40058",
+        "bytes": 1025,
+        "mediaType": "application/vnd.baton.atlas-behavior-comparison+json",
+        "path": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-behavior-proof-eWXim9/artifacts/c0c6c303f045a764d661d22d0968c043ec5c947e4012e5845d2fa684b3d40058.json"
+      }
+    ],
+    "cost": {
+      "tokens_out": 20,
+      "wall_ms": 181,
+      "usd": 0,
+      "underlying": "node-permission-model@v25.8.0"
+    },
+    "provenance": {
+      "artifactDigest": "c0c6c303f045a764d661d22d0968c043ec5c947e4012e5845d2fa684b3d40058",
+      "sourceDigests": [
+        "2df0fa080f7c28510ed37bdb8d6e5e68716efdee344711ea6ef9184295fefcde",
+        "2df0fa080f7c28510ed37bdb8d6e5e68716efdee344711ea6ef9184295fefcde"
+      ],
+      "corpusDigest": "1fca46450c791e6b8184d4b9bf2417d8c82b9f55c757ba1b808c1cd20f0da6fe",
+      "exportName": "routeTupleKey",
+      "nodeVersion": "v25.8.0",
+      "sandbox": {
+        "permissionModel": true,
+        "fsRead": "isolated_target_only",
+        "fsWrite": "denied",
+        "network": "denied",
+        "childProcess": "denied",
+        "workers": "denied"
+      },
+      "deterministic": true,
+      "meaning": "observed_corpus_agreement_not_semantic_equivalence"
+    }
+  },
+  "checks": {
+    "noHarnessError": true,
+    "boundedFirstResult": true,
+    "realBatonExport": true,
+    "deterministicReverify": true,
+    "selfComparisonAgrees": true,
+    "claimLanguageHonest": true,
+    "sandboxPolicyPinned": true,
+    "balancedEvents": true,
+    "noSandboxResidue": true,
+    "artifactRootGone": true
+  },
+  "fatal": null,
+  "pass": true
+}
