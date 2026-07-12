@@ -232,7 +232,8 @@ negative result retires a rung through a recorded Decision, never through omissi
 Current shipped checkpoints as of 2026-07-11: CK1–CK9 supplies the deployment-neutral task,
 artifact, Scratch, and typed causal knowledge authority; Atlas supplies AST structural delta,
 proposal-only structural pattern search/rewrite, shared base/worktree index, lexical orientation,
-symbol/reference/call graph, and SCIP JSON; and
+symbol/reference/call graph, SCIP JSON, and a first single-file CPG seed with containment,
+control, lexical reaching-def, and honest local-call edges; and
 Phase 12 WN6 supplies the authenticated resumable SSE user-to-orchestrator observation channel;
 and Phase 14 supplies the first-class `{harness, exactModel, effort}` route tuple across cards,
 direct and automatic dispatch, authenticated web commands, native wires, durable attribution,
@@ -281,6 +282,8 @@ available, plus optional WebSocket parity, Streamable HTTP MCP/tasks/daemon dept
 the next measured Atlas representation rungs. Proposal-only structural rewrite now ships with a
 9/9 focused gate, 701/701 full suite, and a Baton-on-Baton immutable proposal proof. Direct apply
 and live-LSP depth remain, while CPG/dataflow, IR, behavioral fingerprints, semantic diff/merge, and e-graphs stay in the
+catalog. The CPG seed is 6/6 focused and 707/707 full-suite green with a Baton-on-Baton graph proof;
+SSA, path-sensitive PDG, aliases, interprocedural dataflow, taint, and CPG deltas remain unclaimed.
 catalog. These checkpoints narrow sequence only; they do not retire any later capability below.
 
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
