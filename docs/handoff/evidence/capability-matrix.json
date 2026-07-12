@@ -1,4 +1,8 @@
 {
+  "snapshotAsOf": "phase-10",
+  "statusAuthority": "historical-only",
+  "supersededForCurrentStatusBy": "docs/28-exhaustive-capability-audit.md",
+  "preservationNote": "All 107 research rows remain inventory; current shipped/partial/pending/retired status comes from Phase 28 and later executable evidence.",
   "counts": {
     "SHIPPED": 41,
     "UNSHIPPED-DEBT": 44,

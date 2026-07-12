@@ -1,10 +1,14 @@
 # 25 — Researched versus shipped capability gap
 
-This document publishes the capability sweep captured in
+This document publishes the historical capability sweep captured in
 `docs/handoff/evidence/capability-matrix.json` and reconciles it with phase 10.1 plus the live
 capstones. The matrix is a 107-row snapshot taken at the phase-10 handoff; it is authoritative for
 the research inventory, while current code/evidence is authoritative where phase 10.1 changed a
 row's implementation status.
+
+**Current status has moved on.** Phase 28 supersedes this document's status counts with
+`docs/28-exhaustive-capability-audit.md`; this file and its 107 rows remain the preserved research
+inventory and historical baseline.
 
 ## The answer
 
