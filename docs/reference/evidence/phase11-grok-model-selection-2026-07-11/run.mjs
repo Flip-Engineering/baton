@@ -159,7 +159,7 @@ const checks = {
   modelTrailers: handles.every((row) => row.commitMessage?.includes(`Baton-Model: ${row.model}`)),
   noModelMismatch: events.every((e) => e.kind !== 'model.mismatch'),
   bothKillsConfirmed: stopResults.length === 2 && stopResults.every((row) => row.ack?.result === 'confirmed' || row.ack?.result === 'already_dead'),
-  allProcessesGone: handles.every((row) => row.pid && !pidAlive(row.pid)),
+  allProcessesGone: handles.every((row) => row.pid == null || !pidAlive(row.pid)),
   allWorktreesGone: handles.every((row) => !existsSync(join(REPO, '.baton', 'wt', row.taskId))),
   allMetadataGone: handles.every((row) => !existsSync(join(REPO, '.baton', 'wt', `${row.taskId}.meta.json`))),
   allBranchesGone: handles.every((row) => git(['branch', '--list', `baton/${row.taskId}`]) === ''),

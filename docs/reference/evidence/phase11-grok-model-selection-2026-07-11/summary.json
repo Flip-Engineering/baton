@@ -1,6 +1,6 @@
 {
-  "at": "2026-07-11T23:56:40.066Z",
-  "repoHead": "b2d5fc89f3fc93e0299380922f3d3de4f2c74c15",
+  "at": "2026-07-11T23:57:37.102Z",
+  "repoHead": "a1cbc4fcc8438445aa2d9223920bc0771695f219",
   "grokVersion": "grok 0.1.216 (b139744655)",
   "handles": [
     {
@@ -28,7 +28,13 @@
           "mode": "new"
         },
         "sessionRef": null,
-        "sessionContext": null,
+        "sessionContext": {
+          "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-model-proof-45",
+          "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+          "baseSha": "a1cbc4fcc8438445aa2d9223920bc0771695f219",
+          "branch": "baton/grok-model-proof-45",
+          "ownerTaskId": "grok-model-proof-45"
+        },
         "lineage": null,
         "review": null,
         "integration": null,
@@ -61,7 +67,13 @@
           "mode": "new"
         },
         "sessionRef": null,
-        "sessionContext": null,
+        "sessionContext": {
+          "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-model-proof-45",
+          "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+          "baseSha": "a1cbc4fcc8438445aa2d9223920bc0771695f219",
+          "branch": "baton/grok-model-proof-45",
+          "ownerTaskId": "grok-model-proof-45"
+        },
         "lineage": null,
         "runtimeScope": {
           "root": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-1",
@@ -90,7 +102,7 @@
         },
         "review": null,
         "taskId": "grok-model-proof-45",
-        "worktree": null,
+        "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-model-proof-45",
         "fence": 2,
         "turnEpoch": 2,
         "status": "exited",
@@ -100,7 +112,7 @@
           "tokens": 0,
           "usd": 0
         },
-        "createdAt": "2026-07-11T23:56:39.857Z"
+        "createdAt": "2026-07-11T23:57:35.514Z"
       },
       "pid": null,
       "verify": null
@@ -130,7 +142,13 @@
           "mode": "new"
         },
         "sessionRef": null,
-        "sessionContext": null,
+        "sessionContext": {
+          "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-model-proof-composer",
+          "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+          "baseSha": "a1cbc4fcc8438445aa2d9223920bc0771695f219",
+          "branch": "baton/grok-model-proof-composer",
+          "ownerTaskId": "grok-model-proof-composer"
+        },
         "lineage": null,
         "review": null,
         "integration": null,
@@ -163,7 +181,13 @@
           "mode": "new"
         },
         "sessionRef": null,
-        "sessionContext": null,
+        "sessionContext": {
+          "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-model-proof-composer",
+          "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+          "baseSha": "a1cbc4fcc8438445aa2d9223920bc0771695f219",
+          "branch": "baton/grok-model-proof-composer",
+          "ownerTaskId": "grok-model-proof-composer"
+        },
         "lineage": null,
         "runtimeScope": {
           "root": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-2",
@@ -192,7 +216,7 @@
         },
         "review": null,
         "taskId": "grok-model-proof-composer",
-        "worktree": null,
+        "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-model-proof-composer",
         "fence": 2,
         "turnEpoch": 2,
         "status": "exited",
@@ -202,7 +226,7 @@
           "tokens": 0,
           "usd": 0
         },
-        "createdAt": "2026-07-11T23:56:39.868Z"
+        "createdAt": "2026-07-11T23:57:35.527Z"
       },
       "pid": null,
       "verify": null
