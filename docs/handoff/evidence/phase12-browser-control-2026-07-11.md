@@ -40,7 +40,13 @@ it does not become an identity provider or create parallel fleet state.
 - Combined Phase 12 browser/edge/session/auth/northbound/stream: 94/94.
 - Full canonical suite: 672/672 with zero owned suite roots left in the configured temp parent.
 - `git diff --check` passes.
+- A real local TLS socket proof passed all eight machine checks: OIDC start, fake-provider PKCE
+  redirect, callback/session issuance, authenticated operator page, sanitized session projection,
+  command submission, stream-ticket/SSE snapshot, and logout/revocation. The listener shut down
+  and its owned `baton-browser-wire-*` state count returned to zero. Raw reusable runner and summary
+  are under `docs/reference/evidence/phase12-browser-control-wire-2026-07-11/`.
 
-Real local HTTPS browser automation, a production OIDC provider adapter, optional WebSocket parity,
+The in-app browser's required execution bridge was not exposed in this session, so the TLS proof is
+not mislabeled as browser automation. Real local browser interaction, a production OIDC provider adapter, optional WebSocket parity,
 admitted-command reconciliation, MCP/deeper operator surfaces, and provider-backed adversarial
 review remain pending. No homelab integration was added.

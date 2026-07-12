@@ -37,6 +37,9 @@ cookie-session issuance, a readable non-credential CSRF cookie, and clean fixed 
 BU1–BU7 adds an authenticated minimal operator seat over the existing command and SSE APIs with
 independent harness/model/effort inputs, fence-preserving controls, sanitized session projection,
 strict CSP, and no parallel fleet truth. The combined focused Phase 12 suite is 94/94.
+A real local TLS wire run passes OIDC start/provider/callback, session cookies, `/control`, command,
+SSE snapshot, logout/revocation, shutdown, and owned-state cleanup. The required in-app browser
+execution bridge was unavailable, so WN9's real-browser interaction gate remains pending.
 
 This is not WN1–WN10 completion. Real local browser automation, a production OIDC provider adapter,
 optional resumable WebSocket parity, admitted-but-incomplete command reconciliation, MCP, richer

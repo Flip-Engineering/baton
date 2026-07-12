@@ -261,7 +261,10 @@ durable session issuance, and clean callback redirect. BU1–BU7 supplies the fi
 operator seat over the same command/SSE authority, including independent harness/model/effort
 dispatch and fenced worker control. The combined Phase 12 suite is 94/94 and the full suite is
 672/672. Real-browser HTTPS evidence and provider-backed review remain pending; neither is inferred
-from the deterministic suite.
+from the deterministic suite. A real TLS socket proof now passes OIDC redirect/PKCE/callback,
+operator/session, command, SSE snapshot, logout/revocation, listener shutdown, and owned-state
+cleanup. The in-app browser interaction remains pending because its required execution bridge was
+not exposed; the wire proof is not relabeled as a browser pass.
 
 The active next increment is the real-browser OIDC/control/stream/logout proof, followed by optional
 WebSocket parity, admitted-command reconciliation, MCP, and deeper operator surfaces. It is followed by
