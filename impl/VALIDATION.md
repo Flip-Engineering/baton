@@ -141,7 +141,8 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 | Atlas index/symbol/SCIP | `docs/handoff/evidence/phase13-atlas-index-symbols-2026-07-11.md`; 9 focused contracts plus the 576/576 full suite cover projection-committing explicit epochs, artifact/epoch tamper refusal, base-plus-worktree overlay reconciliation/staleness, lexical/repo-map/code-seed orientation, parsed symbol/reference/call graphs, SCIP JSON artifacts, bounded resumable output, cancellation/confinement, result ceilings, typed ambiguity, deterministic reverify, and a live 75-document Baton self-index; exact-model semantic review awaits quota reset, while live LSP, structural rewrite, semantic/CPG/IR/merge rungs remain explicit |
 | Harness/model/effort route tuple | `docs/handoff/evidence/phase14-route-tuple-2026-07-11.md`; 609/609 full-suite contracts plus recursive exact `CodexAppServerCli` + `gpt-5.6-sol` + `low` runs cover direct/auto/web selection, native mapping, honest nullable observation, recovery, durable event/coordination/story/result/replay/review/integration/commit attribution, exact learning buckets with read-only legacy fallback, mismatch kill/reap, and heterogeneous assembled-driver filtering; the final detached review found no actionable defect and every lifecycle/reap check passed |
 | Authenticated web session lifecycle | `docs/handoff/evidence/phase12-web-session-lifecycle-2026-07-11.md`; 44 focused contracts plus the 619/619 full suite cover injected-provider-only claims, cookie/Bearer login, fsynced atomic credential rotation, restart-safe predecessor refusal, refresh/logout TLS/origin/JSON/CSRF/CORS controls, shared claim/TTL validation, audit-before-mutation failure ordering, non-leakage, live stream revocation, and zero fleet side effects; recursive exact-model build and correction review fully reaped, ending with no actionable IL1–IL8 finding |
-| Authenticated web edge policy | `docs/handoff/evidence/phase12-web-edge-2026-07-11.md`; 82 focused Phase 12 contracts plus the 657/657 full suite cover canonical direct/trusted-proxy identity, raw forwarding provenance, listener-wide HTTPS, bounded and ordered quotas, non-disclosing readiness, audit-amplification resistance, atomic ticket delivery, and bounded shutdown/stream cleanup. Eleven recursive exact-route corrective reviews were integrated and fully reaped; a twelfth clean review was provider-refused before verdict, so the final independent clean-review gate remains pending |
+| Authenticated web edge policy | `docs/handoff/evidence/phase12-web-edge-2026-07-11.md`; 82 focused Phase 12 contracts plus the current 660/660 full suite cover canonical direct/trusted-proxy identity, raw forwarding provenance, listener-wide HTTPS, bounded and ordered quotas, non-disclosing readiness, audit-amplification resistance, atomic ticket delivery, and bounded shutdown/stream cleanup. Eleven recursive exact-route corrective reviews were integrated and fully reaped; a twelfth clean review was provider-refused before verdict, so the final independent clean-review gate remains pending |
+| Owned test-fixture lifecycle | `docs/handoff/evidence/phase15-test-fixture-lifecycle-2026-07-11.md`; TF1–TF4 red/green nested process tests prove pass, fail, SIGTERM, descendant-process reap, sibling preservation, and result truth. The canonical `npm test` run passes 660/660 and leaves zero `baton-suite-*` roots in its configured parent |
 | Credential discipline | GLM checked by presence only and recorded `PENDING-LIVE-no-credential`; no credential value was logged |
 
 The three-vendor capstone checks were: no harness error; Claude/Codex/Grok all completed; every
@@ -181,11 +182,12 @@ These are absent, not implied by the green suite:
    and SCIP JSON interchange ship. Structural rewrite, live LSP, semantic retrieval, CPG/dataflow,
    IR, behavioral fingerprints, semantic diff/merge, and e-graph evaluation remain incomplete and
    explicitly catalogued.
-9. **Test-fixture lifecycle ownership.** Repeated dogfood/full-suite runs leaked 14,070
+9. **Test-fixture crash reconciliation.** Repeated dogfood/full-suite runs leaked 14,070
    Baton-named temporary fixture directories and exhausted the host disk even though registered
-   worker processes, worktrees, branches, and runtime scopes were clean. The leaked directories
-   were measured and removed to restore the host, but automatic per-test/per-run registration,
-   bounded retention, and reap-on-all-terminal-paths remain incomplete.
+   worker processes, worktrees, branches, and runtime scopes were clean. TF1–TF4 now gives the
+   canonical `npm test` command one owned root and reaps it after pass, fail, `SIGINT`, `SIGTERM`,
+   and descendant termination. Direct bare `node --test` still bypasses that owner, and an
+   uncatchable wrapper `SIGKILL` still requires later supervisor-side stale-root reconciliation.
 
 The full researched-versus-shipped inventory and phase boundary are in
 `docs/25-capability-gap.md`.
@@ -205,5 +207,6 @@ the quota/proxy/readiness/shutdown edge-policy increment locally; its final deta
 is pending a provider reset. The next active pursuit is OIDC/browser/WebSocket parity,
 admitted-command reconciliation, MCP, and operator surfaces, followed by the next measured
 representation rungs. Isolated authenticated concurrent Grok 4.5 route/kill/reap remains pending
-live re-authentication rather than being inferred from deterministic coverage, and leaked test
-fixture lifecycle is now an explicit reliability defect to close.
+live re-authentication rather than being inferred from deterministic coverage. Canonical test
+fixture lifecycle is now owned and green; stale-root reconciliation after uncatchable wrapper
+death remains explicit runtime depth.

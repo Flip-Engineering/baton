@@ -8,8 +8,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test",
-    "test:watch": "node --test --watch",
+    "test": "node scripts/run-suite.mjs",
+    "test:watch": "node scripts/run-suite.mjs --watch",
     "demo": "node demo.mjs"
   },
   "dependencies": {

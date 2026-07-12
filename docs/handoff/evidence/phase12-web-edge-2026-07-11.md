@@ -27,7 +27,7 @@ integration.
 ## Deterministic validation
 
 - `node --test` over the five Phase 12 edge/session/auth/northbound/stream files passes 82/82.
-- The full implementation suite passes 657/657.
+- The current full implementation suite passes 660/660 through the owned canonical runner.
 - `git diff --check` passes.
 - A real local proxy listener covers duplicate raw field-lines, forwarding-protocol casing, and
   immediate-peer quota behavior rather than relying only on synthetic request objects.
@@ -62,6 +62,8 @@ those measured Baton temp directories were removed, recovering roughly 3 GB. Aut
 registration, bounded retention, and reap on every terminal path are now explicit full-system
 reliability scope. A subsequent controlled 657-test run under one owned `TMPDIR` reproduced 623
 leftover directories totaling 8.7 MB; that entire owned root was removed after measurement.
+TF1–TF4 subsequently made this ownership automatic for `npm test`; its 660/660 run left zero
+suite roots in the configured parent.
 
 Concrete OIDC callback behavior, admitted-but-incomplete command reconciliation, optional
 WebSocket parity, MCP/operator surfaces, real browser automation, and the final clean provider

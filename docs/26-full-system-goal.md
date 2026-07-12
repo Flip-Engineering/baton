@@ -242,14 +242,18 @@ revocation lifecycle also ships under IL1–IL8 with fsynced session truth and f
 ordering. EP1–EP9 now ships the canonical direct/trusted-proxy identity boundary, listener-wide
 HTTPS enforcement, bounded request/login/principal/cost/ticket/connection quotas,
 dependency-grounded readiness, audit-amplification controls, and bounded shutdown/stream cleanup.
-It is locally green at 82 focused Phase 12 tests and 657 full-suite tests after eleven recursive
+It is locally green at 82 focused Phase 12 tests and the current 660-test full suite after eleven recursive
 corrective reviews. A twelfth clean Codex review was refused by the provider usage limit before a
 verdict, so the clean independent-review gate remains pending. Authenticated concurrent Grok 4.5
 route/kill/reap is likewise `PENDING-LIVE` until isolated provider authentication is available;
 the latest two-worker attempt reached both worktrees and then reaped every resource after both
 authentication refusals. That dogfood also exposed a false-green missing-test command and 14,070
 unowned temporary fixture directories that exhausted the host disk; fixture lifecycle ownership
-is therefore an explicit reliability gate, not housekeeping.
+is therefore an explicit reliability gate, not housekeeping. TF1–TF4 now makes `npm test` own a
+private suite root, preserve pass/fail/signal truth, terminate the complete test process group, and
+reap the root on every observable terminal path; the 660/660 canonical run left zero owned roots.
+Direct bare `node --test` and uncatchable wrapper death remain outside that ownership boundary and
+must not be used as the acceptance command or mistaken for supervisor reconciliation.
 
 The active next increment is the concrete OIDC callback/browser control path plus optional
 WebSocket parity, admitted-command reconciliation, MCP, and operator surfaces. It is followed by

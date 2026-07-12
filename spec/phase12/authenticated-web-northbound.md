@@ -25,7 +25,7 @@ The IL1–IL8 injected-provider login, refresh/credential rotation, and logout l
 EP1–EP9 also ships the direct-TLS/trusted-proxy boundary, canonical address identity, bounded
 address/login/principal/cost/ticket/connection quotas, listener-wide HTTPS enforcement,
 non-disclosing readiness, bounded graceful shutdown, audit-amplification controls, and exact
-stream cleanup. The focused Phase 12 edge suite is 82/82 and the full suite is 657/657. Eleven
+stream cleanup. The focused Phase 12 edge suite is 82/82 and the current full suite is 660/660. Eleven
 recursive exact-route reviews found and closed defects; the next detached clean-review attempt was
 refused by the Codex provider usage limit before a verdict, and the concurrent Grok fallback is
 blocked at provider reauthentication. The implementation is locally green, but the final clean
