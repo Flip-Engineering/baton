@@ -23,12 +23,14 @@ removes orphan stages because an old candidate without a live fresh verdict has 
 ## Validation
 
 - Numbered contract: `spec/phase26/structured-merge.md` (SM1–SM10).
-- Focused gate: 14/14.
-- Existing acceptance/worktree plus Phase 26 gate: 69/69.
-- Canonical owned suite: 766/766; suite root reaped.
+- Focused gate: 16/16.
+- Existing acceptance/worktree plus Phase 26 gate: 71/71; the broader Phase 11
+  coordination/acceptance/worktree surrounding gate is 85/85.
+- Canonical owned suite: 770/770; suite root reaped.
 - Reds cover unavailable resolver, marker retention, parse fallback, deployment file ceiling,
   resolver isolation, clean divergent three-way merge, false-clean syntax failure, dirty main,
-  main-advance race, post-main authority failure/replay, and orphan-stage reconciliation.
+  main-advance race, ambient Git redirects, post-main authority failure/replay, hook suppression,
+  untagged post-fast-forward failure, and orphan-stage reconciliation.
 - The external `mergiraf` binary is absent on this host. Production invocation is implemented
   with fixed no-shell `mergiraf solve <path>` argv, bounded time/output, and a minimal environment;
   tests use an injected executor and do not claim a live external-tool pass.
@@ -90,8 +92,33 @@ The first sparse retry then exposed an unrelated but live Baton control seam: an
 closed Grok stdin and Node emitted an unhandled asynchronous `EPIPE`. `_writeRaw` is now an owned
 promise-based delivery, stdin has an error consumer, request RPCs reject their exact pending call,
 and steer/interrupt/approval return refused delivery instead of emitting false success. Approval
-waits are consumed only after the response enters the wire. The 32/32 Grok adapter gate includes a
+waits are consumed only after the response enters the wire. The 33/33 Grok adapter gate includes a
 closed-pipe red and the canonical suite remains green.
+
+Later exact-model closure passes found four additional authority/classification seams. Local
+result-pin, verify-removal, and session-context Git calls still inherited ambient `GIT_*`; final
+main fast-forward allowed hooks; marker detection covered line-start debris but not an embedded
+seven-character diff3 run; and a failure after main had already fast-forwarded could be recorded
+as an ordinary refusal. Baton now isolates every local Git control environment, disables final
+merge hooks, rechecks the exact post-update SHA and cleanliness, rejects marker runs anywhere,
+and records post-effect ambiguity as `integration.incomplete` before poisoning. The finalizer tags
+every exception after the Git effect boundary, while the coordinator independently inspects
+whether main reached `stageSha`, so classification does not depend on cooperative error metadata.
+Replay still withholds integration authority and no path silently resets user state.
+
+The recursive loop itself then exposed unbounded ACP `tool_call_update` evidence: large raw
+read/diff results could exhaust the authoritative operational log. Grok telemetry now has a
+deployment-configurable 64 KiB default event ceiling. Oversized evidence retains stable tool and
+path fields plus explicit original byte count, SHA-256 digest, and bounded preview. Two ENOSPC
+attempts are retained as failed evidence and made no provider or review claim; both still reaped
+all ownership.
+
+Final closure at `d92d82d` ran exact `grok-4.5` and `grok-composer-2.5-fast` concurrently through
+Baton. Provider identities were observed on distinct overlapping PIDs, both reports independently
+said no actionable SM1-SM10 defect remained, both were freshly sparse-verified, both normal kills
+were confirmed, and every process, worktree, runtime, and branch was reaped. The reports and full
+lifecycle ledger are under
+`docs/reference/evidence/phase26-structured-merge-final-concurrent-clean-grok-review-2026-07-11/`.
 
 ## Honest boundary
 

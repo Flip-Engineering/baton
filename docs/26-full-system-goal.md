@@ -290,7 +290,7 @@ may-reaching definitions, direct identifier-copy flow, immediate-only nested val
 literal-dead-branch pruning, including reachable `else if` chains and conservative may-unions
 inside atomic unsupported control. AST boolean leaves prune comment-bearing dead arms without
 orphan join edges. The combined R3 gate is 31/31 focused and the current canonical suite is
-766/766 green. Independent exact-model closure passes from Grok 4.5 and Grok Composer both found
+770/770 green. Independent exact-model closure passes from Grok 4.5 and Grok Composer both found
 no remaining actionable PS1–PS8 defect; their freshly verified reports and complete kill/reap
 evidence are retained with the Phase 22 handoff.
 
@@ -355,9 +355,14 @@ NUL after the input check. The same binary refusal now gates both sides of the r
 boundary. A subsequent Composer pass found a canonical-path TOCTOU seam around Baton-owned
 post-resolver writes. Conflict paths are now canonical-realpath confined before read and required
 to retain the exact same canonical identity before write; a hostile resolver-timed parent symlink
-swap refuses without modifying the external target. The host lacks Mergiraf, so the 14/14 focused
-gate uses an injected wire-faithful resolver and a
-live external-tool proof remains pending. True data/control-flow semantic merge stays catalogued
+swap refuses without modifying the external target. Later exact-model passes closed embedded
+marker debris, final-hook execution, ambient Git influence outside staging, and post-fast-forward
+authority misclassification. Every exception after the Git effect boundary is now incomplete and
+poisoned rather than falsely refused, with an independent `stageSha` inspection for untagged
+errors. The host lacks Mergiraf, so the 16/16 focused gate uses an injected wire-faithful resolver
+and a live external-tool proof remains pending. A final concurrent exact-model pass at `d92d82d`
+found no remaining actionable SM1–SM10 defect; both reports were provider-observed, freshly
+verified, normally killed, and fully reaped. True data/control-flow semantic merge stays catalogued
 behind adoptable-engine, measured-demand, and false-clean evaluation gates.
 Baton-on-Baton proofs cover a `sha` helper node/edge delta with reverse-caller impact and the real
 MCP `JSON.parse` assignment reaching `server.handle`. SSA, full path-condition feasibility/PDG,
