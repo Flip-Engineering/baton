@@ -244,6 +244,14 @@ export class MockAdapter {
     }
 
     this._runSession(session).catch((err) => {
+      // WF2/WF3: the Coordinator owns readiness failure and already emitted its sole typed,
+      // non-leaking terminal fact. Mock must not duplicate it as a worker crash after performing
+      // no worker effect. Direct test callers likewise receive no fabricated native lifecycle.
+      if (err?.code === 'worktree_unavailable') {
+        session.terminal = true;
+        this._clearTimers(session);
+        return;
+      }
       // An unexpected failure mid-session (e.g. an underlying git operation errored for a
       // reason we didn't anticipate) is an adapter/process-level failure, not a worker
       // outcome — surface it as a crash rather than leaving the session silently hung.
@@ -462,17 +470,18 @@ export class MockAdapter {
     const { scenario } = session;
     const totalEdits = scenario.edits?.length ?? 0;
     session.totalEdits = totalEdits;
-    this._emit(session, 'lifecycle.turn_started', {});
 
     // A real worker can't edit files before its worktree checkout exists. When the driver
     // creates the worktree asynchronously, it passes a readiness promise; wait for it before
-    // touching disk. Backward-compatible: absent (e.g. adapter.test with a ready worktree) => no wait.
+    // announcing a native turn or touching disk. Backward-compatible: absent (e.g. adapter.test
+    // with a ready worktree) means the explicit opts.worktree remains authoritative.
     if (session.opts.worktreeReady) {
-      try {
-        const res = await session.opts.worktreeReady;
-        if (res && res.path && !session.opts.worktree) session.opts.worktree = res.path;
-      } catch { /* creation failure surfaces as a git error on first edit */ }
+      const res = await session.opts.worktreeReady;
+      if (res && res.path && !session.opts.worktree) session.opts.worktree = res.path;
     }
+    if (session.terminal || session.haltSignal.aborted) return;
+    if (!session.opts.worktree) throw new Error('worktree unavailable');
+    this._emit(session, 'lifecycle.turn_started', {});
 
     const ask = scenario.ask;
     const askIndex = ask ? (ask.afterEditIndex ?? 0) : null;

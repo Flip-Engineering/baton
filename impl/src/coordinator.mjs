@@ -11,6 +11,7 @@ import { createBrief, createDigest, wrapFact, wrapProse } from './messages.mjs';
 import { resolveEffort, routeTupleKey } from './route-tuple.mjs';
 
 const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
+const WORKTREE_FAILURE = Symbol('worktree-failure');
 
 // ---------------------------------------------------------------------------
 // Error taxonomy (thrown, not returned) — programmer-error / precondition failures.
@@ -611,15 +612,19 @@ export class Coordinator {
     // worker waits for its checkout to exist before touching disk. Status still flips to
     // 'working' and the adapter is invoked synchronously below (so a bare tick() dispatches
     // in one turn), while the worker's actual work is gated on the worktree being ready.
-    const worktreeSource = task.sessionRequest?.mode === 'resume'
-      ? Promise.resolve({
+    let worktreeSource;
+    if (task.sessionRequest?.mode === 'resume') {
+      worktreeSource = Promise.resolve({
           path: task.sessionContext.worktree,
           branch: task.sessionContext.branch,
           baseSha: task.sessionContext.baseSha,
           ownerTaskId: task.sessionContext.ownerTaskId,
-        })
-      : Promise.resolve(this._worktrees.create(task.id));
-    const worktreeReady = worktreeSource
+        });
+    } else {
+      try { worktreeSource = Promise.resolve(this._worktrees.create(task.id)); }
+      catch (error) { worktreeSource = Promise.reject(error); }
+    }
+    let worktreeReady = worktreeSource
       .then(async (res) => {
         if (res && res.path) {
           task.worktree = res.path;
@@ -647,8 +652,29 @@ export class Coordinator {
           }
         }
         return res;
-      })
-      .catch(() => null);
+      });
+    // WF1-WF5: readiness is a coordinator-owned prerequisite. Normalize both synchronous and
+    // asynchronous creation failure before the adapter can observe the rejection, abort any
+    // pending native spawn, write one fixed non-leaking terminal fact, and still rethrow a typed
+    // rejection to the adapter so it cannot fall through to the orchestrator cwd. A concurrent
+    // stop retains terminal authority; the second reap handles partial creation that failed late.
+    worktreeReady = worktreeReady.catch((cause) => {
+      void cause;
+      const failure = new Error('worktree unavailable');
+      failure.name = 'WorktreeReadinessError';
+      failure.code = 'worktree_unavailable';
+      if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) {
+        handle.spawnAbort.abort({ reason: failure.code });
+      }
+      const terminalized = this._fatalError ? false : this._onSpawnRefused(handle, task, harness, {
+        ok: false, reason: failure.message, code: failure.code, [WORKTREE_FAILURE]: true,
+      });
+      if (!terminalized && task.sessionRequest?.mode === 'new') this._removeTaskWorktree(task).catch(noop);
+      throw failure;
+    });
+    // Some test/dummy adapters do not consume readiness. The prerequisite still owns failure,
+    // while this observer prevents an otherwise-unhandled rejected promise.
+    worktreeReady.catch(noop);
 
     const spawnTurnEpoch = this._fences.current(workerId).turnEpoch;
     this._log.append({
@@ -715,8 +741,10 @@ export class Coordinator {
   _onSpawnRefused(handle, task, harness, ack) {
     // SC13: a concurrent stop or earlier lifecycle terminal owns the outcome. Refusal is allowed
     // to fail only a still-live spawn; it may never clobber cancellation or duplicate a crash.
-    if (TERMINAL_TASK_STATUSES.has(task.status)) return;
-    if (handle.status === 'stopping' || handle.status === 'dead' || handle.status === 'idle' || handle.status === 'exited') return;
+    if (TERMINAL_TASK_STATUSES.has(task.status)) return false;
+    if (handle.status === 'stopping' || handle.status === 'dead' || handle.status === 'idle' || handle.status === 'exited') return false;
+    const worktreeFailure = ack?.[WORKTREE_FAILURE] === true;
+    const phase = worktreeFailure ? 'worktree' : 'spawn';
     const crashEvent = this._log.append({
       worker: handle.id,
       harness,
@@ -724,14 +752,20 @@ export class Coordinator {
       kind: 'lifecycle.crashed',
       actor: 'orchestrator',
       ...this._routeAttribution(handle, task),
-      payload: { error: ack.reason ?? 'spawn refused', phase: 'spawn' },
+      payload: {
+        error: worktreeFailure ? 'worktree unavailable' : ack.reason ?? 'spawn refused',
+        phase,
+        ...(worktreeFailure ? { code: 'worktree_unavailable' } : {}),
+      },
     });
     const evidence = this._coordMapEvent(crashEvent);
-    this._coordTransition(task, 'failed', `task.failed:${task.id}:spawn`, evidence, 'orchestrator');
+    this._coordTransition(task, 'failed', `task.failed:${task.id}:${phase}`, evidence, 'orchestrator');
     handle.status = 'exited';
     task.status = 'failed';
     this._removeRuntimeScope(handle);
+    if (task.sessionRequest?.mode === 'new') this._removeTaskWorktree(task).catch(noop);
     this._dispatchPass();
+    return true;
   }
 
   // =========================================================================

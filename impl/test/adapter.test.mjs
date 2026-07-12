@@ -257,6 +257,19 @@ test('SESSION: spawn() acks immediately and emits turn_started -> content.file_e
   assert.ok(existsSync(join(dir, 'a.txt')) && existsSync(join(dir, 'b.txt')));
 });
 
+test('WF3: MockAdapter rejects readiness before announcing a turn or touching disk', async () => {
+  const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'never.txt', content: 'never' }] } });
+  const bus = makeEventBus(); adapter.onEvent(bus.cb);
+  const failed = Promise.reject(Object.assign(new Error('checkout failed'), { code: 'worktree_unavailable' }));
+  failed.catch(() => {});
+  const ack = await adapter.spawn('wf3', makeBrief(), { worktreeReady: failed, timeoutMs: 20_000 });
+  assert.equal(ack.ok, true);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(bus.events.some((event) => event.kind === 'lifecycle.crashed'), false);
+  assert.equal(bus.events.some((event) => event.kind === 'lifecycle.turn_started'), false);
+  assert.equal(bus.events.some((event) => event.kind === 'content.file_edit'), false);
+});
+
 test('SESSION: forgeSuccess via spawn() — the terminal event lies about the result, but real disk content stays honest', async (t) => {
   const dir = makeRepo();
   t.after(() => rmSync(dir, { recursive: true, force: true }));

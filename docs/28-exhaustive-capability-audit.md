@@ -24,7 +24,8 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 
 1. **Fleet control and authority:** the eight commands, ordered delivery, fences, single-consumer
    questions/approvals, two-phase stop, terminal monotonicity, task DAG/claims, worktree ownership,
-   fresh verification, emergency stop, and complete in-process reap.
+   typed pre-spawn worktree readiness failure, fresh verification, emergency stop, and complete
+   in-process reap. Failed checkout creation cannot fall through to a worker turn or adapter cwd.
 2. **Route specificity:** independent harness, exact model, and effort selection; visible
    requested/resolved/observed attribution; fail-closed mismatch; concurrent exact Grok routes.
 3. **Trust spine:** immutable briefs, pinned verification, red→green, changed-line coverage,

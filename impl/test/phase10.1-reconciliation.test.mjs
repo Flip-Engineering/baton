@@ -158,6 +158,72 @@ test('SC12: stop before worktree readiness reaps the worktree after late creatio
   assert.equal((await coordinator.result(h.id)).status, 'cancelled');
 });
 
+test('WF1-WF4: rejected worktree readiness is one typed failure with no worker effect and complete cleanup', async () => {
+  let workerEffects = 0; const removals = [];
+  const worktrees = {
+    create: async () => { throw new Error('secret checkout failure at /private/operator/repo'); },
+    capture: async () => ({ sha: 'x' }), createVerifyWorktree: async () => ({ path: tmpdir() }),
+    removeVerifyWorktree: async () => {}, remove: async (taskId) => { removals.push(taskId); }, reconcile: async () => {},
+  };
+  const a = stubAdapter({
+    spawn: async (_worker, _brief, opts) => {
+      try { await opts.worktreeReady; } catch { return { ok: false, reason: 'adapter saw rejected readiness' }; }
+      workerEffects += 1; return { ok: true };
+    },
+  });
+  const { coordinator, log, replay } = makeCoordinator(a, { worktrees });
+  const h = await coordinator.spawn('v', brief());
+  for (let i = 0; i < 50 && (await coordinator.result(h.id)).status !== 'failed'; i += 1) await sleep(2);
+  assert.equal((await coordinator.result(h.id)).status, 'failed');
+  assert.equal(workerEffects, 0);
+  const crashes = log.read(h.id).filter((event) => event.kind === 'lifecycle.crashed');
+  assert.equal(crashes.length, 1);
+  assert.deepEqual(crashes[0].payload, { error: 'worktree unavailable', phase: 'worktree', code: 'worktree_unavailable' });
+  assert.equal(JSON.stringify(crashes[0]).includes('/private/operator/repo'), false);
+  assert.deepEqual(removals, ['task-1']);
+  assert.equal((await replay().result(h.id)).status, 'failed');
+});
+
+test('WF5: kill owns a later worktree rejection while cleanup remains idempotent', async () => {
+  const gate = deferred(); const removals = [];
+  const worktrees = {
+    create: async () => { await gate.promise; throw new Error('late checkout failure'); },
+    capture: async () => ({ sha: 'x' }), createVerifyWorktree: async () => ({ path: tmpdir() }),
+    removeVerifyWorktree: async () => {}, remove: async (taskId) => { removals.push(taskId); }, reconcile: async () => {},
+  };
+  let a;
+  a = stubAdapter({
+    spawn: async (_worker, _brief, opts) => { try { await opts.worktreeReady; } catch {} return { ok: false, reason: 'readiness refused' }; },
+    kill: async (worker) => { queueMicrotask(() => a.emit('kill.confirmed', worker)); return { ok: true }; },
+  });
+  const { coordinator, log, replay } = makeCoordinator(a, { worktrees });
+  const h = await coordinator.spawn('v', brief());
+  await coordinator.kill(h.id); gate.resolve(); await sleep(20);
+  assert.equal((await coordinator.result(h.id)).status, 'cancelled');
+  assert.equal(log.read(h.id).some((event) => event.kind === 'lifecycle.crashed'), false);
+  assert.equal(removals.includes('task-1'), true);
+  assert.equal((await replay().result(h.id)).status, 'cancelled');
+});
+
+test('WF4: adapter refusal never deletes a resume-owned worktree context', async () => {
+  const reused = mkdtempSync(join(tmpdir(), 'p101-resume-owned-')); const removals = [];
+  const worktrees = {
+    create: async () => { throw new Error('resume must not create'); },
+    capture: async () => ({ sha: 'x' }), createVerifyWorktree: async () => ({ path: tmpdir() }),
+    removeVerifyWorktree: async () => {}, remove: async (taskId) => { removals.push(taskId); }, reconcile: async () => {},
+    validateSessionContext: async () => ({ ok: true }),
+  };
+  const a = stubAdapter({ spawn: async () => ({ ok: false, reason: 'native resume refused' }) });
+  const card = a.card; a.card = () => ({ ...card(), sessions: { multiTurn: 'native', resume: 'native', fork: 'unsupported' } });
+  const { coordinator } = makeCoordinator(a, { worktrees });
+  const h = await coordinator.spawn('v', brief(), {
+    taskId: 'resume-attempt', session: { mode: 'resume', id: 'native-session', context: { worktree: reused, ownerTaskId: 'original-owner' } },
+  });
+  for (let i = 0; i < 50 && (await coordinator.result(h.id)).status !== 'failed'; i += 1) await sleep(2);
+  assert.equal((await coordinator.result(h.id)).status, 'failed');
+  assert.deepEqual(removals, []);
+});
+
 test('SC13: spawn refusal racing a confirmed kill preserves cancelled and appends no crash', async () => {
   const gate = deferred();
   let a;

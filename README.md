@@ -21,7 +21,7 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **820/820
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **824/824
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
@@ -47,8 +47,10 @@ adds Cartographer/Quartermaster's focused Atlas-epoch orientation and evidence-g
 reuse floor through the same ACI plane. Phase 33 adds exact-fence addressed orientation push over
 the ordinary nudge lane and authenticated web/MCP action. Phase 34 makes immutable-Brief scope
 drift trigger a deployment-pinned, exact-epoch, deduplicated and cooldown/turn-bounded addressed
-orientation refresh while preserving kill as the default and stop/fence authority as final. The
-current canonical suite is **820/820 green**.
+orientation refresh while preserving kill as the default and stop/fence authority as final. Phase
+35 makes checkout readiness a typed coordinator prerequisite: failure cannot become an undefined
+adapter path, worker turn, provider effect, leaked Git diagnostic, or unreaped runtime/worktree.
+The current canonical suite is **824/824 green**.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 

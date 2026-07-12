@@ -426,9 +426,17 @@ may be refreshed at a time under configured cooldown and per-turn ceilings. Deli
 Phase 33's fenced addressed nudge, and a concurrent stop voids the result. Mechanical violation,
 suppression, refusal, and acknowledged map delivery are distinct durable facts. The default remains
 immediate kill, and neither semantic scope inference nor authority expansion is claimed. The live
-recursive proof also exposed a separate lifecycle defect—failed worktree readiness is swallowed
-before adapter spawn—which remains the next repair rather than being obscured by the clean-repo
-proof.
+recursive proof also exposed a separate lifecycle defect—failed worktree readiness was swallowed
+before adapter spawn—which Phase 35 repairs rather than obscuring behind the clean-repo proof.
+
+Phase 35 makes new-session checkout readiness an orchestrator-owned prerequisite. Synchronous and
+asynchronous creation failures become one fixed `worktree_unavailable` lifecycle fact before a
+conforming adapter can create a child, announce a worker turn, touch disk, or spend provider quota.
+The raw Git/path failure is withheld; task/run/route attribution remains exact; pending spawn is
+aborted; new-task worktree ownership and runtime scope are reaped; replay is identical; and a
+concurrent stop retains terminal authority. Mock now waits before announcing a turn and does not
+duplicate the coordinator's failure. This does not auto-stash, retry, broaden repository authority,
+or delete resume-owned context.
 
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
