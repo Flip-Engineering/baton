@@ -13,6 +13,7 @@ const AUTH = join(homedir(), '.grok', 'auth.json');
 const TIMEOUT_MS = Number(process.env.BATON_REVIEW_TIMEOUT_MS ?? 360000);
 const MIN_FREE_BYTES = Number(process.env.BATON_MIN_FREE_BYTES ?? 256 * 1024 * 1024);
 const REVIEW_PROFILE = process.env.BATON_REVIEW_PROFILE ?? 'ir-scope';
+const REVIEW_MODEL = process.env.BATON_REVIEW_MODEL ?? null;
 const IR_TASKS = [
   { taskId: 'grok-ir-scope-45', model: 'grok-4.5', path: 'reviews/dogfood/grok-ir-scope-45.md', stance: 'constructive' },
   { taskId: 'grok-ir-scope-composer', model: 'grok-composer-2.5-fast', path: 'reviews/dogfood/grok-ir-scope-composer.md', stance: 'adversarial' },
@@ -29,10 +30,11 @@ const MERGE_IMPLEMENTATION_TASKS = [
   { taskId: 'grok-merge-implementation-45', model: 'grok-4.5', path: 'reviews/dogfood/grok-merge-implementation-45.md', stance: 'authority' },
   { taskId: 'grok-merge-implementation-composer', model: 'grok-composer-2.5-fast', path: 'reviews/dogfood/grok-merge-implementation-composer.md', stance: 'security' },
 ];
-const TASKS = REVIEW_PROFILE === 'behavior-implementation' ? BEHAVIOR_TASKS
+const PROFILE_TASKS = REVIEW_PROFILE === 'behavior-implementation' ? BEHAVIOR_TASKS
   : REVIEW_PROFILE === 'merge-scope' ? MERGE_TASKS
     : REVIEW_PROFILE === 'merge-implementation' ? MERGE_IMPLEMENTATION_TASKS
     : IR_TASKS;
+const TASKS = REVIEW_MODEL ? PROFILE_TASKS.filter((task) => task.model === REVIEW_MODEL) : PROFILE_TASKS;
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const git = (args) => execFileSync('git', args, { cwd: REPO, encoding: 'utf8' }).trim();
@@ -129,11 +131,13 @@ function brief(task) {
 }
 
 if (!existsSync(AUTH)) throw new Error('PENDING-LIVE-no-grok-auth-file');
+if (TASKS.length === 0) throw new Error(`PENDING-LIVE-review-model-not-in-profile:${REVIEW_MODEL}`);
 if (!Number.isFinite(TIMEOUT_MS) || TIMEOUT_MS <= 0) throw new Error('BATON_REVIEW_TIMEOUT_MS must be positive');
 if (!Number.isFinite(MIN_FREE_BYTES) || MIN_FREE_BYTES <= 0) throw new Error('BATON_MIN_FREE_BYTES must be positive');
 const fs = statfsSync(REPO); const freeBytes = fs.bavail * fs.bsize;
 if (freeBytes < MIN_FREE_BYTES) throw new Error(`PENDING-LIVE-insufficient-disk-headroom:${freeBytes}<${MIN_FREE_BYTES}`);
 const LOG_DIR = mkdtempSync(join(tmpdir(), `baton-${REVIEW_PROFILE}-review-`));
+writeFileSync(join(LOG_DIR, 'ACTIVE_DO_NOT_REAP'), `${process.pid}\n`);
 const adapter = new GrokAcpCli({ requestTimeoutMs: 30000, ceiling: TASKS.length });
 const { coordinator, log } = createDriver({
   repoRoot: REPO,
@@ -248,13 +252,13 @@ const starts = rows.map((row) => row.events.find((event) => event.kind === 'life
 const terminals = rows.map((row) => row.events.find((event) => ['lifecycle.turn_completed', 'lifecycle.crashed'].includes(event.kind))).filter(Boolean);
 const checks = {
   noHarnessError: fatal === null,
-  twoReviews: rows.length === 2,
-  distinctLivePids: new Set(rows.map((row) => row.pid).filter(Boolean)).size === 2,
-  concurrentTurns: starts.length === 2 && terminals.length === 2 && Math.max(...starts.map((event) => Date.parse(event.ts))) <= Math.min(...terminals.map((event) => Date.parse(event.ts))),
+  expectedReviews: rows.length === TASKS.length,
+  distinctLivePids: new Set(rows.map((row) => row.pid).filter(Boolean)).size === TASKS.length,
+  concurrentTurns: TASKS.length === 1 || (starts.length === TASKS.length && terminals.length === TASKS.length && Math.max(...starts.map((event) => Date.parse(event.ts))) <= Math.min(...terminals.map((event) => Date.parse(event.ts)))),
   exactModelsObserved: rows.every((row) => row.handle?.modelRequested === row.model && row.handle?.modelResolved === row.model && row.handle?.modelObserved === row.model),
   bothFreshVerified: rows.every((row) => row.result?.status === 'completed' && row.verify?.payload?.accept === true),
   reportsCaptured: rows.every((row) => row.review?.includes('## Proposed numbered contract')),
-  bothKillsConfirmed: stopResults.length === 2 && stopResults.every((row) => ['confirmed', 'already_dead'].includes(row.ack?.result)),
+  allKillsConfirmed: stopResults.length === TASKS.length && stopResults.every((row) => ['confirmed', 'already_dead'].includes(row.ack?.result)),
   processesGone: rows.every((row) => row.pid == null || !alive(row.pid)),
   worktreesGone: rows.every((row) => !existsSync(join(REPO, '.baton', 'wt', row.taskId))),
   runtimeGone: rows.every((row) => !existsSync(join(REPO, '.baton', 'runtime', row.workerId))),
