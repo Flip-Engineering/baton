@@ -5,6 +5,7 @@
 // (D1/D9/D10/D11), which is authoritative over any conflicting cluster spec.
 
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Cursor } from './log.mjs';
 import { createBrief, createDigest, wrapFact, wrapProse } from './messages.mjs';
@@ -103,8 +104,28 @@ const COORDINATION_MUTATORS = new Set([
   'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent',
   'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
   'readScratch', 'expireScratchClaim', 'expireScratchFact', 'addKnowledgeNode', 'promoteKnowledgeNode',
-  'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination',
+  'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination', 'recordReuseDecision',
 ]);
+
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+}
+function canonicalDigest(value) { return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex'); }
+function normalizedDecisionText(value, field, maxBytes) {
+  if (typeof value !== 'string' || value.trim().length === 0 || Buffer.byteLength(value) > maxBytes || value.includes('\0')) {
+    const error = new TypeError(`reuse decision ${field} is invalid`); error.code = 'invalid_reuse_decision'; throw error;
+  }
+  return value.trim().replace(/\s+/g, ' ');
+}
+function decisionRef(ref, kind, mediaType) {
+  if (!ref || ref.kind !== kind || ref.mediaType !== mediaType || !/^[a-f0-9]{64}$/.test(ref.digest ?? '')
+    || ref.handle !== `art:sha256:${ref.digest}` || !Number.isSafeInteger(ref.bytes) || ref.bytes <= 0) {
+    const error = new TypeError('reuse decision evidence reference is invalid'); error.code = 'reuse_evidence_invalid'; throw error;
+  }
+  return { kind, handle: ref.handle, digest: ref.digest, bytes: ref.bytes, mediaType };
+}
 
 function minimalBrief() {
   return { goal: '', constraints: [], pathScope: [], definitionOfDone: '', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 0, usd: 0, wallMin: 0 } };
@@ -280,7 +301,7 @@ export class Coordinator {
   /** @param {object} opts */
   constructor(opts) {
     if (!opts?.coordination) throw new TypeError('Coordinator requires a durable coordination store');
-    for (const method of ['snapshot', 'task', 'integrationAuthority', 'publicationAuthority', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent', 'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'artifact', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
+    for (const method of ['snapshot', 'task', 'integrationAuthority', 'publicationAuthority', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent', 'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'artifact', 'recordReuseDecision', 'reuseDecision', 'reuseDecisionAdmission', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
       if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
     }
     this._log = opts.log;
@@ -315,6 +336,14 @@ export class Coordinator {
     this._route = opts.route;
     this._story = opts.story ?? null;
     this._repoRoot = opts.repoRoot ?? null;
+    this._resolveEnvironmentRef = opts.resolveEnvironmentRef ?? null;
+    this._reuseDecisionPolicy = null;
+    if (opts.reuseDecisionPolicy !== undefined) {
+      const policy = opts.reuseDecisionPolicy;
+      if (!policy || typeof policy.authorize !== 'function' || !Number.isSafeInteger(policy.maxNeedBytes) || policy.maxNeedBytes <= 0
+        || !Number.isSafeInteger(policy.maxRationaleBytes) || policy.maxRationaleBytes <= 0) throw new TypeError('reuse decision policy requires actor authorization and text ceilings');
+      this._reuseDecisionPolicy = Object.freeze({ authorize: policy.authorize, maxNeedBytes: policy.maxNeedBytes, maxRationaleBytes: policy.maxRationaleBytes });
+    }
     this._now = opts.now || Date.now;
     this._approvalTimeoutMs = opts.approvalTimeoutMs ?? 60000;
     this._stopDeadlineMs = opts.stopDeadlineMs ?? 15000;
@@ -2667,6 +2696,81 @@ export class Coordinator {
   async reverifyCapability(name, op, claim, args, ctx = {}) {
     this._assertOperational();
     return this._capabilityRegistry().reverify(name, op, claim, args, ctx);
+  }
+
+  /** Record one immutable build-vs-borrow judgment after the Coordinator freshly reverifies the
+   * exact dossier and actual-lockfile SBOM. Capability code supplies evidence only; this method is
+   * the sole decision authority and never installs, edits, merges, verifies, or publishes code. */
+  async decideReuse(request, ctx = {}) {
+    this._assertOperational();
+    if (!this._reuseDecisionPolicy || typeof this._resolveEnvironmentRef !== 'function') {
+      const error = new Error('reuse decision authority is not deployment-configured'); error.code = 'reuse_decision_unavailable'; throw error;
+    }
+    const actor = ctx.actor;
+    if (typeof actor !== 'string' || actor.length === 0 || actor.length > 256) {
+      const error = new Error('reuse decision actor is not authorized'); error.code = 'reuse_decision_forbidden'; throw error;
+    }
+    if (typeof ctx.idempotencyKey !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(ctx.idempotencyKey)) throw Object.assign(new TypeError('reuse decision idempotency key is invalid'), { code: 'invalid_reuse_decision' });
+    if (typeof ctx.repoId !== 'string' || ctx.repoId.length === 0 || !request || typeof request !== 'object' || Array.isArray(request)
+      || Object.hasOwn(request, 'actor')) throw Object.assign(new TypeError('reuse decision request is invalid'), { code: 'invalid_reuse_decision' });
+    if (Object.keys(request).some((key) => !['need', 'choice', 'rationale', 'dossier', 'sbom', 'supersedes', 'budgetTokens'].includes(key))) throw Object.assign(new TypeError('reuse decision request has unknown fields'), { code: 'invalid_reuse_decision' });
+    const need = normalizedDecisionText(request.need, 'need', this._reuseDecisionPolicy.maxNeedBytes);
+    const rationale = normalizedDecisionText(request.rationale, 'rationale', this._reuseDecisionPolicy.maxRationaleBytes);
+    if (!['borrow', 'build'].includes(request.choice)) throw Object.assign(new TypeError('reuse decision choice must be borrow|build'), { code: 'invalid_reuse_decision' });
+    if (!request.dossier || !request.sbom || typeof request.dossier !== 'object' || typeof request.sbom !== 'object'
+      || Object.keys(request.dossier).some((key) => !['claim', 'args'].includes(key)) || Object.keys(request.sbom).some((key) => !['claim', 'args'].includes(key))) throw Object.assign(new TypeError('reuse decision requires exact dossier and SBOM evidence'), { code: 'reuse_evidence_invalid' });
+    const dossierArgs = request.dossier.args; const sbomArgs = request.sbom.args;
+    if (!dossierArgs || dossierArgs.ecosystem !== 'npm' || typeof dossierArgs.package !== 'string' || typeof dossierArgs.version !== 'string'
+      || !/^[a-f0-9]{64}$/.test(dossierArgs.indexEpoch ?? '') || !sbomArgs || typeof sbomArgs.lockfilePath !== 'string') throw Object.assign(new TypeError('reuse decision evidence arguments are invalid'), { code: 'reuse_evidence_invalid' });
+    const coordinate = { ecosystem: 'npm', package: dossierArgs.package, version: dossierArgs.version };
+    if (!(await this._reuseDecisionPolicy.authorize({ actor, repoId: ctx.repoId, choice: request.choice, need, coordinate }))) {
+      const error = new Error('reuse decision actor is not authorized for this subject'); error.code = 'reuse_decision_forbidden'; throw error;
+    }
+    const dossierRef = decisionRef(request.dossier.claim?.refs?.[0], 'dependency-dossier', 'application/vnd.baton.dependency-dossier+json');
+    const sbomRef = decisionRef(request.sbom.claim?.refs?.[0], 'lockfile-sbom', 'application/vnd.cyclonedx+json');
+    if (request.supersedes != null && (typeof request.supersedes !== 'object' || Array.isArray(request.supersedes)
+      || Object.keys(request.supersedes).some((key) => !['decisionId', 'expectedValidityVersion'].includes(key))
+      || typeof request.supersedes.decisionId !== 'string' || !Number.isSafeInteger(request.supersedes.expectedValidityVersion) || request.supersedes.expectedValidityVersion <= 0)) throw Object.assign(new TypeError('reuse supersession is invalid'), { code: 'invalid_reuse_decision' });
+    const supersedes = request.supersedes == null ? null : { decisionId: request.supersedes.decisionId, expectedValidityVersion: request.supersedes.expectedValidityVersion };
+    const requestDigest = canonicalDigest({ actor, repoId: ctx.repoId, need, choice: request.choice, rationale, coordinate, dossierRef, dossierArgs, sbomRef, sbomArgs, supersedes });
+    const admitted = this._coordination.reuseDecisionAdmission(ctx.idempotencyKey, requestDigest);
+    if (admitted) return admitted;
+    const verifyCtx = { budgetTokens: ctx.budgetTokens, actor };
+    const dossierCheck = await this.reverifyCapability('cartographer-quartermaster', 'reuse.vet', request.dossier.claim, dossierArgs, verifyCtx);
+    if (dossierCheck.status !== 'ok' || dossierCheck.payload?.[0]?.ok !== true || !dossierCheck.payload[0].snapshot) throw Object.assign(new Error('reuse dossier diverged'), { code: 'reuse_evidence_diverged' });
+    const sbomCheck = await this.reverifyCapability('cartographer-quartermaster', 'provenance.sbom', request.sbom.claim, sbomArgs, verifyCtx);
+    if (sbomCheck.status !== 'ok' || sbomCheck.payload?.[0]?.ok !== true || !sbomCheck.payload[0].snapshot) throw Object.assign(new Error('reuse SBOM diverged'), { code: 'reuse_evidence_diverged' });
+    const dossierSnapshot = dossierCheck.payload[0].snapshot; const sbomSnapshot = sbomCheck.payload[0].snapshot;
+    if (dossierSnapshot.indexEpoch !== dossierArgs.indexEpoch) throw Object.assign(new Error('reuse dossier epoch mismatch'), { code: 'reuse_evidence_diverged' });
+    if (sbomSnapshot.lockfile !== sbomArgs.lockfilePath.replace(/^\.\//, '')) throw Object.assign(new Error('reuse SBOM path mismatch'), { code: 'reuse_evidence_diverged' });
+    if (request.choice === 'borrow' && dossierSnapshot.recommendation !== 'borrow_candidate') throw Object.assign(new Error('blocked dossier cannot authorize borrowing'), { code: 'reuse_borrow_blocked' });
+    const envRef = await this._resolveEnvironmentRef({ repoId: ctx.repoId, indexEpoch: dossierArgs.indexEpoch, overlayDigest: dossierSnapshot.overlayDigest, lockfileDigest: sbomSnapshot.lockfileDigest });
+    const subjectDigest = canonicalDigest({ envRef, indexEpoch: dossierArgs.indexEpoch, need, coordinate, policyHash: dossierSnapshot.policyHash });
+    const evidenceProjectionDigest = canonicalDigest({ dossierRef, dossierSnapshot, sbomRef, sbomSnapshot });
+    const decisionRecord = { envRef, indexEpoch: dossierArgs.indexEpoch, need, choice: request.choice, rationale, coordinate, actor, dossierDigest: dossierRef.digest, sbomDigest: sbomRef.digest, subjectDigest, evidenceProjectionDigest, supersedes };
+    const decisionDigest = canonicalDigest(decisionRecord); const id = `reuse-decision:${decisionDigest}`;
+    const decisionContent = { ...decisionRecord, installAuthority: false, mergeAuthority: false, verificationAuthority: false, policyOverride: false };
+    const decisionArtifactDigest = canonicalDigest(decisionContent);
+    const verifiedEvent = this._log.append({
+      worker: 'hub-capability', harness: 'baton', turnEpoch: 0, actor, kind: 'knowledge.reuse_evidence_reverified',
+      payload: { requestDigest, decisionDigest, decisionArtifactDigest, evidenceProjectionDigest, dossierDigest: dossierRef.digest, dossierFactDigest: dossierSnapshot.factDigest, policyHash: dossierSnapshot.policyHash, recommendation: dossierSnapshot.recommendation, evidenceExpiresAt: dossierSnapshot.expiresAt, sbomDigest: sbomRef.digest, lockfileDigest: sbomSnapshot.lockfileDigest, indexEpoch: dossierArgs.indexEpoch },
+    });
+    const reverifyEvidence = this._coordMapEvent(verifiedEvent);
+    const evidenceManifest = (artifactId, fresh) => {
+      const prior = this._coordination.artifact(artifactId);
+      return prior ? Object.fromEntries(Object.entries(prior).filter(([key]) => !['createdEvent', 'version', 'supersededBy', 'supersededEvent'].includes(key))) : fresh;
+    };
+    const dossierArtifactId = `capability-evidence:${dossierRef.digest}`; const sbomArtifactId = `capability-evidence:${sbomRef.digest}`;
+    const artifacts = [
+      evidenceManifest(dossierArtifactId, { id: dossierArtifactId, owner: { kind: 'capability-evidence', id: `cartographer-quartermaster:reuse.vet:${dossierRef.digest}` }, kind: dossierRef.kind, mediaType: dossierRef.mediaType, digest: dossierRef.digest, refs: [dossierRef], accepted: true, provenance: [reverifyEvidence] }),
+      evidenceManifest(sbomArtifactId, { id: sbomArtifactId, owner: { kind: 'capability-evidence', id: `cartographer-quartermaster:provenance.sbom:${sbomRef.digest}` }, kind: sbomRef.kind, mediaType: sbomRef.mediaType, digest: sbomRef.digest, refs: [sbomRef], accepted: true, provenance: [reverifyEvidence] }),
+      { id: `reuse-decision-artifact:${decisionArtifactDigest}`, owner: { kind: 'decision', id }, kind: 'reuse-decision', mediaType: 'application/vnd.baton.reuse-decision+json', digest: decisionArtifactDigest, refs: [{ artifactId: dossierArtifactId }, { artifactId: sbomArtifactId }], accepted: true, provenance: [reverifyEvidence], content: decisionContent },
+    ];
+    const prior = supersedes ? this._coordination.reuseDecision(supersedes.decisionId) : null;
+    const knowledgeSnapshot = prior ? this._coordination.snapshot().knowledge : null;
+    const priorNode = prior ? knowledgeSnapshot.nodes.find((node) => node.id === prior.nodeId) : null;
+    const affectedReadEvents = prior && !priorNode?.validTo ? knowledgeSnapshot.reads.filter((read) => read.nodeIds.includes(prior.nodeId)).map((read) => read.eventSeq) : [];
+    return this._coordination.recordReuseDecision({ schemaVersion: 1, id, requestDigest, decisionDigest, decisionArtifactDigest, subjectDigest, ...decisionRecord, dossierRef, sbomRef, dossierSnapshot, sbomSnapshot, reverifyEvidence, artifacts, affectedReadEvents }, { actor, key: ctx.idempotencyKey });
   }
 
   /** Pull-only causal recall. The coordination append is the authority boundary: if the read

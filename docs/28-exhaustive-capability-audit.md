@@ -70,6 +70,15 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    integrity, dev/optional flags, nested resolution, and unresolved edges are actual-lockfile
    grounded; proposed registry graphs remain explicitly absent. It is content-addressed and
    reverifiable, with no mutation, advisory, decision, or promotion authority.
+12. **Immutable reuse decision and causal promotion:** a deployment-authorized Coordinator path
+   freshly reverifies the exact dossier and actual-lockfile SBOM, binds them to one configured repo,
+   clean Git tree, Atlas effective overlay, lockfile digest, actor, need, exact coordinate, and policy,
+   and records `borrow|build` only. One replay-validated `knowledge.reuse_decided` event materializes
+   fleet evidence/decision artifacts, derived Findings, an actor-observed Decision, `Informed` and
+   provenance edges, plus optional CAS `Supersedes` and affected-reader contamination. Blocked
+   evidence cannot authorize borrow. Exact direct retry performs no second reverify; authenticated
+   web and the eleventh MCP tool preserve actor/repo/idempotency. There is no install, mutation,
+   merge, policy override, publication, PM export, or homelab integration.
 
 ## What remains partial
 
@@ -95,10 +104,11 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   GLM-seat and automatic quota discovery remain unproven.
 - Phase 32 closes the local orientation/reuse wiring gap, Phase 33 closes addressed downward
   worker push, Phase 34 closes bounded mechanical scope-drift refresh, and Phase 36 closes the
-  exact-npm external evidence/freshness floor. Phase 37 adds the actual npm lockfile SBOM floor.
-  Advisory invalidation, additional ecosystems, proposed-vs-actual graph delta,
-  true vulnerability reachability, immutable reuse decisions, and knowledge
-  promotion remain later Cartographer/Quartermaster contracts.
+  exact-npm external evidence/freshness floor. Phase 37 adds the actual npm lockfile SBOM floor,
+  and Phase 38 closes the external `borrow|build` decision plus local causal-promotion transaction.
+  Advisory/TTL invalidation, the separately grounded `internal` decision, additional ecosystems,
+  proposed-vs-actual graph delta, true vulnerability reachability, optional export, and independent
+  provenance verification remain later Cartographer/Quartermaster contracts.
 
 ## What remains pending
 
@@ -137,7 +147,8 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    reinjection, quota-window/seat scheduling, route overrides, and durable router learning.
 4. **Build capability modules on shared substrate:** Cairn Rung 0 shipped in Phase 31 and
    Cartographer/Quartermaster local Rung 0 shipped in Phase 32, addressed push in Phase 33, and
-   bounded scope-drift refresh in Phase 34;
+   bounded scope-drift refresh in Phase 34, external evidence in Phase 36, exact SBOM in Phase 37,
+   and immutable external reuse decision/promotion in Phase 38;
    continue their explicitly
    catalogued later rungs, then demand-earned Cairn Rungs 1–4, Vantage, Evidence Ladder, and Skill
    Forge/computer use behind stronger containment.

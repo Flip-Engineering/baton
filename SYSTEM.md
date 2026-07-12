@@ -131,7 +131,7 @@ The driver learns which vendor/model is best at which kind of task and routes ac
 ### 5.3 Memory — three speeds, plus replay
 - **Fast:** a shared live scratchpad where workers post in-progress facts ("this test is flaky, seed 42 reproduces it") and claim shared resources ("I'm editing payments/, hands off") — so they coordinate through shared state instead of messaging. `docs/capabilities/coordination-repl.md`.
 - **Medium:** the task list (what's done, what's blocked, what depends on what) that drives dispatch.
-- **Slow:** durable knowledge that outlives a run — a per-run scorecard, the routing stats, and (optionally) a decisions-and-findings graph the driver *promotes into*, rather than reinventing, if you already run a research-notes system. `docs/08-shared-memory-and-pm.md`, `docs/capabilities/causal-research-bok.md`.
+- **Slow:** durable knowledge that outlives a run — a per-run scorecard, the routing stats, and a local typed decisions-and-findings graph the driver promotes into through explicit authority. Optional deployment-neutral export may target an existing research-notes system later; Baton does not couple its runtime to one. `docs/08-shared-memory-and-pm.md`, `docs/capabilities/causal-research-bok.md`.
 - **Replay:** because the log is the only truth (§3.3 rule 5), you can replay any run, or re-run it with one thing changed ("what if the brief had said X?") — invaluable for debugging the fleet and for improving briefs.
 
 ### 5.4 Worker tools — sharper than raw text
@@ -230,6 +230,8 @@ Every feature the exploration produced, with honest status. **Core** = the drive
 | Structured debugging + record-replay | Tools | Later | `docs/capabilities/debug-interp.md` |
 | Semantic diff (review by meaning) | Tools | Earlier (high value) | `docs/15` |
 | Repo orientation map | Tools | Later | `docs/capabilities/orientation-reuse.md` |
+| Exact dependency dossier + actual-lockfile SBOM | Tools/Safety | Shipped Phases 36–37 | `spec/phase36`, `spec/phase37`, `docs/capabilities/orientation-reuse.md` |
+| Immutable external `borrow\|build` decision + causal promotion | Safety/Memory | Shipped Phase 38; internal/advisory invalidation later | `spec/phase38/immutable-reuse-decision.md`, `docs/capabilities/orientation-reuse.md` |
 | Reusable verified skills/recipes | Tools | Later | `docs/capabilities/skills-computeruse.md` |
 | Per-vendor briefs, context-on-demand, re-inject-on-compaction | Context | MVP-adjacent | `docs/12` |
 | OS-sandbox boundary, scoped secrets, contagion tracking | Safety | MVP-adjacent | `docs/09` §C, `docs/14` |

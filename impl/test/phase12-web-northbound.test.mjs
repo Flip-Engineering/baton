@@ -52,12 +52,14 @@ function fixture(overrides = {}) {
     async resumeCapability(name, op, ref, cursor, ctx) { calls.push({ action: 'resume', name, capabilityOp: op, ref, cursor, ctx }); return { op, status: 'ok' }; },
     async reverifyCapability(name, op, claim, args, ctx) { calls.push({ action: 'reverify', name, capabilityOp: op, claim, args, ctx }); return { op, status: 'ok' }; },
     async orientWorker(workerId, args, note, ctx) { calls.push({ action: 'push', workerId, args, note, ctx }); return { ok: true, result: 'ok', sliceDigest: 'a'.repeat(64) }; },
+    async decideReuse(request, ctx) { calls.push({ action: 'reuse_decide', request, ctx }); return { ok: true, result: 'recorded', decision: { id: 'reuse-decision:test' } }; },
     ...overrides.coordinator,
   };
   const coordination = new CoordinationStore(root());
   const web = new WebNorthbound({
     coordinator, coordination, repoIds: ['repo-a'], allowedOrigins: ['https://control.example.test'],
     now: () => Date.parse('2026-07-11T12:00:00.000Z'),
+    ...(overrides.edgePolicy ? { edgePolicy: overrides.edgePolicy } : {}),
   });
   return { web, coordination, calls };
 }
@@ -96,6 +98,30 @@ test('WN1/WN4: spawn forwards harness and exact model independently and derives 
   assert.equal(admitted.actor, 'web:user-1:session-1');
   assert.equal(admitted.payload.credentialId, 'cred-1');
   assert.equal(JSON.stringify(admitted).includes('csrf-1'), false);
+});
+
+test('RD10: authenticated web reuse decision preserves principal actor, repo, budget, and durable idempotency', async () => {
+  const { web, calls } = fixture();
+  const args = { need: 'JWT verification', choice: 'borrow', rationale: 'Exact green evidence.', dossier: { claim: {}, args: {} }, sbom: { claim: {}, args: {} }, budgetTokens: 4_000 };
+  const response = await web.execute(context(), envelope({ commandId: 'reuse-web', idempotencyKey: 'reuse-web-idem', command: 'reuse_decide', args }));
+  assert.equal(response.status, 200); assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0], { action: 'reuse_decide', request: args, ctx: { actor: 'web:user-1:session-1', repoId: 'repo-a', budgetTokens: 4_000, idempotencyKey: 'web.command:reuse-web' } });
+});
+
+test('RD10/WN6: reuse decisions consume exact edge cost 20 and exhausted quota refuses before dispatch', async () => {
+  const now = () => Date.parse('2026-07-11T12:00:00.000Z');
+  const { web, calls } = fixture({ edgePolicy: {
+    addressKey: 'phase38-address-key', now, limits: { cost: 20, principal: 10 },
+  } });
+  const args = { need: 'JWT verification', choice: 'borrow', rationale: 'Exact green evidence.', dossier: { claim: {}, args: {} }, sbom: { claim: {}, args: {} }, budgetTokens: 4_000 };
+  const accepted = await web.execute(context(), envelope({ commandId: 'reuse-cost-20', idempotencyKey: 'reuse-cost-20', command: 'reuse_decide', args }));
+  assert.equal(accepted.status, 200);
+  assert.equal(calls.length, 1);
+
+  const refused = await web.execute(context(), envelope({ commandId: 'after-reuse-cost', idempotencyKey: 'after-reuse-cost', command: 'list', args: {} }));
+  assert.equal(refused.status, 429);
+  assert.equal(refused.body.error.code, 'rate_limited');
+  assert.equal(calls.length, 1, 'quota refusal occurs before coordinator dispatch');
 });
 
 test('CI6: capability cards require observe while bounded invocation requires control and forwards the authenticated actor', async () => {

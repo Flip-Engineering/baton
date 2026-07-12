@@ -4,14 +4,14 @@ const PROTOCOL_VERSION = '2025-11-25';
 const CAPABILITY = Object.freeze({
   fleet_spawn: 'control', fleet_send: 'control', fleet_wait: 'observe', fleet_respond: 'approve',
   fleet_interrupt: 'control', fleet_result: 'observe', fleet_list: 'observe', fleet_capabilities: 'observe',
-  fleet_capability_invoke: 'control', fleet_kill: 'emergency_stop',
+  fleet_capability_invoke: 'control', fleet_reuse_decide: 'control', fleet_kill: 'emergency_stop',
 });
-const STATEFUL = new Set(['fleet_spawn', 'fleet_send', 'fleet_respond', 'fleet_interrupt', 'fleet_capability_invoke', 'fleet_kill']);
+const STATEFUL = new Set(['fleet_spawn', 'fleet_send', 'fleet_respond', 'fleet_interrupt', 'fleet_capability_invoke', 'fleet_reuse_decide', 'fleet_kill']);
 const FENCED = new Set(['fleet_send', 'fleet_interrupt', 'fleet_kill']);
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
 const SESSION_FIELDS = new Set(['mode', 'id', 'lastTurnId', 'context']);
 const SESSION_CONTEXT_FIELDS = new Set(['worktree', 'repoRoot', 'baseSha', 'branch', 'ownerTaskId']);
-const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization|userId|sessionId|capabilities|repoIds)$/i;
+const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization|actor|userId|sessionId|capabilities|repoIds)$/i;
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,256}$/;
 
 function record(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
@@ -42,7 +42,10 @@ function stateFailureCode(cause) {
     'capability_resume_invalid', 'capability_reverify_invalid', 'capability_actor_invalid',
     'capability_context_invalid', 'capability_context_forbidden', 'capability_record_unavailable',
     'capability_resume_unavailable', 'capability_reverify_unavailable', 'capability_task_requires_task_plane',
-    'run_sealed', 'run_not_terminal', 'run_not_found', 'invalid_run_id', 'run_membership_changed', 'run_prefix_changed'].includes(cause?.code)) return cause.code;
+    'run_sealed', 'run_not_terminal', 'run_not_found', 'invalid_run_id', 'run_membership_changed', 'run_prefix_changed',
+    'reuse_decision_unavailable', 'reuse_decision_forbidden', 'invalid_reuse_decision', 'reuse_evidence_invalid', 'reuse_evidence_diverged',
+    'reuse_evidence_stale', 'reuse_environment_mismatch', 'reuse_tree_dirty', 'reuse_repo_mismatch', 'reuse_namespace_conflict',
+    'reuse_borrow_blocked', 'reuse_decision_conflict', 'reuse_decision_exists', 'stale_version'].includes(cause?.code)) return cause.code;
   if (['ModelSelectionError', 'SessionSelectionError', 'DuplicateTaskIdError', 'UnknownVendorError', 'DependencyCycleError', 'TypeError'].includes(cause?.name)) return 'invalid_command';
   if (cause?.name === 'WorkerNotFoundError') return 'not_found';
   return 'command_outcome_unknown';
@@ -89,6 +92,10 @@ const TOOL_DEFINITIONS = Object.freeze([
       actionShape('push', ['args', 'workerId', 'note', 'expectedFence'], ['ref', 'cursor', 'claim']),
     ],
   }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_reuse_decide', description: 'Record one immutable build-or-borrow decision from freshly reverified dossier and actual-lockfile SBOM evidence.', inputSchema: schema({
+    ...repo, ...idem, need: text, choice: { type: 'string', enum: ['borrow', 'build'] }, rationale: text,
+    dossier: { type: 'object' }, sbom: { type: 'object' }, supersedes: { type: 'object' }, budgetTokens: { type: 'integer', minimum: 1 },
+  }, ['repoId', 'idempotencyKey', 'need', 'choice', 'rationale', 'dossier', 'sbom', 'budgetTokens']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_kill', description: 'Kill and reap one fenced worker.', inputSchema: schema({ ...repo, ...idem, ...fence, workerId: text }, ['repoId', 'idempotencyKey', 'expectedFence', 'workerId']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
 ].map((tool) => Object.freeze({ ...tool, execution: Object.freeze({ taskSupport: 'forbidden' }) })));
 const TOOL_BY_NAME = new Map(TOOL_DEFINITIONS.map((tool) => [tool.name, tool]));
@@ -144,6 +151,12 @@ function validateArguments(name, args) {
       || !record(args.args) || !nonempty(args.workerId) || !nonempty(args.note) || Buffer.byteLength(args.note) > 2_048
       || !Number.isSafeInteger(args.expectedFence) || Object.hasOwn(args, 'ref') || Object.hasOwn(args, 'cursor') || Object.hasOwn(args, 'claim'))) return 'invalid_capability_invocation';
   }
+  if (name === 'fleet_reuse_decide' && (!nonempty(args.need) || !['borrow', 'build'].includes(args.choice) || !nonempty(args.rationale)
+    || !record(args.dossier) || !record(args.sbom) || !Number.isSafeInteger(args.budgetTokens) || args.budgetTokens <= 0
+    || Object.keys(args.dossier ?? {}).some((key) => !['claim', 'args'].includes(key)) || Object.keys(args.sbom ?? {}).some((key) => !['claim', 'args'].includes(key))
+    || (Object.hasOwn(args, 'supersedes') && (!record(args.supersedes)
+      || Object.keys(args.supersedes).some((key) => !['decisionId', 'expectedValidityVersion'].includes(key))
+      || !nonempty(args.supersedes.decisionId) || !Number.isSafeInteger(args.supersedes.expectedValidityVersion) || args.supersedes.expectedValidityVersion <= 0)))) return 'invalid_reuse_decision';
   return null;
 }
 
@@ -290,6 +303,7 @@ export class McpFleetServer {
       else if (action === 'reverify') value = await this.coordinator.reverifyCapability(args.name, args.op, args.claim, args.args, context);
       else value = await this.coordinator.orientWorker(args.workerId, args.args, args.note, { ...context, expectedFence: args.expectedFence });
     }
+    else if (name === 'fleet_reuse_decide') value = await this.coordinator.decideReuse({ need: args.need, choice: args.choice, rationale: args.rationale, dossier: args.dossier, sbom: args.sbom, ...(args.supersedes ? { supersedes: args.supersedes } : {}) }, { actor, repoId: args.repoId, budgetTokens: args.budgetTokens, idempotencyKey: `mcp.call:${callId}` });
     else if (name === 'fleet_kill') value = await this.coordinator.kill(args.workerId, actor, { expectedFence: args.expectedFence });
     if (value?.result === 'stale_fence') throw Object.assign(new Error('stale fence'), { mcpCode: 'stale_fence' });
     return normalized(value);

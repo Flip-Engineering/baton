@@ -154,12 +154,14 @@ function refereeFn(task, result, opts) {
  *          approvalTimeoutMs?:number, stopDeadlineMs?:number,
  *          capabilities?:Record<string,object>, capabilityFactories?:Record<string,Function>, capabilityContexts?:Record<string,object|Function>,
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
+ *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,maxNeedBytes:number,maxRationaleBytes:number},
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
  *          workerDependencyDirs?:string[], verifyDependencyDirs?:string[], verifySparsePaths?:string[]}} opts
  * @returns {{coordinator:Coordinator, story:StoryCompiler, router:AdaptiveRouter, log:Log, coordination:CoordinationStore}}
  */
 export function createDriver(opts) {
   const now = opts.now ?? Date.now;
+  if (opts.reuseDecisionPolicy !== undefined && (typeof opts.repoId !== 'string' || opts.repoId.length === 0)) throw new TypeError('reuseDecisionPolicy requires one deployment-bound repoId');
   const log = new Log(opts.logDir, () => new Date(now()).toISOString());
   const fences = new FenceTable();
   const router = new AdaptiveRouter({ mode: 'adaptive', now });
@@ -170,6 +172,7 @@ export function createDriver(opts) {
   });
   const coordination = opts.coordination ?? new CoordinationStore(join(opts.logDir, 'coordination'), {
     operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
+    clock: () => new Date(now()).toISOString(),
   });
   const configuredCapabilities = { ...(opts.capabilities ?? {}) };
   for (const [name, factory] of Object.entries(opts.capabilityFactories ?? {})) {
@@ -250,6 +253,13 @@ export function createDriver(opts) {
     capabilities,
     coordination,
     repoRoot: opts.repoRoot,
+    reuseDecisionPolicy: opts.reuseDecisionPolicy,
+    resolveEnvironmentRef: opts.reuseDecisionPolicy === undefined ? null : ({ repoId, indexEpoch, overlayDigest, lockfileDigest }) => {
+      if (repoId !== opts.repoId) throw Object.assign(new Error('reuse decision repository authority mismatch'), { code: 'reuse_repo_mismatch' });
+      const dirty = localGit(['status', '--porcelain', '--untracked-files=all'], opts.repoRoot, { encoding: 'utf8' }).trim();
+      if (dirty) throw Object.assign(new Error('reuse decisions require a clean effective tree'), { code: 'reuse_tree_dirty' });
+      return { repoId: opts.repoId, treeSha: localGit(['rev-parse', 'HEAD'], opts.repoRoot, { encoding: 'utf8' }).trim(), indexEpoch, overlayDigest: overlayDigest ?? null, lockfileDigest };
+    },
     referee: refereeFn,
     route,
     accept: (verdict, acceptOpts) => accept(verdict, acceptOpts),

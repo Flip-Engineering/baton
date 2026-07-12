@@ -116,7 +116,11 @@ export class CartographerQuartermaster {
         ...(this.sbomPolicy ? { 'provenance.sbom': { latency_class: 'bounded_batch', deterministic: true, side_effects: ['content_addressed_artifact'], reverifiable: true } } : {}),
       },
       underlying: ['atlas-index:code.seed', 'atlas-index:repo.map'],
-      limitations: [this.externalOracle ? 'External dossier is fail-closed and package-level; import observation is not vulnerable-function reachability' : 'External vet is not deployment-configured', 'no auto-install, SBOM, immutable reuse decision, true vulnerability reachability, or third-party prose'],
+      limitations: [
+        this.externalOracle ? 'External dossier is fail-closed and package-level; import observation is not vulnerable-function reachability' : 'External vet is not deployment-configured',
+        this.sbomPolicy ? 'SBOM is exact npm package-lock v3 actual state only' : 'SBOM is not deployment-configured',
+        'no auto-install; reuse-decision authority remains Coordinator-owned; no true vulnerability reachability or third-party prose',
+      ],
     };
   }
 
@@ -345,15 +349,39 @@ export class CartographerQuartermaster {
     try {
       const prior = this._loadArtifact(claim?.refs?.[0], op);
       if (op === 'reuse.vet') {
+        if (prior.query?.ecosystem !== args?.ecosystem || prior.query?.package !== args?.package || prior.query?.version !== args?.version
+          || prior.query?.indexEpoch !== args?.indexEpoch) return { ok: false, reason: 'query_mismatch' };
         if (prior.provenance?.policyHash !== this.vetPolicyHash || Date.parse(prior.provenance?.evidenceExpiresAt ?? '') <= this.now()) return { ok: false, reason: prior.provenance?.policyHash !== this.vetPolicyHash ? 'policy_mismatch' : 'evidence_expired' };
         const dossier = prior.items[0] ?? {};
         const sources = await this.externalOracle.verifySources(dossier.sources);
         if (!sources?.ok) return { ok: false, reason: sources?.reason ?? 'source_integrity' };
+        const currentMap = await this.atlas.invoke('repo.map', { indexEpoch: prior.provenance.index_epoch }, ctx);
+        if (currentMap.provenance?.index_epoch !== prior.provenance.index_epoch
+          || (currentMap.provenance?.overlay_digest ?? null) !== (prior.provenance?.overlay_digest ?? null)) return { ok: false, reason: 'effective_tree_changed' };
         const { factDigest, asOf, expiresAt, staleAt, ...facts } = dossier; void asOf; void expiresAt; void staleAt;
-        return { ok: /^[a-f0-9]{64}$/.test(factDigest ?? '') && sha(stable(facts)) === factDigest, observedDigest: claim?.refs?.[0]?.digest ?? null, observedFactDigest: factDigest ?? null };
+        const ok = /^[a-f0-9]{64}$/.test(factDigest ?? '') && sha(stable(facts)) === factDigest;
+        return {
+          ok, observedDigest: claim?.refs?.[0]?.digest ?? null, observedFactDigest: factDigest ?? null,
+          ...(ok ? { snapshot: {
+            identity: dossier.identity, recommendation: dossier.recommendation,
+            policyHash: dossier.policy?.hash ?? null, policy: dossier.policy,
+            factDigest, asOf: dossier.asOf, expiresAt: dossier.expiresAt,
+            indexEpoch: prior.provenance?.index_epoch ?? null,
+            overlayDigest: prior.provenance?.overlay_digest ?? null,
+          } } : {}),
+        };
       }
+      if (op === 'provenance.sbom' && prior.query?.lockfilePath !== args?.lockfilePath?.replace(/^\.\//, '')) return { ok: false, reason: 'query_mismatch' };
       const rerun = await this.invoke(op, args, ctx);
-      return { ok: rerun.refs[0].digest === claim?.refs?.[0]?.digest, observedDigest: rerun.refs[0].digest };
+      const ok = rerun.refs[0].digest === claim?.refs?.[0]?.digest;
+      const item = prior.items?.[0];
+      return {
+        ok, observedDigest: rerun.refs[0].digest,
+        ...(ok && op === 'provenance.sbom' ? { snapshot: {
+          grounding: item?.grounding, lockfile: item?.lockfile, lockfileDigest: item?.lockfileDigest,
+          componentCount: item?.componentCount,
+        } } : {}),
+      };
     } catch (error) { return { ok: false, reason: error?.code ?? 'reverify_failed' }; }
   }
 }

@@ -21,7 +21,7 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **839/839
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **851/851
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
@@ -37,7 +37,7 @@ knowledge graph, is preserved in [docs/26](docs/26-full-system-goal.md).
 
 Phase 29 now makes deployment-injected Atlas capabilities real fleet tools through one
 Coordinator-owned registry. The same bounded invoke/resume/reverify path is available through the
-authenticated web command surface and the ten-tool MCP inventory; deployment-owned multi-root
+authenticated web command surface and the eleven-tool MCP inventory; deployment-owned multi-root
 contexts cannot override actor, budget, repository root, or cancellation, and capability output
 cannot claim verification or merge authority. Phase 30 also live-proves the credentialed GLM leg:
 exact `glm-4.7` at native `low` effort was provider-observed, freshly verified, normally killed,
@@ -54,7 +54,11 @@ Phase 36 adds Quartermaster's fail-closed exact-npm evidence floor over deployme
 deps.dev+OSV transport, private raw snapshots, TTL/cache/refresh semantics, conservative policy,
 and Atlas import observation without false reachability. Phase 37 adds an exact npm package-lock
 v3 CycloneDX SBOM, grounded only in actual installed lockfile state and explicitly separated from
-future proposed registry graphs. The current canonical suite is **839/839 green**.
+future proposed registry graphs. Phase 38 adds the Coordinator-owned immutable `borrow|build`
+decision: fresh dossier/SBOM/effective-tree reverify, content-addressed fleet artifacts, derived
+Findings, an observed Decision, `Informed`, CAS `Supersedes`, contamination, exact retry, and real
+authenticated web/MCP actor propagation—with no install or merge authority. The current canonical
+suite is **853/853 green**.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 

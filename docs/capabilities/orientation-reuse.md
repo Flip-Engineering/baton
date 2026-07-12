@@ -87,15 +87,19 @@ fleet_orient_worker(worker_id, focus, note, { shape, budget_tokens })
 fleet_reuse(need, { ecosystem, context_ref? })
     -> ReuseVerdict   # {cache_hit?, internal_match?, candidates:[...], recommendation}
 
-# Deep dossier on one specific package@version. Reachability-gated via the map.
+# Deep dossier on one specific package@version. Reachability-enriched via the map;
+# reachability may prioritize review but never waive policy or evidence gates.
 fleet_vet(package, version, { ecosystem })
     -> DependencyDossier
 
 # Record a build-vs-borrow decision → fleet allowlist + knowledge plane.
 # Immutable; a change is a new record with a Supersedes edge (PM pattern).
-fleet_reuse_decide({ need, choice: 'borrow'|'build'|'internal',
-                     package?, rationale, evidence_refs })
+fleet_reuse_decide({ need, choice: 'borrow'|'build', rationale,
+                     dossier_claim, sbom_claim, supersedes? })
     -> { decision_id }
+
+# `internal` remains a separate planned choice until an exact reuse.internal
+# artifact can be freshly reverified and promoted without external-dossier fiction.
 
 # The fleet's current provenance posture: SBOM, license report, open risks.
 fleet_provenance(scope, { format='cyclonedx'|'summary' })
@@ -111,7 +115,8 @@ Anti-pattern refused, mirroring doc 05 §6's ban on `fleet_chat`: there is **no 
 - `knowledge.map_built` `{map_id, ref, langs, symbols, edges, build_ms, backend: tags|lsp|scip}`
 - `knowledge.map_served` `{slice_id, worker, focus, shape, tokens}` — so orientation is auditable and the orchestrator's *steering* is visible (no invisible hand, doc 05 §4).
 - `knowledge.reuse_evaluated` `{need, ecosystem, candidates_n, cache: hit|miss}`
-- `knowledge.reuse_decided` `{decision_id, choice, package?}` (carries `actor` — worker | orchestrator | policy)
+- `knowledge.reuse_evidence_reverified` `{decision_digest, evidence_projection_digest, dossier_digest, sbom_digest}` (Coordinator-authored and globally mapped)
+- `knowledge.reuse_decided` `{decision_id, subject_digest, choice, exact_coordinate, evidence_refs, supersedes?}` (actor comes only from authenticated authority)
 - `knowledge.provenance_recorded` `{sbom_ref, added:[pkg@ver], risk_delta}`
 - `health.dependency_risk` `{package, severity, reachable: yes|no|unknown}` — a derived signal, surfaced in `fleet_wait` digests alongside budget/loop/scope-drift.
 
@@ -119,11 +124,11 @@ Long operations (whole-repo SCIP index, deep transitive vet) are **DAG tasks**, 
 
 **Coordinative (task-DAG + artifact registry).**
 - The map is a **fleet-scoped artifact** keyed `(repo, commit_sha) → map_ref` (SCIP index + tags + PageRank ranks + module summaries). Building it is a task with `deps: []` that **CAS-dedupes** exactly like a task claim (doc 08 §4) — two workers requesting the same SHA don't both build; the loser attaches. Incremental rebuild on a new commit is a task that `refines: prior_map_task` and produces a new immutable snapshot; a worker on a divergent worktree reads the snapshot matching *its* HEAD.
-- The **fleet allowlist / reuse-decision cache** and the **fleet SBOM** are fleet-scoped registry artifacts. A decision is immutable; supersession appends a record with a `Supersedes` edge. Concurrent vets of the same `(package, version, policy_hash)` both compute but the decision dedupes.
+- The **fleet allowlist / reuse-decision cache** and the **fleet SBOM** are fleet-scoped registry artifacts. A decision is immutable; supersession appends a record with a `Supersedes` edge. The shipped subject key binds configured repository/effective tree, normalized need, exact coordinate, Atlas epoch, and policy hash; exact request preflight avoids repeated reverify work, and concurrent supersession uses validity-version CAS.
 - Nothing here is a shared *mutable* blob (doc 08 §4's cardinal rule): the map is per-SHA immutable, the allowlist is append-only, the SBOM is derived.
 
 **Epistemic (knowledge plane, doc 08 §5).** These are precisely the "cheap, high-value epistemic artifacts" doc 08 says to promote selectively — not a second brain, an export at boundaries:
-- Each accepted **reuse decision** promotes to a `pm_decision`-shaped record: `why` (required, causal backbone) + `Informed` edges to the `pm_log_finding`-shaped evidence (the deps.dev/OSV/Socket/Scorecard readings, each timestamped). This satisfies doc 08 §2's **temporal-coherence** invariant — a decision can't cite an advisory that post-dates it — and gives the fleet an auditable "we chose `jsonwebtoken@9` because reachable-vuln-free, MIT, Scorecard 8.1, provenance-attested (event #4471)."
+- Each accepted **reuse decision** now promotes locally to an actor-observed Decision with required rationale and `Informed` edges to derived dossier/SBOM Findings. Evidence integrity, TTL, policy, effective-tree overlay, and exact lockfile are reverified; “derived” is deliberately not “verified safe.” This satisfies doc 08 §2's **temporal-coherence** invariant without claiming true vulnerable-function reachability. Optional deployment-neutral export remains later; there is no PM or homelab runtime integration.
 - The architecture brief's **module summary** (from community detection) promotes to a durable Finding per module — the reusable "what this repo *is*."
 - Cross-run recall is **explicit and pull-only**: `fleet_recall("has anyone vetted a JWT lib for this repo?")` hits the decision cache; never auto-injected into a worker's context (doc 08 §7 Q3 — avoid re-poisoning).
 
@@ -181,7 +186,7 @@ Both are a few hundred tokens — the point of the whole module, per doc 05's co
 | Map index (SCIP/tags/ranks) | **Fleet**, keyed `(repo, sha)` | Immutable snapshot per SHA | Build = CAS-deduped DAG task; readers get the snapshot for their worktree HEAD; new commit → new snapshot (`refines`) |
 | Module/architecture summary | **Fleet**, per `(repo, sha)` | Immutable | Derived from the map build |
 | Orientation slice | **Per-worker**, ephemeral | Immutable view | Pure function of (map, focus, budget); no shared write |
-| Reuse-decision cache / allowlist | **Fleet** | Append-only; supersede via new record | Dedup by `(package, version, policy_hash)`; PM causal edges |
+| Reuse-decision cache / allowlist | **Fleet** | Append-only; supersede via new record | Subject binds configured repo/effective tree, normalized need, exact coordinate, Atlas epoch, and policy hash; request/content digests provide exact retry/conflict identity; causal edges are local and deployment-neutral |
 | Fleet SBOM | **Fleet** | Derived / regenerated | Rebuilt from worktree lockfiles; diffed per decision |
 
 The invariant from doc 08 §4 holds: no shared mutable blob; every shared thing is either immutable-per-key or append-only, so concurrent workers never lost-update.
@@ -190,7 +195,7 @@ The invariant from doc 08 §4 holds: no shared mutable blob; every shared thing 
 
 Slots after **M1** in doc 07 (needs the artifact registry + task-DAG, which M1 builds), then grows:
 
-- **MVP rung (smallest useful).** `fleet_orient` served from an **Aider-style tree-sitter+PageRank map**, cached per `(repo, sha)` as a registry artifact — *grounded on installed tools*: `ctags -R` for definitions + `rg` for references + `networkx` PageRank in `python3`, no tree-sitter dependency needed to start. Plus `fleet_reuse`/`fleet_vet` backed by deps.dev `GetVersion`, optional separate `GetProject` Scorecard enrichment, and an OSV exact-version/malicious-package query. Decisions require a later Coordinator-owned immutable transaction; a dossier alone grants no allowlist or install authority. `fleet_orient_worker` ships here too; it's cheap once slices exist and it's the differentiator.
+- **MVP rung (smallest useful).** `fleet_orient` served from an **Aider-style tree-sitter+PageRank map**, cached per `(repo, sha)` as a registry artifact — *grounded on installed tools*: `ctags -R` for definitions + `rg` for references + `networkx` PageRank in `python3`, no tree-sitter dependency needed to start. Plus `fleet_reuse`/`fleet_vet` backed by deps.dev `GetVersion`, optional separate `GetProject` Scorecard enrichment, and an OSV exact-version/malicious-package query. The Coordinator-owned immutable decision transaction now ships: it freshly reverifies an exact dossier plus actual-lockfile SBOM, projects deployment-neutral causal knowledge, and grants no install or mutation authority. `fleet_orient_worker` ships here too; it's cheap once slices exist and it's the differentiator.
 - **Rung 2.** LSP/Serena precision (symbol-path addressing, `find_referencing_symbols`), **SCIP incremental** index (reindex only changed files on commit), **Socket** behavioral enrichment, and the cross-module payoff: **reachability gating** = the map's call graph × OSV (deprioritize unreachable vulns). ast-grep behind `fleet_locate(kind=callers)`.
 - **Rung 3.** Promotion into the **PM epistemic KG** (decision records with causal `Informed`/`Supersedes` edges, temporal-coherence checks), `fleet_recall` cross-run, **Syft SBOM + Sigstore/SLSA provenance verification** as a gate, and **Leiden community-detection** architecture summaries. `lldb`/`clang` optional dynamic-reachability for C/C++/native.
 

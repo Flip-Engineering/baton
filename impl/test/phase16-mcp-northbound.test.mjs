@@ -29,6 +29,7 @@ function setup(overrides = {}) {
     async resumeCapability(name, op, ref, cursor, ctx) { calls.push(['resumeCapability', name, op, ref, cursor, ctx]); return { op, status: 'ok', summary: 'resumed' }; },
     async reverifyCapability(name, op, claim, args, ctx) { calls.push(['reverifyCapability', name, op, claim, args, ctx]); return { op, status: 'ok', summary: 'reverified' }; },
     async orientWorker(workerId, args, note, ctx) { calls.push(['orientWorker', workerId, args, note, ctx]); return { ok: true, result: 'ok', sliceDigest: 'a'.repeat(64) }; },
+    async decideReuse(decision, ctx) { calls.push(['decideReuse', decision, ctx]); return { ok: true, result: 'recorded', decision: { id: 'reuse-decision:test' } }; },
     async kill(workerId, actor, opts) { calls.push(['kill', workerId, actor, opts]); return { result: 'killed' }; },
     ...overrides.coordinator,
   };
@@ -44,10 +45,10 @@ async function initialized(server) {
   assert.deepEqual(await server.handle({ jsonrpc: '2.0', method: 'notifications/initialized' }), null);
 }
 
-test('MN1/MN4/CI6: handshake and deterministic closed ten-tool inventory', async () => {
+test('MN1/MN4/CI6: handshake and deterministic closed eleven-tool inventory', async () => {
   const { server } = setup(); await initialized(server);
   const response = await request(server, 2, 'tools/list', {});
-  assert.deepEqual(response.result.tools.map((tool) => tool.name), ['fleet_spawn', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt', 'fleet_result', 'fleet_list', 'fleet_capabilities', 'fleet_capability_invoke', 'fleet_kill']);
+  assert.deepEqual(response.result.tools.map((tool) => tool.name), ['fleet_spawn', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt', 'fleet_result', 'fleet_list', 'fleet_capabilities', 'fleet_capability_invoke', 'fleet_reuse_decide', 'fleet_kill']);
   assert.equal(response.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
   assert.equal(response.result.tools.every((tool) => tool.execution.taskSupport === 'forbidden'), true);
   assert.equal(response.result.tools[0].inputSchema.properties.modelPolicy.additionalProperties, false);
@@ -78,6 +79,15 @@ test('CI6: capability cards are observed and invoke, resume, and reverify preser
     ['resumeCapability', 'atlas', 'atlas.inspect', { digest: 'abc' }, 'next', { budgetTokens: 1200, actor: 'mcp:operator-a:stdio-a' }],
     ['reverifyCapability', 'atlas', 'atlas.inspect', { digest: 'def' }, { strict: true }, { budgetTokens: 1200, actor: 'mcp:operator-a:stdio-a' }],
   ]);
+});
+
+test('RD10: authenticated MCP reuse decision preserves principal actor, repo, budget, and durable call identity', async () => {
+  const { server, calls } = setup(); await initialized(server);
+  const args = { repoId: 'repo-a', idempotencyKey: 'reuse-mcp', need: 'JWT verification', choice: 'borrow', rationale: 'Exact green evidence.', dossier: { claim: {}, args: {} }, sbom: { claim: {}, args: {} }, budgetTokens: 4_000 };
+  const response = await request(server, 2, 'tools/call', { name: 'fleet_reuse_decide', arguments: args });
+  assert.equal(response.result.isError, false); assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].slice(0, 2), ['decideReuse', { need: args.need, choice: args.choice, rationale: args.rationale, dossier: args.dossier, sbom: args.sbom }]);
+  assert.equal(calls[0][2].actor, 'mcp:operator-a:stdio-a'); assert.equal(calls[0][2].repoId, 'repo-a'); assert.equal(calls[0][2].budgetTokens, 4_000); assert.match(calls[0][2].idempotencyKey, /^mcp\.call:[0-9a-f-]+$/);
 });
 
 test('OR9: authenticated MCP capability push is fenced and preserves the injected actor', async () => {
@@ -278,5 +288,5 @@ test('MN2/MN3: the packaged subprocess entry runs a configured MCP handshake wit
   const stdout = execFileSync(process.execPath, ['scripts/mcp-stdio.mjs', configPath], { cwd: new URL('..', import.meta.url), input: `${frames.map(JSON.stringify).join('\n')}\n`, encoding: 'utf8' });
   const responses = stdout.trim().split('\n').map(JSON.parse);
   assert.deepEqual(responses.map((response) => response.id), [1, 2]);
-  assert.equal(responses[1].result.tools.length, 10);
+  assert.equal(responses[1].result.tools.length, 11);
 });

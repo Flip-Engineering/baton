@@ -463,6 +463,19 @@ results avoid infinite cursors, and exact rerun detects lockfile change. Baton's
 produces 10 components and re-verifies. Vulnerability scanning, mutation, proposed graph/delta,
 decision/promotion, and policy waivers remain outside this rung.
 
+Phase 38 adds the Coordinator-owned immutable external reuse decision. A deployment must bind one
+repo ID, a contextual actor/subject authorization policy, and text ceilings. `borrow|build` requires
+fresh exact dossier and actual-lockfile SBOM reverify; dossier reverify also reruns Atlas to bind the
+effective overlay, while the environment reference binds clean Git tree, epoch/overlay, and lockfile
+digest. Only a `borrow_candidate` can authorize borrow. A full evidence-projection digest, distinct
+decision identity/content digests, reserved fleet artifact/graph namespaces, and replay validation
+prevent sparse-field substitution and squatting. One `knowledge.reuse_decided` event creates the
+artifacts, derived Findings, observed Decision, `Informed`/provenance edges, and optional CAS
+`Supersedes` plus contamination. Authenticated web and the eleventh MCP tool carry the real actor.
+Exact idempotent retry stops before reverify. `internal` awaits its exact local-evidence transaction;
+advisory invalidation is next. No installer, merge, policy override, PM export, or homelab integration
+is introduced.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**
