@@ -12,10 +12,16 @@ const OUTPUT = resolve(process.env.BATON_EVIDENCE_DIR ?? HERE);
 const AUTH = join(homedir(), '.grok', 'auth.json');
 const TIMEOUT_MS = Number(process.env.BATON_REVIEW_TIMEOUT_MS ?? 360000);
 const MIN_FREE_BYTES = Number(process.env.BATON_MIN_FREE_BYTES ?? 256 * 1024 * 1024);
-const TASKS = [
+const REVIEW_PROFILE = process.env.BATON_REVIEW_PROFILE ?? 'ir-scope';
+const IR_TASKS = [
   { taskId: 'grok-ir-scope-45', model: 'grok-4.5', path: 'reviews/dogfood/grok-ir-scope-45.md', stance: 'constructive' },
   { taskId: 'grok-ir-scope-composer', model: 'grok-composer-2.5-fast', path: 'reviews/dogfood/grok-ir-scope-composer.md', stance: 'adversarial' },
 ];
+const BEHAVIOR_TASKS = [
+  { taskId: 'grok-behavior-review-45', model: 'grok-4.5', path: 'reviews/dogfood/grok-behavior-review-45.md', stance: 'security' },
+  { taskId: 'grok-behavior-review-composer', model: 'grok-composer-2.5-fast', path: 'reviews/dogfood/grok-behavior-review-composer.md', stance: 'semantics' },
+];
+const TASKS = REVIEW_PROFILE === 'behavior-implementation' ? BEHAVIOR_TASKS : IR_TASKS;
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const git = (args) => execFileSync('git', args, { cwd: REPO, encoding: 'utf8' }).trim();
@@ -31,6 +37,25 @@ async function until(fn, label, timeoutMs = TIMEOUT_MS) {
 }
 
 function brief(task) {
+  if (REVIEW_PROFILE === 'behavior-implementation') {
+    const focus = task.stance === 'security'
+      ? 'Prioritize adversarial child-code attacks on permission confinement, environment stripping, output framing/intrinsic mutation, process/timeout cleanup, and artifact trust.'
+      : 'Prioritize fingerprint/delta semantics, nondeterminism, corpus and serialization edge cases, resume/reverify determinism, ACI claim language, and missing reds.';
+    return createBrief({
+      goal: `Adversarially review committed Phase 25 BF1-BF7 at ${git(['rev-parse', '--short', 'HEAD'])}. Read spec/phase25/atlas-behavior-fingerprint.md, impl/src/atlas-behavior-fingerprint.mjs, impl/test/phase25-atlas-behavior-fingerprint.test.mjs, its Baton-on-Baton evidence, and the R5 plan in docs/15 and docs/26. ${focus} Construct concrete failure sequences and distinguish an implementation defect from an explicit non-goal. Write ${task.path} with exact headings "## Decision", "## Proposed numbered contract", "## Red tests and proof", and "## Risks and rejection criteria". Under Decision, state whether any actionable BF1-BF7 defect remains; Proposed numbered contract must give a BF1-BF7 implementation matrix rather than expand scope.`,
+      constraints: [
+        `Edit only ${task.path}.`,
+        'Use at most 14 repository or tool calls, then finish from collected evidence.',
+        'Ground findings in exact source locations and reproducible sequences; do not trust worker or target-code output.',
+        'No homelab integration or dependency. Do not use network tools, read credentials, edit product code/specs/tests/evidence, commit, push, or deploy.',
+        'Keep the report under 2800 words. If no actionable defect remains, say so explicitly.',
+      ],
+      pathScope: [task.path],
+      definitionOfDone: 'The four exact headings exist and every BF1-BF7 seam has an evidence-backed verdict',
+      verification: { command: `test -s ${task.path} && grep -Fq '## Proposed numbered contract' ${task.path} && grep -Fq '## Risks and rejection criteria' ${task.path} && git diff --check -- ${task.path}`, expectExit: 0, timeoutMs: 180000 },
+      budget: { tokens: 50000, usd: 4, wallMin: 9 },
+    });
+  }
   const stance = task.stance === 'constructive'
     ? 'Propose the smallest honest R4 vertical worth building now.'
     : 'Try to falsify the premise that an R4 vertical belongs next; recommend redirect or an explicit negative evaluation if that is more honest.';
@@ -59,7 +84,7 @@ if (!Number.isFinite(TIMEOUT_MS) || TIMEOUT_MS <= 0) throw new Error('BATON_REVI
 if (!Number.isFinite(MIN_FREE_BYTES) || MIN_FREE_BYTES <= 0) throw new Error('BATON_MIN_FREE_BYTES must be positive');
 const fs = statfsSync(REPO); const freeBytes = fs.bavail * fs.bsize;
 if (freeBytes < MIN_FREE_BYTES) throw new Error(`PENDING-LIVE-insufficient-disk-headroom:${freeBytes}<${MIN_FREE_BYTES}`);
-const LOG_DIR = mkdtempSync(join(tmpdir(), 'baton-ir-scope-review-'));
+const LOG_DIR = mkdtempSync(join(tmpdir(), `baton-${REVIEW_PROFILE}-review-`));
 const adapter = new GrokAcpCli({ requestTimeoutMs: 30000, ceiling: TASKS.length });
 const { coordinator, log } = createDriver({
   repoRoot: REPO,
@@ -80,8 +105,8 @@ let fatal = null;
 let pumpError = null;
 
 function hydrate(row) {
-  row.handle = coordinator.list().find((worker) => worker.id === row.workerId) ?? row.handle;
-  row.events = log.read(row.workerId);
+  try { row.handle = coordinator.list().find((worker) => worker.id === row.workerId) ?? row.handle; } catch { /* poison-safe hydration */ }
+  try { row.events = log.read(row.workerId); } catch { row.events ??= []; }
   row.pid = row.events.find((event) => event.kind === 'lifecycle.spawned' && event.actor === 'worker')?.payload?.pid ?? row.pid ?? null;
   row.verify = row.events.find((event) => event.kind === 'verify.reverified') ?? row.verify ?? null;
   const sha = row.verify?.payload?.capture?.sha;
@@ -130,7 +155,7 @@ try {
   const spawned = await Promise.all(TASKS.map(async (task) => {
     const handle = await coordinator.spawn('grok', brief(task), {
       taskId: task.taskId,
-      taskType: 'representation-design-review',
+      taskType: REVIEW_PROFILE === 'behavior-implementation' ? 'adversarial-implementation-review' : 'representation-design-review',
       model: task.model,
       modelPolicy: { allow: [task.model], allowFamilies: ['grok'] },
     });
@@ -161,7 +186,7 @@ try {
     && !existsSync(join(REPO, '.baton', 'wt', `${row.taskId}.meta.json`))
     && !existsSync(join(REPO, '.baton', 'runtime', row.workerId))
     && git(['branch', '--list', `baton/${row.taskId}`]) === ''
-  ), 'both IR reviewers fully reaped', 30000);
+  ), 'both selected reviewers fully reaped', 30000);
 } catch (error) {
   fatal = [fatal, String(error?.stack ?? error)].filter(Boolean).join('\n');
 }
@@ -186,6 +211,7 @@ const checks = {
 const summary = {
   at: new Date().toISOString(),
   repoHead: git(['rev-parse', 'HEAD']),
+  reviewProfile: REVIEW_PROFILE,
   reviewTimeoutMs: TIMEOUT_MS,
   grokVersion: execFileSync('grok', ['--version'], { encoding: 'utf8' }).trim(),
   rows: rows.map(({ events, ...row }) => row),
