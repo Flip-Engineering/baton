@@ -1,6 +1,6 @@
 {
-  "at": "2026-07-12T04:27:24.950Z",
-  "repoHead": "bd3bdc1583472319621b5fcb886a8a17036d52fc",
+  "at": "2026-07-12T04:36:45.062Z",
+  "repoHead": "5a94c512bfbfd653cbbfc585853ec4b1f4bb0558",
   "args": {
     "path": "impl/src/route-tuple.mjs",
     "exportName": "routeTupleKey",
@@ -49,23 +49,23 @@
     "payload": [],
     "refs": [
       {
-        "handle": "art:sha256:eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b",
+        "handle": "art:sha256:0e051affc385b3a5f309ead3f6849e0650f97942673a2aae5066228f61a8979f",
         "kind": "behavior_fingerprint",
-        "digest": "eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b",
-        "bytes": 679,
+        "digest": "0e051affc385b3a5f309ead3f6849e0650f97942673a2aae5066228f61a8979f",
+        "bytes": 863,
         "mediaType": "application/vnd.baton.atlas-behavior-fingerprint+json",
-        "path": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-behavior-proof-eWXim9/artifacts/eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b.json"
+        "path": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-behavior-proof-kSOa7K/artifacts/0e051affc385b3a5f309ead3f6849e0650f97942673a2aae5066228f61a8979f.json"
       }
     ],
-    "cursor": "atlas-behavior:eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b:0",
+    "cursor": "atlas-behavior:0e051affc385b3a5f309ead3f6849e0650f97942673a2aae5066228f61a8979f:0",
     "cost": {
       "tokens_out": 1,
-      "wall_ms": 93,
+      "wall_ms": 92,
       "usd": 0,
       "underlying": "node-permission-model@v25.8.0"
     },
     "provenance": {
-      "artifactDigest": "eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b",
+      "artifactDigest": "0e051affc385b3a5f309ead3f6849e0650f97942673a2aae5066228f61a8979f",
       "sourceDigests": [
         "2df0fa080f7c28510ed37bdb8d6e5e68716efdee344711ea6ef9184295fefcde"
       ],
@@ -92,39 +92,41 @@
       {
         "caseIndex": 0,
         "kind": "return",
+        "valueBytes": "/w8iNVsiY29kZXgiLCIxIiwiZGVmYXVsdCIsImRlZmF1bHQiLCJkZWZhdWx0IiwiZ2VuZXJhbCJd",
         "value": "[\"codex\",\"1\",\"default\",\"default\",\"default\",\"general\"]"
       },
       {
         "caseIndex": 1,
         "kind": "return",
+        "valueBytes": "/w8iNFsiZ3JvayIsIjIiLCJkZWZhdWx0IiwiZGVmYXVsdCIsImRlZmF1bHQiLCJnZW5lcmFsIl0=",
         "value": "[\"grok\",\"2\",\"default\",\"default\",\"default\",\"general\"]"
       }
     ],
     "refs": [
       {
-        "handle": "art:sha256:eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b",
+        "handle": "art:sha256:0e051affc385b3a5f309ead3f6849e0650f97942673a2aae5066228f61a8979f",
         "kind": "behavior_fingerprint",
-        "digest": "eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b",
-        "bytes": 679,
+        "digest": "0e051affc385b3a5f309ead3f6849e0650f97942673a2aae5066228f61a8979f",
+        "bytes": 863,
         "mediaType": "application/vnd.baton.atlas-behavior-fingerprint+json",
-        "path": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-behavior-proof-eWXim9/artifacts/eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b.json"
+        "path": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-behavior-proof-kSOa7K/artifacts/0e051affc385b3a5f309ead3f6849e0650f97942673a2aae5066228f61a8979f.json"
       }
     ],
     "cost": {
-      "tokens_out": 54,
+      "tokens_out": 100,
       "wall_ms": 0,
       "usd": 0,
       "underlying": "node-permission-model@v25.8.0"
     },
     "provenance": {
-      "artifactDigest": "eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b",
+      "artifactDigest": "0e051affc385b3a5f309ead3f6849e0650f97942673a2aae5066228f61a8979f",
       "resumed_from": 0,
       "deterministic": true
     }
   },
   "reverified": {
     "ok": true,
-    "observedDigest": "eece8d5f17af601bcdb95a94144ef5b4da55dc07a6e2bd00914966a02773748b"
+    "observedDigest": "0e051affc385b3a5f309ead3f6849e0650f97942673a2aae5066228f61a8979f"
   },
   "compared": {
     "op": "behavior.compare",
@@ -140,22 +142,22 @@
     ],
     "refs": [
       {
-        "handle": "art:sha256:c0c6c303f045a764d661d22d0968c043ec5c947e4012e5845d2fa684b3d40058",
+        "handle": "art:sha256:4bf9e0f5dca268fbdb59ad762e52db83014f4b59a852b4655f7233fede407f38",
         "kind": "behavior_comparison",
-        "digest": "c0c6c303f045a764d661d22d0968c043ec5c947e4012e5845d2fa684b3d40058",
-        "bytes": 1025,
+        "digest": "4bf9e0f5dca268fbdb59ad762e52db83014f4b59a852b4655f7233fede407f38",
+        "bytes": 1417,
         "mediaType": "application/vnd.baton.atlas-behavior-comparison+json",
-        "path": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-behavior-proof-eWXim9/artifacts/c0c6c303f045a764d661d22d0968c043ec5c947e4012e5845d2fa684b3d40058.json"
+        "path": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-behavior-proof-kSOa7K/artifacts/4bf9e0f5dca268fbdb59ad762e52db83014f4b59a852b4655f7233fede407f38.json"
       }
     ],
     "cost": {
       "tokens_out": 20,
-      "wall_ms": 181,
+      "wall_ms": 178,
       "usd": 0,
       "underlying": "node-permission-model@v25.8.0"
     },
     "provenance": {
-      "artifactDigest": "c0c6c303f045a764d661d22d0968c043ec5c947e4012e5845d2fa684b3d40058",
+      "artifactDigest": "4bf9e0f5dca268fbdb59ad762e52db83014f4b59a852b4655f7233fede407f38",
       "sourceDigests": [
         "2df0fa080f7c28510ed37bdb8d6e5e68716efdee344711ea6ef9184295fefcde",
         "2df0fa080f7c28510ed37bdb8d6e5e68716efdee344711ea6ef9184295fefcde"
