@@ -76,15 +76,17 @@ const TOOL_DEFINITIONS = Object.freeze([
   { name: 'fleet_result', description: 'Read the current or terminal result for one worker.', inputSchema: schema({ ...repo, workerId: text }, ['repoId', 'workerId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_list', description: 'List workers visible to the injected repository authority.', inputSchema: schema({ ...repo }, ['repoId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_capabilities', description: 'List capability cards visible through the coordinator-owned registry.', inputSchema: schema({ ...repo }, ['repoId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-  { name: 'fleet_capability_invoke', description: 'Invoke, resume, or reverify one coordinator-owned fleet capability.', inputSchema: {
+  { name: 'fleet_capability_invoke', description: 'Invoke, resume, reverify, or push one coordinator-owned fleet capability.', inputSchema: {
     ...schema({
-    ...repo, ...idem, name: text, op: text, action: { type: 'string', enum: ['invoke', 'resume', 'reverify'] },
+    ...repo, ...idem, name: text, op: text, action: { type: 'string', enum: ['invoke', 'resume', 'reverify', 'push'] },
     args: { type: 'object' }, budgetTokens: { type: 'integer', minimum: 1 }, ref: { type: 'object' }, cursor: text, claim: { type: 'object' },
+    workerId: text, note: { type: 'string', minLength: 1, maxLength: 2_048 }, expectedFence: { type: 'integer' },
     }, ['repoId', 'idempotencyKey', 'name', 'op', 'action', 'budgetTokens']),
     oneOf: [
-      actionShape('invoke', ['args'], ['ref', 'cursor', 'claim']),
-      actionShape('resume', ['ref', 'cursor'], ['args', 'claim']),
-      actionShape('reverify', ['claim', 'args'], ['ref', 'cursor']),
+      actionShape('invoke', ['args'], ['ref', 'cursor', 'claim', 'workerId', 'note', 'expectedFence']),
+      actionShape('resume', ['ref', 'cursor'], ['args', 'claim', 'workerId', 'note', 'expectedFence']),
+      actionShape('reverify', ['claim', 'args'], ['ref', 'cursor', 'workerId', 'note', 'expectedFence']),
+      actionShape('push', ['args', 'workerId', 'note', 'expectedFence'], ['ref', 'cursor', 'claim']),
     ],
   }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_kill', description: 'Kill and reap one fenced worker.', inputSchema: schema({ ...repo, ...idem, ...fence, workerId: text }, ['repoId', 'idempotencyKey', 'expectedFence', 'workerId']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
@@ -134,10 +136,13 @@ function validateArguments(name, args) {
       || !Number.isSafeInteger(args.budgetTokens) || args.budgetTokens <= 0) return 'invalid_capability_invocation';
     if (!Object.hasOwn(args, 'action')) return 'invalid_capability_invocation';
     const action = args.action;
-    if (!['invoke', 'resume', 'reverify'].includes(action)) return 'invalid_capability_invocation';
-    if (action === 'invoke' && (!record(args.args) || Object.hasOwn(args, 'ref') || Object.hasOwn(args, 'cursor') || Object.hasOwn(args, 'claim'))) return 'invalid_capability_invocation';
-    if (action === 'resume' && (!record(args.ref) || !nonempty(args.cursor) || args.cursor.length > 4_096 || Object.hasOwn(args, 'args') || Object.hasOwn(args, 'claim'))) return 'invalid_capability_invocation';
-    if (action === 'reverify' && (!record(args.claim) || !record(args.args) || Object.hasOwn(args, 'ref') || Object.hasOwn(args, 'cursor'))) return 'invalid_capability_invocation';
+    if (!['invoke', 'resume', 'reverify', 'push'].includes(action)) return 'invalid_capability_invocation';
+    if (action === 'invoke' && (!record(args.args) || ['ref', 'cursor', 'claim', 'workerId', 'note', 'expectedFence'].some((key) => Object.hasOwn(args, key)))) return 'invalid_capability_invocation';
+    if (action === 'resume' && (!record(args.ref) || !nonempty(args.cursor) || args.cursor.length > 4_096 || ['args', 'claim', 'workerId', 'note', 'expectedFence'].some((key) => Object.hasOwn(args, key)))) return 'invalid_capability_invocation';
+    if (action === 'reverify' && (!record(args.claim) || !record(args.args) || ['ref', 'cursor', 'workerId', 'note', 'expectedFence'].some((key) => Object.hasOwn(args, key)))) return 'invalid_capability_invocation';
+    if (action === 'push' && (args.name !== 'cartographer-quartermaster' || args.op !== 'orientation.slice'
+      || !record(args.args) || !nonempty(args.workerId) || !nonempty(args.note) || Buffer.byteLength(args.note) > 2_048
+      || !Number.isSafeInteger(args.expectedFence) || Object.hasOwn(args, 'ref') || Object.hasOwn(args, 'cursor') || Object.hasOwn(args, 'claim'))) return 'invalid_capability_invocation';
   }
   return null;
 }
@@ -282,7 +287,8 @@ export class McpFleetServer {
       const action = args.action;
       if (action === 'invoke') value = await this.coordinator.invokeCapability(args.name, args.op, args.args, context);
       else if (action === 'resume') value = await this.coordinator.resumeCapability(args.name, args.op, args.ref, args.cursor, context);
-      else value = await this.coordinator.reverifyCapability(args.name, args.op, args.claim, args.args, context);
+      else if (action === 'reverify') value = await this.coordinator.reverifyCapability(args.name, args.op, args.claim, args.args, context);
+      else value = await this.coordinator.orientWorker(args.workerId, args.args, args.note, { ...context, expectedFence: args.expectedFence });
     }
     else if (name === 'fleet_kill') value = await this.coordinator.kill(args.workerId, actor, { expectedFence: args.expectedFence });
     if (value?.result === 'stale_fence') throw Object.assign(new Error('stale fence'), { mcpCode: 'stale_fence' });

@@ -51,6 +51,7 @@ function fixture(overrides = {}) {
     async invokeCapability(name, op, args, ctx) { calls.push({ action: 'invoke', name, capabilityOp: op, args, ctx }); return { op, status: 'ok' }; },
     async resumeCapability(name, op, ref, cursor, ctx) { calls.push({ action: 'resume', name, capabilityOp: op, ref, cursor, ctx }); return { op, status: 'ok' }; },
     async reverifyCapability(name, op, claim, args, ctx) { calls.push({ action: 'reverify', name, capabilityOp: op, claim, args, ctx }); return { op, status: 'ok' }; },
+    async orientWorker(workerId, args, note, ctx) { calls.push({ action: 'push', workerId, args, note, ctx }); return { ok: true, result: 'ok', sliceDigest: 'a'.repeat(64) }; },
     ...overrides.coordinator,
   };
   const coordination = new CoordinationStore(root());
@@ -145,6 +146,16 @@ test('CI3/CI6: capability resume and reverify are strict durable control command
     ctx: { budgetTokens: 20, actor: 'web:user-1:session-1' },
   });
   assert.deepEqual(coordination.events().filter((event) => event.kind === 'web.command_admitted').map((event) => event.payload.command), ['capability_invoke', 'capability_invoke']);
+});
+
+test('OR9: authenticated web capability push requires a fence and forwards the derived actor', async () => {
+  const { web, calls } = fixture();
+  const args = { name: 'cartographer-quartermaster', op: 'orientation.slice', action: 'push', workerId: 'w-1', note: 'Stay in auth.', args: { indexEpoch: 'epoch', focus: 'auth', shape: 'brief' }, budgetTokens: 800 };
+  const missing = await web.execute(context(), envelope({ commandId: 'push-missing', idempotencyKey: 'push-missing', command: 'capability_invoke', args }));
+  assert.equal(missing.status, 400); assert.equal(calls.length, 0);
+  const pushed = await web.execute(context(), envelope({ commandId: 'push-1', idempotencyKey: 'push-1', command: 'capability_invoke', expectedFence: 9, args }));
+  assert.equal(pushed.status, 200);
+  assert.deepEqual(calls, [{ action: 'push', workerId: 'w-1', args: { indexEpoch: 'epoch', focus: 'auth', shape: 'brief' }, note: 'Stay in auth.', ctx: { budgetTokens: 800, actor: 'web:user-1:session-1', expectedFence: 9 } }]);
 });
 
 test('CI2/CI3/CI6: capability command validation rejects malformed and action-ambiguous envelopes before admission', async () => {

@@ -28,6 +28,7 @@ function setup(overrides = {}) {
     async invokeCapability(name, op, args, ctx) { calls.push(['invokeCapability', name, op, args, ctx]); return { op, status: 'ok', summary: 'invoked' }; },
     async resumeCapability(name, op, ref, cursor, ctx) { calls.push(['resumeCapability', name, op, ref, cursor, ctx]); return { op, status: 'ok', summary: 'resumed' }; },
     async reverifyCapability(name, op, claim, args, ctx) { calls.push(['reverifyCapability', name, op, claim, args, ctx]); return { op, status: 'ok', summary: 'reverified' }; },
+    async orientWorker(workerId, args, note, ctx) { calls.push(['orientWorker', workerId, args, note, ctx]); return { ok: true, result: 'ok', sliceDigest: 'a'.repeat(64) }; },
     async kill(workerId, actor, opts) { calls.push(['kill', workerId, actor, opts]); return { result: 'killed' }; },
     ...overrides.coordinator,
   };
@@ -53,8 +54,8 @@ test('MN1/MN4/CI6: handshake and deterministic closed ten-tool inventory', async
   assert.equal(response.result.tools[0].inputSchema.properties.session.additionalProperties, false);
   assert.equal(response.result.tools[0].inputSchema.properties.runId.maxLength, 256);
   const capabilitySchema = response.result.tools.find((tool) => tool.name === 'fleet_capability_invoke').inputSchema;
-  assert.equal(capabilitySchema.oneOf.length, 3);
-  assert.deepEqual(capabilitySchema.oneOf.map((branch) => branch.properties.action.const), ['invoke', 'resume', 'reverify']);
+  assert.equal(capabilitySchema.oneOf.length, 4);
+  assert.deepEqual(capabilitySchema.oneOf.map((branch) => branch.properties.action.const), ['invoke', 'resume', 'reverify', 'push']);
   const duplicate = await request(server, 3, 'initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
   assert.equal(duplicate.error.code, -32600);
 });
@@ -77,6 +78,16 @@ test('CI6: capability cards are observed and invoke, resume, and reverify preser
     ['resumeCapability', 'atlas', 'atlas.inspect', { digest: 'abc' }, 'next', { budgetTokens: 1200, actor: 'mcp:operator-a:stdio-a' }],
     ['reverifyCapability', 'atlas', 'atlas.inspect', { digest: 'def' }, { strict: true }, { budgetTokens: 1200, actor: 'mcp:operator-a:stdio-a' }],
   ]);
+});
+
+test('OR9: authenticated MCP capability push is fenced and preserves the injected actor', async () => {
+  const s = setup(); await initialized(s.server);
+  const common = { repoId: 'repo-a', idempotencyKey: 'orient-1', name: 'cartographer-quartermaster', op: 'orientation.slice', action: 'push', workerId: 'worker-1', note: 'Stay in auth.', expectedFence: 4, budgetTokens: 900, args: { indexEpoch: 'epoch', focus: 'auth', shape: 'brief' } };
+  const pushed = await request(s.server, 2, 'tools/call', { name: 'fleet_capability_invoke', arguments: common });
+  assert.equal(pushed.result.isError, false);
+  assert.deepEqual(s.calls, [['orientWorker', 'worker-1', { indexEpoch: 'epoch', focus: 'auth', shape: 'brief' }, 'Stay in auth.', { budgetTokens: 900, actor: 'mcp:operator-a:stdio-a', expectedFence: 4 }]]);
+  const missingFence = await request(s.server, 3, 'tools/call', { name: 'fleet_capability_invoke', arguments: { ...common, idempotencyKey: 'orient-2', expectedFence: undefined } });
+  assert.equal(missingFence.result.isError, true); assert.equal(s.calls.length, 1);
 });
 
 test('CI6: capability invocation validation and control authority fail closed before dispatch', async () => {

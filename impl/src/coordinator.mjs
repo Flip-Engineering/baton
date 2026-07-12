@@ -10,6 +10,8 @@ import { Cursor } from './log.mjs';
 import { createBrief, createDigest, wrapFact, wrapProse } from './messages.mjs';
 import { resolveEffort, routeTupleKey } from './route-tuple.mjs';
 
+const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
+
 // ---------------------------------------------------------------------------
 // Error taxonomy (thrown, not returned) — programmer-error / precondition failures.
 // ---------------------------------------------------------------------------
@@ -1430,12 +1432,59 @@ export class Coordinator {
     return slot;
   }
 
+  /** Build one bounded Cartographer slice and deliver it as a fenced, addressed nudge.
+   * The capability owns evidence production; the Coordinator alone owns worker delivery. */
+  async orientWorker(workerId, args, note, ctx = {}) {
+    this.tick();
+    const handle = this._getWorker(workerId);
+    if (!Number.isSafeInteger(ctx.expectedFence)) throw new TypeError('orientation push requires expectedFence');
+    if (typeof note !== 'string' || note.length === 0 || Buffer.byteLength(note) > 2_048 || note.includes('\0')) throw new TypeError('orientation push note is invalid');
+    const precheck = this._fences.check(workerId, { fence: ctx.expectedFence });
+    if (!precheck.ok) {
+      this._log.append({
+        worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._fences.current(workerId).turnEpoch,
+        kind: 'control.stale_rejected', actor: ctx.actor ?? 'orchestrator',
+        payload: { op: 'orientWorker', attempted: ctx.expectedFence, current: precheck.current, phase: 'pre_capability' },
+      });
+      return { ok: false, result: 'stale_fence', current: precheck.current };
+    }
+    if (handle.status === 'stopping') return { ok: false, result: 'worker_stopping' };
+    if (!['working', 'blocked'].includes(handle.status)) return { ok: false, result: 'worker_not_active' };
+
+    const claim = await this._capabilityRegistry().invoke('cartographer-quartermaster', 'orientation.slice', args, {
+      budgetTokens: ctx.budgetTokens, signal: ctx.signal, actor: ctx.actor ?? 'orchestrator',
+    });
+    if (!['ok', 'partial', 'needs_resume'].includes(claim.status) || !claim.refs?.[0]?.digest) {
+      throw Object.assign(new Error('orientation capability did not produce a deliverable slice'), { code: 'orientation_not_deliverable' });
+    }
+    const provenanceKeys = ['index_epoch', 'overlay_digest', 'staleness', 'artifactDigest', 'deterministic', 'mergeAuthority', 'verificationAuthority'];
+    const message = {
+      kind: 'baton.orientation.slice', note,
+      slice: {
+        op: claim.op, status: claim.status, summary: claim.summary, payload: claim.payload,
+        refs: claim.refs.map((ref) => Object.fromEntries(Object.entries(ref).filter(([key]) => ['kind', 'handle', 'digest', 'bytes', 'mediaType'].includes(key)))),
+        ...(claim.cursor ? { cursor: claim.cursor } : {}),
+        provenance: Object.fromEntries(Object.entries(claim.provenance).filter(([key]) => provenanceKeys.includes(key))),
+      },
+    };
+    const slot = (handle.sendChain ?? Promise.resolve()).then(() => this._deliver(handle, message, 'nudge', {
+      expectedFence: ctx.expectedFence, actor: ctx.actor ?? 'orchestrator', internalKindToken: ORIENTATION_DELIVERY,
+    }));
+    handle.sendChain = slot.then(noop, noop);
+    const ack = await slot;
+    return {
+      ...ack, sliceId: `art:sha256:${claim.refs[0].digest}`, sliceDigest: claim.refs[0].digest,
+      status: claim.status, ...(claim.cursor ? { cursor: claim.cursor } : {}),
+    };
+  }
+
   async _deliver(handle, message, mode, opts) {
     const workerId = handle.id;
     const task = this._tasks.get(handle.taskId);
     // SC14: delivery-slot acquisition is the authority boundary. A queued continuation cannot
     // cross a finalized stop, and a terminal task cannot be resurrected by a surviving session.
     if (handle.status === 'stopping') return { ok: false, result: 'worker_stopping' };
+    if (opts.internalKindToken === ORIENTATION_DELIVERY && !['working', 'blocked'].includes(handle.status)) return { ok: false, result: 'worker_not_active' };
     const card = this._adapters[handle.vendor]?.card();
     const reusableFollowUp = mode === 'turn'
       && handle.status === 'idle'
@@ -1501,7 +1550,9 @@ export class Coordinator {
       return { ok: false, result: ack.reason ?? 'delivery_refused', reason: ack.reason };
     }
 
-    const kind = mode === 'nudge' ? 'control.nudge' : mode === 'steer' ? 'control.steer' : 'control.send';
+    const kind = opts.internalKindToken === ORIENTATION_DELIVERY
+      ? 'knowledge.map_served'
+      : mode === 'nudge' ? 'control.nudge' : mode === 'steer' ? 'control.steer' : 'control.send';
     const ev = { worker: workerId, harness, turnEpoch: currentTurnEpoch, kind, actor: opts.actor ?? 'orchestrator', payload: { message } };
     if (ack && ack.emulated === true) ev.emulated = true;
     this._log.append(ev);

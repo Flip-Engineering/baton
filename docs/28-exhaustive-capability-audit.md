@@ -51,7 +51,10 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    Focused brief/map records are typed and resumable; internal reuse requires actual symbol/call/
    lexical evidence, while a miss returns only `external_vet_required`. Artifacts are confined,
    content-addressed, tamper-refusing, and exact-operation reverifiable; the module performs no
-   network request and claims no verification or merge authority.
+   network request and claims no verification or merge authority. Phase 33 adds
+   `orientWorker`: exact-fence, authenticated addressed delivery over the existing serialized
+   nudge lane. Capability code has no adapter authority; host paths/private provenance are stripped,
+   and successful delivery is one actor-stamped `knowledge.map_served` event.
 
 ## What remains partial
 
@@ -75,8 +78,8 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 - Phase 30 closes the GLM credential-backed live gate: exact `glm-4.7` at native `low` effort was
   provider-observed, freshly verified, killed, and fully reaped through the public driver. Concurrent
   GLM-seat and automatic quota discovery remain unproven.
-- Phase 32 closes the local orientation/reuse wiring gap. Addressed downward worker push, automatic
-  scope-drift updates, external dependency-vetting oracles, advisory invalidation, license/
+- Phase 32 closes the local orientation/reuse wiring gap and Phase 33 closes addressed downward
+  worker push. Automatic scope-drift updates, external dependency-vetting oracles, advisory invalidation, license/
   provenance policy, vulnerability reachability, immutable reuse decisions, SBOMs, and knowledge
   promotion remain later Cartographer/Quartermaster contracts.
 
@@ -116,7 +119,8 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 3. **Finish governance/session continuity:** auto-rejoin, vendor-honest fork/rewind, compaction DoD
    reinjection, quota-window/seat scheduling, route overrides, and durable router learning.
 4. **Build capability modules on shared substrate:** Cairn Rung 0 shipped in Phase 31 and
-   Cartographer/Quartermaster local Rung 0 shipped in Phase 32; continue their explicitly
+   Cartographer/Quartermaster local Rung 0 shipped in Phase 32 and addressed push in Phase 33;
+   continue their explicitly
    catalogued later rungs, then demand-earned Cairn Rungs 1–4, Vantage, Evidence Ladder, and Skill
    Forge/computer use behind stronger containment.
 5. **Complete northbound/runtime depth:** MCP HTTP/Tasks/daemon, WebSocket, operator takeover,

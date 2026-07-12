@@ -406,6 +406,18 @@ Addressed `orient_worker`, automatic scope drift, dependency-vetting oracles, TT
 license/provenance/reachability policy, immutable decisions, SBOMs, and knowledge promotion remain
 explicit later contracts. No homelab or project-manager runtime is introduced.
 
+Phase 33 makes the marquee addressed orientation push executable without granting Cartographer
+worker-control authority. `orientWorker` verifies an exact live worker fence before computing a
+slice, invokes only `cartographer-quartermaster/orientation.slice`, strips host paths and closed-out
+deployment provenance, and delivers structured typed evidence over the worker's serialized nudge
+lane. The lane rechecks worker/fence authority after computation; stop/interrupt races therefore
+cannot cross it. A successful acknowledgement produces one authenticated `knowledge.map_served`
+operational event. Existing web and MCP `capability_invoke` unions gain a restricted `push` action,
+not a second command/state machine. A recursive scoped Baton-on-Baton run delivered the real
+Cartographer implementation map to an active worker and then confirmed kill plus complete
+worktree/metadata/runtime/branch reap. Automatic scope-drift detection, dedup, cooldown, and refresh
+policy remain the next contract; no automatic worker intervention is implied by this rung.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**

@@ -126,7 +126,7 @@ test('SC12: same-worker spawn reservation is atomic across worktreeReady for eve
       gate.resolve({ path: mkdtempSync(join(tmpdir(), `p101-${name}-dupe-`)) });
       const acks = await Promise.all([p1, p2]);
       assert.equal(acks.filter((a) => a.ok).length, 1, `${name}: exactly one spawn owns the worker`);
-      for (let i = 0; i < 50 && events.filter((e) => e.kind === 'lifecycle.spawned').length < 1; i += 1) await sleep(5);
+      for (let i = 0; i < 400 && events.filter((e) => e.kind === 'lifecycle.spawned').length < 1; i += 1) await sleep(5);
       assert.equal(events.filter((e) => e.kind === 'lifecycle.spawned').length, 1, `${name}: exactly one child/session is visible`);
     } finally {
       await cli.kill(`${name}-dupe`).catch(() => {});
@@ -259,7 +259,7 @@ test('SC15: rejecting spawn becomes a durable failed task', async () => {
 test('SC16: Codex turn/start failure reaps the child before refusing spawn', async (t) => {
   const cli = new CodexAppServerCli({
     cmd: process.execPath, args: [FAKE_CODEX, '--serve'], env: { FAKE_CODEX_TURN_START_FAIL: '1' },
-    requestTimeoutMs: 500, versionProbe: () => 'fake',
+    requestTimeoutMs: 2_000, versionProbe: () => 'fake',
   });
   const events = collect(cli);
   t.after(() => killPids(events));

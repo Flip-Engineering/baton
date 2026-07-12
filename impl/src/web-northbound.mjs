@@ -22,7 +22,7 @@ const ARG_FIELDS = Object.freeze({
   result: new Set(['workerId']),
   wait: new Set(['timeoutMs']),
   capabilities: new Set(),
-  capability_invoke: new Set(['name', 'op', 'action', 'args', 'budgetTokens', 'ref', 'cursor', 'claim']),
+  capability_invoke: new Set(['name', 'op', 'action', 'args', 'budgetTokens', 'ref', 'cursor', 'claim', 'workerId', 'note']),
 });
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
@@ -49,7 +49,7 @@ function dispatchFailure(cause) {
     'capability_resume_invalid', 'capability_reverify_invalid', 'capability_budget_invalid', 'capability_actor_invalid'].includes(cause?.code)) {
     return { httpStatus: 400, body: { ok: false, error: { code: 'invalid_command', message: 'command precondition failed' } } };
   }
-  if (['capability_result_invalid', 'capability_result_oversize', 'capability_authority_forbidden'].includes(cause?.code)) {
+  if (['capability_result_invalid', 'capability_result_oversize', 'capability_authority_forbidden', 'orientation_not_deliverable'].includes(cause?.code)) {
     return { httpStatus: 502, body: { ok: false, error: { code: 'capability_refused', message: 'capability result refused by policy' } } };
   }
   if (cause?.code === 'cancelled') return { httpStatus: 409, body: { ok: false, error: { code: 'cancelled', message: 'capability invocation cancelled' } } };
@@ -109,19 +109,25 @@ function validateEnvelope(envelope) {
     const action = envelope.args.action;
     if (!/^[A-Za-z0-9._:-]{1,128}$/.test(envelope.args.name ?? '')
       || typeof envelope.args.op !== 'string' || envelope.args.op.length === 0 || envelope.args.op.length > 256) return 'capability_invoke requires a valid name and op';
-    if (!['invoke', 'resume', 'reverify'].includes(action)) return 'capability_invoke requires a valid action';
+    if (!['invoke', 'resume', 'reverify', 'push'].includes(action)) return 'capability_invoke requires a valid action';
     if (!Number.isSafeInteger(envelope.args.budgetTokens) || envelope.args.budgetTokens <= 0) return 'capability_invoke requires a positive budgetTokens';
     if (action === 'invoke') {
       if (!isRecord(envelope.args.args)) return 'capability invoke requires args';
-      if (Object.hasOwn(envelope.args, 'ref') || Object.hasOwn(envelope.args, 'cursor') || Object.hasOwn(envelope.args, 'claim')) return 'capability invoke received action-inapplicable fields';
+      if (['ref', 'cursor', 'claim', 'workerId', 'note'].some((key) => Object.hasOwn(envelope.args, key))) return 'capability invoke received action-inapplicable fields';
     }
     if (action === 'resume') {
       if (!isRecord(envelope.args.ref) || !string(envelope.args.cursor) || envelope.args.cursor.length > 4_096) return 'capability resume requires ref and cursor';
-      if (Object.hasOwn(envelope.args, 'args') || Object.hasOwn(envelope.args, 'claim')) return 'capability resume received action-inapplicable fields';
+      if (['args', 'claim', 'workerId', 'note'].some((key) => Object.hasOwn(envelope.args, key))) return 'capability resume received action-inapplicable fields';
     }
     if (action === 'reverify') {
       if (!isRecord(envelope.args.claim) || !isRecord(envelope.args.args)) return 'capability reverify requires claim and args';
-      if (Object.hasOwn(envelope.args, 'ref') || Object.hasOwn(envelope.args, 'cursor')) return 'capability reverify received action-inapplicable fields';
+      if (['ref', 'cursor', 'workerId', 'note'].some((key) => Object.hasOwn(envelope.args, key))) return 'capability reverify received action-inapplicable fields';
+    }
+    if (action === 'push') {
+      if (envelope.args.name !== 'cartographer-quartermaster' || envelope.args.op !== 'orientation.slice'
+        || !isRecord(envelope.args.args) || !string(envelope.args.workerId) || !string(envelope.args.note)
+        || Buffer.byteLength(envelope.args.note) > 2_048 || !Number.isSafeInteger(envelope.expectedFence)) return 'capability push requires exact orientation target, worker, note, args, and expectedFence';
+      if (Object.hasOwn(envelope.args, 'ref') || Object.hasOwn(envelope.args, 'cursor') || Object.hasOwn(envelope.args, 'claim')) return 'capability push received action-inapplicable fields';
     }
   }
   return null;
@@ -326,7 +332,8 @@ export class WebNorthbound {
       const action = a.action;
       if (action === 'invoke') value = await this.coordinator.invokeCapability(a.name, a.op, a.args, capabilityCtx);
       else if (action === 'resume') value = await this.coordinator.resumeCapability(a.name, a.op, a.ref, a.cursor, capabilityCtx);
-      else value = await this.coordinator.reverifyCapability(a.name, a.op, a.claim, a.args, capabilityCtx);
+      else if (action === 'reverify') value = await this.coordinator.reverifyCapability(a.name, a.op, a.claim, a.args, capabilityCtx);
+      else value = await this.coordinator.orientWorker(a.workerId, a.args, a.note, { ...capabilityCtx, expectedFence: envelope.expectedFence });
     }
     if (value?.result === 'stale_fence') return error(409, 'stale_fence');
     return result(200, { ok: true, commandId: envelope.commandId, result: json(value) });

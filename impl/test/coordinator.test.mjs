@@ -554,6 +554,54 @@ test('send() a nudge to a healthy working worker succeeds and logs control.nudge
   assert.ok(kinds.includes('control.nudge'));
 });
 
+test('OR9: orientWorker invokes one exact capability slice then delivers a fenced addressed nudge', async () => {
+  const adapter = new ScriptableAdapter(); const calls = [];
+  const claim = {
+    op: 'orientation.slice', status: 'needs_resume', summary: 'auth orientation', payload: [{ path: 'src/auth.js' }],
+    refs: [{ kind: 'orientation-reuse', handle: `art:sha256:${'a'.repeat(64)}`, digest: 'a'.repeat(64), bytes: 99, mediaType: 'application/json', path: '/private/artifact' }],
+    cursor: `orientation:${'a'.repeat(64)}:1`, cost: { tokens_out: 10, wall_ms: 1, usd: 0, underlying: 'atlas' },
+    provenance: { index_epoch: 'epoch-1', overlay_digest: 'overlay-1', staleness: 'base_plus_worktree_overlay', artifactDigest: 'a'.repeat(64), deterministic: true, mergeAuthority: false, verificationAuthority: false, privateDeploymentField: 'must-not-push' },
+  };
+  const capabilities = {
+    cards: () => [], resume: async () => {}, reverify: async () => {},
+    async invoke(...args) { calls.push(args); return claim; },
+  };
+  const { coordinator, log } = setup({ adapters: { mock: adapter }, capabilities });
+  const handle = await coordinator.spawn('mock', makeBrief()); const expectedFence = coordinator.list()[0].fence;
+  const result = await coordinator.orientWorker(handle.id, { indexEpoch: 'epoch-1', focus: 'auth', shape: 'brief' }, 'Stay on the auth boundary.', { budgetTokens: 1_000, actor: 'web:user:session', expectedFence });
+  assert.equal(result.ok, true); assert.equal(result.sliceDigest, 'a'.repeat(64)); assert.equal(result.status, 'needs_resume');
+  assert.equal(calls.length, 1); assert.deepEqual(calls[0].slice(0, 3), ['cartographer-quartermaster', 'orientation.slice', { indexEpoch: 'epoch-1', focus: 'auth', shape: 'brief' }]);
+  assert.deepEqual(calls[0][3], { budgetTokens: 1_000, signal: undefined, actor: 'web:user:session' });
+  assert.equal(adapter.calls.prompt.length, 1); assert.equal(adapter.calls.prompt[0].mode, 'nudge');
+  assert.equal(adapter.calls.prompt[0].content.kind, 'baton.orientation.slice');
+  assert.equal(adapter.calls.prompt[0].content.slice.refs[0].path, undefined);
+  assert.equal(adapter.calls.prompt[0].content.slice.provenance.privateDeploymentField, undefined);
+  const served = log.read(handle.id).find((event) => event.kind === 'knowledge.map_served');
+  assert.equal(served.actor, 'web:user:session'); assert.equal(served.payload.message.note, 'Stay on the auth boundary.');
+  const stale = await coordinator.orientWorker(handle.id, { indexEpoch: 'epoch-1', focus: 'billing' }, 'Wrong fence.', { budgetTokens: 100, expectedFence: expectedFence - 1 });
+  assert.equal(stale.result, 'stale_fence'); assert.equal(calls.length, 1, 'stale authority refuses before capability computation');
+});
+
+test('OR9: a stop starting during orientation computation prevents postcompute delivery', async () => {
+  const adapter = new ScriptableAdapter(); const gate = deferred();
+  const claim = {
+    op: 'orientation.slice', status: 'ok', summary: 'late slice', payload: [],
+    refs: [{ kind: 'orientation-reuse', digest: 'b'.repeat(64) }],
+    cost: { tokens_out: 1, wall_ms: 1, usd: 0, underlying: 'atlas' }, provenance: { mergeAuthority: false, verificationAuthority: false },
+  };
+  const capabilities = { cards: () => [], resume: async () => {}, reverify: async () => {}, invoke: async () => { await gate.promise; return claim; } };
+  const { coordinator } = setup({ adapters: { mock: adapter }, capabilities });
+  const handle = await coordinator.spawn('mock', makeBrief()); const fence = coordinator.list()[0].fence;
+  const pushing = coordinator.orientWorker(handle.id, { indexEpoch: 'epoch', focus: 'auth', shape: 'brief' }, 'Late slice.', { budgetTokens: 100, expectedFence: fence });
+  await Promise.resolve();
+  adapter.gates.interrupt = new Promise(() => {}); void coordinator.interrupt(handle.id);
+  assert.equal(coordinator.list()[0].status, 'stopping');
+  gate.resolve();
+  const result = await pushing;
+  assert.equal(result.ok, false); assert.equal(result.result, 'worker_stopping');
+  assert.equal(adapter.calls.prompt.length, 0, 'a computed slice cannot cross a stop boundary');
+});
+
 // Amended by SC4 (spec/phase10/system-completion.md): delivery now happens on the worker's
 // serialized send lane, so an interrupt landing before the delivery slot opens PREVENTS the
 // delivery outright (worker_stopping, adapter never touched) instead of the old
