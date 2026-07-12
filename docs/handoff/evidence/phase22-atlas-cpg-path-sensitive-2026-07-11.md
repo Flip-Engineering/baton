@@ -22,9 +22,9 @@ structured literal `if` stays unreachable. The real `JSON.parse` to `server.hand
 ## Validation
 
 - Numbered contract: `spec/phase22/atlas-cpg-path-sensitive.md`.
-- Phase 22 focused red/green result: 7/7.
-- Combined Phase 18/19/20/22 R3 gate: 27/27.
-- Canonical suite: 729/729; owned suite root reaped.
+- Phase 22 focused red/green result: 9/9.
+- Combined Phase 18/19/20/22 R3 gate: 29/29.
+- Canonical suite: 731/731; owned suite root reaped.
 - Baton-on-Baton proof: every check in
   `docs/reference/evidence/phase22-atlas-cpg-path-sensitive-2026-07-11/summary.json` is true. It
   built a 2,000-plus-node graph of the implementation itself, observed real CFG/may-def/copy
@@ -45,6 +45,15 @@ to enter the nested `if`, requires that condition to be reachable, and preserves
 middle arm through the join. The correction is covered by the 7/7 focused and 729/729 canonical
 results. The finding reports and their fully reaped lifecycle evidence are under
 `docs/reference/evidence/phase22-atlas-cpg-implementation-grok-review-2026-07-11/`.
+
+The first correction review then found a second composition defect: a structured `if` nested
+inside an atomic unsupported parent formed a disconnected CFG island. Its successful Grok 4.5
+report produced a red regression; the concurrent Composer process closed before its terminal frame,
+and Baton still reaped both workers completely. Effective anchoring now climbs through a
+disconnected structured island to the reachable atomic parent, while literal-dead arms remain
+dead. Same-name definitions collapsed into one atomic region are retained as a may-union instead
+of source-order last-wins. The failed-as-a-whole review attempt is preserved honestly under
+`docs/reference/evidence/phase22-atlas-cpg-correction-grok-review-2026-07-11/`.
 
 The implementation deliberately rejected one proposal that would have removed a source-to-sink
 path whenever the source occurred in a conditional branch. That is must-path reasoning, not

@@ -16,6 +16,8 @@ the shipped CFG without another definition of that name on that path. Multiple d
 reach a join; this is neither lexical-last-def nor SSA/must-def. Definitions in a CFG-unreachable
 literal branch do not reach later references. A deployment-supplied `maxReachDefPairs` ceiling is
 mandatory and fails typed before an oversized relation is emitted.
+When nested definitions collapse onto one reachable atomic unsupported-control anchor, same-name
+definitions form a may-union rather than source-order last-wins.
 
 ## PS3 — direct value edges
 
@@ -36,6 +38,7 @@ possible path across a branch join, while syntax-literal dead branches are prune
 No claim is made for shadowing-aware binding identity, aliases, heap/object properties, implicit
 or control taint, exceptions, interprocedural parameters/returns, dynamic dispatch, full PDG, SSA,
 SAT/SMT condition solving, repository-wide flow, or unbraced conditional expansion.
+Standalone bare statement blocks are not CFG spine nodes in this increment.
 
 ## PS6 — artifact and lifecycle integrity
 

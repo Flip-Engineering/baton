@@ -41,7 +41,7 @@ export class AtlasCpgSlice {
     this.artifactRoot = opts.artifactRoot; this.maxSourceBytes = opts.maxSourceBytes; this.maxArtifactBytes = opts.maxArtifactBytes; this.maxReachDefPairs = opts.maxReachDefPairs; this.now = opts.now ?? Date.now; this.record = opts.record ?? null;
     mkdirSync(this.artifactRoot, { recursive: true, mode: 0o700 });
   }
-  card() { return Object.freeze({ name: 'atlas-cpg-slice', version: '0.3.0', underlying: [`@ast-grep/napi@${VERSION}`], ops: { 'cpg.build': { deterministic: true, latency_class: 'interactive', side_effects: 'writes_content_addressed_artifact', reverifiable: true } }, languages: ['javascript', 'typescript', 'tsx'], limitations: ['single-file JS/TS-family slice', 'bounded CFG may-reaching definitions, not SSA/must-def/full PDG', 'value flow covers direct identifier/call assignment and direct call arguments', 'literal-only dead-branch pruning; no general path-condition solving', 'no shadowing-aware bindings/aliases/heap/implicit flow/interprocedural dataflow/dynamic dispatch', 'only braced if control is expanded; unsupported control constructs are atomic'] }); }
+  card() { return Object.freeze({ name: 'atlas-cpg-slice', version: '0.3.0', underlying: [`@ast-grep/napi@${VERSION}`], ops: { 'cpg.build': { deterministic: true, latency_class: 'interactive', side_effects: 'writes_content_addressed_artifact', reverifiable: true } }, languages: ['javascript', 'typescript', 'tsx'], limitations: ['single-file JS/TS-family slice', 'bounded CFG may-reaching definitions, not SSA/must-def/full PDG', 'value flow covers direct identifier/call assignment and direct call arguments', 'literal-only dead-branch pruning; no general path-condition solving', 'no shadowing-aware bindings/aliases/heap/implicit flow/interprocedural dataflow/dynamic dispatch', 'only braced if control is expanded; unsupported control constructs are atomic', 'standalone bare blocks are not CFG spine nodes'] }); }
 
   async invoke(op, args, ctx) {
     if (op !== 'cpg.build') throw typed('unsupported CPG operation', 'unsupported_op');
@@ -146,11 +146,16 @@ export class AtlasCpgSlice {
     const graphNodeById = new Map(nodes.map((node) => [node.id, node]));
     for (const node of nodes) if (node.type === 'statement') node.cfgReachable = reachableByFunction.get(node.function)?.has(node.id) ?? false;
     const effectiveStatement = (statementId) => {
-      let current = statementById.get(statementId); const seen = new Set();
+      let current = statementById.get(statementId); let descendant = current; const seen = new Set();
       while (current && !seen.has(current.id)) {
         seen.add(current.id); if (reachableByFunction.get(current.fn)?.has(current.id)) return current.id;
-        const parent = statementById.get(current.parentStatement); if (parent && structuredIfs.has(parent.id)) return null;
-        current = parent;
+        const parent = statementById.get(current.parentStatement); const parentSpec = parent ? structuredIfs.get(parent.id) : null;
+        if (parentSpec) {
+          if (parentSpec.literal === 'false' && parentSpec.consequenceList.some((item) => item.id === descendant.id)) return null;
+          if (parentSpec.literal === 'true' && parentSpec.alternativeList.some((item) => item.id === descendant.id)) return null;
+          if (reachableByFunction.get(parent.fn)?.has(parent.id)) return null;
+        }
+        descendant = parent; current = parent;
       }
       return null;
     };
@@ -165,7 +170,7 @@ export class AtlasCpgSlice {
     for (const fn of functions) {
       const reachable = reachableByFunction.get(fn.id); const fnOccurrences = occurrences.filter((item) => item.fn === fn.id); const gen = new Map();
       for (const item of fnOccurrences.filter((candidate) => candidate.role === 'definition')) {
-        const anchor = item.statement ? effectiveStatement(item.statement) : fn.entry; if (!anchor || !reachable.has(anchor)) continue; const defs = gen.get(anchor) ?? new Map(); defs.set(item.name, item.id); gen.set(anchor, defs);
+        const anchor = item.statement ? effectiveStatement(item.statement) : fn.entry; if (!anchor || !reachable.has(anchor)) continue; const defs = gen.get(anchor) ?? new Map(); const named = defs.get(item.name) ?? new Set(); named.add(item.id); defs.set(item.name, named); gen.set(anchor, defs);
       }
       const anchors = [fn.entry, ...statements.filter((item) => item.fn === fn.id && reachable.has(item.id)).sort((a, b) => a.node.range().start.index - b.node.range().start.index).map((item) => item.id), fn.exit];
       const incoming = new Map(anchors.map((anchor) => [anchor, new Map()])); const outgoing = new Map(anchors.map((anchor) => [anchor, new Map()])); let changed = true;
@@ -174,7 +179,7 @@ export class AtlasCpgSlice {
         for (const anchor of anchors) {
           const merged = new Map();
           for (const predecessor of cfgIn.get(anchor) ?? []) for (const [name, defs] of outgoing.get(predecessor) ?? []) { const set = merged.get(name) ?? new Set(); for (const def of defs) set.add(def); merged.set(name, set); }
-          const next = cloneState(merged); for (const [name, def] of gen.get(anchor) ?? []) next.set(name, new Set([def]));
+          const next = cloneState(merged); for (const [name, defs] of gen.get(anchor) ?? []) next.set(name, new Set(defs));
           if (stateKey(incoming.get(anchor)) !== stateKey(merged)) { incoming.set(anchor, merged); changed = true; }
           if (stateKey(outgoing.get(anchor)) !== stateKey(next)) { outgoing.set(anchor, next); changed = true; }
         }

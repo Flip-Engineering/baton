@@ -112,3 +112,15 @@ test('PS1/PS2/PS4: an else-if chain is entered from the outer false edge and pre
   const result = await f.taint.invoke('cpg.taint', f.args, f.ctx);
   assert.equal(result.payload.length, 1);
 });
+
+test('PS1/PS4: a structured if inside atomic unsupported control collapses outward without reviving a literal-dead arm', async () => {
+  const possible = fixture(`function readInput(){} function send(v){}\nfunction run(flag){ let value; try { if(flag){ value=readInput() } } catch {} send(value) }\n`);
+  assert.equal((await possible.taint.invoke('cpg.taint', possible.args, possible.ctx)).payload.length, 1);
+  const dead = fixture(`function readInput(){} function send(v){}\nfunction run(){ let value; try { if(false){ value=readInput() } } catch {} send(value) }\n`);
+  assert.equal((await dead.taint.invoke('cpg.taint', dead.args, dead.ctx)).payload.length, 0);
+});
+
+test('PS2/PS4: multiple same-name definitions collapsed into one atomic region remain a may-union', async () => {
+  const f = fixture(`function readInput(){} function safe(){} function send(v){}\nfunction run(flag){ let value; switch(flag){ case 1: value=readInput(); break; default: value=safe() } send(value) }\n`);
+  assert.equal((await f.taint.invoke('cpg.taint', f.args, f.ctx)).payload.length, 1);
+});
