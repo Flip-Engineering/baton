@@ -21,7 +21,13 @@ const BEHAVIOR_TASKS = [
   { taskId: 'grok-behavior-review-45', model: 'grok-4.5', path: 'reviews/dogfood/grok-behavior-review-45.md', stance: 'security' },
   { taskId: 'grok-behavior-review-composer', model: 'grok-composer-2.5-fast', path: 'reviews/dogfood/grok-behavior-review-composer.md', stance: 'semantics' },
 ];
-const TASKS = REVIEW_PROFILE === 'behavior-implementation' ? BEHAVIOR_TASKS : IR_TASKS;
+const MERGE_TASKS = [
+  { taskId: 'grok-merge-scope-45', model: 'grok-4.5', path: 'reviews/dogfood/grok-merge-scope-45.md', stance: 'authority' },
+  { taskId: 'grok-merge-scope-composer', model: 'grok-composer-2.5-fast', path: 'reviews/dogfood/grok-merge-scope-composer.md', stance: 'semantics' },
+];
+const TASKS = REVIEW_PROFILE === 'behavior-implementation' ? BEHAVIOR_TASKS
+  : REVIEW_PROFILE === 'merge-scope' ? MERGE_TASKS
+    : IR_TASKS;
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const git = (args) => execFileSync('git', args, { cwd: REPO, encoding: 'utf8' }).trim();
@@ -52,6 +58,25 @@ function brief(task) {
       ],
       pathScope: [task.path],
       definitionOfDone: 'The four exact headings exist and every BF1-BF7 seam has an evidence-backed verdict',
+      verification: { command: `test -s ${task.path} && grep -Fq '## Proposed numbered contract' ${task.path} && grep -Fq '## Risks and rejection criteria' ${task.path} && git diff --check -- ${task.path}`, expectExit: 0, timeoutMs: 180000 },
+      budget: { tokens: 50000, usd: 4, wallMin: 9 },
+    });
+  }
+  if (REVIEW_PROFILE === 'merge-scope') {
+    const focus = task.stance === 'authority'
+      ? 'Prioritize Git authority, isolated staging, tool invocation/configuration, dirty-main preservation, post-merge trust gates, rollback, crash/replay ambiguity, artifact retention, and cleanup.'
+      : 'Prioritize the exact boundary between external syntax-aware structured merge and unproven CPG/data-flow semantic merge, conflict classification, behavioral/CPG evidence, false-clean risk, and honest claim language.';
+    return createBrief({
+      goal: `Design-review Baton's next structured/semantic merge increment at ${git(['rev-parse', '--short', 'HEAD'])}. Read SYSTEM.md, docs/15-representation-and-computation.md, docs/21-frontier-features.md, docs/26-full-system-goal.md, reviews/frontier-features/representation.md, spec/phase11/acceptance-integration.md, impl/src/{coordinator,index,worktree,atlas-cpg-delta,atlas-behavior-fingerprint}.mjs, and integration tests. The host has no Mergiraf binary. ${focus} Decide the smallest honest numbered vertical that adopts/wraps Mergiraf rather than inventing a parser, remains testable through injected execution, stages without mutating main, requires fresh verification before any main update, fails closed on unavailable tools/unresolved markers/parse fallback/semantic overlap, and never treats behavioral corpus agreement as merge authority. Include explicit keep/redirect/retire criteria for true semantic merge. Write ${task.path} with exact headings "## Decision", "## Proposed numbered contract", "## Red tests and proof", and "## Risks and rejection criteria".`,
+      constraints: [
+        `Edit only ${task.path}.`,
+        'Use at most 14 repository or tool calls, then finish from collected evidence.',
+        'Ground the proposal in current Baton source and upstream Mergiraf command semantics already summarized in repository research; do not invent a merge algorithm.',
+        'No homelab integration or dependency. Do not use network tools, read credentials, edit product code/specs/tests/evidence, commit, push, deploy, or install software.',
+        'Keep the report under 3000 words and state one unambiguous implementation sequence.',
+      ],
+      pathScope: [task.path],
+      definitionOfDone: 'The four exact headings exist, authority and semantic boundaries are explicit, and every proposed merge claim has a falsifiable gate',
       verification: { command: `test -s ${task.path} && grep -Fq '## Proposed numbered contract' ${task.path} && grep -Fq '## Risks and rejection criteria' ${task.path} && git diff --check -- ${task.path}`, expectExit: 0, timeoutMs: 180000 },
       budget: { tokens: 50000, usd: 4, wallMin: 9 },
     });
@@ -155,7 +180,9 @@ try {
   const spawned = await Promise.all(TASKS.map(async (task) => {
     const handle = await coordinator.spawn('grok', brief(task), {
       taskId: task.taskId,
-      taskType: REVIEW_PROFILE === 'behavior-implementation' ? 'adversarial-implementation-review' : 'representation-design-review',
+      taskType: REVIEW_PROFILE === 'behavior-implementation' ? 'adversarial-implementation-review'
+        : REVIEW_PROFILE === 'merge-scope' ? 'merge-design-review'
+          : 'representation-design-review',
       model: task.model,
       modelPolicy: { allow: [task.model], allowFamilies: ['grok'] },
     });
