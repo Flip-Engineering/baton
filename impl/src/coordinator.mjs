@@ -1160,6 +1160,26 @@ export class Coordinator {
     } catch (err) {
       if (structuredVerifyPath) await this._worktrees.removeVerifyWorktree(structuredVerifyPath);
       if (structuredStage) await this._worktrees.removeStructuredIntegration(structuredStage);
+      if (strategy === 'structured' && (err?.postEffect === true || err?.code === 'structured_post_effect_inconsistent')) {
+        const incompleteEvent = this._log.append({
+          worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+          kind: 'integration.incomplete', actor: 'policy',
+          ...this._routeAttribution(handle, task),
+          payload: {
+            strategy, beforeSha: structuredStage?.beforeSha ?? null, stageSha: structuredStage?.stageSha ?? null,
+            sha: task.capturedSha, retainedResultRef: task.retainedResultRef, postEffect: true,
+            reason: String(err?.message ?? err),
+          },
+        });
+        const incompleteEvidence = this._coordMapEvent(incompleteEvent);
+        this._coordRecord('integration.incomplete', {
+          taskId: task.id, strategy, beforeSha: structuredStage?.beforeSha ?? null,
+          stageSha: structuredStage?.stageSha ?? null, sha: task.capturedSha,
+          retainedResultRef: task.retainedResultRef, postEffect: true,
+          reason: String(err?.message ?? err), evidence: incompleteEvidence,
+        }, `driver.integration.incomplete:${task.id}:${incompleteEvent.seq}`, 'policy');
+        throw this._poisonIntegration(err);
+      }
       const refusedEvent = this._log.append({
         worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
         kind: 'integration.refused', actor: 'policy',
@@ -1731,6 +1751,19 @@ export class Coordinator {
       this._fatalError = fatal;
       for (const handle of this._workers.values()) {
         if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) handle.spawnAbort.abort({ reason: 'coordination_write_unavailable' });
+      }
+    }
+    return this._fatalError;
+  }
+
+  _poisonIntegration(err) {
+    if (!this._fatalError) {
+      const fatal = new Error(`structured integration crossed its Git effect boundary before final validation completed: ${err?.message ?? err}`, { cause: err });
+      fatal.name = 'IntegrationWriteIntegrityError';
+      fatal.code = 'structured_post_effect_inconsistent';
+      this._fatalError = fatal;
+      for (const handle of this._workers.values()) {
+        if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) handle.spawnAbort.abort({ reason: fatal.code });
       }
     }
     return this._fatalError;

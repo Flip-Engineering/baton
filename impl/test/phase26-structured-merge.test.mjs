@@ -206,6 +206,28 @@ test('SM8: post-main coordination failure poisons and replay does not invent str
   assert.equal((await replay.coordinator.result(handle.id)).integration, null);
 });
 
+test('SM7/SM8: a post-fast-forward validation failure poisons instead of recording refusal', async () => {
+  const root = repo();
+  const resolver = { maxFileBytes: 4096, identity: () => ({ tool: 'fake-mergiraf' }), resolve: async ({ absolutePath }) => { writeFileSync(absolutePath, 'export const values = { alpha: 2, beta: 3 };\n'); return { status: 'resolved' }; } };
+  const { coordinator, coordination, log, handle, logDir } = await accepted(root, 'sm-post-effect-failure', 'export const values = { alpha: 2 };\n', resolver);
+  write(root, 'src/value.js', 'export const values = { alpha: 1, beta: 3 };\n'); commit(root, 'main adds beta');
+  const rawFinalize = coordinator._worktrees.finalizeStructuredIntegration;
+  coordinator._worktrees.finalizeStructuredIntegration = async (stage) => {
+    await rawFinalize(stage);
+    writeFileSync(join(root, 'post-effect-dirt.txt'), 'concurrent dirt\n');
+    throw Object.assign(new Error('post-fast-forward integrity check failed'), { code: 'structured_post_effect_inconsistent', postEffect: true });
+  };
+  await assert.rejects(coordinator.integrate(handle.id, { strategy: 'structured' }), (error) => error.code === 'structured_post_effect_inconsistent');
+  const moved = git(['rev-parse', 'HEAD'], root); assert.equal(git(['show', '-s', '--format=%P', moved], root).split(' ').length, 2);
+  assert.equal(log.read(handle.id).some((event) => event.kind === 'integration.incomplete' && event.payload.postEffect === true), true);
+  assert.equal(log.read(handle.id).some((event) => event.kind === 'integration.refused'), false);
+  assert.equal(coordination.events().some((event) => event.kind === 'driver.recorded' && event.payload.kind === 'integration.incomplete'), true);
+  assert.throws(() => coordinator.list(), (error) => error.code === 'structured_post_effect_inconsistent');
+  rmSync(join(root, 'post-effect-dirt.txt'));
+  const replay = createDriver({ repoRoot: root, logDir, coordination, adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, structuredMerge: resolver, watchdog: { stallMs: 0 } });
+  assert.equal((await replay.coordinator.result(handle.id)).integration, null);
+});
+
 test('SM9: restart reconciliation reaps an orphan structured stage', async () => {
   const root = repo();
   const resolver = { maxFileBytes: 4096, identity: () => ({ tool: 'fake-mergiraf' }), resolve: async ({ absolutePath }) => { writeFileSync(absolutePath, 'export const values = { alpha: 2, beta: 3 };\n'); return { status: 'resolved' }; } };

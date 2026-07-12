@@ -72,6 +72,10 @@ function mergeError(message, code, cause) {
   return Object.assign(new StructuredMergeError(message, code), cause ? { cause } : {});
 }
 
+function postEffectMergeError(message, cause) {
+  return Object.assign(mergeError(message, 'structured_post_effect_inconsistent', cause), { postEffect: true });
+}
+
 function wtDirFor(repoRoot, taskId) {
   return join(repoRoot, '.baton', 'wt', taskId);
 }
@@ -357,8 +361,8 @@ export async function finalizeStructuredIntegration(repoRoot, stage) {
   try { gitFile(['-c', 'core.hooksPath=/dev/null', 'merge', '--no-verify', '--ff-only', stage.stageSha], repoRoot, { encoding: 'utf8', stdio: 'pipe' }); }
   catch (error) { throw mergeError('main could not fast-forward to verified structured candidate', 'structured_main_advanced', error); }
   const afterSha = sh('git', ['rev-parse', 'HEAD'], repoRoot);
-  if (afterSha !== stage.stageSha) throw mergeError('main did not land on the verified structured candidate', 'structured_main_advanced');
-  if (!isClean(repoRoot)) throw mergeError('main became dirty while finalizing structured integration', 'structured_main_dirty');
+  if (afterSha !== stage.stageSha) throw postEffectMergeError('main did not remain on the verified structured candidate after fast-forward');
+  if (!isClean(repoRoot)) throw postEffectMergeError('main became dirty after the verified structured candidate fast-forwarded');
   return { beforeSha: stage.beforeSha, resultSha: stage.resultSha, mergeBaseSha: stage.mergeBaseSha, stageSha: stage.stageSha, afterSha, classes: stage.classes, resolutions: stage.resolutions, resolver: stage.resolver };
 }
 
