@@ -21,7 +21,7 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **776/776
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **793/793
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
@@ -34,6 +34,12 @@ resolver, freshly verifies the merge commit, and only then advances main; true d
 merge remains a separately measured research bet. The active complete scope,
 including AST/CPG/IR/behavior/semantic-merge/e-graph rungs and the deployment-neutral causal
 knowledge graph, is preserved in [docs/26](docs/26-full-system-goal.md).
+
+Phase 29 now makes deployment-injected Atlas capabilities real fleet tools through one
+Coordinator-owned registry. The same bounded invoke/resume/reverify path is available through the
+authenticated web command surface and the ten-tool MCP inventory; deployment-owned multi-root
+contexts cannot override actor, budget, repository root, or cancellation, and capability output
+cannot claim verification or merge authority. The current canonical suite is **793/793 green**.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 

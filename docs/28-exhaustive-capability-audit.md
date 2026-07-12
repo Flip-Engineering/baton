@@ -53,9 +53,10 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   proof is absent. Publication has no live remote-push proof.
 - Scratch and causal knowledge primitives ship, but the full Scratch REPL/Bench and Cairn
   scorecard/promoter/export product do not.
-- Atlas modules have strong ACI-shaped unit/evidence gates but are **not constructed by
-  `createDriver()` and cannot be invoked through Coordinator, web, or MCP**. They are library
-  surfaces, not yet fleet tools.
+- Phase 29 closes the former Atlas wiring gap: deployments inject a closed set of real Atlas
+  instances, bounds, artifact roots, and optional trusted multi-root contexts into `createDriver()`;
+  Coordinator owns the sole registry handle, and authenticated web/MCP reuse that invoke/resume/
+  reverify path. Atlas is not auto-registered, so an empty deployment remains honestly empty.
 - OIDC has a real TLS socket proof, not an in-app browser interaction; the production provider
   adapter, WebSocket parity, deep operator takeover, and some edge-policy review depth remain.
 - GLM code reaches the credential boundary but lacks a credential-backed live proof.
@@ -87,9 +88,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 
 ## Dependency-ordered pursuit
 
-1. **Make existing Atlas real fleet tools:** one capability registry and `invoke` path through
-   `createDriver()`/Coordinator, then the same authenticated web/MCP authority. Preserve ACI,
-   cancellation, budgets, artifact provenance, reverify, and no merge authority.
+1. **Make existing Atlas real fleet tools — shipped in Phase 29:** one Coordinator-owned registry,
+   deployment-bounded ACI invoke/resume/reverify, real multi-root Atlas traversal, and authenticated
+   web/MCP authority with no verification/merge authority.
 2. **Close environment/live honesty gates:** GLM credentialed smoke without key disclosure; live
    Mergiraf; real-browser OIDC; independent edge-policy review; optional safe remote-push fixture.
 3. **Finish governance/session continuity:** auto-rejoin, vendor-honest fork/rewind, compaction DoD

@@ -32,6 +32,11 @@ actions, red→green/changed-line coverage/mutation gates, independent oracle pr
 fast-forward integration, and approval-gated publication. Current code/evidence overrides the
 older row status wherever those capabilities appear.
 
+Phase 29 additionally ships the capability-plane narrow waist: deployments can register existing
+Atlas modules with explicit bounds and trusted contexts; Coordinator owns invocation; authenticated
+web and MCP expose cards plus durable invoke/resume/reverify. This does not auto-enable every Atlas
+module or make later Vantage/Evidence/Skill/Cartographer/Cairn products complete.
+
 ## What phase 10 actually completed
 
 The shipped control plane is broader than the handoff snapshot implied:
