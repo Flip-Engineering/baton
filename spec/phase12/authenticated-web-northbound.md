@@ -25,7 +25,7 @@ The IL1–IL8 injected-provider login, refresh/credential rotation, and logout l
 EP1–EP9 also ships the direct-TLS/trusted-proxy boundary, canonical address identity, bounded
 address/login/principal/cost/ticket/connection quotas, listener-wide HTTPS enforcement,
 non-disclosing readiness, bounded graceful shutdown, audit-amplification controls, and exact
-stream cleanup. The focused Phase 12 edge suite is 82/82 and the current full suite is 672/672. Eleven
+stream cleanup. The focused Phase 12 edge suite is 82/82 and the current full suite is 678/678. Eleven
 recursive exact-route reviews found and closed defects; the next detached clean-review attempt was
 refused by the Codex provider usage limit before a verdict, and the concurrent Grok fallback is
 blocked at provider reauthentication. The implementation is locally green, but the final clean
@@ -36,19 +36,24 @@ flow with exact issuer/audience/nonce checks at the injected provider boundary, 
 cookie-session issuance, a readable non-credential CSRF cookie, and clean fixed callback redirect.
 BU1–BU7 adds an authenticated minimal operator seat over the existing command and SSE APIs with
 independent harness/model/effort inputs, fence-preserving controls, sanitized session projection,
-strict CSP, and no parallel fleet truth. The combined focused Phase 12 suite is 94/94.
+strict CSP, and no parallel fleet truth. Before RC1–RC6, the combined focused Phase 12 suite was
+94/94.
 A real local TLS wire run passes OIDC start/provider/callback, session cookies, `/control`, command,
 SSE snapshot, logout/revocation, shutdown, and owned-state cleanup. The required in-app browser
 execution bridge was unavailable, so WN9's real-browser interaction gate remains pending.
+RC1–RC6 now adds same-user/repository/capability-scoped durable command status, sanitized terminal
+outcomes, restart and credential-rotation continuity, bounded routable IDs, and same-ID browser
+polling for admitted commands. The combined focused Phase 12 suite is now 100/100.
 
 This is not WN1–WN10 completion. Real local browser automation, a production OIDC provider adapter,
-optional resumable WebSocket parity, admitted-but-incomplete command reconciliation, MCP, richer
+optional resumable WebSocket parity, MCP, richer
 operator depth, and the final adversarial gate remain active scope.
 
 The shipped lifecycle contracts are IL1–IL8 in
 `spec/phase12/authenticated-web-session-lifecycle.md`; the shipped edge-policy contracts are
 EP1–EP9 in `spec/phase12/web-edge-policy.md`; BO1–BO7 and BU1–BU7 live in
-`spec/phase12/browser-{oidc,operator}.md`. Live browser/provider, command-reconciliation, MCP, and
+`spec/phase12/browser-{oidc,operator}.md`; and
+`spec/phase12/web-command-reconciliation.md` holds RC1–RC6. Live browser/provider, MCP, and
 optional transport gates remain explicit after them.
 
 ## WN1 — one authority, two web transports

@@ -242,7 +242,7 @@ revocation lifecycle also ships under IL1–IL8 with fsynced session truth and f
 ordering. EP1–EP9 now ships the canonical direct/trusted-proxy identity boundary, listener-wide
 HTTPS enforcement, bounded request/login/principal/cost/ticket/connection quotas,
 dependency-grounded readiness, audit-amplification controls, and bounded shutdown/stream cleanup.
-It is locally green at 82 focused Phase 12 tests and the current 660-test full suite after eleven recursive
+It is locally green at 82 focused edge-policy tests and the current 678-test full suite after eleven recursive
 corrective reviews. A twelfth clean Codex review was refused by the provider usage limit before a
 verdict, so the clean independent-review gate remains pending. Authenticated concurrent Grok 4.5
 route/kill/reap is likewise `PENDING-LIVE` until isolated provider authentication is available;
@@ -259,15 +259,16 @@ BO1–BO7 now supplies the concrete browser OIDC Authorization Code + PKCE boots
 browser-bound one-time state, injected provider verification, exact issuer/audience/nonce checks,
 durable session issuance, and clean callback redirect. BU1–BU7 supplies the first authenticated
 operator seat over the same command/SSE authority, including independent harness/model/effort
-dispatch and fenced worker control. The combined Phase 12 suite is 94/94 and the full suite is
-672/672. Real-browser HTTPS evidence and provider-backed review remain pending; neither is inferred
+dispatch and fenced worker control. RC1–RC6 adds durable same-user command-status reconciliation
+without replaying effects. The combined Phase 12 suite is 100/100 and the full suite is
+678/678. Real-browser interaction and provider-backed review remain pending; neither is inferred
 from the deterministic suite. A real TLS socket proof now passes OIDC redirect/PKCE/callback,
 operator/session, command, SSE snapshot, logout/revocation, listener shutdown, and owned-state
 cleanup. The in-app browser interaction remains pending because its required execution bridge was
 not exposed; the wire proof is not relabeled as a browser pass.
 
-The active next increment is the real-browser OIDC/control/stream/logout proof, followed by optional
-WebSocket parity, admitted-command reconciliation, MCP, and deeper operator surfaces. It is followed by
+The active next increment is the real-browser OIDC/control/stream/logout proof when its bridge is
+available, plus optional WebSocket parity, MCP, and deeper operator surfaces. It is followed by
 the next measured Atlas representation rungs, beginning with structural rewrite/live-LSP depth
 and retaining CPG/dataflow, IR, behavioral fingerprints, semantic diff/merge, and e-graphs in the
 catalog. These checkpoints narrow sequence only; they do not retire any later capability below.

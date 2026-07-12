@@ -67,7 +67,9 @@ function validateEnvelope(envelope) {
   const unknown = Object.keys(envelope).find((key) => !TOP_LEVEL.has(key));
   if (unknown) return 'unknown_top_level_field';
   if (envelope.schemaVersion !== 1) return 'unsupported schemaVersion';
-  if (!string(envelope.commandId) || !string(envelope.idempotencyKey) || !string(envelope.command) || !string(envelope.repoId) || !string(envelope.origin)) return 'command identity, idempotencyKey, repoId, and origin are required';
+  if (!/^[A-Za-z0-9._:-]{1,128}$/.test(envelope.commandId ?? '')
+    || !/^[A-Za-z0-9._:-]{1,256}$/.test(envelope.idempotencyKey ?? '')
+    || !string(envelope.command) || !string(envelope.repoId) || !string(envelope.origin)) return 'command identity, idempotencyKey, repoId, and origin are required';
   if (!Object.hasOwn(COMMAND_CAPABILITY, envelope.command)) return 'unsupported command';
   if (!isRecord(envelope.args)) return 'args must be an object';
   const allowed = ARG_FIELDS[envelope.command];
@@ -99,7 +101,7 @@ function canonicalRequest(envelope) {
 export class WebNorthbound {
   constructor(opts) {
     if (!opts?.coordinator || !opts?.coordination) throw new TypeError('web northbound requires coordinator and coordination authority');
-    for (const method of ['admitWebCommand', 'completeWebCommand', 'failWebCommand', 'recordWebAudit']) {
+    for (const method of ['admitWebCommand', 'completeWebCommand', 'failWebCommand', 'recordWebAudit', 'webCommand']) {
       if (typeof opts.coordination[method] !== 'function') throw new TypeError(`coordination authority is missing ${method}()`);
     }
     this.coordinator = opts.coordinator;
@@ -223,7 +225,8 @@ export class WebNorthbound {
     try {
       admission = this.coordination.admitWebCommand({
         commandId: envelope.commandId, scopeKey, requestDigest, command: envelope.command,
-        repoId: envelope.repoId, runId: envelope.runId ?? null, credentialId: ctx.principal.credentialId,
+        repoId: envelope.repoId, runId: envelope.runId ?? null,
+        userId: ctx.principal.userId, sessionId: ctx.principal.sessionId, credentialId: ctx.principal.credentialId,
         origin: envelope.origin, expectedFence: envelope.expectedFence ?? null,
       }, { actor: webActor, key: `web.admit:${scopeKey}` });
     } catch {
@@ -346,6 +349,9 @@ export class WebNorthbound {
     }
     if (req.method === 'GET' && (url.pathname === '/v1/session' || operatorAsset(url.pathname))) {
       return this._handleOperatorRead(req, res, url.pathname, origin);
+    }
+    if (req.method === 'GET' && url.pathname.startsWith('/v1/commands/')) {
+      return this._handleCommandStatus(req, res, url, origin);
     }
     if (req.method === 'POST' && AUTH_PATHS.has(url.pathname)) {
       return this._handleLifecycle(req, res, url.pathname, origin);
@@ -485,6 +491,44 @@ export class WebNorthbound {
     };
     res.writeHead(200, headers);
     res.end(body);
+  }
+
+  async _handleCommandStatus(req, res, url, origin) {
+    const ctx = this._oidcContext(req, origin);
+    let principal;
+    try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
+    const authFailure = this._authenticate({ principal, transport: ctx.transport });
+    if (authFailure) {
+      try { this._audit('command_status_refused', { ...ctx, principal }, { reason: 'unauthenticated' }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+      return this._write(res, authFailure);
+    }
+    const sameSite = principal.authMethod !== 'cookie' || ['same-origin', 'none'].includes(req.headers?.['sec-fetch-site']);
+    const servedRepo = [...this.repoIds][0];
+    if (!sameSite || !principal.capabilities?.includes('observe') || !principal.repoIds?.includes(servedRepo)
+      || (this.isPrincipalActive && !this.isPrincipalActive(principal, { repoId: servedRepo }))) {
+      try { this._audit('command_status_refused', { ...ctx, principal }, { reason: 'forbidden' }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+      return this._write(res, error(403, 'forbidden'));
+    }
+    const encoded = url.pathname.slice('/v1/commands/'.length);
+    const commandId = /^[A-Za-z0-9._:-]{1,128}$/.test(encoded) && url.search === '' ? encoded : null;
+    const command = commandId ? this.coordination.webCommand(commandId) : null;
+    const owned = command && string(command.userId) && command.userId === principal.userId
+      && command.repoId === servedRepo;
+    if (!owned) {
+      try { this._audit('command_status_refused', { ...ctx, principal }, { reason: 'not_found_or_forbidden' }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+      return this._write(res, error(404, 'not_found'));
+    }
+    try { this._audit('command_status_authorized', { ...ctx, principal }, { commandDigest: hash(command.commandId), status: command.status }); }
+    catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+    return this._write(res, result(200, { ok: true, command: {
+      commandId: command.commandId, command: command.command, repoId: command.repoId,
+      runId: command.runId ?? null, expectedFence: command.expectedFence ?? null,
+      status: command.status, admittedAt: command.admittedAt, completedAt: command.completedAt ?? null,
+      outcome: command.outcome == null ? null : json(command.outcome),
+    } }));
   }
 
   _validOidcNavigation(req, origin, callback = false) {
