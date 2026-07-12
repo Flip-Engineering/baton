@@ -40,6 +40,12 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 7. **Representation implementations:** R1 structural delta/rewrite proposals, R2 symbols/SCIP
    interchange, bounded R3 CPG/delta/taint/path sensitivity, bounded R5 behavioral fingerprints,
    R6 syntax-aware structured merge, plus explicit R4 and R7 Decision gates.
+8. **Cairn Rung 0:** bounded run identity now survives direct/web/MCP spawn, task state, replay,
+   handles/results, reviews/refinements, and coordinator-owned operational attribution. The
+   deterministic `run.scorecard` ACI operation seals terminal runs, pins independent log tails,
+   distinguishes verified from asserted completions, aggregates normalized cost/control/approval
+   evidence, emits a content-addressed artifact, and atomically materializes Run/Artifact graph
+   authority in one replay-safe event.
 
 ## What remains partial
 
@@ -51,8 +57,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   postmortems are not.
 - Structured merge is shipped with an injected Mergiraf-class boundary; a live Mergiraf binary
   proof is absent. Publication has no live remote-push proof.
-- Scratch and causal knowledge primitives ship, but the full Scratch REPL/Bench and Cairn
-  scorecard/promoter/export product do not.
+- Scratch and causal knowledge primitives ship. Cairn Rung 0's scorecard/promoter now ships;
+  Scratch REPL/Bench and Cairn RouteStats/route advice, causal audit/recall, contradiction UX,
+  and optional deployment-neutral export remain partial or pending.
 - Phase 29 closes the former Atlas wiring gap: deployments inject a closed set of real Atlas
   instances, bounds, artifact roots, and optional trusted multi-root contexts into `createDriver()`;
   Coordinator owns the sole registry handle, and authenticated web/MCP reuse that invoke/resume/
@@ -67,8 +74,8 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 
 - Trust ramp policy, plan gate, impact-selected reruns, structured reject postmortems, and higher
   Evidence Ladder rungs (property/fuzz/BMC/SMT/proof) under honest language/tool ceilings.
-- Vantage, Evidence Ladder as a capability module, Skill Forge/computer use,
-  Cartographer/Quartermaster, and Cairn as public ACI/coordinator tools.
+- Vantage, Evidence Ladder as a capability module, Skill Forge/computer use, and
+  Cartographer/Quartermaster as public ACI/coordinator tools; Cairn Rungs 1–4 remain pending.
 - Direct structural rewrite apply, live LSP, full SSA/PDG/path solving, interprocedural/alias/heap
   CPG depth, attestation overlays, and representation choreography.
 - True semantic merge, stacked integration, deploy adapters, rollback automation, and live remote
@@ -98,8 +105,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    safe remote-push fixture remain.
 3. **Finish governance/session continuity:** auto-rejoin, vendor-honest fork/rewind, compaction DoD
    reinjection, quota-window/seat scheduling, route overrides, and durable router learning.
-4. **Build capability modules on shared substrate:** Cartographer/Quartermaster and Cairn first,
-   then Vantage, Evidence Ladder, and Skill Forge/computer use behind stronger containment.
+4. **Build capability modules on shared substrate:** Cairn Rung 0 shipped in Phase 31;
+   Cartographer/Quartermaster come next, followed by demand-earned Cairn Rungs 1–4, Vantage,
+   Evidence Ladder, and Skill Forge/computer use behind stronger containment.
 5. **Complete northbound/runtime depth:** MCP HTTP/Tasks/daemon, WebSocket, operator takeover,
    OpenTelemetry, and only then a production-core port.
 6. **Pursue representation/trust research only through its Decisions:** higher CPG/IR/semantic

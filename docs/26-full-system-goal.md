@@ -380,6 +380,20 @@ shadowing-aware bindings, aliases, heap/implicit flows, exceptions, interprocedu
 dynamic dispatch, unbraced control expansion, and repository-wide CPG overlays remain unclaimed.
 These checkpoints narrow sequence only; they do not retire any later capability below.
 
+Phase 31 ships Cairn Rung 0 without importing the deployment shape of `project-manager` or adding
+any homelab integration. A caller-selected bounded `runId` now survives direct, authenticated web,
+and MCP spawn; durable task/replay state; public handles/results; review/refinement lineage; and
+coordinator-owned operational attribution independently of harness, exact model, and effort.
+`run.scorecard` deterministically seals only terminal runs, pins the coordination prefix plus each
+task's worker-log tail, distinguishes hub-verified from merely asserted completions, aggregates
+normalized token/USD deltas, human interventions, approvals, outcomes, and exact route rows, and
+marks prose DoD coverage honestly unavailable. One content-addressed artifact and one durable
+`run.sealed` event materialize the Run/Artifact nodes and Contains/ProducedBy edges together, so a
+torn line fails as a truncated tail and no multi-line prefix can grant half a run's authority.
+Reverify replays the exact bounds and rejects missing evidence, attribution drift, path substitution,
+or byte tamper. RouteStats, causal audit/recall, contradiction UX, and optional deployment-neutral
+export remain explicit Cairn Rungs 1–4; none is implied by the Rung 0 scorecard.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**

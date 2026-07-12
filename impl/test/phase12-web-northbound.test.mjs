@@ -203,6 +203,7 @@ test('WN4/WN5/WN7: unknown fields, unknown model policy, and client-supplied aud
   const { web, calls, coordination } = fixture();
   for (const invalid of [
     envelope({ actor: 'admin' }),
+    envelope({ runId: '../escape' }),
     envelope({ args: { ...envelope().args, credential: 'secret' } }),
     envelope({ args: { ...envelope().args, modelPolicy: { reasoningEffort: 'high', bypassSandbox: true } } }),
   ]) {
@@ -255,6 +256,9 @@ test('WN1/WN4: fence-sensitive control forwards the expected fence and refuses a
   const killed = await web.execute(context(), envelope({ commandId: 'kill-1', idempotencyKey: 'kill-1', command: 'kill', expectedFence: 7, args: { workerId: 'w-1' } }));
   assert.equal(killed.status, 200);
   assert.deepEqual(calls.at(-1), { op: 'kill', workerId: 'w-1', actor: 'web:user-1:session-1', opts: { expectedFence: 7 } });
+  const sent = await web.execute(context(), envelope({ commandId: 'send-1', idempotencyKey: 'send-1', command: 'send', expectedFence: 8, args: { workerId: 'w-1', message: 'continue', mode: 'nudge' } }));
+  assert.equal(sent.status, 200);
+  assert.deepEqual(calls.at(-1), { op: 'send', workerId: 'w-1', message: 'continue', mode: 'nudge', opts: { expectedFence: 8, actor: 'web:user-1:session-1' } });
 });
 
 test('WN4/WN7: durable completion append failure never returns a successful command result', async () => {

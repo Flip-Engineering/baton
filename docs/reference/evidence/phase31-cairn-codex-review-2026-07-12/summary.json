@@ -1,0 +1,310 @@
+{
+  "at": "2026-07-12T08:00:03.337Z",
+  "repoHead": "5223dee256ee3532df0adbb09d7f226426260275",
+  "runId": "phase31-cairn-codex-review",
+  "harness": "codex",
+  "harnessVersion": "codex-cli 0.144.1",
+  "rows": [
+    {
+      "taskId": "cairn-review-codex-integrity",
+      "model": "gpt-5.6-sol",
+      "path": "reviews/dogfood/cairn-review-codex-integrity.md",
+      "focus": "atomic store authority, event attribution, evidence spoofing, artifact integrity, replay, and seal races",
+      "workerId": "w-1",
+      "handle": {
+        "id": "w-1",
+        "vendor": "codex",
+        "modelRequested": "gpt-5.6-sol",
+        "modelResolved": "gpt-5.6-sol",
+        "modelObserved": "gpt-5.6-sol",
+        "harnessRequested": "codex",
+        "harnessResolved": "codex@codex-cli 0.144.1",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null,
+        "routeKey": "[\"codex\",\"codex-cli 0.144.1\",\"gpt-5.6-sol\",\"low\",\"openai\",\"cairn-adversarial-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "gpt-5.6-sol"
+          ],
+          "allowFamilies": [
+            "openai"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "codex",
+          "kind": "thread",
+          "id": "019f5557-1470-7661-ae23-69423f49a5d1",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/tmp/baton-phase31-codex-dogfood.SlTGQT/.baton/wt/cairn-review-codex-integrity",
+          "repoRoot": "/tmp/baton-phase31-codex-dogfood.SlTGQT",
+          "baseSha": "5223dee256ee3532df0adbb09d7f226426260275",
+          "branch": "baton/cairn-review-codex-integrity",
+          "ownerTaskId": "cairn-review-codex-integrity"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/tmp/baton-phase31-codex-dogfood.SlTGQT/.baton/runtime/w-1",
+          "home": "/tmp/baton-phase31-codex-dogfood.SlTGQT/.baton/runtime/w-1/home",
+          "tmp": "/tmp/baton-phase31-codex-dogfood.SlTGQT/.baton/runtime/w-1/tmp",
+          "config": "/tmp/baton-phase31-codex-dogfood.SlTGQT/.baton/runtime/w-1/config/codex",
+          "family": "codex",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "SECURITYSESSIONID",
+            "SSH_AUTH_SOCK"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "wire-workspaceWrite-network-deny",
+          "active": false
+        },
+        "review": null,
+        "taskId": "cairn-review-codex-integrity",
+        "runId": "phase31-cairn-codex-review",
+        "worktree": "/tmp/baton-phase31-codex-dogfood.SlTGQT/.baton/wt/cairn-review-codex-integrity",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 0,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T07:59:56.820Z"
+      },
+      "result": {
+        "ready": true,
+        "status": "failed",
+        "verdict": null,
+        "taskId": "cairn-review-codex-integrity",
+        "runId": "phase31-cairn-codex-review",
+        "vendor": "codex",
+        "harnessRequested": "codex",
+        "harnessResolved": "codex@codex-cli 0.144.1",
+        "modelRequested": "gpt-5.6-sol",
+        "modelResolved": "gpt-5.6-sol",
+        "modelObserved": "gpt-5.6-sol",
+        "modelMismatch": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"codex\",\"codex-cli 0.144.1\",\"gpt-5.6-sol\",\"low\",\"openai\",\"cairn-adversarial-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "codex",
+          "kind": "thread",
+          "id": "019f5557-1470-7661-ae23-69423f49a5d1",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/tmp/baton-phase31-codex-dogfood.SlTGQT/.baton/wt/cairn-review-codex-integrity",
+          "repoRoot": "/tmp/baton-phase31-codex-dogfood.SlTGQT",
+          "baseSha": "5223dee256ee3532df0adbb09d7f226426260275",
+          "branch": "baton/cairn-review-codex-integrity",
+          "ownerTaskId": "cairn-review-codex-integrity"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "pid": 28910,
+      "verify": null
+    },
+    {
+      "taskId": "cairn-review-codex-api",
+      "model": "gpt-5.6-sol",
+      "path": "reviews/dogfood/cairn-review-codex-api.md",
+      "focus": "ACI shape, web/MCP run propagation, deterministic metrics, lifecycle/refinement behavior, and missing acceptance tests",
+      "workerId": "w-2",
+      "handle": {
+        "id": "w-2",
+        "vendor": "codex",
+        "modelRequested": "gpt-5.6-sol",
+        "modelResolved": "gpt-5.6-sol",
+        "modelObserved": "gpt-5.6-sol",
+        "harnessRequested": "codex",
+        "harnessResolved": "codex@codex-cli 0.144.1",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null,
+        "routeKey": "[\"codex\",\"codex-cli 0.144.1\",\"gpt-5.6-sol\",\"low\",\"openai\",\"cairn-adversarial-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "gpt-5.6-sol"
+          ],
+          "allowFamilies": [
+            "openai"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "codex",
+          "kind": "thread",
+          "id": "019f5557-1469-7c02-a475-bed16da1d086",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/tmp/baton-phase31-codex-dogfood.SlTGQT/.baton/wt/cairn-review-codex-api",
+          "repoRoot": "/tmp/baton-phase31-codex-dogfood.SlTGQT",
+          "baseSha": "5223dee256ee3532df0adbb09d7f226426260275",
+          "branch": "baton/cairn-review-codex-api",
+          "ownerTaskId": "cairn-review-codex-api"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/tmp/baton-phase31-codex-dogfood.SlTGQT/.baton/runtime/w-2",
+          "home": "/tmp/baton-phase31-codex-dogfood.SlTGQT/.baton/runtime/w-2/home",
+          "tmp": "/tmp/baton-phase31-codex-dogfood.SlTGQT/.baton/runtime/w-2/tmp",
+          "config": "/tmp/baton-phase31-codex-dogfood.SlTGQT/.baton/runtime/w-2/config/codex",
+          "family": "codex",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "SECURITYSESSIONID",
+            "SSH_AUTH_SOCK"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "wire-workspaceWrite-network-deny",
+          "active": false
+        },
+        "review": null,
+        "taskId": "cairn-review-codex-api",
+        "runId": "phase31-cairn-codex-review",
+        "worktree": "/tmp/baton-phase31-codex-dogfood.SlTGQT/.baton/wt/cairn-review-codex-api",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 0,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T07:59:56.944Z"
+      },
+      "result": {
+        "ready": true,
+        "status": "failed",
+        "verdict": null,
+        "taskId": "cairn-review-codex-api",
+        "runId": "phase31-cairn-codex-review",
+        "vendor": "codex",
+        "harnessRequested": "codex",
+        "harnessResolved": "codex@codex-cli 0.144.1",
+        "modelRequested": "gpt-5.6-sol",
+        "modelResolved": "gpt-5.6-sol",
+        "modelObserved": "gpt-5.6-sol",
+        "modelMismatch": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"codex\",\"codex-cli 0.144.1\",\"gpt-5.6-sol\",\"low\",\"openai\",\"cairn-adversarial-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "codex",
+          "kind": "thread",
+          "id": "019f5557-1469-7c02-a475-bed16da1d086",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/tmp/baton-phase31-codex-dogfood.SlTGQT/.baton/wt/cairn-review-codex-api",
+          "repoRoot": "/tmp/baton-phase31-codex-dogfood.SlTGQT",
+          "baseSha": "5223dee256ee3532df0adbb09d7f226426260275",
+          "branch": "baton/cairn-review-codex-api",
+          "ownerTaskId": "cairn-review-codex-api"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "pid": 28915,
+      "verify": null
+    }
+  ],
+  "approvals": [],
+  "stopResults": [
+    {
+      "taskId": "cairn-review-codex-integrity",
+      "ack": {
+        "ok": true,
+        "result": "already_dead"
+      }
+    },
+    {
+      "taskId": "cairn-review-codex-api",
+      "ack": {
+        "ok": true,
+        "result": "already_dead"
+      }
+    }
+  ],
+  "scorecard": null,
+  "scorecardReverify": null,
+  "sealed": null,
+  "checks": {
+    "noHarnessError": false,
+    "twoWorkers": true,
+    "distinctLivePids": true,
+    "concurrentTurns": true,
+    "exactModelsObserved": true,
+    "exactLowEffortRouted": true,
+    "exactRunAttributed": true,
+    "freshVerified": false,
+    "reportsCaptured": false,
+    "scorecardSealed": false,
+    "scorecardReverifiedAfterStops": false,
+    "killsConfirmed": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "metadataGone": true,
+    "runtimeGone": true,
+    "branchesGone": true
+  },
+  "fatal": "Error: review trust gate failed: [{\"taskId\":\"cairn-review-codex-integrity\",\"status\":\"failed\"},{\"taskId\":\"cairn-review-codex-api\",\"status\":\"failed\"}]\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase31-cairn-grok-review-2026-07-12/run.mjs:96:68\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
+  "pass": false
+}

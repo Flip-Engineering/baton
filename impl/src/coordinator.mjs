@@ -349,9 +349,12 @@ export class Coordinator {
         let e;
         try {
           const handle = this._workers?.get?.(partial?.worker) ?? null;
-          const taskId = partial?.taskId ?? handle?.taskId ?? null;
+          // A provider event is untrusted input. For a known worker, current coordinator
+          // ownership is the only task/run attribution authority; adapter-supplied fields may
+          // neither move cost/evidence into another task nor escape the run being scored.
+          const taskId = handle?.taskId ?? partial?.taskId ?? null;
           const task = taskId == null ? null : this._tasks?.get?.(taskId) ?? null;
-          const runId = partial?.runId ?? task?.runId ?? null;
+          const runId = handle ? task?.runId ?? null : partial?.runId ?? task?.runId ?? null;
           e = rawAppend({ ...partial, taskId, runId });
         } catch (err) {
           this._appendFailures += 1;

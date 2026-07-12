@@ -39,7 +39,7 @@ function driver({ delayed = false } = {}) {
     },
     maxCapabilityBudgetTokens: 10_000, maxCapabilityEnvelopeBytes: 128 * 1024,
   });
-  return { ...instance, repoRoot, logDir, artifactRoot };
+  return { ...instance, adapter, repoRoot, logDir, artifactRoot };
 }
 
 test('CR1/CR3/CR4/CR5: exact run identity seals one verified scorecard through createDriver ACI', async () => {
@@ -50,6 +50,8 @@ test('CR1/CR3/CR4/CR5: exact run identity seals one verified scorecard through c
   assert.equal(publicHandle.runId, 'run-a');
   assert.equal(d.coordination.task('run-task').runId, 'run-a');
   assert.equal(d.log.read(handle.id).every((event) => event.taskId === 'run-task' && event.runId === 'run-a'), true);
+  const spoof = d.log.append({ worker: handle.id, taskId: 'forged-task', runId: 'forged-run', harness: 'mock-cairn@1', turnEpoch: 2, actor: 'worker', kind: 'content.message', payload: { text: 'untrusted attribution' } });
+  assert.equal(spoof.taskId, 'run-task'); assert.equal(spoof.runId, 'run-a');
 
   const ctx = { budgetTokens: 4_000, actor: 'orchestrator' };
   const result = await d.coordinator.invokeCapability('cairn', 'run.scorecard', { runId: 'run-a' }, ctx);
@@ -104,6 +106,8 @@ test('CR3/CR4: concurrent task rows deterministically ground usage, intervention
   await until(async () => (await d.coordinator.result(first.id)).ready && (await d.coordinator.result(second.id)).ready, 'concurrent run');
   d.log.append({ worker: first.id, harness: 'mock-cairn@1', turnEpoch: 2, actor: 'worker', kind: 'resource.tokens', payload: { tokens: 11, usd: 0.25 } });
   d.log.append({ worker: second.id, harness: 'mock-cairn@1', turnEpoch: 2, actor: 'worker', kind: 'resource.tokens', payload: { tokens: 7, usd: 0.1 } });
+  d.adapter._userCb({ worker: first.id, harness: 'mock-cairn@1', turnEpoch: 2, actor: 'worker', kind: 'resource.tokens', payload: { source: 'provider-cumulative', accounting: 'cumulative', totalTokens: 5, totalCostUsd: 0.1 } });
+  d.adapter._userCb({ worker: first.id, harness: 'mock-cairn@1', turnEpoch: 2, actor: 'worker', kind: 'resource.tokens', payload: { source: 'provider-cumulative', accounting: 'cumulative', totalTokens: 8, totalCostUsd: 0.15 } });
   d.log.append({ worker: first.id, harness: 'mock-cairn@1', turnEpoch: 2, actor: 'human:operator-a', kind: 'control.nudge', payload: { message: 'check it' } });
   d.log.append({ worker: first.id, harness: 'mock-cairn@1', turnEpoch: 2, actor: 'worker', kind: 'approval.requested', payload: { requestId: 'approval-open' } });
   d.log.append({ worker: second.id, harness: 'mock-cairn@1', turnEpoch: 2, actor: 'worker', kind: 'approval.requested', payload: { requestId: 'approval-closed' } });
@@ -116,7 +120,7 @@ test('CR3/CR4: concurrent task rows deterministically ground usage, intervention
   const row = firstSeal.payload[0];
   assert.equal(row.tasks.total, 2); assert.deepEqual(row.tasks.byOutcome, { completed: 2 });
   assert.deepEqual(row.completions, { verified: 2, asserted: 0 });
-  assert.deepEqual(row.usage, { tokens: 18, usd: 0.35 });
+  assert.deepEqual(row.usage, { tokens: 26, usd: 0.5 });
   assert.deepEqual(row.interventions, { total: 1, byKind: { 'control.nudge': 1 }, byActor: { 'human:operator-a': 1 } });
   assert.deepEqual(row.approvals, { requested: 2, resolved: 1, unresolved: ['approval-open'] });
   assert.deepEqual(row.workers.map((worker) => worker.taskId), ['score-a', 'score-b']);
@@ -134,7 +138,7 @@ test('CR2/CR5: run sealing is atomic under append failure and retry promotes one
   const fields = {
     runId: 'run-atomic', coordinationUpperBound: store.snapshot().lastSeq,
     operationalTails: [{ taskId: 'atomic-task', worker: 'w-atomic', tail: 1 }], taskIds: ['atomic-task'],
-    scorecardDigest: 'a'.repeat(64), scorecard: { runId: 'run-atomic' }, artifact: { path: '/tmp/orphan', bytes: 1 },
+    scorecardDigest: 'a'.repeat(64), scorecard: { runId: 'run-atomic' }, artifact: { path: '/tmp/orphan', digest: 'a'.repeat(64), bytes: 1 },
     evidence: [{ coordinationSeq: terminal.event.seq }],
   };
   const append = store._appendFile;
@@ -144,6 +148,7 @@ test('CR2/CR5: run sealing is atomic under append failure and retry promotes one
   store._appendFile = append;
   const sealed = store.sealRunScorecard(fields, { actor: 'test', key: 'seal' });
   assert.equal(sealed.run.status, 'sealed');
+  assert.equal(store.snapshot().lastSeq, fields.coordinationUpperBound + 1, 'seal and graph authority are one durable event');
   assert.equal(store.snapshot().knowledge.nodes.filter((node) => ['run:run-atomic', `run-scorecard:${'a'.repeat(64)}`].includes(node.id)).length, 2);
 });
 
@@ -157,4 +162,47 @@ test('CR1/CR2/CR7: invalid run identity and changed sealed authority refuse with
   await d.coordinator.invokeCapability('cairn', 'run.scorecard', { runId: 'run-conflict' }, { budgetTokens: 4_000 });
   assert.throws(() => d.coordination.sealRunScorecard({ runId: 'run-conflict', scorecardDigest: 'b'.repeat(64) }, { actor: 'test', key: 'changed-seal' }), (error) => error.code === 'run_sealed');
   await d.coordinator.kill(handle.id, 'policy');
+});
+
+test('CR1/CR2: review tasks inherit run identity and sealed follow-up refuses before adapter effect', async () => {
+  const d = driver(); const baseCard = d.adapter.card.bind(d.adapter);
+  d.adapter.card = () => ({ ...baseCard(), sessions: { multiTurn: 'native', resume: 'native', fork: 'planned', rewind: 'planned' } });
+  const parent = await d.coordinator.spawn('mock', brief(), { taskId: 'review-parent', runId: 'run-review' });
+  await until(async () => (await d.coordinator.result(parent.id)).ready, 'review parent');
+  const child = await d.coordinator.spawnReview(parent.id, 'mock', { taskId: 'review-child', verification: { command: 'test -s done.txt', expectExit: 0, timeoutMs: 5000 } });
+  assert.equal(child.runId, 'run-review'); assert.equal(d.coordination.task('review-child').runId, 'run-review');
+  await until(async () => (await d.coordinator.result(child.id)).ready, 'review child');
+  await d.coordinator.invokeCapability('cairn', 'run.scorecard', { runId: 'run-review' }, { budgetTokens: 8_000 });
+  let promptCalls = 0; const prompt = d.adapter.prompt.bind(d.adapter);
+  d.adapter.prompt = async (...args) => { promptCalls += 1; return prompt(...args); };
+  await assert.rejects(d.coordinator.send(child.id, 'continue', 'turn'), (error) => error.code === 'run_sealed');
+  assert.equal(promptCalls, 0);
+  const internal = d.coordinator._workers.get(child.id); internal.status = 'orphaned'; internal.sessionRef = { id: 'native-review-session', persistence: 'native' };
+  let recoverySpawns = 0; const spawn = d.adapter.spawn.bind(d.adapter);
+  d.adapter.spawn = async (...args) => { recoverySpawns += 1; return spawn(...args); };
+  await assert.rejects(d.coordinator.recover(child.id), (error) => error.code === 'run_sealed');
+  assert.equal(recoverySpawns, 0); internal.status = 'idle';
+  await d.coordinator.kill(parent.id, 'policy'); await d.coordinator.kill(child.id, 'policy');
+});
+
+test('CR3/CR7: unmapped completion is asserted, and missing/mixed operational evidence refuses', async () => {
+  const events = [{ seq: 1, worker: 'w-asserted', taskId: 'asserted-task', runId: 'run-asserted', kind: 'lifecycle.turn_completed', actor: 'worker', payload: { status: 'completed' } }];
+  const store = new CoordinationStore(root('asserted-store'));
+  const created = store.createTask({ id: 'asserted-task', runId: 'run-asserted', deps: [], reservedWorkerId: 'w-asserted' }, { actor: 'test', key: 'asserted-create' });
+  const claimed = store.claimTask('asserted-task', 'w-asserted', created.task.version, { actor: 'test', key: 'asserted-claim' });
+  store.transitionTask('asserted-task', 'completed', claimed.task.version, { actor: 'test', key: 'asserted-terminal' });
+  const cairn = new CairnRunScorecard({ coordination: store, readOperational: () => events, artifactRoot: root('asserted-artifact') });
+  const result = await cairn.invoke('run.scorecard', { runId: 'run-asserted' }, { actor: 'test' });
+  assert.deepEqual(result.payload[0].completions, { verified: 0, asserted: 1 });
+
+  const missingStore = new CoordinationStore(root('missing-store'));
+  const missingCreated = missingStore.createTask({ id: 'missing-task', runId: 'run-missing', deps: [], reservedWorkerId: 'w-missing' }, { actor: 'test', key: 'missing-create' });
+  const missingClaimed = missingStore.claimTask('missing-task', 'w-missing', missingCreated.task.version, { actor: 'test', key: 'missing-claim' });
+  missingStore.transitionTask('missing-task', 'completed', missingClaimed.task.version, { actor: 'test', key: 'missing-terminal' });
+  const unavailable = new CairnRunScorecard({ coordination: missingStore, readOperational: () => null, artifactRoot: root('missing-artifact') });
+  await assert.rejects(unavailable.invoke('run.scorecard', { runId: 'run-missing' }, { actor: 'test' }), (error) => error.code === 'run_evidence_unavailable');
+  const mixed = new CairnRunScorecard({ coordination: missingStore, readOperational: () => [{ seq: 1, worker: 'w-missing', taskId: 'missing-task', runId: 'other-run', kind: 'resource.tokens', actor: 'worker', payload: { tokens: 50 } }], artifactRoot: root('mixed-artifact') });
+  await assert.rejects(mixed.invoke('run.scorecard', { runId: 'run-missing' }, { actor: 'test' }), (error) => error.code === 'run_attribution_mismatch');
+  const gapped = new CairnRunScorecard({ coordination: missingStore, readOperational: () => [{ seq: 2, worker: 'w-missing', taskId: 'missing-task', runId: 'run-missing', kind: 'resource.tokens', actor: 'worker', payload: { tokens: 50 } }], artifactRoot: root('gapped-artifact') });
+  await assert.rejects(gapped.invoke('run.scorecard', { runId: 'run-missing' }, { actor: 'test' }), (error) => error.code === 'run_evidence_gap');
 });

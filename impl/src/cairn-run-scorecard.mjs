@@ -158,7 +158,7 @@ export class CairnRunScorecard {
       runId, coordinationUpperBound: built.document.coordinationUpperBound,
       operationalTails: built.document.operationalTails, taskIds: built.document.operationalTails.map((tail) => tail.taskId),
       scorecardDigest: built.digest, scorecard: built.document.row,
-      artifact: { kind: built.document.kind, path, bytes: Buffer.byteLength(built.bytes) }, evidence: built.evidence,
+      artifact: { kind: built.document.kind, path, digest: built.digest, bytes: Buffer.byteLength(built.bytes) }, evidence: built.evidence,
     }, { actor: ctx.actor, key: `run.sealed:${runId}:${built.digest}` });
     return this._result(sealed.run);
   }

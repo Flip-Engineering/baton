@@ -128,6 +128,7 @@ test('MN7: conflicting and admitted replay are fail-closed without a second disp
   const s = setup(); await initialized(s.server);
   const common = { repoId: 'repo-a', idempotencyKey: 'send-1', workerId: 'worker-1', message: 'one', mode: 'nudge', expectedFence: 1 };
   await request(s.server, 2, 'tools/call', { name: 'fleet_send', arguments: common });
+  assert.deepEqual(s.calls[0][4], { expectedFence: 1, actor: 'mcp:operator-a:stdio-a' });
   const conflict = await request(s.server, 3, 'tools/call', { name: 'fleet_send', arguments: { ...common, message: 'two' } });
   assert.equal(conflict.result.isError, true); assert.match(conflict.result.content[0].text, /idempotency_conflict/);
   const held = setup(); await initialized(held.server);
@@ -165,6 +166,7 @@ test('MN3/MN4/MN6: scope, capability, fence, unknown fields, and credential fiel
   const s = setup({ principal: principal({ capabilities: ['observe'] }) }); await initialized(s.server);
   const cases = [
     { name: 'fleet_spawn', arguments: { repoId: 'repo-a', idempotencyKey: 'a', harness: 'x', brief: {} } },
+    { name: 'fleet_spawn', arguments: { repoId: 'repo-a', idempotencyKey: 'bad-run', runId: '../escape', harness: 'x', brief: {} } },
     { name: 'fleet_kill', arguments: { repoId: 'repo-b', idempotencyKey: 'b', workerId: 'w', expectedFence: 1 } },
     { name: 'fleet_send', arguments: { repoId: 'repo-a', idempotencyKey: 'c', workerId: 'w', message: 'x', mode: 'nudge' } },
     { name: 'fleet_list', arguments: { repoId: 'repo-a', token: 'secret' } },
