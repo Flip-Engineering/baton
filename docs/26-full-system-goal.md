@@ -371,6 +371,9 @@ conditional external research behind exact demand, translation, scale, accuracy,
 value gates. `AtlasEGraphEvaluation` builds no graph and proves no equivalence. It emits a
 content-addressed Decision and refuses native build/saturation/proof, verification bypass, and
 merge authority typed. The focused gate is 6/6 and the canonical suite is 776/776.
+Final concurrent exact-model implementation closure at `4d038d0` found no remaining actionable
+EG1–EG8 defect; both reports were provider-observed, freshly verified, normally killed, and fully
+reaped.
 Baton-on-Baton proofs cover a `sha` helper node/edge delta with reverse-caller impact and the real
 MCP `JSON.parse` assignment reaching `server.handle`. SSA, full path-condition feasibility/PDG,
 shadowing-aware bindings, aliases, heap/implicit flows, exceptions, interprocedural returns,

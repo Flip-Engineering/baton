@@ -22,6 +22,9 @@ authority.
 - Reds cover all three domains; all five false build/proof/bypass/merge operations; exact
   reopening thresholds; policy-only ACI meaning; artifact bounds; cancellation; unsupported
   domain/operation; bounded resume; tamper refusal; and deterministic reverify.
+- The first post-review canonical run hit the existing SC12 Claude readiness timing assertion once
+  (`0` visible children versus `1`). Its exact 16-test suite passed on immediate isolated rerun and
+  the canonical owner then passed 776/776; Phase 27 imports no session adapter code.
 
 ## Recursive Baton scope evidence
 
@@ -33,6 +36,19 @@ equivalence claims. Grok 4.5 called the expression/kernel domain “keep as cata
 Composer called it “redirect to an external bounded tool.” Phase 27 encodes the common substance:
 conditional external research, no native build. Evidence is under
 `docs/reference/evidence/phase27-egraph-evaluation-scope-grok-review-2026-07-11/`.
+
+The first concurrent implementation review found one actionable refusal-taxonomy seam: false R7
+verbs with an absent or unsupported domain reached generic `unsupported_domain` before the
+recorded R7 refusal. They now conservatively refuse `r7_domain_retired` with the Decision id and
+supported domains. Error reds also pin reopening gates, and resume rejects a digest-correct
+artifact substituted outside the owned root. That pre-fix review is retained under
+`docs/reference/evidence/phase27-egraph-implementation-grok-review-2026-07-11/`.
+
+Final concurrent closure at `4d038d0` produced independent no-actionable-defect verdicts from
+exact `grok-4.5` and `grok-composer-2.5-fast`. Both provider identities were observed on distinct
+overlapping PIDs, both reports were freshly sparse-verified, both normal kills were confirmed,
+and every process, worktree, runtime, and branch was reaped. The complete ledger is under
+`docs/reference/evidence/phase27-egraph-final-clean-grok-review-2026-07-11/`.
 
 ## Honest boundary
 
