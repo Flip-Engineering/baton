@@ -239,6 +239,7 @@ Every feature the exploration produced, with honest status. **Core** = the drive
 | Immutable external `borrow\|build` decision + causal promotion | Safety/Memory | Shipped Phase 38 | `spec/phase38/immutable-reuse-decision.md`, `docs/capabilities/orientation-reuse.md` |
 | Advisory refresh guard + exact TTL invalidation | Safety/Memory | Shipped Phase 39; provider push/policy/clearance later | `spec/phase39/advisory-ttl-invalidation.md`, `docs/capabilities/orientation-reuse.md` |
 | Isolated proposed npm graph + actual delta | Tools/Safety | Shipped Phase 40; no install/decision authority; reachability/ecosystems/provenance later | `spec/phase40/proposed-install-graph.md`, `docs/handoff/evidence/phase40-proposed-install-graph-2026-07-12.md` |
+| Transitive advisory projection | Tools/Safety | Phase 41 specified; implementation pending; dependency/import attention only, never vulnerable-function proof or waiver | `spec/phase41/transitive-advisory-projection.md`, `docs/capabilities/orientation-reuse.md` |
 | Reusable verified skills/recipes | Tools | Later | `docs/capabilities/skills-computeruse.md` |
 | Per-vendor briefs, context-on-demand, re-inject-on-compaction | Context | MVP-adjacent | `docs/12` |
 | OS-sandbox boundary, scoped secrets, contagion tracking | Safety | MVP-adjacent | `docs/09` §C, `docs/14` |

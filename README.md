@@ -65,9 +65,12 @@ Phase 40 adds an exact npm proposed-not-installed graph and actual-to-proposed d
 inside a disposable macOS Seatbelt root with writes confined there and direct network denied; one
 supervisor-owned CONNECT proxy admits the configured registry. Exact executable/sandbox identities,
 source/proposed digests, process-tree cleanup, and proxy cleanup are receipt-bound and offline-
-reverified. The official live npm proof is 11/11, while install/decision/merge authority, transitive
-advisory reachability, additional ecosystems, and independent provenance remain later rungs. The
-current canonical suite is **882/882 green**.
+reverified. The official live npm proof is 11/11. Phase 41 is now specified as exact transitive
+advisory projection over separately grounded actual/proposed graphs plus conservative dependency-
+path and supported-static-import attention evidence; it cannot claim vulnerable-function
+reachability or waive an advisory. Its implementation, additional ecosystems, independent
+provenance, and the complete Quartermaster ledger remain pending. The current canonical suite is
+**882/882 green**.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 

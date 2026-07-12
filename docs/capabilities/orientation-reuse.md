@@ -207,6 +207,35 @@ Slots after **M1** in doc 07 (needs the artifact registry + task-DAG, which M1 b
 - **Rung 2.** LSP/Serena precision (symbol-path addressing, `find_referencing_symbols`), **SCIP incremental** index (reindex only changed files on commit), **Socket** behavioral enrichment, and the cross-module payoff: **reachability gating** = the map's call graph × OSV (deprioritize unreachable vulns). ast-grep behind `fleet_locate(kind=callers)`.
 - **Rung 3.** Promotion into **Baton's local deployment-neutral epistemic KG** (decision records with causal `Informed`/`Supersedes`/`Affects` edges and temporal-coherence checks), `fleet_recall` cross-run, **Syft SBOM + Sigstore/SLSA provenance verification** as a gate, and **Leiden community-detection** architecture summaries. Optional PM-shaped export remains separate; `lldb`/`clang` is optional dynamic-reachability for C/C++/native.
 
+### Authoritative pending Quartermaster ledger
+
+This ledger prevents the short summaries from silently shrinking the design. Dependency order is
+part of the contract; grouping here does not authorize a mega-phase.
+
+1. **Safety closure:** policy-hash invalidation across durable Decisions and fences.
+2. **Read-only risk evidence:** Phase 41 exact transitive advisory projection over separately
+   grounded actual and proposed npm graphs, deterministic dependency-path witnesses, and narrowly
+   named supported-static-import observation. It never claims vulnerable-function reachability or
+   waives an advisory.
+3. **Independent evidence sources:** adverse-only provider feed/webhook/poll ingestion,
+   independently verified Sigstore/SLSA provenance, and the separately grounded exact `internal`
+   reuse-decision transaction.
+4. **Deeper analysis:** trusted release-artifact-to-source/export identity, advisory-to-symbol
+   mapping, stronger module-aware/interprocedural Atlas/CPG, and only then true vulnerable-function
+   reachability with `unknown` as the default.
+5. **Authority-bearing composition:** proposed-plan approval/binding into a new reuse Decision;
+   positive clearance as its own non-resurrection transaction; high-level `fleet_reuse` and
+   unified `fleet_provenance` surfaces.
+6. **Breadth after semantics:** ecosystems added one at a time with their own exact inventory,
+   oracle, resolver, provenance, and replay contracts; optional Socket and Syft/Grype/Trivy-class
+   fuller SCA enrichment remain separate sources, not shortcuts.
+
+Provider push, policy change, clearance, internal decisions, plan approval, true function
+reachability, independent provenance, additional ecosystems, Socket/full-SCA enrichment, and the
+composite user surfaces are therefore all still planned. Baton has no homelab or project-manager
+runtime dependency; optional PM-shaped export remains a later one-way boundary from the local
+deployment-neutral causal graph.
+
 ## Limitations & honest residuals
 
 - **Centrality ≠ task relevance.** PageRank/betweenness is a *prior*, not truth; the real signal is the orchestrator's `focus`. So the module's value is bounded by the orchestrator's judgment — and a *confidently wrong* orientation push (`fleet_orient_worker` to the wrong subsystem) misleads exactly as efficiently as a right one helps. Attention-steering is a loaded gun.

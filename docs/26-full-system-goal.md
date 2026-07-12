@@ -495,6 +495,16 @@ lockfile/SBOM/receipt/delta artifacts offline-reverify against the unchanged act
 coordinate, kinds/order, and recomputed graph delta. The operation does not install, decide, merge,
 scan all transitive advisories, prove reachability, add ecosystems, or integrate with homelab.
 
+Phase 41 is specified, not yet shipped, as the next read-only supply-chain vertical. It scans every
+exact component in separately grounded actual or proposed npm graphs through a bounded official
+OSV batch contract, retains deterministic root dependency paths, and reports only narrowly named
+supported-static-import observation. Missing imports, zero local CPG paths, ambiguous nested
+instances, and unsupported syntax never become `unreachable` or positive clearance; known
+advisories retain their block priority. True vulnerable-function reachability waits for trusted
+release-artifact/export identity, advisory-to-symbol mapping, and stronger module-aware Atlas/CPG.
+The full distinct later backlog is authoritative in `docs/capabilities/orientation-reuse.md`; no
+homelab or project-manager runtime integration is introduced.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**

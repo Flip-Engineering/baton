@@ -123,10 +123,14 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   exact-npm external evidence/freshness floor. Phase 37 adds the actual npm lockfile SBOM floor,
   Phase 38 closes the external `borrow|build` decision plus local causal-promotion transaction, and
   Phase 39 closes pull-to-refresh advisory fencing plus exact TTL invalidation, and Phase 40 closes
-  the npm proposed-vs-actual graph delta under an isolated resolver supervisor. Provider push/feed
-  ingestion, positive clearance, policy-hash invalidation, the separately grounded `internal`
-  decision, additional ecosystems, true vulnerability
-  reachability, optional export, and independent provenance verification remain later contracts.
+  the npm proposed-vs-actual graph delta under an isolated resolver supervisor. Phase 41 is now
+  specified as read-only transitive advisory projection plus conservative dependency/import
+  attention evidence; implementation remains pending. The authoritative pending ledger in
+  `docs/capabilities/orientation-reuse.md` retains policy-hash invalidation, provider push/feed,
+  positive clearance, exact `internal` decisions, plan approval/binding, trusted advisory-symbol
+  identity and true vulnerability reachability, independent provenance, additional ecosystems,
+  Socket/full-SCA enrichment, composite `fleet_reuse`/`fleet_provenance`, and optional export as
+  distinct later contracts.
 
 ## What remains pending
 
