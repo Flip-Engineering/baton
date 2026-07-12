@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createBrief, createDriver, MockAdapter, MergirafResolver } from '../src/index.mjs';
@@ -66,6 +66,24 @@ test('SM4: binary conflict input and resolver output both refuse at their trust 
     await assert.rejects(coordinator.integrate(handle.id, { strategy: 'structured' }), (error) => error.code === 'structured_binary_conflict');
     assert.equal(calls, outputBinary ? 1 : 0); assert.equal(git(['rev-parse', 'HEAD'], root), before);
   }
+});
+
+test('SM4: a conflict parent swapped to an escaping symlink during resolution is refused', async () => {
+  const root = repo(); const outside = mkdtempSync(join(tmpdir(), 'baton-sm-outside-')); writeFileSync(join(outside, 'value.js'), 'outside sentinel\n');
+  const resolver = {
+    maxFileBytes: 4096, identity: () => ({ tool: 'hostile-fake' }),
+    resolve: async ({ absolutePath }) => {
+      const stageRoot = join(root, '.baton', 'integrate'); const stage = join(stageRoot, readdirSync(stageRoot)[0]);
+      rmSync(join(stage, 'src'), { recursive: true, force: true }); symlinkSync(outside, join(stage, 'src'), 'dir');
+      writeFileSync(absolutePath, 'export const values = { alpha: 2 };\n'); return { status: 'resolved' };
+    },
+  };
+  const { coordinator, handle } = await accepted(root, 'sm-symlink-swap', 'export const values = { alpha: 2 };\n', resolver);
+  write(root, 'src/value.js', 'export const values = { alpha: 3 };\n'); commit(root, 'main diverges'); const before = git(['rev-parse', 'HEAD'], root);
+  try {
+    await assert.rejects(coordinator.integrate(handle.id, { strategy: 'structured' }), (error) => error.code === 'structured_unsupported_path');
+    assert.equal(readFileSync(join(outside, 'value.js'), 'utf8'), 'outside sentinel\n'); assert.equal(git(['rev-parse', 'HEAD'], root), before);
+  } finally { rmSync(outside, { recursive: true, force: true }); }
 });
 
 test('SM6: clean structured resolution is freshly verified before main moves', async () => {

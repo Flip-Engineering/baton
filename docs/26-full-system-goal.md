@@ -290,7 +290,7 @@ may-reaching definitions, direct identifier-copy flow, immediate-only nested val
 literal-dead-branch pruning, including reachable `else if` chains and conservative may-unions
 inside atomic unsupported control. AST boolean leaves prune comment-bearing dead arms without
 orphan join edges. The combined R3 gate is 31/31 focused and the current canonical suite is
-763/763 green. Independent exact-model closure passes from Grok 4.5 and Grok Composer both found
+764/764 green. Independent exact-model closure passes from Grok 4.5 and Grok Composer both found
 no remaining actionable PS1–PS8 defect; their freshly verified reports and complete kill/reap
 evidence are retained with the Phase 22 handoff.
 
@@ -352,7 +352,11 @@ invocation, detects any seven-or-more diff3 marker run at line start, strips all
 control variables, disables system/global Git config and hooks for staging, and pins these with
 reds. A targeted Composer closure then caught the symmetric output seam: a resolver could inject
 NUL after the input check. The same binary refusal now gates both sides of the resolver trust
-boundary. The host lacks Mergiraf, so the 13/13 focused gate uses an injected wire-faithful resolver and a
+boundary. A subsequent Composer pass found a canonical-path TOCTOU seam around Baton-owned
+post-resolver writes. Conflict paths are now canonical-realpath confined before read and required
+to retain the exact same canonical identity before write; a hostile resolver-timed parent symlink
+swap refuses without modifying the external target. The host lacks Mergiraf, so the 14/14 focused
+gate uses an injected wire-faithful resolver and a
 live external-tool proof remains pending. True data/control-flow semantic merge stays catalogued
 behind adoptable-engine, measured-demand, and false-clean evaluation gates.
 Baton-on-Baton proofs cover a `sha` helper node/edge delta with reverse-caller impact and the real

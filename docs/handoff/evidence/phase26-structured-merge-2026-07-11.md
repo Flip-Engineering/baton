@@ -23,9 +23,9 @@ removes orphan stages because an old candidate without a live fresh verdict has 
 ## Validation
 
 - Numbered contract: `spec/phase26/structured-merge.md` (SM1–SM10).
-- Focused gate: 13/13.
-- Existing acceptance/worktree plus Phase 26 gate: 67/67.
-- Canonical owned suite: 763/763; suite root reaped.
+- Focused gate: 14/14.
+- Existing acceptance/worktree plus Phase 26 gate: 68/68.
+- Canonical owned suite: 764/764; suite root reaped.
 - Reds cover unavailable resolver, marker retention, parse fallback, deployment file ceiling,
   resolver isolation, clean divergent three-way merge, false-clean syntax failure, dirty main,
   main-advance race, post-main authority failure/replay, and orphan-stage reconciliation.
@@ -67,6 +67,14 @@ UTF-8/marker acceptance, and one red exercises both pre- and post-resolver binar
 pre-correction reports are retained under
 `docs/reference/evidence/phase26-structured-merge-closure-grok45-2026-07-11/` and
 `docs/reference/evidence/phase26-structured-merge-closure-composer-2026-07-11/`.
+
+Composer's next exact-model pass found that lexical conflict-path confinement was not sufficient
+against a parent directory swapped to an escaping symlink between the pre-resolver read and the
+post-resolver write. Baton now canonical-realpath confines the conflict before reading and requires
+the path to retain that exact canonical identity immediately before writing. A hostile timed swap
+refuses `structured_unsupported_path`, leaves main pinned, and leaves the external sentinel
+untouched. That report and lifecycle proof are under
+`docs/reference/evidence/phase26-structured-merge-definitive-composer-2026-07-11/`.
 
 ## Honest boundary
 
