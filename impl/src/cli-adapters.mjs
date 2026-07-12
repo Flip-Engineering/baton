@@ -256,7 +256,7 @@ export class ZCodeCli extends ClaudeCli {
   constructor(opts = {}) {
     const token = opts.authToken ?? process.env.Z_AI_API_KEY ?? process.env.ZHIPU_API_KEY;
     super({
-      harness: 'glm-via-claude', version: opts.version ?? 'glm-5.2', ceiling: opts.ceiling ?? 1, // Z.ai Pro ≈ 1 in-flight
+      harness: 'glm-via-claude', version: opts.version ?? 'claude-cli+zai-anthropic', ceiling: opts.ceiling ?? 1, // Z.ai Pro ≈ 1 in-flight
       model: opts.model, env: {
         ANTHROPIC_BASE_URL: opts.baseUrl ?? 'https://api.z.ai/api/anthropic',
         ANTHROPIC_AUTH_TOKEN: token ?? '',

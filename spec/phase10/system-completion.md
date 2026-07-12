@@ -169,7 +169,8 @@ official harness path IS Claude Code pointed at Z.ai's Anthropic-compatible endp
   gate, not the constructor's), and when `opts.model` is given the model-map pair
   `ANTHROPIC_DEFAULT_OPUS_MODEL`/`ANTHROPIC_DEFAULT_SONNET_MODEL` (ZCodeCli parity,
   cli-adapters.mjs:256–260). Caller `opts.env` merges last.
-- identity: harness `glm-via-claude-session`, version default `glm-5.2`, ceiling default **1**
+- identity: harness `glm-via-claude-session`, version identifies the Claude Code plus Z.ai
+  Anthropic transport (not a model slug), ceiling default **1**
   (derived limit: Z.ai Pro ≈ one in-flight session, same derivation as cli-adapters.mjs:255 —
   configurable, documented, not arbitrary).
 - card: inherits the 8-verb Claude-session card and adds

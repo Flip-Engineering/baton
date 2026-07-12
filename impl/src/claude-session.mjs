@@ -8,7 +8,38 @@
 // card/spawn/prompt/interrupt/approve/answer/kill/onEvent. Dependency-free ESM; only Node builtins.
 
 import { spawn } from 'node:child_process';
+import { lstatSync, readFileSync } from 'node:fs';
 import { renderPrompt } from './cli-adapters.mjs';
+
+const credentialError = (message, code) => Object.assign(new Error(message), { code });
+
+/** Load one bounded local credential without ever including its value in diagnostics. */
+export function loadGlmAuthTokenFile(path) {
+  if (typeof path !== 'string' || path.length === 0) throw credentialError('GLM auth token file path required', 'credential_file_invalid');
+  let stat;
+  try { stat = lstatSync(path); } catch { throw credentialError('GLM auth token file unavailable', 'credential_file_unavailable'); }
+  if (!stat.isFile() || stat.isSymbolicLink()) throw credentialError('GLM auth token file must be a regular non-symlink', 'credential_file_invalid');
+  if ((stat.mode & 0o077) !== 0) throw credentialError('GLM auth token file must be owner-only', 'credential_file_permissions');
+  if (stat.size <= 0 || stat.size > 16 * 1024) throw credentialError('GLM auth token file size outside policy', 'credential_file_invalid');
+  let text;
+  try { text = readFileSync(path, 'utf8').trim(); } catch { throw credentialError('GLM auth token file unreadable', 'credential_file_unavailable'); }
+  if (!text || text.includes('\0')) throw credentialError('GLM auth token file content invalid', 'credential_file_invalid');
+  if (!text.startsWith('{')) {
+    if (/\s/.test(text)) throw credentialError('GLM raw auth token must be one line', 'credential_file_invalid');
+    return text;
+  }
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { throw credentialError('GLM auth token JSON invalid', 'credential_file_invalid'); }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw credentialError('GLM auth token JSON must be an object', 'credential_file_invalid');
+  const env = parsed.env;
+  const token = env !== null && typeof env === 'object' && !Array.isArray(env)
+    ? env.ANTHROPIC_AUTH_TOKEN
+    : undefined;
+  if (typeof token !== 'string' || token.length === 0 || /\s/.test(token)) {
+    throw credentialError('GLM auth token JSON requires env.ANTHROPIC_AUTH_TOKEN', 'credential_file_invalid');
+  }
+  return token;
+}
 
 // ---------------------------------------------------------------------------
 // buildClaudeSessionArgs — pure function (no process spawned), CS1.
@@ -575,7 +606,7 @@ export class ClaudeSessionCli {
  * ZCodeCli env pattern (cli-adapters.mjs) lifted onto the session adapter, so every session verb
  * (mid-turn steer, interrupt, approvals) is inherited, not re-implemented.
  *
- * Credentials resolve `opts.authToken ?? Z_AI_API_KEY ?? ZHIPU_API_KEY` at construction; absence
+ * Credentials resolve `opts.authToken ?? authTokenFile ?? Z_AI_API_KEY ?? ZHIPU_API_KEY` at construction; absence
  * is NOT a constructor error — the credential boundary is live-smoke's gate, presence-checked
  * only, values never printed/logged/committed. Ceiling defaults to 1 (derived: Z.ai Pro ≈ one
  * in-flight session, same derivation as ZCodeCli) and stays configurable.
@@ -586,11 +617,11 @@ export class ClaudeSessionCli {
  */
 export class GlmSessionCli extends ClaudeSessionCli {
   constructor(opts = {}) {
-    const token = opts.authToken ?? process.env.Z_AI_API_KEY ?? process.env.ZHIPU_API_KEY;
+    const token = opts.authToken ?? (opts.authTokenFile ? loadGlmAuthTokenFile(opts.authTokenFile) : undefined) ?? process.env.Z_AI_API_KEY ?? process.env.ZHIPU_API_KEY;
     super({
       ...opts,
       harness: opts.harness ?? 'glm-via-claude-session',
-      version: opts.version ?? 'glm-5.2',
+      version: opts.version ?? 'claude-code-2.1.206+zai-anthropic',
       ceiling: opts.ceiling ?? 1,
       env: {
         ANTHROPIC_BASE_URL: opts.baseUrl ?? 'https://api.z.ai/api/anthropic',
@@ -606,6 +637,7 @@ export class GlmSessionCli extends ClaudeSessionCli {
     const base = super.card();
     return {
       ...base,
+      authPosture: 'api_key',
       modelSelection: {
         ...base.modelSelection,
         family: 'glm',

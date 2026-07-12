@@ -75,13 +75,13 @@ Mapping to the vocabulary:
 
 **Key asymmetry vs Codex:** Claude Code's richest control mode (SDK/stream-json) is *per-process* — the controller owns the process's stdio. Codex's app-server is a *daemon* — many clients can attach, pair, and share threads. For fleet supervision the daemon shape is structurally better; Claude Code gets partway there with `--bg` and session resumability. A baton adapter for Claude Code should itself be a small daemon owning N child processes and re-exposing them (which is exactly what OpenAI's broker does for the single-Codex case, and what `opencode` does natively — see below).
 
-## GLM / Z.ai (GLM 5.2 — resolved, doc 01 §5)
+## GLM / Z.ai (current model mapping — resolved, doc 01 §5)
 
-There is **no first-party "Z-code" CLI**. Z.ai's GLM Coding Plan (GLM-5.2, GLM-5-Turbo, GLM-4.7) officially supports *third-party* harnesses — **Claude Code, Cline, and OpenCode** — auto-configured by `npx @z_ai/coding-helper`. The Anthropic-compatible endpoint is confirmed from official docs: `ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic` + `ANTHROPIC_AUTH_TOKEN`, with model mapping via `ANTHROPIC_DEFAULT_*_MODEL` (e.g. `ANTHROPIC_DEFAULT_OPUS_MODEL=glm-5.2[1m]` for 1M context); Z.ai recommends a 3,000,000 ms timeout and 1M-token auto-compact window — explicitly agent-session-oriented.
+There is **no first-party "Z-code" CLI**. Z.ai's GLM Coding Plan officially supports *third-party* harnesses — **Claude Code, Cline, and OpenCode** — configured by `npx @z_ai/coding-helper`. The Anthropic-compatible endpoint is confirmed from official docs: `ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic` + `ANTHROPIC_AUTH_TOKEN`. The current normal Opus/Sonnet aliases map to `glm-4.7`, Haiku maps to `glm-4.5-air`, and `glm-5.1` is an explicit higher-cost route. Baton therefore sends an exact model through the native `--model` flag plus `ANTHROPIC_DEFAULT_*_MODEL`; the adapter version never masquerades as the model identity.
 
 So **Claude Code as the GLM harness is not a hack, it's the vendor's blessed configuration** — the glm-adapter is the claude-adapter with env overrides, exactly as hoped. Two caveats survive:
-- Harness/model mismatch still costs quality (Claude-tuned prompts and tool descriptions driving GLM); Z.ai's own compat verification trails Claude Code releases (2.0.14 vs today's 2.1.206). OpenCode is the officially-supported alternative harness if the mismatch proves expensive.
-- The plan is **contractually locked to supported harnesses** and enforces per-tier *concurrency* limits (Pro-tier reports of a single in-flight request; peak-hour 3× quota multipliers on GLM-5.2). Fleet math changes accordingly — see doc 01 §7 and doc 06 Q7.
+- Harness/model mismatch can still cost quality (Claude-tuned prompts and tool descriptions driving GLM). OpenCode is the officially-supported alternative harness if the mismatch proves expensive.
+- The plan is **contractually locked to supported harnesses** and enforces tier/model-dependent concurrency and quota limits. Baton therefore consumes deployment-configured ceilings rather than encoding mutable plan marketing — see doc 01 §7 and doc 06 Q7.
 
 ## Grok Build CLI 0.1.216 — native ACP, shipped by the vendor (added 2026-07-10)
 
