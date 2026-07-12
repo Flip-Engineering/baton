@@ -11,7 +11,7 @@ const REPO = resolve(process.env.BATON_REPO ?? resolve(HERE, '../../../..'));
 const OUTPUT = resolve(process.env.BATON_EVIDENCE_DIR ?? HERE);
 const AUTH = join(homedir(), '.grok', 'auth.json');
 const TIMEOUT_MS = Number(process.env.BATON_REVIEW_TIMEOUT_MS ?? 360000);
-const MIN_FREE_BYTES = Number(process.env.BATON_MIN_FREE_BYTES ?? 256 * 1024 * 1024);
+const MIN_FREE_BYTES_OVERRIDE = process.env.BATON_MIN_FREE_BYTES ?? null;
 const REVIEW_PROFILE = process.env.BATON_REVIEW_PROFILE ?? 'ir-scope';
 const REVIEW_MODEL = process.env.BATON_REVIEW_MODEL ?? null;
 const IR_TASKS = [
@@ -35,6 +35,7 @@ const PROFILE_TASKS = REVIEW_PROFILE === 'behavior-implementation' ? BEHAVIOR_TA
     : REVIEW_PROFILE === 'merge-implementation' ? MERGE_IMPLEMENTATION_TASKS
     : IR_TASKS;
 const TASKS = REVIEW_MODEL ? PROFILE_TASKS.filter((task) => task.model === REVIEW_MODEL) : PROFILE_TASKS;
+const MIN_FREE_BYTES = Number(MIN_FREE_BYTES_OVERRIDE ?? (128 + 64 * TASKS.length) * 1024 * 1024);
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const git = (args) => execFileSync('git', args, { cwd: REPO, encoding: 'utf8' }).trim();
