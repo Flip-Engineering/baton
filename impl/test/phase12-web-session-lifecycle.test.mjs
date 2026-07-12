@@ -22,6 +22,10 @@ async function request(web, path, body, headers = {}, encrypted = true, method =
   queueMicrotask(() => { if (body !== undefined) req.emit('data', Buffer.from(JSON.stringify(body))); req.emit('end'); });
   await pending; return res;
 }
+function cookieHeader(response, name = '__Host-baton_session') {
+  const values = Array.isArray(response.headers['set-cookie']) ? response.headers['set-cookie'] : [response.headers['set-cookie']];
+  return values.find((value) => value.startsWith(`${name}=`));
+}
 function system(identityProvider, overrides = {}) {
   const directory = root(); const sessions = new WebSessionStore(directory, { now: () => now });
   const coordination = new CoordinationStore(root()); const fleetCalls = [];
@@ -91,7 +95,8 @@ test('IL1/IL3/IL4: HTTPS login uses only injected claims and returns a strict co
   assert.equal(res.body.identity.userId, 'provider-user');
   assert.deepEqual(res.body.identity.capabilities, ['observe']);
   assert.equal(Object.hasOwn(res.body, 'token'), false);
-  assert.match(res.headers['set-cookie'], /^__Host-baton_session=.*; Secure; HttpOnly; SameSite=Strict; Path=\/$/);
+  assert.match(cookieHeader(res), /^__Host-baton_session=.*; Secure; HttpOnly; SameSite=Strict; Path=\/$/);
+  assert.match(cookieHeader(res, '__Host-baton_csrf'), /^__Host-baton_csrf=.*; Secure; SameSite=Strict; Path=\/$/);
   assert.equal(typeof res.body.csrfToken, 'string');
   assert.deepEqual(seen.metadata, { origin: ORIGIN, transport: 'https' });
   assert.equal(JSON.stringify(s.coordination.events()).includes('never-log-me'), false);
@@ -102,17 +107,18 @@ test('IL1/IL3/IL4: HTTPS login uses only injected claims and returns a strict co
 test('IL2/IL3/IL6: cookie refresh requires CSRF, rotates atomically, and logout revokes without fleet control', async () => {
   const s = system(async () => ({ userId: 'u', authMethod: 'cookie', capabilities: ['observe'], repoIds: ['repo-a'], ttlMs: 60_000 }));
   const login = await request(s.web, '/v1/auth/login', {});
-  const cookie = login.headers['set-cookie'].split(';')[0];
+  const cookie = cookieHeader(login).split(';')[0];
   assert.equal((await request(s.web, '/v1/auth/refresh', {}, { cookie })).status, 403);
   const refreshed = await request(s.web, '/v1/auth/refresh', {}, { cookie, 'x-baton-csrf': login.body.csrfToken });
   assert.equal(refreshed.status, 200);
-  const nextCookie = refreshed.headers['set-cookie'].split(';')[0];
+  const nextCookie = cookieHeader(refreshed).split(';')[0];
   assert.equal(s.sessions.authenticate({ headers: { cookie } }), null);
   const active = s.sessions.authenticate({ headers: { cookie: nextCookie } });
   assert.ok(active);
   const logout = await request(s.web, '/v1/auth/logout', {}, { cookie: nextCookie, 'x-baton-csrf': refreshed.body.csrfToken });
   assert.equal(logout.status, 200);
-  assert.match(logout.headers['set-cookie'], /Max-Age=0/);
+  assert.match(cookieHeader(logout), /Max-Age=0/);
+  assert.match(cookieHeader(logout, '__Host-baton_csrf'), /Max-Age=0/);
   assert.equal(s.sessions.isPrincipalActive(active), false);
   assert.deepEqual(s.fleetCalls, []);
 });

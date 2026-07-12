@@ -3,6 +3,8 @@ import { createServer as createHttpsServer } from 'node:https';
 import { createServer as createHttpServer } from 'node:http';
 import { WebEventStream } from './web-stream.mjs';
 import { WebEdgePolicy, WebReadinessAuthority } from './web-edge.mjs';
+import { OidcBrowserFlow, csrfCookie } from './web-oidc.mjs';
+import { operatorAsset } from './web-operator.mjs';
 
 const COMMAND_CAPABILITY = Object.freeze({
   spawn: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', respond: 'approve',
@@ -23,6 +25,8 @@ const ARG_FIELDS = Object.freeze({
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
 const AUTH_PATHS = new Set(['/v1/auth/login', '/v1/auth/refresh', '/v1/auth/logout']);
+const OIDC_START_PATH = '/v1/auth/oidc/start';
+const OIDC_CALLBACK_PATH = '/v1/auth/oidc/callback';
 
 function json(value) { return JSON.parse(JSON.stringify(value)); }
 function hash(value) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
@@ -107,6 +111,12 @@ export class WebNorthbound {
     this.authenticate = opts.authenticate ?? null;
     this.sessions = opts.sessions ?? opts.sessionStore ?? null;
     this.identityProvider = opts.identityProvider ?? opts.provider ?? null;
+    this.oidc = opts.oidc ?? opts.oidcFlow ?? null;
+    if (this.oidc !== null && !(this.oidc instanceof OidcBrowserFlow)) throw new TypeError('oidc must be an OidcBrowserFlow');
+    if (this.oidc && (!this.allowedOrigins.has(this.oidc.redirectUri.origin)
+      || this.oidc.redirectUri.pathname !== OIDC_CALLBACK_PATH)) {
+      throw new TypeError('OIDC redirectUri must match the served allowed origin and callback path');
+    }
     if (!this.authenticate && this.sessions) this.authenticate = this.sessions.authenticator();
     this.isPrincipalActive = opts.isPrincipalActive ?? this.authenticate?.isPrincipalActive ?? null;
     this.maxBodyBytes = opts.maxBodyBytes ?? 64 * 1024;
@@ -328,6 +338,15 @@ export class WebNorthbound {
     if (req.method === 'GET' && url.pathname === '/healthz') return this._write(res, result(200, { ok: true }));
     if (req.method === 'GET' && url.pathname === '/readyz') return this._write(res, this._readinessResponse({ origin, remoteAddress: req.edgeAddressDigest ? 'canonical' : (req.socket?.remoteAddress ?? null), addressDigest: req.edgeAddressDigest ?? null }));
     if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'));
+    if (req.method === 'GET' && url.pathname === OIDC_START_PATH) {
+      return this._handleOidcStart(req, res, url, origin);
+    }
+    if (req.method === 'GET' && url.pathname === OIDC_CALLBACK_PATH) {
+      return this._handleOidcCallback(req, res, url, origin);
+    }
+    if (req.method === 'GET' && (url.pathname === '/v1/session' || operatorAsset(url.pathname))) {
+      return this._handleOperatorRead(req, res, url.pathname, origin);
+    }
     if (req.method === 'POST' && AUTH_PATHS.has(url.pathname)) {
       return this._handleLifecycle(req, res, url.pathname, origin);
     }
@@ -418,6 +437,158 @@ export class WebNorthbound {
       remoteAddress: req.edgeAddressDigest ? 'canonical' : (req.socket?.remoteAddress ?? null), addressDigest: req.edgeAddressDigest ?? null, transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http'),
     }, envelope);
     return this._write(res, response, origin);
+  }
+
+  _oidcContext(req, origin) {
+    return {
+      origin,
+      remoteAddress: req.edgeAddressDigest ? 'canonical' : (req.socket?.remoteAddress ?? null),
+      addressDigest: req.edgeAddressDigest ?? null,
+      transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http'),
+    };
+  }
+
+  async _handleOperatorRead(req, res, pathname, origin) {
+    const ctx = this._oidcContext(req, origin);
+    let principal;
+    try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
+    const authFailure = this._authenticate({ principal, transport: ctx.transport });
+    if (authFailure) {
+      try { this._audit('operator_read_refused', { ...ctx, principal }, { reason: 'unauthenticated' }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+      return this._write(res, authFailure);
+    }
+    const repoId = [...this.repoIds][0];
+    const sameSite = ['same-origin', 'none'].includes(req.headers?.['sec-fetch-site']);
+    if (!sameSite || !principal.capabilities?.includes('observe') || !principal.repoIds?.includes(repoId)
+      || (this.isPrincipalActive && !this.isPrincipalActive(principal, { repoId }))) {
+      try { this._audit('operator_read_refused', { ...ctx, principal }, { reason: 'forbidden' }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+      return this._write(res, error(403, 'forbidden'));
+    }
+    try { this._audit('operator_read_authorized', { ...ctx, principal }, { resourceClass: pathname === '/v1/session' ? 'session' : 'asset' }); }
+    catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+    if (pathname === '/v1/session') {
+      return this._write(res, result(200, {
+        ok: true,
+        identity: { userId: principal.userId, capabilities: [...principal.capabilities], repoIds: [...principal.repoIds] },
+        expiresAt: principal.expiresAt,
+      }));
+    }
+    const asset = operatorAsset(pathname);
+    const body = asset.body;
+    const headers = {
+      'content-type': asset.type, 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer',
+      'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+      'content-security-policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    };
+    res.writeHead(200, headers);
+    res.end(body);
+  }
+
+  _validOidcNavigation(req, origin, callback = false) {
+    if (req.headers?.['sec-fetch-mode'] !== 'navigate') return false;
+    if (req.headers?.['sec-fetch-dest'] !== 'document') return false;
+    const site = req.headers?.['sec-fetch-site'];
+    const allowedSites = callback ? new Set(['cross-site', 'same-origin', 'none']) : new Set(['same-origin', 'none']);
+    if (!allowedSites.has(site)) return false;
+    if (callback) return origin == null;
+    return origin == null || this.allowedOrigins.has(origin);
+  }
+
+  _writeRedirect(res, status, location, setCookie) {
+    const headers = {
+      location, 'content-length': '0', 'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff',
+      'content-security-policy': "default-src 'none'; frame-ancestors 'none'",
+      ...(setCookie ? { 'set-cookie': setCookie } : {}),
+    };
+    res.writeHead(status, headers);
+    res.end();
+  }
+
+  _handleOidcStart(req, res, url, origin) {
+    const ctx = this._oidcContext(req, origin);
+    if (!this.oidc) return this._write(res, error(404, 'not_found'));
+    if (ctx.transport !== 'https' || url.search !== '' || !this._validOidcNavigation(req, origin, false)) {
+      try { this._audit('oidc_start_refused', ctx, { reason: 'request_policy' }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+      return this._write(res, error(ctx.transport === 'https' ? 403 : 503, ctx.transport === 'https' ? 'forbidden' : 'temporarily_unavailable'));
+    }
+    if (this.edge) {
+      const quota = this.edge.take('login', ctx.addressDigest);
+      if (!quota.ok) {
+        try { this._audit('quota_refused', ctx, { quota: 'login' }); }
+        catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+        return this._write(res, error(429, 'rate_limited'), null, { 'retry-after': String(quota.retryAfter) });
+      }
+    }
+    try { this._audit('oidc_start_requested', ctx, { providerClass: 'oidc' }); }
+    catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+    let started;
+    try { started = this.oidc.begin(); }
+    catch (cause) {
+      return this._write(res, error(cause?.code === 'flow_capacity' ? 429 : 503, cause?.code === 'flow_capacity' ? 'rate_limited' : 'temporarily_unavailable'));
+    }
+    try {
+      this._writeRedirect(res, 302, started.location, started.setCookie);
+      started.commit();
+    } catch (cause) {
+      started.rollback();
+      throw cause;
+    }
+  }
+
+  async _handleOidcCallback(req, res, url, origin) {
+    const ctx = this._oidcContext(req, origin);
+    const clearCookie = this.oidc?.clearCookie?.();
+    const refuse = (status, code, reason) => {
+      try { this._audit('oidc_callback_refused', ctx, { reason }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable'), null, clearCookie ? { 'set-cookie': clearCookie } : {}); }
+      return this._write(res, error(status, code), null, clearCookie ? { 'set-cookie': clearCookie } : {});
+    };
+    if (!this.oidc) return this._write(res, error(404, 'not_found'));
+    if (ctx.transport !== 'https' || !this._validOidcNavigation(req, origin, true)) {
+      return refuse(ctx.transport === 'https' ? 403 : 503, ctx.transport === 'https' ? 'forbidden' : 'temporarily_unavailable', 'request_policy');
+    }
+    const keys = [...url.searchParams.keys()];
+    if (keys.some((key) => !['code', 'state'].includes(key))
+      || url.searchParams.getAll('code').length !== 1 || url.searchParams.getAll('state').length !== 1) {
+      return refuse(400, 'invalid_request', 'invalid_callback');
+    }
+    let claims;
+    try {
+      claims = await this.oidc.complete({
+        code: url.searchParams.get('code'), state: url.searchParams.get('state'),
+        cookieHeader: req.headers?.cookie,
+      });
+    } catch (cause) {
+      return refuse(cause?.code === 'provider_refused' || cause?.code === 'identity_mismatch' || cause?.code === 'claims_refused' ? 401 : 400,
+        cause?.code === 'provider_refused' || cause?.code === 'identity_mismatch' || cause?.code === 'claims_refused' ? 'unauthenticated' : 'invalid_request',
+        cause?.code ?? 'invalid_flow');
+    }
+    if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), null, { 'set-cookie': clearCookie });
+    if (!this.sessions || !this.sessions.validateIssue?.(claims)) return refuse(401, 'unauthenticated', 'claims_refused');
+    try {
+      this._audit('oidc_callback_authorized', {
+        ...ctx, principal: { userId: claims.userId, sessionId: 'pending', credentialId: 'pending' },
+      }, { authMethod: 'cookie', providerClass: 'oidc' });
+    } catch {
+      return this._write(res, error(503, 'temporarily_unavailable'), null, { 'set-cookie': clearCookie });
+    }
+    let issued;
+    try { issued = this.sessions.issue(claims, { actor: `web:${claims.userId}:oidc` }); }
+    catch { return this._write(res, error(503, 'temporarily_unavailable'), null, { 'set-cookie': clearCookie }); }
+    const maxAge = Math.max(1, Math.floor((Date.parse(issued.expiresAt) - this.now()) / 1000));
+    const cookies = [issued.setCookie, csrfCookie(issued.csrfToken, maxAge), clearCookie];
+    try {
+      this._writeRedirect(res, 303, '/control', cookies);
+    } catch (cause) {
+      try { this.sessions.revoke(issued.sessionId, { actor: `web:${claims.userId}:oidc`, reason: 'delivery_failed' }); } catch { /* durable issue remains visible */ }
+      try { this._audit('oidc_callback_delivery_failed', ctx, { reason: 'response_delivery' }); } catch { /* transport already failed */ }
+      throw cause;
+    }
   }
 
   async _handleLifecycle(req, res, pathname, origin) {
@@ -514,14 +685,21 @@ export class WebNorthbound {
     catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
     try { this.sessions?.revoke(principal.sessionId, { actor: actor(principal), reason: 'logout' }); }
     catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
-    const headers = principal.authMethod === 'cookie' ? { 'set-cookie': '__Host-baton_session=; Max-Age=0; Secure; HttpOnly; SameSite=Strict; Path=/' } : {};
+    const headers = principal.authMethod === 'cookie' ? { 'set-cookie': [
+      '__Host-baton_session=; Max-Age=0; Secure; HttpOnly; SameSite=Strict; Path=/',
+      '__Host-baton_csrf=; Max-Age=0; Secure; SameSite=Strict; Path=/',
+    ] } : {};
     return this._write(res, result(200, { ok: true }), origin, headers);
   }
 
   _credentialResponse(res, identity, issued, origin, status) {
     const body = { ok: true, identity: { userId: identity.userId, capabilities: [...identity.capabilities], repoIds: [...identity.repoIds] }, expiresAt: issued.expiresAt };
     const headers = {};
-    if (identity.authMethod === 'cookie') { body.csrfToken = issued.csrfToken; headers['set-cookie'] = issued.setCookie; }
+    if (identity.authMethod === 'cookie') {
+      body.csrfToken = issued.csrfToken;
+      const maxAge = Math.max(1, Math.floor((Date.parse(issued.expiresAt) - this.now()) / 1000));
+      headers['set-cookie'] = [issued.setCookie, csrfCookie(issued.csrfToken, maxAge)];
+    }
     else body.token = issued.token;
     return this._write(res, result(status, body), origin, headers);
   }

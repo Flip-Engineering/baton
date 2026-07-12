@@ -255,8 +255,16 @@ reap the root on every observable terminal path; the 660/660 canonical run left 
 Direct bare `node --test` and uncatchable wrapper death remain outside that ownership boundary and
 must not be used as the acceptance command or mistaken for supervisor reconciliation.
 
-The active next increment is the concrete OIDC callback/browser control path plus optional
-WebSocket parity, admitted-command reconciliation, MCP, and operator surfaces. It is followed by
+BO1–BO7 now supplies the concrete browser OIDC Authorization Code + PKCE bootstrap with
+browser-bound one-time state, injected provider verification, exact issuer/audience/nonce checks,
+durable session issuance, and clean callback redirect. BU1–BU7 supplies the first authenticated
+operator seat over the same command/SSE authority, including independent harness/model/effort
+dispatch and fenced worker control. The combined Phase 12 suite is 94/94 and the full suite is
+672/672. Real-browser HTTPS evidence and provider-backed review remain pending; neither is inferred
+from the deterministic suite.
+
+The active next increment is the real-browser OIDC/control/stream/logout proof, followed by optional
+WebSocket parity, admitted-command reconciliation, MCP, and deeper operator surfaces. It is followed by
 the next measured Atlas representation rungs, beginning with structural rewrite/live-LSP depth
 and retaining CPG/dataflow, IR, behavioral fingerprints, semantic diff/merge, and e-graphs in the
 catalog. These checkpoints narrow sequence only; they do not retire any later capability below.

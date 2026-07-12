@@ -25,20 +25,28 @@ The IL1–IL8 injected-provider login, refresh/credential rotation, and logout l
 EP1–EP9 also ships the direct-TLS/trusted-proxy boundary, canonical address identity, bounded
 address/login/principal/cost/ticket/connection quotas, listener-wide HTTPS enforcement,
 non-disclosing readiness, bounded graceful shutdown, audit-amplification controls, and exact
-stream cleanup. The focused Phase 12 edge suite is 82/82 and the current full suite is 660/660. Eleven
+stream cleanup. The focused Phase 12 edge suite is 82/82 and the current full suite is 672/672. Eleven
 recursive exact-route reviews found and closed defects; the next detached clean-review attempt was
 refused by the Codex provider usage limit before a verdict, and the concurrent Grok fallback is
 blocked at provider reauthentication. The implementation is locally green, but the final clean
 provider-backed review gate remains pending rather than inferred.
 
-This is not WN1–WN10 completion. Concrete OIDC redirect/callback behavior, optional resumable
-WebSocket parity, admitted-but-incomplete command reconciliation, MCP/operator surfaces, real
-browser automation, and the final adversarial gate remain active scope.
+BO1–BO7 now adds a bounded, one-time, browser-bound OIDC Authorization Code + PKCE relying-party
+flow with exact issuer/audience/nonce checks at the injected provider boundary, existing durable
+cookie-session issuance, a readable non-credential CSRF cookie, and clean fixed callback redirect.
+BU1–BU7 adds an authenticated minimal operator seat over the existing command and SSE APIs with
+independent harness/model/effort inputs, fence-preserving controls, sanitized session projection,
+strict CSP, and no parallel fleet truth. The combined focused Phase 12 suite is 94/94.
+
+This is not WN1–WN10 completion. Real local browser automation, a production OIDC provider adapter,
+optional resumable WebSocket parity, admitted-but-incomplete command reconciliation, MCP, richer
+operator depth, and the final adversarial gate remain active scope.
 
 The shipped lifecycle contracts are IL1–IL8 in
 `spec/phase12/authenticated-web-session-lifecycle.md`; the shipped edge-policy contracts are
-EP1–EP9 in `spec/phase12/web-edge-policy.md`. Browser, identity-provider, command-reconciliation,
-MCP/operator, and optional transport gates remain explicit after them.
+EP1–EP9 in `spec/phase12/web-edge-policy.md`; BO1–BO7 and BU1–BU7 live in
+`spec/phase12/browser-{oidc,operator}.md`. Live browser/provider, command-reconciliation, MCP, and
+optional transport gates remain explicit after them.
 
 ## WN1 — one authority, two web transports
 

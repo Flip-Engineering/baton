@@ -35,6 +35,8 @@ export { WebNorthbound, createAuthenticatedWebServer, validateWebCommandEnvelope
 export { WebEventStream } from './web-stream.mjs';
 export { WebEdgePolicy, WebReadinessAuthority, FixedWindowQuota, ConcurrentQuota, resolveEdgeRequest } from './web-edge.mjs';
 export { WebSessionStore, WebSessionIntegrityError, WEB_SESSION_COOKIE_NAME } from './web-auth.mjs';
+export { OidcBrowserFlow, OidcFlowError, OIDC_FLOW_COOKIE_NAME, WEB_CSRF_COOKIE_NAME, csrfCookie } from './web-oidc.mjs';
+export { operatorAsset } from './web-operator.mjs';
 export { AtlasStructuralDelta } from './atlas-structural.mjs';
 export { AtlasCodeIndex } from './atlas-index.mjs';
 

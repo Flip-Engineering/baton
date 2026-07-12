@@ -27,7 +27,7 @@ integration.
 ## Deterministic validation
 
 - `node --test` over the five Phase 12 edge/session/auth/northbound/stream files passes 82/82.
-- The current full implementation suite passes 660/660 through the owned canonical runner.
+- The current full implementation suite passes 672/672 through the owned canonical runner.
 - `git diff --check` passes.
 - A real local proxy listener covers duplicate raw field-lines, forwarding-protocol casing, and
   immediate-peer quota behavior rather than relying only on synthetic request objects.
