@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createBrief, createDriver, MockAdapter, MergirafResolver } from '../src/index.mjs';
@@ -44,6 +44,7 @@ test('SM4: resolver success with conflict markers still refuses and reaps the st
   for (const [taskId, resolve] of [
     ['sm-markers', async () => ({ status: 'resolved' })],
     ['sm-marker-evasion', async ({ absolutePath }) => { writeFileSync(absolutePath, 'export const ok = 1;\n<<<<<<<ours\n'); return { status: 'resolved' }; }],
+    ['sm-marker-midline', async ({ absolutePath }) => { writeFileSync(absolutePath, 'export const ok = 1; /* <<<<<<< ours */\n'); return { status: 'resolved' }; }],
   ]) {
     const root = repo(); const resolver = { maxFileBytes: 4096, identity: () => ({ tool: 'fake-mergiraf', version: 'test' }), resolve };
     const { coordinator, handle } = await accepted(root, taskId, 'export const values = { alpha: 2 };\n', resolver);
@@ -113,6 +114,17 @@ test('SM3-SM7: a clean divergent three-way merge needs no resolver but still get
   assert.equal(result.integration.resolver, null); assert.equal(result.integration.verdict.passed, true);
   assert.equal(readFileSync(join(root, 'src/value.js'), 'utf8'), 'export const values = { alpha: 2 };\n');
   assert.equal(readFileSync(join(root, 'src/main-only.js'), 'utf8'), 'export const beta = 3;\n');
+});
+
+test('SM7: final main fast-forward disables hooks and leaves the checkout clean', async () => {
+  const root = repo(); const { coordinator, handle } = await accepted(root, 'sm-final-hook', 'export const values = { alpha: 2 };\n', null);
+  write(root, 'src/main-only.js', 'export const beta = 3;\n'); commit(root, 'main adds another file');
+  const hook = join(root, '.git', 'hooks', 'post-merge');
+  writeFileSync(hook, '#!/bin/sh\nprintf hook-ran > hook-ran.txt\n'); chmodSync(hook, 0o755);
+  const result = await coordinator.integrate(handle.id, { strategy: 'structured' });
+  assert.equal(result.integration.verdict.passed, true);
+  assert.equal(existsSync(join(root, 'hook-ran.txt')), false);
+  assert.equal(git(['status', '--porcelain'], root), '');
 });
 
 test('SM2/SM3: ambient GIT overrides cannot redirect structured staging', async () => {

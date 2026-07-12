@@ -260,7 +260,7 @@ export async function captureCommit(repoRoot, taskId, opts = {}) {
 // Structured integration staging (Phase 26 SM1-SM9)
 // ---------------------------------------------------------------------------
 
-const CONFLICT_MARKER = /^(?:<{7,}|\|{7,}|={7,}|>{7,})/m;
+const CONFLICT_MARKER = /(?:<{7,}|\|{7,}|={7,}|>{7,})/;
 
 function integrationRoot(repoRoot) { return join(repoRoot, '.baton', 'integrate'); }
 
@@ -354,9 +354,12 @@ export async function finalizeStructuredIntegration(repoRoot, stage) {
   if (sh('git', ['rev-parse', 'HEAD'], repoRoot) !== stage.beforeSha) throw mergeError('main advanced after structured staging', 'structured_main_advanced');
   const parents = sh('git', ['show', '-s', '--format=%P', stage.stageSha], repoRoot).split(' ');
   if (parents.length !== 2 || parents[0] !== stage.beforeSha || parents[1] !== stage.resultSha) throw mergeError('structured candidate parent identity changed', 'structured_parent_mismatch');
-  try { sh('git', ['merge', '--ff-only', stage.stageSha], repoRoot); }
+  try { gitFile(['-c', 'core.hooksPath=/dev/null', 'merge', '--no-verify', '--ff-only', stage.stageSha], repoRoot, { encoding: 'utf8', stdio: 'pipe' }); }
   catch (error) { throw mergeError('main could not fast-forward to verified structured candidate', 'structured_main_advanced', error); }
-  return { beforeSha: stage.beforeSha, resultSha: stage.resultSha, mergeBaseSha: stage.mergeBaseSha, stageSha: stage.stageSha, afterSha: sh('git', ['rev-parse', 'HEAD'], repoRoot), classes: stage.classes, resolutions: stage.resolutions, resolver: stage.resolver };
+  const afterSha = sh('git', ['rev-parse', 'HEAD'], repoRoot);
+  if (afterSha !== stage.stageSha) throw mergeError('main did not land on the verified structured candidate', 'structured_main_advanced');
+  if (!isClean(repoRoot)) throw mergeError('main became dirty while finalizing structured integration', 'structured_main_dirty');
+  return { beforeSha: stage.beforeSha, resultSha: stage.resultSha, mergeBaseSha: stage.mergeBaseSha, stageSha: stage.stageSha, afterSha, classes: stage.classes, resolutions: stage.resolutions, resolver: stage.resolver };
 }
 
 // ---------------------------------------------------------------------------
