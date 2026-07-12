@@ -19,6 +19,16 @@ import { dirname, join } from 'node:path';
 
 const STOP_SETTLE_MS = 8;
 
+function localGitEnv() {
+  const env = {};
+  for (const [key, value] of Object.entries(process.env)) if (!key.startsWith('GIT_')) env[key] = value;
+  return { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+}
+
+function localGit(args, cwd, opts = {}) {
+  return execFileSync('git', args, { ...opts, cwd, env: localGitEnv() });
+}
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
@@ -426,23 +436,22 @@ export class MockAdapter {
     writeFileSync(filePath, edit.content);
     const authorName = session.scenario.authorName ?? 'baton-worker-mock';
     const authorEmail = session.scenario.authorEmail ?? 'baton-worker-mock@localhost';
-    execFileSync('git', ['add', '-A'], { cwd: session.opts.worktree });
+    localGit(['add', '-A'], session.opts.worktree);
     // If the edit's path is entirely gitignored (or otherwise produces no staged change),
     // `git add -A` silently skips it and there is nothing for `git commit` to record — the
     // file is still genuinely written to disk (honest, inspectable content), it's just not
     // tracked by git. Detect that case instead of letting `git commit` throw.
-    const stagedClean = execFileSync('git', ['status', '--porcelain'], { cwd: session.opts.worktree, encoding: 'utf8' }).trim() === '';
+    const stagedClean = localGit(['status', '--porcelain'], session.opts.worktree, { encoding: 'utf8' }).trim() === '';
     let sha;
     if (!stagedClean) {
-      execFileSync(
-        'git',
+      localGit(
         ['commit', '-q', '-m', `mock edit: ${edit.path}`, `--author=${authorName} <${authorEmail}>`],
-        { cwd: session.opts.worktree },
+        session.opts.worktree,
       );
-      sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: session.opts.worktree, encoding: 'utf8' }).trim();
+      sha = localGit(['rev-parse', 'HEAD'], session.opts.worktree, { encoding: 'utf8' }).trim();
       session.commits.push(sha);
     } else {
-      sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: session.opts.worktree, encoding: 'utf8' }).trim();
+      sha = localGit(['rev-parse', 'HEAD'], session.opts.worktree, { encoding: 'utf8' }).trim();
     }
     session.appliedPaths.push(edit.path);
     session.editsApplied += 1;

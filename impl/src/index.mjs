@@ -48,6 +48,13 @@ export { AtlasBehaviorFingerprint } from './atlas-behavior-fingerprint.mjs';
 export { AtlasCodeIndex } from './atlas-index.mjs';
 export { MergirafResolver } from './structured-merge.mjs';
 
+function localGitEnv() {
+  const env = {}; for (const [key, value] of Object.entries(process.env)) if (!key.startsWith('GIT_')) env[key] = value;
+  return { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+}
+
+function localGit(args, cwd, opts = {}) { return execFileSync('git', args, { ...opts, cwd, env: localGitEnv() }); }
+
 /** worktree.mjs's real functions wrapped into the coordinator's manager interface. */
 function worktreeManager(repoRoot, opts = {}) {
   return {
@@ -73,11 +80,11 @@ function worktreeManager(repoRoot, opts = {}) {
     async integrate(sha, opts = {}) {
       const strategy = opts.strategy ?? 'ff-only';
       if (strategy !== 'ff-only') throw new Error(`unsupported integration strategy: ${strategy}`);
-      const dirty = execFileSync('git', ['status', '--porcelain'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+      const dirty = localGit(['status', '--porcelain'], repoRoot, { encoding: 'utf8' }).trim();
       if (dirty) throw new Error('main checkout is dirty');
-      const beforeSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
-      execFileSync('git', ['merge', '--ff-only', sha], { cwd: repoRoot, stdio: 'pipe' });
-      const afterSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).trim();
+      const beforeSha = localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
+      localGit(['merge', '--ff-only', sha], repoRoot, { stdio: 'pipe' });
+      const afterSha = localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
       return { beforeSha, resultSha: sha, afterSha };
     },
     async stageStructuredIntegration(taskId, sha) {
@@ -87,14 +94,14 @@ function worktreeManager(repoRoot, opts = {}) {
     async removeStructuredIntegration(stage) { return worktreeMod.removeStructuredIntegration(repoRoot, stage); },
     async retainResult(sha) {
       const ref = `refs/baton/results/${sha}`;
-      execFileSync('git', ['update-ref', ref, sha], { cwd: repoRoot, stdio: 'ignore' });
+      localGit(['update-ref', ref, sha], repoRoot, { stdio: 'ignore' });
       return ref;
     },
     async releaseResult(ref) {
-      execFileSync('git', ['update-ref', '-d', ref], { cwd: repoRoot, stdio: 'ignore' });
+      localGit(['update-ref', '-d', ref], repoRoot, { stdio: 'ignore' });
     },
     async removeVerifyWorktree(verifyPath) {
-      try { execFileSync('git', ['worktree', 'remove', '--force', verifyPath], { cwd: repoRoot, stdio: 'ignore' }); } catch { /* noop */ }
+      try { localGit(['worktree', 'remove', '--force', verifyPath], repoRoot, { stdio: 'ignore' }); } catch { /* noop */ }
       try { rmSync(verifyPath, { recursive: true, force: true }); } catch { /* noop */ }
     },
     // Terminal policy cleanup owns non-evidence task branches as well as their checkout/metadata.
@@ -108,14 +115,14 @@ function worktreeManager(repoRoot, opts = {}) {
         if (context.repoRoot && realpathSync(context.repoRoot) !== root) return { ok: false, reason: 'session repository identity mismatch' };
         if (worktree !== managedRoot && !worktree.startsWith(`${managedRoot}${sep}`)) return { ok: false, reason: 'session worktree is outside Baton ownership' };
         if (context.ownerTaskId && basename(worktree) !== context.ownerTaskId) return { ok: false, reason: 'session worktree owner mismatch' };
-        const top = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: worktree, encoding: 'utf8' }).trim();
+        const top = localGit(['rev-parse', '--show-toplevel'], worktree, { encoding: 'utf8' }).trim();
         if (realpathSync(top) !== worktree) return { ok: false, reason: 'session path is not the recorded git worktree root' };
         if (context.branch) {
-          const branch = execFileSync('git', ['branch', '--show-current'], { cwd: worktree, encoding: 'utf8' }).trim();
+          const branch = localGit(['branch', '--show-current'], worktree, { encoding: 'utf8' }).trim();
           if (branch !== context.branch) return { ok: false, reason: 'session worktree branch mismatch' };
         }
         if (context.baseSha) {
-          execFileSync('git', ['merge-base', '--is-ancestor', context.baseSha, 'HEAD'], { cwd: worktree, stdio: 'ignore' });
+          localGit(['merge-base', '--is-ancestor', context.baseSha, 'HEAD'], worktree, { stdio: 'ignore' });
         }
         return { ok: true };
       } catch (err) {

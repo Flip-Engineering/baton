@@ -118,11 +118,16 @@ test('SM3-SM7: a clean divergent three-way merge needs no resolver but still get
 test('SM2/SM3: ambient GIT overrides cannot redirect structured staging', async () => {
   const root = repo(); const { coordinator, handle } = await accepted(root, 'sm-git-env', 'export const values = { alpha: 2 };\n', null);
   write(root, 'src/main-only.js', 'export const beta = 3;\n'); commit(root, 'main adds another file');
-  const prior = process.env.GIT_INDEX_FILE; process.env.GIT_INDEX_FILE = join(root, 'missing', 'poison-index');
+  const decoy = repo(); const prior = { dir: process.env.GIT_DIR, tree: process.env.GIT_WORK_TREE, index: process.env.GIT_INDEX_FILE };
+  process.env.GIT_DIR = join(decoy, '.git'); process.env.GIT_WORK_TREE = decoy; process.env.GIT_INDEX_FILE = join(decoy, '.git', 'poison-index');
   try {
     const result = await coordinator.integrate(handle.id, { strategy: 'structured' });
     assert.equal(result.integration.verdict.passed, true); assert.equal(readFileSync(join(root, 'src/value.js'), 'utf8'), 'export const values = { alpha: 2 };\n');
-  } finally { if (prior === undefined) delete process.env.GIT_INDEX_FILE; else process.env.GIT_INDEX_FILE = prior; }
+    assert.equal(git(['for-each-ref', '--format=%(refname)', 'refs/baton'], decoy), '');
+  } finally {
+    for (const [key, value] of [['GIT_DIR', prior.dir], ['GIT_WORK_TREE', prior.tree], ['GIT_INDEX_FILE', prior.index]]) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    rmSync(decoy, { recursive: true, force: true });
+  }
 });
 
 test('SM2: a dirty main refuses without changing its bytes or index state', async () => {

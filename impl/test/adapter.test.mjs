@@ -197,6 +197,23 @@ test('MockAdapter.run outcome:"completed" writes scripted edits as real files an
   assert.equal(author, 'Mock Worker <mock@baton.local>');
 });
 
+test('MockAdapter commit capture ignores ambient GIT repository redirects', async (t) => {
+  const worktree = makeRepo(); const decoy = makeRepo();
+  t.after(() => { rmSync(worktree, { recursive: true, force: true }); rmSync(decoy, { recursive: true, force: true }); });
+  const prior = { dir: process.env.GIT_DIR, tree: process.env.GIT_WORK_TREE, index: process.env.GIT_INDEX_FILE };
+  process.env.GIT_DIR = join(decoy, '.git'); process.env.GIT_WORK_TREE = decoy; process.env.GIT_INDEX_FILE = join(decoy, '.git', 'poison-index');
+  try {
+    await new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'owned.txt', content: 'owned\n' }] } }).run(makeBrief(), makeOpts(worktree));
+  } finally {
+    for (const [key, value] of [['GIT_DIR', prior.dir], ['GIT_WORK_TREE', prior.tree], ['GIT_INDEX_FILE', prior.index]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+  assert.equal(readFileSync(join(worktree, 'owned.txt'), 'utf8'), 'owned\n');
+  assert.equal(commitCount(worktree), 2);
+  assert.equal(commitCount(decoy), 1);
+});
+
 test('MockAdapter.run outcome:"failed" still applies and commits real (if wrong) work', async (t) => {
   const dir = makeRepo();
   t.after(() => rmSync(dir, { recursive: true, force: true }));
