@@ -18,6 +18,7 @@
 // gate are the two [live]-pinned facts.
 
 import { spawn, execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { renderBrief } from './adapter.mjs';
 
 // ---------------------------------------------------------------------------
@@ -66,6 +67,21 @@ function pickOption(options, decision) {
   return byKind ?? opts[opts.length - 1];
 }
 
+function boundedEvidence(value, maxBytes) {
+  let encoded;
+  try { encoded = JSON.stringify(value); }
+  catch { return { truncated: true, originalBytes: null, sha256: null, preview: '[unserializable provider payload]' }; }
+  const originalBytes = Buffer.byteLength(encoded);
+  if (originalBytes <= maxBytes) return value;
+  const previewBytes = Math.max(0, Math.min(2048, maxBytes - 256));
+  return {
+    truncated: true,
+    originalBytes,
+    sha256: createHash('sha256').update(encoded).digest('hex'),
+    preview: Buffer.from(encoded).subarray(0, previewBytes).toString('utf8'),
+  };
+}
+
 export function withGrokModelArgs(baseArgs, { model, reasoningEffort, sandbox } = {}) {
   const args = [...baseArgs];
   // `--sandbox` is a top-level Grok flag and is rejected after `agent`; model/effort are agent
@@ -91,7 +107,7 @@ export class GrokAcpCli {
   /**
    * @param {{cmd?:string, args?:string[], env?:object, requestTimeoutMs?:number,
    *   stopDeadlineMs?:number, ceiling?:number, maxContext?:number,
-   *   versionProbe?:()=>string, spawnFn?:Function}} opts
+   *   versionProbe?:()=>string, spawnFn?:Function, maxEventPayloadBytes?:number}} opts
    */
   constructor(opts = {}) {
     // GA3: derived, never invented — same rule and option names as the codex/claude adapters.
@@ -110,6 +126,10 @@ export class GrokAcpCli {
     this._maxContext = opts.maxContext ?? 500000;
     this._model = opts.model;
     this._reasoningEffort = opts.reasoningEffort;
+    this._maxEventPayloadBytes = opts.maxEventPayloadBytes ?? 64 * 1024;
+    if (!Number.isSafeInteger(this._maxEventPayloadBytes) || this._maxEventPayloadBytes < 1024) {
+      throw new TypeError('GrokAcpCli: maxEventPayloadBytes must be an integer of at least 1024 bytes');
+    }
 
     // GA15: probed once, synchronously, cached; never throws.
     const versionProbe = opts.versionProbe ?? (() => execFileSync('grok', ['--version']).toString().trim());
@@ -364,11 +384,15 @@ export class GrokAcpCli {
           if (diffs.length > 0) {
             this._emit(session, 'content.file_edit', {
               sessionId: session.sessionId, turnId, toolCallId: update.toolCallId,
-              paths: diffs.map((item) => item.path), diffs,
+              paths: diffs.map((item) => item.path), diffs: boundedEvidence(diffs, this._maxEventPayloadBytes),
             });
           }
+          const wireEvidence = boundedEvidence(update, this._maxEventPayloadBytes);
+          const eventUpdate = wireEvidence?.truncated === true
+            ? { sessionUpdate: update.sessionUpdate, toolCallId: update.toolCallId, title: update.title ?? null, kind: update.kind ?? null, status: update.status ?? null, wireEvidence }
+            : wireEvidence;
           this._emit(session, 'content.tool_call', {
-            sessionId: session.sessionId, turnId, ...update,
+            sessionId: session.sessionId, turnId, ...eventUpdate,
             command: update.rawInput?.command ?? update.rawOutput?.command ?? null,
             exitCode: update.rawOutput?.exit_code ?? null,
           });

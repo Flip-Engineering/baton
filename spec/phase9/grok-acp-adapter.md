@@ -226,7 +226,8 @@ Session ids pid-namespaced (phase8 R2 lesson — per-worker children would other
    "approved: proceeding" + `end_turn`; reject-kind → "declined: skipping step" + `end_turn`;
    `cancelled` outcome → `stopReason:"cancelled"`), `FAKE:SERVER_UNKNOWN_REQUEST` (blocks on an
    `x.ai/*` request baton doesn't map — an error answer unwedges it), `FAKE:STAY_OPEN` (resolves
-   only via `session/cancel`), else natural `end_turn` ~10ms.
+   only via `session/cancel`), `FAKE:LARGE_TOOL_OUTPUT` (emits oversized raw output and diff
+   telemetry for the event-ceiling red), else natural `end_turn` ~10ms.
 4. `session/cancel` (notification) → resolves the active prompt `{stopReason:"cancelled"}`; the
    session survives for further prompts.
 5. `FAKE_GROK_HANG=1` → `initialize` never answered (times the adapter's bounded setup RPCs).
@@ -291,5 +292,12 @@ adapter):
 9. Fleet-isolation note: the user's global MCP servers + hooks ran inside the session
    (`mcpServers:[]` notwithstanding). Workers should set `GROK_HOME` to a minimal config dir via
    the constructor's `env` — no adapter change required.
+10. Recursive Baton review exposed that live `tool_call_update` frames can contain arbitrarily
+    large raw command/read/diff payloads. GA19 now applies a deployment-configurable
+    `maxEventPayloadBytes` ceiling (64 KiB default) before authoritative logging. Oversized wire
+    evidence becomes `{truncated, originalBytes, sha256, preview}` while stable session/update,
+    tool-call, status, command, exit-code, and changed-path fields remain available. This is an
+    evidence bound, not silent omission: the digest and byte count make truncation explicit and
+    reproducible.
 
 Suite after corrections: **372/372** (+F1 usage test, +F2 tool_call_update test).

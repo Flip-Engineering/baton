@@ -183,6 +183,17 @@ function runPrompt(text) {
     return; // only session/cancel resolves it
   }
 
+  if (text.includes('FAKE:LARGE_TOOL_OUTPUT')) {
+    const tcId = `call-${(toolCallSeq += 1)}`;
+    update({
+      sessionUpdate: 'tool_call_update', toolCallId: tcId, title: 'read huge fixture', status: 'completed',
+      rawInput: { path: '/fake/huge.txt' }, rawOutput: { exit_code: 0, output: 'x'.repeat(128 * 1024) },
+      content: [{ type: 'diff', path: '/fake/huge.txt', oldText: '', newText: 'x'.repeat(128 * 1024) }],
+    });
+    scheduleNaturalEnd(text);
+    return;
+  }
+
   // LIVE-shaped two-phase tool telemetry (probe #4): an initial tool_call, then a
   // tool_call_update carrying the completion status + diff content.
   const tcId = `call-${(toolCallSeq += 1)}`;

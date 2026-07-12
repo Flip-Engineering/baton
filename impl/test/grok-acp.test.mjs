@@ -49,6 +49,7 @@ function makeAdapter(extra = {}) {
     stopDeadlineMs: extra.stopDeadlineMs,
     ceiling: 4,
     maxContext: extra.maxContext,
+    maxEventPayloadBytes: extra.maxEventPayloadBytes,
     versionProbe: extra.versionProbe ?? (() => 'fake-grok/0.1.216-test'),
   });
 }
@@ -180,6 +181,20 @@ test('GA19: a tool_call session/update maps to content.tool_call', async () => {
   } finally {
     await cleanup(adapter, worker);
   }
+});
+
+test('GA19: oversized provider tool telemetry is digest-bounded before authoritative logging', async () => {
+  const adapter = makeAdapter({ maxEventPayloadBytes: 2048 });
+  const events = collect(adapter); const worker = 'w1';
+  try {
+    await adapter.spawn(worker, makeBrief('FAKE:LARGE_TOOL_OUTPUT'), { worktree: freshWorktree() });
+    const tc = await until(events, (e) => e.kind === 'content.tool_call');
+    assert.equal(tc.payload.sessionUpdate, 'tool_call_update'); assert.equal(tc.payload.status, 'completed');
+    assert.equal(tc.payload.wireEvidence.truncated, true); assert.equal(tc.payload.wireEvidence.originalBytes > 128 * 1024, true);
+    assert.match(tc.payload.wireEvidence.sha256, /^[a-f0-9]{64}$/); assert.equal(Buffer.byteLength(JSON.stringify(tc.payload)) < 4096, true);
+    const edit = await until(events, (e) => e.kind === 'content.file_edit');
+    assert.deepEqual(edit.payload.paths, ['/fake/huge.txt']); assert.equal(edit.payload.diffs.truncated, true);
+  } finally { await cleanup(adapter, worker); }
 });
 
 // ---------------------------------------------------------------------------
