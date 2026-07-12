@@ -16,7 +16,7 @@ function fixture(source, opts = {}) {
 
 test('CG1/CG2: card and deterministic graph identity are honest', async () => {
   const f = fixture(`function helper(x) { return x }\nfunction run(v) { let out = helper(v); return out }\n`);
-  const card = f.atlas.card(); assert.equal(card.ops['cpg.build'].deterministic, true); assert.ok(card.limitations.includes('no SSA/path-sensitive PDG/taint'));
+  const card = f.atlas.card(); assert.equal(card.ops['cpg.build'].deterministic, true); assert.ok(card.limitations.some((item) => item.includes('no SSA/path-sensitive PDG/taint')));
   const one = await f.atlas.invoke('cpg.build', f.args, f.ctx); const two = await f.atlas.invoke('cpg.build', f.args, f.ctx);
   assert.equal(one.provenance.graphDigest, two.provenance.graphDigest);
   assert.deepEqual(one.payload, two.payload);
@@ -48,6 +48,15 @@ test('CG2/CG5: parameterized arrow functions use their binding name, not their f
   assert.equal(graph.nodes.some((node) => node.type === 'function' && node.name === 'helper'), true);
   assert.equal(graph.nodes.some((node) => node.type === 'function' && node.name === 'value'), false);
   assert.equal(graph.nodes.find((node) => node.type === 'call' && node.calleeName === 'helper').resolved !== null, true);
+});
+
+test('CG4: assignments and direct call arguments produce explicit value-flow edges', async () => {
+  const f = fixture(`function source() { return 'x' }\nfunction sink(value) {}\nfunction run() { let value = source(); sink(value); sink(source()) }\n`);
+  const result = await f.atlas.invoke('cpg.build', f.args, f.ctx); const graph = JSON.parse(readFileSync(result.refs[0].path, 'utf8'));
+  assert.equal(graph.edges.some((edge) => edge.type === 'ASSIGNED_FROM'), true);
+  assert.equal(graph.edges.some((edge) => edge.type === 'ARGUMENT_TO' && graph.nodes.find((node) => node.id === edge.from)?.type === 'identifier'), true);
+  assert.equal(graph.edges.some((edge) => edge.type === 'ARGUMENT_TO' && graph.nodes.find((node) => node.id === edge.from)?.type === 'call'), true);
+  assert.equal(new Set(graph.edges.map((edge) => edge.id)).size, graph.edges.length);
 });
 
 test('CG6: parse errors are partial and cancellation/unsupported language fail typed', async () => {

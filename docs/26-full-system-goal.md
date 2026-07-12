@@ -282,10 +282,12 @@ available, plus optional WebSocket parity, Streamable HTTP MCP/tasks/daemon dept
 the next measured Atlas representation rungs. Proposal-only structural rewrite now ships with a
 9/9 focused gate, 701/701 full suite, and a Baton-on-Baton immutable proposal proof. Direct apply
 and live-LSP depth remain, while CPG/dataflow, IR, behavioral fingerprints, semantic diff/merge,
-and e-graphs stay in the catalog. The CPG seed and its delta/impact continuation now ship. The combined CPG gate is 13/13 focused and
-714/714 full-suite green, with a Baton-on-Baton `sha` helper delta proving node/edge changes,
-reverse-caller impact, and reverify. SSA, path-sensitive PDG, aliases, interprocedural dataflow,
-dynamic dispatch, taint, and repository-wide CPG overlays remain unclaimed.
+and e-graphs stay in the catalog. The CPG seed, delta/impact, and operator-specified lexical taint
+continuation now ship. The combined R3 gate is 20/20 focused and 721/721 full-suite green.
+Baton-on-Baton proofs cover a `sha` helper node/edge delta with reverse-caller impact and the real
+MCP `JSON.parse` assignment reaching `server.handle`. SSA, path-sensitive PDG, aliases,
+heap/implicit flows, interprocedural returns, dynamic dispatch, and repository-wide CPG overlays
+remain unclaimed.
 These checkpoints narrow sequence only; they do not retire any later capability below.
 
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,

@@ -41,7 +41,7 @@ export class AtlasCpgSlice {
     this.artifactRoot = opts.artifactRoot; this.maxSourceBytes = opts.maxSourceBytes; this.maxArtifactBytes = opts.maxArtifactBytes; this.now = opts.now ?? Date.now; this.record = opts.record ?? null;
     mkdirSync(this.artifactRoot, { recursive: true, mode: 0o700 });
   }
-  card() { return Object.freeze({ name: 'atlas-cpg-slice', version: '0.1.0', underlying: [`@ast-grep/napi@${VERSION}`], ops: { 'cpg.build': { deterministic: true, latency_class: 'interactive', side_effects: 'writes_content_addressed_artifact', reverifiable: true } }, languages: ['javascript', 'typescript', 'tsx'], limitations: ['single-file JS/TS-family slice', 'no SSA/path-sensitive PDG/taint', 'no alias analysis/interprocedural dataflow/dynamic dispatch', 'unsupported control constructs are atomic'] }); }
+  card() { return Object.freeze({ name: 'atlas-cpg-slice', version: '0.2.0', underlying: [`@ast-grep/napi@${VERSION}`], ops: { 'cpg.build': { deterministic: true, latency_class: 'interactive', side_effects: 'writes_content_addressed_artifact', reverifiable: true } }, languages: ['javascript', 'typescript', 'tsx'], limitations: ['single-file JS/TS-family slice', 'no SSA/path-sensitive PDG/taint proof', 'value flow covers lexical assignment and call arguments', 'no alias analysis/interprocedural dataflow/dynamic dispatch', 'unsupported control constructs are atomic'] }); }
 
   async invoke(op, args, ctx) {
     if (op !== 'cpg.build') throw typed('unsupported CPG operation', 'unsupported_op');
@@ -50,9 +50,9 @@ export class AtlasCpgSlice {
     const file = safe(ctx.root, args.path); const bytes = readFileSync(file); if (bytes.includes(0) || bytes.length > this.maxSourceBytes) throw typed('CPG source exceeds budget or is binary', 'invalid_source');
     let source; try { source = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { throw typed('CPG source is invalid UTF-8', 'invalid_source'); }
     const sourceDigest = sha(bytes); const started = this.now(); this.record?.({ kind: 'capability.op.started', actor: ctx.actor ?? 'orchestrator', op, sourceDigest });
-    const root = parse(language, source).root(); const nodes = []; const edges = []; const errors = []; const functions = []; const occurrences = []; const calls = []; const blockStatements = new Map();
+    const root = parse(language, source).root(); const nodes = []; const edges = []; const errors = []; const functions = []; const occurrences = []; const calls = []; const blockStatements = new Map(); const pendingAssignments = []; const pendingArguments = [];
     const nodeId = (type, node) => `${sourceDigest}:${id(type, node)}`;
-    const edge = (type, from, to) => { if (!from || !to) return; edges.push({ id: sha(`${type}\0${from}\0${to}`), type, from, to }); };
+    const edgeIds = new Set(); const edge = (type, from, to) => { if (!from || !to) return; const edgeId = sha(`${type}\0${from}\0${to}`); if (edgeIds.has(edgeId)) return; edgeIds.add(edgeId); edges.push({ id: edgeId, type, from, to }); };
     function visit(node, state = { fn: null, block: null, parent: null }) {
       abort(ctx); const kind = node.kind(); if (kind === 'ERROR') errors.push(range(node));
       let fn = state.fn; let block = state.block;
@@ -77,6 +77,18 @@ export class AtlasCpgSlice {
       if (kind === 'call_expression' && fn) {
         const callee = node.children().find((child) => child.isNamed()); const name = callee ? callee.text().match(/[A-Za-z_$][\w$]*$/)?.[0] ?? null : null; const cid = nodeId('call', node);
         nodes.push({ id: cid, type: 'call', caller: fn, calleeName: name, calleeText: callee?.text() ?? null, resolved: null, candidates: [], path: args.path, range: range(node) }); edge('CONTAINS', fn, cid); calls.push({ id: cid, name, fn });
+        let argumentsNode = null; try { argumentsNode = node.field('arguments'); } catch { /* grammar variance */ }
+        if (argumentsNode) {
+          for (const identifier of argumentsNode.findAll({ rule: { kind: 'identifier' } })) pendingArguments.push({ value: identifier, call: node });
+          for (const nested of argumentsNode.findAll({ rule: { kind: 'call_expression' } })) pendingArguments.push({ value: nested, call: node });
+        }
+      }
+      if (['variable_declarator', 'assignment_expression'].includes(kind)) {
+        const named = node.children().filter((child) => child.isNamed()); const target = named[0]; const value = named[1];
+        if (target?.kind() === 'identifier' && value) {
+          if (value.kind() === 'call_expression') pendingAssignments.push({ value, target });
+          for (const call of value.findAll({ rule: { kind: 'call_expression' } })) pendingAssignments.push({ value: call, target });
+        }
       }
       for (const child of node.children()) if (child.isNamed()) visit(child, { fn, block, parent: node });
     }
@@ -100,6 +112,8 @@ export class AtlasCpgSlice {
     for (const item of occurrences) { const key = `${item.fn}\0${item.name}`; if (item.role === 'definition') latest.set(key, item.id); else edge('REACHING_DEF', latest.get(key), item.id); }
     const byName = new Map(); for (const fn of functions) { const list = byName.get(fn.name) ?? []; list.push(fn.id); byName.set(fn.name, list); }
     const nodeById = new Map(nodes.map((node) => [node.id, node]));
+    for (const pending of pendingAssignments) edge('ASSIGNED_FROM', nodeId('call', pending.value), nodeId('identifier', pending.target));
+    for (const pending of pendingArguments) { const type = pending.value.kind() === 'call_expression' ? 'call' : 'identifier'; const valueId = nodeId(type, pending.value); if (nodeById.has(valueId)) edge('ARGUMENT_TO', valueId, nodeId('call', pending.call)); }
     for (const call of calls) { const candidates = byName.get(call.name) ?? []; const target = nodeById.get(call.id); target.candidates = [...candidates]; target.resolved = candidates.length === 1 ? candidates[0] : null; if (target.resolved) edge('CALLS', call.fn, target.resolved); }
     nodes.sort((a, b) => a.id.localeCompare(b.id)); edges.sort((a, b) => a.type.localeCompare(b.type) || a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
     const graph = { schemaVersion: 1, op, path: args.path, sourceDigest, parseErrors: errors, nodes, edges }; const serialized = `${JSON.stringify(graph)}\n`; const graphDigest = sha(serialized);

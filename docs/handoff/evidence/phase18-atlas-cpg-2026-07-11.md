@@ -1,8 +1,8 @@
 # Phase 18 Atlas CPG seed evidence — 2026-07-11
 
 - Contract: `spec/phase18/atlas-cpg-slice.md` (CG1–CG8).
-- Focused: 7/7 via `npm test -- --test test/phase18-atlas-cpg.test.mjs` in `impl/`.
-- Current full: 714/714 via canonical `npm test`; owned suite root reaped.
+- Focused: 8/8 via `npm test -- --test test/phase18-atlas-cpg.test.mjs` in `impl/`.
+- Current full: 721/721 via canonical `npm test`; owned suite root reaped.
 
 The gate proves deterministic source-digest-bound graph identities; function/statement/identifier/
 call/entry/exit nodes; syntax containment; block control order, branch, return/throw exit edges;
@@ -12,6 +12,8 @@ and re-verification.
 The added hardening proves parameterized arrow functions use their binding name rather than their
 first parameter and makes resume require the exact digest-derived path plus the CPG schema, not
 merely arbitrary hash-consistent JSON.
+The value-flow continuation adds deduplicated `ASSIGNED_FROM` and `ARGUMENT_TO` edges for lexical
+assignments plus direct identifier/nested-call arguments.
 
 The Baton-on-Baton runner built the graph for `impl/src/mcp-northbound.mjs`. Its adjacent summary
 has every check true: the graph was complete and substantial, contained every claimed edge family,

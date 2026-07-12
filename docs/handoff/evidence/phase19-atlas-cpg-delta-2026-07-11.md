@@ -2,8 +2,8 @@
 
 - Contract: `spec/phase19/atlas-cpg-delta-impact.md` (CD1–CD8).
 - Focused Phase 18/19 command: `npm test -- --test test/phase18-atlas-cpg.test.mjs --test test/phase19-atlas-cpg-delta.test.mjs` in `impl/`.
-- Focused result: 13/13 passing (7 CPG seed, 6 delta/impact).
-- Full canonical result: 714/714 passing; the owned suite root was reaped.
+- Current focused R3 result: 20/20 passing (8 CPG seed/value graph, 6 delta/impact, 6 taint).
+- Current full canonical result: 721/721 passing; the owned suite root was reaped.
 
 The gate proves independently built before/after graph authorities, formatting-invariant semantic
 keys, honest ordinal/rename behavior, syntax-fingerprint node modifications, typed edge deltas,
