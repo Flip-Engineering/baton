@@ -482,6 +482,19 @@ TTL closure, plus authenticated web/MCP controls. A green check cannot clear the
 push/polling, policy change, positive clearance, and `internal` remain later. No installer, merge,
 policy override, PM export, or homelab integration is introduced.
 
+Phase 40 ships the separately grounded proposed install graph that Phase 37 intentionally omitted.
+`provenance.plan` accepts one confined actual lockfile path and exact npm coordinate through the
+Coordinator-owned ACI plane. Quartermaster binds immutable lockfile and manifest bytes, then a
+deployment supervisor runs fixed-argv npm under measured macOS Seatbelt confinement: writes are
+limited to a disposable root, direct network is denied, and a loopback CONNECT proxy admits only
+the exact registry authority. Existing and proposed dependency specs reject file/workspace/link,
+Git/SSH, URL, hosted shorthand, and aliases. The supervisor receipt binds executable/sandbox
+digests, source/proposed digests, proxy policy, exit, and complete cleanup; marker-based process
+reconciliation survives process-group escape without trusting a reused PID. Separate addressed
+lockfile/SBOM/receipt/delta artifacts offline-reverify against the unchanged actual source, root,
+coordinate, kinds/order, and recomputed graph delta. The operation does not install, decide, merge,
+scan all transitive advisories, prove reachability, add ecosystems, or integrate with homelab.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**

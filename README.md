@@ -21,7 +21,7 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **851/851
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **882/882
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
@@ -60,7 +60,14 @@ Findings, an observed Decision, `Informed`, CAS `Supersedes`, contamination, exa
 authenticated web/MCP actor propagation—with no install or merge authority. Phase 39 adds the
 Coordinator-owned TTL/advisory recheck: exact-expiry read safety, forced official refresh,
 coordinate-wide adverse fencing, atomic Decision/Finding invalidation, causal risk `Affects`
-projection, and affected-reader contamination. The current canonical suite is **871/871 green**.
+projection, and affected-reader contamination.
+Phase 40 adds an exact npm proposed-not-installed graph and actual-to-proposed delta. npm runs only
+inside a disposable macOS Seatbelt root with writes confined there and direct network denied; one
+supervisor-owned CONNECT proxy admits the configured registry. Exact executable/sandbox identities,
+source/proposed digests, process-tree cleanup, and proxy cleanup are receipt-bound and offline-
+reverified. The official live npm proof is 11/11, while install/decision/merge authority, transitive
+advisory reachability, additional ecosystems, and independent provenance remain later rungs. The
+current canonical suite is **882/882 green**.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 

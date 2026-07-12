@@ -1,8 +1,8 @@
-# System Validation — living full-system ledger through Phase 37
+# System Validation — living full-system ledger through Phase 40
 
 Originally validated 2026-07-11 through Phase 11; updated through the 2026-07-12 coordinator-owned
-capability plane, credentialed GLM live gate, Cairn Rung 0, and Cartographer/Quartermaster local
-orientation/reuse plus addressed-push rungs. Historical milestone counts remain in their rows;
+capability plane, credentialed GLM live gate, Cairn Rung 0, and Cartographer/Quartermaster local,
+external-evidence, SBOM, decision, invalidation, and proposed-graph rungs. Historical milestone counts remain in their rows;
 the top canonical row and latest handoffs are the current authority.
 
 ## Verdict
@@ -124,7 +124,7 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 
 | Gate | Current evidence |
 |---|---|
-| Canonical zero-quota suite | **871/871 passing** via `npm test` in `impl/`; its lifecycle owner reaps the private suite root, and the real linked-worktree regression covers recursive Baton execution without relying on a directory-shaped `.git` |
+| Canonical zero-quota suite | **882/882 passing** via `npm test` in `impl/`; its lifecycle owner reaps the private suite root, and the real linked-worktree regression covers recursive Baton execution without relying on a directory-shaped `.git` |
 | U-1…U-11 | All reproduced before repair; verdict ledger in `docs/handoff/evidence/phase10.1-reverification.md` |
 | Fresh adversarial review | No unresolved critical/major finding; `docs/handoff/evidence/phase10.1-adversarial-review.md` |
 | Three-vendor live fleet | `docs/reference/evidence/phase10.1-capstone-2026-07-10/summary.json` has every check true; 573-event raw ledger beside it |
@@ -161,6 +161,7 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 | Exact-lockfile SBOM | `docs/handoff/evidence/phase37-lockfile-sbom-2026-07-12.md`; SB1–SB6 and 6 focused contracts add confined npm lockfile-v3 parsing, deterministic CycloneDX 1.6 components/purls/integrity/dev/optional facts, nested dependency resolution, explicit unresolved edges, actual-vs-proposed grounding separation, content-addressed reverify, and ref-only partials. Baton's real lockfile passes 9/9 and canonical is 839/839. |
 | Immutable reuse decision | `docs/handoff/evidence/phase38-reuse-decision-2026-07-12.md`; RD1–RD12 and 11 focused contracts add contextual Coordinator authority, exact retry preflight, current dossier/SBOM/Atlas-overlay reverify, configured clean-repo binding, full-projection replay integrity, fleet artifact ownership, derived Finding/observed Decision causal promotion, namespace-squat refusal, CAS supersession/contamination including replacement after external invalidation, exact web quota pricing, and real authenticated web/MCP propagation. Fresh official `@ast-grep/napi@0.44.1` decision proof passes 9/9 and canonical is 853/853. |
 | Advisory/TTL reuse invalidation | `docs/handoff/evidence/phase39-advisory-ttl-invalidation-2026-07-12.md`; RI1–RI12 and 16 focused contracts add distinct contextual recheck authority, exact-expiry read safety, immutable historical retry, no-network TTL closure, internally forced official refresh, exact-coordinate adverse fencing, store-derived all-subject fan-out including an in-flight same-subject replacement, monotonic guards, same-fact adverse build consistency, stale dossier-Finding validity closure, derived risk Finding/`Affects` projection, reader contamination, non-clearing green checks, durable duplicate-key aliasing, request/CAS/full-projection/event-time replay tamper refusal, and authenticated web/MCP propagation. Current official `@ast-grep/napi@0.44.1` refresh plus TTL proof passes 10/10 and canonical is 871/871. |
+| Proposed npm install graph | `docs/handoff/evidence/phase40-proposed-install-graph-2026-07-12.md`; PG1–PG12 and 11 grouped focused contracts add exact npm requests, immutable actual lock/manifest binding, closed registry-only specs, measured Node/npm/Seatbelt identities, authenticated exact-registry proxying, write/direct-egress confinement, active descendant tracking/reap, atomic exclusive lease takeover, proposed CycloneDX plus typed request-edge delta, conservative findings, five separate addressed artifacts, semantic offline replay, ceilings/failure taxonomy, and real authenticated web/MCP reachability. Official `is-number@7.0.0` passes 11/11 without source mutation/install and canonical is 882/882. |
 | Harness/model/effort route tuple | `docs/handoff/evidence/phase14-route-tuple-2026-07-11.md`; 609/609 full-suite contracts plus recursive exact `CodexAppServerCli` + `gpt-5.6-sol` + `low` runs cover direct/auto/web selection, native mapping, honest nullable observation, recovery, durable event/coordination/story/result/replay/review/integration/commit attribution, exact learning buckets with read-only legacy fallback, mismatch kill/reap, and heterogeneous assembled-driver filtering; the final detached review found no actionable defect and every lifecycle/reap check passed |
 | Authenticated web session lifecycle | `docs/handoff/evidence/phase12-web-session-lifecycle-2026-07-11.md`; 44 focused contracts plus the 619/619 full suite cover injected-provider-only claims, cookie/Bearer login, fsynced atomic credential rotation, restart-safe predecessor refusal, refresh/logout TLS/origin/JSON/CSRF/CORS controls, shared claim/TTL validation, audit-before-mutation failure ordering, non-leakage, live stream revocation, and zero fleet side effects; recursive exact-model build and correction review fully reaped, ending with no actionable IL1–IL8 finding |
 | Authenticated web edge policy | `docs/handoff/evidence/phase12-web-edge-2026-07-11.md`; 82 focused Phase 12 contracts plus the current 678/678 full suite cover canonical direct/trusted-proxy identity, raw forwarding provenance, listener-wide HTTPS, bounded and ordered quotas, non-disclosing readiness, audit-amplification resistance, atomic ticket delivery, and bounded shutdown/stream cleanup. Eleven recursive exact-route corrective reviews were integrated and fully reaped; a twelfth clean review was provider-refused before verdict, so the final independent clean-review gate remains pending |
@@ -216,10 +217,10 @@ These are absent, not implied by the green suite:
    solving/full PDG, IR, and true semantic merge remain incomplete and explicitly catalogued.
    Native whole-repo e-graphs are retired by Phase 27; only threshold-gated external expression/
    kernel research remains conditional. Cartographer/Quartermaster now exposes a local focused
-   orientation/reuse floor, addressed push, bounded scope-drift automation, and an exact-npm
-   external evidence/freshness floor plus an actual npm lockfile SBOM, but additional ecosystems,
-   proposed graph delta, advisory push invalidation, true reachability, decisions, and knowledge
-   promotion remain.
+   orientation/reuse floor, addressed push, bounded scope-drift automation, an exact-npm external
+   evidence/freshness floor, actual npm lockfile SBOM, immutable reuse decisions/invalidation, and
+   an isolated proposed npm graph/delta. Additional ecosystems, provider advisory push, positive
+   clearance, true vulnerability reachability, and independent provenance verification remain.
 9. **Test-fixture crash reconciliation.** Repeated dogfood/full-suite runs leaked 14,070
    Baton-named temporary fixture directories and exhausted the host disk even though registered
    worker processes, worktrees, branches, and runtime scopes were clean. TF1–TF4 now gives the

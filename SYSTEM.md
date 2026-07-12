@@ -199,6 +199,11 @@ Optional at any point: a cheap side experiment on your real tasks to see whether
 
 ## 10. Feature index (nothing lost)
 
+**Scope decision:** Baton is deployment-neutral and has no homelab runtime or integration target.
+The repository's `project-manager` material is architectural prior art for the local typed causal
+graph, not a dependency; any future export remains optional, approval-gated, and out of current
+scope. Historical exploration that mentioned a homelab deployment is superseded by this decision.
+
 Every feature the exploration produced, with honest status. **Core** = the driver itself. **Trust/Smart/Memory/Tools/Safety** = supporting. **Later/Bet** = earned or unproven.
 
 | Feature | Role | Status | Where |
@@ -233,6 +238,7 @@ Every feature the exploration produced, with honest status. **Core** = the drive
 | Exact dependency dossier + actual-lockfile SBOM | Tools/Safety | Shipped Phases 36–37 | `spec/phase36`, `spec/phase37`, `docs/capabilities/orientation-reuse.md` |
 | Immutable external `borrow\|build` decision + causal promotion | Safety/Memory | Shipped Phase 38 | `spec/phase38/immutable-reuse-decision.md`, `docs/capabilities/orientation-reuse.md` |
 | Advisory refresh guard + exact TTL invalidation | Safety/Memory | Shipped Phase 39; provider push/policy/clearance later | `spec/phase39/advisory-ttl-invalidation.md`, `docs/capabilities/orientation-reuse.md` |
+| Isolated proposed npm graph + actual delta | Tools/Safety | Shipped Phase 40; no install/decision authority; reachability/ecosystems/provenance later | `spec/phase40/proposed-install-graph.md`, `docs/handoff/evidence/phase40-proposed-install-graph-2026-07-12.md` |
 | Reusable verified skills/recipes | Tools | Later | `docs/capabilities/skills-computeruse.md` |
 | Per-vendor briefs, context-on-demand, re-inject-on-compaction | Context | MVP-adjacent | `docs/12` |
 | OS-sandbox boundary, scoped secrets, contagion tracking | Safety | MVP-adjacent | `docs/09` §C, `docs/14` |

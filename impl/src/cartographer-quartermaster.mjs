@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 const typed = (message, code) => Object.assign(new Error(message), { code });
 const sha = (value) => createHash('sha256').update(value).digest('hex');
@@ -45,6 +45,8 @@ const artifactType = (op) => op === 'reuse.vet'
   ? { kind: 'dependency-dossier', mediaType: 'application/vnd.baton.dependency-dossier+json' }
   : op === 'provenance.sbom'
     ? { kind: 'lockfile-sbom', mediaType: 'application/vnd.cyclonedx+json' }
+  : op === 'provenance.plan'
+    ? { kind: 'proposed-install-plan', mediaType: 'application/vnd.baton.proposed-install-plan+json' }
   : { kind: 'orientation-reuse', mediaType: 'application/vnd.baton.orientation-reuse+json' };
 const exactList = (value, field) => {
   if (!Array.isArray(value) || value.length > 256 || value.some((item) => typeof item !== 'string' || item.length === 0 || Buffer.byteLength(item) > 256 || item.includes('\0'))) throw new TypeError(`${field} must be a bounded string[]`);
@@ -55,6 +57,7 @@ const lockPackageName = (path, item) => {
   const marker = 'node_modules/'; const index = path.lastIndexOf(marker);
   return index < 0 ? null : path.slice(index + marker.length);
 };
+const pathPackageName = (path) => { const marker = 'node_modules/'; const index = path.lastIndexOf(marker); return index < 0 ? null : path.slice(index + marker.length); };
 const resolveLockDependency = (packages, from, name) => {
   let cursor = from;
   while (true) {
@@ -72,6 +75,98 @@ const npmPurl = (name, version) => {
     : encodeURIComponent(name);
   return `pkg:npm/${path}@${encodeURIComponent(version)}`;
 };
+const exactNpm = (name, version) => /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(name)
+  && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version);
+const semverRangeAtom = '(?:0|[1-9]\\d*|[xX*])(?:\\.(?:0|[1-9]\\d*|[xX*])){0,2}(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?';
+const semverComparator = new RegExp(`^(?:\\^|~|<=|>=|<|>|=)?\\s*${semverRangeAtom}$`);
+const semverHyphen = new RegExp(`^${semverRangeAtom}\\s+-\\s+${semverRangeAtom}$`);
+const registrySpec = (value) => typeof value === 'string' && value.length > 0 && value.length <= 256 && !/[:/@\\]/.test(value)
+  && value.split('||').every((set) => { const text = set.trim(); return text.length > 0 && (semverHyphen.test(text) || text.replace(/([<>]=?|[~^=])\s+/g, '$1').split(/\s+/).every((token) => semverComparator.test(token))); });
+const validSri = (value) => {
+  const match = /^(sha256|sha384|sha512)-([A-Za-z0-9+/]+={0,2})$/.exec(value ?? ''); if (!match) return false;
+  const bytes = Buffer.from(match[2], 'base64'); return bytes.length === ({ sha256: 32, sha384: 48, sha512: 64 })[match[1]] && bytes.toString('base64').replace(/=+$/, '') === match[2].replace(/=+$/, '');
+};
+const validPackagePath = (value) => typeof value === 'string' && value.startsWith('node_modules/') && !value.includes('\\') && !value.split('/').includes('..')
+  && value.slice('node_modules/'.length).split('/node_modules/').every((name) => /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(name));
+const validDependencyMaps = (item) => ['dependencies', 'optionalDependencies', 'peerDependencies', 'devDependencies'].every((field) =>
+  item[field] === undefined || (item[field] && typeof item[field] === 'object' && !Array.isArray(item[field])
+    && Object.entries(item[field]).every(([name, spec]) => /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/.test(name) && registrySpec(spec))));
+const validResolutionMetadata = (item) => validDependencyMaps(item) && ['workspaces', 'overrides', 'resolutions', 'pnpm'].every((field) => !Object.hasOwn(item, field));
+const prop = (component, name) => component.properties.find((item) => item.name === name)?.value ?? null;
+function npmGraph(raw, policy, grounding, { requireRegistry = false, allowedOrigins = [] } = {}) {
+  if (raw.length > policy.maxLockfileBytes) throw typed('lockfile exceeds deployment ceiling', grounding === 'actual_lockfile' ? 'sbom_oversize' : 'proposal_oversize');
+  let lock; try { lock = JSON.parse(raw); } catch { throw typed('lockfile JSON invalid', grounding === 'actual_lockfile' ? 'sbom_schema_invalid' : 'proposal_schema_invalid'); }
+  if (lock?.lockfileVersion !== 3 || !lock.packages || typeof lock.packages !== 'object' || Array.isArray(lock.packages)) throw typed('npm package-lock v3 packages map required', grounding === 'actual_lockfile' ? 'sbom_schema_invalid' : 'proposal_schema_invalid');
+  const entries = Object.entries(lock.packages).filter(([key]) => key !== '').sort(([a], [b]) => a.localeCompare(b));
+  if (entries.length > policy.maxComponents) throw typed('component count exceeds deployment ceiling', grounding === 'actual_lockfile' ? 'sbom_oversize' : 'proposal_oversize');
+  const components = [];
+  for (const [key, item] of entries) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw typed('package entry invalid', grounding === 'actual_lockfile' ? 'sbom_schema_invalid' : 'proposal_schema_invalid');
+    const name = lockPackageName(key, item); const version = typeof item.version === 'string' ? item.version : null;
+    if (!name || (!version && item.link !== true)) throw typed('package identity unavailable', grounding === 'actual_lockfile' ? 'sbom_schema_invalid' : 'proposal_schema_invalid');
+    const resolved = typeof item.resolved === 'string' ? item.resolved : null; const integrity = typeof item.integrity === 'string' ? item.integrity : null;
+    if (requireRegistry) {
+      const derivedName = pathPackageName(key); const postureValid = ['dev', 'optional', 'peer', 'devOptional'].every((field) => item[field] === undefined || typeof item[field] === 'boolean');
+      if (!validPackagePath(key) || derivedName !== name || !exactNpm(name, version) || !validResolutionMetadata(item) || !postureValid || item.link === true || !validSri(integrity) || !resolved) throw typed('proposed registry component lacks exact identity/origin/integrity', 'proposal_policy_violation');
+      let origin; try { origin = new URL(resolved).origin; } catch { throw typed('proposed registry origin is invalid', 'proposal_policy_violation'); }
+      const resolvedUrl = new URL(resolved); if (resolvedUrl.username || resolvedUrl.password || resolvedUrl.protocol !== 'https:' || !allowedOrigins.includes(origin)) throw typed('proposed registry origin is not allowed', 'proposal_policy_violation');
+    }
+    components.push({ type: 'library', 'bom-ref': `npm:${key}`, name, version, ...(version ? { purl: npmPurl(name, version) } : {}), properties: [
+      { name: 'baton:lockfile_path', value: key }, { name: 'baton:grounding', value: grounding },
+      ...(integrity ? [{ name: 'baton:integrity', value: integrity }] : []), ...(resolved ? [{ name: 'baton:resolved', value: resolved }] : []),
+      ...(item.dev === true ? [{ name: 'baton:dev', value: 'true' }] : []), ...(item.optional === true ? [{ name: 'baton:optional', value: 'true' }] : []),
+      ...(item.peer === true ? [{ name: 'baton:peer', value: 'true' }] : []), ...(item.devOptional === true ? [{ name: 'baton:devOptional', value: 'true' }] : []),
+    ] });
+  }
+  const componentByPath = new Map(components.map((component) => [prop(component, 'baton:lockfile_path'), component]));
+  const unresolvedEdges = []; const requestEdges = []; const dependencies = []; const rootEntry = lock.packages[''] ?? {};
+  if (requireRegistry && !validResolutionMetadata(rootEntry)) throw typed('proposed root contains unsupported dependency sources', 'proposal_policy_violation');
+  const rootName = typeof rootEntry.name === 'string' ? rootEntry.name : typeof lock.name === 'string' ? lock.name : 'application';
+  const rootVersion = typeof rootEntry.version === 'string' ? rootEntry.version : typeof lock.version === 'string' ? lock.version : '0.0.0';
+  const rootRef = `application:${rootName}@${rootVersion}`;
+  for (const [key, item] of [['', rootEntry], ...entries]) {
+    const fromRef = key === '' ? rootRef : componentByPath.get(key)?.['bom-ref']; if (!fromRef) continue;
+    const dependsOn = [];
+    for (const [field, type] of [['dependencies', 'runtime'], ['optionalDependencies', 'optional'], ['devDependencies', 'dev'], ['peerDependencies', 'peer']]) {
+      for (const [name, spec] of Object.entries(item[field] ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
+        const target = resolveLockDependency(lock.packages, key, name); const targetRef = target ? componentByPath.get(target)?.['bom-ref'] : null;
+        const row = { from: key === '' ? '' : key, name, type, spec };
+        if (targetRef) { dependsOn.push(targetRef); requestEdges.push({ ...row, to: target }); } else unresolvedEdges.push(row);
+      }
+    }
+    dependencies.push({ ref: fromRef, dependsOn: [...new Set(dependsOn)].sort() });
+  }
+  requestEdges.sort((a, b) => stable(a).localeCompare(stable(b))); unresolvedEdges.sort((a, b) => stable(a).localeCompare(stable(b)));
+  const edgeCount = requestEdges.length + unresolvedEdges.length;
+  if (Number.isSafeInteger(policy.maxEdges) && edgeCount > policy.maxEdges) throw typed('dependency edge count exceeds deployment ceiling', grounding === 'actual_lockfile' ? 'sbom_oversize' : 'proposal_oversize');
+  const digest = sha(raw);
+  return { lock, root: { name: rootName, version: rootVersion, ref: rootRef, entry: rootEntry }, requestEdges, unresolvedEdges, sbom: { bomFormat: 'CycloneDX', specVersion: '1.6', version: 1, metadata: { component: { type: 'application', 'bom-ref': rootRef, name: rootName, version: rootVersion }, properties: [{ name: 'baton:grounding', value: grounding }, { name: 'baton:source_digest', value: digest }] }, components, dependencies } };
+}
+function graphDelta(actual, proposed) {
+  const rows = (graph) => new Map(graph.sbom.components.map((item) => [prop(item, 'baton:lockfile_path'), { name: item.name, version: item.version, integrity: prop(item, 'baton:integrity'), resolved: prop(item, 'baton:resolved'), dev: prop(item, 'baton:dev') === 'true', optional: prop(item, 'baton:optional') === 'true', peer: prop(item, 'baton:peer') === 'true', devOptional: prop(item, 'baton:devOptional') === 'true' }]));
+  const a = rows(actual); const p = rows(proposed); const added = []; const removed = []; const changed = [];
+  for (const [path, value] of p) if (!a.has(path)) added.push({ path, ...value }); else if (stable(a.get(path)) !== stable(value)) changed.push({ path, before: a.get(path), after: value });
+  for (const [path, value] of a) if (!p.has(path)) removed.push({ path, ...value });
+  const edges = (graph) => new Map(graph.requestEdges.map((row) => [stable(row), row]));
+  const ae = edges(actual); const pe = edges(proposed);
+  const unresolved = (graph) => new Map(graph.unresolvedEdges.map((row) => [stable(row), row])); const au = unresolved(actual); const pu = unresolved(proposed);
+  const rootRequests = (graph) => Object.fromEntries(['dependencies', 'optionalDependencies', 'devDependencies', 'peerDependencies'].map((field) => [field, Object.fromEntries(Object.entries(graph.root.entry[field] ?? {}).sort(([a], [b]) => a.localeCompare(b)))]));
+  const delta = { rootRequest: { before: rootRequests(actual), after: rootRequests(proposed) }, added, removed, changed, edgesAdded: [...pe].filter(([key]) => !ae.has(key)).map(([, row]) => row), edgesRemoved: [...ae].filter(([key]) => !pe.has(key)).map(([, row]) => row), unresolvedEdgesAdded: [...pu].filter(([key]) => !au.has(key)).map(([, row]) => row), unresolvedEdgesRemoved: [...au].filter(([key]) => !pu.has(key)).map(([, row]) => row) };
+  return { ...delta, counts: { componentsAdded: added.length, componentsRemoved: removed.length, componentsChanged: changed.length, edgesAdded: delta.edgesAdded.length, edgesRemoved: delta.edgesRemoved.length, unresolvedAdded: delta.unresolvedEdgesAdded.length, unresolvedRemoved: delta.unresolvedEdgesRemoved.length, rootRequestChanged: stable(delta.rootRequest.before) === stable(delta.rootRequest.after) ? 0 : 1 } };
+}
+function planProjection(delta, proposed) {
+  const rootRequestChanged = stable(delta.rootRequest.before) !== stable(delta.rootRequest.after);
+  const rootRequestRemoved = Object.keys(delta.rootRequest.before).some((field) => Object.keys(delta.rootRequest.before[field]).some((name) => !Object.hasOwn(delta.rootRequest.after[field], name)));
+  const integrityChanged = delta.changed.some((row) => row.before.integrity !== row.after.integrity);
+  const deltaRows = delta.added.length + delta.removed.length + delta.changed.length + delta.edgesAdded.length + delta.edgesRemoved.length + delta.unresolvedEdgesAdded.length + delta.unresolvedEdgesRemoved.length + (rootRequestChanged ? 1 : 0);
+  const findings = [...new Set([
+    ...(delta.removed.length > 0 || delta.edgesRemoved.length > 0 || delta.unresolvedEdgesRemoved.length > 0 || rootRequestRemoved ? ['unexpected_removal'] : []),
+    ...(integrityChanged ? ['integrity_changed'] : []), ...(proposed.unresolvedEdges.length > 0 ? ['unresolved_graph'] : []),
+    ...(delta.removed.length === 0 && delta.changed.length === 0 && delta.edgesRemoved.length === 0 && delta.unresolvedEdgesRemoved.length === 0 && !rootRequestRemoved && !integrityChanged && proposed.unresolvedEdges.length === 0 && (delta.added.length > 0 || delta.edgesAdded.length > 0 || rootRequestChanged) ? ['clean_addition'] : []),
+    ...(deltaRows === 0 ? ['no_change'] : []),
+  ])].sort();
+  return { deltaRows, findings };
+}
 
 export class CartographerQuartermaster {
   constructor(opts = {}) {
@@ -104,6 +199,16 @@ export class CartographerQuartermaster {
         || !Number.isSafeInteger(policy.maxComponents) || policy.maxComponents <= 0) throw new TypeError('SBOM policy requires positive lockfile/component ceilings');
       this.sbomPolicy = Object.freeze({ maxLockfileBytes: policy.maxLockfileBytes, maxComponents: policy.maxComponents });
     }
+    this.proposalResolver = opts.proposalResolver ?? null; this.proposalPolicy = null;
+    if (this.proposalResolver !== null) {
+      if (!this.sbomPolicy || typeof this.proposalResolver?.resolve !== 'function' || typeof this.proposalResolver?.card !== 'function' || typeof this.proposalResolver?.verifyReceipt !== 'function') throw new TypeError('proposal resolver requires SBOM policy and resolve/card/verifyReceipt methods');
+      const card = this.proposalResolver.card(); const policy = opts.proposalPolicy;
+      if (!card || typeof card.resolverId !== 'string' || typeof card.toolVersion !== 'string' || card.tool !== 'npm' || card.reconciled !== true
+        || !policy || !Array.isArray(policy.allowedRegistryOrigins) || policy.allowedRegistryOrigins.length === 0
+        || !Number.isSafeInteger(policy.maxEdges) || policy.maxEdges <= 0 || !Number.isSafeInteger(policy.maxDeltaRows) || policy.maxDeltaRows <= 0) throw new TypeError('proposal resolver identity/policy is invalid');
+      const allowedRegistryOrigins = exactList(policy.allowedRegistryOrigins, 'allowedRegistryOrigins').map((value) => { const url = new URL(value); if (url.protocol !== 'https:' || url.origin !== value) throw new TypeError('allowed registry origins must be exact HTTPS origins'); return value; });
+      this.proposalPolicy = Object.freeze({ resolverId: card.resolverId, tool: card.tool, toolVersion: card.toolVersion, allowedRegistryOrigins, maxEdges: policy.maxEdges, maxDeltaRows: policy.maxDeltaRows });
+    }
   }
 
   card() {
@@ -114,11 +219,13 @@ export class CartographerQuartermaster {
         'reuse.internal': { latency_class: 'interactive', deterministic: true, side_effects: ['content_addressed_artifact'], reverifiable: true },
         ...(this.externalOracle ? { 'reuse.vet': { latency_class: 'bounded_batch', deterministic: false, side_effects: ['external_api', 'content_addressed_artifact'], reverifiable: 'fresh_observation' } } : {}),
         ...(this.sbomPolicy ? { 'provenance.sbom': { latency_class: 'bounded_batch', deterministic: true, side_effects: ['content_addressed_artifact'], reverifiable: true } } : {}),
+        ...(this.proposalResolver ? { 'provenance.plan': { latency_class: 'bounded_batch', deterministic: false, side_effects: ['isolated_registry_resolution', 'content_addressed_artifact'], reverifiable: true } } : {}),
       },
       underlying: ['atlas-index:code.seed', 'atlas-index:repo.map'],
       limitations: [
         this.externalOracle ? 'External dossier is fail-closed and package-level; import observation is not vulnerable-function reachability' : 'External vet is not deployment-configured',
         this.sbomPolicy ? 'SBOM is exact npm package-lock v3 actual state only' : 'SBOM is not deployment-configured',
+        this.proposalResolver ? 'Proposed graph is hypothetical and grants no install or decision authority' : 'Proposed graph resolver is not deployment-configured',
         'no auto-install; reuse-decision authority remains Coordinator-owned; no true vulnerability reachability or third-party prose',
       ],
     };
@@ -158,9 +265,24 @@ export class CartographerQuartermaster {
     return { digest, path, bytes: Buffer.byteLength(bytes) };
   }
 
+  _writeRaw(bytes) {
+    const raw = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes); const digest = sha(raw); const path = join(this.artifactRoot, `${digest}.blob`);
+    if (!existsSync(path)) { try { writeFileSync(path, raw, { mode: 0o600, flag: 'wx' }); } catch (error) { if (error?.code !== 'EEXIST') throw error; } }
+    const observed = readFileSync(path); if (!observed.equals(raw) || sha(observed) !== digest) throw typed('content-addressed raw path is occupied by different bytes', 'artifact_integrity');
+    return { digest, bytes: raw.length, path };
+  }
+
+  _rawRef(bytes, kind, mediaType) { const artifact = this._writeRaw(bytes); return { kind, mediaType, handle: `art:sha256:${artifact.digest}`, digest: artifact.digest, bytes: artifact.bytes }; }
+
+  _loadRaw(ref, expectedKind = null, expectedMediaType = null) {
+    if (!ref || (expectedKind !== null && ref.kind !== expectedKind) || (expectedMediaType !== null && ref.mediaType !== expectedMediaType)
+      || !/^[a-f0-9]{64}$/.test(ref.digest ?? '') || ref.handle !== `art:sha256:${ref.digest}` || !Number.isSafeInteger(ref.bytes) || ref.bytes < 0) throw typed('plan artifact reference invalid', 'artifact_integrity');
+    const raw = readFileSync(join(this.artifactRoot, `${ref.digest}.blob`)); if (raw.length !== ref.bytes || sha(raw) !== ref.digest) throw typed('plan artifact digest mismatch', 'artifact_integrity'); return raw;
+  }
+
   _loadArtifact(ref, expectedOp = null) {
     const expectedType = expectedOp === null ? null : artifactType(expectedOp);
-    const knownType = [artifactType('orientation.slice'), artifactType('reuse.vet'), artifactType('provenance.sbom')].find((candidate) => candidate.kind === ref?.kind && candidate.mediaType === ref?.mediaType);
+    const knownType = [artifactType('orientation.slice'), artifactType('reuse.vet'), artifactType('provenance.sbom'), artifactType('provenance.plan')].find((candidate) => candidate.kind === ref?.kind && candidate.mediaType === ref?.mediaType);
     if (!ref || !knownType || (expectedType && (ref.kind !== expectedType.kind || ref.mediaType !== expectedType.mediaType))
       || !/^[a-f0-9]{64}$/.test(ref.digest ?? '') || ref.handle !== `art:sha256:${ref.digest}`) throw typed('orientation artifact reference invalid', 'artifact_integrity');
     const expected = join(this.artifactRoot, `${ref.digest}.json`); let path;
@@ -179,10 +301,11 @@ export class CartographerQuartermaster {
     const sourceRefs = document.op === 'reuse.vet' && Array.isArray(document.items?.[0]?.sources)
       ? document.items[0].sources.map((source) => ({ kind: 'supply-chain-source', handle: source.handle, digest: source.digest, bytes: source.bytes, mediaType: source.mediaType }))
       : [];
-    const resumable = !['reuse.vet', 'provenance.sbom'].includes(document.op);
+    const planRefs = document.op === 'provenance.plan' ? (document.provenance.planRefs ?? []).map((ref) => ({ ...ref, path: join(this.artifactRoot, `${ref.digest}.blob`) })) : [];
+    const resumable = !['reuse.vet', 'provenance.sbom', 'provenance.plan'].includes(document.op);
     return Object.freeze({
       op: document.op, status: truncated ? (resumable ? 'needs_resume' : 'partial') : 'ok', summary: document.summary, payload,
-      refs: [{ kind: type.kind, handle: `art:sha256:${artifact.digest}`, digest: artifact.digest, bytes: artifact.bytes, path: artifact.path, mediaType: type.mediaType }, ...sourceRefs],
+      refs: [{ kind: type.kind, handle: `art:sha256:${artifact.digest}`, digest: artifact.digest, bytes: artifact.bytes, path: artifact.path, mediaType: type.mediaType }, ...sourceRefs, ...planRefs],
       ...(truncated && resumable ? { cursor: `orientation:${artifact.digest}:${payload.length}` } : {}),
       cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), wall_ms: Math.max(0, this.now() - started), usd: 0, underlying: document.provenance.underlying ?? 'atlas-index:orientation-reuse-r0' },
       provenance: { ...document.provenance, ...runtimeProvenance, artifactDigest: artifact.digest, deterministic: document.provenance.deterministic ?? true, mergeAuthority: false, verificationAuthority: false },
@@ -278,6 +401,61 @@ export class CartographerQuartermaster {
       this.vetCache.set(cacheKey, document);
       return this._result(document, ctx, started, { cache: 'miss' });
     }
+    if (op === 'provenance.plan' && this.proposalResolver) {
+      if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).sort().join(',') !== 'ecosystem,lockfilePath,package,version') throw typed('proposal request shape is invalid', 'invalid_proposal');
+      const ecosystem = normalizedText(args.ecosystem, 'invalid_proposal').toLowerCase(); const packageName = normalizedText(args.package, 'invalid_proposal'); const version = normalizedText(args.version, 'invalid_proposal');
+      if (ecosystem !== 'npm' || !exactNpm(packageName, version)) throw typed('proposal requires exact npm coordinate', 'invalid_proposal');
+      if (typeof ctx.worktreeRoot !== 'string' || ctx.worktreeRoot.length === 0) throw typed('proposal requires trusted worktree root', 'proposal_context_required');
+      const requested = normalizedText(args.lockfilePath, 'invalid_sbom_path').replace(/^\.\//, '');
+      if (isAbsolute(requested) || requested.split('/').includes('..')) throw typed('proposal lockfile path escapes worktree', 'invalid_sbom_path');
+      let root; let path; try { root = realpathSync(ctx.worktreeRoot); path = realpathSync(join(root, requested)); } catch { throw typed('proposal base lockfile unavailable', 'sbom_unavailable'); }
+      const rel = relative(root, path); if (rel.startsWith('..') || isAbsolute(rel)) throw typed('proposal base lockfile escaped worktree', 'invalid_sbom_path');
+      const graphPolicy = { ...this.sbomPolicy, maxEdges: this.proposalPolicy.maxEdges };
+      let actualRaw; try { actualRaw = readFileSync(path); } catch { throw typed('proposal base lockfile unavailable', 'sbom_unavailable'); }
+      const actualDigest = sha(actualRaw); const actual = npmGraph(actualRaw, graphPolicy, 'actual_lockfile');
+      if (actual.lock.name !== actual.root.name || actual.lock.version !== actual.root.version) throw typed('actual root identity is internally inconsistent', 'sbom_schema_invalid');
+      let manifestPath; let manifestRaw; try { manifestPath = realpathSync(join(dirname(path), 'package.json')); manifestRaw = readFileSync(manifestPath); } catch { throw typed('proposal manifest unavailable', 'sbom_unavailable'); }
+      if (relative(root, manifestPath).startsWith('..')) throw typed('proposal manifest escaped worktree', 'invalid_sbom_path');
+      if (manifestRaw.length > this.sbomPolicy.maxLockfileBytes) throw typed('proposal manifest exceeds deployment ceiling', 'proposal_oversize');
+      let manifest; try { manifest = JSON.parse(manifestRaw); } catch { throw typed('proposal manifest is invalid', 'proposal_schema_invalid'); }
+      if (manifest?.name !== actual.root.name || manifest?.version !== actual.root.version) throw typed('proposal manifest identity diverges from lockfile', 'proposal_root_changed');
+      if (!validResolutionMetadata(actual.root.entry) || !validResolutionMetadata(manifest)) throw typed('proposal base contains unsupported dependency sources', 'proposal_policy_violation');
+      const manifestDigest = sha(manifestRaw);
+      const coordinate = { ecosystem, package: packageName, version };
+      const resolved = await this.proposalResolver.resolve(Object.freeze({ coordinate, baseLockfile: Buffer.from(actualRaw), baseDigest: actualDigest, manifest: Buffer.from(manifestRaw), manifestDigest }), { signal: ctx.signal }); this._abort(ctx);
+      const proposedRaw = Buffer.isBuffer(resolved?.proposedLockfile) ? resolved.proposedLockfile : typeof resolved?.proposedLockfile === 'string' ? Buffer.from(resolved.proposedLockfile) : null;
+      if (!proposedRaw) throw typed('proposal resolver output is invalid', 'proposal_schema_invalid');
+      const proposedDigest = sha(proposedRaw); const receipt = resolved.receipt;
+      let receiptBytes; try { receiptBytes = Buffer.byteLength(stable(receipt)); } catch { throw typed('proposal execution receipt is invalid', 'proposal_receipt_invalid'); }
+      if (receiptBytes > this.sbomPolicy.maxLockfileBytes) throw typed('proposal execution receipt exceeds deployment ceiling', 'proposal_oversize');
+      const expectedArgv = ['install', `${packageName}@${version}`, '--package-lock-only', '--ignore-scripts', '--save-exact', '--no-audit', '--no-fund'];
+      if (!receipt || receipt.schemaVersion !== 1
+        || receipt.resolverId !== this.proposalPolicy.resolverId || receipt.tool !== 'npm' || receipt.toolVersion !== this.proposalPolicy.toolVersion
+        || stable(receipt.argv) !== stable(expectedArgv) || receipt.baseDigest !== actualDigest || receipt.manifestDigest !== manifestDigest || receipt.proposedDigest !== proposedDigest
+        || stable(receipt.coordinate) !== stable(coordinate) || receipt.isolatedRoot !== true || receipt.ownedCache !== true || receipt.exitCode !== 0
+        || stable(receipt.registryOrigins) !== stable(this.proposalPolicy.allowedRegistryOrigins)
+        || typeof receipt.isolation?.invocationId !== 'string' || typeof receipt.isolation?.rootHandle !== 'string' || typeof receipt.isolation?.cacheHandle !== 'string'
+        || receipt.cleanup?.processes !== true || receipt.cleanup?.root !== true || receipt.cleanup?.cache !== true || receipt.cleanup?.credentials !== true
+        || (await this.proposalResolver.verifyReceipt(receipt, { coordinate, baseDigest: actualDigest, manifestDigest, proposedDigest, argv: expectedArgv, allowedRegistryOrigins: this.proposalPolicy.allowedRegistryOrigins }))?.ok !== true) throw typed('proposal execution receipt is invalid', 'proposal_receipt_invalid');
+      let currentRaw; let currentManifest; let currentPath; let currentManifestPath;
+      try { currentRaw = readFileSync(path); currentManifest = readFileSync(manifestPath); currentPath = realpathSync(join(root, requested)); currentManifestPath = realpathSync(join(dirname(path), 'package.json')); } catch { throw typed('proposal base changed during resolution', 'sbom_source_changed'); }
+      if (!currentRaw.equals(actualRaw) || !currentManifest.equals(manifestRaw) || currentPath !== path || currentManifestPath !== manifestPath) throw typed('proposal base changed during resolution', 'sbom_source_changed');
+      const proposed = npmGraph(proposedRaw, graphPolicy, 'proposed_lockfile', { requireRegistry: true, allowedOrigins: this.proposalPolicy.allowedRegistryOrigins });
+      if (proposed.lock.name !== proposed.root.name || proposed.lock.version !== proposed.root.version) throw typed('proposal root identity is internally inconsistent', 'proposal_root_changed');
+      if (actual.root.name !== proposed.root.name || actual.root.version !== proposed.root.version) throw typed('proposal changed root application identity', 'proposal_root_changed');
+      const rootSpec = proposed.root.entry.dependencies?.[packageName] ?? proposed.root.entry.optionalDependencies?.[packageName];
+      const targetPath = resolveLockDependency(proposed.lock.packages, '', packageName); const target = targetPath ? proposed.lock.packages[targetPath] : null;
+      if (rootSpec !== version || target?.version !== version || lockPackageName(targetPath ?? '', target) !== packageName) throw typed('proposal substituted requested coordinate', 'proposal_coordinate_mismatch');
+      const delta = graphDelta(actual, proposed); const { deltaRows, findings } = planProjection(delta, proposed);
+      if (deltaRows > this.proposalPolicy.maxDeltaRows) throw typed('proposal delta exceeds deployment ceiling', 'proposal_oversize');
+      const proposedLockRef = this._rawRef(proposedRaw, 'proposed-lockfile', 'application/vnd.npm.package-lock+json');
+      const proposedSbomRef = this._rawRef(`${stable(proposed.sbom)}\n`, 'proposed-sbom', 'application/vnd.cyclonedx+json');
+      const receiptRef = this._rawRef(`${stable(receipt)}\n`, 'proposal-execution-receipt', 'application/vnd.baton.resolver-receipt+json');
+      const deltaRef = this._rawRef(`${stable(delta)}\n`, 'install-graph-delta', 'application/vnd.baton.install-graph-delta+json');
+      const planRefs = [proposedLockRef, proposedSbomRef, receiptRef, deltaRef];
+      const item = { grounding: 'proposed_not_installed', authority: { install: false, decision: false, merge: false, verification: false }, coordinate, actual: { lockfile: requested, digest: actualDigest, manifestDigest, componentCount: actual.sbom.components.length }, proposed: { digest: proposedDigest, componentCount: proposed.sbom.components.length, unresolvedEdges: proposed.unresolvedEdges }, delta, findings, refs: planRefs };
+      return this._result({ schemaVersion: 1, op, query: { lockfilePath: requested, ecosystem, package: packageName, version }, summary: `${delta.added.length} added, ${delta.removed.length} removed, ${delta.changed.length} changed proposed components`, items: [item], provenance: { deterministic: false, grounding: 'actual_to_proposed', baseLockfileDigest: actualDigest, baseManifestDigest: manifestDigest, proposedLockfileDigest: proposedDigest, resolverId: receipt.resolverId, tool: receipt.tool, toolVersion: receipt.toolVersion, receiptDigest: receiptRef.digest, proposedSbomDigest: proposedSbomRef.digest, deltaDigest: deltaRef.digest, planRefs, underlying: 'deployment-resolver+npm-package-lock-v3+cyclonedx-1.6' } }, ctx, started);
+    }
     if (op === 'provenance.sbom' && this.sbomPolicy) {
       if (typeof ctx.worktreeRoot !== 'string' || ctx.worktreeRoot.length === 0) throw typed('SBOM requires trusted worktree root', 'sbom_context_required');
       const requested = normalizedText(args.lockfilePath, 'invalid_sbom_path').replace(/^\.\//, '');
@@ -337,7 +515,7 @@ export class CartographerQuartermaster {
     const match = /^orientation:([a-f0-9]{64}):(\d+)$/.exec(cursor ?? '');
     if (!match || match[1] !== ref?.digest || ref?.handle !== `art:sha256:${match[1]}`) throw typed('orientation cursor mismatch', 'invalid_cursor');
     const document = this._loadArtifact(ref);
-    if (['reuse.vet', 'provenance.sbom'].includes(document.op)) throw typed('artifact is ref-addressed, not cursor-resumable', 'capability_resume_unavailable');
+    if (['reuse.vet', 'provenance.sbom', 'provenance.plan'].includes(document.op)) throw typed('artifact is ref-addressed, not cursor-resumable', 'capability_resume_unavailable');
     const offset = Number(match[2]); if (!Number.isSafeInteger(offset) || offset < 0 || offset > document.items.length) throw typed('orientation cursor offset invalid', 'invalid_cursor');
     const payload = bounded(document.items.slice(offset), ctx.budgetTokens); const next = offset + payload.length; const truncated = next < document.items.length;
     return Object.freeze({ op: document.op, status: truncated ? 'needs_resume' : 'ok', summary: document.summary, payload, refs: [ref], ...(truncated ? { cursor: `orientation:${match[1]}:${next}` } : {}),
@@ -370,6 +548,56 @@ export class CartographerQuartermaster {
             overlayDigest: prior.provenance?.overlay_digest ?? null,
           } } : {}),
         };
+      }
+      if (op === 'provenance.plan') {
+        const query = { lockfilePath: args?.lockfilePath?.replace(/^\.\//, ''), ecosystem: args?.ecosystem, package: args?.package, version: args?.version };
+        if (stable(prior.query) !== stable(query) || query.ecosystem !== 'npm' || !exactNpm(query.package, query.version)
+          || isAbsolute(query.lockfilePath ?? '') || query.lockfilePath?.split('/').includes('..') || !Array.isArray(prior.provenance?.planRefs) || prior.provenance.planRefs.length !== 4) return { ok: false, reason: 'query_mismatch' };
+        const [lockRef, sbomRef, receiptRef, deltaRef] = prior.provenance.planRefs;
+        const expectedRefs = [
+          ['proposed-lockfile', 'application/vnd.npm.package-lock+json'], ['proposed-sbom', 'application/vnd.cyclonedx+json'],
+          ['proposal-execution-receipt', 'application/vnd.baton.resolver-receipt+json'], ['install-graph-delta', 'application/vnd.baton.install-graph-delta+json'],
+        ];
+        if (expectedRefs.some(([kind, mediaType], index) => prior.provenance.planRefs[index]?.kind !== kind || prior.provenance.planRefs[index]?.mediaType !== mediaType)) return { ok: false, reason: 'artifact_integrity' };
+        const refIdentity = (ref) => ({ kind: ref?.kind, mediaType: ref?.mediaType, handle: ref?.handle, digest: ref?.digest, bytes: ref?.bytes });
+        if (stable((claim?.refs ?? []).slice(1).map(refIdentity)) !== stable(prior.provenance.planRefs.map(refIdentity))) return { ok: false, reason: 'artifact_integrity' };
+        const graphPolicy = { ...this.sbomPolicy, maxEdges: this.proposalPolicy.maxEdges };
+        const maxExpandedBytes = this.sbomPolicy.maxLockfileBytes * 8;
+        if (lockRef.bytes > this.sbomPolicy.maxLockfileBytes || receiptRef.bytes > this.sbomPolicy.maxLockfileBytes || sbomRef.bytes > maxExpandedBytes || deltaRef.bytes > maxExpandedBytes) return { ok: false, reason: 'proposal_oversize' };
+        const proposedRaw = this._loadRaw(lockRef, ...expectedRefs[0]); const proposed = npmGraph(proposedRaw, graphPolicy, 'proposed_lockfile', { requireRegistry: true, allowedOrigins: this.proposalPolicy.allowedRegistryOrigins });
+        const sbomRaw = this._loadRaw(sbomRef, ...expectedRefs[1]); const receiptRaw = this._loadRaw(receiptRef, ...expectedRefs[2]); const deltaRaw = this._loadRaw(deltaRef, ...expectedRefs[3]);
+        if (!sbomRaw.equals(Buffer.from(`${stable(proposed.sbom)}\n`))) return { ok: false, reason: 'proposed_sbom_diverged' };
+        let receipt; let storedDelta; try { receipt = JSON.parse(receiptRaw); storedDelta = JSON.parse(deltaRaw); } catch { return { ok: false, reason: 'artifact_integrity' }; }
+        let root; let actualPath; let manifestPath;
+        try { root = realpathSync(ctx.worktreeRoot); actualPath = realpathSync(join(root, query.lockfilePath)); manifestPath = realpathSync(join(dirname(actualPath), 'package.json')); } catch { return { ok: false, reason: 'sbom_unavailable' }; }
+        if (relative(root, actualPath).startsWith('..') || isAbsolute(relative(root, actualPath)) || relative(root, manifestPath).startsWith('..') || isAbsolute(relative(root, manifestPath))) return { ok: false, reason: 'invalid_sbom_path' };
+        let actualRaw; let currentManifest; let rereadActualPath; let rereadManifestPath;
+        try { actualRaw = readFileSync(actualPath); currentManifest = readFileSync(manifestPath); rereadActualPath = realpathSync(join(root, query.lockfilePath)); rereadManifestPath = realpathSync(join(dirname(actualPath), 'package.json')); } catch { return { ok: false, reason: 'sbom_source_changed' }; }
+        if (rereadActualPath !== actualPath || rereadManifestPath !== manifestPath) return { ok: false, reason: 'sbom_source_changed' };
+        const actualDigest = sha(actualRaw); const actual = npmGraph(actualRaw, graphPolicy, 'actual_lockfile');
+        if (actualDigest !== prior.provenance.baseLockfileDigest || sha(currentManifest) !== prior.provenance.baseManifestDigest || receipt.baseDigest !== actualDigest
+          || receipt.proposedDigest !== sha(proposedRaw) || prior.provenance.proposedLockfileDigest !== sha(proposedRaw) || prior.provenance.proposedSbomDigest !== sha(sbomRaw)
+          || receipt.resolverId !== this.proposalPolicy.resolverId || receipt.toolVersion !== this.proposalPolicy.toolVersion
+          || receipt.argv?.includes('--ignore-scripts') !== true || receipt.argv?.includes('--package-lock-only') !== true || receipt.argv?.includes('--save-exact') !== true
+          || receipt.isolatedRoot !== true || receipt.ownedCache !== true || receipt.exitCode !== 0
+          || receipt.cleanup?.processes !== true || receipt.cleanup?.root !== true || receipt.cleanup?.cache !== true || receipt.cleanup?.credentials !== true
+          || receipt.manifestDigest !== prior.provenance.baseManifestDigest
+          || (await this.proposalResolver.verifyReceipt(receipt, { coordinate: { ecosystem: query.ecosystem, package: query.package, version: query.version }, baseDigest: actualDigest, manifestDigest: prior.provenance.baseManifestDigest, proposedDigest: sha(proposedRaw), argv: ['install', `${query.package}@${query.version}`, '--package-lock-only', '--ignore-scripts', '--save-exact', '--no-audit', '--no-fund'], allowedRegistryOrigins: this.proposalPolicy.allowedRegistryOrigins }))?.ok !== true) return { ok: false, reason: 'proposal_receipt_invalid' };
+        if (actual.lock.name !== actual.root.name || actual.lock.version !== actual.root.version || proposed.lock.name !== proposed.root.name || proposed.lock.version !== proposed.root.version
+          || actual.root.name !== proposed.root.name || actual.root.version !== proposed.root.version) return { ok: false, reason: 'proposal_root_changed' };
+        const rootSpec = proposed.root.entry.dependencies?.[query.package] ?? proposed.root.entry.optionalDependencies?.[query.package];
+        const targetPath = resolveLockDependency(proposed.lock.packages, '', query.package); const target = targetPath ? proposed.lock.packages[targetPath] : null;
+        if (rootSpec !== query.version || target?.version !== query.version || lockPackageName(targetPath ?? '', target) !== query.package) return { ok: false, reason: 'proposal_coordinate_mismatch' };
+        const expectedDelta = graphDelta(actual, proposed);
+        const { deltaRows, findings } = planProjection(expectedDelta, proposed); if (deltaRows > this.proposalPolicy.maxDeltaRows) return { ok: false, reason: 'proposal_oversize' };
+        if (stable(expectedDelta) !== stable(storedDelta) || sha(deltaRaw) !== prior.provenance.deltaDigest || sha(receiptRaw) !== prior.provenance.receiptDigest) return { ok: false, reason: 'proposal_delta_diverged' };
+        const expectedItem = { grounding: 'proposed_not_installed', authority: { install: false, decision: false, merge: false, verification: false }, coordinate: { ecosystem: query.ecosystem, package: query.package, version: query.version }, actual: { lockfile: query.lockfilePath, digest: actualDigest, manifestDigest: prior.provenance.baseManifestDigest, componentCount: actual.sbom.components.length }, proposed: { digest: sha(proposedRaw), componentCount: proposed.sbom.components.length, unresolvedEdges: proposed.unresolvedEdges }, delta: expectedDelta, findings, refs: prior.provenance.planRefs };
+        const expectedSummary = `${expectedDelta.added.length} added, ${expectedDelta.removed.length} removed, ${expectedDelta.changed.length} changed proposed components`;
+        const expectedProvenance = { deterministic: false, grounding: 'actual_to_proposed', baseLockfileDigest: actualDigest, baseManifestDigest: prior.provenance.baseManifestDigest, proposedLockfileDigest: sha(proposedRaw), resolverId: receipt.resolverId, tool: receipt.tool, toolVersion: receipt.toolVersion, receiptDigest: receiptRef.digest, proposedSbomDigest: sbomRef.digest, deltaDigest: deltaRef.digest, planRefs: prior.provenance.planRefs, underlying: 'deployment-resolver+npm-package-lock-v3+cyclonedx-1.6' };
+        if (Object.keys(prior).sort().join(',') !== 'items,op,provenance,query,schemaVersion,summary'
+          || prior.items.length !== 1 || stable(prior.items[0]) !== stable(expectedItem) || prior.summary !== expectedSummary
+          || stable(prior.provenance) !== stable(expectedProvenance)) return { ok: false, reason: 'proposal_plan_diverged' };
+        return { ok: true, observedDigest: claim?.refs?.[0]?.digest ?? null, snapshot: { grounding: 'proposed_not_installed', baseLockfileDigest: actualDigest, proposedLockfileDigest: sha(proposedRaw), deltaDigest: deltaRef.digest, installAuthority: false } };
       }
       if (op === 'provenance.sbom' && prior.query?.lockfilePath !== args?.lockfilePath?.replace(/^\.\//, '')) return { ok: false, reason: 'query_mismatch' };
       const rerun = await this.invoke(op, args, ctx);

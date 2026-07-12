@@ -1,5 +1,9 @@
 # 07 — Roadmap (revised, review round 1)
 
+> **Current scope supersession (2026-07-12):** the historical M3 remote Foreman/homelab idea below
+> is not part of Baton's current goal. Baton remains deployment-neutral and single-project; adding
+> homelab integration would be a detriment. The line is retained only as exploration history.
+
 *Build sequence for the Option-A hub (doc 04). Milestones are cut so each one is independently useful and **falsifies something measurable**. Rewritten after review round 1 (doc 09 §F): the single strongest convergent signal from the Codex external review, the product judge, the ambition judge, and the time-scale judge was **"you are spending before you prove value, and the proof is cheap."** So eval and the differentiating demo move to the front, and the honest MVP is cut hard.*
 
 ## Guiding re-estimate (time-scale judge + Codex review)

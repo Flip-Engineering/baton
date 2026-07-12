@@ -4,6 +4,11 @@ I now have everything: full three-plane architecture context, doc 08's positions
 
 # Cairn — Causal Research & Body-of-Knowledge (baton capability module)
 
+> **Current scope supersession (2026-07-12):** `project-manager` is inspiration for Baton's local
+> typed causal/temporal contract, not a runtime or required export target. Direct PM/homelab export
+> language below is retained as historical design exploration; any future interchange is optional,
+> deployment-neutral, approval-gated, and outside the current goal.
+
 *Cairns are stones a prior traveller stacks so the next one doesn't relearn the path. This module is baton's cairn plane: how a fleet's runs pile up into a durable, causally-linked, queryable body of knowledge (BoK) that future fleets consult to avoid relearning — and, critically, how that pile does **not** get dumped back into a working orchestrator's head. It deepens doc 08's epistemic layer and answers its four open questions (§7).*
 
 ## Summary (5 bullets)

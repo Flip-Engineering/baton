@@ -86,6 +86,15 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    Decision/dossier Finding, records affected readers, and projects a derived risk Finding plus
    `Affects` edges. A green check cannot clear the fence. Web and the twelfth MCP tool carry derived
    actor/repo/idempotency with no caller-supplied evidence or package authority.
+14. **Proposed npm install graph and actual delta:** deployment-configured `provenance.plan`
+   resolves one exact npm coordinate from immutable actual lockfile/manifest bytes without
+   installing it. Measured macOS Seatbelt confines writes to a disposable root and denies direct
+   network; an exact-authority loopback CONNECT proxy is the only registry route. Closed dependency
+   specs, fixed argv, bounded output/deadline, marker-based subtree reconciliation, PID-start-bound
+   lease, supervisor-verified receipt, separate proposed lock/SBOM/receipt/delta artifacts, and
+   offline reverify fail closed. Authenticated web/MCP reach the same Coordinator-owned operation.
+   The live official npm proof observes no source mutation or install. This is not a reuse decision,
+   transitive advisory scan, reachability proof, provenance verdict, merge, or homelab integration.
 
 ## What remains partial
 
@@ -113,9 +122,10 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   worker push, Phase 34 closes bounded mechanical scope-drift refresh, and Phase 36 closes the
   exact-npm external evidence/freshness floor. Phase 37 adds the actual npm lockfile SBOM floor,
   Phase 38 closes the external `borrow|build` decision plus local causal-promotion transaction, and
-  Phase 39 closes pull-to-refresh advisory fencing plus exact TTL invalidation. Provider push/feed
+  Phase 39 closes pull-to-refresh advisory fencing plus exact TTL invalidation, and Phase 40 closes
+  the npm proposed-vs-actual graph delta under an isolated resolver supervisor. Provider push/feed
   ingestion, positive clearance, policy-hash invalidation, the separately grounded `internal`
-  decision, additional ecosystems, proposed-vs-actual graph delta, true vulnerability
+  decision, additional ecosystems, true vulnerability
   reachability, optional export, and independent provenance verification remain later contracts.
 
 ## What remains pending
@@ -156,8 +166,8 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 4. **Build capability modules on shared substrate:** Cairn Rung 0 shipped in Phase 31 and
    Cartographer/Quartermaster local Rung 0 shipped in Phase 32, addressed push in Phase 33, and
    bounded scope-drift refresh in Phase 34, external evidence in Phase 36, exact SBOM in Phase 37,
-   and immutable external reuse decision/promotion in Phase 38;
-   continue their explicitly
+   immutable external reuse decision/promotion in Phase 38, advisory/TTL invalidation in Phase 39,
+   and the isolated proposed npm graph/delta in Phase 40; continue their explicitly
    catalogued later rungs, then demand-earned Cairn Rungs 1–4, Vantage, Evidence Ladder, and Skill
    Forge/computer use behind stronger containment.
 5. **Complete northbound/runtime depth:** MCP HTTP/Tasks/daemon, WebSocket, operator takeover,
