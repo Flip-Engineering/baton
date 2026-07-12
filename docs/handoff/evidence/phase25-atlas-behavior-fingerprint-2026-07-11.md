@@ -65,6 +65,13 @@ exactly one frame carrying that nonce. A target-forged early-exit frame therefor
 `observation_protocol` even if its V8 schema is otherwise valid. Runner-owned top-level error
 frames use the same nonce, so missing/non-function exports now surface typed `invalid_export`.
 
+A final concurrent exact-model closure pass reviewed that corrected commit through Baton. Exact
+`grok-4.5` and `grok-composer-2.5-fast` were both provider-observed on distinct overlapping native
+PIDs; both reports were freshly verified, both kills were normally and durably confirmed, and all
+process, worktree, runtime, and branch ownership was reaped. Each report independently found no
+remaining actionable BF1–BF7 defect. The reports and complete lifecycle ledger are under
+`docs/reference/evidence/phase25-atlas-behavior-final-grok-review-2026-07-11/`.
+
 ## Honest boundary
 
 The corpus is operator-supplied and may be weak. This phase does not generate or shrink inputs,

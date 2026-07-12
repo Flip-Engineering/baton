@@ -329,6 +329,12 @@ nonce over stdin; it is consumed before target import, retained only in the runn
 required in the sole accepted frame. Early exit and forged frames fail typed. Authenticated
 top-level runner errors also make missing/non-function exports reliably `invalid_export` rather
 than generic execution failures.
+
+A final concurrent exact-model closure pass then found no remaining actionable BF1–BF7 defect.
+Exact Grok 4.5 and Grok Composer routes were provider-observed on distinct overlapping PIDs, both
+reports were freshly trust-gated, normal kills were durably confirmed, and every owned process,
+worktree, runtime, and branch was reaped. Phase 25 is therefore closed at its deliberately bounded
+R5 contract; it does not silently acquire coverage, effect tracing, or equivalence claims.
 Baton-on-Baton proofs cover a `sha` helper node/edge delta with reverse-caller impact and the real
 MCP `JSON.parse` assignment reaching `server.handle`. SSA, full path-condition feasibility/PDG,
 shadowing-aware bindings, aliases, heap/implicit flows, exceptions, interprocedural returns,
