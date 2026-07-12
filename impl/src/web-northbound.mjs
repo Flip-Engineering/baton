@@ -53,6 +53,8 @@ function dispatchFailure(cause) {
     return { httpStatus: 502, body: { ok: false, error: { code: 'capability_refused', message: 'capability result refused by policy' } } };
   }
   if (cause?.code === 'cancelled') return { httpStatus: 409, body: { ok: false, error: { code: 'cancelled', message: 'capability invocation cancelled' } } };
+  if (['run_sealed', 'run_not_terminal', 'run_membership_changed', 'run_prefix_changed'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'run state conflict' } } };
+  if (['invalid_run_id', 'run_not_found'].includes(cause?.code)) return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'run precondition failed' } } };
   if (cause?.name === 'WorkerNotFoundError') return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'resource not found' } } };
   return { httpStatus: 503, body: { ok: false, error: { code: 'temporarily_unavailable', message: 'command dispatch failed' } } };
 }
@@ -82,6 +84,7 @@ function validateEnvelope(envelope) {
     || !/^[A-Za-z0-9._:-]{1,256}$/.test(envelope.idempotencyKey ?? '')
     || !string(envelope.command) || !string(envelope.repoId) || !string(envelope.origin)) return 'command identity, idempotencyKey, repoId, and origin are required';
   if (!Object.hasOwn(COMMAND_CAPABILITY, envelope.command)) return 'unsupported command';
+  if (Object.hasOwn(envelope, 'runId') && !/^[A-Za-z0-9._:-]{1,256}$/.test(envelope.runId ?? '')) return 'invalid_run_id';
   if (!isRecord(envelope.args)) return 'args must be an object';
   const allowed = ARG_FIELDS[envelope.command];
   const unknownArg = Object.keys(envelope.args).find((key) => !allowed.has(key));
@@ -299,10 +302,11 @@ export class WebNorthbound {
       value = await this.coordinator.spawn(a.harness, a.brief, {
         model: a.model, effort: a.effort, modelPolicy: a.modelPolicy, taskId: a.taskId ?? `web-${envelope.commandId}`,
         deps: a.deps, taskType: a.taskType, session: a.session, refines: a.refines,
+        runId: envelope.runId ?? null,
         actor: webActor, idempotencyKey: `web.command:${envelope.commandId}`,
       });
     } else if (envelope.command === 'send') {
-      value = await this.coordinator.send(a.workerId, a.message, a.mode, { expectedFence: envelope.expectedFence });
+      value = await this.coordinator.send(a.workerId, a.message, a.mode, { expectedFence: envelope.expectedFence, actor: webActor });
     } else if (envelope.command === 'interrupt') {
       value = await this.coordinator.interrupt(a.workerId, a.then, webActor, { expectedFence: envelope.expectedFence });
     } else if (envelope.command === 'kill') {

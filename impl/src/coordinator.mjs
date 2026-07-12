@@ -109,6 +109,16 @@ function minimalBrief() {
 
 function noop() {}
 
+function normalizeRunId(value) {
+  if (value == null) return null;
+  if (typeof value !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(value)) {
+    const error = new TypeError('runId must be a bounded identifier');
+    error.code = 'invalid_run_id';
+    throw error;
+  }
+  return value;
+}
+
 function globRegex(glob) {
   let re = '^';
   const text = String(glob);
@@ -338,7 +348,11 @@ export class Coordinator {
       this._log.append = (partial) => {
         let e;
         try {
-          e = rawAppend(partial);
+          const handle = this._workers?.get?.(partial?.worker) ?? null;
+          const taskId = partial?.taskId ?? handle?.taskId ?? null;
+          const task = taskId == null ? null : this._tasks?.get?.(taskId) ?? null;
+          const runId = partial?.runId ?? task?.runId ?? null;
+          e = rawAppend({ ...partial, taskId, runId });
         } catch (err) {
           this._appendFailures += 1;
           if (!this._fatalError) {
@@ -511,6 +525,8 @@ export class Coordinator {
 
   _routeAttribution(handle, task = this._tasks.get(handle.taskId)) {
     return {
+      taskId: task?.id ?? handle.taskId ?? null,
+      runId: task?.runId ?? handle.runId ?? null,
       harnessRequested: task?.vendorRequested ?? null,
       harnessResolved: handle.vendor ? this._harnessOf(handle.vendor) : null,
       modelRequested: handle.modelRequested ?? null,
@@ -701,6 +717,7 @@ export class Coordinator {
     // CI1: admission is the pinning boundary. Never retain caller-owned mutable state and never
     // allow a malformed raw object to become a task merely because the caller skipped createBrief.
     const admittedBrief = createBrief(brief);
+    const runId = normalizeRunId(opts.runId);
     const modelPolicy = normalizeModelPolicy(opts.model, opts.modelPolicy, opts.effort);
     const effortRequested = opts.effort ?? modelPolicy?.reasoningEffort ?? null;
     let sessionRequest = normalizeSessionRequest(opts.session);
@@ -756,6 +773,7 @@ export class Coordinator {
     if (this._coordination) {
       const created = this._coordination.createTask({
         id: taskId, brief: admittedBrief, deps, refines: opts.refines ?? null,
+        runId,
         taskType: opts.taskType ?? 'general', reservedWorkerId: workerId,
         vendorRequested: vendor, modelRequested: opts.model ?? null, modelPolicy,
         effortRequested, effortResolved: null, effortObserved: null, routeKey: null,
@@ -765,6 +783,7 @@ export class Coordinator {
     }
     const task = {
       id: taskId,
+      runId,
       brief: admittedBrief,
       deps,
       vendorRequested: vendor,
@@ -801,6 +820,7 @@ export class Coordinator {
 
     const handle = {
       id: workerId,
+      runId,
       vendor: vendor === 'auto' ? null : vendor,
       modelRequested: opts.model ?? null,
       modelResolved: null,
@@ -845,7 +865,7 @@ export class Coordinator {
       const workerId = durable.reservedWorkerId;
       if (!workerId) continue;
       const task = {
-        id: durable.id, brief: durable.brief, deps: [...durable.deps],
+        id: durable.id, runId: durable.runId ?? null, brief: durable.brief, deps: [...durable.deps],
         vendorRequested: durable.vendorRequested, modelRequested: durable.modelRequested,
         modelResolved: durable.modelResolved ?? null, modelObserved: durable.modelObserved ?? null, modelPolicy: durable.modelPolicy,
         effortRequested: durable.effortRequested ?? null, effortResolved: durable.effortResolved ?? null,
@@ -859,7 +879,7 @@ export class Coordinator {
       this._tasks.set(task.id, task);
       this._taskOrder.push(task.id);
       this._workers.set(workerId, {
-        id: workerId, vendor: durable.vendorRequested === 'auto' ? null : durable.vendorRequested,
+        id: workerId, runId: durable.runId ?? null, vendor: durable.vendorRequested === 'auto' ? null : durable.vendorRequested,
         modelRequested: durable.modelRequested ?? null, modelResolved: null, modelObserved: null,
         modelPolicy: durable.modelPolicy ?? null, modelMismatch: null,
         effortRequested: durable.effortRequested ?? null, effortResolved: durable.effortResolved ?? null,
@@ -937,6 +957,7 @@ export class Coordinator {
       modelPolicy: opts.modelPolicy,
       taskType: kind,
       refines: parent.id,
+      runId: parent.runId ?? null,
       review,
     });
     this._log.append({
@@ -989,6 +1010,7 @@ export class Coordinator {
     if (!task || !handle.sessionRef || handle.sessionRef.persistence !== 'native') {
       return { ok: false, result: 'session_not_resumable' };
     }
+    if (task.runId && this._coordination.run?.(task.runId)?.status === 'sealed') throw Object.assign(new Error(`run ${task.runId} is sealed`), { name: 'CoordinationRefusal', code: 'run_sealed' });
     const adapter = this._adapters[handle.vendor];
     if (!adapter || !cardSupportsSession(adapter.card(), { mode: 'resume' })) {
       return { ok: false, result: 'session_not_resumable' };
@@ -1369,6 +1391,7 @@ export class Coordinator {
       runtimeScope: handle.runtimeScope ?? null,
       review: this._tasks.get(handle.taskId)?.review ?? null,
       taskId: handle.taskId,
+      runId: this._tasks.get(handle.taskId)?.runId ?? handle.runId ?? null,
       worktree: handle.worktree,
       fence,
       turnEpoch,
@@ -1415,6 +1438,9 @@ export class Coordinator {
       && handle.status === 'idle'
       && task && TERMINAL_TASK_STATUSES.has(task.status)
       && ['native', 'emulated'].includes(card?.sessions?.multiTurn);
+    if (reusableFollowUp && task.runId && this._coordination.run?.(task.runId)?.status === 'sealed') {
+      throw Object.assign(new Error(`run ${task.runId} is sealed`), { name: 'CoordinationRefusal', code: 'run_sealed' });
+    }
     if (handle.status === 'idle' && !reusableFollowUp) return { ok: false, result: 'worker_not_active' };
     if (handle.status === 'dead' || handle.status === 'exited' || handle.status === 'orphaned' || handle.status === 'pending') {
       return { ok: false, result: 'worker_not_active' };
@@ -1434,7 +1460,7 @@ export class Coordinator {
           harness,
           turnEpoch: this._fences.current(workerId).turnEpoch,
           kind: 'control.stale_rejected',
-          actor: 'orchestrator',
+          actor: opts.actor ?? 'orchestrator',
           payload: { op: 'send', mode, attempted: opts.expectedFence, current: preCheck.current, phase: 'pre_delivery' },
         });
         return { ok: false, result: 'stale_fence', current: preCheck.current };
@@ -1453,7 +1479,7 @@ export class Coordinator {
         harness,
         turnEpoch: currentTurnEpoch,
         kind: 'control.stale_rejected',
-        actor: 'orchestrator',
+        actor: opts.actor ?? 'orchestrator',
         payload: { op: 'send', mode, attempted: stamp, current: check.current, phase: 'post_delivery' },
       });
       // C3: delivery already happened despite the staleness — say so, loudly.
@@ -1473,7 +1499,7 @@ export class Coordinator {
     }
 
     const kind = mode === 'nudge' ? 'control.nudge' : mode === 'steer' ? 'control.steer' : 'control.send';
-    const ev = { worker: workerId, harness, turnEpoch: currentTurnEpoch, kind, actor: 'orchestrator', payload: { message } };
+    const ev = { worker: workerId, harness, turnEpoch: currentTurnEpoch, kind, actor: opts.actor ?? 'orchestrator', payload: { message } };
     if (ack && ack.emulated === true) ev.emulated = true;
     this._log.append(ev);
     return { ok: true, result: 'ok', emulated: ack && ack.emulated === true };
@@ -1814,6 +1840,7 @@ export class Coordinator {
     const id = `${prior.id}:refinement-${++this._refinementSeq}`;
     const created = this._coordination.createTask({
       id, brief: prior.brief, deps: [], refines: prior.id, taskType: prior.taskType,
+      runId: prior.runId ?? null,
       reservedWorkerId: handle.id, vendorRequested: handle.vendor,
       modelRequested: handle.modelRequested, modelPolicy: handle.modelPolicy,
       sessionRequest: handle.sessionRequest, relation,
@@ -1829,6 +1856,7 @@ export class Coordinator {
     this._tasks.set(id, next);
     this._taskOrder.push(id);
     handle.taskId = id;
+    handle.runId = next.runId ?? null;
     return next;
   }
 
@@ -2417,6 +2445,8 @@ export class Coordinator {
     const handle = this._getWorker(workerId);
     const task = this._tasks.get(handle.taskId);
     const attribution = {
+      taskId: task?.id ?? handle.taskId ?? null,
+      runId: task?.runId ?? handle.runId ?? null,
       vendor: handle.vendor,
       harnessRequested: task?.vendorRequested ?? null,
       harnessResolved: handle.vendor ? this._harnessOf(handle.vendor) : null,
@@ -3116,11 +3146,13 @@ export class Coordinator {
       let retainedResultRef = null;
       let publication = null;
       let review = null;
+      let runId = null;
       const budgetUsed = { tokens: 0, usd: 0 };
       const budgetThresholdsFired = new Set();
       const usageCumulative = new Map();
 
       for (const e of events) {
+        runId = e.runId ?? runId;
         if (typeof e.turnEpoch === 'number' && e.turnEpoch > maxTurnEpoch) maxTurnEpoch = e.turnEpoch;
         const publicationMatch = /^publication-w-\d+-(\d+)$/.exec(e.payload?.requestId ?? '');
         if (publicationMatch) this._publicationSeq = Math.max(this._publicationSeq, Number(publicationMatch[1]));
@@ -3310,6 +3342,7 @@ export class Coordinator {
       if (taskId) {
         const task = this._tasks.get(taskId) ?? {
           id: taskId,
+          runId,
           brief: brief ?? minimalBrief(),
           deps: [],
           status: 'pending',
@@ -3340,6 +3373,7 @@ export class Coordinator {
           review,
         };
         const durable = this._coordination?.task(taskId);
+        task.runId = durable?.runId ?? runId ?? task.runId ?? null;
         task.assignee = durable?.reservedWorkerId ?? workerId;
         task.deps = durable ? [...durable.deps] : task.deps;
         task.coordinationVersion = durable?.version ?? task.coordinationVersion ?? null;
@@ -3362,6 +3396,7 @@ export class Coordinator {
 
       this._workers.set(workerId, {
         id: workerId,
+        runId: this._coordination?.task(taskId)?.runId ?? runId ?? null,
         vendor: vendorResolved,
         modelRequested,
         modelResolved,

@@ -13,6 +13,7 @@ const KNOWLEDGE_EDGE_TYPES = new Set(['Supports', 'Contradicts', 'Supersedes', '
 
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
 function digest(value) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
+function validRunId(value) { return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/.test(value); }
 function validEnvRef(envRef) { return envRef && typeof envRef.repoId === 'string' && envRef.repoId.length > 0 && typeof envRef.treeSha === 'string' && /^[A-Fa-f0-9]{4,128}$/.test(envRef.treeSha); }
 function globRegex(pattern) {
   let out = '^';
@@ -64,6 +65,7 @@ export class CoordinationStore {
     this._events = [];
     this._byKey = new Map();
     this._tasks = new Map();
+    this._runs = new Map();
     this._artifacts = new Map();
     this._evidence = new Map();
     this._scratchFacts = new Map();
@@ -141,6 +143,9 @@ export class CoordinationStore {
   _apply(event) {
     const p = event.payload;
     if (event.kind === 'task.created') {
+      if (p.runId != null && this._runs.get(p.runId)?.status === 'sealed') {
+        throw new CoordinationIntegrityError(`task ${p.id} was admitted to sealed run ${p.runId}`, 'run_sealed');
+      }
       this._tasks.set(p.id, freeze({ ...clone(p), status: 'pending', assignee: null, version: 1, createdEvent: event.seq, claimedEvent: null, terminalEvent: null, artifactIds: [] }));
       this._knowledgeNodes.set(`task:${p.id}`, freeze({ id: `task:${p.id}`, type: 'Task', grounding: 'observed', body: `Task ${p.id}`, evidence: [{ coordinationSeq: event.seq }], observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: event.seq, eventTime: event.ts, validFrom: event.ts, validTo: null, validityVersion: 1 }));
     } else if (event.kind === 'task.claimed') {
@@ -168,6 +173,9 @@ export class CoordinationStore {
       this._artifacts.set(p.oldId, freeze({ ...clone(old), version: p.newVersion, supersededBy: p.newId, supersededEvent: event.seq }));
     } else if (event.kind === 'driver.recorded') {
       // Durable audit fact; no additional materialized state.
+    } else if (event.kind === 'run.sealed') {
+      if (this._runs.has(p.runId)) throw new CoordinationIntegrityError(`duplicate run seal ${p.runId}`, 'duplicate_run_seal');
+      this._runs.set(p.runId, freeze({ ...clone(p), status: 'sealed', sealedEvent: event.seq, sealedAt: event.ts }));
     } else if (event.kind === 'scratch.fact_posted') {
       this._scratchFacts.set(p.id, freeze({ ...clone(p), createdEvent: event.seq, active: true }));
     } else if (event.kind === 'scratch.fact_expired') {
@@ -235,7 +243,8 @@ export class CoordinationStore {
     return this._events.slice(start, limit === null ? undefined : start + limit).map(clone);
   }
   task(id) { return clone(this._tasks.get(id) ?? null); }
-  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
+  run(id) { return clone(this._runs.get(id) ?? null); }
+  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
   healthCheck() { try { if (!existsSync(this.file)) return this._events.length === 0; const raw = readFileSync(this.file, 'utf8'); return raw.length === 0 || raw.endsWith('\n'); } catch { return false; } }
   readyTasks() {
     return [...this._tasks.values()].filter((task) => task.status === 'pending' && task.assignee == null
@@ -316,12 +325,63 @@ export class CoordinationStore {
     const prior = this._byKey.get(auth?.key);
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), task: this.task(prior.payload.id) };
     if (!fields?.id || this._tasks.has(fields.id)) throw new CoordinationRefusal(`duplicate task ${fields?.id}`, 'duplicate_task');
+    const runId = fields.runId ?? null;
+    if (runId !== null && !validRunId(runId)) throw new CoordinationRefusal('task runId is invalid', 'invalid_run_id');
+    if (runId !== null && this._runs.get(runId)?.status === 'sealed') throw new CoordinationRefusal(`run ${runId} is sealed`, 'run_sealed');
     const deps = [...(fields.deps ?? [])];
     for (const dep of deps) if (!this._tasks.has(dep)) throw new CoordinationRefusal(`missing dependency ${dep}`, 'missing_dependency');
     if (deps.includes(fields.id)) throw new CoordinationRefusal(`dependency cycle at ${fields.id}`, 'cycle');
-    const payload = { ...clone(fields), deps };
+    const payload = { ...clone(fields), runId, deps };
     const event = this._append('task.created', payload, auth);
     return { ok: true, result: 'created', event: clone(event), task: this.task(fields.id) };
+  }
+
+  sealRunScorecard(fields, auth) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      const run = this.run(fields?.runId);
+      if (run && run.scorecardDigest === fields?.scorecardDigest) return freeze({ ok: true, result: 'idempotent', event: clone(prior), run });
+      throw new CoordinationRefusal('run seal idempotency conflict', 'run_seal_conflict');
+    }
+    const runId = fields?.runId;
+    if (!validRunId(runId)) throw new CoordinationRefusal('runId is invalid', 'invalid_run_id');
+    const existing = this._runs.get(runId);
+    if (existing) {
+      if (existing.scorecardDigest === fields?.scorecardDigest) return freeze({ ok: true, result: 'idempotent', event: clone(this._events[existing.sealedEvent - 1]), run: clone(existing) });
+      throw new CoordinationRefusal(`run ${runId} is already sealed`, 'run_sealed');
+    }
+    if (!Number.isSafeInteger(fields.coordinationUpperBound) || fields.coordinationUpperBound !== this._events.length) {
+      throw new CoordinationRefusal('coordination prefix changed before run seal', 'run_prefix_changed');
+    }
+    const members = [...this._tasks.values()].filter((task) => task.runId === runId).sort((a, b) => a.id.localeCompare(b.id));
+    if (members.length === 0) throw new CoordinationRefusal(`unknown run ${runId}`, 'run_not_found');
+    const taskIds = [...(fields.taskIds ?? [])].sort();
+    if (JSON.stringify(taskIds) !== JSON.stringify(members.map((task) => task.id))) throw new CoordinationRefusal('run membership changed before seal', 'run_membership_changed');
+    if (members.some((task) => !TERMINAL.has(task.status))) throw new CoordinationRefusal(`run ${runId} has nonterminal tasks`, 'run_not_terminal');
+    if (!Array.isArray(fields.operationalTails) || fields.operationalTails.length !== members.length) throw new CoordinationRefusal('run operational tails are incomplete', 'run_tail_invalid');
+    const tails = new Map(fields.operationalTails.map((tail) => [tail.taskId, tail]));
+    for (const task of members) {
+      const tail = tails.get(task.id);
+      if (!tail || tail.worker !== task.assignee || !Number.isSafeInteger(tail.tail) || tail.tail < 1) throw new CoordinationRefusal(`invalid operational tail for ${task.id}`, 'run_tail_invalid');
+    }
+    if (!/^[a-f0-9]{64}$/.test(fields.scorecardDigest ?? '') || !fields.scorecard || typeof fields.scorecard !== 'object') throw new CoordinationRefusal('run scorecard digest/row invalid', 'run_scorecard_invalid');
+    const evidence = clone(fields.evidence ?? []);
+    this._validateKnowledgeEvidence(evidence);
+    if (evidence.length === 0 || evidence.some((ref) => ref.coordinationSeq > fields.coordinationUpperBound)) throw new CoordinationRefusal('run scorecard evidence is incomplete or beyond the seal', 'run_evidence_invalid');
+    const runNodeId = `run:${runId}`;
+    const artifactNodeId = `run-scorecard:${fields.scorecardDigest}`;
+    if (this._knowledgeNodes.has(runNodeId) || this._knowledgeNodes.has(artifactNodeId)) throw new CoordinationRefusal('run scorecard graph identity already exists', 'duplicate_node');
+    const baseKey = auth?.key;
+    const promotion = { kind: 'RunScorecard', trigger: 'run.scorecard' };
+    const entries = [
+      { kind: 'run.sealed', payload: clone(fields), auth },
+      { kind: 'knowledge.promoted', payload: { id: runNodeId, type: 'Run', grounding: 'verified', body: `Sealed run ${runId}`, evidence, promotion }, auth: { actor: auth.actor, key: `${baseKey}:run-node` } },
+      { kind: 'knowledge.promoted', payload: { id: artifactNodeId, type: 'Artifact', grounding: 'verified', body: `Cairn scorecard ${fields.scorecardDigest}`, evidence, promotion }, auth: { actor: auth.actor, key: `${baseKey}:artifact-node` } },
+      ...members.map((task) => ({ kind: 'knowledge.edge_added', payload: { id: `knowledge-edge:contains:${runId}:${task.id}`, type: 'Contains', from: runNodeId, to: `task:${task.id}`, evidence }, auth: { actor: auth.actor, key: `${baseKey}:contains:${task.id}` } })),
+      { kind: 'knowledge.edge_added', payload: { id: `knowledge-edge:producedby:${fields.scorecardDigest}:${runId}`, type: 'ProducedBy', from: artifactNodeId, to: runNodeId, evidence }, auth: { actor: auth.actor, key: `${baseKey}:produced-by` } },
+    ];
+    const events = this._appendBatch(entries);
+    return freeze({ ok: true, result: 'sealed', event: clone(events[0]), run: this.run(runId) });
   }
 
   claimTask(id, worker, expectedVersion, auth, attribution = {}) {

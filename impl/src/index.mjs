@@ -48,6 +48,7 @@ export { AtlasRepresentationCeiling } from './atlas-representation-ceiling.mjs';
 export { AtlasEGraphEvaluation } from './atlas-egraph-evaluation.mjs';
 export { AtlasBehaviorFingerprint } from './atlas-behavior-fingerprint.mjs';
 export { AtlasCodeIndex } from './atlas-index.mjs';
+export { CairnRunScorecard } from './cairn-run-scorecard.mjs';
 export { MergirafResolver } from './structured-merge.mjs';
 export { CapabilityRegistry } from './capability-registry.mjs';
 
@@ -149,7 +150,7 @@ function refereeFn(task, result, opts) {
  * Assemble a runnable fleet driver.
  * @param {{repoRoot:string, logDir:string, adapters:Record<string,object>, now?:()=>number,
  *          approvalTimeoutMs?:number, stopDeadlineMs?:number,
- *          capabilities?:Record<string,object>, capabilityContexts?:Record<string,object|Function>,
+ *          capabilities?:Record<string,object>, capabilityFactories?:Record<string,Function>, capabilityContexts?:Record<string,object|Function>,
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
  *          workerDependencyDirs?:string[], verifyDependencyDirs?:string[], verifySparsePaths?:string[]}} opts
@@ -168,7 +169,16 @@ export function createDriver(opts) {
   const coordination = opts.coordination ?? new CoordinationStore(join(opts.logDir, 'coordination'), {
     operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
   });
-  const configuredCapabilities = opts.capabilities ?? {};
+  const configuredCapabilities = { ...(opts.capabilities ?? {}) };
+  for (const [name, factory] of Object.entries(opts.capabilityFactories ?? {})) {
+    if (Object.hasOwn(configuredCapabilities, name)) throw new TypeError(`duplicate capability registration: ${name}`);
+    if (typeof factory !== 'function') throw new TypeError(`capability factory must be a function: ${name}`);
+    configuredCapabilities[name] = factory({
+      coordination,
+      readOperational: (worker, throughSeq = null) => log.read(worker).filter((event) => throughSeq === null || event.seq <= throughSeq),
+      tailOperational: (worker) => log.tail(worker),
+    });
+  }
   if (Object.keys(configuredCapabilities).length > 0
     && (!Number.isSafeInteger(opts.maxCapabilityBudgetTokens) || !Number.isSafeInteger(opts.maxCapabilityEnvelopeBytes))) {
     throw new TypeError('maxCapabilityBudgetTokens and maxCapabilityEnvelopeBytes must be deployment-derived for a non-empty capability registry');

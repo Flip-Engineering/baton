@@ -21,6 +21,7 @@ const envelope = (overrides = {}) => ({
     brief: { goal: 'test', constraints: [], pathScope: ['x'], definitionOfDone: 'done', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 10, usd: 1, wallMin: 1 } },
   },
   repoId: 'repo-a',
+  runId: 'run-web-a',
   origin: 'https://control.example.test',
   ...overrides,
 });
@@ -89,6 +90,7 @@ test('WN1/WN4: spawn forwards harness and exact model independently and derives 
   assert.deepEqual(calls[0].opts.modelPolicy, { reasoningEffort: 'high' });
   assert.equal(calls[0].opts.actor, 'web:user-1:session-1');
   assert.equal(calls[0].opts.taskId, 'web-cmd-1');
+  assert.equal(calls[0].opts.runId, 'run-web-a');
   const admitted = coordination.events().find((event) => event.kind === 'web.command_admitted');
   assert.equal(admitted.actor, 'web:user-1:session-1');
   assert.equal(admitted.payload.credentialId, 'cred-1');

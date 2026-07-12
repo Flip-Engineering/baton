@@ -51,6 +51,7 @@ test('MN1/MN4/CI6: handshake and deterministic closed ten-tool inventory', async
   assert.equal(response.result.tools.every((tool) => tool.execution.taskSupport === 'forbidden'), true);
   assert.equal(response.result.tools[0].inputSchema.properties.modelPolicy.additionalProperties, false);
   assert.equal(response.result.tools[0].inputSchema.properties.session.additionalProperties, false);
+  assert.equal(response.result.tools[0].inputSchema.properties.runId.maxLength, 256);
   const capabilitySchema = response.result.tools.find((tool) => tool.name === 'fleet_capability_invoke').inputSchema;
   assert.equal(capabilitySchema.oneOf.length, 3);
   assert.deepEqual(capabilitySchema.oneOf.map((branch) => branch.properties.action.const), ['invoke', 'resume', 'reverify']);
@@ -101,11 +102,12 @@ test('CI6: capability invocation validation and control authority fail closed be
 test('MN3/MN5/MN6: spawn preserves exact harness/model/effort under injected authority', async () => {
   const { server, calls } = setup(); await initialized(server);
   const response = await request(server, 2, 'tools/call', { name: 'fleet_spawn', arguments: {
-    repoId: 'repo-a', idempotencyKey: 'spawn-1', harness: 'CodexAppServerCli', model: 'gpt-5.6-sol', effort: 'low', brief: { task: 'review MCP' },
+    repoId: 'repo-a', idempotencyKey: 'spawn-1', runId: 'run-mcp-a', harness: 'CodexAppServerCli', model: 'gpt-5.6-sol', effort: 'low', brief: { task: 'review MCP' },
   } });
   assert.equal(response.result.isError, false);
   assert.deepEqual(calls[0].slice(0, 3), ['spawn', 'CodexAppServerCli', { task: 'review MCP' }]);
   assert.equal(calls[0][3].model, 'gpt-5.6-sol'); assert.equal(calls[0][3].effort, 'low');
+  assert.equal(calls[0][3].runId, 'run-mcp-a');
   assert.match(calls[0][3].actor, /^mcp:operator-a:stdio-a$/);
   assert.equal(JSON.stringify(calls[0]).includes('idempotencyKey":"spawn-1'), false);
 });
