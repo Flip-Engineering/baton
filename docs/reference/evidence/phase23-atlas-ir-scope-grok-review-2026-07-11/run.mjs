@@ -38,11 +38,16 @@ const EGRAPH_IMPLEMENTATION_TASKS = [
   { taskId: 'grok-egraph-implementation-45', model: 'grok-4.5', path: 'reviews/dogfood/grok-egraph-implementation-45.md', stance: 'authority' },
   { taskId: 'grok-egraph-implementation-composer', model: 'grok-composer-2.5-fast', path: 'reviews/dogfood/grok-egraph-implementation-composer.md', stance: 'security' },
 ];
+const CAPABILITY_AUDIT_TASKS = [
+  { taskId: 'grok-capability-audit-45', model: 'grok-4.5', path: 'reviews/dogfood/grok-capability-audit-45.md', stance: 'wiring' },
+  { taskId: 'grok-capability-audit-composer', model: 'grok-composer-2.5-fast', path: 'reviews/dogfood/grok-capability-audit-composer.md', stance: 'catalog' },
+];
 const PROFILE_TASKS = REVIEW_PROFILE === 'behavior-implementation' ? BEHAVIOR_TASKS
   : REVIEW_PROFILE === 'merge-scope' ? MERGE_TASKS
     : REVIEW_PROFILE === 'merge-implementation' ? MERGE_IMPLEMENTATION_TASKS
       : REVIEW_PROFILE === 'egraph-evaluation' ? EGRAPH_TASKS
         : REVIEW_PROFILE === 'egraph-implementation' ? EGRAPH_IMPLEMENTATION_TASKS
+          : REVIEW_PROFILE === 'capability-audit' ? CAPABILITY_AUDIT_TASKS
     : IR_TASKS;
 const TASKS = REVIEW_MODEL ? PROFILE_TASKS.filter((task) => task.model === REVIEW_MODEL) : PROFILE_TASKS;
 const MIN_FREE_BYTES = Number(MIN_FREE_BYTES_OVERRIDE ?? (128 + 64 * TASKS.length) * 1024 * 1024);
@@ -61,6 +66,24 @@ async function until(fn, label, timeoutMs = TIMEOUT_MS) {
 }
 
 function brief(task) {
+  if (REVIEW_PROFILE === 'capability-audit') {
+    const focus = task.stance === 'wiring'
+      ? 'Trace public assembly and real call paths. Treat exports, cards, specs, or unit tests without coordinator/northbound wiring as partial, not shipped.'
+      : 'Reconcile every named catalog item and status claim. Find anything silently dropped, mislabeled complete, duplicated, stale, or missing explicit acceptance/reopening gates.';
+    return createBrief({
+      goal: `Exhaustively audit Baton's intended full-system capability catalog at ${git(['rev-parse', '--short', 'HEAD'])}. Read SYSTEM.md, README.md, docs/25-capability-gap.md, docs/26-full-system-goal.md, docs/handoff/evidence/capability-matrix.json, impl/VALIDATION.md, all spec phase directories, impl/src/index.mjs exports/driver assembly, and focused tests/evidence as needed. Include control plane, exact harness/model/effort routing, sessions/lifecycle/replay/reap, sandbox/secrets, messaging/provenance, budgets/watchdogs/operator control, verification/oracle/mutation/integration/publication, adaptive routing/evals, context governance, Scratch/causal knowledge graph, authenticated web/MCP, Atlas AST/symbol/SCIP/CPG/IR/behavior/merge/e-graph, Vantage, Evidence Ladder, Skill Forge/computer use, Cartographer/Quartermaster, and Cairn. ${focus} No homelab integration is in scope. Write ${task.path} with exact headings "## Decision", "## Proposed numbered contract", "## Red tests and proof", and "## Risks and rejection criteria". Proposed numbered contract must contain a status matrix and dependency-ordered pursuit list; every intended item must be shipped, partial, pending, explicitly retired, or conditionally catalogued with evidence.`,
+      constraints: [
+        `Edit only ${task.path}.`,
+        'Use at most 24 repository or tool calls, then finish from collected evidence.',
+        'Ground status in source wiring, focused tests, live evidence, and explicit Decision artifacts; do not trust documentation prose alone.',
+        'No homelab integration or dependency. Do not use network tools, read credentials, edit product code/specs/tests/evidence, commit, push, deploy, or install software.',
+        'Keep the report under 5000 words. Do not drop a feature by calling it later or fenced; retain exact acceptance or reopening gates.',
+      ],
+      pathScope: [task.path], definitionOfDone: 'The four exact headings exist, the full catalog is status-mapped, and remaining work is dependency ordered without silent deletions',
+      verification: { command: `test -s ${task.path} && grep -Fq '## Proposed numbered contract' ${task.path} && grep -Fq '## Risks and rejection criteria' ${task.path} && git diff --check -- ${task.path}`, expectExit: 0, timeoutMs: 180000 },
+      budget: { tokens: 70000, usd: 5, wallMin: 12 },
+    });
+  }
   if (REVIEW_PROFILE === 'egraph-implementation') {
     const focus = task.stance === 'authority'
       ? 'Prioritize typed refusal coverage, accidental capability enablement, verification/merge authority leakage, Decision replay meaning, and exact reopening-threshold non-authority.'
@@ -262,6 +285,7 @@ try {
           : REVIEW_PROFILE === 'merge-implementation' ? 'merge-implementation-review'
             : REVIEW_PROFILE === 'egraph-evaluation' ? 'representation-evaluation-review'
               : REVIEW_PROFILE === 'egraph-implementation' ? 'representation-implementation-review'
+                : REVIEW_PROFILE === 'capability-audit' ? 'full-system-capability-audit'
           : 'representation-design-review',
       model: task.model,
       modelPolicy: { allow: [task.model], allowFamilies: ['grok'] },
