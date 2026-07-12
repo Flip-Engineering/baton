@@ -75,6 +75,8 @@ export class CoordinationStore {
     this._contamination = [];
     this._webCommands = new Map();
     this._webCommandScopes = new Map();
+    this._mcpCalls = new Map();
+    this._mcpCallScopes = new Map();
     this._operationalRead = opts.operationalRead ?? null;
     mkdirSync(root, { recursive: true });
     this._load();
@@ -213,6 +215,15 @@ export class CoordinationStore {
     } else if (event.kind === 'web.command_completed' || event.kind === 'web.command_failed') {
       const old = this._webCommands.get(p.commandId);
       this._webCommands.set(p.commandId, freeze({ ...clone(old), status: event.kind === 'web.command_completed' ? 'completed' : 'failed', outcome: clone(p.outcome), completedEvent: event.seq, completedAt: event.ts }));
+    } else if (event.kind === 'mcp.call_admitted') {
+      const call = freeze({ ...clone(p), status: 'admitted', admittedEvent: event.seq, admittedAt: event.ts, outcome: null, completedEvent: null });
+      this._mcpCalls.set(p.callId, call);
+      this._mcpCallScopes.set(p.scopeKey, p.callId);
+    } else if (event.kind === 'mcp.call_completed' || event.kind === 'mcp.call_failed') {
+      const old = this._mcpCalls.get(p.callId);
+      this._mcpCalls.set(p.callId, freeze({ ...clone(old), status: event.kind === 'mcp.call_completed' ? 'completed' : 'failed', outcome: clone(p.outcome), completedEvent: event.seq, completedAt: event.ts }));
+    } else if (event.kind === 'mcp.audit') {
+      // Append-only MCP security/audit record; it deliberately owns no tool authority.
     } else if (event.kind === 'web.audit') {
       // Append-only security/audit record; it deliberately owns no command authority.
     }
@@ -260,6 +271,41 @@ export class CoordinationStore {
     if (command.status !== 'admitted') return freeze({ ok: true, result: 'replay', command: clone(command) });
     const event = this._append('web.command_failed', { commandId, outcome: clone(outcome) }, auth);
     return freeze({ ok: true, result: 'failed', event: clone(event), command: this.webCommand(commandId) });
+  }
+
+  mcpCall(id) { return clone(this._mcpCalls.get(id) ?? null); }
+
+  admitMcpCall(fields, auth) {
+    if (!fields?.callId || !fields?.scopeKey || !fields?.requestDigest) throw new TypeError('MCP call identity, scope, and digest required');
+    const priorId = this._mcpCallScopes.get(fields.scopeKey);
+    if (priorId) {
+      const prior = this._mcpCalls.get(priorId);
+      if (prior.requestDigest !== fields.requestDigest) return freeze({ ok: false, result: 'idempotency_conflict' });
+      return freeze({ ok: true, result: 'replay', call: clone(prior) });
+    }
+    if (this._mcpCalls.has(fields.callId)) return freeze({ ok: false, result: 'call_id_conflict' });
+    const event = this._append('mcp.call_admitted', clone(fields), auth);
+    return freeze({ ok: true, result: 'admitted', event: clone(event), call: this.mcpCall(fields.callId) });
+  }
+
+  completeMcpCall(callId, outcome, auth) {
+    const call = this._mcpCalls.get(callId);
+    if (!call) throw new CoordinationRefusal(`unknown MCP call ${callId}`, 'not_found');
+    if (call.status !== 'admitted') return freeze({ ok: true, result: 'replay', call: clone(call) });
+    const event = this._append('mcp.call_completed', { callId, outcome: clone(outcome) }, auth);
+    return freeze({ ok: true, result: 'completed', event: clone(event), call: this.mcpCall(callId) });
+  }
+
+  failMcpCall(callId, outcome, auth) {
+    const call = this._mcpCalls.get(callId);
+    if (!call) throw new CoordinationRefusal(`unknown MCP call ${callId}`, 'not_found');
+    if (call.status !== 'admitted') return freeze({ ok: true, result: 'replay', call: clone(call) });
+    const event = this._append('mcp.call_failed', { callId, outcome: clone(outcome) }, auth);
+    return freeze({ ok: true, result: 'failed', event: clone(event), call: this.mcpCall(callId) });
+  }
+
+  recordMcpAudit(fields, auth) {
+    return clone(this._append('mcp.audit', clone(fields), auth));
   }
 
   recordWebAudit(fields, auth) {

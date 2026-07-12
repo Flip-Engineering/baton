@@ -7,6 +7,9 @@
   "engines": {
     "node": ">=20"
   },
+  "bin": {
+    "baton-mcp": "scripts/mcp-stdio.mjs"
+  },
   "scripts": {
     "test": "node scripts/run-suite.mjs",
     "test:watch": "node scripts/run-suite.mjs --watch",

@@ -1,0 +1,166 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
+import test from 'node:test';
+
+import { CoordinationStore, McpFleetServer, serveMcpStdio } from '../src/index.mjs';
+
+const NOW = Date.parse('2026-07-11T21:00:00.000Z');
+const root = () => mkdtempSync(join(tmpdir(), 'baton-mcp-'));
+const principal = (overrides = {}) => ({
+  userId: 'operator-a', sessionId: 'stdio-a', capabilities: ['control', 'observe', 'approve', 'emergency_stop'],
+  repoIds: ['repo-a'], expiresAt: new Date(NOW + 60_000).toISOString(), revoked: false, ...overrides,
+});
+function setup(overrides = {}) {
+  const calls = [];
+  const coordinator = {
+    async spawn(harness, brief, opts) { calls.push(['spawn', harness, brief, opts]); return { id: 'worker-1', fence: 1 }; },
+    async send(workerId, message, mode, opts) { calls.push(['send', workerId, message, mode, opts]); return { result: 'sent' }; },
+    async wait(timeoutMs) { calls.push(['wait', timeoutMs]); return { events: [], cursor: 4, more: false }; },
+    async respond(requestId, answer, actor) { calls.push(['respond', requestId, answer, actor]); return { result: 'responded' }; },
+    async interrupt(workerId, then, actor, opts) { calls.push(['interrupt', workerId, then, actor, opts]); return { result: 'interrupted' }; },
+    async result(workerId) { calls.push(['result', workerId]); return { id: workerId, state: 'working' }; },
+    list() { calls.push(['list']); return [{ id: 'worker-1' }]; },
+    async kill(workerId, actor, opts) { calls.push(['kill', workerId, actor, opts]); return { result: 'killed' }; },
+    ...overrides.coordinator,
+  };
+  const directory = overrides.directory ?? root();
+  const coordination = new CoordinationStore(join(directory, 'coordination'), { clock: () => new Date(NOW).toISOString() });
+  const server = new McpFleetServer({ coordinator, coordination, principal: overrides.principal ?? principal(), repoIds: ['repo-a'], now: () => NOW, maxWaitMs: 25_000, takeToolQuota: overrides.takeToolQuota ?? (() => ({ ok: true })) });
+  return { calls, coordinator, coordination, directory, server };
+}
+const request = (server, id, method, params) => server.handle({ jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) });
+async function initialized(server) {
+  const response = await request(server, 1, 'initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
+  assert.equal(response.result.protocolVersion, '2025-11-25');
+  assert.deepEqual(await server.handle({ jsonrpc: '2.0', method: 'notifications/initialized' }), null);
+}
+
+test('MN1/MN4: handshake and deterministic closed eight-tool inventory', async () => {
+  const { server } = setup(); await initialized(server);
+  const response = await request(server, 2, 'tools/list', {});
+  assert.deepEqual(response.result.tools.map((tool) => tool.name), ['fleet_spawn', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt', 'fleet_result', 'fleet_list', 'fleet_kill']);
+  assert.equal(response.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
+  assert.equal(response.result.tools.every((tool) => tool.execution.taskSupport === 'forbidden'), true);
+});
+
+test('MN3/MN5/MN6: spawn preserves exact harness/model/effort under injected authority', async () => {
+  const { server, calls } = setup(); await initialized(server);
+  const response = await request(server, 2, 'tools/call', { name: 'fleet_spawn', arguments: {
+    repoId: 'repo-a', idempotencyKey: 'spawn-1', harness: 'CodexAppServerCli', model: 'gpt-5.6-sol', effort: 'low', brief: { task: 'review MCP' },
+  } });
+  assert.equal(response.result.isError, false);
+  assert.deepEqual(calls[0].slice(0, 3), ['spawn', 'CodexAppServerCli', { task: 'review MCP' }]);
+  assert.equal(calls[0][3].model, 'gpt-5.6-sol'); assert.equal(calls[0][3].effort, 'low');
+  assert.match(calls[0][3].actor, /^mcp:operator-a:stdio-a$/);
+  assert.equal(JSON.stringify(calls[0]).includes('idempotencyKey":"spawn-1'), false);
+});
+
+test('MN7/MN9: terminal replay survives restart and never duplicates an effect', async () => {
+  const s = setup(); await initialized(s.server);
+  const args = { repoId: 'repo-a', idempotencyKey: 'kill-1', workerId: 'worker-1', expectedFence: 3 };
+  const first = await request(s.server, 2, 'tools/call', { name: 'fleet_kill', arguments: args });
+  const restarted = setup({ directory: s.directory, coordinator: s.coordinator }); await initialized(restarted.server);
+  const replay = await request(restarted.server, 3, 'tools/call', { name: 'fleet_kill', arguments: args });
+  assert.deepEqual(replay.result, first.result);
+  assert.equal(s.calls.filter(([kind]) => kind === 'kill').length, 1);
+  const raw = JSON.stringify(restarted.coordination.events());
+  assert.equal(raw.includes('kill-1'), false);
+});
+
+test('MN7: conflicting and admitted replay are fail-closed without a second dispatch', async () => {
+  const s = setup(); await initialized(s.server);
+  const common = { repoId: 'repo-a', idempotencyKey: 'send-1', workerId: 'worker-1', message: 'one', mode: 'nudge', expectedFence: 1 };
+  await request(s.server, 2, 'tools/call', { name: 'fleet_send', arguments: common });
+  const conflict = await request(s.server, 3, 'tools/call', { name: 'fleet_send', arguments: { ...common, message: 'two' } });
+  assert.equal(conflict.result.isError, true); assert.match(conflict.result.content[0].text, /idempotency_conflict/);
+  const held = setup(); await initialized(held.server);
+  held.coordination.admitMcpCall({ callId: 'held-1', scopeKey: held.server.callScope('fleet_send', common), requestDigest: held.server.callDigest(common), tool: 'fleet_send', repoId: 'repo-a', userId: 'operator-a' }, { actor: 'test', key: 'held' });
+  const pending = await request(held.server, 4, 'tools/call', { name: 'fleet_send', arguments: common });
+  assert.equal(pending.result.isError, true); assert.match(pending.result.content[0].text, /call_admitted/);
+  assert.equal(held.calls.length, 0);
+});
+
+test('MN7: a lost completion append never reports success and retry never repeats the effect', async () => {
+  const s = setup(); await initialized(s.server);
+  const complete = s.coordination.completeMcpCall.bind(s.coordination);
+  s.coordination.completeMcpCall = () => { throw new Error('disk unavailable'); };
+  const args = { repoId: 'repo-a', idempotencyKey: 'interrupt-1', workerId: 'worker-1', expectedFence: 2, then: 'stop here' };
+  const first = await request(s.server, 2, 'tools/call', { name: 'fleet_interrupt', arguments: args });
+  assert.equal(first.result.isError, true); assert.match(first.result.content[0].text, /temporarily_unavailable/);
+  s.coordination.completeMcpCall = complete;
+  const retry = await request(s.server, 3, 'tools/call', { name: 'fleet_interrupt', arguments: args });
+  assert.equal(retry.result.isError, true); assert.match(retry.result.content[0].text, /call_admitted/);
+  assert.equal(s.calls.filter(([kind]) => kind === 'interrupt').length, 1);
+});
+
+test('MN3/MN4/MN6: scope, capability, fence, unknown fields, and credential fields are rejected before dispatch', async () => {
+  const s = setup({ principal: principal({ capabilities: ['observe'] }) }); await initialized(s.server);
+  const cases = [
+    { name: 'fleet_spawn', arguments: { repoId: 'repo-a', idempotencyKey: 'a', harness: 'x', brief: {} } },
+    { name: 'fleet_kill', arguments: { repoId: 'repo-b', idempotencyKey: 'b', workerId: 'w', expectedFence: 1 } },
+    { name: 'fleet_send', arguments: { repoId: 'repo-a', idempotencyKey: 'c', workerId: 'w', message: 'x', mode: 'nudge' } },
+    { name: 'fleet_list', arguments: { repoId: 'repo-a', token: 'secret' } },
+  ];
+  for (let i = 0; i < cases.length; i += 1) {
+    const response = await request(s.server, 10 + i, 'tools/call', cases[i]);
+    assert.equal(response.result.isError, true);
+  }
+  assert.deepEqual(s.calls, []);
+});
+
+test('MN3/MN8: injected quota and durable audit fail closed before dispatch', async () => {
+  const limited = setup({ takeToolQuota: () => ({ ok: false }) }); await initialized(limited.server);
+  const response = await request(limited.server, 2, 'tools/call', { name: 'fleet_list', arguments: { repoId: 'repo-a' } });
+  assert.equal(response.result.isError, true); assert.match(response.result.content[0].text, /rate_limited/);
+  assert.equal(limited.coordination.events().at(-1).payload.kind, 'tool_rate_limited');
+  assert.deepEqual(limited.calls, []);
+  const unavailable = setup(); await initialized(unavailable.server);
+  unavailable.coordination.recordMcpAudit = () => { throw new Error('audit unavailable'); };
+  const failed = await request(unavailable.server, 3, 'tools/call', { name: 'fleet_list', arguments: { repoId: 'repo-a' } });
+  assert.equal(failed.result.isError, true); assert.match(failed.result.content[0].text, /temporarily_unavailable/);
+  assert.deepEqual(unavailable.calls, [['list']]);
+});
+
+test('MN8: reads return structured content and wait is bounded by the configured host-safe ceiling', async () => {
+  const s = setup(); await initialized(s.server);
+  const response = await request(s.server, 2, 'tools/call', { name: 'fleet_wait', arguments: { repoId: 'repo-a', timeoutMs: 90_000 } });
+  assert.deepEqual(response.result.structuredContent, { events: [], cursor: 4, more: false });
+  assert.deepEqual(JSON.parse(response.result.content[0].text), response.result.structuredContent);
+  assert.deepEqual(s.calls, [['wait', 25_000]]);
+  const listed = await request(s.server, 3, 'tools/call', { name: 'fleet_list', arguments: { repoId: 'repo-a' } });
+  assert.deepEqual(listed.result.structuredContent, { result: [{ id: 'worker-1' }] });
+});
+
+test('MN1/MN8: protocol faults stay JSON-RPC errors while coordinator faults are tool errors', async () => {
+  const s = setup({ coordinator: { async result() { throw new Error('private provider detail'); } } });
+  const beforeInit = await request(s.server, 1, 'tools/list', {}); assert.equal(beforeInit.error.code, -32002);
+  await initialized(s.server);
+  const unknownMethod = await request(s.server, 2, 'unknown', {}); assert.equal(unknownMethod.error.code, -32601);
+  const unknownTool = await request(s.server, 3, 'tools/call', { name: 'fleet_nope', arguments: {} }); assert.equal(unknownTool.error.code, -32602);
+  const failed = await request(s.server, 4, 'tools/call', { name: 'fleet_result', arguments: { repoId: 'repo-a', workerId: 'w' } });
+  assert.equal(failed.result.isError, true); assert.equal(failed.result.content[0].text.includes('private provider detail'), false);
+});
+
+test('MN2: stdio is newline JSON-RPC, ordered, drains on EOF, and rejects malformed/oversize frames', async () => {
+  const s = setup(); const input = new PassThrough(); const output = new PassThrough(); const error = new PassThrough();
+  let wire = ''; output.on('data', (chunk) => { wire += chunk; });
+  const serving = serveMcpStdio(s.server, { input, output, error, maxLineBytes: 256 });
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'test', version: '1' } } })}\n`);
+  input.write('{bad json}\n'); input.write(`${'x'.repeat(300)}\n`); input.end(); await serving;
+  const frames = wire.trim().split('\n').map(JSON.parse);
+  assert.equal(frames[0].id, 1); assert.deepEqual(frames.slice(1).map((frame) => frame.error.code), [-32700, -32700]);
+  assert.equal(s.calls.length, 0); assert.equal(error.read()?.toString() ?? '', '');
+});
+
+test('MN2: an oversize frame split across chunks is discarded without losing the following frame', async () => {
+  const s = setup(); const input = new PassThrough(); const output = new PassThrough();
+  let wire = ''; output.on('data', (chunk) => { wire += chunk; });
+  const serving = serveMcpStdio(s.server, { input, output, maxLineBytes: 64 });
+  input.write('x'.repeat(40)); input.write(`${'y'.repeat(40)}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'ping' })}\n`); input.end(); await serving;
+  const frames = wire.trim().split('\n').map(JSON.parse);
+  assert.equal(frames[0].error.code, -32700); assert.deepEqual(frames[1], { jsonrpc: '2.0', id: 2, result: {} });
+});

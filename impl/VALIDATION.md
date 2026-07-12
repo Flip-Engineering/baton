@@ -145,6 +145,7 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 | Owned test-fixture lifecycle | `docs/handoff/evidence/phase15-test-fixture-lifecycle-2026-07-11.md`; TF1–TF4 red/green nested process tests prove pass, fail, SIGTERM, descendant-process reap, sibling preservation, and result truth. The canonical `npm test` run passes 660/660 and leaves zero `baton-suite-*` roots in its configured parent |
 | Browser OIDC and operator seat | `docs/handoff/evidence/phase12-browser-control-2026-07-11.md`; 12 new BO/BU contracts, 100/100 combined Phase 12 tests, and the 678/678 full suite cover browser-bound PKCE state, exact verified identity, provider/mapper timeouts and capacity, durable session/CSRF cookies, clean callback redirect, delivery-failure revocation, authenticated no-store/CSP assets, sanitized session projection, exact harness/model/effort inputs, fenced controls, and existing SSE/logout wiring. A real TLS socket proof passes eight end-to-end redirect/cookie/command/SSE/revocation gates and fully cleans up; in-app browser interaction and provider-backed review remain pending because their execution/quota providers were unavailable |
 | Durable web command reconciliation | `docs/handoff/evidence/phase12-web-command-reconciliation-2026-07-11.md`; 6 RC contracts, 22/22 focused status/operator/northbound tests, and 678/678 full-suite tests cover server-derived durable user ownership, admitted/completed/failed sanitized reads, restart and same-user credential rotation, cross-user/legacy/malformed hidden-object posture, observe/repo scope, audit failure, zero coordinator calls, bounded routable IDs, and same-ID browser polling |
+| MCP stdio northbound | `docs/handoff/evidence/phase16-mcp-northbound-2026-07-11.md`; MN1–MN10, 11/11 focused tests, and 689/689 full-suite tests cover the stable 2025-11-25 handshake, eight closed fleet tools, fixed injected authority and deployment quota, exact harness/model/effort dispatch, fences, bounded wait, durable pre-effect admission, restart replay, post-effect ambiguity refusal, structured/text results, and bounded newline stdio framing |
 | Credential discipline | GLM checked by presence only and recorded `PENDING-LIVE-no-credential`; no credential value was logged |
 
 The three-vendor capstone checks were: no harness error; Claude/Codex/Grok all completed; every
@@ -176,7 +177,7 @@ These are absent, not implied by the green suite:
    dependency-free Node ESM. The authenticated HTTPS command/session vertical, resumable SSE WN6,
    EP1–EP9 edge policy, BO1–BO7 OIDC bootstrap, and BU1–BU7 minimal operator seat ship, but a
    production OIDC provider adapter, optional WebSocket parity,
-   MCP/deeper operator surfaces, real-browser/end-to-end
+   Streamable HTTP MCP authorization, MCP Tasks/daemon supervision, deeper operator surfaces, real-browser/end-to-end
    adversarial proof, and the eventual Go/Elixir production core remain incomplete.
 7. **Cross-vendor decorrelation eval (E2).** The fleet required to run it now exists; the eval is a
    phase-11 research decision, not evidence retroactively required for phase-10 wiring completion.
