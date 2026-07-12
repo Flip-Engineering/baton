@@ -350,7 +350,9 @@ binary conflicts could reach the resolver, marker detection missed delimiter-fre
 and local Git inherited ambient `GIT_*` redirects. Baton now rejects NUL conflicts before resolver
 invocation, detects any seven-or-more diff3 marker run at line start, strips all ambient Git
 control variables, disables system/global Git config and hooks for staging, and pins these with
-reds. The host lacks Mergiraf, so the 13/13 focused gate uses an injected wire-faithful resolver and a
+reds. A targeted Composer closure then caught the symmetric output seam: a resolver could inject
+NUL after the input check. The same binary refusal now gates both sides of the resolver trust
+boundary. The host lacks Mergiraf, so the 13/13 focused gate uses an injected wire-faithful resolver and a
 live external-tool proof remains pending. True data/control-flow semantic merge stays catalogued
 behind adoptable-engine, measured-demand, and false-clean evaluation gates.
 Baton-on-Baton proofs cover a `sha` helper node/edge delta with reverse-caller impact and the real

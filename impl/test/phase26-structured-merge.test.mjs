@@ -53,14 +53,19 @@ test('SM4: resolver success with conflict markers still refuses and reaps the st
   }
 });
 
-test('SM4: Git-binary conflicts refuse before resolver invocation', async () => {
-  const root = repo(); let calls = 0;
-  const resolver = { maxFileBytes: 4096, identity: () => ({ tool: 'fake-mergiraf' }), resolve: async () => { calls += 1; return { status: 'resolved' }; } };
+test('SM4: binary conflict input and resolver output both refuse at their trust boundary', async () => {
   const binaryBrief = createBrief({ goal: 'change binary', constraints: [], pathScope: ['src/value.js'], definitionOfDone: 'fixture only', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } });
-  const { coordinator, handle } = await accepted(root, 'sm-binary', '\0worker\n', resolver, binaryBrief);
-  write(root, 'src/value.js', '\0main\n'); commit(root, 'main changes binary'); const before = git(['rev-parse', 'HEAD'], root);
-  await assert.rejects(coordinator.integrate(handle.id, { strategy: 'structured' }), (error) => error.code === 'structured_binary_conflict');
-  assert.equal(calls, 0); assert.equal(git(['rev-parse', 'HEAD'], root), before);
+  for (const outputBinary of [false, true]) {
+    const root = repo(); let calls = 0;
+    const resolver = { maxFileBytes: 4096, identity: () => ({ tool: 'fake-mergiraf' }), resolve: async ({ absolutePath }) => { calls += 1; writeFileSync(absolutePath, 'export const values = { alpha: 2 };\n\0resolver'); return { status: 'resolved' }; } };
+    const taskId = outputBinary ? 'sm-binary-output' : 'sm-binary-input';
+    const workerSource = outputBinary ? 'export const values = { alpha: 2 };\n' : '\0worker\n';
+    const mainSource = outputBinary ? 'export const values = { alpha: 3 };\n' : '\0main\n';
+    const { coordinator, handle } = await accepted(root, taskId, workerSource, resolver, binaryBrief);
+    write(root, 'src/value.js', mainSource); commit(root, 'main changes binary fixture'); const before = git(['rev-parse', 'HEAD'], root);
+    await assert.rejects(coordinator.integrate(handle.id, { strategy: 'structured' }), (error) => error.code === 'structured_binary_conflict');
+    assert.equal(calls, outputBinary ? 1 : 0); assert.equal(git(['rev-parse', 'HEAD'], root), before);
+  }
 });
 
 test('SM6: clean structured resolution is freshly verified before main moves', async () => {

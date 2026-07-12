@@ -304,6 +304,7 @@ export async function stageStructuredIntegration(repoRoot, taskId, resultSha, op
           if (resolution?.status === 'resolved') {
             if (!existsSync(isolatedPath) || !lstatSync(isolatedPath).isFile()) throw mergeError(`structured resolver replaced the candidate path: ${relativePath}`, 'structured_unsupported_path');
             merged = readFileSync(isolatedPath); if (merged.byteLength > opts.resolver.maxFileBytes) throw mergeError(`structured resolution exceeds file budget: ${relativePath}`, 'structured_file_too_large');
+            if (merged.includes(0)) throw mergeError(`structured resolution is binary: ${relativePath}`, 'structured_binary_conflict');
           }
         } finally { rmSync(isolatedRoot, { recursive: true, force: true }); }
         resolutions.push({ path: relativePath, ...resolution });

@@ -52,6 +52,22 @@ variables, disables system/global configuration, and disables hooks for merge/co
 implementation reports and complete kill/reap ledger are under
 `docs/reference/evidence/phase26-structured-merge-implementation-grok-review-2026-07-11/`.
 
+The first concurrent final retry also exposed an operator-cleanup hazard: while recovering disk
+headroom, an overbroad stale-log pattern deleted the active runner log directory. Baton poisoned
+immediately, made no review claim, and reaped all provider and Git ownership. The runner now marks
+its active log root `ACTIVE_DO_NOT_REAP` and supports exact single-model closure runs for bounded
+disk environments. That failed evidence is retained under
+`docs/reference/evidence/phase26-structured-merge-final-grok-review-2026-07-11/`.
+
+Sequential exact-model closure was then used without weakening model identity or lifecycle gates.
+Grok 4.5 found no remaining actionable defect after the first correction set. Composer found one
+adjacent asymmetry: binary NUL was rejected before resolver invocation but not if injected into
+the resolver output. Output bytes now receive the same `structured_binary_conflict` gate before
+UTF-8/marker acceptance, and one red exercises both pre- and post-resolver binary refusal. The
+pre-correction reports are retained under
+`docs/reference/evidence/phase26-structured-merge-closure-grok45-2026-07-11/` and
+`docs/reference/evidence/phase26-structured-merge-closure-composer-2026-07-11/`.
+
 ## Honest boundary
 
 This is syntax-aware structured integration, not semantic merge. Mergiraf can reduce textual
