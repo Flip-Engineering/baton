@@ -11,8 +11,12 @@ package, edits the source worktree, or grants decision/merge/verification author
 deployment-injected proposal resolver with explicit resolver/tool/version identity. The resolver is
 the only component allowed to contact a registry or run a package-manager dry resolution. It must
 operate in an isolated disposable root, disable lifecycle scripts, and return bounded proposed
-`package-lock.json` v3 bytes plus a structured execution attestation. Quartermaster never invokes an
-ambient package manager directly and never accepts caller-supplied proposed bytes.
+`package-lock.json` v3 bytes plus a structured execution receipt authored by the trusted sandbox
+supervisor—not by package-manager output. The receipt binds child executable/version, exact argv,
+base digest, isolated root, owned cache root, permitted registry origins, exit status, and cleanup.
+For npm, fixed policy includes `--package-lock-only` and `--ignore-scripts`; a boolean claim from an
+untrusted resolver is insufficient. Quartermaster never invokes an ambient package manager directly
+and never accepts caller-supplied proposed bytes.
 
 ## PG2 — closed exact request
 
@@ -26,8 +30,11 @@ deployment configuration.
 
 Quartermaster canonically opens the actual lockfile under the trusted worktree, enforces the Phase
 37 byte/component ceilings, records its digest, and rechecks path and bytes after resolution. A
-dirty/changing/escaping/malformed actual source fails closed. The resolver receives an immutable
-copy or bytes, never the source path as mutation authority.
+dirty/changing/escaping/malformed actual source fails closed. The resolver receives only immutable
+bytes plus their digest, never the source path as mutation authority, and its trusted execution
+receipt repeats that exact base digest. Concurrent source change cannot alter resolver input; any
+post-resolution mismatch discards the result, even though that conservative rule permits denial of
+service.
 
 ## PG4 — proposed source validation
 
@@ -35,8 +42,11 @@ The resolver result is accepted only when its attestation identifies the configu
 package-manager executable/version, scripts-disabled posture, disposable root, exact coordinate,
 base lockfile digest, and success status. The proposed bytes must parse as npm lockfile v3, remain
 under ceilings, retain the same root application identity, contain the requested exact package,
-and bind the root dependency request to that exact version. Missing, substituted, ranged, or
-ambiguous requested coordinates fail closed.
+and bind the root dependency request to that exact version. Every non-link registry component must
+have an exact version, integrity, and an origin allowed by deployment policy; Git, file, workspace,
+link, arbitrary URL, missing-integrity, or disallowed-origin entries fail closed rather than being
+classified green. This is origin/integrity validation, not independent registry consensus.
+Missing, substituted, ranged, or ambiguous requested coordinates fail closed.
 
 ## PG5 — separate proposed graph
 
@@ -52,6 +62,9 @@ dependency edges from normalized lockfile paths and exact versions/integrities. 
 changes, unresolved edges, transitive churn, removals, peer/optional/dev posture changes, registry
 origin changes, and integrity loss remain explicit. Counts and rows are stably sorted and bounded;
 no prose or resolver verdict participates in the delta.
+Root application identity and the exact root request are reasserted before delta classification. A
+hoist/path move is intentionally a graph removal plus addition because npm install path is part of
+resolution identity; equal name/version does not collapse it into a false unchanged result.
 
 ## PG7 — conservative policy projection
 
@@ -64,7 +77,7 @@ reachability may later prioritize review but may never waive a known advisory or
 
 The complete plan document is content-addressed. If it cannot fit the context budget, the result is
 honest ref-only `partial` with no non-progressing cursor. Reverification reloads the exact artifacts,
-revalidates resolver identity/attestation and graph/delta digests, and confirms that the actual
+revalidates the supervisor-authored execution receipt—including exact base digest—and graph/delta digests, and confirms that the actual
 worktree lockfile still matches the recorded base digest; it does not repeat registry resolution.
 Any artifact substitution or changed base fails closed.
 
@@ -73,7 +86,9 @@ Any artifact substitution or changed base fails closed.
 Cancellation is propagated to the resolver. Timeout, resolver outage, nonzero result, scripts not
 provably disabled, missing tool identity, oversize output, malformed schema, coordinate mismatch,
 source change, and artifact collision are typed failures. No failed call emits a usable proposal
-claim or mutates the actual worktree.
+claim or mutates the actual worktree. The disposable root, package-manager cache, subprocess tree,
+and temporary credentials are invocation-owned and reaped on success, failure, cancellation, and
+supervisor restart; global or user cache use is an isolation violation.
 
 ## PG10 — sole capability plane
 

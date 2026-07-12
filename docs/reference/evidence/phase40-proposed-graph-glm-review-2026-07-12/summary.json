@@ -1,0 +1,167 @@
+{
+  "at": "2026-07-12T21:15:47.671Z",
+  "repoHead": "6b7be7c96b2b8b91ed2a7030ee23f16cba9024f7",
+  "taskId": "phase40-proposed-graph-glm-review",
+  "checks": {
+    "noHarnessError": true,
+    "nativePidObserved": true,
+    "exactRouteObserved": true,
+    "freshlyVerified": true,
+    "reportCaptured": true,
+    "killConfirmed": true,
+    "processGone": true,
+    "worktreeGone": true,
+    "runtimeGone": true,
+    "branchGone": true
+  },
+  "handle": {
+    "id": "w-1",
+    "vendor": "glm",
+    "modelRequested": "glm-4.7",
+    "modelResolved": "glm-4.7",
+    "modelObserved": "glm-4.7",
+    "harnessRequested": "glm",
+    "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+    "effortRequested": "low",
+    "effortResolved": "low",
+    "effortObserved": null,
+    "routeKey": "[\"glm-via-claude-session\",\"claude-code-2.1.206+zai-anthropic\",\"glm-4.7\",\"low\",\"glm\",\"phase40-contract-review\"]",
+    "modelMismatch": null,
+    "effortMismatch": null,
+    "modelPolicy": {
+      "allow": [
+        "glm-4.7"
+      ],
+      "allowFamilies": [
+        "glm"
+      ],
+      "reasoningEffort": "low"
+    },
+    "sessionRequest": {
+      "mode": "new"
+    },
+    "sessionRef": {
+      "vendor": "glm",
+      "kind": "session",
+      "id": "606e787a-9743-45ee-b185-9a0f4e40c868",
+      "persistence": "native",
+      "source": "wire"
+    },
+    "sessionContext": {
+      "worktree": "/private/tmp/baton-phase40-glm.sDnAYT/repo/.baton/wt/phase40-proposed-graph-glm-review",
+      "repoRoot": "/private/tmp/baton-phase40-glm.sDnAYT/repo",
+      "baseSha": "6b7be7c96b2b8b91ed2a7030ee23f16cba9024f7",
+      "branch": "baton/phase40-proposed-graph-glm-review",
+      "ownerTaskId": "phase40-proposed-graph-glm-review"
+    },
+    "lineage": null,
+    "runtimeScope": {
+      "root": "/private/tmp/baton-phase40-glm.sDnAYT/repo/.baton/runtime/w-1",
+      "home": "/private/tmp/baton-phase40-glm.sDnAYT/repo/.baton/runtime/w-1/home",
+      "tmp": "/private/tmp/baton-phase40-glm.sDnAYT/repo/.baton/runtime/w-1/tmp",
+      "config": "/private/tmp/baton-phase40-glm.sDnAYT/repo/.baton/runtime/w-1/config/glm",
+      "family": "glm",
+      "strippedEnvKeys": [
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "BATON_GLM_AUTH_FILE",
+        "BATON_GLM_AUTH_JSON_POINTER",
+        "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+        "GEMINI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "SECURITYSESSIONID",
+        "SSH_AUTH_SOCK"
+      ],
+      "projectedEnvKeys": [],
+      "projectedFiles": [],
+      "permissions": {
+        "directories": "0700",
+        "credentialFiles": "0600"
+      },
+      "sandboxPolicy": "settings-enabled-network-deny",
+      "active": false
+    },
+    "review": null,
+    "taskId": "phase40-proposed-graph-glm-review",
+    "runId": null,
+    "worktree": "/private/tmp/baton-phase40-glm.sDnAYT/repo/.baton/wt/phase40-proposed-graph-glm-review",
+    "fence": 3,
+    "turnEpoch": 2,
+    "status": "dead",
+    "pendingApprovalId": null,
+    "pendingQuestionId": null,
+    "budgetUsed": {
+      "tokens": 42172,
+      "usd": 0.484388
+    },
+    "createdAt": "2026-07-12T21:14:36.808Z"
+  },
+  "result": {
+    "ready": true,
+    "status": "completed",
+    "verdict": {
+      "reverified": true,
+      "observedExit": 0,
+      "hadClaim": false,
+      "matchesClaim": true,
+      "passed": true,
+      "locus": "fresh_sandbox",
+      "redGreen": null,
+      "baseExit": null,
+      "coverageOfChange": null,
+      "uncoveredChangedLines": [],
+      "mutationStrength": null,
+      "mutationPassed": null,
+      "survivedMutants": [],
+      "observedOutputTail": "",
+      "note": "PASS: observed exit 0 matches expected 0.",
+      "durationMs": 14
+    },
+    "artifacts": {
+      "commits": [],
+      "files": []
+    },
+    "taskId": "phase40-proposed-graph-glm-review",
+    "runId": null,
+    "vendor": "glm",
+    "harnessRequested": "glm",
+    "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+    "modelRequested": "glm-4.7",
+    "modelResolved": "glm-4.7",
+    "modelObserved": "glm-4.7",
+    "modelMismatch": null,
+    "effortRequested": "low",
+    "effortResolved": "low",
+    "effortObserved": null,
+    "effortMismatch": null,
+    "routeKey": "[\"glm-via-claude-session\",\"claude-code-2.1.206+zai-anthropic\",\"glm-4.7\",\"low\",\"glm\",\"phase40-contract-review\"]",
+    "sessionRequest": {
+      "mode": "new"
+    },
+    "sessionRef": {
+      "vendor": "glm",
+      "kind": "session",
+      "id": "606e787a-9743-45ee-b185-9a0f4e40c868",
+      "persistence": "native",
+      "source": "wire"
+    },
+    "sessionContext": {
+      "worktree": "/private/tmp/baton-phase40-glm.sDnAYT/repo/.baton/wt/phase40-proposed-graph-glm-review",
+      "repoRoot": "/private/tmp/baton-phase40-glm.sDnAYT/repo",
+      "baseSha": "6b7be7c96b2b8b91ed2a7030ee23f16cba9024f7",
+      "branch": "baton/phase40-proposed-graph-glm-review",
+      "ownerTaskId": "phase40-proposed-graph-glm-review"
+    },
+    "lineage": null,
+    "review": null,
+    "integration": null,
+    "publication": null,
+    "retainedResultRef": null
+  },
+  "killAck": {
+    "ok": true,
+    "result": "confirmed",
+    "emulated": false
+  },
+  "fatal": null,
+  "pass": true
+}
