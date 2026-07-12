@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, resolve as pathResolve } from 'node:path';
 import {
   pinBaseSha,
   createFromBase,
@@ -77,6 +77,30 @@ test('pinBaseSha on a clean repo returns {sha: HEAD, stashed:false}', async (t) 
   const result = await pinBaseSha(dir);
   assert.equal(result.sha, baseSha);
   assert.equal(result.stashed, false);
+});
+
+test('pinBaseSha supports a linked Git worktree and excludes Baton runtime state through Git\'s resolved exclude path', async (t) => {
+  const { dir, baseSha } = makeRepo();
+  const linkedParent = mkdtempSync(join(tmpdir(), 'baton-linked-parent-'));
+  const linked = join(linkedParent, 'checkout');
+  sh('git', ['worktree', 'add', '--detach', linked, baseSha], dir);
+  t.after(() => {
+    try { sh('git', ['worktree', 'remove', '--force', linked], dir); } catch { /* best-effort */ }
+    rmSync(linkedParent, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const result = await pinBaseSha(linked);
+
+  assert.equal(result.sha, baseSha);
+  assert.equal(result.stashed, false);
+  assert.ok(isClean(linked));
+  const rawExcludePath = sh('git', ['rev-parse', '--git-path', 'info/exclude'], linked);
+  const excludePath = isAbsolute(rawExcludePath) ? rawExcludePath : pathResolve(linked, rawExcludePath);
+  assert.ok(
+    readFileSync(excludePath, 'utf8').split('\n').some((line) => line.trim() === '.baton/'),
+    `expected .baton/ in Git-resolved exclude file ${excludePath}`,
+  );
 });
 
 test('pinBaseSha on a dirty repo with autoStash:false (default) throws DirtyRepoError and leaves the repo untouched', async (t) => {

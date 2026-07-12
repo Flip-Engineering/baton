@@ -110,10 +110,12 @@ function materializeDependencies(dir, sources) {
 // ensureBatonExcluded
 // ---------------------------------------------------------------------------
 
-/** Idempotently ensures '.baton/' is present in <repoRoot>/.git/info/exclude, preserving any
- * existing content. Additive export per RECONCILIATION.md D7's addendum (C6). */
+/** Idempotently ensures '.baton/' is present in Git's info/exclude for repoRoot, preserving
+ * existing content. Ask Git for the path because `.git` is a file in linked worktrees.
+ * Additive export per RECONCILIATION.md D7's addendum (C6). */
 export function ensureBatonExcluded(repoRoot) {
-  const excludePath = join(repoRoot, '.git', 'info', 'exclude');
+  const rawExcludePath = sh('git', ['rev-parse', '--git-path', 'info/exclude'], repoRoot);
+  const excludePath = isAbsolute(rawExcludePath) ? rawExcludePath : pathResolve(repoRoot, rawExcludePath);
   let existing = '';
   if (existsSync(excludePath)) existing = readFileSync(excludePath, 'utf8');
   const lines = existing.split('\n');
