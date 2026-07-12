@@ -1,17 +1,17 @@
 {
-  "at": "2026-07-12T03:21:14.449Z",
+  "at": "2026-07-12T03:30:10.229Z",
   "actualPaths": {
     "graph": "impl/src/atlas-cpg.mjs",
     "taint": "impl/src/mcp-northbound.mjs"
   },
   "graph": {
     "status": "ok",
-    "summary": "2019 nodes, 2901 edges",
+    "summary": "2040 nodes, 2933 edges",
     "provenance": {
-      "sourceDigest": "07436a12bd7c8405ab48b23a5e690053d7e56f439f76285a39dc3a20de5be3ed",
-      "graphDigest": "000897fa88b4f7e816cd583477359235726945b4bc9104f0d20d8ccc34af36df",
+      "sourceDigest": "357408ba7ea909cf581da364b3c0a631181e82a583bfc6bbfd9ef508d991932e",
+      "graphDigest": "4c803f00a56f0b7b5b0943551bb9c8b6592dca6171db2dcbf07da1bc442e5350",
       "parseErrors": 0,
-      "reachDefPairs": 375,
+      "reachDefPairs": 377,
       "deterministic": true,
       "scope": "single_file_intraprocedural_cfg_may_reach_seed"
     }

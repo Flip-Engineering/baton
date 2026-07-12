@@ -3,7 +3,8 @@
 ## PS1 — structured `if` control flow
 
 For braced `if` statements, `CFG_TRUE` enters the consequence and `CFG_FALSE` enters the
-alternative when present, otherwise the join. Every non-terminal branch tail reaches the join.
+alternative when present, otherwise the join. An `else if` alternative enters the nested
+`if_statement`; it is not collapsed into atomic fall-through. Every non-terminal branch tail reaches the join.
 Literal `true`/`false` conditions omit the unreachable branch edge. Unbraced conditions, loops,
 switches, short-circuit expressions, ternaries, and exception constructs remain atomic unless a
 later contract expands them.

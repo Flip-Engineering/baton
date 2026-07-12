@@ -22,9 +22,9 @@ structured literal `if` stays unreachable. The real `JSON.parse` to `server.hand
 ## Validation
 
 - Numbered contract: `spec/phase22/atlas-cpg-path-sensitive.md`.
-- Phase 22 focused red/green result: 6/6.
-- Combined Phase 18/19/20/22 R3 gate: 26/26.
-- Canonical suite: 728/728; owned suite root reaped.
+- Phase 22 focused red/green result: 7/7.
+- Combined Phase 18/19/20/22 R3 gate: 27/27.
+- Canonical suite: 729/729; owned suite root reaped.
 - Baton-on-Baton proof: every check in
   `docs/reference/evidence/phase22-atlas-cpg-path-sensitive-2026-07-11/summary.json` is true. It
   built a 2,000-plus-node graph of the implementation itself, observed real CFG/may-def/copy
@@ -37,6 +37,14 @@ Two exact-model Grok workers reviewed the prior R3 implementation concurrently t
 were independently fresh-verified, killed, and fully reaped. Both found the incorrect else edge;
 one also found the copy-flow/card honesty gap. Their captured reports and normalized events are in
 `docs/reference/evidence/phase22-atlas-path-sensitive-grok-review-2026-07-11/`.
+
+After implementation, two more exact-model Grok reviews independently found that `else if` sugar
+caused the outer structured `if` to fall back to atomic flow, orphaning the nested branch and
+creating a false-negative taint result. A red regression now requires the outer `CFG_FALSE` edge
+to enter the nested `if`, requires that condition to be reachable, and preserves a source in the
+middle arm through the join. The correction is covered by the 7/7 focused and 729/729 canonical
+results. The finding reports and their fully reaped lifecycle evidence are under
+`docs/reference/evidence/phase22-atlas-cpg-implementation-grok-review-2026-07-11/`.
 
 The implementation deliberately rejected one proposal that would have removed a source-to-sink
 path whenever the source occurred in a conditional branch. That is must-path reasoning, not

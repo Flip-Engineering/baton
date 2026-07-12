@@ -111,11 +111,15 @@ export class AtlasCpgSlice {
       let consequence = null; let alternative = null; let condition = null;
       try { consequence = stmt.node.field('consequence'); alternative = stmt.node.field('alternative'); condition = stmt.node.field('condition'); } catch { /* grammar variance */ }
       if (consequence?.kind() !== 'statement_block') continue;
-      let alternativeBlock = null;
-      if (alternative) alternativeBlock = alternative.kind() === 'statement_block' ? alternative : alternative.children().find((child) => child.isNamed() && child.kind() === 'statement_block') ?? null;
-      if (alternative && !alternativeBlock) continue;
+      let alternativeBlock = null; let alternativeIf = null;
+      if (alternative) {
+        const alternativeBody = alternative.kind() === 'else_clause' ? alternative.children().find((child) => child.isNamed()) ?? null : alternative;
+        if (alternativeBody?.kind() === 'statement_block') alternativeBlock = alternativeBody;
+        else if (alternativeBody?.kind() === 'if_statement') alternativeIf = alternativeBody;
+      }
+      if (alternative && !alternativeBlock && !alternativeIf) continue;
       const consequenceList = directStatements(blockStatements.get(nodeId('block', consequence)));
-      const alternativeList = alternativeBlock ? directStatements(blockStatements.get(nodeId('block', alternativeBlock))) : [];
+      const alternativeList = alternativeBlock ? directStatements(blockStatements.get(nodeId('block', alternativeBlock))) : alternativeIf ? [statementById.get(nodeId('statement', alternativeIf))].filter(Boolean) : [];
       const literal = condition?.text().replace(/[()\s]/g, '') ?? null;
       structuredIfs.set(stmt.id, { stmt, consequenceList, alternativeList, hasAlternative: !!alternative, literal, join: joinFor(stmt) });
     }

@@ -92,3 +92,23 @@ test('PS1/PS4: unsupported control remains atomic instead of making its nested v
   const result = await f.taint.invoke('cpg.taint', f.args, f.ctx);
   assert.equal(result.payload.length, 1);
 });
+
+test('PS1/PS2/PS4: an else-if chain is entered from the outer false edge and preserves the middle-arm may-flow', async () => {
+  const f = fixture(`function readInput(){} function safe(){} function send(v){}\nfunction run(flag){
+  let value
+  if(flag === 1){
+    value=safe()
+  } else if(flag === 2){
+    value=readInput()
+  } else {
+    value=safe()
+  }
+  send(value)
+}\n`);
+  const g = await graph(f); const branches = g.nodes.filter((node) => node.type === 'statement' && node.kind === 'if_statement').sort((a, b) => a.range.start.line - b.range.start.line);
+  assert.equal(branches.length, 2);
+  assert.ok(g.edges.some((edge) => edge.type === 'CFG_FALSE' && edge.from === branches[0].id && edge.to === branches[1].id));
+  assert.equal(branches[1].cfgReachable, true);
+  const result = await f.taint.invoke('cpg.taint', f.args, f.ctx);
+  assert.equal(result.payload.length, 1);
+});
