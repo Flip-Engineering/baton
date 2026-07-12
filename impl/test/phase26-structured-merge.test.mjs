@@ -215,7 +215,7 @@ test('SM7/SM8: a post-fast-forward validation failure poisons instead of recordi
   coordinator._worktrees.finalizeStructuredIntegration = async (stage) => {
     await rawFinalize(stage);
     writeFileSync(join(root, 'post-effect-dirt.txt'), 'concurrent dirt\n');
-    throw Object.assign(new Error('post-fast-forward integrity check failed'), { code: 'structured_post_effect_inconsistent', postEffect: true });
+    throw new Error('untagged post-fast-forward integrity check failed');
   };
   await assert.rejects(coordinator.integrate(handle.id, { strategy: 'structured' }), (error) => error.code === 'structured_post_effect_inconsistent');
   const moved = git(['rev-parse', 'HEAD'], root); assert.equal(git(['show', '-s', '--format=%P', moved], root).split(' ').length, 2);

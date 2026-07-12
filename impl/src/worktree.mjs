@@ -360,10 +360,21 @@ export async function finalizeStructuredIntegration(repoRoot, stage) {
   if (parents.length !== 2 || parents[0] !== stage.beforeSha || parents[1] !== stage.resultSha) throw mergeError('structured candidate parent identity changed', 'structured_parent_mismatch');
   try { gitFile(['-c', 'core.hooksPath=/dev/null', 'merge', '--no-verify', '--ff-only', stage.stageSha], repoRoot, { encoding: 'utf8', stdio: 'pipe' }); }
   catch (error) { throw mergeError('main could not fast-forward to verified structured candidate', 'structured_main_advanced', error); }
-  const afterSha = sh('git', ['rev-parse', 'HEAD'], repoRoot);
-  if (afterSha !== stage.stageSha) throw postEffectMergeError('main did not remain on the verified structured candidate after fast-forward');
-  if (!isClean(repoRoot)) throw postEffectMergeError('main became dirty after the verified structured candidate fast-forwarded');
-  return { beforeSha: stage.beforeSha, resultSha: stage.resultSha, mergeBaseSha: stage.mergeBaseSha, stageSha: stage.stageSha, afterSha, classes: stage.classes, resolutions: stage.resolutions, resolver: stage.resolver };
+  try {
+    const afterSha = sh('git', ['rev-parse', 'HEAD'], repoRoot);
+    if (afterSha !== stage.stageSha) throw new Error('main did not remain on the verified structured candidate after fast-forward');
+    if (!isClean(repoRoot)) throw new Error('main became dirty after the verified structured candidate fast-forwarded');
+    return { beforeSha: stage.beforeSha, resultSha: stage.resultSha, mergeBaseSha: stage.mergeBaseSha, stageSha: stage.stageSha, afterSha, classes: stage.classes, resolutions: stage.resolutions, resolver: stage.resolver };
+  } catch (error) {
+    if (error?.postEffect === true) throw error;
+    throw postEffectMergeError(String(error?.message ?? error), error);
+  }
+}
+
+export async function inspectStructuredIntegration(repoRoot, stage) {
+  if (!stage?.beforeSha || !stage?.stageSha) throw mergeError('invalid structured stage descriptor', 'structured_stage_invalid');
+  const headSha = sh('git', ['rev-parse', 'HEAD'], repoRoot);
+  return Object.freeze({ headSha, stageSha: stage.stageSha, beforeSha: stage.beforeSha, effectApplied: headSha === stage.stageSha, clean: isClean(repoRoot) });
 }
 
 // ---------------------------------------------------------------------------

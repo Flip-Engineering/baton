@@ -1104,6 +1104,7 @@ export class Coordinator {
     }
     if (strategy === 'structured' && (typeof this._worktrees.stageStructuredIntegration !== 'function'
       || typeof this._worktrees.finalizeStructuredIntegration !== 'function'
+      || typeof this._worktrees.inspectStructuredIntegration !== 'function'
       || typeof this._worktrees.removeStructuredIntegration !== 'function')) {
       throw new IntegrationError('worktree manager does not implement structured integration', 'integration_unavailable');
     }
@@ -1130,7 +1131,7 @@ export class Coordinator {
     }
     await this._removeTaskWorktree(task);
 
-    let integrated; let structuredStage = null; let structuredVerifyPath = null;
+    let integrated; let structuredStage = null; let structuredVerifyPath = null; let structuredFinalizeStarted = false;
     try {
       if (strategy === 'ff-only') {
         integrated = await this._worktrees.integrate(task.capturedSha, { strategy });
@@ -1155,12 +1156,18 @@ export class Coordinator {
           payload: { strategy, stageSha: structuredStage.stageSha, verdict, accept: accepted },
         });
         if (!accepted) throw Object.assign(new Error('structured merge candidate failed fresh pinned verification'), { code: 'structured_verification_failed' });
+        structuredFinalizeStarted = true;
         integrated = { ...(await this._worktrees.finalizeStructuredIntegration(structuredStage)), verdict };
       }
     } catch (err) {
       if (structuredVerifyPath) await this._worktrees.removeVerifyWorktree(structuredVerifyPath);
       if (structuredStage) await this._worktrees.removeStructuredIntegration(structuredStage);
-      if (strategy === 'structured' && (err?.postEffect === true || err?.code === 'structured_post_effect_inconsistent')) {
+      let structuredPostEffect = err?.postEffect === true || err?.code === 'structured_post_effect_inconsistent';
+      if (strategy === 'structured' && structuredFinalizeStarted && structuredStage && !structuredPostEffect) {
+        try { structuredPostEffect = (await this._worktrees.inspectStructuredIntegration(structuredStage)).effectApplied === true; }
+        catch { /* the finalizer owns tagging when Git itself becomes unreadable after the effect */ }
+      }
+      if (strategy === 'structured' && structuredPostEffect) {
         const incompleteEvent = this._log.append({
           worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
           kind: 'integration.incomplete', actor: 'policy',
