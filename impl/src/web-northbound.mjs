@@ -167,8 +167,10 @@ function planNode(value) {
   return exactRecord(value, PLAN_NODE_FIELDS) && string(value.key) && string(value.objective)
     && stringList(value.definitionOfDone) && stringList(value.deps) && stringList(value.pathScope)
     && string(value.risk) && goalPlanBudget(value.budget) && planVerification(value.verification)
-    && exactRecord(value.routes, PLAN_ROUTE_FIELDS) && stringList(value.routes.harnesses)
-    && stringList(value.routes.models) && stringList(value.routes.efforts)
+    && value.pathScope.length > 0
+    && exactRecord(value.routes, PLAN_ROUTE_FIELDS) && stringList(value.routes.harnesses) && value.routes.harnesses.length > 0
+    && stringList(value.routes.models) && value.routes.models.length > 0
+    && stringList(value.routes.efforts) && value.routes.efforts.length > 0
     && stringList(value.capabilities) && stringList(value.effects);
 }
 function planGate(value) {

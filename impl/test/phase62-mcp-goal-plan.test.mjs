@@ -42,9 +42,12 @@ function makeDriver(authorizations) {
   writeFileSync(join(repoRoot, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repoRoot });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repoRoot });
+  const adapter = new MockAdapter({ harness: 'mock', scenario: { outcome: 'completed', delayMs: 1, summary: 'done', files: {} } });
+  const baseCard = adapter.card.bind(adapter);
+  adapter.card = () => ({ ...baseCard(), modelSelection: { mode: 'exact', configuredDefault: 'model-a', available: ['model-a'], family: 'mock', acceptedPrefixes: ['model-'], acceptedAliases: [], reasoningEffort: ['low'], serviceTier: null, provenance: 'test', refreshedAt: null } });
   return createDriver({
     repoRoot, repoId: 'repo-phase62-mcp', logDir: root('log'),
-    adapters: { mock: new MockAdapter({ harness: 'mock', scenario: { outcome: 'completed', delayMs: 1, summary: 'done', files: {} } }) },
+    adapters: { mock: adapter },
     goalPlanAuthority: { policy, authorize: async (request) => { authorizations.push(request); return true; } },
   });
 }
@@ -85,7 +88,7 @@ test('GP1/GP4/GP7: MCP Goal/Plan tools expose closed schemas and bind exact prin
     nodes: [{
       key: 'implement', objective: 'Implement MCP Goal Plan authority', definitionOfDone: ['node --test passes'], deps: [], pathScope: ['impl/**'],
       risk: 'high', budget: { tokens: 10_000, usd: 1, wallMin: 5, providerTurns: 4 }, verification,
-      routes: { harnesses: ['mock'], models: [], efforts: [] }, capabilities: ['code', 'test'], effects: ['repository_edit'],
+      routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] }, capabilities: ['code', 'test'], effects: ['repository_edit'],
     }],
   });
   assert.equal(planResponse.result.isError, false, JSON.stringify(planResponse.result));
@@ -199,7 +202,7 @@ test('GP5/GP7/GP8: admitted plan-gated fleet_spawn replay returns the one origin
     nodes: [{
       key: 'implement', objective: 'Implement the one admitted node', definitionOfDone: ['one worker admission exists'],
       deps: [], pathScope: ['impl/**'], risk: 'high', budget: { tokens: 10_000, usd: 1, wallMin: 5, providerTurns: 4 },
-      verification, routes: { harnesses: ['mock'], models: [], efforts: [] }, capabilities: ['code'], effects: ['repository_edit'],
+      verification, routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] }, capabilities: ['code'], effects: ['repository_edit'],
     }],
   }, directAuth('planner', ['plan:propose'], 'plan:spawn-reconcile'));
   await driver.coordinator.approvePlan({
@@ -210,7 +213,7 @@ test('GP5/GP7/GP8: admitted plan-gated fleet_spawn replay returns the one origin
   const dispatcherPrincipal = principal('dispatcher', ['control', 'plan:dispatch']);
   const dispatcher = server(driver.coordinator, driver.coordination, dispatcherPrincipal); await initialize(dispatcher);
   const args = {
-    repoId: 'repo-phase62-mcp', idempotencyKey: 'spawn-lost-response', taskId: 'mcp-plan-reconcile', harness: 'mock', brief: {},
+    repoId: 'repo-phase62-mcp', idempotencyKey: 'spawn-lost-response', taskId: 'mcp-plan-reconcile', harness: 'mock', model: 'model-a', effort: 'low', brief: {},
     goalPlan: {
       goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest,
       planId: plan.planId, planVersion: plan.version, planDigest: plan.digest,

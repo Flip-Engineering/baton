@@ -149,16 +149,16 @@ function normalizeVerification(value, policy, deps) {
   };
 }
 function normalizeScope(values, policy) {
-  const scope = normalizedSet(values, policy.limits.maxScopePaths, policy.limits.maxTextBytes, 'pathScope');
+  const scope = normalizedSet(values, policy.limits.maxScopePaths, policy.limits.maxTextBytes, 'pathScope', { empty: false });
   if (scope.some((item) => item.startsWith('/') || item.split('/').includes('..') || item.includes('\\'))) fail('plan scope is not repository relative', 'plan_scope_invalid');
   return scope;
 }
 function normalizeRoutes(value, policy) {
   exactObject(value, ['harnesses', 'models', 'efforts']);
   return {
-    harnesses: normalizedSet(value.harnesses, policy.limits.maxRouteValues, 256, 'routes.harnesses'),
-    models: normalizedSet(value.models, policy.limits.maxRouteValues, 256, 'routes.models'),
-    efforts: normalizedSet(value.efforts, policy.limits.maxRouteValues, 64, 'routes.efforts'),
+    harnesses: normalizedSet(value.harnesses, policy.limits.maxRouteValues, 256, 'routes.harnesses', { empty: false }),
+    models: normalizedSet(value.models, policy.limits.maxRouteValues, 256, 'routes.models', { empty: false }),
+    efforts: normalizedSet(value.efforts, policy.limits.maxRouteValues, 64, 'routes.efforts', { empty: false }),
   };
 }
 function normalizeNode(value, policy, goal) {

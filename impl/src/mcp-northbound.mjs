@@ -211,12 +211,14 @@ function validGoalPlanVerification(value) {
 }
 function validGoalPlanRoutes(value) {
   return closedRecord(value, ['harnesses', 'models', 'efforts'])
-    && validTextArray(value.harnesses) && validTextArray(value.models) && validTextArray(value.efforts);
+    && validTextArray(value.harnesses, { empty: false })
+    && validTextArray(value.models, { empty: false })
+    && validTextArray(value.efforts, { empty: false });
 }
 function validGoalPlanNode(value) {
   return closedRecord(value, ['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects'])
     && nonempty(value.key) && nonempty(value.objective) && validTextArray(value.definitionOfDone) && validTextArray(value.deps)
-    && validTextArray(value.pathScope) && nonempty(value.risk) && validGoalPlanBudget(value.budget)
+    && validTextArray(value.pathScope, { empty: false }) && nonempty(value.risk) && validGoalPlanBudget(value.budget)
     && validGoalPlanVerification(value.verification) && validGoalPlanRoutes(value.routes)
     && validTextArray(value.capabilities) && validTextArray(value.effects);
 }

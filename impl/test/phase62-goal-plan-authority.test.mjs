@@ -38,6 +38,7 @@ class NativePlanAdapter {
       harness: 'mock', version: 'phase62-native', authPosture: 'none', concurrencyCeiling: 2, maxContext: 100_000,
       verbs: { spawn: 'native', prompt: 'native', steer: 'native', interrupt: 'native', approve: 'native', answer: 'native', kill: 'native', pause: 'unsupported' },
       sessions: { multiTurn: 'native', resume: 'native', fork: 'native' },
+      modelSelection: { mode: 'exact', configuredDefault: 'model-a', available: ['model-a'], family: 'mock', acceptedPrefixes: ['model-'], acceptedAliases: [], reasoningEffort: ['low'], serviceTier: null, provenance: 'test', refreshedAt: null },
     };
   }
   async spawn(worker, brief) {
@@ -80,6 +81,8 @@ function make(name, overrides = {}) {
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
   const adapter = new MockAdapter({ harness: 'mock', scenario: { outcome: 'completed', delayMs: 100, summary: 'done', files: {} } });
+  const baseCard = adapter.card.bind(adapter);
+  adapter.card = () => ({ ...baseCard(), modelSelection: { mode: 'exact', configuredDefault: 'model-a', available: ['model-a'], family: 'mock', acceptedPrefixes: ['model-'], acceptedAliases: [], reasoningEffort: ['low'], serviceTier: null, provenance: 'test', refreshedAt: null } });
   return createDriver({
     repoRoot: repo, repoId: 'repo-phase62', logDir: root(`${name}-log`), adapters: { mock: adapter },
     goalPlanAuthority: { policy, authorize: async () => true },
@@ -99,7 +102,7 @@ async function approved(driver, suffix = 'one') {
     nodes: [{
       key: 'implement', objective: 'Implement the approved slice', definitionOfDone: ['node --test passes'],
       deps: [], pathScope: ['impl/**'], risk: 'high', budget: budget(10_000), verification,
-      routes: { harnesses: ['mock'], models: [], efforts: [] }, capabilities: ['code', 'test'], effects: ['repository_edit'],
+      routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] }, capabilities: ['code', 'test'], effects: ['repository_edit'],
     }],
   }, auth('planner', ['plan:propose'], `plan:${suffix}`));
   const plan = planResult.plan;
@@ -137,7 +140,7 @@ test('GP2/GP3/GP8: weakening, cycles, and double-counted budget refuse without d
   const { goal } = await approved(driver, 'baseline');
   const before = driver.coordination.events().length;
   await assert.rejects(driver.coordinator.defineGoal({ objective: 'Weakened', definitionOfDone: [], constraints: [], risk: 'low', budget: budget(30_000), predecessor: { goalId: goal.goalId, version: goal.version, digest: goal.digest } }, auth('goal-owner', ['goal:define'], 'goal:weaken')), (error) => error.code === 'goal_weakened');
-  await assert.rejects(driver.coordinator.proposePlan({ goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest }, predecessor: null, nodes: [{ key: 'a', objective: 'A', definitionOfDone: ['node --test passes'], deps: ['b'], pathScope: [], risk: 'low', budget: budget(15_000), verification: { ...verification, requiredPredecessorEvidence: ['b'] }, routes: { harnesses: ['mock'], models: [], efforts: [] }, capabilities: ['code'], effects: ['repository_edit'] }, { key: 'b', objective: 'B', definitionOfDone: [], deps: ['a'], pathScope: [], risk: 'low', budget: budget(15_000), verification: { ...verification, requiredPredecessorEvidence: ['a'] }, routes: { harnesses: ['mock'], models: [], efforts: [] }, capabilities: ['code'], effects: ['repository_edit'] }] }, auth('planner-2', ['plan:propose'], 'plan:cycle')), (error) => ['plan_cycle', 'plan_budget_exceeded'].includes(error.code));
+  await assert.rejects(driver.coordinator.proposePlan({ goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest }, predecessor: null, nodes: [{ key: 'a', objective: 'A', definitionOfDone: ['node --test passes'], deps: ['b'], pathScope: ['**'], risk: 'low', budget: budget(15_000), verification: { ...verification, requiredPredecessorEvidence: ['b'] }, routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] }, capabilities: ['code'], effects: ['repository_edit'] }, { key: 'b', objective: 'B', definitionOfDone: [], deps: ['a'], pathScope: ['**'], risk: 'low', budget: budget(15_000), verification: { ...verification, requiredPredecessorEvidence: ['a'] }, routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] }, capabilities: ['code'], effects: ['repository_edit'] }] }, auth('planner-2', ['plan:propose'], 'plan:cycle')), (error) => ['plan_cycle', 'plan_budget_exceeded'].includes(error.code));
   assert.equal(driver.coordination.events().length, before);
   driver.close();
 });
@@ -149,7 +152,7 @@ test('GP5/GP8: mandatory plan-gated spawn binds Brief/route/budget and has one c
   await assert.rejects(driver.coordinator.spawn('mock', brief, { taskId: 'ungated' }), (error) => error.code === 'goal_plan_required');
   assert.equal(driver.coordination.events().length, effectsBefore);
   const gate = { goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest, planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code', 'test'], effects: ['repository_edit'] };
-  const attempts = await Promise.allSettled(['planned-a', 'planned-b'].map((taskId) => driver.coordinator.spawn('mock', brief, { taskId, goalPlan: gate, actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session', powers: ['plan:dispatch'], idempotencyKey: `spawn:${taskId}` })));
+  const attempts = await Promise.allSettled(['planned-a', 'planned-b'].map((taskId) => driver.coordinator.spawn('mock', brief, { taskId, model: 'model-a', effort: 'low', goalPlan: gate, actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session', powers: ['plan:dispatch'], idempotencyKey: `spawn:${taskId}` })));
   assert.equal(attempts.filter((row) => row.status === 'fulfilled').length, 1);
   assert.equal(attempts.filter((row) => row.status === 'rejected' && row.reason?.code === 'plan_dispatch_stale').length, 1);
   const status = await driver.coordinator.goalPlanStatus({ goalId: goal.goalId, planId: plan.planId, throughSeq: null }, auth('observer', ['goal:observe'], 'status:dispatch'));
@@ -164,7 +167,7 @@ test('GP5/GP6/GP8: an admitted plan-gated spawn reconciles an exact lost-respons
   const driver = make('dispatch-reconcile'); const { goal, plan } = await approved(driver, 'dispatch-reconcile');
   const brief = { goal: 'Implement the approved slice', constraints: ['No network access'], pathScope: ['impl/**'], definitionOfDone: 'node --test passes', verification, budget: { tokens: 10_000, usd: 2, wallMin: 10 } };
   const gate = { goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest, planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code', 'test'], effects: ['repository_edit'] };
-  const opts = { taskId: 'planned-reconcile', goalPlan: gate, actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session', powers: ['plan:dispatch'], idempotencyKey: 'spawn:planned-reconcile' };
+  const opts = { taskId: 'planned-reconcile', model: 'model-a', effort: 'low', goalPlan: gate, actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session', powers: ['plan:dispatch'], idempotencyKey: 'spawn:planned-reconcile' };
 
   const admitted = await driver.coordinator.spawn('mock', brief, opts);
   const tasksBefore = driver.coordination.events().filter((event) => event.kind === 'task.created').length;
@@ -198,7 +201,7 @@ test('GP5/GP8: plan-bound follow-up and recovery refuse before provider, adapter
   const { goal, plan } = await approved(driver, 'continuation-refusal');
   const brief = { goal: 'Implement the approved slice', constraints: ['No network access'], pathScope: ['impl/**'], definitionOfDone: 'node --test passes', verification, budget: { tokens: 10_000, usd: 2, wallMin: 10 } };
   const gate = { goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest, planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code', 'test'], effects: ['repository_edit'] };
-  const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'planned-continuation', goalPlan: gate, actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session', powers: ['plan:dispatch'], idempotencyKey: 'spawn:planned-continuation' });
+  const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'planned-continuation', model: 'model-a', effort: 'low', goalPlan: gate, actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session', powers: ['plan:dispatch'], idempotencyKey: 'spawn:planned-continuation' });
   await until(async () => (await driver.coordinator.result(handle.id)).ready === true);
 
   const beforeFollowUp = { coordination: driver.coordination.events().length, operational: driver.log.read(handle.id).length, spawnCalls: adapter.spawnCalls, promptCalls: adapter.promptCalls };

@@ -280,6 +280,32 @@ test('GP5/GP8: harness, model, and effort constraints each refuse before dispatc
   store.releaseWriterLease();
 });
 
+test('GP3/GP5: every plan node declares explicit scope and selectable harness/model/effort sets', () => {
+  const cases = {
+    scope: { pathScope: [] },
+    harness: { routes: { harnesses: [], models: ['model-a'], efforts: ['low'] } },
+    model: { routes: { harnesses: ['mock'], models: [], efforts: ['low'] } },
+    effort: { routes: { harnesses: ['mock'], models: ['model-a'], efforts: [] } },
+  };
+  for (const [name, change] of Object.entries(cases)) {
+    const store = new CoordinationStore(root(`explicit-${name}`), { goalPlanPolicy: policy });
+    const goal = store.defineGoal({
+      objective: 'Require explicit authority', definitionOfDone: ['explicit node'], constraints: [], risk: 'high',
+      budget: goalBudget(), predecessor: null,
+    }, storeAuth('goal-owner', `goal:explicit:${name}`)).goal;
+    const before = store.snapshot().lastSeq;
+    const node = {
+      key: 'implement', objective: 'Implement explicitly', definitionOfDone: ['explicit node'], deps: [],
+      pathScope: ['**'], risk: 'high', budget: nodeBudget(), verification: verification(),
+      routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] },
+      capabilities: ['code'], effects: ['repository_edit'], ...change,
+    };
+    assert.throws(() => store.proposePlan({ goal: ref('goal', goal), predecessor: null, nodes: [node] }, storeAuth('planner', `plan:explicit:${name}`)), (error) => ['plan_scope_invalid', 'goal_plan_invalid'].includes(error.code));
+    assert.equal(store.snapshot().lastSeq, before);
+    store.releaseWriterLease();
+  }
+});
+
 test('GP3/GP8: plan verification is closed direct-exec authority with bounded cwd, env, argv, output, and predecessor evidence', () => {
   const invalid = {
     shell: { ...verification(), command: 'node && false' },
@@ -366,6 +392,8 @@ test('GP5/GP8: caller verification substitution refuses before task, capacity, o
   const adapter = new MockAdapter({
     harness: 'mock', scenario: { outcome: 'completed', delayMs: 10, summary: 'unexpected spawn', files: {} },
   });
+  const baseCard = adapter.card.bind(adapter);
+  adapter.card = () => ({ ...baseCard(), modelSelection: { mode: 'exact', configuredDefault: 'model-a', available: ['model-a'], family: 'mock', acceptedPrefixes: ['model-'], acceptedAliases: [], reasoningEffort: ['low'], serviceTier: null, provenance: 'test', refreshedAt: null } });
   let spawnCalls = 0;
   const spawn = adapter.spawn.bind(adapter);
   adapter.spawn = (...args) => { spawnCalls += 1; return spawn(...args); };
@@ -399,7 +427,7 @@ test('GP5/GP8: caller verification substitution refuses before task, capacity, o
       key: 'implement', objective: 'Implement the approved slice',
       definitionOfDone: ['node --test passes'], deps: [], pathScope: ['impl/**'], risk: 'high',
       budget: nodeBudget(), verification: verification(),
-      routes: { harnesses: ['mock'], models: [], efforts: [] },
+      routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] },
       capabilities: ['code', 'test'], effects: ['repository_edit'],
     }],
   }, ctx('planner', ['plan:propose'], 'plan:brief'))).plan;
@@ -418,6 +446,7 @@ test('GP5/GP8: caller verification substitution refuses before task, capacity, o
       budget: { tokens: 10_000, usd: 1, wallMin: 5 },
     }, {
       taskId: 'brief-substitution', goalPlan: gateFor(goal, plan),
+      model: 'model-a', effort: 'low',
       actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session',
       powers: ['plan:dispatch'], idempotencyKey: 'dispatch:brief-substitution',
     }),
@@ -446,6 +475,7 @@ test('GP5/GP8: caller verification substitution refuses before task, capacity, o
     await assert.rejects(
       () => driver.coordinator.spawn('mock', approvedBrief, {
         taskId: `execution-substitution-${index}`, goalPlan: gateFor(goal, plan),
+        model: 'model-a', effort: 'low',
         actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session',
         powers: ['plan:dispatch'], idempotencyKey: `dispatch:execution-substitution-${index}`,
         ...extra,
