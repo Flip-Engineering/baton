@@ -1,17 +1,20 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 
 const PROTOCOL_VERSION = '2025-11-25';
 const CAPABILITY = Object.freeze({
-  fleet_spawn: 'control', fleet_send: 'control', fleet_wait: 'observe', fleet_respond: 'approve',
+  fleet_spawn: 'control', fleet_scratch_oracle: 'control', fleet_send: 'control', fleet_wait: 'observe', fleet_respond: 'approve',
   fleet_interrupt: 'control', fleet_result: 'observe', fleet_list: 'observe', fleet_capabilities: 'observe',
   fleet_provider_status: 'observe',
   fleet_capability_invoke: 'control', fleet_reuse_decide: 'control', fleet_reuse_recheck: 'control', fleet_kill: 'emergency_stop',
 });
-const STATEFUL = new Set(['fleet_spawn', 'fleet_send', 'fleet_respond', 'fleet_interrupt', 'fleet_capability_invoke', 'fleet_reuse_decide', 'fleet_reuse_recheck', 'fleet_kill']);
+const STATEFUL = new Set(['fleet_spawn', 'fleet_scratch_oracle', 'fleet_send', 'fleet_respond', 'fleet_interrupt', 'fleet_capability_invoke', 'fleet_reuse_decide', 'fleet_reuse_recheck', 'fleet_kill']);
 const FENCED = new Set(['fleet_send', 'fleet_interrupt', 'fleet_kill']);
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
 const SESSION_FIELDS = new Set(['mode', 'id', 'lastTurnId', 'context']);
 const SESSION_CONTEXT_FIELDS = new Set(['worktree', 'repoRoot', 'baseSha', 'branch', 'ownerTaskId']);
+const VERIFICATION_FIELDS = new Set(['command', 'expectExit', 'timeoutMs', 'coverageCommand', 'mutationCommand']);
+const BUDGET_FIELDS = new Set(['tokens', 'usd', 'wallMin']);
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization|actor|userId|sessionId|capabilities|repoIds)$/i;
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,256}$/;
 
@@ -52,9 +55,11 @@ function stateFailureCode(cause) {
     'invalid_advisory_request', 'advisory_context_required', 'invalid_package_identity', 'advisory_plan_diverged', 'advisory_policy_changed', 'advisory_scan_coordinate_mismatch', 'advisory_scan_schema_invalid', 'advisory_scan_incomplete', 'advisory_source_changed', 'advisory_atlas_integrity', 'advisory_projection_oversize',
     'oracle_unavailable', 'oracle_timeout', 'oracle_response_oversize', 'oracle_schema_invalid', 'oracle_coordinate_mismatch', 'oracle_incomplete', 'oracle_source_integrity', 'oracle_clock_invalid',
     'capability_resume_unavailable', 'capability_reverify_unavailable', 'capability_task_requires_task_plane',
+    'scratch_oracle_invalid', 'scratch_oracle_target_ineligible', 'scratch_oracle_route_unavailable', 'scratch_oracle_not_independent', 'scratch_oracle_oversize', 'scratch_oracle_forbidden', 'scratch_oracle_unavailable', 'scratch_oracle_integrity', 'explicit_vendor_required', 'verification_required',
     'run_sealed', 'run_not_terminal', 'run_not_found', 'invalid_run_id', 'run_membership_changed', 'run_prefix_changed',
     'causal_request_invalid', 'causal_context_invalid', 'causal_repo_mismatch', 'causal_audit_invalid', 'causal_trace_invalid', 'causal_recall_invalid', 'causal_audit_oversize', 'causal_trace_oversize', 'causal_audit_integrity', 'causal_recall_oversize', 'causal_recall_audit_failed', 'knowledge_recall_conflict', 'knowledge_recall_integrity',
     'causal_promotion_invalid', 'causal_promotion_forbidden', 'causal_promotion_oversize', 'causal_promotion_audit_failed', 'causal_promotion_conflict', 'causal_promotion_integrity',
+    'causal_correction_invalid', 'causal_correction_forbidden', 'causal_correction_oversize', 'causal_correction_conflict', 'causal_correction_integrity', 'unresolved_contradiction',
     'reuse_decision_unavailable', 'reuse_decision_forbidden', 'invalid_reuse_decision', 'reuse_evidence_invalid', 'reuse_evidence_diverged',
     'reuse_evidence_stale', 'reuse_environment_mismatch', 'reuse_tree_dirty', 'reuse_repo_mismatch', 'reuse_namespace_conflict',
     'reuse_borrow_blocked', 'reuse_decision_conflict', 'reuse_decision_exists', 'reuse_recheck_unavailable', 'reuse_recheck_forbidden',
@@ -85,6 +90,7 @@ const idem = { idempotencyKey: { type: 'string', minLength: 1, maxLength: 256, p
 const fence = { expectedFence: { type: 'integer' } };
 const TOOL_DEFINITIONS = Object.freeze([
   { name: 'fleet_spawn', description: 'Spawn one Baton worker with independently selected harness, model, effort, and run.', inputSchema: schema({ ...repo, ...idem, runId, harness: text, model: text, effort: text, modelPolicy: schema({ allow: textArray, deny: textArray, prefer: textArray, allowFamilies: textArray, denyFamilies: textArray, reasoningEffort: text, serviceTier: text }), brief: { type: 'object' }, taskId: text, deps: textArray, taskType: text, session: schema({ mode: { type: 'string', enum: ['new', 'resume', 'fork'] }, id: text, lastTurnId: text, context: schema({ worktree: text, repoRoot: text, baseSha: text, branch: text, ownerTaskId: text }, ['worktree']) }), refines: text }, ['repoId', 'idempotencyKey', 'harness', 'brief']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_scratch_oracle', description: 'Spawn an explicitly routed independent oracle over one immutable derived Scratch fact.', inputSchema: schema({ ...repo, ...idem, runId, scratchFactId: text, harness: text, model: text, effort: text, modelPolicy: schema({ allow: textArray, deny: textArray, prefer: textArray, allowFamilies: textArray, denyFamilies: textArray, reasoningEffort: text, serviceTier: text }), verification: { type: 'object' }, budget: { type: 'object' }, constraints: textArray, goal: text, definitionOfDone: text, taskId: text }, ['repoId', 'idempotencyKey', 'scratchFactId', 'harness', 'verification']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_send', description: 'Send a turn, steer, or nudge to a fenced worker.', inputSchema: schema({ ...repo, ...idem, ...fence, workerId: text, message: text, mode: { type: 'string', enum: ['turn', 'steer', 'nudge'] } }, ['repoId', 'idempotencyKey', 'expectedFence', 'workerId', 'message', 'mode']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_wait', description: 'Wait for fleet events for at most the host-safe bounded interval.', inputSchema: schema({ ...repo, timeoutMs: { type: 'integer', minimum: 0 } }, ['repoId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_respond', description: 'Answer one pending approval or question.', inputSchema: schema({ ...repo, ...idem, requestId: text, answer: {} }, ['repoId', 'idempotencyKey', 'requestId', 'answer']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
@@ -151,6 +157,16 @@ function validateArguments(name, args) {
         || Object.keys(args.session.context).some((key) => !SESSION_CONTEXT_FIELDS.has(key))
         || !nonempty(args.session.context.worktree))) return 'invalid_session';
     }
+  }
+  if (name === 'fleet_scratch_oracle') {
+    if (!nonempty(args.scratchFactId) || !nonempty(args.harness) || !record(args.verification) || !nonempty(args.verification.command)
+      || typeof args.verification.expectExit !== 'number' || Object.keys(args.verification).some((key) => !VERIFICATION_FIELDS.has(key))) return 'invalid_scratch_oracle';
+    if (Object.hasOwn(args, 'runId') && !/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId ?? '')) return 'invalid_run_id';
+    if (Object.hasOwn(args, 'model') && !nonempty(args.model)) return 'invalid_model';
+    if (Object.hasOwn(args, 'effort') && !nonempty(args.effort)) return 'invalid_effort';
+    if (Object.hasOwn(args, 'modelPolicy') && (!record(args.modelPolicy) || Object.keys(args.modelPolicy).some((key) => !MODEL_POLICY_FIELDS.has(key)))) return 'invalid_model_policy';
+    if (Object.hasOwn(args, 'budget') && (!record(args.budget) || Object.keys(args.budget).some((key) => !BUDGET_FIELDS.has(key)))) return 'invalid_budget';
+    if (Object.hasOwn(args, 'constraints') && (!Array.isArray(args.constraints) || !args.constraints.every(nonempty))) return 'invalid_constraints';
   }
   if (['fleet_send', 'fleet_interrupt', 'fleet_result', 'fleet_kill'].includes(name) && !nonempty(args.workerId)) return 'invalid_worker';
   if (name === 'fleet_provider_status' && ((Object.hasOwn(args, 'providerId') && !/^[A-Za-z0-9._:-]{1,128}$/.test(args.providerId ?? ''))
@@ -317,6 +333,12 @@ export class McpFleetServer {
       runId: args.runId ?? null,
       actor, idempotencyKey: `mcp.call:${callId}`,
     });
+    else if (name === 'fleet_scratch_oracle') value = await this.coordinator.spawnScratchOracle(args.scratchFactId, args.harness, {
+      model: args.model, effort: args.effort, modelPolicy: args.modelPolicy, verification: args.verification,
+      budget: args.budget, constraints: args.constraints, goal: args.goal, definitionOfDone: args.definitionOfDone,
+      taskId: args.taskId ?? `mcp-${callId}`, runId: args.runId ?? null,
+      actor: `operator:${actor}`, idempotencyKey: `mcp.call:${callId}`,
+    });
     else if (name === 'fleet_send') value = await this.coordinator.send(args.workerId, args.message, args.mode, { expectedFence: args.expectedFence, actor });
     else if (name === 'fleet_wait') value = await this.coordinator.wait(Math.min(args.timeoutMs ?? this.maxWaitMs, this.maxWaitMs));
     else if (name === 'fleet_respond') value = await this.coordinator.respond(args.requestId, args.answer, actor);
@@ -328,9 +350,9 @@ export class McpFleetServer {
     else if (name === 'fleet_capability_invoke') {
       const context = { budgetTokens: args.budgetTokens, actor, repoId: args.repoId, idempotencyKey: `mcp.call:${callId}`, transport: 'mcp' };
       const action = args.action;
-      if (action === 'invoke') value = await this.coordinator.invokeCapability(args.name, args.op, args.args, context);
-      else if (action === 'resume') value = await this.coordinator.resumeCapability(args.name, args.op, args.ref, args.cursor, context);
-      else if (action === 'reverify') value = await this.coordinator.reverifyCapability(args.name, args.op, args.claim, args.args, context);
+      if (action === 'invoke') value = typeof this.coordinator.invokeCapabilityNorthbound === 'function' ? await this.coordinator.invokeCapabilityNorthbound('mcp', northboundCapabilityToken('mcp'), args.name, args.op, args.args, context) : await this.coordinator.invokeCapability(args.name, args.op, args.args, context);
+      else if (action === 'resume') value = typeof this.coordinator.resumeCapabilityNorthbound === 'function' ? await this.coordinator.resumeCapabilityNorthbound('mcp', northboundCapabilityToken('mcp'), args.name, args.op, args.ref, args.cursor, context) : await this.coordinator.resumeCapability(args.name, args.op, args.ref, args.cursor, context);
+      else if (action === 'reverify') value = typeof this.coordinator.reverifyCapabilityNorthbound === 'function' ? await this.coordinator.reverifyCapabilityNorthbound('mcp', northboundCapabilityToken('mcp'), args.name, args.op, args.claim, args.args, context) : await this.coordinator.reverifyCapability(args.name, args.op, args.claim, args.args, context);
       else value = await this.coordinator.orientWorker(args.workerId, args.args, args.note, { ...context, expectedFence: args.expectedFence });
       value = transportCapability(value);
     }

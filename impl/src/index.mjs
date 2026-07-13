@@ -359,6 +359,7 @@ export function createDriver(opts) {
     coordination,
     repoRoot: opts.repoRoot,
     repoId: opts.repoId,
+    scratchOraclePolicy: opts.scratchOraclePolicy,
     reuseDecisionPolicy: opts.reuseDecisionPolicy,
     resolveEnvironmentRef: opts.reuseDecisionPolicy === undefined ? null : ({ repoId, indexEpoch, overlayDigest, lockfileDigest }) => {
       if (repoId !== opts.repoId) throw Object.assign(new Error('reuse decision repository authority mismatch'), { code: 'reuse_repo_mismatch' });

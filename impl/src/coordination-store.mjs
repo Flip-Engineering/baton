@@ -14,6 +14,8 @@ const KNOWLEDGE_GROUNDINGS = new Set(['verified', 'observed', 'derived', 'assert
 const KNOWLEDGE_PROJECTION_FIELDS = new Set(['contentDigest', 'observedSeq', 'observedAt', 'eventTimeSeq', 'eventTime', 'validityVersion', 'invalidatedBy', 'derivedFromEvent', 'resolvedBy', 'winnerId', 'loserId', 'resolutionReason']);
 const KNOWLEDGE_RECALL_POLICY_FIELDS = ['repoId', 'maxQueryBytes', 'maxQueryTerms', 'maxCandidates', 'maxCandidateBytes', 'maxResults', 'maxGraphDepth', 'maxGraphRows', 'maxSnippetBytes', 'maxReceiptBytes', 'maxResultBytes'];
 const KNOWLEDGE_PROMOTION_POLICY_FIELDS = ['repoId', 'minScratchReaders', 'maxScanEvents', 'maxCandidates', 'maxCandidateBytes', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes'];
+const KNOWLEDGE_SCRATCH_CORRECTION_POLICY_FIELDS = ['repoId', 'minScratchReaders', 'maxScanEvents', 'maxAffectedReads', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes'];
+const SCRATCH_CORRECTION_ADMIN_EVENTS = new Set(['evidence.mapped', 'web.command_admitted', 'mcp.call_admitted']);
 const PROMOTION_DECISION_KINDS = new Set(['control.stop_requested', 'follow_up.requested', 'publication.authorized', 'publication.denied']);
 const PROMOTION_FAILURE_KINDS = new Set(['integration.incomplete', 'integration.refused', 'publication.refused', 'recovery.claimed_without_spawn']);
 const PROVIDER_FAILURE_CODES = new Set(['provider_index_changed', 'reuse_policy_reconciliation_required', 'reuse_evidence_diverged', 'capability_refused', 'provider_processing_failed']);
@@ -59,6 +61,13 @@ function validKnowledgePromotionPolicy(policy) {
   return policy.minScratchReaders <= 1_000 && policy.maxScanEvents <= 1_000_000 && policy.maxCandidates <= 100_000
     && policy.maxCandidateBytes <= 64 * 1024 * 1024 && policy.maxEvidenceRefs <= 1_000_000
     && policy.maxBatchBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
+}
+function validKnowledgeScratchCorrectionPolicy(policy) {
+  if (!policy || Object.keys(policy).sort().join(',') !== [...KNOWLEDGE_SCRATCH_CORRECTION_POLICY_FIELDS].sort().join(',') || typeof policy.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId)) return false;
+  const numeric = KNOWLEDGE_SCRATCH_CORRECTION_POLICY_FIELDS.filter((name) => name !== 'repoId');
+  if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
+  return policy.minScratchReaders <= 1_000 && policy.maxScanEvents <= 1_000_000 && policy.maxAffectedReads <= 1_000_000
+    && policy.maxEvidenceRefs <= 1_000_000 && policy.maxBatchBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
 }
 function providerAttemptDelay(policy, windowAttempt) {
   const exponent = Math.min(windowAttempt - 1, Math.ceil(Math.log2(policy.maxBackoffMs / policy.initialBackoffMs)));
@@ -247,13 +256,18 @@ export class CoordinationStore {
     } } finally { this._loading = false; }
   }
 
-  _append(kind, payload, { actor, key }, fixedTs = null) {
+  _append(kind, payload, { actor, key }, fixedTs = null, beforeWrite = null) {
     this._assertWriterLease();
     if (typeof actor !== 'string' || actor.length === 0) throw new TypeError('coordination actor required');
     if (typeof key !== 'string' || key.length === 0) throw new TypeError('coordination idempotency key required');
     const prior = this._byKey.get(key);
     if (prior) return prior;
     const event = freeze({ schemaVersion: 1, seq: this._events.length + 1, ts: fixedTs ?? this._clock(), kind, actor, idempotencyKey: key, payload: freeze(clone(payload)) });
+    if (beforeWrite !== null) {
+      if (typeof beforeWrite !== 'function') throw new TypeError('coordination before-write gate must be a function');
+      const before = this._events.length; beforeWrite();
+      if (this._events.length !== before) throw new CoordinationRefusal('coordination before-write gate changed state', 'causal_correction_integrity');
+    }
     this._appendFile(this.file, `${JSON.stringify(event)}\n`, 'utf8');
     this._events.push(event);
     this._byKey.set(key, event);
@@ -1207,6 +1221,15 @@ export class CoordinationStore {
       this._validateKnowledgePromotionPayload(p, event, true);
       for (const node of p.nodes) this._setKnowledgeNode(event, node.id, freeze({ ...clone(node), observedSeq: event.seq, observedAt: event.ts, ...eventTime(this._events, node.evidence, event), validFrom: event.ts, validTo: null, validityVersion: 1, derivedFromEvent: event.seq }));
       for (const edge of p.edges) this._setKnowledgeEdge(event, edge.id, freeze({ ...clone(edge), observedSeq: event.seq, observedAt: event.ts, ...eventTime(this._events, edge.evidence, event), validFrom: event.ts, validTo: null, validityVersion: 1, derivedFromEvent: event.seq }));
+    } else if (event.kind === 'knowledge.scratch_corrected') {
+      this._validateScratchCorrectionPayload(p, event, true);
+      for (const node of p.nodes) this._setKnowledgeNode(event, node.id, freeze({ ...clone(node), observedSeq: event.seq, observedAt: event.ts, ...eventTime(this._events, node.evidence, event), validFrom: event.ts, validTo: null, validityVersion: 1, derivedFromEvent: event.seq }));
+      for (const edge of p.edges) this._setKnowledgeEdge(event, edge.id, freeze({ ...clone(edge), observedSeq: event.seq, observedAt: event.ts, ...eventTime(this._events, edge.evidence, event), validFrom: event.ts, validTo: null, validityVersion: 1, derivedFromEvent: event.seq }));
+      if (p.target) {
+        const target = this._knowledgeNodes.get(p.target.nodeId);
+        this._setKnowledgeNode(event, target.id, freeze({ ...clone(target), validTo: event.ts, validityVersion: target.validityVersion + 1, invalidatedBy: event.seq }));
+        this._contamination.push(freeze({ nodeId: target.id, invalidationEvent: event.seq, affectedReadEvents: clone(p.affectedReadEvents), eventSeq: event.seq, ts: event.ts }));
+      }
     } else if (event.kind === 'knowledge.node_added' || event.kind === 'knowledge.promoted') {
       this._validateKnowledgeNodePayload(p, event, true);
       this._setKnowledgeNode(event, p.id, freeze({ ...clone(p), observedSeq: event.seq, observedAt: event.ts, ...eventTime(this._events, p.evidence, event), validFrom: p.validFrom ?? event.ts, validTo: p.validTo ?? null, validityVersion: 1 }));
@@ -1917,10 +1940,35 @@ export class CoordinationStore {
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), fact: clone(this._scratchFacts.get(prior.payload.id)) };
     if (!validEnvRef(fields?.envRef)) throw new CoordinationRefusal('scratch fact requires immutable repoId/treeSha envRef', 'invalid_env_ref');
     if (!['observed', 'derived'].includes(fields.grounding)) throw new CoordinationRefusal('scratch grounding must be observed|derived', 'invalid_grounding');
+    if (Object.hasOwn(fields, 'id')) throw new CoordinationRefusal('Scratch fact identity is hub-derived', 'invalid_scratch_id');
     const payload = clone(fields);
-    payload.id ??= `scratch-fact:${digest(payload)}`;
+    payload.id = `scratch-fact:${digest(payload)}`;
     const event = this._append('scratch.fact_posted', payload, auth);
     return { ok: true, event: clone(event), fact: clone(this._scratchFacts.get(payload.id)) };
+  }
+
+  /** Bind an oracle Brief to the exact durable Scratch assertion without asking a caller to
+   * echo or nominate any source fields. The private snapshot is returned only to Coordinator. */
+  scratchFactOracleTarget(id, repoId, maxTargetBytes) {
+    if (typeof id !== 'string' || id.length === 0 || Buffer.byteLength(id) > 4_096 || typeof repoId !== 'string' || repoId.length === 0
+      || !Number.isSafeInteger(maxTargetBytes) || maxTargetBytes <= 0) throw new CoordinationRefusal('Scratch oracle target request is invalid', 'scratch_oracle_invalid');
+    const fact = this._scratchFacts.get(id);
+    if (!fact || !fact.active || fact.grounding !== 'derived') throw new CoordinationRefusal('Scratch oracle requires an active derived fact', 'scratch_oracle_target_ineligible');
+    if (fact.envRef?.repoId !== repoId || typeof fact.ownerTask !== 'string' || fact.ownerTask.length === 0) throw new CoordinationRefusal('Scratch oracle target repository or producer is invalid', 'scratch_oracle_target_ineligible');
+    const source = this._events[fact.createdEvent - 1];
+    const projectedFact = Object.fromEntries(Object.entries(fact).filter(([key]) => !['active', 'createdEvent'].includes(key)));
+    if (!source || source.kind !== 'scratch.fact_posted' || source.payload?.id !== id || canonicalDigest(source.payload) !== canonicalDigest(projectedFact)) {
+      throw new CoordinationIntegrityError('Scratch oracle source binding is invalid', 'scratch_oracle_integrity');
+    }
+    const snapshot = clone(source.payload); const targetBytes = canonicalBytes(snapshot);
+    if (targetBytes > maxTargetBytes) throw new CoordinationRefusal('Scratch oracle target exceeded deployment ceiling', 'scratch_oracle_oversize');
+    const commitment = freeze({
+      schemaVersion: 1, kind: 'scratch.fact', scratchFactId: id,
+      scratchFactDigest: canonicalDigest(snapshot), sourceEventSeq: source.seq,
+      sourceEventDigest: canonicalDigest(source), repoId,
+      envRefDigest: canonicalDigest(snapshot.envRef), producerTaskId: snapshot.ownerTask,
+    });
+    return freeze({ commitment, snapshot, targetBytes });
   }
 
   expireScratchFact(id, auth) {
@@ -2172,6 +2220,157 @@ export class CoordinationStore {
     const derived = this._deriveKnowledgePromotion(repoId, observedSeq, policy);
     if (derived.candidates.length !== 0) throw new CoordinationRefusal('knowledge promotion no-op is no longer reproducible', 'causal_promotion_conflict');
     return freeze({ event: null, projection: { repoId, observedSeq, observedAt: this.observationTime(observedSeq), policyDigest: canonicalDigest(policy), projectionDigest: derived.projectionDigest, receiptDigest: null, eventSeq: null, summaries: [] }, replayed: true, noOp: true });
+  }
+
+  _scratchCorrectionRequest(request) {
+    if (!request || typeof request !== 'object' || Array.isArray(request) || !['release', 'supersede', 'retract'].includes(request.action)) throw new CoordinationRefusal('Scratch correction request is invalid', 'causal_correction_invalid');
+    const fields = request.action === 'release' ? ['action', 'oracleTaskId', 'scratchFactId']
+      : request.action === 'supersede' ? ['action', 'expectedValidityVersion', 'replacementScratchFactId', 'targetNodeId', ...(Object.hasOwn(request, 'oracleTaskId') ? ['oracleTaskId'] : [])]
+        : ['action', 'expectedValidityVersion', 'reason', 'targetNodeId'];
+    if (Object.keys(request).sort().join(',') !== fields.sort().join(',')) throw new CoordinationRefusal('Scratch correction request shape is invalid', 'causal_correction_invalid');
+    for (const name of ['scratchFactId', 'replacementScratchFactId', 'targetNodeId', 'oracleTaskId']) if (Object.hasOwn(request, name) && (typeof request[name] !== 'string' || request[name].length === 0 || Buffer.byteLength(request[name]) > 4_096)) throw new CoordinationRefusal('Scratch correction identifier is invalid', 'causal_correction_invalid');
+    if (request.action !== 'release' && (!Number.isSafeInteger(request.expectedValidityVersion) || request.expectedValidityVersion <= 0)) throw new CoordinationRefusal('Scratch correction target version is invalid', 'causal_correction_invalid');
+    if (request.action === 'retract' && !['source_expired', 'oracle_withdrawn', 'operator_correction'].includes(request.reason)) throw new CoordinationRefusal('Scratch correction reason is invalid', 'causal_correction_invalid');
+    return clone(request);
+  }
+
+  _scratchCorrectionPrefix(observedSeq) {
+    const prefix = this._events.slice(0, observedSeq); const tasks = new Map(); const scratch = new Map(); const scratchReads = []; const artifacts = [];
+    for (const event of prefix) {
+      if (event.kind === 'task.created') tasks.set(event.payload.id, { created: event, payload: clone(event.payload), status: 'pending', terminalEvent: null, routeKey: event.payload.routeKey ?? null });
+      else if (event.kind === 'task.claimed') { const task = tasks.get(event.payload.id); if (task) { task.status = 'working'; task.routeKey = event.payload.routeKey ?? task.routeKey; task.claimed = event; } }
+      else if (event.kind === 'task.transitioned') { const task = tasks.get(event.payload.id); if (task) { task.status = event.payload.to; if (TERMINAL.has(event.payload.to)) task.terminalEvent = event; } }
+      else if (event.kind === 'scratch.fact_posted') scratch.set(event.payload.id, { event, active: true });
+      else if (event.kind === 'scratch.fact_expired') { const fact = scratch.get(event.payload.id); if (fact) fact.active = false; }
+      else if (event.kind === 'scratch.read') scratchReads.push(event);
+      else if (event.kind === 'artifact.registered') artifacts.push(event);
+    }
+    return { prefix, tasks, scratch, scratchReads, artifacts };
+  }
+
+  _eligibleScratchOracle(repoId, factRow, oracleTaskId, state, nodeMap) {
+    const fact = factRow?.event?.payload; const task = state.tasks.get(oracleTaskId);
+    if (!factRow?.active || fact?.grounding !== 'derived' || fact?.envRef?.repoId !== repoId || typeof fact.ownerTask !== 'string' || !task || task.status !== 'completed' || !task.terminalEvent || !nodeMap.has(`task:${oracleTaskId}`)) return null;
+    if (!/^scratch-fact:[a-f0-9]{64}$/.test(fact.id)) return null;
+    const producer = state.tasks.get(fact.ownerTask); let producerRoute; let reviewerRoute;
+    try { producerRoute = JSON.parse(producer?.routeKey); reviewerRoute = JSON.parse(task.routeKey); } catch { return null; }
+    if (![producerRoute, reviewerRoute].every((tuple) => Array.isArray(tuple) && tuple.length === 6 && tuple.every((value) => typeof value === 'string')) || producerRoute[0] === reviewerRoute[0] || producerRoute[4] === reviewerRoute[4]) return null;
+    const routeMatchesTask = (row, tuple) => row?.claimed?.payload?.routeKey === row.routeKey && row.claimed.payload.harnessResolved === `${tuple[0]}@${tuple[1]}`
+      && (row.claimed.payload.modelResolved ?? 'default') === tuple[2] && (row.claimed.payload.effortResolved ?? 'default') === tuple[3] && row.payload.taskType === tuple[5];
+    if (!routeMatchesTask(producer, producerRoute) || !routeMatchesTask(task, reviewerRoute)) return null;
+    const commitment = { schemaVersion: 1, kind: 'scratch.fact', scratchFactId: fact.id, scratchFactDigest: canonicalDigest(fact), sourceEventSeq: factRow.event.seq, sourceEventDigest: canonicalDigest(factRow.event), repoId, envRefDigest: canonicalDigest(fact.envRef), producerTaskId: fact.ownerTask, producerHarness: producerRoute[0], producerFamily: producerRoute[4], reviewerHarness: reviewerRoute[0], reviewerFamily: reviewerRoute[4] };
+    const review = task.payload.review;
+    if (!review || review.kind !== 'oracle' || review.independent !== true || review.parentTaskId !== fact.ownerTask || canonicalDigest(review.knowledgeTarget) !== canonicalDigest(commitment)) return null;
+    const acceptedByOracle = (artifact) => (artifact.provenance ?? []).some((ref) => {
+        const mapped = Number.isSafeInteger(ref?.coordinationSeq) ? state.prefix[ref.coordinationSeq - 1] : null; if (mapped?.kind !== 'evidence.mapped' || mapped.payload?.kind !== 'verify.reverified') return false;
+        if (mapped.payload.worker !== task.claimed?.payload?.worker || mapped.payload.worker !== task.payload.reservedWorkerId) return false;
+        const source = this._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq); return source?.kind === 'verify.reverified' && source?.payload?.accept === true && source?.routeKey === task.routeKey
+          && source?.harness === `${reviewerRoute[0]}@${reviewerRoute[1]}` && source?.modelResolved === reviewerRoute[2] && source?.effortResolved === reviewerRoute[3]
+          && source?.payload?.capture?.sha === artifact.refs?.sha && source?.payload?.capture?.model === reviewerRoute[2] && source?.payload?.capture?.effort === reviewerRoute[3] && source?.payload?.capture?.routeKey === task.routeKey;
+      });
+    const eligible = state.artifacts.filter((event) => {
+      const artifact = event.payload; if (artifact.taskId !== oracleTaskId || artifact.kind !== 'review' || artifact.mediaType !== 'application/vnd.baton.review+json' || artifact.accepted !== true || canonicalDigest(artifact.review) !== canonicalDigest(review) || !nodeMap.has(`artifact:${artifact.id}`)) return false;
+      if (!artifact.refs || Object.keys(artifact.refs).sort().join(',') !== ['parentTaskId', 'sha'].sort().join(',') || artifact.refs.parentTaskId !== fact.ownerTask || typeof artifact.refs.sha !== 'string' || artifact.refs.sha.length === 0) return false;
+      const pairedCommit = state.artifacts.some((candidate) => candidate.payload?.taskId === oracleTaskId && candidate.payload?.kind === 'commit' && candidate.payload?.mediaType === 'application/vnd.git.commit'
+        && candidate.payload?.accepted === true && candidate.payload?.refs?.sha === artifact.refs.sha && acceptedByOracle(candidate.payload));
+      return pairedCommit && acceptedByOracle(artifact);
+    }).sort((a, b) => a.seq - b.seq);
+    if (eligible.length !== 1) return null;
+    const artifactEvent = eligible[0]; const mappedSeqs = artifactEvent.payload.provenance.map((ref) => ref.coordinationSeq).filter(Number.isSafeInteger).sort((a, b) => a - b);
+    return { taskId: oracleTaskId, taskNodeId: `task:${oracleTaskId}`, artifactId: artifactEvent.payload.id, artifactNodeId: `artifact:${artifactEvent.payload.id}`, artifactEventSeq: artifactEvent.seq, terminalEventSeq: task.terminalEvent.seq, evidenceSeqs: [...new Set([factRow.event.seq, task.terminalEvent.seq, artifactEvent.seq, ...mappedSeqs])].sort((a, b) => a - b), producerRoute, reviewerRoute, producerRouteDigest: canonicalDigest(producerRoute), reviewerRouteDigest: canonicalDigest(reviewerRoute) };
+  }
+
+  _deriveScratchCorrection(repoId, observedSeq, policy, rawRequest, beforeEventSeq = this._events.length + 1) {
+    if (!validKnowledgeScratchCorrectionPolicy(policy) || policy.repoId !== repoId || !Number.isSafeInteger(observedSeq) || observedSeq < 0 || observedSeq >= beforeEventSeq || observedSeq > this._events.length) throw new CoordinationRefusal('Scratch correction boundary or policy is invalid', 'causal_correction_invalid');
+    if (this._events.slice(observedSeq, Math.max(observedSeq, beforeEventSeq - 1)).some((event) => !SCRATCH_CORRECTION_ADMIN_EVENTS.has(event.kind))) throw new CoordinationRefusal('Scratch correction boundary became stale', 'causal_correction_conflict');
+    if (observedSeq > policy.maxScanEvents) throw new CoordinationRefusal('Scratch correction scan exceeded deployment ceiling', 'causal_correction_oversize');
+    const request = this._scratchCorrectionRequest(rawRequest); const state = this._scratchCorrectionPrefix(observedSeq); const nodesAtBoundary = this.queryKnowledge({ observedSeq }); const edgesAtBoundary = this.queryKnowledgeEdges({ observedSeq }); const nodeMap = new Map(nodesAtBoundary.map((node) => [node.id, node]));
+    const targetNodeId = request.targetNodeId ?? null; let target = null;
+    if (targetNodeId) {
+      const node = nodeMap.get(targetNodeId); const allowedTrigger = ['scratch.cited_observed', 'scratch.oracle_verified', 'scratch.corrected'].includes(node?.promotion?.trigger);
+      const source = Number.isSafeInteger(node?.derivedFromEvent) ? state.prefix[node.derivedFromEvent - 1] : null; const validSource = source?.kind === 'knowledge.promotion_batch' || source?.kind === 'knowledge.scratch_corrected';
+      const openContradiction = edgesAtBoundary.some((edge) => edge.type === 'Contradicts' && !edge.validTo && [edge.from, edge.to].includes(targetNodeId));
+      if (!node || node.type !== 'Finding' || node.repoId !== repoId || !allowedTrigger || !validSource || node.validityVersion !== request.expectedValidityVersion || openContradiction) throw new CoordinationRefusal('Scratch correction target is stale or ineligible', openContradiction ? 'unresolved_contradiction' : 'causal_correction_conflict');
+      target = { nodeId: targetNodeId, expectedValidityVersion: request.expectedValidityVersion, observedSeq: node.observedSeq, contentDigest: node.contentDigest };
+    }
+    if (request.action === 'retract') {
+      const affectedReadEvents = this._knowledgeReads.filter((read) => read.eventSeq <= observedSeq && read.nodeIds.includes(targetNodeId)).map((read) => read.eventSeq);
+      if (affectedReadEvents.length > policy.maxAffectedReads) throw new CoordinationRefusal('Scratch correction contamination exceeded deployment ceiling', 'causal_correction_oversize');
+      const evidenceDigest = canonicalDigest({ target, affectedReadEvents }); const projectionDigest = canonicalDigest({ action: request.action, target, nodes: [], edges: [], affectedReadEvents, evidenceDigest });
+      return freeze({ request, target, nodes: [], edges: [], affectedReadEvents, evidenceRefs: 0, evidenceDigest, projectionDigest, replacement: null, oracleTaskId: null });
+    }
+
+    const factId = request.action === 'release' ? request.scratchFactId : request.replacementScratchFactId; const factRow = state.scratch.get(factId); const fact = factRow?.event?.payload;
+    if (!factRow?.active || fact?.envRef?.repoId !== repoId || !['observed', 'derived'].includes(fact?.grounding)) throw new CoordinationRefusal('Scratch correction source is ineligible', 'causal_correction_conflict');
+    if (request.action === 'release' && fact.grounding !== 'derived') throw new CoordinationRefusal('Scratch release requires a derived fact', 'causal_correction_conflict');
+    const scratchFactFullDigest = canonicalDigest(fact); const sourceDigest = canonicalDigest(factRow.event);
+    const representsFact = (node) => node?.scratchFactFullDigest === scratchFactFullDigest || (node?.sourceSeq === factRow.event.seq && node?.sourceDigest === sourceDigest);
+    if (target && targetNodeId && representsFact(nodeMap.get(targetNodeId))) throw new CoordinationRefusal('Scratch correction cannot replace a Finding with the same fact', 'causal_correction_conflict');
+    if (nodesAtBoundary.some((node) => node.type === 'Finding' && !node.validTo && representsFact(node))) throw new CoordinationRefusal('Scratch fact already has a live Finding', 'causal_correction_conflict');
+
+    const verifiedOutcomes = new Map(nodesAtBoundary.filter((node) => node.type === 'Finding' && !node.validTo && node.grounding === 'verified' && node.promotion?.trigger === 'verified_task_outcome' && typeof node.taskId === 'string'
+      && edgesAtBoundary.some((edge) => edge.type === 'VerifiedBy' && edge.from === node.id && edge.to === `task:${node.taskId}`)).map((node) => [node.taskId, node]));
+    let oracle = null; let readerTaskIds = []; let evidenceSeqs = [factRow.event.seq]; const verifiedTargets = [];
+    if (fact.grounding === 'observed') {
+      if (Object.hasOwn(request, 'oracleTaskId')) throw new CoordinationRefusal('Observed Scratch correction cannot nominate an oracle', 'causal_correction_invalid');
+      const byTask = new Map(); for (const read of state.scratchReads) if (read.payload?.result?.facts?.some((row) => row.id === fact.id) && typeof read.payload?.taskId === 'string' && state.tasks.get(read.payload.taskId)?.status === 'completed' && verifiedOutcomes.has(read.payload.taskId) && !byTask.has(read.payload.taskId)) byTask.set(read.payload.taskId, read);
+      readerTaskIds = [...byTask.keys()].sort(); if (readerTaskIds.length < policy.minScratchReaders) throw new CoordinationRefusal('Observed Scratch replacement is under-qualified', 'causal_correction_conflict');
+      for (const taskId of readerTaskIds) { const outcome = verifiedOutcomes.get(taskId); verifiedTargets.push({ nodeId: outcome.id, evidence: [byTask.get(taskId).seq, outcome.observedSeq] }); evidenceSeqs.push(byTask.get(taskId).seq, outcome.observedSeq); }
+    } else {
+      if (typeof request.oracleTaskId !== 'string') throw new CoordinationRefusal('Derived Scratch correction requires an oracle task', 'causal_correction_invalid');
+      oracle = this._eligibleScratchOracle(repoId, factRow, request.oracleTaskId, state, nodeMap); if (!oracle) throw new CoordinationRefusal('Derived Scratch oracle evidence is ineligible', 'causal_correction_conflict'); evidenceSeqs.push(...oracle.evidenceSeqs);
+    }
+    evidenceSeqs = [...new Set(evidenceSeqs)].sort((a, b) => a - b); const sourceKind = 'scratch.fact_posted'; const sourceNodeId = `scratch-source:${canonicalDigest({ repoId, sourceSeq: factRow.event.seq, sourceKind })}`;
+    const findingId = `scratch-correction:${canonicalDigest({ repoId, action: request.action, sourceSeq: factRow.event.seq, targetNodeId, oracleTaskId: oracle?.taskId ?? null })}`; const sourceEvidence = [{ coordinationSeq: factRow.event.seq }]; const findingEvidence = evidenceSeqs.map((coordinationSeq) => ({ coordinationSeq }));
+    const sourceNode = this._knowledgePayload({ id: sourceNodeId, type: 'ScratchFact', grounding: fact.grounding, body: `${fact.grounding === 'derived' ? 'Derived' : 'Observed'} Scratch fact metadata`, evidence: sourceEvidence, promotion: { kind: 'ScratchFact', trigger: fact.grounding === 'derived' ? 'scratch.derived_source' : 'scratch.observed_source' }, repoId, sourceSeq: factRow.event.seq, sourceKind, scratchFactDigest: canonicalDigest(fact.id), scratchFactFullDigest, namespaceDigest: canonicalDigest(fact.namespace ?? null), keyDigest: canonicalDigest(fact.key ?? null), envRefDigest: canonicalDigest(fact.envRef) });
+    const trigger = request.action === 'release' ? 'scratch.oracle_verified' : 'scratch.corrected'; const grounding = fact.grounding === 'derived' ? 'verified' : 'observed';
+    const finding = this._knowledgePayload({ id: findingId, type: 'Finding', grounding, body: request.action === 'release' ? 'Independently verified derived Scratch fact' : 'Corrected Scratch fact', evidence: findingEvidence, promotion: { kind: 'Finding', trigger }, repoId, sourceSeq: factRow.event.seq, sourceKind, scratchFactDigest: canonicalDigest(fact.id), scratchFactFullDigest, readerTaskIds, oracleTaskId: oracle?.taskId ?? null, sourceDigest });
+    const edges = [this._knowledgePayload({ id: `knowledge-edge:derivedfrom:${findingId}:${sourceNodeId}`, type: 'DerivedFrom', from: findingId, to: sourceNodeId, evidence: sourceEvidence })];
+    for (const row of verifiedTargets) edges.push(this._knowledgePayload({ id: `knowledge-edge:verifiedby:${findingId}:${row.nodeId}`, type: 'VerifiedBy', from: findingId, to: row.nodeId, evidence: row.evidence.map((coordinationSeq) => ({ coordinationSeq })) }));
+    if (oracle) {
+      edges.push(this._knowledgePayload({ id: `knowledge-edge:verifiedby:${findingId}:${oracle.taskNodeId}`, type: 'VerifiedBy', from: findingId, to: oracle.taskNodeId, evidence: oracle.evidenceSeqs.map((coordinationSeq) => ({ coordinationSeq })) }));
+      edges.push(this._knowledgePayload({ id: `knowledge-edge:verifiedby:${findingId}:${oracle.artifactNodeId}`, type: 'VerifiedBy', from: findingId, to: oracle.artifactNodeId, evidence: [{ coordinationSeq: oracle.artifactEventSeq }, { artifactId: oracle.artifactId }] }));
+    }
+    if (target) edges.push(this._knowledgePayload({ id: `knowledge-edge:supersedes:${findingId}:${target.nodeId}`, type: 'Supersedes', from: findingId, to: target.nodeId, evidence: findingEvidence, expectedValidityVersion: target.expectedValidityVersion }));
+    const nodes = [sourceNode, finding].sort((a, b) => a.id.localeCompare(b.id)); edges.sort((a, b) => a.id.localeCompare(b.id));
+    for (const node of nodes) if ((this._knowledgeNodeHistory.get(node.id) ?? []).some((version) => version.observedSeq < beforeEventSeq)) throw new CoordinationRefusal('Scratch correction node namespace is occupied', 'causal_correction_conflict');
+    for (const edge of edges) if ((this._knowledgeEdgeHistory.get(edge.id) ?? []).some((version) => version.observedSeq < beforeEventSeq)) throw new CoordinationRefusal('Scratch correction edge namespace is occupied', 'causal_correction_conflict');
+    const affectedReadEvents = target ? this._knowledgeReads.filter((read) => read.eventSeq <= observedSeq && read.nodeIds.includes(target.nodeId)).map((read) => read.eventSeq) : [];
+    const evidenceRefs = [...nodes, ...edges].reduce((sum, row) => sum + (row.evidence?.length ?? 0), 0); if (affectedReadEvents.length > policy.maxAffectedReads || evidenceRefs > policy.maxEvidenceRefs) throw new CoordinationRefusal('Scratch correction projection exceeded deployment ceiling', 'causal_correction_oversize');
+    const evidenceDigest = canonicalDigest({ sourceEventSeq: factRow.event.seq, evidenceSeqs, target, affectedReadEvents, oracleTaskId: oracle?.taskId ?? null, producerRouteDigest: oracle?.producerRouteDigest ?? null, reviewerRouteDigest: oracle?.reviewerRouteDigest ?? null }); const projectionDigest = canonicalDigest({ action: request.action, target, nodes, edges, affectedReadEvents, evidenceDigest });
+    return freeze({ request, target, nodes, edges, affectedReadEvents, evidenceRefs, evidenceDigest, projectionDigest, replacement: { nodeId: findingId, grounding }, oracleTaskId: oracle?.taskId ?? null });
+  }
+
+  _scratchCorrectionProjection(payload, event = null) {
+    const replacementNode = payload.nodes.find((node) => node.type === 'Finding') ?? null;
+    return freeze({ action: payload.action, repoId: payload.repoId, observedSeq: payload.observedSeq, observedAt: payload.observedAt, requestDigest: payload.requestDigest, policyDigest: payload.policyDigest, projectionDigest: payload.projectionDigest, receiptDigest: payload.receiptDigest, eventSeq: event?.seq ?? null, targetNodeId: payload.target?.nodeId ?? null, targetValidityVersion: payload.target?.expectedValidityVersion ?? null, replacement: replacementNode ? { nodeId: replacementNode.id, grounding: replacementNode.grounding } : null, oracleTaskId: payload.request.oracleTaskId ?? null, affectedReadCount: payload.affectedReadEvents.length });
+  }
+
+  _validateScratchCorrectionPayload(payload, event, integrity = false) {
+    const fail = (message, code = 'causal_correction_integrity') => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
+    const fields = ['schemaVersion', 'action', 'repoId', 'observedSeq', 'observedAt', 'policy', 'policyDigest', 'request', 'requestDigest', 'target', 'nodes', 'edges', 'affectedReadEvents', 'evidenceDigest', 'projectionDigest', 'receiptDigest'];
+    if (!payload || Object.keys(payload).sort().join(',') !== fields.sort().join(',') || payload.schemaVersion !== 1 || !promotionActor(event.actor) || !validKnowledgeScratchCorrectionPolicy(payload.policy) || payload.repoId !== payload.policy.repoId || payload.action !== payload.request?.action || payload.policyDigest !== canonicalDigest(payload.policy)
+      || !Number.isSafeInteger(payload.observedSeq) || payload.observedSeq < 0 || payload.observedSeq >= event.seq || payload.observedAt !== this.observationTime(payload.observedSeq)) fail('Scratch correction receipt shape is invalid');
+    const requestDigest = canonicalDigest({ actor: event.actor, idempotencyKey: event.idempotencyKey, repoId: payload.repoId, observedSeq: payload.observedSeq, policyDigest: payload.policyDigest, request: payload.request }); if (payload.requestDigest !== requestDigest) fail('Scratch correction request binding is invalid');
+    let derived; try { derived = this._deriveScratchCorrection(payload.repoId, payload.observedSeq, payload.policy, payload.request, event.seq); } catch (error) { fail(error.message, error.code ?? 'causal_correction_integrity'); }
+    if (canonicalDigest(payload.target) !== canonicalDigest(derived.target) || canonicalDigest(payload.nodes) !== canonicalDigest(derived.nodes) || canonicalDigest(payload.edges) !== canonicalDigest(derived.edges) || canonicalDigest(payload.affectedReadEvents) !== canonicalDigest(derived.affectedReadEvents) || payload.evidenceDigest !== derived.evidenceDigest || payload.projectionDigest !== derived.projectionDigest) fail('Scratch correction projection diverged');
+    const core = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'receiptDigest')); if (payload.receiptDigest !== canonicalDigest(core) || canonicalBytes(payload) > payload.policy.maxBatchBytes) fail('Scratch correction receipt is invalid or oversized'); return derived;
+  }
+
+  correctScratchKnowledge(repoId, observedSeq, policy, request, auth, beforeAppend = null) {
+    if (!promotionActor(auth?.actor) || typeof auth?.key !== 'string' || auth.key.length === 0 || !validKnowledgeScratchCorrectionPolicy(policy) || policy.repoId !== repoId || (beforeAppend !== null && typeof beforeAppend !== 'function')) throw new CoordinationRefusal('Scratch correction authority is invalid', 'causal_correction_invalid');
+    const normalized = this._scratchCorrectionRequest(request); const policyDigest = canonicalDigest(policy); const requestDigest = canonicalDigest({ actor: auth.actor, idempotencyKey: auth.key, repoId, observedSeq, policyDigest, request: normalized }); const prior = this._byKey.get(auth.key);
+    if (prior) { if (prior.kind !== 'knowledge.scratch_corrected' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('Scratch correction idempotency conflict', 'causal_correction_conflict'); this._validateScratchCorrectionPayload(prior.payload, prior, false); return freeze({ event: clone(prior), projection: this._scratchCorrectionProjection(prior.payload, prior), replayed: true }); }
+    const derived = this._deriveScratchCorrection(repoId, observedSeq, policy, normalized); const core = { schemaVersion: 1, action: normalized.action, repoId, observedSeq, observedAt: this.observationTime(observedSeq), policy: clone(policy), policyDigest, request: normalized, requestDigest, target: clone(derived.target), nodes: clone(derived.nodes), edges: clone(derived.edges), affectedReadEvents: clone(derived.affectedReadEvents), evidenceDigest: derived.evidenceDigest, projectionDigest: derived.projectionDigest }; const payload = { ...core, receiptDigest: canonicalDigest(core) };
+    if (canonicalBytes(payload) > policy.maxBatchBytes) throw new CoordinationRefusal('Scratch correction batch exceeded deployment ceiling', 'causal_correction_oversize'); const prospective = { schemaVersion: 1, seq: this._events.length + 1, kind: 'knowledge.scratch_corrected', actor: auth.actor, idempotencyKey: auth.key, payload }; const projection = this._scratchCorrectionProjection(payload, prospective);
+    if (canonicalBytes(projection) > policy.maxResultBytes) throw new CoordinationRefusal('Scratch correction result exceeded deployment ceiling', 'causal_correction_oversize'); if (beforeAppend) { const before = this._events.length; beforeAppend(freeze({ projection: clone(projection), jsonBytes: Buffer.byteLength(JSON.stringify(projection)) })); if (this._events.length !== before) throw new CoordinationRefusal('Scratch correction preflight changed coordination state', 'causal_correction_integrity'); }
+    const fixedTs = this._clock(); const predicted = { ...prospective, ts: fixedTs }; this._validateScratchCorrectionPayload(payload, predicted, false); const event = this._append('knowledge.scratch_corrected', payload, auth, fixedTs, beforeAppend ? () => beforeAppend(freeze({ projection: clone(projection), jsonBytes: Buffer.byteLength(JSON.stringify(projection)) })) : null); return freeze({ event: clone(event), projection: this._scratchCorrectionProjection(payload, event), replayed: false });
+  }
+
+  reverifyScratchCorrection(repoId, observedSeq, policy, actor, eventSeq, request) {
+    if (!validKnowledgeScratchCorrectionPolicy(policy) || policy.repoId !== repoId || !promotionActor(actor) || !Number.isSafeInteger(eventSeq)) throw new CoordinationRefusal('Scratch correction reverify request is invalid', 'causal_correction_invalid'); const event = this._events[eventSeq - 1];
+    const normalized = this._scratchCorrectionRequest(request); const policyDigest = canonicalDigest(policy); const requestDigest = event ? canonicalDigest({ actor, idempotencyKey: event.idempotencyKey, repoId, observedSeq, policyDigest, request: normalized }) : null;
+    if (!event || event.kind !== 'knowledge.scratch_corrected' || event.actor !== actor || event.payload?.repoId !== repoId || event.payload?.observedSeq !== observedSeq || event.payload?.policyDigest !== policyDigest || event.payload?.requestDigest !== requestDigest || canonicalDigest(event.payload?.request) !== canonicalDigest(normalized)) throw new CoordinationRefusal('Scratch correction receipt does not match authority', 'causal_correction_conflict'); this._validateScratchCorrectionPayload(event.payload, event, false); return freeze({ event: clone(event), projection: this._scratchCorrectionProjection(event.payload, event), replayed: true });
   }
 
   addKnowledgeNode(fields, auth) {

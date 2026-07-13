@@ -80,6 +80,14 @@ export class CairnRunScorecard {
         || typeof this.coordination.promoteKnowledgeBatch !== 'function' || typeof this.coordination.reverifyKnowledgePromotion !== 'function' || typeof this.coordination.reverifyKnowledgePromotionNoOp !== 'function') throw new TypeError('Cairn promotion configuration is invalid');
       this.knowledgePromotionPolicy = Object.freeze(p); this.knowledgePromotionPolicyDigest = sha256(stable(p));
     }
+    this.knowledgeScratchCorrectionPolicy = opts.knowledgeScratchCorrectionPolicy ? clone(opts.knowledgeScratchCorrectionPolicy) : null;
+    if (this.knowledgeScratchCorrectionPolicy) {
+      const names = ['repoId', 'minScratchReaders', 'maxScanEvents', 'maxAffectedReads', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes']; const numeric = names.filter((name) => name !== 'repoId'); const p = this.knowledgeScratchCorrectionPolicy;
+      if (!this.knowledgeAuditPolicy || !this.knowledgePromotionPolicy || Object.keys(p).sort().join(',') !== names.sort().join(',') || p.repoId !== this.knowledgeAuditPolicy.repoId || p.repoId !== this.knowledgePromotionPolicy.repoId || p.minScratchReaders !== this.knowledgePromotionPolicy.minScratchReaders
+        || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0) || p.minScratchReaders > 1_000 || p.maxScanEvents > 1_000_000 || p.maxAffectedReads > 1_000_000 || p.maxEvidenceRefs > 1_000_000 || p.maxBatchBytes > 16 * 1024 * 1024 || p.maxResultBytes > 16 * 1024 * 1024
+        || typeof this.coordination.correctScratchKnowledge !== 'function' || typeof this.coordination.reverifyScratchCorrection !== 'function') throw new TypeError('Cairn Scratch correction configuration is invalid');
+      this.knowledgeScratchCorrectionPolicy = Object.freeze(p); this.knowledgeScratchCorrectionPolicyDigest = sha256(stable(p));
+    }
     mkdirSync(this.artifactRoot, { recursive: true, mode: 0o700 });
   }
 
@@ -96,6 +104,7 @@ export class CairnRunScorecard {
     }
     if (this.knowledgeRecallPolicy) ops['causal.recall'] = { latency_class: 'interactive', deterministic: true, side_effects: ['coordination.append', 'knowledge.read_receipt'], reverifiable: true, preflight_output: true };
     if (this.knowledgePromotionPolicy) ops['causal.promote'] = { latency_class: 'interactive', deterministic: true, side_effects: ['coordination.append', 'knowledge.promote'], reverifiable: true, preflight_output: true };
+    if (this.knowledgeScratchCorrectionPolicy) ops['causal.correct_scratch'] = { latency_class: 'interactive', deterministic: true, side_effects: ['coordination.append', 'knowledge.correct'], reverifiable: true, preflight_output: true };
     return {
       name: 'cairn', version: 1,
       ops,
@@ -306,6 +315,29 @@ export class CairnRunScorecard {
     return result;
   }
 
+  _correctionResult(corrected, audit) {
+    const p = corrected.projection; const receipt = { eventSeq: p.eventSeq, digest: p.receiptDigest };
+    const document = { schemaVersion: 1, kind: 'baton.cairn.scratch-correction', action: p.action, repoId: p.repoId, coordinationUpperBound: p.observedSeq, requestDigest: p.requestDigest, policyDigest: p.policyDigest, projectionDigest: p.projectionDigest, receipt, targetNodeId: p.targetNodeId, targetValidityVersion: p.targetValidityVersion, replacement: clone(p.replacement), oracleTaskId: p.oracleTaskId, affectedReadCount: p.affectedReadCount };
+    const result = { op: 'causal.correct_scratch', status: 'ok', summary: `atomically ${p.action === 'release' ? 'released' : p.action === 'supersede' ? 'superseded' : 'retracted'} one Scratch knowledge claim for ${p.repoId}`, payload: [document], refs: [{ kind: 'cairn-scratch-correction-receipt', digest: receipt.digest, coordinationSeq: receipt.eventSeq }], cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' }, provenance: { kind: 'scratch-correction', repoId: p.repoId, coordinationUpperBound: p.observedSeq, policyDigest: p.policyDigest, auditPolicyDigest: this.knowledgePolicyDigest, deterministic: true, readOnly: false, coordinationEffect: 'knowledge.scratch_corrected', workerAuthority: false, editAuthority: false, verificationAuthority: false, mergeAuthority: false, approvalAuthority: false, publicationAuthority: false, routingMutationAuthority: false, proofAuthority: false, noteAuthority: false, policyAuthoringAuthority: false } };
+    if (Buffer.byteLength(stable(result)) > this.knowledgeScratchCorrectionPolicy.maxResultBytes) throw typed('Scratch correction result exceeded deployment ceiling', 'causal_correction_oversize'); return result;
+  }
+
+  _preflightCorrectionResult(preview, audit, ctx) {
+    const result = this._correctionResult({ projection: preview.projection }, audit);
+    if (ctx?.aciOutputPolicy && (Buffer.byteLength(JSON.stringify(result)) > ctx.aciOutputPolicy.maxEnvelopeBytes || Buffer.byteLength(JSON.stringify(result.payload)) > ctx.aciOutputPolicy.maxPayloadBytes)) throw typed('Scratch correction result exceeded ACI publication ceiling', 'capability_result_oversize'); return result;
+  }
+
+  _causalCorrectScratch(args, ctx, verifyReceiptSeq = null, writeReceipt = true) {
+    if (!this.knowledgeScratchCorrectionPolicy) throw typed('Scratch correction is not deployment-configured', 'capability_op_unavailable'); this._knowledgeContext(ctx);
+    const actor = ctx.transport == null && (ctx.actor === 'orchestrator' || (typeof ctx.actor === 'string' && ctx.actor.startsWith('operator:') && !ctx.actor.startsWith('operator:web:') && !ctx.actor.startsWith('operator:mcp:'))) ? ctx.actor
+      : (ctx.transport === 'web' && typeof ctx.actor === 'string' && ctx.actor.startsWith('web:')) || (ctx.transport === 'mcp' && typeof ctx.actor === 'string' && ctx.actor.startsWith('mcp:')) ? `operator:${ctx.actor}` : null;
+    if (actor === null) throw typed('Scratch correction actor is not authorized', 'causal_correction_forbidden');
+    const allowed = ['action', 'scratchFactId', 'oracleTaskId', 'targetNodeId', 'expectedValidityVersion', 'replacementScratchFactId', 'reason', 'observedSeq']; const upper = this._causalBoundary(args, allowed, verifyReceiptSeq === null ? null : args?.observedSeq); const request = Object.fromEntries(Object.entries(args).filter(([key]) => key !== 'observedSeq')); const audit = this._promotionAudit(upper); this._knowledgeContext(ctx);
+    if (!writeReceipt) return this._correctionResult(this.coordination.reverifyScratchCorrection(this.knowledgeScratchCorrectionPolicy.repoId, upper, this.knowledgeScratchCorrectionPolicy, actor, verifyReceiptSeq, request), audit);
+    const auth = { actor, key: `knowledge.correct_scratch:${sha256(stable({ repoId: ctx.repoId, actor: ctx.actor, idempotencyKey: ctx.idempotencyKey }))}` };
+    const corrected = this.coordination.correctScratchKnowledge(this.knowledgeScratchCorrectionPolicy.repoId, upper, this.knowledgeScratchCorrectionPolicy, request, auth, (preview) => { this._knowledgeContext(ctx); this._preflightCorrectionResult(preview, audit, ctx); }); return this._correctionResult(corrected, audit);
+  }
+
   _events(worker, throughSeq) {
     const events = this.readOperational(worker, throughSeq);
     if (!Array.isArray(events)) throw typed('operational evidence reader unavailable', 'run_evidence_unavailable');
@@ -412,6 +444,7 @@ export class CairnRunScorecard {
     if (op === 'causal.trace') return this._causalTrace(args, ctx);
     if (op === 'causal.recall') return this._causalRecall(args, ctx);
     if (op === 'causal.promote') return this._causalPromote(args, ctx);
+    if (op === 'causal.correct_scratch') return this._causalCorrectScratch(args, ctx);
     if (op !== 'run.scorecard') throw typed('unsupported Cairn operation', 'capability_op_unavailable');
     const runId = args?.runId;
     if (!validRunId(runId)) throw typed('runId is invalid', 'invalid_run_id');
@@ -450,6 +483,11 @@ export class CairnRunScorecard {
       if (op === 'causal.promote') {
         if (!Number.isSafeInteger(args?.observedSeq)) return { ok: false, reason: 'observation_boundary_required' };
         const receiptSeq = claim?.payload?.[0]?.receipt?.eventSeq ?? null; const rebuilt = this._causalPromote(args, ctx, receiptSeq, false);
+        return { ok: stable(claim) === stable(rebuilt), digest: rebuilt.payload[0].projectionDigest };
+      }
+      if (op === 'causal.correct_scratch') {
+        if (!Number.isSafeInteger(args?.observedSeq)) return { ok: false, reason: 'observation_boundary_required' };
+        const receiptSeq = claim?.payload?.[0]?.receipt?.eventSeq; const rebuilt = this._causalCorrectScratch(args, ctx, receiptSeq, false);
         return { ok: stable(claim) === stable(rebuilt), digest: rebuilt.payload[0].projectionDigest };
       }
       if (op !== 'run.scorecard' || !validRunId(args?.runId)) return { ok: false, reason: 'invalid_request' };

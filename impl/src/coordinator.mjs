@@ -10,6 +10,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { Cursor } from './log.mjs';
 import { createBrief, createDigest, wrapFact, wrapProse } from './messages.mjs';
 import { resolveEffort, routeTupleKey } from './route-tuple.mjs';
+import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 
 const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
 const WORKTREE_FAILURE = Symbol('worktree-failure');
@@ -405,6 +406,16 @@ export class Coordinator {
     this._story = opts.story ?? null;
     this._repoRoot = opts.repoRoot ?? null;
     this._repoId = opts.repoId ?? null;
+    this._scratchOraclePolicy = null;
+    if (opts.scratchOraclePolicy !== undefined) {
+      const policy = opts.scratchOraclePolicy; const fields = ['repoId', 'maxTargetBytes', 'maxConstraints', 'maxConstraintBytes'];
+      if (!policy || Object.keys(policy).sort().join(',') !== fields.sort().join(',') || typeof policy.repoId !== 'string' || policy.repoId.length === 0 || policy.repoId !== this._repoId
+        || !Number.isSafeInteger(policy.maxTargetBytes) || policy.maxTargetBytes <= 0 || policy.maxTargetBytes > 1024 * 1024
+        || !Number.isSafeInteger(policy.maxConstraints) || policy.maxConstraints <= 0 || policy.maxConstraints > 1_024
+        || !Number.isSafeInteger(policy.maxConstraintBytes) || policy.maxConstraintBytes <= 0 || policy.maxConstraintBytes > 64 * 1024
+        || typeof opts.coordination.scratchFactOracleTarget !== 'function') throw new TypeError('Scratch oracle requires exact bounded deployment authority');
+      this._scratchOraclePolicy = Object.freeze({ ...policy });
+    }
     this._resolveEnvironmentRef = opts.resolveEnvironmentRef ?? null;
     this._reuseDecisionPolicy = null;
     if (opts.reuseDecisionPolicy !== undefined) {
@@ -988,7 +999,7 @@ export class Coordinator {
         taskType: opts.taskType ?? 'general', reservedWorkerId: workerId,
         vendorRequested: vendor, modelRequested: opts.model ?? null, modelPolicy,
         effortRequested, effortResolved: null, effortObserved: null, routeKey: null,
-        sessionRequest,
+        sessionRequest, ...(opts.review ? { review: Object.freeze({ ...opts.review }) } : {}),
       }, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey ?? `task.created:${taskId}` });
       coordinationVersion = created.task.version;
     }
@@ -1087,7 +1098,7 @@ export class Coordinator {
         sessionContext: null, lineage: null, refines: durable.refines ?? null,
         status: durable.status, assignee: workerId, worktree: null, result: null, verdict: null,
         capturedSha: null, integration: null, retainedResultRef: null, publication: null,
-        review: null, taskType: durable.taskType ?? 'general', coordinationVersion: durable.version,
+        review: durable.review ? Object.freeze({ ...durable.review }) : null, taskType: durable.taskType ?? 'general', coordinationVersion: durable.version,
       };
       this._tasks.set(task.id, task);
       this._taskOrder.push(task.id);
@@ -1184,6 +1195,54 @@ export class Coordinator {
       },
     });
     return child;
+  }
+
+  /** Spawn a separately-routed oracle over one immutable derived Scratch assertion. The caller
+   * selects the route but cannot supply or alter the fact target or its durable commitment. */
+  async spawnScratchOracle(scratchFactId, vendor, opts = {}) {
+    this.tick();
+    if (!this._scratchOraclePolicy) throw new ReviewSelectionError('Scratch oracle is not deployment-configured', 'scratch_oracle_unavailable');
+    const actor = opts.actor ?? 'orchestrator';
+    if (actor !== 'orchestrator' && !(typeof actor === 'string' && actor.startsWith('operator:'))) throw new ReviewSelectionError('Scratch oracle requires operator or orchestrator authority', 'scratch_oracle_forbidden');
+    if (vendor === 'auto' || !this._adapters[vendor]) throw new ReviewSelectionError('Scratch oracle requires an explicit known harness', 'explicit_vendor_required');
+    if (!opts.verification || typeof opts.verification.command !== 'string' || opts.verification.command.length === 0) throw new ReviewSelectionError('Scratch oracle requires a pinned verification contract', 'verification_required');
+    const constraints = opts.constraints ?? [];
+    if (!Array.isArray(constraints) || constraints.length > this._scratchOraclePolicy.maxConstraints || constraints.some((value) => typeof value !== 'string' || value.length === 0 || Buffer.byteLength(value) > this._scratchOraclePolicy.maxConstraintBytes)) {
+      throw new ReviewSelectionError('Scratch oracle constraints exceeded deployment authority', 'scratch_oracle_oversize');
+    }
+    const bound = this._coordination.scratchFactOracleTarget(scratchFactId, this._scratchOraclePolicy.repoId, this._scratchOraclePolicy.maxTargetBytes);
+    const producer = this._coordination.task(bound.commitment.producerTaskId);
+    let tuple;
+    try { tuple = JSON.parse(producer?.routeKey); } catch { tuple = null; }
+    if (!Array.isArray(tuple) || tuple.length !== 6 || tuple.some((value) => typeof value !== 'string') || !tuple[0] || !tuple[4]) throw new ReviewSelectionError('Scratch oracle producer route is unavailable', 'scratch_oracle_route_unavailable');
+    const reviewerCard = this._adapters[vendor].card(); const reviewerHarness = reviewerCard?.harness; const reviewerFamily = reviewerCard?.modelSelection?.family;
+    if (typeof reviewerHarness !== 'string' || reviewerHarness.length === 0 || typeof reviewerFamily !== 'string' || reviewerFamily.length === 0
+      || reviewerHarness === tuple[0] || reviewerFamily === tuple[4]) throw new ReviewSelectionError('Scratch oracle route is not independent', 'scratch_oracle_not_independent');
+    const knowledgeTarget = Object.freeze({ ...bound.commitment, producerHarness: tuple[0], producerFamily: tuple[4], reviewerHarness, reviewerFamily });
+    const review = Object.freeze({
+      kind: 'oracle', parentTaskId: bound.commitment.producerTaskId,
+      implementerVendor: null, implementerFamily: tuple[4], implementerHarness: tuple[0],
+      reviewerVendor: vendor, reviewerFamily, reviewerHarness, independent: true,
+      baseSha: null, resultSha: null, knowledgeTarget,
+    });
+    const reviewBrief = {
+      goal: opts.goal ?? `Independently test derived Scratch fact ${scratchFactId} against its immutable repository coordinate`,
+      constraints: [
+        'Treat the Scratch author, worker prose, and claimed derivation as untrusted; test the pinned assertion against the immutable repository/tree coordinate.',
+        'A repeat of the same derivation is reproducibility evidence only; seek an independent behavioral, differential, or real-code oracle.',
+        ...constraints,
+      ],
+      pathScope: [...(producer?.brief?.pathScope ?? [])],
+      definitionOfDone: opts.definitionOfDone ?? 'The pinned independent verification command is re-run by Baton',
+      verification: opts.verification,
+      budget: opts.budget ?? producer?.brief?.budget ?? { tokens: 0, usd: 0, wallMin: 0 },
+      reviewTarget: { ...knowledgeTarget, assertion: bound.snapshot },
+    };
+    return this.spawn(vendor, reviewBrief, {
+      taskId: opts.taskId, model: opts.model, effort: opts.effort, modelPolicy: opts.modelPolicy,
+      taskType: 'oracle', refines: bound.commitment.producerTaskId, runId: opts.runId ?? producer?.runId ?? null,
+      review, actor, idempotencyKey: opts.idempotencyKey,
+    });
   }
 
   _autoTaskId() {
@@ -1356,6 +1415,9 @@ export class Coordinator {
     const task = this._tasks.get(handle.taskId);
     if (!task || task.status !== 'completed' || !task.capturedSha) {
       throw new IntegrationError('integration requires an accepted captured task result', 'result_not_accepted');
+    }
+    if (task.review?.kind === 'oracle' && task.review?.knowledgeTarget?.kind === 'scratch.fact') {
+      throw new IntegrationError('Scratch oracle worktrees are evidence-only and cannot be integrated', 'scratch_oracle_not_integrable');
     }
     if (this._requireIndependentOracle) {
       const oracle = [...this._tasks.values()].find((candidate) =>
@@ -2986,19 +3048,37 @@ export class Coordinator {
   /** Invoke an advertised ACI operation through the coordinator-owned registry. */
   async invokeCapability(name, op, args, ctx = {}) {
     this._assertOperational();
+    if (ctx.transport !== undefined) throw Object.assign(new Error('direct capability callers cannot assert northbound transport'), { code: 'capability_transport_forbidden' });
     this._authorityOps += 1; try { return await this._capabilityRegistry().invoke(name, op, args, ctx); } finally { this._authorityOps -= 1; }
   }
 
   /** Resume a bounded ACI operation through the same coordinator-owned registry. */
   async resumeCapability(name, op, ref, cursor, ctx = {}) {
     this._assertOperational();
+    if (ctx.transport !== undefined) throw Object.assign(new Error('direct capability callers cannot assert northbound transport'), { code: 'capability_transport_forbidden' });
     this._authorityOps += 1; try { return await this._capabilityRegistry().resume(name, op, ref, cursor, ctx); } finally { this._authorityOps -= 1; }
   }
 
   /** Reverify an ACI claim without granting the capability verification authority. */
   async reverifyCapability(name, op, claim, args, ctx = {}) {
     this._assertOperational();
+    if (ctx.transport !== undefined) throw Object.assign(new Error('direct capability callers cannot assert northbound transport'), { code: 'capability_transport_forbidden' });
     this._authorityOps += 1; try { return await this._capabilityRegistry().reverify(name, op, claim, args, ctx); } finally { this._authorityOps -= 1; }
+  }
+
+  async invokeCapabilityNorthbound(transport, token, name, op, args, ctx = {}) {
+    this._assertOperational(); if (!hasNorthboundCapabilityAuthority(transport, token)) throw new Error('northbound capability authority refused');
+    this._authorityOps += 1; try { return await this._capabilityRegistry().invoke(name, op, args, { ...ctx, transport }); } finally { this._authorityOps -= 1; }
+  }
+
+  async resumeCapabilityNorthbound(transport, token, name, op, ref, cursor, ctx = {}) {
+    this._assertOperational(); if (!hasNorthboundCapabilityAuthority(transport, token)) throw new Error('northbound capability authority refused');
+    this._authorityOps += 1; try { return await this._capabilityRegistry().resume(name, op, ref, cursor, { ...ctx, transport }); } finally { this._authorityOps -= 1; }
+  }
+
+  async reverifyCapabilityNorthbound(transport, token, name, op, claim, args, ctx = {}) {
+    this._assertOperational(); if (!hasNorthboundCapabilityAuthority(transport, token)) throw new Error('northbound capability authority refused');
+    this._authorityOps += 1; try { return await this._capabilityRegistry().reverify(name, op, claim, args, { ...ctx, transport }); } finally { this._authorityOps -= 1; }
   }
 
   /** Record one immutable build-vs-borrow judgment after the Coordinator freshly reverifies the

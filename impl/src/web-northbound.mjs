@@ -5,15 +5,17 @@ import { WebEventStream } from './web-stream.mjs';
 import { WebEdgePolicy, WebReadinessAuthority } from './web-edge.mjs';
 import { OidcBrowserFlow, csrfCookie } from './web-oidc.mjs';
 import { operatorAsset } from './web-operator.mjs';
+import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 
 const COMMAND_CAPABILITY = Object.freeze({
-  spawn: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', respond: 'approve',
+  spawn: 'control', scratch_oracle: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', respond: 'approve',
   list: 'observe', result: 'observe', wait: 'observe', capabilities: 'observe', provider_status: 'observe', capability_invoke: 'control', reuse_decide: 'control', reuse_recheck: 'control',
 });
 const FENCE_REQUIRED = new Set(['send', 'interrupt', 'kill']);
 const TOP_LEVEL = new Set(['schemaVersion', 'commandId', 'idempotencyKey', 'command', 'args', 'repoId', 'runId', 'expectedFence', 'origin', 'clientObservedCursor']);
 const ARG_FIELDS = Object.freeze({
   spawn: new Set(['harness', 'model', 'effort', 'modelPolicy', 'brief', 'taskId', 'deps', 'taskType', 'session', 'refines']),
+  scratch_oracle: new Set(['scratchFactId', 'harness', 'model', 'effort', 'modelPolicy', 'verification', 'budget', 'constraints', 'goal', 'definitionOfDone', 'taskId']),
   send: new Set(['workerId', 'message', 'mode']),
   interrupt: new Set(['workerId', 'then']),
   kill: new Set(['workerId']),
@@ -29,6 +31,8 @@ const ARG_FIELDS = Object.freeze({
 });
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
+const VERIFICATION_FIELDS = new Set(['command', 'expectExit', 'timeoutMs', 'coverageCommand', 'mutationCommand']);
+const BUDGET_FIELDS = new Set(['tokens', 'usd', 'wallMin']);
 const AUTH_PATHS = new Set(['/v1/auth/login', '/v1/auth/refresh', '/v1/auth/logout']);
 const OIDC_START_PATH = '/v1/auth/oidc/start';
 const OIDC_CALLBACK_PATH = '/v1/auth/oidc/callback';
@@ -66,11 +70,15 @@ function dispatchFailure(cause) {
   if (['advisory_plan_diverged', 'advisory_policy_changed', 'advisory_scan_coordinate_mismatch', 'advisory_scan_schema_invalid', 'advisory_scan_incomplete', 'advisory_source_changed', 'advisory_atlas_integrity', 'advisory_projection_oversize', 'oracle_response_oversize', 'oracle_schema_invalid', 'oracle_coordinate_mismatch', 'oracle_incomplete', 'oracle_source_integrity', 'oracle_clock_invalid'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'advisory evidence refused' } } };
   if (['oracle_unavailable', 'oracle_timeout'].includes(cause?.code)) return { httpStatus: 503, body: { ok: false, error: { code: cause.code, message: 'advisory source unavailable' } } };
   if (cause?.code === 'cancelled') return { httpStatus: 409, body: { ok: false, error: { code: 'cancelled', message: 'capability invocation cancelled' } } };
+  if (['scratch_oracle_invalid', 'scratch_oracle_target_ineligible', 'scratch_oracle_route_unavailable', 'scratch_oracle_not_independent', 'scratch_oracle_oversize', 'explicit_vendor_required', 'verification_required'].includes(cause?.code)) return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'Scratch oracle precondition failed' } } };
+  if (cause?.code === 'scratch_oracle_forbidden') return { httpStatus: 403, body: { ok: false, error: { code: cause.code, message: 'Scratch oracle authority forbidden' } } };
+  if (cause?.code === 'scratch_oracle_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: cause.code, message: 'Scratch oracle unavailable' } } };
+  if (cause?.code === 'scratch_oracle_integrity') return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'Scratch oracle evidence refused' } } };
   if (['run_sealed', 'run_not_terminal', 'run_membership_changed', 'run_prefix_changed'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'run state conflict' } } };
   if (['invalid_run_id', 'run_not_found'].includes(cause?.code)) return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'run precondition failed' } } };
-  if (['causal_request_invalid', 'causal_context_invalid', 'causal_audit_invalid', 'causal_trace_invalid', 'causal_recall_invalid', 'causal_promotion_invalid'].includes(cause?.code)) return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'causal operation precondition failed' } } };
-  if (['causal_repo_mismatch', 'causal_promotion_forbidden'].includes(cause?.code)) return { httpStatus: 403, body: { ok: false, error: { code: cause.code, message: 'causal repository authority forbidden' } } };
-  if (['causal_audit_oversize', 'causal_trace_oversize', 'causal_audit_integrity', 'causal_recall_oversize', 'causal_recall_audit_failed', 'knowledge_recall_conflict', 'knowledge_recall_integrity', 'causal_promotion_oversize', 'causal_promotion_audit_failed', 'causal_promotion_conflict', 'causal_promotion_integrity'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'causal evidence refused' } } };
+  if (['causal_request_invalid', 'causal_context_invalid', 'causal_audit_invalid', 'causal_trace_invalid', 'causal_recall_invalid', 'causal_promotion_invalid', 'causal_correction_invalid'].includes(cause?.code)) return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'causal operation precondition failed' } } };
+  if (['causal_repo_mismatch', 'causal_promotion_forbidden', 'causal_correction_forbidden'].includes(cause?.code)) return { httpStatus: 403, body: { ok: false, error: { code: cause.code, message: 'causal repository authority forbidden' } } };
+  if (['causal_audit_oversize', 'causal_trace_oversize', 'causal_audit_integrity', 'causal_recall_oversize', 'causal_recall_audit_failed', 'knowledge_recall_conflict', 'knowledge_recall_integrity', 'causal_promotion_oversize', 'causal_promotion_audit_failed', 'causal_promotion_conflict', 'causal_promotion_integrity', 'causal_correction_oversize', 'causal_correction_conflict', 'causal_correction_integrity', 'unresolved_contradiction'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'causal evidence refused' } } };
   if (['invalid_reuse_decision', 'reuse_evidence_invalid'].includes(cause?.code)) return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'reuse decision precondition failed' } } };
   if (['reuse_decision_forbidden', 'reuse_repo_mismatch'].includes(cause?.code)) return { httpStatus: 403, body: { ok: false, error: { code: cause.code, message: 'reuse decision authority forbidden' } } };
   if (['reuse_decision_conflict', 'reuse_decision_exists', 'reuse_borrow_blocked', 'reuse_evidence_diverged', 'reuse_evidence_stale', 'reuse_environment_mismatch', 'reuse_tree_dirty', 'reuse_namespace_conflict', 'stale_version'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'reuse decision conflict' } } };
@@ -127,6 +135,16 @@ function validateEnvelope(envelope) {
       const unknownPolicy = Object.keys(envelope.args.modelPolicy).find((key) => !MODEL_POLICY_FIELDS.has(key));
       if (unknownPolicy) return 'unknown_model_policy_field';
     }
+  }
+  if (envelope.command === 'scratch_oracle') {
+    if (!string(envelope.args.scratchFactId) || !string(envelope.args.harness) || !isRecord(envelope.args.verification)
+      || !string(envelope.args.verification.command) || typeof envelope.args.verification.expectExit !== 'number'
+      || Object.keys(envelope.args.verification).some((key) => !VERIFICATION_FIELDS.has(key))) return 'scratch_oracle requires fact, explicit harness, and pinned verification';
+    if (Object.hasOwn(envelope.args, 'model') && !string(envelope.args.model)) return 'model must be a non-empty string';
+    if (Object.hasOwn(envelope.args, 'effort') && !string(envelope.args.effort)) return 'effort must be a non-empty string';
+    if (Object.hasOwn(envelope.args, 'modelPolicy') && (!isRecord(envelope.args.modelPolicy) || Object.keys(envelope.args.modelPolicy).some((key) => !MODEL_POLICY_FIELDS.has(key)))) return 'modelPolicy must be a closed object';
+    if (Object.hasOwn(envelope.args, 'budget') && (!isRecord(envelope.args.budget) || Object.keys(envelope.args.budget).some((key) => !BUDGET_FIELDS.has(key)))) return 'budget must be a closed object';
+    if (Object.hasOwn(envelope.args, 'constraints') && (!Array.isArray(envelope.args.constraints) || !envelope.args.constraints.every(string))) return 'constraints must be non-empty strings';
   }
   if (['send', 'interrupt', 'kill', 'result'].includes(envelope.command) && !string(envelope.args.workerId)) return `${envelope.command} requires workerId`;
   if (envelope.command === 'provider_status' && ((Object.hasOwn(envelope.args, 'providerId') && !/^[A-Za-z0-9._:-]{1,128}$/.test(envelope.args.providerId ?? ''))
@@ -357,6 +375,13 @@ export class WebNorthbound {
         runId: envelope.runId ?? null,
         actor: webActor, idempotencyKey: `web.command:${envelope.commandId}`,
       });
+    } else if (envelope.command === 'scratch_oracle') {
+      value = await this.coordinator.spawnScratchOracle(a.scratchFactId, a.harness, {
+        model: a.model, effort: a.effort, modelPolicy: a.modelPolicy, verification: a.verification,
+        budget: a.budget, constraints: a.constraints, goal: a.goal, definitionOfDone: a.definitionOfDone,
+        taskId: a.taskId ?? `web-${envelope.commandId}`, runId: envelope.runId ?? null,
+        actor: `operator:${webActor}`, idempotencyKey: `web.command:${envelope.commandId}`,
+      });
     } else if (envelope.command === 'send') {
       value = await this.coordinator.send(a.workerId, a.message, a.mode, { expectedFence: envelope.expectedFence, actor: webActor });
     } else if (envelope.command === 'interrupt') {
@@ -381,9 +406,9 @@ export class WebNorthbound {
         idempotencyKey: `web.command:${envelope.commandId}`, transport: 'web',
       };
       const action = a.action;
-      if (action === 'invoke') value = await this.coordinator.invokeCapability(a.name, a.op, a.args, capabilityCtx);
-      else if (action === 'resume') value = await this.coordinator.resumeCapability(a.name, a.op, a.ref, a.cursor, capabilityCtx);
-      else if (action === 'reverify') value = await this.coordinator.reverifyCapability(a.name, a.op, a.claim, a.args, capabilityCtx);
+      if (action === 'invoke') value = typeof this.coordinator.invokeCapabilityNorthbound === 'function' ? await this.coordinator.invokeCapabilityNorthbound('web', northboundCapabilityToken('web'), a.name, a.op, a.args, capabilityCtx) : await this.coordinator.invokeCapability(a.name, a.op, a.args, capabilityCtx);
+      else if (action === 'resume') value = typeof this.coordinator.resumeCapabilityNorthbound === 'function' ? await this.coordinator.resumeCapabilityNorthbound('web', northboundCapabilityToken('web'), a.name, a.op, a.ref, a.cursor, capabilityCtx) : await this.coordinator.resumeCapability(a.name, a.op, a.ref, a.cursor, capabilityCtx);
+      else if (action === 'reverify') value = typeof this.coordinator.reverifyCapabilityNorthbound === 'function' ? await this.coordinator.reverifyCapabilityNorthbound('web', northboundCapabilityToken('web'), a.name, a.op, a.claim, a.args, capabilityCtx) : await this.coordinator.reverifyCapability(a.name, a.op, a.claim, a.args, capabilityCtx);
       else value = await this.coordinator.orientWorker(a.workerId, a.args, a.note, { ...capabilityCtx, expectedFence: envelope.expectedFence });
       value = transportCapability(value);
     } else if (envelope.command === 'reuse_decide') {
