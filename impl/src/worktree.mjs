@@ -19,6 +19,7 @@ import {
   basename, join, dirname, isAbsolute, sep, resolve as pathResolve, relative as pathRelative,
 } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { ToolchainProjectionError } from './toolchain-projection.mjs';
 
 // ---------------------------------------------------------------------------
 // Errors (W7 — typed, never a bare Error wrapping raw stderr)
@@ -161,6 +162,19 @@ export function ensureBatonExcluded(repoRoot) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Extract projection target paths from a projection identity
+ * @param {object} identity - Toolchain projection identity
+ * @returns {string[]} Array of target paths
+ */
+function extractProjectionTargets(identity) {
+  if (!identity || !identity.schemaVersion) return [];
+  // The identity doesn't contain the mappings directly, but we can reconstruct
+  // target paths from the limit/mapping information. For now, return empty array
+  // and rely on the authority to track targets.
+  return [];
+}
+
+/**
  * @param {string} repoRoot
  * @param {{autoStash?: boolean, targetRef?: string}} [opts]
  * @returns {Promise<{sha:string, stashed:boolean, stashRef?:string}>}
@@ -190,14 +204,20 @@ export async function pinBaseSha(repoRoot, opts = {}) {
  * @param {string} repoRoot
  * @param {string} taskId
  * @param {string} baseSha
- * @param {{log?: object, dependencyDirs?: string[]}} [opts]
- * @returns {Promise<{taskId:string, dir:string, branch:string, baseSha:string, createdAt:string,copiedDependencies:string[]}>}
+ * @param {{log?: object, dependencyDirs?: string[], toolchainProjection?: object}} [opts]
+ * @returns {Promise<{taskId:string, dir:string, branch:string, baseSha:string, createdAt:string,copiedDependencies:string[], toolchainProjection?: object}>}
  */
 export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
   const dir = wtDirFor(repoRoot, taskId);
   if (existsSync(dir)) {
     throw new WorktreeAlreadyExistsError(`createFromBase: ${dir} already exists`);
   }
+
+  // TP10: Reject mixed legacy dependency and new toolchain projection configuration
+  if (opts.toolchainProjection && (opts.dependencyDirs && opts.dependencyDirs.length > 0)) {
+    throw new Error('cannot combine dependencyDirs with toolchainProjection (ambiguous configuration)');
+  }
+
   const sources = dependencySources(repoRoot, opts.dependencyDirs ?? []);
   const branch = `baton/${taskId}`;
   mkdirSync(join(repoRoot, '.baton', 'wt'), { recursive: true });
@@ -210,9 +230,20 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
     }
     throw err;
   }
+
   let copiedDependencies;
+  let toolchainProjection;
+  let toolchainProjectionTargets;
+
   try {
-    copiedDependencies = materializeDependencies(dir, sources);
+    // Materialize legacy dependencies or toolchain projection
+    if (opts.toolchainProjection) {
+      const result = opts.toolchainProjection.materialize(dir);
+      toolchainProjection = result.identity;
+      toolchainProjectionTargets = result.materializedTargets;
+    } else {
+      copiedDependencies = materializeDependencies(dir, sources);
+    }
   } catch (err) {
     try { sh('git', ['worktree', 'remove', '--force', dir], repoRoot); }
     catch { rmSync(dir, { recursive: true, force: true }); }
@@ -220,10 +251,32 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
     try { sh('git', ['worktree', 'prune'], repoRoot); } catch { /* best-effort */ }
     throw err;
   }
+
   const createdAt = new Date().toISOString();
-  writeMeta(repoRoot, taskId, { taskId, branch, baseSha, createdAt, stoppedAt: null });
-  logEvent(opts, taskId, 'worktree.created', { dir, branch, baseSha, copiedDependencies });
-  return { taskId, dir, branch, baseSha, createdAt, copiedDependencies };
+
+  // Store metadata including projection target paths for exclusion
+  const meta = {
+    taskId, branch, baseSha, createdAt, stoppedAt: null,
+    copiedDependencies,
+  };
+  if (toolchainProjection) {
+    meta.toolchainProjection = toolchainProjection;
+    meta.toolchainProjectionTargets = toolchainProjectionTargets;
+
+    // TP5: Add projection targets to .git/info/exclude in the worktree
+    // This ensures they never show up in git status and cannot be accidentally committed
+    const gitInfoDir = join(dir, '.git', 'info');
+    mkdirSync(gitInfoDir, { recursive: true });
+    const gitInfoExclude = join(gitInfoDir, 'exclude');
+    let existingExclude = '';
+    try { existingExclude = readFileSync(gitInfoExclude, 'utf8'); } catch { /* ignore */ }
+    const excludeLines = toolchainProjectionTargets.map((t) => `/${t}\n${t}/**\n`).join('');
+    writeFileSync(gitInfoExclude, `${existingExclude}\n# Baton toolchain projection (managed)\n${excludeLines}`, 'utf8');
+  }
+  writeMeta(repoRoot, taskId, meta);
+
+  logEvent(opts, taskId, 'worktree.created', { dir, branch, baseSha, copiedDependencies, toolchainProjection });
+  return { taskId, dir, branch, baseSha, createdAt, copiedDependencies, toolchainProjection };
 }
 
 // ---------------------------------------------------------------------------
@@ -241,9 +294,32 @@ export async function captureCommit(repoRoot, taskId, opts = {}) {
   if (!existsSync(dir)) {
     throw new UnknownWorktreeError(`captureCommit: no worktree for taskId "${taskId}"`);
   }
+
+  // TP5: Read metadata to get projection targets for exclusion
+  const meta = readMeta(repoRoot, taskId);
+  const projectionTargets = meta?.toolchainProjectionTargets ?? [];
+
   let snapshotted = false;
   if (!isClean(dir)) {
-    sh('git', ['add', '-A'], dir);
+    // TP5: Exclude projection targets from git add
+    // Get list of all files, filter out projection targets, then add the rest
+    const allFiles = sh('git', ['ls-files', '-o', '--exclude-standard', '--full-name'], dir).split('\n').filter(Boolean);
+
+    const filesToAdd = allFiles.filter((file) => {
+      // Check if file matches any projection target
+      for (const target of projectionTargets) {
+        if (file === target || file.startsWith(`${target}/`) || file.startsWith(`${target}\\`)) {
+          return false; // Exclude
+        }
+      }
+      return true; // Include
+    });
+
+    // Add each non-projection file explicitly
+    for (const file of filesToAdd) {
+      sh('git', ['add', file], dir);
+    }
+
     const vendor = opts.vendor;
     const authorName = vendor ? `baton-worker-${vendor}` : 'baton-snapshot';
     const authorEmail = `${authorName}@localhost`;
@@ -254,6 +330,19 @@ export async function captureCommit(repoRoot, taskId, opts = {}) {
     const message = `baton snapshot: ${taskId}\n\n${trailerLines.join('\n')}\n`;
     sh('git', ['commit', '-q', '-m', message, `--author=${authorName} <${authorEmail}>`], dir);
     snapshotted = true;
+
+    // TP5: After commit, check that no projection targets were added
+    // Force-added projection targets should cause failure
+    try {
+      const checkResult = sh('git', ['ls-files', '--error-unmatch', ...projectionTargets.flatMap(t => [t, `${t}/**`])], dir, { stdio: 'pipe' });
+      // If we get here, projection targets were added - fail closed
+      throw new ToolchainProjectionError('projection targets were force-added into result commit', 'toolchain_projection_materialization_failed');
+    } catch (err) {
+      // Expected - projection targets should NOT be in the index
+      if (!err.message.includes('did not match any files')) {
+        throw err;
+      }
+    }
   }
   const sha = sh('git', ['rev-parse', 'HEAD'], dir);
   logEvent(opts, taskId, 'worktree.captured', { sha, snapshotted });
@@ -385,8 +474,8 @@ export async function inspectStructuredIntegration(repoRoot, stage) {
  * @param {string} repoRoot
  * @param {string} label
  * @param {string} sha
- * @param {{log?: object, dependencyDirs?: string[], sparsePaths?: string[]}} [opts]
- * @returns {Promise<{dir:string, sha:string, copiedDependencies:string[], sparsePaths:string[], cleanup:() => Promise<void>}>}
+ * @param {{log?: object, dependencyDirs?: string[], sparsePaths?: string[], toolchainProjection?: object}} [opts]
+ * @returns {Promise<{dir:string, sha:string, copiedDependencies:string[], sparsePaths:string[], toolchainProjection?: object, cleanup:() => Promise<void>}>}
  * @throws {InvalidShaError}
  */
 export async function freshVerifySandbox(repoRoot, label, sha, opts = {}) {
@@ -396,6 +485,12 @@ export async function freshVerifySandbox(repoRoot, label, sha, opts = {}) {
   } catch {
     throw new InvalidShaError(`freshVerifySandbox: "${sha}" does not resolve to a commit in ${repoRoot}`);
   }
+
+  // TP10: Reject mixed legacy dependency and new toolchain projection configuration
+  if (opts.toolchainProjection && (opts.dependencyDirs && opts.dependencyDirs.length > 0)) {
+    throw new Error('cannot combine dependencyDirs with toolchainProjection (ambiguous configuration)');
+  }
+
   // Validate every source before registering a worktree. Invalid configuration therefore cannot
   // create a detached checkout that no caller has a cleanup handle for.
   const sources = dependencySources(repoRoot, opts.dependencyDirs ?? []);
@@ -423,6 +518,7 @@ export async function freshVerifySandbox(repoRoot, label, sha, opts = {}) {
   // not be able to mutate the orchestrator's toolchain through its dependency path. Any copy
   // failure removes and prunes the worktree before the error escapes.
   const copiedDependencies = [];
+  let toolchainProjection;
   try {
     sh('git', ['worktree', 'add', '--detach', ...(sparsePaths.length ? ['--no-checkout'] : []), dir, fullSha], repoRoot);
     registered = true;
@@ -430,14 +526,21 @@ export async function freshVerifySandbox(repoRoot, label, sha, opts = {}) {
       gitFile(['sparse-checkout', 'set', '--no-cone', '--stdin'], dir, { input: `${sparsePaths.map((path) => `/${path}`).join('\n')}\n`, encoding: 'utf8' });
       gitFile(['checkout', '--detach', fullSha], dir, { stdio: 'pipe' });
     }
-    copiedDependencies.push(...materializeDependencies(dir, sources));
+
+    // Materialize legacy dependencies or toolchain projection
+    if (opts.toolchainProjection) {
+      const result = opts.toolchainProjection.materialize(dir);
+      toolchainProjection = result.identity;
+    } else {
+      copiedDependencies.push(...materializeDependencies(dir, sources));
+    }
   } catch (err) {
     await cleanup();
     throw err;
   }
 
-  logEvent(opts, 'worktree', 'worktree.verify_sandbox_created', { dir, sha: fullSha, label, copiedDependencies, sparsePaths });
-  return { dir, sha: fullSha, copiedDependencies, sparsePaths, cleanup };
+  logEvent(opts, 'worktree', 'worktree.verify_sandbox_created', { dir, sha: fullSha, label, copiedDependencies, sparsePaths, toolchainProjection });
+  return { dir, sha: fullSha, copiedDependencies, sparsePaths, toolchainProjection, cleanup };
 }
 
 // ---------------------------------------------------------------------------

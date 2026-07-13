@@ -24,12 +24,14 @@ import { AdvisoryFeedRegistry } from './advisory-feed-registry.mjs';
 import { ProviderPollSupervisor } from './provider-poll-supervisor.mjs';
 import { ProviderProcessingSupervisor } from './provider-processing-supervisor.mjs';
 import { SessionRecoverySupervisor } from './session-recovery-supervisor.mjs';
+import { inspectToolchainProjection, prepareToolchainProjection, ToolchainProjectionError } from './toolchain-projection.mjs';
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const canonicalDigest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 
 export { Coordinator, ModelSelectionError, SessionSelectionError, IntegrationError, ReviewSelectionError, PublicationError } from './coordinator.mjs';
 export { MockAdapter, CodexAdapter, ClaudeAdapter, GlmAdapter } from './adapter.mjs';
+export { inspectToolchainProjection, prepareToolchainProjection, ToolchainProjectionError } from './toolchain-projection.mjs';
 // SC2: the session tier IS the product surface — constructible from the entry point.
 export { ClaudeSessionCli, GlmSessionCli } from './claude-session.mjs';
 export { CodexAppServerCli } from './codex-appserver.mjs';
