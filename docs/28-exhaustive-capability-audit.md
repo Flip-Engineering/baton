@@ -205,8 +205,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    closed poll cards, authenticated bounded proof, staged receipt admission, store-derived recovery
    CAS, causal freshness, replay, and race-safe non-clearance. Automatic deterministic single-flight
    scheduling, capped backoff, hostile-abort/lease-loss fencing, and asynchronous close/abort/await
-   now ship. Bounded authenticated reads, production HTTPS poll transport/live proof, durable
-   deferred attempts, and the full authenticated Grok matrix remain.
+   now ship. Repo-scoped count/derivation/byte-bounded authenticated web/MCP provider reads now ship
+   with sanitized health and current/historical processing pagination. Production HTTPS poll
+   transport/live proof, durable deferred attempts, and the full authenticated Grok matrix remain.
    Continue the remaining explicitly
    catalogued later rungs, then demand-earned Cairn Rungs 1–4, Vantage, Evidence Ladder, and Skill
    Forge/computer use behind stronger containment.
