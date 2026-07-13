@@ -84,7 +84,7 @@ test('GV3: 100 percent budget invokes confirmed two-phase kill exactly once', as
   assert.equal(log.read(h.id).filter((event) => event.kind === 'resource.budget_threshold' && event.payload.hardStop).length, 1);
 });
 
-test('GV3: a terminal claim adjacent to final over-budget usage cancels the pending kill', async () => {
+test('GV3: a terminal claim cancels a pointless late kill but hard-over-budget output fails admission', async () => {
   const ad = adapter();
   const { c, log } = system(ad, { budgetPolicy: { terminalGraceMs: 20 } });
   const h = await c.spawn('stub', brief());
@@ -95,8 +95,10 @@ test('GV3: a terminal claim adjacent to final over-budget usage cancels the pend
   });
   await sleep(30);
   assert.equal(ad.calls.kill, 0);
-  assert.equal((await c.result(h.id)).status, 'completed');
+  assert.equal((await c.result(h.id)).status, 'failed');
   assert.equal(log.read(h.id).filter((event) => event.kind === 'resource.budget_threshold' && event.payload.hardStop).length, 1);
+  const verified = log.read(h.id).find((event) => event.kind === 'verify.reverified');
+  assert.equal(verified.payload.verdict.reverified, true); assert.equal(verified.payload.accept, false); assert.equal(verified.payload.budgetAdmission.hardExceeded, true);
 });
 
 test('GV2: replay restores canonical budget totals and fired thresholds', async () => {

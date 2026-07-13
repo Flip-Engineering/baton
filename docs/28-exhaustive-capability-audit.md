@@ -162,8 +162,10 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 - Reproducible M0/M1/E2 evaluation programs, automatic account-aware scheduling, and a production
   Go/Elixir core after executable contracts stabilize.
 - Provider-terminal lump usage can cross nominal token/USD ceilings before Baton receives telemetry;
-  preauthorization/headroom and post-overrun artifact-admission policy remain explicit governance
-  work. Provider-native budget flags are not treated as hard until live evidence proves enforcement.
+  sticky post-overrun artifact rejection now prevents that output from becoming an accepted task or
+  router win. Preauthorization/headroom remains explicit governance work because no local policy can
+  retroactively prevent already-reported spend. Provider-native budget flags are not treated as hard
+  until live evidence proves enforcement.
 
 ## Explicit Decisions and conditional research
 

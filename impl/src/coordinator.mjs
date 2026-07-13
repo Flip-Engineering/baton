@@ -959,6 +959,7 @@ export class Coordinator {
       pendingQuestionId: null,
       budgetUsed: { tokens: 0, usd: 0 },
       budgetThresholdsFired: new Set(),
+      budgetHardExceeded: false,
       usageCumulative: new Map(),
       budgetStopTimer: null,
       turnTerminalObserved: false,
@@ -1009,6 +1010,7 @@ export class Coordinator {
         taskId: task.id, worktree: null,
         status: durable.status === 'pending' ? 'pending' : (TERMINAL_TASK_STATUSES.has(durable.status) ? 'idle' : 'orphaned'), pendingApprovalId: null,
         pendingQuestionId: null, budgetUsed: { tokens: 0, usd: 0 }, budgetThresholdsFired: new Set(),
+        budgetHardExceeded: false,
         usageCumulative: new Map(), budgetStopTimer: null, turnTerminalObserved: false,
         watchdogActions: new Set(), recentFailedActions: [],
         watchdogGeneration: 0, watchdogTimer: null, runtimeScope: null, runtimeLease: null,
@@ -2227,6 +2229,7 @@ export class Coordinator {
         },
       });
     }
+    if (hard) handle.budgetHardExceeded = true;
     if (hard && handle.status === 'working' && !handle.turnTerminalObserved && handle.budgetStopTimer == null) {
       handle.budgetStopTimer = this._setTimeout(() => {
         handle.budgetStopTimer = null;
@@ -3389,7 +3392,10 @@ export class Coordinator {
       task.verdict = verdict;
       // C1: referee.accept() (or an injected equivalent) is the SOLE done-gate.
       const acceptOpts = { ...this._acceptOpts, expectExit: task.brief.verification.expectExit };
-      const accept = this._accept(verdict, acceptOpts);
+      const refereeAccept = this._accept(verdict, acceptOpts);
+      // Provider usage can arrive only as a terminal lump. Native kill cannot claw back that
+      // spend, but an over-hard-limit artifact must still fail admission and router learning.
+      const accept = refereeAccept && handle.budgetHardExceeded !== true;
       const verifyEvent = this._log.append({
         worker: handle.id,
         harness,
@@ -3400,6 +3406,7 @@ export class Coordinator {
         payload: {
           verdict,
           accept,
+          budgetAdmission: { hardExceeded: handle.budgetHardExceeded === true, refereeAccept, used: { ...handle.budgetUsed }, limits: { tokens: Number(task.brief.budget?.tokens ?? 0), usd: Number(task.brief.budget?.usd ?? 0) } },
           acceptOpts: {
             requireRedGreen: this._acceptOpts.requireRedGreen ?? false,
             requireCoverage: this._acceptOpts.requireCoverage ?? false,
@@ -3571,6 +3578,7 @@ export class Coordinator {
       let review = null;
       let runId = null;
       const budgetUsed = { tokens: 0, usd: 0 };
+      let budgetHardExceeded = false;
       const budgetThresholdsFired = new Set();
       const usageCumulative = new Map();
 
@@ -3632,6 +3640,7 @@ export class Coordinator {
             break;
           case 'resource.budget_threshold':
             if (typeof e.payload?.threshold === 'number') budgetThresholdsFired.add(e.payload.threshold);
+            if (e.payload?.hardStop === true) budgetHardExceeded = true;
             break;
           case 'control.recovery_attached':
             terminalStatus = 'working';
@@ -3844,6 +3853,7 @@ export class Coordinator {
         pendingQuestionId: null,
         budgetUsed,
         budgetThresholdsFired,
+        budgetHardExceeded,
         usageCumulative,
         budgetStopTimer: null,
         turnTerminalObserved: false,

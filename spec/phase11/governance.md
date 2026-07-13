@@ -19,10 +19,14 @@ re-emitting them.
 The 100% threshold schedules Baton's ordinary confirmed two-phase kill after a small bounded
 terminal-frame grace (`terminalGraceMs`, default 250ms). This exists because provider protocols may
 emit final cumulative usage immediately before the adjacent turn-completed frame. A terminal claim
-observed during the grace cancels the pending transport kill and enters the ordinary independent
-trust gate; it does not make the claim trusted. Once the stop request begins, a late completion
-cannot win. Missing/zero limits disable that dimension; counter resets and malformed usage never
-create negative credit. Budget policy is deterministic code, not a model judgment.
+observed during the grace cancels the now-pointless transport kill and enters the ordinary
+independent trust gate, but any hard-threshold crossing is sticky for that task: independently
+correct output is recorded as verified but fails artifact admission, terminal completion, review
+success, and router-win learning with `budgetAdmission.hardExceeded:true`. Provider-terminal lump
+accounting therefore cannot retroactively prevent spend, but it also cannot launder over-budget
+work into an accepted fleet outcome. Once the stop request begins, a late completion cannot win.
+Missing/zero limits disable that dimension; counter resets and malformed usage never create
+negative credit. Budget policy is deterministic code, not a model judgment.
 
 ## GV4 — mechanical watchdog actions are bounded and idempotent
 
