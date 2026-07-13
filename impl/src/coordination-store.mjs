@@ -187,6 +187,7 @@ export class CoordinationStore {
     this._knowledgeNodes = new Map(); this._knowledgeEdges = new Map(); this._knowledgeNodeHistory = new Map(); this._knowledgeEdgeHistory = new Map(); this._knowledgeReads = []; this._knowledgeRecallAssessments = new Map(); this._contamination = [];
     this._webCommands = new Map(); this._webCommandScopes = new Map(); this._mcpCalls = new Map(); this._mcpCallScopes = new Map();
     this._fleetDrains = new Map();
+    this._recoveryDispatches = new Map();
     this._providerReceipts = new Map(); this._providerDeliveryIds = new Map(); this._providerProcessing = new Map(); this._providerPending = new Map();
     this._providerSequences = new Map(); this._providerSourceHealth = new Map();
   }
@@ -290,7 +291,9 @@ export class CoordinationStore {
       this._events.push(freeze(event));
       this._byKey.set(event.idempotencyKey, event);
       this._apply(event);
-    } } finally { this._loading = false; }
+    }
+      this._validateRecoveryReplayTransactions();
+    } finally { this._loading = false; }
   }
 
   _append(kind, payload, { actor, key }, fixedTs = null, beforeWrite = null) {
@@ -312,9 +315,12 @@ export class CoordinationStore {
     return event;
   }
 
-  _appendBatch(entries) {
+  _appendBatch(entries, batchKind = null) {
     this._assertWriterLease();
     if (!Array.isArray(entries) || entries.length === 0) throw new TypeError('coordination batch requires entries');
+    if (batchKind !== null && !['recovery_refinement_create_claim', 'recovery_dispatch_refusal'].includes(batchKind)) {
+      throw new TypeError('coordination batch kind is invalid');
+    }
     const keys = new Set();
     for (const entry of entries) {
       if (typeof entry.auth?.actor !== 'string' || entry.auth.actor.length === 0) throw new TypeError('coordination actor required');
@@ -323,9 +329,20 @@ export class CoordinationStore {
       keys.add(entry.auth.key);
     }
     const start = this._events.length;
+    const batchId = batchKind === null ? null : canonicalDigest({
+      schemaVersion: 1,
+      kind: batchKind,
+      entries: entries.map((entry) => ({
+        kind: entry.kind,
+        actor: entry.auth.actor,
+        idempotencyKey: entry.auth.key,
+        payload: entry.payload,
+      })),
+    });
     const events = entries.map((entry, index) => freeze({
       schemaVersion: 1, seq: start + index + 1, ts: entry.fixedTs ?? this._clock(), kind: entry.kind,
       actor: entry.auth.actor, idempotencyKey: entry.auth.key, payload: freeze(clone(entry.payload)),
+      ...(batchKind === null ? {} : { batch: freeze({ schemaVersion: 1, kind: batchKind, id: batchId, index, count: entries.length }) }),
     }));
     this._appendFile(this.file, `${events.map((event) => JSON.stringify(event)).join('\n')}\n`, 'utf8');
     for (const event of events) {
@@ -334,6 +351,368 @@ export class CoordinationStore {
       this._apply(event);
     }
     return events;
+  }
+
+  _recoveryBatchIdentity(kind, events) {
+    return canonicalDigest({
+      schemaVersion: 1,
+      kind,
+      entries: events.map((event) => ({
+        kind: event.kind,
+        actor: event.actor,
+        idempotencyKey: event.idempotencyKey,
+        payload: event.payload,
+      })),
+    });
+  }
+
+  _validateRecoveryReplayTransactions() {
+    const fail = (message) => { throw new CoordinationIntegrityError(message, 'recovery_batch_integrity'); };
+    for (let index = 0; index < this._events.length; index += 1) {
+      const first = this._events[index];
+      const recoveryCreate = first.kind === 'task.created' && first.payload?.relation === 'recovery';
+      const recoveryRefusal = first.kind === 'driver.recorded' && first.payload?.kind === 'recovery.dispatch_refused';
+      const recoveryBatch = ['recovery_refinement_create_claim', 'recovery_dispatch_refusal'].includes(first.batch?.kind);
+      if (!recoveryCreate && !recoveryRefusal && !recoveryBatch) continue;
+      const expectedKind = recoveryCreate ? 'recovery_refinement_create_claim'
+        : recoveryRefusal ? 'recovery_dispatch_refusal' : first.batch.kind;
+      if (!first.batch || Object.keys(first.batch).sort().join(',') !== ['count', 'id', 'index', 'kind', 'schemaVersion'].sort().join(',')
+        || first.batch.schemaVersion !== 1 || first.batch.kind !== expectedKind || first.batch.index !== 0
+        || first.batch.count !== 2 || !/^[a-f0-9]{64}$/.test(first.batch.id ?? '')) {
+        fail(`recovery transaction at seq ${first.seq} lacks an exact batch identity`);
+      }
+      const second = this._events[index + 1];
+      if (!second || second.seq !== first.seq + 1 || second.ts !== first.ts
+        || !second.batch || second.batch.schemaVersion !== 1 || second.batch.kind !== expectedKind
+        || second.batch.id !== first.batch.id || second.batch.index !== 1 || second.batch.count !== 2
+        || this._recoveryBatchIdentity(expectedKind, [first, second]) !== first.batch.id) {
+        fail(`recovery transaction at seq ${first.seq} is torn or mismatched`);
+      }
+      if (expectedKind === 'recovery_refinement_create_claim') {
+        if (!recoveryCreate || second.kind !== 'task.claimed' || second.actor !== first.actor
+          || second.idempotencyKey !== `${first.idempotencyKey}:claim`) {
+          fail(`recovery refinement transaction at seq ${first.seq} is not an exact create/claim pair`);
+        }
+        this._validateRecoveryRefinementPair(first, second, true);
+      } else {
+        if (!recoveryRefusal || second.kind !== 'task.transitioned' || second.actor !== first.actor
+          || second.idempotencyKey !== `${first.idempotencyKey}:task`) {
+          fail(`recovery refusal transaction at seq ${first.seq} is not an exact receipt/transition pair`);
+        }
+        const task = this._tasks.get(first.payload.taskId);
+        const expectedTransition = {
+          id: first.payload.taskId,
+          from: 'working',
+          to: 'failed',
+          expectedVersion: 2,
+          newVersion: 3,
+          evidence: clone(first.payload.evidence),
+        };
+        if (canonicalDigest(second.payload) !== canonicalDigest(expectedTransition)
+          || task?.status !== 'failed' || task?.terminalEvent !== second.seq) {
+          fail(`recovery refusal transaction at seq ${first.seq} did not close its exact refinement`);
+        }
+      }
+      index += 1;
+    }
+  }
+
+  _recoveryFailure(message, code, integrity) {
+    throw integrity
+      ? new CoordinationIntegrityError(message, code)
+      : new CoordinationRefusal(message, code);
+  }
+
+  _verifiedRecoveryPrior(task, integrity = false) {
+    const fail = (message) => this._recoveryFailure(message, 'recovery_refinement_unverified', integrity);
+    const terminal = task?.terminalEvent ? this._events[task.terminalEvent - 1] : null;
+    const evidenceSeq = terminal?.payload?.evidence?.coordinationSeq;
+    const mapped = Number.isSafeInteger(evidenceSeq) ? this._events[evidenceSeq - 1] : null;
+    const source = mapped?.kind === 'evidence.mapped'
+      ? this._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq)
+      : null;
+    if (!task || (!integrity && task.status !== 'completed') || !terminal || terminal.kind !== 'task.transitioned'
+      || terminal.payload?.id !== task.id || terminal.payload?.to !== 'completed'
+      || mapped?.kind !== 'evidence.mapped' || mapped.payload?.kind !== 'verify.reverified'
+      || mapped.payload?.worker !== task.assignee || source?.kind !== 'verify.reverified'
+      || source.actor !== 'policy' || source.worker !== task.assignee || source.taskId !== task.id
+      || source.payload?.accept !== true || digest(source) !== mapped.payload.digest) {
+      fail('recovery refinement requires the exact completed hub-verified prior task');
+    }
+    return { terminal, mapped, source };
+  }
+
+  _normalizedRecoveryCreatedPayload(fields, priorTask) {
+    return {
+      id: fields.id,
+      brief: clone(priorTask.brief),
+      deps: [],
+      refines: priorTask.id,
+      runId: priorTask.runId ?? null,
+      taskType: priorTask.taskType ?? 'general',
+      reservedWorkerId: priorTask.reservedWorkerId,
+      vendorRequested: priorTask.vendorRequested ?? null,
+      modelRequested: priorTask.modelRequested ?? null,
+      modelPolicy: clone(priorTask.modelPolicy ?? null),
+      effortRequested: priorTask.effortRequested ?? null,
+      sessionRequest: clone(fields.sessionRequest),
+      relation: 'recovery',
+      worktreeBaseSha: priorTask.worktreeBaseSha ?? null,
+      review: clone(priorTask.review ?? null),
+    };
+  }
+
+  _normalizedRecoveryClaimedPayload(createdPayload, attribution) {
+    return {
+      id: createdPayload.id,
+      worker: createdPayload.reservedWorkerId,
+      expectedVersion: 1,
+      newVersion: 2,
+      harnessRequested: attribution.harnessRequested,
+      harnessResolved: attribution.harnessResolved,
+      modelRequested: createdPayload.modelRequested,
+      modelResolved: attribution.modelResolved,
+      modelObserved: attribution.modelObserved,
+      effortRequested: createdPayload.effortRequested,
+      effortResolved: attribution.effortResolved,
+      effortObserved: attribution.effortObserved,
+      routeKey: attribution.routeKey,
+    };
+  }
+
+  _validateRecoverySessionRequest(sessionRequest, priorTask, fail) {
+    const requestFields = ['context', 'id', 'mode'];
+    const contextFields = new Set([
+      'baseSha', 'branch', 'capacityReservation', 'ownerTaskId', 'repoRoot',
+      'sparseCheckoutIdentity', 'sparsePaths', 'toolchainProjection', 'worktree',
+    ]);
+    const context = sessionRequest?.context;
+    let bytes = Number.POSITIVE_INFINITY;
+    try { bytes = canonicalBytes(sessionRequest); } catch { /* malformed/cyclic values refuse below */ }
+    if (!sessionRequest || typeof sessionRequest !== 'object' || Array.isArray(sessionRequest)
+      || Object.keys(sessionRequest).sort().join(',') !== requestFields.sort().join(',')
+      || sessionRequest.mode !== 'resume' || !boundedText(sessionRequest.id, 4_096)
+      || !context || typeof context !== 'object' || Array.isArray(context)
+      || Object.keys(context).some((key) => !contextFields.has(key))
+      || !boundedText(context.worktree, 32_768)
+      || !boundedText(context.ownerTaskId, 4_096)
+      || ['repoRoot', 'baseSha', 'branch'].some((key) => context[key] !== undefined
+        && !boundedText(context[key], key === 'repoRoot' ? 32_768 : 4_096))
+      || (context.sparsePaths !== undefined && (!Array.isArray(context.sparsePaths)
+        || context.sparsePaths.length > 4_096
+        || context.sparsePaths.some((path) => !boundedText(path, 32_768))))
+      || ['sparseCheckoutIdentity', 'toolchainProjection', 'capacityReservation'].some((key) => context[key] !== undefined
+        && (!context[key] || typeof context[key] !== 'object' || Array.isArray(context[key])))
+      || bytes > 1024 * 1024) {
+      fail('recovery refinement session context is malformed');
+    }
+
+    const priorContext = priorTask?.sessionRequest?.mode === 'resume'
+      ? priorTask.sessionRequest.context
+      : null;
+    const expectedOwnerTaskId = priorContext?.ownerTaskId ?? priorTask?.id;
+    if (context.ownerTaskId !== expectedOwnerTaskId
+      || (priorTask?.worktreeBaseSha != null && context.baseSha !== priorTask.worktreeBaseSha)
+      || (priorContext && canonicalDigest(context) !== canonicalDigest(priorContext))) {
+      fail('recovery refinement session context changes durable worktree lineage', 'recovery_refinement_conflict');
+    }
+  }
+
+  _validateRecoveryRefinementRequest(fields, attribution, priorTask, integrity = false) {
+    const fail = (message, code = 'recovery_refinement_invalid') => this._recoveryFailure(message, code, integrity);
+    const fieldNames = [
+      'brief', 'deps', 'effortRequested', 'id', 'modelPolicy', 'modelRequested', 'refines',
+      'relation', 'reservedWorkerId', 'runId', 'sessionRequest', 'taskType', 'vendorRequested',
+    ];
+    const attributionNames = [
+      'effortObserved', 'effortRequested', 'effortResolved', 'harnessRequested', 'harnessResolved',
+      'modelObserved', 'modelRequested', 'modelResolved', 'routeKey',
+    ];
+    if (!fields || Object.keys(fields).sort().join(',') !== fieldNames.sort().join(',')
+      || !attribution || Object.keys(attribution).sort().join(',') !== attributionNames.sort().join(',')
+      || !boundedText(fields.id, 4_096) || !boundedText(fields.refines, 4_096)
+      || !boundedText(fields.reservedWorkerId, 256) || fields.relation !== 'recovery'
+      || !Array.isArray(fields.deps) || fields.deps.length !== 0
+      || !boundedText(attribution.harnessRequested, 512)
+      || !boundedText(attribution.harnessResolved, 512)
+      || [attribution.modelRequested, attribution.modelResolved, attribution.modelObserved,
+        attribution.effortRequested, attribution.effortResolved, attribution.effortObserved,
+        attribution.routeKey].some((value) => value !== null && !boundedText(value, 8_192))) {
+      fail('recovery refinement request is malformed');
+    }
+    this._verifiedRecoveryPrior(priorTask, integrity);
+    this._validateRecoverySessionRequest(fields.sessionRequest, priorTask, fail);
+    const sameRequestedHarness = fields.vendorRequested === priorTask.vendorRequested
+      || (priorTask.vendorRequested === 'auto' && fields.vendorRequested === attribution.harnessRequested);
+    if (fields.refines !== priorTask.id || fields.reservedWorkerId !== priorTask.reservedWorkerId
+      || fields.reservedWorkerId !== priorTask.assignee || (fields.runId ?? null) !== (priorTask.runId ?? null)
+      || fields.taskType !== (priorTask.taskType ?? 'general') || !sameRequestedHarness
+      || canonicalDigest(fields.brief) !== canonicalDigest(priorTask.brief)
+      || canonicalDigest(fields.modelRequested ?? null) !== canonicalDigest(priorTask.modelRequested ?? null)
+      || canonicalDigest(fields.modelPolicy ?? null) !== canonicalDigest(priorTask.modelPolicy ?? null)
+      || canonicalDigest(fields.effortRequested ?? null) !== canonicalDigest(priorTask.effortRequested ?? null)
+      || canonicalDigest(attribution.modelRequested ?? null) !== canonicalDigest(priorTask.modelRequested ?? null)
+      || canonicalDigest(attribution.effortRequested ?? null) !== canonicalDigest(priorTask.effortRequested ?? null)) {
+      fail('recovery refinement request changes immutable prior-task lineage', 'recovery_refinement_conflict');
+    }
+    return this._normalizedRecoveryCreatedPayload(fields, priorTask);
+  }
+
+  _validateRecoveryRefinementPair(createdEvent, claimedEvent, integrity = false) {
+    const fail = (message) => this._recoveryFailure(message, 'recovery_batch_integrity', integrity);
+    const created = createdEvent?.payload;
+    const priorTask = this._tasks.get(created?.refines);
+    const createdFields = [
+      'brief', 'deps', 'effortRequested', 'id', 'modelPolicy', 'modelRequested', 'refines', 'relation',
+      'reservedWorkerId', 'review', 'runId', 'sessionRequest', 'taskType', 'vendorRequested', 'worktreeBaseSha',
+    ];
+    const claimFields = [
+      'effortObserved', 'effortRequested', 'effortResolved', 'expectedVersion', 'harnessRequested',
+      'harnessResolved', 'id', 'modelObserved', 'modelRequested', 'modelResolved', 'newVersion', 'routeKey', 'worker',
+    ];
+    if (!created || Object.keys(created).sort().join(',') !== createdFields.sort().join(',')
+      || !claimedEvent?.payload || Object.keys(claimedEvent.payload).sort().join(',') !== claimFields.sort().join(',')) {
+      fail('recovery refinement batch payload is open or malformed');
+    }
+    this._verifiedRecoveryPrior(priorTask, integrity);
+    this._validateRecoverySessionRequest(created.sessionRequest, priorTask, fail);
+    const expectedCreated = this._normalizedRecoveryCreatedPayload(created, priorTask);
+    const claimed = claimedEvent.payload;
+    const expectedClaimed = this._normalizedRecoveryClaimedPayload(created, {
+      harnessRequested: claimed.harnessRequested,
+      harnessResolved: claimed.harnessResolved,
+      modelRequested: claimed.modelRequested,
+      modelResolved: claimed.modelResolved,
+      modelObserved: claimed.modelObserved,
+      effortRequested: claimed.effortRequested,
+      effortResolved: claimed.effortResolved,
+      effortObserved: claimed.effortObserved,
+      routeKey: claimed.routeKey,
+    });
+    if (canonicalDigest(created) !== canonicalDigest(expectedCreated)
+      || canonicalDigest(claimed) !== canonicalDigest(expectedClaimed)) {
+      fail('recovery refinement batch changes prior lineage or claim identity');
+    }
+    return { created: expectedCreated, claimed: expectedClaimed };
+  }
+
+  _validateRecoveryContinuationPayload(p, event, integrity = false) {
+    const fields = [
+      'adapterCardDigest', 'briefDigest', 'contextDigest', 'kind', 'priorTaskId',
+      'processGeneration', 'routeDigest', 'schemaVersion', 'sessionId', 'taskId', 'workerId',
+    ];
+    const fail = (message, code = 'recovery_dispatch_integrity') => this._recoveryFailure(message, code, integrity);
+    if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',')
+      || p.kind !== 'recovery.continuation_intent' || p.schemaVersion !== 1
+      || !boundedText(p.workerId, 256) || !boundedText(p.taskId, 4_096)
+      || !boundedText(p.priorTaskId, 4_096) || !boundedText(p.sessionId, 4_096)
+      || !Number.isSafeInteger(p.processGeneration) || p.processGeneration <= 0
+      || !/^[a-f0-9]{64}$/.test(p.briefDigest ?? '')
+      || !/^[a-f0-9]{64}$/.test(p.contextDigest ?? '')
+      || !/^[a-f0-9]{64}$/.test(p.routeDigest ?? '')
+      || !/^[a-f0-9]{64}$/.test(p.adapterCardDigest ?? '')) {
+      fail('recovery continuation intent is malformed');
+    }
+    const task = this._tasks.get(p.taskId);
+    const prior = this._tasks.get(p.priorTaskId);
+    if (!task || !prior || task.status !== 'working' || task.assignee !== p.workerId
+      || task.refines !== p.priorTaskId || task.relation !== 'recovery'
+      || prior.status !== 'completed' || prior.assignee !== p.workerId
+      || task.sessionRequest?.mode !== 'resume' || task.sessionRequest?.id !== p.sessionId
+      || canonicalDigest(task.brief) !== p.briefDigest
+      || canonicalDigest(task.sessionRequest?.context ?? null) !== p.contextDigest) {
+      fail('recovery continuation intent disagrees with its claimed refinement');
+    }
+    this._verifiedRecoveryPrior(prior, integrity);
+    const createdEvent = this._events[task.createdEvent - 1];
+    const claimedEvent = this._events[task.claimedEvent - 1];
+    if (createdEvent?.batch?.kind !== 'recovery_refinement_create_claim'
+      || claimedEvent?.batch?.id !== createdEvent.batch.id || claimedEvent?.seq !== createdEvent.seq + 1) {
+      fail('recovery continuation intent is not bound to an atomic recovery refinement');
+    }
+    this._validateRecoveryRefinementPair(createdEvent, claimedEvent, integrity);
+    const route = {
+      harness: task.harnessResolved ?? task.vendorRequested ?? null,
+      model: task.modelResolved ?? null,
+      effort: task.effortResolved ?? null,
+      serviceTier: task.modelPolicy?.serviceTier ?? null,
+      routeKey: task.routeKey ?? null,
+      adapterCardDigest: p.adapterCardDigest,
+    };
+    if (canonicalDigest(route) !== p.routeDigest) fail('recovery continuation route digest is invalid');
+    const current = this._recoveryDispatches.get(p.workerId);
+    if (current) {
+      const currentTask = this._tasks.get(current.taskId);
+      if (!(current.status === 'dispatch_accepted' && currentTask?.status === 'completed')) {
+        fail('worker already has an unresolved recovery continuation', 'recovery_dispatch_conflict');
+      }
+      if (p.priorTaskId !== current.taskId) {
+        fail('recovery continuation does not extend the current accepted worker lineage', 'recovery_dispatch_conflict');
+      }
+    }
+    return freeze({
+      workerId: p.workerId, taskId: p.taskId, priorTaskId: p.priorTaskId,
+      sessionId: p.sessionId, processGeneration: p.processGeneration,
+      briefDigest: p.briefDigest, contextDigest: p.contextDigest,
+      routeDigest: p.routeDigest, adapterCardDigest: p.adapterCardDigest,
+      intentSeq: event.seq, status: 'dispatch_unknown', receiptSeq: null,
+    });
+  }
+
+  _validateRecoveryDispositionPayload(p, event, integrity = false) {
+    const disposition = p?.kind === 'recovery.dispatch_accepted'
+      ? 'dispatch_accepted'
+      : p?.kind === 'recovery.dispatch_refused' ? 'dispatch_refused' : null;
+    const fields = [
+      'adapterCardDigest', 'briefDigest', 'contextDigest', 'intentSeq', 'kind', 'priorTaskId',
+      'processGeneration', 'routeDigest', 'schemaVersion', 'sessionId', 'taskId', 'workerId',
+      ...(disposition === 'dispatch_refused' ? ['code', 'evidence'] : []),
+    ];
+    const fail = (message, code = 'recovery_dispatch_integrity') => this._recoveryFailure(message, code, integrity);
+    if (!disposition || !p || Object.keys(p).sort().join(',') !== fields.sort().join(',')
+      || p.schemaVersion !== 1 || !Number.isSafeInteger(p.intentSeq) || p.intentSeq <= 0) {
+      fail('recovery dispatch disposition is malformed');
+    }
+    const current = this._recoveryDispatches.get(p.workerId);
+    const exact = current?.status === 'dispatch_unknown' && p.intentSeq === current.intentSeq
+      && p.taskId === current.taskId && p.priorTaskId === current.priorTaskId
+      && p.sessionId === current.sessionId && p.processGeneration === current.processGeneration
+      && p.briefDigest === current.briefDigest && p.contextDigest === current.contextDigest
+      && p.routeDigest === current.routeDigest && p.adapterCardDigest === current.adapterCardDigest;
+    if (!exact) fail('recovery dispatch disposition does not close the exact unknown intent');
+    if (disposition === 'dispatch_refused') {
+      if (p.code !== 'not_sent' || !p.evidence || !Number.isSafeInteger(p.evidence.coordinationSeq)) {
+        fail('recovery refusal lacks a closed not-sent proof');
+      }
+      const mapped = this._events[p.evidence.coordinationSeq - 1];
+      if (mapped?.kind !== 'evidence.mapped'
+        || canonicalDigest({ ...mapped.payload, coordinationSeq: mapped.seq }) !== canonicalDigest(p.evidence)) {
+        fail('recovery refusal evidence is not authoritative');
+      }
+      const source = this._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq);
+      const proofFields = [
+        'action', 'adapterCardDigest', 'briefDigest', 'code', 'contextDigest', 'intentSeq',
+        'observedDispatchFacts', 'priorTaskId', 'processGeneration', 'routeDigest', 'schemaVersion',
+        'sessionId', 'taskId', 'workerId',
+      ];
+      const proof = source?.payload;
+      if (mapped.payload.kind !== 'control.recovery_dispatch_refused'
+        || source?.kind !== 'control.recovery_dispatch_refused' || source.actor !== 'policy'
+        || source.worker !== p.workerId
+        || digest(source) !== mapped.payload.digest
+        || !proof || Object.keys(proof).sort().join(',') !== proofFields.sort().join(',')
+        || proof.schemaVersion !== 1 || proof.code !== 'not_sent'
+        || proof.action !== 'kill_untrusted_transport'
+        || !Array.isArray(proof.observedDispatchFacts) || proof.observedDispatchFacts.length !== 0
+        || proof.workerId !== p.workerId || proof.taskId !== p.taskId
+        || proof.priorTaskId !== p.priorTaskId || proof.sessionId !== p.sessionId
+        || proof.processGeneration !== p.processGeneration || proof.intentSeq !== p.intentSeq
+        || proof.briefDigest !== p.briefDigest || proof.contextDigest !== p.contextDigest
+        || proof.routeDigest !== p.routeDigest || proof.adapterCardDigest !== p.adapterCardDigest) {
+        fail('recovery refusal evidence is not exact zero-fact not-sent testimony');
+      }
+    }
+    return freeze({ ...clone(current), status: disposition, receiptSeq: event.seq });
   }
 
   _validateRunSealPayload(p, eventSeq, integrity = false) {
@@ -1325,7 +1704,14 @@ export class CoordinationStore {
       const old = this._artifacts.get(p.oldId);
       this._artifacts.set(p.oldId, freeze({ ...clone(old), version: p.newVersion, supersededBy: p.newId, supersededEvent: event.seq }));
     } else if (event.kind === 'driver.recorded') {
-      // Durable audit fact; no additional materialized state.
+      // Phase 60 recovery records are closed, causally validated state. Malformed or unmatched
+      // known records are integrity failures on replay, never durable facts that projection may
+      // silently ignore and later redeliver.
+      if (p?.kind === 'recovery.continuation_intent') {
+        this._recoveryDispatches.set(p.workerId, this._validateRecoveryContinuationPayload(p, event, true));
+      } else if (['recovery.dispatch_accepted', 'recovery.dispatch_refused'].includes(p?.kind)) {
+        this._recoveryDispatches.set(p.workerId, this._validateRecoveryDispositionPayload(p, event, true));
+      }
     } else if (event.kind === 'run.sealed') {
       const { members, evidence, runNodeId, artifactNodeId } = this._validateRunSealPayload(p, event.seq, true);
       this._runs.set(p.runId, freeze({ ...clone(p), status: 'sealed', sealedEvent: event.seq, sealedAt: event.ts }));
@@ -1611,6 +1997,7 @@ export class CoordinationStore {
   run(id) { return clone(this._runs.get(id) ?? null); }
   routePolicy() { return clone(this._routePolicy); }
   routeObservations() { return [...this._routeObservations.values()].sort((a, b) => a.eventSeq - b.eventSeq).map(clone); }
+  recoveryDispatchState(workerId) { return clone(this._recoveryDispatches.get(workerId) ?? null); }
   snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
   healthCheck() { try { if (!existsSync(this.file)) return this._events.length === 0; const raw = readFileSync(this.file, 'utf8'); return raw.length === 0 || raw.endsWith('\n'); } catch { return false; } }
   readyTasks() {
@@ -1739,9 +2126,13 @@ export class CoordinationStore {
   }
 
   createTask(fields, auth) {
+    if (fields?.relation === 'recovery') {
+      throw new CoordinationRefusal('recovery relation requires the dedicated atomic refinement API', 'recovery_refinement_api_required');
+    }
     const prior = this._byKey.get(auth?.key);
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), task: this.task(prior.payload.id) };
-    if (!fields?.id || this._tasks.has(fields.id)) throw new CoordinationRefusal(`duplicate task ${fields?.id}`, 'duplicate_task');
+    if (!boundedText(fields?.id, 4_096)) throw new CoordinationRefusal('task id is invalid', 'invalid_task_id');
+    if (this._tasks.has(fields.id)) throw new CoordinationRefusal(`duplicate task ${fields.id}`, 'duplicate_task');
     const runId = fields.runId ?? null;
     if (runId !== null && !validRunId(runId)) throw new CoordinationRefusal('task runId is invalid', 'invalid_run_id');
     if (runId !== null && this._runs.get(runId)?.status === 'sealed') throw new CoordinationRefusal(`run ${runId} is sealed`, 'run_sealed');
@@ -1751,6 +2142,46 @@ export class CoordinationStore {
     const payload = { ...clone(fields), runId, deps };
     const event = this._append('task.created', payload, auth);
     return { ok: true, result: 'created', event: clone(event), task: this.task(fields.id) };
+  }
+
+  createAndClaimRecoveryRefinement(fields, attribution, auth) {
+    const priorTask = this._tasks.get(fields?.refines);
+    if (!priorTask || (fields?.runId != null && this._runs.get(fields.runId)?.status === 'sealed')) {
+      throw new CoordinationRefusal('recovery refinement target is unavailable', 'recovery_refinement_unavailable');
+    }
+    const createdPayload = this._validateRecoveryRefinementRequest(fields, attribution, priorTask, false);
+    const claimedPayload = this._normalizedRecoveryClaimedPayload(createdPayload, attribution);
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      const claimed = this._events[prior.seq];
+      if (prior.kind !== 'task.created' || prior.actor !== auth.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(createdPayload)
+        || prior.batch?.kind !== 'recovery_refinement_create_claim'
+        || claimed?.kind !== 'task.claimed' || claimed.actor !== auth.actor
+        || claimed.batch?.id !== prior.batch.id
+        || prior.batch.index !== 0 || claimed.batch?.index !== 1
+        || prior.batch.count !== 2 || claimed.batch?.count !== 2 || claimed.ts !== prior.ts
+        || claimed.idempotencyKey !== `${auth.key}:claim`
+        || canonicalDigest(claimed.payload) !== canonicalDigest(claimedPayload)
+        || this._recoveryBatchIdentity('recovery_refinement_create_claim', [prior, claimed]) !== prior.batch.id) {
+        throw new CoordinationRefusal('recovery refinement idempotency conflict', 'recovery_refinement_conflict');
+      }
+      this._validateRecoveryRefinementPair(prior, claimed, false);
+      return freeze({ ok: true, result: 'idempotent', createdEvent: clone(prior), claimedEvent: clone(claimed), task: this.task(fields.id) });
+    }
+    if (this._tasks.has(fields.id)) {
+      throw new CoordinationRefusal('recovery refinement target is unavailable', 'recovery_refinement_unavailable');
+    }
+    const fixedTs = this._clock();
+    const [createdEvent, claimedEvent] = this._appendBatch([
+      { kind: 'task.created', payload: createdPayload, auth, fixedTs },
+      { kind: 'task.claimed', payload: claimedPayload, auth: { actor: auth.actor, key: `${auth.key}:claim` }, fixedTs },
+    ], 'recovery_refinement_create_claim');
+    const task = this.task(fields.id);
+    if (!task || task.status !== 'working' || task.assignee !== fields.reservedWorkerId || task.version !== 2) {
+      throw new CoordinationIntegrityError('recovery refinement batch did not materialize exactly', 'recovery_refinement_integrity');
+    }
+    return freeze({ ok: true, result: 'claimed', createdEvent: clone(createdEvent), claimedEvent: clone(claimedEvent), task });
   }
 
   sealRunScorecard(fields, auth) {
@@ -1773,6 +2204,10 @@ export class CoordinationStore {
   }
 
   claimTask(id, worker, expectedVersion, auth, attribution = {}) {
+    const selected = this._tasks.get(id);
+    if (selected?.relation === 'recovery') {
+      throw new CoordinationRefusal('recovery relation requires the dedicated atomic refinement API', 'recovery_refinement_api_required');
+    }
     const prior = this._byKey.get(auth?.key);
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), task: this.task(id) };
     const task = this._tasks.get(id);
@@ -2229,8 +2664,105 @@ export class CoordinationStore {
   }
 
   recordDriver(kind, payload, auth) {
+    if (['recovery.continuation_intent', 'recovery.dispatch_accepted', 'recovery.dispatch_refused'].includes(kind)) {
+      throw new CoordinationRefusal('recovery dispatch state requires its dedicated atomic API', 'recovery_dispatch_api_required');
+    }
     const event = this._append('driver.recorded', { kind, ...clone(payload) }, auth);
     return { ok: true, event: clone(event) };
+  }
+
+  recordRecoveryContinuationIntent(fields, auth) {
+    const payload = { kind: 'recovery.continuation_intent', ...clone(fields) };
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'driver.recorded' || prior.actor !== auth.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
+        throw new CoordinationRefusal('recovery intent idempotency conflict', 'recovery_dispatch_conflict');
+      }
+      const state = this.recoveryDispatchState(fields.workerId);
+      if (!state || state.intentSeq !== prior.seq) throw new CoordinationIntegrityError('recovery intent projection is absent', 'recovery_dispatch_integrity');
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), dispatch: state });
+    }
+    const prospective = {
+      schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(), kind: 'driver.recorded',
+      actor: auth?.actor, idempotencyKey: auth?.key, payload,
+    };
+    this._validateRecoveryContinuationPayload(payload, prospective, false);
+    const event = this._append('driver.recorded', payload, auth, prospective.ts);
+    const dispatch = this.recoveryDispatchState(fields.workerId);
+    if (dispatch?.intentSeq !== event.seq || dispatch.status !== 'dispatch_unknown') {
+      throw new CoordinationIntegrityError('recovery intent did not materialize as unknown', 'recovery_dispatch_integrity');
+    }
+    return freeze({ ok: true, result: 'recorded', event: clone(event), dispatch });
+  }
+
+  completeRecoveryDispatch(fields, auth) {
+    const disposition = fields?.disposition;
+    if (!['accepted', 'refused'].includes(disposition)) throw new CoordinationRefusal('recovery disposition is invalid', 'recovery_dispatch_invalid');
+    const { disposition: _ignored, ...request } = clone(fields);
+    const payload = {
+      kind: disposition === 'accepted' ? 'recovery.dispatch_accepted' : 'recovery.dispatch_refused',
+      ...request,
+    };
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'driver.recorded' || prior.actor !== auth.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
+        throw new CoordinationRefusal('recovery disposition idempotency conflict', 'recovery_dispatch_conflict');
+      }
+      const dispatch = this.recoveryDispatchState(fields.workerId);
+      if (!dispatch || dispatch.receiptSeq !== prior.seq) throw new CoordinationIntegrityError('recovery disposition projection is absent', 'recovery_dispatch_integrity');
+      const task = this.task(fields.taskId);
+      if (disposition === 'refused') {
+        const transitioned = this._events[prior.seq];
+        const expectedTransition = {
+          id: fields.taskId, from: 'working', to: 'failed', expectedVersion: 2, newVersion: 3,
+          evidence: clone(fields.evidence),
+        };
+        if (prior.batch?.kind !== 'recovery_dispatch_refusal' || prior.batch.index !== 0 || prior.batch.count !== 2
+          || transitioned?.kind !== 'task.transitioned' || transitioned.actor !== prior.actor
+          || transitioned.idempotencyKey !== `${auth.key}:task` || transitioned.ts !== prior.ts
+          || transitioned.batch?.id !== prior.batch.id || transitioned.batch?.index !== 1
+          || canonicalDigest(transitioned.payload) !== canonicalDigest(expectedTransition)
+          || this._recoveryBatchIdentity('recovery_dispatch_refusal', [prior, transitioned]) !== prior.batch.id
+          || task?.status !== 'failed' || task.terminalEvent !== transitioned.seq) {
+          throw new CoordinationIntegrityError('recovery refusal task closure is absent', 'recovery_dispatch_integrity');
+        }
+        return freeze({ ok: true, result: 'idempotent', event: clone(prior), taskEvent: clone(transitioned), task, dispatch });
+      }
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), task, dispatch });
+    }
+    const prospective = {
+      schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(), kind: 'driver.recorded',
+      actor: auth?.actor, idempotencyKey: auth?.key, payload,
+    };
+    this._validateRecoveryDispositionPayload(payload, prospective, false);
+    if (disposition === 'accepted') {
+      const event = this._append('driver.recorded', payload, auth, prospective.ts);
+      const dispatch = this.recoveryDispatchState(fields.workerId);
+      if (dispatch?.receiptSeq !== event.seq || dispatch.status !== 'dispatch_accepted') {
+        throw new CoordinationIntegrityError('accepted recovery dispatch did not materialize', 'recovery_dispatch_integrity');
+      }
+      return freeze({ ok: true, result: 'accepted', event: clone(event), task: this.task(fields.taskId), dispatch });
+    }
+    const task = this._tasks.get(fields.taskId);
+    if (!task || task.status !== 'working' || task.assignee !== fields.workerId) {
+      throw new CoordinationRefusal('recovery refusal task is not the live claimed refinement', 'recovery_dispatch_conflict');
+    }
+    const transitionedPayload = {
+      id: task.id, from: task.status, to: 'failed', expectedVersion: task.version,
+      newVersion: task.version + 1, evidence: clone(fields.evidence),
+    };
+    const [event, taskEvent] = this._appendBatch([
+      { kind: 'driver.recorded', payload, auth, fixedTs: prospective.ts },
+      { kind: 'task.transitioned', payload: transitionedPayload, auth: { actor: auth.actor, key: `${auth.key}:task` }, fixedTs: prospective.ts },
+    ], 'recovery_dispatch_refusal');
+    const dispatch = this.recoveryDispatchState(fields.workerId);
+    const closedTask = this.task(fields.taskId);
+    if (dispatch?.receiptSeq !== event.seq || dispatch.status !== 'dispatch_refused' || closedTask?.status !== 'failed') {
+      throw new CoordinationIntegrityError('refused recovery dispatch did not close atomically', 'recovery_dispatch_integrity');
+    }
+    return freeze({ ok: true, result: 'refused', event: clone(event), taskEvent: clone(taskEvent), task: closedTask, dispatch });
   }
 
   integrationAuthority(taskId, operationalEvent) {

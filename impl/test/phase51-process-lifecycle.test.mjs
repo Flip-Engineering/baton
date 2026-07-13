@@ -603,7 +603,7 @@ test('PL7/PL8: recovery refuses a matching provider session that closes before a
   assert.equal(events.some((event) => event.kind === 'lifecycle.spawned' && event.payload?.pid === 6262), false, 'buffered session identity does not commit');
   assert.equal(events.some((event) => event.kind === 'lifecycle.process_ready' && event.payload?.pid === 6262), true);
   assert.equal(events.some((event) => event.kind === 'lifecycle.process_closed' && event.payload?.pid === 6262), true);
-  assert.equal(internal.status, 'orphaned'); assert.equal(internal.processRef.state, 'closed');
+  assert.equal(internal.status, 'dead'); assert.equal(internal.processRef.state, 'closed');
 });
 
 test('PL8: replay preserves historical readiness for an exact late close without claiming a live transport', async () => {
@@ -699,16 +699,18 @@ test('PL7/PL8: failed native recovery retains writer authority and runtime owner
   let releaseKill; const killGate = new Promise((resolve) => { releaseKill = resolve; }); const nativeKill = adapter.kill.bind(adapter);
   adapter.kill = async (worker) => { await killGate; return nativeKill(worker); };
   const cleanup = []; coordinator._removeRuntimeScope = (owned) => cleanup.push({ state: owned.processRef?.state, pid: owned.processRef?.pid });
-  coordinator._createCoordinationRefinement = () => { throw new Error('scripted recovery refinement failure'); };
+  coordinator._createCoordinationRecoveryRefinement = () => { throw new Error('scripted recovery refinement failure'); };
 
   let nativePid;
   try {
-    await assert.rejects(coordinator.recover(handle.id), /scripted recovery refinement failure/);
+    const recovering = coordinator.recover(handle.id);
+    await until(() => coordinator.list()[0].processRef?.generation === 2 && coordinator.list()[0].processRef?.state === 'ready', 'recovery process ready before failed refinement stop');
     nativePid = coordinator.list()[0].processRef.pid;
     assert.equal(coordinator.list()[0].processRef.generation, 2); assert.equal(coordinator.list()[0].processRef.state, 'ready');
     assert.equal(internal.localAuthority, true); assert.equal(cleanup.length, 0); assert.equal(alive(nativePid), true); assert.equal(groupAlive(nativePid), true);
     assert.throws(() => coordinator.closeAuthority(), (error) => error.code === 'coordinator_not_drained');
     releaseKill();
+    await assert.rejects(recovering, /scripted recovery refinement failure/);
     await until(() => coordinator.list()[0].processRef.state === 'closed' && cleanup.length === 1, 'recovery process close before cleanup');
     assert.deepEqual(cleanup, [{ state: 'closed', pid: nativePid }]); assert.equal(internal.localAuthority, false);
     assert.equal(alive(nativePid), false); assert.equal(groupAlive(nativePid), false);

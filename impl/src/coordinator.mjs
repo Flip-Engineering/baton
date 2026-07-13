@@ -17,6 +17,7 @@ import { normalizePhysicalOwnerId, normalizeSparseCheckoutIdentity, normalizeSpa
 
 const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
 const WORKTREE_FAILURE = Symbol('worktree-failure');
+const PHYSICAL_LOG_APPENDS = new WeakMap();
 const LOGICAL_CALL_PHASES = new Set(['requested', 'progress', 'completed', 'failed', 'cancelled']);
 
 function validLogicalCallId(value) {
@@ -146,6 +147,7 @@ function canonicalActionPath(path) {
 const TERMINAL_TASK_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 const COORDINATION_MUTATORS = new Set([
   'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent',
+  'createAndClaimRecoveryRefinement', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch',
   'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
   'readScratch', 'expireScratchClaim', 'expireScratchFact', 'addKnowledgeNode', 'promoteKnowledgeNode',
   'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination', 'recordReuseDecision',
@@ -362,8 +364,9 @@ function normalizeSessionRequest(request) {
   if (!['new', 'resume', 'fork'].includes(mode)) {
     throw new SessionSelectionError(`unknown session mode "${mode}"`, 'invalid_session_request');
   }
-  if (mode !== 'new' && (typeof request.id !== 'string' || request.id.length === 0)) {
-    throw new SessionSelectionError(`session.${mode} requires a non-empty id`, 'invalid_session_request');
+  if (mode !== 'new' && (typeof request.id !== 'string' || request.id.length === 0
+    || Buffer.byteLength(request.id) > 4_096 || request.id.includes('\0'))) {
+    throw new SessionSelectionError(`session.${mode} requires a bounded non-empty id`, 'invalid_session_request');
   }
   if (request.lastTurnId !== undefined && (mode !== 'fork' || typeof request.lastTurnId !== 'string' || request.lastTurnId.length === 0)) {
     throw new SessionSelectionError('session.lastTurnId is valid only for fork and must be a non-empty string', 'invalid_session_request');
@@ -452,7 +455,7 @@ export class Coordinator {
   /** @param {object} opts */
   constructor(opts) {
     if (!opts?.coordination) throw new TypeError('Coordinator requires a durable coordination store');
-    for (const method of ['snapshot', 'task', 'integrationAuthority', 'publicationAuthority', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent', 'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'artifact', 'recordReuseDecision', 'reuseDecision', 'reuseDecisionAdmission', 'reusePolicyState', 'activateReusePolicy', 'reuseRiskGuard', 'recordReuseRiskGuard', 'reuseRiskAdmission', 'recordReuseTtlInvalidation', 'reuseTtlAdmission', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
+    for (const method of ['snapshot', 'task', 'integrationAuthority', 'publicationAuthority', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'createAndClaimRecoveryRefinement', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch', 'mapOperationalEvent', 'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'artifact', 'recordReuseDecision', 'reuseDecision', 'reuseDecisionAdmission', 'reusePolicyState', 'activateReusePolicy', 'reuseRiskGuard', 'recordReuseRiskGuard', 'reuseRiskAdmission', 'recordReuseTtlInvalidation', 'reuseTtlAdmission', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
       if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
     }
     this._closed = false;
@@ -469,7 +472,25 @@ export class Coordinator {
     this._drainHistoricalReconcilePromise = null;
     this._authorityOps = 0;
     this._authorityTokens = new Set();
-    this._log = new Proxy(opts.log, { get: (target, property, receiver) => { const value = Reflect.get(target, property, receiver); if (typeof value !== 'function') return value; const bound = value.bind(target); return property === 'append' ? (...args) => { if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' }); return bound(...args); } : bound; } });
+    // Keep coordinator-local health/attribution wrappers on a facade. Reusing one Log across a
+    // restart must not stack controller closures on the shared writer and let the prior
+    // controller overwrite the fresh controller's task/run attribution.
+    const rawLog = opts.log;
+    const physicalLogAppend = PHYSICAL_LOG_APPENDS.get(rawLog) ?? rawLog.append.bind(rawLog);
+    if (!PHYSICAL_LOG_APPENDS.has(rawLog)) PHYSICAL_LOG_APPENDS.set(rawLog, physicalLogAppend);
+    this._log = new Proxy({}, {
+      get: (target, property, receiver) => {
+        if (Object.hasOwn(target, property)) return Reflect.get(target, property, receiver);
+        const value = property === 'append' ? physicalLogAppend : Reflect.get(rawLog, property, rawLog);
+        if (typeof value !== 'function') return value;
+        const bound = value.bind(rawLog);
+        return property === 'append' ? (...args) => {
+          if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' });
+          return bound(...args);
+        } : bound;
+      },
+      set: (target, property, value, receiver) => Reflect.set(target, property, value, receiver),
+    });
     this._fences = opts.fences;
     this._adapters = opts.adapters;
     this._providerGovernance = opts.providerGovernance === undefined
@@ -677,6 +698,9 @@ export class Coordinator {
               if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) {
                 handle.spawnAbort.abort({ reason: 'operational_log_unavailable' });
               }
+              if (handle.recoverySpawnAbort && !handle.recoverySpawnAbort.signal.aborted) {
+                handle.recoverySpawnAbort.abort({ reason: 'operational_log_unavailable' });
+              }
             }
           }
           throw this._fatalError;
@@ -686,6 +710,10 @@ export class Coordinator {
         }
         return e;
       };
+      // Keep the public Log surface attributed by the newest controller while the controller's
+      // own facade retains its immutable physical append. A restart replaces this one forwarding
+      // closure instead of stacking the prior controller's task/run authority around the writer.
+      rawLog.append = (...args) => this._log.append(...args);
     }
 
     /** @type {Map<string, object>} taskId -> DriverTask */
@@ -702,6 +730,8 @@ export class Coordinator {
     this._stopWaiters = new Map();
     /** @type {Map<string, object>} workerId -> unaudited emergency-stop waiter after poison */
     this._fatalStopWaiters = new Map();
+    /** @type {Map<string, {identity:string,promise:Promise<object>}>} workerId -> live recovery */
+    this._recoveryAttempts = new Map();
     /** @type {Map<string, Cursor>} */
     this._cursors = new Map();
     /** @type {Map<string, number>} workerId -> highest seq served but not yet acked */
@@ -767,7 +797,10 @@ export class Coordinator {
     if (this._startupRecoveryAuthority) {
       const eligible = [...this._workers.values()].filter((handle) => {
         const adapter = this._adapters[handle.vendor];
-        return handle.status === 'orphaned' && handle.sessionRef?.persistence === 'native' && handle.sessionContext?.ownerTaskId && adapter && cardSupportsSession(adapter.card(), { mode: 'resume' });
+        const task = this._tasks.get(handle.taskId);
+        return handle.status === 'orphaned' && handle.sessionRef?.persistence === 'native'
+          && handle.sessionContext?.ownerTaskId && adapter && cardSupportsSession(adapter.card(), { mode: 'resume' })
+          && this._recoveryDispatchRefusal(handle, task) === null;
       });
       if (this._worktrees && typeof this._worktrees.reconcile === 'function') this._trackStartupCleanup(() => this._worktrees.reconcile(eligible.map((handle) => handle.sessionContext.ownerTaskId)));
       if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') this._trackStartupCleanup(() => this._runtimeScopes.reconcile(eligible.map((handle) => handle.id)));
@@ -869,9 +902,22 @@ export class Coordinator {
     for (const handle of this._workers.values()) {
       const task = this._tasks.get(handle.taskId); const adapter = this._adapters[handle.vendor];
       if (handle.status !== 'orphaned' || !task || !handle.sessionContext || handle.sessionRef?.persistence !== 'native' || !adapter || !cardSupportsSession(adapter.card(), { mode: 'resume' })) continue;
+      if (this._recoveryDispatchRefusal(handle, task) !== null) continue;
       rows.push(handle.id);
     }
     return rows;
+  }
+
+  _recoveryDispatchRefusal(handle, task) {
+    const state = handle && typeof this._coordination?.recoveryDispatchState === 'function'
+      ? this._coordination.recoveryDispatchState(handle.id)
+      : null;
+    if (!state || !task || state.taskId !== task.id) return null;
+    const durable = this._coordination?.task?.(task.id);
+    if (state.status === 'dispatch_accepted' && durable?.status === 'completed') return null;
+    if (state.status === 'dispatch_accepted') return 'dispatch_accepted';
+    if (state.status === 'dispatch_refused') return 'dispatch_refused';
+    return 'dispatch_unknown';
   }
 
   completeStartupRecovery(authority, failureCode = null) {
@@ -1020,6 +1066,7 @@ export class Coordinator {
     const worktreeOwned = handle.ownedWorktreeAuthority === true && !!handle.worktree;
     return handle.localAuthority === true || processOwned || handle.runtimeScope?.active === true || worktreeOwned
       || handle.worktreeCreationPending === true || handle.nativeSpawnPending === true
+      || handle.recoverySpawnPending === true
       || handle.cleanupPending === true || handle.cleanupAfterVerification === true || !!handle.cleanupPromise
       || !!handle.untrustedTransportReap || handle.recoveryPending === true
       || this._stopWaiters.has(handle.id) || this._fatalStopWaiters.has(handle.id);
@@ -1872,6 +1919,11 @@ export class Coordinator {
       worktreeCreationPending: false,
       nativeSpawnPending: false,
       nativeSpawnPromise: null,
+      recoverySpawnAbort: null,
+      recoverySpawnPending: false,
+      recoverySpawnPromise: null,
+      recoveryStopReason: null,
+      recoveryProviderReleaseDeferred: false,
       processGeneration: 0,
       processRef: null,
       cleanupPending: false,
@@ -1925,7 +1977,9 @@ export class Coordinator {
         providerTelemetryFailed: false, providerTerminalSeal: null,
         watchdogActions: new Set(), recentFailedActions: [],
         watchdogGeneration: 0, watchdogTimer: null, runtimeScope: null, runtimeLease: null,
-        spawnAbort: null, processGeneration: 0, processRef: null, cleanupPending: false, cleanupPromise: null, cleanupAfterVerification: false, createdAt: new Date(0).toISOString(),
+        spawnAbort: null, recoverySpawnAbort: null, recoverySpawnPending: false, recoverySpawnPromise: null, recoveryStopReason: null,
+        recoveryProviderReleaseDeferred: false,
+        processGeneration: 0, processRef: null, cleanupPending: false, cleanupPromise: null, cleanupAfterVerification: false, createdAt: new Date(0).toISOString(),
         currentIncarnation: false, ownedWorktreeAuthority: false, localAuthority: false,
       });
       const match = /^w-(\d+)$/.exec(workerId);
@@ -2094,12 +2148,36 @@ export class Coordinator {
   /** PS7: explicitly reattach a replayed native session. Recovery never trusts a stale PID;
    * authority comes only from a fresh adapter handshake that reports the expected native ID. */
   recover(workerId, opts = {}) {
-    return this._withAuthorityOp(async () => {
+    const handle = this._workers.get(workerId);
+    const task = handle ? this._tasks.get(handle.taskId) : null;
+    const identity = canonicalDigest({
+      workerId,
+      taskId: task?.id ?? null,
+      vendor: handle?.vendor ?? null,
+      sessionRef: handle?.sessionRef ?? null,
+      context: opts.context ?? handle?.sessionContext ?? null,
+      model: handle?.modelResolved ?? null,
+      effort: handle?.effortResolved ?? null,
+      actor: opts.actor ?? 'orchestrator',
+      timeoutMs: opts.timeoutMs ?? this._recoveryTimeoutMs,
+    });
+    const existing = this._recoveryAttempts.get(workerId);
+    if (existing) {
+      if (existing.identity === identity) return existing.promise;
+      return Promise.resolve({ ok: false, result: 'recovery_conflict' });
+    }
+    const attempt = this._withAuthorityOp(async () => {
       const handle = this._workers.get(workerId);
       if (handle) handle.recoveryPending = true;
       try { return await this._recover(workerId, opts); }
       finally { if (handle) handle.recoveryPending = false; }
     });
+    let tracked;
+    tracked = attempt.finally(() => {
+      if (this._recoveryAttempts.get(workerId)?.promise === tracked) this._recoveryAttempts.delete(workerId);
+    });
+    this._recoveryAttempts.set(workerId, { identity, promise: tracked });
+    return tracked;
   }
 
   async _recover(workerId, opts = {}) {
@@ -2108,6 +2186,8 @@ export class Coordinator {
     else { if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' }); if (this._fatalError) throw this._fatalError; }
     const handle = this._getWorker(workerId);
     const task = this._tasks.get(handle.taskId);
+    const priorDispatchRefusal = this._recoveryDispatchRefusal(handle, task);
+    if (priorDispatchRefusal !== null) return { ok: false, result: priorDispatchRefusal };
     if (handle.status !== 'orphaned') return { ok: false, result: 'worker_not_orphaned' };
     if (!task || !handle.sessionRef || handle.sessionRef.persistence !== 'native') {
       return { ok: false, result: 'session_not_resumable' };
@@ -2136,18 +2216,28 @@ export class Coordinator {
     admission.spawned = new Promise((resolve) => { admission.resolveSpawned = resolve; });
     handle.turnAdmission = admission;
     const session = normalizeSessionRequest({ mode: 'resume', id: handle.sessionRef.id, context });
-    const recoveryRequested = this._log.append({
-      worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
-      kind: 'control.recovery_requested', actor: opts.actor ?? 'orchestrator',
-      payload: { sessionRef: handle.sessionRef, context },
-    });
-    const recoveryEvidence = this._coordMapEvent(recoveryRequested);
-    this._coordRecord('recovery.requested', {
-      taskId: task.id, workerId, sessionId: handle.sessionRef.id, context, evidence: recoveryEvidence,
-    }, `driver.recovery.requested:${task.id}:${recoveryRequested.seq}`, opts.actor ?? 'orchestrator');
-    const runtime = this._ensureRuntimeScope(handle);
-    handle.currentIncarnation = true;
-    handle.localAuthority = true;
+    let recoveryRequested;
+    let runtime;
+    try {
+      recoveryRequested = this._log.append({
+        worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'control.recovery_requested', actor: opts.actor ?? 'orchestrator',
+        payload: { sessionRef: handle.sessionRef, context },
+      });
+      const recoveryEvidence = this._coordMapEvent(recoveryRequested);
+      this._coordRecord('recovery.requested', {
+        taskId: task.id, workerId, sessionId: handle.sessionRef.id, context, evidence: recoveryEvidence,
+      }, `driver.recovery.requested:${task.id}:${recoveryRequested.seq}`, opts.actor ?? 'orchestrator');
+      runtime = this._ensureRuntimeScope(handle);
+      handle.currentIncarnation = true;
+      handle.localAuthority = true;
+    } catch (error) {
+      if (handle.turnAdmission === admission) handle.turnAdmission = null;
+      const releaseError = this._releaseRecoveryProviderTurn(handle, 'recovery_setup_aborted');
+      const runtimeRemoved = this._removeRuntimeScope(handle);
+      if (runtimeRemoved) handle.localAuthority = false;
+      throw releaseError ?? error;
+    }
 
     let timerHandle;
     let timedOut = false;
@@ -2156,18 +2246,34 @@ export class Coordinator {
       if (timerHandle && typeof timerHandle.unref === 'function') timerHandle.unref();
     });
     handle.processGeneration = (handle.processGeneration ?? 0) + 1;
-    const attempt = Promise.resolve(adapter.spawn(workerId, task.brief, {
+    const recoverySpawnAbort = new AbortController();
+    handle.recoverySpawnAbort = recoverySpawnAbort;
+    handle.recoverySpawnPending = true;
+    const attempt = Promise.resolve().then(() => adapter.spawn(workerId, task.brief, {
       worktree: context.worktree,
       timeoutMs: task.brief?.budget?.wallMin ? task.brief.budget.wallMin * 60000 : undefined,
       model: handle.modelResolved ?? undefined,
       reasoningEffort: handle.effortResolved ?? undefined,
       serviceTier: handle.modelPolicy?.serviceTier,
       session,
+      attachOnly: true,
+      signal: recoverySpawnAbort.signal,
       env: runtime?.env,
       replaceEnv: runtime?.replaceEnv === true,
       processGeneration: handle.processGeneration,
       processReapTimeoutMs: Math.max(1, Math.floor(this._stopDeadlineMs * 0.8)),
     })).then((ack) => ({ ack }), (error) => ({ error }));
+    let trackedAttempt;
+    trackedAttempt = attempt.finally(async () => {
+      if (handle.recoverySpawnPromise !== trackedAttempt) return;
+      handle.recoverySpawnPending = false;
+      if (handle.recoverySpawnAbort === recoverySpawnAbort) handle.recoverySpawnAbort = null;
+      if (handle.recoveryStopReason) await this._stopRecoveryTransport(handle, handle.recoveryStopReason);
+    }).finally(() => {
+      if (handle.recoverySpawnPromise === trackedAttempt) handle.recoverySpawnPromise = null;
+    });
+    handle.recoverySpawnPromise = trackedAttempt;
+    trackedAttempt.catch(noop);
 
     let outcome = await Promise.race([attempt, timeout]);
     if (outcome?.ack?.ok === true && !timedOut) {
@@ -2194,59 +2300,280 @@ export class Coordinator {
       || ['dead', 'exited', 'stopping'].includes(handle.status))) {
       failed = { result: 'recovery_transport_closed', reason: 'native reattachment closed before admission committed' };
     }
+    if (!failed) {
+      const spawned = admission.events.filter((event) => event.kind === 'lifecycle.spawned');
+      const unexpected = admission.events.filter((event) => event.kind !== 'lifecycle.spawned');
+      if (spawned.length !== 1 || unexpected.length > 0) {
+        failed = {
+          result: 'recovery_protocol_violation',
+          reason: spawned.length !== 1
+            ? `attach-only adapter emitted ${spawned.length} provider-ready identities`
+            : `attach-only adapter emitted pre-dispatch events: ${unexpected.map((event) => event.kind).join(',')}`,
+        };
+      }
+    }
 
     if (failed) {
       if (handle.turnAdmission === admission) handle.turnAdmission = null;
-      this._releaseProviderTurnAdmission(handle, failed.result);
-      handle.status = 'orphaned';
-      this._scheduleUntrustedTransportReap(handle, adapter, { reason: failed.result });
       this._log.append({
         worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
         kind: 'control.recovery_failed', actor: 'policy', payload: { ...failed, action: 'kill_untrusted_transport' },
       });
+      await this._stopRecoveryTransport(handle, failed.result);
       return { ok: false, ...failed };
     }
 
-    const stamp = this._fences.bumpTurn(workerId);
     let activeTask;
     try {
-      activeTask = this._createCoordinationRefinement(handle, task, 'recovery');
+      // Bind the durable refinement to the exact recovered request rather than the historical
+      // first-turn request. No provider prompt has crossed the attach-only boundary yet.
+      handle.sessionRequest = session;
+      handle.sessionContext = context;
+      activeTask = this._createCoordinationRecoveryRefinement(handle, task);
     } catch (err) {
       if (handle.turnAdmission === admission) handle.turnAdmission = null;
-      this._releaseProviderTurnAdmission(handle, 'recovery_refinement_aborted');
-      handle.status = 'orphaned';
-      this._scheduleUntrustedTransportReap(handle, adapter, { reason: 'recovery_refinement_aborted' });
       this._log.append({
         worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
         kind: 'control.refinement_aborted', actor: 'policy',
         payload: { relation: 'recovery', requestedSeq: recoveryRequested.seq, reason: String(err?.message ?? err), action: 'kill_untrusted_transport' },
       });
+      await this._stopRecoveryTransport(handle, 'recovery_refinement_aborted');
       throw err;
     }
+
     activeTask.status = 'working';
     activeTask.result = null;
     activeTask.verdict = null;
     activeTask.sessionRequest = session;
     activeTask.sessionContext = context;
-    handle.status = 'working';
-    handle.turnTerminalObserved = false;
-    this._clearBudgetStop(handle);
-    handle.sessionRequest = session;
-    handle.sessionContext = context;
+
+    // Commit provider testimony only after the refinement exists. This can discover an exact
+    // route mismatch, but attach-only guarantees that discovery still precedes provider work.
     handle.turnAdmission = null;
-    this._resetWatchdogTurn(handle);
-    this._log.append({
-      worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: stamp.turnEpoch,
-      kind: 'control.recovery_attached', actor: 'orchestrator',
-      payload: { sessionRef: handle.sessionRef, context },
+    for (const event of admission.events) {
+      this._handleEvent(event, handle.vendor, { admittedReady: event.kind === 'lifecycle.spawned' });
+    }
+    if (handle.modelMismatch || handle.effortMismatch || ['dead', 'exited', 'stopping'].includes(handle.status)) {
+      await this._stopRecoveryTransport(handle, 'recovery_route_mismatch');
+      return { ok: false, result: 'recovery_route_mismatch' };
+    }
+
+    const adapterCardDigest = canonicalDigest(adapter.card());
+    const route = {
+      harness: handle.vendor,
+      model: handle.modelResolved ?? null,
+      effort: handle.effortResolved ?? null,
+      serviceTier: handle.modelPolicy?.serviceTier ?? null,
+      routeKey: handle.routeKey ?? null,
+      adapterCardDigest,
+    };
+    const continuation = {
+      schemaVersion: 1,
+      taskId: activeTask.id,
+      priorTaskId: task.id,
+      workerId,
+      sessionId: expectedId,
+      processGeneration: handle.processGeneration,
+      briefDigest: canonicalDigest(task.brief),
+      contextDigest: canonicalDigest(context),
+      routeDigest: canonicalDigest(route),
+      adapterCardDigest,
+    };
+    let continuationIntent;
+    try {
+      const recorded = this._coordination.recordRecoveryContinuationIntent(continuation, {
+        actor: opts.actor ?? 'orchestrator',
+        key: `driver.recovery.continuation_intent:${activeTask.id}:${handle.processGeneration}`,
+      });
+      continuationIntent = recorded.event;
+      if (recorded.dispatch?.status !== 'dispatch_unknown' || recorded.dispatch.intentSeq !== continuationIntent?.seq) {
+        throw new Error('recovery continuation intent did not materialize exactly');
+      }
+    } catch (err) {
+      this._log.append({
+        worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'control.refinement_aborted', actor: 'policy',
+        payload: { relation: 'recovery', requestedSeq: recoveryRequested.seq, reason: 'continuation_intent_unavailable', action: 'kill_untrusted_transport' },
+      });
+      await this._stopRecoveryTransport(handle, 'recovery_continuation_intent_aborted');
+      throw err;
+    }
+
+    // Native prompt methods can synchronously emit turn events before their Ack resolves. Keep
+    // those observations private until the accepted receipt is durable.
+    const dispatchAdmission = { events: [] };
+    handle.turnAdmission = dispatchAdmission;
+    let dispatchAck;
+    let dispatchError = null;
+    let dispatchTimer;
+    const promptAttempt = Promise.resolve().then(() => (typeof adapter.promptBrief === 'function'
+      ? adapter.promptBrief(workerId, task.brief)
+      : adapter.prompt(workerId, task.brief, 'turn'))).then(
+      (ack) => ({ ack }),
+      (error) => ({ error }),
+    );
+    const promptTimeout = new Promise((resolvePromptTimeout) => {
+      dispatchTimer = this._setTimeout(() => resolvePromptTimeout({ timeout: true }), timeoutMs);
+      if (dispatchTimer && typeof dispatchTimer.unref === 'function') dispatchTimer.unref();
     });
-    this._log.append({
-      worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: stamp.turnEpoch,
-      kind: 'lifecycle.turn_started', actor: 'orchestrator', payload: { recovery: true },
-      ...this._routeAttribution(handle, activeTask),
-    });
-    for (const event of admission.events) this._handleEvent(event, handle.vendor, { admittedReady: event.kind === 'lifecycle.spawned' });
-    return { ok: true, result: 'attached', handle: this._publicHandle(handle) };
+    const dispatchOutcome = await Promise.race([promptAttempt, promptTimeout]);
+    if (dispatchTimer != null) this._clearTimeout(dispatchTimer);
+    if (dispatchOutcome.timeout) dispatchError = Object.assign(new Error(`recovery continuation dispatch exceeded ${timeoutMs}ms`), { code: 'dispatch_timeout' });
+    else if (dispatchOutcome.error) dispatchError = dispatchOutcome.error;
+    else dispatchAck = dispatchOutcome.ack;
+    const stopWonDuringDispatch = () => this._stopWaiters.has(handle.id)
+      || ['dead', 'exited', 'stopping'].includes(handle.status)
+      || handle.processRef?.state === 'closed' || handle.processRef?.state === 'unconfirmed_after_restart';
+    const dispatchHasFacts = dispatchAdmission.events.length > 0;
+    const provenNotSent = !dispatchError && dispatchAck?.ok === false
+      && dispatchAck.notSent === true && !dispatchHasFacts && !stopWonDuringDispatch();
+
+    if (dispatchAck?.ok !== true && !provenNotSent) {
+      if (handle.turnAdmission === dispatchAdmission) handle.turnAdmission = null;
+      const unknownEvent = this._log.append({
+        worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'control.recovery_dispatch_unknown', actor: 'policy',
+        ...this._routeAttribution(handle, activeTask),
+        payload: {
+          code: dispatchError ? 'delivery_exception' : dispatchHasFacts ? 'contradictory_refusal' : 'not_sent_unproven',
+          observedDispatchFacts: dispatchAdmission.events.slice(0, 16).map((event) => event.kind),
+          action: 'kill_untrusted_transport',
+        },
+      });
+      let unknownWriteError = null;
+      try {
+        const unknownEvidence = this._coordMapEvent(unknownEvent);
+        const durable = this._coordination.task(activeTask.id);
+        if (durable && !TERMINAL_TASK_STATUSES.has(durable.status)) {
+          this._coordTransition(activeTask, 'failed', `task.failed:${activeTask.id}:recovery_dispatch_unknown`, unknownEvidence);
+          activeTask.status = 'failed';
+        }
+      } catch (err) {
+        unknownWriteError = err;
+      }
+      await this._stopRecoveryTransport(handle, 'recovery_dispatch_unknown');
+      if (unknownWriteError) throw unknownWriteError;
+      return {
+        ok: false,
+        result: 'dispatch_unknown',
+        reason: String(dispatchError?.message ?? dispatchAck?.reason ?? 'recovery continuation dispatch is ambiguous'),
+      };
+    }
+
+    if (provenNotSent) {
+      if (handle.turnAdmission === dispatchAdmission) handle.turnAdmission = null;
+      const refusedEvent = this._log.append({
+        worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'control.recovery_dispatch_refused', actor: 'policy',
+        ...this._routeAttribution(handle, activeTask),
+        payload: {
+          schemaVersion: 1,
+          code: 'not_sent',
+          taskId: activeTask.id,
+          priorTaskId: task.id,
+          workerId,
+          sessionId: expectedId,
+          processGeneration: handle.processGeneration,
+          routeDigest: continuation.routeDigest,
+          briefDigest: continuation.briefDigest,
+          contextDigest: continuation.contextDigest,
+          adapterCardDigest: continuation.adapterCardDigest,
+          intentSeq: continuationIntent?.seq ?? null,
+          observedDispatchFacts: [],
+          action: 'kill_untrusted_transport',
+        },
+      });
+      let refusalWriteError = null;
+      try {
+        const refusedEvidence = this._coordMapEvent(refusedEvent);
+        const closed = this._coordination.completeRecoveryDispatch({
+          disposition: 'refused', ...continuation, intentSeq: continuationIntent?.seq ?? null,
+          code: 'not_sent', evidence: refusedEvidence,
+        }, {
+          actor: 'policy', key: `driver.recovery.dispatch_refused:${activeTask.id}:${handle.processGeneration}`,
+        });
+        activeTask.status = closed.task.status;
+        activeTask.coordinationVersion = closed.task.version;
+      } catch (err) {
+        refusalWriteError = err;
+      }
+      await this._stopRecoveryTransport(handle, 'recovery_dispatch_refused');
+      if (refusalWriteError) throw refusalWriteError;
+      return {
+        ok: false,
+        result: 'dispatch_refused',
+        reason: String(dispatchAck?.reason ?? 'adapter proved the continuation was not sent'),
+      };
+    }
+
+    let dispatchReceipt;
+    try {
+      const accepted = this._coordination.completeRecoveryDispatch({
+        disposition: 'accepted', ...continuation, intentSeq: continuationIntent?.seq ?? null,
+      }, {
+        actor: opts.actor ?? 'orchestrator',
+        key: `driver.recovery.dispatch_accepted:${activeTask.id}:${handle.processGeneration}`,
+      });
+      dispatchReceipt = accepted.event;
+    } catch (err) {
+      if (handle.turnAdmission === dispatchAdmission) handle.turnAdmission = null;
+      await this._stopRecoveryTransport(handle, 'recovery_dispatch_unknown');
+      // The durable intent without an accepted/refused receipt is the replayable unknown marker.
+      // Do not retry this continuation automatically.
+      throw err;
+    }
+
+    const spawnedDuringDispatch = dispatchAdmission.events.some((event) => event.kind === 'lifecycle.spawned');
+    if (stopWonDuringDispatch() || spawnedDuringDispatch) {
+      if (handle.turnAdmission === dispatchAdmission) handle.turnAdmission = null;
+      const code = spawnedDuringDispatch ? 'duplicate_provider_ready' : 'stop_won_after_dispatch';
+      const racedEvent = this._log.append({
+        worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'control.recovery_dispatch_not_exposed', actor: 'policy',
+        ...this._routeAttribution(handle, activeTask),
+        payload: { code, dispatchReceiptSeq: dispatchReceipt?.seq ?? null, action: 'kill_untrusted_transport' },
+      });
+      try {
+        const evidence = this._coordMapEvent(racedEvent);
+        const durable = this._coordination.task(activeTask.id);
+        if (durable && !TERMINAL_TASK_STATUSES.has(durable.status)) {
+          this._coordTransition(activeTask, 'failed', `task.failed:${activeTask.id}:recovery_dispatch_not_exposed`, evidence);
+          activeTask.status = 'failed';
+        }
+      } catch (err) {
+        await this._stopRecoveryTransport(handle, code);
+        throw err;
+      }
+      await this._stopRecoveryTransport(handle, code);
+      return { ok: false, result: spawnedDuringDispatch ? 'recovery_protocol_violation' : 'recovery_stopped_after_dispatch' };
+    }
+
+    try {
+      const stamp = this._fences.bumpTurn(workerId);
+      handle.status = 'working';
+      handle.turnTerminalObserved = false;
+      this._clearBudgetStop(handle);
+      handle.turnAdmission = null;
+      this._resetWatchdogTurn(handle);
+      this._log.append({
+        worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: stamp.turnEpoch,
+        kind: 'control.recovery_attached', actor: 'orchestrator',
+        payload: { sessionRef: handle.sessionRef, context, dispatchReceiptSeq: dispatchReceipt?.seq ?? null },
+      });
+      this._log.append({
+        worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: stamp.turnEpoch,
+        kind: 'lifecycle.turn_started', actor: 'orchestrator', payload: { recovery: true },
+        ...this._routeAttribution(handle, activeTask),
+      });
+      for (const event of dispatchAdmission.events) this._handleEvent(event, handle.vendor);
+      return { ok: true, result: 'attached', handle: this._publicHandle(handle, { exposeRecovery: true }) };
+    } catch (error) {
+      if (handle.turnAdmission === dispatchAdmission) handle.turnAdmission = null;
+      if (handle.status === 'working') handle.status = 'stopping';
+      try { await this._stopRecoveryTransport(handle, 'recovery_exposure_unavailable'); }
+      catch { /* preserve the first authoritative exposure failure */ }
+      throw error;
+    }
   }
 
   /** AC5: explicitly integrate an accepted captured commit. This never pushes. */
@@ -2486,7 +2813,7 @@ export class Coordinator {
     if (dfs(taskId)) throw new DependencyCycleError(`spawn() would create a dependency cycle at "${taskId}"`);
   }
 
-  _publicHandle(handle) {
+  _publicHandle(handle, opts = {}) {
     let fence = null;
     let turnEpoch = null;
     if (handle.status !== 'pending') {
@@ -2525,7 +2852,7 @@ export class Coordinator {
       worktree: handle.worktree,
       fence,
       turnEpoch,
-      status: handle.status,
+      status: handle.recoveryPending === true && opts.exposeRecovery !== true ? 'orphaned' : handle.status,
       pendingApprovalId: handle.pendingApprovalId,
       pendingQuestionId: handle.pendingQuestionId,
       budgetUsed: { ...handle.budgetUsed },
@@ -2900,6 +3227,10 @@ export class Coordinator {
     if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) {
       handle.spawnAbort.abort({ mode: 'kill', actor: 'policy', emergency: true });
     }
+    if (handle.recoverySpawnPending === true) handle.recoveryProviderReleaseDeferred = true;
+    if (handle.recoverySpawnAbort && !handle.recoverySpawnAbort.signal.aborted) {
+      handle.recoverySpawnAbort.abort({ mode: 'kill', actor: 'policy', emergency: true });
+    }
     handle.status = 'stopping';
     this._clearBudgetStop(handle);
     this._clearWatchdog(handle);
@@ -3042,6 +3373,10 @@ export class Coordinator {
     if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) {
       handle.spawnAbort.abort({ mode, actor });
     }
+    if (handle.recoverySpawnPending === true) handle.recoveryProviderReleaseDeferred = true;
+    if (handle.recoverySpawnAbort && !handle.recoverySpawnAbort.signal.aborted) {
+      handle.recoverySpawnAbort.abort({ mode, actor });
+    }
     handle.status = 'stopping';
     this._clearBudgetStop(handle);
     this._clearWatchdog(handle);
@@ -3118,6 +3453,7 @@ export class Coordinator {
       this._fatalError = fatal;
       for (const handle of this._workers.values()) {
         if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) handle.spawnAbort.abort({ reason: 'coordination_write_unavailable' });
+        if (handle.recoverySpawnAbort && !handle.recoverySpawnAbort.signal.aborted) handle.recoverySpawnAbort.abort({ reason: 'coordination_write_unavailable' });
       }
     }
     return this._fatalError;
@@ -3131,6 +3467,7 @@ export class Coordinator {
       this._fatalError = fatal;
       for (const handle of this._workers.values()) {
         if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) handle.spawnAbort.abort({ reason: fatal.code });
+        if (handle.recoverySpawnAbort && !handle.recoverySpawnAbort.signal.aborted) handle.recoverySpawnAbort.abort({ reason: fatal.code });
       }
     }
     return this._fatalError;
@@ -3153,6 +3490,47 @@ export class Coordinator {
       ...prior, id, deps: [], refines: prior.id, status: 'working', result: null, verdict: null,
       capturedSha: null, integration: null, retainedResultRef: null, publication: null, review: null,
       coordinationVersion: claimed.task.version,
+    };
+    this._tasks.set(id, next);
+    this._taskOrder.push(id);
+    handle.taskId = id;
+    handle.runId = next.runId ?? null;
+    return next;
+  }
+
+  _createCoordinationRecoveryRefinement(handle, prior) {
+    if (!this._coordination) return prior;
+    const id = `recovery:${canonicalDigest({
+      priorTaskId: prior.id,
+      workerId: handle.id,
+      sessionId: handle.sessionRequest?.id ?? handle.sessionRef?.id ?? null,
+      processGeneration: handle.processGeneration,
+    })}`;
+    const result = this._coordination.createAndClaimRecoveryRefinement({
+      id, brief: prior.brief, deps: [], refines: prior.id, taskType: prior.taskType,
+      runId: prior.runId ?? null,
+      reservedWorkerId: handle.id, vendorRequested: handle.vendor,
+      modelRequested: handle.modelRequested, modelPolicy: handle.modelPolicy,
+      effortRequested: handle.effortRequested,
+      sessionRequest: handle.sessionRequest, relation: 'recovery',
+    }, {
+      harnessRequested: handle.vendor,
+      harnessResolved: handle.vendor,
+      modelRequested: handle.modelRequested ?? null,
+      modelResolved: handle.modelResolved ?? null,
+      modelObserved: handle.modelObserved ?? null,
+      effortRequested: handle.effortRequested ?? null,
+      effortResolved: handle.effortResolved ?? null,
+      effortObserved: handle.effortObserved ?? null,
+      routeKey: handle.routeKey ?? null,
+    }, {
+      actor: 'orchestrator', key: `task.created:${id}`,
+    });
+    const next = {
+      ...prior, id, deps: [], refines: prior.id, status: 'working', result: null, verdict: null,
+      capturedSha: null, integration: null, retainedResultRef: null, publication: null, review: null,
+      coordinationVersion: result.task.version,
+      sessionRequest: handle.sessionRequest,
     };
     this._tasks.set(id, next);
     this._taskOrder.push(id);
@@ -3301,6 +3679,60 @@ export class Coordinator {
     }, this._stopDeadlineMs);
     if (record.timerHandle && typeof record.timerHandle.unref === 'function') record.timerHandle.unref();
     Promise.resolve().then(() => adapter.kill(handle.id)).catch(noop);
+  }
+
+  _releaseRecoveryProviderTurn(handle, reason) {
+    try {
+      this._releaseProviderTurnAdmission(handle, reason);
+      return null;
+    } catch (error) {
+      // A poisoned audit sink cannot leave an already-terminated provider reservation live in
+      // memory. The fatal error still escapes, but the coordinator may never advertise this seat
+      // as reusable merely because the release record itself could not be persisted.
+      if (handle.providerTurn && !handle.providerTurn.sealed) {
+        handle.providerTurn.sealed = true;
+        handle.providerTurn.violation ??= reason;
+      }
+      return error;
+    }
+  }
+
+  async _stopRecoveryTransport(handle, reason) {
+    // Recovery teardown uses the ordinary confirmation protocol. A kill Ack is merely request
+    // admission; cleanup waits for kill.confirmed and, for a started generation, its correlated
+    // process_closed. If coordination is poisoned, the stop-only emergency path retains the same
+    // physical proof requirement without pretending it was durably audited.
+    handle.recoveryStopReason = reason;
+    if (handle.recoverySpawnPending === true) handle.recoveryProviderReleaseDeferred = true;
+    if (handle.recoverySpawnAbort && !handle.recoverySpawnAbort.signal.aborted) {
+      handle.recoverySpawnAbort.abort({ reason });
+    }
+    let stopped;
+    if ((handle.status === 'dead' && handle.localAuthority !== true
+      && (!handle.processRef || handle.processRef.state === 'closed') && handle.cleanupPending !== true)
+      || (!this._ownsLocalResources(handle) && (!handle.processRef || handle.processRef.state === 'closed'))) {
+      stopped = { ok: true, result: 'already_stopped' };
+    } else if (this._fatalError) {
+      stopped = await this._emergencyKillUnlogged(handle);
+    } else {
+      stopped = await this._beginStop(handle, 'kill', undefined, 'policy');
+      if (!stopped?.ok && stopped?.result !== 'forced') {
+        this._log.append({
+          worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+          kind: 'control.recovery_reap_unconfirmed', actor: 'policy', payload: { reason },
+        });
+      }
+    }
+    const transportConfirmed = ['confirmed', 'already_stopped', 'confirmed_unlogged', 'already_dead_unlogged'].includes(stopped?.result)
+      || (stopped?.result === 'cleanup_failed' && handle.status === 'dead'
+        && (!handle.processRef || handle.processRef.state === 'closed'));
+    if (transportConfirmed && handle.recoverySpawnPending !== true) {
+      handle.recoveryStopReason = null;
+      handle.recoveryProviderReleaseDeferred = false;
+      const releaseError = this._releaseRecoveryProviderTurn(handle, reason);
+      if (releaseError) throw releaseError;
+    }
+    return stopped;
   }
 
   _finishUntrustedTransportReap(handle, processRef) {
@@ -3796,7 +4228,8 @@ export class Coordinator {
     const waiter = this._stopWaiters.get(handle.id);
     if (!waiter) return;
     if (confirmKind !== waiter.mode) return; // stale/mismatched confirmation — ignore
-    if (handle.providerGovernance && handle.providerTurn && !handle.providerTurn.sealed) {
+    if (handle.providerGovernance && handle.providerTurn && !handle.providerTurn.sealed
+      && handle.recoveryProviderReleaseDeferred !== true) {
       const verdict = this._validateTerminalUsageSeal(handle, payload?.usageSeal ?? null);
       waiter.providerSealVerdict = verdict;
       handle.turnTerminalObserved = true;
@@ -4239,6 +4672,7 @@ export class Coordinator {
       providerGovernance,
       observationOnly: providerGovernance?.observationOnly === true,
     };
+    if (handle.recoveryPending === true) return { ready: false, status: 'orphaned', ...attribution };
     if (!task) return { ready: false, status: handle.status, ...attribution };
     if (!TERMINAL_TASK_STATUSES.has(task.status)) return { ready: false, status: task.status, ...attribution };
     return { ready: true, status: task.status, verdict: task.verdict, artifacts: task.result ? task.result.artifacts : undefined, ...attribution };
@@ -5975,6 +6409,11 @@ export class Coordinator {
         worktreeCreationPending: false,
         nativeSpawnPending: false,
         nativeSpawnPromise: null,
+        recoverySpawnAbort: null,
+        recoverySpawnPending: false,
+        recoverySpawnPromise: null,
+        recoveryStopReason: null,
+        recoveryProviderReleaseDeferred: false,
         processGeneration,
         processRef,
         cleanupPending: false,

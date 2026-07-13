@@ -141,14 +141,17 @@ test('provider admission is released exactly once when the adapter refuses initi
 
 test('provider recovery admission is released exactly once when attached native state cannot commit its refinement, including replay', async () => {
   const original = system(adapter()); const handle = await completeReusableSession(original, 'release-recovery-refinement');
-  const resumed = adapter({ spawn: async (ad, worker) => { ad.emit(worker, 'lifecycle.spawned', { sessionId: 'release-recovery-refinement-native', pid: 222 }, 1); return { ok: true }; } });
+  const resumed = adapter({
+    spawn: async (ad, worker) => { ad.emit(worker, 'lifecycle.spawned', { sessionId: 'release-recovery-refinement-native', pid: 222 }, 1); return { ok: true }; },
+    kill: async (ad, worker) => { queueMicrotask(() => ad.emit(worker, 'kill.confirmed', {}, 1)); return { ok: true }; },
+  });
   const removed = [];
   const recovering = replay(original, resumed, {
     reconcile: () => {}, create: (worker) => ({ env: {}, replaceEnv: true, posture: { root: `/runtime/${worker}` } }), remove: (worker) => removed.push(worker),
   });
   const rawAppend = recovering.coordination._appendFile;
   recovering.coordination._appendFile = (file, body, encoding) => {
-    if (body.includes('"task.created"') && body.includes('refinement-')) throw new Error('recovery refinement disk full');
+    if (body.includes('"task.created"') && body.includes('"relation":"recovery"')) throw new Error('recovery refinement disk full');
     return rawAppend(file, body, encoding);
   };
   await assert.rejects(recovering.coordinator.recover(handle.id), (error) => error.code === 'coordination_write_unavailable');

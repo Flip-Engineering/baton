@@ -171,6 +171,75 @@ test('GA6: spawn() acks ok:true and drives lifecycle.spawned -> turn_started -> 
   }
 });
 
+test('Phase 60: resume attachOnly emits exact provider-ready identity but no turn or tool work before prompt()', async () => {
+  const adapter = makeAdapter();
+  const events = collect(adapter);
+  const worker = 'phase60-grok-attach';
+  try {
+    const ack = await adapter.spawn(worker, makeBrief('FAKE:STAY_OPEN must not be dispatched during attach'), {
+      worktree: freshWorktree(),
+      session: { mode: 'resume', id: 'phase60-grok-session' },
+      attachOnly: true,
+    });
+    assert.equal(ack.ok, true);
+    const spawned = await until(events, (event) => event.kind === 'lifecycle.spawned');
+    assert.equal(spawned.payload.sessionId, 'phase60-grok-session');
+
+    await never(events, (event) => [
+      'lifecycle.turn_started', 'resource.provider_call', 'content.tool_call',
+      'content.file_edit', 'content.message', 'lifecycle.turn_completed',
+    ].includes(event.kind));
+
+    const prompt = await adapter.prompt(worker, 'phase60 continuation after durable attach', 'turn');
+    assert.equal(prompt.ok, true);
+    await until(events, (event) => event.kind === 'lifecycle.turn_started');
+    await until(events, (event) => event.kind === 'lifecycle.turn_completed');
+  } finally {
+    await cleanup(adapter, worker);
+  }
+});
+
+test('Phase 60: attachOnly refuses a non-resume session before creating a provider process', async () => {
+  const adapter = makeAdapter();
+  const events = collect(adapter);
+  for (const mode of ['new', 'fork']) {
+    const worker = `phase60-grok-invalid-attach-${mode}`;
+    try {
+      const ack = await adapter.spawn(worker, makeBrief('must not run'), {
+        worktree: freshWorktree(), session: { mode, ...(mode === 'fork' ? { id: 'parent' } : {}) }, attachOnly: true,
+      });
+      assert.equal(ack.ok, false);
+      assert.equal(ack.code, 'attach_only_requires_resume');
+      assert.equal(events.some((event) => event.worker === worker && event.kind === 'lifecycle.process_started'), false);
+    } finally {
+      await cleanup(adapter, worker);
+    }
+  }
+});
+
+for (const mode of ['absent', 'wrong']) {
+  test(`Phase 60: session/load ${mode} identity is refused instead of trusting the requested sessionId`, async () => {
+    const adapter = makeAdapter({ env: { FAKE_GROK_LOAD_ID_MODE: mode } });
+    const events = collect(adapter);
+    const worker = `phase60-grok-${mode}-identity`;
+    try {
+      const ack = await adapter.spawn(worker, makeBrief('must never dispatch after an unproven resume identity'), {
+        worktree: freshWorktree(),
+        session: { mode: 'resume', id: 'phase60-grok-expected' },
+        attachOnly: true,
+      });
+      assert.equal(ack.ok, false);
+      assert.equal(ack.code, 'session_identity_mismatch');
+      const closed = await until(events, (event) => event.kind === 'lifecycle.process_closed');
+      assert.equal(closed.payload.ready, false);
+      assert.equal(events.some((event) => event.kind === 'lifecycle.spawned'), false);
+      assert.equal(events.some((event) => event.kind === 'lifecycle.turn_started'), false);
+    } finally {
+      await cleanup(adapter, worker);
+    }
+  });
+}
+
 test('GA16: exactly one terminal event fires per turn', async () => {
   const adapter = makeAdapter();
   const events = collect(adapter);

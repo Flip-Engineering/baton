@@ -624,6 +624,13 @@ export class GrokAcpCli {
     if ((existing && !existing.closed) || this._pendingSpawns.has(worker)) {
       return { ok: false, reason: `worker ${worker} already has an active session` };
     }
+    if (opts.attachOnly === true && opts.session?.mode !== 'resume') {
+      return {
+        ok: false,
+        code: 'attach_only_requires_resume',
+        reason: 'attach-only is an internal native-resume primitive',
+      };
+    }
     const pending = { cancelled: false };
     this._pendingSpawns.set(worker, pending);
     try {
@@ -713,9 +720,20 @@ export class GrokAcpCli {
       this._killChild(session);
       return { ok: false, reason: err.message, code: err.code };
     }
-    // ACP load responses should echo the identity, but retain the requested durable reference
-    // if an implementation returns only replay metadata.
-    session.sessionId = newResult.sessionId ?? opts.session?.id;
+    // A resume identity is provider testimony, not a value Baton may synthesize from its request.
+    // Missing or substituted session/load identity cannot cross the recovery trust gate.
+    if (opts.session?.mode === 'resume'
+      && (typeof newResult.sessionId !== 'string' || newResult.sessionId.length === 0
+        || newResult.sessionId !== opts.session.id)) {
+      session.setupFailed = true;
+      this._killChild(session);
+      return {
+        ok: false,
+        code: 'session_identity_mismatch',
+        reason: `expected native session ${opts.session.id}, observed ${newResult.sessionId ?? '(none)'}`,
+      };
+    }
+    session.sessionId = newResult.sessionId;
     session.providerReady = true;
     this._emit(session, 'lifecycle.spawned', {
       sessionId: session.sessionId, pid: child.pid,
@@ -723,6 +741,9 @@ export class GrokAcpCli {
       modelRequested: session.modelRequested, modelObserved: session.modelObserved,
       sandboxRequested: session.sandboxRequested,
     });
+
+    // Recovery attaches and proves identity before a durable refinement is allowed to dispatch.
+    if (opts.attachOnly === true) return { ok: true, attached: true };
 
     // GA6: the Ack resolves once the first prompt is DISPATCHED after a live handshake — ACP has
     // no separate turn-accepted response; completion is exclusively an onEvent fact.
@@ -747,7 +768,7 @@ export class GrokAcpCli {
 
   async prompt(worker, content, mode = 'turn') {
     const session = this._sessions.get(worker);
-    if (!session || !session.sessionId || session.closed) return { ok: false, reason: `unknown worker ${worker}` };
+    if (!session || !session.sessionId || session.closed) return { ok: false, notSent: true, reason: `unknown worker ${worker}` };
 
     if (mode === 'nudge') {
       session.nudgeQueue.push(content);
@@ -755,7 +776,7 @@ export class GrokAcpCli {
     }
 
     if (mode === 'steer') {
-      if (!session.activeTurn) return { ok: false, reason: 'no active turn to steer' };
+      if (!session.activeTurn) return { ok: false, notSent: true, reason: 'no active turn to steer' };
       // GA13: cancel-then-reprompt, the case the adapter-contract's emulation pattern exists for
       // (the wire genuinely lacks steer — unlike claude E2, where native existed). The cancelled
       // resolution consumes this marker and dispatches `content` as the next turn.
@@ -767,12 +788,17 @@ export class GrokAcpCli {
 
     // mode === 'turn'
     if (session.activeTurn) {
-      return { ok: false, reason: 'a turn is already active (ACP baseline: one prompt turn at a time)' };
+      return { ok: false, notSent: true, reason: 'a turn is already active (ACP baseline: one prompt turn at a time)' };
     }
     const nudges = session.nudgeQueue.splice(0);
     const text = [...nudges, content].join('\n');
     this._startTurn(session, text);
     return { ok: true };
+  }
+
+  /** Internal recovery dispatch that preserves the ordinary-spawn Brief dialect. */
+  async promptBrief(worker, brief) {
+    return this.prompt(worker, renderBrief(brief, 'grok-acp'), 'turn');
   }
 
   // -------------------------------------------------------------------------

@@ -55,11 +55,14 @@ task/session identity and never aliases the parent worker's mutable state.
 
 Replay restores session references but does not claim control until an adapter proves reattachment.
 `recover(worker, {timeoutMs?,context?})` attempts bounded native resume/rejoin when explicitly
-requested, records success/failure, and only then changes `orphaned` to working. The fresh
-handshake must report exactly the persisted native session identity; mismatch, refusal, exception,
-or timeout kills the untrusted transport and leaves the handle orphaned. PID identity requires a
-birth token or native session handshake; a replayed numeric PID alone is never signalled because
-of PID reuse.
+requested. Its private attach-only handshake sends no Brief; after exact identity, Baton atomically
+creates/claims the recovery refinement, persists a bound continuation intent, dispatches through the
+ordinary adapter dialect, and persists an accepted/refused disposition before it may expose
+working. Ambiguous dispatch remains durable `dispatch_unknown` and is never automatically retried.
+The fresh handshake must report exactly the persisted native session identity; mismatch, refusal,
+exception, timeout, or a racing stop kills the untrusted transport through confirmed teardown. PID
+identity requires a birth token or native session handshake; a replayed numeric PID alone is never
+signalled because of PID reuse.
 
 ## PS8 — worktree and fork coherence
 

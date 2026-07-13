@@ -19,6 +19,8 @@
 //   - env FAKE_GROK_MALFORMED=1 -> after each prompt starts: one invalid-JSON line, one
 //                                  unknown-method notification, one unknown sessionUpdate
 //                                  variant, one synthetic id-less error (GA5/GA17).
+//   - env FAKE_GROK_LOAD_ID_MODE=absent|wrong -> session/load omits or substitutes the requested
+//                                  provider identity (Phase 60 recovery-handshake honesty).
 //   - directives embedded in the prompt text (brief.goal or raw prompt() content):
 //       FAKE:CRASH              -> the prompt request resolves with a JSON-RPC ERROR ("boom")
 //       FAKE:REFUSAL            -> resolves {stopReason:"refusal"}
@@ -43,6 +45,7 @@ if (!process.argv.includes('--serve') && !process.argv.includes('agent')) {
 const UNAUTH = process.env.FAKE_GROK_UNAUTH === '1';
 const HANG = process.env.FAKE_GROK_HANG === '1';
 const MALFORMED = process.env.FAKE_GROK_MALFORMED === '1';
+const LOAD_ID_MODE = process.env.FAKE_GROK_LOAD_ID_MODE ?? 'exact';
 const modelArgIndex = process.argv.indexOf('--model');
 const MODEL = modelArgIndex >= 0 ? process.argv[modelArgIndex + 1] : 'grok-4.5-fake';
 
@@ -313,7 +316,9 @@ rl.on('line', (line) => {
       }
       sessionId = obj.params?.sessionId ?? null;
       sessCwd = obj.params?.cwd ?? null;
-      send({ id: obj.id, result: { sessionId } });
+      send({ id: obj.id, result: LOAD_ID_MODE === 'absent'
+        ? {}
+        : { sessionId: LOAD_ID_MODE === 'wrong' ? `${sessionId}-substituted` : sessionId } });
       break;
     }
     case 'session/prompt': {

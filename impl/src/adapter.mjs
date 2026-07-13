@@ -239,6 +239,13 @@ export class MockAdapter {
    * @returns {Promise<{ok:boolean, reason?:string}>}
    */
   async spawn(worker, brief, opts = {}) {
+    if (opts.attachOnly === true && opts.session?.mode !== 'resume') {
+      return {
+        ok: false,
+        code: 'attach_only_requires_resume',
+        reason: 'attach-only is an internal native-resume primitive',
+      };
+    }
     const scenario = opts.scenario ?? this._defaultScenario;
     const validation = validateScenario(scenario);
     if (!validation.ok) return { ok: false, reason: validation.reason };
@@ -251,6 +258,8 @@ export class MockAdapter {
     const haltController = new AbortController();
     const session = {
       worker, brief, scenario, opts,
+      attachedOnly: opts.attachOnly === true,
+      runStarted: false,
       haltController, haltSignal: haltController.signal,
       stopKind: null, terminal: false, crashed: false,
       wait: null, askHandled: false, askResolve: null,
@@ -271,6 +280,14 @@ export class MockAdapter {
       else opts.signal.addEventListener('abort', () => this._beginStop(worker, 'interrupt'), { once: true });
     }
 
+    if (!session.attachedOnly) this._startSession(session);
+
+    return { ok: true, ...(session.attachedOnly ? { attached: true } : {}) };
+  }
+
+  _startSession(session) {
+    if (session.runStarted || session.terminal) return;
+    session.runStarted = true;
     this._runSession(session).catch((err) => {
       // WF2/WF3: the Coordinator owns readiness failure and already emitted its sole typed,
       // non-leaking terminal fact. Mock must not duplicate it as a worker crash after performing
@@ -293,8 +310,6 @@ export class MockAdapter {
         });
       }
     });
-
-    return { ok: true };
   }
 
   /**
@@ -330,9 +345,13 @@ export class MockAdapter {
 
   async prompt(worker, content, mode = 'turn') {
     const session = this._sessions.get(worker);
-    if (!session) return { ok: false, reason: `unknown worker ${worker}` };
+    if (!session) return { ok: false, notSent: true, reason: `unknown worker ${worker}` };
     const kindMap = { turn: 'control.send', nudge: 'control.nudge', steer: 'control.steer' };
     this._emit(session, kindMap[mode] ?? 'control.send', { content, mode });
+    if (session.attachedOnly && mode === 'turn') {
+      session.attachedOnly = false;
+      this._startSession(session);
+    }
     return { ok: true };
   }
 

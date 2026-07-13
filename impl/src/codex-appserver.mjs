@@ -518,6 +518,13 @@ export class CodexAppServerCli {
     if ((existing && !existing.terminal) || this._pendingSpawns.has(worker)) {
       return { ok: false, reason: `worker ${worker} already has an active session` };
     }
+    if (opts.attachOnly === true && opts.session?.mode !== 'resume') {
+      return {
+        ok: false,
+        code: 'attach_only_requires_resume',
+        reason: 'attach-only is an internal native-resume primitive',
+      };
+    }
     const pending = { cancelled: false };
     this._pendingSpawns.set(worker, pending);
     try {
@@ -612,6 +619,15 @@ export class CodexAppServerCli {
       return { ok: false, reason: err.message, code: err.code };
     }
     session.threadId = threadResult.thread.id;
+    if (opts.session?.mode === 'resume' && session.threadId !== opts.session.id) {
+      session.setupFailed = true;
+      this._killChild(session);
+      return {
+        ok: false,
+        code: 'session_identity_mismatch',
+        reason: `expected native thread ${opts.session.id}, observed ${session.threadId ?? '(none)'}`,
+      };
+    }
     session.modelObserved = threadResult.model ?? session.modelRequested;
     session.providerReady = true;
     // R6.1: parity with the Claude session adapter's lifecycle.spawned — the wire's own
@@ -622,6 +638,9 @@ export class CodexAppServerCli {
       modelRequested: session.modelRequested, modelObserved: session.modelObserved,
       effortObserved: threadResult.effort ?? null, serviceTier: session.serviceTier,
     });
+
+    // Recovery attaches and proves identity before a durable refinement is allowed to dispatch.
+    if (opts.attachOnly === true) return { ok: true, attached: true };
 
     let turnResult;
     try {
@@ -662,7 +681,7 @@ export class CodexAppServerCli {
 
   async prompt(worker, content, mode = 'turn') {
     const session = this._sessions.get(worker);
-    if (!session || !session.threadId) return { ok: false, reason: `unknown worker ${worker}` };
+    if (!session || !session.threadId) return { ok: false, notSent: true, reason: `unknown worker ${worker}` };
 
     if (mode === 'nudge') {
       // No "queue for next turn" primitive on this wire — buffered and prepended to the next
@@ -672,7 +691,7 @@ export class CodexAppServerCli {
     }
 
     if (mode === 'steer') {
-      if (!session.activeTurn) return { ok: false, reason: 'no active turn to steer' };
+      if (!session.activeTurn) return { ok: false, notSent: true, reason: 'no active turn to steer' };
       try {
         await this._sendRequest(session, 'turn/steer', {
           threadId: session.threadId,
@@ -704,6 +723,11 @@ export class CodexAppServerCli {
     } catch (err) {
       return { ok: false, reason: err.message, code: err.code };
     }
+  }
+
+  /** Internal recovery dispatch that preserves the ordinary-spawn Brief dialect. */
+  async promptBrief(worker, brief) {
+    return this.prompt(worker, renderBrief(brief, 'codex-v2'), 'turn');
   }
 
   // -------------------------------------------------------------------------

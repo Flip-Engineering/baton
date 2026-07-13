@@ -171,6 +171,54 @@ test('CS2/CS3: spawn delivers the Brief as the first turn; lifecycle.spawned car
   await waitForKind('kill.confirmed');
 });
 
+test('Phase 60: resume attachOnly performs the native handshake but emits no turn or provider work before prompt()', async () => {
+  const { cli, events, waitForKind } = harness();
+  const w = 'phase60-claude-attach';
+  try {
+    const ack = await cli.spawn(w, brief('HOLD_UNTIL_INTERRUPT must not be delivered during attach'), {
+      worktree: process.cwd(),
+      session: { mode: 'resume', id: 'phase60-claude-native' },
+      attachOnly: true,
+    });
+    assert.equal(ack.ok, true);
+    const spawned = await waitForKind('lifecycle.spawned');
+    assert.equal(spawned.payload.sessionId, 'phase60-claude-native');
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const forbidden = new Set([
+      'lifecycle.turn_started', 'resource.provider_call', 'content.tool_call',
+      'content.file_edit', 'content.message', 'lifecycle.turn_completed',
+    ]);
+    assert.deepEqual(events.filter((event) => forbidden.has(event.kind)).map((event) => event.kind), [],
+      'attach-only recovery must not deliver the Brief or begin provider work');
+
+    const prompt = await cli.prompt(w, 'phase60 continuation after durable attach', 'turn');
+    assert.equal(prompt.ok, true);
+    await waitForKind('lifecycle.turn_started');
+    const completed = await waitForKind('lifecycle.turn_completed');
+    assert.match(completed.payload.result.summary, /phase60 continuation after durable attach/u);
+  } finally {
+    try { await cli.kill(w); } catch { /* RED cleanup */ }
+  }
+});
+
+test('Phase 60: attachOnly refuses a non-resume session before creating a provider process', async () => {
+  const { cli, events } = harness();
+  for (const mode of ['new', 'fork']) {
+    const w = `phase60-claude-invalid-attach-${mode}`;
+    try {
+      const ack = await cli.spawn(w, brief('must not run'), {
+        worktree: process.cwd(), session: { mode, ...(mode === 'fork' ? { id: 'parent' } : {}) }, attachOnly: true,
+      });
+      assert.equal(ack.ok, false);
+      assert.equal(ack.code, 'attach_only_requires_resume');
+      assert.equal(events.some((event) => event.worker === w && event.kind === 'lifecycle.process_started'), false);
+    } finally {
+      try { await cli.kill(w); } catch { /* RED cleanup */ }
+    }
+  }
+});
+
 // ---------------------------------------------------------------------------
 // CS6/CS7 — multi-turn on ONE process; prompt(turn/nudge) is native (no emulated flag)
 // ---------------------------------------------------------------------------

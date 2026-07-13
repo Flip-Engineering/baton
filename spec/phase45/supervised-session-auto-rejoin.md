@@ -27,15 +27,19 @@ reasserts directory/file permissions and credential projection before launch.
 
 ## SR4 — existing recovery trust gate
 
-Each candidate passes through the existing `recover()` transaction sequentially. Context ownership
-is freshly validated, the adapter receives the persisted exact model and effort, and a bounded fresh
-native handshake must report the identical session ID. Rejoin creates a refinement task before
-working authority becomes visible. Stale PIDs are never signalled.
+Each candidate passes through the Phase 60 attach-only `recover()` transaction sequentially.
+Context ownership is freshly validated, the adapter receives the persisted exact model and effort,
+and a bounded fresh native handshake must report the identical session ID without sending a Brief.
+Rejoin atomically creates/claims a refinement, persists the bound continuation intent, dispatches
+through the ordinary Brief dialect, and persists the local adapter disposition before working
+authority becomes visible. Unknown/refused/accepted-but-unfinished dispositions are never
+auto-redelivered. Stale PIDs are never signalled.
 
 ## SR5 — honest partial failure
 
 Identity mismatch, adapter refusal/exception, invalid context, or timeout kills the untrusted
-transport and leaves that handle explicitly orphaned. The supervisor continues with the remaining
+transport through confirmed stop and leaves that handle terminal or explicitly orphaned according
+to whether a fresh process generation existed. The supervisor continues with the remaining
 candidates and returns a bounded sanitized `degraded` summary. Coordination/provenance write loss
 fails readiness instead of degrading.
 

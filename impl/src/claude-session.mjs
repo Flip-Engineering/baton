@@ -247,6 +247,13 @@ export class ClaudeSessionCli {
     if ((existing && !existing.deadEmitted) || this._pendingSpawns.has(worker)) {
       return { ok: false, reason: `worker ${worker} already has an active session` };
     }
+    if (opts.attachOnly === true && opts.session?.mode !== 'resume') {
+      return {
+        ok: false,
+        code: 'attach_only_requires_resume',
+        reason: 'attach-only is an internal native-resume primitive',
+      };
+    }
     const pending = { cancelled: false };
     this._pendingSpawns.set(worker, pending);
     try {
@@ -336,11 +343,12 @@ export class ClaudeSessionCli {
     const processStarted = processStartedPayload(session.processGeneration, session.pid);
     if (processStarted) this._emit(session, 'lifecycle.process_started', processStarted);
 
-    // The Brief is the FIRST turn; stdin is left open (never .end()-ed) — the entire reason
-    // session mode exists (CS2).
-    this._writeUserFrame(session, renderPrompt(brief));
+    // Phase 60 recovery first proves the provider's own session identity. The coordinator creates
+    // and claims the refinement durably before it calls prompt(); sending the Brief here would let
+    // provider work escape that transaction. Ordinary spawn retains the Brief-as-first-turn wire.
+    if (opts.attachOnly !== true) this._writeUserFrame(session, renderPrompt(brief));
 
-    return { ok: true };
+    return { ok: true, ...(opts.attachOnly === true ? { attached: true } : {}) };
     } finally {
       if (this._pendingSpawns.get(worker) === pending) this._pendingSpawns.delete(worker);
     }
@@ -560,7 +568,7 @@ export class ClaudeSessionCli {
 
   async prompt(worker, content, mode = 'turn') {
     const session = this._sessions.get(worker);
-    if (!session || session.terminal) return { ok: false, reason: `unknown or terminal worker ${worker}` };
+    if (!session || session.terminal) return { ok: false, notSent: true, reason: `unknown or terminal worker ${worker}` };
 
     if (mode === 'steer') {
       // CS8 as amended by erratum E2 (live-proven 2026-07-10): steer is NATIVE. A user frame
@@ -580,6 +588,11 @@ export class ClaudeSessionCli {
     // it (nudge semantics are therefore genuinely native here). Never silently emulated (CS19).
     this._writeUserFrame(session, content);
     return { ok: true };
+  }
+
+  /** Internal recovery dispatch that preserves the ordinary-spawn Brief dialect. */
+  async promptBrief(worker, brief) {
+    return this.prompt(worker, renderPrompt(brief), 'turn');
   }
 
   // ---------------------------------------------------------------------------
