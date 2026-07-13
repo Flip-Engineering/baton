@@ -496,6 +496,14 @@ export class CartographerQuartermaster {
     });
   }
 
+  async _invokeAtlas(op, args, ctx) {
+    try { return await this.atlas.invoke(op, args, ctx); }
+    catch (cause) {
+      if (cause?.code !== 'artifact_integrity') throw cause;
+      const error = typed('Atlas source artifact failed integrity', 'orientation_source_integrity'); error.cause = cause; throw error;
+    }
+  }
+
   async invoke(op, args = {}, ctx = {}) {
     const started = this.now(); this._abort(ctx);
     if (!Number.isSafeInteger(ctx.budgetTokens) || ctx.budgetTokens <= 0) throw typed('positive orientation budget required', 'invalid_budget');
@@ -505,7 +513,7 @@ export class CartographerQuartermaster {
       const atlasOp = shape === 'brief' ? 'code.seed' : 'repo.map';
       const atlasArgs = shape === 'brief' ? { indexEpoch: args.indexEpoch, terms: terms(focus) } : { indexEpoch: args.indexEpoch };
       if (shape === 'brief' && atlasArgs.terms.length === 0) throw typed('orientation focus has no searchable terms', 'invalid_orientation');
-      const innerResult = await this.atlas.invoke(atlasOp, atlasArgs, ctx); this._abort(ctx);
+      const innerResult = await this._invokeAtlas(atlasOp, atlasArgs, ctx); this._abort(ctx);
       const { full, ref } = this._inner(innerResult); let items = full.items;
       if (shape === 'brief') items = items.filter((item) => seedEvidence(item).matched).slice(0, 512).map(briefItem);
       if (shape === 'map') {
@@ -522,7 +530,7 @@ export class CartographerQuartermaster {
     if (op === 'reuse.internal') {
       const need = normalizedText(args.need, 'invalid_reuse'); const queryTerms = terms(need);
       if (queryTerms.length === 0) throw typed('reuse need has no searchable terms', 'invalid_reuse');
-      const innerResult = await this.atlas.invoke('code.seed', { indexEpoch: args.indexEpoch, terms: queryTerms }, ctx); this._abort(ctx);
+      const innerResult = await this._invokeAtlas('code.seed', { indexEpoch: args.indexEpoch, terms: queryTerms }, ctx); this._abort(ctx);
       const { full, ref } = this._inner(innerResult);
       // Atlas code.seed includes import-count as a small ranking prior. That prior is useful after
       // a match but is not itself evidence that the requested capability exists; Quartermaster
@@ -538,7 +546,7 @@ export class CartographerQuartermaster {
       const packageName = normalizedText(args.package, 'invalid_package_identity');
       const version = normalizedText(args.version, 'invalid_package_identity');
       if (args.refresh !== undefined && typeof args.refresh !== 'boolean') throw typed('refresh must be boolean', 'invalid_package_identity');
-      const innerResult = await this.atlas.invoke('repo.map', { indexEpoch: args.indexEpoch }, ctx); this._abort(ctx);
+      const innerResult = await this._invokeAtlas('repo.map', { indexEpoch: args.indexEpoch }, ctx); this._abort(ctx);
       const { full, ref } = this._inner(innerResult);
       for (const item of full.items) if (!item || typeof item.path !== 'string' || !stringArray(item.imports)) throw typed('Atlas map item schema mismatch', 'orientation_source_integrity');
       const usage = ecosystem === 'npm'
@@ -598,7 +606,7 @@ export class CartographerQuartermaster {
       const scan = await this.advisoryScanner.scan({ coordinates }, { signal: ctx.signal }); this._abort(ctx);
       if (scan?.scannerId !== this.advisoryPolicy.scannerId || stable(scan.coordinates) !== stable(coordinates)) throw typed('advisory scanner returned a different manifest', 'advisory_scan_coordinate_mismatch');
       const scanCheck = await this.advisoryScanner.verifyScan(scan); if (!scanCheck?.ok || stable(scanCheck.normalized) !== stable(scan)) throw typed('advisory scanner evidence failed immediate replay', 'advisory_scan_incomplete');
-      const atlasResult = await this.atlas.invoke('repo.map', { indexEpoch: args.indexEpoch }, ctx); this._abort(ctx);
+      const atlasResult = await this._invokeAtlas('repo.map', { indexEpoch: args.indexEpoch }, ctx); this._abort(ctx);
       const { full: atlasFull, ref: atlasRef } = this._inner(atlasResult, this.advisoryPolicy.maxArtifactBytes);
       const relevantPackages = new Set(coordinates.map((coordinate) => coordinate.package)); const atlasCard = this.atlas.card();
       const imports = advisoryImportSnapshot(atlasFull, { ...atlasResult.provenance, artifactDigest: atlasRef.digest }, atlasCard, relevantPackages, this.advisoryPolicy, () => this._abort(ctx));
@@ -753,7 +761,7 @@ export class CartographerQuartermaster {
         const dossier = prior.items[0] ?? {};
         const sources = await this.externalOracle.verifySources(dossier.sources);
         if (!sources?.ok) return { ok: false, reason: sources?.reason ?? 'source_integrity' };
-        const currentMap = await this.atlas.invoke('repo.map', { indexEpoch: prior.provenance.index_epoch }, ctx);
+        const currentMap = await this._invokeAtlas('repo.map', { indexEpoch: prior.provenance.index_epoch }, ctx);
         if (currentMap.provenance?.index_epoch !== prior.provenance.index_epoch
           || (currentMap.provenance?.overlay_digest ?? null) !== (prior.provenance?.overlay_digest ?? null)) return { ok: false, reason: 'effective_tree_changed' };
         const { factDigest, asOf, expiresAt, staleAt, ...facts } = dossier; void asOf; void expiresAt; void staleAt;
@@ -789,7 +797,7 @@ export class CartographerQuartermaster {
         const snapshot = advisoryGraphSnapshot(selected.graph, grounding, selected.source, this.advisoryPolicy);
         if (!graphLoaded.raw.equals(Buffer.from(`${stable(snapshot)}\n`)) || stable(graphLoaded.value) !== stable(snapshot)) return { ok: false, reason: 'advisory_graph_diverged' };
         const scanCheck = await this.advisoryScanner.verifyScan(scanLoaded.value); if (!scanCheck?.ok || stable(scanCheck.normalized) !== stable(scanLoaded.value)) return { ok: false, reason: scanCheck?.reason ?? 'advisory_scan_diverged' };
-        const atlasResult = await this.atlas.invoke('repo.map', { indexEpoch: args.indexEpoch }, ctx); this._abort(ctx); const { full: atlasFull, ref: atlasRef } = this._inner(atlasResult, this.advisoryPolicy.maxArtifactBytes);
+        const atlasResult = await this._invokeAtlas('repo.map', { indexEpoch: args.indexEpoch }, ctx); this._abort(ctx); const { full: atlasFull, ref: atlasRef } = this._inner(atlasResult, this.advisoryPolicy.maxArtifactBytes);
         const relevantPackages = new Set(scanLoaded.value.coordinates.map((coordinate) => coordinate.package)); const atlasCard = this.atlas.card();
         const imports = advisoryImportSnapshot(atlasFull, { ...atlasResult.provenance, artifactDigest: atlasRef.digest }, atlasCard, relevantPackages, this.advisoryPolicy, () => this._abort(ctx));
         if (!importsLoaded.raw.equals(Buffer.from(`${stable(imports)}\n`)) || stable(importsLoaded.value) !== stable(imports)) return { ok: false, reason: 'advisory_atlas_diverged' };

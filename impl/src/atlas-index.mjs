@@ -188,6 +188,46 @@ function budgetPayload(items, budgetTokens) {
   for (const item of items) { if (Buffer.byteLength(JSON.stringify([...payload, item])) > limit) break; payload.push(item); }
   return payload;
 }
+function record(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
+function stableRef(ref) {
+  if (!record(ref)) return null;
+  return Object.fromEntries(Object.entries(ref).filter(([key]) => key !== 'path'));
+}
+function projectResult(result) {
+  if (!record(result) || !Array.isArray(result.refs) || !record(result.cost)) return null;
+  const projected = structuredClone(result); const { wall_ms: _wallMs, ...cost } = projected.cost;
+  projected.refs = projected.refs.map(stableRef); projected.cost = cost;
+  return projected;
+}
+function scipPrimaryRef(refs) {
+  const matches = Array.isArray(refs) ? refs.filter((ref) => ref?.kind === 'scip_json') : [];
+  if (matches.length !== 1) throw typed('SCIP result requires exactly one primary artifact ref', 'scip_primary_ref_invalid');
+  const ref = matches[0]; const fields = ['handle', 'kind', 'digest', 'bytes', 'mediaType']; const allowed = new Set([...fields, 'path']);
+  if (Object.keys(ref).some((key) => !allowed.has(key)) || ref.kind !== 'scip_json' || ref.mediaType !== 'application/scip+json'
+    || !/^[a-f0-9]{64}$/.test(ref.digest ?? '') || ref.handle !== `art:sha256:${ref.digest}` || !Number.isSafeInteger(ref.bytes) || ref.bytes <= 0
+    || (Object.hasOwn(ref, 'path') && (typeof ref.path !== 'string' || ref.path.length === 0))) throw typed('SCIP primary artifact ref is invalid', 'scip_primary_ref_invalid');
+  return Object.freeze(Object.fromEntries(fields.map((field) => [field, ref[field]])));
+}
+function validScip(value) {
+  if (!record(value) || Object.keys(value).sort().join(',') !== ['documents', 'externalSymbols', 'metadata'].sort().join(',') || !Array.isArray(value.documents) || !Array.isArray(value.externalSymbols)) return false;
+  const metadata = value.metadata; const tool = metadata?.toolInfo;
+  if (!record(metadata) || Object.keys(metadata).sort().join(',') !== ['projectRoot', 'textDocumentEncoding', 'toolInfo', 'version'].sort().join(',')
+    || metadata.version !== 0 || metadata.projectRoot !== '' || metadata.textDocumentEncoding !== 'UTF8'
+    || !record(tool) || Object.keys(tool).sort().join(',') !== ['arguments', 'name', 'version'].sort().join(',')
+    || tool.name !== 'baton-atlas' || tool.version !== '0.1.0' || !Array.isArray(tool.arguments) || tool.arguments.some((item) => typeof item !== 'string')) return false;
+  if (new Set(value.documents.map((document) => document?.relativePath)).size !== value.documents.length) return false;
+  for (const document of value.documents) {
+    if (!record(document) || Object.keys(document).sort().join(',') !== ['language', 'occurrences', 'relativePath', 'symbols'].sort().join(',')
+      || typeof document.relativePath !== 'string' || document.relativePath.length === 0 || typeof document.language !== 'string' || document.language.length === 0
+      || !Array.isArray(document.occurrences) || !Array.isArray(document.symbols)) return false;
+    for (const occurrence of document.occurrences) if (!record(occurrence) || Object.keys(occurrence).sort().join(',') !== ['range', 'symbol', 'symbolRoles'].sort().join(',')
+      || !Array.isArray(occurrence.range) || occurrence.range.length !== 4 || occurrence.range.some((item) => !Number.isSafeInteger(item) || item < 0)
+      || typeof occurrence.symbol !== 'string' || occurrence.symbol.length === 0 || !Number.isSafeInteger(occurrence.symbolRoles) || occurrence.symbolRoles < 0) return false;
+    for (const symbol of document.symbols) if (!record(symbol) || Object.keys(symbol).sort().join(',') !== ['documentation', 'relationships', 'symbol'].sort().join(',')
+      || typeof symbol.symbol !== 'string' || symbol.symbol.length === 0 || !Array.isArray(symbol.documentation) || !Array.isArray(symbol.relationships)) return false;
+  }
+  return value.externalSymbols.every((symbol) => record(symbol) && typeof symbol.symbol === 'string' && Array.isArray(symbol.documentation) && Array.isArray(symbol.relationships));
+}
 
 export class AtlasCodeIndex {
   constructor(opts = {}) {
@@ -219,11 +259,33 @@ export class AtlasCodeIndex {
       limitations: [`overlay recomputed per query`, `hard result ceiling ${this.maxResults}`, 'SCIP JSON interchange only; no live LSP/protobuf', 'no semantic retrieval', 'no CPG/IR/semantic merge'],
     });
   }
+  _readArtifact(path, expectedDigest, expectedBytes = null) {
+    let stat; let bytes;
+    try {
+      stat = lstatSync(path);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > this.maxArtifactBytes || (stat.mode & 0o777) !== 0o600
+        || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) throw new Error('unsafe artifact file');
+      bytes = readSourceBounded(path, this.maxArtifactBytes);
+    } catch (cause) { const error = typed('Atlas content-addressed artifact is unavailable or unsafe', 'artifact_integrity'); error.cause = cause; throw error; }
+    if (bytes === null || bytes.length !== stat.size || sha(bytes) !== expectedDigest || (expectedBytes !== null && !bytes.equals(expectedBytes))) throw typed('Atlas content-addressed artifact digest mismatch', 'artifact_integrity');
+    return bytes;
+  }
   _write(root, value) {
     const serialized = `${stable(value)}\n`; const digest = sha(serialized); const path = join(root, `${digest}.json`);
     if (Buffer.byteLength(serialized) > this.maxArtifactBytes) throw typed('Atlas artifact exceeded deployment ceiling', 'artifact_too_large');
-    if (!existsSync(path)) { try { writeFileSync(path, serialized, { encoding: 'utf8', mode: 0o600, flag: 'wx' }); } catch (error) { if (error?.code !== 'EEXIST') throw error; } }
+    try { writeFileSync(path, serialized, { encoding: 'utf8', mode: 0o600, flag: 'wx' }); }
+    catch (error) { if (error?.code !== 'EEXIST') throw error; }
+    this._readArtifact(path, digest, Buffer.from(serialized));
     return { digest, path, bytes: Buffer.byteLength(serialized) };
+  }
+  _loadScipArtifact(ref) {
+    const primary = scipPrimaryRef([ref]); const path = join(this.resultRoot, `${primary.digest}.json`);
+    if (ref.path !== undefined && resolve(ref.path) !== resolve(path)) throw typed('SCIP primary artifact path is invalid', 'scip_primary_ref_invalid');
+    const bytes = this._readArtifact(path, primary.digest);
+    if (bytes.length !== primary.bytes) throw typed('SCIP primary artifact byte count diverged', 'artifact_integrity');
+    let value; try { value = JSON.parse(bytes.toString('utf8')); } catch (cause) { const error = typed('SCIP primary artifact JSON is invalid', 'artifact_integrity'); error.cause = cause; throw error; }
+    if (!validScip(value)) throw typed('SCIP primary artifact schema is invalid', 'artifact_integrity');
+    return Object.freeze({ primary, value });
   }
   _load(epoch) {
     if (typeof epoch !== 'string' || !/^[a-f0-9]{64}$/.test(epoch)) throw typed('valid Atlas indexEpoch required', 'invalid_epoch');
@@ -244,15 +306,16 @@ export class AtlasCodeIndex {
     if (!found) throw typed(`unknown Atlas epoch ${epoch}`, 'unknown_epoch');
     return found;
   }
-  _result(op, full, ctx, started, provenance, kind = 'atlas_results', extraRefs = []) {
+  _result(op, full, ctx, started, provenance, kind = 'atlas_results', extraRefs = [], analysisStatus = null) {
     const complete = { ...full, op, provenance };
     const artifact = this._write(this.resultRoot, complete); const items = Array.isArray(full.items) ? full.items : [full];
     const payload = budgetPayload(items, ctx.budgetTokens); const truncated = payload.length < items.length;
     const wallMs = Math.max(0, this.now() - started);
+    const status = analysisStatus === 'partial' ? 'partial' : truncated ? 'needs_resume' : 'ok';
     const result = Object.freeze({
-      op, status: truncated ? 'needs_resume' : 'ok', summary: full.summary, payload,
+      op, status, summary: full.summary, payload,
       refs: [{ handle: `art:sha256:${artifact.digest}`, kind, digest: artifact.digest, bytes: artifact.bytes, mediaType: 'application/vnd.baton.atlas-index+json', path: artifact.path }, ...extraRefs],
-      ...(truncated ? { cursor: `atlas:${artifact.digest}:${payload.length}` } : {}),
+      ...(status === 'needs_resume' ? { cursor: `atlas:${artifact.digest}:${payload.length}` } : {}),
       cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), wall_ms: wallMs, usd: 0, underlying: EXTRACTOR_VERSION },
       provenance: { tool: EXTRACTOR_VERSION, deterministic: true, artifactDigest: artifact.digest, ...provenance },
     });
@@ -274,7 +337,7 @@ export class AtlasCodeIndex {
     }
     const base = this._load(args.indexEpoch); const view = overlay(base, ctx.worktreeRoot, this, ctx);
     const provenance = { index_epoch: base.epoch, overlay_applied: view.applied, overlay_digest: view.digest, overlay_changed: view.changed, overlay_added: view.added, overlay_deleted: view.deleted, staleness: view.applied ? 'base_plus_worktree_overlay' : 'base_snapshot_only', effective_files: view.files.length };
-    let items = []; let summary = ''; let extraRefs = []; let resultKind = 'atlas_results';
+    let items = []; let summary = ''; let extraRefs = []; let resultKind = 'atlas_results'; let analysisStatus = null;
     if (op === 'search.lexical') {
       if (typeof args.query !== 'string' || !args.query) throw typed('lexical query required', 'invalid_query');
       const needle = args.caseSensitive ? args.query : args.query.toLowerCase();
@@ -317,13 +380,23 @@ export class AtlasCodeIndex {
       const scipArtifact = this._write(this.resultRoot, scip);
       extraRefs = [{ handle: `art:sha256:${scipArtifact.digest}`, kind: 'scip_json', digest: scipArtifact.digest, bytes: scipArtifact.bytes, mediaType: 'application/scip+json', path: scipArtifact.path }];
       items = documents.map((document) => ({ relativePath: document.relativePath, language: document.language, occurrences: document.occurrences.length, symbols: document.symbols.length }));
-      summary = `SCIP JSON interchange for ${documents.length} documents`; resultKind = 'scip_export_results';
+      const parseErrors = { files: view.files.filter((file) => file.parseErrors.length > 0).length, total: view.files.reduce((sum, file) => sum + file.parseErrors.length, 0) };
+      provenance.parseErrors = parseErrors; provenance.primaryRef = scipPrimaryRef(extraRefs);
+      summary = `SCIP JSON interchange for ${documents.length} documents${parseErrors.total > 0 ? `; ${parseErrors.total} parse errors in ${parseErrors.files} files` : ''}`; resultKind = 'scip_export_results'; analysisStatus = parseErrors.total > 0 ? 'partial' : null;
     }
     checkAbort(ctx);
     if (items.length > this.maxResults) throw typed(`Atlas result ceiling ${this.maxResults} exceeded`, 'result_too_large');
-    return this._result(op, { schemaVersion: 1, summary, items }, ctx, started, provenance, resultKind, extraRefs);
+    return this._result(op, { schemaVersion: 1, summary, items }, ctx, started, provenance, resultKind, extraRefs, analysisStatus);
   }
   async reverify(claim, op, args, ctx) {
+    if (op === 'scip.export') {
+      const claimedPrimary = scipPrimaryRef(claim?.refs); this._loadScipArtifact(claimedPrimary);
+      const rerun = await this.invoke(op, args, ctx); const primaryRef = scipPrimaryRef(rerun.refs); this._loadScipArtifact(primaryRef);
+      const resultProjection = projectResult(rerun); const claimedProjection = projectResult(claim); const resultProjectionDigest = sha(stable(resultProjection));
+      const ok = claimedProjection !== null && stable(claimedProjection) === stable(resultProjection)
+        && stable(claim?.provenance?.primaryRef) === stable(claimedPrimary) && stable(rerun.provenance?.primaryRef) === stable(primaryRef);
+      return Object.freeze({ ok, primaryRef, resultProjection, resultProjectionDigest, observedDigest: rerun.provenance.artifactDigest });
+    }
     const rerun = await this.invoke(op, args, ctx);
     return Object.freeze({ ok: rerun.provenance.artifactDigest === claim?.provenance?.artifactDigest, observedDigest: rerun.provenance.artifactDigest });
   }

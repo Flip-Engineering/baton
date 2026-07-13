@@ -20,6 +20,7 @@ import { RuntimeIsolation } from './runtime-isolation.mjs';
 import { CoordinationStore } from './coordination-store.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
 import { CapabilityRegistry } from './capability-registry.mjs';
+import { AtlasRepresentationProducer } from './atlas-representation-producer.mjs';
 import { AdvisoryFeedRegistry } from './advisory-feed-registry.mjs';
 import { ProviderPollSupervisor } from './provider-poll-supervisor.mjs';
 import { ProviderProcessingSupervisor } from './provider-processing-supervisor.mjs';
@@ -79,6 +80,7 @@ export { AtlasRepresentationReview } from './atlas-representation-review.mjs';
 export { AtlasEGraphEvaluation } from './atlas-egraph-evaluation.mjs';
 export { AtlasBehaviorFingerprint } from './atlas-behavior-fingerprint.mjs';
 export { AtlasCodeIndex } from './atlas-index.mjs';
+export { AtlasRepresentationProducer } from './atlas-representation-producer.mjs';
 export { CairnRunScorecard } from './cairn-run-scorecard.mjs';
 export { CartographerQuartermaster } from './cartographer-quartermaster.mjs';
 export { NpmProposalResolver } from './npm-proposal-resolver.mjs';
@@ -355,6 +357,7 @@ function refereeFn(task, result, opts) {
  *          routeLearningPolicy?:{mode:'round-robin'|'adaptive'|'auto',halfLifeMs:number,explorationConstant:number,seedDiscount:number,minSamplesForAdaptive:number,defaultPriorSuccessRate:number},
  *          sessionRecoveryPolicy?:{maxSessions:number,maxStateRows:number,timeoutMs:number},
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
+ *          representationProduction?:{policy:object,artifactRoot:string,authorize:Function,resolveEnvironment:Function},
  *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
  *          providerGovernance?:object,
@@ -370,6 +373,12 @@ export function createDriver(opts) {
     ? null
     : normalizeProviderGovernancePolicy(opts.providerGovernance, Object.keys(opts.adapters ?? {}));
   const deploymentRepoId = opts.repoId ?? 'local';
+  const representationProduction = opts.representationProduction;
+  if (representationProduction !== undefined
+    && (!representationProduction || Object.keys(representationProduction).sort().join(',') !== ['artifactRoot', 'authorize', 'policy', 'resolveEnvironment'].sort().join(',')
+      || typeof opts.repoId !== 'string' || representationProduction.policy?.repoId !== opts.repoId)) {
+    throw new TypeError('representationProduction must be one closed deployment-repository configuration');
+  }
   const worktreeCapacityPolicy = opts.worktreeCapacity === undefined ? null : normalizeWorktreeCapacityPolicy(opts.worktreeCapacity);
   if (opts.worktreeCapacityObserve !== undefined && typeof opts.worktreeCapacityObserve !== 'function') throw new TypeError('worktreeCapacityObserve must be a function');
   if (opts.worktreeCapacityEstimate !== undefined && typeof opts.worktreeCapacityEstimate !== 'function') throw new TypeError('worktreeCapacityEstimate must be a function');
@@ -438,18 +447,27 @@ export function createDriver(opts) {
     advisoryPollReverify: (proof) => advisoryFeeds.reverifyPollSync(proof),
     ...(providerProcessingPolicy ? { providerAttemptPolicy: providerProcessingPolicy } : {}),
     ...(routeLearningPolicy ? { routePolicy: routeLearningPolicy } : {}),
+    ...(representationProduction ? { representationPolicy: representationProduction.policy } : {}),
   });
   if (opts.coordination && advisoryFeedCards.length > 0) {
     if (typeof coordination.advisoryFeedCards !== 'function' || canonicalDigest(coordination.advisoryFeedCards()) !== canonicalDigest(advisoryFeedCards)) throw new TypeError('custom coordination store disagrees with deployment advisory feed cards');
   }
   if (opts.coordination && providerProcessingPolicy && (typeof coordination.providerAttemptPolicy !== 'function' || canonicalDigest(coordination.providerAttemptPolicy()) !== canonicalDigest(providerProcessingPolicy))) throw new TypeError('custom coordination store disagrees with deployment provider attempt policy');
   if (opts.coordination && routeLearningPolicy && (typeof coordination.routePolicy !== 'function' || typeof coordination.routeObservations !== 'function' || canonicalDigest(coordination.routePolicy()) !== canonicalDigest(routeLearningPolicy))) throw new TypeError('custom coordination store disagrees with deployment route learning policy');
+  if (opts.coordination && representationProduction && (typeof coordination.representationPolicy !== 'function' || canonicalDigest(coordination.representationPolicy()) !== canonicalDigest(representationProduction.policy))) throw new TypeError('custom coordination store disagrees with deployment representation policy');
   let writerLease = null;
   try {
   writerLease = coordination.claimWriterLease();
   const driverDrainIdempotencyKey = `driver:drain:${canonicalDigest({ repoId: deploymentRepoId, writerLeaseToken: writerLease.token })}`;
   if (routeLearningPolicy) router.hydrate(coordination.routeObservations());
   const configuredCapabilities = { ...(opts.capabilities ?? {}) };
+  let representationProducer = null;
+  if (representationProduction !== undefined) {
+    if (Object.hasOwn(configuredCapabilities, 'atlas-representation-producer') || Object.hasOwn(opts.capabilityFactories ?? {}, 'atlas-representation-producer')) throw new TypeError('duplicate capability registration: atlas-representation-producer');
+    const config = representationProduction;
+    representationProducer = new AtlasRepresentationProducer({ coordination, ...config });
+    configuredCapabilities['atlas-representation-producer'] = representationProducer;
+  }
   for (const [name, factory] of Object.entries(opts.capabilityFactories ?? {})) {
     if (Object.hasOwn(configuredCapabilities, name)) throw new TypeError(`duplicate capability registration: ${name}`);
     if (typeof factory !== 'function') throw new TypeError(`capability factory must be a function: ${name}`);
@@ -474,9 +492,10 @@ export function createDriver(opts) {
     idempotencyRoot: join(opts.logDir, 'capability-idempotency'),
     record: (event) => {
       const logged = log.append({ worker: 'hub-capability', harness: 'baton', turnEpoch: 0, actor: event.actor, kind: event.kind, payload: Object.fromEntries(Object.entries(event).filter(([key]) => !['kind', 'actor'].includes(key))) });
-      coordination.mapOperationalEvent(logged, { actor: event.actor, key: `evidence:${logged.worker}:${logged.seq}` });
+      return coordination.mapOperationalEvent(logged, { actor: event.actor, key: `evidence:${logged.worker}:${logged.seq}` });
     },
   });
+  representationProducer?.bindRegistry(capabilities);
   let providerReconciliation;
   if (opts.providerReconciliation !== undefined) {
     if (!opts.providerReconciliation || Object.keys(opts.providerReconciliation).sort().join(',') !== ['budgetTokens', 'indexAuthority'].sort().join(',')

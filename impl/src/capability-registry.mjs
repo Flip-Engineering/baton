@@ -91,10 +91,22 @@ export class CapabilityRegistry {
       this.entries.set(name, { capability, context, card: Object.freeze(enrichedCard) });
     }
   }
-  _record(event) {
+  _record(event, capture = null) {
     if (this.recordFailure) throw this.recordFailure;
     if (!this.record) return;
-    try { this.record(event); }
+    try {
+      const receipt = this.record(event);
+      const evidence = receipt?.evidence;
+      if (capture && Number.isSafeInteger(evidence?.coordinationSeq) && evidence.coordinationSeq > 0
+        && typeof evidence.kind === 'string' && typeof evidence.worker === 'string'
+        && Number.isSafeInteger(evidence.workerSeq) && typeof evidence.digest === 'string') {
+        capture.push(Object.freeze({
+          coordinationSeq: evidence.coordinationSeq, kind: evidence.kind, worker: evidence.worker,
+          workerSeq: evidence.workerSeq, digest: evidence.digest, ts: evidence.ts,
+        }));
+      }
+      return receipt;
+    }
     catch (cause) {
       this.recordFailure = typed('capability provenance sink unavailable; restart and reconcile before further capability use', 'capability_record_unavailable');
       this.recordFailure.cause = cause;
@@ -199,23 +211,34 @@ export class CapabilityRegistry {
       this.idempotencyMemory.set(binding.identityDigest, Object.freeze(json(row))); return this.idempotencyMemory.get(binding.identityDigest);
     } catch (error) { return this._poisonIdempotency(error); }
   }
-  _idempotencyConflict(binding, invocationId, actor) {
+  _idempotencyConflict(binding, invocationId, actor, capture = null) {
     const error = typed('capability idempotency identity is already bound to a different request', 'capability_idempotency_conflict');
-    this._record({ kind: 'capability.op.refused', actor, invocationId, action: binding.action, capability: binding.capability, op: binding.op, code: error.code, ...this._idempotencyMetadata(binding) });
+    this._record({ kind: 'capability.op.refused', actor, invocationId, action: binding.action, capability: binding.capability, op: binding.op, code: error.code, ...this._idempotencyMetadata(binding) }, capture);
     throw error;
   }
-  _replayIdempotency(binding, existing, op, safe, invocationId) {
-    if (existing.requestDigest !== binding.requestDigest) return this._idempotencyConflict(binding, invocationId, safe.actor);
+  _recordRecoveredCompletion(binding, invocationId, actor, result, capture) {
+    if (capture === null) return;
+    this._record({
+      kind: 'capability.op.completed', actor, invocationId, action: binding.action,
+      capability: binding.capability, op: binding.op, status: result.status, cost: result.cost,
+      refs: result.refs.map((ref) => Object.fromEntries(Object.entries(ref).filter(([key]) => ['kind', 'handle', 'digest', 'bytes'].includes(key)))).slice(0, 256),
+      digests: result.refs.map((ref) => ref.digest).filter((value) => typeof value === 'string').slice(0, 256),
+      resultDigest: digest(result), recoveredFromIdempotency: true, ...this._idempotencyMetadata(binding),
+    }, capture);
+  }
+  _replayIdempotency(binding, existing, op, safe, invocationId, capture = null) {
+    if (existing.requestDigest !== binding.requestDigest) return this._idempotencyConflict(binding, invocationId, safe.actor, capture);
     if (existing.state === 'pending') {
       const error = typed('capability idempotency identity has an incomplete prior invocation requiring reconciliation', 'capability_idempotency_incomplete');
-      this._record({ kind: 'capability.op.refused', actor: safe.actor, invocationId, action: binding.action, capability: binding.capability, op: binding.op, code: error.code, ...this._idempotencyMetadata(binding) }); throw error;
+      this._record({ kind: 'capability.op.refused', actor: safe.actor, invocationId, action: binding.action, capability: binding.capability, op: binding.op, code: error.code, ...this._idempotencyMetadata(binding) }, capture); throw error;
     }
     if (existing.state === 'refused') {
-      this._record({ kind: 'capability.op.replayed', actor: safe.actor, invocationId, action: binding.action, capability: binding.capability, op: binding.op, terminal: 'refused', code: existing.code, ...this._idempotencyMetadata(binding) });
+      this._record({ kind: 'capability.op.replayed', actor: safe.actor, invocationId, action: binding.action, capability: binding.capability, op: binding.op, terminal: 'refused', code: existing.code, ...this._idempotencyMetadata(binding) }, capture);
       throw typed('capability invocation previously refused under this idempotency identity', existing.code);
     }
     const result = this._validate(existing.result, op, safe.budgetTokens);
-    this._record({ kind: 'capability.op.replayed', actor: safe.actor, invocationId, action: binding.action, capability: binding.capability, op: binding.op, terminal: 'completed', status: result.status, resultDigest: existing.resultDigest, ...this._idempotencyMetadata(binding) });
+    this._recordRecoveredCompletion(binding, invocationId, safe.actor, result, capture);
+    this._record({ kind: 'capability.op.replayed', actor: safe.actor, invocationId, action: binding.action, capability: binding.capability, op: binding.op, terminal: 'completed', status: result.status, resultDigest: existing.resultDigest, ...this._idempotencyMetadata(binding) }, capture);
     return result;
   }
   _validate(result, op, budgetTokens) {
@@ -228,31 +251,63 @@ export class CapabilityRegistry {
     if (Buffer.byteLength(JSON.stringify(result.payload)) > budgetTokens * 4) throw typed('capability payload exceeded invocation budget', 'capability_result_oversize');
     return Object.freeze(json(result));
   }
-  async _run(action, name, op, input, fn, ctx) {
+  async _run(action, name, op, input, fn, ctx, options = {}) {
     const invocationId = randomUUID(); const actor = this._actor(ctx);
+    const capture = options.attest === true ? [] : null;
+    const publish = (result) => options.attest === true
+      ? Object.freeze({ result, evidence: Object.freeze(capture.map((item) => Object.freeze({ ...item }))) })
+      : result;
     const auditName = typeof name === 'string' && name.length <= 128 ? name : '[invalid]';
     const auditOp = typeof op === 'string' && op.length <= 256 ? op : '[invalid]';
     let safe;
     try {
       safe = this._ctx(ctx);
     } catch (error) {
-      this._record({ kind: 'capability.op.refused', actor, invocationId, action, capability: auditName, op: auditOp, code: typeof error?.code === 'string' && error.code.length <= 128 ? error.code : 'capability_failed' });
+      this._record({ kind: 'capability.op.refused', actor, invocationId, action, capability: auditName, op: auditOp, code: typeof error?.code === 'string' && error.code.length <= 128 ? error.code : 'capability_failed' }, capture);
       throw error;
     }
     const binding = this._idempotencyBinding(action, auditName, auditOp, input, safe);
     if (binding) {
       const inflight = this.idempotencyInflight.get(binding.identityDigest);
       if (inflight) {
-        if (inflight.requestDigest !== binding.requestDigest) return this._idempotencyConflict(binding, invocationId, safe.actor);
+        if (inflight.requestDigest !== binding.requestDigest) return this._idempotencyConflict(binding, invocationId, safe.actor, capture);
         const result = await inflight.promise;
-        this._record({ kind: 'capability.op.replayed', actor: safe.actor, invocationId, action, capability: auditName, op: auditOp, terminal: 'completed', status: result.status, resultDigest: digest(result), ...this._idempotencyMetadata(binding) }); return result;
+        this._recordRecoveredCompletion(binding, invocationId, safe.actor, result, capture);
+        this._record({ kind: 'capability.op.replayed', actor: safe.actor, invocationId, action, capability: auditName, op: auditOp, terminal: 'completed', status: result.status, resultDigest: digest(result), ...this._idempotencyMetadata(binding) }, capture); return publish(result);
       }
-      const existing = this._readIdempotency(binding); if (existing) return this._replayIdempotency(binding, existing, op, safe, invocationId);
+      const existing = this._readIdempotency(binding);
+      if (existing?.state === 'pending' && action === 'invoke') {
+        const entry = this._entry(name);
+        if (typeof entry.capability.reconcile === 'function') {
+          const reconciled = await entry.capability.reconcile(op, json(input.args ?? {}), this._capabilityCtx(entry, { action: 'reconcile', op, args: input.args ?? {} }, safe));
+          if (reconciled !== null && reconciled !== undefined) {
+            const result = this._validate(reconciled, op, safe.budgetTokens); const resultDigest = digest(result);
+            this._persistIdempotency(binding, { state: 'completed', invocationId: existing.invocationId, resultDigest, result: json(result), reconciledBy: invocationId });
+            this._record({ kind: 'capability.op.replayed', actor: safe.actor, invocationId, action, capability: auditName, op: auditOp, terminal: 'completed', status: result.status, resultDigest, reconciled: true, ...this._idempotencyMetadata(binding) }, capture);
+            return publish(result);
+          }
+        }
+      }
+      if (existing?.state === 'completed' && action === 'invoke') {
+        const entry = this._entry(name);
+        if (typeof entry.capability.replay === 'function') {
+          try {
+            const replayed = await entry.capability.replay(op, json(existing.result), json(input.args ?? {}), this._capabilityCtx(entry, { action: 'replay', op, claim: existing.result, args: input.args ?? {} }, safe));
+            const checked = this._validate(replayed, op, safe.budgetTokens);
+            if (digest(checked) !== existing.resultDigest) throw typed('capability completed replay diverged from its durable result', 'capability_replay_diverged');
+          } catch (error) {
+            const code = typeof error?.code === 'string' && error.code.length <= 128 ? error.code : 'capability_replay_failed';
+            this._record({ kind: 'capability.op.refused', actor: safe.actor, invocationId, action, capability: auditName, op: auditOp, code, replayIntegrity: true, ...this._idempotencyMetadata(binding) }, capture);
+            throw error;
+          }
+        }
+      }
+      if (existing) return publish(this._replayIdempotency(binding, existing, op, safe, invocationId, capture));
     }
     const execute = async () => {
       let terminalPersisted = false;
       if (binding) this._persistIdempotency(binding, { state: 'pending', invocationId }, { initial: true });
-      this._record({ kind: 'capability.op.started', actor, invocationId, action, capability: auditName, op: auditOp, ...this._idempotencyMetadata(binding) });
+      this._record({ kind: 'capability.op.started', actor, invocationId, action, capability: auditName, op: auditOp, ...this._idempotencyMetadata(binding) }, capture);
       try {
         const result = this._validate(await fn(safe), op, safe.budgetTokens); const resultDigest = digest(result);
         if (binding) { this._persistIdempotency(binding, { state: 'completed', invocationId, resultDigest, result: json(result) }); terminalPersisted = true; }
@@ -262,19 +317,19 @@ export class CapabilityRegistry {
           refs: result.refs.map((ref) => Object.fromEntries(Object.entries(ref).filter(([key]) => ['kind', 'handle', 'digest', 'bytes'].includes(key)))).slice(0, 256),
           digests: result.refs.map((ref) => ref.digest).filter((value) => typeof value === 'string').slice(0, 256),
           resultDigest, ...this._idempotencyMetadata(binding),
-        });
+        }, capture);
         return result;
       } catch (error) {
         if (!terminalPersisted && error?.code !== 'capability_record_unavailable' && error?.code !== 'capability_idempotency_unavailable') {
           const code = typeof error?.code === 'string' && error.code.length <= 128 ? error.code : 'capability_failed';
           if (binding) this._persistIdempotency(binding, { state: 'refused', invocationId, code });
-          this._record({ kind: 'capability.op.refused', actor, invocationId, action, capability: auditName, op: auditOp, code, ...this._idempotencyMetadata(binding) });
+          this._record({ kind: 'capability.op.refused', actor, invocationId, action, capability: auditName, op: auditOp, code, ...this._idempotencyMetadata(binding) }, capture);
         }
         throw error;
       }
     };
     const promise = execute(); if (binding) this.idempotencyInflight.set(binding.identityDigest, { requestDigest: binding.requestDigest, promise });
-    try { return await promise; }
+    try { return publish(await promise); }
     finally { if (binding && this.idempotencyInflight.get(binding.identityDigest)?.promise === promise) this.idempotencyInflight.delete(binding.identityDigest); }
   }
   async invoke(name, op, args, ctx) {
@@ -283,6 +338,13 @@ export class CapabilityRegistry {
       if (!record(args ?? {}) || !jsonValue(args ?? {}) || Buffer.byteLength(JSON.stringify(args ?? {})) > this.maxEnvelopeBytes) throw typed('capability arguments must be a bounded JSON object', 'capability_args_invalid');
       return entry.capability.invoke(op, json(args ?? {}), this._capabilityCtx(entry, { action: 'invoke', op, args: args ?? {} }, safe));
     }, ctx);
+  }
+  async invokeAttested(name, op, args, ctx) {
+    return this._run('invoke', name, op, { args }, (safe) => {
+      const entry = this._entry(name); this._op(entry, op);
+      if (!record(args ?? {}) || !jsonValue(args ?? {}) || Buffer.byteLength(JSON.stringify(args ?? {})) > this.maxEnvelopeBytes) throw typed('capability arguments must be a bounded JSON object', 'capability_args_invalid');
+      return entry.capability.invoke(op, json(args ?? {}), this._capabilityCtx(entry, { action: 'invoke', op, args: args ?? {} }, safe));
+    }, ctx, { attest: true });
   }
   async resume(name, op, ref, cursor, ctx) {
     return this._run('resume', name, op, { ref, cursor }, (safe) => {
@@ -301,5 +363,15 @@ export class CapabilityRegistry {
       if (!record(result) || typeof result.ok !== 'boolean' || !jsonValue(result)) throw typed('capability returned an invalid reverify result', 'capability_result_invalid');
       return { op, status: result.ok ? 'ok' : 'diverged', summary: result.ok ? 'capability evidence reverified' : 'capability evidence diverged', payload: [result], refs: [], cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(result)) / 4), wall_ms: 0, usd: 0, underlying: `capability:${name}` }, provenance: { reverified: true, mergeAuthority: false, verificationAuthority: false } };
     }, ctx);
+  }
+  async reverifyAttested(name, op, claim, args, ctx) {
+    return this._run('reverify', name, op, { claim, args }, async (safe) => {
+      const entry = this._entry(name); this._op(entry, op);
+      if (typeof entry.capability.reverify !== 'function') throw typed('capability does not support reverify', 'capability_reverify_unavailable');
+      if (!record(claim) || !jsonValue(claim) || Buffer.byteLength(JSON.stringify(claim)) > this.maxEnvelopeBytes || !record(args ?? {}) || !jsonValue(args ?? {}) || Buffer.byteLength(JSON.stringify(args ?? {})) > this.maxEnvelopeBytes) throw typed('capability reverify input invalid', 'capability_reverify_invalid');
+      const result = await entry.capability.reverify(json(claim), op, json(args ?? {}), this._capabilityCtx(entry, { action: 'reverify', op, claim, args: args ?? {} }, safe));
+      if (!record(result) || typeof result.ok !== 'boolean' || !jsonValue(result)) throw typed('capability returned an invalid reverify result', 'capability_result_invalid');
+      return { op, status: result.ok ? 'ok' : 'diverged', summary: result.ok ? 'capability evidence reverified' : 'capability evidence diverged', payload: [result], refs: [], cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(result)) / 4), wall_ms: 0, usd: 0, underlying: `capability:${name}` }, provenance: { reverified: true, mergeAuthority: false, verificationAuthority: false } };
+    }, ctx, { attest: true });
   }
 }

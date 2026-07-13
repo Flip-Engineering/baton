@@ -153,6 +153,7 @@ const COORDINATION_MUTATORS = new Set([
   'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination', 'recordReuseDecision',
   'recordReuseRiskGuard', 'recordReuseTtlInvalidation', 'activateReusePolicy', 'recordProviderDelivery', 'recordProviderGreenCompletion', 'recordProviderAdverseCompletion', 'recordProviderSourceReconciliation', 'recordProviderProcessingDeferral',
   'admitFleetDrain', 'recordFleetDrainDisposition', 'completeFleetDrain',
+  'recordRepresentationProduction',
 ]);
 
 const DEFAULT_DRAIN_POLICY = Object.freeze({ maxWorkers: 1024, maxInteractions: 15_000, timeoutMs: 60_000, pollMs: 10 });

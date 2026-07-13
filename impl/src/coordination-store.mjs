@@ -25,6 +25,20 @@ const PROVIDER_FAILURE_CODES = new Set(['provider_index_changed', 'reuse_policy_
 const ACCEPTANCE_REVOCATION_EVIDENCE_KINDS = new Set(['resource.provider_telemetry_invalid', 'resource.provider_governance_exceeded']);
 const ARTIFACT_LIFECYCLE_FIELDS = new Set(['createdEvent', 'version', 'supersededBy', 'supersededEvent', 'acceptanceInvalidation']);
 const ACCEPTANCE_REVOCATION_LIMITS = Object.freeze({ maxStateRows: 1_000_000, maxTargets: 100_000, maxReferences: 1_000_000, maxPayloadBytes: 16 * 1024 * 1024 });
+const REPRESENTATION_POLICY_FIELDS = [
+  'maxArgumentBytes', 'maxEvidenceRefs', 'maxGraphBatchBytes', 'maxReceiptBytes',
+  'maxResultBytes', 'maxResultItems', 'maxResultRefs', 'maxSourceRefBytes', 'maxSourceRefs', 'repoId', 'schemaVersion',
+];
+const REPRESENTATION_PRODUCERS = Object.freeze({
+  structural_delta: Object.freeze({ capability: 'atlas-structural', version: '0.1.0', operation: 'diff.structural', artifactKind: 'structural_delta', mediaType: 'application/vnd.baton.atlas-structural+json', rung: 'R1', representationType: 'ast_cst_structural_delta', body: 'Derived Atlas structural delta representation', environmentKind: 'tree_delta' }),
+  symbol_snapshot: Object.freeze({ capability: 'atlas-index', version: '0.1.0', operation: 'scip.export', artifactKind: 'scip_json', mediaType: 'application/scip+json', rung: 'R2', representationType: 'scip_symbol_snapshot', body: 'Derived Atlas SCIP symbol snapshot representation', environmentKind: 'index_snapshot' }),
+  cpg_semantic_delta: Object.freeze({ capability: 'atlas-cpg-delta', version: '0.1.0', operation: 'cpg.delta', artifactKind: 'cpg_delta', mediaType: 'application/vnd.baton.atlas-cpg-delta+json', rung: 'R3', representationType: 'bounded_cpg_semantic_delta', body: 'Derived Atlas bounded binding-aware reachability delta representation; not behavioral semantics or proof', environmentKind: 'tree_delta' }),
+});
+const REPRESENTATION_AUTHORITY = Object.freeze({
+  approval: false, deployment: false, edit: false, integration: false, merge: false,
+  policyAuthoring: false, proof: false, publication: false, route: false,
+  verification: false, workerControl: false,
+});
 
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
 function digest(value) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
@@ -103,6 +117,17 @@ function validRoutePolicy(policy) {
     && Number.isSafeInteger(policy.minSamplesForAdaptive) && policy.minSamplesForAdaptive > 0 && policy.minSamplesForAdaptive <= 1_000_000
     && Number.isFinite(policy.defaultPriorSuccessRate) && policy.defaultPriorSuccessRate > 0 && policy.defaultPriorSuccessRate < 1;
 }
+function validRepresentationPolicy(policy) {
+  if (!policy || typeof policy !== 'object' || Array.isArray(policy)
+    || Object.keys(policy).sort().join(',') !== [...REPRESENTATION_POLICY_FIELDS].sort().join(',')
+    || policy.schemaVersion !== 1 || !/^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId ?? '')) return false;
+  const numeric = REPRESENTATION_POLICY_FIELDS.filter((field) => !['repoId', 'schemaVersion'].includes(field));
+  if (numeric.some((field) => !Number.isSafeInteger(policy[field]) || policy[field] <= 0)) return false;
+  return policy.maxArgumentBytes <= 16 * 1024 * 1024 && policy.maxSourceRefs <= 256 && policy.maxSourceRefBytes <= 16 * 1024 * 1024
+    && policy.maxEvidenceRefs <= 100_000 && policy.maxReceiptBytes <= 16 * 1024 * 1024
+    && policy.maxGraphBatchBytes <= 16 * 1024 * 1024 && policy.maxResultItems <= 1024
+    && policy.maxResultRefs <= 256 && policy.maxResultBytes <= 16 * 1024 * 1024;
+}
 function validRunId(value) { return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/.test(value); }
 function promotionActor(value) { return value === 'orchestrator' || (typeof value === 'string' && value.startsWith('operator:')); }
 function validEnvRef(envRef) { return envRef && typeof envRef.repoId === 'string' && envRef.repoId.length > 0 && typeof envRef.treeSha === 'string' && /^[A-Fa-f0-9]{4,128}$/.test(envRef.treeSha); }
@@ -170,6 +195,11 @@ export class CoordinationStore {
       if (!validRoutePolicy(opts.routePolicy)) throw new TypeError('route learning policy is invalid');
       this._routePolicy = freeze(clone(opts.routePolicy));
     }
+    this._representationPolicy = null;
+    if (opts.representationPolicy !== undefined) {
+      if (!validRepresentationPolicy(opts.representationPolicy)) throw new TypeError('representation policy is invalid');
+      this._representationPolicy = freeze(clone(opts.representationPolicy));
+    }
     this._resetProjection();
     this._operationalRead = opts.operationalRead ?? null;
     this._writerLease = null;
@@ -182,6 +212,7 @@ export class CoordinationStore {
     this._events = []; this._byKey = new Map(); this._tasks = new Map(); this._runs = new Map(); this._artifacts = new Map();
     this._reuseDecisions = new Map(); this._reuseSubjects = new Map(); this._reuseRiskGuards = new Map(); this._reusePolicyHeads = new Map(); this._reusePolicyTransitions = [];
     this._routeObservations = new Map();
+    this._representations = new Map(); this._representationRequests = new Map();
     this._reuseProviderContributions = new Map(); this._reuseProviderCoordinateContributions = new Map(); this._reuseProviderGuards = new Map();
     this._evidence = new Map(); this._scratchFacts = new Map(); this._scratchClaims = new Map(); this._scratchReads = [];
     this._knowledgeNodes = new Map(); this._knowledgeEdges = new Map(); this._knowledgeNodeHistory = new Map(); this._knowledgeEdgeHistory = new Map(); this._knowledgeReads = []; this._knowledgeRecallAssessments = new Map(); this._contamination = [];
@@ -713,6 +744,272 @@ export class CoordinationStore {
       }
     }
     return freeze({ ...clone(current), status: disposition, receiptSeq: event.seq });
+  }
+
+  _representationFailure(message, code = 'representation_integrity', integrity = false) {
+    throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code);
+  }
+
+  _representationRequest(request, auth, integrity = false, requireLive = true) {
+    const fail = (message, code = 'representation_invalid') => this._representationFailure(message, code, integrity);
+    const idempotencyKey = auth?.key ?? auth?.idempotencyKey;
+    if (!this._representationPolicy) fail('representation production is not deployment configured', 'representation_policy_unavailable');
+    const requestFields = ['environment', 'producerKind', 'repoId', 'runId', 'schemaVersion', 'sourceArguments', 'taskId'];
+    const argumentFields = ['bytes', 'digest'];
+    if (!request || typeof request !== 'object' || Array.isArray(request)
+      || Object.keys(request).sort().join(',') !== requestFields.sort().join(',') || request.schemaVersion !== 1
+      || !boundedText(request.repoId, 256) || !boundedText(request.taskId, 4_096)
+      || (request.runId !== null && !validRunId(request.runId))
+      || !Object.hasOwn(REPRESENTATION_PRODUCERS, request.producerKind)
+      || !request.sourceArguments || typeof request.sourceArguments !== 'object' || Array.isArray(request.sourceArguments)
+      || Object.keys(request.sourceArguments).sort().join(',') !== argumentFields.sort().join(',')
+      || !/^[a-f0-9]{64}$/.test(request.sourceArguments.digest ?? '')
+      || !Number.isSafeInteger(request.sourceArguments.bytes) || request.sourceArguments.bytes <= 0
+      || !boundedText(auth?.actor, 256) || !boundedText(idempotencyKey, 512)) fail('representation production request is malformed');
+    if (request.sourceArguments.bytes > this._representationPolicy.maxArgumentBytes) fail('representation arguments exceeded deployment ceiling', 'representation_oversize');
+    const mapping = REPRESENTATION_PRODUCERS[request.producerKind]; const environment = request.environment;
+    const deltaFields = ['afterOverlayDigest', 'afterTreeSha', 'beforeOverlayDigest', 'beforeTreeSha', 'kind', 'repoId', 'schemaVersion'];
+    const indexFields = ['indexEpoch', 'kind', 'overlayDigest', 'repoId', 'schemaVersion', 'treeSha'];
+    const expectedEnvironmentFields = mapping.environmentKind === 'tree_delta' ? deltaFields : indexFields;
+    if (!environment || typeof environment !== 'object' || Array.isArray(environment)
+      || Object.keys(environment).sort().join(',') !== expectedEnvironmentFields.sort().join(',')
+      || environment.schemaVersion !== 1 || environment.kind !== mapping.environmentKind
+      || environment.repoId !== request.repoId
+      || (mapping.environmentKind === 'tree_delta'
+        ? !/^[a-f0-9]{4,128}$/.test(environment.beforeTreeSha ?? '')
+          || !/^[a-f0-9]{64}$/.test(environment.beforeOverlayDigest ?? '')
+          || !/^[a-f0-9]{4,128}$/.test(environment.afterTreeSha ?? '')
+          || !/^[a-f0-9]{64}$/.test(environment.afterOverlayDigest ?? '')
+        : !/^[a-f0-9]{4,128}$/.test(environment.treeSha ?? '')
+          || !/^[a-f0-9]{64}$/.test(environment.indexEpoch ?? '')
+          || (environment.overlayDigest !== null && !/^[a-f0-9]{64}$/.test(environment.overlayDigest ?? '')))) fail('representation environment identity is malformed');
+    if (request.repoId !== this._representationPolicy.repoId) fail('representation repository disagrees with deployment', 'representation_scope_mismatch');
+    const task = this._tasks.get(request.taskId); const taskNode = this._knowledgeNodes.get(`task:${request.taskId}`);
+    if (!task || !taskNode || task.createdEvent >= (auth.seq ?? this._events.length + 1)
+      || (requireLive && !['working', 'input_required'].includes(task.status))) fail('representation requires an exact live durable task', 'representation_task_unavailable');
+    if ((task.runId ?? null) !== request.runId) fail('representation run membership disagrees with its task', 'representation_scope_mismatch');
+    const policyDigest = canonicalDigest(this._representationPolicy);
+    const requestDigest = canonicalDigest({ actor: auth.actor, idempotencyKey, request, policyDigest });
+    return freeze({ request: clone(request), task, mapping, policyDigest, requestDigest, environmentDigest: canonicalDigest(environment) });
+  }
+
+  _representationEvidence(evidence, requestState, source, event, integrity = false) {
+    const fail = (message, code = 'representation_evidence_invalid') => this._representationFailure(message, code, integrity);
+    const evidenceFields = ['invoke', 'reverify']; const coordinateFields = ['coordinationSeq', 'digest', 'kind', 'ts', 'worker', 'workerSeq'];
+    if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)
+      || Object.keys(evidence).sort().join(',') !== evidenceFields.sort().join(',')) fail('representation evidence shape is invalid');
+    const coordinates = [evidence.invoke, evidence.reverify];
+    if (coordinates.length > this._representationPolicy.maxEvidenceRefs) fail('representation evidence exceeded deployment ceiling', 'representation_oversize');
+    const sources = coordinates.map((coordinate) => {
+      if (!coordinate || typeof coordinate !== 'object' || Array.isArray(coordinate)
+        || Object.keys(coordinate).sort().join(',') !== coordinateFields.sort().join(',')
+        || !Number.isSafeInteger(coordinate.coordinationSeq) || coordinate.coordinationSeq <= 0 || coordinate.coordinationSeq >= event.seq
+        || coordinate.kind !== 'capability.op.completed' || !boundedText(coordinate.worker, 256)
+        || !Number.isSafeInteger(coordinate.workerSeq) || coordinate.workerSeq <= 0 || !/^[a-f0-9]{64}$/.test(coordinate.digest ?? '')) fail('representation evidence coordinate is invalid');
+      const mapped = this._events[coordinate.coordinationSeq - 1]; const authoritative = this._evidence.get(`${coordinate.worker}:${coordinate.workerSeq}`);
+      const operational = mapped?.kind === 'evidence.mapped' ? this._operationalRead?.(coordinate.worker, coordinate.workerSeq) : null;
+      if (!mapped || mapped.seq >= event.seq || canonicalDigest(authoritative) !== canonicalDigest(coordinate)
+        || mapped.payload?.kind !== coordinate.kind || mapped.payload?.digest !== coordinate.digest
+        || !operational || digest(operational) !== coordinate.digest || operational.kind !== 'capability.op.completed'
+        || operational.actor !== event.actor) fail('representation evidence is not authoritative mapped capability evidence');
+      return operational;
+    });
+    if (evidence.invoke.coordinationSeq >= evidence.reverify.coordinationSeq) fail('representation invoke/reverify evidence is temporally incoherent');
+    const [invoked, reverified] = sources; const mapping = requestState.mapping;
+    for (const [row, action] of [[invoked, 'invoke'], [reverified, 'reverify']]) {
+      const acceptedStatus = action === 'invoke' ? new Set(['ok', 'needs_resume']) : new Set(['ok']);
+      const idempotencyKey = `representation:${action}:${canonicalDigest({ requestDigest: requestState.requestDigest })}`;
+      const identityDigest = canonicalDigest({ repoId: requestState.request.repoId, actor: event.actor, idempotencyKey });
+      const requestDigest = canonicalDigest({
+        schemaVersion: 1, repoId: requestState.request.repoId, actor: event.actor, idempotencyKey,
+        action, capability: mapping.capability, op: mapping.operation,
+        inputDigest: row.payload?.inputDigest, budgetTokens: row.payload?.budgetTokens,
+      });
+      if (row.payload?.action !== action || row.payload?.capability !== mapping.capability
+        || row.payload?.op !== mapping.operation || !acceptedStatus.has(row.payload?.status)
+        || row.payload?.repoId !== requestState.request.repoId || row.payload?.idempotencyKey !== idempotencyKey
+        || row.payload?.identityDigest !== identityDigest || row.payload?.requestDigest !== requestDigest
+        || !/^[a-f0-9]{64}$/.test(row.payload?.inputDigest ?? '')
+        || !Number.isSafeInteger(row.payload?.budgetTokens) || row.payload.budgetTokens <= 0) fail('representation evidence capability route or context diverged');
+    }
+    const projectedRef = {
+      kind: source.artifact.kind, handle: source.artifact.handle,
+      digest: source.artifact.digest, bytes: source.artifact.bytes,
+    };
+    const primaryRefs = Array.isArray(invoked.payload.refs)
+      ? invoked.payload.refs.filter((ref) => canonicalDigest(ref) === canonicalDigest(projectedRef))
+      : [];
+    const primaryDigests = Array.isArray(invoked.payload.digests)
+      ? invoked.payload.digests.filter((value) => value === source.artifact.digest)
+      : [];
+    if ((Array.isArray(invoked.payload.refs) && invoked.payload.refs.length > this._representationPolicy.maxSourceRefs)
+      || (Array.isArray(invoked.payload.digests) && invoked.payload.digests.length > this._representationPolicy.maxSourceRefs)) fail('representation source references exceeded deployment ceiling', 'representation_oversize');
+    if (invoked.payload.inputDigest !== requestState.request.sourceArguments.digest
+      || invoked.payload.resultDigest !== source.resultDigest
+      || !Array.isArray(invoked.payload.refs) || primaryRefs.length !== 1
+      || !Array.isArray(invoked.payload.digests) || primaryDigests.length !== 1
+      || reverified.payload.resultDigest !== source.reverifyResultDigest
+      || !Array.isArray(reverified.payload.refs) || reverified.payload.refs.length !== 0) fail('representation source/ref/reverify evidence diverged');
+    return freeze({ invoke: clone(evidence.invoke), reverify: clone(evidence.reverify) });
+  }
+
+  _representationSource(source, requestState, evidence, event, integrity = false) {
+    const fail = (message, code = 'representation_invalid') => this._representationFailure(message, code, integrity);
+    const sourceFields = ['artifact', 'capability', 'operation', 'resultDigest', 'resultProjectionDigest', 'reverifyResultDigest'];
+    const capabilityFields = ['cardDigest', 'name', 'version']; const artifactFields = ['bytes', 'digest', 'handle', 'kind', 'mediaType'];
+    if (!source || typeof source !== 'object' || Array.isArray(source)
+      || Object.keys(source).sort().join(',') !== sourceFields.sort().join(',')
+      || !source.capability || Object.keys(source.capability).sort().join(',') !== capabilityFields.sort().join(',')
+      || source.capability.name !== requestState.mapping.capability || source.capability.version !== requestState.mapping.version
+      || !/^[a-f0-9]{64}$/.test(source.capability.cardDigest ?? '') || source.operation !== requestState.mapping.operation
+      || !source.artifact || Object.keys(source.artifact).sort().join(',') !== artifactFields.sort().join(',')
+      || source.artifact.kind !== requestState.mapping.artifactKind || source.artifact.mediaType !== requestState.mapping.mediaType
+      || !/^[a-f0-9]{64}$/.test(source.artifact.digest ?? '')
+      || source.artifact.handle !== `art:sha256:${source.artifact.digest}`
+      || !Number.isSafeInteger(source.artifact.bytes) || source.artifact.bytes <= 0
+      || [source.resultDigest, source.resultProjectionDigest, source.reverifyResultDigest].some((value) => !/^[a-f0-9]{64}$/.test(value ?? ''))) fail('representation source projection is malformed');
+    if (canonicalBytes(source.artifact) > this._representationPolicy.maxSourceRefBytes) fail('representation source reference exceeded deployment ceiling', 'representation_oversize');
+    this._representationEvidence(evidence, requestState, source, event, integrity);
+    return clone(source);
+  }
+
+  _representationArtifactManifest(id, expected, event, integrity = false) {
+    const fail = (message) => this._representationFailure(message, 'representation_namespace_conflict', integrity);
+    const prior = this._artifacts.get(id); if (!prior) return expected;
+    const created = this._events[prior.createdEvent - 1]; const node = this._knowledgeNodes.get(`artifact:${id}`);
+    const manifest = Object.fromEntries(Object.entries(prior).filter(([key]) => !ARTIFACT_LIFECYCLE_FIELDS.has(key)));
+    const content = Object.fromEntries(Object.entries(manifest).filter(([key]) => key !== 'provenance'));
+    const expectedContent = Object.fromEntries(Object.entries(expected).filter(([key]) => key !== 'provenance'));
+    if (created?.kind !== 'knowledge.representation_produced' || prior.repoId !== expected.repoId
+      || prior.supersededBy !== null || Object.hasOwn(prior, 'acceptanceInvalidation')
+      || !node || node.validTo !== null || canonicalDigest(content) !== canonicalDigest(expectedContent)) fail('reserved representation artifact identity is occupied or non-live');
+    return clone(manifest);
+  }
+
+  _representationGraphTemplate(fields, auth, integrity = false, requireLive = true) {
+    const event = auth; const requestState = this._representationRequest(fields?.request, event, integrity, requireLive);
+    const fail = (message, code = 'representation_invalid') => this._representationFailure(message, code, integrity);
+    const fieldNames = ['evidence', 'request', 'requestDigest', 'source'];
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+      || Object.keys(fields).sort().join(',') !== fieldNames.sort().join(',')
+      || fields.requestDigest !== requestState.requestDigest) fail('representation production fields are open or request-bound incorrectly');
+    const source = this._representationSource(fields.source, requestState, fields.evidence, event, integrity);
+    const mapping = requestState.mapping;
+    const identity = {
+      repoId: fields.request.repoId, taskId: fields.request.taskId, runId: fields.request.runId,
+      producerKind: fields.request.producerKind, rung: mapping.rung, representationType: mapping.representationType,
+      capabilityName: source.capability.name, capabilityVersion: source.capability.version,
+      capabilityCardDigest: source.capability.cardDigest, operation: source.operation,
+      sourceArgumentsDigest: fields.request.sourceArguments.digest, sourceArtifactKind: source.artifact.kind,
+      sourceArtifactDigest: source.artifact.digest, sourceArtifactBytes: source.artifact.bytes,
+      resultProjectionDigest: source.resultProjectionDigest, reverifyResultDigest: source.reverifyResultDigest,
+      environment: clone(fields.request.environment), producerSchemaVersion: 1, policyDigest: requestState.policyDigest,
+    };
+    const identityDigest = canonicalDigest(identity); const representationId = `representation:${identityDigest}`;
+    const receipt = {
+      schemaVersion: 1, kind: 'graph-backed-representation', identityDigest, repoId: fields.request.repoId,
+      taskId: fields.request.taskId, runId: fields.request.runId, grounding: 'derived',
+      producer: { schemaVersion: 1, kind: fields.request.producerKind, rung: mapping.rung, representationType: mapping.representationType, policyDigest: requestState.policyDigest },
+      capability: clone(source.capability), operation: source.operation,
+      sourceArgumentsDigest: fields.request.sourceArguments.digest, sourceArtifact: clone(source.artifact),
+      resultDigest: source.resultDigest, resultProjectionDigest: source.resultProjectionDigest,
+      reverifyResultDigest: source.reverifyResultDigest, environment: clone(fields.request.environment),
+      authority: clone(REPRESENTATION_AUTHORITY),
+    };
+    const receiptSerialized = JSON.stringify(canonical(receipt));
+    const receiptDigest = canonicalDigest(receipt); const receiptRef = {
+      kind: 'representation-receipt', mediaType: 'application/vnd.baton.representation-receipt+json',
+      handle: `art:sha256:${receiptDigest}`, digest: receiptDigest, bytes: Buffer.byteLength(receiptSerialized),
+    };
+    if (receiptRef.bytes > this._representationPolicy.maxReceiptBytes) fail('representation receipt exceeded deployment ceiling', 'representation_oversize');
+    const sourceArtifactId = `representation-source:${canonicalDigest({ repoId: fields.request.repoId, digest: source.artifact.digest })}`;
+    const receiptArtifactId = `representation-receipt:${receiptDigest}`;
+    const provenance = [clone(fields.evidence.invoke), clone(fields.evidence.reverify)];
+    const newSourceArtifact = {
+      id: sourceArtifactId, owner: { kind: 'representation-source', repoId: fields.request.repoId }, repoId: fields.request.repoId,
+      kind: source.artifact.kind, mediaType: source.artifact.mediaType, digest: source.artifact.digest,
+      bytes: source.artifact.bytes, refs: [clone(source.artifact)], accepted: true, provenance,
+    };
+    const sourceArtifact = this._representationArtifactManifest(sourceArtifactId, newSourceArtifact, event, integrity);
+    const receiptArtifact = {
+      id: receiptArtifactId, owner: { kind: 'representation', id: representationId }, repoId: fields.request.repoId,
+      taskId: fields.request.taskId, kind: receiptRef.kind, mediaType: receiptRef.mediaType,
+      digest: receiptRef.digest, bytes: receiptRef.bytes, refs: [{ artifactId: sourceArtifactId }], accepted: true, provenance,
+    };
+    const graphEvidence = [{ coordinationSeq: fields.evidence.invoke.coordinationSeq }, { coordinationSeq: fields.evidence.reverify.coordinationSeq }];
+    const representationNode = this._knowledgePayload({
+      id: representationId, type: 'Representation', grounding: 'derived', body: mapping.body,
+      evidence: [...clone(graphEvidence), { artifactId: receiptArtifactId }],
+      promotion: { kind: 'Representation', trigger: 'representation.produce' }, repoId: fields.request.repoId,
+      taskId: fields.request.taskId, runId: fields.request.runId, identityDigest,
+      producerKind: fields.request.producerKind, rung: mapping.rung, representationType: mapping.representationType,
+      sourceDigest: source.artifact.digest, environmentDigest: requestState.environmentDigest, policyDigest: requestState.policyDigest,
+    });
+    const sourceNodeId = `artifact:${sourceArtifactId}`;
+    const sourceNode = this._knowledgePayload({
+      id: sourceNodeId, type: 'Artifact', grounding: 'verified', body: `Reverified ${source.artifact.kind} representation source artifact`,
+      evidence: [{ artifactId: sourceArtifactId }], promotion: { kind: 'RepresentationSource', trigger: 'representation.produce' },
+      repoId: fields.request.repoId, artifactId: sourceArtifactId, digest: source.artifact.digest,
+    });
+    const taskNodeId = `task:${fields.request.taskId}`;
+    const edges = [
+      this._knowledgePayload({ id: `knowledge-edge:derivedfrom:${representationId}:${sourceNodeId}`, type: 'DerivedFrom', from: representationId, to: sourceNodeId, evidence: clone(graphEvidence) }),
+      this._knowledgePayload({ id: `knowledge-edge:producedby:${sourceNodeId}:${taskNodeId}`, type: 'ProducedBy', from: sourceNodeId, to: taskNodeId, evidence: [{ artifactId: sourceArtifactId }] }),
+      this._knowledgePayload({ id: `knowledge-edge:observedin:${representationId}:${taskNodeId}`, type: 'ObservedIn', from: representationId, to: taskNodeId, evidence: clone(graphEvidence) }),
+    ];
+    const nodes = [representationNode, sourceNode]; const graphDigest = canonicalDigest({ nodes, edges });
+    const projection = {
+      identityDigest, representationId, receiptRef: clone(receiptRef), sourceArtifact: clone(sourceArtifact),
+      receiptArtifact: clone(receiptArtifact), node: clone(representationNode), sourceNode: clone(sourceNode), edges: clone(edges), graphDigest,
+    };
+    const core = {
+      schemaVersion: 1, request: clone(fields.request), requestDigest: fields.requestDigest,
+      policy: clone(this._representationPolicy), policyDigest: requestState.policyDigest,
+      mapping: { kind: fields.request.producerKind, capability: mapping.capability, operation: mapping.operation, rung: mapping.rung, representationType: mapping.representationType },
+      source, evidence: clone(fields.evidence), identity, identityDigest, receipt, receiptRef,
+      sourceArtifact, receiptArtifact, nodes, edges, graphDigest,
+    };
+    const payload = { ...core, productionDigest: canonicalDigest(core) };
+    if (canonicalBytes(payload) > this._representationPolicy.maxGraphBatchBytes) fail('representation graph batch exceeded deployment ceiling', 'representation_oversize');
+    if (canonicalBytes(projection) > this._representationPolicy.maxResultBytes) fail('representation result exceeded deployment ceiling', 'representation_oversize');
+    return freeze({ requestState, source, receipt, receiptSerialized, receiptRef, identityDigest, representationId, projection, payload });
+  }
+
+  _validateRepresentationNamespaces(derived, integrity = false) {
+    const fail = (message) => this._representationFailure(message, 'representation_namespace_conflict', integrity);
+    const existingRepresentation = this._representations.get(derived.identityDigest);
+    const nodeLifecycle = new Set(['derivedFromEvent', 'eventTime', 'eventTimeSeq', 'invalidatedBy', 'observedAt', 'observedSeq', 'validFrom', 'validTo', 'validityVersion']);
+    for (const node of derived.payload.nodes) {
+      const prior = this._knowledgeNodes.get(node.id); if (!prior) continue;
+      const manifest = Object.fromEntries(Object.entries(prior).filter(([key]) => !nodeLifecycle.has(key)));
+      const sourceReuse = node.id === derived.projection.sourceNode.id && canonicalDigest(manifest) === canonicalDigest(node) && prior.validTo === null;
+      const sameRepresentation = !integrity && node.id === derived.representationId && existingRepresentation?.identityDigest === derived.identityDigest;
+      if (!sourceReuse && !sameRepresentation) fail('reserved representation node identity is occupied');
+    }
+    for (const edge of derived.payload.edges) {
+      const prior = this._knowledgeEdges.get(edge.id); if (!prior) continue;
+      const manifest = Object.fromEntries(Object.entries(prior).filter(([key]) => !nodeLifecycle.has(key)));
+      const reusableProducedBy = edge.type === 'ProducedBy' && canonicalDigest(manifest) === canonicalDigest(edge) && prior.validTo === null;
+      const sameRepresentation = !integrity && existingRepresentation?.edges?.some((item) => item.id === edge.id);
+      if (!reusableProducedBy && !sameRepresentation) fail('reserved representation edge identity is occupied');
+    }
+    const receiptPrior = this._artifacts.get(derived.projection.receiptArtifact.id);
+    if (receiptPrior && (integrity || existingRepresentation?.receiptArtifact?.id !== receiptPrior.id)) fail('reserved representation receipt identity is occupied');
+  }
+
+  _validateRepresentationPayload(payload, event, integrity = false) {
+    const fail = (message, code = 'representation_integrity') => this._representationFailure(message, code, integrity);
+    const fields = ['edges', 'evidence', 'graphDigest', 'identity', 'identityDigest', 'mapping', 'nodes', 'policy', 'policyDigest', 'productionDigest', 'receipt', 'receiptArtifact', 'receiptRef', 'request', 'requestDigest', 'schemaVersion', 'source', 'sourceArtifact'];
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || Object.keys(payload).sort().join(',') !== fields.sort().join(',') || payload.schemaVersion !== 1
+      || canonicalDigest(payload.policy) !== canonicalDigest(this._representationPolicy)
+      || payload.policyDigest !== canonicalDigest(this._representationPolicy)) fail('representation event shape or policy diverged');
+    const derived = this._representationGraphTemplate({
+      request: payload.request, requestDigest: payload.requestDigest, source: payload.source, evidence: payload.evidence,
+    }, event, integrity);
+    if (canonicalDigest(payload) !== canonicalDigest(derived.payload)) fail('representation event projection diverged');
+    this._validateRepresentationNamespaces(derived, integrity);
+    return derived;
   }
 
   _validateRunSealPayload(p, eventSeq, integrity = false) {
@@ -1712,6 +2009,67 @@ export class CoordinationStore {
       } else if (['recovery.dispatch_accepted', 'recovery.dispatch_refused'].includes(p?.kind)) {
         this._recoveryDispatches.set(p.workerId, this._validateRecoveryDispositionPayload(p, event, true));
       }
+    } else if (event.kind === 'knowledge.representation_produced') {
+      const derived = this._validateRepresentationPayload(p, event, true);
+      for (const manifest of [p.sourceArtifact, p.receiptArtifact]) {
+        if (!this._artifacts.has(manifest.id)) this._artifacts.set(manifest.id, freeze({
+          ...clone(manifest), createdEvent: event.seq, version: 1, supersededBy: null, supersededEvent: null,
+        }));
+      }
+      const temporal = eventTime(this._events, [
+        { coordinationSeq: p.evidence.invoke.coordinationSeq },
+        { coordinationSeq: p.evidence.reverify.coordinationSeq },
+      ], event);
+      const [representationNode, sourceNode] = p.nodes;
+      if (!this._knowledgeNodes.has(sourceNode.id)) this._setKnowledgeNode(event, sourceNode.id, freeze({
+        ...clone(sourceNode), observedSeq: event.seq, observedAt: event.ts, ...temporal,
+        validFrom: event.ts, validTo: null, validityVersion: 1, derivedFromEvent: event.seq,
+      }));
+      this._setKnowledgeNode(event, representationNode.id, freeze({
+        ...clone(representationNode), observedSeq: event.seq, observedAt: event.ts, ...temporal,
+        validFrom: event.ts, validTo: null, validityVersion: 1, derivedFromEvent: event.seq,
+      }));
+      for (const edge of p.edges) if (!this._knowledgeEdges.has(edge.id)) this._setKnowledgeEdge(event, edge.id, freeze({
+        ...clone(edge), observedSeq: event.seq, observedAt: event.ts, ...temporal,
+        validFrom: event.ts, validTo: null, validityVersion: 1, derivedFromEvent: event.seq,
+      }));
+      const record = freeze({
+        identityDigest: p.identityDigest, representationId: representationNode.id,
+        repoId: p.request.repoId, taskId: p.request.taskId, runId: p.request.runId,
+        producerKind: p.request.producerKind, rung: p.mapping.rung, representationType: p.mapping.representationType,
+        requestDigest: p.requestDigest, policyDigest: p.policyDigest, source: clone(p.source),
+        evidence: clone(p.evidence), receipt: clone(p.receipt), receiptRef: clone(p.receiptRef),
+        sourceArtifact: clone(this._artifacts.get(p.sourceArtifact.id)),
+        receiptArtifact: clone(this._artifacts.get(p.receiptArtifact.id)),
+        node: clone(this._knowledgeNodes.get(representationNode.id)),
+        sourceNode: clone(this._knowledgeNodes.get(sourceNode.id)),
+        edges: p.edges.map((edge) => clone(this._knowledgeEdges.get(edge.id))),
+        graphDigest: p.graphDigest, productionDigest: p.productionDigest,
+        recordedEvent: event.seq, recordedAt: event.ts,
+      });
+      const bindingDigest = canonicalDigest({
+        requestDigest: p.requestDigest, identityDigest: p.identityDigest, source: p.source,
+        evidence: p.evidence, receiptRef: p.receiptRef,
+      });
+      this._representations.set(p.identityDigest, record); this._representationRequests.set(p.requestDigest, freeze({ identityDigest: p.identityDigest, bindingDigest }));
+    } else if (event.kind === 'knowledge.representation_request_bound') {
+      const fields = ['bindingDigest', 'evidence', 'identityDigest', 'productionDigest', 'receiptRef', 'request', 'requestDigest', 'schemaVersion', 'source'];
+      const representation = this._representations.get(p.identityDigest);
+      let derived = null;
+      try {
+        derived = this._representationGraphTemplate({ request: p.request, requestDigest: p.requestDigest, source: p.source, evidence: p.evidence }, event, true, false);
+      } catch (error) {
+        if (error instanceof CoordinationIntegrityError) throw error;
+        throw new CoordinationIntegrityError(error.message, 'representation_integrity');
+      }
+      const bindingDigest = canonicalDigest({ requestDigest: p.requestDigest, identityDigest: p.identityDigest, source: p.source, evidence: p.evidence, receiptRef: p.receiptRef });
+      if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || p.schemaVersion !== 1
+        || p.bindingDigest !== bindingDigest || !representation || representation.productionDigest !== p.productionDigest
+        || derived.identityDigest !== p.identityDigest || canonicalDigest(representation.receiptRef) !== canonicalDigest(p.receiptRef)
+        || this._representationRequests.has(p.requestDigest)) {
+        throw new CoordinationIntegrityError('representation request alias is invalid', 'representation_integrity');
+      }
+      this._representationRequests.set(p.requestDigest, freeze({ identityDigest: p.identityDigest, bindingDigest: p.bindingDigest }));
     } else if (event.kind === 'run.sealed') {
       const { members, evidence, runNodeId, artifactNodeId } = this._validateRunSealPayload(p, event.seq, true);
       this._runs.set(p.runId, freeze({ ...clone(p), status: 'sealed', sealedEvent: event.seq, sealedAt: event.ts }));
@@ -1996,9 +2354,126 @@ export class CoordinationStore {
   task(id) { return clone(this._tasks.get(id) ?? null); }
   run(id) { return clone(this._runs.get(id) ?? null); }
   routePolicy() { return clone(this._routePolicy); }
+  representationPolicy() { return clone(this._representationPolicy); }
   routeObservations() { return [...this._routeObservations.values()].sort((a, b) => a.eventSeq - b.eventSeq).map(clone); }
   recoveryDispatchState(workerId) { return clone(this._recoveryDispatches.get(workerId) ?? null); }
-  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
+  representationProduction(identityDigest) { return clone(this._representations.get(identityDigest) ?? null); }
+  representationProductionByRequest(requestDigest) {
+    const binding = this._representationRequests.get(requestDigest);
+    return binding ? this.representationProduction(binding.identityDigest) : null;
+  }
+  representationProductionAdmission(request, auth) {
+    const preview = { actor: auth?.actor, idempotencyKey: auth?.key, seq: this._events.length + 1 };
+    const state = this._representationRequest(request, preview, false, false);
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      const binding = this._representationRequests.get(state.requestDigest);
+      if (!['knowledge.representation_produced', 'knowledge.representation_request_bound'].includes(prior.kind)
+        || prior.actor !== auth.actor || prior.payload?.requestDigest !== state.requestDigest || !binding) {
+        throw new CoordinationRefusal('representation idempotency key is bound differently', 'representation_conflict');
+      }
+      return freeze({ ok: true, result: 'idempotent', requestDigest: state.requestDigest, policyDigest: state.policyDigest, representation: this.representationProduction(binding.identityDigest) });
+    }
+    this._representationRequest(request, preview, false, true);
+    return freeze({ ok: true, result: 'admitted', requestDigest: state.requestDigest, policyDigest: state.policyDigest, representation: null });
+  }
+  prepareRepresentationProduction(fields, auth) {
+    const preview = { schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(), kind: 'knowledge.representation_produced', actor: auth?.actor, idempotencyKey: auth?.key };
+    const prior = this._byKey.get(auth?.key);
+    const derived = this._representationGraphTemplate(fields, preview, false, !prior);
+    this._validateRepresentationNamespaces(derived, false);
+    return freeze({
+      identityDigest: derived.identityDigest, eventSeq: preview.seq, receipt: clone(derived.receipt), receiptSerialized: derived.receiptSerialized,
+      receiptRef: clone(derived.receiptRef), projection: clone(derived.projection),
+    });
+  }
+  recordRepresentationProduction(fields, receiptRef, auth) {
+    const fixedTs = this._clock(); const preview = { schemaVersion: 1, seq: this._events.length + 1, ts: fixedTs, kind: 'knowledge.representation_produced', actor: auth?.actor, idempotencyKey: auth?.key };
+    const prior = this._byKey.get(auth?.key);
+    const derived = this._representationGraphTemplate(fields, preview, false, !prior);
+    if (!receiptRef || typeof receiptRef !== 'object' || Array.isArray(receiptRef)
+      || Object.keys(receiptRef).sort().join(',') !== ['bytes', 'digest', 'handle', 'kind', 'mediaType'].sort().join(',')
+      || canonicalDigest(receiptRef) !== canonicalDigest(derived.receiptRef)) {
+      throw new CoordinationRefusal('representation receipt reference disagrees with canonical receipt bytes', 'representation_conflict');
+    }
+    this._validateRepresentationNamespaces(derived, false);
+    if (prior) {
+      const binding = this._representationRequests.get(fields.requestDigest);
+      const boundRepresentation = binding ? this._representations.get(binding.identityDigest) : null;
+      const boundReceiptRef = prior.kind === 'knowledge.representation_request_bound' ? boundRepresentation?.receiptRef : receiptRef;
+      const retryBindingDigest = canonicalDigest({
+        requestDigest: fields.requestDigest, identityDigest: derived.identityDigest,
+        source: fields.source, evidence: fields.evidence, receiptRef: boundReceiptRef,
+      });
+      if (!binding || binding.identityDigest !== derived.identityDigest || binding.bindingDigest !== retryBindingDigest
+        || !['knowledge.representation_produced', 'knowledge.representation_request_bound'].includes(prior.kind)
+        || prior.actor !== auth.actor || prior.payload?.requestDigest !== fields.requestDigest) {
+        throw new CoordinationRefusal('representation idempotency retry diverged', 'representation_conflict');
+      }
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), representation: this.representationProduction(derived.identityDigest) });
+    }
+    const existing = this._representations.get(derived.identityDigest);
+    if (existing) {
+      const existingStableSource = Object.fromEntries(Object.entries(existing.source).filter(([key]) => key !== 'resultDigest'));
+      const candidateStableSource = Object.fromEntries(Object.entries(fields.source).filter(([key]) => key !== 'resultDigest'));
+      if (canonicalDigest(existingStableSource) !== canonicalDigest(candidateStableSource)
+        || existing.repoId !== fields.request.repoId || existing.taskId !== fields.request.taskId
+        || existing.runId !== fields.request.runId || existing.policyDigest !== derived.requestState.policyDigest) {
+        throw new CoordinationRefusal('representation identity is bound to different production evidence', 'representation_conflict');
+      }
+      const bindingDigest = canonicalDigest({
+        requestDigest: fields.requestDigest, identityDigest: derived.identityDigest,
+        source: fields.source, evidence: fields.evidence, receiptRef: existing.receiptRef,
+      });
+      const payload = {
+        schemaVersion: 1, request: clone(fields.request), requestDigest: fields.requestDigest,
+        source: clone(fields.source), evidence: clone(fields.evidence), receiptRef: clone(existing.receiptRef),
+        identityDigest: derived.identityDigest, productionDigest: existing.productionDigest, bindingDigest,
+      };
+      const event = this._append('knowledge.representation_request_bound', payload, auth, fixedTs);
+      return freeze({ ok: true, result: 'coalesced', event: clone(event), representation: this.representationProduction(derived.identityDigest) });
+    }
+    this._validateRepresentationPayload(derived.payload, preview, false);
+    const event = this._append('knowledge.representation_produced', derived.payload, auth, fixedTs);
+    return freeze({ ok: true, result: 'recorded', event: clone(event), representation: this.representationProduction(derived.identityDigest) });
+  }
+  reverifyRepresentationProduction(identityDigest, expectedSource = null) {
+    const representation = this._representations.get(identityDigest);
+    if (!representation || !/^[a-f0-9]{64}$/.test(identityDigest ?? '')) throw new CoordinationRefusal('representation is unavailable', 'representation_reverify_unavailable');
+    if (expectedSource !== null) {
+      const sourceFields = Object.keys(representation.source).sort().join(',');
+      const expectedStable = expectedSource && typeof expectedSource === 'object' && !Array.isArray(expectedSource)
+        ? Object.fromEntries(Object.entries(expectedSource).filter(([key]) => key !== 'resultDigest')) : null;
+      const durableStable = Object.fromEntries(Object.entries(representation.source).filter(([key]) => key !== 'resultDigest'));
+      if (!expectedSource || Object.keys(expectedSource).sort().join(',') !== sourceFields
+        || !/^[a-f0-9]{64}$/.test(expectedSource.resultDigest ?? '')
+        || canonicalDigest(expectedStable) !== canonicalDigest(durableStable)) {
+        throw new CoordinationRefusal('fresh source reverify diverged from durable representation', 'representation_reverify_diverged');
+      }
+    }
+    const event = this._events[representation.recordedEvent - 1];
+    const core = Object.fromEntries(Object.entries(event?.payload ?? {}).filter(([key]) => key !== 'productionDigest'));
+    const sourceArtifact = this._artifacts.get(representation.sourceArtifact.id); const receiptArtifact = this._artifacts.get(representation.receiptArtifact.id);
+    const node = this._knowledgeNodes.get(representation.representationId); const sourceNode = this._knowledgeNodes.get(representation.sourceNode.id);
+    const task = this._tasks.get(representation.taskId); const taskNode = this._knowledgeNodes.get(`task:${representation.taskId}`);
+    const edges = representation.edges.map((edge) => this._knowledgeEdges.get(edge.id));
+    if (!event || event.kind !== 'knowledge.representation_produced' || event.payload?.identityDigest !== identityDigest
+      || event.payload.productionDigest !== canonicalDigest(core) || !sourceArtifact || !receiptArtifact
+      || sourceArtifact.supersededBy !== null || receiptArtifact.supersededBy !== null
+      || Object.hasOwn(sourceArtifact, 'acceptanceInvalidation') || Object.hasOwn(receiptArtifact, 'acceptanceInvalidation')
+      || !node || node.validTo !== null || node.grounding !== 'derived' || node.type !== 'Representation'
+      || !sourceNode || sourceNode.validTo !== null || !task || (task.runId ?? null) !== representation.runId
+      || !taskNode || taskNode.validTo !== null || edges.some((edge) => !edge || edge.validTo !== null)
+      || canonicalDigest(sourceArtifact) !== canonicalDigest(representation.sourceArtifact)
+      || canonicalDigest(receiptArtifact) !== canonicalDigest(representation.receiptArtifact)
+      || canonicalDigest(node) !== canonicalDigest(representation.node)
+      || canonicalDigest(sourceNode) !== canonicalDigest(representation.sourceNode)
+      || canonicalDigest(edges) !== canonicalDigest(representation.edges)) {
+      throw new CoordinationIntegrityError('durable representation projection diverged', 'representation_integrity');
+    }
+    return freeze({ ok: true, projection: clone(representation), grounding: 'derived' });
+  }
+  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
   healthCheck() { try { if (!existsSync(this.file)) return this._events.length === 0; const raw = readFileSync(this.file, 'utf8'); return raw.length === 0 || raw.endsWith('\n'); } catch { return false; } }
   readyTasks() {
     return [...this._tasks.values()].filter((task) => task.status === 'pending' && task.assignee == null

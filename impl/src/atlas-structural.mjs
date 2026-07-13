@@ -19,8 +19,69 @@ const UNIT_KINDS = new Set([
   'type_alias_declaration', 'enum_declaration', 'namespace_declaration',
 ]);
 const CHANGE_ORDER = Object.freeze({ removed: 0, modified: 1, added: 2 });
+const PRIMARY_KIND = 'structural_delta';
+const PRIMARY_MEDIA_TYPE = 'application/vnd.baton.atlas-structural+json';
 
 function sha(value) { return createHash('sha256').update(value).digest('hex'); }
+function typed(message, code = 'artifact_integrity') { return Object.assign(new Error(message), { code }); }
+function stable(value) {
+  if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stable(value[key])}`).join(',')}}`;
+  return JSON.stringify(value);
+}
+function primaryRefProjection(ref) {
+  if (!ref || typeof ref !== 'object') return null;
+  const projection = { handle: ref.handle, kind: ref.kind, digest: ref.digest, bytes: ref.bytes, mediaType: ref.mediaType };
+  return typeof projection.handle === 'string' && projection.kind === PRIMARY_KIND
+    && /^[a-f0-9]{64}$/u.test(projection.digest ?? '') && Number.isSafeInteger(projection.bytes) && projection.bytes > 0
+    && projection.mediaType === PRIMARY_MEDIA_TYPE ? projection : null;
+}
+function stableRefProjection(ref) {
+  if (!ref || typeof ref !== 'object') return null;
+  const projection = { handle: ref.handle, kind: ref.kind, digest: ref.digest, bytes: ref.bytes, mediaType: ref.mediaType };
+  return typeof projection.handle === 'string' && typeof projection.kind === 'string'
+    && /^[a-f0-9]{64}$/u.test(projection.digest ?? '') && Number.isSafeInteger(projection.bytes) && projection.bytes > 0
+    && typeof projection.mediaType === 'string' ? projection : null;
+}
+function stableResultProjection(result) {
+  if (!result || typeof result !== 'object' || !Array.isArray(result.refs) || !result.cost || typeof result.cost !== 'object') return null;
+  const refs = result.refs.map(stableRefProjection);
+  if (refs.some((ref) => ref === null)) return null;
+  const { wall_ms: _volatileWallMs, ...cost } = result.cost;
+  const { refs: _refs, cost: _cost, ...rest } = result;
+  return { ...rest, refs, cost };
+}
+function reverifyBudget(claim, ctx) {
+  const claimed = claim?.cost?.tokens_out;
+  return Number.isSafeInteger(claimed) && claimed > 0 && claimed <= ctx.budgetTokens ? claimed : ctx.budgetTokens;
+}
+function validateStructuralArtifact(artifact) {
+  const fields = ['after', 'before', 'changes', 'counts', 'language', 'op', 'schemaVersion'];
+  const side = (value) => value && Object.keys(value).sort().join(',') === ['digest', 'parseErrors', 'path'].sort().join(',')
+    && typeof value.path === 'string' && /^[a-f0-9]{64}$/u.test(value.digest ?? '') && Array.isArray(value.parseErrors);
+  const counts = artifact?.counts;
+  if (!artifact || Object.keys(artifact).sort().join(',') !== fields.sort().join(',') || artifact.schemaVersion !== 1
+    || artifact.op !== 'diff.structural' || !Object.hasOwn(LANGUAGE, artifact.language)
+    || !side(artifact.before) || !side(artifact.after) || !Array.isArray(artifact.changes)
+    || !counts || Object.keys(counts).sort().join(',') !== ['added', 'modified', 'removed'].sort().join(',')
+    || Object.values(counts).some((value) => !Number.isSafeInteger(value) || value < 0)
+    || counts.added + counts.removed + counts.modified !== artifact.changes.length) {
+    throw typed('structural artifact schema mismatch');
+  }
+  return artifact;
+}
+function loadStructuralArtifact(root, ref) {
+  const projected = primaryRefProjection(ref);
+  if (!projected || projected.handle !== `art:sha256:${projected.digest}`) throw typed('structural artifact reference malformed');
+  let artifactRoot; let path;
+  try { artifactRoot = realpathSync(root); path = realpathSync(ref.path); } catch { throw typed('structural artifact unavailable'); }
+  if (path !== join(artifactRoot, `${projected.digest}.json`)) throw typed('structural artifact escape');
+  const bytes = readFileSync(path);
+  if (bytes.length !== projected.bytes || sha(bytes) !== projected.digest) throw typed('structural artifact digest mismatch');
+  let artifact;
+  try { artifact = JSON.parse(bytes); } catch { throw typed('structural artifact JSON invalid'); }
+  return { artifact: validateStructuralArtifact(artifact), ref: projected };
+}
 function pos(range) { return { start: { line: range.start.line + 1, column: range.start.column + 1 }, end: { line: range.end.line + 1, column: range.end.column + 1 } }; }
 function safePath(root, path) {
   if (typeof path !== 'string' || path.length === 0 || isAbsolute(path)) throw Object.assign(new Error('source path must be relative'), { code: 'path_escape' });
@@ -125,26 +186,55 @@ export class AtlasStructuralDelta {
     const complete = { schemaVersion: 1, op, language, before: { path: args.beforePath, digest: beforeDigest, parseErrors: left.errors }, after: { path: args.afterPath, digest: afterDigest, parseErrors: right.errors }, counts, changes };
     const serialized = `${JSON.stringify(complete)}\n`; const artifactDigest = sha(serialized);
     const artifactPath = join(this.artifactRoot, `${artifactDigest}.json`);
+    const primaryRef = { handle: `art:sha256:${artifactDigest}`, kind: PRIMARY_KIND, digest: artifactDigest, bytes: Buffer.byteLength(serialized), mediaType: PRIMARY_MEDIA_TYPE, path: artifactPath };
     if (!existsSync(artifactPath)) writeFileSync(artifactPath, serialized, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    loadStructuralArtifact(this.artifactRoot, primaryRef);
     const budgetBytes = ctx.budgetTokens * 4;
     const payload = [];
     for (const change of changes) { if (Buffer.byteLength(JSON.stringify([...payload, change])) > budgetBytes) break; payload.push(change); }
     const parseErrorCount = left.errors.length + right.errors.length;
     const truncated = payload.length < changes.length;
-    const status = truncated ? 'needs_resume' : (parseErrorCount > 0 ? 'partial' : 'ok');
+    const status = parseErrorCount > 0 ? 'partial' : (truncated ? 'needs_resume' : 'ok');
     const wallMs = Math.max(0, this.now() - started);
     const result = Object.freeze({
       op, status, summary: `${counts.added} added, ${counts.removed} removed, ${counts.modified} modified${parseErrorCount ? `; ${parseErrorCount} parse errors` : ''}`,
-      payload, refs: [{ handle: `art:sha256:${artifactDigest}`, kind: 'structural_delta', digest: artifactDigest, bytes: Buffer.byteLength(serialized), mediaType: 'application/vnd.baton.atlas-structural+json', path: artifactPath }],
-      ...(truncated ? { cursor: `atlas:${artifactDigest}:${payload.length}` } : {}),
+      payload, refs: [primaryRef],
+      ...(status === 'needs_resume' ? { cursor: `atlas:${artifactDigest}:${payload.length}` } : {}),
       cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), wall_ms: wallMs, usd: 0, underlying: `@ast-grep/napi@${AST_GREP_VERSION}` },
       provenance: { tool: `@ast-grep/napi@${AST_GREP_VERSION}`, language, beforeDigest, afterDigest, deterministic: true, parseErrors: { before: left.errors.length, after: right.errors.length }, artifactDigest },
     });
     this.record?.({ kind: 'capability.op.completed', actor: ctx.actor ?? 'orchestrator', op, beforeDigest, afterDigest, artifactDigest, status, wallMs });
     return result;
   }
+  async resume(ref, cursor, ctx) {
+    if (!ctx || !Number.isSafeInteger(ctx.budgetTokens) || ctx.budgetTokens <= 0) throw new TypeError('positive budgetTokens required');
+    const match = /^atlas:([a-f0-9]{64}):(\d+)$/u.exec(cursor ?? '');
+    if (!match || match[1] !== ref?.digest) throw typed('invalid structural cursor', 'invalid_cursor');
+    const loaded = loadStructuralArtifact(this.artifactRoot, ref); const items = loaded.artifact.changes;
+    const offset = Number(match[2]);
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > items.length) throw typed('invalid structural cursor offset', 'invalid_cursor');
+    const payload = [];
+    for (const change of items.slice(offset)) { if (Buffer.byteLength(JSON.stringify([...payload, change])) > ctx.budgetTokens * 4) break; payload.push(change); }
+    const next = offset + payload.length; const truncated = next < items.length;
+    const parseErrorCount = loaded.artifact.before.parseErrors.length + loaded.artifact.after.parseErrors.length;
+    const status = parseErrorCount > 0 ? 'partial' : (truncated ? 'needs_resume' : 'ok');
+    return Object.freeze({
+      op: 'diff.structural', status, summary: `resumed ${payload.length} structural delta records`, payload, refs: [{ ...loaded.ref, path: ref.path }],
+      ...(status === 'needs_resume' ? { cursor: `atlas:${ref.digest}:${next}` } : {}),
+      cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), wall_ms: 0, usd: 0, underlying: `@ast-grep/napi@${AST_GREP_VERSION}` },
+      provenance: { artifactDigest: ref.digest, resumed_from: offset, deterministic: true },
+    });
+  }
   async reverify(claim, op, args, ctx) {
-    const rerun = await this.invoke(op, args, ctx);
-    return Object.freeze({ ok: rerun.provenance.artifactDigest === claim?.provenance?.artifactDigest, observedDigest: rerun.provenance.artifactDigest });
+    const rerun = await this.invoke(op, args, { ...ctx, budgetTokens: reverifyBudget(claim, ctx) });
+    const primaryRefs = Array.isArray(claim?.refs) ? claim.refs.filter((ref) => ref?.kind === PRIMARY_KIND) : [];
+    const observed = loadStructuralArtifact(this.artifactRoot, rerun.refs[0]);
+    const resultProjection = stableResultProjection(rerun); const claimProjection = stableResultProjection(claim);
+    const resultProjectionDigest = resultProjection ? sha(stable(resultProjection)) : null;
+    const ok = primaryRefs.length === 1 && primaryRefProjection(primaryRefs[0]) !== null
+      && stable(primaryRefProjection(primaryRefs[0])) === stable(observed.ref)
+      && claim?.provenance?.artifactDigest === observed.ref.digest
+      && resultProjection !== null && claimProjection !== null && stable(resultProjection) === stable(claimProjection);
+    return Object.freeze({ ok, primaryRef: observed.ref, resultProjection, resultProjectionDigest, observedDigest: observed.ref.digest });
   }
 }
