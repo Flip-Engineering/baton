@@ -632,7 +632,7 @@ accepted. Kill confirmation requires exact close, process-group death, and owned
 interrupt retains reusable-session authority, forced disposition retains writer authority, and
 ordinary or poisoned emergency kill can retry a dead-but-unconfirmed reap. Replay accepts an exact
 late close without treating historical PIDs as live. Direct, authenticated web, and MCP list expose
-only the bounded process reference. The 63 focused contracts and 1101/1101 canonical suite are
+only the bounded process reference. The 63 focused contracts and 1103/1103 canonical suite are
 green. Recursive Baton exact-routes Codex `gpt-5.6-sol`/low, project-key GLM `glm-4.7`/low, Grok
 `grok-4.5`/low, and Grok Build/low; all four start/close pairs and full ownership restoration are
 retained, with simultaneous Grok process groups observed. GLM fresh-verifies its report, while the

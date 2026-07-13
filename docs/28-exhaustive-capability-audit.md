@@ -187,7 +187,7 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    source correlation, bounded refusal digests, setup/timeout/kill ordering, descendant-group reap,
    retryable forced and poisoned emergency kill, writer/verification cleanup authority,
    transactional recovery readiness, late-close replay, and bounded auth-protected public status
-   are executable. Sixty-three focused PL contracts and 1101/1101 canonical tests are green.
+   are executable. Sixty-three focused PL contracts and 1103/1103 canonical tests are green.
    Recursive exact Codex `gpt-5.6-sol`/low, project-key GLM `glm-4.7`/low, Grok `grok-4.5`/low,
    and Grok Build/low routes all produce exact start/close evidence and complete cleanup; the two
    Grok groups overlap, GLM fresh-verifies, and the strict provider matrix remains honestly red at
