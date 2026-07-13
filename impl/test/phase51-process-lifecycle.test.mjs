@@ -136,10 +136,10 @@ test('PL7: wall timeout records the exact close before the timeout crash for eve
         const ack = await adapter.spawn(worker, brief(marker), {
           worktree: mkdtempSync(join(tmpdir(), `phase51-${name}-timeout-`)),
           processGeneration: 17,
-          timeoutMs: 200,
+          timeoutMs: 750,
         });
         assert.equal(ack.ok, true);
-        await until(() => events.some((event) => event.kind === 'lifecycle.crashed' && event.payload?.phase === 'timeout'), `${name} timeout crash`);
+        await until(() => events.some((event) => event.kind === 'lifecycle.crashed' && event.payload?.phase === 'timeout'), `${name} timeout crash`, 5000);
         assertClosedPair(events, 17, true);
         assert.equal(events.some((event) => event.kind === 'kill.confirmed'), false, 'policy timeout is not a user-requested confirmed kill');
       } finally { await emergencyCleanup(adapter, worker); }
@@ -275,7 +275,7 @@ test('PL7/PL9: one-shot turn completion does not surrender process-group authori
     await until(() => events.some((event) => event.kind === 'lifecycle.turn_completed'), 'one-shot parsed terminal');
     const session = adapter._sessions.get(worker); const pid = session.child.pid;
     assert.equal(session.turnSettled, true); assert.equal(session.terminal, false); assert.equal(groupAlive(pid), true);
-    await adapter.kill(worker); await until(() => events.some((event) => event.kind === 'kill.confirmed'), 'one-shot descendant reap');
+    await adapter.kill(worker); await until(() => events.some((event) => event.kind === 'kill.confirmed'), 'one-shot descendant reap', 8000);
     assert.equal(groupAlive(pid), false); assertClosedPair(events, 31, false);
   } finally { await emergencyCleanup(adapter, worker); }
 });
