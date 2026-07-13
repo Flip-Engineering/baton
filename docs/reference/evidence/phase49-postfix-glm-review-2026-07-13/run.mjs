@@ -7,7 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GlmSessionCli, createBrief, createDriver } from '../../../../impl/src/index.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url)); const REPO = resolve(process.env.BATON_REPO ?? resolve(HERE, '../../../..')); const LOG_DIR = mkdtempSync(join(tmpdir(), 'baton-phase49-postfix-glm-')); const GLM_AUTH = resolve(process.env.BATON_GLM_AUTH_FILE ?? resolve(REPO, 'glm_key.json')); const TASK_ID = 'phase49-postfix-glm-review'; const TARGET = 'reviews/dogfood/phase49-glm-implementation-review.md';
+const SOURCE_DIR = dirname(fileURLToPath(import.meta.url)); const HERE = resolve(process.env.BATON_EVIDENCE_DIR ?? SOURCE_DIR); const REPO = resolve(process.env.BATON_REPO ?? resolve(SOURCE_DIR, '../../../..')); const LOG_DIR = mkdtempSync(join(tmpdir(), 'baton-phase49-postfix-glm-')); const GLM_AUTH = resolve(process.env.BATON_GLM_AUTH_FILE ?? resolve(REPO, 'glm_key.json')); const TASK_ID = 'phase49-postfix-glm-review'; const TARGET = 'reviews/dogfood/phase49-glm-implementation-review.md';
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms)); const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } }; const git = (args) => execFileSync('git', args, { cwd: REPO, encoding: 'utf8' }).trim();
 async function until(fn, label, timeoutMs = 900_000) { const deadline = Date.now() + timeoutMs; while (Date.now() < deadline) { const value = await fn(); if (value) return value; await sleep(100); } throw new Error(`timeout waiting for ${label}`); }
 if (!existsSync(GLM_AUTH)) throw new Error('PENDING-LIVE-no-project-glm-key'); mkdirSync(HERE, { recursive: true });
