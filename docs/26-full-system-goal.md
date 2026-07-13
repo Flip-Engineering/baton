@@ -549,6 +549,17 @@ before releasing worktree, runtime, branch, Coordinator, and writer ownership. T
 verified turn → simulated process loss → exact rejoin → verified refinement → full reap. This does
 not claim in-flight turn continuation, checkpoint/rewind parity, or provider-backed native resume.
 
+Phase 46 prevents the representation program from shrinking through documentation drift. The
+`representation.review` ACI operation fixes R1 AST/CST structural work, R2 symbol/SCIP, R3 bounded
+CPG/CFG/path/taint/delta, the R4 compiler-IR ceiling Decision, R5 behavioral fingerprints, R6
+structured merge, and the R7 e-graph Decision into one ordered packet. It reads 20 fixed source and
+contract files from an exact current Git commit, independently bounds files/bytes/rows/artifact/
+context, writes a content-addressed artifact, and reverifies the entire deterministic claim.
+Authenticated ACI reach grants no edit, verification, merge, approval, publication, routing,
+proof, or policy-authoring authority. The packet mechanically retains live LSP, SSA/PDG/path
+solving, alias/heap/implicit flow, exceptions/interprocedural returns, external IR/translation
+validation, true semantic merge, and conditional expression/kernel e-graphs as unbuilt work.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**

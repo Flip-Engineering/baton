@@ -125,6 +125,15 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    Ordinary failures remain explicit orphans and a sanitized degraded summary; authoritative-write
    loss fails readiness. Async close kills every auto-attached transport before worktree/runtime/
    branch/writer release, and provider supervisors start only after readiness settles.
+19. **Attested representation review packet:** Phase 46 fixes the full R1–R7 inventory in code and
+   attests 20 implementation/contract files from one exact current Git tree. Closed statuses keep
+   AST/CST proposals, symbol/SCIP, bounded CPG/path, behavioral observation, structured merge, the
+   R4 IR ceiling Decision, and R7 e-graph retirement distinct. Independent source/file/row/artifact/
+   context bounds, content-addressed artifacts, full-claim reverify, audited ACI/authenticated web
+   reach, and explicit zero authority prevent the packet from becoming a proof. Its retained-gap
+   list makes live LSP, SSA/PDG/path solving, alias/heap/implicit flow, exceptions/interprocedural
+   returns, external IR/translation validation, true semantic merge, and conditional e-graphs
+   mechanically visible.
 
 ## What remains partial
 
@@ -173,7 +182,7 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 - Vantage, Evidence Ladder as a capability module, Skill Forge/computer use, later
   Cartographer/Quartermaster supply/orientation rungs, and Cairn Rungs 2–4 remain pending.
 - Direct structural rewrite apply, live LSP, full SSA/PDG/path solving, interprocedural/alias/heap
-  CPG depth, attestation overlays, and representation choreography.
+  CPG depth, deeper behavioral/provenance attestation overlays, and representation choreography.
 - True semantic merge, stacked integration, deploy adapters, rollback automation, and live remote
   publication.
 - Streamable HTTP MCP authorization, MCP Tasks/progress/daemon supervision, WebSocket parity,
