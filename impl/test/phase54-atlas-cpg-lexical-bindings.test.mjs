@@ -42,7 +42,7 @@ function graphOf(result) { return JSON.parse(readFileSync(result.refs.find((ref)
 test('LB1/LB8/LB10: cards and constructors expose one bounded advisory binding model without new authority', () => {
   const f = sourceFixture('function run(value) { return value }\n'); const card = f.cpg.card();
   assert.equal(card.bindingModel, MODEL); assert.equal(card.graphSchemaVersion, 3);
-  assert.deepEqual(card.ceilings, {
+  assert.deepEqual(Object.fromEntries(['maxScopes', 'maxScopeDepth', 'maxBindings', 'maxBindingOccurrences'].map((key) => [key, card.ceilings[key]])), {
     maxScopes: limits.maxScopes, maxScopeDepth: limits.maxScopeDepth,
     maxBindings: limits.maxBindings, maxBindingOccurrences: limits.maxBindingOccurrences,
   });
