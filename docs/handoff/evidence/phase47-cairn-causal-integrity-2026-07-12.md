@@ -66,6 +66,12 @@ fully reaped. Its three P1s were real: unbound registry idempotency, pre-bound o
 reads, and cancellation crossing the publication seam. All three supplied the red tests and fixes
 described above.
 
+The post-fix proof in
+`docs/reference/evidence/phase47-postfix-glm-review-2026-07-12/summary.json` reviews immutable commit
+`3e1c860` through exact credentialed `glm` / `glm-4.7` / `low` on PID `15291`. It consumed 85,497
+accounted tokens / $0.83427, completed its scoped report, passed Baton's fresh-sandbox referee,
+received confirmed kill, and passed every process/worktree/runtime/branch/writer-release check.
+
 The current two-Grok attempt in
 `docs/reference/evidence/phase47-grok-concurrent-kill-reap-2026-07-12/summary.json` requested and
 resolved exact `grok-4.5` / `low` and `grok-composer-2.5-fast` / `low` concurrently. Despite the
@@ -86,6 +92,15 @@ allowed depth is visited, and only undiscovered next-depth nodes remain frontier
 contradiction question is allowed by the bitemporal contract when endpoints are live at the stated
 valid time; CA2 requires a parseable non-negative interval, not transaction time equal to valid
 time. None required a product change.
+
+The post-fix GLM report's sole claimed P1 is also refuted by its own quoted predicate:
+`sourceIsLiveLineage` requires the source to be live at both the pinned audit time **and**
+`claim.validFrom`. A source invalidated before `claim.validFrom` therefore fails the second conjunct;
+the suggested removal would weaken, not repair, current-live lineage. Its concrete Decision also
+cannot be appended through the public producer because endpoint validation rejects an already-dead
+`informedBy` source. The existing dead-lineage and `missing_endpoint` regressions cover both audit
+and producer paths. The remaining suggested supersession/frontier/transport reds duplicate current
+Phase 47 coverage.
 
 Phase 47 is an integrity/audit gate, not recall completion. Phase 48 still owes audit-gated bounded
 lexical and graph ranking, contradiction bundles, compact durable read receipts, pull-only proof,
