@@ -82,6 +82,7 @@ export class CoordinationStore {
   _resetProjection() {
     this._events = []; this._byKey = new Map(); this._tasks = new Map(); this._runs = new Map(); this._artifacts = new Map();
     this._reuseDecisions = new Map(); this._reuseSubjects = new Map(); this._reuseRiskGuards = new Map(); this._reusePolicyHeads = new Map(); this._reusePolicyTransitions = [];
+    this._reuseProviderContributions = new Map(); this._reuseProviderCoordinateContributions = new Map(); this._reuseProviderGuards = new Map();
     this._evidence = new Map(); this._scratchFacts = new Map(); this._scratchClaims = new Map(); this._scratchReads = [];
     this._knowledgeNodes = new Map(); this._knowledgeEdges = new Map(); this._knowledgeReads = []; this._contamination = [];
     this._webCommands = new Map(); this._webCommandScopes = new Map(); this._mcpCalls = new Map(); this._mcpCallScopes = new Map();
@@ -290,6 +291,7 @@ export class CoordinationStore {
       if (p.choice === 'borrow') fail('exact package coordinate is blocked by a newer advisory observation', 'reuse_risk_guarded');
       if (asOf < Date.parse(riskGuard.asOf) || dossier.factDigest !== riskGuard.factDigest) fail('reuse decision evidence predates the active advisory guard', 'reuse_risk_guarded');
     }
+    if (this._reuseProviderGuards.get(this._providerCoordinateKey(p.envRef.repoId, coordinate))?.blocked === true) fail('exact package coordinate is blocked by retained official provider evidence', 'reuse_provider_guarded');
     if (p.choice === 'borrow' && dossier.recommendation !== 'borrow_candidate') fail('blocked dossier cannot authorize borrowing', 'reuse_borrow_blocked');
     const sbom = p.sbomSnapshot;
     if (!sbom || sbom.grounding !== 'actual_lockfile' || !/^[a-f0-9]{64}$/.test(sbom.lockfileDigest ?? '')
@@ -604,6 +606,42 @@ export class CoordinationStore {
     return [...ids].map((id) => this._providerProcessing.get(id)).filter(Boolean).sort((a, b) => a.id.localeCompare(b.id));
   }
 
+  _providerAdverseCeilings(repoId) {
+    const transition = [...this._reusePolicyTransitions].reverse().find((item) => item.repoId === repoId);
+    return transition?.ceilings ?? { maxDecisionTargets: 100_000, maxGuardTargets: 100_000, maxAffectedReads: 1_000_000, maxStateRows: 1_000_000, maxEventBytes: 64 * 1024 * 1024 };
+  }
+
+  _providerAdverseTargets(repoId, coordinate, ceilings = this._providerAdverseCeilings(repoId)) {
+    const targets = []; let examinedStateRows = 0; let affectedReads = 0; let derivationOverflow = false;
+    const examine = (count = 1) => { examinedStateRows += count; if (examinedStateRows > ceilings.maxStateRows) derivationOverflow = true; return !derivationOverflow; };
+    const readsFor = (nodeId) => {
+      const rows = [];
+      for (const read of this._knowledgeReads) { if (!examine()) break; if (read.nodeIds.includes(nodeId)) rows.push(read.eventSeq); }
+      affectedReads += rows.length; if (affectedReads > ceilings.maxAffectedReads) derivationOverflow = true; return rows;
+    };
+    for (const decision of this._reuseDecisions.values()) {
+      if (!examine()) break;
+      if (decision.envRef?.repoId !== repoId || canonicalDigest(decision.coordinate) !== canonicalDigest(coordinate)) continue;
+      const node = this._knowledgeNodes.get(decision.nodeId); if (!node || node.validTo) continue;
+      const findingId = `finding:dependency-dossier:${decision.dossierRef.digest}`; const finding = this._knowledgeNodes.get(findingId);
+      targets.push({ decisionId: decision.id, nodeId: decision.nodeId, subjectDigest: decision.subjectDigest, expectedValidityVersion: node.validityVersion, dossierFindingId: finding && !finding.validTo ? findingId : null, affectedDecisionReadEvents: readsFor(decision.nodeId), affectedFindingReadEvents: finding && !finding.validTo ? readsFor(findingId) : [] });
+      if (targets.length > ceilings.maxDecisionTargets || derivationOverflow) { derivationOverflow = true; break; }
+    }
+    return { targets: targets.sort((a, b) => a.decisionId.localeCompare(b.decisionId)), examinedStateRows, affectedReads, derivationOverflow };
+  }
+
+  _providerContribution(row, processing, policy) {
+    const id = `provider-contribution:${canonicalDigest({ repoId: processing.repoId, coordinate: row.coordinate, providerId: processing.providerId, sourceEpoch: processing.sourceEpoch, officialFactDigest: row.snapshot.factDigest })}`;
+    return freeze({ id, repoId: processing.repoId, coordinate: clone(row.coordinate), providerId: processing.providerId, sourceEpoch: processing.sourceEpoch, officialFactDigest: row.snapshot.factDigest, dossierDigest: row.dossierRef.digest, policyHash: policy.hash, recommendation: row.snapshot.recommendation, asOf: row.snapshot.asOf, expiresAt: row.snapshot.expiresAt, advisoryIds: clone(row.advisoryIds), maliciousAdvisoryIds: clone(row.maliciousAdvisoryIds) });
+  }
+
+  _providerAggregate(repoId, coordinate, contribution, policy) {
+    const coordinateKey = this._providerCoordinateKey(repoId, coordinate); const ids = new Set(this._reuseProviderCoordinateContributions.get(coordinateKey) ?? []); ids.add(contribution.id);
+    const contributions = [...ids].map((id) => id === contribution.id ? contribution : this._reuseProviderContributions.get(id)).filter(Boolean).sort((a, b) => a.id.localeCompare(b.id));
+    const core = { repoId, coordinate: clone(coordinate), blocked: true, contributionIds: contributions.map((item) => item.id), advisoryIds: [...new Set(contributions.flatMap((item) => item.advisoryIds))].sort(), maliciousAdvisoryIds: [...new Set(contributions.flatMap((item) => item.maliciousAdvisoryIds))].sort(), policyHash: policy.hash, policyVersion: policy.version, policyStale: false, requiredPolicyHash: null };
+    return freeze({ ...core, guardDigest: canonicalDigest(core) });
+  }
+
   _validateProviderDeliveryPayload(p, event, integrity = false) {
     const fail = (message, code) => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
     if (!p || Object.keys(p).sort().join(',') !== ['contentIdentity', 'processingId', 'receipt', 'receiptDigest', 'receiptId', 'repoId', 'schemaVersion'].sort().join(',') || p.schemaVersion !== 1
@@ -674,9 +712,73 @@ export class CoordinationStore {
     if (p.completionDigest !== canonicalDigest(core)) fail('provider green completion digest is invalid', 'provider_processing_integrity');
   }
 
+  _validateProviderAdversePayload(p, event, integrity = false) {
+    const fail = (message, code = 'provider_processing_integrity') => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
+    const fields = ['schemaVersion', 'requestDigest', 'completionDigest', 'processingId', 'expectedProcessingVersion', 'repoId', 'providerId', 'sourceEpoch', 'receiptIds', 'policy', 'indexBinding', 'observations', 'result'];
+    if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || p.schemaVersion !== 1 || p.result !== 'guarded_adverse' || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.completionDigest ?? '')) fail('provider adverse completion shape is invalid');
+    const processing = this._providerProcessing.get(p.processingId);
+    if (!processing || processing.status !== 'pending' || processing.version !== p.expectedProcessingVersion || processing.repoId !== p.repoId || processing.providerId !== p.providerId || processing.sourceEpoch !== p.sourceEpoch || JSON.stringify(processing.receiptIds) !== JSON.stringify(p.receiptIds)) fail('provider adverse completion target is stale or mismatched', 'provider_processing_stale');
+    if (event.actor !== `provider-reconciler:${p.providerId}`) fail('provider reconciler actor is invalid');
+    const head = this._reusePolicyHeads.get(p.repoId); const policyFields = ['hash', 'version', 'constraintId'];
+    if (!head || !p.policy || Object.keys(p.policy).sort().join(',') !== policyFields.sort().join(',') || p.policy.hash !== head.policyHash || p.policy.version !== head.version || p.policy.constraintId !== head.constraintId) fail('provider processing policy changed', 'reuse_policy_reconciliation_required');
+    const bindingFields = ['schemaVersion', 'repoId', 'treeSha', 'indexEpoch', 'atlasCardDigest', 'bindingDigest'];
+    if (!p.indexBinding || Object.keys(p.indexBinding).sort().join(',') !== bindingFields.sort().join(',') || p.indexBinding.schemaVersion !== 1 || p.indexBinding.repoId !== p.repoId || !/^[a-f0-9]{4,128}$/.test(p.indexBinding.treeSha ?? '') || !/^[a-f0-9]{64}$/.test(p.indexBinding.indexEpoch ?? '') || !/^[a-f0-9]{64}$/.test(p.indexBinding.atlasCardDigest ?? '') || p.indexBinding.bindingDigest !== canonicalDigest(Object.fromEntries(Object.entries(p.indexBinding).filter(([key]) => key !== 'bindingDigest')))) fail('provider index binding is invalid', 'provider_index_changed');
+    if (!Array.isArray(p.observations) || p.observations.length !== processing.coordinates.length || JSON.stringify(p.observations.map((row) => row.coordinate)) !== JSON.stringify(processing.coordinates) || !p.observations.some((row) => row.adverse === true)) fail('provider adverse coordinate set is incomplete');
+    const ceilings = this._providerAdverseCeilings(p.repoId);
+    for (const row of p.observations) {
+      const rowFields = ['coordinate', 'dossierRef', 'snapshot', 'advisoryIds', 'maliciousAdvisoryIds', 'reverifyEvidence', 'officialDigest', 'adverse', 'contribution', 'aggregate', 'targets', 'targetSetDigest', 'examinedStateRows'];
+      const snapshotFields = ['identity', 'recommendation', 'policyHash', 'policy', 'factDigest', 'asOf', 'expiresAt', 'indexEpoch', 'overlayDigest'];
+      if (!row || Object.keys(row).sort().join(',') !== rowFields.sort().join(',') || !row.snapshot || Object.keys(row.snapshot).sort().join(',') !== snapshotFields.sort().join(',') || ![true, false].includes(row.adverse) || row.adverse !== (row.snapshot.recommendation !== 'borrow_candidate') || row.snapshot.policyHash !== p.policy.hash || row.snapshot.indexEpoch !== p.indexBinding.indexEpoch || canonicalDigest(row.coordinate) !== canonicalDigest(row.snapshot.identity) || !/^[a-f0-9]{64}$/.test(row.snapshot.factDigest ?? '') || !/^[a-f0-9]{64}$/.test(row.officialDigest ?? '')) fail('provider official observation is invalid');
+      if (Object.keys(row.dossierRef ?? {}).sort().join(',') !== ['kind', 'mediaType', 'handle', 'digest', 'bytes'].sort().join(',') || row.dossierRef.kind !== 'dependency-dossier' || row.dossierRef.mediaType !== 'application/vnd.baton.dependency-dossier+json' || row.dossierRef.handle !== `art:sha256:${row.dossierRef.digest}` || !/^[a-f0-9]{64}$/.test(row.dossierRef.digest ?? '') || !Number.isSafeInteger(row.dossierRef.bytes) || row.dossierRef.bytes <= 0) fail('provider official dossier reference is invalid');
+      if (!Array.isArray(row.advisoryIds) || JSON.stringify(row.advisoryIds) !== JSON.stringify([...new Set(row.advisoryIds)].sort()) || row.advisoryIds.some((id) => !boundedText(id, 256)) || !Array.isArray(row.maliciousAdvisoryIds) || JSON.stringify(row.maliciousAdvisoryIds) !== JSON.stringify([...new Set(row.maliciousAdvisoryIds)].sort()) || row.maliciousAdvisoryIds.some((id) => !row.advisoryIds.includes(id)) || (row.adverse && row.advisoryIds.length === 0)) fail('provider official advisory identities are invalid');
+      const asOf = Date.parse(row.snapshot.asOf); const expires = Date.parse(row.snapshot.expiresAt); const at = Date.parse(event.ts); if (!Number.isFinite(asOf) || !Number.isFinite(expires) || !Number.isFinite(at) || asOf > at || at >= expires) fail('provider official observation is stale or incoherent');
+      const evidenceSeq = row.reverifyEvidence?.coordinationSeq; const mapped = Number.isSafeInteger(evidenceSeq) ? this._events[evidenceSeq - 1] : null; const authoritative = mapped ? this._evidence.get(`${mapped.payload?.worker}:${mapped.payload?.workerSeq}`) : null; const source = mapped ? this._operationalRead?.(mapped.payload?.worker, mapped.payload?.workerSeq) : null;
+      const projection = { processingId: p.processingId, coordinate: row.coordinate, dossierDigest: row.dossierRef.digest, factDigest: row.snapshot.factDigest, policyHash: p.policy.hash, indexBindingDigest: p.indexBinding.bindingDigest, recommendation: row.snapshot.recommendation, asOf: row.snapshot.asOf, expiresAt: row.snapshot.expiresAt, advisoryIds: row.advisoryIds, maliciousAdvisoryIds: row.maliciousAdvisoryIds };
+      if (!mapped || mapped.kind !== 'evidence.mapped' || mapped.seq >= event.seq || mapped.payload?.kind !== 'knowledge.reuse_provider_reverified' || !authoritative || canonicalDigest(authoritative) !== canonicalDigest(row.reverifyEvidence) || !source || source.kind !== 'knowledge.reuse_provider_reverified' || digest(source) !== mapped.payload.digest || source.actor !== event.actor || canonicalDigest(source.payload) !== canonicalDigest({ ...projection, officialDigest: canonicalDigest(projection) }) || row.officialDigest !== canonicalDigest(projection)) fail('provider official reverify evidence is invalid');
+      const targetProjection = row.adverse ? this._providerAdverseTargets(p.repoId, row.coordinate, ceilings) : { targets: [], examinedStateRows: 0, affectedReads: 0, derivationOverflow: false };
+      if (targetProjection.derivationOverflow || targetProjection.targets.length > ceilings.maxDecisionTargets || targetProjection.affectedReads > ceilings.maxAffectedReads || targetProjection.examinedStateRows > ceilings.maxStateRows) fail('provider adverse target projection exceeded deployment ceiling', 'reuse_risk_oversize');
+      if (canonicalDigest(row.targets) !== canonicalDigest(targetProjection.targets) || row.examinedStateRows !== targetProjection.examinedStateRows || row.targetSetDigest !== canonicalDigest({ targets: row.targets, examinedStateRows: row.examinedStateRows })) fail('provider adverse target projection is invalid');
+      if (row.adverse) {
+        const expectedContribution = this._providerContribution(row, processing, p.policy); const existingContribution = this._reuseProviderContributions.get(expectedContribution.id);
+        if (canonicalDigest(row.contribution) !== canonicalDigest(expectedContribution) || (existingContribution && canonicalDigest(existingContribution) !== canonicalDigest(expectedContribution))) fail('provider adverse contribution identity conflicts', 'provider_contribution_conflict');
+        const expectedAggregate = this._providerAggregate(p.repoId, row.coordinate, expectedContribution, p.policy);
+        if (expectedAggregate.contributionIds.length > ceilings.maxGuardTargets || canonicalDigest(row.aggregate) !== canonicalDigest(expectedAggregate)) fail('provider adverse aggregate is invalid', 'reuse_risk_oversize');
+        const officialNodeId = `source:provider-official:${row.officialDigest}`; const findingId = `finding:reuse-provider:${expectedContribution.id.slice('provider-contribution:'.length)}`;
+        if (this._knowledgeNodes.has(officialNodeId)) fail('provider official Source identity is preoccupied', 'reuse_namespace_conflict');
+        if (!existingContribution && this._knowledgeNodes.has(findingId)) fail('provider contribution Finding identity is preoccupied', 'reuse_namespace_conflict');
+        for (const target of row.targets) if (this._knowledgeEdges.has(`knowledge-edge:affects:${findingId}:${target.nodeId}`)) fail('provider adverse Affects identity is preoccupied', 'reuse_namespace_conflict');
+      } else if (row.contribution !== null || row.aggregate !== null || row.targets.length !== 0 || row.examinedStateRows !== 0) fail('provider green coordinate cannot carry adverse authority');
+    }
+    const core = Object.fromEntries(Object.entries(p).filter(([key]) => key !== 'completionDigest'));
+    if (p.completionDigest !== canonicalDigest(core)) fail('provider adverse completion digest is invalid');
+    const exactEvent = { schemaVersion: 1, seq: event.seq, ts: event.ts, kind: 'knowledge.reuse_provider_guarded', actor: event.actor, idempotencyKey: event.idempotencyKey, payload: p };
+    if (Buffer.byteLength(`${JSON.stringify(exactEvent)}\n`) > ceilings.maxEventBytes) fail('provider adverse completion exceeded event byte ceiling', 'reuse_risk_oversize');
+  }
+
   _apply(event) {
     const p = event.payload;
-    if (event.kind === 'provider.processing_checked') {
+    if (event.kind === 'knowledge.reuse_provider_guarded') {
+      this._validateProviderAdversePayload(p, event, true); const old = this._providerProcessing.get(p.processingId);
+      this._providerProcessing.set(p.processingId, freeze({ ...clone(old), status: 'guarded_adverse', version: old.version + 1, requestDigest: p.requestDigest, completionDigest: p.completionDigest, completionEvent: event.seq, observations: p.observations.map((row) => ({ coordinate: clone(row.coordinate), officialDigest: row.officialDigest, factDigest: row.snapshot.factDigest, adverse: row.adverse, contributionId: row.contribution?.id ?? null, asOf: row.snapshot.asOf })) }));
+      for (const coordinate of old.coordinates) { const key = this._providerCoordinateKey(old.repoId, coordinate); const pending = new Set(this._providerPending.get(key) ?? []); pending.delete(p.processingId); if (pending.size === 0) this._providerPending.delete(key); else this._providerPending.set(key, pending); }
+      for (const row of p.observations) {
+        const officialNodeId = `source:provider-official:${row.officialDigest}`; const evidence = [{ coordinationSeq: row.reverifyEvidence.coordinationSeq }];
+        this._knowledgeNodes.set(officialNodeId, freeze({ id: officialNodeId, type: 'Source', grounding: 'verified', body: `Official ${row.adverse ? 'adverse' : 'non-adverse'} observation for ${row.coordinate.package}@${row.coordinate.version}`, evidence, promotion: { kind: 'ProviderOfficialObservation', trigger: 'provider.official' }, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: row.reverifyEvidence.coordinationSeq, eventTime: row.snapshot.asOf, validFrom: row.snapshot.asOf, validTo: null, validityVersion: 1, repoId: p.repoId, providerId: p.providerId, sourceEpoch: p.sourceEpoch, processingId: p.processingId, factDigest: row.snapshot.factDigest, policyHash: p.policy.hash }));
+        for (const receiptId of p.receiptIds) { const receipt = this._providerReceipts.get(receiptId); const edgeId = `knowledge-edge:derived:${officialNodeId}:${receipt.nodeId}`; this._knowledgeEdges.set(edgeId, freeze({ id: edgeId, type: 'DerivedFrom', from: officialNodeId, to: receipt.nodeId, evidence: [{ coordinationSeq: event.seq }, { coordinationSeq: receipt.recordedEvent }], observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: row.reverifyEvidence.coordinationSeq, eventTime: row.snapshot.asOf, validFrom: row.snapshot.asOf, validTo: null, validityVersion: 1 })); }
+        if (!row.adverse) continue;
+        const coordinateKey = this._providerCoordinateKey(p.repoId, row.coordinate); const contribution = freeze(clone(row.contribution));
+        if (!this._reuseProviderContributions.has(contribution.id)) this._reuseProviderContributions.set(contribution.id, contribution);
+        const contributionIds = new Set(this._reuseProviderCoordinateContributions.get(coordinateKey) ?? []); contributionIds.add(contribution.id); this._reuseProviderCoordinateContributions.set(coordinateKey, contributionIds); this._reuseProviderGuards.set(coordinateKey, freeze({ ...clone(row.aggregate), eventSeq: event.seq }));
+        const findingId = `finding:reuse-provider:${contribution.id.slice('provider-contribution:'.length)}`;
+        if (!this._knowledgeNodes.has(findingId)) this._knowledgeNodes.set(findingId, freeze({ id: findingId, type: 'Finding', grounding: 'derived', body: `Official provider risk for ${row.coordinate.package}@${row.coordinate.version}`, evidence, promotion: { kind: 'ProviderReuseRisk', trigger: 'provider.risk' }, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: row.reverifyEvidence.coordinationSeq, eventTime: row.snapshot.asOf, validFrom: row.snapshot.asOf, validTo: null, validityVersion: 1, repoId: p.repoId, providerId: p.providerId, sourceEpoch: p.sourceEpoch, contributionId: contribution.id, policyHash: p.policy.hash }));
+        const lineageId = `knowledge-edge:derived:${findingId}:${officialNodeId}`; this._knowledgeEdges.set(lineageId, freeze({ id: lineageId, type: 'DerivedFrom', from: findingId, to: officialNodeId, evidence, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: row.reverifyEvidence.coordinationSeq, eventTime: row.snapshot.asOf, validFrom: row.snapshot.asOf, validTo: null, validityVersion: 1 }));
+        for (const target of row.targets) {
+          const edgeId = `knowledge-edge:affects:${findingId}:${target.nodeId}`; this._knowledgeEdges.set(edgeId, freeze({ id: edgeId, type: 'Affects', from: findingId, to: target.nodeId, evidence, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: row.reverifyEvidence.coordinationSeq, eventTime: row.snapshot.asOf, validFrom: row.snapshot.asOf, validTo: null, validityVersion: 1 }));
+          const node = this._knowledgeNodes.get(target.nodeId); this._knowledgeNodes.set(target.nodeId, freeze({ ...clone(node), validTo: event.ts, validityVersion: node.validityVersion + 1, invalidatedBy: event.seq })); this._contamination.push(freeze({ nodeId: target.nodeId, invalidationEvent: event.seq, affectedReadEvents: clone(target.affectedDecisionReadEvents), eventSeq: event.seq, ts: event.ts }));
+          if (target.dossierFindingId) { const finding = this._knowledgeNodes.get(target.dossierFindingId); if (finding && !finding.validTo) { this._knowledgeNodes.set(target.dossierFindingId, freeze({ ...clone(finding), validTo: event.ts, validityVersion: finding.validityVersion + 1, invalidatedBy: event.seq })); this._contamination.push(freeze({ nodeId: target.dossierFindingId, invalidationEvent: event.seq, affectedReadEvents: clone(target.affectedFindingReadEvents), eventSeq: event.seq, ts: event.ts })); } }
+        }
+      }
+    } else if (event.kind === 'provider.processing_checked') {
       this._validateProviderGreenPayload(p, event, true); const old = this._providerProcessing.get(p.processingId);
       this._providerProcessing.set(p.processingId, freeze({ ...clone(old), status: 'ignored_non_adverse', version: old.version + 1, requestDigest: p.requestDigest, completionDigest: p.completionDigest, completionEvent: event.seq, observations: p.observations.map((row) => ({ coordinate: clone(row.coordinate), officialDigest: row.officialDigest, factDigest: row.snapshot.factDigest, asOf: row.snapshot.asOf })) }));
       for (const coordinate of old.coordinates) { const key = this._providerCoordinateKey(old.repoId, coordinate); const pending = new Set(this._providerPending.get(key) ?? []); pending.delete(p.processingId); if (pending.size === 0) this._providerPending.delete(key); else this._providerPending.set(key, pending); }
@@ -957,7 +1059,7 @@ export class CoordinationStore {
   }
   task(id) { return clone(this._tasks.get(id) ?? null); }
   run(id) { return clone(this._runs.get(id) ?? null); }
-  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
+  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
   healthCheck() { try { if (!existsSync(this.file)) return this._events.length === 0; const raw = readFileSync(this.file, 'utf8'); return raw.length === 0 || raw.endsWith('\n'); } catch { return false; } }
   readyTasks() {
     return [...this._tasks.values()].filter((task) => task.status === 'pending' && task.assignee == null
@@ -1197,7 +1299,7 @@ export class CoordinationStore {
 
   providerProcessingAdmission(key, requestDigest) {
     const prior = this._byKey.get(key); if (!prior) return null;
-    if (prior.kind !== 'provider.processing_checked' || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('provider processing idempotency conflict', 'provider_processing_conflict');
+    if (!['provider.processing_checked', 'knowledge.reuse_provider_guarded'].includes(prior.kind) || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('provider processing idempotency conflict', 'provider_processing_conflict');
     return freeze({ ok: true, result: 'idempotent', event: clone(prior), processing: this.providerProcessing(prior.payload.processingId) });
   }
 
@@ -1213,6 +1315,26 @@ export class CoordinationStore {
     const payload = { ...core, completionDigest: canonicalDigest(core) }; const event = { seq: this._events.length + 1, ts: this._clock(), actor: auth.actor };
     this._validateProviderGreenPayload(payload, event, false); const appended = this._append('provider.processing_checked', payload, auth, event.ts);
     return freeze({ ok: true, result: 'ignored_non_adverse', event: clone(appended), processing: this.providerProcessing(fields.processingId) });
+  }
+
+  recordProviderAdverseCompletion(fields, auth) {
+    if (typeof auth?.actor !== 'string' || typeof auth?.key !== 'string' || auth.actor.length === 0 || auth.key.length === 0) throw new TypeError('provider processing actor and idempotency key required');
+    const admitted = this.providerProcessingAdmission(auth.key, fields?.requestDigest); if (admitted) return admitted;
+    const existing = this._providerProcessing.get(fields?.processingId);
+    if (existing && existing.status !== 'pending') {
+      if (existing.requestDigest !== fields?.requestDigest) throw new CoordinationRefusal('provider processing already completed differently', 'provider_processing_conflict');
+      return freeze({ ok: true, result: 'idempotent', event: clone(this._events[existing.completionEvent - 1]), processing: clone(existing) });
+    }
+    const processing = existing; const ceilings = this._providerAdverseCeilings(fields.repoId);
+    const observations = fields.observations.map((row) => {
+      const adverse = row.snapshot.recommendation !== 'borrow_candidate'; const projection = adverse ? this._providerAdverseTargets(fields.repoId, row.coordinate, ceilings) : { targets: [], examinedStateRows: 0 };
+      const contribution = adverse ? this._providerContribution(row, processing, fields.policy) : null; const aggregate = adverse ? this._providerAggregate(fields.repoId, row.coordinate, contribution, fields.policy) : null;
+      return { ...clone(row), adverse, contribution: clone(contribution), aggregate: clone(aggregate), targets: clone(projection.targets), targetSetDigest: canonicalDigest({ targets: projection.targets, examinedStateRows: projection.examinedStateRows }), examinedStateRows: projection.examinedStateRows };
+    });
+    const core = { schemaVersion: 1, requestDigest: fields.requestDigest, processingId: fields.processingId, expectedProcessingVersion: fields.expectedProcessingVersion, repoId: fields.repoId, providerId: fields.providerId, sourceEpoch: fields.sourceEpoch, receiptIds: clone(fields.receiptIds), policy: clone(fields.policy), indexBinding: clone(fields.indexBinding), observations, result: 'guarded_adverse' };
+    const payload = { ...core, completionDigest: canonicalDigest(core) }; const event = { seq: this._events.length + 1, ts: this._clock(), actor: auth.actor, idempotencyKey: auth.key };
+    this._validateProviderAdversePayload(payload, event, false); const appended = this._append('knowledge.reuse_provider_guarded', payload, auth, event.ts);
+    return freeze({ ok: true, result: 'guarded_adverse', event: clone(appended), processing: this.providerProcessing(fields.processingId), guards: observations.filter((row) => row.adverse).map((row) => this.reuseProviderGuard(fields.repoId, row.coordinate)) });
   }
 
   recordProviderDelivery(fields, auth) {
@@ -1253,10 +1375,13 @@ export class CoordinationStore {
     if (!node || node.validTo || !Number.isFinite(observed) || observed >= Date.parse(decision.dossierSnapshot?.expiresAt ?? '')) return null;
     const guard = this._reuseRiskGuards.get(canonicalDigest(decision.coordinate));
     if (guard?.blocked === true && (decision.choice === 'borrow' || decision.dossierSnapshot?.factDigest !== guard.factDigest)) return null;
+    if (this._reuseProviderGuards.get(this._providerCoordinateKey(decision.envRef?.repoId, decision.coordinate))?.blocked === true) return null;
     if (this._providerPendingFor(decision.envRef?.repoId, decision.coordinate).length > 0) return null;
     return decision;
   }
   reuseRiskGuard(coordinate) { return clone(this._reuseRiskGuards.get(canonicalDigest(coordinate)) ?? null); }
+  reuseProviderGuard(repoId, coordinate) { return clone(this._reuseProviderGuards.get(this._providerCoordinateKey(repoId, coordinate)) ?? null); }
+  reuseAdverseState(repoId, coordinate) { const manual = this.reuseRiskGuard(coordinate); const provider = this.reuseProviderGuard(repoId, coordinate); return freeze({ blocked: manual?.blocked === true || provider?.blocked === true, manual, provider }); }
   reuseDecisionAdmission(key, requestDigest) {
     const prior = this._byKey.get(key); if (!prior) return null;
     if (!['knowledge.reuse_decided', 'reuse.decision_request_bound'].includes(prior.kind) || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('reuse decision idempotency conflict', 'reuse_decision_conflict');

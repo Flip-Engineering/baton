@@ -105,7 +105,7 @@ const COORDINATION_MUTATORS = new Set([
   'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
   'readScratch', 'expireScratchClaim', 'expireScratchFact', 'addKnowledgeNode', 'promoteKnowledgeNode',
   'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination', 'recordReuseDecision',
-  'recordReuseRiskGuard', 'recordReuseTtlInvalidation', 'activateReusePolicy', 'recordProviderDelivery', 'recordProviderGreenCompletion',
+  'recordReuseRiskGuard', 'recordReuseTtlInvalidation', 'activateReusePolicy', 'recordProviderDelivery', 'recordProviderGreenCompletion', 'recordProviderAdverseCompletion',
 ]);
 
 function canonical(value) {
@@ -339,7 +339,7 @@ export class Coordinator {
       if (!cq?.ops?.['reuse.vet'] || cq.actions?.reverify !== true) throw new TypeError('provider reconciliation requires reverifiable Quartermaster reuse.vet');
       const activePolicy = opts.coordination.reusePolicyState(config.repoId);
       if (!cq.reusePolicy || !activePolicy || activePolicy.policyHash !== cq.reusePolicy.hash) throw new TypeError('provider reconciliation requires the active Quartermaster policy');
-      for (const method of ['providerProcessingAdmission', 'recordProviderGreenCompletion', 'reusePolicyState']) if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
+      for (const method of ['providerProcessingAdmission', 'recordProviderGreenCompletion', 'recordProviderAdverseCompletion', 'reusePolicyState']) if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
       this._providerReconciliation = Object.freeze({ repoId: config.repoId, budgetTokens: config.budgetTokens, indexAuthority: authority, card: Object.freeze({ ...card }) });
     }
     const rawCoordination = opts.coordination;
@@ -2782,8 +2782,8 @@ export class Coordinator {
   }
 
   /** Freshly reconcile one durable provider processing root without caller-selected coordinates,
-   * policy, index epoch, outcome, actor, or idempotency. This first transaction resolves only an
-   * all-green root; adverse observations remain pending for the monotonic guard transaction. */
+   * policy, index epoch, outcome, actor, or idempotency. Green and adverse coordinates complete as
+   * one atomic root; only independently refreshed official facts can add monotonic guard authority. */
   async reconcileProviderProcessing(processingId, ctx = {}) {
     this._assertOperational(); const config = this._providerReconciliation;
     if (!config) throw Object.assign(new Error('provider reconciliation is not deployment-configured'), { code: 'provider_reconciliation_unavailable' });
@@ -2812,14 +2812,16 @@ export class Coordinator {
       const currentBinding = await config.indexAuthority.current({ repoId: config.repoId, signal: ctx.signal }); const bindingCheck = await config.indexAuthority.reverify(rawBinding, { signal: ctx.signal }); const currentHead = this._coordination.reusePolicyState(config.repoId);
       if (canonicalDigest(currentBinding) !== canonicalDigest(rawBinding) || bindingCheck?.ok !== true) throw Object.assign(new Error('provider index changed during refresh'), { code: 'provider_index_changed' });
       if (!currentHead || currentHead.policyHash !== policy.hash || currentHead.version !== policy.version || currentHead.constraintId !== policy.constraintId) throw Object.assign(new Error('provider policy changed during refresh'), { code: 'reuse_policy_reconciliation_required' });
-      if (candidates.some((row) => row.snapshot.recommendation !== 'borrow_candidate')) throw Object.assign(new Error('provider adverse observation requires monotonic guard completion'), { code: 'provider_adverse_pending' });
       const observations = [];
       for (const row of candidates) {
         const projection = { processingId, coordinate: row.coordinate, dossierDigest: row.dossierRef.digest, factDigest: row.snapshot.factDigest, policyHash: policy.hash, indexBindingDigest: indexBinding.bindingDigest, recommendation: row.snapshot.recommendation, asOf: row.snapshot.asOf, expiresAt: row.snapshot.expiresAt, advisoryIds: row.advisoryIds, maliciousAdvisoryIds: row.maliciousAdvisoryIds }; const officialDigest = canonicalDigest(projection);
         const verifiedEvent = this._log.append({ worker: 'hub-capability', harness: 'baton', turnEpoch: 0, actor, kind: 'knowledge.reuse_provider_reverified', payload: { ...projection, officialDigest } }); const reverifyEvidence = this._coordMapEvent(verifiedEvent);
         observations.push({ coordinate: row.coordinate, dossierRef: row.dossierRef, snapshot: row.snapshot, advisoryIds: row.advisoryIds, maliciousAdvisoryIds: row.maliciousAdvisoryIds, reverifyEvidence, officialDigest });
       }
-      const result = this._coordination.recordProviderGreenCompletion({ requestDigest, processingId, expectedProcessingVersion: initial.version, repoId: initial.repoId, providerId: initial.providerId, sourceEpoch: initial.sourceEpoch, receiptIds: initial.receiptIds, policy, indexBinding, observations }, { actor, key });
+      const fields = { requestDigest, processingId, expectedProcessingVersion: initial.version, repoId: initial.repoId, providerId: initial.providerId, sourceEpoch: initial.sourceEpoch, receiptIds: initial.receiptIds, policy, indexBinding, observations };
+      const result = candidates.some((row) => row.snapshot.recommendation !== 'borrow_candidate')
+        ? this._coordination.recordProviderAdverseCompletion(fields, { actor, key })
+        : this._coordination.recordProviderGreenCompletion(fields, { actor, key });
       return Object.freeze({ ...result, dossiers: candidates.map((row) => row.claim) });
     } finally { this._authorityOps -= 1; }
   }
