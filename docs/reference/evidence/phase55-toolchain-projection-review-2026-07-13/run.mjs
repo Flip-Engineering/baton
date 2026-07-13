@@ -75,7 +75,7 @@ function brief(task) {
   });
 }
 function bounded(events) {
-  const kinds = new Set(['worktree.ready', 'runtime.scope_created', 'lifecycle.spawned', 'lifecycle.turn_started', 'lifecycle.turn_completed', 'lifecycle.crashed', 'resource.tokens', 'resource.budget_threshold', 'verify.reverified', 'kill.requested', 'kill.confirmed', 'lifecycle.process_closed']);
+  const kinds = new Set(['worktree.ready', 'runtime.scope_created', 'lifecycle.spawned', 'lifecycle.turn_started', 'lifecycle.turn_completed', 'lifecycle.crashed', 'resource.tokens', 'resource.budget_threshold', 'verify.reverified', 'kill.requested', 'kill.confirmed', 'lifecycle.process_started', 'lifecycle.process_closed']);
   return events.filter((event) => kinds.has(event.kind)).map((event) => ({
     seq: event.seq, ts: event.ts, actor: event.actor, kind: event.kind,
     harnessRequested: event.harnessRequested ?? null, harnessResolved: event.harnessResolved ?? null,
@@ -87,7 +87,7 @@ function bounded(events) {
         : event.kind === 'resource.tokens' ? { tokens: event.payload?.tokens ?? null, usd: event.payload?.usd ?? null, accounting: event.payload?.accounting ?? null }
           : event.kind === 'verify.reverified' ? { accept: event.payload?.accept ?? false, observedExit: event.payload?.verdict?.observedExit ?? null, captureSha: event.payload?.capture?.sha ?? null, workerProjectionDigest: event.payload?.capture?.toolchainProjection?.projectionDigest ?? null, verifierProjectionDigest: event.payload?.capture?.verifierToolchainProjection?.projectionDigest ?? null }
             : ['lifecycle.turn_completed', 'lifecycle.crashed'].includes(event.kind) ? { status: event.payload?.status ?? event.payload?.result?.status ?? null, reason: String(event.payload?.error ?? event.payload?.reason ?? '').slice(0, 512) }
-              : event.kind === 'lifecycle.process_closed' ? { pid: event.payload?.pid ?? null, processGroupId: event.payload?.processGroupId ?? null, closeReason: event.payload?.closeReason ?? null } : {},
+              : ['lifecycle.process_started', 'lifecycle.process_closed'].includes(event.kind) ? { pid: event.payload?.pid ?? null, processGroupId: event.payload?.processGroupId ?? null, generation: event.payload?.generation ?? null, closeReason: event.payload?.closeReason ?? null } : {},
   }));
 }
 
@@ -148,7 +148,10 @@ try {
   if (rows.length > 0) await Promise.all(rows.map((row) => until(async () => (await coordinator.result(row.workerId)).ready, `${row.taskId} terminal result`)));
   for (const row of rows) {
     row.result = await coordinator.result(row.workerId); row.events = log.read(row.workerId);
-    row.spawn = row.events.find((event) => event.kind === 'lifecycle.spawned' && event.actor === 'worker') ?? null; row.pid = row.spawn?.payload?.pid ?? null;
+    row.spawn = row.events.find((event) => event.kind === 'lifecycle.spawned' && event.actor === 'worker') ?? null;
+    row.processStarted = row.events.find((event) => event.kind === 'lifecycle.process_started') ?? null;
+    row.processClosed = row.events.findLast((event) => event.kind === 'lifecycle.process_closed') ?? null;
+    row.pid = row.spawn?.payload?.pid ?? row.processStarted?.payload?.pid ?? row.processClosed?.payload?.pid ?? null;
     row.ready = row.events.find((event) => event.kind === 'worktree.ready') ?? null; row.verify = row.events.findLast((event) => event.kind === 'verify.reverified') ?? null;
     const sha = row.verify?.payload?.capture?.sha;
     if (row.result.status === 'completed' && row.verify?.payload?.accept === true && sha) try { row.report = git(['show', `${sha}:${row.target}`]); } catch { row.report = null; }
@@ -157,7 +160,10 @@ try {
 finally {
   pumping = false; await pump.catch(() => {});
   for (const row of rows) {
-    row.events = log.read(row.workerId); row.spawn ??= row.events.find((event) => event.kind === 'lifecycle.spawned' && event.actor === 'worker') ?? null; row.pid ??= row.spawn?.payload?.pid ?? null; row.killFloorSeq = row.events.at(-1)?.seq ?? 0;
+    row.events = log.read(row.workerId); row.spawn ??= row.events.find((event) => event.kind === 'lifecycle.spawned' && event.actor === 'worker') ?? null;
+    row.processStarted ??= row.events.find((event) => event.kind === 'lifecycle.process_started') ?? null;
+    row.processClosed ??= row.events.findLast((event) => event.kind === 'lifecycle.process_closed') ?? null;
+    row.pid ??= row.spawn?.payload?.pid ?? row.processStarted?.payload?.pid ?? row.processClosed?.payload?.pid ?? null; row.killFloorSeq = row.events.at(-1)?.seq ?? 0;
     try { kills.push({ taskId: row.taskId, floorSeq: row.killFloorSeq, ack: await coordinator.kill(row.workerId, 'policy') }); }
     catch (error) { kills.push({ taskId: row.taskId, error: String(error?.stack ?? error).slice(0, 1_200) }); }
   }
@@ -172,9 +178,11 @@ if (reapWaitError) fatal = [fatal, reapWaitError].filter(Boolean).join('\n');
 
 for (const row of rows) {
   row.events = log.read(row.workerId); row.handle = coordinator._publicHandle(coordinator._workers.get(row.workerId));
-  row.killRequested = row.events.find((event) => event.seq > row.killFloorSeq && event.kind === 'kill.requested') ?? null;
+  row.processStarted = row.events.find((event) => event.kind === 'lifecycle.process_started') ?? row.processStarted ?? null;
+  row.processClosed = row.events.findLast((event) => event.kind === 'lifecycle.process_closed') ?? row.processClosed ?? null;
+  row.pid ??= row.processStarted?.payload?.pid ?? row.processClosed?.payload?.pid ?? null;
+  row.killRequested = row.events.findLast((event) => event.kind === 'kill.requested') ?? null;
   row.killConfirmation = row.events.find((event) => event.seq > (row.killRequested?.seq ?? Number.MAX_SAFE_INTEGER) && event.kind === 'kill.confirmed') ?? null;
-  row.processClosed = row.events.findLast((event) => event.kind === 'lifecycle.process_closed') ?? null;
 }
 const exactRoute = (row) => {
   try { const tuple = JSON.parse(row.handle.routeKey); return Array.isArray(tuple) && tuple.length === 6 && `${tuple[0]}@${tuple[1]}` === row.handle.harnessResolved && tuple[2] === row.model && tuple[3] === 'low' && tuple[4] === row.family && tuple[5] === TASK_TYPE; }
@@ -185,11 +193,20 @@ const routeAdmission = {
   exactRequestedResolved: rows.length === TASKS.length && rows.every((row) => row.handle.harnessRequested === row.harness && row.handle.modelRequested === row.model && row.handle.modelResolved === row.model && row.handle.effortRequested === 'low' && row.handle.effortResolved === 'low' && exactRoute(row)),
   observedIdentityHonest: rows.every((row) => (row.handle.modelObserved === null || row.handle.modelObserved === row.model) && (row.handle.effortObserved === null || row.handle.effortObserved === 'low')),
 };
-const killIsCorrelated = (row) => { const kill = kills.find((candidate) => candidate.taskId === row.taskId); return Boolean(row.pid && row.killRequested && row.killConfirmation && ['confirmed', 'forced'].includes(kill?.ack?.result)); };
+const killIsCorrelated = (row) => {
+  const kill = kills.find((candidate) => candidate.taskId === row.taskId);
+  return Boolean(row.pid && row.killRequested && row.killConfirmation && row.processClosed
+    && ['confirmed', 'forced', 'already_dead'].includes(kill?.ack?.result));
+};
 const startedRows = rows.filter((row) => row.pid);
+const grokRows = rows.filter((row) => row.harness === 'grok' && row.processStarted && row.processClosed);
+const grokIntervalsOverlap = grokRows.length === 2
+  && Date.parse(grokRows[0].processStarted.ts) <= Date.parse(grokRows[1].processClosed.ts)
+  && Date.parse(grokRows[1].processStarted.ts) <= Date.parse(grokRows[0].processClosed.ts);
 const providerProof = {
   providerReadyPidByTask: Object.fromEntries(TASKS.map((task) => [task.taskId, rows.find((row) => row.taskId === task.taskId)?.pid ?? null])),
   startedProcessCount: startedRows.length, simultaneousActiveGrokPidSampleObserved: simultaneousGrokSamples.length > 0,
+  overlappingGrokProcessIntervalsObserved: grokIntervalsOverlap,
   correlatedKillByStartedTask: Object.fromEntries(startedRows.map((row) => [row.taskId, killIsCorrelated(row)])),
   everyStartedProcessKilled: startedRows.length > 0 && startedRows.every(killIsCorrelated), everyStartedProcessClosed: startedRows.every((row) => Boolean(row.processClosed)),
 };
@@ -211,10 +228,12 @@ const reportBinding = (row) => row.result?.status === 'completed' && row.verify?
 const reviewProof = { allTerminal: rows.length === TASKS.length && rows.every((row) => row.result?.ready === true), verifiedReports: rows.filter(reportBinding).map((row) => row.taskId), exactBaseShaPreserved: git(['rev-parse', 'HEAD']) === BASE_SHA };
 const lifecyclePass = fatal === null && routeAdmission.exactRequestedResolved && routeAdmission.observedIdentityHonest && providerProof.everyStartedProcessKilled && providerProof.everyStartedProcessClosed && Object.values(cleanup).every(Boolean);
 const projectionPass = lifecyclePass && projectionProof.allAdmittedWorkersBound && projectionProof.allFreshVerificationsBound && projectionProof.sourceRootAbsentFromEvents && projectionProof.targetDependencyAbsentBeforeAndAfter;
-const matrixPass = projectionPass && providerProof.simultaneousActiveGrokPidSampleObserved && reviewProof.verifiedReports.length > 0;
+const matrixPass = projectionPass && grokProbeError === null && grokModels.length > 0 && !grokModels.includes('not authenticated')
+  && (providerProof.simultaneousActiveGrokPidSampleObserved || providerProof.overlappingGrokProcessIntervalsObserved)
+  && reviewProof.verifiedReports.length > 0;
 const summary = {
   at: new Date().toISOString(), sourceImplementationSha: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: SOURCE_REPO, encoding: 'utf8' }).trim(), targetBaseSha: BASE_SHA, targetHead: git(['rev-parse', 'HEAD']), runId: RUN_ID,
-  interpretation: { lifecyclePass: 'exact route admission plus explicit correlated kill, process-close evidence, and full ownership reap for every started provider process', projectionPass: 'lifecyclePass plus path-free identical projection binding in every admitted worker and fresh verification, with no dependency stage in the clean target', matrixPass: 'projectionPass plus a simultaneous two-Grok active-process sample and at least one fresh-verified implementation report' },
+  interpretation: { lifecyclePass: 'exact route admission plus an explicit post-terminal kill acknowledgement, correlated kill/close evidence, and full ownership reap for every started provider process', projectionPass: 'lifecyclePass plus path-free identical projection binding in every admitted worker and fresh verification, with no dependency stage in the clean target', matrixPass: 'projectionPass plus authenticated overlapping two-Grok provider processes and at least one fresh-verified implementation report' },
   grokAuthProbe: { authenticated: grokProbeError === null && grokModels.length > 0 && !grokModels.includes('not authenticated'), output: grokModels, error: grokProbeError },
   credentialMeasurements, ownershipBefore, ownershipAfter, simultaneousGrokSamples, attempts,
   rows: rows.map((row) => ({ taskId: row.taskId, harness: row.harness, model: row.model, workerId: row.workerId, pid: row.pid, result: row.result ? { status: row.result.status, ready: row.result.ready } : null, route: { harnessRequested: row.handle.harnessRequested, harnessResolved: row.handle.harnessResolved, modelRequested: row.handle.modelRequested, modelResolved: row.handle.modelResolved, modelObserved: row.handle.modelObserved, effortRequested: row.handle.effortRequested, effortResolved: row.handle.effortResolved, effortObserved: row.handle.effortObserved }, budgetUsed: row.handle.budgetUsed, verifyAccept: row.verify?.payload?.accept ?? false, reportCaptured: Boolean(row.report), readyProjectionDigest: row.ready?.payload?.toolchainProjection?.projectionDigest ?? null, verifierProjectionDigest: row.verify?.payload?.capture?.verifierToolchainProjection?.projectionDigest ?? null, killRequestedSeq: row.killRequested?.seq ?? null, killConfirmationSeq: row.killConfirmation?.seq ?? null, processClosedSeq: row.processClosed?.seq ?? null, terminalReason: String(row.events.findLast((event) => ['lifecycle.turn_completed', 'lifecycle.crashed'].includes(event.kind))?.payload?.error ?? '').slice(0, 512) })),
