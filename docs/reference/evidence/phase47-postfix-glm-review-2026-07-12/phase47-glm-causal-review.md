@@ -14,7 +14,7 @@ Phase 47 at commit 3e1c860 successfully implements the Cairn causal integrity au
 
 **Issue:** The `sourceIsLiveLineage` function checks `source.observedSeq < claim.observedSeq` and then uses `effectiveAt` (derived from `observedAt` or `observationTime(observedSeq)`) to test `source`'s liveness at the claim's `validFrom` time. This creates a timing window where `sourceIsLiveLineage(nodeMap.get(edge.to), node)` may return `true` for a `source` that was already invalidated at `node.validFrom` but whose `validTo` falls after `effectiveAt`.
 
-**Concrete failure scenario:** 
+**Concrete failure scenario:**
 1. At coordination sequence 100, Finding A is created with `validFrom: 2026-07-12T20:00:00.000Z` and no `validTo`
 2. At coordination sequence 200 (event time `2026-07-12T21:00:00.000Z`), Finding A is invalidated with `validTo: 2026-07-12T21:00:00.000Z`
 3. At coordination sequence 300 (event time `2026-07-12T22:00:00.000Z`), Decision D is created with `validFrom: 2026-07-12T21:30:00.000Z` and an `Informed` edge from Finding A
@@ -72,43 +72,43 @@ Add test case to `impl/test/phase47-cairn-causal-audit.test.mjs` after line 175:
 
 ```javascript
 test('CA4: sourceIsLiveLineage rejects invalidated sources at claim.validFrom', () => {
-  const dir = root('lineage-timing'); 
-  const store = new CoordinationStore(dir, { 
-    clock: () => '2026-07-12T20:00:00.000Z' 
+  const dir = root('lineage-timing');
+  const store = new CoordinationStore(dir, {
+    clock: () => '2026-07-12T20:00:00.000Z'
   });
-  
+
   // Create source Finding A at seq 1, time 20:00
   const created = store.createTask(task('source'), { actor: 'orchestrator', key: 'task' });
-  const source = store.addKnowledgeNode({ 
-    id: 'finding:source', 
-    type: 'Finding', 
-    grounding: 'verified', 
-    body: 'source', 
-    evidence: [{ coordinationSeq: created.event.seq }] 
+  const source = store.addKnowledgeNode({
+    id: 'finding:source',
+    type: 'Finding',
+    grounding: 'verified',
+    body: 'source',
+    evidence: [{ coordinationSeq: created.event.seq }]
   }, { actor: 'policy', key: 'source' });
-  
+
   // Advance clock and invalidate Finding A at seq 2, time 21:00
   store._clock = () => '2026-07-12T21:00:00.000Z';
-  store.invalidateKnowledge(source.node.id, 1, 'Invalidated.', { 
-    actor: 'operator:alice', key: 'invalidate' 
+  store.invalidateKnowledge(source.node.id, 1, 'Invalidated.', {
+    actor: 'operator:alice', key: 'invalidate'
   });
-  
+
   // Advance clock and create Decision D at seq 3, time 22:00
   // with validFrom set to 21:30 (after invalidation)
   store._clock = () => '2026-07-12T22:00:00.000Z';
-  const decision = store.addKnowledgeNode({ 
-    id: 'decision:derived', 
-    type: 'Decision', 
-    grounding: 'observed', 
-    body: 'derived', 
+  const decision = store.addKnowledgeNode({
+    id: 'decision:derived',
+    type: 'Decision',
+    grounding: 'observed',
+    body: 'derived',
     evidence: [{ coordinationSeq: source.event.seq }],
     informedBy: [source.node.id],
     validFrom: '2026-07-12T21:30:00.000Z'  // AFTER invalidation at 21:00
   }, { actor: 'operator:alice', key: 'decision' });
-  
+
   // Audit at current boundary (seq 3, time 22:00)
   const metrics = store.auditKnowledge({ observedSeq: 3 });
-  
+
   // Decision should NOT be causally complete because its source
   // was already invalidated at the decision's validFrom time
   assert.equal(metrics.causalCompleteness.decisions.complete, 0);
@@ -127,32 +127,32 @@ The current implementation already prevents supersession races (coordination-sto
 test('CA5: concurrent supersession attempts with same CAS refuse all but first', () => {
   const store = new CoordinationStore(root('supersession-race'), { clock: clock() });
   const g = graph(store);
-  const replacement = store.addKnowledgeNode({ 
-    id: 'finding:replacement', 
-    type: 'Finding', 
-    grounding: 'verified', 
-    body: 'replacement', 
-    evidence: [{ coordinationSeq: g.created.event.seq }] 
+  const replacement = store.addKnowledgeNode({
+    id: 'finding:replacement',
+    type: 'Finding',
+    grounding: 'verified',
+    body: 'replacement',
+    evidence: [{ coordinationSeq: g.created.event.seq }]
   }, { actor: 'policy', key: 'replacement' });
-  
+
   // First supersession succeeds
-  const first = store.addKnowledgeEdge({ 
-    type: 'Supersedes', 
-    from: replacement.node.id, 
-    to: g.left.node.id, 
-    expectedValidityVersion: 1, 
-    evidence: [{ coordinationSeq: replacement.event.seq }] 
+  const first = store.addKnowledgeEdge({
+    type: 'Supersedes',
+    from: replacement.node.id,
+    to: g.left.node.id,
+    expectedValidityVersion: 1,
+    evidence: [{ coordinationSeq: replacement.event.seq }]
   }, { actor: 'operator:alice', key: 'supersede-1' });
-  
+
   // Second attempt with same CAS fails
-  assert.throws(() => store.addKnowledgeEdge({ 
-    type: 'Supersedes', 
-    from: replacement.node.id, 
-    to: g.left.node.id, 
+  assert.throws(() => store.addKnowledgeEdge({
+    type: 'Supersedes',
+    from: replacement.node.id,
+    to: g.left.node.id,
     expectedValidityVersion: 1,  // Stale CAS
-    evidence: [{ coordinationSeq: replacement.event.seq }] 
+    evidence: [{ coordinationSeq: replacement.event.seq }]
   }, { actor: 'operator:bob', key: 'supersede-2' }), (error) => error.code === 'stale_version');
-  
+
   // Old version is no longer live
   assert.equal(store.queryKnowledge({ ids: [g.left.node.id] }).length, 0);
 });
@@ -171,17 +171,17 @@ test('CA8: trace frontier accounts for cross-edge breadth correctly', async () =
   store.createTask(task('root'), { actor: 'orchestrator', key: 'root' });
   for (let i = 0; i < 10; i++) {
     store.createTask(task(`child-${i}`), { actor: 'orchestrator', key: `child-${i}` });
-    store.addKnowledgeEdge({ 
-      type: 'Supports', 
-      from: 'task:root', 
-      to: `task:child-${i}`, 
-      evidence: [{ coordinationSeq: 1 }] 
+    store.addKnowledgeEdge({
+      type: 'Supports',
+      from: 'task:root',
+      to: `task:child-${i}`,
+      evidence: [{ coordinationSeq: 1 }]
     }, { actor: 'policy', key: `edge-${i}` });
   }
-  
+
   const trace = await cairn(store, { maxTraceDepth: 0, maxTraceRows: 20 })
     .invoke('causal.trace', { nodeId: 'task:root' }, ctx());
-  
+
   // Depth 0 means we see root but not children
   assert.equal(trace.payload[0].nodes.length, 1);
   assert.equal(trace.payload[0].nodes[0].id, 'task:root');
@@ -205,14 +205,14 @@ test('CA9: reverify detects artifact tamper via digest-only comparison', async (
   const capability = cairn(store);
   const result = await capability.invoke('causal.audit', {}, ctx());
   const args = { observedSeq: result.payload[0].coordinationUpperBound };
-  
+
   // Tamper with artifact bytes but preserve digest (impossible, but verify check)
   // Instead, tamper with claim digest
   const tampered = structuredClone(result);
   tampered.refs[0].digest = '0'.repeat(64);
   tampered.payload[0].auditDigest = tampered.refs[0].digest;
-  
-  const check = await capability.reverify(tampered, 'causal.audit', args, 
+
+  const check = await capability.reverify(tampered, 'causal.audit', args,
     ctx({ transport: 'web' }));
   assert.equal(check.ok, false);
   assert.equal(check.reason, 'artifact_digest_mismatch');
