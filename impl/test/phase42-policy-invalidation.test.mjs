@@ -18,6 +18,8 @@ const policyA = { ttlMs: 60_000, licenseAllow: ['MIT'], licenseDeny: [], minScor
 const policyB = { ...policyA, minScorecard: 8 };
 const policyC = { ...policyA, minScorecard: 9 };
 const writerFiles = (directory) => existsSync(directory) ? readdirSync(directory).filter((name) => name === 'writer.lease' || name.startsWith('writer.claim.')) : [];
+const providerFingerprint = hash(Buffer.from('phase42-provider-key'));
+function providerSource() { return { card: () => ({ schemaVersion: 1, providerId: 'fixture.policy', adapterId: 'fixture-policy-v1', version: '1', modes: ['webhook'], ecosystem: 'npm', semantics: 'authenticated_hint', auth: { scheme: 'injected-test', keyFingerprints: [providerFingerprint] }, ceilings: { maxDeliveryBytes: 4096, maxCoordinates: 4, maxAdvisoryIds: 8, maxIdentityBytes: 256 } }), async verifyDelivery({ raw }) { const body = JSON.parse(raw); const rawDigest = createHash('sha256').update(raw).digest('hex'); return { schemaVersion: 1, providerId: 'fixture.policy', deliveryId: body.deliveryId, rawDigest, rawBytes: raw.length, authReceiptDigest: hash(`auth:${body.deliveryId}`), keyFingerprint: providerFingerprint, occurredAt: body.occurredAt, sequence: body.sequence, coordinates: body.coordinates, advisoryIds: [], source: { handle: `art:sha256:${rawDigest}`, digest: rawDigest, bytes: raw.length, mediaType: 'application/json' } }; } }; }
 
 async function world() {
   const repoRoot = root('repo'); const logDir = root('log'); let nowMs = Date.parse('2026-07-12T15:00:00Z'); let advisories = []; let fetchCalls = 0;
@@ -31,7 +33,8 @@ async function world() {
     const oracle = new PublicSupplyChainOracle({ fetch, artifactRoot: root('oracle'), timeoutMs: 1_000, maxResponseBytes: 64 * 1024, maxAdvisories: 32 });
     const capability = new CartographerQuartermaster({ atlas, artifactRoot: root('quartermaster'), externalOracle: oracle, now, vetPolicy, sbomPolicy: { maxLockfileBytes: 64 * 1024, maxComponents: 32 } });
     if (extra.cardTransform) { const baseCard = capability.card(); capability.card = () => extra.cardTransform(baseCard); }
-    const driver = createDriver({ repoRoot, repoId: 'repo-a', logDir, adapters: {}, now, coordination: extra.coordination,
+    const indexAuthority = { card: () => ({ schemaVersion: 1, authorityId: 'phase42-provider-index', repoId: 'repo-a', atlasCardDigest: 'a'.repeat(64) }), async current() { return { schemaVersion: 1, repoId: 'repo-a', treeSha: 'abcd', indexEpoch: built.provenance.index_epoch, atlasCardDigest: 'a'.repeat(64) }; }, async reverify() { return { ok: true }; } };
+    const driver = createDriver({ repoRoot, repoId: 'repo-a', logDir, adapters: {}, now, coordination: extra.coordination, ...(extra.provider ? { advisoryFeedSources: { 'fixture.policy': providerSource() }, providerReconciliation: { budgetTokens: 10_000, indexAuthority } } : {}),
       capabilityFactories: { 'cartographer-quartermaster': () => capability }, capabilityContexts: { 'cartographer-quartermaster': { worktreeRoot: repoRoot } }, maxCapabilityBudgetTokens: 10_000, maxCapabilityEnvelopeBytes: 256 * 1024,
       reuseDecisionPolicy: { authorize: ({ actor }) => /^(?:operator|web|mcp):/.test(actor), authorizeRecheck: ({ actor }) => /^(?:operator|web|mcp):/.test(actor), maxNeedBytes: 2_048, maxRationaleBytes: 8_192, policyReconcile: extra.limits ?? reconcileLimits },
     });
@@ -54,6 +57,18 @@ async function world() {
   };
   return { repoRoot, logDir, now, deploy, decide, requestFor, advance: (ms) => { nowMs += ms; }, setAdvisories: (value) => { advisories = value; }, fetchCalls: () => fetchCalls };
 }
+
+test('AF5/AF6/AF9: a serialized provider append invalidates an already-live Decision and dossier Finding with exact causal fan-out', async () => {
+  const w = await world(); const a = await w.deploy(policyA, { provider: true }); const borrowed = await w.decide(a, 'provider-fanout:decision'); a.coordination.readKnowledge({ types: ['Decision', 'Finding'] }, { readerActor: 'operator:alice' }, { actor: 'operator:alice', key: 'provider-fanout:read' });
+  w.setAdvisories([{ id: 'GHSA-provider-fanout', modified: '2026-07-12T15:00:01Z' }]); w.advance(1_000); const raw = Buffer.from(JSON.stringify({ deliveryId: 'provider-fanout-1', occurredAt: new Date(w.now()).toISOString(), sequence: 1, coordinates: [borrowed.decision.coordinate] })); const receipt = await a.coordinator.receiveProviderDelivery('fixture.policy', { mode: 'webhook', raw }); const guarded = await a.coordinator.reconcileProviderProcessing(receipt.processing.id);
+  assert.equal(guarded.result, 'guarded_adverse'); assert.equal(guarded.event.payload.observations[0].targets.length, 1); assert.equal(a.coordination.currentReuseDecision(borrowed.decision.subjectDigest), null); const snapshot = a.coordination.snapshot(); const decision = snapshot.knowledge.nodes.find((node) => node.id === borrowed.decision.nodeId); const dossier = snapshot.knowledge.nodes.find((node) => node.id === `finding:dependency-dossier:${borrowed.decision.dossierRef.digest}`); assert.ok(decision.validTo); assert.ok(dossier.validTo); const aggregate = `finding:reuse-provider-aggregate:${a.coordination.reuseProviderGuard('repo-a', borrowed.decision.coordinate).guardDigest}`; assert.ok(snapshot.knowledge.edges.some((edge) => edge.type === 'Affects' && edge.from === aggregate && edge.to === decision.id)); assert.ok(snapshot.knowledge.contamination.some((row) => row.nodeId === decision.id && row.affectedReadEvents.length === 1)); a.close();
+});
+
+test('AF5: manual advisory lineage and provider contribution lineage coexist without replacing either guard plane', async () => {
+  const w = await world(); const a = await w.deploy(policyA, { provider: true }); const borrowed = await w.decide(a, 'provider-manual:decision'); w.setAdvisories([{ id: 'GHSA-provider-manual', modified: '2026-07-12T15:00:01Z' }]); w.advance(1_000);
+  const manual = await a.coordinator.recheckReuseDecision({ decisionId: borrowed.decision.id, expectedValidityVersion: 1, trigger: 'advisory_refresh', budgetTokens: 10_000 }, { actor: 'operator:alice', repoId: 'repo-a', budgetTokens: 10_000, idempotencyKey: 'provider-manual:risk' }); const raw = Buffer.from(JSON.stringify({ deliveryId: 'provider-manual-1', occurredAt: new Date(w.now()).toISOString(), sequence: 1, coordinates: [borrowed.decision.coordinate] })); const receipt = await a.coordinator.receiveProviderDelivery('fixture.policy', { mode: 'webhook', raw }); await a.coordinator.reconcileProviderProcessing(receipt.processing.id);
+  const state = a.coordination.reuseAdverseState('repo-a', borrowed.decision.coordinate); assert.equal(state.blocked, true); assert.equal(state.manual.guardDigest, manual.guard.guardDigest); assert.equal(state.provider.contributionIds.length, 1); const snapshot = a.coordination.snapshot(); assert.equal(snapshot.reuseRiskGuards.length, 1); assert.equal(snapshot.reuseProviderGuards.length, 1); assert.equal(snapshot.reuseProviderContributions.length, 1); a.close();
+});
 
 test('PI1/PI2/PI7: card-derived baseline is durable, same-policy restart is a no-op, and A→B→A advances monotonically', async () => {
   const w = await world(); const a = await w.deploy(policyA); const first = a.coordination.reusePolicyState('repo-a');

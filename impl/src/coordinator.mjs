@@ -114,6 +114,13 @@ function canonical(value) {
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
 }
 function canonicalDigest(value) { return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex'); }
+function officialCoordinateMatches(identity, coordinate) {
+  if (!identity || !coordinate) return false;
+  const fields = Object.keys(identity).sort().join(',');
+  if (!['ecosystem,package,version', 'ecosystem,package,system,version'].includes(fields)) return false;
+  return identity.ecosystem === coordinate.ecosystem && identity.package === coordinate.package && identity.version === coordinate.version
+    && (!Object.hasOwn(identity, 'system') || (coordinate.ecosystem === 'npm' && identity.system === 'NPM'));
+}
 function normalizedDecisionText(value, field, maxBytes) {
   if (typeof value !== 'string' || value.trim().length === 0 || Buffer.byteLength(value) > maxBytes || value.includes('\0')) {
     const error = new TypeError(`reuse decision ${field} is invalid`); error.code = 'invalid_reuse_decision'; throw error;
@@ -2806,7 +2813,7 @@ export class Coordinator {
         const args = { indexEpoch: indexBinding.indexEpoch, ecosystem: coordinate.ecosystem, package: coordinate.package, version: coordinate.version, refresh: true }; const verifyCtx = { budgetTokens: config.budgetTokens, actor, signal: ctx.signal };
         const claim = await this._capabilityRegistry().invoke('cartographer-quartermaster', 'reuse.vet', args, verifyCtx); const dossierRef = decisionRef(claim?.refs?.[0], 'dependency-dossier', 'application/vnd.baton.dependency-dossier+json');
         const check = await this._capabilityRegistry().reverify('cartographer-quartermaster', 'reuse.vet', claim, args, verifyCtx); const snapshot = check.status === 'ok' ? check.payload?.[0]?.snapshot : null; const dossier = claim.payload?.[0];
-        if (!snapshot || !dossier || dossier.factDigest !== snapshot.factDigest || canonicalDigest(snapshot.identity) !== canonicalDigest(coordinate) || !Array.isArray(dossier.advisoryIds) || !Array.isArray(dossier.advisories)) throw Object.assign(new Error('provider official refresh diverged'), { code: 'reuse_evidence_diverged' });
+        if (!snapshot || !dossier || dossier.factDigest !== snapshot.factDigest || !officialCoordinateMatches(snapshot.identity, coordinate) || !Array.isArray(dossier.advisoryIds) || !Array.isArray(dossier.advisories)) throw Object.assign(new Error('provider official refresh diverged'), { code: 'reuse_evidence_diverged' });
         const advisoryIds = [...new Set(dossier.advisoryIds)].sort(); const maliciousAdvisoryIds = [...new Set(dossier.advisories.filter((item) => item?.malicious === true).map((item) => item.id))].sort(); candidates.push({ coordinate, dossierRef, snapshot, advisoryIds, maliciousAdvisoryIds, claim });
       }
       const currentBinding = await config.indexAuthority.current({ repoId: config.repoId, signal: ctx.signal }); const bindingCheck = await config.indexAuthority.reverify(rawBinding, { signal: ctx.signal }); const currentHead = this._coordination.reusePolicyState(config.repoId);
