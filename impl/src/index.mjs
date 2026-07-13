@@ -21,6 +21,7 @@ import { CoordinationStore } from './coordination-store.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
 import { CapabilityRegistry } from './capability-registry.mjs';
 import { AdvisoryFeedRegistry } from './advisory-feed-registry.mjs';
+import { ProviderPollSupervisor } from './provider-poll-supervisor.mjs';
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const canonicalDigest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
@@ -60,6 +61,7 @@ export { PublicSupplyChainOracle } from './supply-chain-oracle.mjs';
 export { MergirafResolver } from './structured-merge.mjs';
 export { CapabilityRegistry } from './capability-registry.mjs';
 export { AdvisoryFeedRegistry } from './advisory-feed-registry.mjs';
+export { ProviderPollSupervisor } from './provider-poll-supervisor.mjs';
 export { Ed25519AdvisoryWebhookSource, HmacAdvisoryWebhookSource, signEd25519AdvisoryWebhookForTest, signHmacAdvisoryWebhookForTest } from './hmac-advisory-webhook.mjs';
 
 function localGitEnv() {
@@ -163,6 +165,7 @@ function refereeFn(task, result, opts) {
  *          capabilities?:Record<string,object>, capabilityFactories?:Record<string,Function>, capabilityContexts?:Record<string,object|Function>,
  *          advisoryFeedSources?:Record<string,object>,
  *          providerReconciliation?:{budgetTokens:number,indexAuthority:object},
+ *          providerPolling?:{intervalMs:number,initialBackoffMs:number},
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
  *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
@@ -322,7 +325,29 @@ export function createDriver(opts) {
     watchdog: opts.watchdog,
   });
 
+  let providerPoller = null;
+  if (opts.providerPolling !== undefined) {
+    if (!opts.providerPolling || Object.keys(opts.providerPolling).sort().join(',') !== 'initialBackoffMs,intervalMs') throw new TypeError('providerPolling requires only fixed intervalMs and initialBackoffMs');
+    if (!coordination.reusePolicyState(opts.repoId)) throw new TypeError('providerPolling requires an active deployment reuse policy');
+    const pollCards = advisoryFeedCards.filter((card) => card.modes.includes('poll'));
+    providerPoller = new ProviderPollSupervisor({
+      coordinator, cards: pollCards, intervalMs: opts.providerPolling.intervalMs, initialBackoffMs: opts.providerPolling.initialBackoffMs,
+      onEvent: (event) => log.append({ worker: 'hub-provider-poller', harness: 'baton', turnEpoch: 0, actor: 'policy', kind: event.kind, payload: Object.fromEntries(Object.entries(event).filter(([key]) => key !== 'kind')) }),
+    });
+    providerPoller.start();
+  }
   let closed = false;
-  return { coordinator, story, router, log, coordination, advisoryFeeds, close: () => { if (closed) return false; coordinator.closeAuthority(); closed = true; return coordination.releaseWriterLease(); } };
+  const closeAuthority = () => { const authorityClosed = coordinator.closeAuthority(); closed = true; coordination.releaseWriterLease(); return authorityClosed; };
+  const close = () => {
+    if (closed) return false;
+    if (providerPoller) throw Object.assign(new Error('poll-enabled drivers require await closeAsync()'), { code: 'driver_async_close_required' });
+    return closeAuthority();
+  };
+  const closeAsync = async () => {
+    if (closed) return false;
+    if (providerPoller) await providerPoller.close();
+    return closeAuthority();
+  };
+  return { coordinator, story, router, log, coordination, advisoryFeeds, providerPoller, close, closeAsync };
   } catch (error) { if (writerLease) coordination.releaseWriterLease(); throw error; }
 }

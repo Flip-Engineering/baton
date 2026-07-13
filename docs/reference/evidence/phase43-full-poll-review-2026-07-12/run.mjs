@@ -12,13 +12,16 @@ const REPO = resolve(process.env.BATON_REPO ?? resolve(HERE, '../../../..'));
 const OUTPUT = resolve(process.env.BATON_EVIDENCE_DIR ?? HERE);
 const GLM_AUTH = resolve(process.env.BATON_GLM_AUTH_FILE ?? resolve(HERE, '../../../..', 'glm_key.json'));
 const LOG_DIR = mkdtempSync(join(tmpdir(), 'baton-phase43-full-poll-review-'));
-const TASK_ID = 'phase43-full-poll-glm-review';
+const git = (args) => execFileSync('git', args, { cwd: REPO, encoding: 'utf8' }).trim();
+const TASK_ID = process.env.BATON_TASK_ID ?? 'phase43-full-poll-glm-review';
 const TARGET = `reviews/dogfood/${TASK_ID}.md`;
+const RUN_ID = process.env.BATON_RUN_ID ?? 'phase43-full-poll-review';
+const REVIEW_GOAL = process.env.BATON_REVIEW_GOAL ?? `Adversarially review committed Phase 43 authenticated full-poll recovery ${git(['rev-parse', '--short', 'HEAD'])}. Read spec/phase43/full-poll-reconciliation.md, impl/src/advisory-feed-registry.mjs, impl/src/coordination-store.mjs, impl/src/coordinator.mjs, and the phase43 provider tests. Evaluate proof binding, sequence completeness, durable receipt admission, recovery CAS races and replay, cancellation, bounds, secret confinement, and whether claims exceed implemented PF1-PF5.`;
+const REVIEW_BOUNDARY = process.env.BATON_REVIEW_BOUNDARY ?? 'Distinguish implemented manual PF1-PF5 from unimplemented scheduler/close-drain, production HTTPS adapter, and authenticated bounded reads.';
 const MAX_TOKENS = Number(process.env.BATON_REVIEW_MAX_TOKENS ?? 150_000);
 const MAX_USD = Number(process.env.BATON_GLM_MAX_USD ?? 1.25);
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
-const git = (args) => execFileSync('git', args, { cwd: REPO, encoding: 'utf8' }).trim();
 
 async function until(fn, label, timeoutMs = 480_000) {
   const deadline = Date.now() + timeoutMs;
@@ -28,13 +31,13 @@ async function until(fn, label, timeoutMs = 480_000) {
 
 function brief() {
   return createBrief({
-    goal: `Adversarially review committed Phase 43 authenticated full-poll recovery ${git(['rev-parse', '--short', 'HEAD'])}. Read spec/phase43/full-poll-reconciliation.md, impl/src/advisory-feed-registry.mjs, impl/src/coordination-store.mjs, impl/src/coordinator.mjs, and the phase43 provider tests. Evaluate proof binding, sequence completeness, durable receipt admission, recovery CAS races and replay, cancellation, bounds, secret confinement, and whether claims exceed implemented PF1-PF5. Write ${TARGET} with exactly "## Verdict", "## P0-P1 findings", and "## Required red tests".`,
+    goal: `${REVIEW_GOAL} Write ${TARGET} with exactly "## Verdict", "## P0-P1 findings", and "## Required red tests".`,
     constraints: [
       `Edit only ${TARGET}.`,
       'Use at most eight repository or tool calls and keep the report under 1,000 words.',
       'Ground every finding in an exact source seam and reproducible event, mutation, or race.',
       'Do not inspect credentials or environment, use network tools, commit, push, deploy, access homelab/project-manager, or edit product files.',
-      'Distinguish implemented manual PF1-PF5 from unimplemented scheduler/close-drain, production HTTPS adapter, and authenticated bounded reads.',
+      REVIEW_BOUNDARY,
     ],
     pathScope: [TARGET],
     definitionOfDone: 'The three exact headings exist and the verdict is explicit.',
@@ -73,7 +76,7 @@ const { coordinator, log } = driver;
 let handle; let result; let report = null; let pid = null; let verify = null; let kill = null; let closed = false; let fatal = null; let pumping = true;
 const pump = (async () => { const consumed = new Set(); while (pumping) { for (const worker of coordinator.list()) { const id = worker.pendingApprovalId ?? worker.pendingQuestionId; if (!id || consumed.has(id)) continue; consumed.add(id); await coordinator.respond(id, worker.pendingApprovalId ? { decision: 'allow' } : { text: 'Finish the bounded review.' }, 'orchestrator'); } await sleep(100); } })();
 try {
-  handle = await coordinator.spawn('glm', brief(), { taskId: TASK_ID, taskType: 'phase43-full-poll-review', runId: 'phase43-full-poll-review', model: 'glm-4.7', effort: 'low', modelPolicy: { allow: ['glm-4.7'], allowFamilies: ['glm'], reasoningEffort: 'low' } });
+  handle = await coordinator.spawn('glm', brief(), { taskId: TASK_ID, taskType: 'phase43-full-poll-review', runId: RUN_ID, model: 'glm-4.7', effort: 'low', modelPolicy: { allow: ['glm-4.7'], allowFamilies: ['glm'], reasoningEffort: 'low' } });
   await until(async () => (await coordinator.result(handle.id)).ready, 'GLM terminal result');
   result = await coordinator.result(handle.id);
   const events = log.read(handle.id); pid = events.find((event) => event.kind === 'lifecycle.spawned' && event.actor === 'worker')?.payload?.pid ?? null; verify = events.find((event) => event.kind === 'verify.reverified') ?? null;
@@ -102,7 +105,7 @@ const checks = {
   branchGone: git(['branch', '--list', `baton/${TASK_ID}`]) === '',
   writerAuthorityReleased: closed === true,
 };
-const summary = { at: new Date().toISOString(), repoHead: git(['rev-parse', 'HEAD']), taskId: TASK_ID, workerId: handle?.id ?? null, pid, result: result ? { status: result.status, ready: result.ready } : null, route: route ? { harnessRequested: route.harnessRequested, harnessResolved: route.harnessResolved, modelRequested: route.modelRequested, modelResolved: route.modelResolved, modelObserved: route.modelObserved, effortRequested: route.effortRequested, effortResolved: route.effortResolved, effortObserved: route.effortObserved } : null, budgetUsed: route?.budgetUsed ?? null, verifyAccept: verify?.payload?.accept ?? false, reportCaptured: Boolean(report), kill, checks, fatal, pass: Object.values(checks).every(Boolean) };
+const summary = { at: new Date().toISOString(), repoHead: git(['rev-parse', 'HEAD']), runId: RUN_ID, taskId: TASK_ID, workerId: handle?.id ?? null, pid, result: result ? { status: result.status, ready: result.ready } : null, route: route ? { harnessRequested: route.harnessRequested, harnessResolved: route.harnessResolved, modelRequested: route.modelRequested, modelResolved: route.modelResolved, modelObserved: route.modelObserved, effortRequested: route.effortRequested, effortResolved: route.effortResolved, effortObserved: route.effortObserved } : null, budgetUsed: route?.budgetUsed ?? null, verifyAccept: verify?.payload?.accept ?? false, reportCaptured: Boolean(report), kill, checks, fatal, pass: Object.values(checks).every(Boolean) };
 writeFileSync(join(OUTPUT, 'events.jsonl'), `${bounded(events).map((event) => JSON.stringify({ taskId: TASK_ID, requestedHarness: 'glm', requestedModel: 'glm-4.7', requestedEffort: 'low', ...event })).join('\n')}\n`);
 writeFileSync(join(OUTPUT, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
 if (report) writeFileSync(join(OUTPUT, `${TASK_ID}.md`), report);

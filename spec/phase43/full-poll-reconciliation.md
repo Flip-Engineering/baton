@@ -61,6 +61,13 @@ their settlement, prevents late store/log writes, then closes Coordinator author
 the writer lease. Lease loss or close during any stage leaves health degraded and durable receipts
 retryable. Two drivers cannot own the poller concurrently.
 
+`createDriver({providerPolling:{intervalMs,initialBackoffMs}})` is the only automatic enablement
+surface; both values are positive deployment constants and may not exceed each poll card's
+`maxBackoffMs`. The returned supervisor exposes only sanitized status and no trigger authority.
+Poll-enabled drivers close through idempotent `await driver.closeAsync()`. Their legacy synchronous
+`close()` refuses with `driver_async_close_required` before stopping timers or releasing authority;
+drivers without automatic polling retain synchronous `close()` compatibility.
+
 ## PF7 — sanitized authenticated reads
 
 Operator web/MCP reads are repository-scoped, observe-authorized, count/byte bounded, and expose

@@ -2803,7 +2803,8 @@ export class Coordinator {
     this._authorityOps += 1;
     try {
       const polled = await this._advisoryFeeds.pollFull(providerId, { signal: ctx.signal }); const receipts = [];
-      for (const receipt of polled.receipts) { const key = `provider-delivery:${canonicalDigest({ repoId: this._repoId, providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest })}`; receipts.push(this._coordination.recordProviderDelivery({ repoId: this._repoId, receipt }, { actor: `provider:${providerId}`, key })); }
+      for (const receipt of polled.receipts) { if (ctx.signal?.aborted) throw Object.assign(new Error('provider poll cancelled before durable admission'), { code: 'cancelled' }); const key = `provider-delivery:${canonicalDigest({ repoId: this._repoId, providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest })}`; receipts.push(this._coordination.recordProviderDelivery({ repoId: this._repoId, receipt }, { actor: `provider:${providerId}`, key })); }
+      if (ctx.signal?.aborted) throw Object.assign(new Error('provider poll cancelled before recovery'), { code: 'cancelled' });
       const current = this._coordination.providerSourceHealth(this._repoId, providerId, card.cardDigest); if (!current || current.status !== 'reconciliation_required') throw Object.assign(new Error('provider source health changed during full poll'), { code: 'provider_reconciliation_stale' });
       const result = this._coordination.recordProviderSourceReconciliation({ repoId: this._repoId, proof: polled.proof, expectedHealthEvent: current.lastEvent }, { actor: `provider-poller:${providerId}`, key: `provider-poll:${canonicalDigest({ repoId: this._repoId, providerId, sourceEpoch: card.cardDigest, proofDigest: polled.proof.proofDigest })}` });
       return Object.freeze({ ...result, receipts });

@@ -15,7 +15,7 @@ const policyProjection = Object.freeze({ licenseAllow: ['MIT'], licenseDeny: [],
 const reconcileLimits = { maxDecisionTargets: 100, maxGuardTargets: 100, maxAffectedReads: 100, maxStateRows: 1000, maxObservedPolicyHashes: 16, maxEventBytes: 256 * 1024 };
 
 function feedSource(providerId = 'fixture.green', keyFingerprint = fingerprint, state = {}) { return { card: () => ({ schemaVersion: 1, providerId, adapterId: `${providerId}-v1`, version: '1', modes: ['poll', 'webhook'], ecosystem: 'npm', semantics: 'authenticated_hint', auth: { scheme: 'injected-test', keyFingerprints: [keyFingerprint] }, ceilings: { maxDeliveryBytes: 4096, maxCoordinates: 4, maxAdvisoryIds: 8, maxIdentityBytes: 256 }, poll: { origin: 'https://fixture.invalid', operation: `/v1/${providerId}/full`, cursorKind: 'sequence', initialSequence: 1, redirects: 'deny', maxPages: 2, maxItems: 8, maxPageBytes: 4096, maxTotalBytes: 16384, maxWallMs: 1000, maxBackoffMs: 1000, maxClockSkewMs: 300_000 } }),
-  async verifyDelivery({ raw }) { const parsed = JSON.parse(raw); const digest = sha(raw); return { schemaVersion: 1, providerId, deliveryId: parsed.deliveryId, rawDigest: digest, rawBytes: raw.length, authReceiptDigest: sha(Buffer.from(`auth:${providerId}:${parsed.deliveryId}`)), keyFingerprint, occurredAt: parsed.occurredAt, sequence: parsed.sequence, coordinates: parsed.coordinates, advisoryIds: [], source: { handle: `art:sha256:${digest}`, digest, bytes: raw.length, mediaType: 'application/json' } }; }, async pollFull() { state.pollCalls = (state.pollCalls ?? 0) + 1; return state.polls?.[providerId]; }, reverifyPollSync(proof) { return proof; } }; }
+  async verifyDelivery({ raw }) { const parsed = JSON.parse(raw); const digest = sha(raw); return { schemaVersion: 1, providerId, deliveryId: parsed.deliveryId, rawDigest: digest, rawBytes: raw.length, authReceiptDigest: sha(Buffer.from(`auth:${providerId}:${parsed.deliveryId}`)), keyFingerprint, occurredAt: parsed.occurredAt, sequence: parsed.sequence, coordinates: parsed.coordinates, advisoryIds: [], source: { handle: `art:sha256:${digest}`, digest, bytes: raw.length, mediaType: 'application/json' } }; }, async pollFull({ signal } = {}) { state.pollCalls = (state.pollCalls ?? 0) + 1; state.pollActive = (state.pollActive ?? 0) + 1; state.maxPollActive = Math.max(state.maxPollActive ?? 0, state.pollActive); try { if (state.blockPoll === providerId) return await new Promise((resolve, reject) => { state.releasePoll = () => resolve(state.polls?.[providerId]); signal.addEventListener('abort', () => { state.pollAborted = (state.pollAborted ?? 0) + 1; reject(Object.assign(new Error('cancelled'), { code: 'cancelled' })); }, { once: true }); }); return state.polls?.[providerId]; } finally { state.pollActive -= 1; } }, reverifyPollSync(proof) { return proof; } }; }
 
 function quartermaster(state) {
   const vetPolicy = state.policyProjection; const vetPolicyHash = sha(vetPolicy);
@@ -32,9 +32,13 @@ async function world(overrides = {}) {
   const authority = { card: () => ({ schemaVersion: 1, authorityId: 'fixture-index-authority', repoId: 'repo-a', atlasCardDigest }), async current() { state.currentCalls += 1; return { schemaVersion: 1, repoId: 'repo-a', treeSha: state.currentCalls > 1 && overrides.changeIndex ? 'ffff' : 'abcd', indexEpoch, atlasCardDigest }; }, async reverify() { return { ok: true }; } };
   const options = { repoRoot, repoId: 'repo-a', logDir, adapters: {}, now: () => Date.parse('2026-07-13T06:00:01.000Z'), advisoryFeedSources: { 'fixture.green': feedSource('fixture.green', fingerprint, state), 'fixture.green-two': feedSource('fixture.green-two', fingerprintTwo, state) }, capabilities: { 'cartographer-quartermaster': quartermaster(state) }, maxCapabilityBudgetTokens: 10_000, maxCapabilityEnvelopeBytes: 256 * 1024,
     reuseDecisionPolicy: { authorize: async () => true, authorizeRecheck: async () => true, maxNeedBytes: 2048, maxRationaleBytes: 8192, policyReconcile: reconcileLimits }, providerReconciliation: { budgetTokens: 10_000, indexAuthority: authority } };
+  if (overrides.providerPolling) options.providerPolling = overrides.providerPolling;
+  if (overrides.blockPoll) state.blockPoll = overrides.blockPoll;
   const driver = createDriver(options); const raw = Buffer.from(JSON.stringify({ deliveryId: 'delivery-green', occurredAt: '2026-07-13T06:00:00.000Z', sequence: 1, coordinates: overrides.coordinates ?? [coordinate] })); const admitted = await driver.coordinator.receiveProviderDelivery('fixture.green', { mode: 'webhook', raw });
   return { driver, options, state, admitted };
 }
+
+async function until(fn, timeoutMs = 2000) { const deadline = Date.now() + timeoutMs; while (Date.now() < deadline) { const value = fn(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 5)); } throw new Error('timed out waiting for provider poll lifecycle'); }
 
 test('AF3/AF4/AF8/AF9: seedless official green refresh atomically resolves pending and creates only verified Source lineage', async () => {
   const w = await world(); const before = w.driver.coordination.snapshot(); const result = await w.driver.coordinator.reconcileProviderProcessing(w.admitted.processing.id);
@@ -60,6 +64,37 @@ test('PF3-PF5: Coordinator full poll durably dedupes receipts then performs the 
   const items = [raw('delivery-green', 1), raw('delivery-2', 2), raw('delivery-3', 3)]; w.state.polls['fixture.green'] = { schemaVersion: 1, providerId: 'fixture.green', pollId: 'full-window-1', observedAt: '2026-07-13T06:00:00.000Z', window: { fromSequence: 1, toSequence: 3 }, finalSequence: 3, cursorDigest: sha('cursor-3'), authReceiptDigest: sha('poll-auth'), keyFingerprint: fingerprint, pages: [{ raw: Buffer.from('{"page":1}'), items }] };
   const result = await w.driver.coordinator.reconcileProviderSource('fixture.green'); assert.equal(result.result, 'healthy'); assert.equal(result.receipts.length, 3); assert.equal(w.driver.coordination.providerSourceHealth('repo-a', 'fixture.green', epoch).status, 'healthy'); assert.equal(w.driver.coordination.events().filter((event) => event.kind === 'provider.reconciliation_completed').length, 1);
   const calls = w.state.pollCalls; assert.equal((await w.driver.coordinator.reconcileProviderSource('fixture.green')).result, 'not_required'); assert.equal(w.state.pollCalls, calls, 'healthy source does not spend a network poll'); await w.driver.coordinator.receiveProviderDelivery('fixture.green', { mode: 'webhook', raw: raw('delivery-5', 5) }); assert.equal(w.driver.coordination.providerSourceHealth('repo-a', 'fixture.green', epoch).status, 'reconciliation_required'); w.driver.close();
+});
+
+test('PF6: createDriver automatically recovers one degraded source and records sanitized lifecycle', async () => {
+  const w = await world({ providerPolling: { intervalMs: 20, initialBackoffMs: 10 } }); const raw = (deliveryId, sequence) => Buffer.from(JSON.stringify({ deliveryId, occurredAt: '2026-07-13T06:00:00.000Z', sequence, coordinates: [coordinate] }));
+  await w.driver.coordinator.receiveProviderDelivery('fixture.green', { mode: 'webhook', raw: raw('delivery-3', 3) }); const epoch = w.admitted.receipt.sourceEpoch;
+  const items = [raw('delivery-green', 1), raw('delivery-2', 2), raw('delivery-3', 3)]; w.state.polls['fixture.green'] = { schemaVersion: 1, providerId: 'fixture.green', pollId: 'automatic-window-1', observedAt: '2026-07-13T06:00:00.000Z', window: { fromSequence: 1, toSequence: 3 }, finalSequence: 3, cursorDigest: sha('automatic-cursor-3'), authReceiptDigest: sha('automatic-poll-auth'), keyFingerprint: fingerprint, pages: [{ raw: Buffer.from('{"page":1}'), items }] };
+  await until(() => w.driver.coordination.providerSourceHealth('repo-a', 'fixture.green', epoch)?.status === 'healthy');
+  assert.equal(w.state.maxPollActive, 1); assert.ok(w.driver.providerPoller.status().find((row) => row.providerId === 'fixture.green').attempts >= 1);
+  const lifecycle = w.driver.log.read('hub-provider-poller'); assert.ok(lifecycle.some((event) => event.kind === 'provider.poll_completed' && event.payload.providerId === 'fixture.green')); assert.equal(JSON.stringify(lifecycle).includes('cursor'), false);
+  assert.throws(() => createDriver(w.options), (error) => error.code === 'coordination_writer_busy');
+  assert.throws(() => w.driver.close(), (error) => error.code === 'driver_async_close_required'); assert.equal(await w.driver.closeAsync(), true); assert.equal(await w.driver.closeAsync(), false);
+});
+
+test('PF6: closeAsync aborts and awaits an active poll before fencing coordinator and writer lease', async () => {
+  const w = await world({ providerPolling: { intervalMs: 20, initialBackoffMs: 10 }, blockPoll: 'fixture.green' }); const raw = (deliveryId, sequence) => Buffer.from(JSON.stringify({ deliveryId, occurredAt: '2026-07-13T06:00:00.000Z', sequence, coordinates: [coordinate] }));
+  await w.driver.coordinator.receiveProviderDelivery('fixture.green', { mode: 'webhook', raw: raw('delivery-3', 3) }); const epoch = w.admitted.receipt.sourceEpoch;
+  await until(() => w.driver.providerPoller.status().find((row) => row.providerId === 'fixture.green')?.active === true);
+  assert.throws(() => w.driver.close(), (error) => error.code === 'driver_async_close_required'); assert.equal(w.driver.coordination.providerSourceHealth('repo-a', 'fixture.green', epoch).status, 'reconciliation_required');
+  assert.equal(await w.driver.closeAsync(), true); assert.equal(w.state.pollAborted, 1); assert.equal(w.driver.providerPoller.status().some((row) => row.active || row.scheduled), false); assert.equal(w.driver.coordination._writerLease, null);
+  assert.throws(() => w.driver.coordinator.tick(), (error) => error.code === 'coordinator_closed');
+});
+
+test('PF6: writer-lease loss during fetch leaves health degraded and prevents every late append', async () => {
+  const w = await world({ providerPolling: { intervalMs: 20, initialBackoffMs: 10 }, blockPoll: 'fixture.green' }); const raw = (deliveryId, sequence) => Buffer.from(JSON.stringify({ deliveryId, occurredAt: '2026-07-13T06:00:00.000Z', sequence, coordinates: [coordinate] }));
+  await w.driver.coordinator.receiveProviderDelivery('fixture.green', { mode: 'webhook', raw: raw('delivery-3', 3) }); const epoch = w.admitted.receipt.sourceEpoch;
+  const items = [raw('delivery-green', 1), raw('delivery-2', 2), raw('delivery-3', 3)]; w.state.polls['fixture.green'] = { schemaVersion: 1, providerId: 'fixture.green', pollId: 'lost-lease-window', observedAt: '2026-07-13T06:00:00.000Z', window: { fromSequence: 1, toSequence: 3 }, finalSequence: 3, cursorDigest: sha('lost-lease-cursor'), authReceiptDigest: sha('lost-lease-auth'), keyFingerprint: fingerprint, pages: [{ raw: Buffer.from('{"page":1}'), items }] };
+  await until(() => w.driver.providerPoller.status().find((row) => row.providerId === 'fixture.green')?.active === true); const before = w.driver.coordination.snapshot().lastSeq;
+  assert.equal(w.driver.coordination.releaseWriterLease(), true); w.state.releasePoll();
+  await until(() => w.driver.providerPoller.status().find((row) => row.providerId === 'fixture.green')?.lastErrorCode === 'coordination_writer_lost');
+  assert.equal(w.driver.coordination.snapshot().lastSeq, before); assert.equal(w.driver.coordination.providerSourceHealth('repo-a', 'fixture.green', epoch).status, 'reconciliation_required'); assert.equal(w.driver.coordination.events().some((event) => event.kind === 'provider.reconciliation_completed'), false);
+  assert.equal(await w.driver.closeAsync(), true); assert.throws(() => w.driver.coordinator.tick(), (error) => error.code === 'coordinator_closed');
 });
 
 test('AF4: official npm system alias is closed and no extra identity authority is accepted', async () => {
