@@ -25,6 +25,7 @@ const REVIEW_ARTIFACTS = Object.freeze({
   57: ['provider-governance', 'provider-governance'],
   58: ['capacity-aware-sparse-workers', 'sparse-worker-worktree'],
   59: ['worktree-capacity-authority', 'worktree-capacity-authority'],
+  60: ['attach-only-native-recovery', 'coordination-recovery'],
 });
 const reviewArtifact = REVIEW_ARTIFACTS[REVIEW_PHASE];
 if (!reviewArtifact && (!process.env.BATON_REVIEW_SPEC || !process.env.BATON_REVIEW_TEST)) throw new Error('PENDING-LIVE-review-artifact-mapping-required');
@@ -32,8 +33,8 @@ const REVIEW_SPEC = process.env.BATON_REVIEW_SPEC ?? `spec/phase${REVIEW_PHASE}/
 const REVIEW_TEST = process.env.BATON_REVIEW_TEST ?? `impl/test/phase${REVIEW_PHASE}-${reviewArtifact[1]}.test.mjs`;
 const TARGET_REPO = join(OWNER_ROOT, `phase${REVIEW_PHASE}-clean-target`);
 const LOG_DIR = mkdtempSync(join(tmpdir(), `baton-phase${REVIEW_PHASE}-live-log-`));
-const RUN_ID = REVIEW_PHASE === '56' ? 'phase56-live-harness-drain' : `phase${REVIEW_PHASE}-live-harness-governance`;
-const TASK_TYPE = REVIEW_PHASE === '56' ? 'phase56-drain-adversarial-review' : `phase${REVIEW_PHASE}-governance-adversarial-review`;
+const RUN_ID = REVIEW_PHASE === '56' ? 'phase56-live-harness-drain' : REVIEW_PHASE === '60' ? 'phase60-native-recovery-review' : `phase${REVIEW_PHASE}-live-harness-governance`;
+const TASK_TYPE = REVIEW_PHASE === '56' ? 'phase56-drain-adversarial-review' : REVIEW_PHASE === '60' ? 'phase60-native-recovery-adversarial-review' : `phase${REVIEW_PHASE}-governance-adversarial-review`;
 const phase57Focus = [
   'callback provenance, exact route binding, and forged policy/orchestrator authority',
   'dimension-complete usage seals, metric binding, and post-acceptance revocation',
@@ -47,6 +48,13 @@ const phase59Focus = [
   'project-key GLM route isolation, exact capacity release, provider refusal, and runtime rollback',
   'concurrent Grok capacity admission, every process generation correlation, and exact drain/reap',
   'reflexive Baton-on-Baton capacity friction, honest quota limits, and retained completion scope',
+];
+const phase60Focus = [
+  'attach-only identity proof, no-prompt-before-commit ordering, and exact model and effort recovery',
+  'durable continuation intent, accepted/refused/unknown dispositions, replay, and no automatic redelivery',
+  'project-key GLM route isolation, private credential projection, recovery refusal, and exact cleanup',
+  'concurrent Grok recovery authority, process-generation correlation, interrupt, kill, and exact reap',
+  'reflexive Baton-on-Baton recovery friction plus retained Phase 61 representation and Phase 62 Goal/Plan scope',
 ];
 const phase56Focus = [
   'drain fencing, exact async ownership, deadline truth, and driver close ordering',
@@ -66,7 +74,7 @@ const TASK_CATALOG = routes.map((route, index) => ({
   ...route,
   taskId: `phase${REVIEW_PHASE}-${route.suffix}`,
   target: `reviews/dogfood/phase${REVIEW_PHASE}-${route.suffix}.md`,
-  focus: (REVIEW_PHASE === '59' ? phase59Focus : REVIEW_PHASE === '57' ? phase57Focus : phase56Focus)[index],
+  focus: ({ 56: phase56Focus, 57: phase57Focus, 59: phase59Focus, 60: phase60Focus }[REVIEW_PHASE] ?? phase56Focus)[index],
 }));
 const selectedTaskIds = process.env.BATON_TASK_IDS ? new Set(process.env.BATON_TASK_IDS.split(',').filter(Boolean)) : null;
 const TASKS = selectedTaskIds ? TASK_CATALOG.filter((task) => selectedTaskIds.has(task.taskId)) : TASK_CATALOG;
@@ -251,7 +259,7 @@ try {
         const closed = started ? events.find((event) => event.kind === 'lifecycle.process_closed' && event.payload?.generation === started.payload?.generation) : null;
         return { taskId: row.taskId, workerId: row.workerId, pid: started?.payload?.pid ?? null, processGroupId: started?.payload?.processGroupId ?? null, generation: started?.payload?.generation ?? null, closed: Boolean(closed), leaderAlive: alive(started?.payload?.pid), groupAlive: groupAlive(started?.payload?.processGroupId) };
       });
-      if (liveGrok.length === 2 && liveGrok.every((row) => row.pid && row.processGroupId && !row.closed && row.leaderAlive && row.groupAlive)) simultaneousGrokSamples.push({ at: new Date().toISOString(), grok: liveGrok });
+      if (simultaneousGrokSamples.length < 64 && liveGrok.length === 2 && liveGrok.every((row) => row.pid && row.processGroupId && !row.closed && row.leaderAlive && row.groupAlive)) simultaneousGrokSamples.push({ at: new Date().toISOString(), grok: liveGrok });
       await sleep(50);
     }
   })();
@@ -354,8 +362,8 @@ try {
     allVerifiersBound: rows.filter((row) => row.verify).every((row) => same(row.verify.payload?.capture?.toolchainProjection, projectionIdentity) && same(row.verify.payload?.capture?.verifierToolchainProjection, projectionIdentity)),
     sourcePathAbsentFromBoundedEvents: rows.every((row) => !JSON.stringify(bounded(row.events ?? [])).includes(SOURCE_REPO)),
   };
-  const lifecyclePass = fatal === null && routeAdmission.allAdmitted && routeAdmission.exactRequestedResolved && routeAdmission.noObservedMismatch && routeAdmission.allGovernedBeforeEffect && providerProof.allSelectedProcessesStarted && (!REQUIRE_GROK_PAIR || providerProof.simultaneousActiveGrokPidSampleObserved) && providerProof.everyStartedProcessClosedExactly && providerProof.everyRequestedKillConfirmed && providerProof.zeroReapUnconfirmed && providerProof.everyStartedLeaderGone && providerProof.everyStartedGroupGone && Object.values(cleanup).every(Boolean);
-  const matrixPass = lifecyclePass && routeAdmission.providerObservationComplete && reviewProof.allSelectedVerified && projectionProof.allWorkersBound && projectionProof.allVerifiersBound && projectionProof.sourcePathAbsentFromBoundedEvents;
+  const lifecyclePass = fatal === null && routeAdmission.allAdmitted && routeAdmission.exactRequestedResolved && routeAdmission.allGovernedBeforeEffect && providerProof.allSelectedProcessesStarted && (!REQUIRE_GROK_PAIR || providerProof.simultaneousActiveGrokPidSampleObserved) && providerProof.everyStartedProcessClosedExactly && providerProof.everyRequestedKillConfirmed && providerProof.zeroReapUnconfirmed && providerProof.everyStartedLeaderGone && providerProof.everyStartedGroupGone && Object.values(cleanup).every(Boolean);
+  const matrixPass = lifecyclePass && routeAdmission.noObservedMismatch && routeAdmission.providerObservationComplete && reviewProof.allSelectedVerified && projectionProof.allWorkersBound && projectionProof.allVerifiersBound && projectionProof.sourcePathAbsentFromBoundedEvents;
   summary = {
     at: new Date().toISOString(), implementationSha: IMPLEMENTATION_SHA, runId: RUN_ID, selectedTaskIds: TASKS.map((task) => task.taskId),
     interpretation: { lifecyclePass: `all ${TASKS.length} selected exact routes admitted${REQUIRE_GROK_PAIR ? ', both Grok process groups sampled live simultaneously' : ''}, every started generation closed exactly, driver drain closed coordinator/writer, and all owned residue disappeared`, matrixPass: `lifecyclePass plus exact provider model observation, ${TASKS.length} fresh-verified report(s), and identical worker/verifier toolchain projection binding` },
@@ -382,20 +390,19 @@ if (targetAttempted) {
 summary.targetWorktreeRemoved = targetRemoved;
 summary.removalError = removalError;
 if (!targetRemoved || removalError) { summary.lifecyclePass = false; summary.matrixPass = false; summary.fatal = [summary.fatal, removalError ?? 'target worktree removal incomplete'].filter(Boolean).join('\n'); }
-let ownerRootRemoved = false;
+const diagnosticLogRetained = !summary.matrixPass && process.env.BATON_KEEP_FAILED_LOG === '1';
+if (!diagnosticLogRetained) rmSync(LOG_DIR, { recursive: true, force: true });
+let ownerRootReadyForSupervisorReap = false;
 try {
-  if (targetRemoved && existsSync(OWNER_ROOT) && readdirSync(OWNER_ROOT).length === 0) rmSync(OWNER_ROOT, { recursive: true, force: false });
-  ownerRootRemoved = !existsSync(OWNER_ROOT);
+  ownerRootReadyForSupervisorReap = targetRemoved && existsSync(OWNER_ROOT) && readdirSync(OWNER_ROOT).length === 0;
 } catch (error) {
   summary.fatal = [summary.fatal, String(error?.stack ?? error)].filter(Boolean).join('\n');
 }
-summary.ownerRootRemoved = ownerRootRemoved;
-if (!ownerRootRemoved) { summary.lifecyclePass = false; summary.matrixPass = false; summary.fatal = [summary.fatal, 'owned evidence root removal incomplete'].filter(Boolean).join('\n'); }
+summary.ownerRootReadyForSupervisorReap = ownerRootReadyForSupervisorReap;
+if (!ownerRootReadyForSupervisorReap) { summary.lifecyclePass = false; summary.matrixPass = false; summary.fatal = [summary.fatal, 'owned evidence root retained child residue'].filter(Boolean).join('\n'); }
 
 writeFileSync(join(OUTPUT, 'events.jsonl'), `${rows.flatMap((row) => bounded(row.events ?? []).map((event) => JSON.stringify({ taskId: row.taskId, requestedHarness: row.harness, requestedModel: row.model, requestedEffort: 'low', ...event }))).join('\n')}\n`);
 writeFileSync(join(OUTPUT, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
 for (const row of rows) if (row.report) writeFileSync(join(OUTPUT, `${row.taskId}.md`), row.report);
-const diagnosticLogRetained = !summary.matrixPass && process.env.BATON_KEEP_FAILED_LOG === '1';
-if (!diagnosticLogRetained) rmSync(LOG_DIR, { recursive: true, force: true });
-process.stdout.write(`${JSON.stringify({ lifecyclePass: summary.lifecyclePass, matrixPass: summary.matrixPass, routeAdmission: summary.routeAdmission, providerProof: summary.providerProof, cleanup: summary.cleanup, reviewProof: summary.reviewProof, fatal: summary.fatal, targetWorktreeRemoved: summary.targetWorktreeRemoved, ownerRootRemoved: summary.ownerRootRemoved, diagnosticLogDir: diagnosticLogRetained ? LOG_DIR : null }, null, 2)}\n`);
+process.stdout.write(`${JSON.stringify({ lifecyclePass: summary.lifecyclePass, matrixPass: summary.matrixPass, routeAdmission: summary.routeAdmission, providerProof: summary.providerProof, cleanup: summary.cleanup, reviewProof: summary.reviewProof, fatal: summary.fatal, targetWorktreeRemoved: summary.targetWorktreeRemoved, ownerRootReadyForSupervisorReap: summary.ownerRootReadyForSupervisorReap, diagnosticLogDir: diagnosticLogRetained ? LOG_DIR : null }, null, 2)}\n`);
 if (!summary.matrixPass) process.exitCode = 1;

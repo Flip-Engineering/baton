@@ -176,9 +176,12 @@ automatically redelivered. Provider seats stay reserved until exact stop/reap an
 settlement. Closed store APIs reject forged not-sent evidence, generic recovery-task bypasses,
 unverified or cross-worker lineage, context substitution, and newline-complete torn transactions.
 The persistent-session gate is 43/43, the dedicated store/replay gate is 7/7, and the current
-canonical result is the 1389/1389 status above. A committed recursive five-route Phase 60 review
-and native-recovery proof plus the remaining NR7 crash/adapter matrix are the next acceptance
-gates; none is inferred from the shipped fixture coverage.
+canonical result is the 1389/1389 status above. The first recursive five-route Phase 60 review
+admitted all exact routes, sampled both Groks live concurrently, independently verified Codex
+`gpt-5.6-sol`, project-key GLM `glm-4.7`, and Grok 4.5, and exactly killed/reaped every process and
+ownership surface. Its strict external matrix remains honestly red at Claude login and literal
+Build identity. A provider-backed native-recovery proof plus the remaining NR7 crash/adapter
+matrix remain acceptance gates; neither is inferred from the shipped fixture or review coverage.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 

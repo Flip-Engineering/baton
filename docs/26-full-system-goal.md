@@ -837,6 +837,15 @@ complete torn create/claim or refusal/transition batches. The Phase 11 persisten
 the canonical suite is 1389/1389. Provider-backed recursive evidence and the remaining NR7
 crash/adapter rows remain separate acceptance gates.
 
+The first Phase 60 recursive five-route review then admitted Codex `gpt-5.6-sol`, Claude Opus,
+project-key GLM `glm-4.7`, Grok `grok-4.5`, and literal `grok-build` at exact low-effort route
+requests. Both Grok process groups were sampled live simultaneously; all five generations closed
+exactly, every requested kill was confirmed, no reap remained uncertain, every leader/group was
+gone, and all worktree/runtime/branch/writer/capacity ownership returned to zero. Codex, GLM, and
+Grok 4.5 produced fresh independently verified reviews with no P0/P1 finding. The strict matrix is
+still red because Claude reports no login and literal Build reports observed model `grok-4.5`;
+these external facts are not relabeled as a Phase 60 native-recovery proof.
+
 These operational phases do not narrow the retained system. The self-contained causal/temporal
 knowledge graph remains inspired by repository-local project-manager prior art without homelab or
 external runtime integration. Authenticated web user-to-orchestrator command/control, exact route
