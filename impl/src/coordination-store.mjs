@@ -86,6 +86,7 @@ export class CoordinationStore {
     this._knowledgeNodes = new Map(); this._knowledgeEdges = new Map(); this._knowledgeReads = []; this._contamination = [];
     this._webCommands = new Map(); this._webCommandScopes = new Map(); this._mcpCalls = new Map(); this._mcpCallScopes = new Map();
     this._providerReceipts = new Map(); this._providerDeliveryIds = new Map(); this._providerProcessing = new Map(); this._providerPending = new Map();
+    this._providerSequences = new Map(); this._providerSourceHealth = new Map();
   }
 
   _configureAdvisoryFeedCards(cards) {
@@ -596,6 +597,7 @@ export class CoordinationStore {
   }
 
   _providerCoordinateKey(repoId, coordinate) { return canonicalDigest({ repoId, coordinate }); }
+  _providerSourceKey(repoId, providerId, sourceEpoch) { return canonicalDigest({ repoId, providerId, sourceEpoch }); }
 
   _providerPendingFor(repoId, coordinate) {
     const ids = this._providerPending.get(this._providerCoordinateKey(repoId, coordinate)) ?? new Set();
@@ -636,15 +638,25 @@ export class CoordinationStore {
     const deliveryKey = canonicalDigest({ repoId: p.repoId, providerId: receipt.providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId });
     const priorId = this._providerDeliveryIds.get(deliveryKey);
     if (priorId) fail('provider delivery identity already exists in the ledger', 'provider_delivery_duplicate');
-    return { deliveryKey };
+    const sourceKey = this._providerSourceKey(p.repoId, receipt.providerId, receipt.sourceEpoch); const priorSequence = receipt.sequence === null ? null : this._providerSequences.get(sourceKey)?.get(receipt.sequence);
+    if (priorSequence && priorSequence.rawDigest !== receipt.rawDigest) fail('provider sequence was rebound to different authenticated bytes', 'provider_sequence_conflict');
+    return { deliveryKey, sourceKey };
   }
 
   _apply(event) {
     const p = event.payload;
     if (event.kind === 'provider.delivery_received') {
-      const { deliveryKey } = this._validateProviderDeliveryPayload(p, event, true); const existing = this._providerProcessing.get(p.processingId);
+      const { deliveryKey, sourceKey } = this._validateProviderDeliveryPayload(p, event, true); const existing = this._providerProcessing.get(p.processingId);
       const receipt = freeze({ id: p.receiptId, receiptDigest: p.receiptDigest, processingId: p.processingId, repoId: p.repoId, providerId: p.receipt.providerId, sourceEpoch: p.receipt.sourceEpoch, deliveryId: p.receipt.deliveryId, rawDigest: p.receipt.rawDigest, rawBytes: p.receipt.rawBytes, authReceiptDigest: p.receipt.authReceiptDigest, keyFingerprint: p.receipt.keyFingerprint, occurredAt: p.receipt.occurredAt, receivedAt: p.receipt.receivedAt, sequence: p.receipt.sequence, coordinates: clone(p.receipt.coordinates), advisoryIds: clone(p.receipt.advisoryIds), verificationDigest: p.receipt.verificationDigest, nodeId: `source:provider-receipt:${p.receiptDigest}`, recordedEvent: event.seq });
       this._providerReceipts.set(p.receiptId, receipt); this._providerDeliveryIds.set(deliveryKey, p.receiptId);
+      if (p.receipt.sequence !== null) {
+        const rows = new Map(this._providerSequences.get(sourceKey) ?? []); if (!rows.has(p.receipt.sequence)) rows.set(p.receipt.sequence, freeze({ sequence: p.receipt.sequence, rawDigest: p.receipt.rawDigest, receiptId: p.receiptId, eventSeq: event.seq })); this._providerSequences.set(sourceKey, rows);
+        const priorHealth = this._providerSourceHealth.get(sourceKey); let status = priorHealth?.status ?? 'healthy'; let firstGap = clone(priorHealth?.firstGap ?? null); let highSequence = priorHealth?.highSequence ?? null;
+        if (highSequence !== null && p.receipt.sequence > highSequence + 1) { status = 'reconciliation_required'; firstGap ??= { from: highSequence + 1, to: p.receipt.sequence - 1 }; }
+        else if (highSequence !== null && p.receipt.sequence < highSequence) { status = 'reconciliation_required'; firstGap ??= { from: p.receipt.sequence, to: p.receipt.sequence }; }
+        highSequence = highSequence === null ? p.receipt.sequence : Math.max(highSequence, p.receipt.sequence);
+        this._providerSourceHealth.set(sourceKey, freeze({ repoId: p.repoId, providerId: p.receipt.providerId, sourceEpoch: p.receipt.sourceEpoch, status, highSequence, firstGap, lastEvent: event.seq }));
+      }
       if (existing) this._providerProcessing.set(p.processingId, freeze({ ...clone(existing), receiptIds: [...existing.receiptIds, p.receiptId], lastReceiptEvent: event.seq }));
       else {
         const processing = freeze({ id: p.processingId, contentIdentity: p.contentIdentity, repoId: p.repoId, providerId: p.receipt.providerId, sourceEpoch: p.receipt.sourceEpoch, coordinates: clone(p.receipt.coordinates), advisoryIds: clone(p.receipt.advisoryIds), status: 'pending', version: 1, receiptIds: [p.receiptId], createdEvent: event.seq, lastReceiptEvent: event.seq });
@@ -1139,6 +1151,7 @@ export class CoordinationStore {
 
   providerReceipt(id) { return clone(this._providerReceipts.get(id) ?? null); }
   providerProcessing(id) { return clone(this._providerProcessing.get(id) ?? null); }
+  providerSourceHealth(repoId, providerId, sourceEpoch) { return clone(this._providerSourceHealth.get(this._providerSourceKey(repoId, providerId, sourceEpoch)) ?? null); }
   advisoryFeedCards() { return [...this._advisoryFeedCards.values()].map((entry) => freeze({ ...clone(entry.card), cardDigest: entry.cardDigest })).sort((a, b) => a.providerId.localeCompare(b.providerId)); }
   pendingProviderReconciliation(repoId, coordinate) { return this._providerPendingFor(repoId, coordinate).map(clone); }
 

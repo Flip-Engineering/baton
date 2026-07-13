@@ -119,3 +119,25 @@ test('AF3/AF10: append failure exposes neither an acknowledged receipt nor a par
   assert.deepEqual(store.snapshot().provider, { receiptCount: 0, processingCount: 0, pendingCoordinateCount: 0 }); assert.equal(store.snapshot().lastSeq, 0);
   store.releaseWriterLease();
 });
+
+test('AF7: sequence gaps and late unseen deliveries remain admitted but health stays reconciliation-required', async () => {
+  const feeds = registry(); const root = mkdtempSync(join(tmpdir(), 'baton-provider-sequence-')); const cards = feeds.cards();
+  const store = new CoordinationStore(root, { advisoryFeedCards: cards, clock: () => '2026-07-13T03:00:01.000Z' });
+  store.recordProviderDelivery({ repoId: 'repo-a', receipt: await verified(feeds, 'delivery-1', 1) }, { actor: 'provider:fixture.osv', key: 'provider:seq:1' });
+  store.recordProviderDelivery({ repoId: 'repo-a', receipt: await verified(feeds, 'delivery-3', 3) }, { actor: 'provider:fixture.osv', key: 'provider:seq:3' });
+  assert.deepEqual(store.providerSourceHealth('repo-a', 'fixture.osv', cards[0].cardDigest), { repoId: 'repo-a', providerId: 'fixture.osv', sourceEpoch: cards[0].cardDigest, status: 'reconciliation_required', highSequence: 3, firstGap: { from: 2, to: 2 }, lastEvent: 2 });
+  store.recordProviderDelivery({ repoId: 'repo-a', receipt: await verified(feeds, 'delivery-2', 2) }, { actor: 'provider:fixture.osv', key: 'provider:seq:2' });
+  assert.equal(store.providerSourceHealth('repo-a', 'fixture.osv', cards[0].cardDigest).status, 'reconciliation_required', 'late fill cannot silently assert source health');
+  store.releaseWriterLease();
+  const replay = new CoordinationStore(root, { advisoryFeedCards: cards, clock: () => '2026-07-13T03:00:02.000Z' }); assert.equal(replay.providerSourceHealth('repo-a', 'fixture.osv', cards[0].cardDigest).highSequence, 3); replay.releaseWriterLease();
+});
+
+test('AF7: one provider sequence cannot be rebound to different authenticated bytes', async () => {
+  const feeds = registry(); const root = mkdtempSync(join(tmpdir(), 'baton-provider-sequence-conflict-')); const cards = feeds.cards();
+  const store = new CoordinationStore(root, { advisoryFeedCards: cards, clock: () => '2026-07-13T03:00:01.000Z' });
+  store.recordProviderDelivery({ repoId: 'repo-a', receipt: await verified(feeds, 'delivery-1', 1, 'first') }, { actor: 'provider:fixture.osv', key: 'provider:first' });
+  const sequenceConflict = await verified(feeds, 'delivery-other', 1, 'different-authenticated-content');
+  assert.throws(() => store.recordProviderDelivery({ repoId: 'repo-a', receipt: sequenceConflict }, { actor: 'provider:fixture.osv', key: 'provider:conflict' }), (error) => error.code === 'provider_sequence_conflict');
+  assert.equal(store.snapshot().lastSeq, 1);
+  store.releaseWriterLease();
+});
