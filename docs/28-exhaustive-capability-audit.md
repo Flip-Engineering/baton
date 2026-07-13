@@ -200,7 +200,10 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    `verified_fail_after_recall` with `causationClaimed:false`. Nine grouped RA tests cover exclusions,
    borrowed evidence, races, contamination, audit/cancellation/append failure, every max+1 ceiling,
    restart/tamper, output preflight, and direct/web/MCP parity. It does not accept worker ratings or
-   mutate grounding, validity, confidence, ranking, routing, or promotion.
+   mutate grounding, validity, confidence, ranking, routing, or promotion. The 54-test adjacent
+   Cairn gate and 1112/1112 canonical suite are green; recursive project-key GLM fresh-verifies
+   PASS, while exact Codex and two concurrent Grok process groups retain honest route/lifecycle/reap
+   evidence and the current Grok provider-readiness matrix stays authentication-red.
 
 ## What remains partial
 

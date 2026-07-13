@@ -651,6 +651,11 @@ and no grounding, validity, confidence, ranking, routing, or promotion state cha
 axes now report eligible/assessed coverage, pass/fail-after association, distinct exposed nodes, and
 later contamination. Exact no-op/idempotency/race/restart/tamper behavior, all independent ceilings,
 ACI pre-effect output refusal, and direct/authenticated-web/MCP invoke and reverify are executable.
+Nine grouped Phase 52 contracts, the 54-test adjacent Cairn gate, and the 1112/1112 canonical suite
+are green. Recursive Baton independently fresh-verifies the project-key GLM PASS report, reaches
+exact Codex provider readiness, overlaps two exact Grok process groups, records matching close for
+all four routes, explicitly kills GLM, and restores every owned resource. The strict provider
+matrix remains honestly red at the installed Grok CLI's authentication refusal before readiness.
 Authenticated contradiction UX is next; versioned learned weighting, Playbook/Skill promotion,
 Scratch Board/Bench, Goal/Plan authority, retention/checkpoints, and approval-gated neutral export
 remain explicit. Baton stays self-contained with no project-manager or homelab runtime integration.

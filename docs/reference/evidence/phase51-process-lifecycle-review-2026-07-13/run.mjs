@@ -11,7 +11,8 @@ import { CodexAppServerCli, GlmSessionCli, GrokAcpCli, createBrief, createDriver
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(process.env.BATON_REPO ?? resolve(HERE, '../../../..'));
 const OUTPUT = resolve(process.env.BATON_EVIDENCE_DIR ?? HERE);
-const LOG_DIR = mkdtempSync(join(tmpdir(), 'baton-phase51-review-'));
+const REVIEW_PHASE = process.env.BATON_REVIEW_PHASE ?? '51';
+const LOG_DIR = mkdtempSync(join(tmpdir(), `baton-phase${REVIEW_PHASE}-review-`));
 const GLM_AUTH = resolve(process.env.BATON_GLM_AUTH_FILE ?? resolve(REPO, 'glm_key.json'));
 const CODEX_AUTH = join(homedir(), '.codex', 'auth.json');
 const GROK_AUTH = join(homedir(), '.grok', 'auth.json');
@@ -28,13 +29,36 @@ const CODEX_CMD = loginCommand('codex', process.env.BATON_CODEX_CMD);
 const GROK_CMD = loginCommand('grok', process.env.BATON_GROK_CMD);
 const CLAUDE_CMD = loginCommand('claude', process.env.BATON_CLAUDE_CMD);
 const BASE_SHA = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim();
-const RUN_ID = 'phase51-process-lifecycle-review';
-const TASK_TYPE = 'phase51-process-lifecycle-implementation-review';
+const REVIEW_CONFIG = REVIEW_PHASE === '52' ? {
+  runId: 'phase52-recall-assessment-review',
+  taskType: 'phase52-recall-assessment-implementation-review',
+  files: 'spec/phase52/cairn-recall-outcome-attribution.md, impl/src/coordination-store.mjs, impl/src/cairn-run-scorecard.mjs, and impl/test/phase52-cairn-recall-assessment.test.mjs',
+  future: 'Treat authenticated contradiction UX, learned weighting, Playbook/Skill promotion, retention/export, and other retained capabilities as future scope rather than Phase 52 defects.',
+  focus: {
+    codex: 'exact receipt-to-verification-to-terminal binding, borrowed-evidence exclusion, replay, and tamper resistance',
+    glm: 'non-causal semantics, mutation authority, atomicity, independent ceilings, and pre-effect ACI refusal',
+    grok45: 'direct/web/MCP authorization and actor normalization, idempotency, cancellation, and concurrent races',
+    grokbuild: 'audit coverage and contamination metrics, historical projections, restart behavior, and missing adversarial cases',
+  },
+} : {
+  runId: 'phase51-process-lifecycle-review',
+  taskType: 'phase51-process-lifecycle-implementation-review',
+  files: 'spec/phase51/pre-ready-process-lifecycle.md, impl/src/process-lifecycle.mjs, the four shipped session/CLI adapters, impl/src/coordinator.mjs, and impl/test/phase51-process-lifecycle.test.mjs',
+  future: 'Treat later retained capabilities as future scope rather than Phase 51 defects.',
+  focus: {
+    codex: 'generation and PID correlation, provider-ready ordering, replay, and exact kill confirmation',
+    glm: 'cleanup and writer authority, poison/emergency behavior, non-disclosure, and bounded group reap',
+    grok45: 'Grok setup/authentication races, timeout first-cause, exact close, and repeated kill',
+    grokbuild: 'independent adversarial review of process descendants, forced disposition, recovery, and source attribution',
+  },
+};
+const RUN_ID = REVIEW_CONFIG.runId;
+const TASK_TYPE = REVIEW_CONFIG.taskType;
 const TASKS = [
-  { taskId: 'phase51-codex-review', harness: 'codex', model: 'gpt-5.6-sol', family: 'openai', target: 'reviews/dogfood/phase51-codex-review.md', tokens: 100_000, usd: 2.5, focus: 'generation and PID correlation, provider-ready ordering, replay, and exact kill confirmation' },
-  { taskId: 'phase51-glm-review', harness: 'glm', model: 'glm-4.7', family: 'glm', target: 'reviews/dogfood/phase51-glm-review.md', tokens: 110_000, usd: 1.25, focus: 'cleanup and writer authority, poison/emergency behavior, non-disclosure, and bounded group reap' },
-  { taskId: 'phase51-grok45-review', harness: 'grok', model: 'grok-4.5', family: 'grok', target: 'reviews/dogfood/phase51-grok45-review.md', tokens: 70_000, usd: 2, focus: 'Grok setup/authentication races, timeout first-cause, exact close, and repeated kill' },
-  { taskId: 'phase51-grokbuild-review', harness: 'grok', model: 'grok-build', family: 'grok', target: 'reviews/dogfood/phase51-grokbuild-review.md', tokens: 70_000, usd: 2, focus: 'independent adversarial review of process descendants, forced disposition, recovery, and source attribution' },
+  { taskId: `phase${REVIEW_PHASE}-codex-review`, harness: 'codex', model: 'gpt-5.6-sol', family: 'openai', target: `reviews/dogfood/phase${REVIEW_PHASE}-codex-review.md`, tokens: 100_000, usd: 2.5, focus: REVIEW_CONFIG.focus.codex },
+  { taskId: `phase${REVIEW_PHASE}-glm-review`, harness: 'glm', model: 'glm-4.7', family: 'glm', target: `reviews/dogfood/phase${REVIEW_PHASE}-glm-review.md`, tokens: 110_000, usd: 1.25, focus: REVIEW_CONFIG.focus.glm },
+  { taskId: `phase${REVIEW_PHASE}-grok45-review`, harness: 'grok', model: 'grok-4.5', family: 'grok', target: `reviews/dogfood/phase${REVIEW_PHASE}-grok45-review.md`, tokens: 70_000, usd: 2, focus: REVIEW_CONFIG.focus.grok45 },
+  { taskId: `phase${REVIEW_PHASE}-grokbuild-review`, harness: 'grok', model: 'grok-build', family: 'grok', target: `reviews/dogfood/phase${REVIEW_PHASE}-grokbuild-review.md`, tokens: 70_000, usd: 2, focus: REVIEW_CONFIG.focus.grokbuild },
 ];
 
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
@@ -70,13 +94,13 @@ async function until(fn, label, timeoutMs = 1_200_000) {
 
 function brief(task) {
   return createBrief({
-    goal: `Adversarially review committed Baton Phase 51 at ${BASE_SHA.slice(0, 7)}, focusing on ${task.focus}. Read spec/phase51/pre-ready-process-lifecycle.md, impl/src/process-lifecycle.mjs, the four shipped session/CLI adapters, impl/src/coordinator.mjs, and impl/test/phase51-process-lifecycle.test.mjs. Write ${task.target} with exactly the headings "## Verdict", "## P0-P1 findings", and "## Required corrections".`,
+    goal: `Adversarially review committed Baton Phase ${REVIEW_PHASE} at ${BASE_SHA.slice(0, 7)}, focusing on ${task.focus}. Read ${REVIEW_CONFIG.files}. Write ${task.target} with exactly the headings "## Verdict", "## P0-P1 findings", and "## Required corrections".`,
     constraints: [
       `Edit only ${task.target}.`,
       'Keep the report under 1400 words and use at most 18 repository/tool calls.',
       'Ground confirmed defects in current source with a deterministic reproduction or violated contract.',
       'Do not inspect credentials/environment, use network tools, commit, push, deploy, or access homelab/project-manager.',
-      'Treat later retained capabilities as future scope rather than Phase 51 defects.',
+      REVIEW_CONFIG.future,
     ],
     pathScope: [task.target],
     definitionOfDone: 'The three headings exist and Verdict explicitly says PASS or REVISE.',
@@ -218,7 +242,8 @@ const cleanup = {
 };
 const reportBinding = (row) => Boolean(row.report && row.verify?.payload?.accept === true && row.report.includes('## Verdict') && row.report.includes('## P0-P1 findings') && row.report.includes('## Required corrections'));
 const reviewProof = { verifiedReports: rows.filter(reportBinding).map((row) => row.taskId), baseShaPinned: git(['rev-parse', 'HEAD']) === BASE_SHA };
-const implementationReviewPass = fatal === null && routeProof.exactHarnessModelEffort && routeProof.observationsHonest && reviewProof.verifiedReports.includes('phase51-glm-review') && Object.values(cleanup).every(Boolean);
+const glmTaskId = TASKS.find((task) => task.harness === 'glm').taskId;
+const implementationReviewPass = fatal === null && routeProof.exactHarnessModelEffort && routeProof.observationsHonest && reviewProof.verifiedReports.includes(glmTaskId) && Object.values(cleanup).every(Boolean);
 const harnessMatrixPass = implementationReviewPass && rows.length === TASKS.length
   && rows.every((row) => row.processStarted && row.providerReady && row.processClosed)
   && processProof.concurrentGrokProcessGroupsObserved
