@@ -58,7 +58,7 @@ const adapter = new GlmSessionCli({
   authTokenFile: GLM_AUTH,
   authTokenJsonPointer: process.env.BATON_GLM_AUTH_JSON_POINTER ?? '/glm_key',
   model: 'glm-4.7', approvals: false, permissionMode: 'acceptEdits',
-  args: ['--safe-mode', '--no-session-persistence', '--max-budget-usd', '1.75'],
+  args: ['--safe-mode', '--no-session-persistence', '--max-budget-usd', '3.5'],
   ceiling: 1, killGraceMs: 5_000,
 });
 const driver = createDriver({
@@ -67,7 +67,7 @@ const driver = createDriver({
   approvalTimeoutMs: 60_000, stopDeadlineMs: 15_000, watchdog: { stallMs: 600_000 },
 });
 const { coordinator, log } = driver;
-const taskId = 'phase54-glm-build';
+const taskId = process.env.BATON_TASK_ID ?? 'phase54-glm-build';
 const verification = 'node --test impl/test/phase54-atlas-cpg-lexical-bindings.test.mjs impl/test/phase18-atlas-cpg.test.mjs impl/test/phase19-atlas-cpg-delta.test.mjs impl/test/phase20-atlas-cpg-taint.test.mjs impl/test/phase22-atlas-cpg-path-sensitive.test.mjs';
 const brief = createBrief({
   goal: `Implement committed Baton Phase 54 at ${BASE_SHA.slice(0, 12)}. Read spec/phase54/atlas-cpg-lexical-bindings.md and make the committed red suite pass by adding bounded lexical scope/binding identity to the existing CPG, delta, and taint implementation.`,
@@ -81,7 +81,7 @@ const brief = createBrief({
   pathScope: ['impl/src/atlas-cpg.mjs', 'impl/src/atlas-cpg-delta.mjs', 'impl/src/atlas-cpg-taint.mjs'],
   definitionOfDone: 'All Phase 54 and adjacent Phase 18/19/20/22 tests pass without changing the tests.',
   verification: { command: verification, expectExit: 0, timeoutMs: 120_000 },
-  budget: { tokens: 150_000, usd: 1.75, wallMin: 24 },
+  budget: { tokens: 220_000, usd: 3.5, wallMin: 30 },
 });
 
 let handle; let result; let verify; let processStarted; let processClosed; let killFloor = 0; let killAck = null; let fatal = null; let closed = false;
@@ -134,7 +134,9 @@ const killRequested = events.find((event) => event.seq > killFloor && event.kind
 const killConfirmed = events.find((event) => event.seq > (killRequested?.seq ?? Number.MAX_SAFE_INTEGER) && event.kind === 'kill.confirmed') ?? null;
 const captureSha = verify?.payload?.capture?.sha ?? null;
 const tuple = (() => { try { return JSON.parse(publicHandle?.routeKey); } catch { return null; } })();
-const exactRoute = Array.isArray(tuple) && tuple[0] === 'glm' && tuple[2] === 'glm-4.7' && tuple[3] === 'low' && tuple[4] === 'glm' && tuple[5] === 'phase54-cpg-binding-implementation';
+const exactRoute = Array.isArray(tuple) && publicHandle?.harnessRequested === 'glm'
+  && tuple[0] === String(publicHandle?.harnessResolved ?? '').split('@')[0]
+  && tuple[2] === 'glm-4.7' && tuple[3] === 'low' && tuple[4] === 'glm' && tuple[5] === 'phase54-cpg-binding-implementation';
 const after = ownership();
 const cleanup = {
   leaderGone: !processStarted?.payload?.pid || !alive(processStarted.payload.pid),
