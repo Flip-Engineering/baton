@@ -215,9 +215,11 @@ export function semanticBriefCore(value) {
 
 export function normalizeGoalPlanContext(ctx, policy, power) {
   if (!ctx || typeof ctx !== 'object' || Array.isArray(ctx)) fail('goal/plan authority context is absent', 'goal_plan_unauthorized');
-  if (!validId(ctx.principalId) || typeof ctx.actor !== 'string' || ctx.actor.length === 0 || !validId(ctx.sessionId)
+  if (Object.keys(ctx).sort().join(',') !== ['actor', 'idempotencyKey', 'powers', 'principalId', 'repoId', 'runId', 'sessionId'].sort().join(',')
+    || !validId(ctx.principalId) || typeof ctx.actor !== 'string' || ctx.actor.length === 0 || Buffer.byteLength(ctx.actor) > 256 || ctx.actor.includes('\0') || !validId(ctx.sessionId)
     || ctx.repoId !== policy.repoId || (ctx.runId !== null && !validId(ctx.runId)) || !Array.isArray(ctx.powers)
-    || !ctx.powers.includes(power) || typeof ctx.idempotencyKey !== 'string' || ctx.idempotencyKey.length === 0 || Buffer.byteLength(ctx.idempotencyKey) > 4096) {
+    || ctx.powers.some((item) => !validId(item)) || new Set(ctx.powers).size !== ctx.powers.length
+    || !ctx.powers.includes(power) || typeof ctx.idempotencyKey !== 'string' || ctx.idempotencyKey.length === 0 || ctx.idempotencyKey.includes('\0') || Buffer.byteLength(ctx.idempotencyKey) > 4096) {
     fail('goal/plan authority is insufficient', 'goal_plan_unauthorized');
   }
   return {

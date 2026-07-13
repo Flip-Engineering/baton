@@ -2575,7 +2575,8 @@ export class CoordinationStore {
   _planDispatchState(gate, route) {
     const fields = ['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'expectedDispatchVersion', 'capabilities', 'effects'];
     if (!gate || typeof gate !== 'object' || Array.isArray(gate) || Object.keys(gate).sort().join(',') !== fields.sort().join(',')
-      || gate.expectedDispatchVersion !== 0 || !route || Object.keys(route).sort().join(',') !== ['effort', 'model', 'vendor'].sort().join(',')) throw new CoordinationRefusal('plan dispatch coordinates are invalid', 'plan_dispatch_invalid');
+      || gate.expectedDispatchVersion !== 0 || !Array.isArray(gate.capabilities) || !Array.isArray(gate.effects)
+      || !route || Object.keys(route).sort().join(',') !== ['effort', 'model', 'vendor'].sort().join(',')) throw new CoordinationRefusal('plan dispatch coordinates are invalid', 'plan_dispatch_invalid');
     const goal = this._goals.get(this._goalVersionKey(gate.goalId, gate.goalVersion)); const plan = this._plans.get(this._planVersionKey(gate.planId, gate.planVersion));
     if (!goal || !plan || goal.digest !== gate.goalDigest || plan.digest !== gate.planDigest || plan.goal.goalId !== goal.goalId || plan.goal.version !== goal.version || plan.goal.digest !== goal.digest) throw new CoordinationRefusal('plan dispatch coordinates are stale', 'plan_stale');
     const goalHead = this._goalHeads.get(this._goalScopeKey(goal.repoId, goal.runId)); const planHead = this._planHeads.get(this._planHeadKey(plan.goal));
