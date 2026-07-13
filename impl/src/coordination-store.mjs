@@ -10,6 +10,7 @@ const TRANSITIONS = new Map([
 ]);
 const KNOWLEDGE_NODE_TYPES = new Set(['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Decision', 'Hypothesis', 'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample', 'Representation', 'ScratchFact', 'Source']);
 const KNOWLEDGE_EDGE_TYPES = new Set(['Supports', 'Contradicts', 'Supersedes', 'Informed', 'ProducedBy', 'Contains', 'DependsOn', 'Refines', 'ReadBy', 'VerifiedBy', 'DerivedFrom', 'Affects', 'Cites', 'ObservedIn']);
+const PROVIDER_FAILURE_CODES = new Set(['provider_index_changed', 'reuse_policy_reconciliation_required', 'reuse_evidence_diverged', 'capability_refused', 'provider_processing_failed']);
 
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
 function digest(value) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
@@ -19,6 +20,10 @@ function canonical(value) {
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
 }
 function canonicalDigest(value) { return digest(canonical(value)); }
+function providerAttemptDelay(policy, windowAttempt) {
+  const exponent = Math.min(windowAttempt - 1, Math.ceil(Math.log2(policy.maxBackoffMs / policy.initialBackoffMs)));
+  return Math.min(policy.maxBackoffMs, policy.initialBackoffMs * (2 ** exponent));
+}
 function validRunId(value) { return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/.test(value); }
 function validEnvRef(envRef) { return envRef && typeof envRef.repoId === 'string' && envRef.repoId.length > 0 && typeof envRef.treeSha === 'string' && /^[A-Fa-f0-9]{4,128}$/.test(envRef.treeSha); }
 function officialCoordinateMatches(identity, coordinate) { const fields = Object.keys(identity ?? {}).sort().join(','); return ['ecosystem,package,version', 'ecosystem,package,system,version'].includes(fields) && identity.ecosystem === coordinate?.ecosystem && identity.package === coordinate?.package && identity.version === coordinate?.version && (!Object.hasOwn(identity, 'system') || (coordinate.ecosystem === 'npm' && identity.system === 'NPM')); }
@@ -73,6 +78,13 @@ export class CoordinationStore {
     this._advisoryFeedCards = this._configureAdvisoryFeedCards(opts.advisoryFeedCards ?? []);
     this._advisoryReceiptReverify = opts.advisoryReceiptReverify ?? null;
     this._advisoryPollReverify = opts.advisoryPollReverify ?? null;
+    this._providerAttemptPolicy = null;
+    if (opts.providerAttemptPolicy !== undefined) {
+      const policy = opts.providerAttemptPolicy; const fields = ['intervalMs', 'maxBatch', 'maxAttempts', 'initialBackoffMs', 'maxBackoffMs', 'maxStateRows'];
+      if (!policy || Object.keys(policy).sort().join(',') !== fields.sort().join(',') || Object.values(policy).some((value) => !Number.isSafeInteger(value) || value <= 0)
+        || policy.initialBackoffMs > policy.maxBackoffMs || policy.intervalMs > 24 * 60 * 60 * 1_000 || policy.maxBatch > 10_000 || policy.maxBatch > policy.maxStateRows || policy.maxAttempts > 1_000_000 || policy.maxBackoffMs > 24 * 60 * 60 * 1_000 || policy.maxStateRows > 1_000_000) throw new TypeError('provider attempt policy is invalid');
+      this._providerAttemptPolicy = freeze(clone(policy));
+    }
     this._resetProjection();
     this._operationalRead = opts.operationalRead ?? null;
     this._writerLease = null;
@@ -727,6 +739,23 @@ export class CoordinationStore {
     return { sourceKey, health };
   }
 
+  _validateProviderDeferralPayload(p, event, integrity = false) {
+    const fail = (message, code = 'provider_deferral_integrity') => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
+    const fields = ['schemaVersion', 'requestDigest', 'deferralDigest', 'policyDigest', 'repoId', 'processingId', 'providerId', 'sourceEpoch', 'expectedProcessingVersion', 'expectedLastReceiptEvent', 'attempt', 'failureCode', 'delayMs', 'nextAttemptAt'];
+    if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || p.schemaVersion !== 1 || !this._providerAttemptPolicy || p.policyDigest !== canonicalDigest(this._providerAttemptPolicy)
+      || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.deferralDigest ?? '') || !boundedText(p.repoId, 256) || !boundedText(p.processingId, 256) || !boundedText(p.providerId, 128)
+      || !/^[a-f0-9]{64}$/.test(p.sourceEpoch ?? '') || !Number.isSafeInteger(p.expectedProcessingVersion) || !Number.isSafeInteger(p.expectedLastReceiptEvent) || !Number.isSafeInteger(p.attempt)
+      || !PROVIDER_FAILURE_CODES.has(p.failureCode) || !Number.isSafeInteger(p.delayMs) || !Number.isFinite(Date.parse(p.nextAttemptAt)) || new Date(Date.parse(p.nextAttemptAt)).toISOString() !== p.nextAttemptAt
+      || !Number.isFinite(Date.parse(event.ts)) || new Date(Date.parse(event.ts)).toISOString() !== event.ts || !boundedText(event.idempotencyKey, 512) || event.actor !== `provider-reconciler:${p.providerId}`) fail('provider deferral shape is invalid');
+    const processing = this._providerProcessing.get(p.processingId); if (!processing || processing.status !== 'pending' || processing.repoId !== p.repoId || processing.providerId !== p.providerId || processing.sourceEpoch !== p.sourceEpoch || processing.version !== p.expectedProcessingVersion || processing.lastReceiptEvent !== p.expectedLastReceiptEvent) fail('provider deferral target is stale', 'provider_processing_stale');
+    if (processing.nextAttemptAt && Date.parse(event.ts) < Date.parse(processing.nextAttemptAt)) fail('provider deferral was recorded before it became due', 'provider_processing_not_due');
+    const expectedAttempt = (processing.attemptCount ?? 0) + 1; const windowAttempt = expectedAttempt - (processing.attemptWindowStart ?? 0); const expectedDelay = providerAttemptDelay(this._providerAttemptPolicy, windowAttempt);
+    if (p.attempt !== expectedAttempt || windowAttempt > this._providerAttemptPolicy.maxAttempts || p.delayMs !== expectedDelay || p.nextAttemptAt !== new Date(Date.parse(event.ts) + expectedDelay).toISOString()) fail('provider deferral policy derivation is invalid');
+    const requestCore = { actor: event.actor, idempotencyKey: event.idempotencyKey, repoId: p.repoId, processingId: p.processingId, providerId: p.providerId, sourceEpoch: p.sourceEpoch, expectedProcessingVersion: p.expectedProcessingVersion, expectedLastReceiptEvent: p.expectedLastReceiptEvent, attempt: p.attempt, failureCode: p.failureCode, policyDigest: p.policyDigest };
+    if (p.requestDigest !== canonicalDigest(requestCore)) fail('provider deferral request identity is invalid'); const core = Object.fromEntries(Object.entries(p).filter(([key]) => key !== 'deferralDigest')); if (p.deferralDigest !== canonicalDigest(core)) fail('provider deferral digest is invalid');
+    return processing;
+  }
+
   _validateProviderGreenPayload(p, event, integrity = false) {
     const fail = (message, code) => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
     const fields = ['schemaVersion', 'requestDigest', 'completionDigest', 'processingId', 'expectedProcessingVersion', 'repoId', 'providerId', 'sourceEpoch', 'receiptIds', 'policy', 'indexBinding', 'observations', 'result'];
@@ -805,12 +834,14 @@ export class CoordinationStore {
 
   _apply(event) {
     const p = event.payload;
-    if (event.kind === 'provider.reconciliation_completed') {
+    if (event.kind === 'provider.processing_deferred') {
+      const processing = this._validateProviderDeferralPayload(p, event, true); this._providerProcessing.set(p.processingId, freeze({ ...clone(processing), attemptCount: p.attempt, lastAttemptEvent: event.seq, lastFailureCode: p.failureCode, nextAttemptAt: p.nextAttemptAt }));
+    } else if (event.kind === 'provider.reconciliation_completed') {
       const { sourceKey, health } = this._validateProviderReconciliationPayload(p, event, true);
       this._providerSourceHealth.set(sourceKey, freeze({ ...clone(health), status: 'healthy', firstGap: null, finalSequence: p.proof.finalSequence, cursorDigest: p.proof.cursorDigest, proofDigest: p.proof.proofDigest, lastReceiptEvent: health.lastEvent, lastEvent: event.seq, reconciliationEvent: event.seq, reconciledAt: event.ts }));
     } else if (event.kind === 'knowledge.reuse_provider_guarded') {
       this._validateProviderAdversePayload(p, event, true); const old = this._providerProcessing.get(p.processingId);
-      this._providerProcessing.set(p.processingId, freeze({ ...clone(old), status: 'guarded_adverse', version: old.version + 1, requestDigest: p.requestDigest, completionDigest: p.completionDigest, completionEvent: event.seq, observations: p.observations.map((row) => ({ coordinate: clone(row.coordinate), officialDigest: row.officialDigest, factDigest: row.snapshot.factDigest, adverse: row.adverse, contributionId: row.contribution?.id ?? null, asOf: row.snapshot.asOf })) }));
+      this._providerProcessing.set(p.processingId, freeze({ ...clone(old), status: 'guarded_adverse', version: old.version + 1, requestDigest: p.requestDigest, completionDigest: p.completionDigest, completionEvent: event.seq, nextAttemptAt: null, observations: p.observations.map((row) => ({ coordinate: clone(row.coordinate), officialDigest: row.officialDigest, factDigest: row.snapshot.factDigest, adverse: row.adverse, contributionId: row.contribution?.id ?? null, asOf: row.snapshot.asOf })) }));
       for (const coordinate of old.coordinates) { const key = this._providerCoordinateKey(old.repoId, coordinate); const pending = new Set(this._providerPending.get(key) ?? []); pending.delete(p.processingId); if (pending.size === 0) this._providerPending.delete(key); else this._providerPending.set(key, pending); }
       for (const row of p.observations) {
         const officialNodeId = `source:provider-official:${row.officialDigest}`; const evidence = [{ coordinationSeq: row.reverifyEvidence.coordinationSeq }];
@@ -835,7 +866,7 @@ export class CoordinationStore {
       }
     } else if (event.kind === 'provider.processing_checked') {
       this._validateProviderGreenPayload(p, event, true); const old = this._providerProcessing.get(p.processingId);
-      this._providerProcessing.set(p.processingId, freeze({ ...clone(old), status: 'ignored_non_adverse', version: old.version + 1, requestDigest: p.requestDigest, completionDigest: p.completionDigest, completionEvent: event.seq, observations: p.observations.map((row) => ({ coordinate: clone(row.coordinate), officialDigest: row.officialDigest, factDigest: row.snapshot.factDigest, asOf: row.snapshot.asOf })) }));
+      this._providerProcessing.set(p.processingId, freeze({ ...clone(old), status: 'ignored_non_adverse', version: old.version + 1, requestDigest: p.requestDigest, completionDigest: p.completionDigest, completionEvent: event.seq, nextAttemptAt: null, observations: p.observations.map((row) => ({ coordinate: clone(row.coordinate), officialDigest: row.officialDigest, factDigest: row.snapshot.factDigest, asOf: row.snapshot.asOf })) }));
       for (const coordinate of old.coordinates) { const key = this._providerCoordinateKey(old.repoId, coordinate); const pending = new Set(this._providerPending.get(key) ?? []); pending.delete(p.processingId); if (pending.size === 0) this._providerPending.delete(key); else this._providerPending.set(key, pending); }
       for (const row of p.observations) {
         const nodeId = `source:provider-official:${row.officialDigest}`; const evidence = [{ coordinationSeq: row.reverifyEvidence.coordinationSeq }];
@@ -854,9 +885,9 @@ export class CoordinationStore {
         highSequence = highSequence === null ? p.receipt.sequence : Math.max(highSequence, p.receipt.sequence);
         this._providerSourceHealth.set(sourceKey, freeze({ repoId: p.repoId, providerId: p.receipt.providerId, sourceEpoch: p.receipt.sourceEpoch, status, highSequence, firstGap, lastEvent: event.seq, ...(priorHealth?.reconciliationEvent ? { finalSequence: priorHealth.finalSequence, cursorDigest: priorHealth.cursorDigest, proofDigest: priorHealth.proofDigest, lastReceiptEvent: event.seq, reconciliationEvent: priorHealth.reconciliationEvent, reconciledAt: priorHealth.reconciledAt } : {}) }));
       }
-      if (existing) this._providerProcessing.set(p.processingId, freeze({ ...clone(existing), receiptIds: [...existing.receiptIds, p.receiptId], lastReceiptEvent: event.seq }));
+      if (existing) this._providerProcessing.set(p.processingId, freeze({ ...clone(existing), receiptIds: [...existing.receiptIds, p.receiptId], lastReceiptEvent: event.seq, attemptWindowStart: existing.attemptCount ?? 0, nextAttemptAt: null }));
       else {
-        const processing = freeze({ id: p.processingId, contentIdentity: p.contentIdentity, repoId: p.repoId, providerId: p.receipt.providerId, sourceEpoch: p.receipt.sourceEpoch, coordinates: clone(p.receipt.coordinates), advisoryIds: clone(p.receipt.advisoryIds), status: 'pending', version: 1, receiptIds: [p.receiptId], createdEvent: event.seq, lastReceiptEvent: event.seq });
+        const processing = freeze({ id: p.processingId, contentIdentity: p.contentIdentity, repoId: p.repoId, providerId: p.receipt.providerId, sourceEpoch: p.receipt.sourceEpoch, coordinates: clone(p.receipt.coordinates), advisoryIds: clone(p.receipt.advisoryIds), status: 'pending', version: 1, receiptIds: [p.receiptId], createdEvent: event.seq, lastReceiptEvent: event.seq, attemptWindowStart: 0 });
         this._providerProcessing.set(p.processingId, processing);
         for (const coordinate of p.receipt.coordinates) { const key = this._providerCoordinateKey(p.repoId, coordinate); const pending = new Set(this._providerPending.get(key) ?? []); pending.add(p.processingId); this._providerPending.set(key, pending); }
       }
@@ -1353,8 +1384,38 @@ export class CoordinationStore {
   providerReceipt(id) { return clone(this._providerReceipts.get(id) ?? null); }
   providerProcessing(id) { return clone(this._providerProcessing.get(id) ?? null); }
   providerSourceHealth(repoId, providerId, sourceEpoch) { return clone(this._providerSourceHealth.get(this._providerSourceKey(repoId, providerId, sourceEpoch)) ?? null); }
+  providerAttemptPolicy() { return clone(this._providerAttemptPolicy); }
   advisoryFeedCards() { return [...this._advisoryFeedCards.values()].map((entry) => freeze({ ...clone(entry.card), cardDigest: entry.cardDigest })).sort((a, b) => a.providerId.localeCompare(b.providerId)); }
   pendingProviderReconciliation(repoId, coordinate) { return this._providerPendingFor(repoId, coordinate).map(clone); }
+
+  dueProviderProcessing(repoId, at) {
+    if (!this._providerAttemptPolicy || !boundedText(repoId, 256) || !Number.isFinite(Date.parse(at)) || new Date(Date.parse(at)).toISOString() !== at) throw new CoordinationRefusal('provider due-read authority is invalid', 'provider_attempt_unavailable');
+    const due = []; let examined = 0;
+    for (const row of this._providerProcessing.values()) {
+      examined += 1; if (examined > this._providerAttemptPolicy.maxStateRows) throw new CoordinationRefusal('provider due derivation exceeded deployment ceiling', 'provider_attempt_oversize');
+      if (row.repoId !== repoId || row.status !== 'pending' || (row.attemptCount ?? 0) - (row.attemptWindowStart ?? 0) >= this._providerAttemptPolicy.maxAttempts || (row.nextAttemptAt && Date.parse(row.nextAttemptAt) > Date.parse(at))) continue;
+      due.push(row.id);
+    }
+    return due.sort().slice(0, this._providerAttemptPolicy.maxBatch);
+  }
+
+  recordProviderProcessingDeferral(fields, auth) {
+    if (!fields || Object.keys(fields).sort().join(',') !== ['expectedLastReceiptEvent', 'expectedProcessingVersion', 'failureCode', 'processingId'].sort().join(',')) throw new TypeError('provider deferral request is invalid');
+    const processing = this._providerProcessing.get(fields?.processingId); if (!processing || auth?.actor !== `provider-reconciler:${processing.providerId}` || !boundedText(auth?.key, 512)) throw new TypeError('provider deferral authority is invalid');
+    if (!this._providerAttemptPolicy) throw new CoordinationRefusal('provider attempt policy is unavailable', 'provider_attempt_unavailable');
+    const prior = this._byKey.get(auth.key); if (prior) {
+      if (prior.kind !== 'provider.processing_deferred' || prior.actor !== auth.actor || prior.payload?.processingId !== processing.id || prior.payload?.failureCode !== fields.failureCode
+        || prior.payload?.expectedProcessingVersion !== fields.expectedProcessingVersion || prior.payload?.expectedLastReceiptEvent !== fields.expectedLastReceiptEvent) throw new CoordinationRefusal('provider deferral idempotency conflict', 'provider_deferral_conflict');
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), processing: this.providerProcessing(processing.id) });
+    }
+    if (processing.status !== 'pending' || fields.expectedProcessingVersion !== processing.version || fields.expectedLastReceiptEvent !== processing.lastReceiptEvent) throw new CoordinationRefusal('provider deferral target is stale', 'provider_processing_stale');
+    const attempt = (processing.attemptCount ?? 0) + 1; const windowAttempt = attempt - (processing.attemptWindowStart ?? 0); const delayMs = providerAttemptDelay(this._providerAttemptPolicy, windowAttempt);
+    const event = { seq: this._events.length + 1, ts: this._clock(), actor: auth.actor, idempotencyKey: auth.key };
+    if (!Number.isFinite(Date.parse(event.ts)) || new Date(Date.parse(event.ts)).toISOString() !== event.ts) throw new CoordinationRefusal('provider deferral clock is invalid', 'provider_attempt_unavailable');
+    const policyDigest = canonicalDigest(this._providerAttemptPolicy); const requestCore = { actor: auth.actor, idempotencyKey: auth.key, repoId: processing.repoId, processingId: processing.id, providerId: processing.providerId, sourceEpoch: processing.sourceEpoch, expectedProcessingVersion: processing.version, expectedLastReceiptEvent: processing.lastReceiptEvent, attempt, failureCode: fields.failureCode, policyDigest }; const requestDigest = canonicalDigest(requestCore);
+    const core = { schemaVersion: 1, requestDigest, policyDigest, repoId: processing.repoId, processingId: processing.id, providerId: processing.providerId, sourceEpoch: processing.sourceEpoch, expectedProcessingVersion: processing.version, expectedLastReceiptEvent: processing.lastReceiptEvent, attempt, failureCode: fields.failureCode, delayMs, nextAttemptAt: new Date(Date.parse(event.ts) + delayMs).toISOString() }; const payload = { ...core, deferralDigest: canonicalDigest(core) };
+    this._validateProviderDeferralPayload(payload, event, false); const appended = this._append('provider.processing_deferred', payload, auth, event.ts); return freeze({ ok: true, result: 'deferred', event: clone(appended), processing: this.providerProcessing(processing.id) });
+  }
 
   readProviderStatus(repoId, request, ceilings) {
     if (!boundedText(repoId, 256) || !request || Object.keys(request).some((key) => !['providerId', 'after', 'limit'].includes(key))
@@ -1377,7 +1438,7 @@ export class CoordinationStore {
     }
     providers.sort((a, b) => a.providerId.localeCompare(b.providerId) || a.sourceEpoch.localeCompare(b.sourceEpoch));
     if (providers.length > ceilings.maxProviders) throw new CoordinationRefusal('provider read provider set exceeded deployment ceiling', 'provider_read_oversize');
-    const summaries = processing.map((row) => ({ processingId: row.id, providerId: row.providerId, sourceEpoch: row.sourceEpoch, status: row.status, version: row.version, coordinateCount: row.coordinates.length, receiptCount: row.receiptIds.length, createdEvent: row.createdEvent, lastReceiptEvent: row.lastReceiptEvent, completionEvent: row.completionEvent ?? null })).sort((a, b) => a.processingId.localeCompare(b.processingId));
+    const summaries = processing.map((row) => ({ processingId: row.id, providerId: row.providerId, sourceEpoch: row.sourceEpoch, status: row.status, version: row.version, coordinateCount: row.coordinates.length, receiptCount: row.receiptIds.length, createdEvent: row.createdEvent, lastReceiptEvent: row.lastReceiptEvent, completionEvent: row.completionEvent ?? null, attemptCount: row.attemptCount ?? 0, lastAttemptEvent: row.lastAttemptEvent ?? null, lastFailureCode: row.lastFailureCode ?? null, nextAttemptAt: row.nextAttemptAt ?? null })).sort((a, b) => a.processingId.localeCompare(b.processingId));
     const available = summaries.filter((row) => request.after === undefined || row.processingId > request.after); const selected = available.slice(0, limit);
     const response = { schemaVersion: 1, repoId, asOfEvent: this._events.length, providers: clone(providers), currentProcessing: [], historicalProcessing: [], nextAfter: null };
     const bytes = () => Buffer.byteLength(JSON.stringify(response));

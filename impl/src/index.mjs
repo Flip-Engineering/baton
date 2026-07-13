@@ -22,6 +22,7 @@ import { routeTupleKey } from './route-tuple.mjs';
 import { CapabilityRegistry } from './capability-registry.mjs';
 import { AdvisoryFeedRegistry } from './advisory-feed-registry.mjs';
 import { ProviderPollSupervisor } from './provider-poll-supervisor.mjs';
+import { ProviderProcessingSupervisor } from './provider-processing-supervisor.mjs';
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const canonicalDigest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
@@ -62,6 +63,7 @@ export { MergirafResolver } from './structured-merge.mjs';
 export { CapabilityRegistry } from './capability-registry.mjs';
 export { AdvisoryFeedRegistry } from './advisory-feed-registry.mjs';
 export { ProviderPollSupervisor } from './provider-poll-supervisor.mjs';
+export { ProviderProcessingSupervisor } from './provider-processing-supervisor.mjs';
 export { HttpsHmacAdvisoryFeedSource, signHmacAdvisoryPollPageForTest } from './https-hmac-advisory-feed.mjs';
 export { Ed25519AdvisoryWebhookSource, HmacAdvisoryWebhookSource, signEd25519AdvisoryWebhookForTest, signHmacAdvisoryWebhookForTest } from './hmac-advisory-webhook.mjs';
 
@@ -167,6 +169,7 @@ function refereeFn(task, result, opts) {
  *          advisoryFeedSources?:Record<string,object>,
  *          providerReconciliation?:{budgetTokens:number,indexAuthority:object},
  *          providerPolling?:{intervalMs:number,initialBackoffMs:number},
+ *          providerProcessingSchedule?:{intervalMs:number,maxBatch:number,maxAttempts:number,initialBackoffMs:number,maxBackoffMs:number,maxStateRows:number},
  *          providerRead?:{maxProviders:number,maxProcessing:number,maxStateRows:number,maxBytes:number},
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
  *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
@@ -188,16 +191,26 @@ export function createDriver(opts) {
   const advisoryFeeds = new AdvisoryFeedRegistry({ sources: opts.advisoryFeedSources ?? {} });
   const advisoryFeedCards = advisoryFeeds.cards();
   if (advisoryFeedCards.length > 0 && (typeof opts.repoId !== 'string' || opts.repoId.length === 0)) throw new TypeError('advisory feed sources require one deployment-bound repoId');
+  let providerProcessingPolicy;
+  if (opts.providerProcessingSchedule !== undefined) {
+    const policy = opts.providerProcessingSchedule; const fields = ['intervalMs', 'maxBatch', 'maxAttempts', 'initialBackoffMs', 'maxBackoffMs', 'maxStateRows'];
+    if (!policy || Object.keys(policy).sort().join(',') !== fields.sort().join(',') || typeof opts.repoId !== 'string' || opts.repoId.length === 0 || opts.providerReconciliation === undefined
+      || Object.values(policy).some((value) => !Number.isSafeInteger(value) || value <= 0) || policy.initialBackoffMs > policy.maxBackoffMs || policy.intervalMs > 24 * 60 * 60 * 1_000
+      || policy.maxBatch > 10_000 || policy.maxBatch > policy.maxStateRows || policy.maxAttempts > 1_000_000 || policy.maxBackoffMs > 24 * 60 * 60 * 1_000 || policy.maxStateRows > 1_000_000) throw new TypeError('providerProcessingSchedule requires exact bounded deployment retry and reconciliation authority');
+    providerProcessingPolicy = Object.freeze({ ...policy });
+  }
   const coordination = opts.coordination ?? new CoordinationStore(join(opts.logDir, 'coordination'), {
     operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
     clock: () => new Date(now()).toISOString(),
     advisoryFeedCards,
     advisoryReceiptReverify: (receipt) => advisoryFeeds.reverifyReceiptSync(receipt),
     advisoryPollReverify: (proof) => advisoryFeeds.reverifyPollSync(proof),
+    ...(providerProcessingPolicy ? { providerAttemptPolicy: providerProcessingPolicy } : {}),
   });
   if (opts.coordination && advisoryFeedCards.length > 0) {
     if (typeof coordination.advisoryFeedCards !== 'function' || canonicalDigest(coordination.advisoryFeedCards()) !== canonicalDigest(advisoryFeedCards)) throw new TypeError('custom coordination store disagrees with deployment advisory feed cards');
   }
+  if (opts.coordination && providerProcessingPolicy && (typeof coordination.providerAttemptPolicy !== 'function' || canonicalDigest(coordination.providerAttemptPolicy()) !== canonicalDigest(providerProcessingPolicy))) throw new TypeError('custom coordination store disagrees with deployment provider attempt policy');
   let writerLease = null;
   try {
   writerLease = coordination.claimWriterLease();
@@ -305,6 +318,7 @@ export function createDriver(opts) {
     capabilities,
     advisoryFeeds,
     providerReconciliation,
+    providerProcessingSchedule: providerProcessingPolicy ? { repoId: opts.repoId, ...providerProcessingPolicy } : undefined,
     providerRead,
     coordination,
     repoRoot: opts.repoRoot,
@@ -344,20 +358,30 @@ export function createDriver(opts) {
       coordinator, cards: pollCards, intervalMs: opts.providerPolling.intervalMs, initialBackoffMs: opts.providerPolling.initialBackoffMs,
       onEvent: (event) => log.append({ worker: 'hub-provider-poller', harness: 'baton', turnEpoch: 0, actor: 'policy', kind: event.kind, payload: Object.fromEntries(Object.entries(event).filter(([key]) => key !== 'kind')) }),
     });
-    providerPoller.start();
   }
+  let providerProcessor = null;
+  if (providerProcessingPolicy) {
+    if (!coordination.reusePolicyState(opts.repoId)) throw new TypeError('providerProcessingSchedule requires an active deployment reuse policy');
+    providerProcessor = new ProviderProcessingSupervisor({
+      coordinator, intervalMs: providerProcessingPolicy.intervalMs,
+      onEvent: (event) => log.append({ worker: 'hub-provider-processor', harness: 'baton', turnEpoch: 0, actor: 'policy', kind: event.kind, payload: Object.fromEntries(Object.entries(event).filter(([key]) => key !== 'kind')) }),
+    });
+  }
+  providerProcessor?.start();
+  providerPoller?.start();
   let closed = false;
   const closeAuthority = () => { const authorityClosed = coordinator.closeAuthority(); closed = true; coordination.releaseWriterLease(); return authorityClosed; };
   const close = () => {
     if (closed) return false;
-    if (providerPoller) throw Object.assign(new Error('poll-enabled drivers require await closeAsync()'), { code: 'driver_async_close_required' });
+    if (providerPoller || providerProcessor) throw Object.assign(new Error('supervised drivers require await closeAsync()'), { code: 'driver_async_close_required' });
     return closeAuthority();
   };
   const closeAsync = async () => {
     if (closed) return false;
+    if (providerProcessor) await providerProcessor.close();
     if (providerPoller) await providerPoller.close();
     return closeAuthority();
   };
-  return { coordinator, story, router, log, coordination, advisoryFeeds, providerPoller, close, closeAsync };
+  return { coordinator, story, router, log, coordination, advisoryFeeds, providerPoller, providerProcessor, close, closeAsync };
   } catch (error) { if (writerLease) coordination.releaseWriterLease(); throw error; }
 }
