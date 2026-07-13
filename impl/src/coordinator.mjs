@@ -3692,6 +3692,7 @@ export class Coordinator {
       trustPhase = 'promotion';
       this._coordination.promoteKnowledgeNode({
         id: `outcome:${task.id}:${verifyEvent.seq}`,
+        taskId: task.id,
         type: accept ? 'Finding' : 'Counterexample',
         body: accept ? `Task ${task.id} passed its hub verification` : `Task ${task.id} failed its hub verification`,
         grounding: 'verified', evidence: [{ coordinationSeq: evidence.coordinationSeq }, ...artifactEvidence],

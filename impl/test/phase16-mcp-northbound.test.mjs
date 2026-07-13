@@ -74,12 +74,16 @@ test('CI6: capability cards are observed and invoke, resume, and reverify preser
   const replayed = await request(s.server, 6, 'tools/call', { name: 'fleet_capability_invoke', arguments: invokeArgs });
   assert.equal(invoked.result.isError, false); assert.equal(resumed.result.isError, false); assert.equal(reverified.result.isError, false);
   assert.deepEqual(replayed.result, invoked.result);
-  assert.deepEqual(s.calls, [
-    ['capabilityCards'],
-    ['invokeCapability', 'atlas', 'atlas.inspect', { path: 'src' }, { budgetTokens: 1200, actor: 'mcp:operator-a:stdio-a' }],
-    ['resumeCapability', 'atlas', 'atlas.inspect', { digest: 'abc' }, 'next', { budgetTokens: 1200, actor: 'mcp:operator-a:stdio-a' }],
-    ['reverifyCapability', 'atlas', 'atlas.inspect', { digest: 'def' }, { strict: true }, { budgetTokens: 1200, actor: 'mcp:operator-a:stdio-a' }],
-  ]);
+  assert.deepEqual(s.calls.map((call) => call[0]), ['capabilityCards', 'invokeCapability', 'resumeCapability', 'reverifyCapability']);
+  assert.deepEqual(s.calls[1].slice(1, -1), ['atlas', 'atlas.inspect', { path: 'src' }]);
+  assert.deepEqual(s.calls[2].slice(1, -1), ['atlas', 'atlas.inspect', { digest: 'abc' }, 'next']);
+  assert.deepEqual(s.calls[3].slice(1, -1), ['atlas', 'atlas.inspect', { digest: 'def' }, { strict: true }]);
+  const contexts = s.calls.slice(1).map((call) => call.at(-1));
+  for (const ctx of contexts) {
+    assert.equal(ctx.budgetTokens, 1200); assert.equal(ctx.actor, 'mcp:operator-a:stdio-a'); assert.equal(ctx.repoId, 'repo-a'); assert.equal(ctx.transport, 'mcp');
+    assert.match(ctx.idempotencyKey, /^mcp\.call:[0-9a-f-]+$/);
+  }
+  assert.equal(new Set(contexts.map((ctx) => ctx.idempotencyKey)).size, 3);
 });
 
 test('RD10: authenticated MCP reuse decision preserves principal actor, repo, budget, and durable call identity', async () => {
@@ -107,7 +111,10 @@ test('OR9: authenticated MCP capability push is fenced and preserves the injecte
   const common = { repoId: 'repo-a', idempotencyKey: 'orient-1', name: 'cartographer-quartermaster', op: 'orientation.slice', action: 'push', workerId: 'worker-1', note: 'Stay in auth.', expectedFence: 4, budgetTokens: 900, args: { indexEpoch: 'epoch', focus: 'auth', shape: 'brief' } };
   const pushed = await request(s.server, 2, 'tools/call', { name: 'fleet_capability_invoke', arguments: common });
   assert.equal(pushed.result.isError, false);
-  assert.deepEqual(s.calls, [['orientWorker', 'worker-1', { indexEpoch: 'epoch', focus: 'auth', shape: 'brief' }, 'Stay in auth.', { budgetTokens: 900, actor: 'mcp:operator-a:stdio-a', expectedFence: 4 }]]);
+  assert.deepEqual(s.calls[0].slice(0, -1), ['orientWorker', 'worker-1', { indexEpoch: 'epoch', focus: 'auth', shape: 'brief' }, 'Stay in auth.']);
+  assert.equal(s.calls[0].at(-1).budgetTokens, 900); assert.equal(s.calls[0].at(-1).actor, 'mcp:operator-a:stdio-a');
+  assert.equal(s.calls[0].at(-1).repoId, 'repo-a'); assert.equal(s.calls[0].at(-1).transport, 'mcp'); assert.match(s.calls[0].at(-1).idempotencyKey, /^mcp\.call:[0-9a-f-]+$/);
+  assert.equal(s.calls[0].at(-1).expectedFence, 4);
   const missingFence = await request(s.server, 3, 'tools/call', { name: 'fleet_capability_invoke', arguments: { ...common, idempotencyKey: 'orient-2', expectedFence: undefined } });
   assert.equal(missingFence.result.isError, true); assert.equal(s.calls.length, 1);
 });

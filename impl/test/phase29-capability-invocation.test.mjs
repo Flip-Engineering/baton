@@ -48,11 +48,16 @@ test('CI1/CI2/CI5/CI7: closed cards invoke with trusted context and bounded prov
     actions: { invoke: true, resume: true, reverify: true, cancel: false },
     northbound: { inlineOps: ['fixture.read'], taskOpsRequiringTaskPlane: [] },
   }]);
-  const result = await subject.invoke('fixture', 'fixture.read', { query: 'TOP-SECRET-ARGUMENT' }, { budgetTokens: 100, actor: 'web:user:session' });
+  const result = await subject.invoke('fixture', 'fixture.read', { query: 'TOP-SECRET-ARGUMENT' }, {
+    budgetTokens: 100, actor: 'web:user:session', repoId: 'repo-a', idempotencyKey: 'web.command:command-1',
+  });
   assert.equal(result.status, 'ok');
   assert.deepEqual(capability.calls[0], {
     action: 'invoke', op: 'fixture.read', args: { query: 'TOP-SECRET-ARGUMENT' },
-    ctx: { budgetTokens: 100, signal: undefined, actor: 'web:user:session', root: '/trusted/repository' },
+    ctx: {
+      budgetTokens: 100, signal: undefined, actor: 'web:user:session', repoId: 'repo-a',
+      idempotencyKey: 'web.command:command-1', root: '/trusted/repository',
+    },
   });
   assert.deepEqual(events.map((event) => event.kind), ['capability.op.started', 'capability.op.completed']);
   assert.equal(events[0].invocationId, events[1].invocationId);
@@ -72,6 +77,10 @@ test('CI1/CI2/CI7: registration, cards, JSON inputs, operations, budgets, and en
   await assert.rejects(registry().invoke('fixture', 'fixture.write', {}, { budgetTokens: 10 }), (error) => error.code === 'capability_op_unavailable');
   await assert.rejects(registry().invoke('fixture', 'fixture.read', {}, { budgetTokens: 0 }), (error) => error.code === 'capability_budget_invalid');
   await assert.rejects(registry().invoke('fixture', 'fixture.read', {}, { budgetTokens: 1_001 }), (error) => error.code === 'capability_budget_invalid');
+  await assert.rejects(registry().invoke('fixture', 'fixture.read', {}, { budgetTokens: 10, repoId: '' }), (error) => error.code === 'capability_repo_invalid');
+  await assert.rejects(registry().invoke('fixture', 'fixture.read', {}, { budgetTokens: 10, repoId: 'x'.repeat(257) }), (error) => error.code === 'capability_repo_invalid');
+  await assert.rejects(registry().invoke('fixture', 'fixture.read', {}, { budgetTokens: 10, idempotencyKey: 'not safe' }), (error) => error.code === 'capability_idempotency_invalid');
+  await assert.rejects(registry().invoke('fixture', 'fixture.read', {}, { budgetTokens: 10, transport: 'forged' }), (error) => error.code === 'capability_transport_invalid');
   const cyclic = {}; cyclic.self = cyclic;
   await assert.rejects(registry().invoke('fixture', 'fixture.read', cyclic, { budgetTokens: 10 }), (error) => error.code === 'capability_args_invalid');
   const malformed = fixture({ invoke: async () => ({ op: 'fixture.read', status: 'ok' }) });
@@ -97,13 +106,19 @@ test('CI1/CI2/CI7: registration, cards, JSON inputs, operations, budgets, and en
 test('CI2/CI7: deployment context resolves multi-root operations but cannot replace registry authority', async () => {
   const capability = fixture();
   const subject = registry(capability, { contexts: { fixture: ({ action, args }) => ({ beforeRoot: `/snapshots/${action}`, overlayEpoch: args.epoch }) } });
-  await subject.invoke('fixture', 'fixture.read', { epoch: 'abc' }, { budgetTokens: 100, actor: 'web:user:session' });
+  await subject.invoke('fixture', 'fixture.read', { epoch: 'abc' }, {
+    budgetTokens: 100, actor: 'web:user:session', repoId: 'repo-a', idempotencyKey: 'web.command:command-1',
+  });
   assert.deepEqual(capability.calls[0].ctx, {
     beforeRoot: '/snapshots/invoke', overlayEpoch: 'abc', budgetTokens: 100, signal: undefined,
-    actor: 'web:user:session', root: '/trusted/repository',
+    actor: 'web:user:session', repoId: 'repo-a', idempotencyKey: 'web.command:command-1', root: '/trusted/repository',
   });
-  const forbidden = registry(fixture(), { contexts: { fixture: { root: '/attacker-controlled' } } });
-  await assert.rejects(forbidden.invoke('fixture', 'fixture.read', {}, { budgetTokens: 100 }), (error) => error.code === 'capability_context_forbidden');
+  for (const context of [{ root: '/attacker-controlled' }, { repoId: 'repo-b' }, { idempotencyKey: 'deployment:forged' }, { transport: 'web' }]) {
+    const forbidden = registry(fixture(), { contexts: { fixture: context } });
+    await assert.rejects(forbidden.invoke('fixture', 'fixture.read', {}, {
+      budgetTokens: 100, repoId: 'repo-a', idempotencyKey: 'direct:trusted',
+    }), (error) => error.code === 'capability_context_forbidden');
+  }
   const malformed = registry(fixture(), { contexts: { fixture: () => ({ value: Infinity }) } });
   await assert.rejects(malformed.invoke('fixture', 'fixture.read', {}, { budgetTokens: 100 }), (error) => error.code === 'capability_context_invalid');
 });
@@ -131,11 +146,15 @@ test('CI5: provenance sink loss poisons the capability plane before any repeated
 });
 
 test('CI3: resume and reverify share operation, input, budget, root, and authority policy', async () => {
-  const capability = fixture(); const subject = registry(capability); const ctx = { budgetTokens: 100, actor: 'mcp:user:session' };
+  const capability = fixture(); const subject = registry(capability);
+  const ctx = { budgetTokens: 100, actor: 'mcp:user:session', repoId: 'repo-a', idempotencyKey: 'mcp.call:call-1' };
   const resumed = await subject.resume('fixture', 'fixture.read', { digest: 'a'.repeat(64) }, 'fixture:1', ctx);
   const verified = await subject.reverify('fixture', 'fixture.read', { digest: 'same' }, { digest: 'same' }, ctx);
   assert.equal(resumed.op, 'fixture.read'); assert.equal(verified.status, 'ok'); assert.equal(verified.payload[0].ok, true);
-  assert.equal(capability.calls[0].ctx.root, '/trusted/repository'); assert.equal(capability.calls[1].ctx.root, '/trusted/repository');
+  for (const call of capability.calls) assert.deepEqual(call.ctx, {
+    budgetTokens: 100, signal: undefined, actor: 'mcp:user:session', repoId: 'repo-a',
+    idempotencyKey: 'mcp.call:call-1', root: '/trusted/repository',
+  });
   await assert.rejects(subject.resume('fixture', 'fixture.write', {}, 'cursor', ctx), (error) => error.code === 'capability_op_unavailable');
   await assert.rejects(subject.resume('fixture', 'fixture.read', {}, '', ctx), (error) => error.code === 'capability_resume_invalid');
   await assert.rejects(subject.reverify('fixture', 'fixture.read', null, {}, ctx), (error) => error.code === 'capability_reverify_invalid');

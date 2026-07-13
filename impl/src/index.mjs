@@ -247,10 +247,16 @@ export function createDriver(opts) {
     if (Object.hasOwn(configuredCapabilities, name)) throw new TypeError(`duplicate capability registration: ${name}`);
     if (typeof factory !== 'function') throw new TypeError(`capability factory must be a function: ${name}`);
     configuredCapabilities[name] = factory({
-      coordination, router,
+      coordination, router, repoId: opts.repoId,
       readOperational: (worker, throughSeq = null) => log.read(worker).filter((event) => throughSeq === null || event.seq <= throughSeq),
       tailOperational: (worker) => log.tail(worker),
     });
+  }
+  for (const [name, capability] of Object.entries(configuredCapabilities)) {
+    if (typeof capability?.deploymentRepoId === 'function') {
+      const boundRepoId = capability.deploymentRepoId();
+      if (boundRepoId !== null && (typeof opts.repoId !== 'string' || boundRepoId !== opts.repoId)) throw new TypeError(`capability deployment repository mismatch: ${name}`);
+    }
   }
   if (Object.keys(configuredCapabilities).length > 0
     && (!Number.isSafeInteger(opts.maxCapabilityBudgetTokens) || !Number.isSafeInteger(opts.maxCapabilityEnvelopeBytes))) {

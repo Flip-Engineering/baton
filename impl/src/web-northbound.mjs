@@ -54,7 +54,7 @@ function dispatchFailure(cause) {
   }
   if (cause?.code === 'capability_not_found') return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'resource not found' } } };
   if (['capability_op_unavailable', 'capability_resume_unavailable', 'capability_reverify_unavailable', 'capability_task_requires_task_plane', 'capability_args_invalid',
-    'capability_resume_invalid', 'capability_reverify_invalid', 'capability_budget_invalid', 'capability_actor_invalid'].includes(cause?.code)) {
+    'capability_resume_invalid', 'capability_reverify_invalid', 'capability_budget_invalid', 'capability_actor_invalid', 'capability_repo_invalid', 'capability_idempotency_invalid'].includes(cause?.code)) {
     return { httpStatus: 400, body: { ok: false, error: { code: 'invalid_command', message: 'command precondition failed' } } };
   }
   if (['capability_result_invalid', 'capability_result_oversize', 'capability_authority_forbidden', 'orientation_not_deliverable'].includes(cause?.code)) {
@@ -68,6 +68,9 @@ function dispatchFailure(cause) {
   if (cause?.code === 'cancelled') return { httpStatus: 409, body: { ok: false, error: { code: 'cancelled', message: 'capability invocation cancelled' } } };
   if (['run_sealed', 'run_not_terminal', 'run_membership_changed', 'run_prefix_changed'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'run state conflict' } } };
   if (['invalid_run_id', 'run_not_found'].includes(cause?.code)) return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'run precondition failed' } } };
+  if (['causal_request_invalid', 'causal_context_invalid', 'causal_audit_invalid', 'causal_trace_invalid'].includes(cause?.code)) return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'causal operation precondition failed' } } };
+  if (cause?.code === 'causal_repo_mismatch') return { httpStatus: 403, body: { ok: false, error: { code: cause.code, message: 'causal repository authority forbidden' } } };
+  if (['causal_audit_oversize', 'causal_trace_oversize', 'causal_audit_integrity'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'causal evidence refused' } } };
   if (['invalid_reuse_decision', 'reuse_evidence_invalid'].includes(cause?.code)) return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'reuse decision precondition failed' } } };
   if (['reuse_decision_forbidden', 'reuse_repo_mismatch'].includes(cause?.code)) return { httpStatus: 403, body: { ok: false, error: { code: cause.code, message: 'reuse decision authority forbidden' } } };
   if (['reuse_decision_conflict', 'reuse_decision_exists', 'reuse_borrow_blocked', 'reuse_evidence_diverged', 'reuse_evidence_stale', 'reuse_environment_mismatch', 'reuse_tree_dirty', 'reuse_namespace_conflict', 'stale_version'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'reuse decision conflict' } } };
@@ -373,7 +376,10 @@ export class WebNorthbound {
     } else if (envelope.command === 'provider_status') {
       value = this.coordinator.readProviderStatus(a, { repoId: envelope.repoId });
     } else if (envelope.command === 'capability_invoke') {
-      const capabilityCtx = { budgetTokens: a.budgetTokens, actor: webActor };
+      const capabilityCtx = {
+        budgetTokens: a.budgetTokens, actor: webActor, repoId: envelope.repoId,
+        idempotencyKey: `web.command:${envelope.commandId}`, transport: 'web',
+      };
       const action = a.action;
       if (action === 'invoke') value = await this.coordinator.invokeCapability(a.name, a.op, a.args, capabilityCtx);
       else if (action === 'resume') value = await this.coordinator.resumeCapability(a.name, a.op, a.ref, a.cursor, capabilityCtx);

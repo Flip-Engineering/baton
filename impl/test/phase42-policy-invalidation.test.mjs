@@ -131,7 +131,7 @@ test('PI4/PI6: fresh current-policy adverse evidence supersedes the stale guard 
   const b = await w.deploy(policyB); w.setAdvisories([{ id: 'GHSA-current-policy', modified: '2026-07-12T15:00:03Z' }]); w.advance(1_000);
   const current = await b.coordinator.recheckReuseDecision({ decisionId: built.decision.id, expectedValidityVersion: 2, trigger: 'advisory_refresh', budgetTokens: 10_000 }, { actor: 'operator:alice', repoId: 'repo-a', budgetTokens: 10_000, idempotencyKey: 'adverse-lineage:b' });
   assert.equal(current.guard.supersedesGuardDigest, old.guard.guardDigest); assert.equal(current.guard.inheritedAdverse, false);
-  assert.ok(b.coordination.snapshot().knowledge.edges.some((edge) => edge.type === 'Supersedes' && edge.from === `finding:reuse-risk:${current.guard.guardDigest}` && edge.to === `finding:reuse-risk:${old.guard.guardDigest}`)); b.close();
+  assert.ok(b.coordination.snapshot().knowledge.edges.some((edge) => edge.type === 'DerivedFrom' && edge.from === `finding:reuse-risk:${current.guard.guardDigest}` && edge.to === `finding:reuse-risk:${old.guard.guardDigest}`)); b.close();
 });
 
 test('PI2/PI8: exclusive policy writer ownership refuses overlapping drivers and append failure exposes no partial policy projection', async () => {

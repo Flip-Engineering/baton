@@ -560,6 +560,21 @@ proof, or policy-authoring authority. The packet mechanically retains live LSP, 
 solving, alias/heap/implicit flow, exceptions/interprocedural returns, external IR/translation
 validation, true semantic merge, and conditional expression/kernel e-graphs as unbuilt work.
 
+Phase 47 closes Cairn Rung 2's causal-integrity prerequisite. Every generic graph append is
+request/content-bound and replay-validated before materialization; all producers retain true
+observation-version history. Queries pin transaction and valid time, and durable reads preserve
+that boundary. Same-type live supersession uses validity CAS and atomic exact-reader contamination.
+Contradictions have a canonical pair, cannot be born resolved or bypassed through endpoint
+invalidation, and close only through an authorized winner/loser CAS event. The bounded Cairn audit
+uses live typed earlier lineage and reports independent causal/temporal/structure/grounding/
+contradiction/recall/contamination metrics; bounded live trace counts nodes, edges, evidence, and
+frontier and refuses unrelated graph state over deployment ceilings. Content-addressed mode-0600
+packets and complete direct or transport-canonical reverify are repository-bound through the sole
+ACI path. The packet embeds a versioned digest of stable IDs for the full retained capability
+catalog—including AST/CST/SCIP/CPG/IR, Scratch, Vantage, Evidence Ladder, Skill Forge, session/
+provider/runtime depth, semantic merge/fingerprints, and e-graphs—so Phase 48 recall and the wider
+goal cannot disappear through summary. No external project-manager or homelab runtime is added.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**
@@ -569,8 +584,9 @@ validation, true semantic merge, and conditional expression/kernel e-graphs as u
 4. Ship OS/credential isolation and budget/watchdog governance.
 5. Complete hardened acceptance and structured integration.
 6. Ship the task/artifact/Scratch substrate and deployment-neutral causal knowledge core.
-7. Ship Atlas + AST structural delta + repo map + Cairn scorecard and durable RouteStats/advice as
-   the first capability verticals. **Shipped through Cairn Rung 1.**
+7. Ship Atlas + AST structural delta + repo map + Cairn scorecard, durable RouteStats/advice, and
+   causal integrity/audit/trace as the first capability verticals. **Shipped locally through Cairn
+   Rung 2; recursive Phase 47 provider proof remains before evidence closure.**
 8. Expand the representation and capability ladders in measured increments.
 9. Add MCP plus authenticated HTTPS/WebSocket user↔orchestrator control, operator surfaces,
    production runtime, and the registered evaluations.

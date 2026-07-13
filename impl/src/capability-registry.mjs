@@ -3,6 +3,7 @@ const typed = (message, code) => Object.assign(new Error(message), { code });
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const json = (value) => JSON.parse(JSON.stringify(value));
 const ACI_STATUSES = new Set(['ok', 'partial', 'error', 'needs_resume', 'diverged']);
+const SAFE_ID = /^[A-Za-z0-9._:-]{1,256}$/;
 function jsonValue(value, seen = new Set()) {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
   if (typeof value === 'number') return Number.isFinite(value);
@@ -97,13 +98,22 @@ export class CapabilityRegistry {
     if (!Number.isSafeInteger(ctx.budgetTokens) || ctx.budgetTokens <= 0 || ctx.budgetTokens > this.maxBudgetTokens) throw typed('capability budget outside deployment policy', 'capability_budget_invalid');
     if (ctx.signal?.aborted) throw typed('capability invocation cancelled', 'cancelled');
     const actor = this._actor(ctx);
-    return { budgetTokens: ctx.budgetTokens, signal: ctx.signal, actor, ...(this.root === undefined ? {} : { root: this.root }) };
+    if (ctx.repoId !== undefined && (typeof ctx.repoId !== 'string' || ctx.repoId.length === 0 || Buffer.byteLength(ctx.repoId) > 256 || ctx.repoId.includes('\0'))) throw typed('capability repository identity invalid', 'capability_repo_invalid');
+    if (ctx.idempotencyKey !== undefined && (typeof ctx.idempotencyKey !== 'string' || !SAFE_ID.test(ctx.idempotencyKey))) throw typed('capability idempotency identity invalid', 'capability_idempotency_invalid');
+    if (ctx.transport !== undefined && !['web', 'mcp'].includes(ctx.transport)) throw typed('capability transport identity invalid', 'capability_transport_invalid');
+    return {
+      budgetTokens: ctx.budgetTokens, signal: ctx.signal, actor,
+      ...(ctx.repoId === undefined ? {} : { repoId: ctx.repoId }),
+      ...(ctx.idempotencyKey === undefined ? {} : { idempotencyKey: ctx.idempotencyKey }),
+      ...(ctx.transport === undefined ? {} : { transport: ctx.transport }),
+      ...(this.root === undefined ? {} : { root: this.root }),
+    };
   }
   _capabilityCtx(entry, request, safe) {
     const resolved = typeof entry.context === 'function' ? entry.context(Object.freeze(json(request))) : entry.context;
     if (resolved === null || resolved === undefined) return safe;
     if (!record(resolved) || !jsonValue(resolved) || Buffer.byteLength(JSON.stringify(resolved)) > this.maxEnvelopeBytes) throw typed('deployment capability context invalid', 'capability_context_invalid');
-    for (const key of ['actor', 'budgetTokens', 'root', 'signal']) if (Object.hasOwn(resolved, key)) throw typed('deployment capability context attempted to override registry authority', 'capability_context_forbidden');
+    for (const key of ['actor', 'budgetTokens', 'repoId', 'idempotencyKey', 'transport', 'root', 'signal']) if (Object.hasOwn(resolved, key)) throw typed('deployment capability context attempted to override registry authority', 'capability_context_forbidden');
     return { ...json(resolved), ...safe };
   }
   _validate(result, op, budgetTokens) {

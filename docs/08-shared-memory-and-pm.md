@@ -70,6 +70,22 @@ read-only advice over a caller-supplied candidate set; callers cannot supply out
 routing. Broader claims such as “a family is bad at auth” still require an explicit Finding with
 evidence rather than being inferred from this narrow win/loss table.
 
+Phase 47 makes the causal substrate auditable instead of merely queryable. Node and edge
+observation versions now survive replay, while valid time is pinned to the requested observation
+boundary rather than the moving wall clock. Generic graph payloads are content-bound and reserve
+lifecycle-owned fields. `Supersedes` is same-type, live, CAS-bound, acyclic, and atomically
+contaminating; `Contradicts` has one unordered-pair identity and can close only through an explicit
+operator/orchestrator CAS resolution that invalidates exactly the loser and records exact prior
+readers. Cairn's repository-bound `causal.audit` reports separate causal, temporal, structural,
+grounding, contradiction, recall, and contamination axes; `causal.trace` is a bounded live-view
+walk with explicit frontier. Both are deterministic/reverifiable through direct and authenticated
+web/MCP ACI without edit, verification, merge, approval, publication, routing, proof, note, or
+policy authority. This is still a local selective graph: no external PM or homelab runtime exists.
+
+Phase 48 remains the next epistemic dependency: audit-gated bounded lexical/graph recall,
+contradiction bundles, compact durable read receipts, `ReadBy`/contamination, pull-only framing,
+and exact authenticated replay/reverify. It does not auto-inject accumulated knowledge.
+
 Richer cross-run learning, literature, hypotheses, contradictions, and supersession therefore live in
 Baton's self-contained bitemporal graph under `spec/phase11/coordination-knowledge.md`. They are
 promoted selectively from immutable events/artifacts, never written as an ambient mutable brain.

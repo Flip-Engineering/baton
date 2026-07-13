@@ -157,7 +157,7 @@ test('CI6: capability cards require observe while bounded invocation requires co
   assert.equal(invoked.status, 200);
   assert.deepEqual(calls.at(-1), {
     action: 'invoke', name: 'atlas', capabilityOp: 'symbols.search', args: { query: 'Coordinator' },
-    ctx: { budgetTokens: 80, actor: 'web:user-1:session-1' },
+    ctx: { budgetTokens: 80, actor: 'web:user-1:session-1', repoId: 'repo-a', idempotencyKey: 'web.command:invoke-1', transport: 'web' },
   });
 });
 
@@ -170,7 +170,7 @@ test('CI3/CI6: capability resume and reverify are strict durable control command
   assert.equal(resumed.status, 200);
   assert.deepEqual(calls.at(-1), {
     action: 'resume', name: 'atlas', capabilityOp: 'symbols.search', ref: { digest: 'abc' }, cursor: 'next-1',
-    ctx: { budgetTokens: 40, actor: 'web:user-1:session-1' },
+    ctx: { budgetTokens: 40, actor: 'web:user-1:session-1', repoId: 'repo-a', idempotencyKey: 'web.command:resume-1', transport: 'web' },
   });
 
   const reverified = await web.execute(context(), envelope({
@@ -180,7 +180,7 @@ test('CI3/CI6: capability resume and reverify are strict durable control command
   assert.equal(reverified.status, 200);
   assert.deepEqual(calls.at(-1), {
     action: 'reverify', name: 'atlas', capabilityOp: 'symbols.search', claim: { digest: 'abc' }, args: { strict: true },
-    ctx: { budgetTokens: 20, actor: 'web:user-1:session-1' },
+    ctx: { budgetTokens: 20, actor: 'web:user-1:session-1', repoId: 'repo-a', idempotencyKey: 'web.command:reverify-1', transport: 'web' },
   });
   assert.deepEqual(coordination.events().filter((event) => event.kind === 'web.command_admitted').map((event) => event.payload.command), ['capability_invoke', 'capability_invoke']);
 });
@@ -192,7 +192,10 @@ test('OR9: authenticated web capability push requires a fence and forwards the d
   assert.equal(missing.status, 400); assert.equal(calls.length, 0);
   const pushed = await web.execute(context(), envelope({ commandId: 'push-1', idempotencyKey: 'push-1', command: 'capability_invoke', expectedFence: 9, args }));
   assert.equal(pushed.status, 200);
-  assert.deepEqual(calls, [{ action: 'push', workerId: 'w-1', args: { indexEpoch: 'epoch', focus: 'auth', shape: 'brief' }, note: 'Stay in auth.', ctx: { budgetTokens: 800, actor: 'web:user-1:session-1', expectedFence: 9 } }]);
+  assert.deepEqual(calls, [{
+    action: 'push', workerId: 'w-1', args: { indexEpoch: 'epoch', focus: 'auth', shape: 'brief' }, note: 'Stay in auth.',
+    ctx: { budgetTokens: 800, actor: 'web:user-1:session-1', repoId: 'repo-a', idempotencyKey: 'web.command:push-1', transport: 'web', expectedFence: 9 },
+  }]);
 });
 
 test('CI2/CI3/CI6: capability command validation rejects malformed and action-ambiguous envelopes before admission', async () => {

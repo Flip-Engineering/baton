@@ -134,6 +134,13 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    list makes live LSP, SSA/PDG/path solving, alias/heap/implicit flow, exceptions/interprocedural
    returns, external IR/translation validation, true semantic merge, and conditional e-graphs
    mechanically visible.
+20. **Cairn causal integrity and attested audit/trace:** Phase 47 adds content/request-bound generic
+   graph appends, replay-validated lifecycle rows, observation-version history, pinned valid-time
+   views, live typed earlier lineage, authorized CAS contradiction resolution, exact affected-read
+   contamination, independently bounded metric audit and live causal trace, repository/transport-
+   bound direct/web/MCP reverify, and a digested stable-ID copy of the full retained goal catalog.
+   The 13 focused contracts and 1003/1003 canonical suite are green. Recursive GLM/Grok/model/
+   effort/kill-reap evidence remains the closing gate, and Phase 48 recall remains next.
 
 ## What remains partial
 
@@ -145,8 +152,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   postmortems are not.
 - Structured merge is shipped with an injected Mergiraf-class boundary; a live Mergiraf binary
   proof is absent. Publication has no live remote-push proof.
-- Scratch and causal knowledge primitives ship. Cairn Rungs 0–1 scorecard, verified RouteStats,
-  restart hydration, and bounded advice now ship; Scratch REPL/Bench, causal audit/recall, contradiction UX,
+- Scratch and causal knowledge primitives ship. Cairn Rungs 0–2 scorecard, verified RouteStats,
+  restart hydration, bounded advice, causal integrity, contradiction resolution, and attested
+  audit/trace now ship locally; Scratch REPL/Bench, authenticated contradiction UX, bounded recall,
   and optional deployment-neutral export remain partial or pending.
 - Phase 29 closes the former Atlas wiring gap: deployments inject a closed set of real Atlas
   instances, bounds, artifact roots, and optional trusted multi-root contexts into `createDriver()`;
@@ -180,7 +188,7 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 - Trust ramp policy, plan gate, impact-selected reruns, structured reject postmortems, and higher
   Evidence Ladder rungs (property/fuzz/BMC/SMT/proof) under honest language/tool ceilings.
 - Vantage, Evidence Ladder as a capability module, Skill Forge/computer use, later
-  Cartographer/Quartermaster supply/orientation rungs, and Cairn Rungs 2–4 remain pending.
+  Cartographer/Quartermaster supply/orientation rungs, and Cairn recall/feedback/export rungs remain pending.
 - Direct structural rewrite apply, live LSP, full SSA/PDG/path solving, interprocedural/alias/heap
   CPG depth, deeper behavioral/provenance attestation overlays, and representation choreography.
 - True semantic merge, stacked integration, deploy adapters, rollback automation, and live remote
