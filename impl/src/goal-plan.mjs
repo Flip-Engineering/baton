@@ -250,7 +250,7 @@ export function buildAuthoritativeBrief(goal, plan, node, binding) {
 
 export function semanticBriefCore(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
-  return Object.fromEntries(['goal', 'constraints', 'pathScope', 'definitionOfDone', 'verification', 'budget']
+  return Object.fromEntries(['goal', 'constraints', 'pathScope', 'tools', 'outputFormat', 'definitionOfDone', 'verification', 'budget', 'providerTurns', 'capabilities', 'effects']
     .filter((key) => Object.hasOwn(value, key)).map((key) => [key, clone(value[key])]));
 }
 

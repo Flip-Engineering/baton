@@ -109,6 +109,35 @@ test('DC2-DC7: one drain cancels pending work, kill-confirms active work, fences
   assert.equal(JSON.stringify(receipt).includes(f.world), false);
 });
 
+test('DC4: linked-worktree controllers start and drain without reconciling each other\'s live branch authority', async (t) => {
+  const world = root('controller-isolation'); const main = join(world, 'main'); mkdirSync(main);
+  git(['init', '-q'], main); git(['config', 'user.name', 'Baton Phase 56'], main); git(['config', 'user.email', 'phase56@example.invalid'], main);
+  writeFileSync(join(main, 'README.md'), '# fixture\n'); git(['add', 'README.md'], main); git(['commit', '-qm', 'fixture'], main);
+  const sha = git(['rev-parse', 'HEAD'], main); const controllerA = join(world, 'controller-a'); const controllerB = join(world, 'controller-b');
+  git(['worktree', 'add', '--detach', controllerA, sha], main); git(['worktree', 'add', '--detach', controllerB, sha], main);
+  let driverA; let driverB;
+  t.after(async () => {
+    try { await driverB?.closeAsync(); } catch {}
+    try { await driverA?.closeAsync(); } catch {}
+    rmSync(world, { recursive: true, force: true });
+  });
+  const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
+  driverA = createDriver({ repoRoot: controllerA, logDir: join(world, 'log-a'), repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { maxWorkers: 1, timeoutMs: 5_000, pollMs: 5 }, watchdog: { stallMs: 0 } });
+  const worker = await driverA.coordinator.spawn('mock', brief('controller A live work'), { taskId: 'controller-a-live' });
+  await until(() => driverA.coordinator.list().find((row) => row.id === worker.id)?.status === 'working', 'controller A worker');
+  const livePath = join(controllerA, '.baton', 'wt', 'controller-a-live');
+  driverB = createDriver({ repoRoot: controllerB, logDir: join(world, 'log-b'), repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 5_000, pollMs: 5 } });
+  await driverB.ready;
+  assert.equal(existsSync(livePath), true);
+  assert.match(git(['branch', '--list', 'baton/controller-a-live'], controllerB), /baton\/controller-a-live$/u);
+  assert.equal((await driverB.drainAndClose()).state, 'closed');
+  assert.equal(existsSync(livePath), true);
+  assert.match(git(['branch', '--list', 'baton/controller-a-live'], controllerB), /baton\/controller-a-live$/u);
+  assert.equal((await driverA.drainAndClose()).state, 'closed');
+  assert.equal(existsSync(livePath), false);
+  assert.equal(git(['branch', '--list', 'baton/controller-a-live'], controllerA), '');
+});
+
 test('DC4: drain cannot attest while worktree creation or native spawn remains pending', async (t) => {
   const f = repo('late-spawn-boundary'); let driver; const worktreeGate = deferred(); const spawnGate = deferred();
   t.after(() => { worktreeGate.resolve(); spawnGate.resolve(); try { driver?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });

@@ -182,6 +182,32 @@ test('GP5/GP8: mandatory plan-gated spawn binds Brief/route/budget and has one c
   driver.close();
 });
 
+test('GP5/GP8: caller Brief provider turns, capabilities, and effects must match the approved node before mutation', async () => {
+  const driver = make('brief-authority-conflicts'); const { goal, plan } = await approved(driver, 'brief-authority-conflicts');
+  const brief = { goal: 'Implement the approved slice', constraints: ['No network access'], pathScope: ['impl/**'], definitionOfDone: 'node --test passes', verification, budget: { tokens: 10_000, usd: 2, wallMin: 10 } };
+  const gate = { goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest, planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code', 'test'], effects: ['repository_edit'] };
+  const before = driver.coordination.events().length;
+  const conflicts = [
+    { providerTurns: 7 },
+    { capabilities: ['code'] },
+    { effects: [] },
+  ];
+  for (const [index, conflict] of conflicts.entries()) {
+    await assert.rejects(
+      driver.coordinator.spawn('mock', { ...brief, ...conflict }, {
+        taskId: `planned-brief-conflict-${index}`, model: 'model-a', effort: 'low', goalPlan: gate,
+        actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session',
+        powers: ['plan:dispatch'], idempotencyKey: `spawn:planned-brief-conflict-${index}`,
+      }),
+      (error) => error.code === 'plan_brief_mismatch',
+    );
+  }
+  assert.equal(driver.coordination.events().length, before);
+  assert.equal(driver.coordinator.list().length, 0);
+  assert.equal(driver.coordination.task('planned-brief-conflict-0'), null);
+  await driver.drainAndClose('test');
+});
+
 test('GP5/GP6/GP8: an admitted plan-gated spawn reconciles an exact lost-response retry without duplicate effects', async () => {
   const driver = make('dispatch-reconcile'); const { goal, plan } = await approved(driver, 'dispatch-reconcile');
   const brief = { goal: 'Implement the approved slice', constraints: ['No network access'], pathScope: ['impl/**'], definitionOfDone: 'node --test passes', verification, budget: { tokens: 10_000, usd: 2, wallMin: 10 } };
@@ -200,6 +226,12 @@ test('GP5/GP6/GP8: an admitted plan-gated spawn reconciles an exact lost-respons
     () => driver.coordinator.spawn('mock', { ...brief, goal: 'Substituted objective' }, opts),
     (error) => error.code === 'plan_dispatch_conflict',
   );
+  for (const conflict of [{ providerTurns: 7 }, { capabilities: ['code'] }, { effects: [] }]) {
+    await assert.rejects(
+      () => driver.coordinator.spawn('mock', { ...brief, ...conflict }, opts),
+      (error) => error.code === 'plan_dispatch_conflict',
+    );
+  }
   await assert.rejects(
     () => driver.coordinator.spawn('mock', brief, { ...opts, idempotencyKey: 'spawn:changed-key' }),
     (error) => error.code === 'plan_dispatch_conflict',

@@ -92,8 +92,11 @@ process, a stop waiter, local worker authority, or `_authorityOps` remains.
 
 Asynchronous worktree creation and the native `spawn()` Promise are explicit ownership
 reservations until their late cleanup/refusal path settles. Restart and final-drain reconciliation
-enumerate directory, metadata, projection-exclude, Git registration, branch-only, and runtime-only
-residue, including skipped/failed recovery candidates. A timed-out reconciliation remains one
+enumerate locally ownership-proven directory, metadata, projection-exclude, Git registration,
+branch, and runtime-only residue, including skipped/failed recovery candidates. Bare `baton/*`
+refs without a local sidecar or local worktree registration are ownership-ambiguous in a shared
+Git common directory and are retained; reconciliation never claims another linked-worktree
+controller's live or dormant branch authority. A timed-out reconciliation remains one
 owned Promise that retries join; a second cleanup cannot overtake it and attest while the first can
 still mutate. Pending question/approval/publication authority is policy-cancelled/denied, while a
 late ask after the fence is durably discarded and cannot reopen blocked state.

@@ -31,12 +31,13 @@ function canonical(value) {
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
 }
 function hash(value) { return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex'); }
-function containsForbidden(value, path = []) {
-  if (Array.isArray(value)) return value.some((child) => containsForbidden(child, path));
+function containsForbidden(value, path = [], opts = {}) {
+  if (Array.isArray(value)) return value.some((child) => containsForbidden(child, path, opts));
   if (!record(value)) return false;
   return Object.entries(value).some(([key, child]) => {
-    const planCapabilityField = key === 'capabilities' && ['goalPlan', 'nodes'].includes(path.at(-1));
-    return (FORBIDDEN_KEY.test(key) && !planCapabilityField) || containsForbidden(child, [...path, key]);
+    const planCapabilityField = key === 'capabilities' && (['goalPlan', 'nodes'].includes(path.at(-1))
+      || (opts.planGatedBrief === true && path.length === 1 && path[0] === 'brief'));
+    return (FORBIDDEN_KEY.test(key) && !planCapabilityField) || containsForbidden(child, [...path, key], opts);
   });
 }
 function normalized(value) { return value === undefined ? null : clone(value); }
@@ -239,7 +240,7 @@ function validateArguments(name, args) {
   if (Object.keys(args).some((key) => !Object.hasOwn(schemaDefinition.properties, key))) return 'unknown_argument_field';
   if (name === 'fleet_capability_invoke' && !Object.hasOwn(args, 'action')) return 'invalid_capability_invocation';
   if (schemaDefinition.required.some((key) => !Object.hasOwn(args, key))) return 'missing_argument';
-  if (containsForbidden(args)) return 'credential_fields_forbidden';
+  if (containsForbidden(args, [], { planGatedBrief: name === 'fleet_spawn' && record(args.goalPlan) })) return 'credential_fields_forbidden';
   if (!nonempty(args.repoId)) return 'invalid_repo';
   if (STATEFUL.has(name) && !SAFE_ID.test(args.idempotencyKey ?? '')) return 'invalid_idempotency_key';
   if (FENCED.has(name) && !Number.isSafeInteger(args.expectedFence)) return 'expected_fence_required';

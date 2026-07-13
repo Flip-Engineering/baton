@@ -216,13 +216,28 @@ test('GP5/GP7/GP8: admitted plan-gated fleet_spawn replay returns the one origin
 
   const dispatcherPrincipal = principal('dispatcher', ['control', 'plan:dispatch']);
   const dispatcher = server(driver.coordinator, driver.coordination, dispatcherPrincipal); await initialize(dispatcher);
+  const gate = {
+    goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest,
+    planId: plan.planId, planVersion: plan.version, planDigest: plan.digest,
+    nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code'], effects: ['repository_edit'],
+  };
+  const matchingBrief = {
+    goal: 'Implement the one admitted node', constraints: [], pathScope: ['impl/**'], definitionOfDone: 'one worker admission exists',
+    verification, budget: { tokens: 10_000, usd: 1, wallMin: 5 },
+  };
+  const beforeConflicts = driver.coordination.events().length;
+  for (const [index, conflict] of [{ providerTurns: 3 }, { capabilities: ['test'] }, { effects: [] }].entries()) {
+    const refused = await rpc(dispatcher, 20 + index, 'fleet_spawn', {
+      repoId: 'repo-phase62-mcp', idempotencyKey: `spawn-conflict-${index}`, taskId: `mcp-plan-conflict-${index}`,
+      harness: 'mock', model: 'model-a', effort: 'low', brief: { ...matchingBrief, ...conflict }, goalPlan: gate,
+    });
+    assert.equal(refused.result.isError, true); assert.match(refused.result.content[0].text, /plan_brief_mismatch/);
+  }
+  assert.equal(driver.coordination.events().filter((event) => ['plan.node_dispatched', 'task.created'].includes(event.kind)).length, 0);
+  assert.equal(driver.coordination.events().length, beforeConflicts + 6, 'each MCP refusal records only call admission and closed failure');
   const args = {
     repoId: 'repo-phase62-mcp', idempotencyKey: 'spawn-lost-response', taskId: 'mcp-plan-reconcile', harness: 'mock', model: 'model-a', effort: 'low', brief: {},
-    goalPlan: {
-      goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest,
-      planId: plan.planId, planVersion: plan.version, planDigest: plan.digest,
-      nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code'], effects: ['repository_edit'],
-    },
+    goalPlan: gate,
   };
   const complete = driver.coordination.completeMcpCall.bind(driver.coordination);
   driver.coordination.completeMcpCall = () => { throw new Error('completion append unavailable'); };
@@ -241,10 +256,10 @@ test('GP5/GP7/GP8: admitted plan-gated fleet_spawn replay returns the one origin
   assert.equal(driver.coordination.events().filter((event) => event.kind === 'task.created' && event.payload.id === 'mcp-plan-reconcile').length, 1);
   assert.equal(driver.coordination.events().filter((event) => event.kind === 'plan.node_dispatched' && event.payload.taskId === 'mcp-plan-reconcile').length, 1);
   assert.equal(driver.coordinator.list().filter((worker) => worker.taskId === 'mcp-plan-reconcile').length, 1);
-  assert.equal(spawnContexts.length, 2);
-  assert.equal(spawnContexts[1].actor, 'mcp:dispatcher:dispatcher-session');
-  assert.equal(spawnContexts[1].sessionId, 'dispatcher-session');
-  assert.equal(spawnContexts[1].idempotencyKey, spawnContexts[0].idempotencyKey);
+  assert.equal(spawnContexts.length, 5);
+  assert.equal(spawnContexts[4].actor, 'mcp:dispatcher:dispatcher-session');
+  assert.equal(spawnContexts[4].sessionId, 'dispatcher-session');
+  assert.equal(spawnContexts[4].idempotencyKey, spawnContexts[3].idempotencyKey);
   await driver.coordinator.kill(reconciled.result.structuredContent.id, 'test');
   await driver.coordinator.drain({ actor: 'test', repoId: 'repo-phase62-mcp', idempotencyKey: 'drain:spawn-reconcile' });
   driver.close();

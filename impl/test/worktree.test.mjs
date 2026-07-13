@@ -490,7 +490,7 @@ test('reconcile leaves directories whose taskId is in expectedActiveTaskIds alon
   assert.ok(!report.removedZombieDirs.some((p) => p.includes('keep-me')));
 });
 
-test('reconcile removes branch-only and metadata-only worker crash residue', async (t) => {
+test('reconcile removes locally proven metadata residue but retains ownership-ambiguous bare branches', async (t) => {
   const { dir } = makeRepo();
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const wtRoot = join(dir, '.baton', 'wt'); mkdirSync(wtRoot, { recursive: true });
@@ -503,9 +503,36 @@ test('reconcile removes branch-only and metadata-only worker crash residue', asy
 
   assert.deepEqual(report.errors, []);
   assert.equal(existsSync(join(wtRoot, 'meta-only.meta.json')), false);
-  assert.equal(sh('git', ['branch', '--list', 'baton/branch-only'], dir), '');
-  assert.equal(sh('git', ['branch', '--list', 'baton/expected-but-missing'], dir), '', 'an expected ID without its owned directory is not resumable authority');
-  assert.deepEqual(events.filter((event) => event.kind === 'worktree.reconciled').map((event) => event.worker).sort(), ['branch-only', 'expected-but-missing', 'meta-only']);
+  assert.equal(sh('git', ['branch', '--list', 'baton/branch-only'], dir), 'baton/branch-only');
+  assert.equal(sh('git', ['branch', '--list', 'baton/expected-but-missing'], dir), 'baton/expected-but-missing');
+  assert.deepEqual(events.filter((event) => event.kind === 'worktree.reconciled').map((event) => event.worker), ['meta-only']);
+});
+
+test('reconcile does not claim or delete a live Baton branch owned by another linked-worktree controller', async (t) => {
+  const parent = mkdtempSync(join(tmpdir(), 'baton-wt-controller-isolation-'));
+  t.after(() => rmSync(parent, { recursive: true, force: true }));
+  const main = join(parent, 'main'); mkdirSync(main);
+  sh('git', ['init', '-q'], main);
+  sh('git', ['config', 'user.email', 'test@example.com'], main);
+  sh('git', ['config', 'user.name', 'Baton Test'], main);
+  writeFileSync(join(main, 'README.md'), '# base\n');
+  sh('git', ['add', '-A'], main); sh('git', ['commit', '-qm', 'base'], main);
+  const baseSha = sh('git', ['rev-parse', 'HEAD'], main);
+  const controllerA = join(parent, 'controller-a'); const controllerB = join(parent, 'controller-b');
+  sh('git', ['worktree', 'add', '--detach', controllerA, baseSha], main);
+  sh('git', ['worktree', 'add', '--detach', controllerB, baseSha], main);
+  const live = await createFromBase(controllerA, 'controller-a-live', baseSha);
+  sh('git', ['branch', 'baton/controller-a-dormant', baseSha], main);
+
+  const report = await reconcile(controllerB, []);
+
+  assert.deepEqual(report.errors, []);
+  assert.equal(existsSync(live.dir), true);
+  assert.match(sh('git', ['branch', '--list', 'baton/controller-a-live'], controllerB), /baton\/controller-a-live$/u);
+  assert.equal(sh('git', ['branch', '--list', 'baton/controller-a-dormant'], controllerB), 'baton/controller-a-dormant');
+  assert.equal(sh('git', ['branch', '--show-current'], live.dir), 'baton/controller-a-live');
+  await markStopped(controllerA, 'controller-a-live');
+  await reap(controllerA, 'controller-a-live', { deleteBranch: true });
 });
 
 // ============================================================
@@ -639,6 +666,7 @@ test('createFromBase, captureCommit, freshVerifySandbox, reap, reconcile each ap
     await reconcile(dir, [], { log });
     assert.ok(events.length >= 1);
     assert.ok(events.every((e) => prefixOk(e.kind)), 'reconcile log kinds');
-    assert.deepEqual(events.map((event) => event.worker).sort(), ['t1', 'zombie'], 'every directory or branch residue is attributed to its own taskId');
+    assert.deepEqual(events.map((event) => event.worker), ['zombie'], 'only locally ownership-proven residue is attributed and removed');
+    assert.equal(sh('git', ['branch', '--list', 'baton/t1'], dir), 'baton/t1', 'an unproven bare branch is retained');
   }
 });

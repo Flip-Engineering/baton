@@ -895,6 +895,9 @@ export async function reap(repoRoot, taskId, opts = {}) {
  */
 export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
   const report = { prunedAdminEntries: [], removedZombieDirs: [], removedIntegrationDirs: [], removedVerifyDirs: [], errors: [] };
+  let registrationsBeforePrune = [];
+  try { registrationsBeforePrune = listWorktrees(repoRoot); }
+  catch (err) { report.errors.push(`registration-scan: ${err.message || err}`); }
   try {
     sh('git', ['worktree', 'prune'], repoRoot);
   } catch (err) {
@@ -924,12 +927,13 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
   }
 
   const expected = new Set(expectedActiveTaskIds);
+  const localWorkerCandidates = new Set();
 
   let wtRoot = null;
   try { wtRoot = authorityRoot(repoRoot, 'wt', { create: false }); }
   catch (err) { report.errors.push(`wt-root: ${err.message || err}`); }
   {
-    const candidates = new Set();
+    const candidates = localWorkerCandidates;
     if (wtRoot) {
     for (const entry of readdirSync(wtRoot)) {
       if (entry.endsWith('.meta.json')) candidates.add(entry.slice(0, -'.meta.json'.length));
@@ -939,9 +943,11 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
       }
     }
     }
-    try {
-      for (const taskId of sh('git', ['for-each-ref', '--format=%(refname:strip=3)', 'refs/heads/baton/'], repoRoot).split('\n').filter(Boolean)) candidates.add(taskId);
-    } catch (err) { report.errors.push(`worker-branch-scan: ${err.message || err}`); }
+    const workerRoot = pathResolve(repoRoot, '.baton', 'wt');
+    for (const entry of registrationsBeforePrune) {
+      const relative = pathRelative(workerRoot, pathResolve(entry.dir));
+      if (relative !== '' && relative !== '..' && !relative.startsWith(`..${sep}`) && !isAbsolute(relative) && !relative.includes(sep)) candidates.add(relative);
+    }
     for (const taskId of candidates) {
       let normalizedTaskId;
       try { normalizedTaskId = normalizePhysicalOwnerId(taskId, 'reconciled taskId'); }
@@ -1016,8 +1022,10 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         if (!expected.has(taskId)) report.errors.push(`registered-zombie-worker:${taskId}`);
       }
     }
-    for (const taskId of sh('git', ['for-each-ref', '--format=%(refname:strip=3)', 'refs/heads/baton/'], repoRoot).split('\n').filter(Boolean)) {
-      if (!expected.has(taskId) || !existsSync(join(wtRoot, taskId))) report.errors.push(`branch-zombie-worker:${taskId}`);
+    for (const taskId of localWorkerCandidates) {
+      let branchPresent = false;
+      try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/baton/${taskId}`], repoRoot); branchPresent = true; } catch { /* absent */ }
+      if (branchPresent && (!expected.has(taskId) || !existsSync(join(wtRoot, taskId)))) report.errors.push(`branch-zombie-worker:${taskId}`);
     }
   } catch (err) { report.errors.push(`registration-postcheck: ${err.message || err}`); }
   return report;

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { CoordinationStore, WebNorthbound } from '../src/index.mjs';
+import { CoordinationStore, MockAdapter, WebNorthbound, createDriver } from '../src/index.mjs';
 
 const ORIGIN = 'https://control.example.test';
 const REPO = 'repo-a';
@@ -60,6 +61,25 @@ function fixture(coordinator = {}) {
   return { web, coordination, calls };
 }
 
+function realWebDriver() {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'baton-phase62-web-repo-'));
+  execFileSync('git', ['init', '-q'], { cwd: repoRoot });
+  execFileSync('git', ['config', 'user.email', 'phase62@example.invalid'], { cwd: repoRoot });
+  execFileSync('git', ['config', 'user.name', 'Phase 62'], { cwd: repoRoot });
+  writeFileSync(join(repoRoot, 'base.txt'), 'base\n');
+  execFileSync('git', ['add', 'base.txt'], { cwd: repoRoot });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repoRoot });
+  const adapter = new MockAdapter({ harness: 'mock', scenario: { outcome: 'completed', delayMs: 1, summary: 'done', files: {} } });
+  const baseCard = adapter.card.bind(adapter);
+  adapter.card = () => ({ ...baseCard(), modelSelection: { mode: 'exact', configuredDefault: 'model-exact', available: ['model-exact'], family: 'mock', acceptedPrefixes: ['model-'], acceptedAliases: [], reasoningEffort: ['low'], serviceTier: null, provenance: 'test', refreshedAt: null } });
+  const authorityPolicy = {
+    schemaVersion: 1, repoId: REPO, mandatory: true, approvalTtlMs: 60 * 60 * 1000,
+    riskClasses: ['low', 'medium', 'high', 'critical'], effectClasses: ['repository_edit', 'provider_call'], capabilityClasses: ['code', 'test'],
+    limits: { maxGoalVersions: 16, maxPlanVersions: 16, maxNodes: 32, maxDepsPerNode: 16, maxTextBytes: 4096, maxItems: 64, maxScopePaths: 64, maxRouteValues: 32, maxGoalBytes: 64 * 1024, maxPlanBytes: 256 * 1024, maxStatusBytes: 256 * 1024, maxTokens: 1_000_000, maxUsd: 100, maxWallMin: 1440, maxProviderTurns: 10_000 },
+  };
+  return createDriver({ repoRoot, repoId: REPO, logDir: mkdtempSync(join(tmpdir(), 'baton-phase62-web-log-')), adapters: { mock: adapter }, goalPlanAuthority: { policy: authorityPolicy, authorize: async () => true } });
+}
+
 test('GP1/GP4/GP7: web goal and plan commands bind separate powers and transport-derived authority', async () => {
   const { web, calls } = fixture();
   const cases = [
@@ -109,6 +129,37 @@ test('GP5/GP7: plan-gated web spawn forwards one closed gate and transport-deriv
   assert.equal(calls[0].opts.sessionId, 'session-1');
   assert.deepEqual(calls[0].opts.powers, ['control', 'plan:dispatch']);
   assert.equal(calls[0].opts.actor, 'web:user-1:session-1');
+});
+
+test('GP5/GP7/GP8: authenticated web rejects conflicting plan-owned Brief fields before task dispatch', async () => {
+  const driver = realWebDriver();
+  const direct = (principalId, powers, idempotencyKey) => ({ actor: `direct:${principalId}`, principalId, sessionId: `${principalId}-session`, powers, repoId: REPO, runId: RUN, idempotencyKey });
+  const { goal: approvedGoal } = await driver.coordinator.defineGoal(goalArgs(), direct('owner', ['goal:define'], 'goal:web-conflicts'));
+  const proposed = await driver.coordinator.proposePlan({
+    goal: { goalId: approvedGoal.goalId, version: approvedGoal.version, digest: approvedGoal.digest }, predecessor: null,
+    nodes: [{ ...node, budget: { ...budget }, verification: { ...verification }, routes: { ...node.routes } }],
+  }, direct('planner', ['plan:propose'], 'plan:web-conflicts'));
+  const approvedPlan = proposed.plan;
+  await driver.coordinator.approvePlan({
+    goal: { goalId: approvedGoal.goalId, version: approvedGoal.version, digest: approvedGoal.digest },
+    plan: { planId: approvedPlan.planId, version: approvedPlan.version, digest: approvedPlan.digest }, expectedDisposition: null, disposition: 'approved',
+  }, direct('approver', ['plan:approve'], 'approval:web-conflicts'));
+  const web = new WebNorthbound({ coordinator: driver.coordinator, coordination: driver.coordination, repoIds: [REPO], allowedOrigins: [ORIGIN], now: () => Date.parse('2026-07-13T12:00:00.000Z') });
+  const gate = {
+    goalId: approvedGoal.goalId, goalVersion: approvedGoal.version, goalDigest: approvedGoal.digest,
+    planId: approvedPlan.planId, planVersion: approvedPlan.version, planDigest: approvedPlan.digest,
+    nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code', 'test'], effects: ['repository_edit'],
+  };
+  const matchingBrief = { goal: node.objective, constraints: ['No network'], pathScope: ['impl/**'], definitionOfDone: 'tests pass', verification: { ...verification }, budget: { tokens: 10_000, usd: 2, wallMin: 10 } };
+  for (const [index, conflict] of [{ providerTurns: 7 }, { capabilities: ['code'] }, { effects: [] }].entries()) {
+    const response = await web.execute(context(['control', 'plan:dispatch']), envelope('spawn', {
+      harness: 'mock', model: 'model-exact', effort: 'low', taskId: `web-plan-conflict-${index}`,
+      brief: { ...matchingBrief, ...conflict }, goalPlan: gate,
+    }, `plan-conflict-${index}`));
+    assert.equal(response.status, 409); assert.equal(response.body.error.code, 'plan_brief_mismatch');
+  }
+  assert.equal(driver.coordination.events().filter((event) => ['plan.node_dispatched', 'task.created'].includes(event.kind)).length, 0);
+  await driver.drainAndClose('test');
 });
 
 test('GP5/GP7/GP8: lost responses reconcile Goal/Plan mutations and gated spawn under the original admission identity', async () => {
