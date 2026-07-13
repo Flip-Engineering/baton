@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, createPublicKey, sign as edSign, timingSafeEqual, verify as edVerify } from 'node:crypto';
 
 const typed = (message, code) => Object.assign(new Error(message), { code });
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -35,9 +35,13 @@ export class HmacAdvisoryWebhookSource {
 
   card() {
     return { schemaVersion: 1, providerId: this.providerId, adapterId: this.adapterId, version: this.version, modes: ['webhook'], ecosystem: 'npm', semantics: 'authenticated_hint',
-      auth: { scheme: 'hmac-sha256', keyFingerprints: [this.keyFingerprint], domain: 'baton-provider-webhook-v1', signatureEncoding: 'hex', headers: { signature: 'x-baton-signature', deliveryId: 'x-baton-delivery-id', timestamp: 'x-baton-timestamp', sequence: 'x-baton-sequence' } },
+      auth: this._authCard(),
       webhook: { method: this.callback.method, path: this.callback.path, contentType: 'application/json', contentEncoding: 'identity' }, privateCas: { storeId: this.privateCas.storeId, digestAlgorithm: 'sha256' }, ceilings: { ...this.ceilings } };
   }
+
+  _authCard() { return { scheme: 'hmac-sha256', keyFingerprints: [this.keyFingerprint], domain: 'baton-provider-webhook-v1', signatureEncoding: 'hex', headers: { signature: 'x-baton-signature', deliveryId: 'x-baton-delivery-id', timestamp: 'x-baton-timestamp', sequence: 'x-baton-sequence' } }; }
+  _validSignatureEncoding(value) { return /^[a-f0-9]{64}$/.test(value ?? ''); }
+  _verifySignature(value, signedDomain) { const expected = createHmac('sha256', this.secret).update(signedDomain).digest(); const observed = Buffer.from(value, 'hex'); return observed.length === expected.length && timingSafeEqual(observed, expected); }
 
   async verifyWebhook(input, ctx = {}) {
     if (ctx.signal?.aborted) throw typed('provider delivery verification cancelled', 'cancelled');
@@ -50,12 +54,12 @@ export class HmacAdvisoryWebhookSource {
     if (headers.has('content-length') || headers.has('transfer-encoding')) throw typed('provider webhook framing headers are not accepted at this boundary', 'provider_auth_invalid');
     const names = this.card().auth.headers; const signature = headers.get(names.signature); const deliveryId = headers.get(names.deliveryId); const occurredAt = headers.get(names.timestamp); const sequenceText = headers.get(names.sequence);
     const occurredMs = Date.parse(occurredAt); const nowMs = this.now();
-    if (headers.get('content-type') !== 'application/json' || headers.get('content-encoding') !== 'identity' || !/^[a-f0-9]{64}$/.test(signature ?? '')
+    if (headers.get('content-type') !== 'application/json' || headers.get('content-encoding') !== 'identity' || !this._validSignatureEncoding(signature)
       || !bounded(deliveryId, this.ceilings.maxIdentityBytes) || !/^\d+$/.test(sequenceText ?? '') || (sequenceText.length > 1 && sequenceText.startsWith('0'))
       || !Number.isSafeInteger(Number(sequenceText)) || Number(sequenceText) < 0 || !bounded(occurredAt, 64) || !Number.isFinite(occurredMs) || new Date(occurredMs).toISOString() !== occurredAt
       || !Number.isFinite(nowMs) || occurredMs > nowMs || nowMs - occurredMs > this.ceilings.maxClockSkewMs) throw typed('provider webhook authentication metadata is invalid', 'provider_auth_invalid');
-    const raw = Buffer.from(input.raw); const signedDomain = domain({ method: input.method, path: input.path, occurredAt, deliveryId, raw }); const expected = createHmac('sha256', this.secret).update(signedDomain).digest(); const observed = Buffer.from(signature, 'hex');
-    if (observed.length !== expected.length || !timingSafeEqual(observed, expected)) throw typed('provider webhook authentication failed', 'provider_auth_invalid');
+    const raw = Buffer.from(input.raw); const signedDomain = domain({ method: input.method, path: input.path, occurredAt, deliveryId, raw });
+    if (!this._verifySignature(signature, signedDomain)) throw typed('provider webhook authentication failed', 'provider_auth_invalid');
     let hint; try { hint = JSON.parse(raw); } catch { throw typed('provider webhook JSON is invalid', 'provider_hint_invalid'); }
     if (raw.toString('utf8') !== stable(hint) || !exactKeys(hint, ['schemaVersion', 'coordinates', 'advisoryIds']) || hint.schemaVersion !== 1
       || !Array.isArray(hint.coordinates) || hint.coordinates.length === 0 || hint.coordinates.length > this.ceilings.maxCoordinates || hint.coordinates.some((coordinate) => !exactNpm(coordinate))
@@ -64,7 +68,7 @@ export class HmacAdvisoryWebhookSource {
       || JSON.stringify(hint.advisoryIds) !== JSON.stringify([...new Set(hint.advisoryIds)].sort())) throw typed('provider webhook hint is invalid', 'provider_hint_invalid');
     const rawDigest = sha(raw); const stored = await this.privateCas.put(Buffer.from(raw), { digest: rawDigest, bytes: raw.length, signal: ctx.signal });
     if (!exactKeys(stored, ['storeId', 'digest', 'bytes']) || stored.storeId !== this.privateCas.storeId || stored.digest !== rawDigest || stored.bytes !== raw.length) throw typed('provider private CAS did not preserve authenticated bytes', 'provider_cas_invalid');
-    const domainDigest = sha(signedDomain); const authReceiptDigest = sha(stable({ schemaVersion: 1, algorithm: 'hmac-sha256', keyFingerprint: this.keyFingerprint, domain: 'baton-provider-webhook-v1', domainDigest }));
+    const authCard = this._authCard(); const domainDigest = sha(signedDomain); const authReceiptDigest = sha(stable({ schemaVersion: 1, algorithm: authCard.scheme, keyFingerprint: this.keyFingerprint, domain: authCard.domain, domainDigest }));
     return { schemaVersion: 1, providerId: this.providerId, deliveryId, rawDigest, rawBytes: raw.length, authReceiptDigest, keyFingerprint: this.keyFingerprint, occurredAt, sequence: Number(sequenceText), coordinates: hint.coordinates, advisoryIds: hint.advisoryIds, source: { handle: `art:sha256:${rawDigest}`, digest: rawDigest, bytes: raw.length, mediaType: 'application/json' } };
   }
 
@@ -72,8 +76,30 @@ export class HmacAdvisoryWebhookSource {
     const raw = await this.privateCas.get(receipt.rawDigest); if (!Buffer.isBuffer(raw) || raw.length !== receipt.rawBytes || sha(raw) !== receipt.rawDigest) throw typed('provider private CAS replay diverged', 'provider_cas_invalid');
     return Buffer.from(raw);
   }
+  readReceiptSync(receipt) {
+    if (typeof this.privateCas.getSync !== 'function') throw typed('provider private CAS synchronous replay is unavailable', 'provider_replay_unavailable');
+    const raw = this.privateCas.getSync(receipt.rawDigest); if (!Buffer.isBuffer(raw) || raw.length !== receipt.rawBytes || sha(raw) !== receipt.rawDigest) throw typed('provider private CAS replay diverged', 'provider_cas_invalid');
+    return Buffer.from(raw);
+  }
+}
+
+/** Asymmetric variant over the identical exact wire domain. The card fingerprint is derived from
+ * the pinned SPKI public key; no private key is retained by Baton. */
+export class Ed25519AdvisoryWebhookSource extends HmacAdvisoryWebhookSource {
+  constructor(opts = {}) {
+    let publicKey; try { publicKey = opts.publicKey?.type === 'public' ? opts.publicKey : createPublicKey(opts.publicKey); } catch { throw new TypeError('Ed25519 advisory webhook public key is invalid'); }
+    if (publicKey.asymmetricKeyType !== 'ed25519') throw new TypeError('Ed25519 advisory webhook public key is invalid');
+    const keyFingerprint = sha(publicKey.export({ type: 'spki', format: 'der' }));
+    if (opts.keyFingerprint !== undefined && opts.keyFingerprint !== keyFingerprint) throw new TypeError('Ed25519 advisory webhook fingerprint disagrees with public key');
+    super({ ...opts, secret: Buffer.alloc(32, 0), keyFingerprint }); this.secret.fill(0); this.publicKey = publicKey;
+  }
+  _authCard() { return { scheme: 'ed25519', keyFingerprints: [this.keyFingerprint], domain: 'baton-provider-webhook-v1', signatureEncoding: 'base64', headers: { signature: 'x-baton-signature', deliveryId: 'x-baton-delivery-id', timestamp: 'x-baton-timestamp', sequence: 'x-baton-sequence' } }; }
+  _validSignatureEncoding(value) { if (typeof value !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return false; const bytes = Buffer.from(value, 'base64'); return bytes.length === 64 && bytes.toString('base64') === value; }
+  _verifySignature(value, signedDomain) { return edVerify(null, signedDomain, this.publicKey, Buffer.from(value, 'base64')); }
 }
 
 export function signHmacAdvisoryWebhookForTest(secret, fields) {
   return createHmac('sha256', secret).update(domain(fields)).digest('hex');
 }
+
+export function signEd25519AdvisoryWebhookForTest(privateKey, fields) { return edSign(null, domain(fields), privateKey).toString('base64'); }

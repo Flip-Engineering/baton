@@ -18,6 +18,7 @@ function cas(overrides = {}) {
   return { storeId: 'provider-cas-v1', calls, values,
     async put(raw, expected) { calls.push({ kind: 'put', expected }); const digest = sha(raw); values.set(digest, Buffer.from(raw)); return { storeId: 'provider-cas-v1', digest, bytes: raw.length, ...(overrides.put ?? {}) }; },
     async get(digest) { calls.push({ kind: 'get', digest }); return overrides.get ?? Buffer.from(values.get(digest)); },
+    getSync(digest) { calls.push({ kind: 'getSync', digest }); return overrides.getSync ?? Buffer.from(values.get(digest)); },
   };
 }
 function sourceFixture(overrides = {}) {
@@ -89,4 +90,13 @@ test('AF2/AF3: Coordinator native webhook ingress durably fences before acknowle
   const admitted = await driver.coordinator.receiveProviderWebhook('fixture.secure', request()); assert.equal(admitted.result, 'recorded'); assert.equal(driver.coordination.snapshot().provider.pendingCoordinateCount, 1);
   const retry = await driver.coordinator.receiveProviderWebhook('fixture.secure', request()); assert.equal(retry.result, 'idempotent'); assert.equal(driver.coordination.snapshot().lastSeq, 1);
   driver.close();
+});
+
+test('AF2/AF7/AF10: driver restart synchronously rereads private CAS before restoring provider authority', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'baton-native-replay-')); const repoRoot = join(root, 'repo'); mkdirSync(repoRoot); execFileSync('git', ['init', '-q'], { cwd: repoRoot }); const logDir = join(root, 'log');
+  const built = sourceFixture(); const options = { repoRoot, repoId: 'repo-a', logDir, adapters: {}, now, advisoryFeedSources: { 'fixture.secure': built.source } };
+  const first = createDriver(options); const admitted = await first.coordinator.receiveProviderWebhook('fixture.secure', request()); first.close();
+  const replay = createDriver(options); assert.equal(replay.coordination.providerReceipt(admitted.receipt.id).rawDigest, sha(body)); assert.equal(built.privateCas.calls.some((call) => call.kind === 'getSync'), true); replay.close();
+  built.privateCas.values.set(admitted.receipt.rawDigest, Buffer.from('substituted'));
+  assert.throws(() => createDriver(options), (error) => error.code === 'provider_cas_invalid');
 });

@@ -60,7 +60,7 @@ export { PublicSupplyChainOracle } from './supply-chain-oracle.mjs';
 export { MergirafResolver } from './structured-merge.mjs';
 export { CapabilityRegistry } from './capability-registry.mjs';
 export { AdvisoryFeedRegistry } from './advisory-feed-registry.mjs';
-export { HmacAdvisoryWebhookSource, signHmacAdvisoryWebhookForTest } from './hmac-advisory-webhook.mjs';
+export { Ed25519AdvisoryWebhookSource, HmacAdvisoryWebhookSource, signEd25519AdvisoryWebhookForTest, signHmacAdvisoryWebhookForTest } from './hmac-advisory-webhook.mjs';
 
 function localGitEnv() {
   const env = {}; for (const [key, value] of Object.entries(process.env)) if (!key.startsWith('GIT_')) env[key] = value;
@@ -186,6 +186,7 @@ export function createDriver(opts) {
     operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
     clock: () => new Date(now()).toISOString(),
     advisoryFeedCards,
+    advisoryReceiptReverify: (receipt) => advisoryFeeds.reverifyReceiptSync(receipt),
   });
   if (opts.coordination && advisoryFeedCards.length > 0) {
     if (typeof coordination.advisoryFeedCards !== 'function' || canonicalDigest(coordination.advisoryFeedCards()) !== canonicalDigest(advisoryFeedCards)) throw new TypeError('custom coordination store disagrees with deployment advisory feed cards');

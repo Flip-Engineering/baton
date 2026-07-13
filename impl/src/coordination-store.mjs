@@ -70,6 +70,7 @@ export class CoordinationStore {
     this._clock = opts.clock ?? (() => new Date().toISOString());
     this._appendFile = opts.appendFile ?? appendFileSync;
     this._advisoryFeedCards = this._configureAdvisoryFeedCards(opts.advisoryFeedCards ?? []);
+    this._advisoryReceiptReverify = opts.advisoryReceiptReverify ?? null;
     this._resetProjection();
     this._operationalRead = opts.operationalRead ?? null;
     this._writerLease = null;
@@ -159,7 +160,8 @@ export class CoordinationStore {
     if (raw.length === 0) return;
     if (!raw.endsWith('\n')) throw new CoordinationIntegrityError('coordination stream has a truncated tail', 'truncated_tail');
     const lines = raw.slice(0, -1).split('\n');
-    for (let i = 0; i < lines.length; i += 1) {
+    this._loading = true;
+    try { for (let i = 0; i < lines.length; i += 1) {
       let event;
       try { event = JSON.parse(lines[i]); } catch { throw new CoordinationIntegrityError(`invalid JSON at coordination line ${i + 1}`, 'invalid_json'); }
       if (event.schemaVersion !== 1) throw new CoordinationIntegrityError(`unsupported schema version at seq ${event.seq}`, 'schema_version');
@@ -170,7 +172,7 @@ export class CoordinationStore {
       this._events.push(freeze(event));
       this._byKey.set(event.idempotencyKey, event);
       this._apply(event);
-    }
+    } } finally { this._loading = false; }
   }
 
   _append(kind, payload, { actor, key }, fixedTs = null) {
@@ -615,6 +617,13 @@ export class CoordinationStore {
     const card = configured.card;
     if (configured.cardDigest !== receipt.cardDigest || !card.modes?.includes(receipt.mode) || !card.auth?.keyFingerprints?.includes(receipt.keyFingerprint)
       || !Number.isSafeInteger(receipt.rawBytes) || receipt.rawBytes <= 0 || receipt.rawBytes > card.ceilings?.maxDeliveryBytes) fail('provider delivery is not bound to its source card', 'provider_card_mismatch');
+    if (integrity && this._loading === true && ['hmac-sha256', 'ed25519'].includes(card.auth?.scheme)) {
+      if (typeof this._advisoryReceiptReverify !== 'function') fail('native provider receipt requires private CAS replay before readiness', 'provider_cas_replay_required');
+      const replayReceipt = { schemaVersion: 1, providerId: receipt.providerId, sourceEpoch: receipt.sourceEpoch, cardDigest: receipt.cardDigest, mode: receipt.mode, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest, rawBytes: receipt.rawBytes, authReceiptDigest: receipt.authReceiptDigest, keyFingerprint: receipt.keyFingerprint, occurredAt: receipt.occurredAt, sequence: receipt.sequence, coordinates: clone(receipt.coordinates), advisoryIds: clone(receipt.advisoryIds), source: { handle: `art:sha256:${receipt.rawDigest}`, digest: receipt.rawDigest, bytes: receipt.rawBytes, mediaType: 'application/json' }, contentDigest: receipt.verificationDigest };
+      let reverified; try { reverified = this._advisoryReceiptReverify(replayReceipt); } catch (error) { throw integrity ? new CoordinationIntegrityError('native provider receipt private CAS replay failed', error?.code ?? 'provider_cas_invalid') : error; }
+      if (reverified && typeof reverified.then === 'function') fail('native provider receipt replay must be synchronous', 'provider_cas_replay_required');
+      if (canonicalDigest(reverified) !== canonicalDigest(replayReceipt)) fail('native provider receipt private CAS replay diverged', 'provider_cas_invalid');
+    }
     const coordinateKey = (coordinate) => `${coordinate?.ecosystem}\0${coordinate?.package}\0${coordinate?.version}`;
     const sortedCoordinates = Array.isArray(receipt.coordinates) && JSON.stringify(receipt.coordinates.map(coordinateKey)) === JSON.stringify([...new Set(receipt.coordinates.map(coordinateKey))].sort());
     if (!sortedCoordinates || receipt.coordinates.length === 0 || receipt.coordinates.length > card.ceilings.maxCoordinates || receipt.coordinates.some((coordinate) => !coordinate || Object.keys(coordinate).sort().join(',') !== 'ecosystem,package,version'

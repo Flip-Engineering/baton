@@ -23,7 +23,7 @@ const freeze = (value) => {
 };
 
 function validCard(card) {
-  const nativeWebhook = card?.auth?.scheme === 'hmac-sha256'; const topFields = ['schemaVersion', 'providerId', 'adapterId', 'version', 'modes', 'ecosystem', 'semantics', 'auth', 'ceilings', ...(nativeWebhook ? ['webhook', 'privateCas'] : [])];
+  const nativeWebhook = ['hmac-sha256', 'ed25519'].includes(card?.auth?.scheme); const topFields = ['schemaVersion', 'providerId', 'adapterId', 'version', 'modes', 'ecosystem', 'semantics', 'auth', 'ceilings', ...(nativeWebhook ? ['webhook', 'privateCas'] : [])];
   if (!exactKeys(card, topFields)
     || card.schemaVersion !== 1 || !bounded(card.providerId, 128) || !/^[A-Za-z0-9._:-]+$/.test(card.providerId)
     || !bounded(card.adapterId, 128) || !bounded(card.version, 128) || card.ecosystem !== 'npm' || card.semantics !== 'authenticated_hint'
@@ -32,7 +32,7 @@ function validCard(card) {
   if (!exactKeys(card.auth, authFields) || !['hmac-sha256', 'ed25519', 'injected-test'].includes(card.auth.scheme)
     || !Array.isArray(card.auth.keyFingerprints) || card.auth.keyFingerprints.length === 0 || card.auth.keyFingerprints.length > 16
     || !sortedUnique(card.auth.keyFingerprints) || card.auth.keyFingerprints.some((item) => !hex(item))) return false;
-  if (nativeWebhook && (card.auth.domain !== 'baton-provider-webhook-v1' || card.auth.signatureEncoding !== 'hex'
+  if (nativeWebhook && (card.auth.domain !== 'baton-provider-webhook-v1' || card.auth.signatureEncoding !== (card.auth.scheme === 'hmac-sha256' ? 'hex' : 'base64')
     || !exactKeys(card.auth.headers, ['signature', 'deliveryId', 'timestamp', 'sequence']) || Object.values(card.auth.headers).some((value) => !/^[a-z0-9-]{1,64}$/.test(value))
     || new Set(Object.values(card.auth.headers)).size !== 4 || !exactKeys(card.webhook, ['method', 'path', 'contentType', 'contentEncoding']) || card.webhook.method !== 'POST'
     || typeof card.webhook.path !== 'string' || !card.webhook.path.startsWith('/') || card.webhook.contentType !== 'application/json' || card.webhook.contentEncoding !== 'identity'
@@ -99,6 +99,13 @@ export class AdvisoryFeedRegistry {
   async reverifyReceipt(receipt) {
     const entry = this.entries.get(receipt?.providerId); if (!entry || typeof entry.source.readReceipt !== 'function') throw typed('provider receipt replay is unavailable', 'provider_replay_unavailable');
     const raw = await entry.source.readReceipt(receipt); const reverified = validateReceipt({ schemaVersion: 1, providerId: receipt.providerId, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest, rawBytes: receipt.rawBytes, authReceiptDigest: receipt.authReceiptDigest, keyFingerprint: receipt.keyFingerprint, occurredAt: receipt.occurredAt, sequence: receipt.sequence, coordinates: receipt.coordinates, advisoryIds: receipt.advisoryIds, source: receipt.source }, entry.card, raw, receipt.mode, entry.cardDigest);
+    if (reverified.contentDigest !== receipt.contentDigest || receipt.sourceEpoch !== entry.cardDigest || receipt.cardDigest !== entry.cardDigest) throw typed('provider receipt replay diverged', 'provider_receipt_invalid');
+    return reverified;
+  }
+
+  reverifyReceiptSync(receipt) {
+    const entry = this.entries.get(receipt?.providerId); if (!entry || typeof entry.source.readReceiptSync !== 'function') throw typed('provider receipt replay is unavailable', 'provider_replay_unavailable');
+    const raw = entry.source.readReceiptSync(receipt); const reverified = validateReceipt({ schemaVersion: 1, providerId: receipt.providerId, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest, rawBytes: receipt.rawBytes, authReceiptDigest: receipt.authReceiptDigest, keyFingerprint: receipt.keyFingerprint, occurredAt: receipt.occurredAt, sequence: receipt.sequence, coordinates: receipt.coordinates, advisoryIds: receipt.advisoryIds, source: receipt.source }, entry.card, raw, receipt.mode, entry.cardDigest);
     if (reverified.contentDigest !== receipt.contentDigest || receipt.sourceEpoch !== entry.cardDigest || receipt.cardDigest !== entry.cardDigest) throw typed('provider receipt replay diverged', 'provider_receipt_invalid');
     return reverified;
   }
