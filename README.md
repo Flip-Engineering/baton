@@ -21,7 +21,7 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **1351/1351
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **1389/1389
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
@@ -88,7 +88,7 @@ authoring, waiver, clearance, install, project-manager export, or homelab integr
 provider feeds, independently verified provenance, exact `internal` decisions, trusted advisory/
 source identity and true reachability, plan approval, positive clearance, additional ecosystems,
 composite surfaces, and deeper Cairn remain pending. The live policy-cycle proof passes **13/13**;
-the current canonical suite is **1351/1351 green**.
+the current canonical suite is **1389/1389 green**.
 
 Phases 43–50 extend the provider, routing, representation-attestation, and Cairn causal-knowledge
 verticals through durable provider recovery, exact route learning, supervised native-session
@@ -156,7 +156,7 @@ canonical sparse worker/verifier identities with hidden-diff refusal, and a repo
 capacity authority. Exact base/branch binding prevents metadata from erasing the admitted diff,
 ownership roots refuse symlink escape, and legacy close refuses live reservations. Their historical
 phase baselines remain 1179/1179 for Phase 56, 1256/1256 for Phase 57, and 1346/1346 for Phase 59;
-the current canonical result is the 1351/1351 status above. The first exact five-provider
+the current canonical result is the 1389/1389 status above. The first exact five-provider
 sparse+capacity recursive proof admitted all five routes, sampled both Grok groups live
 simultaneously, fresh-verified Codex `gpt-5.6-sol`, project-key GLM `glm-4.7`, and Grok 4.5 reports,
 and exactly closed/reaped all five generations with zero capacity residue. The strict matrix remains
@@ -166,6 +166,19 @@ dead foreign reservation retention; both now have red/green repairs. The post-re
 `7780266` repeated the three accepted fresh verifications and exact five-generation cleanup, and
 all three returned reports now have no P0/P1. The strict external matrix is still red only at Claude
 login and literal Build identity. The older Composer proof is not equivalent to literal Build.
+
+The Phase 60 implementation baseline now makes native recovery an attach-only transaction. Claude,
+Codex, and Grok may prove the exact persisted native identity without receiving the recovered Brief; Baton then atomically
+creates/claims a bounded recovery refinement, records an exact continuation intent, and exposes
+working authority only after an adapter-local accepted disposition. Exceptions, timeouts, false
+Acks with facts, append loss, and stop races remain durable `dispatch_unknown` and are never
+automatically redelivered. Provider seats stay reserved until exact stop/reap and late-spawn
+settlement. Closed store APIs reject forged not-sent evidence, generic recovery-task bypasses,
+unverified or cross-worker lineage, context substitution, and newline-complete torn transactions.
+The persistent-session gate is 43/43, the dedicated store/replay gate is 7/7, and the current
+canonical result is the 1389/1389 status above. A committed recursive five-route Phase 60 review
+and native-recovery proof plus the remaining NR7 crash/adapter matrix are the next acceptance
+gates; none is inferred from the shipped fixture coverage.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 

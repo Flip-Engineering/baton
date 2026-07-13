@@ -309,10 +309,11 @@ operator/session, command, SSE snapshot, logout/revocation, listener shutdown, a
 cleanup. The in-app browser interaction remains pending because its required execution bridge was
 not exposed; the wire proof is not relabeled as a browser pass.
 
-The active operational increment is sparse/capacity-governed recursive Baton proof across every
-supported harness, followed by the real-browser OIDC/control/stream/logout proof when its bridge is
-available, optional WebSocket parity, Streamable HTTP MCP/tasks/daemon depth, deeper operator
-surfaces, and the next measured Atlas representation rungs. Proposal-only structural rewrite now ships with a
+The active operational increment is committed Phase 60 attach-only recovery dogfood across every
+supported harness, followed by Phase 61's graph-backed R1 structural-delta, R2 SCIP-snapshot, and
+R3 bounded-CPG producers. Real-browser OIDC/control/stream/logout proof when its bridge is
+available, optional WebSocket parity, Streamable HTTP MCP/tasks/daemon depth, and deeper operator
+surfaces remain after those safety-ordered gates. Proposal-only structural rewrite now ships with a
 9/9 focused gate, 701/701 full suite, and a Baton-on-Baton immutable proposal proof. Direct apply
 and live-LSP depth remain, while CPG/dataflow, IR, behavioral fingerprints, semantic diff/merge,
 and e-graphs stay in the catalog. The CPG seed, delta/impact, and operator-specified taint
@@ -572,9 +573,9 @@ contract remain in the goal. No homelab or external project-manager runtime is i
 Phase 45 ships deployment-opt-in supervised startup auto-rejoin without weakening PS7's manual
 trust gate. A bounded startup scan installs a synchronous readiness barrier, retains only replayed
 native-resumable sessions' exact worktree and private runtime ownership, and attempts them
-sequentially. Fresh context validation and exact native identity/model/effort precede the recovery
-refinement becoming working. Per-session mismatch/refusal/timeout remains an explicit orphan and a
-sanitized degraded summary; authoritative-write loss fails readiness. Provider supervisors remain
+sequentially. Fresh context validation and exact native identity/model/effort precede recovered
+worker authority being exposed as working. Per-session mismatch/refusal/timeout leaves an explicit
+orphan and a sanitized degraded summary; authoritative-write loss fails readiness. Provider supervisors remain
 stopped until readiness settles. Async close awaits the scan and kills every auto-attached session
 before releasing worktree, runtime, branch, Coordinator, and writer ownership. The fixture proves
 verified turn → simulated process loss → exact rejoin → verified refinement → full reap. This does
@@ -821,6 +822,21 @@ simultaneously, fresh-verified Codex/GLM/Grok 4.5, returned three reports with n
 closed/reaped every ownership and capacity surface. Claude login and literal Build provider identity
 remain external red gates; the all-provider matrix is not claimed complete.
 
+The Phase 60 implementation baseline now closes the covered deterministic attach-only
+native-recovery transaction. Recovery validates
+an exact completed, hub-verified, same-worker lineage; starts an abortable attach-only native
+process; proves the exact provider session identity without sending the recovered Brief; atomically
+creates and claims one bounded recovery refinement; records an exact continuation intent; and
+exposes worker `working` authority only after an adapter-local accepted disposition. Ambiguous
+delivery remains durable `dispatch_unknown` and is never automatically redelivered. Provider-turn
+authority is released only after exact stop/reap, owned cleanup, and any late spawn settlement.
+Dedicated store APIs bind not-sent refusal to exact zero-fact operational evidence, refuse generic
+recovery-task mutation and unverified/context-substituted lineage, and fail replay on newline-
+complete torn create/claim or refusal/transition batches. The Phase 11 persistent-session gate is
+43/43, the dedicated store/replay gate is 7/7, adjacent adapter/lifecycle validation is green, and
+the canonical suite is 1389/1389. Provider-backed recursive evidence and the remaining NR7
+crash/adapter rows remain separate acceptance gates.
+
 These operational phases do not narrow the retained system. The self-contained causal/temporal
 knowledge graph remains inspired by repository-local project-manager prior art without homelab or
 external runtime integration. Authenticated web user-to-orchestrator command/control, exact route
@@ -829,13 +845,26 @@ AST/CST and lexical representation, SCIP/symbol graph, CPG, IR/SSA/PDG and seman
 behavioral fingerprints, semantic merge, and conditional expression/kernel e-graphs all remain
 catalogued work with their existing evidence-ladder gates.
 
+The retained dependency chain is explicit: Phase 60's implementation baseline now closes
+attach-only native recovery before provider work; after its remaining acceptance gates, Phase 61
+next promotes the existing bounded R1 structural delta, R2 SCIP snapshot, and R3
+CPG delta through freshly reverified graph-backed Representation producers; Phase 62 adds
+append-only Goal/Plan `goal_define`, `plan_propose`, `plan_approve`, `goal_plan_status`, and
+plan-gated spawn authority over direct and authenticated web surfaces, with exact
+`fleet_goal_plan_status` and companion MCP tools. This is a safety order, not a scope reduction.
+Native session depth, live budget amendments, distinct integration/publication/deploy/rollback
+approval commands, remaining operator and MCP/runtime depth, deeper R1–R7 representation
+precision, registered evaluation, and production hardening all remain after that chain under their
+existing gates.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**
 3. Make persistent sessions genuinely usable through the driver; supervised startup auto-rejoin
-   is shipped in Phase 45 and exact provider-process lifecycle/reap in Phase 51, while broader
-   provider-backed recovery proof, in-flight continuation, and vendor-honest fork/rewind depth
-   remain. Phase 55 separately ships immutable bounded toolchain projection for clean-target
+   is shipped in Phase 45, exact provider-process lifecycle/reap in Phase 51, and attach-only,
+   no-auto-redelivery recovery ordering in Phase 60. Provider-backed recovery proof, old in-flight
+   quiescence/history reconciliation, and vendor-honest fork/rewind depth remain. Phase 55
+   separately ships immutable bounded toolchain projection for clean-target
    recursive sessions. Phase 56 ships universal evidence-owner temp/process cleanup plus direct,
    authenticated web, MCP, and driver drain-and-close. Phase 57 ships deterministic route-bound
    reservation, usage-seal, provider/tool-call, and post-acceptance revocation governance; strict
