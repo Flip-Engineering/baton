@@ -538,11 +538,23 @@ kill/reap. Phase 45 supervised auto-rejoin, Phase 46 representation attestation,
 audit/recall and contradiction hardening, and every higher AST/SCIP/CPG/IR/behavior/merge/e-graph
 contract remain in the goal. No homelab or external project-manager runtime is introduced.
 
+Phase 45 ships deployment-opt-in supervised startup auto-rejoin without weakening PS7's manual
+trust gate. A bounded startup scan installs a synchronous readiness barrier, retains only replayed
+native-resumable sessions' exact worktree and private runtime ownership, and attempts them
+sequentially. Fresh context validation and exact native identity/model/effort precede the recovery
+refinement becoming working. Per-session mismatch/refusal/timeout remains an explicit orphan and a
+sanitized degraded summary; authoritative-write loss fails readiness. Provider supervisors remain
+stopped until readiness settles. Async close awaits the scan and kills every auto-attached session
+before releasing worktree, runtime, branch, Coordinator, and writer ownership. The fixture proves
+verified turn → simulated process loss → exact rejoin → verified refinement → full reap. This does
+not claim in-flight turn continuation, checkpoint/rewind parity, or provider-backed native resume.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**
-3. Make persistent sessions genuinely usable through the driver; supervised auto-rejoin is next,
-   followed by vendor-honest fork/rewind depth.
+3. Make persistent sessions genuinely usable through the driver; supervised startup auto-rejoin
+   is shipped in Phase 45, while provider-backed recovery, in-flight continuation, and vendor-honest
+   fork/rewind depth remain.
 4. Ship OS/credential isolation and budget/watchdog governance.
 5. Complete hardened acceptance and structured integration.
 6. Ship the task/artifact/Scratch substrate and deployment-neutral causal knowledge core.

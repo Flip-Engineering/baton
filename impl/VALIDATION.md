@@ -1,9 +1,10 @@
-# System Validation — living full-system ledger through Phase 44
+# System Validation — living full-system ledger through Phase 45
 
 Originally validated 2026-07-11 through Phase 11; updated through the 2026-07-12 coordinator-owned
 capability plane, credentialed GLM live gate, Cairn Rung 0, and Cartographer/Quartermaster local,
 external-evidence, SBOM, decision, invalidation, proposed-graph, transitive-advisory, policy-epoch,
-authenticated provider-ingress/reconciliation/retry rungs, and Cairn durable RouteStats/advice. Historical milestone counts remain in their rows;
+authenticated provider-ingress/reconciliation/retry rungs, Cairn durable RouteStats/advice, and
+supervised startup native-session auto-rejoin. Historical milestone counts remain in their rows;
 the top canonical row and latest handoffs are the current authority.
 
 ## Verdict
@@ -112,7 +113,10 @@ adapter Ack, advances the coordinator generation, and independently verifies the
 and Codex support explicit resume/fork mappings; Grok supports ACP `session/load`. Resume requires
 the recorded worktree owner/context, while fork allocates a fresh worktree and lineage edge.
 Restart replay never trusts a stored PID. `recover()` is bounded and attaches only when a fresh
-native handshake reports the exact persisted identity; ambiguity triggers cleanup.
+native handshake reports the exact persisted identity; ambiguity triggers cleanup. Phase 45 adds
+an explicit deployment-bounded startup supervisor: ordinary authority is readiness-fenced, only
+eligible native session worktree/runtime ownership survives reconciliation, exact recovery remains
+sequential, and async close kills every auto-attached session before releasing the writer.
 
 Each driver worker now receives a private home/tmp/vendor-config scope. Ambient provider secrets,
 proxy credentials, and code-injection environment variables are stripped; credentials are
@@ -125,7 +129,7 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 
 | Gate | Current evidence |
 |---|---|
-| Canonical zero-quota suite | **978/978 passing** via `npm test` in `impl/`; its lifecycle owner reaps the private suite root, and the real linked-worktree regression covers recursive Baton execution without relying on a directory-shaped `.git` |
+| Canonical zero-quota suite | **986/986 passing** via `npm test` in `impl/`; its lifecycle owner reaps the private suite root, and the real linked-worktree regression covers recursive Baton execution without relying on a directory-shaped `.git` |
 | U-1…U-11 | All reproduced before repair; verdict ledger in `docs/handoff/evidence/phase10.1-reverification.md` |
 | Fresh adversarial review | No unresolved critical/major finding; `docs/handoff/evidence/phase10.1-adversarial-review.md` |
 | Three-vendor live fleet | `docs/reference/evidence/phase10.1-capstone-2026-07-10/summary.json` has every check true; 573-event raw ledger beside it |
@@ -146,6 +150,7 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 | Phase 43 production HTTPS poll transport/live proof | `docs/handoff/evidence/phase43-https-poll-live-2026-07-12.md`; 70 focused Phase 42/43 and 965/965 canonical tests cover fixed-origin TLS, no redirects, private bearer/cursors/CA, exact timing-safe page HMAC domains, private per-call poll authority, staged item admission, webhook/poll byte identity, CAS receipt and poll-proof replay, cancellation at page boundaries, and retry. The real two-page TLS fixture proves gap/recovery/pending retention/zero-network restart/re-degradation/status/writer/fleet cleanup with every summary check true. A disk-full prelaunch exposed 43,749 stale bare-test roots, which were reaped; the exact credentialed `glm-4.7`/low rerun on PID `83152` fresh-verified, confirmed kill, and fully reaped. The report's false post-failure byte-counter claim was refuted; its page-two abort suggestion became a green regression. Durable deferred official attempts, extra providers/ecosystems, and the auth-red Grok rerun remain explicit. |
 | Phase 43 durable deferred official processing | `docs/handoff/evidence/phase43-provider-processing-retries-2026-07-12.md`; 78 focused Phase 42/43 and 973/973 canonical tests cover exact deployment retry policy, bounded stable due selection, canonical closed-code deferral identity, O(1) doubled/capped backoff, per-receipt attempt windows with lifetime history, max-attempt blocking, exact replay/policy/key/time/CAS integrity, completion/receipt/append races, single-flight supervision, hostile abort and writer-loss fencing, restart continuation, and PF7 non-leakage. The live outage→deferral→restart→success proof passes nine checks with complete cleanup. Exact credentialed `glm-4.7`/low on PID `72783` used 99,259 tokens/$0.616934, fresh-verified a PASS/no-P0-P1 report, received confirmed kill, and fully reaped. Current Claude and Grok authentication remain environment-red; Codex exact `gpt-5.6-sol`/low was observed and budget-cancelled; all harness refusal/cancellation ownership reaped. Additional provider/ecosystem adapters and positive clearance remain explicit. |
 | Phase 44 durable RouteStats and Cairn advice | `docs/handoff/evidence/phase44-cairn-route-stats-2026-07-12.md`; five grouped Phase 44 contracts, 86 combined router/Cairn/web/MCP contracts, and 978/978 canonical tests cover deployment-pinned exact-tuple policy, verified-only atomic terminal observations, exact retry conflicts, failure atomicity, immutable RouteStat/ObservedIn promotion, deterministic restart hydration, bounded read-only advice, authenticated reachability, replay/tamper refusal, and later-evidence reverify drift. The two-route live restart proof passes all ten checks. Recursive Baton routed exact credentialed `glm-4.7`/low to PID `85358`, used 82,208 tokens/$0.62141, fresh-verified, persisted and replayed its own route evidence once, selected that route through Cairn, confirmed native kill, and fully reaped. Three unsupported review findings became explicit recomputed-digest and seven-day restart-clock regressions. Phase 45 auto-rejoin, Phase 46 representation attestation, and later causal audit/recall remain explicit. |
+| Phase 45 supervised startup session auto-rejoin | `docs/handoff/evidence/phase45-session-auto-rejoin-2026-07-12.md`; seven focused SR contracts, 25 combined persistent-session/recovery contracts, 31 combined provider/recovery contracts, and 986/986 canonical tests cover exact deployment bounds, startup readiness refusal, stable sequential eligibility, max+1 no-prefix failure, exact session/context/model/effort preservation, private worktree/runtime reconciliation, identity mismatch/timeout/exception degradation, authoritative-write failure, close races, provider-supervisor ordering, unchanged opt-out behavior, and full async reap. The fixture restart proof passes 11/11. Recursive exact credentialed `glm-4.7`/low on PID `75883` used 72,132 tokens/$0.609352, fresh-verified a no-P0/P1 report, received confirmed kill, and fully reaped. Its sole coverage observation became the SR8/PF6 ordering regression. In-flight continuation, rewind/checkpoint depth, and provider-backed native resume remain explicit. |
 | Persistent two-turn Grok | `docs/reference/evidence/phase11-grok-persistent-session-2026-07-11/summary.json` has all 16 checks true; same session/PID, two fresh verdicts, full reap |
 | Isolated governance Grok | `docs/reference/evidence/phase11-grok-governance-2026-07-11/summary.json` has all 16 checks true; private credential scope, real sandbox denial, canonical usage, automatic budget kill, full reap |
 | Acceptance/integration | `docs/handoff/evidence/phase11-acceptance-integration-2026-07-11.md`; 16 focused temp-repo tests cover AC1–AC6 and the full suite is 502/502 |
@@ -210,8 +215,9 @@ These are absent, not implied by the green suite:
    Mergiraf binary proof is still pending on this host. True data/control-flow semantic merge,
    stacked integration, automated rollback, deploy adapters, and a live remote-push proof remain
    absent.
-4. **Automatic rejoin and remaining vendor depth.** Explicit native resume/recovery is shipped;
-   automatic startup rejoin to an already-running broker/process is not. Grok's vendor-specific
+4. **Automatic rejoin and remaining vendor depth.** Explicit native resume/recovery plus
+   deployment-opt-in supervised startup auto-rejoin ship through Phase 45. In-flight turn
+   continuation and a provider-backed crash/rejoin proof remain absent. Grok's vendor-specific
    fork/rewind schemas remain `planned`, and checkpoint/rewind depth remains incomplete.
 5. **GLM concurrency/quota depth.** One credentialed exact-model/low-effort session is live-proven;
    concurrent GLM seats, automatic quota discovery, and OpenCode-as-GLM parity remain unproven.

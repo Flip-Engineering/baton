@@ -66,9 +66,9 @@ attempt; full process/worktree/runtime/branch/writer reap; and unchanged opt-out
 
 ## SR10 — live and recursive proof
 
-A fixture restart persists a verified native session, closes the first driver, auto-rejoins through
-a fresh exact-identity handshake, completes a freshly verified refinement, and proves async close
-reaps all ownership. A provider-backed exact harness/model/effort proof follows only where the
+A fixture restart persists a verified native session, simulates process loss by releasing the first
+writer without graceful cleanup, auto-rejoins through a fresh exact-identity handshake, completes a
+freshly verified refinement, and proves async close reaps all ownership. A provider-backed exact harness/model/effort proof follows only where the
 installed harness supports safe persisted resume; environment refusal remains red evidence.
 
 Phase 46 remains the attested representation review packet. Cairn causal audit, temporal

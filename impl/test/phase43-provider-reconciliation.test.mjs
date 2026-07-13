@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { McpFleetServer, WebNorthbound, createDriver } from '../src/index.mjs';
+import { McpFleetServer, SessionRecoverySupervisor, WebNorthbound, createDriver } from '../src/index.mjs';
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const sha = (value) => createHash('sha256').update(Buffer.isBuffer(value) ? value : JSON.stringify(canonical(value))).digest('hex');
@@ -35,11 +35,12 @@ async function world(overrides = {}) {
   if (overrides.providerPolling) options.providerPolling = overrides.providerPolling;
   if (overrides.providerProcessingSchedule) options.providerProcessingSchedule = overrides.providerProcessingSchedule;
   if (overrides.providerRead) options.providerRead = overrides.providerRead;
+  if (overrides.sessionRecoveryPolicy) options.sessionRecoveryPolicy = overrides.sessionRecoveryPolicy;
   if (overrides.blockPoll) state.blockPoll = overrides.blockPoll;
   if (overrides.resolvePollOnAbort) state.resolvePollOnAbort = true;
   if (overrides.blockOfficial) state.blockOfficial = true;
   if (overrides.resolveOfficialOnAbort) state.resolveOfficialOnAbort = true;
-  const driver = createDriver(options); if (overrides.waitForInitialProcessor) await until(() => driver.providerProcessor?.status().scans >= 1 && driver.providerProcessor.status().active === false); const raw = Buffer.from(JSON.stringify({ deliveryId: 'delivery-green', occurredAt: '2026-07-13T06:00:00.000Z', sequence: 1, coordinates: overrides.coordinates ?? [coordinate] })); const admitted = await driver.coordinator.receiveProviderDelivery('fixture.green', { mode: 'webhook', raw });
+  const driver = createDriver(options); if (overrides.deferAdmission) return { driver, options, state, admitted: null }; if (overrides.waitForInitialProcessor) await until(() => driver.providerProcessor?.status().scans >= 1 && driver.providerProcessor.status().active === false); const raw = Buffer.from(JSON.stringify({ deliveryId: 'delivery-green', occurredAt: '2026-07-13T06:00:00.000Z', sequence: 1, coordinates: overrides.coordinates ?? [coordinate] })); const admitted = await driver.coordinator.receiveProviderDelivery('fixture.green', { mode: 'webhook', raw });
   return { driver, options, state, admitted };
 }
 
@@ -80,6 +81,15 @@ test('PF6: createDriver automatically recovers one degraded source and records s
   const lifecycle = w.driver.log.read('hub-provider-poller'); assert.ok(lifecycle.some((event) => event.kind === 'provider.poll_completed' && event.payload.providerId === 'fixture.green')); assert.equal(JSON.stringify(lifecycle).includes('cursor'), false);
   assert.throws(() => createDriver(w.options), (error) => error.code === 'coordination_writer_busy');
   assert.throws(() => w.driver.close(), (error) => error.code === 'driver_async_close_required'); assert.equal(await w.driver.closeAsync(), true); assert.equal(await w.driver.closeAsync(), false);
+});
+
+test('SR8/PF6: provider supervisors do not start before session recovery readiness settles', async () => {
+  const original = SessionRecoverySupervisor.prototype.start; let release;
+  SessionRecoverySupervisor.prototype.start = function heldStart() { if (this._promise) return this._promise; this.coordinator.beginStartupRecovery(this.authority); this._promise = new Promise((resolve) => { release = () => { this.coordinator.completeStartupRecovery(this.authority); resolve(Object.freeze({ status: 'ready', eligible: 0, attached: 0, failed: 0, skipped: 0, failures: Object.freeze([]) })); }; }); return this._promise; };
+  let w;
+  try {
+    w = await world({ providerPolling: { intervalMs: 20, initialBackoffMs: 10 }, sessionRecoveryPolicy: { maxSessions: 1, maxStateRows: 8, timeoutMs: 50 }, deferAdmission: true }); assert.equal(w.driver.providerPoller.status().every((row) => row.scheduled === false && row.active === false && row.attempts === 0), true); assert.throws(() => w.driver.coordinator.list(), (error) => error.code === 'session_recovery_pending'); release(); await w.driver.ready; await until(() => w.driver.providerPoller.status().some((row) => row.scheduled || row.active || row.attempts > 0));
+  } finally { SessionRecoverySupervisor.prototype.start = original; if (w) await w.driver.closeAsync(); }
 });
 
 test('PF6: closeAsync aborts and awaits even a hostile abort-resolving poll before fencing coordinator and writer lease', async () => {

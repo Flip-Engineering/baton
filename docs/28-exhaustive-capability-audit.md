@@ -117,10 +117,18 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    observations before dispatch. Cairn's bounded `route.advice` is deterministic and read-only,
    reachable through the existing authenticated direct/web/MCP capability path, and grants no
    routing-mutation, verification, merge, approval, publication, or worker authority.
+18. **Supervised startup session auto-rejoin:** Phase 45 adds an opt-in exact deployment policy,
+   synchronous readiness barrier, bounded stable eligible set, and one sequential supervisor over
+   the existing identity-checked recovery transaction. Replay preserves only eligible native
+   sessions' exact owned worktrees and private runtime homes; unsupported leftovers are reaped.
+   Context, session ID, model, and effort are freshly checked before a refinement becomes working.
+   Ordinary failures remain explicit orphans and a sanitized degraded summary; authoritative-write
+   loss fails readiness. Async close kills every auto-attached transport before worktree/runtime/
+   branch/writer release, and provider supervisors start only after readiness settles.
 
 ## What remains partial
 
-- Automatic session rejoin, deeper fork/rewind/checkpoint parity, and vendor-specific context,
+- In-flight session continuation, provider-backed crash/rejoin proof, deeper fork/rewind/checkpoint parity, and vendor-specific context,
   hook, broker, extension, and reconfiguration surfaces.
 - Full Claude/Codex sandbox denial parity, contamination UX, operator
   pin/exclude/prefer controls, and account quota-window/fleet-seat scheduling.
@@ -196,8 +204,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 2. **Close environment/live honesty gates:** GLM credentialed smoke without key disclosure shipped
    in Phase 30; live Mergiraf, real-browser OIDC, independent edge-policy review, and an optional
    safe remote-push fixture remain.
-3. **Finish governance/session continuity:** durable router learning shipped in Phase 44; next are
-   supervised auto-rejoin, vendor-honest fork/rewind, compaction DoD reinjection,
+3. **Finish governance/session continuity:** durable router learning shipped in Phase 44 and
+   supervised startup auto-rejoin shipped in Phase 45; next are provider-backed recovery proof,
+   in-flight continuation, vendor-honest fork/rewind, compaction DoD reinjection,
    quota-window/seat scheduling, and operator route overrides.
 4. **Build capability modules on shared substrate:** Cairn Rung 0 shipped in Phase 31 and
    Cartographer/Quartermaster local Rung 0 shipped in Phase 32, addressed push in Phase 33, and
