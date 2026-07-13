@@ -94,6 +94,7 @@ test('SP1/SP8/SP9: direct, authenticated web, and MCP routes share exact promoti
   const driver = createDriver({ repoRoot: repo, repoId: 'repo-a', logDir, adapters: {}, capabilityFactories: { cairn: ({ coordination, readOperational }) => new CairnRunScorecard({ coordination, readOperational, artifactRoot: root('driver-artifacts'), knowledgeAuditPolicy: auditPolicy(), knowledgePromotionPolicy: promotionPolicy() }) }, maxCapabilityBudgetTokens: 32_000, maxCapabilityEnvelopeBytes: 256 * 1024 });
   completed(driver.coordination, 'a'); const observedSeq = driver.coordination.snapshot().lastSeq; const args = { observedSeq };
   const direct = await driver.coordinator.invokeCapability('cairn', 'causal.promote', args, ctx({ idempotencyKey: 'direct' }));
+  await assert.rejects(driver.coordinator.invokeCapability('cairn', 'causal.promote', args, ctx({ actor: 'orchestrator', transport: 'web', idempotencyKey: 'orchestrator-web-smuggle' })), (error) => error.code === 'causal_promotion_forbidden');
   await assert.rejects(driver.coordinator.invokeCapability('cairn', 'causal.promote', args, ctx({ actor: 'web:forged:session', idempotencyKey: 'direct-web-smuggle' })), (error) => error.code === 'causal_promotion_forbidden');
   await assert.rejects(driver.coordinator.invokeCapability('cairn', 'causal.promote', args, ctx({ actor: 'web:forged:session', transport: 'mcp', idempotencyKey: 'mismatched-transport' })), (error) => error.code === 'causal_promotion_forbidden');
   completed(driver.coordination, 'b'); const webBoundary = driver.coordination.snapshot().lastSeq;
@@ -129,4 +130,9 @@ test('SP2/SP8: a critical audit failure or cancellation after audit leaves no pr
   await assert.rejects(cairn(bad).invoke('causal.promote', { observedSeq: before }, ctx()), (error) => error.code === 'causal_promotion_audit_failed'); assert.equal(bad.snapshot().lastSeq, before);
   const cancelled = new CoordinationStore(root('cancel-after-audit'), { clock: clock() }); completed(cancelled, 'a'); const abort = new AbortController(); const audit = cancelled.auditKnowledge.bind(cancelled); cancelled.auditKnowledge = (...args) => { const result = audit(...args); abort.abort(); return result; }; const cancelBefore = cancelled.snapshot().lastSeq;
   await assert.rejects(cairn(cancelled).invoke('causal.promote', { observedSeq: cancelBefore }, ctx({ signal: abort.signal })), (error) => error.code === 'cancelled'); assert.equal(cancelled.snapshot().lastSeq, cancelBefore);
+
+  const raced = new CoordinationStore(root('post-audit-append'), { clock: clock() }); completed(raced, 'a'); const pinned = raced.snapshot().lastSeq; const racedAudit = raced.auditKnowledge.bind(raced); let injected = false;
+  raced.auditKnowledge = (...args) => { const result = racedAudit(...args); if (!injected) { injected = true; completed(raced, 'b'); } return result; };
+  const racedResult = await cairn(raced).invoke('causal.promote', { observedSeq: pinned }, ctx({ idempotencyKey: 'post-audit-append' }));
+  assert.equal(racedResult.payload[0].candidateCount, 1); assert.equal(racedResult.payload[0].candidates.every((row) => row.sourceSeq <= pinned), true);
 });
