@@ -26,6 +26,7 @@ import { ProviderProcessingSupervisor } from './provider-processing-supervisor.m
 import { SessionRecoverySupervisor } from './session-recovery-supervisor.mjs';
 import { inspectToolchainProjection, prepareToolchainProjection, ToolchainProjectionError } from './toolchain-projection.mjs';
 import { normalizeProviderGovernancePolicy } from './provider-governance.mjs';
+import { loadOrCreateWorktreeCapacityIntegrityKey, normalizeWorktreeCapacityPolicy, WorktreeCapacityAuthority } from './worktree-capacity.mjs';
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const canonicalDigest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
@@ -50,6 +51,7 @@ export { Coordinator, ModelSelectionError, SessionSelectionError, IntegrationErr
 export { MockAdapter, CodexAdapter, ClaudeAdapter, GlmAdapter } from './adapter.mjs';
 export { inspectToolchainProjection, prepareToolchainProjection, ToolchainProjectionError } from './toolchain-projection.mjs';
 export { normalizeProviderGovernancePolicy, providerGovernanceRoute } from './provider-governance.mjs';
+export { loadOrCreateWorktreeCapacityIntegrityKey, normalizeWorktreeCapacityPolicy, WorktreeCapacityAuthority, WorktreeCapacityError } from './worktree-capacity.mjs';
 // SC2: the session tier IS the product surface — constructible from the entry point.
 export { ClaudeSessionCli, GlmSessionCli } from './claude-session.mjs';
 export { CodexAppServerCli } from './codex-appserver.mjs';
@@ -97,27 +99,104 @@ function localGitEnv() {
 
 function localGit(args, cwd, opts = {}) { return execFileSync('git', args, { ...opts, cwd, env: localGitEnv() }); }
 
+function capacityReservationIdentity(row) {
+  if (!row) return null;
+  return Object.freeze({
+    id: row.id, kind: row.kind, resourceId: row.resourceId, bytes: row.bytes, inodes: row.inodes,
+    baseSha: row.baseSha, sparseDigest: row.sparseDigest,
+    toolchainProjectionDigest: row.toolchainProjectionDigest ?? null, createdAt: row.createdAt,
+  });
+}
+
 /** worktree.mjs's real functions wrapped into the coordinator's manager interface. */
 function worktreeManager(repoRoot, opts = {}) {
+  let verifyReservationSeq = 0;
+  const verifyReservations = new Map();
+  const workerReservations = new Map();
+  const pendingWorkerReservations = new Map();
   return {
+    reserveCapacity(taskId, requestedBaseSha = null) {
+      if (!opts.worktreeCapacity) return null;
+      worktreeMod.normalizePhysicalOwnerId(taskId, 'taskId');
+      const selected = requestedBaseSha ?? localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
+      if (!/^[a-f0-9]{40}$/u.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
+      localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
+      const reservation = opts.worktreeCapacity.reserve(`worker:${taskId}`, {
+        baseSha: selected, sparsePaths: opts.workerSparsePaths ?? [], sparseCheckoutIdentity: opts.workerSparseCheckoutIdentity,
+        toolchainProjection: opts.toolchainProjection?.identity() ?? null,
+      });
+      pendingWorkerReservations.set(taskId, { selected, reservation });
+      return Object.freeze({ baseSha: selected, reservation });
+    },
+    releaseCapacity(taskId) {
+      const pending = pendingWorkerReservations.get(taskId);
+      if (!pending || !opts.worktreeCapacity) return false;
+      const released = opts.worktreeCapacity.release(pending.reservation);
+      if (released) pendingWorkerReservations.delete(taskId);
+      return released;
+    },
     async create(taskId, requestedBaseSha = null) {
       const base = await worktreeMod.pinBaseSha(repoRoot, {});
       const selected = requestedBaseSha ?? base.sha;
       if (!/^[a-f0-9]{40}$/.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
       localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
-      const r = await worktreeMod.createFromBase(repoRoot, taskId, selected, { dependencyDirs: opts.workerDependencyDirs ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
-      return { path: r.dir, branch: r.branch, baseSha: r.baseSha, ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
+      const pending = pendingWorkerReservations.get(taskId);
+      if (pending && pending.selected !== selected) {
+        const released = opts.worktreeCapacity.release(pending.reservation);
+        if (released) pendingWorkerReservations.delete(taskId);
+        throw new TypeError('capacity reservation base SHA disagrees with worktree creation');
+      }
+      let capacityReservation = pending?.reservation;
+      if (pending) pendingWorkerReservations.delete(taskId);
+      if (!capacityReservation && opts.worktreeCapacity) capacityReservation = opts.worktreeCapacity.reserve(`worker:${taskId}`, {
+        baseSha: selected, sparsePaths: opts.workerSparsePaths ?? [], sparseCheckoutIdentity: opts.workerSparseCheckoutIdentity,
+        toolchainProjection: opts.toolchainProjection?.identity() ?? null,
+      });
+      try {
+        const r = await worktreeMod.createFromBase(repoRoot, taskId, selected, { dependencyDirs: opts.workerDependencyDirs ?? [], sparsePaths: opts.workerSparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
+        if (capacityReservation) workerReservations.set(taskId, capacityReservation);
+        return { path: r.dir, branch: r.branch, baseSha: r.baseSha, sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity, ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}), ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
+      } catch (error) {
+        if (capacityReservation) opts.worktreeCapacity.release(capacityReservation);
+        throw error;
+      }
     },
-    async capture(worktreePath, opts = {}) {
-      return worktreeMod.captureCommit(repoRoot, basename(worktreePath), { vendor: opts.vendor, model: opts.model, effort: opts.effort });
+    async capture(worktreePath, captureOpts = {}) {
+      if (typeof captureOpts.ownerTaskId !== 'string') throw new TypeError('capture requires an explicit physical worktree owner');
+      return worktreeMod.captureCommit(repoRoot, captureOpts.ownerTaskId, {
+        vendor: captureOpts.vendor, model: captureOpts.model, effort: captureOpts.effort,
+        expectedWorktreePath: worktreePath,
+        expectedBaseSha: captureOpts.expectedBaseSha,
+        expectedBranch: captureOpts.expectedBranch,
+        sparseCheckoutIdentity: captureOpts.workerSparseCheckoutIdentity ?? captureOpts.workerSparseIdentity,
+        ...(opts.toolchainProjection ? { toolchainProjectionTargets: opts.toolchainProjection.targetPaths() } : {}),
+      });
     },
-    async createVerifyWorktree(taskId, sha) {
-      const r = await worktreeMod.freshVerifySandbox(repoRoot, taskId, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
-      return { path: r.dir ?? r.path, ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
+    async createVerifyWorktree(taskId, sha, verifyOpts = {}) {
+      const reservationId = `verify:${taskId}:${++verifyReservationSeq}`;
+      let capacityReservation;
+      if (opts.worktreeCapacity) capacityReservation = opts.worktreeCapacity.reserve(reservationId, { baseSha: sha, sparseCheckoutIdentity: opts.verifySparseCheckoutIdentity, toolchainProjection: opts.toolchainProjection?.identity() ?? null });
+      try {
+        const r = await worktreeMod.freshVerifySandbox(repoRoot, taskId, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], requiredPaths: verifyOpts.requiredPaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
+        if (capacityReservation) verifyReservations.set(resolve(r.dir ?? r.path), capacityReservation);
+        return { path: r.dir ?? r.path, sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity, ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}), ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
+      } catch (error) {
+        if (capacityReservation) opts.worktreeCapacity.release(capacityReservation);
+        throw error;
+      }
     },
     async createBaseVerifyWorktree(taskId, sha) {
-      const r = await worktreeMod.freshVerifySandbox(repoRoot, `${taskId}-base`, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
-      return { path: r.dir ?? r.path, ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
+      const label = `${taskId}-base`; const reservationId = `verify:${label}:${++verifyReservationSeq}`;
+      let capacityReservation;
+      if (opts.worktreeCapacity) capacityReservation = opts.worktreeCapacity.reserve(reservationId, { baseSha: sha, sparseCheckoutIdentity: opts.verifySparseCheckoutIdentity, toolchainProjection: opts.toolchainProjection?.identity() ?? null });
+      try {
+        const r = await worktreeMod.freshVerifySandbox(repoRoot, label, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
+        if (capacityReservation) verifyReservations.set(resolve(r.dir ?? r.path), capacityReservation);
+        return { path: r.dir ?? r.path, sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity, ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}), ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
+      } catch (error) {
+        if (capacityReservation) opts.worktreeCapacity.release(capacityReservation);
+        throw error;
+      }
     },
     async changedLines(baseSha, resultSha) {
       return worktreeMod.changedLines(repoRoot, baseSha, resultSha);
@@ -150,16 +229,34 @@ function worktreeManager(repoRoot, opts = {}) {
       const verifyRoot = resolve(repoRoot, '.baton', 'verify'); const candidate = resolve(verifyPath);
       const within = relative(verifyRoot, candidate);
       if (within === '' || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) throw Object.assign(new Error('verification cleanup path is outside Baton ownership'), { code: 'worktree_cleanup_failed' });
-      try { localGit(['worktree', 'remove', '--force', candidate], repoRoot, { stdio: 'ignore' }); }
-      catch { rmSync(candidate, { recursive: true, force: true }); }
+      const confined = worktreeMod.validateOwnedAuthorityPath(repoRoot, 'verify', candidate, { kind: 'directory', mustExist: true });
+      try { localGit(['worktree', 'remove', '--force', confined], repoRoot, { stdio: 'ignore' }); }
+      catch { rmSync(confined, { recursive: true, force: true }); }
       try { localGit(['worktree', 'prune'], repoRoot, { stdio: 'ignore' }); } catch { /* exact postcheck below remains authoritative */ }
       let registered;
       try { registered = (await worktreeMod.listWorktrees(repoRoot)).some((entry) => resolve(entry.dir) === candidate); }
       catch { throw Object.assign(new Error('verification worktree cleanup could not be inspected'), { code: 'worktree_cleanup_failed' }); }
-      if (existsSync(candidate) || registered) throw Object.assign(new Error('verification worktree cleanup was incomplete'), { code: 'worktree_cleanup_failed' });
+      if (existsSync(confined) || registered) throw Object.assign(new Error('verification worktree cleanup was incomplete'), { code: 'worktree_cleanup_failed' });
+      const reservation = verifyReservations.get(candidate);
+      if (reservation && opts.worktreeCapacity) {
+        if (opts.worktreeCapacity.release(reservation)) verifyReservations.delete(candidate);
+      }
     },
     // Terminal policy cleanup owns non-evidence task branches as well as their checkout/metadata.
-    async remove(taskId) { await worktreeMod.reap(repoRoot, taskId, { force: true, deleteBranch: true }); },
+    async remove(taskId) {
+      const pending = pendingWorkerReservations.get(taskId);
+      if (pending && opts.worktreeCapacity) {
+        if (opts.worktreeCapacity.release(pending.reservation)) pendingWorkerReservations.delete(taskId);
+      }
+      await worktreeMod.reap(repoRoot, taskId, { force: true, deleteBranch: true });
+      if (opts.worktreeCapacity) {
+        const reservation = workerReservations.get(taskId);
+        if (reservation) {
+          if (opts.worktreeCapacity.release(reservation)) workerReservations.delete(taskId);
+        }
+        else opts.worktreeCapacity.releaseAbsent(`worker:${taskId}`);
+      }
+    },
     async validateSessionContext(context) {
       try {
         if (!existsSync(context.worktree)) return { ok: false, reason: 'session worktree no longer exists' };
@@ -178,6 +275,22 @@ function worktreeManager(repoRoot, opts = {}) {
         if (context.baseSha) {
           localGit(['merge-base', '--is-ancestor', context.baseSha, 'HEAD'], worktree, { stdio: 'ignore' });
         }
+        if (!Array.isArray(context.sparsePaths) && opts.workerSparseCheckoutIdentity.mode !== 'full') return { ok: false, reason: 'session sparse checkout identity is missing' };
+        const contextSparsePaths = Array.isArray(context.sparsePaths) ? context.sparsePaths : [];
+        const contextSparseIdentity = context.sparseCheckoutIdentity
+          ? worktreeMod.normalizeSparseCheckoutIdentity(context.sparseCheckoutIdentity)
+          : worktreeMod.sparseCheckoutIdentity(contextSparsePaths);
+        if (JSON.stringify(contextSparseIdentity.paths) !== JSON.stringify(worktreeMod.normalizeSparsePaths(contextSparsePaths))) return { ok: false, reason: 'session sparse checkout paths disagree with identity' };
+        if (contextSparseIdentity.digest !== opts.workerSparseCheckoutIdentity.digest) return { ok: false, reason: 'session sparse checkout deployment identity mismatch' };
+        worktreeMod.validateOwnedWorktree(repoRoot, context.ownerTaskId ?? basename(worktree), {
+          expectedPath: worktree,
+          sparseCheckoutIdentity: opts.workerSparseCheckoutIdentity,
+        });
+        if (opts.worktreeCapacity) {
+          const expectedId = `worker:${context.ownerTaskId ?? basename(worktree)}`;
+          const row = opts.worktreeCapacity.snapshot().reservations.find((candidate) => candidate.id === expectedId);
+          if (!context.capacityReservation || !row || canonicalDigest(context.capacityReservation) !== canonicalDigest(capacityReservationIdentity(row))) return { ok: false, reason: 'session worktree capacity reservation mismatch' };
+        } else if (context.capacityReservation) return { ok: false, reason: 'session worktree capacity is not configured' };
         if (opts.toolchainProjection) {
           if (!context.toolchainProjection || !opts.toolchainProjection.matchesIdentity(context.toolchainProjection)
             || !worktreeMod.validateToolchainProjectionMetadata(repoRoot, context.ownerTaskId ?? basename(worktree), context.toolchainProjection)) return { ok: false, reason: 'session toolchain projection identity mismatch' };
@@ -190,10 +303,21 @@ function worktreeManager(repoRoot, opts = {}) {
       }
     },
     reconcile(expectedActiveTaskIds = []) {
-      const report = worktreeMod.reconcile(repoRoot, expectedActiveTaskIds);
+      const report = worktreeMod.reconcile(repoRoot, expectedActiveTaskIds, { sparseCheckoutIdentity: opts.workerSparseCheckoutIdentity });
       if (report.errors.length > 0) throw Object.assign(new Error('worktree reconciliation was incomplete'), { code: 'worktree_cleanup_failed' });
+      if (opts.worktreeCapacity) {
+        const retained = expectedActiveTaskIds.filter((taskId) => existsSync(join(repoRoot, '.baton', 'wt', taskId)));
+        for (const taskId of expectedActiveTaskIds) if (!retained.includes(taskId)) opts.worktreeCapacity.releaseAbsent(`worker:${taskId}`);
+        for (const row of opts.worktreeCapacity.snapshot().reservations) {
+          if (row.kind === 'verify') opts.worktreeCapacity.releaseAbsent(row.id);
+          else if (row.kind === 'worker' && !existsSync(join(repoRoot, '.baton', 'wt', row.resourceId))) opts.worktreeCapacity.releaseAbsent(row.id);
+        }
+        const capacityReconcile = opts.worktreeCapacity.reconcile(retained);
+        for (const row of capacityReconcile.adopted) workerReservations.set(row.resourceId, row);
+      }
       return report;
     },
+    capacitySnapshot() { return opts.worktreeCapacity?.snapshot() ?? null; },
   };
 }
 
@@ -221,7 +345,8 @@ function refereeFn(task, result, opts) {
  *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
  *          providerGovernance?:object,
- *          workerDependencyDirs?:string[], verifyDependencyDirs?:string[], verifySparsePaths?:string[], toolchainProjection?:object}} opts
+ *          workerDependencyDirs?:string[], workerSparsePaths?:string[], verifyDependencyDirs?:string[], verifySparsePaths?:string[], toolchainProjection?:object,
+ *          worktreeCapacity?:object, worktreeCapacityObserve?:Function, worktreeCapacityEstimate?:Function}} opts
  * @returns {{coordinator:Coordinator, story:StoryCompiler, router:AdaptiveRouter, log:Log, coordination:CoordinationStore}}
  */
 export function createDriver(opts) {
@@ -232,8 +357,25 @@ export function createDriver(opts) {
     ? null
     : normalizeProviderGovernancePolicy(opts.providerGovernance, Object.keys(opts.adapters ?? {}));
   const deploymentRepoId = opts.repoId ?? 'local';
+  const worktreeCapacityPolicy = opts.worktreeCapacity === undefined ? null : normalizeWorktreeCapacityPolicy(opts.worktreeCapacity);
+  if (opts.worktreeCapacityObserve !== undefined && typeof opts.worktreeCapacityObserve !== 'function') throw new TypeError('worktreeCapacityObserve must be a function');
+  if (opts.worktreeCapacityEstimate !== undefined && typeof opts.worktreeCapacityEstimate !== 'function') throw new TypeError('worktreeCapacityEstimate must be a function');
+  if (!worktreeCapacityPolicy && (opts.worktreeCapacityObserve !== undefined || opts.worktreeCapacityEstimate !== undefined)) throw new TypeError('worktree capacity dependencies require worktreeCapacity policy');
+  if (worktreeCapacityPolicy && ((opts.workerDependencyDirs?.length ?? 0) > 0 || (opts.verifyDependencyDirs?.length ?? 0) > 0)) throw new TypeError('worktreeCapacity requires attested toolchainProjection instead of legacy dependency copies');
+  const workerSparsePaths = worktreeMod.normalizeSparsePaths(opts.workerSparsePaths ?? []);
+  const verifySparsePaths = worktreeMod.normalizeSparsePaths(opts.verifySparsePaths ?? []);
+  const workerSparseCheckoutIdentity = worktreeMod.sparseCheckoutIdentity(workerSparsePaths);
+  const verifySparseCheckoutIdentity = worktreeMod.sparseCheckoutIdentity(verifySparsePaths);
   if (opts.toolchainProjection !== undefined && (opts.workerDependencyDirs !== undefined || opts.verifyDependencyDirs !== undefined)) throw new TypeError('toolchainProjection cannot be combined with legacy dependency directory options');
   const toolchainProjection = opts.toolchainProjection === undefined ? null : prepareToolchainProjection(opts.toolchainProjection);
+  const worktreeCapacity = worktreeCapacityPolicy ? new WorktreeCapacityAuthority({
+    repoRoot: opts.repoRoot,
+    policy: opts.worktreeCapacity,
+    integrityKey: loadOrCreateWorktreeCapacityIntegrityKey(opts.repoRoot),
+    ...(opts.worktreeCapacityObserve ? { observe: opts.worktreeCapacityObserve } : {}),
+    ...(opts.worktreeCapacityEstimate ? { estimate: opts.worktreeCapacityEstimate } : {}),
+    now: opts.now ?? Date.now,
+  }) : null;
   const now = opts.now ?? Date.now;
   if (opts.reuseDecisionPolicy !== undefined && (typeof opts.repoId !== 'string' || opts.repoId.length === 0)) throw new TypeError('reuseDecisionPolicy requires one deployment-bound repoId');
   let routeLearningPolicy;
@@ -397,9 +539,13 @@ export function createDriver(opts) {
     adapters: opts.adapters,
     worktrees: worktreeManager(opts.repoRoot, {
       workerDependencyDirs: opts.workerDependencyDirs,
+      workerSparsePaths,
+      workerSparseCheckoutIdentity,
       verifyDependencyDirs: opts.verifyDependencyDirs,
-      verifySparsePaths: opts.verifySparsePaths,
+      verifySparsePaths,
+      verifySparseCheckoutIdentity,
       toolchainProjection,
+      worktreeCapacity,
       structuredMerge: opts.structuredMerge,
     }),
     runtimeScopes,
@@ -473,7 +619,16 @@ export function createDriver(opts) {
   let drainedFleet = null; let drainedSupervisors = null; let coordinatorAuthorityClosed = false; let writerAuthorityReleased = false;
   const startProviderSupervisors = () => { if (driverState === 'open') { providerProcessor?.start(); providerPoller?.start(); } };
   ready.then((summary) => { if (!sessionRecovery || summary.status !== 'failed') startProviderSupervisors(); }).catch(() => {});
+  const assertCapacityQuiescent = () => {
+    if (!worktreeCapacity) return null;
+    const snapshot = worktreeCapacity.snapshot();
+    if (snapshot.reservations.some((row) => row.ownerId === worktreeCapacity.ownerId)) {
+      throw Object.assign(new Error('driver has active capacity reservations; use drainAndClose()'), { code: 'driver_capacity_active' });
+    }
+    return snapshot;
+  };
   const closeAuthority = () => {
+    assertCapacityQuiescent();
     const authorityClosed = coordinator.closeAuthority();
     coordination.releaseWriterLease();
     driverState = 'closed';
@@ -488,6 +643,7 @@ export function createDriver(opts) {
   const closeAsync = async () => {
     if (driverState === 'closed') return false;
     if (driverState !== 'open') throw Object.assign(new Error('driver close is already in progress'), { code: 'driver_closing' });
+    assertCapacityQuiescent();
     driverState = 'legacy-closing';
     try {
       await coordinatorReady;
@@ -537,6 +693,13 @@ export function createDriver(opts) {
         drainedFleet = fleet;
         drainedSupervisors = Object.freeze({ sessionRecovery: recoveryState, providerProcessing: processingState, providerPolling: pollingState });
       }
+      let capacity = null;
+      if (worktreeCapacity) {
+        const snapshot = worktreeCapacity.snapshot();
+        const ownedReservations = snapshot.reservations.filter((row) => row.ownerId === worktreeCapacity.ownerId);
+        if (ownedReservations.length > 0) throw Object.assign(new Error('driver capacity reservations remained after fleet drain'), { code: 'coordinator_drain_incomplete' });
+        capacity = Object.freeze({ policyDigest: snapshot.policyDigest, stateDigest: snapshot.stateDigest, ownedReservations: 0, fleetTotals: snapshot.totals });
+      }
       if (!coordinatorAuthorityClosed) {
         assertWithinDeadline();
         const coordinatorClosed = coordinator.closeAuthority();
@@ -555,6 +718,7 @@ export function createDriver(opts) {
         schemaVersion: 1, state: 'closed', fleet: drainedFleet,
         supervisors: drainedSupervisors,
         authority: { coordinatorClosed: true, writerReleased: true },
+        ...(capacity ? { capacity } : {}),
       };
       drainReceipt = deepFreeze({ ...core, receiptDigest: canonicalDigest(core) });
       driverState = 'closed';
@@ -569,6 +733,6 @@ export function createDriver(opts) {
     });
     return operation;
   };
-  return { coordinator, story, router, log, coordination, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, ready, close, closeAsync, drainAndClose };
+  return { coordinator, story, router, log, coordination, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, worktreeCapacity, ready, close, closeAsync, drainAndClose };
   } catch (error) { if (writerLease) coordination.releaseWriterLease(); throw error; }
 }

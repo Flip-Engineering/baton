@@ -342,9 +342,10 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    supervised startup auto-rejoin shipped in Phase 45; next are provider-backed recovery proof,
    in-flight continuation, vendor-honest fork/rewind, compaction DoD reinjection,
    quota-window/seat scheduling, and operator route overrides.
-   Immutable bounded dual-root toolchain projection shipped in Phase 55. Before another large
-   recursive build, add route-specific terminal-burst reserve/call governance, a public
-   drain-and-close attestation, and enforce temp-root ownership for direct recursive/evidence runs.
+   Immutable bounded dual-root toolchain projection shipped in Phase 55; public drain/close,
+   route-specific terminal-burst/call governance, sparse worker/verifier identity, and repo-scoped
+   byte/inode admission shipped in Phases 56–59. The next live gate is the exact five-provider
+   sparse+capacity recursive run with concurrent Groks and exact drain/reap evidence.
 4. **Build capability modules on shared substrate:** Cairn Rung 0 shipped in Phase 31 and
    Cartographer/Quartermaster local Rung 0 shipped in Phase 32, addressed push in Phase 33, and
    bounded scope-drift refresh in Phase 34, external evidence in Phase 36, exact SBOM in Phase 37,

@@ -13,6 +13,7 @@ import { resolveEffort, routeTupleKey } from './route-tuple.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { processReadyPayload, validProcessClosedPayload, validProcessReadyPayload, validProcessReapUnconfirmedPayload, validProcessStartedPayload } from './process-lifecycle.mjs';
 import { normalizeProviderGovernancePolicy, providerGovernanceRoute, validateProviderGovernanceCard } from './provider-governance.mjs';
+import { normalizePhysicalOwnerId, normalizeSparseCheckoutIdentity, normalizeSparsePaths, sparseCheckoutIdentity } from './worktree.mjs';
 
 const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
 const WORKTREE_FAILURE = Symbol('worktree-failure');
@@ -380,12 +381,51 @@ function normalizeSessionRequest(request) {
         throw new SessionSelectionError(`session.context.${key} must be a non-empty string`, 'invalid_session_request');
       }
     }
+    let sparsePaths;
+    if (request.context.sparsePaths !== undefined) {
+      try {
+        sparsePaths = normalizeSparsePaths(request.context.sparsePaths);
+      } catch (cause) {
+        throw Object.assign(new SessionSelectionError('session.context.sparsePaths must be a bounded array of safe relative literals', 'invalid_session_request'), { cause });
+      }
+    }
+    let sparseIdentity;
+    if (request.context.sparseCheckoutIdentity !== undefined) {
+      try { sparseIdentity = normalizeSparseCheckoutIdentity(request.context.sparseCheckoutIdentity); }
+      catch (cause) { throw Object.assign(new SessionSelectionError('session.context.sparseCheckoutIdentity is invalid', 'invalid_session_request'), { cause }); }
+    } else if (sparsePaths) sparseIdentity = sparseCheckoutIdentity(sparsePaths);
+    if (sparsePaths && sparseIdentity && JSON.stringify(sparsePaths) !== JSON.stringify(sparseIdentity.paths)) {
+      throw new SessionSelectionError('session sparse paths disagree with their identity', 'invalid_session_request');
+    }
+    let toolchainProjection;
+    if (request.context.toolchainProjection !== undefined) {
+      try {
+        if (!request.context.toolchainProjection || typeof request.context.toolchainProjection !== 'object' || Array.isArray(request.context.toolchainProjection)) throw new Error();
+        toolchainProjection = Object.freeze(JSON.parse(JSON.stringify(request.context.toolchainProjection)));
+      } catch (cause) {
+        throw Object.assign(new SessionSelectionError('session.context.toolchainProjection is invalid', 'invalid_session_request'), { cause });
+      }
+    }
+    let capacityReservation;
+    if (request.context.capacityReservation !== undefined) {
+      try {
+        const candidate = request.context.capacityReservation;
+        if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new Error();
+        capacityReservation = Object.freeze(JSON.parse(JSON.stringify(candidate)));
+      } catch (cause) {
+        throw Object.assign(new SessionSelectionError('session.context.capacityReservation is invalid', 'invalid_session_request'), { cause });
+      }
+    }
     context = Object.freeze({
       worktree: request.context.worktree,
       ...(request.context.repoRoot ? { repoRoot: request.context.repoRoot } : {}),
       ...(request.context.baseSha ? { baseSha: request.context.baseSha } : {}),
       ...(request.context.branch ? { branch: request.context.branch } : {}),
       ...(request.context.ownerTaskId ? { ownerTaskId: request.context.ownerTaskId } : {}),
+      ...(sparsePaths ? { sparsePaths } : {}),
+      ...(sparseIdentity ? { sparseCheckoutIdentity: sparseIdentity } : {}),
+      ...(toolchainProjection ? { toolchainProjection } : {}),
+      ...(capacityReservation ? { capacityReservation } : {}),
     });
   }
   return Object.freeze({
@@ -1396,6 +1436,7 @@ export class Coordinator {
   }
 
   _failInitialProviderAdmission(handle, task, admission) {
+    if (task?.sessionRequest?.mode === 'new' && typeof this._worktrees?.releaseCapacity === 'function') this._worktrees.releaseCapacity(task.id);
     const evidence = this._coordMapEvent(admission.event);
     this._coordTransition(task, 'failed', `task.failed:${task.id}:provider_turn:${admission.event.seq}`, evidence);
     task.status = 'failed';
@@ -1448,6 +1489,7 @@ export class Coordinator {
       runtime = this._ensureRuntimeScope(handle);
     } catch (err) {
       try { this._runtimeScopes?.remove?.(workerId); } catch { /* best effort */ }
+      if (task.sessionRequest?.mode === 'new' && typeof this._worktrees?.releaseCapacity === 'function') this._worktrees.releaseCapacity(task.id);
       this._releaseProviderTurnAdmission(handle, 'runtime_scope_unavailable');
       const crashEvent = this._log.append({
         worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'lifecycle.crashed', actor: 'policy',
@@ -1474,6 +1516,10 @@ export class Coordinator {
           branch: task.sessionContext.branch,
           baseSha: task.sessionContext.baseSha,
           ownerTaskId: task.sessionContext.ownerTaskId,
+          ...(task.sessionContext.sparsePaths ? { sparsePaths: task.sessionContext.sparsePaths } : {}),
+          ...(task.sessionContext.sparseCheckoutIdentity ? { sparseCheckoutIdentity: task.sessionContext.sparseCheckoutIdentity } : {}),
+          ...(task.sessionContext.toolchainProjection ? { toolchainProjection: task.sessionContext.toolchainProjection } : {}),
+          ...(task.sessionContext.capacityReservation ? { capacityReservation: task.sessionContext.capacityReservation } : {}),
         });
     } else {
       try { worktreeSource = Promise.resolve(this._worktrees.create(task.id, task.worktreeBaseSha ?? null)); }
@@ -1493,6 +1539,9 @@ export class Coordinator {
             ...(res.baseSha ? { baseSha: res.baseSha } : {}),
             ...(res.branch ? { branch: res.branch } : {}),
             ...(res.toolchainProjection ? { toolchainProjection: res.toolchainProjection } : {}),
+            ...(res.sparsePaths !== undefined ? { sparsePaths: normalizeSparsePaths(res.sparsePaths) } : {}),
+            ...(res.sparseCheckoutIdentity !== undefined ? { sparseCheckoutIdentity: normalizeSparseCheckoutIdentity(res.sparseCheckoutIdentity) } : {}),
+            ...(res.capacityReservation ? { capacityReservation: Object.freeze({ ...res.capacityReservation }) } : {}),
             ownerTaskId: res.ownerTaskId ?? task.sessionContext?.ownerTaskId ?? task.id,
           });
           task.sessionContext = sessionContext;
@@ -1663,11 +1712,12 @@ export class Coordinator {
     const runId = normalizeRunId(opts.runId);
     const modelPolicy = normalizeModelPolicy(opts.model, opts.modelPolicy, opts.effort);
     const effortRequested = opts.effort ?? modelPolicy?.reasoningEffort ?? null;
-    const worktreeBaseSha = opts.worktreeBaseSha ?? null;
+    let worktreeBaseSha = opts.worktreeBaseSha ?? null;
     if (worktreeBaseSha !== null && !/^[a-f0-9]{40}$/.test(worktreeBaseSha)) throw new TypeError('spawn worktreeBaseSha must be an exact commit ID');
     let sessionRequest = normalizeSessionRequest(opts.session);
 
     const taskId = opts.taskId ?? this._autoTaskId();
+    normalizePhysicalOwnerId(taskId, 'taskId');
     if (this._tasks.has(taskId)) throw new DuplicateTaskIdError(`duplicate taskId "${taskId}"`);
     if (vendor !== 'auto' && !this._adapters[vendor]) throw new UnknownVendorError(`unknown vendor "${vendor}"`);
     if (vendor !== 'auto' && !cardSupportsSession(this._adapters[vendor].card(), sessionRequest)) {
@@ -1714,18 +1764,34 @@ export class Coordinator {
     const deps = opts.deps ? [...opts.deps] : [];
     this._assertNoCycle(taskId, deps);
 
+    let capacityPrepared = false;
+    if (sessionRequest.mode === 'new' && typeof this._worktrees?.reserveCapacity === 'function') {
+      const prepared = await this._worktrees.reserveCapacity(taskId, worktreeBaseSha);
+      if (prepared?.baseSha) worktreeBaseSha = prepared.baseSha;
+      capacityPrepared = prepared !== null;
+      if (this._drainState !== 'open') {
+        if (capacityPrepared) await Promise.resolve(this._worktrees.releaseCapacity?.(taskId));
+        throw Object.assign(new Error('coordinator admission is draining'), { code: 'coordinator_draining' });
+      }
+    }
+
     const workerId = this._allocWorkerId();
     let coordinationVersion = null;
-    if (this._coordination) {
-      const created = this._coordination.createTask({
+    try {
+      if (this._coordination) {
+        const created = this._coordination.createTask({
         id: taskId, brief: admittedBrief, deps, refines: opts.refines ?? null,
         runId,
         taskType: opts.taskType ?? 'general', reservedWorkerId: workerId,
         vendorRequested: vendor, modelRequested: opts.model ?? null, modelPolicy,
         effortRequested, effortResolved: null, effortObserved: null, routeKey: null,
         sessionRequest, ...(worktreeBaseSha ? { worktreeBaseSha } : {}), ...(opts.review ? { review: Object.freeze({ ...opts.review }) } : {}),
-      }, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey ?? `task.created:${taskId}` });
-      coordinationVersion = created.task.version;
+        }, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey ?? `task.created:${taskId}` });
+        coordinationVersion = created.task.version;
+      }
+    } catch (error) {
+      if (capacityPrepared) await Promise.resolve(this._worktrees.releaseCapacity?.(taskId));
+      throw error;
     }
     const task = {
       id: taskId,
@@ -5129,6 +5195,9 @@ export class Coordinator {
     let baseVerifyPath = null;
     let verifierToolchainProjection = null;
     let baseVerifierToolchainProjection = null;
+    let verifierSparseCheckoutIdentity = null;
+    let baseVerifierSparseCheckoutIdentity = null;
+    let verificationCleanupError = null;
     let trustPhase = 'capture';
     try {
       // C5: thread the dispatching vendor through to captureCommit so the snapshot
@@ -5137,12 +5206,22 @@ export class Coordinator {
         vendor: handle.vendor,
         model: handle.modelObserved ?? handle.modelResolved,
         ...((handle.effortObserved ?? handle.effortResolved) ? { effort: handle.effortObserved ?? handle.effortResolved } : {}),
+        ownerTaskId: task.sessionContext?.ownerTaskId ?? task.id,
+        ...(task.sessionContext?.baseSha ? { expectedBaseSha: task.sessionContext.baseSha } : {}),
+        ...(task.sessionContext?.branch ? { expectedBranch: task.sessionContext.branch } : {}),
+        ...(task.sessionContext?.sparseCheckoutIdentity ? { workerSparseCheckoutIdentity: task.sessionContext.sparseCheckoutIdentity } : {}),
       });
       const sha = captured && captured.sha;
-      const created = await this._worktrees.createVerifyWorktree(task.id, sha);
+      const created = await this._worktrees.createVerifyWorktree(task.id, sha, { requiredPaths: captured?.changedPaths ?? [] });
       verifyPath = created && created.path;
       verifierToolchainProjection = created?.toolchainProjection ?? null;
+      verifierSparseCheckoutIdentity = created?.sparseCheckoutIdentity ?? null;
       const workerToolchainProjection = task.sessionContext?.toolchainProjection ?? null;
+      const declaredWorkerSparseCheckoutIdentity = task.sessionContext?.sparseCheckoutIdentity ?? null;
+      const workerSparseCheckoutIdentity = declaredWorkerSparseCheckoutIdentity
+        ?? (verifierSparseCheckoutIdentity ? captured?.sparseCheckoutIdentity ?? null : null);
+      if ((workerSparseCheckoutIdentity || verifierSparseCheckoutIdentity)
+        && (!workerSparseCheckoutIdentity || !verifierSparseCheckoutIdentity)) throw Object.assign(new Error('verification sparse checkout identity is missing'), { code: 'verification_environment_mismatch' });
       if ((workerToolchainProjection || verifierToolchainProjection)
         && (!workerToolchainProjection || !verifierToolchainProjection || canonicalDigest(workerToolchainProjection) !== canonicalDigest(verifierToolchainProjection))) throw Object.assign(new Error('verification toolchain projection mismatch'), { code: 'verification_environment_mismatch' });
 
@@ -5151,6 +5230,7 @@ export class Coordinator {
         const baseCreated = await this._worktrees.createBaseVerifyWorktree(task.id, baseSha);
         baseVerifyPath = baseCreated?.path ?? null;
         baseVerifierToolchainProjection = baseCreated?.toolchainProjection ?? null;
+        baseVerifierSparseCheckoutIdentity = baseCreated?.sparseCheckoutIdentity ?? null;
         if ((workerToolchainProjection || baseVerifierToolchainProjection)
           && (!workerToolchainProjection || !baseVerifierToolchainProjection || canonicalDigest(workerToolchainProjection) !== canonicalDigest(baseVerifierToolchainProjection))) throw Object.assign(new Error('base verification toolchain projection mismatch'), { code: 'verification_environment_mismatch' });
       }
@@ -5215,6 +5295,9 @@ export class Coordinator {
             routeKey: handle.routeKey ?? null,
             ...(workerToolchainProjection ? { toolchainProjection: workerToolchainProjection, verifierToolchainProjection } : {}),
             ...(baseVerifierToolchainProjection ? { baseVerifierToolchainProjection } : {}),
+            ...(workerSparseCheckoutIdentity ? { sparseCheckoutIdentity: workerSparseCheckoutIdentity, verifierSparseCheckoutIdentity } : {}),
+            ...(baseVerifierSparseCheckoutIdentity ? { baseVerifierSparseCheckoutIdentity } : {}),
+            changedPaths: captured?.changedPaths ?? [],
           },
         },
       });
@@ -5341,8 +5424,18 @@ export class Coordinator {
       task.status = durable?.status ?? 'failed';
       if (task.status !== 'completed') task.verdict = null;
     } finally {
-      if (verifyPath != null) await this._worktrees.removeVerifyWorktree(verifyPath);
-      if (baseVerifyPath != null) await this._worktrees.removeVerifyWorktree(baseVerifyPath);
+      const cleanupTargets = [verifyPath, baseVerifyPath].filter((path) => path != null);
+      const cleanupResults = await Promise.allSettled(cleanupTargets.map((path) => this._worktrees.removeVerifyWorktree(path)));
+      const failures = cleanupResults.filter((result) => result.status === 'rejected');
+      if (failures.length > 0) {
+        verificationCleanupError = Object.assign(new Error(`verification cleanup failed for ${failures.length} owned sandbox(es)`), {
+          code: 'worktree_cleanup_failed', causes: failures.map((result) => result.reason),
+        });
+        this._log.append({
+          worker: handle.id, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'error', actor: 'policy',
+          payload: { message: verificationCleanupError.message, phase: 'verification_cleanup' },
+        });
+      }
     }
 
     if (handle.cleanupAfterVerification) {
@@ -5357,6 +5450,7 @@ export class Coordinator {
     }
     handle.status = handle.processRef?.state === 'closed' ? 'exited' : 'idle';
     this._dispatchPass();
+    if (verificationCleanupError) throw verificationCleanupError;
   }
 
   // =========================================================================

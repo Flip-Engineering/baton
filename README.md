@@ -21,7 +21,7 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **1141/1141
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **1344/1344
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
@@ -84,7 +84,7 @@ authoring, waiver, clearance, install, project-manager export, or homelab integr
 provider feeds, independently verified provenance, exact `internal` decisions, trusted advisory/
 source identity and true reachability, plan approval, positive clearance, additional ecosystems,
 composite surfaces, and deeper Cairn remain pending. The live policy-cycle proof passes **13/13**;
-the current canonical suite is **1141/1141 green**.
+the current canonical suite is **1344/1344 green**.
 
 Phases 43–50 extend the provider, routing, representation-attestation, and Cairn causal-knowledge
 verticals through durable provider recovery, exact route learning, supervised native-session
@@ -145,6 +145,13 @@ because the installed Grok CLI reports unauthenticated. Terminal-burst/call gove
 drain-and-close attestation, provider-backed continuation, Scratch Board/Bench, Skill/Playbook
 promotion, deeper web/operator surfaces and evaluations, and every retained representation rung
 remain in the full-system goal.
+
+Phases 56–59 now ship public exact fleet drain/close, route-bound truthful provider governance,
+canonical sparse worker/verifier identities with hidden-diff refusal, and a repo-scoped byte/inode
+capacity authority. Exact base/branch binding prevents metadata from erasing the admitted diff,
+ownership roots refuse symlink escape, and legacy close refuses live reservations. The current
+five-provider sparse+capacity recursive proof remains an explicit live gate rather than a claimed
+completion.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 

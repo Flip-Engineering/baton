@@ -500,7 +500,7 @@ test('E2E concurrency: a GLM-shaped ceiling=1 vendor genuinely serializes two ta
 
   await waitUntil(async () => (await sys.coordinator.result(handleA.id)).ready);
   const outcomeA = await sys.coordinator.result(handleA.id);
-  assert.equal(outcomeA.status, 'completed');
+  assert.equal(outcomeA.status, 'completed', JSON.stringify(sys.log.read(handleA.id)));
 
   sys.coordinator.tick();
   await waitUntil(() => sys.adapterCalls.spawn.length === 2);
@@ -509,7 +509,7 @@ test('E2E concurrency: a GLM-shaped ceiling=1 vendor genuinely serializes two ta
 
   await waitUntil(async () => (await sys.coordinator.result(handleB.id)).ready);
   const outcomeB = await sys.coordinator.result(handleB.id);
-  assert.equal(outcomeB.status, 'completed');
+  assert.equal(outcomeB.status, 'completed', JSON.stringify(sys.log.read(handleB.id)));
 
   // Effect: two genuinely separate, sequential trust-gate runs and router recordings — not one
   // shared/collapsed run. Proves the serialization was real end to end, not just at dispatch time.

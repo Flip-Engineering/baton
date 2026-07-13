@@ -266,7 +266,7 @@ test('MS5: model attribution reaches verification, router learning, and terminal
     payload: { status: 'completed', summary: 'done', artifacts: { files: [] }, verification: { command: 'true', claimedExit: 0 } },
   });
   await untilValue(async () => (await c.result(h.id)).ready, 3000);
-  assert.deepEqual(captureOpts[0], { vendor: 'stub', model: 'stub-exact' });
+  assert.deepEqual(captureOpts[0], { vendor: 'stub', model: 'stub-exact', ownerTaskId: 'attributed-model' });
   const verified = log.read(h.id).find((e) => e.kind === 'verify.reverified');
   assert.equal(verified.modelRequested, 'stub-exact');
   assert.equal(verified.modelResolved, 'stub-exact');

@@ -54,6 +54,7 @@ or knowledge endpoint inconsistency fails closed. Worker self-report never count
 Reds cover run propagation, restart, duplicate/mixed membership, post-close admission, nonterminal
 closure, verified/asserted spoofing, approvals/interventions, delta/cumulative usage, exact route
 rows, deterministic artifact identity, tamper/reverify, atomic promotion, append failure, web/MCP
-reachability, and recursive process/worktree reap. RouteStats feedback, recall ranking, export,
-dashboarding, PM/homelab integration, and later Cairn graph rungs are excluded from this phase but
-remain catalogued.
+reachability, and recursive process/worktree reap. RouteStats feedback, recall ranking,
+deployment-neutral export, dashboarding, and later Cairn graph rungs are excluded from this phase
+but remain catalogued. Project-manager is design inspiration only; PM/homelab runtime integration
+is excluded from Baton rather than deferred.

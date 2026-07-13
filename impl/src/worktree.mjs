@@ -12,13 +12,14 @@
 
 import { execFileSync } from 'node:child_process';
 import {
-  cpSync, existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync, readdirSync, statSync, lstatSync, realpathSync,
+  chmodSync, closeSync, cpSync, existsSync, fsyncSync, mkdirSync, mkdtempSync, openSync, renameSync,
+  writeFileSync, readFileSync, rmSync, readdirSync, statSync, lstatSync, realpathSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import {
   basename, join, dirname, isAbsolute, sep, resolve as pathResolve, relative as pathRelative,
 } from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { ToolchainProjectionError } from './toolchain-projection.mjs';
 
 // ---------------------------------------------------------------------------
@@ -45,6 +46,9 @@ export class WorktreeLockedError extends Error {
 }
 export class WorktreeCleanupError extends Error {
   constructor(message) { super(message); this.name = 'WorktreeCleanupError'; this.code = 'worktree_cleanup_failed'; }
+}
+export class SparseCheckoutError extends Error {
+  constructor(message, code = 'worker_sparse_projection_changed') { super(message); this.name = 'SparseCheckoutError'; this.code = code; }
 }
 export class StructuredMergeError extends Error {
   constructor(message, code = 'structured_merge_failed') { super(message); this.name = 'StructuredMergeError'; this.code = code; }
@@ -80,6 +84,49 @@ function postEffectMergeError(message, cause) {
   return Object.assign(mergeError(message, 'structured_post_effect_inconsistent', cause), { postEffect: true });
 }
 
+const AUTHORITY_ROOTS = new Set(['integrate', 'verify', 'wt']);
+
+function authorityRoot(repoRoot, name, { create = false } = {}) {
+  if (!AUTHORITY_ROOTS.has(name)) throw new TypeError('unknown worktree authority root');
+  const repoPath = pathResolve(repoRoot); const repo = realpathSync(repoPath); const baton = join(repoPath, '.baton'); const root = join(baton, name);
+  for (const path of [baton, root]) {
+    if (!existsSync(path)) {
+      if (!create) return null;
+      mkdirSync(path, { mode: 0o700 });
+    }
+    const stat = lstatSync(path);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new WorktreeCleanupError(`${name} root is not a confined directory`);
+    chmodSync(path, 0o700);
+    const real = realpathSync(path); const within = pathRelative(repo, real);
+    if (within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) throw new WorktreeCleanupError(`${name} root escapes repository ownership`);
+  }
+  return root;
+}
+
+function authorityChild(repoRoot, name, child, { createRoot = false, kind = 'directory', mustExist = false } = {}) {
+  const root = authorityRoot(repoRoot, name, { create: createRoot });
+  const base = root ?? join(realpathSync(repoRoot), '.baton', name);
+  const candidate = join(base, child); const within = pathRelative(base, candidate);
+  if (within === '' || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) throw new WorktreeCleanupError(`${name} child escapes repository ownership`);
+  if (!existsSync(candidate)) {
+    if (mustExist) throw new WorktreeCleanupError(`${name} child is missing`);
+    return candidate;
+  }
+  const stat = lstatSync(candidate);
+  if (stat.isSymbolicLink() || (kind === 'directory' ? !stat.isDirectory() : !stat.isFile())) throw new WorktreeCleanupError(`${name} child is not an owned ${kind}`);
+  const real = realpathSync(candidate); const realWithin = pathRelative(realpathSync(base), real);
+  if (realWithin === '' || realWithin === '..' || realWithin.startsWith(`..${sep}`) || isAbsolute(realWithin)) throw new WorktreeCleanupError(`${name} child escapes repository ownership`);
+  return candidate;
+}
+
+export function validateOwnedAuthorityPath(repoRoot, name, candidate, opts = {}) {
+  const root = authorityRoot(repoRoot, name, { create: false });
+  if (!root) throw new WorktreeCleanupError(`${name} root is missing`);
+  const resolved = pathResolve(candidate); const within = pathRelative(root, resolved);
+  if (within === '' || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) throw new WorktreeCleanupError(`${name} cleanup path is outside Baton ownership`);
+  return authorityChild(repoRoot, name, within, { kind: opts.kind ?? 'directory', mustExist: opts.mustExist ?? true });
+}
+
 function wtDirFor(repoRoot, taskId) {
   return join(repoRoot, '.baton', 'wt', taskId);
 }
@@ -93,9 +140,13 @@ function projectionExcludePathFor(repoRoot, taskId) {
 }
 
 function readMeta(repoRoot, taskId) {
-  const f = metaPathFor(repoRoot, taskId);
+  let f;
+  try { f = authorityChild(repoRoot, 'wt', `${taskId}.meta.json`, { kind: 'file' }); }
+  catch { return null; }
   if (!existsSync(f)) return null;
   try {
+    const stat = lstatSync(f);
+    if ((stat.mode & 0o077) !== 0 || stat.size > 1024 * 1024) return null;
     return JSON.parse(readFileSync(f, 'utf8'));
   } catch {
     return null;
@@ -103,9 +154,24 @@ function readMeta(repoRoot, taskId) {
 }
 
 function writeMeta(repoRoot, taskId, meta) {
-  const f = metaPathFor(repoRoot, taskId);
-  mkdirSync(dirname(f), { recursive: true });
-  writeFileSync(f, JSON.stringify(meta, null, 2));
+  const f = authorityChild(repoRoot, 'wt', `${taskId}.meta.json`, { createRoot: true, kind: 'file' });
+  const temp = `${f}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`;
+  let fd;
+  try {
+    fd = openSync(temp, 'wx', 0o600);
+    writeFileSync(fd, `${JSON.stringify(meta, null, 2)}\n`, 'utf8');
+    fsyncSync(fd);
+    closeSync(fd); fd = undefined;
+    renameSync(temp, f);
+    try {
+      const parent = openSync(dirname(f), 'r');
+      try { fsyncSync(parent); } finally { closeSync(parent); }
+    } catch { /* directory fsync is unavailable on some filesystems */ }
+  } catch (error) {
+    if (fd !== undefined) try { closeSync(fd); } catch { /* no-op */ }
+    rmSync(temp, { force: true });
+    throw error;
+  }
 }
 
 function logEvent(opts, worker, kind, payload) {
@@ -137,8 +203,7 @@ function materializeDependencies(dir, sources) {
 }
 
 function configureProjectionExcludes(repoRoot, worktreeDir, taskId, targetPaths) {
-  const excludePath = projectionExcludePathFor(repoRoot, taskId);
-  mkdirSync(dirname(excludePath), { recursive: true });
+  const excludePath = authorityChild(repoRoot, 'wt', `${taskId}.projection.exclude`, { createRoot: true, kind: 'file' });
   writeFileSync(excludePath, `${targetPaths.map((path) => `/${path}`).join('\n')}\n`, { encoding: 'utf8', mode: 0o600 });
   gitFile(['config', 'extensions.worktreeConfig', 'true'], repoRoot, { stdio: 'pipe' });
   gitFile(['config', '--worktree', 'core.excludesFile', excludePath], worktreeDir, { stdio: 'pipe' });
@@ -157,13 +222,192 @@ export function validateToolchainProjectionMetadata(repoRoot, taskId, identity) 
     && Array.isArray(meta.toolchainProjectionTargets) && meta.toolchainProjectionTargets.length > 0;
 }
 
-function sparseProjection(paths = []) {
-  if (!Array.isArray(paths)) throw new TypeError('sparse verification paths must be an array');
-  return paths.map((path) => {
-    if (typeof path !== 'string' || path.length === 0 || isAbsolute(path) || !/^[A-Za-z0-9._/-]+$/.test(path)) throw new TypeError('sparse verification path must be a safe relative literal');
-    const parts = path.split('/'); if (parts.some((part) => part === '' || part === '.' || part === '..')) throw new TypeError('sparse verification path escapes repository');
+const SPARSE_MAX_PATHS = 1024;
+const SPARSE_MAX_PATH_BYTES = 2048;
+const SPARSE_MAX_TOTAL_PATH_BYTES = 256 * 1024;
+const SPARSE_MAX_DEPTH = 64;
+
+function canonicalDigest(value) {
+  const canonical = (item) => Array.isArray(item) ? item.map(canonical) : item && typeof item === 'object'
+    ? Object.fromEntries(Object.keys(item).sort().map((key) => [key, canonical(item[key])])) : item;
+  return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
+}
+
+export function normalizePhysicalOwnerId(value, label = 'worktree owner') {
+  const folded = typeof value === 'string' ? value.toLocaleLowerCase('en-US') : '';
+  if (typeof value !== 'string' || value.length === 0 || Buffer.byteLength(value) > 128
+    || value.normalize('NFC') !== value || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value)
+    || value.endsWith('.') || value.includes('..') || value.toLocaleLowerCase('en-US') === '.git'
+    || value.toLocaleLowerCase('en-US') === '.baton' || ['.lock', '.meta.json', '.projection.exclude'].some((suffix) => folded.endsWith(suffix))) throw new TypeError(`${label} must be one bounded path and ref component`);
+  return value;
+}
+
+function assertNoPhysicalOwnerCollision(repoRoot, taskId) {
+  const root = authorityRoot(repoRoot, 'wt', { create: false });
+  if (!root) return;
+  const requested = taskId.toLocaleLowerCase('en-US');
+  for (const entry of readdirSync(root)) {
+    const candidate = entry.endsWith('.meta.json') ? entry.slice(0, -'.meta.json'.length)
+      : entry.endsWith('.projection.exclude') ? entry.slice(0, -'.projection.exclude'.length) : entry;
+    if (candidate !== taskId && candidate.toLocaleLowerCase('en-US') === requested) {
+      throw new WorktreeAlreadyExistsError(`createFromBase: worktree owner collides with existing owner "${candidate}"`);
+    }
+  }
+}
+
+export function normalizeSparsePaths(paths = []) {
+  if (!Array.isArray(paths) || paths.length > SPARSE_MAX_PATHS) throw new TypeError('sparse checkout paths must be a bounded array');
+  let totalBytes = 0;
+  const normalized = paths.map((path) => {
+    const bytes = typeof path === 'string' ? Buffer.byteLength(path) : 0; totalBytes += bytes;
+    if (typeof path !== 'string' || path.length === 0 || bytes > SPARSE_MAX_PATH_BYTES
+      || path.normalize('NFC') !== path || path.includes('\\') || /[\u0000-\u001f\u007f]/u.test(path)
+      || isAbsolute(path) || !/^[A-Za-z0-9._/-]+$/u.test(path)) throw new TypeError('sparse checkout path must be a safe relative literal');
+    const parts = path.split('/');
+    if (parts.length > SPARSE_MAX_DEPTH || parts.some((part) => part === '' || part === '.' || part === '..')
+      || ['.git', '.baton'].includes(parts[0].toLocaleLowerCase('en-US'))) throw new TypeError('sparse checkout path escapes repository');
     return path;
+  }).sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+  if (totalBytes > SPARSE_MAX_TOTAL_PATH_BYTES) throw new TypeError('sparse checkout paths exceed the aggregate byte ceiling');
+  for (let index = 0; index < normalized.length; index += 1) {
+    const left = normalized[index].toLocaleLowerCase('en-US');
+    for (let other = index + 1; other < normalized.length; other += 1) {
+      const right = normalized[other].toLocaleLowerCase('en-US');
+      if (left === right || right.startsWith(`${left}/`) || left.startsWith(`${right}/`)) {
+        throw new TypeError('sparse checkout paths must be unique and non-overlapping');
+      }
+    }
+  }
+  return Object.freeze(normalized);
+}
+
+export function sparseCheckoutIdentity(paths = []) {
+  const normalized = normalizeSparsePaths(paths);
+  const core = Object.freeze({
+    schemaVersion: 1,
+    mode: normalized.length === 0 ? 'full' : 'non-cone-literal',
+    paths: normalized,
   });
+  return Object.freeze({ ...core, digest: canonicalDigest(core) });
+}
+
+export function normalizeSparseCheckoutIdentity(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).sort().join(',') !== ['digest', 'mode', 'paths', 'schemaVersion'].sort().join(',')) throw new TypeError('sparse checkout identity is invalid');
+  const expected = sparseCheckoutIdentity(value.paths);
+  if (value.schemaVersion !== expected.schemaVersion || value.mode !== expected.mode || value.digest !== expected.digest) throw new TypeError('sparse checkout identity is invalid');
+  return expected;
+}
+
+export function sparseCheckoutCoversPath(identity, path) {
+  const normalized = normalizeSparseCheckoutIdentity(identity);
+  if (normalized.mode === 'full') return true;
+  return normalized.paths.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+}
+
+function sameSparseIdentity(left, right) {
+  try { return normalizeSparseCheckoutIdentity(left).digest === normalizeSparseCheckoutIdentity(right).digest; }
+  catch { return false; }
+}
+
+function sparseError(message, code) { return new SparseCheckoutError(message, code); }
+
+function liveSparseCheckoutIdentity(dir) {
+  let enabled = false;
+  try { enabled = sh('git', ['config', '--bool', 'core.sparseCheckout'], dir) === 'true'; } catch { enabled = false; }
+  if (!enabled) return sparseCheckoutIdentity([]);
+  let cone;
+  try { cone = sh('git', ['config', '--bool', 'core.sparseCheckoutCone'], dir); } catch { cone = ''; }
+  if (cone !== 'false') throw new TypeError('sparse checkout mode is not the admitted non-cone literal mode');
+  const listed = gitFile(['sparse-checkout', 'list'], dir, { encoding: 'utf8' }).split('\n').filter(Boolean).map((path) => path.startsWith('/') ? path.slice(1) : path);
+  return sparseCheckoutIdentity(listed);
+}
+
+function trackedPathsAtCommit(repoRoot, sha) {
+  const raw = gitFile(['ls-tree', '-r', '--name-only', '-z', sha], repoRoot, { encoding: 'utf8' });
+  return raw.split('\0').filter(Boolean);
+}
+
+function changedPathsFromBase(dir, baseSha) {
+  const paths = new Set();
+  for (const args of [
+    ['diff', '--cached', '--name-only', '-z', baseSha],
+    ['diff', '--name-only', '-z'],
+    ['ls-files', '--others', '--exclude-standard', '-z'],
+  ]) {
+    const raw = gitFile(args, dir, { encoding: 'utf8' });
+    for (const path of raw.split('\0').filter(Boolean)) paths.add(path);
+  }
+  return [...paths].sort();
+}
+
+function assertSparseIndexState(dir, baseSha, identity) {
+  const normalized = normalizeSparseCheckoutIdentity(identity);
+  if (normalized.mode === 'full') return;
+  const rows = gitFile(['ls-files', '-t', '-z'], dir, { encoding: 'utf8' }).split('\0').filter(Boolean);
+  const states = new Map(rows.map((row) => [row.slice(2), row.slice(0, 1)]));
+  for (const path of trackedPathsAtCommit(dir, baseSha)) {
+    if (!sparseCheckoutCoversPath(normalized, path) && states.get(path) !== 'S') {
+      throw sparseError(`sparse checkout index state escaped policy at ${path}`, 'worker_sparse_scope_violation');
+    }
+  }
+}
+
+function assertChangedPathsCovered(paths, identity, projectionTargets = []) {
+  for (const path of paths) {
+    if (projectionTargets.some((target) => path === target || path.startsWith(`${target}/`))) {
+      throw new ToolchainProjectionError('toolchain projection entered the result tree', 'toolchain_projection_materialization_failed');
+    }
+    if (!sparseCheckoutCoversPath(identity, path)) throw sparseError(`worker change escaped sparse policy at ${path}`, 'worker_sparse_scope_violation');
+  }
+}
+
+function trackedProjectionPathsAtCommit(repoRoot, sha, targetPaths) {
+  if (targetPaths.length === 0) return [];
+  const raw = gitFile(['ls-tree', '-r', '--name-only', '-z', sha, '--', ...targetPaths], repoRoot, { encoding: 'utf8' });
+  return raw.split('\0').filter(Boolean);
+}
+
+function validatedMetadata(repoRoot, taskId) {
+  const meta = readMeta(repoRoot, taskId);
+  const baseFields = ['schemaVersion', 'taskId', 'branch', 'baseSha', 'createdAt', 'stoppedAt', 'copiedDependencies', 'sparsePaths', 'sparseCheckoutIdentity'];
+  const projectionFields = ['toolchainProjection', 'toolchainProjectionTargets', 'projectionExclude'];
+  const expectedFields = meta?.toolchainProjection ? [...baseFields, ...projectionFields] : baseFields;
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)
+    || Object.keys(meta).sort().join(',') !== expectedFields.sort().join(',')
+    || meta.schemaVersion !== 1 || meta.taskId !== taskId || meta.branch !== `baton/${taskId}`
+    || typeof meta.baseSha !== 'string' || !/^[a-f0-9]{40}$/u.test(meta.baseSha)
+    || typeof meta.createdAt !== 'string' || (meta.stoppedAt !== null && typeof meta.stoppedAt !== 'string')
+    || !Array.isArray(meta.copiedDependencies) || !Array.isArray(meta.sparsePaths)) throw sparseError('owned worktree metadata is missing or invalid', 'worker_sparse_metadata_invalid');
+  let identity;
+  try { identity = normalizeSparseCheckoutIdentity(meta.sparseCheckoutIdentity); }
+  catch (cause) { throw Object.assign(sparseError('owned worktree sparse identity metadata is invalid', 'worker_sparse_metadata_invalid'), { cause }); }
+  if (JSON.stringify(identity.paths) !== JSON.stringify(normalizeSparsePaths(meta.sparsePaths))) throw sparseError('owned worktree sparse metadata disagrees', 'worker_sparse_metadata_invalid');
+  if (meta.toolchainProjection && (!Array.isArray(meta.toolchainProjectionTargets) || meta.projectionExclude !== `${taskId}.projection.exclude`)) throw sparseError('owned worktree projection metadata is invalid', 'worker_sparse_metadata_invalid');
+  return Object.freeze({ ...meta, sparsePaths: identity.paths, sparseCheckoutIdentity: identity });
+}
+
+export function validateOwnedWorktree(repoRoot, taskId, opts = {}) {
+  normalizePhysicalOwnerId(taskId, 'taskId');
+  const dir = authorityChild(repoRoot, 'wt', taskId, { kind: 'directory', mustExist: true });
+  if (!existsSync(dir)) throw new UnknownWorktreeError(`no owned worktree for taskId "${taskId}"`);
+  const meta = validatedMetadata(repoRoot, taskId);
+  const realDir = realpathSync(dir);
+  if (opts.expectedPath !== undefined && realpathSync(opts.expectedPath) !== realDir) throw new UnknownWorktreeError('owned worktree path identity mismatch');
+  if (realpathSync(sh('git', ['rev-parse', '--show-toplevel'], dir)) !== realDir) throw new UnknownWorktreeError('owned worktree Git root identity mismatch');
+  if (sh('git', ['branch', '--show-current'], dir) !== meta.branch) throw new UnknownWorktreeError('owned worktree branch identity mismatch');
+  if (opts.expectedBranch !== undefined && meta.branch !== opts.expectedBranch) throw sparseError('owned worktree branch metadata disagrees with admitted branch', 'worker_sparse_metadata_invalid');
+  if (opts.expectedBaseSha !== undefined && meta.baseSha !== opts.expectedBaseSha) throw sparseError('owned worktree base metadata disagrees with admitted base', 'worker_sparse_metadata_invalid');
+  try { gitFile(['merge-base', '--is-ancestor', meta.baseSha, 'HEAD'], dir, { stdio: 'ignore' }); }
+  catch { throw new UnknownWorktreeError('owned worktree base identity mismatch'); }
+  const expectedIdentity = opts.sparseCheckoutIdentity === undefined ? meta.sparseCheckoutIdentity : normalizeSparseCheckoutIdentity(opts.sparseCheckoutIdentity);
+  if (!sameSparseIdentity(meta.sparseCheckoutIdentity, expectedIdentity)) throw sparseError('owned worktree sparse deployment identity mismatch', 'worker_sparse_projection_changed');
+  let liveIdentity;
+  try { liveIdentity = liveSparseCheckoutIdentity(dir); }
+  catch (cause) { throw Object.assign(sparseError('owned worktree live sparse identity is invalid', 'worker_sparse_projection_changed'), { cause }); }
+  if (!sameSparseIdentity(liveIdentity, expectedIdentity)) throw sparseError('owned worktree live sparse identity mismatch', 'worker_sparse_projection_changed');
+  assertSparseIndexState(dir, meta.baseSha, expectedIdentity);
+  return Object.freeze({ dir: realDir, meta, sparseCheckoutIdentity: expectedIdentity });
 }
 
 // ---------------------------------------------------------------------------
@@ -219,11 +463,16 @@ export async function pinBaseSha(repoRoot, opts = {}) {
  * @param {string} repoRoot
  * @param {string} taskId
  * @param {string} baseSha
- * @param {{log?: object, dependencyDirs?: string[], toolchainProjection?: object}} [opts]
- * @returns {Promise<{taskId:string, dir:string, branch:string, baseSha:string, createdAt:string,copiedDependencies:string[], toolchainProjection?: object}>}
+ * @param {{log?: object, dependencyDirs?: string[], sparsePaths?:string[], toolchainProjection?: object}} [opts]
+ * @returns {Promise<{taskId:string, dir:string, branch:string, baseSha:string, createdAt:string,copiedDependencies:string[], sparsePaths:string[], toolchainProjection?: object}>}
  */
 export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
-  const dir = wtDirFor(repoRoot, taskId);
+  normalizePhysicalOwnerId(taskId, 'taskId');
+  try { gitFile(['check-ref-format', '--branch', `baton/${taskId}`], repoRoot, { stdio: 'ignore' }); }
+  catch { throw new TypeError('taskId must produce one valid Baton branch ref'); }
+  assertNoPhysicalOwnerCollision(repoRoot, taskId);
+  const wtRoot = authorityRoot(repoRoot, 'wt', { create: true });
+  const dir = join(wtRoot, taskId);
   if (existsSync(dir)) {
     throw new WorktreeAlreadyExistsError(`createFromBase: ${dir} already exists`);
   }
@@ -234,10 +483,15 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
   }
 
   const sources = dependencySources(repoRoot, opts.dependencyDirs ?? []);
+  const sparsePaths = normalizeSparsePaths(opts.sparsePaths ?? []);
+  const sparseIdentity = sparseCheckoutIdentity(sparsePaths);
   const branch = `baton/${taskId}`;
-  mkdirSync(join(repoRoot, '.baton', 'wt'), { recursive: true });
+  if (opts.toolchainProjection) {
+    const collisions = trackedProjectionPathsAtCommit(repoRoot, baseSha, opts.toolchainProjection.targetPaths());
+    if (collisions.length > 0) throw new ToolchainProjectionError('toolchain projection target is tracked by the worker base commit', 'toolchain_projection_materialization_failed');
+  }
   try {
-    sh('git', ['worktree', 'add', '-b', branch, dir, baseSha], repoRoot);
+    sh('git', ['worktree', 'add', '-b', branch, ...(sparsePaths.length ? ['--no-checkout'] : []), dir, baseSha], repoRoot);
   } catch (err) {
     const msg = String(err.stderr || err.message || err);
     if (/already (used by worktree|checked out|exists)/i.test(msg)) {
@@ -252,6 +506,10 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
   let projectionExcludePath;
 
   try {
+    if (sparsePaths.length) {
+      gitFile(['sparse-checkout', 'set', '--no-cone', '--stdin'], dir, { input: `${sparsePaths.map((path) => `/${path}`).join('\n')}\n`, encoding: 'utf8' });
+      gitFile(['checkout', '-q', branch], dir, { stdio: 'pipe' });
+    }
     if (opts.toolchainProjection) {
       toolchainProjectionTargets = opts.toolchainProjection.targetPaths();
       projectionExcludePath = configureProjectionExcludes(repoRoot, dir, taskId, toolchainProjectionTargets);
@@ -261,28 +519,35 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
     } else {
       copiedDependencies = materializeDependencies(dir, sources);
     }
+    const createdAt = new Date().toISOString();
+    const meta = {
+      schemaVersion: 1, taskId, branch, baseSha, createdAt, stoppedAt: null,
+      copiedDependencies, sparsePaths: [...sparsePaths], sparseCheckoutIdentity: sparseIdentity,
+    };
+    if (toolchainProjection) {
+      meta.toolchainProjection = toolchainProjection;
+      meta.toolchainProjectionTargets = toolchainProjectionTargets;
+      meta.projectionExclude = `${taskId}.projection.exclude`;
+    }
+    writeMeta(repoRoot, taskId, meta);
+    validateOwnedWorktree(repoRoot, taskId, { expectedBaseSha: baseSha, expectedBranch: branch, sparseCheckoutIdentity: sparseIdentity });
+    logEvent(opts, taskId, 'worktree.created', {
+      dir, branch, baseSha, copiedDependencies, sparsePaths: [...sparsePaths], sparseCheckoutIdentity: sparseIdentity,
+      ...(toolchainProjection ? { toolchainProjection } : {}),
+    });
+    return {
+      taskId, dir, branch, baseSha, createdAt, copiedDependencies, sparsePaths: [...sparsePaths], sparseCheckoutIdentity: sparseIdentity,
+      ...(toolchainProjection ? { toolchainProjection } : {}),
+    };
   } catch (err) {
     try { sh('git', ['worktree', 'remove', '--force', dir], repoRoot); }
     catch { rmSync(dir, { recursive: true, force: true }); }
     try { sh('git', ['branch', '-D', branch], repoRoot); } catch { /* best-effort */ }
     try { sh('git', ['worktree', 'prune'], repoRoot); } catch { /* best-effort */ }
     if (projectionExcludePath) rmSync(projectionExcludePath, { force: true });
+    rmSync(metaPathFor(repoRoot, taskId), { force: true });
     throw err;
   }
-
-  const createdAt = new Date().toISOString();
-
-  // Store metadata including projection target paths for exclusion
-  const meta = { taskId, branch, baseSha, createdAt, stoppedAt: null, copiedDependencies };
-  if (toolchainProjection) {
-    meta.toolchainProjection = toolchainProjection;
-    meta.toolchainProjectionTargets = toolchainProjectionTargets;
-    meta.projectionExclude = `${taskId}.projection.exclude`;
-  }
-  writeMeta(repoRoot, taskId, meta);
-
-  logEvent(opts, taskId, 'worktree.created', { dir, branch, baseSha, copiedDependencies, ...(toolchainProjection ? { toolchainProjection } : {}) });
-  return { taskId, dir, branch, baseSha, createdAt, copiedDependencies, ...(toolchainProjection ? { toolchainProjection } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -296,34 +561,55 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
  * @returns {Promise<{sha:string, snapshotted:boolean}>}
  */
 export async function captureCommit(repoRoot, taskId, opts = {}) {
-  const dir = wtDirFor(repoRoot, taskId);
-  if (!existsSync(dir)) {
-    throw new UnknownWorktreeError(`captureCommit: no worktree for taskId "${taskId}"`);
-  }
-
-  // TP5: Read metadata to get projection targets for exclusion
-  const meta = readMeta(repoRoot, taskId);
-  const projectionTargets = meta?.toolchainProjectionTargets ?? [];
+  normalizePhysicalOwnerId(taskId, 'taskId');
+  const owned = validateOwnedWorktree(repoRoot, taskId, {
+    ...(opts.expectedWorktreePath ? { expectedPath: opts.expectedWorktreePath } : {}),
+    ...(opts.expectedBaseSha ? { expectedBaseSha: opts.expectedBaseSha } : {}),
+    ...(opts.expectedBranch ? { expectedBranch: opts.expectedBranch } : {}),
+    ...(opts.sparseCheckoutIdentity ? { sparseCheckoutIdentity: opts.sparseCheckoutIdentity } : {}),
+  });
+  const { dir, meta } = owned;
+  const projectionTargets = meta.toolchainProjectionTargets ?? [];
+  if (opts.toolchainProjectionTargets && JSON.stringify([...opts.toolchainProjectionTargets].sort()) !== JSON.stringify([...projectionTargets].sort())) throw new ToolchainProjectionError('toolchain projection target authority mismatch', 'toolchain_projection_materialization_failed');
   if (trackedProjectionPaths(dir, projectionTargets).length > 0) throw new ToolchainProjectionError('toolchain projection entered the result index', 'toolchain_projection_materialization_failed');
+  assertChangedPathsCovered(changedPathsFromBase(dir, meta.baseSha), owned.sparseCheckoutIdentity, projectionTargets);
 
   let snapshotted = false;
   if (!isClean(dir)) {
-    sh('git', ['add', '-A'], dir);
-    if (trackedProjectionPaths(dir, projectionTargets).length > 0) throw new ToolchainProjectionError('toolchain projection entered the result index', 'toolchain_projection_materialization_failed');
-    const vendor = opts.vendor;
-    const authorName = vendor ? `baton-worker-${vendor}` : 'baton-snapshot';
-    const authorEmail = `${authorName}@localhost`;
-    const trailerLines = [`Baton-Task: ${taskId}`];
-    if (vendor) trailerLines.push(`Baton-Vendor: ${vendor}`);
-    if (opts.model) trailerLines.push(`Baton-Model: ${opts.model}`);
-    if (opts.effort) trailerLines.push(`Baton-Effort: ${opts.effort}`);
-    const message = `baton snapshot: ${taskId}\n\n${trailerLines.join('\n')}\n`;
-    sh('git', ['commit', '-q', '-m', message, `--author=${authorName} <${authorEmail}>`], dir);
-    snapshotted = true;
+    let staged = false;
+    try {
+      sh('git', ['add', '-A'], dir); staged = true;
+      validateOwnedWorktree(repoRoot, taskId, {
+        expectedPath: dir, expectedBaseSha: opts.expectedBaseSha ?? meta.baseSha,
+        expectedBranch: opts.expectedBranch ?? meta.branch, sparseCheckoutIdentity: owned.sparseCheckoutIdentity,
+      });
+      if (trackedProjectionPaths(dir, projectionTargets).length > 0) throw new ToolchainProjectionError('toolchain projection entered the result index', 'toolchain_projection_materialization_failed');
+      const changedPaths = changedPathsFromBase(dir, meta.baseSha);
+      assertChangedPathsCovered(changedPaths, owned.sparseCheckoutIdentity, projectionTargets);
+      const vendor = opts.vendor;
+      const authorName = vendor ? `baton-worker-${vendor}` : 'baton-snapshot';
+      const authorEmail = `${authorName}@localhost`;
+      const trailerLines = [`Baton-Task: ${taskId}`];
+      if (vendor) trailerLines.push(`Baton-Vendor: ${vendor}`);
+      if (opts.model) trailerLines.push(`Baton-Model: ${opts.model}`);
+      if (opts.effort) trailerLines.push(`Baton-Effort: ${opts.effort}`);
+      const message = `baton snapshot: ${taskId}\n\n${trailerLines.join('\n')}\n`;
+      sh('git', ['commit', '-q', '-m', message, `--author=${authorName} <${authorEmail}>`], dir);
+      snapshotted = true;
+    } catch (error) {
+      if (staged) try { gitFile(['reset', '-q'], dir, { stdio: 'ignore' }); } catch { /* refusal remains authoritative */ }
+      throw error;
+    }
   }
   const sha = sh('git', ['rev-parse', 'HEAD'], dir);
-  logEvent(opts, taskId, 'worktree.captured', { sha, snapshotted });
-  return { sha, snapshotted };
+  const changedPaths = changedPathsFromBase(dir, meta.baseSha);
+  assertChangedPathsCovered(changedPaths, owned.sparseCheckoutIdentity, projectionTargets);
+  validateOwnedWorktree(repoRoot, taskId, {
+    expectedPath: dir, expectedBaseSha: opts.expectedBaseSha ?? meta.baseSha,
+    expectedBranch: opts.expectedBranch ?? meta.branch, sparseCheckoutIdentity: owned.sparseCheckoutIdentity,
+  });
+  logEvent(opts, taskId, 'worktree.captured', { sha, snapshotted, baseSha: meta.baseSha, changedPaths, sparseCheckoutIdentity: owned.sparseCheckoutIdentity });
+  return { sha, snapshotted, baseSha: meta.baseSha, changedPaths, sparseCheckoutIdentity: owned.sparseCheckoutIdentity };
 }
 
 // ---------------------------------------------------------------------------
@@ -332,12 +618,13 @@ export async function captureCommit(repoRoot, taskId, opts = {}) {
 
 const CONFLICT_MARKER = /(?:<{7,}|\|{7,}|={7,}|>{7,})/;
 
-function integrationRoot(repoRoot) { return join(repoRoot, '.baton', 'integrate'); }
+function integrationRoot(repoRoot, create = false) { return authorityRoot(repoRoot, 'integrate', { create }); }
 
 export async function removeStructuredIntegration(repoRoot, stage) {
   const dir = typeof stage === 'string' ? stage : stage?.stagePath;
   if (typeof dir === 'string' && dir.length > 0) {
-    try { sh('git', ['worktree', 'remove', '--force', dir], repoRoot); } catch { rmSync(dir, { recursive: true, force: true }); }
+    const confined = validateOwnedAuthorityPath(repoRoot, 'integrate', dir, { kind: 'directory', mustExist: true });
+    try { sh('git', ['worktree', 'remove', '--force', confined], repoRoot); } catch { rmSync(confined, { recursive: true, force: true }); }
   }
   try { sh('git', ['worktree', 'prune'], repoRoot); } catch { /* best effort */ }
   const root = integrationRoot(repoRoot);
@@ -345,6 +632,7 @@ export async function removeStructuredIntegration(repoRoot, stage) {
 }
 
 export async function stageStructuredIntegration(repoRoot, taskId, resultSha, opts = {}) {
+  normalizePhysicalOwnerId(taskId, 'structured integration taskId');
   ensureBatonExcluded(repoRoot);
   if (!isClean(repoRoot)) throw mergeError('structured integration requires a clean main checkout', 'structured_main_dirty');
   let rightSha;
@@ -354,7 +642,7 @@ export async function stageStructuredIntegration(repoRoot, taskId, resultSha, op
   try { sh('git', ['merge-base', '--is-ancestor', rightSha, beforeSha], repoRoot); throw mergeError('structured integration result is already contained by main', 'structured_already_integrated'); }
   catch (error) { if (error?.code === 'structured_already_integrated') throw error; }
   const mergeBaseSha = sh('git', ['merge-base', beforeSha, rightSha], repoRoot);
-  const root = integrationRoot(repoRoot); mkdirSync(root, { recursive: true });
+  const root = integrationRoot(repoRoot, true);
   const stagePath = join(root, `${taskId}-${randomBytes(4).toString('hex')}`);
   try { sh('git', ['worktree', 'add', '--detach', stagePath, beforeSha], repoRoot); }
   catch (error) { throw mergeError('structured integration stage could not be created', 'structured_stage_failed', error); }
@@ -456,6 +744,7 @@ export async function inspectStructuredIntegration(repoRoot, stage) {
  * @throws {InvalidShaError}
  */
 export async function freshVerifySandbox(repoRoot, label, sha, opts = {}) {
+  normalizePhysicalOwnerId(label, 'verification label');
   let fullSha;
   try {
     fullSha = sh('git', ['rev-parse', '--verify', `${sha}^{commit}`], repoRoot);
@@ -471,16 +760,22 @@ export async function freshVerifySandbox(repoRoot, label, sha, opts = {}) {
   // Validate every source before registering a worktree. Invalid configuration therefore cannot
   // create a detached checkout that no caller has a cleanup handle for.
   const sources = dependencySources(repoRoot, opts.dependencyDirs ?? []);
-  const sparsePaths = sparseProjection(opts.sparsePaths ?? []);
+  const sparsePaths = normalizeSparsePaths(opts.sparsePaths ?? []);
+  const sparseIdentity = sparseCheckoutIdentity(sparsePaths);
+  if (Array.isArray(opts.requiredPaths)) assertChangedPathsCovered(opts.requiredPaths, sparseIdentity, []);
+  if (opts.toolchainProjection) {
+    const collisions = trackedProjectionPathsAtCommit(repoRoot, fullSha, opts.toolchainProjection.targetPaths());
+    if (collisions.length > 0) throw new ToolchainProjectionError('toolchain projection target is tracked by the verification commit', 'toolchain_projection_materialization_failed');
+  }
 
-  const verifyRoot = join(repoRoot, '.baton', 'verify');
-  mkdirSync(verifyRoot, { recursive: true });
+  const verifyRoot = authorityRoot(repoRoot, 'verify', { create: true });
   const suffix = randomBytes(4).toString('hex');
   const dir = join(verifyRoot, `${label}-${suffix}`);
   let registered = false;
 
   const cleanup = async () => {
     if (registered || existsSync(dir)) {
+      if (existsSync(dir)) authorityChild(repoRoot, 'verify', basename(dir), { kind: 'directory', mustExist: true });
       try {
         sh('git', ['worktree', 'remove', '--force', dir], repoRoot);
       } catch {
@@ -503,6 +798,9 @@ export async function freshVerifySandbox(repoRoot, label, sha, opts = {}) {
       gitFile(['sparse-checkout', 'set', '--no-cone', '--stdin'], dir, { input: `${sparsePaths.map((path) => `/${path}`).join('\n')}\n`, encoding: 'utf8' });
       gitFile(['checkout', '--detach', fullSha], dir, { stdio: 'pipe' });
     }
+    const liveIdentity = liveSparseCheckoutIdentity(dir);
+    if (!sameSparseIdentity(liveIdentity, sparseIdentity)) throw new TypeError('verification sparse checkout identity mismatch');
+    assertSparseIndexState(dir, fullSha, sparseIdentity);
 
     // Materialize legacy dependencies or toolchain projection
     if (opts.toolchainProjection) {
@@ -516,8 +814,8 @@ export async function freshVerifySandbox(repoRoot, label, sha, opts = {}) {
     throw err;
   }
 
-  logEvent(opts, 'worktree', 'worktree.verify_sandbox_created', { dir, sha: fullSha, label, copiedDependencies, sparsePaths, ...(toolchainProjection ? { toolchainProjection } : {}) });
-  return { dir, sha: fullSha, copiedDependencies, sparsePaths, ...(toolchainProjection ? { toolchainProjection } : {}), cleanup };
+  logEvent(opts, 'worktree', 'worktree.verify_sandbox_created', { dir, sha: fullSha, label, copiedDependencies, sparsePaths, sparseCheckoutIdentity: sparseIdentity, ...(toolchainProjection ? { toolchainProjection } : {}) });
+  return { dir, sha: fullSha, copiedDependencies, sparsePaths, sparseCheckoutIdentity: sparseIdentity, ...(toolchainProjection ? { toolchainProjection } : {}), cleanup };
 }
 
 // ---------------------------------------------------------------------------
@@ -526,7 +824,8 @@ export async function freshVerifySandbox(repoRoot, label, sha, opts = {}) {
 
 /** @param {string} repoRoot @param {string} taskId @returns {Promise<void>} */
 export async function markStopped(repoRoot, taskId) {
-  const meta = readMeta(repoRoot, taskId) ?? { taskId, stoppedAt: null };
+  normalizePhysicalOwnerId(taskId, 'taskId');
+  const meta = { ...validatedMetadata(repoRoot, taskId) };
   meta.stoppedAt = new Date().toISOString();
   writeMeta(repoRoot, taskId, meta);
 }
@@ -543,10 +842,13 @@ export async function markStopped(repoRoot, taskId) {
  * @throws {WorktreeLockedError}
  */
 export async function reap(repoRoot, taskId, opts = {}) {
-  const dir = wtDirFor(repoRoot, taskId);
-  const metaFile = metaPathFor(repoRoot, taskId);
-  const projectionExclude = projectionExcludePathFor(repoRoot, taskId);
+  normalizePhysicalOwnerId(taskId, 'taskId');
+  const root = authorityRoot(repoRoot, 'wt', { create: false });
+  const dir = join(root ?? join(realpathSync(repoRoot), '.baton', 'wt'), taskId);
+  const metaFile = join(root ?? dirname(dir), `${taskId}.meta.json`);
+  const projectionExclude = join(root ?? dirname(dir), `${taskId}.projection.exclude`);
   if (existsSync(dir)) {
+    authorityChild(repoRoot, 'wt', taskId, { kind: 'directory', mustExist: true });
     const meta = readMeta(repoRoot, taskId);
     const stopped = !!meta?.stoppedAt;
     if (!stopped && !opts.force) {
@@ -565,8 +867,8 @@ export async function reap(repoRoot, taskId, opts = {}) {
       // A failed existence probe is the idempotent absent case. A surviving ref below is red.
     }
   }
-  if (existsSync(metaFile)) rmSync(metaFile, { force: true });
-  if (existsSync(projectionExclude)) rmSync(projectionExclude, { force: true });
+  if (existsSync(metaFile)) rmSync(authorityChild(repoRoot, 'wt', `${taskId}.meta.json`, { kind: 'file', mustExist: true }), { force: true });
+  if (existsSync(projectionExclude)) rmSync(authorityChild(repoRoot, 'wt', `${taskId}.projection.exclude`, { kind: 'file', mustExist: true }), { force: true });
   const registered = (await listWorktrees(repoRoot)).some((entry) => {
     try { return realpathSync(entry.dir) === realpathSync(dir); }
     catch { return pathResolve(entry.dir) === pathResolve(dir); }
@@ -602,13 +904,16 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
   // Structured integration is never resumed after coordinator restart: without an in-memory
   // operation holding the freshly observed verification verdict, a candidate is evidence only.
   // Reap every detached stage and require a new attempt to reconstruct and reverify it.
-  const mergeRoot = integrationRoot(repoRoot);
-  if (existsSync(mergeRoot)) {
+  let mergeRoot = null;
+  try { mergeRoot = authorityRoot(repoRoot, 'integrate', { create: false }); }
+  catch (err) { report.errors.push(`integrate-root: ${err.message || err}`); }
+  if (mergeRoot) {
     for (const entry of readdirSync(mergeRoot)) {
       const fullDir = join(mergeRoot, entry);
-      let isDir = false; try { isDir = statSync(fullDir).isDirectory(); } catch { continue; }
+      let isDir = false; try { isDir = lstatSync(fullDir).isDirectory() && !lstatSync(fullDir).isSymbolicLink(); } catch { continue; }
       if (!isDir) continue;
       try {
+        authorityChild(repoRoot, 'integrate', entry, { kind: 'directory', mustExist: true });
         try { sh('git', ['worktree', 'remove', '--force', fullDir], repoRoot); }
         catch { rmSync(fullDir, { recursive: true, force: true }); }
         report.removedIntegrationDirs.push(fullDir);
@@ -620,15 +925,17 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
 
   const expected = new Set(expectedActiveTaskIds);
 
-  const wtRoot = join(repoRoot, '.baton', 'wt');
+  let wtRoot = null;
+  try { wtRoot = authorityRoot(repoRoot, 'wt', { create: false }); }
+  catch (err) { report.errors.push(`wt-root: ${err.message || err}`); }
   {
     const candidates = new Set();
-    if (existsSync(wtRoot)) {
+    if (wtRoot) {
     for (const entry of readdirSync(wtRoot)) {
       if (entry.endsWith('.meta.json')) candidates.add(entry.slice(0, -'.meta.json'.length));
       else if (entry.endsWith('.projection.exclude')) candidates.add(entry.slice(0, -'.projection.exclude'.length));
       else {
-        try { if (statSync(join(wtRoot, entry)).isDirectory()) candidates.add(entry); } catch { /* inspected below if represented by metadata */ }
+        try { if (lstatSync(join(wtRoot, entry)).isDirectory() && !lstatSync(join(wtRoot, entry)).isSymbolicLink()) candidates.add(entry); } catch { /* inspected below if represented by metadata */ }
       }
     }
     }
@@ -636,16 +943,28 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
       for (const taskId of sh('git', ['for-each-ref', '--format=%(refname:strip=3)', 'refs/heads/baton/'], repoRoot).split('\n').filter(Boolean)) candidates.add(taskId);
     } catch (err) { report.errors.push(`worker-branch-scan: ${err.message || err}`); }
     for (const taskId of candidates) {
-      const fullDir = join(wtRoot, taskId); const metaFile = metaPathFor(repoRoot, taskId); const projectionExclude = projectionExcludePathFor(repoRoot, taskId);
-      if (expected.has(taskId) && existsSync(fullDir)) continue;
+      let normalizedTaskId;
+      try { normalizedTaskId = normalizePhysicalOwnerId(taskId, 'reconciled taskId'); }
+      catch (err) { report.errors.push(`${taskId}: ${err.message || err}`); continue; }
+      const baseRoot = wtRoot ?? join(realpathSync(repoRoot), '.baton', 'wt');
+      const fullDir = join(baseRoot, normalizedTaskId); const metaFile = join(baseRoot, `${normalizedTaskId}.meta.json`); const projectionExclude = join(baseRoot, `${normalizedTaskId}.projection.exclude`);
+      if (expected.has(taskId) && existsSync(fullDir)) {
+        try {
+          validateOwnedWorktree(repoRoot, taskId, {
+            ...(opts.sparseCheckoutIdentity ? { sparseCheckoutIdentity: opts.sparseCheckoutIdentity } : {}),
+          });
+          continue;
+        } catch { /* invalid expected authority is quarantined below */ }
+      }
       try {
         const hadDir = existsSync(fullDir); const hadResidue = hadDir || existsSync(metaFile) || existsSync(projectionExclude);
         if (hadDir) {
+          authorityChild(repoRoot, 'wt', normalizedTaskId, { kind: 'directory', mustExist: true });
           try { sh('git', ['worktree', 'remove', '--force', fullDir], repoRoot); }
           catch { rmSync(fullDir, { recursive: true, force: true }); }
         }
-        if (existsSync(metaFile)) rmSync(metaFile, { force: true });
-        if (existsSync(projectionExclude)) rmSync(projectionExclude, { force: true });
+        if (existsSync(metaFile)) rmSync(authorityChild(repoRoot, 'wt', `${normalizedTaskId}.meta.json`, { kind: 'file', mustExist: true }), { force: true });
+        if (existsSync(projectionExclude)) rmSync(authorityChild(repoRoot, 'wt', `${normalizedTaskId}.projection.exclude`, { kind: 'file', mustExist: true }), { force: true });
         let branchPresent = false;
         try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/baton/${taskId}`], repoRoot); branchPresent = true; } catch { /* absent */ }
         const hadBranch = branchPresent;
@@ -662,11 +981,14 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
 
   // Verification sandboxes are never resumable. A crash can occur between sandbox creation and
   // its in-memory finally block, so restart reconciliation owns every abandoned directory.
-  const verifyRoot = join(repoRoot, '.baton', 'verify');
-  if (existsSync(verifyRoot)) {
+  let verifyRoot = null;
+  try { verifyRoot = authorityRoot(repoRoot, 'verify', { create: false }); }
+  catch (err) { report.errors.push(`verify-root: ${err.message || err}`); }
+  if (verifyRoot) {
     for (const entry of readdirSync(verifyRoot)) {
       const fullDir = join(verifyRoot, entry);
       try {
+        authorityChild(repoRoot, 'verify', entry, { kind: 'directory', mustExist: true });
         try { sh('git', ['worktree', 'remove', '--force', fullDir], repoRoot); }
         catch { rmSync(fullDir, { recursive: true, force: true }); }
         if (existsSync(fullDir)) throw new WorktreeCleanupError('verification sandbox remained after cleanup');

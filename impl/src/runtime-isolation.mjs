@@ -29,7 +29,8 @@ export class RuntimeIsolation {
     this.credentialEnv = opts.credentialEnv ?? {};
     this.credentialFiles = opts.credentialFiles ?? {};
     this.keepEnv = new Set([...(opts.keepEnv ?? []), ...ALWAYS_KEEP]);
-    privateDir(this.root);
+    // Admission constructs policy only. The first accepted worker creates the runtime root so a
+    // pre-worktree capacity refusal leaves no runtime filesystem authority behind.
   }
 
   create(workerId, vendor) {

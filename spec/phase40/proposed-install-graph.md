@@ -150,5 +150,6 @@ source tree remained byte-clean and every owned process/root was reaped.
 This phase does not install packages, edit a manifest or lockfile in the source worktree, decide
 `borrow|build|internal`, approve a plan, scan all transitive advisories, clear a known advisory,
 prove vulnerable-function reachability, verify Sigstore/SLSA independently, add another ecosystem,
-run Socket, merge, publish, export to project-manager, or integrate with homelab. Those remain
-separate named contracts; no omission retires them.
+run Socket, merge, or publish. Those remain separate named contracts; no omission retires them.
+Deployment-neutral graph export may be specified later, but project-manager/homelab runtime
+integration is excluded from Baton rather than deferred.

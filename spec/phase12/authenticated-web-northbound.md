@@ -225,4 +225,5 @@ Implementation starts only after CK8/CK9 establishes one durable coordinator aut
 vertical is API/stream/security behavior with a minimal test client; a dashboard is not required.
 MCP and web northbounds share command schemas and policy adapters where useful, but neither is a
 privileged backdoor. Federation, public multi-tenant hosting, and homelab integration are outside
-this phase. They remain ordinary future deployment decisions and may not weaken this boundary.
+this phase. Federation and public multi-tenant hosting remain separate deployment decisions;
+homelab integration is excluded from Baton and may not be inferred as later scope.

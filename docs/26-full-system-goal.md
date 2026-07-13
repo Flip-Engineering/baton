@@ -130,16 +130,21 @@ runtime isolation.
 - Fresh-result verification plus base red→green, coverage-of-change, mutation strength,
   impact-selected tests, property/fuzz/BMC/SMT/proof rungs, and reproducible counterexamples.
 - Independent oracle construction and cross-vendor semantic-diff review for risk-selected work.
+- A first-class **Goal/Plan authority**: bounded plans, explicit dependencies and risk, pre-effect
+  plan review for consequential work, durable operator amendments, and proof that a worker cannot
+  weaken the goal or definition of done while executing it.
 - Structured postmortems and failure attribution linked to source events.
 - Verified branch integration, textual then structured/semantic merge, conflict handling, effect
   tripwire, review artifact, and explicit approval before push/deploy/other irreversible actions.
+- Stacked integration queues, deployment adapters, health-gated rollout, rollback automation, and
+  live remote publication remain distinct approval-gated contracts rather than implied by merge.
 
 ### F. Routing, evaluation, and learning
 
 - Routing buckets keyed by harness, exact model, model family, task class, capability, policy, and
   version; only verified outcomes learn; idempotent replay preserves them.
 - New-model exploration, decay, refusal feedback/reroute, operator pin/exclude/prefer controls,
-  quota awareness, and outcome/calibration telemetry.
+  quota awareness, automatic account/seat-aware scheduling, and outcome/calibration telemetry.
 - Reproducible M0 control latency, M1 orchestration arms, and E2 cross-vendor decorrelation
   evaluations, including null/negative outcomes and human-audit cost.
 
@@ -164,6 +169,8 @@ The epistemic layer borrows the strong ideas—not the deployment—from `projec
 - contradiction-gated, provenance-framed, token-bounded pull recall—never automatic shared-brain
   injection; and
 - run scorecards expose graph and fleet health with metric breakdowns rather than one green bit.
+- Atlas/CPG/semantic-delta producers mint evidence-bound `Representation` nodes and graph-backed
+  deltas; merely permitting the node type does not count as building those producers.
 
 ### H. Capability plane
 
@@ -291,9 +298,10 @@ operator/session, command, SSE snapshot, logout/revocation, listener shutdown, a
 cleanup. The in-app browser interaction remains pending because its required execution bridge was
 not exposed; the wire proof is not relabeled as a browser pass.
 
-The active next increment is the real-browser OIDC/control/stream/logout proof when its bridge is
-available, plus optional WebSocket parity, Streamable HTTP MCP/tasks/daemon depth, and deeper operator surfaces. It is followed by
-the next measured Atlas representation rungs. Proposal-only structural rewrite now ships with a
+The active operational increment is sparse/capacity-governed recursive Baton proof across every
+supported harness, followed by the real-browser OIDC/control/stream/logout proof when its bridge is
+available, optional WebSocket parity, Streamable HTTP MCP/tasks/daemon depth, deeper operator
+surfaces, and the next measured Atlas representation rungs. Proposal-only structural rewrite now ships with a
 9/9 focused gate, 701/701 full suite, and a Baton-on-Baton immutable proposal proof. Direct apply
 and live-LSP depth remain, while CPG/dataflow, IR, behavioral fingerprints, semantic diff/merge,
 and e-graphs stay in the catalog. The CPG seed, delta/impact, and operator-specified taint
@@ -757,6 +765,47 @@ behavioral analysis, semantic merge, and conditional expression/kernel e-graphs 
 shared causal/temporal knowledge graph remains a self-contained Baton system inspired by the
 repository's project-manager material only; no homelab or external project-manager runtime,
 credential, query, mutation, or integration is in scope.
+
+Phase 57 ships truthful provider governance over the exact harness/model/effort route selected by
+the orchestrator. Closed strict/observe policies bind token metric, usage, provider/tool-call
+counts, per-turn reservations, terminal seals, policy digest, and route digest through live events,
+result, replay, and post-acceptance revocation. One-shot argv and session routes retain exact model
+and effort, while process lifecycle remains bounded and reapable. The canonical suite reached
+1256/1256 green. GitHub issue #2 remains the public tracking seam for exact harness/model/effort
+routing. This work does not replace provider-backed recovery, authenticated operator depth,
+Scratch/Bench/Skill promotion, or any representation rung.
+
+Phase 58 began as the sparse-worker response to a real Baton-on-Baton ENOSPC failure before any
+provider call. Adversarial review proved that initial sparsity alone was unsafe, so the shipped
+contract is broader: a canonical sparse identity is now enforced across deployment, atomic private
+metadata, Git config/index state, worktree events, live/replayed/resumed session context, capture,
+result/base verification evidence, and reconciliation. Capture refuses sparse broadening/disable,
+metadata loss/forgery, hidden deletion/addition, prefix escapes, and any full-tree diff outside the
+admitted view. Worker/result/base commits cannot hide tracked toolchain targets behind sparse
+materialization. Physical worker and verifier IDs are confined before effects; invalid expected
+workers are reaped on restart. Combined sparse plus immutable-toolchain native resume is executable.
+Fifty-four focused real-Git contracts are green, including exact coordinator-base/branch binding
+against metadata smuggling and non-symlink realpath confinement for worker/verifier/integration
+ownership roots.
+
+Phase 59 now adds actual fleet byte/inode reservations because sparse checkout is neither a quota
+nor a security boundary. A closed deployment policy reserves the exact pinned selected Git tree,
+attested toolchain bytes/files/directories, and runtime allowance before worktree, runtime, task, or
+provider effects. Repo-scoped HMAC-sealed state, generation locks, nonce-bound release, restart
+adoption, abandoned-verifier cleanup, active legacy-close refusal, and pre-writer-release zero-state
+drain receipts are executable. Legacy un-attested dependency copying refuses when capacity is on.
+The HMAC is corruption detection when its key is withheld, not a hostile same-UID worker boundary;
+OS sandboxing and hard isolated-volume quotas remain explicit later gates. Thirty-four focused
+capacity contracts and the 1344/1344 canonical suite are green. The exact five-provider recursive
+sparse+capacity rerun remains a live acceptance gate, not a claimed completion.
+
+These operational phases do not narrow the retained system. The self-contained causal/temporal
+knowledge graph remains inspired by repository-local project-manager prior art without homelab or
+external runtime integration. Authenticated web user-to-orchestrator command/control, exact route
+selection, provider sessions, Scratch Board/Bench, Skill/Playbook promotion, evaluation, Atlas
+AST/CST and lexical representation, SCIP/symbol graph, CPG, IR/SSA/PDG and semantic delta,
+behavioral fingerprints, semantic merge, and conditional expression/kernel e-graphs all remain
+catalogued work with their existing evidence-ladder gates.
 
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
