@@ -16,7 +16,9 @@ const KNOWLEDGE_RECALL_POLICY_FIELDS = ['repoId', 'maxQueryBytes', 'maxQueryTerm
 const KNOWLEDGE_RECALL_ASSESSMENT_POLICY_FIELDS = ['repoId', 'maxScanEvents', 'maxReceipts', 'maxNodeRefs', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes'];
 const KNOWLEDGE_PROMOTION_POLICY_FIELDS = ['repoId', 'minScratchReaders', 'maxScanEvents', 'maxCandidates', 'maxCandidateBytes', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes'];
 const KNOWLEDGE_SCRATCH_CORRECTION_POLICY_FIELDS = ['repoId', 'minScratchReaders', 'maxScanEvents', 'maxAffectedReads', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes'];
+const KNOWLEDGE_CONTRADICTION_POLICY_FIELDS = ['repoId', 'maxScanEvents', 'maxScanEdges', 'maxItems', 'maxSnippetBytes', 'maxEvidenceRefs', 'maxAffectedReads', 'maxReasonBytes', 'maxBatchBytes', 'maxResultBytes'];
 const SCRATCH_CORRECTION_ADMIN_EVENTS = new Set(['evidence.mapped', 'web.command_admitted', 'mcp.call_admitted']);
+const CONTRADICTION_ADMIN_EVENTS = new Set(['evidence.mapped', 'web.command_admitted', 'mcp.call_admitted']);
 const PROMOTION_DECISION_KINDS = new Set(['control.stop_requested', 'follow_up.requested', 'publication.authorized', 'publication.denied']);
 const PROMOTION_FAILURE_KINDS = new Set(['integration.incomplete', 'integration.refused', 'publication.refused', 'recovery.claimed_without_spawn']);
 const PROVIDER_FAILURE_CODES = new Set(['provider_index_changed', 'reuse_policy_reconciliation_required', 'reuse_evidence_diverged', 'capability_refused', 'provider_processing_failed']);
@@ -76,6 +78,14 @@ function validKnowledgeScratchCorrectionPolicy(policy) {
   if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
   return policy.minScratchReaders <= 1_000 && policy.maxScanEvents <= 1_000_000 && policy.maxAffectedReads <= 1_000_000
     && policy.maxEvidenceRefs <= 1_000_000 && policy.maxBatchBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
+}
+function validKnowledgeContradictionPolicy(policy) {
+  if (!policy || Object.keys(policy).sort().join(',') !== [...KNOWLEDGE_CONTRADICTION_POLICY_FIELDS].sort().join(',') || typeof policy.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId)) return false;
+  const numeric = KNOWLEDGE_CONTRADICTION_POLICY_FIELDS.filter((name) => name !== 'repoId');
+  if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
+  return policy.maxScanEvents <= 1_000_000 && policy.maxScanEdges <= 1_000_000 && policy.maxItems <= 100_000
+    && policy.maxSnippetBytes <= 64 * 1024 && policy.maxEvidenceRefs <= 1_000_000 && policy.maxAffectedReads <= 1_000_000
+    && policy.maxReasonBytes <= 64 * 1024 && policy.maxBatchBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
 }
 function providerAttemptDelay(policy, windowAttempt) {
   const exponent = Math.min(windowAttempt - 1, Math.ceil(Math.log2(policy.maxBackoffMs / policy.initialBackoffMs)));
@@ -1257,10 +1267,13 @@ export class CoordinationStore {
         this._setKnowledgeNode(event, p.to, freeze({ ...clone(target), validTo: p.validFrom ?? event.ts, validityVersion: target.validityVersion + 1, invalidatedBy: p.id }));
       }
     } else if (event.kind === 'knowledge.contradiction_resolved') {
-      this._validateContradictionResolution(p, true, event.actor);
+      if (p.schemaVersion === 2) this._validateBoundedContradictionResolutionPayload(p, event, true);
+      else this._validateContradictionResolution(p, true, event.actor);
       const edge = this._knowledgeEdges.get(p.edgeId); const loser = this._knowledgeNodes.get(p.loserId);
-      this._setKnowledgeEdge(event, edge.id, freeze({ ...clone(edge), validTo: event.ts, validityVersion: edge.validityVersion + 1, resolvedBy: event.seq, winnerId: p.winnerId, loserId: p.loserId, resolutionReason: p.reason }));
+      const reason = p.schemaVersion === 2 ? p.request.reason : p.reason;
+      this._setKnowledgeEdge(event, edge.id, freeze({ ...clone(edge), validTo: event.ts, validityVersion: edge.validityVersion + 1, resolvedBy: event.seq, winnerId: p.winnerId, loserId: p.loserId, resolutionReason: reason }));
       this._setKnowledgeNode(event, loser.id, freeze({ ...clone(loser), validTo: event.ts, validityVersion: loser.validityVersion + 1, invalidatedBy: event.seq }));
+      if (p.schemaVersion === 2) this._contamination.push(freeze({ nodeId: p.loserId, invalidationEvent: event.seq, affectedReadEvents: clone(p.affectedReadEvents), eventSeq: event.seq, ts: event.ts }));
     } else if (event.kind === 'knowledge.invalidated') {
       this._validateKnowledgeInvalidation(p, event, true); const target = this._knowledgeNodes.get(p.nodeId);
       this._setKnowledgeNode(event, p.nodeId, freeze({ ...clone(target), validTo: event.ts, validityVersion: target.validityVersion + 1, invalidatedBy: event.seq }));
@@ -2440,6 +2453,138 @@ export class CoordinationStore {
     return { ok: true, event: clone(event), edge: clone(this._knowledgeEdges.get(payload.id)), contamination: clone(contamination) };
   }
 
+  _contradictionListRequest(request, policy) {
+    const fields = ['observedSeq', 'afterEdgeId', 'limit'];
+    if (!validKnowledgeContradictionPolicy(policy) || !request || Object.keys(request).sort().join(',') !== fields.sort().join(',')
+      || !Number.isSafeInteger(request.observedSeq) || request.observedSeq < 0 || request.observedSeq > this._events.length
+      || (request.afterEdgeId !== null && !boundedText(request.afterEdgeId, 4_096)) || !Number.isSafeInteger(request.limit) || request.limit <= 0) throw new CoordinationRefusal('knowledge contradiction list request is invalid', 'causal_contradiction_invalid');
+    if (request.observedSeq > policy.maxScanEvents || request.limit > policy.maxItems) throw new CoordinationRefusal('knowledge contradiction list exceeded deployment ceiling', 'causal_contradiction_oversize');
+    return freeze(clone(request));
+  }
+
+  listKnowledgeContradictions(repoId, rawRequest, policy) {
+    if (!validKnowledgeContradictionPolicy(policy) || policy.repoId !== repoId) throw new CoordinationRefusal('knowledge contradiction list policy is invalid', 'causal_contradiction_invalid');
+    const request = this._contradictionListRequest(rawRequest, policy); const nodes = this.queryKnowledge({ observedSeq: request.observedSeq }); const edges = this.queryKnowledgeEdges({ observedSeq: request.observedSeq });
+    if (edges.length > policy.maxScanEdges) throw new CoordinationRefusal('knowledge contradiction edge scan exceeded deployment ceiling', 'causal_contradiction_oversize');
+    const nodeMap = new Map(nodes.map((node) => [node.id, node])); const contradictions = edges.filter((edge) => edge.type === 'Contradicts').sort((a, b) => a.id.localeCompare(b.id));
+    const rows = contradictions.map((edge) => {
+      const endpoints = [nodeMap.get(edge.from), nodeMap.get(edge.to)].sort((a, b) => (a?.id ?? '').localeCompare(b?.id ?? ''));
+      if (edge.validTo || edge.resolvedBy || endpoints.length !== 2 || endpoints.some((node) => !node || node.validTo) || endpoints[0].id === endpoints[1].id || endpoints[0].type !== endpoints[1].type) throw new CoordinationRefusal('knowledge contradiction bundle is malformed', 'causal_contradiction_integrity');
+      const safeEndpoints = endpoints.map((node) => ({
+        id: node.id, type: node.type, grounding: node.grounding, contentDigest: node.contentDigest,
+        validityVersion: node.validityVersion, observedSeq: node.observedSeq, observedAt: node.observedAt,
+        eventTimeSeq: node.eventTimeSeq, eventTime: node.eventTime, snippet: utf8Snippet(node.body, policy.maxSnippetBytes),
+        evidenceCount: (node.evidence ?? []).length, evidenceDigest: canonicalDigest(node.evidence ?? []),
+      }));
+      return {
+        edgeId: edge.id, status: 'unresolved', edgeValidityVersion: edge.validityVersion,
+        edgeObservedSeq: edge.observedSeq, edgeObservedAt: edge.observedAt, edgeEventTimeSeq: edge.eventTimeSeq, edgeEventTime: edge.eventTime,
+        evidenceCount: (edge.evidence ?? []).length, evidenceDigest: canonicalDigest(edge.evidence ?? []), endpoints: safeEndpoints,
+      };
+    });
+    let offset = 0;
+    if (request.afterEdgeId !== null) { const index = rows.findIndex((row) => row.edgeId === request.afterEdgeId); if (index === -1) throw new CoordinationRefusal('knowledge contradiction continuation is invalid', 'causal_contradiction_invalid'); offset = index + 1; }
+    const items = rows.slice(offset, offset + request.limit); const evidenceRefs = items.reduce((sum, row) => sum + row.evidenceCount + row.endpoints.reduce((inner, endpoint) => inner + endpoint.evidenceCount, 0), 0);
+    if (evidenceRefs > policy.maxEvidenceRefs) throw new CoordinationRefusal('knowledge contradiction evidence exceeded deployment ceiling', 'causal_contradiction_oversize');
+    const policyDigest = canonicalDigest(policy); const requestDigest = canonicalDigest({ repoId, request, policyDigest }); const nextAfterEdgeId = offset + items.length < rows.length ? items.at(-1)?.edgeId ?? null : null;
+    const core = {
+      schemaVersion: 1, repoId, observedSeq: request.observedSeq, observedAt: this.observationTime(request.observedSeq), policyDigest, requestDigest,
+      afterEdgeId: request.afterEdgeId, limit: request.limit, totalUnresolved: rows.length, items, nextAfterEdgeId,
+      frame: 'UNTRUSTED_CONTRADICTED_KNOWLEDGE — compare both claims and verify evidence before choosing a winner',
+    };
+    const projection = freeze({ ...core, projectionDigest: canonicalDigest(core) });
+    if (canonicalBytes(projection) > policy.maxResultBytes) throw new CoordinationRefusal('knowledge contradiction list result exceeded deployment ceiling', 'causal_contradiction_oversize');
+    return projection;
+  }
+
+  _contradictionResolutionRequest(request, policy) {
+    const fields = ['edgeId', 'winnerId', 'loserId', 'expectedEdgeValidityVersion', 'expectedWinnerValidityVersion', 'expectedLoserValidityVersion', 'reason'];
+    if (!validKnowledgeContradictionPolicy(policy) || !request || Object.keys(request).sort().join(',') !== fields.sort().join(',')
+      || !boundedText(request.edgeId, 4_096) || !boundedText(request.winnerId, 4_096) || !boundedText(request.loserId, 4_096) || request.winnerId === request.loserId
+      || !Number.isSafeInteger(request.expectedEdgeValidityVersion) || request.expectedEdgeValidityVersion <= 0
+      || !Number.isSafeInteger(request.expectedWinnerValidityVersion) || request.expectedWinnerValidityVersion <= 0
+      || !Number.isSafeInteger(request.expectedLoserValidityVersion) || request.expectedLoserValidityVersion <= 0
+      || !boundedText(request.reason, policy.maxReasonBytes) || !validUnicodeScalarString(request.reason)) throw new CoordinationRefusal('knowledge contradiction resolution request is invalid', 'causal_contradiction_invalid');
+    return freeze(clone(request));
+  }
+
+  _deriveBoundedContradictionResolution(repoId, observedSeq, policy, rawRequest, beforeEventSeq = this._events.length + 1) {
+    if (!validKnowledgeContradictionPolicy(policy) || policy.repoId !== repoId || !Number.isSafeInteger(observedSeq) || observedSeq < 0 || observedSeq >= beforeEventSeq || observedSeq > this._events.length) throw new CoordinationRefusal('knowledge contradiction resolution boundary is invalid', 'causal_contradiction_invalid');
+    if (observedSeq > policy.maxScanEvents) throw new CoordinationRefusal('knowledge contradiction resolution scan exceeded deployment ceiling', 'causal_contradiction_oversize');
+    if (this._events.slice(observedSeq, Math.max(observedSeq, beforeEventSeq - 1)).some((event) => !CONTRADICTION_ADMIN_EVENTS.has(event.kind))) throw new CoordinationRefusal('knowledge contradiction resolution boundary became stale', 'causal_contradiction_conflict');
+    const request = this._contradictionResolutionRequest(rawRequest, policy); const nodes = this.queryKnowledge({ observedSeq }); const edges = this.queryKnowledgeEdges({ observedSeq });
+    if (edges.length > policy.maxScanEdges) throw new CoordinationRefusal('knowledge contradiction resolution edge scan exceeded deployment ceiling', 'causal_contradiction_oversize');
+    const nodeMap = new Map(nodes.map((node) => [node.id, node])); const edge = edges.find((row) => row.id === request.edgeId); const winner = nodeMap.get(request.winnerId); const loser = nodeMap.get(request.loserId);
+    const preAppendNodes = new Map(this.queryKnowledge({ observedSeq: beforeEventSeq - 1 }).map((node) => [node.id, node])); const preAppendEdges = new Map(this.queryKnowledgeEdges({ observedSeq: beforeEventSeq - 1 }).map((row) => [row.id, row]));
+    const currentEdge = preAppendEdges.get(request.edgeId); const currentWinner = preAppendNodes.get(request.winnerId); const currentLoser = preAppendNodes.get(request.loserId);
+    if (!edge || edge.type !== 'Contradicts' || edge.validTo || edge.resolvedBy || !winner || !loser || winner.validTo || loser.validTo || ![edge.from, edge.to].includes(winner.id) || ![edge.from, edge.to].includes(loser.id)
+      || !currentEdge || currentEdge.validTo || currentEdge.resolvedBy || !currentWinner || currentWinner.validTo || !currentLoser || currentLoser.validTo
+      || canonicalDigest(edge) !== canonicalDigest(currentEdge) || canonicalDigest(winner) !== canonicalDigest(currentWinner) || canonicalDigest(loser) !== canonicalDigest(currentLoser)) throw new CoordinationRefusal('knowledge contradiction is stale, resolved, or mismatched', 'causal_contradiction_conflict');
+    if (edge.validityVersion !== request.expectedEdgeValidityVersion || winner.validityVersion !== request.expectedWinnerValidityVersion || loser.validityVersion !== request.expectedLoserValidityVersion) throw new CoordinationRefusal('knowledge contradiction versions are stale', 'causal_contradiction_conflict');
+    const affectedReadEvents = this._knowledgeReads.filter((read) => read.eventSeq <= observedSeq && read.nodeIds.includes(loser.id)).map((read) => read.eventSeq); const evidenceRefs = (edge.evidence ?? []).length + (winner.evidence ?? []).length + (loser.evidence ?? []).length;
+    if (affectedReadEvents.length > policy.maxAffectedReads || evidenceRefs > policy.maxEvidenceRefs) throw new CoordinationRefusal('knowledge contradiction resolution evidence exceeded deployment ceiling', 'causal_contradiction_oversize');
+    const projectionCore = {
+      edgeId: edge.id, winnerId: winner.id, loserId: loser.id,
+      expectedEdgeValidityVersion: edge.validityVersion, expectedWinnerValidityVersion: winner.validityVersion, expectedLoserValidityVersion: loser.validityVersion,
+      edgeValidityVersion: edge.validityVersion + 1, winnerValidityVersion: winner.validityVersion, loserValidityVersion: loser.validityVersion + 1,
+      edgeContentDigest: edge.contentDigest, winnerContentDigest: winner.contentDigest, loserContentDigest: loser.contentDigest,
+      reasonDigest: canonicalDigest(request.reason), affectedReadEvents, evidenceRefs,
+    };
+    return freeze({ request, affectedReadEvents, evidenceRefs, projectionCore, projectionDigest: canonicalDigest(projectionCore) });
+  }
+
+  _boundedContradictionResolutionProjection(payload, event = null) {
+    return freeze({
+      schemaVersion: 1, repoId: payload.repoId, observedSeq: payload.observedSeq, observedAt: payload.observedAt, eventSeq: event?.seq ?? null,
+      policyDigest: payload.policyDigest, requestDigest: payload.requestDigest, projectionDigest: payload.projectionDigest, receiptDigest: payload.receiptDigest,
+      edgeId: payload.edgeId, winnerId: payload.winnerId, loserId: payload.loserId,
+      edgeValidityVersion: payload.request.expectedEdgeValidityVersion + 1, winnerValidityVersion: payload.request.expectedWinnerValidityVersion,
+      loserValidityVersion: payload.request.expectedLoserValidityVersion + 1, affectedReadCount: payload.affectedReadEvents.length,
+      reasonDigest: canonicalDigest(payload.request.reason),
+    });
+  }
+
+  _validateBoundedContradictionResolutionPayload(payload, event, integrity = false) {
+    const fail = (message, code = 'causal_contradiction_integrity') => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
+    const fields = ['schemaVersion', 'repoId', 'observedSeq', 'observedAt', 'policy', 'policyDigest', 'request', 'requestDigest', 'edgeId', 'winnerId', 'loserId', 'affectedReadEvents', 'projectionDigest', 'receiptDigest'];
+    if (!payload || Object.keys(payload).sort().join(',') !== fields.sort().join(',') || payload.schemaVersion !== 2 || !promotionActor(event.actor) || !validKnowledgeContradictionPolicy(payload.policy) || payload.repoId !== payload.policy.repoId
+      || payload.policyDigest !== canonicalDigest(payload.policy) || payload.edgeId !== payload.request?.edgeId || payload.winnerId !== payload.request?.winnerId || payload.loserId !== payload.request?.loserId
+      || !Number.isSafeInteger(payload.observedSeq) || payload.observedSeq < 0 || payload.observedSeq >= event.seq || payload.observedAt !== this.observationTime(payload.observedSeq)) fail('knowledge contradiction resolution receipt shape is invalid');
+    const requestDigest = canonicalDigest({ actor: event.actor, idempotencyKey: event.idempotencyKey, repoId: payload.repoId, observedSeq: payload.observedSeq, policyDigest: payload.policyDigest, request: payload.request });
+    if (payload.requestDigest !== requestDigest) fail('knowledge contradiction resolution request binding is invalid');
+    let derived; try { derived = this._deriveBoundedContradictionResolution(payload.repoId, payload.observedSeq, payload.policy, payload.request, event.seq); } catch (error) { fail(error.message, error.code === 'causal_contradiction_oversize' ? error.code : 'causal_contradiction_integrity'); }
+    if (canonicalDigest(payload.affectedReadEvents) !== canonicalDigest(derived.affectedReadEvents) || payload.projectionDigest !== derived.projectionDigest) fail('knowledge contradiction resolution projection diverged');
+    const core = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'receiptDigest'));
+    if (!/^[a-f0-9]{64}$/.test(payload.receiptDigest ?? '') || payload.receiptDigest !== canonicalDigest(core) || canonicalBytes(payload) > payload.policy.maxBatchBytes) fail('knowledge contradiction resolution receipt is invalid or oversized');
+    return derived;
+  }
+
+  resolveKnowledgeContradictionBounded(repoId, observedSeq, policy, rawRequest, auth, beforeAppend = null) {
+    if (!promotionActor(auth?.actor) || typeof auth?.key !== 'string' || auth.key.length === 0 || !validKnowledgeContradictionPolicy(policy) || policy.repoId !== repoId || (beforeAppend !== null && typeof beforeAppend !== 'function')) throw new CoordinationRefusal('knowledge contradiction resolution authority is invalid', 'causal_contradiction_invalid');
+    const request = this._contradictionResolutionRequest(rawRequest, policy); const policyDigest = canonicalDigest(policy); const requestDigest = canonicalDigest({ actor: auth.actor, idempotencyKey: auth.key, repoId, observedSeq, policyDigest, request }); const prior = this._byKey.get(auth.key);
+    if (prior) {
+      if (prior.kind !== 'knowledge.contradiction_resolved' || prior.payload?.schemaVersion !== 2 || prior.actor !== auth.actor || prior.payload.requestDigest !== requestDigest) throw new CoordinationRefusal('knowledge contradiction resolution idempotency conflict', 'causal_contradiction_conflict');
+      this._validateBoundedContradictionResolutionPayload(prior.payload, prior, false); return freeze({ event: clone(prior), projection: this._boundedContradictionResolutionProjection(prior.payload, prior), replayed: true });
+    }
+    const derived = this._deriveBoundedContradictionResolution(repoId, observedSeq, policy, request); const core = {
+      schemaVersion: 2, repoId, observedSeq, observedAt: this.observationTime(observedSeq), policy: clone(policy), policyDigest, request, requestDigest,
+      edgeId: request.edgeId, winnerId: request.winnerId, loserId: request.loserId, affectedReadEvents: clone(derived.affectedReadEvents), projectionDigest: derived.projectionDigest,
+    }; const payload = { ...core, receiptDigest: canonicalDigest(core) };
+    if (canonicalBytes(payload) > policy.maxBatchBytes) throw new CoordinationRefusal('knowledge contradiction resolution batch exceeded deployment ceiling', 'causal_contradiction_oversize');
+    const prospective = { schemaVersion: 1, seq: this._events.length + 1, kind: 'knowledge.contradiction_resolved', actor: auth.actor, idempotencyKey: auth.key, payload }; const projection = this._boundedContradictionResolutionProjection(payload, prospective);
+    if (canonicalBytes(projection) > policy.maxResultBytes) throw new CoordinationRefusal('knowledge contradiction resolution result exceeded deployment ceiling', 'causal_contradiction_oversize');
+    const gate = beforeAppend === null ? null : () => { const before = this._events.length; beforeAppend(freeze({ projection: clone(projection), jsonBytes: Buffer.byteLength(JSON.stringify(projection)) })); if (this._events.length !== before) throw new CoordinationRefusal('knowledge contradiction resolution preflight changed coordination state', 'causal_contradiction_integrity'); };
+    if (gate) gate(); const fixedTs = this._clock(); const predicted = { ...prospective, ts: fixedTs }; this._validateBoundedContradictionResolutionPayload(payload, predicted, false); const event = this._append('knowledge.contradiction_resolved', payload, auth, fixedTs, gate);
+    return freeze({ event: clone(event), projection: this._boundedContradictionResolutionProjection(payload, event), replayed: false });
+  }
+
+  reverifyKnowledgeContradictionResolution(repoId, observedSeq, policy, actor, eventSeq, rawRequest) {
+    if (!validKnowledgeContradictionPolicy(policy) || policy.repoId !== repoId || !promotionActor(actor) || !Number.isSafeInteger(eventSeq)) throw new CoordinationRefusal('knowledge contradiction reverify request is invalid', 'causal_contradiction_invalid');
+    const event = this._events[eventSeq - 1]; const request = this._contradictionResolutionRequest(rawRequest, policy); const policyDigest = canonicalDigest(policy); const requestDigest = event ? canonicalDigest({ actor, idempotencyKey: event.idempotencyKey, repoId, observedSeq, policyDigest, request }) : null;
+    if (!event || event.kind !== 'knowledge.contradiction_resolved' || event.payload?.schemaVersion !== 2 || event.actor !== actor || event.payload.repoId !== repoId || event.payload.observedSeq !== observedSeq || event.payload.policyDigest !== policyDigest || event.payload.requestDigest !== requestDigest || canonicalDigest(event.payload.request) !== canonicalDigest(request)) throw new CoordinationRefusal('knowledge contradiction resolution receipt does not match authority', 'causal_contradiction_conflict');
+    this._validateBoundedContradictionResolutionPayload(event.payload, event, false); return freeze({ event: clone(event), projection: this._boundedContradictionResolutionProjection(event.payload, event), replayed: true });
+  }
+
   _validateContradictionResolution(fields, integrity = false, actor = null) {
     const expected = ['edgeId', 'expectedEdgeValidityVersion', 'expectedLoserValidityVersion', 'expectedWinnerValidityVersion', 'loserId', 'reason', 'requestDigest', 'winnerId'];
     const request = Object.fromEntries(Object.entries(fields ?? {}).filter(([key]) => key !== 'requestDigest'));
@@ -2916,9 +3061,9 @@ export class CoordinationStore {
       groundingLineage: { verifiedFindings: { complete: completeFindings.length, total: verifiedFindings.length }, routeStats: { complete: completeRouteStats.length, total: routeStats.length } },
       contradictions: { total: contradictions.length, unresolved, resolved, malformed: malformedContradictions },
       recallUtility: {
-        reads: recalls.length, totalRecalls: recalls.length, taskScopedReceipts: taskScopedRecalls.length, eligibleVerifiedOutcomes: eligibleRecallRows.length,
+        reads: reads.length, totalRecalls: recalls.length, taskScopedReceipts: taskScopedRecalls.length, eligibleVerifiedOutcomes: eligibleRecallRows.length,
         assessed: assessedEligible.length, unassessedEligible: Math.max(0, eligibleRecallRows.length - assessedEligible.length), verifiedPassAfterRecall, verifiedFailAfterRecall,
-        distinctNodesRead: new Set(recalls.flatMap((read) => read.nodeIds)).size, distinctAssessedNodes: new Set(assessedEligible.flatMap((row) => row.nodeIds)).size,
+        distinctNodesRead: new Set(reads.flatMap((read) => read.nodeIds)).size, distinctAssessedNodes: new Set(assessedEligible.flatMap((row) => row.nodeIds)).size,
         contaminatedAssessments: contaminatedAssessmentCount,
         assessmentCoverage: { numerator: assessedEligible.length, denominator: eligibleRecallRows.length },
         observedVerifiedPassAssociation: { numerator: verifiedPassAfterRecall, denominator: assessedEligible.length }, causationClaimed: false,

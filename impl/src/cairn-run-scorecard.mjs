@@ -96,6 +96,14 @@ export class CairnRunScorecard {
         || typeof this.coordination.correctScratchKnowledge !== 'function' || typeof this.coordination.reverifyScratchCorrection !== 'function') throw new TypeError('Cairn Scratch correction configuration is invalid');
       this.knowledgeScratchCorrectionPolicy = Object.freeze(p); this.knowledgeScratchCorrectionPolicyDigest = sha256(stable(p));
     }
+    this.knowledgeContradictionPolicy = opts.knowledgeContradictionPolicy ? clone(opts.knowledgeContradictionPolicy) : null;
+    if (this.knowledgeContradictionPolicy) {
+      const names = ['repoId', 'maxScanEvents', 'maxScanEdges', 'maxItems', 'maxSnippetBytes', 'maxEvidenceRefs', 'maxAffectedReads', 'maxReasonBytes', 'maxBatchBytes', 'maxResultBytes']; const numeric = names.filter((name) => name !== 'repoId'); const p = this.knowledgeContradictionPolicy;
+      if (!this.knowledgeAuditPolicy || Object.keys(p).sort().join(',') !== names.sort().join(',') || p.repoId !== this.knowledgeAuditPolicy.repoId
+        || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0) || p.maxScanEvents > 1_000_000 || p.maxScanEdges > 1_000_000 || p.maxItems > 100_000 || p.maxSnippetBytes > 64 * 1024 || p.maxEvidenceRefs > 1_000_000 || p.maxAffectedReads > 1_000_000 || p.maxReasonBytes > 64 * 1024 || p.maxBatchBytes > 16 * 1024 * 1024 || p.maxResultBytes > 16 * 1024 * 1024
+        || typeof this.coordination.listKnowledgeContradictions !== 'function' || typeof this.coordination.resolveKnowledgeContradictionBounded !== 'function' || typeof this.coordination.reverifyKnowledgeContradictionResolution !== 'function') throw new TypeError('Cairn contradiction configuration is invalid');
+      this.knowledgeContradictionPolicy = Object.freeze(p); this.knowledgeContradictionPolicyDigest = sha256(stable(p));
+    }
     mkdirSync(this.artifactRoot, { recursive: true, mode: 0o700 });
   }
 
@@ -114,6 +122,10 @@ export class CairnRunScorecard {
     if (this.knowledgeRecallAssessmentPolicy) ops['causal.assess_recall'] = { latency_class: 'interactive', deterministic: true, side_effects: ['coordination.append', 'knowledge.recall_assessment'], reverifiable: true, preflight_output: true };
     if (this.knowledgePromotionPolicy) ops['causal.promote'] = { latency_class: 'interactive', deterministic: true, side_effects: ['coordination.append', 'knowledge.promote'], reverifiable: true, preflight_output: true };
     if (this.knowledgeScratchCorrectionPolicy) ops['causal.correct_scratch'] = { latency_class: 'interactive', deterministic: true, side_effects: ['coordination.append', 'knowledge.correct'], reverifiable: true, preflight_output: true };
+    if (this.knowledgeContradictionPolicy) {
+      ops['causal.contradictions'] = { latency_class: 'interactive', deterministic: true, side_effects: [], reverifiable: true };
+      ops['causal.resolve_contradiction'] = { latency_class: 'interactive', deterministic: true, side_effects: ['coordination.append', 'knowledge.resolve_contradiction'], reverifiable: true, preflight_output: true };
+    }
     return {
       name: 'cairn', version: 1,
       ops,
@@ -393,6 +405,55 @@ export class CairnRunScorecard {
     const corrected = this.coordination.correctScratchKnowledge(this.knowledgeScratchCorrectionPolicy.repoId, upper, this.knowledgeScratchCorrectionPolicy, request, auth, (preview) => { this._knowledgeContext(ctx); this._preflightCorrectionResult(preview, audit, ctx); }); return this._correctionResult(corrected, audit);
   }
 
+  _contradictionActor(ctx) {
+    const actor = ctx.transport == null && (ctx.actor === 'orchestrator' || (typeof ctx.actor === 'string' && ctx.actor.startsWith('operator:') && !ctx.actor.startsWith('operator:web:') && !ctx.actor.startsWith('operator:mcp:'))) ? ctx.actor
+      : (ctx.transport === 'web' && typeof ctx.actor === 'string' && ctx.actor.startsWith('web:')) || (ctx.transport === 'mcp' && typeof ctx.actor === 'string' && ctx.actor.startsWith('mcp:')) ? `operator:${ctx.actor}` : null;
+    if (actor === null) throw typed('causal contradiction actor is not authorized', 'causal_contradiction_forbidden'); return actor;
+  }
+
+  _contradictionAudit(upper) {
+    const p = this.knowledgeAuditPolicy; const metrics = this.coordination.auditKnowledge({ observedSeq: upper, maxStateRows: p.maxStateRows, maxNodes: p.maxNodes, maxEdges: p.maxEdges, maxEvidenceRefs: p.maxEvidenceRefs, maxAuditSamples: p.maxAuditSamples });
+    if (metrics.violations.critical > 0) throw typed('causal contradiction audit gate failed', 'causal_contradiction_audit_failed'); return { criticalViolations: 0, metricsDigest: sha256(stable(metrics)) };
+  }
+
+  _contradictionProvenance(kind, upper, readOnly, effect = 'none') {
+    return { kind, repoId: this.knowledgeContradictionPolicy.repoId, coordinationUpperBound: upper, policyDigest: this.knowledgeContradictionPolicyDigest, auditPolicyDigest: this.knowledgePolicyDigest, deterministic: true, readOnly, coordinationEffect: effect, workerAuthority: false, editAuthority: false, verificationAuthority: false, mergeAuthority: false, approvalAuthority: false, publicationAuthority: false, routingMutationAuthority: false, proofAuthority: false, noteAuthority: false, policyAuthoringAuthority: false };
+  }
+
+  _contradictionListResult(projection, audit) {
+    const document = { schemaVersion: 1, kind: 'baton.cairn.contradictions', coordinationUpperBound: projection.observedSeq, coordinationObservedAt: projection.observedAt, audit, ...clone(projection) };
+    const result = { op: 'causal.contradictions', status: 'ok', summary: `listed ${projection.items.length} of ${projection.totalUnresolved} unresolved Cairn contradictions for ${projection.repoId}`, payload: [document], refs: [{ kind: 'cairn-contradiction-view', digest: projection.projectionDigest, coordinationUpperBound: projection.observedSeq }], cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' }, provenance: this._contradictionProvenance('contradiction-list', projection.observedSeq, true) };
+    if (Buffer.byteLength(stable(result)) > this.knowledgeContradictionPolicy.maxResultBytes) throw typed('causal contradiction list result exceeded deployment ceiling', 'causal_contradiction_oversize'); return result;
+  }
+
+  _causalContradictions(args, ctx) {
+    if (!this.knowledgeContradictionPolicy) throw typed('causal contradiction workspace is not deployment-configured', 'capability_op_unavailable'); this._knowledgeContext(ctx); this._contradictionActor(ctx);
+    if (!args || Object.keys(args).sort().join(',') !== ['observedSeq', 'afterEdgeId', 'limit'].sort().join(',')) throw typed('causal contradiction list request is invalid', 'causal_contradiction_invalid');
+    const upper = this._causalBoundary(args, ['observedSeq', 'afterEdgeId', 'limit'], args.observedSeq); const audit = this._contradictionAudit(upper); this._knowledgeContext(ctx);
+    return this._contradictionListResult(this.coordination.listKnowledgeContradictions(this.knowledgeContradictionPolicy.repoId, args, this.knowledgeContradictionPolicy), audit);
+  }
+
+  _contradictionResolutionResult(resolved, audit) {
+    const p = resolved.projection; const document = { schemaVersion: 1, kind: 'baton.cairn.contradiction-resolution', coordinationUpperBound: p.observedSeq, coordinationObservedAt: p.observedAt, audit, ...clone(p) };
+    const result = { op: 'causal.resolve_contradiction', status: 'ok', summary: `atomically resolved Cairn contradiction ${p.edgeId} for ${p.repoId}`, payload: [document], refs: [{ kind: 'cairn-contradiction-resolution-receipt', digest: p.receiptDigest, coordinationSeq: p.eventSeq }], cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' }, provenance: this._contradictionProvenance('contradiction-resolution', p.observedSeq, false, 'knowledge.contradiction_resolved') };
+    if (Buffer.byteLength(stable(result)) > this.knowledgeContradictionPolicy.maxResultBytes) throw typed('causal contradiction resolution result exceeded deployment ceiling', 'causal_contradiction_oversize'); return result;
+  }
+
+  _preflightContradictionResolution(preview, audit, ctx) {
+    const result = this._contradictionResolutionResult({ projection: preview.projection }, audit);
+    if (ctx?.aciOutputPolicy && (Buffer.byteLength(JSON.stringify(result)) > ctx.aciOutputPolicy.maxEnvelopeBytes || Buffer.byteLength(JSON.stringify(result.payload)) > ctx.aciOutputPolicy.maxPayloadBytes)) throw typed('causal contradiction result exceeded ACI publication ceiling', 'capability_result_oversize'); return result;
+  }
+
+  _causalResolveContradiction(args, ctx, verifyReceiptSeq = null, writeReceipt = true) {
+    if (!this.knowledgeContradictionPolicy) throw typed('causal contradiction workspace is not deployment-configured', 'capability_op_unavailable'); this._knowledgeContext(ctx); const actor = this._contradictionActor(ctx);
+    const allowed = ['observedSeq', 'edgeId', 'winnerId', 'loserId', 'expectedEdgeValidityVersion', 'expectedWinnerValidityVersion', 'expectedLoserValidityVersion', 'reason'];
+    if (!args || Object.keys(args).sort().join(',') !== allowed.sort().join(',')) throw typed('causal contradiction resolution request is invalid', 'causal_contradiction_invalid');
+    const upper = this._causalBoundary(args, allowed, args.observedSeq); const request = Object.fromEntries(Object.entries(args).filter(([key]) => key !== 'observedSeq')); const audit = this._contradictionAudit(upper); this._knowledgeContext(ctx);
+    if (!writeReceipt) return this._contradictionResolutionResult(this.coordination.reverifyKnowledgeContradictionResolution(this.knowledgeContradictionPolicy.repoId, upper, this.knowledgeContradictionPolicy, actor, verifyReceiptSeq, request), audit);
+    const auth = { actor, key: `knowledge.resolve_contradiction:${sha256(stable({ repoId: ctx.repoId, actor: ctx.actor, idempotencyKey: ctx.idempotencyKey }))}` };
+    const resolved = this.coordination.resolveKnowledgeContradictionBounded(this.knowledgeContradictionPolicy.repoId, upper, this.knowledgeContradictionPolicy, request, auth, (preview) => { this._knowledgeContext(ctx); this._preflightContradictionResolution(preview, audit, ctx); }); return this._contradictionResolutionResult(resolved, audit);
+  }
+
   _events(worker, throughSeq) {
     const events = this.readOperational(worker, throughSeq);
     if (!Array.isArray(events)) throw typed('operational evidence reader unavailable', 'run_evidence_unavailable');
@@ -501,6 +562,8 @@ export class CairnRunScorecard {
     if (op === 'causal.assess_recall') return this._causalAssessRecall(args, ctx);
     if (op === 'causal.promote') return this._causalPromote(args, ctx);
     if (op === 'causal.correct_scratch') return this._causalCorrectScratch(args, ctx);
+    if (op === 'causal.contradictions') return this._causalContradictions(args, ctx);
+    if (op === 'causal.resolve_contradiction') return this._causalResolveContradiction(args, ctx);
     if (op !== 'run.scorecard') throw typed('unsupported Cairn operation', 'capability_op_unavailable');
     const runId = args?.runId;
     if (!validRunId(runId)) throw typed('runId is invalid', 'invalid_run_id');
@@ -549,6 +612,14 @@ export class CairnRunScorecard {
       if (op === 'causal.correct_scratch') {
         if (!Number.isSafeInteger(args?.observedSeq)) return { ok: false, reason: 'observation_boundary_required' };
         const receiptSeq = claim?.payload?.[0]?.eventSeq; const rebuilt = this._causalCorrectScratch(args, ctx, receiptSeq, false);
+        return { ok: stable(claim) === stable(rebuilt), digest: rebuilt.payload[0].projectionDigest };
+      }
+      if (op === 'causal.contradictions') {
+        if (!Number.isSafeInteger(args?.observedSeq)) return { ok: false, reason: 'observation_boundary_required' }; const rebuilt = this._causalContradictions(args, ctx);
+        return { ok: stable(claim) === stable(rebuilt), digest: rebuilt.payload[0].projectionDigest };
+      }
+      if (op === 'causal.resolve_contradiction') {
+        if (!Number.isSafeInteger(args?.observedSeq)) return { ok: false, reason: 'observation_boundary_required' }; const receiptSeq = claim?.payload?.[0]?.eventSeq; const rebuilt = this._causalResolveContradiction(args, ctx, receiptSeq, false);
         return { ok: stable(claim) === stable(rebuilt), digest: rebuilt.payload[0].projectionDigest };
       }
       if (op !== 'run.scorecard' || !validRunId(args?.runId)) return { ok: false, reason: 'invalid_request' };

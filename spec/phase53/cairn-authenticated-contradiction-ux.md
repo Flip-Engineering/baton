@@ -61,7 +61,9 @@ policy, authenticated actor/idempotency identity, exact request, edge/node versi
 affected-read set, projection, and receipt digests. Applying that one event closes the edge,
 invalidates only the loser, and records every prior knowledge/recall reader of the loser at or
 before the prefix. The winner remains live. Append failure or cancellation leaves edge, nodes,
-contamination, and idempotency state unchanged.
+contamination, and idempotency state unchanged when observed before the append commit point. Once
+the append succeeds, commit wins: a signal raised at the write boundary cannot turn the committed
+resolution into an ambiguous cancelled response, and Baton returns the durable receipt.
 
 ## CX4 — historical truth and contamination
 
@@ -103,9 +105,10 @@ versions, page cursor, snippets, counts, or digests fails.
 ## CX7 — audit, race, and publication gates
 
 Both operations fail before output/effect when the Phase 47 critical audit fails. Resolution checks
-cancellation after audit, before derivation, before publication, at the append seam, and before
-return. Result/batch and ACI envelope/payload ceilings are computed before append; a max+1 refusal
-creates no resolution or contamination. A preflight callback that changes coordination state is an
+cancellation after audit, before derivation, before publication, and at the append seam. After the
+durable append, it returns the receipt even if cancellation becomes observable at that boundary.
+Result/batch and ACI envelope/payload ceilings are computed before append; a max+1 refusal creates
+no resolution or contamination. A preflight callback that changes coordination state is an
 integrity failure, not authority to rebase silently.
 
 ## CX8 — executable adversarial matrix
@@ -114,8 +117,8 @@ Zero-provider tests cover configuration/card gating; empty, one-page, and multi-
 stable ordering and continuation; safe UTF-8 snippets; unresolved bundles; historical list after
 resolution; exact winner/loser/version CAS; worker/policy/forged-transport refusal; direct/web/MCP
 invoke and reverify; same-key replay/conflict; concurrent race; restart/tamper; affected recall and
-ordinary reads; append failure; cancellation at derivation and append seams; audit failure; and
-each independent max/max+1 policy and ACI output ceiling.
+ordinary reads; append failure; cancellation at derivation and append seams; post-append commit-wins
+receipt delivery; audit failure; and each independent max/max+1 policy and ACI output ceiling.
 
 The focused Phase 47–53 Cairn gates and canonical `npm test` must pass before recursive dogfood.
 Recursive Baton then requests exact Codex `gpt-5.6-sol`/low, project-key GLM `glm-4.7`/low, Grok

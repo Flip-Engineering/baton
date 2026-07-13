@@ -9,6 +9,7 @@ import { CairnRunScorecard, CoordinationIntegrityError, CoordinationStore, McpFl
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase53-${name}-`));
 const auditPolicy = (overrides = {}) => ({ repoId: 'repo-a', maxStateRows: 2048, maxNodes: 512, maxEdges: 1024, maxEvidenceRefs: 4096, maxAuditSamples: 128, maxTraceDepth: 8, maxTraceRows: 1024, maxArtifactBytes: 256 * 1024, maxResultBytes: 256 * 1024, ...overrides });
+const recallPolicy = (overrides = {}) => ({ repoId: 'repo-a', maxQueryBytes: 4096, maxQueryTerms: 64, maxCandidates: 256, maxCandidateBytes: 512 * 1024, maxResults: 32, maxGraphDepth: 8, maxGraphRows: 1024, maxSnippetBytes: 128, maxReceiptBytes: 128 * 1024, maxResultBytes: 256 * 1024, ...overrides });
 const contradictionPolicy = (overrides = {}) => ({ repoId: 'repo-a', maxScanEvents: 4096, maxScanEdges: 1024, maxItems: 32, maxSnippetBytes: 48, maxEvidenceRefs: 512, maxAffectedReads: 512, maxReasonBytes: 1024, maxBatchBytes: 256 * 1024, maxResultBytes: 256 * 1024, ...overrides });
 const context = (overrides = {}) => ({ actor: 'operator:alice', repoId: 'repo-a', idempotencyKey: 'phase53:direct', budgetTokens: 32_000, ...overrides });
 
@@ -66,11 +67,11 @@ test('CX1/CX2/CX6: policy-gated list is bounded, stable, safe, paged, and exactl
 test('CX3/CX4/CX6: one public resolution preserves history, invalidates only loser, and records bounded contamination', async () => {
   const store = new CoordinationStore(root('resolve'), { clock: clock() }); const { pairs } = graph(store); const cairn = capability(store); const before = store.snapshot().lastSeq;
   const listed = await cairn.invoke('causal.contradictions', { observedSeq: before, afterEdgeId: null, limit: 1 }, context({ idempotencyKey: 'list' })); const item = listed.payload[0].items[0]; const loserId = item.endpoints[1].id;
-  const read = store.readKnowledge({ ids: [loserId] }, { readerActor: 'orchestrator', taskId: 'source' }, { actor: 'orchestrator', key: 'read:loser' }); const observedSeq = store.snapshot().lastSeq; const args = resolveArgs(item, observedSeq, item.endpoints[0].id);
+  const read = store.readKnowledge({ ids: [loserId] }, { readerActor: 'orchestrator', taskId: 'source' }, { actor: 'orchestrator', key: 'read:loser' }); const recall = await new CairnRunScorecard({ coordination: store, readOperational: () => [], artifactRoot: root('recall-artifacts'), knowledgeAuditPolicy: auditPolicy(), knowledgeRecallPolicy: recallPolicy() }).invoke('causal.recall', { text: loserId, limit: 2, observedSeq: store.snapshot().lastSeq, reader: { taskId: 'source' } }, context({ idempotencyKey: 'recall:loser' })); assert.equal(recall.payload[0].nodes.some((node) => node.id === loserId), true); const observedSeq = store.snapshot().lastSeq; const args = resolveArgs(item, observedSeq, item.endpoints[0].id);
   const result = await cairn.invoke('causal.resolve_contradiction', args, context({ idempotencyKey: 'resolve' })); const document = result.payload[0];
-  assert.equal(document.winnerId, args.winnerId); assert.equal(document.loserId, args.loserId); assert.equal(document.affectedReadCount, 1); assert.equal(document.edgeValidityVersion, 2); assert.equal(document.winnerValidityVersion, 1); assert.equal(document.loserValidityVersion, 2);
+  assert.equal(document.winnerId, args.winnerId); assert.equal(document.loserId, args.loserId); assert.equal(document.affectedReadCount, 2); assert.equal(document.edgeValidityVersion, 2); assert.equal(document.winnerValidityVersion, 1); assert.equal(document.loserValidityVersion, 2);
   assert.equal(JSON.stringify(result).includes(args.reason), false); assert.equal(store.events(document.eventSeq, 1)[0].kind, 'knowledge.contradiction_resolved'); assert.equal(store.events(document.eventSeq, 1)[0].payload.schemaVersion, 2);
-  assert.deepEqual(store.snapshot().knowledge.contamination.at(-1).affectedReadEvents, [read.event.seq]); assert.equal(store.snapshot().knowledge.contamination.at(-1).eventSeq, document.eventSeq);
+  assert.deepEqual(store.snapshot().knowledge.contamination.at(-1).affectedReadEvents, [read.event.seq, recall.payload[0].receipt.eventSeq]); assert.equal(store.snapshot().knowledge.contamination.at(-1).eventSeq, document.eventSeq);
   assert.equal(store.queryKnowledge({ ids: [args.winnerId] }).length, 1); assert.equal(store.queryKnowledge({ ids: [args.loserId] }).length, 0); assert.equal(store.queryKnowledgeEdges({ types: ['Contradicts'] }).length, 0);
   assert.equal(store.queryKnowledge({ observedSeq, ids: [args.loserId] }).length, 1); assert.equal(store.queryKnowledgeEdges({ observedSeq, types: ['Contradicts'] }).length, 1);
   assert.deepEqual((await cairn.invoke('causal.contradictions', { observedSeq, afterEdgeId: null, limit: 1 }, context({ idempotencyKey: 'historical' }))).payload[0].items, listed.payload[0].items);
@@ -120,20 +121,36 @@ test('CX1/CX2/CX3/CX7: every independent bound refuses without resolution residu
   }
 });
 
-test('CX3/CX7: audit failure, cancellation, preflight mutation, and append failure are effect-free', async () => {
+test('CX3/CX7: audit failure, cancellation through the append seam, and append failure are effect-free', async () => {
   const bad = new CoordinationStore(root('audit-bad'), { clock: clock() }); const bg = graph(bad); bad.addKnowledgeNode({ id: 'finding:orphan', type: 'Finding', grounding: 'verified', body: 'orphan', evidence: [{ coordinationSeq: bg.created.event.seq }] }, { actor: 'policy', key: 'orphan' }); const badBefore = bad.snapshot().lastSeq;
   await assert.rejects(capability(bad).invoke('causal.contradictions', { observedSeq: badBefore, afterEdgeId: null, limit: 1 }, context({ idempotencyKey: 'audit' })), (error) => error.code === 'causal_contradiction_audit_failed'); assert.equal(bad.snapshot().lastSeq, badBefore);
 
-  const cancelled = new CoordinationStore(root('cancelled'), { clock: clock() }); graph(cancelled); const cancelledCairn = capability(cancelled); const listed = await cancelledCairn.invoke('causal.contradictions', listArgs(cancelled), context({ idempotencyKey: 'list:cancel' })); const abort = new AbortController(); const audit = cancelled.auditKnowledge.bind(cancelled); cancelled.auditKnowledge = (...args) => { const value = audit(...args); abort.abort(); return value; }; const cancelBefore = cancelled.snapshot();
-  await assert.rejects(cancelledCairn.invoke('causal.resolve_contradiction', resolveArgs(listed.payload[0].items[0], cancelled.snapshot().lastSeq), context({ idempotencyKey: 'cancel', signal: abort.signal })), (error) => error.code === 'cancelled'); assert.deepEqual(cancelled.snapshot(), cancelBefore);
+  for (const phase of ['before', 'after-audit', 'append-seam']) {
+    const cancelled = new CoordinationStore(root(`cancelled-${phase}`), { clock: clock() }); graph(cancelled); const cancelledCairn = capability(cancelled); const listed = await cancelledCairn.invoke('causal.contradictions', listArgs(cancelled), context({ idempotencyKey: `list:cancel:${phase}` })); const abort = new AbortController();
+    if (phase === 'before') abort.abort();
+    if (phase === 'after-audit') { const audit = cancelled.auditKnowledge.bind(cancelled); cancelled.auditKnowledge = (...args) => { const value = audit(...args); abort.abort(); return value; }; }
+    if (phase === 'append-seam') { const validate = cancelled._validateBoundedContradictionResolutionPayload.bind(cancelled); let armed = true; cancelled._validateBoundedContradictionResolutionPayload = (...args) => { const value = validate(...args); if (armed && args[2] === false) { armed = false; abort.abort(); } return value; }; }
+    const cancelBefore = cancelled.snapshot(); await assert.rejects(cancelledCairn.invoke('causal.resolve_contradiction', resolveArgs(listed.payload[0].items[0], cancelled.snapshot().lastSeq), context({ idempotencyKey: `cancel:${phase}`, signal: abort.signal })), (error) => error.code === 'cancelled'); assert.deepEqual(cancelled.snapshot(), cancelBefore);
+  }
 
   const failed = new CoordinationStore(root('failed'), { clock: clock(), appendFile: appendFileSync }); graph(failed); const failedCairn = capability(failed); const failedList = await failedCairn.invoke('causal.contradictions', listArgs(failed), context({ idempotencyKey: 'list:failed' })); const failedBefore = failed.snapshot(); failed._appendFile = () => { throw new Error('disk full'); };
   await assert.rejects(failedCairn.invoke('causal.resolve_contradiction', resolveArgs(failedList.payload[0].items[0], failed.snapshot().lastSeq), context({ idempotencyKey: 'failed' })), /disk full/); assert.deepEqual(failed.snapshot(), failedBefore);
 });
 
+test('CX3/CX7: preflight mutation refuses resolution, while a completed append wins over late cancellation', async () => {
+  const mutated = new CoordinationStore(root('preflight-mutation'), { clock: clock() }); graph(mutated); const mutatedCairn = capability(mutated); const listed = await mutatedCairn.invoke('causal.contradictions', listArgs(mutated), context({ idempotencyKey: 'list:mutation' })); const args = resolveArgs(listed.payload[0].items[0], mutated.snapshot().lastSeq); const before = mutated.snapshot(); const preflight = mutatedCairn._preflightContradictionResolution.bind(mutatedCairn);
+  mutatedCairn._preflightContradictionResolution = (...values) => { mutated.recordWebAudit({ kind: 'phase53-preflight-mutation' }, { actor: 'test', key: 'phase53:preflight-mutation' }); return preflight(...values); };
+  await assert.rejects(mutatedCairn.invoke('causal.resolve_contradiction', args, context({ idempotencyKey: 'mutation' })), (error) => error.code === 'causal_contradiction_integrity'); assert.equal(mutated.events().filter((event) => event.kind === 'web.audit').length, 1); assert.equal(mutated.events().some((event) => event.kind === 'knowledge.contradiction_resolved'), false); assert.deepEqual(mutated.snapshot().knowledge, before.knowledge);
+
+  const committed = new CoordinationStore(root('commit-wins'), { clock: clock() }); graph(committed); const committedCairn = capability(committed); const committedList = await committedCairn.invoke('causal.contradictions', listArgs(committed), context({ idempotencyKey: 'list:commit' })); const committedArgs = resolveArgs(committedList.payload[0].items[0], committed.snapshot().lastSeq); const abort = new AbortController(); const append = committed._appendFile;
+  committed._appendFile = (...values) => { const value = append(...values); if (values[1].includes('"knowledge.contradiction_resolved"')) abort.abort(); return value; };
+  const result = await committedCairn.invoke('causal.resolve_contradiction', committedArgs, context({ idempotencyKey: 'commit', signal: abort.signal })); assert.equal(abort.signal.aborted, true); assert.equal(result.payload[0].eventSeq, committed.snapshot().lastSeq); assert.equal(committed.queryKnowledge({ ids: [committedArgs.loserId] }).length, 0); assert.equal(committed.events().filter((event) => event.kind === 'knowledge.contradiction_resolved').length, 1);
+});
+
 function driverFor(store, name, maxCapabilityEnvelopeBytes = 512 * 1024) {
   store.releaseWriterLease();
-  return createDriver({ repoRoot: repo(), repoId: 'repo-a', logDir: root(`${name}-log`), coordination: store, adapters: {}, capabilityFactories: { cairn: ({ coordination, readOperational }) => new CairnRunScorecard({ coordination, readOperational, artifactRoot: root(`${name}-artifacts`), knowledgeAuditPolicy: auditPolicy(), knowledgeContradictionPolicy: contradictionPolicy() }) }, maxCapabilityBudgetTokens: 64_000, maxCapabilityEnvelopeBytes });
+  const priorRead = store._operationalRead; const driver = createDriver({ repoRoot: repo(), repoId: 'repo-a', logDir: root(`${name}-log`), coordination: store, adapters: {}, capabilityFactories: { cairn: ({ coordination, readOperational }) => new CairnRunScorecard({ coordination, readOperational, artifactRoot: root(`${name}-artifacts`), knowledgeAuditPolicy: auditPolicy(), knowledgeContradictionPolicy: contradictionPolicy() }) }, maxCapabilityBudgetTokens: 64_000, maxCapabilityEnvelopeBytes });
+  store._operationalRead = (worker, seq) => priorRead?.(worker, seq) ?? driver.log.read(worker)[seq - 1] ?? null; return driver;
 }
 
 test('CX5/CX6: authenticated HTTPS and MCP invoke/reverify share one effectful authority', async () => {
@@ -149,6 +166,6 @@ test('CX5/CX6: authenticated HTTPS and MCP invoke/reverify share one effectful a
 });
 
 test('CX7: ACI output refusal happens before contradiction resolution', async () => {
-  const store = new CoordinationStore(root('aci'), { clock: clock() }); graph(store); const direct = capability(store); const listed = await direct.invoke('causal.contradictions', listArgs(store), context({ idempotencyKey: 'list' })); const args = resolveArgs(listed.payload[0].items[0], store.snapshot().lastSeq); const driver = driverFor(store, 'aci', 1024); const before = store.snapshot();
-  await assert.rejects(driver.coordinator.invokeCapability('cairn', 'causal.resolve_contradiction', args, context({ idempotencyKey: 'aci', budgetTokens: 1 })), (error) => error.code === 'capability_result_oversize'); assert.deepEqual(store.snapshot(), before); driver.close();
+  const store = new CoordinationStore(root('aci'), { clock: clock() }); graph(store); const direct = capability(store); const listed = await direct.invoke('causal.contradictions', listArgs(store), context({ idempotencyKey: 'list' })); const item = listed.payload[0].items[0]; const args = resolveArgs(item, store.snapshot().lastSeq); const driver = driverFor(store, 'aci', 1024);
+  await assert.rejects(driver.coordinator.invokeCapability('cairn', 'causal.resolve_contradiction', args, context({ idempotencyKey: 'aci', budgetTokens: 1 })), (error) => error.code === 'capability_result_oversize'); assert.equal(store.events().some((event) => event.kind === 'knowledge.contradiction_resolved'), false); assert.equal(store.snapshot().knowledge.contamination.length, 0); assert.equal(store.queryKnowledge({ ids: [args.loserId] }).length, 1); assert.equal(store.queryKnowledgeEdges({ types: ['Contradicts'] }).length, 1); driver.close();
 });
