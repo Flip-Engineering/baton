@@ -60,6 +60,7 @@ export { PublicSupplyChainOracle } from './supply-chain-oracle.mjs';
 export { MergirafResolver } from './structured-merge.mjs';
 export { CapabilityRegistry } from './capability-registry.mjs';
 export { AdvisoryFeedRegistry } from './advisory-feed-registry.mjs';
+export { HmacAdvisoryWebhookSource, signHmacAdvisoryWebhookForTest } from './hmac-advisory-webhook.mjs';
 
 function localGitEnv() {
   const env = {}; for (const [key, value] of Object.entries(process.env)) if (!key.startsWith('GIT_')) env[key] = value;

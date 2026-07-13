@@ -2750,6 +2750,20 @@ export class Coordinator {
     } finally { this._authorityOps -= 1; }
   }
 
+  /** Exact HTTP-envelope variant for Baton-owned native webhook authenticators. A deployment's
+   * fixed HTTPS route supplies providerId; the body and headers cannot select a source. */
+  async receiveProviderWebhook(providerId, input, ctx = {}) {
+    this._assertOperational();
+    if (!this._advisoryFeeds || this.advisoryFeedCards().length === 0 || !this._repoId || typeof this._advisoryFeeds.verifyWebhook !== 'function') throw Object.assign(new Error('provider machine ingress is not deployment-configured'), { code: 'provider_ingress_unavailable' });
+    if (ctx && Object.keys(ctx).some((key) => key !== 'signal')) throw Object.assign(new TypeError('provider machine ingress context is invalid'), { code: 'provider_delivery_invalid' });
+    this._authorityOps += 1;
+    try {
+      const receipt = await this._advisoryFeeds.verifyWebhook(providerId, input, { signal: ctx.signal });
+      const key = `provider-delivery:${canonicalDigest({ repoId: this._repoId, providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest })}`;
+      return this._coordination.recordProviderDelivery({ repoId: this._repoId, receipt }, { actor: `provider:${providerId}`, key });
+    } finally { this._authorityOps -= 1; }
+  }
+
   /** Invoke an advertised ACI operation through the coordinator-owned registry. */
   async invokeCapability(name, op, args, ctx = {}) {
     this._assertOperational();

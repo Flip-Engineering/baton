@@ -23,16 +23,24 @@ const freeze = (value) => {
 };
 
 function validCard(card) {
-  if (!exactKeys(card, ['schemaVersion', 'providerId', 'adapterId', 'version', 'modes', 'ecosystem', 'semantics', 'auth', 'ceilings'])
+  const nativeWebhook = card?.auth?.scheme === 'hmac-sha256'; const topFields = ['schemaVersion', 'providerId', 'adapterId', 'version', 'modes', 'ecosystem', 'semantics', 'auth', 'ceilings', ...(nativeWebhook ? ['webhook', 'privateCas'] : [])];
+  if (!exactKeys(card, topFields)
     || card.schemaVersion !== 1 || !bounded(card.providerId, 128) || !/^[A-Za-z0-9._:-]+$/.test(card.providerId)
     || !bounded(card.adapterId, 128) || !bounded(card.version, 128) || card.ecosystem !== 'npm' || card.semantics !== 'authenticated_hint'
     || !Array.isArray(card.modes) || card.modes.length === 0 || !sortedUnique(card.modes) || card.modes.some((mode) => !['poll', 'webhook'].includes(mode))) return false;
-  if (!exactKeys(card.auth, ['scheme', 'keyFingerprints']) || !['hmac-sha256', 'ed25519', 'injected-test'].includes(card.auth.scheme)
+  const authFields = nativeWebhook ? ['scheme', 'keyFingerprints', 'domain', 'signatureEncoding', 'headers'] : ['scheme', 'keyFingerprints'];
+  if (!exactKeys(card.auth, authFields) || !['hmac-sha256', 'ed25519', 'injected-test'].includes(card.auth.scheme)
     || !Array.isArray(card.auth.keyFingerprints) || card.auth.keyFingerprints.length === 0 || card.auth.keyFingerprints.length > 16
     || !sortedUnique(card.auth.keyFingerprints) || card.auth.keyFingerprints.some((item) => !hex(item))) return false;
-  const ceilingKeys = ['maxDeliveryBytes', 'maxCoordinates', 'maxAdvisoryIds', 'maxIdentityBytes'];
+  if (nativeWebhook && (card.auth.domain !== 'baton-provider-webhook-v1' || card.auth.signatureEncoding !== 'hex'
+    || !exactKeys(card.auth.headers, ['signature', 'deliveryId', 'timestamp', 'sequence']) || Object.values(card.auth.headers).some((value) => !/^[a-z0-9-]{1,64}$/.test(value))
+    || new Set(Object.values(card.auth.headers)).size !== 4 || !exactKeys(card.webhook, ['method', 'path', 'contentType', 'contentEncoding']) || card.webhook.method !== 'POST'
+    || typeof card.webhook.path !== 'string' || !card.webhook.path.startsWith('/') || card.webhook.contentType !== 'application/json' || card.webhook.contentEncoding !== 'identity'
+    || !exactKeys(card.privateCas, ['storeId', 'digestAlgorithm']) || !bounded(card.privateCas.storeId, 128) || card.privateCas.digestAlgorithm !== 'sha256')) return false;
+  const ceilingKeys = ['maxDeliveryBytes', 'maxCoordinates', 'maxAdvisoryIds', 'maxIdentityBytes', ...(nativeWebhook ? ['maxHeaderCount', 'maxHeaderBytes', 'maxClockSkewMs'] : [])];
   return exactKeys(card.ceilings, ceilingKeys) && Object.values(card.ceilings).every((value) => Number.isSafeInteger(value) && value > 0)
-    && card.ceilings.maxDeliveryBytes <= 16 * 1024 * 1024 && card.ceilings.maxCoordinates <= 10_000 && card.ceilings.maxAdvisoryIds <= 100_000 && card.ceilings.maxIdentityBytes <= 4_096;
+    && card.ceilings.maxDeliveryBytes <= 16 * 1024 * 1024 && card.ceilings.maxCoordinates <= 10_000 && card.ceilings.maxAdvisoryIds <= 100_000 && card.ceilings.maxIdentityBytes <= 4_096
+    && (!nativeWebhook || (card.ceilings.maxHeaderCount <= 256 && card.ceilings.maxHeaderBytes <= 256 * 1024 && card.ceilings.maxClockSkewMs <= 24 * 60 * 60 * 1_000));
 }
 
 function validateReceipt(receipt, card, raw, mode, cardDigest) {
@@ -60,7 +68,7 @@ export class AdvisoryFeedRegistry {
     if (!record(opts.sources ?? {})) throw new TypeError('advisory feed sources must be a closed registry');
     this.entries = new Map();
     for (const [providerId, source] of Object.entries(opts.sources ?? {})) {
-      if (!source || typeof source.card !== 'function' || typeof source.verifyDelivery !== 'function') throw new TypeError(`invalid advisory feed source: ${providerId}`);
+      if (!source || typeof source.card !== 'function' || (typeof source.verifyDelivery !== 'function' && typeof source.verifyWebhook !== 'function')) throw new TypeError(`invalid advisory feed source: ${providerId}`);
       const card = source.card();
       if (!validCard(card) || card.providerId !== providerId) throw new TypeError(`invalid advisory feed card: ${providerId}`);
       const cardDigest = digest(card);
@@ -77,5 +85,21 @@ export class AdvisoryFeedRegistry {
     const preserved = Buffer.from(input.raw); const adapterBytes = Buffer.from(preserved);
     const receipt = await entry.source.verifyDelivery(Object.freeze({ mode: input.mode, raw: adapterBytes }), Object.freeze({ signal: ctx.signal, cardDigest: entry.cardDigest }));
     return validateReceipt(receipt, entry.card, preserved, input.mode, entry.cardDigest);
+  }
+
+  async verifyWebhook(providerId, input, ctx = {}) {
+    const entry = this.entries.get(providerId); if (!entry) throw typed('unknown advisory feed provider', 'provider_not_configured');
+    if (entry.card.auth.scheme === 'injected-test' || typeof entry.source.verifyWebhook !== 'function' || !record(input) || !exactKeys(input, ['method', 'path', 'rawHeaders', 'raw'])
+      || !Buffer.isBuffer(input.raw) || input.raw.length === 0 || input.raw.length > entry.card.ceilings.maxDeliveryBytes) throw typed('provider webhook is not configured', 'provider_delivery_invalid');
+    if (ctx.signal?.aborted) throw typed('provider delivery verification cancelled', 'cancelled');
+    const preserved = Buffer.from(input.raw); const receipt = await entry.source.verifyWebhook(Object.freeze({ method: input.method, path: input.path, rawHeaders: json(input.rawHeaders), raw: Buffer.from(preserved) }), Object.freeze({ signal: ctx.signal, cardDigest: entry.cardDigest }));
+    return validateReceipt(receipt, entry.card, preserved, 'webhook', entry.cardDigest);
+  }
+
+  async reverifyReceipt(receipt) {
+    const entry = this.entries.get(receipt?.providerId); if (!entry || typeof entry.source.readReceipt !== 'function') throw typed('provider receipt replay is unavailable', 'provider_replay_unavailable');
+    const raw = await entry.source.readReceipt(receipt); const reverified = validateReceipt({ schemaVersion: 1, providerId: receipt.providerId, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest, rawBytes: receipt.rawBytes, authReceiptDigest: receipt.authReceiptDigest, keyFingerprint: receipt.keyFingerprint, occurredAt: receipt.occurredAt, sequence: receipt.sequence, coordinates: receipt.coordinates, advisoryIds: receipt.advisoryIds, source: receipt.source }, entry.card, raw, receipt.mode, entry.cardDigest);
+    if (reverified.contentDigest !== receipt.contentDigest || receipt.sourceEpoch !== entry.cardDigest || receipt.cardDigest !== entry.cardDigest) throw typed('provider receipt replay diverged', 'provider_receipt_invalid');
+    return reverified;
   }
 }
