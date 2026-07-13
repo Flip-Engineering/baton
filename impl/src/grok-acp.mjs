@@ -430,12 +430,17 @@ export class GrokAcpCli {
       // Keyed map (X4 lesson): the wire permits multiple pending server->client requests.
       session.waits.set(requestId, { kind: 'approval', rawId: id, options: params?.options ?? [] });
       const toolCall = params?.toolCall ?? {};
+      const callId = String(toolCall.toolCallId ?? toolCall.id ?? `${session.worker}:permission:${id}`);
+      const knownCall = session.activeTurn?.toolCallIds.has(callId) ?? false;
+      session.activeTurn?.toolCallIds.add(callId);
       this._emit(session, 'content.tool_call', {
         sessionId: params?.sessionId ?? session.sessionId,
         turnId: session.activeTurn?.turnId ?? null,
         ...boundedEvidence(toolCall, this._maxEventPayloadBytes),
-        callId: String(toolCall.toolCallId ?? toolCall.id ?? `${session.worker}:permission:${id}`),
-        phase: 'requested',
+        callId,
+        // Live Grok may announce the call through session/update before asking permission.
+        // The permission request is then a state observation, not a second logical attempt.
+        phase: knownCall ? 'progress' : 'requested',
       });
       this._emit(session, 'approval.requested', {
         requestId,
@@ -485,16 +490,20 @@ export class GrokAcpCli {
             ? { sessionUpdate: update.sessionUpdate, toolCallId: update.toolCallId, title: update.title ?? null, kind: update.kind ?? null, status: update.status ?? null, wireEvidence }
             : wireEvidence;
           const terminalStatuses = new Set(['completed', 'failed', 'cancelled', 'rejected']);
+          const callId = String(update.toolCallId ?? `${session.sessionId}:${turnId}:${update.sessionUpdate}`);
+          const knownCall = session.activeTurn.toolCallIds.has(callId);
+          session.activeTurn.toolCallIds.add(callId);
           this._emit(session, 'content.tool_call', {
             sessionId: session.sessionId, turnId, ...eventUpdate,
             command: update.rawInput?.command ?? update.rawOutput?.command ?? null,
             exitCode: update.rawOutput?.exit_code ?? null,
-            callId: String(update.toolCallId ?? `${session.sessionId}:${turnId}:${update.sessionUpdate}`),
+            callId,
             phase: update.sessionUpdate === 'tool_call'
-              ? 'requested'
+              ? knownCall ? 'progress' : 'requested'
               : update.status === 'completed' ? 'completed'
                 : update.status === 'cancelled' ? 'cancelled'
-                  : terminalStatuses.has(update.status) ? 'failed' : 'progress',
+                  : terminalStatuses.has(update.status) ? 'failed'
+                    : knownCall ? 'progress' : 'requested',
           });
         }
         return;
@@ -513,7 +522,7 @@ export class GrokAcpCli {
     session.turnSeq += 1;
     session.turnEpoch += 1;
     const turnId = `t${session.turnSeq}`; // GA6: ACP has no wire turn id — adapter-minted
-    session.activeTurn = { turnId };
+    session.activeTurn = { turnId, toolCallIds: new Set() };
     this._emit(session, 'lifecycle.turn_started', { sessionId: session.sessionId, turnId });
     this._sendRequest(session, 'session/prompt', {
       sessionId: session.sessionId,

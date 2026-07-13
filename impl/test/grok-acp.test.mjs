@@ -446,6 +446,29 @@ test('GA9: a pending session/request_permission BLOCKS the turn until approve("a
   }
 });
 
+test('F3 (phase59 live-pinned): permission re-observation of a known toolCallId advances the logical call instead of emitting a duplicate request', async () => {
+  const adapter = makeAdapter();
+  const events = collect(adapter);
+  const worker = 'w1';
+  try {
+    await adapter.spawn(worker, makeBrief('FAKE:REQUEST_PERMISSION_AFTER_TOOL_CALL risky'), { worktree: freshWorktree() });
+    const req = await until(events, (e) => e.kind === 'approval.requested');
+    const callId = req.payload.toolCall.toolCallId;
+    const phases = events
+      .filter((e) => e.kind === 'content.tool_call' && e.payload.callId === callId)
+      .map((e) => e.payload.phase);
+
+    assert.deepEqual(
+      phases,
+      ['requested', 'progress', 'progress'],
+      'session/request_permission is a state observation for the already-known call, not a second logical attempt',
+    );
+    assert.equal(req.payload.requestId.length > 0, true, 'normalizing tool telemetry must not suppress the approval request');
+  } finally {
+    await cleanup(adapter, worker);
+  }
+});
+
 test('GA9: approve(..., "deny") selects the reject option — the agent continues and the turn completes without the tool', async () => {
   const adapter = makeAdapter();
   const events = collect(adapter);

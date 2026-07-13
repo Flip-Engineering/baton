@@ -137,6 +137,13 @@ function runPrompt(text) {
       toolCallSeq += 1;
       const toolCallId = `call-${toolCallSeq}`;
       pendingPermission = { id: serverReqSeq, optionIds: { allowOnce: 'allow-once', allowAlways: 'always-allow', rejectOnce: 'reject-once' } };
+      // Phase-59 live Grok emitted the ordinary tool telemetry first, then re-announced the
+      // same toolCallId in session/request_permission while awaiting approval. Keep this opt-in
+      // so the older permission-first fixture shape remains covered independently.
+      if (text.includes('FAKE:REQUEST_PERMISSION_AFTER_TOOL_CALL')) {
+        update({ sessionUpdate: 'tool_call', toolCallId, title: 'write', rawInput: { filePath: '/fake/risky.txt', content: 'risky\n' } });
+        update({ sessionUpdate: 'tool_call_update', toolCallId, title: 'Write `/fake/risky.txt`', status: 'in_progress' });
+      }
       // LIVE-verbatim option list and toolCall shape (probe #4, grok 0.1.216 authenticated):
       // allow_always is FIRST — the adapter's kind-preference (allow -> allow_once) must not
       // naively take options[0].

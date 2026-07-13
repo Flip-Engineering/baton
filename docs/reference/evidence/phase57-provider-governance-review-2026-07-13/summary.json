@@ -1,0 +1,84 @@
+{
+  "at": "2026-07-13T17:59:41.622Z",
+  "implementationSha": "8c377c70741e3cd0c00a311833166fa52013a117",
+  "runId": "phase57-live-harness-governance",
+  "selectedTaskIds": [
+    "phase57-codex-review",
+    "phase57-claude-review",
+    "phase57-glm-review",
+    "phase57-grok45-review",
+    "phase57-grokbuild-review"
+  ],
+  "interpretation": {
+    "lifecyclePass": "all 5 selected exact routes admitted, both Grok process groups sampled live simultaneously, every started generation closed exactly, driver drain closed coordinator/writer, and all owned residue disappeared",
+    "matrixPass": "lifecyclePass plus 5 fresh-verified report(s) and identical worker/verifier toolchain projection binding"
+  },
+  "manualWorkerKills": false,
+  "legacyDriverClose": false,
+  "closureReceipt": null,
+  "credentialMeasurements": {
+    "glm": {
+      "present": true,
+      "ownerOnly": true,
+      "ownedByRunnerUser": true
+    },
+    "codex": {
+      "present": true,
+      "ownerOnly": true,
+      "ownedByRunnerUser": true
+    },
+    "grok": {
+      "present": true,
+      "ownerOnly": true,
+      "ownedByRunnerUser": true
+    }
+  },
+  "simultaneousGrokSamples": [],
+  "attempts": [],
+  "rows": [],
+  "responses": [],
+  "routeAdmission": {
+    "allAttempted": false,
+    "allAdmitted": false,
+    "exactRequestedResolved": false,
+    "noObservedMismatch": false,
+    "providerGovernanceMode": "observe",
+    "allGovernedBeforeEffect": false
+  },
+  "providerProof": {
+    "startedProcessCount": 0,
+    "allSelectedProcessesStarted": false,
+    "simultaneousActiveGrokPidSampleObserved": false,
+    "everyStartedProcessClosedExactly": true,
+    "everyStartedLeaderGone": true,
+    "everyStartedGroupGone": true
+  },
+  "cleanup": {
+    "closureReceiptPresent": false,
+    "coordinatorClosed": false,
+    "writerReleased": false,
+    "taskWorktreesGone": true,
+    "runtimesGone": true,
+    "taskBranchesGone": false,
+    "targetDependencyAbsent": true,
+    "ownershipSnapshotRestored": true
+  },
+  "projectionProof": {
+    "identity": null,
+    "allWorkersBound": false,
+    "allVerifiersBound": true,
+    "sourcePathAbsentFromBoundedEvents": true
+  },
+  "reviewProof": {
+    "terminalTaskCount": 0,
+    "verifiedReports": [],
+    "allSelectedVerified": false
+  },
+  "ownershipBefore": null,
+  "ownershipAfter": null,
+  "fatal": "Error: Command failed: git worktree add --detach /private/tmp/baton-phase57-governance.GQL41x/phase57-clean-target 8c377c70741e3cd0c00a311833166fa52013a117\nPreparing worktree (detached HEAD 8c377c7)\nerror: unable to write file docs/reference/evidence/phase26-structured-merge-closure-composer-2026-07-11/events.jsonl\nerror: unable to write file docs/reference/evidence/phase26-structured-merge-closure-grok45-2026-07-11/events.jsonl\nerror: unable to write file docs/reference/evidence/phase26-structured-merge-definitive-clean-composer-2026-07-11/events.jsonl\nerror: unable to write file docs/reference/evidence/phase26-structured-merge-definitive-clean-grok45-2026-07-11/events.jsonl\nerror: unable to write file docs/reference/evidence/phase26-structured-merge-definitive-composer-2026-07-11/events.jsonl\nerror: unable to write file docs/reference/evidence/phase26-structured-merge-final-clean-composer-2026-07-11/events.jsonl\nerror: unable to write file docs/reference/evidence/phase26-structured-merge-final-concurrent-clean-grok-review-2026-07-11/events.jsonl\nerror: unable to write file docs/reference/evidence/phase26-structured-merge-implementation-grok-review-2026-07-11/events.jsonl\nerror: unable to write file docs/reference/evidence/phase26-structured-merge-post-effect-clean-composer-2026-07-11/events.jsonl\nerror: unable to write file docs/reference/evidence/phase26-structured-merge-post-effect-clean-grok45-2026-07-11/events.jsonl\nerror: unable to write file docs/reference/evidence/phase26-structured-merge-post-effect-retry-clean-grok45-2026-07-11/events.jsonl\nerror: unable to write file docs/reference/evidence/phase26-structured-merge-scope-grok-review-2026-07-11/events.jsonl\nerror: unable to write file docs/reference/evidence/phase26-structured-merge-sparse-red-composer-2026-07-11/events.jsonl\nUpdating files:  37% (312/842)\rerror: unable to write file docs/reference/evidence/phase26-structured-merge-telemetry-bounded-clean-composer-2026-07-11/events.jsonl\nerror: unable to write file docs/reference/evidence/phase26-structured-merge-telemetry-bounded-clean-grok45-2026-07-11/events.jsonl\nerror: unable to write file docs/reference/evidence/phase27-egraph-evaluation-scope-grok-review-2026-07-11/events.jsonl\nerror: unable to write file docs/reference/evidence/phase27-egraph-final-clean-grok-review-2026-07-11/events.jsonl\nUpdating files:  38% (320/842)\rerror: unable to write file docs/reference/evidence/phase27-egraph-implementation-grok-review-2026-07-11/events.jsonl\nerror: unable to write file docs/reference/evidence/phase28-exhaustive-capability-audit-grok-review-2026-07-11/events.jsonl\nerror: unable to write file docs/reference/evidence/phase29-aci-contract-closure-grok-review-2026-07-12/events.jsonl\nfatal: cannot create directory at 'docs/reference/evidence/phase29-capability-invocation-final-clean-grok-review-2026-07-12': No space left on device\n\n    at genericNodeError (node:internal/errors:998:15)\n    at wrappedFn (node:internal/errors:543:14)\n    at checkExecSyncError (node:child_process:925:11)\n    at execFileSync (node:child_process:961:15)\n    at sourceGit (file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase56-live-harness-drain-2026-07-13/run.mjs:82:29)\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase56-live-harness-drain-2026-07-13/run.mjs:161:3\n    at ModuleJob.run (node:internal/modules/esm/module_job:430:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:639:26)\n    at async file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase57-provider-governance-review-2026-07-13/run.mjs:9:1\ntarget worktree removal incomplete",
+  "lifecyclePass": false,
+  "matrixPass": false,
+  "targetWorktreeRemoved": false,
+  "removalError": null
+}

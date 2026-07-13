@@ -796,7 +796,7 @@ adoption, abandoned-verifier cleanup, active legacy-close refusal, and pre-write
 drain receipts are executable. Legacy un-attested dependency copying refuses when capacity is on.
 The HMAC is corruption detection when its key is withheld, not a hostile same-UID worker boundary;
 OS sandboxing and hard isolated-volume quotas remain explicit later gates. Thirty-four focused
-capacity contracts and the 1344/1344 canonical suite are green. The exact five-provider recursive
+capacity contracts and the 1345/1345 canonical suite are green. The exact five-provider recursive
 sparse+capacity rerun remains a live acceptance gate, not a claimed completion.
 
 These operational phases do not narrow the retained system. The self-contained causal/temporal

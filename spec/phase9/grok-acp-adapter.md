@@ -187,7 +187,8 @@ still completes; nothing is mistaken for a crash.
 | `update.sessionUpdate` | BatonEvent kind | Notes |
 |---|---|---|
 | `agent_message_chunk` | `content.message` | payload `{sessionId, turnId, text, chunked:true}` — chunks pass through individually (multiple content.message per turn is already the codex norm per item) |
-| `tool_call` | `content.tool_call` | raw update payload carried through |
+| `tool_call` | `content.tool_call` | raw update payload carried through; first observation is `requested`, a known call is `progress` |
+| `tool_call_update` | `content.tool_call` | status/diff update; a nonterminal first observation establishes the logical request, later observations are `progress`, and terminal statuses remain terminal |
 | `agent_thought_chunk` | *(none)* | ignored, matching the codex adapter's reasoning-delta posture |
 | `plan` | *(none)* | ignored (D3 has no plan kind); revisit with goal-pinning work |
 | anything else | *(none)* | ignored — unmapped events never crash (D3) |
@@ -299,5 +300,12 @@ adapter):
     tool-call, status, command, exit-code, and changed-path fields remain available. This is an
     evidence bound, not silent omission: the digest and byte count make truncation explicit and
     reproducible.
+11. Phase 59 recursive dogfood against grok 0.2.99 exposed a second wire shape: Grok can emit
+    `tool_call` and `tool_call_update` for an ID, then repeat that ID inside
+    `session/request_permission`. The permission request remains an `approval.requested`, but its
+    `content.tool_call` observation is `progress` when that ID is already known in the active
+    turn. Permission-first calls still establish `requested`. This adapter normalization prevents
+    one provider action from masquerading as two logical attempts while the coordinator correctly
+    retains fail-closed rejection of genuinely repeated `requested` phases (**F3**, test-locked).
 
 Suite after corrections: **372/372** (+F1 usage test, +F2 tool_call_update test).
