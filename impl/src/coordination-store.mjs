@@ -12,6 +12,7 @@ const KNOWLEDGE_NODE_TYPES = new Set(['Run', 'Task', 'Artifact', 'Phase', 'Exper
 const KNOWLEDGE_EDGE_TYPES = new Set(['Supports', 'Contradicts', 'Supersedes', 'Informed', 'ProducedBy', 'Contains', 'DependsOn', 'Refines', 'ReadBy', 'VerifiedBy', 'DerivedFrom', 'Affects', 'Cites', 'ObservedIn']);
 const KNOWLEDGE_GROUNDINGS = new Set(['verified', 'observed', 'derived', 'asserted']);
 const KNOWLEDGE_PROJECTION_FIELDS = new Set(['contentDigest', 'observedSeq', 'observedAt', 'eventTimeSeq', 'eventTime', 'validityVersion', 'invalidatedBy', 'derivedFromEvent', 'resolvedBy', 'winnerId', 'loserId', 'resolutionReason']);
+const KNOWLEDGE_RECALL_POLICY_FIELDS = ['repoId', 'maxQueryBytes', 'maxQueryTerms', 'maxCandidates', 'maxCandidateBytes', 'maxResults', 'maxGraphDepth', 'maxGraphRows', 'maxSnippetBytes', 'maxReceiptBytes', 'maxResultBytes'];
 const PROVIDER_FAILURE_CODES = new Set(['provider_index_changed', 'reuse_policy_reconciliation_required', 'reuse_evidence_diverged', 'capability_refused', 'provider_processing_failed']);
 
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
@@ -22,6 +23,32 @@ function canonical(value) {
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
 }
 function canonicalDigest(value) { return digest(canonical(value)); }
+function canonicalBytes(value) { return Buffer.byteLength(JSON.stringify(canonical(value))); }
+function normalizedRecallText(value) { return value.normalize('NFKC').toLowerCase().trim().replace(/\s+/gu, ' '); }
+function recallTerms(value) { return [...new Set(normalizedRecallText(value).match(/[\p{L}\p{N}]+/gu) ?? [])]; }
+function validUnicodeScalarString(value) {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xD800 && code <= 0xDBFF) { const next = value.charCodeAt(index + 1); if (!(next >= 0xDC00 && next <= 0xDFFF)) return false; index += 1; }
+    else if (code >= 0xDC00 && code <= 0xDFFF) return false;
+  }
+  return true;
+}
+function recallBody(value) { return typeof value === 'string' ? value : JSON.stringify(canonical(value ?? '')); }
+function utf8Snippet(value, maxBytes) {
+  let result = ''; let bytes = 0;
+  for (const character of recallBody(value)) { const size = Buffer.byteLength(character); if (bytes + size > maxBytes) break; result += character; bytes += size; }
+  return result;
+}
+function validKnowledgeRecallPolicy(policy) {
+  if (!policy || Object.keys(policy).sort().join(',') !== [...KNOWLEDGE_RECALL_POLICY_FIELDS].sort().join(',') || typeof policy.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId)) return false;
+  const numeric = KNOWLEDGE_RECALL_POLICY_FIELDS.filter((name) => name !== 'repoId');
+  if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
+  return policy.maxQueryBytes <= 64 * 1024 && policy.maxQueryTerms <= 1_024 && policy.maxCandidates <= 100_000
+    && policy.maxCandidateBytes <= 64 * 1024 * 1024 && policy.maxResults <= 1_000 && policy.maxGraphDepth <= 64
+    && policy.maxGraphRows <= 1_000_000 && policy.maxSnippetBytes <= 64 * 1024
+    && policy.maxReceiptBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
+}
 function providerAttemptDelay(policy, windowAttempt) {
   const exponent = Math.min(windowAttempt - 1, Math.ceil(Math.log2(policy.maxBackoffMs / policy.initialBackoffMs)));
   return Math.min(policy.maxBackoffMs, policy.initialBackoffMs * (2 ** exponent));
@@ -1190,6 +1217,16 @@ export class CoordinationStore {
     } else if (event.kind === 'knowledge.invalidated') {
       this._validateKnowledgeInvalidation(p, event, true); const target = this._knowledgeNodes.get(p.nodeId);
       this._setKnowledgeNode(event, p.nodeId, freeze({ ...clone(target), validTo: event.ts, validityVersion: target.validityVersion + 1, invalidatedBy: event.seq }));
+    } else if (event.kind === 'knowledge.recall') {
+      this._validateKnowledgeRecallPayload(p, event, true);
+      this._knowledgeReads.push(freeze({ ...clone(p), eventSeq: event.seq, ts: event.ts, readKind: 'recall' }));
+      const readerNode = p.taskId ? `task:${p.taskId}` : (p.runId ? `run:${p.runId}` : null);
+      if (readerNode) {
+        for (const nodeId of p.nodeIds) {
+          const id = `knowledge-edge:readby:${event.seq}:${nodeId}:${readerNode}`;
+          this._setKnowledgeEdge(event, id, freeze({ id, type: 'ReadBy', from: nodeId, to: readerNode, evidence: [{ coordinationSeq: event.seq }], observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: event.seq, eventTime: event.ts, validFrom: event.ts, validTo: null, validityVersion: 1, derivedFromEvent: event.seq }));
+        }
+      }
     } else if (event.kind === 'knowledge.read') {
       const fixed = new Set(['query', 'nodeIds', 'nodeSnapshots', 'asOf', 'observedSeq', 'observedAt', 'validityVersions', 'requestDigest']);
       const reader = Object.fromEntries(Object.entries(p).filter(([key]) => !fixed.has(key)));
@@ -2142,6 +2179,163 @@ export class CoordinationStore {
       if (edge.validTo && Date.parse(edge.validTo) <= effectiveAt) return false;
       return true;
     }).sort((a, b) => a.id.localeCompare(b.id)).map(clone);
+  }
+
+  _prepareKnowledgeRecall(request, policy, actor) {
+    const allowed = new Set(['text', 'limit', 'observedSeq', 'asOf', 'types', 'grounding', 'seedNodeIds', 'reader']);
+    if (!validKnowledgeRecallPolicy(policy)) throw new CoordinationRefusal('knowledge recall policy is invalid', 'causal_recall_invalid');
+    if (!request || typeof request !== 'object' || Array.isArray(request) || Object.keys(request).some((key) => !allowed.has(key))
+      || typeof request.text !== 'string' || request.text.trim().length === 0 || request.text.includes('\0') || !validUnicodeScalarString(request.text) || typeof actor !== 'string' || actor.length === 0
+      || !Number.isSafeInteger(request.limit) || request.limit <= 0 || request.limit > policy.maxResults
+      || !Number.isSafeInteger(request.observedSeq) || request.observedSeq < 0 || request.observedSeq > this._events.length
+      || !request.reader || typeof request.reader !== 'object' || Array.isArray(request.reader)) throw new CoordinationRefusal('knowledge recall request is invalid', 'causal_recall_invalid');
+    if (Buffer.byteLength(request.text) > policy.maxQueryBytes) throw new CoordinationRefusal('knowledge recall query exceeded deployment ceiling', 'causal_recall_oversize');
+    const terms = recallTerms(request.text); if (terms.length === 0) throw new CoordinationRefusal('knowledge recall query has no searchable terms', 'causal_recall_invalid');
+    if (terms.length > policy.maxQueryTerms) throw new CoordinationRefusal('knowledge recall query exceeded deployment ceiling', 'causal_recall_oversize');
+    const readerKeys = Object.keys(request.reader); if (readerKeys.some((key) => !['taskId', 'runId'].includes(key)) || readerKeys.length > 1) throw new CoordinationRefusal('knowledge recall reader is invalid', 'causal_recall_invalid');
+    const taskId = request.reader.taskId ?? null; const runId = request.reader.runId ?? null;
+    if ((taskId !== null && (!boundedText(taskId, 256) || !this._tasks.has(taskId))) || (runId !== null && (!validRunId(runId) || !this._runs.has(runId) || !this._knowledgeNodes.has(`run:${runId}`)))) throw new CoordinationRefusal('knowledge recall reader target is invalid', 'causal_recall_invalid');
+    const types = request.types ?? []; const grounding = request.grounding ?? []; const seedNodeIds = request.seedNodeIds ?? [];
+    if (!Array.isArray(types) || new Set(types).size !== types.length || types.some((type) => !KNOWLEDGE_NODE_TYPES.has(type))
+      || !Array.isArray(grounding) || new Set(grounding).size !== grounding.length || grounding.some((value) => !KNOWLEDGE_GROUNDINGS.has(value))
+      || !Array.isArray(seedNodeIds) || new Set(seedNodeIds).size !== seedNodeIds.length || seedNodeIds.length > request.limit || seedNodeIds.some((id) => !boundedText(id, 4_096))) throw new CoordinationRefusal('knowledge recall filters or seeds are invalid', 'causal_recall_invalid');
+    const observedAt = this.observationTime(request.observedSeq); const asOf = request.asOf ?? observedAt;
+    if (typeof asOf !== 'string' || !Number.isFinite(Date.parse(asOf)) || new Date(Date.parse(asOf)).toISOString() !== asOf) throw new CoordinationRefusal('knowledge recall valid-time boundary is invalid', 'causal_recall_invalid');
+    const normalized = normalizedRecallText(request.text); const query = freeze({
+      schemaVersion: 1, normalizedTextDigest: canonicalDigest(normalized), termDigests: terms.map((term) => canonicalDigest(term)).sort(),
+      types: [...types].sort(), grounding: [...grounding].sort(), seedNodeIds: [...seedNodeIds].sort(), limit: request.limit,
+      observedSeq: request.observedSeq, asOf,
+    });
+    const policyProjection = freeze(clone(policy)); const policyDigest = canonicalDigest(policyProjection);
+    const reader = freeze({ readerActor: actor, readerWorker: taskId ? this._tasks.get(taskId)?.assignee ?? null : null, taskId, runId });
+    const requestDigest = canonicalDigest({ request: clone(request), actor, policyDigest });
+    return { query, policy: policyProjection, policyDigest, reader, requestDigest, observedAt };
+  }
+
+  _buildKnowledgeRecall(query, policy) {
+    if (!validKnowledgeRecallPolicy(policy) || query?.schemaVersion !== 1 || Object.keys(query).sort().join(',') !== ['schemaVersion', 'normalizedTextDigest', 'termDigests', 'types', 'grounding', 'seedNodeIds', 'limit', 'observedSeq', 'asOf'].sort().join(',')
+      || !/^[a-f0-9]{64}$/.test(query.normalizedTextDigest ?? '') || !Array.isArray(query.termDigests) || query.termDigests.length === 0 || query.termDigests.length > policy.maxQueryTerms || query.termDigests.some((value) => !/^[a-f0-9]{64}$/.test(value)) || new Set(query.termDigests).size !== query.termDigests.length
+      || !Number.isSafeInteger(query.limit) || query.limit <= 0 || query.limit > policy.maxResults || !Number.isSafeInteger(query.observedSeq) || query.observedSeq < 0 || query.observedSeq > this._events.length
+      || typeof query.asOf !== 'string' || !Number.isFinite(Date.parse(query.asOf)) || new Date(Date.parse(query.asOf)).toISOString() !== query.asOf
+      || !Array.isArray(query.types) || query.types.some((type) => !KNOWLEDGE_NODE_TYPES.has(type)) || new Set(query.types).size !== query.types.length
+      || !Array.isArray(query.grounding) || query.grounding.some((value) => !KNOWLEDGE_GROUNDINGS.has(value)) || new Set(query.grounding).size !== query.grounding.length
+      || !Array.isArray(query.seedNodeIds) || query.seedNodeIds.length > query.limit || query.seedNodeIds.some((id) => !boundedText(id, 4_096)) || new Set(query.seedNodeIds).size !== query.seedNodeIds.length
+      || canonicalDigest(query.termDigests) !== canonicalDigest([...query.termDigests].sort()) || canonicalDigest(query.types) !== canonicalDigest([...query.types].sort())
+      || canonicalDigest(query.grounding) !== canonicalDigest([...query.grounding].sort()) || canonicalDigest(query.seedNodeIds) !== canonicalDigest([...query.seedNodeIds].sort())) throw new CoordinationRefusal('knowledge recall projection is invalid', 'causal_recall_invalid');
+    const allNodes = this.queryKnowledge({ observedSeq: query.observedSeq, asOf: query.asOf });
+    if (allNodes.length > policy.maxCandidates) throw new CoordinationRefusal('knowledge recall candidates exceeded deployment ceiling', 'causal_recall_oversize');
+    const candidateBytes = allNodes.reduce((sum, node) => sum + Buffer.byteLength(recallBody(node.body)), 0);
+    if (candidateBytes > policy.maxCandidateBytes) throw new CoordinationRefusal('knowledge recall candidate bytes exceeded deployment ceiling', 'causal_recall_oversize');
+    const nodeMap = new Map(allNodes.map((node) => [node.id, node]));
+    const eligible = allNodes.filter((node) => (query.types.length === 0 || query.types.includes(node.type)) && (query.grounding.length === 0 || query.grounding.includes(node.grounding)));
+    const eligibleIds = new Set(eligible.map((node) => node.id));
+    if (query.seedNodeIds.some((id) => !eligibleIds.has(id))) throw new CoordinationRefusal('knowledge recall seed is unknown, dead, or filtered', 'causal_recall_invalid');
+    const queryTermSet = new Set(query.termDigests);
+    const lexical = new Map();
+    for (const node of eligible) {
+      const idTokens = new Set(recallTerms(node.id).map((term) => canonicalDigest(term))); const typeTokens = new Set(recallTerms(node.type).map((term) => canonicalDigest(term))); const bodyTokens = new Set(recallTerms(recallBody(node.body)).map((term) => canonicalDigest(term)));
+      const idMatches = [...queryTermSet].filter((term) => idTokens.has(term)).length; const typeMatches = [...queryTermSet].filter((term) => typeTokens.has(term)).length; const bodyMatches = [...queryTermSet].filter((term) => bodyTokens.has(term)).length;
+      const idExact = canonicalDigest(normalizedRecallText(node.id)) === query.normalizedTextDigest; const score = (idExact ? 1_000 : 0) + idMatches * 100 + typeMatches * 40 + bodyMatches * 10;
+      lexical.set(node.id, { idExact, idMatches, typeMatches, bodyMatches, score });
+    }
+    const allEdges = this.queryKnowledgeEdges({ observedSeq: query.observedSeq, asOf: query.asOf }).filter((edge) => edge.type !== 'ReadBy' && nodeMap.has(edge.from) && nodeMap.has(edge.to));
+    const incident = new Map(); for (const edge of allEdges) for (const id of [edge.from, edge.to]) { const rows = incident.get(id) ?? []; rows.push(edge); incident.set(id, rows); }
+    for (const rows of incident.values()) rows.sort((a, b) => a.id.localeCompare(b.id));
+    const sources = [...new Set([...query.seedNodeIds, ...eligible.filter((node) => (lexical.get(node.id)?.score ?? 0) > 0).map((node) => node.id)])].sort();
+    const distances = new Map(sources.map((id) => [id, 0])); const queue = sources.map((id) => ({ id, depth: 0 })); const seenNodes = new Set(); const seenEdges = new Set(); let graphRows = 0;
+    while (queue.length > 0) {
+      const current = queue.shift(); if (seenNodes.has(current.id)) continue; seenNodes.add(current.id);
+      graphRows += 1; if (graphRows > policy.maxGraphRows) throw new CoordinationRefusal('knowledge recall graph exceeded deployment ceiling', 'causal_recall_oversize');
+      for (const edge of incident.get(current.id) ?? []) {
+        const next = edge.from === current.id ? edge.to : edge.from;
+        if (!seenEdges.has(edge.id)) { seenEdges.add(edge.id); graphRows += 1; if (graphRows > policy.maxGraphRows) throw new CoordinationRefusal('knowledge recall graph exceeded deployment ceiling', 'causal_recall_oversize'); }
+        if (current.depth >= policy.maxGraphDepth) {
+          if (!distances.has(next)) throw new CoordinationRefusal('knowledge recall graph depth exceeded deployment ceiling', 'causal_recall_oversize');
+        } else if (!distances.has(next)) { distances.set(next, current.depth + 1); queue.push({ id: next, depth: current.depth + 1 }); }
+      }
+    }
+    const rank = (node) => {
+      const lex = lexical.get(node.id) ?? { idExact: false, idMatches: 0, typeMatches: 0, bodyMatches: 0, score: 0 }; const graphDistance = distances.get(node.id) ?? null; const graphScore = graphDistance === null ? 0 : Math.max(1, 30 - 5 * graphDistance);
+      return { node, score: lex.score + graphScore, reason: { idExact: lex.idExact, idMatches: lex.idMatches, typeMatches: lex.typeMatches, bodyMatches: lex.bodyMatches, graphDistance, graphScore } };
+    };
+    const ranked = eligible.map(rank).filter((row) => row.score > 0).sort((a, b) => b.score - a.score || a.node.id.localeCompare(b.node.id));
+    const selected = ranked.slice(0, query.limit); const selectedIds = new Set(selected.map((row) => row.node.id)); const finalIds = new Set(selectedIds); const contradictionEdges = allEdges.filter((edge) => edge.type === 'Contradicts').sort((a, b) => a.id.localeCompare(b.id));
+    let changed = true; while (changed) { changed = false; for (const edge of contradictionEdges) if (finalIds.has(edge.from) || finalIds.has(edge.to)) for (const id of [edge.from, edge.to]) if (!finalIds.has(id)) { finalIds.add(id); changed = true; } }
+    if (finalIds.size > query.limit || finalIds.size > policy.maxResults) throw new CoordinationRefusal('knowledge recall contradiction bundle exceeded deployment ceiling', 'causal_recall_oversize');
+    const rows = [...finalIds].map((id) => rank(nodeMap.get(id))).sort((a, b) => b.score - a.score || a.node.id.localeCompare(b.node.id)).map(({ node, score, reason }) => {
+      const fullReason = { ...reason, selected: selectedIds.has(node.id), contradictionPeer: !selectedIds.has(node.id) }; const reasonDigest = canonicalDigest(fullReason);
+      const safe = Object.fromEntries(['id', 'type', 'grounding', 'observedSeq', 'eventTimeSeq', 'validFrom', 'validTo', 'validityVersion'].filter((key) => Object.hasOwn(node, key)).map((key) => [key, clone(node[key])]));
+      return { ...safe, score, reason: fullReason, reasonDigest, snippet: utf8Snippet(node.body, policy.maxSnippetBytes) };
+    });
+    const contradictions = contradictionEdges.filter((edge) => finalIds.has(edge.from) && finalIds.has(edge.to)).map((edge) => ({ edgeId: edge.id, from: edge.from, to: edge.to, status: 'unresolved' }));
+    const core = { schemaVersion: 1, observedSeq: query.observedSeq, observedAt: this.observationTime(query.observedSeq), asOf: query.asOf, queryDigest: canonicalDigest(query), nodes: rows, contradictions };
+    return freeze({ ...core, projectionDigest: canonicalDigest(core) });
+  }
+
+  _validateKnowledgeRecallPayload(payload, event, integrity = false) {
+    const fail = (message, code = 'knowledge_recall_integrity') => this._knowledgeFailure(message, code, integrity);
+    const fields = ['schemaVersion', 'readerActor', 'readerWorker', 'taskId', 'runId', 'query', 'policy', 'policyDigest', 'observedSeq', 'observedAt', 'asOf', 'nodeIds', 'validityVersions', 'scores', 'contradictionEdgeIds', 'requestDigest', 'resultProjectionDigest', 'receiptDigest'];
+    if (!payload || Object.keys(payload).sort().join(',') !== fields.sort().join(',') || payload.schemaVersion !== 1 || payload.readerActor !== event.actor || !validKnowledgeRecallPolicy(payload.policy)
+      || payload.policyDigest !== canonicalDigest(payload.policy) || !/^[a-f0-9]{64}$/.test(payload.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(payload.resultProjectionDigest ?? '')
+      || payload.observedSeq !== payload.query?.observedSeq || payload.asOf !== payload.query?.asOf || payload.observedAt !== this.observationTime(payload.observedSeq)) fail('knowledge recall receipt shape is invalid');
+    const core = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'receiptDigest'));
+    if (!/^[a-f0-9]{64}$/.test(payload.receiptDigest ?? '') || payload.receiptDigest !== canonicalDigest(core) || canonicalBytes(payload) > payload.policy.maxReceiptBytes) fail('knowledge recall receipt binding is invalid');
+    const taskId = payload.taskId ?? null; const runId = payload.runId ?? null; const task = taskId === null ? null : this._tasks.get(taskId);
+    const readerWorkerAtReceipt = task?.claimedEvent && task.claimedEvent < event.seq ? task.assignee : null;
+    if ((taskId !== null && (!task || payload.readerWorker !== readerWorkerAtReceipt || runId !== null))
+      || (runId !== null && (!this._runs.has(runId) || !this._knowledgeNodes.has(`run:${runId}`) || taskId !== null || payload.readerWorker !== null))
+      || (taskId === null && runId === null && payload.readerWorker !== null)) fail('knowledge recall reader projection is invalid');
+    let projection; try { projection = this._buildKnowledgeRecall(payload.query, payload.policy); } catch (error) { if (integrity) throw new CoordinationIntegrityError('knowledge recall projection cannot be rebuilt', 'knowledge_recall_integrity'); throw error; }
+    const expectedScores = projection.nodes.map((node) => ({ id: node.id, score: node.score, reasonDigest: node.reasonDigest }));
+    if (canonicalDigest(payload.nodeIds) !== canonicalDigest(projection.nodes.map((node) => node.id))
+      || canonicalDigest(payload.validityVersions) !== canonicalDigest(Object.fromEntries(projection.nodes.map((node) => [node.id, node.validityVersion])))
+      || canonicalDigest(payload.scores) !== canonicalDigest(expectedScores) || canonicalDigest(payload.contradictionEdgeIds) !== canonicalDigest(projection.contradictions.map((edge) => edge.edgeId))
+      || payload.resultProjectionDigest !== projection.projectionDigest) fail('knowledge recall ranked projection diverged');
+    return projection;
+  }
+
+  _newKnowledgeRecallReceipt(prepared) {
+    const projection = this._buildKnowledgeRecall(prepared.query, prepared.policy); const core = {
+      schemaVersion: 1, ...clone(prepared.reader), query: clone(prepared.query), policy: clone(prepared.policy), policyDigest: prepared.policyDigest,
+      observedSeq: prepared.query.observedSeq, observedAt: prepared.observedAt, asOf: prepared.query.asOf,
+      nodeIds: projection.nodes.map((node) => node.id), validityVersions: Object.fromEntries(projection.nodes.map((node) => [node.id, node.validityVersion])),
+      scores: projection.nodes.map((node) => ({ id: node.id, score: node.score, reasonDigest: node.reasonDigest })), contradictionEdgeIds: projection.contradictions.map((edge) => edge.edgeId),
+      requestDigest: prepared.requestDigest, resultProjectionDigest: projection.projectionDigest,
+    };
+    const payload = { ...core, receiptDigest: canonicalDigest(core) }; if (canonicalBytes(payload) > prepared.policy.maxReceiptBytes) throw new CoordinationRefusal('knowledge recall receipt exceeded deployment ceiling', 'causal_recall_oversize');
+    return { projection, payload, receiptBytes: canonicalBytes(payload) };
+  }
+
+  #knowledgeRecallPreview(request, policy, auth) {
+    const prepared = this._prepareKnowledgeRecall(request, policy, auth?.actor); const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'knowledge.recall' || prior.actor !== auth.actor || prior.payload?.requestDigest !== prepared.requestDigest) throw new CoordinationRefusal('knowledge recall idempotency conflict', 'knowledge_recall_conflict');
+      const projection = this._validateKnowledgeRecallPayload(prior.payload, prior, false); return freeze({ event: clone(prior), projection, replayed: true, receiptBytes: canonicalBytes(prior.payload) });
+    }
+    const built = this._newKnowledgeRecallReceipt(prepared); const event = { schemaVersion: 1, seq: this._events.length + 1, kind: 'knowledge.recall', actor: auth.actor, idempotencyKey: auth.key, payload: built.payload };
+    return freeze({ event, projection: built.projection, replayed: false, receiptBytes: built.receiptBytes });
+  }
+
+  previewKnowledgeRecallBounded(request, policy, auth) {
+    const preview = this.#knowledgeRecallPreview(request, policy, auth); const projection = preview.projection;
+    return freeze({
+      event: { seq: preview.event.seq, payload: { receiptDigest: preview.event.payload.receiptDigest } }, replayed: preview.replayed, receiptBytes: preview.receiptBytes,
+      publication: { observedSeq: projection.observedSeq, observedAt: projection.observedAt, asOf: projection.asOf, queryDigest: projection.queryDigest, projectionDigest: projection.projectionDigest, nodeBytes: canonicalBytes(projection.nodes), contradictionBytes: canonicalBytes(projection.contradictions) },
+    });
+  }
+
+  recallKnowledgeBounded(request, policy, auth) {
+    const preview = this.#knowledgeRecallPreview(request, policy, auth); if (preview.replayed) return preview;
+    const payload = preview.event.payload;
+    const fixedTs = this._clock(); const predicted = { schemaVersion: 1, seq: this._events.length + 1, ts: fixedTs, kind: 'knowledge.recall', actor: auth.actor, idempotencyKey: auth.key, payload };
+    this._validateKnowledgeRecallPayload(payload, predicted, false); const event = this._append('knowledge.recall', payload, auth, fixedTs);
+    return freeze({ event: clone(event), projection: preview.projection, replayed: false, receiptBytes: preview.receiptBytes });
+  }
+
+  reverifyKnowledgeRecall(request, policy, actor, eventSeq) {
+    const prepared = this._prepareKnowledgeRecall(request, policy, actor); const event = Number.isSafeInteger(eventSeq) ? this._events[eventSeq - 1] : null;
+    if (!event || event.kind !== 'knowledge.recall' || event.actor !== actor || event.payload?.requestDigest !== prepared.requestDigest || event.payload?.policyDigest !== prepared.policyDigest) throw new CoordinationRefusal('knowledge recall receipt does not match request authority', 'knowledge_recall_conflict');
+    const projection = this._validateKnowledgeRecallPayload(event.payload, event, false); return freeze({ event: clone(event), projection, replayed: true, receiptBytes: canonicalBytes(event.payload) });
   }
 
   readKnowledge(query, reader, auth) {
