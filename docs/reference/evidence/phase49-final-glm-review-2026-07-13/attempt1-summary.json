@@ -1,0 +1,38 @@
+{
+  "at": "2026-07-13T08:26:17.747Z",
+  "repoHead": "7127b6bee04e64a53e791d8b7ee45b8b6a92fd3d",
+  "taskId": "phase49-postfix-glm-review",
+  "credentialPosture": "project-local owner-only ignored key loaded only by GlmSessionCli",
+  "workerId": "w-1",
+  "pid": null,
+  "result": { "status": "failed", "ready": true },
+  "route": {
+    "harnessRequested": "glm",
+    "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+    "modelRequested": "glm-4.7",
+    "modelResolved": "glm-4.7",
+    "modelObserved": null,
+    "effortRequested": "low",
+    "effortResolved": "low",
+    "effortObserved": null
+  },
+  "budgetUsed": { "tokens": 0, "usd": 0 },
+  "verifyAccept": false,
+  "reportCaptured": false,
+  "kill": { "ok": true, "result": "already_dead" },
+  "checks": {
+    "runnerHealthy": true,
+    "exactRoute": false,
+    "completed": false,
+    "freshVerified": false,
+    "killSafe": true,
+    "processGone": true,
+    "worktreeGone": true,
+    "runtimeGone": true,
+    "branchGone": true,
+    "writerReleased": true
+  },
+  "fatal": null,
+  "pass": false,
+  "friction": "A top-level node_modules symlink was not matched by the repository's directory-only ignore rule, so the clean-worktree gate refused before provider spawn."
+}

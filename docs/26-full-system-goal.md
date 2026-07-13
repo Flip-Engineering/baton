@@ -594,6 +594,19 @@ PIDs while all allocations and ownership reap. Recall feedback, broader selectiv
 Playbook/Skill promotion, authenticated contradiction UX, and deployment-neutral export remain
 catalogued next; no homelab or external project-manager runtime is added.
 
+Phase 49 ships the first broader selective-promotion batch without placing the knowledge plane on a
+safety-critical control path. `causal.promote` pins one coordination boundary, reruns the critical
+audit, derives only closed operator/orchestrator Decisions, policy-authored Counterexamples, and
+independently verified cited observed Scratch Findings, then appends one all-or-nothing replay-
+validated batch. The caller cannot nominate sources, candidates, text, edges, or grounding. Fixed
+safe bodies and digested metadata omit briefs, Scratch values, prompts, commands, reasons, paths,
+URLs, credentials, and provider payloads. Direct, authenticated web, and MCP invocation/reverify
+share exact repository/actor/idempotency authority and pre-effect result gates. Derived Scratch
+remains quarantined. Correction/supersession and independent-oracle release, Playbook/Skill
+promotion, recall feedback/utility, authenticated contradiction UX, retention/compaction, and
+deployment-neutral export remain mechanically retained. Baton remains self-contained: the local
+project-manager material is causal-graph inspiration only, and homelab integration is excluded.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**
@@ -604,8 +617,9 @@ catalogued next; no homelab or external project-manager runtime is added.
 5. Complete hardened acceptance and structured integration.
 6. Ship the task/artifact/Scratch substrate and deployment-neutral causal knowledge core.
 7. Ship Atlas + AST structural delta + repo map + Cairn scorecard, durable RouteStats/advice,
-   causal integrity/audit/trace, and audit-gated bounded recall as the first capability verticals.
-   **Shipped locally through Cairn bounded recall; Phase 48 exact-route evidence is recorded.**
+   causal integrity/audit/trace, audit-gated bounded recall, and audit-gated selective promotion as
+   the first capability verticals. **Shipped locally through Cairn selective promotion; Phase 49
+   exact-route evidence is recorded.**
 8. Expand the representation and capability ladders in measured increments.
 9. Add MCP plus authenticated HTTPS/WebSocket user↔orchestrator control, operator surfaces,
    production runtime, and the registered evaluations.

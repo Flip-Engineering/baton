@@ -152,6 +152,19 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    effect. Ten focused BR tests and 1016/1016 canonical tests are green. Exact Codex and project-key
    GLM reviews fresh-verified and fully reaped; the current two-Grok allocation remains explicitly
    auth-red before provider PIDs while all worktrees/runtimes/branches/writer authority reap.
+22. **Cairn audit-gated selective promotion:** Phase 49 adds a deployment-pinned closed source
+   taxonomy and derives candidates from one audited coordination prefix without caller nomination.
+   Operator/orchestrator spawn and selected control/publication events become Decisions; closed
+   policy failure observations become Counterexamples; and cited same-repository observed Scratch
+   becomes a Finding only through distinct completed tasks with live verified outcome grounding.
+   One atomic replay-validated batch uses fixed safe bodies, closed identifiers/digests, exact
+   causal edges, max+1 ceilings, ACI pre-effect result gates, and direct/web/MCP invoke/reverify.
+   Eight focused SP tests and 1024/1024 canonical tests are green. Derived-Scratch oracle release,
+   correction/supersession, Playbook/Skill promotion, recall feedback, contradiction UX,
+   retention/compaction, and deployment-neutral export remain explicit. Final exact project-key
+   GLM `glm-4.7`/low review on PID `46906` fresh-verified, confirmed kill, and fully reaped; its
+   non-reproducing transport, boundary, and ACI-preflight claims are dispositioned with explicit
+   transport-binding and post-audit append regressions.
 
 ## What remains partial
 
@@ -165,9 +178,10 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   proof is absent. Publication has no live remote-push proof.
 - Scratch and causal knowledge primitives ship. Cairn Rungs 0–2 scorecard, verified RouteStats,
   restart hydration, bounded advice, causal integrity, contradiction resolution, and attested
-  audit/trace plus bounded recall now ship locally; Scratch REPL/Bench, authenticated contradiction
-  UX, recall feedback, broader promotion, and optional deployment-neutral export remain partial or
-  pending.
+  audit/trace, bounded recall, and the first closed selective-promotion batch now ship locally;
+  Scratch REPL/Bench, authenticated contradiction UX, recall feedback, derived-Scratch independent-
+  oracle release and correction, Playbook/Skill promotion, retention/compaction, and optional
+  deployment-neutral export remain partial or pending.
 - Phase 29 closes the former Atlas wiring gap: deployments inject a closed set of real Atlas
   instances, bounds, artifact roots, and optional trusted multi-root contexts into `createDriver()`;
   Coordinator owns the sole registry handle, and authenticated web/MCP reuse that invoke/resume/

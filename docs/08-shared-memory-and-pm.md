@@ -54,8 +54,9 @@ A fleet is N harnesses writing simultaneously. Design rules:
 ## 5. The epistemic layer exists in Baton: selective promotion, not a shared brain
 
 The original research stance made the graph an external PM concern. The full-system goal supersedes
-that boundary: **Baton owns a deployment-neutral typed causal graph, while PM remains prior art and
-an optional ordinary import/export target.** There is no PM or homelab runtime dependency. The graph
+that boundary: **Baton owns a deployment-neutral typed causal graph, while PM remains architectural
+prior art only.** Any later import/export surface is a generic Baton interchange contract, not a PM
+or homelab adapter. There is no PM or homelab runtime dependency. The graph
 remains selective and pull-only because a coding fleet's primary job is to land work, not to inject
 an accumulated research narrative into every turn. Two epistemic artifacts are immediately cheap
 and high-value:
@@ -91,10 +92,22 @@ snippet is retained. Registry-derived ACI envelope and budget gates run before t
 and there is no public unreceipted preview surface. Recall remains explicit and never auto-injects
 accumulated knowledge.
 
+Phase 49 closes the first general promotion-policy subset. `causal.promote` pins one coordination
+prefix, reruns the Phase 47 critical audit, and derives candidates without caller nomination. The
+closed taxonomy admits operator/orchestrator spawn and selected control/publication Decisions,
+policy-authored integration/publication/recovery Counterexamples, and same-repository observed
+Scratch Findings only after distinct completed tasks independently ground them in live verified
+outcomes. One replay-validated atomic batch retains fixed safe text, closed identifiers/digests,
+and exact causal edges without copying briefs, Scratch values, prompts, paths, reasons, commands,
+URLs, credentials, or provider payloads. Derived Scratch remains quarantined pending a distinct
+independent-oracle and correction policy. Direct, authenticated web, and MCP invoke/reverify share
+the same repository-bound authority and pre-effect publication gates.
+
 Richer cross-run learning, literature, hypotheses, contradictions, and supersession therefore live in
 Baton's self-contained bitemporal graph under `spec/phase11/coordination-knowledge.md`. They are
 promoted selectively from immutable events/artifacts, never written as an ambient mutable brain.
-External export may shape-map into PM or another graph later, but the product stays self-contained.
+An optional deployment-neutral graph export may ship later, but no PM-specific target is planned and
+the product stays self-contained.
 This preserves the honest architecture: a **fast operational spine that promotes selectively into
 a slow epistemic graph**, with Git-backed artifacts as the third leg.
 
@@ -115,7 +128,7 @@ targets, never product dependencies.)*
 
 ## 7. Open questions
 
-1. Promotion policy: what *automatically* qualifies an event/outcome for the scorecard and the decision graph, without a per-event tax or a curation backlog? (Candidate: terminal task transitions + all `control.*` with `actor≠policy` + budget/refusal/reroute events.)
+1. Promotion policy: Phase 49 resolves a closed first subset for consequential Decisions, closed policy Counterexamples, and independently verified cited observed Scratch. Separate contracts are still required for derived-Scratch oracle release and correction/supersession, Playbook/Skill promotion, and any later taxonomy expansion; arbitrary events never become knowledge by default.
 2. Cross-run identity: Phase 44 ships the cheap exact harness/version/model/effort/family/task-class win/loss table. Generalized claims such as "Codex is bad at auth refactors" remain explicit causal Findings, never automatic route evidence.
 3. Does the orchestrator read the scorecard of *past* runs as context for a new run, and if so how do we keep that from re-poisoning its context (doc 06 Q3)? Probably: only on explicit `fleet_recall(query)`, never auto-injected.
 4. Retention/rotation: ledgers grow unbounded; JSONL rotates, SQLite compacts, artifacts are git-GC'd — but the scorecard + decision graph are meant to be permanent. Where's the boundary, and who prunes?
