@@ -27,7 +27,9 @@ All numeric fields are positive safe integers with implementation maxima. Its `r
 the audit and recall repository when those policies are present. The capability card advertises
 `causal.promote` only when both audit and promotion policies are configured. Direct, authenticated
 web, and authenticated MCP invocation all pass through the existing ACI repository and
-idempotency authority. Only `orchestrator` or `operator:*` may invoke it.
+idempotency authority. Only `orchestrator` or `operator:*` may own the promotion receipt.
+Authenticated web/MCP user actors are normalized inside Cairn to `operator:web:*` /
+`operator:mcp:*`; caller-supplied deployment context cannot forge that normalization.
 
 ### SP2 — pinned critical audit gate
 
@@ -46,13 +48,14 @@ Candidate derivation scans at most `maxScanEvents` events in `[1, observedSeq]` 
 2. `driver.recorded` with `kind` in `control.stop_requested`, `follow_up.requested`,
    `publication.authorized`, or `publication.denied`, where the event actor is `orchestrator` or
    `operator:*` → observed `Decision`, trigger `coordination.<kind>`, informed by a durable Task;
-3. `driver.recorded` with `kind` in `integration.incomplete`, `integration.refused`,
-   `publication.refused`, or `recovery.claimed_without_spawn` → observed `Counterexample`, trigger
-   `coordination.<kind>`, linked to a durable Task; and
+3. policy-authored `driver.recorded` with `kind` in `integration.incomplete`,
+   `integration.refused`, `publication.refused`, or `recovery.claimed_without_spawn` → observed
+   `Counterexample`, trigger `coordination.<kind>`, linked to a durable Task; and
 4. active `scratch.fact_posted` with `grounding:'observed'`, same `repoId`, and at least
    `minScratchReaders` distinct completed tasks in durable `scratch.read` events at or before the
-   boundary, where every counted task has a live `verified_task_outcome` Finding → observed
-   `Finding`, trigger `scratch.cited_observed`.
+   boundary, where every counted task has a live verified-grounding `verified_task_outcome`
+   Finding with its `VerifiedBy` Task edge → observed `Finding`, trigger
+   `scratch.cited_observed`.
 
 Policy-authored events cannot become positive Decisions. `derived` Scratch, uncited Scratch,
 expired Scratch, cross-repository Scratch, reads without completed verified tasks, raw operational

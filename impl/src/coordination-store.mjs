@@ -13,6 +13,9 @@ const KNOWLEDGE_EDGE_TYPES = new Set(['Supports', 'Contradicts', 'Supersedes', '
 const KNOWLEDGE_GROUNDINGS = new Set(['verified', 'observed', 'derived', 'asserted']);
 const KNOWLEDGE_PROJECTION_FIELDS = new Set(['contentDigest', 'observedSeq', 'observedAt', 'eventTimeSeq', 'eventTime', 'validityVersion', 'invalidatedBy', 'derivedFromEvent', 'resolvedBy', 'winnerId', 'loserId', 'resolutionReason']);
 const KNOWLEDGE_RECALL_POLICY_FIELDS = ['repoId', 'maxQueryBytes', 'maxQueryTerms', 'maxCandidates', 'maxCandidateBytes', 'maxResults', 'maxGraphDepth', 'maxGraphRows', 'maxSnippetBytes', 'maxReceiptBytes', 'maxResultBytes'];
+const KNOWLEDGE_PROMOTION_POLICY_FIELDS = ['repoId', 'minScratchReaders', 'maxScanEvents', 'maxCandidates', 'maxCandidateBytes', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes'];
+const PROMOTION_DECISION_KINDS = new Set(['control.stop_requested', 'follow_up.requested', 'publication.authorized', 'publication.denied']);
+const PROMOTION_FAILURE_KINDS = new Set(['integration.incomplete', 'integration.refused', 'publication.refused', 'recovery.claimed_without_spawn']);
 const PROVIDER_FAILURE_CODES = new Set(['provider_index_changed', 'reuse_policy_reconciliation_required', 'reuse_evidence_diverged', 'capability_refused', 'provider_processing_failed']);
 
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
@@ -49,6 +52,14 @@ function validKnowledgeRecallPolicy(policy) {
     && policy.maxGraphRows <= 1_000_000 && policy.maxSnippetBytes <= 64 * 1024
     && policy.maxReceiptBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
 }
+function validKnowledgePromotionPolicy(policy) {
+  if (!policy || Object.keys(policy).sort().join(',') !== [...KNOWLEDGE_PROMOTION_POLICY_FIELDS].sort().join(',') || typeof policy.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId)) return false;
+  const numeric = KNOWLEDGE_PROMOTION_POLICY_FIELDS.filter((name) => name !== 'repoId');
+  if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
+  return policy.minScratchReaders <= 1_000 && policy.maxScanEvents <= 1_000_000 && policy.maxCandidates <= 100_000
+    && policy.maxCandidateBytes <= 64 * 1024 * 1024 && policy.maxEvidenceRefs <= 1_000_000
+    && policy.maxBatchBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
+}
 function providerAttemptDelay(policy, windowAttempt) {
   const exponent = Math.min(windowAttempt - 1, Math.ceil(Math.log2(policy.maxBackoffMs / policy.initialBackoffMs)));
   return Math.min(policy.maxBackoffMs, policy.initialBackoffMs * (2 ** exponent));
@@ -63,6 +74,7 @@ function validRoutePolicy(policy) {
     && Number.isFinite(policy.defaultPriorSuccessRate) && policy.defaultPriorSuccessRate > 0 && policy.defaultPriorSuccessRate < 1;
 }
 function validRunId(value) { return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/.test(value); }
+function promotionActor(value) { return value === 'orchestrator' || (typeof value === 'string' && value.startsWith('operator:')); }
 function validEnvRef(envRef) { return envRef && typeof envRef.repoId === 'string' && envRef.repoId.length > 0 && typeof envRef.treeSha === 'string' && /^[A-Fa-f0-9]{4,128}$/.test(envRef.treeSha); }
 function officialCoordinateMatches(identity, coordinate) { const fields = Object.keys(identity ?? {}).sort().join(','); return ['ecosystem,package,version', 'ecosystem,package,system,version'].includes(fields) && identity.ecosystem === coordinate?.ecosystem && identity.package === coordinate?.package && identity.version === coordinate?.version && (!Object.hasOwn(identity, 'system') || (coordinate.ecosystem === 'npm' && identity.system === 'NPM')); }
 function boundedText(value, maxBytes) { return typeof value === 'string' && value.trim().length > 0 && Buffer.byteLength(value) <= maxBytes && !value.includes('\0'); }
@@ -1191,6 +1203,10 @@ export class CoordinationStore {
       this._scratchClaims.set(p.id, freeze({ ...clone(old), active: false, expiredEvent: event.seq, version: old.version + 1 }));
     } else if (event.kind === 'scratch.read') {
       this._scratchReads.push(freeze({ ...clone(p), eventSeq: event.seq, ts: event.ts }));
+    } else if (event.kind === 'knowledge.promotion_batch') {
+      this._validateKnowledgePromotionPayload(p, event, true);
+      for (const node of p.nodes) this._setKnowledgeNode(event, node.id, freeze({ ...clone(node), observedSeq: event.seq, observedAt: event.ts, ...eventTime(this._events, node.evidence, event), validFrom: event.ts, validTo: null, validityVersion: 1, derivedFromEvent: event.seq }));
+      for (const edge of p.edges) this._setKnowledgeEdge(event, edge.id, freeze({ ...clone(edge), observedSeq: event.seq, observedAt: event.ts, ...eventTime(this._events, edge.evidence, event), validFrom: event.ts, validTo: null, validityVersion: 1, derivedFromEvent: event.seq }));
     } else if (event.kind === 'knowledge.node_added' || event.kind === 'knowledge.promoted') {
       this._validateKnowledgeNodePayload(p, event, true);
       this._setKnowledgeNode(event, p.id, freeze({ ...clone(p), observedSeq: event.seq, observedAt: event.ts, ...eventTime(this._events, p.evidence, event), validFrom: p.validFrom ?? event.ts, validTo: p.validTo ?? null, validityVersion: 1 }));
@@ -2044,6 +2060,118 @@ export class CoordinationStore {
       if (lifecycleFields.some((key) => Object.hasOwn(fields, key)) || fields.from === fields.to || from.type !== to.type || !this._knowledgeLiveAt(from, effective) || !this._knowledgeLiveAt(to, effective) || (fields.evidence?.length ?? 0) === 0 || fields.id !== canonicalId) this._knowledgeFailure('knowledge contradiction is invalid', 'invalid_contradiction', integrity);
       if ([...this._knowledgeEdges.values()].some((edge) => edge.type === 'Contradicts' && !edge.validTo && canonicalDigest([edge.from, edge.to].sort()) === canonicalDigest(pair))) this._knowledgeFailure('knowledge contradiction already exists', 'duplicate_contradiction', integrity);
     }
+  }
+
+  _deriveKnowledgePromotion(repoId, observedSeq, policy, beforeEventSeq = this._events.length + 1) {
+    if (!validKnowledgePromotionPolicy(policy) || policy.repoId !== repoId || !Number.isSafeInteger(observedSeq) || observedSeq < 0 || observedSeq >= beforeEventSeq || observedSeq > this._events.length) throw new CoordinationRefusal('knowledge promotion request is invalid', 'causal_promotion_invalid');
+    if (observedSeq > policy.maxScanEvents) throw new CoordinationRefusal('knowledge promotion scan exceeded deployment ceiling', 'causal_promotion_oversize');
+    const prefix = this._events.slice(0, observedSeq); const nodesAtBoundary = this.queryKnowledge({ observedSeq }); const edgesAtBoundary = this.queryKnowledgeEdges({ observedSeq }); const nodeMap = new Map(nodesAtBoundary.map((node) => [node.id, node]));
+    const promoted = new Set(this._events.slice(0, Math.max(0, beforeEventSeq - 1)).filter((event) => event.kind === 'knowledge.promotion_batch').flatMap((event) => event.payload?.candidates?.map((row) => `${row.sourceSeq}:${row.sourceKind}`) ?? []));
+    const taskStatus = new Map(); const scratch = new Map(); const scratchReads = [];
+    for (const event of prefix) {
+      if (event.kind === 'task.created') taskStatus.set(event.payload.id, 'pending');
+      else if (event.kind === 'task.transitioned') taskStatus.set(event.payload.id, event.payload.to);
+      else if (event.kind === 'scratch.fact_posted') scratch.set(event.payload.id, { event, active: true });
+      else if (event.kind === 'scratch.fact_expired') { const row = scratch.get(event.payload.id); if (row) row.active = false; }
+      else if (event.kind === 'scratch.read') scratchReads.push(event);
+    }
+    const verifiedOutcomes = new Map(nodesAtBoundary.filter((node) => node.type === 'Finding' && node.grounding === 'verified' && node.promotion?.trigger === 'verified_task_outcome' && typeof node.taskId === 'string' && !node.validTo
+      && edgesAtBoundary.some((edge) => edge.type === 'VerifiedBy' && edge.from === node.id && edge.to === `task:${node.taskId}`)).map((node) => [node.taskId, node]));
+    const candidates = []; const nodes = []; const edges = [];
+    const push = (source, type, trigger, taskId, actorRequired = false) => {
+      const sourceKind = source.kind === 'driver.recorded' ? `driver.${source.payload.kind}` : source.kind; const commitment = `${source.seq}:${sourceKind}`;
+      if (promoted.has(commitment) || (actorRequired && !promotionActor(source.actor))) return;
+      if (typeof taskId !== 'string' || !nodeMap.has(`task:${taskId}`)) return;
+      const nodeId = `promotion:${canonicalDigest({ repoId, sourceSeq: source.seq, sourceKind })}`;
+      const evidence = [{ coordinationSeq: source.seq }]; const promotion = { kind: type, trigger }; const body = type === 'Decision' ? `Consequential coordination decision: ${trigger}` : `Observed coordination failure: ${trigger}`;
+      const fields = { id: nodeId, type, grounding: 'observed', body, evidence, promotion, repoId, taskId, sourceSeq: source.seq, sourceKind, sourceDigest: canonicalDigest(source), ...(type === 'Decision' ? { informedBy: [`task:${taskId}`] } : {}) };
+      const node = this._knowledgePayload(fields); const edgeType = type === 'Decision' ? 'Informed' : 'ObservedIn'; const edgeId = `knowledge-edge:${edgeType.toLowerCase()}:${nodeId}:task:${taskId}`;
+      const edge = this._knowledgePayload({ id: edgeId, type: edgeType, from: nodeId, to: `task:${taskId}`, evidence });
+      candidates.push({ nodeId, type, trigger, sourceSeq: source.seq, sourceKind, sourceDigest: canonicalDigest(source) }); nodes.push(node); edges.push(edge);
+    };
+    for (const source of prefix) {
+      if (source.kind === 'task.created') push(source, 'Decision', 'coordination.spawn', source.payload.id, true);
+      else if (source.kind === 'driver.recorded' && PROMOTION_DECISION_KINDS.has(source.payload?.kind)) push(source, 'Decision', `coordination.${source.payload.kind}`, source.payload.taskId, true);
+      else if (source.kind === 'driver.recorded' && source.actor === 'policy' && PROMOTION_FAILURE_KINDS.has(source.payload?.kind)) push(source, 'Counterexample', `coordination.${source.payload.kind}`, source.payload.taskId, false);
+    }
+    for (const { event: source, active } of [...scratch.values()].sort((a, b) => a.event.seq - b.event.seq)) {
+      const fact = source.payload; const sourceKind = 'scratch.fact_posted'; const commitment = `${source.seq}:${sourceKind}`;
+      if (!active || promoted.has(commitment) || fact.grounding !== 'observed' || fact.envRef?.repoId !== repoId) continue;
+      const reads = scratchReads.filter((event) => event.payload?.result?.facts?.some((row) => row.id === fact.id) && typeof event.payload?.taskId === 'string');
+      const byTask = new Map(); for (const read of reads) if (taskStatus.get(read.payload.taskId) === 'completed' && verifiedOutcomes.has(read.payload.taskId) && !byTask.has(read.payload.taskId)) byTask.set(read.payload.taskId, read);
+      const readerTaskIds = [...byTask.keys()].sort(); if (readerTaskIds.length < policy.minScratchReaders) continue;
+      const sourceNodeId = `scratch-source:${canonicalDigest({ repoId, sourceSeq: source.seq, sourceKind })}`; const nodeId = `promotion:${canonicalDigest({ repoId, sourceSeq: source.seq, sourceKind })}`;
+      const sourceEvidence = [{ coordinationSeq: source.seq }]; const readEvidence = readerTaskIds.map((taskId) => ({ coordinationSeq: byTask.get(taskId).seq })); const outcomeEvidence = readerTaskIds.map((taskId) => ({ coordinationSeq: verifiedOutcomes.get(taskId).observedSeq }));
+      const evidence = [...sourceEvidence, ...readEvidence, ...outcomeEvidence].sort((a, b) => a.coordinationSeq - b.coordinationSeq);
+      const scratchFactDigest = canonicalDigest(fact.id);
+      const sourceNode = this._knowledgePayload({ id: sourceNodeId, type: 'ScratchFact', grounding: 'observed', body: 'Observed Scratch fact metadata', evidence: sourceEvidence, promotion: { kind: 'ScratchFact', trigger: 'scratch.observed_source' }, repoId, sourceSeq: source.seq, sourceKind, scratchFactDigest, namespaceDigest: canonicalDigest(fact.namespace ?? null), keyDigest: canonicalDigest(fact.key ?? null), envRefDigest: canonicalDigest(fact.envRef) });
+      const finding = this._knowledgePayload({ id: nodeId, type: 'Finding', grounding: 'observed', body: 'Cited observed Scratch fact', evidence, promotion: { kind: 'Finding', trigger: 'scratch.cited_observed' }, repoId, sourceSeq: source.seq, sourceKind, scratchFactDigest, readerTaskIds, sourceDigest: canonicalDigest(source) });
+      const derived = this._knowledgePayload({ id: `knowledge-edge:derivedfrom:${nodeId}:${sourceNodeId}`, type: 'DerivedFrom', from: nodeId, to: sourceNodeId, evidence: sourceEvidence });
+      const verified = readerTaskIds.map((taskId) => { const outcome = verifiedOutcomes.get(taskId); return this._knowledgePayload({ id: `knowledge-edge:verifiedby:${nodeId}:${outcome.id}`, type: 'VerifiedBy', from: nodeId, to: outcome.id, evidence: [{ coordinationSeq: byTask.get(taskId).seq }, { coordinationSeq: outcome.observedSeq }] }); });
+      candidates.push({ nodeId, type: 'Finding', trigger: 'scratch.cited_observed', sourceSeq: source.seq, sourceKind, sourceDigest: canonicalDigest(source) }); nodes.push(sourceNode, finding); edges.push(derived, ...verified);
+    }
+    const order = (a, b) => a.sourceSeq - b.sourceSeq || a.sourceKind.localeCompare(b.sourceKind) || a.nodeId.localeCompare(b.nodeId); candidates.sort(order);
+    const candidateOrder = new Map(candidates.map((row, index) => [row.nodeId, index])); nodes.sort((a, b) => (candidateOrder.get(a.id) ?? candidateOrder.get(a.id.replace(/^scratch-source:/, 'promotion:')) ?? Number.MAX_SAFE_INTEGER) - (candidateOrder.get(b.id) ?? candidateOrder.get(b.id.replace(/^scratch-source:/, 'promotion:')) ?? Number.MAX_SAFE_INTEGER) || a.id.localeCompare(b.id)); edges.sort((a, b) => a.id.localeCompare(b.id));
+    if (candidates.length > policy.maxCandidates) throw new CoordinationRefusal('knowledge promotion candidates exceeded deployment ceiling', 'causal_promotion_oversize');
+    const candidateBytes = candidates.reduce((sum, candidate) => sum + canonicalBytes({ candidate, nodes: nodes.filter((node) => node.id === candidate.nodeId || node.sourceSeq === candidate.sourceSeq), edges: edges.filter((edge) => edge.from === candidate.nodeId) }), 0);
+    const evidenceRefs = [...nodes, ...edges].reduce((sum, row) => sum + (row.evidence?.length ?? 0), 0);
+    if (candidateBytes > policy.maxCandidateBytes || evidenceRefs > policy.maxEvidenceRefs) throw new CoordinationRefusal('knowledge promotion projection exceeded deployment ceiling', 'causal_promotion_oversize');
+    for (const node of nodes) if ((this._knowledgeNodeHistory.get(node.id) ?? []).some((version) => version.observedSeq < beforeEventSeq)) throw new CoordinationRefusal('knowledge promotion node namespace is occupied', 'causal_promotion_conflict');
+    for (const edge of edges) if ((this._knowledgeEdgeHistory.get(edge.id) ?? []).some((version) => version.observedSeq < beforeEventSeq)) throw new CoordinationRefusal('knowledge promotion edge namespace is occupied', 'causal_promotion_conflict');
+    return freeze({ candidates, nodes, edges, candidateBytes, evidenceRefs, projectionDigest: canonicalDigest({ candidates, nodes, edges }) });
+  }
+
+  _promotionProjection(payload, event = null) {
+    return freeze({ repoId: payload.repoId, observedSeq: payload.observedSeq, observedAt: payload.observedAt, policyDigest: payload.policyDigest, projectionDigest: payload.projectionDigest, receiptDigest: payload.receiptDigest ?? null, eventSeq: event?.seq ?? null, summaries: payload.candidates.map(({ nodeId, type, trigger, sourceSeq }) => ({ nodeId, type, trigger, sourceSeq })) });
+  }
+
+  _validateKnowledgePromotionPayload(payload, event, integrity = false) {
+    const fail = (message, code) => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
+    const fields = ['schemaVersion', 'repoId', 'observedSeq', 'observedAt', 'policy', 'policyDigest', 'candidates', 'nodes', 'edges', 'requestDigest', 'projectionDigest', 'receiptDigest'];
+    if (!payload || Object.keys(payload).sort().join(',') !== fields.sort().join(',') || payload.schemaVersion !== 1 || !promotionActor(event.actor) || !validKnowledgePromotionPolicy(payload.policy) || payload.repoId !== payload.policy.repoId || payload.policyDigest !== canonicalDigest(payload.policy)
+      || !Number.isSafeInteger(payload.observedSeq) || payload.observedSeq < 0 || payload.observedSeq >= event.seq || payload.observedAt !== this.observationTime(payload.observedSeq)) fail('knowledge promotion receipt shape is invalid', 'causal_promotion_integrity');
+    const expectedRequest = canonicalDigest({ actor: event.actor, idempotencyKey: event.idempotencyKey, repoId: payload.repoId, observedSeq: payload.observedSeq, policyDigest: payload.policyDigest });
+    if (payload.requestDigest !== expectedRequest) fail('knowledge promotion request binding is invalid', 'causal_promotion_integrity');
+    let derived; try { derived = this._deriveKnowledgePromotion(payload.repoId, payload.observedSeq, payload.policy, event.seq); } catch (error) { fail(error.message, error.code ?? 'causal_promotion_integrity'); }
+    if (derived.candidates.length === 0 || canonicalDigest(payload.candidates) !== canonicalDigest(derived.candidates) || canonicalDigest(payload.nodes) !== canonicalDigest(derived.nodes) || canonicalDigest(payload.edges) !== canonicalDigest(derived.edges) || payload.projectionDigest !== derived.projectionDigest) fail('knowledge promotion projection diverged', 'causal_promotion_integrity');
+    const core = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'receiptDigest'));
+    if (payload.receiptDigest !== canonicalDigest(core) || canonicalBytes(payload) > payload.policy.maxBatchBytes) fail('knowledge promotion receipt is invalid or oversized', 'causal_promotion_integrity');
+    return derived;
+  }
+
+  promoteKnowledgeBatch(repoId, observedSeq, policy, auth, beforeAppend = null) {
+    if (!promotionActor(auth?.actor) || typeof auth?.key !== 'string' || auth.key.length === 0 || (beforeAppend !== null && typeof beforeAppend !== 'function')) throw new CoordinationRefusal('knowledge promotion authority is invalid', 'causal_promotion_invalid');
+    if (!validKnowledgePromotionPolicy(policy) || policy.repoId !== repoId) throw new CoordinationRefusal('knowledge promotion policy is invalid', 'causal_promotion_invalid');
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      const expectedPolicyDigest = canonicalDigest(policy); const expectedRequestDigest = canonicalDigest({ actor: auth.actor, idempotencyKey: auth.key, repoId, observedSeq, policyDigest: expectedPolicyDigest });
+      if (prior.kind !== 'knowledge.promotion_batch' || prior.actor !== auth.actor || prior.payload?.repoId !== repoId || prior.payload?.observedSeq !== observedSeq || prior.payload?.policyDigest !== expectedPolicyDigest || prior.payload?.requestDigest !== expectedRequestDigest) throw new CoordinationRefusal('knowledge promotion idempotency conflict', 'causal_promotion_conflict');
+      this._validateKnowledgePromotionPayload(prior.payload, prior, false); return freeze({ event: clone(prior), projection: this._promotionProjection(prior.payload, prior), replayed: true, noOp: false });
+    }
+    const derived = this._deriveKnowledgePromotion(repoId, observedSeq, policy); const policyDigest = canonicalDigest(policy); const observedAt = this.observationTime(observedSeq);
+    if (derived.candidates.length === 0) return freeze({ event: null, projection: { repoId, observedSeq, observedAt, policyDigest, projectionDigest: derived.projectionDigest, receiptDigest: null, eventSeq: null, summaries: [] }, replayed: false, noOp: true });
+    const core = { schemaVersion: 1, repoId, observedSeq, observedAt, policy: clone(policy), policyDigest, candidates: clone(derived.candidates), nodes: clone(derived.nodes), edges: clone(derived.edges), requestDigest: canonicalDigest({ actor: auth.actor, idempotencyKey: auth.key, repoId, observedSeq, policyDigest }), projectionDigest: derived.projectionDigest };
+    const payload = { ...core, receiptDigest: canonicalDigest(core) };
+    if (canonicalBytes(payload) > policy.maxBatchBytes) throw new CoordinationRefusal('knowledge promotion batch exceeded deployment ceiling', 'causal_promotion_oversize');
+    const prospective = { schemaVersion: 1, seq: this._events.length + 1, kind: 'knowledge.promotion_batch', actor: auth.actor, idempotencyKey: auth.key, payload };
+    const projection = this._promotionProjection(payload, prospective);
+    if (canonicalBytes(projection) > policy.maxResultBytes) throw new CoordinationRefusal('knowledge promotion result exceeded deployment ceiling', 'causal_promotion_oversize');
+    if (beforeAppend) { const before = this._events.length; beforeAppend(freeze({ projection: clone(projection), jsonBytes: Buffer.byteLength(JSON.stringify(projection)) })); if (this._events.length !== before) throw new CoordinationRefusal('knowledge promotion preflight changed coordination state', 'causal_promotion_integrity'); }
+    const fixedTs = this._clock(); const predicted = { ...prospective, ts: fixedTs }; this._validateKnowledgePromotionPayload(payload, predicted, false);
+    const event = this._append('knowledge.promotion_batch', payload, auth, fixedTs); return freeze({ event: clone(event), projection: this._promotionProjection(payload, event), replayed: false, noOp: false });
+  }
+
+  reverifyKnowledgePromotion(repoId, observedSeq, policy, actor, eventSeq) {
+    if (!validKnowledgePromotionPolicy(policy) || policy.repoId !== repoId || !promotionActor(actor) || !Number.isSafeInteger(eventSeq)) throw new CoordinationRefusal('knowledge promotion reverify request is invalid', 'causal_promotion_invalid');
+    const event = this._events[eventSeq - 1]; if (!event || event.kind !== 'knowledge.promotion_batch' || event.actor !== actor || event.payload?.repoId !== repoId || event.payload?.observedSeq !== observedSeq || event.payload?.policyDigest !== canonicalDigest(policy)) throw new CoordinationRefusal('knowledge promotion receipt does not match authority', 'causal_promotion_conflict');
+    this._validateKnowledgePromotionPayload(event.payload, event, false); return freeze({ event: clone(event), projection: this._promotionProjection(event.payload, event), replayed: true, noOp: false });
+  }
+
+  reverifyKnowledgePromotionNoOp(repoId, observedSeq, policy) {
+    if (!validKnowledgePromotionPolicy(policy) || policy.repoId !== repoId) throw new CoordinationRefusal('knowledge promotion no-op reverify request is invalid', 'causal_promotion_invalid');
+    const derived = this._deriveKnowledgePromotion(repoId, observedSeq, policy);
+    if (derived.candidates.length !== 0) throw new CoordinationRefusal('knowledge promotion no-op is no longer reproducible', 'causal_promotion_conflict');
+    return freeze({ event: null, projection: { repoId, observedSeq, observedAt: this.observationTime(observedSeq), policyDigest: canonicalDigest(policy), projectionDigest: derived.projectionDigest, receiptDigest: null, eventSeq: null, summaries: [] }, replayed: true, noOp: true });
   }
 
   addKnowledgeNode(fields, auth) {

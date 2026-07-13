@@ -70,6 +70,16 @@ export class CairnRunScorecard {
         || typeof this.coordination.recallKnowledgeBounded !== 'function' || typeof this.coordination.reverifyKnowledgeRecall !== 'function') throw new TypeError('Cairn recall configuration is invalid');
       this.knowledgeRecallPolicy = Object.freeze(p); this.knowledgeRecallPolicyDigest = sha256(stable(p));
     }
+    this.knowledgePromotionPolicy = opts.knowledgePromotionPolicy ? clone(opts.knowledgePromotionPolicy) : null;
+    if (this.knowledgePromotionPolicy) {
+      const names = ['repoId', 'minScratchReaders', 'maxScanEvents', 'maxCandidates', 'maxCandidateBytes', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes'];
+      const numeric = names.filter((name) => name !== 'repoId'); const p = this.knowledgePromotionPolicy;
+      if (!this.knowledgeAuditPolicy || Object.keys(p).sort().join(',') !== names.sort().join(',') || p.repoId !== this.knowledgeAuditPolicy.repoId
+        || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0) || p.minScratchReaders > 1_000 || p.maxScanEvents > 1_000_000 || p.maxCandidates > 100_000
+        || p.maxCandidateBytes > 64 * 1024 * 1024 || p.maxEvidenceRefs > 1_000_000 || p.maxBatchBytes > 16 * 1024 * 1024 || p.maxResultBytes > 16 * 1024 * 1024
+        || typeof this.coordination.promoteKnowledgeBatch !== 'function' || typeof this.coordination.reverifyKnowledgePromotion !== 'function' || typeof this.coordination.reverifyKnowledgePromotionNoOp !== 'function') throw new TypeError('Cairn promotion configuration is invalid');
+      this.knowledgePromotionPolicy = Object.freeze(p); this.knowledgePromotionPolicyDigest = sha256(stable(p));
+    }
     mkdirSync(this.artifactRoot, { recursive: true, mode: 0o700 });
   }
 
@@ -85,6 +95,7 @@ export class CairnRunScorecard {
       ops['causal.trace'] = { latency_class: 'interactive', deterministic: true, side_effects: [], reverifiable: true };
     }
     if (this.knowledgeRecallPolicy) ops['causal.recall'] = { latency_class: 'interactive', deterministic: true, side_effects: ['coordination.append', 'knowledge.read_receipt'], reverifiable: true, preflight_output: true };
+    if (this.knowledgePromotionPolicy) ops['causal.promote'] = { latency_class: 'interactive', deterministic: true, side_effects: ['coordination.append', 'knowledge.promote'], reverifiable: true, preflight_output: true };
     return {
       name: 'cairn', version: 1,
       ops,
@@ -238,6 +249,59 @@ export class CairnRunScorecard {
     this._knowledgeContext(ctx); return this._recallResult(recalled, audit);
   }
 
+  _promotionAudit(upper) {
+    const p = this.knowledgeAuditPolicy;
+    const metrics = this.coordination.auditKnowledge({ observedSeq: upper, maxStateRows: p.maxStateRows, maxNodes: p.maxNodes, maxEdges: p.maxEdges, maxEvidenceRefs: p.maxEvidenceRefs, maxAuditSamples: p.maxAuditSamples });
+    if (metrics.violations.critical > 0) throw typed('causal promotion audit gate failed', 'causal_promotion_audit_failed');
+    return { criticalViolations: 0, metricsDigest: sha256(stable(metrics)) };
+  }
+
+  _promotionResult(promoted, audit) {
+    const projection = promoted.projection; const receipt = projection.eventSeq === null ? null : { eventSeq: projection.eventSeq, digest: projection.receiptDigest };
+    const document = {
+      schemaVersion: 1, kind: 'baton.cairn.causal-promotion', repoId: projection.repoId,
+      coordinationUpperBound: projection.observedSeq, coordinationObservedAt: projection.observedAt, audit,
+      policyDigest: projection.policyDigest, projectionDigest: projection.projectionDigest, receipt,
+      candidateCount: projection.summaries.length, candidates: clone(projection.summaries), noOp: promoted.noOp === true,
+    };
+    const result = {
+      op: 'causal.promote', status: 'ok', summary: promoted.noOp ? `no eligible Cairn promotions for ${projection.repoId}` : `atomically promoted ${projection.summaries.length} Cairn candidates for ${projection.repoId}`,
+      payload: [document], refs: receipt ? [{ kind: 'cairn-causal-promotion-receipt', digest: receipt.digest, coordinationSeq: receipt.eventSeq }] : [],
+      cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' },
+      provenance: { kind: 'causal-promotion', repoId: projection.repoId, coordinationUpperBound: projection.observedSeq, policyDigest: projection.policyDigest, auditPolicyDigest: this.knowledgePolicyDigest, deterministic: true, readOnly: promoted.noOp === true, coordinationEffect: promoted.noOp ? 'none' : 'knowledge.promotion_batch', workerAuthority: false, editAuthority: false, verificationAuthority: false, mergeAuthority: false, approvalAuthority: false, publicationAuthority: false, routingMutationAuthority: false, proofAuthority: false, noteAuthority: false, policyAuthoringAuthority: false },
+    };
+    if (Buffer.byteLength(stable(result)) > this.knowledgePromotionPolicy.maxResultBytes) throw typed('causal promotion result exceeded deployment ceiling', 'causal_promotion_oversize');
+    return result;
+  }
+
+  _preflightPromotionResult(preview, audit, ctx) {
+    const result = this._promotionResult({ projection: preview.projection, noOp: false }, audit);
+    if (ctx?.aciOutputPolicy) {
+      const envelopeBytes = Buffer.byteLength(JSON.stringify(result)); const payloadBytes = Buffer.byteLength(JSON.stringify(result.payload));
+      if (envelopeBytes > ctx.aciOutputPolicy.maxEnvelopeBytes || payloadBytes > ctx.aciOutputPolicy.maxPayloadBytes) throw typed('causal promotion result exceeded ACI publication ceiling', 'capability_result_oversize');
+    }
+    return result;
+  }
+
+  _causalPromote(args, ctx, verifyReceiptSeq = null, writeReceipt = true) {
+    if (!this.knowledgePromotionPolicy) throw typed('causal promotion is not deployment-configured', 'capability_op_unavailable');
+    this._knowledgeContext(ctx); const promotionActor = ctx.actor === 'orchestrator' || (typeof ctx.actor === 'string' && ctx.actor.startsWith('operator:'))
+      ? ctx.actor : (typeof ctx.actor === 'string' && (ctx.actor.startsWith('web:') || ctx.actor.startsWith('mcp:')) ? `operator:${ctx.actor}` : null);
+    if (promotionActor === null) throw typed('causal promotion actor is not authorized', 'causal_promotion_forbidden');
+    const upper = this._causalBoundary(args, ['observedSeq'], verifyReceiptSeq === null ? null : args?.observedSeq); const audit = this._promotionAudit(upper); this._knowledgeContext(ctx);
+    if (!writeReceipt) {
+      const promoted = verifyReceiptSeq === null
+        ? this.coordination.reverifyKnowledgePromotionNoOp(this.knowledgePromotionPolicy.repoId, upper, this.knowledgePromotionPolicy)
+        : this.coordination.reverifyKnowledgePromotion(this.knowledgePromotionPolicy.repoId, upper, this.knowledgePromotionPolicy, promotionActor, verifyReceiptSeq);
+      return this._promotionResult(promoted, audit);
+    }
+    const auth = { actor: promotionActor, key: `knowledge.promote:${sha256(stable({ repoId: ctx.repoId, actor: ctx.actor, idempotencyKey: ctx.idempotencyKey }))}` };
+    const promoted = this.coordination.promoteKnowledgeBatch(this.knowledgePromotionPolicy.repoId, upper, this.knowledgePromotionPolicy, auth, (preview) => { this._knowledgeContext(ctx); this._preflightPromotionResult(preview, audit, ctx); });
+    this._knowledgeContext(ctx); const result = this._promotionResult(promoted, audit);
+    if (promoted.noOp && ctx?.aciOutputPolicy && (Buffer.byteLength(JSON.stringify(result)) > ctx.aciOutputPolicy.maxEnvelopeBytes || Buffer.byteLength(JSON.stringify(result.payload)) > ctx.aciOutputPolicy.maxPayloadBytes)) throw typed('causal promotion result exceeded ACI publication ceiling', 'capability_result_oversize');
+    return result;
+  }
+
   _events(worker, throughSeq) {
     const events = this.readOperational(worker, throughSeq);
     if (!Array.isArray(events)) throw typed('operational evidence reader unavailable', 'run_evidence_unavailable');
@@ -343,6 +407,7 @@ export class CairnRunScorecard {
     if (op === 'causal.audit') return this._causalAudit(args, ctx);
     if (op === 'causal.trace') return this._causalTrace(args, ctx);
     if (op === 'causal.recall') return this._causalRecall(args, ctx);
+    if (op === 'causal.promote') return this._causalPromote(args, ctx);
     if (op !== 'run.scorecard') throw typed('unsupported Cairn operation', 'capability_op_unavailable');
     const runId = args?.runId;
     if (!validRunId(runId)) throw typed('runId is invalid', 'invalid_run_id');
@@ -377,6 +442,11 @@ export class CairnRunScorecard {
         if (!Number.isSafeInteger(args?.observedSeq)) return { ok: false, reason: 'observation_boundary_required' };
         const receiptSeq = claim?.payload?.[0]?.receipt?.eventSeq; const rebuilt = this._causalRecall(args, ctx, receiptSeq, false);
         return { ok: stable(claim) === stable(rebuilt), digest: rebuilt.refs[0].digest };
+      }
+      if (op === 'causal.promote') {
+        if (!Number.isSafeInteger(args?.observedSeq)) return { ok: false, reason: 'observation_boundary_required' };
+        const receiptSeq = claim?.payload?.[0]?.receipt?.eventSeq ?? null; const rebuilt = this._causalPromote(args, ctx, receiptSeq, false);
+        return { ok: stable(claim) === stable(rebuilt), digest: rebuilt.payload[0].projectionDigest };
       }
       if (op !== 'run.scorecard' || !validRunId(args?.runId)) return { ok: false, reason: 'invalid_request' };
       const run = this.coordination.run(args.runId);
