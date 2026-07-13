@@ -579,6 +579,21 @@ catalog—including AST/CST/SCIP/CPG/IR, Scratch, Vantage, Evidence Ladder, Skil
 provider/runtime depth, semantic merge/fingerprints, and e-graphs—so Phase 48 recall and the wider
 goal cannot disappear through summary. No external project-manager or homelab runtime is added.
 
+Phase 48 makes that audited graph deliberately recallable without creating an ambient shared
+brain. `causal.recall` pins one observation/valid-time boundary, reruns the Phase 47 critical audit,
+and applies fixed integer ID/type/body plus bounded graph-distance ranking with stable node-ID ties.
+It returns unresolved contradictions only as complete bundles and frames every bounded snippet as
+untrusted evidence. One compact `knowledge.recall` receipt is appended before content and projects
+exact `ReadBy` edges and later contamination; the receipt omits raw text/bodies and recomputes its
+request identity from compact query/reader/policy fields on restart. Direct, authenticated web, and
+MCP claims share exact replay/reverify. The sole store call has no public preview oracle, and the
+closed ACI card opts into registry-derived envelope/payload preflight so size refusal leaves no
+receipt or read effect. Exact Codex and project-key GLM recursive reviews supplied the red tests and
+fresh verification; the latest exact Grok 4.5/Composer pair remains honestly auth-red before native
+PIDs while all allocations and ownership reap. Recall feedback, broader selective promotion,
+Playbook/Skill promotion, authenticated contradiction UX, and deployment-neutral export remain
+catalogued next; no homelab or external project-manager runtime is added.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**
@@ -588,9 +603,9 @@ goal cannot disappear through summary. No external project-manager or homelab ru
 4. Ship OS/credential isolation and budget/watchdog governance.
 5. Complete hardened acceptance and structured integration.
 6. Ship the task/artifact/Scratch substrate and deployment-neutral causal knowledge core.
-7. Ship Atlas + AST structural delta + repo map + Cairn scorecard, durable RouteStats/advice, and
-   causal integrity/audit/trace as the first capability verticals. **Shipped locally through Cairn
-   Rung 2; recursive Phase 47 exact-route evidence is recorded, with final post-fix review pending.**
+7. Ship Atlas + AST structural delta + repo map + Cairn scorecard, durable RouteStats/advice,
+   causal integrity/audit/trace, and audit-gated bounded recall as the first capability verticals.
+   **Shipped locally through Cairn bounded recall; Phase 48 exact-route evidence is recorded.**
 8. Expand the representation and capability ladders in measured increments.
 9. Add MCP plus authenticated HTTPS/WebSocket user↔orchestrator control, operator surfaces,
    production runtime, and the registered evaluations.

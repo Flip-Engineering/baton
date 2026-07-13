@@ -142,8 +142,16 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    occupied-artifact bounds, publication-edge cancellation, and a digested stable-ID copy of the
    full retained goal catalog. The 15 focused contracts and 1005/1005 canonical suite are green.
    Recursive exact-route GLM and Codex reports are freshly verified with full reap; the current
-   two-Grok retry remains honestly authentication-red before provider PIDs, and Phase 48 recall
-   remains next.
+   two-Grok retry remains honestly authentication-red before provider PIDs.
+21. **Cairn audit-gated bounded recall:** Phase 48 adds pinned Phase 47 audit gating, fixed integer
+   lexical/graph ranking with stable ties, complete unresolved-contradiction bundles, compact
+   append-before-return receipts, historical `ReadBy`/affected-reader projection, pull-only
+   untrusted snippets, and exact direct/web/MCP replay and reverify. Durable request identity is
+   recomputed from compact receipt fields. The public preview oracle is removed, and a closed-card,
+   registry-derived ACI output policy rejects envelope or budget overflow before any receipt/read
+   effect. Ten focused BR tests and 1016/1016 canonical tests are green. Exact Codex and project-key
+   GLM reviews fresh-verified and fully reaped; the current two-Grok allocation remains explicitly
+   auth-red before provider PIDs while all worktrees/runtimes/branches/writer authority reap.
 
 ## What remains partial
 
@@ -157,8 +165,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   proof is absent. Publication has no live remote-push proof.
 - Scratch and causal knowledge primitives ship. Cairn Rungs 0–2 scorecard, verified RouteStats,
   restart hydration, bounded advice, causal integrity, contradiction resolution, and attested
-  audit/trace now ship locally; Scratch REPL/Bench, authenticated contradiction UX, bounded recall,
-  and optional deployment-neutral export remain partial or pending.
+  audit/trace plus bounded recall now ship locally; Scratch REPL/Bench, authenticated contradiction
+  UX, recall feedback, broader promotion, and optional deployment-neutral export remain partial or
+  pending.
 - Phase 29 closes the former Atlas wiring gap: deployments inject a closed set of real Atlas
   instances, bounds, artifact roots, and optional trusted multi-root contexts into `createDriver()`;
   Coordinator owns the sole registry handle, and authenticated web/MCP reuse that invoke/resume/
@@ -191,7 +200,7 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 - Trust ramp policy, plan gate, impact-selected reruns, structured reject postmortems, and higher
   Evidence Ladder rungs (property/fuzz/BMC/SMT/proof) under honest language/tool ceilings.
 - Vantage, Evidence Ladder as a capability module, Skill Forge/computer use, later
-  Cartographer/Quartermaster supply/orientation rungs, and Cairn recall/feedback/export rungs remain pending.
+  Cartographer/Quartermaster supply/orientation rungs, and Cairn promotion/feedback/export rungs remain pending.
 - Direct structural rewrite apply, live LSP, full SSA/PDG/path solving, interprocedural/alias/heap
   CPG depth, deeper behavioral/provenance attestation overlays, and representation choreography.
 - True semantic merge, stacked integration, deploy adapters, rollback automation, and live remote

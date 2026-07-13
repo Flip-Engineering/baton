@@ -82,9 +82,14 @@ walk with explicit frontier. Both are deterministic/reverifiable through direct 
 web/MCP ACI without edit, verification, merge, approval, publication, routing, proof, note, or
 policy authority. This is still a local selective graph: no external PM or homelab runtime exists.
 
-Phase 48 remains the next epistemic dependency: audit-gated bounded lexical/graph recall,
-contradiction bundles, compact durable read receipts, `ReadBy`/contamination, pull-only framing,
-and exact authenticated replay/reverify. It does not auto-inject accumulated knowledge.
+Phase 48 ships that next epistemic dependency. Cairn now exposes audit-gated bounded lexical/graph
+recall with fixed integer weights and stable node-ID ties, complete unresolved-contradiction
+bundles, compact append-before-return receipts, exact historical `ReadBy`/contamination identity,
+pull-only untrusted framing, and direct/authenticated-web/MCP replay and reverify. The receipt's
+request identity is recomputable from its compact query/reader/policy projection; no raw query or
+snippet is retained. Registry-derived ACI envelope and budget gates run before the receipt append,
+and there is no public unreceipted preview surface. Recall remains explicit and never auto-injects
+accumulated knowledge.
 
 Richer cross-run learning, literature, hypotheses, contradictions, and supersession therefore live in
 Baton's self-contained bitemporal graph under `spec/phase11/coordination-knowledge.md`. They are

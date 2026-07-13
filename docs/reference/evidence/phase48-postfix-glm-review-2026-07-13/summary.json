@@ -1,0 +1,75 @@
+{
+  "at": "2026-07-13T07:49:57.590Z",
+  "repoHead": "dd221bff9064fd28af683ac1bb85cff6d8ed7359",
+  "runId": "phase48-harness-matrix",
+  "grokAuthProbe": {
+    "authenticated": false,
+    "output": "You are not authenticated.\n\nDefault model: grok-build\n\nAvailable models:\n  * grok-build (default)"
+  },
+  "credentialPosture": {
+    "glm": "project-local owner-only ignored file loaded only by GlmSessionCli",
+    "codex": "explicit owner-only private runtime projection",
+    "grok": "explicit owner-only private runtime projection",
+    "claude": "subscription/keychain; no credential file projection"
+  },
+  "rows": [
+    {
+      "taskId": "phase48-glm-ranking-review",
+      "harness": "glm",
+      "model": "glm-4.7",
+      "target": "reviews/dogfood/phase48-glm-ranking-review.md",
+      "workerId": "w-1",
+      "pid": 56030,
+      "result": {
+        "status": "completed",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "glm",
+        "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+        "modelRequested": "glm-4.7",
+        "modelResolved": "glm-4.7",
+        "modelObserved": "glm-4.7",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 92285,
+        "usd": 0.7629020000000001
+      },
+      "verifyAccept": true,
+      "reportCaptured": true,
+      "terminalReason": ""
+    }
+  ],
+  "responses": [],
+  "kills": [
+    {
+      "taskId": "phase48-glm-ranking-review",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "checks": {
+    "runnerHealthy": true,
+    "allHarnessesAdmitted": true,
+    "exactRoutesRequestedResolved": true,
+    "noFalseProviderObservation": true,
+    "allTerminal": true,
+    "successfulReportsCaptured": true,
+    "successfulTurnsOverlap": true,
+    "distinctNativePids": true,
+    "killSafe": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimesGone": true,
+    "branchesGone": true,
+    "writerAuthorityReleased": true
+  },
+  "fatal": null,
+  "pass": true
+}

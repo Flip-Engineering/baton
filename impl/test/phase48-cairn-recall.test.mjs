@@ -87,6 +87,13 @@ test('BR2/BR5: audit failures refuse and unresolved contradictions are returned 
   await assert.rejects(cairn(bad).invoke('causal.recall', { text: 'orphan', limit: 1, observedSeq: before, reader: {} }, ctx({ idempotencyKey: 'audit:fail' })), (error) => error.code === 'causal_recall_audit_failed'); assert.equal(bad.snapshot().lastSeq, before);
 });
 
+test('BR3: equal integer scores break ties by node ID', async () => {
+  const store = new CoordinationStore(root('tie-store'), { clock: clock() }); const created = store.createTask(task('tie-source'), { actor: 'orchestrator', key: 'tie:task' });
+  for (const id of ['finding:tie-b', 'finding:tie-a']) store.addKnowledgeNode({ id, type: 'Finding', grounding: 'observed', body: 'equalword', evidence: [{ coordinationSeq: created.event.seq }] }, { actor: 'policy', key: `tie:${id}` });
+  const observedSeq = store.snapshot().lastSeq; const result = await cairn(store).invoke('causal.recall', { text: 'equalword', limit: 2, observedSeq, reader: {} }, ctx({ idempotencyKey: 'tie:invoke' }));
+  assert.deepEqual(result.payload[0].nodes.map((node) => [node.id, node.score]), [['finding:tie-a', 40], ['finding:tie-b', 40]]);
+});
+
 test('BR3/BR4/BR6/BR8: closed requests and every deployment ceiling fail closed at max+1', async () => {
   const store = new CoordinationStore(root('limits-store'), { clock: clock() }); graph(store); const observedSeq = store.snapshot().lastSeq;
   const invoke = (capability, args, key) => capability.invoke('causal.recall', { text: 'retry', limit: 1, observedSeq, reader: {}, ...args }, ctx({ idempotencyKey: key }));

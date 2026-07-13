@@ -1,0 +1,216 @@
+{
+  "at": "2026-07-13T07:51:13.498Z",
+  "repoHead": "597cb3e76d4a60902bfb884372605c2e5d764c8e",
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "authProbe": {
+    "authenticated": false,
+    "output": "You are not authenticated.\n\nDefault model: grok-build\n\nAvailable models:\n  * grok-build (default)"
+  },
+  "rows": [
+    {
+      "taskId": "phase42-grok45-writer-audit",
+      "model": "grok-4.5",
+      "focus": "writer claims, lifetime lease, replay validation, bounded target derivation, and close/drain safety",
+      "workerId": "w-1",
+      "pid": null,
+      "beforeKill": null,
+      "handle": {
+        "id": "w-1",
+        "vendor": "grok",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": null,
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"low\",\"grok\",\"phase42-live-redteam\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-4.5"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": null,
+        "sessionContext": {
+          "worktree": "/tmp/baton-phase48-grok.Wklbry/.baton/wt/phase42-grok45-writer-audit",
+          "repoRoot": "/tmp/baton-phase48-grok.Wklbry",
+          "baseSha": "597cb3e76d4a60902bfb884372605c2e5d764c8e",
+          "branch": "baton/phase42-grok45-writer-audit",
+          "ownerTaskId": "phase42-grok45-writer-audit"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/tmp/baton-phase48-grok.Wklbry/.baton/runtime/w-1",
+          "home": "/tmp/baton-phase48-grok.Wklbry/.baton/runtime/w-1/home",
+          "tmp": "/tmp/baton-phase48-grok.Wklbry/.baton/runtime/w-1/tmp",
+          "config": "/tmp/baton-phase48-grok.Wklbry/.baton/runtime/w-1/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "SECURITYSESSIONID",
+            "SSH_AUTH_SOCK"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": false
+        },
+        "review": null,
+        "taskId": "phase42-grok45-writer-audit",
+        "runId": null,
+        "worktree": "/tmp/baton-phase48-grok.Wklbry/.baton/wt/phase42-grok45-writer-audit",
+        "fence": 2,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 0,
+          "usd": 0
+        },
+        "createdAt": "2026-07-13T07:51:11.617Z"
+      }
+    },
+    {
+      "taskId": "phase42-grokbuild-causal-audit",
+      "model": "grok-composer-2.5-fast",
+      "focus": "policy-card pinning, adverse non-clearance, causal Constraint lineage, and authenticated web/MCP replay",
+      "workerId": "w-2",
+      "pid": null,
+      "beforeKill": null,
+      "handle": {
+        "id": "w-2",
+        "vendor": "grok",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": null,
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"low\",\"grok\",\"phase42-live-redteam\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-composer-2.5-fast"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": null,
+        "sessionContext": {
+          "worktree": "/tmp/baton-phase48-grok.Wklbry/.baton/wt/phase42-grokbuild-causal-audit",
+          "repoRoot": "/tmp/baton-phase48-grok.Wklbry",
+          "baseSha": "597cb3e76d4a60902bfb884372605c2e5d764c8e",
+          "branch": "baton/phase42-grokbuild-causal-audit",
+          "ownerTaskId": "phase42-grokbuild-causal-audit"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/tmp/baton-phase48-grok.Wklbry/.baton/runtime/w-2",
+          "home": "/tmp/baton-phase48-grok.Wklbry/.baton/runtime/w-2/home",
+          "tmp": "/tmp/baton-phase48-grok.Wklbry/.baton/runtime/w-2/tmp",
+          "config": "/tmp/baton-phase48-grok.Wklbry/.baton/runtime/w-2/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "SECURITYSESSIONID",
+            "SSH_AUTH_SOCK"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": false
+        },
+        "review": null,
+        "taskId": "phase42-grokbuild-causal-audit",
+        "runId": null,
+        "worktree": "/tmp/baton-phase48-grok.Wklbry/.baton/wt/phase42-grokbuild-causal-audit",
+        "fence": 2,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 0,
+          "usd": 0
+        },
+        "createdAt": "2026-07-13T07:51:11.795Z"
+      }
+    }
+  ],
+  "control": {
+    "killAcks": [],
+    "idempotentKills": [],
+    "cleanupKills": [
+      {
+        "workerId": "w-1",
+        "ack": {
+          "ok": true,
+          "result": "already_dead"
+        }
+      },
+      {
+        "workerId": "w-2",
+        "ack": {
+          "ok": true,
+          "result": "already_dead"
+        }
+      }
+    ],
+    "closed": true
+  },
+  "checks": {
+    "noHarnessError": false,
+    "grokAuthenticated": false,
+    "twoWorkers": true,
+    "distinctLivePids": false,
+    "concurrentTurns": false,
+    "routesRequestedResolvedExactly": true,
+    "providerIdentityObserved": false,
+    "bothWorkingBeforeKill": false,
+    "killConfirmed": false,
+    "repeatKillIdempotent": false,
+    "refusalCleanupControlSafe": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimeGone": true,
+    "branchesGone": true,
+    "writerAuthorityReleased": true
+  },
+  "fatal": "Error: w-1 crashed before lifecycle.spawned: {\"error\":\"Authentication required\",\"phase\":\"spawn\"}\n    at earlyFailure (file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase42-grok-concurrent-kill-reap-2026-07-12/run.mjs:24:284)\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase42-grok-concurrent-kill-reap-2026-07-12/run.mjs:41:39\n    at until (file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase42-grok-concurrent-kill-reap-2026-07-12/run.mjs:23:149)\n    at async file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase42-grok-concurrent-kill-reap-2026-07-12/run.mjs:41:21",
+  "pass": false
+}
