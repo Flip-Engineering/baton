@@ -104,6 +104,12 @@ the source `reconciliation_required` and schedules bounded full polling; it is n
 healthy. An out-of-order adverse hint is not discarded merely because a later cursor exists: it may
 still trigger a current official refresh.
 
+Late arrival of every numerically missing delivery does not silently restore health because numeric
+sequence coverage alone cannot prove provider cursor completeness. Only a future explicit
+`provider.reconciliation_completed` transaction may return the source to `healthy`, after a pinned
+full-poll operation proves its final cursor/window, admitted receipt set, and absence of unresolved
+conflicts under the current source epoch.
+
 Exact delivery retry returns the original receipt/processing identity without network. A second
 delivery ID with identical semantic content aliases the existing refresh work rather than spending
 new official-call/fan-out quota. Old retry after a later official observation or policy epoch
