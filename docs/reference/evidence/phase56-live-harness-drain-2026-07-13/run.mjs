@@ -151,7 +151,7 @@ function brief(task) {
 }
 
 function bounded(events) {
-  const keep = new Set(['worktree.ready', 'lifecycle.spawned', 'lifecycle.turn_started', 'lifecycle.turn_completed', 'lifecycle.crashed', 'resource.tokens', 'resource.provider_turn_admitted', 'resource.provider_turn_refused', 'resource.provider_turn_released', 'resource.provider_governance_exceeded', 'resource.provider_telemetry_invalid', 'model.mismatch', 'verify.reverified', 'kill.requested', 'kill.confirmed', 'lifecycle.process_started', 'lifecycle.process_closed', 'lifecycle.process_reap_unconfirmed']);
+  const keep = new Set(['worktree.ready', 'lifecycle.spawned', 'lifecycle.turn_started', 'lifecycle.turn_completed', 'lifecycle.crashed', 'error', 'resource.tokens', 'resource.provider_turn_admitted', 'resource.provider_turn_refused', 'resource.provider_turn_released', 'resource.provider_governance_exceeded', 'resource.provider_telemetry_invalid', 'model.mismatch', 'verify.reverified', 'kill.requested', 'kill.confirmed', 'lifecycle.process_started', 'lifecycle.process_closed', 'lifecycle.process_reap_unconfirmed']);
   return events.filter((event) => keep.has(event.kind)).map((event) => ({
     seq: event.seq, ts: event.ts, actor: event.actor, kind: event.kind,
     harnessRequested: event.harnessRequested ?? null, harnessResolved: event.harnessResolved ?? null,
@@ -162,7 +162,8 @@ function bounded(events) {
       : event.kind === 'verify.reverified' ? { accept: event.payload?.accept ?? false, observedExit: event.payload?.verdict?.observedExit ?? null, providerGovernanceAdmission: event.payload?.providerGovernanceAdmission ?? null, captureSha: event.payload?.capture?.sha ?? null, workerProjectionDigest: event.payload?.capture?.toolchainProjection?.projectionDigest ?? null, verifierProjectionDigest: event.payload?.capture?.verifierToolchainProjection?.projectionDigest ?? null }
         : event.kind.startsWith('resource.provider_') ? { phase: event.payload?.phase ?? null, code: event.payload?.code ?? null, policyDigest: event.payload?.policyDigest ?? null, routeDigest: event.payload?.routeDigest ?? null, mode: event.payload?.mode ?? null, admissionSeq: event.payload?.admissionSeq ?? null }
         : ['lifecycle.process_started', 'lifecycle.process_closed'].includes(event.kind) ? { pid: event.payload?.pid ?? null, processGroupId: event.payload?.processGroupId ?? null, generation: event.payload?.generation ?? null, closeReason: event.payload?.closeReason ?? null }
-          : ['lifecycle.turn_completed', 'lifecycle.crashed', 'model.mismatch'].includes(event.kind) ? { status: event.payload?.status ?? event.payload?.result?.status ?? null, reason: String(event.payload?.error ?? event.payload?.reason ?? '').slice(0, 512), requested: event.payload?.requested ?? null, observed: event.payload?.observed ?? null }
+          : event.kind === 'error' ? { code: String(event.payload?.code ?? '').slice(0, 128), message: String(event.payload?.message ?? '').slice(0, 512) }
+            : ['lifecycle.turn_completed', 'lifecycle.crashed', 'model.mismatch'].includes(event.kind) ? { status: event.payload?.status ?? event.payload?.result?.status ?? null, reason: String(event.payload?.error ?? event.payload?.reason ?? '').slice(0, 512), requested: event.payload?.requested ?? null, observed: event.payload?.observed ?? null }
             : {},
   }));
 }
@@ -358,14 +359,14 @@ try {
   summary = {
     at: new Date().toISOString(), implementationSha: IMPLEMENTATION_SHA, runId: RUN_ID, selectedTaskIds: TASKS.map((task) => task.taskId),
     interpretation: { lifecyclePass: `all ${TASKS.length} selected exact routes admitted${REQUIRE_GROK_PAIR ? ', both Grok process groups sampled live simultaneously' : ''}, every started generation closed exactly, driver drain closed coordinator/writer, and all owned residue disappeared`, matrixPass: `lifecyclePass plus exact provider model observation, ${TASKS.length} fresh-verified report(s), and identical worker/verifier toolchain projection binding` },
-    manualWorkerKills: false, legacyDriverClose: false, closureReceipt,
+    manualWorkerKills: false, legacyDriverClose: false, capacityPolicy: worktreeCapacity, closureReceipt,
     credentialMeasurements, simultaneousGrokSamples, attempts,
     rows: rows.map((row) => ({ taskId: row.taskId, harness: row.harness, model: row.model, workerId: row.workerId, pid: row.pid ?? null, processGroupId: row.processGroupId ?? null, result: row.result ? { status: row.result.status, ready: row.result.ready, observationOnly: row.result.observationOnly, providerGovernance: row.result.providerGovernance } : null, route: row.handle ? { harnessRequested: row.handle.harnessRequested, harnessResolved: row.handle.harnessResolved, modelRequested: row.handle.modelRequested, modelResolved: row.handle.modelResolved, modelObserved: row.handle.modelObserved, modelMismatch: row.handle.modelMismatch, effortRequested: row.handle.effortRequested, effortResolved: row.handle.effortResolved, effortObserved: row.handle.effortObserved } : null, providerPolicyDigest: row.handle?.providerPolicyDigest ?? null, providerTurn: row.handle?.providerTurn ?? null, budgetUsed: row.handle?.budgetUsed ?? null, verifyAccept: row.verify?.payload?.accept ?? false, budgetAdmission: row.verify?.payload?.budgetAdmission ?? null, providerGovernanceAdmission: row.verify?.payload?.providerGovernanceAdmission ?? null, reportCaptured: Boolean(row.report), processStartedSeq: row.processStarted?.seq ?? null, processClosedSeq: row.processClosed?.seq ?? null, terminalReason: String(row.events?.findLast((event) => ['lifecycle.crashed', 'model.mismatch'].includes(event.kind))?.payload?.error ?? row.events?.findLast((event) => event.kind === 'lifecycle.crashed')?.payload?.reason ?? row.events?.findLast((event) => event.kind === 'lifecycle.turn_completed')?.payload?.result?.summary ?? row.events?.findLast((event) => event.kind === 'lifecycle.turn_completed')?.payload?.summary ?? '').slice(0, 512) })),
     responses, routeAdmission, providerProof, cleanup, projectionProof, reviewProof, ownershipBefore, ownershipAfter, fatal, lifecyclePass, matrixPass,
   };
 } catch (error) {
   fatal = [fatal, String(error?.stack ?? error)].filter(Boolean).join('\n');
-  summary = { at: new Date().toISOString(), implementationSha: IMPLEMENTATION_SHA, runId: RUN_ID, fatal, lifecyclePass: false, matrixPass: false };
+  summary = { at: new Date().toISOString(), implementationSha: IMPLEMENTATION_SHA, runId: RUN_ID, capacityPolicy: worktreeCapacity, fatal, lifecyclePass: false, matrixPass: false };
 }
 
 if (targetAttempted) {

@@ -680,3 +680,38 @@ test('WC21: drain capacity refusal occurs before irreversible coordinator close 
   assert.equal(receipt.capacity.ownedReservations, 0);
   driver = null;
 });
+
+test('WC22: trust-gate capacity refusal exposes a bounded typed code without capacity internals', async (t) => {
+  const f = fixture('trust-gate-capacity-code');
+  const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [] } });
+  let observations = 0;
+  let driver;
+  t.after(() => dispose(driver, f));
+  driver = createDriver({
+    repoRoot: f.repo,
+    logDir: f.logDir,
+    adapters: { mock: adapter },
+    worktreeCapacity: validPolicy,
+    worktreeCapacityEstimate: () => ({ bytes: 60, inodes: 5 }),
+    worktreeCapacityObserve: () => {
+      observations += 1;
+      return observations === 1
+        ? { freeBytes: 10_000, freeInodes: 1_000 }
+        : { freeBytes: 150, freeInodes: 20 };
+    },
+  });
+
+  const handle = await driver.coordinator.spawn('mock', brief(), { taskId: 'capacity-trust-gate-code' });
+  await until(async () => {
+    const result = await driver.coordinator.result(handle.id);
+    return result.status === 'failed' ? result : null;
+  }, 'typed trust-gate capacity refusal');
+
+  const refusal = driver.log.read(handle.id).find((event) => (
+    event.kind === 'error' && event.payload?.phase === 'trust_gate'
+  ));
+  assert.equal(refusal?.payload?.trustPhase, 'capture');
+  assert.equal(refusal?.payload?.code, 'worktree_capacity_exceeded');
+  assert.equal(Object.hasOwn(refusal?.payload ?? {}, 'freeBytes'), false);
+  assert.equal(Object.hasOwn(refusal?.payload ?? {}, 'reservations'), false);
+});

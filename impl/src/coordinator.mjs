@@ -5398,13 +5398,16 @@ export class Coordinator {
         }
       }
     } catch (err) {
+      const code = typeof err?.code === 'string' && /^[a-z0-9_]{1,64}$/u.test(err.code)
+        ? err.code
+        : 'trust_gate_failed';
       const errorEvent = this._log.append({
         worker: handle.id,
         harness,
         turnEpoch: this._safeTurnEpoch(handle),
         kind: 'error',
         actor: 'policy',
-        payload: { message: String((err && err.message) || err), phase: 'trust_gate', trustPhase },
+        payload: { message: String((err && err.message) || err), code, phase: 'trust_gate', trustPhase },
       });
       let durable = this._coordination.task(task.id);
       if (durable && !TERMINAL_TASK_STATUSES.has(durable.status)) {
