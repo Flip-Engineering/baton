@@ -128,7 +128,33 @@ const COORDINATION_MUTATORS = new Set([
   'readScratch', 'expireScratchClaim', 'expireScratchFact', 'addKnowledgeNode', 'promoteKnowledgeNode',
   'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination', 'recordReuseDecision',
   'recordReuseRiskGuard', 'recordReuseTtlInvalidation', 'activateReusePolicy', 'recordProviderDelivery', 'recordProviderGreenCompletion', 'recordProviderAdverseCompletion', 'recordProviderSourceReconciliation', 'recordProviderProcessingDeferral',
+  'admitFleetDrain', 'recordFleetDrainDisposition', 'completeFleetDrain',
 ]);
+
+const DEFAULT_DRAIN_POLICY = Object.freeze({ maxWorkers: 1024, maxInteractions: 15_000, timeoutMs: 60_000, pollMs: 10 });
+
+function normalizeDrainPolicy(value) {
+  if (value === undefined) return DEFAULT_DRAIN_POLICY;
+  const fields = ['maxWorkers', 'pollMs', 'timeoutMs'];
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).sort().join(',') !== fields.sort().join(',')
+    || fields.some((field) => !Number.isSafeInteger(value[field]) || value[field] <= 0)
+    || value.maxWorkers > 100_000 || value.timeoutMs > 300_000 || value.pollMs > value.timeoutMs) {
+    throw new TypeError('drain policy must be a closed bounded deployment policy');
+  }
+  return Object.freeze({
+    maxWorkers: value.maxWorkers,
+    maxInteractions: Math.min(100_000, value.maxWorkers * 16, Math.max(1, Math.floor(value.timeoutMs / 4))),
+    timeoutMs: value.timeoutMs,
+    pollMs: value.pollMs,
+  });
+}
+
+function deepFreeze(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreeze(child);
+  return Object.freeze(value);
+}
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -343,7 +369,19 @@ export class Coordinator {
       if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
     }
     this._closed = false;
+    this._drainState = 'open';
+    this._drainPolicy = normalizeDrainPolicy(opts.drainPolicy);
+    this._drainPromise = null;
+    this._drainReceipt = null;
+    this._drainRequestPromises = new Map();
+    this._drainTargetIds = null;
+    this._drainPhysicalId = null;
+    this._drainPhysicalActor = null;
+    this._drainKillToken = Object.freeze({});
+    this._drainHistoricalReconciled = false;
+    this._drainHistoricalReconcilePromise = null;
     this._authorityOps = 0;
+    this._authorityTokens = new Set();
     this._log = new Proxy(opts.log, { get: (target, property, receiver) => { const value = Reflect.get(target, property, receiver); if (typeof value !== 'function') return value; const bound = value.bind(target); return property === 'append' ? (...args) => { if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' }); return bound(...args); } : bound; } });
     this._fences = opts.fences;
     this._adapters = opts.adapters;
@@ -455,6 +493,9 @@ export class Coordinator {
     this._startupRecoveryAuthority = opts.startupRecoveryAuthority ?? null;
     this._startupRecoveryState = this._startupRecoveryAuthority ? 'idle' : 'disabled';
     this._startupRecoveryError = null;
+    this._startupCleanupPromises = [];
+    this._startupCleanupPending = 0;
+    this._startupCleanupError = null;
     this._budgetThresholds = Object.freeze([...(opts.budgetPolicy?.thresholds ?? [0.5, 0.8, 1])].sort((a, b) => a - b));
     this._budgetHardStopAt = opts.budgetPolicy?.hardStopAt ?? 1;
     this._budgetTerminalGraceMs = opts.budgetPolicy?.terminalGraceMs ?? 250;
@@ -547,6 +588,8 @@ export class Coordinator {
     this._workers = new Map();
     /** @type {Map<string, object>} requestId -> pending question/approval record */
     this._pending = new Map();
+    /** Active interaction authority only; historical resolved records stay queryable in _pending. */
+    this._activeInteractionIds = new Set();
     /** @type {Map<string, object>} workerId -> stop-waiter bookkeeping */
     this._stopWaiters = new Map();
     /** @type {Map<string, object>} workerId -> unaudited emergency-stop waiter after poison */
@@ -565,6 +608,7 @@ export class Coordinator {
 
     for (const [sourceVendor, adapter] of Object.entries(this._adapters)) {
       adapter.onEvent((e) => {
+        if (this._closed) return;
         if (this._fatalError) {
           this._observeEmergencyTerminal(e, sourceVendor);
           return;
@@ -589,16 +633,16 @@ export class Coordinator {
     // Ordinary startup retains D10's reconcile-before-replay posture. Opt-in automatic native
     // recovery must first identify the exact replayed session owners; otherwise an empty expected
     // set would delete the very worktrees whose ownership the fresh handshake must validate.
-    if (!this._startupRecoveryAuthority && this._worktrees && typeof this._worktrees.reconcile === 'function') Promise.resolve(this._worktrees.reconcile()).catch(noop);
-    if (!this._startupRecoveryAuthority && this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') Promise.resolve(this._runtimeScopes.reconcile([])).catch(noop);
+    if (!this._startupRecoveryAuthority && this._worktrees && typeof this._worktrees.reconcile === 'function') this._trackStartupCleanup(() => this._worktrees.reconcile());
+    if (!this._startupRecoveryAuthority && this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') this._trackStartupCleanup(() => this._runtimeScopes.reconcile([]));
     this._replay();
     if (this._startupRecoveryAuthority) {
       const eligible = [...this._workers.values()].filter((handle) => {
         const adapter = this._adapters[handle.vendor];
         return handle.status === 'orphaned' && handle.sessionRef?.persistence === 'native' && handle.sessionContext?.ownerTaskId && adapter && cardSupportsSession(adapter.card(), { mode: 'resume' });
       });
-      if (this._worktrees && typeof this._worktrees.reconcile === 'function') Promise.resolve(this._worktrees.reconcile(eligible.map((handle) => handle.sessionContext.ownerTaskId))).catch(noop);
-      if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') Promise.resolve(this._runtimeScopes.reconcile(eligible.map((handle) => handle.id))).catch(noop);
+      if (this._worktrees && typeof this._worktrees.reconcile === 'function') this._trackStartupCleanup(() => this._worktrees.reconcile(eligible.map((handle) => handle.sessionContext.ownerTaskId)));
+      if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') this._trackStartupCleanup(() => this._runtimeScopes.reconcile(eligible.map((handle) => handle.id)));
     }
     this._terminalizeUnattachedCoordinationTasks();
   }
@@ -609,12 +653,81 @@ export class Coordinator {
 
   tick() {
     if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' });
+    if (this._drainState !== 'open') throw Object.assign(new Error('coordinator admission is draining'), { code: 'coordinator_draining' });
     if (this._fatalError) throw this._fatalError;
     if (this._startupRecoveryState === 'pending') throw Object.assign(new Error('startup session recovery is pending'), { code: 'session_recovery_pending' });
     if (this._startupRecoveryState === 'failed') throw this._startupRecoveryError;
+    if (this._startupCleanupPending > 0) throw Object.assign(new Error('startup owned-resource reconciliation is pending'), { code: 'coordinator_cleanup_pending' });
+    if (this._startupCleanupError) throw this._startupCleanupError;
     this._sweepDeadlines();
     this._dispatchPass();
   }
+
+  _assertReadable() {
+    if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' });
+    if (this._fatalError) throw this._fatalError;
+    if (this._startupRecoveryState === 'pending') throw Object.assign(new Error('startup session recovery is pending'), { code: 'session_recovery_pending' });
+    if (this._startupRecoveryState === 'failed') throw this._startupRecoveryError;
+    if (this._startupCleanupError) throw this._startupCleanupError;
+    // Reads stay observational during drain. Deadline transitions, forced stops, and policy
+    // resolutions are effects and remain owned by admitted control paths/timers.
+  }
+
+  async _withAuthorityOp(operation) {
+    if (this._drainState !== 'open') throw Object.assign(new Error('coordinator admission is draining'), { code: 'coordinator_draining' });
+    // Preserve same-tick command admission once production startup reconciliation is complete.
+    // Only a genuinely pending injected/asynchronous reconciler introduces an await boundary.
+    if (this._startupCleanupPending > 0) await Promise.all(this._startupCleanupPromises);
+    if (this._startupCleanupError) throw this._startupCleanupError;
+    const release = this._acquireAuthorityOp();
+    try { return await operation(); }
+    finally { release(); }
+  }
+
+  _acquireAuthorityOp(allowDraining = false) {
+    if (this._drainState !== 'open' && !(allowDraining && this._drainState === 'draining')) throw Object.assign(new Error('coordinator admission is draining'), { code: 'coordinator_draining' });
+    const token = Object.freeze({}); let active = true;
+    this._authorityTokens.add(token); this._authorityOps = this._authorityTokens.size;
+    return () => {
+      if (!active) return;
+      active = false; this._authorityTokens.delete(token); this._authorityOps = this._authorityTokens.size;
+    };
+  }
+
+  _trackAuthorityPromise(operation, allowDraining = false) {
+    const release = this._acquireAuthorityOp(allowDraining);
+    let result;
+    try { result = operation(); }
+    catch (error) { release(); return Promise.reject(error); }
+    return Promise.resolve(result).finally(release);
+  }
+
+  _trackStartupCleanup(operation) {
+    let source;
+    try { source = operation(); }
+    catch {
+      if (!this._startupCleanupError) this._startupCleanupError = Object.assign(new Error('startup owned-resource reconciliation failed'), { code: 'coordinator_cleanup_incomplete' });
+      return Promise.resolve();
+    }
+    // The production reconcilers are deliberately synchronous: construction must finish their
+    // bounded local inspection before legacy synchronous commands or close() can enter. Injected
+    // reconcilers may still be genuinely asynchronous; those remain behind startupReady().
+    if (!source || typeof source.then !== 'function') return Promise.resolve(source);
+    this._startupCleanupPending += 1;
+    const tracked = Promise.resolve(source).catch(() => {
+      if (!this._startupCleanupError) this._startupCleanupError = Object.assign(new Error('startup owned-resource reconciliation failed'), { code: 'coordinator_cleanup_incomplete' });
+    }).finally(() => { this._startupCleanupPending -= 1; });
+    this._startupCleanupPromises.push(tracked);
+    return tracked;
+  }
+
+  async startupReady() {
+    await Promise.all(this._startupCleanupPromises);
+    if (this._startupCleanupError) throw this._startupCleanupError;
+    return true;
+  }
+
+  _fleetDrainOwnsShutdown() { return this._drainState !== 'open'; }
 
   beginStartupRecovery(authority) {
     if (!authority || authority !== this._startupRecoveryAuthority || this._startupRecoveryState !== 'idle') throw Object.assign(new Error('startup session recovery authority is unavailable'), { code: 'session_recovery_authority' });
@@ -641,7 +754,9 @@ export class Coordinator {
 
   /** Keep fleet capabilities behind the same coordinator health boundary as every other
    * public command. Northbounds call these methods; they never receive a second controller. */
-  _assertOperational() {
+  async _assertOperational() {
+    await Promise.all(this._startupCleanupPromises);
+    if (this._startupCleanupError) throw this._startupCleanupError;
     this.tick();
   }
 
@@ -651,14 +766,319 @@ export class Coordinator {
     // Durable replay handles describe prior ownership; they are not native transports owned by
     // this Coordinator instance. Locally dispatched handles are marked at the resource boundary
     // and remain drain-required while idle so resumable/persistent harnesses cannot be orphaned.
-    const active = [...this._workers.values()].filter((worker) => worker.localAuthority === true
-      && (worker.cleanupPending === true || worker.cleanupAfterVerification === true
-        || (worker.processRef !== null && worker.processRef.state !== 'closed')
-        || !['dead', 'exited'].includes(worker.status)));
+    const active = [...this._workers.values()].filter((worker) => this._ownsLocalResources(worker));
     if (active.length > 0) throw Object.assign(new Error(`coordinator still owns ${active.length} active worker(s); kill/reap before close`), { code: 'coordinator_not_drained' });
     if (this._authorityOps > 0) throw Object.assign(new Error(`coordinator still has ${this._authorityOps} authority operation(s) in flight`), { code: 'coordinator_not_drained' });
+    if (this._hasPendingInteractionAuthority()) throw Object.assign(new Error('coordinator still owns pending interaction authority'), { code: 'coordinator_not_drained' });
+    if (this._startupCleanupPending > 0) throw Object.assign(new Error('coordinator owned-resource reconciliation is pending'), { code: 'coordinator_not_drained' });
+    if (this._startupCleanupError) throw Object.assign(new Error('coordinator owned-resource reconciliation is incomplete'), { code: 'coordinator_not_drained' });
+    if (this._drainHistoricalReconcilePromise) throw Object.assign(new Error('coordinator historical resource reconciliation is pending'), { code: 'coordinator_not_drained' });
+    if (!['disabled', 'ready'].includes(this._startupRecoveryState) && !(this._drainHistoricalReconciled && this._drainReceipt)) {
+      throw Object.assign(new Error('coordinator startup recovery authority is not settled'), { code: 'coordinator_not_drained' });
+    }
+    this._drainState = 'draining';
     this._closed = true;
+    this._drainState = 'closed';
     return true;
+  }
+
+  /** DC2-DC6: irreversibly fence admission, durably bind one fixed target set, and
+   * converge every locally-owned resource through the ordinary stop state machine. */
+  drain(ctx = {}) {
+    if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' });
+    const fields = ['actor', 'idempotencyKey', 'repoId'];
+    if (!ctx || typeof ctx !== 'object' || Array.isArray(ctx)
+      || Object.keys(ctx).sort().join(',') !== fields.sort().join(',')
+      || typeof ctx.actor !== 'string' || ctx.actor.length === 0 || ctx.actor.length > 256
+      || typeof ctx.idempotencyKey !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(ctx.idempotencyKey)
+      || typeof ctx.repoId !== 'string' || ctx.repoId !== this._repoId) {
+      throw Object.assign(new TypeError('fleet drain authority is invalid'), { code: 'coordinator_drain_invalid' });
+    }
+    for (const method of ['fleetDrain', 'admitFleetDrain', 'recordFleetDrainDisposition', 'completeFleetDrain']) {
+      if (typeof this._coordination[method] !== 'function') throw Object.assign(new Error('fleet drain coordination authority is unavailable'), { code: 'coordinator_drain_unavailable' });
+    }
+    const deadline = Date.now() + this._drainPolicy.timeoutMs;
+    const assertWithinDeadline = () => {
+      if (Date.now() >= deadline) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+    };
+
+    const requestDigest = canonicalDigest({ repoId: ctx.repoId, idempotencyKey: ctx.idempotencyKey });
+    const drainId = `fleet-drain:${requestDigest}`;
+    const durable = this._coordination.fleetDrain?.(drainId);
+
+    let targetWorkerIds = durable?.targetWorkerIds ?? this._drainTargetIds;
+    if (targetWorkerIds === null) {
+      targetWorkerIds = [...this._workers.values()]
+        .filter((handle) => {
+          const task = this._tasks.get(handle.taskId);
+          return task?.status === 'pending' || handle.status === 'pending' || this._ownsLocalResources(handle);
+        })
+        .map((handle) => handle.id).sort();
+      if (targetWorkerIds.length > this._drainPolicy.maxWorkers) {
+        throw Object.assign(new Error('fleet drain target set exceeds deployment capacity'), { code: 'coordinator_drain_capacity' });
+      }
+    } else {
+      targetWorkerIds = [...targetWorkerIds].sort();
+      if (this._drainTargetIds !== null && canonicalDigest(targetWorkerIds) !== canonicalDigest(this._drainTargetIds)) {
+        throw Object.assign(new Error('fleet drain target set conflicts with active drain'), { code: 'coordinator_drain_incomplete' });
+      }
+    }
+    if (durable?.status !== 'completed' && this._activeInteractionIds.size > this._drainPolicy.maxInteractions) {
+      throw Object.assign(new Error('fleet drain interaction set exceeds deployment capacity'), { code: 'coordinator_drain_capacity' });
+    }
+
+    const admission = Object.freeze({
+      schemaVersion: 1, drainId, repoId: ctx.repoId, requestDigest,
+      targetWorkerIds: Object.freeze([...targetWorkerIds]), targetDigest: canonicalDigest(targetWorkerIds),
+    });
+    assertWithinDeadline();
+    try { this._coordination.admitFleetDrain(admission, { actor: ctx.actor, key: `fleet.drain:${ctx.idempotencyKey}` }); }
+    catch (error) { throw this._drainFailure(error); }
+    try { assertWithinDeadline(); }
+    catch (error) {
+      if (durable?.status !== 'completed') {
+        if (this._drainTargetIds === null) this._drainTargetIds = Object.freeze([...targetWorkerIds]);
+        if (this._drainPhysicalId === null) { this._drainPhysicalId = drainId; this._drainPhysicalActor = ctx.actor; }
+        this._drainState = 'draining';
+      }
+      throw error;
+    }
+    const existingRequest = this._drainRequestPromises.get(drainId);
+    if (existingRequest) return existingRequest;
+    if (durable?.status === 'completed') {
+      const completed = Promise.resolve(deepFreeze(durable.receipt));
+      this._drainRequestPromises.set(drainId, completed);
+      return completed;
+    }
+    if (this._drainPhysicalId === null) { this._drainPhysicalId = drainId; this._drainPhysicalActor = ctx.actor; }
+    if (this._drainTargetIds === null) this._drainTargetIds = Object.freeze([...targetWorkerIds]);
+    this._drainState = 'draining';
+
+    if (!this._drainPromise) {
+      const physical = this._performDrain(this._drainTargetIds, ctx.repoId, deadline, this._drainPhysicalId, this._drainPhysicalActor);
+      this._drainPromise = physical.then((receipt) => {
+        this._drainReceipt = receipt;
+        return receipt;
+      }, (error) => {
+        if (this._drainPromise === physical) this._drainPromise = null;
+        throw error;
+      });
+      // Compare against the public Promise, not the inner operation, when a retry clears it.
+      const publicPromise = this._drainPromise;
+      publicPromise.catch(() => { if (this._drainPromise === publicPromise) this._drainPromise = null; });
+    }
+    const requestPromise = this._drainPromise.then((receipt) => {
+      assertWithinDeadline();
+      this._mirrorDrainDispositions(this._drainPhysicalId, drainId, ctx.actor, assertWithinDeadline);
+      assertWithinDeadline();
+      try { this._coordination.completeFleetDrain(drainId, receipt, { actor: ctx.actor, key: `fleet.drain.complete:${ctx.idempotencyKey}` }); }
+      catch (error) { throw this._drainFailure(error); }
+      assertWithinDeadline();
+      return receipt;
+    }, (error) => { throw this._drainFailure(error); });
+    this._drainRequestPromises.set(drainId, requestPromise);
+    requestPromise.catch(() => { if (this._drainRequestPromises.get(drainId) === requestPromise) this._drainRequestPromises.delete(drainId); });
+    return requestPromise;
+  }
+
+  _drainFailure(error) {
+    if (['coordinator_closed', 'coordinator_drain_capacity', 'coordinator_drain_invalid', 'coordinator_drain_unavailable'].includes(error?.code)) return error;
+    return Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+  }
+
+  _ownsLocalResources(handle) {
+    if (!handle) return false;
+    const processOwned = handle.currentIncarnation === true && handle.processRef && handle.processRef.state !== 'closed';
+    const worktreeOwned = handle.ownedWorktreeAuthority === true && !!handle.worktree;
+    return handle.localAuthority === true || processOwned || handle.runtimeScope?.active === true || worktreeOwned
+      || handle.worktreeCreationPending === true || handle.nativeSpawnPending === true
+      || handle.cleanupPending === true || handle.cleanupAfterVerification === true || !!handle.cleanupPromise
+      || !!handle.untrustedTransportReap || handle.recoveryPending === true
+      || this._stopWaiters.has(handle.id) || this._fatalStopWaiters.has(handle.id);
+  }
+
+  _hasPendingInteractionAuthority() {
+    return this._activeInteractionIds.size > 0;
+  }
+
+  _resolveInteractionAuthority(requestId, record) {
+    record.state = 'resolved';
+    this._activeInteractionIds.delete(requestId);
+  }
+
+  _recordDrainDisposition(drainId, actor, workerId, disposition) {
+    const key = `fleet.drain.disposition:${canonicalDigest({ drainId, workerId })}`;
+    this._coordination.recordFleetDrainDisposition(drainId, workerId, disposition, { actor, key });
+  }
+
+  _mirrorDrainDispositions(sourceDrainId, targetDrainId, actor, assertWithinDeadline) {
+    const source = this._coordination.fleetDrain(sourceDrainId);
+    if (!source || !['admitted', 'completed'].includes(source.status) || source.dispositions.length !== source.targetWorkerIds.length) {
+      throw Object.assign(new Error('fleet drain durable dispositions are incomplete'), { code: 'coordinator_drain_incomplete' });
+    }
+    for (const row of source.dispositions) {
+      assertWithinDeadline();
+      this._recordDrainDisposition(targetDrainId, actor, row.workerId, row.disposition);
+    }
+  }
+
+  async _cancelPendingForDrain(deadline) {
+    let processed = 0;
+    for (const requestId of [...this._activeInteractionIds]) {
+      const record = this._pending.get(requestId);
+      if (!record) { this._activeInteractionIds.delete(requestId); continue; }
+      if (record.state !== 'pending') continue;
+      if (Date.now() >= deadline || processed >= this._drainPolicy.maxInteractions) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+      processed += 1;
+      const handle = this._workers.get(record.worker); const task = handle ? this._tasks.get(handle.taskId) : null;
+      const cancelled = this._log.append({
+        worker: record.worker, harness: handle?.vendor ? this._harnessOf(handle.vendor) : '', turnEpoch: handle ? this._safeTurnEpoch(handle) : 0,
+        kind: 'control.drain_interaction_cancelled', actor: 'policy', payload: { requestId, kind: record.kind },
+      });
+      const evidence = this._coordMapEvent(cancelled);
+      this._coordRecord('authority.cancelled', {
+        taskId: task?.id ?? null, workerId: record.worker, requestId, kind: record.kind, reason: 'fleet_drain', evidence,
+      }, `driver.authority.cancelled:${record.worker}:${requestId}:${cancelled.seq}`, 'policy');
+      this._resolveInteractionAuthority(requestId, record); record.consumer = 'policy';
+      record.resolution = { decision: record.kind === 'publication' ? 'deny' : 'cancel', reason: 'fleet_drain' };
+      if (handle?.pendingQuestionId === requestId) handle.pendingQuestionId = null;
+      if (handle?.pendingApprovalId === requestId) handle.pendingApprovalId = null;
+      if (processed % 32 === 0) await this._sleep(0);
+    }
+  }
+
+  async _performDrain(targetWorkerIds, repoId, deadline, physicalDrainId, physicalActor) {
+    await this._beforeDrainDeadline(Promise.all(this._startupCleanupPromises), deadline);
+    if (this._startupCleanupError) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+    // Operations admitted before the irreversible fence may finish, but no stop effect races
+    // them. In particular, publisher/integration/provider work cannot be relabelled as drained
+    // while it still owns an external or repository effect boundary.
+    while (this._authorityOps > 0 && Date.now() < deadline) {
+      await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - Date.now())));
+    }
+    if (this._authorityOps > 0) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+    while (this._startupRecoveryState === 'pending' && Date.now() < deadline) {
+      await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - Date.now())));
+    }
+    if (this._startupRecoveryState === 'pending') throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+    await this._cancelPendingForDrain(deadline);
+    if (this._hasPendingInteractionAuthority()) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+    const durablePhysical = this._coordination.fleetDrain(physicalDrainId);
+    if (!durablePhysical || durablePhysical.status !== 'admitted'
+      || canonicalDigest(durablePhysical.targetWorkerIds) !== canonicalDigest(targetWorkerIds)) {
+      throw Object.assign(new Error('fleet drain durable target is unavailable'), { code: 'coordinator_drain_incomplete' });
+    }
+    const dispositions = new Map((durablePhysical.dispositions ?? []).map((row) => [row.workerId, row.disposition]));
+    const setDisposition = (workerId, disposition) => {
+      const prior = dispositions.get(workerId);
+      if (prior !== undefined) {
+        if (prior !== disposition) throw Object.assign(new Error('fleet drain durable disposition conflicts with live ownership'), { code: 'coordinator_drain_incomplete' });
+        return;
+      }
+      this._recordDrainDisposition(physicalDrainId, physicalActor, workerId, disposition);
+      dispositions.set(workerId, disposition);
+    };
+    for (const workerId of targetWorkerIds) {
+      if (Date.now() >= deadline) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+      if (dispositions.has(workerId)) continue;
+      const handle = this._workers.get(workerId); const task = handle ? this._tasks.get(handle.taskId) : null;
+      if (!handle) { setDisposition(workerId, 'alreadyTerminal'); continue; }
+      if (task?.status === 'pending' || handle.status === 'pending') {
+        const cancelled = this._log.append({
+          worker: workerId, harness: handle.vendor ? this._harnessOf(handle.vendor) : '', turnEpoch: this._safeTurnEpoch(handle),
+          kind: 'control.drain_cancelled', actor: 'policy', ...this._routeAttribution(handle, task), payload: {},
+        });
+        const evidence = this._coordMapEvent(cancelled);
+        if (task && !TERMINAL_TASK_STATUSES.has(task.status)) this._coordTransition(task, 'cancelled', `task.cancelled:${task.id}:${cancelled.seq}`, evidence);
+        if (task) task.status = 'cancelled';
+        handle.status = 'dead';
+        if (!handle.processRef && !handle.runtimeScope && !handle.worktree) handle.localAuthority = false;
+        await this._beforeDrainDeadline(this._removeOwnedTaskWorktree(handle, task), deadline);
+        setDisposition(workerId, 'pendingCancelled');
+      } else if (!this._ownsLocalResources(handle) && (!handle.processRef || handle.processRef.state === 'closed')) {
+        setDisposition(workerId, 'alreadyTerminal');
+      }
+    }
+
+    const attempt = async (handle) => {
+      if (!handle || (dispositions.has(handle.id) && !this._ownsLocalResources(handle))) return;
+      if (!this._ownsLocalResources(handle) && (!handle.processRef || handle.processRef.state === 'closed')) {
+        setDisposition(handle.id, 'alreadyTerminal');
+        return;
+      }
+      if ((!handle.processRef || handle.processRef.state === 'closed') && ['dead', 'exited'].includes(handle.status)) {
+        try {
+          await this._cleanupClosedTransport(handle, this._tasks.get(handle.taskId));
+          if (!this._ownsLocalResources(handle)) setDisposition(handle.id, 'alreadyTerminal');
+        } catch { /* the bounded convergence loop retries exact cleanup */ }
+        return;
+      }
+      try {
+        const result = await this.kill(handle.id, 'policy', { drainToken: this._drainKillToken });
+        if (result?.ok && result.result === 'confirmed') setDisposition(handle.id, 'killConfirmed');
+        else if (result?.ok && ['already_dead', 'already_stopped'].includes(result.result)
+          && !this._ownsLocalResources(handle) && (!handle.processRef || handle.processRef.state === 'closed')) setDisposition(handle.id, 'alreadyTerminal');
+      } catch { /* exact state below is authoritative; retry until the deployment deadline */ }
+    };
+
+    await this._beforeDrainDeadline(Promise.all(targetWorkerIds.map((id) => attempt(this._workers.get(id)))), deadline);
+    while (Date.now() <= deadline) {
+      const targets = targetWorkerIds.map((id) => this._workers.get(id)).filter(Boolean);
+      const remaining = targets.filter((handle) => this._ownsLocalResources(handle));
+      const globalRemaining = [...this._workers.values()].filter((handle) => this._ownsLocalResources(handle));
+      if (remaining.length === 0 && globalRemaining.length === 0 && this._authorityOps === 0
+        && !this._hasPendingInteractionAuthority() && targetWorkerIds.every((id) => dispositions.has(id))) {
+        if (!this._drainHistoricalReconciled) {
+          if (!this._drainHistoricalReconcilePromise) {
+            const reconciliations = [];
+            if (this._worktrees && typeof this._worktrees.reconcile === 'function') reconciliations.push(this._worktrees.reconcile([]));
+            if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') reconciliations.push(this._runtimeScopes.reconcile([]));
+            const reconciliation = Promise.all(reconciliations);
+            this._drainHistoricalReconcilePromise = reconciliation;
+            reconciliation.catch(() => {
+              if (this._drainHistoricalReconcilePromise === reconciliation) this._drainHistoricalReconcilePromise = null;
+            });
+          }
+          const reconciliation = this._drainHistoricalReconcilePromise;
+          await this._beforeDrainDeadline(reconciliation, deadline);
+          if (this._drainHistoricalReconcilePromise === reconciliation) this._drainHistoricalReconcilePromise = null;
+          this._drainHistoricalReconciled = true;
+          continue;
+        }
+        const processesObserved = targets.filter((handle) => handle.processRef !== null).length;
+        const processesClosed = targets.filter((handle) => handle.processRef?.state === 'closed').length;
+        const counts = {
+          pendingCancelled: [...dispositions.values()].filter((value) => value === 'pendingCancelled').length,
+          killConfirmed: [...dispositions.values()].filter((value) => value === 'killConfirmed').length,
+          alreadyTerminal: [...dispositions.values()].filter((value) => value === 'alreadyTerminal').length,
+          processesObserved,
+          processesClosed,
+        };
+        const core = {
+          schemaVersion: 1, state: 'drained', scope: 'local-controller', repoId,
+          targetCount: targetWorkerIds.length, remainingCount: 0, targetDigest: canonicalDigest(targetWorkerIds), counts,
+          checks: { admissionClosed: true, authorityOpsDrained: true, stopWaitersDrained: true, cleanupDrained: true, localWorkerAuthorityReleased: true },
+          effects: { coordinatorClosed: false, writerReleased: false, transportsClosed: false },
+        };
+        return deepFreeze({ ...core, receiptDigest: canonicalDigest(core) });
+      }
+      await this._beforeDrainDeadline(Promise.all(remaining.map(attempt)), deadline);
+      if (Date.now() >= deadline) break;
+      await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - Date.now())));
+    }
+    throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+  }
+
+  _beforeDrainDeadline(operation, deadline) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return Promise.reject(Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' }));
+    return new Promise((resolveOperation, rejectOperation) => {
+      const timer = setTimeout(() => rejectOperation(Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' })), remaining);
+      Promise.resolve(operation).then(
+        (value) => { clearTimeout(timer); resolveOperation(value); },
+        (error) => { clearTimeout(timer); rejectOperation(error); },
+      );
+    });
   }
 
   _capabilityRegistry() {
@@ -669,6 +1089,7 @@ export class Coordinator {
   }
 
   _dispatchPass() {
+    if (this._closed || this._drainState !== 'open') return;
     for (const taskId of this._taskOrder) {
       const task = this._tasks.get(taskId);
       if (!task || task.status !== 'pending') continue;
@@ -686,7 +1107,7 @@ export class Coordinator {
     const now = this._now();
     for (const [requestId, record] of [...this._pending]) {
       if ((record.kind === 'approval' || record.kind === 'publication') && record.state === 'pending' && record.deadlineAt != null && now >= record.deadlineAt) {
-        this._resolveRecord(requestId, { decision: 'deny' }, 'policy').catch(noop);
+        this._trackAuthorityPromise(() => this._resolveRecord(requestId, { decision: 'deny' }, 'policy')).catch(noop);
       }
     }
     for (const [workerId, waiter] of [...this._stopWaiters]) {
@@ -779,6 +1200,7 @@ export class Coordinator {
     task.routeKey = routeTupleKey(this._adapters[vendor]?.card(), task.modelResolved, task.effortResolved, task.taskType);
     handle.routeKey = task.routeKey;
     const harness = this._harnessOf(vendor);
+    handle.currentIncarnation = true;
     handle.localAuthority = true;
     let runtime;
     try {
@@ -802,6 +1224,7 @@ export class Coordinator {
     // worker waits for its checkout to exist before touching disk. Status still flips to
     // 'working' and the adapter is invoked synchronously below (so a bare tick() dispatches
     // in one turn), while the worker's actual work is gated on the worktree being ready.
+    handle.worktreeCreationPending = true;
     let worktreeSource;
     if (task.sessionRequest?.mode === 'resume') {
       worktreeSource = Promise.resolve({
@@ -819,6 +1242,9 @@ export class Coordinator {
         if (res && res.path) {
           task.worktree = res.path;
           handle.worktree = res.path;
+          // A resumed/recovered session merely borrows its durable session checkout. Only a
+          // checkout created for this task is independent local authority that must block drain.
+          handle.ownedWorktreeAuthority = task.sessionRequest?.mode !== 'resume';
           const sessionContext = Object.freeze({
             worktree: res.path,
             ...(this._repoRoot ? { repoRoot: this._repoRoot } : {}),
@@ -862,7 +1288,7 @@ export class Coordinator {
       });
       if (!terminalized && task.sessionRequest?.mode === 'new') this._removeOwnedTaskWorktree(handle, task).catch(noop);
       throw failure;
-    });
+    }).finally(() => { handle.worktreeCreationPending = false; });
     // Some test/dummy adapters do not consume readiness. The prerequisite still owns failure,
     // while this observer prevents an otherwise-unhandled rejected promise.
     worktreeReady.catch(noop);
@@ -895,26 +1321,35 @@ export class Coordinator {
     handle.processGeneration = (handle.processGeneration ?? 0) + 1;
     // SC1d: the spawn Ack is consumed, not discarded — a refused spawn must fail the task
     // instead of leaving a zombie in 'working' (the G1 audit's silent failure mode).
-    Promise.resolve(this._adapters[vendor].spawn(workerId, task.brief, {
-      worktreeReady,
-      timeoutMs: wallMin ? wallMin * 60000 : undefined,
-      signal: spawnAbort.signal,
-      model: task.modelResolved ?? undefined,
-      reasoningEffort: task.effortResolved ?? undefined,
-      serviceTier: task.modelPolicy?.serviceTier,
-      session: task.sessionRequest?.mode === 'new' ? undefined : task.sessionRequest,
-      env: runtime?.env,
-      replaceEnv: runtime?.replaceEnv === true,
-      processGeneration: handle.processGeneration,
-      processReapTimeoutMs: Math.max(1, Math.floor(this._stopDeadlineMs * 0.8)),
-    })).then((ack) => {
+    handle.nativeSpawnPending = true;
+    let nativeSpawnSource;
+    try {
+      nativeSpawnSource = this._adapters[vendor].spawn(workerId, task.brief, {
+        worktreeReady,
+        timeoutMs: wallMin ? wallMin * 60000 : undefined,
+        signal: spawnAbort.signal,
+        model: task.modelResolved ?? undefined,
+        reasoningEffort: task.effortResolved ?? undefined,
+        serviceTier: task.modelPolicy?.serviceTier,
+        session: task.sessionRequest?.mode === 'new' ? undefined : task.sessionRequest,
+        env: runtime?.env,
+        replaceEnv: runtime?.replaceEnv === true,
+        processGeneration: handle.processGeneration,
+        processReapTimeoutMs: Math.max(1, Math.floor(this._stopDeadlineMs * 0.8)),
+      });
+    } catch (error) { nativeSpawnSource = Promise.reject(error); }
+    const nativeSpawnPromise = Promise.resolve(nativeSpawnSource).then((ack) => {
       if (handle.spawnAbort === spawnAbort) handle.spawnAbort = null;
       if (ack && ack.ok === false) this._onSpawnRefused(handle, task, harness, ack);
     }).catch((err) => {
       if (handle.spawnAbort === spawnAbort) handle.spawnAbort = null;
       // SC15: rejection and resolved refusal are the same durable failure channel.
       this._onSpawnRefused(handle, task, harness, { ok: false, reason: String(err?.message ?? err) });
+    }).finally(() => {
+      if (handle.nativeSpawnPromise === nativeSpawnPromise) handle.nativeSpawnPromise = null;
+      handle.nativeSpawnPending = false;
     });
+    handle.nativeSpawnPromise = nativeSpawnPromise;
 
     this._log.append({
       worker: workerId, harness, turnEpoch: stamp.turnEpoch, kind: 'lifecycle.turn_started', actor: 'orchestrator', payload: {},
@@ -971,7 +1406,11 @@ export class Coordinator {
   // Command: spawn()
   // =========================================================================
 
-  async spawn(vendor, brief, opts = {}) {
+  spawn(vendor, brief, opts = {}) {
+    return this._withAuthorityOp(() => this._spawn(vendor, brief, opts));
+  }
+
+  async _spawn(vendor, brief, opts = {}) {
     this.tick();
 
     // CI1: admission is the pinning boundary. Never retain caller-owned mutable state and never
@@ -1025,6 +1464,7 @@ export class Coordinator {
         throw new SessionSelectionError(`session "${sessionRequest.id}" is already attached`, 'session_already_attached');
       }
       await this._validateSessionContext(sessionRequest.context);
+      if (this._drainState !== 'open') throw Object.assign(new Error('coordinator admission is draining'), { code: 'coordinator_draining' });
     }
 
     const deps = opts.deps ? [...opts.deps] : [];
@@ -1113,11 +1553,16 @@ export class Coordinator {
       runtimeScope: null,
       runtimeLease: null,
       spawnAbort: null,
+      worktreeCreationPending: false,
+      nativeSpawnPending: false,
+      nativeSpawnPromise: null,
       processGeneration: 0,
       processRef: null,
       cleanupPending: false,
       cleanupPromise: null,
       cleanupAfterVerification: false,
+      currentIncarnation: true,
+      ownedWorktreeAuthority: false,
       localAuthority: false,
       createdAt: new Date(this._now()).toISOString(),
     };
@@ -1163,7 +1608,7 @@ export class Coordinator {
         watchdogActions: new Set(), recentFailedActions: [],
         watchdogGeneration: 0, watchdogTimer: null, runtimeScope: null, runtimeLease: null,
         spawnAbort: null, processGeneration: 0, processRef: null, cleanupPending: false, cleanupPromise: null, cleanupAfterVerification: false, createdAt: new Date(0).toISOString(),
-        localAuthority: false,
+        currentIncarnation: false, ownedWorktreeAuthority: false, localAuthority: false,
       });
       const match = /^w-(\d+)$/.exec(workerId);
       if (match) this._workerSeq = Math.max(this._workerSeq, Number(match[1]));
@@ -1173,7 +1618,11 @@ export class Coordinator {
   }
 
   /** AC4: spawn a separately-attributed oracle/review over immutable task evidence. */
-  async spawnReview(workerId, vendor, opts = {}) {
+  spawnReview(workerId, vendor, opts = {}) {
+    return this._withAuthorityOp(() => this._spawnReview(workerId, vendor, opts));
+  }
+
+  async _spawnReview(workerId, vendor, opts = {}) {
     this.tick();
     const parentHandle = this._getWorker(workerId);
     const parent = this._tasks.get(parentHandle.taskId);
@@ -1245,7 +1694,11 @@ export class Coordinator {
 
   /** Spawn a separately-routed oracle over one immutable derived Scratch assertion. The caller
    * selects the route but cannot supply or alter the fact target or its durable commitment. */
-  async spawnScratchOracle(scratchFactId, vendor, opts = {}) {
+  spawnScratchOracle(scratchFactId, vendor, opts = {}) {
+    return this._withAuthorityOp(() => this._spawnScratchOracle(scratchFactId, vendor, opts));
+  }
+
+  async _spawnScratchOracle(scratchFactId, vendor, opts = {}) {
     this.tick();
     if (!this._scratchOraclePolicy) throw new ReviewSelectionError('Scratch oracle is not deployment-configured', 'scratch_oracle_unavailable');
     const actor = opts.actor ?? 'orchestrator';
@@ -1322,7 +1775,16 @@ export class Coordinator {
 
   /** PS7: explicitly reattach a replayed native session. Recovery never trusts a stale PID;
    * authority comes only from a fresh adapter handshake that reports the expected native ID. */
-  async recover(workerId, opts = {}) {
+  recover(workerId, opts = {}) {
+    return this._withAuthorityOp(async () => {
+      const handle = this._workers.get(workerId);
+      if (handle) handle.recoveryPending = true;
+      try { return await this._recover(workerId, opts); }
+      finally { if (handle) handle.recoveryPending = false; }
+    });
+  }
+
+  async _recover(workerId, opts = {}) {
     const startup = opts.startupAuthority === this._startupRecoveryAuthority && this._startupRecoveryState === 'pending';
     if (!startup) this.tick();
     else { if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' }); if (this._fatalError) throw this._fatalError; }
@@ -1363,6 +1825,7 @@ export class Coordinator {
       taskId: task.id, workerId, sessionId: handle.sessionRef.id, context, evidence: recoveryEvidence,
     }, `driver.recovery.requested:${task.id}:${recoveryRequested.seq}`, opts.actor ?? 'orchestrator');
     const runtime = this._ensureRuntimeScope(handle);
+    handle.currentIncarnation = true;
     handle.localAuthority = true;
 
     let timerHandle;
@@ -1464,7 +1927,11 @@ export class Coordinator {
   }
 
   /** AC5: explicitly integrate an accepted captured commit. This never pushes. */
-  async integrate(workerId, opts = {}) {
+  integrate(workerId, opts = {}) {
+    return this._withAuthorityOp(() => this._integrate(workerId, opts));
+  }
+
+  async _integrate(workerId, opts = {}) {
     this.tick();
     const handle = this._getWorker(workerId);
     const task = this._tasks.get(handle.taskId);
@@ -1667,6 +2134,7 @@ export class Coordinator {
       taskId: task.id, workerId, requestId, publication, fence: stamp.fence, deadlineAt, evidence,
     }, `driver.publication.requested:${task.id}:${requestId}`, actor);
     this._pending.set(requestId, record);
+    this._activeInteractionIds.add(requestId);
     return { ok: true, requestId, fence: stamp.fence, target: publication };
   }
 
@@ -1752,7 +2220,11 @@ export class Coordinator {
   // Command: send()
   // =========================================================================
 
-  async send(workerId, message, mode, opts = {}) {
+  send(workerId, message, mode, opts = {}) {
+    return this._withAuthorityOp(() => this._send(workerId, message, mode, opts));
+  }
+
+  async _send(workerId, message, mode, opts = {}) {
     this.tick();
     const handle = this._getWorker(workerId);
     // SC4a: per-worker delivery serialization — deliveries reach the adapter strictly in
@@ -1768,7 +2240,11 @@ export class Coordinator {
 
   /** Build one bounded Cartographer slice and deliver it as a fenced, addressed nudge.
    * The capability owns evidence production; the Coordinator alone owns worker delivery. */
-  async orientWorker(workerId, args, note, ctx = {}) {
+  orientWorker(workerId, args, note, ctx = {}) {
+    return this._withAuthorityOp(() => this._orientWorker(workerId, args, note, ctx));
+  }
+
+  async _orientWorker(workerId, args, note, ctx = {}) {
     this.tick();
     const handle = this._getWorker(workerId);
     if (!Number.isSafeInteger(ctx.expectedFence)) throw new TypeError('orientation push requires expectedFence');
@@ -1989,6 +2465,7 @@ export class Coordinator {
   // =========================================================================
 
   async interrupt(workerId, then, actor = 'orchestrator', opts = {}) {
+    if (this._startupCleanupPending > 0) await this.startupReady();
     this.tick();
     const handle = this._getWorker(workerId);
     if (opts.expectedFence !== undefined) {
@@ -2005,12 +2482,16 @@ export class Coordinator {
   }
 
   async kill(workerId, actor = 'orchestrator', opts = {}) {
-    const startup = opts.startupAuthority === this._startupRecoveryAuthority && this._startupRecoveryAuthority !== null;
+    const startup = opts.startupAuthority === this._startupRecoveryAuthority && this._startupRecoveryState === 'pending';
+    const draining = opts.drainToken === this._drainKillToken;
     if (this._fatalError) {
-      if (opts.emergency !== true && !startup) throw this._fatalError;
+      if (opts.emergency !== true && !startup && !draining) throw this._fatalError;
       return this._emergencyKillUnlogged(this._getWorker(workerId));
     }
-    if (!startup) this.tick();
+    if (!startup && !draining) {
+      if (this._startupCleanupPending > 0) await this.startupReady();
+      this.tick();
+    }
     else if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' });
     const handle = this._getWorker(workerId);
     if (opts.expectedFence !== undefined) {
@@ -2192,9 +2673,9 @@ export class Coordinator {
 
     if (handle.status === 'blocked') {
       if (handle.pendingApprovalId) {
-        this._resolveRecord(handle.pendingApprovalId, { decision: 'cancel' }, actor).catch(noop);
+        this._trackAuthorityPromise(() => this._resolveRecord(handle.pendingApprovalId, { decision: 'cancel' }, actor), this._drainState === 'draining').catch(noop);
       } else if (handle.pendingQuestionId) {
-        this._resolveRecord(handle.pendingQuestionId, { decision: 'cancel' }, actor).catch(noop);
+        this._trackAuthorityPromise(() => this._resolveRecord(handle.pendingQuestionId, { decision: 'cancel' }, actor), this._drainState === 'draining').catch(noop);
       }
     }
     if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) {
@@ -2340,6 +2821,10 @@ export class Coordinator {
     if (handle.cleanupPromise) return handle.cleanupPromise;
     handle.cleanupPending = true;
     const cleanup = this._removeTaskWorktree(task).then(() => {
+      handle.worktree = null;
+      handle.ownedWorktreeAuthority = false;
+      // Preserve the historical worker path on the task: the mandatory trust/freshness guard
+      // compares it with later verification sandboxes even after the checkout was reaped.
       handle.cleanupPending = handle.runtimeScope?.active === true;
       if (!handle.cleanupPending) handle.cleanupError = null;
     }, (error) => {
@@ -2400,6 +2885,9 @@ export class Coordinator {
         const runtimeRemoved = this._removeRuntimeScope(handle);
         if (opts.removeWorktree === true) await this._removeOwnedTaskWorktree(handle, this._tasks.get(handle.taskId));
         if (!runtimeRemoved) throw Object.assign(new Error('runtime cleanup failed'), { code: 'runtime_cleanup_failed' });
+        // Recovery reuses a durable session checkout. If policy intentionally retains it, it is
+        // historical/session evidence after exact process close rather than live host authority.
+        if (opts.removeWorktree !== true) handle.ownedWorktreeAuthority = false;
         handle.localAuthority = false;
       })();
       return cleanupPromise;
@@ -2426,7 +2914,6 @@ export class Coordinator {
     handle.untrustedTransportReap = record;
     record.timerHandle = this._setTimeout(() => {
       if (handle.untrustedTransportReap !== record) return;
-      handle.untrustedTransportReap = null;
       handle.processRef = handle.processRef?.generation === record.generation
         && handle.processRef?.pid === record.pid
         && ['initializing', 'ready'].includes(handle.processRef?.state)
@@ -2448,9 +2935,7 @@ export class Coordinator {
         });
       } catch {
         // append() already poisoned coordinator health; timer callbacks must never escape and
-        // crash the host process while bounded resource disposition continues below.
-      } finally {
-        record.cleanup().catch(noop);
+        // crash the host process. Exact close is still required before owned resources move.
       }
     }, this._stopDeadlineMs);
     if (record.timerHandle && typeof record.timerHandle.unref === 'function') record.timerHandle.unref();
@@ -2787,7 +3272,9 @@ export class Coordinator {
         });
         Promise.resolve(this._adapters[handle.vendor]?.kill(handle.id)).catch(noop);
       }
-      Promise.resolve(waiter.cleanupPromise).catch(noop).finally(() => {
+      Promise.resolve(waiter.cleanupPromise).then(() => {
+        if (handle && (!handle.processRef || handle.processRef.state === 'closed') && handle.cleanupPending !== true) handle.localAuthority = false;
+      }, noop).finally(() => {
         for (const resolve of waiter.resolvers) resolve({ ok: false, result: 'coordination_unavailable' });
         this._stopWaiters.delete(workerId);
       });
@@ -2823,7 +3310,6 @@ export class Coordinator {
     }
 
     let coordinationFailure = null;
-    let cleanupPromise = Promise.resolve();
     if (handle) {
       const task = this._tasks.get(handle.taskId);
       if (task && !TERMINAL_TASK_STATUSES.has(task.status)) {
@@ -2845,29 +3331,28 @@ export class Coordinator {
         handle.processRef = { ...handle.processRef, state: 'unconfirmed_after_restart' };
       }
       handle.status = 'dead';
-      const runtimeRemoved = this._removeRuntimeScope(handle);
+      // A deadline is an uncertainty observation, not process-close authority. Preserve the
+      // runtime and worktree until an exact correlated close or a later confirmed kill.
+      handle.cleanupPending = true;
+      handle.cleanupError = 'stop_unconfirmed';
       const task = this._tasks.get(handle.taskId);
       if (!coordinationFailure && task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'failed';
-      cleanupPromise = this._removeOwnedTaskWorktree(handle, task).then(() => {
-        if (!runtimeRemoved) throw Object.assign(new Error('runtime cleanup failed'), { code: 'runtime_cleanup_failed' });
-      });
     }
 
     const result = coordinationFailure ? { ok: false, result: 'coordination_unavailable' } : { ok: true, result: 'forced' };
-    cleanupPromise.then(() => {
-      for (const resolve of waiter.resolvers) resolve(result);
-      this._stopWaiters.delete(workerId);
-    }, () => {
-      for (const resolve of waiter.resolvers) resolve({ ok: false, result: 'cleanup_failed' });
-      this._stopWaiters.delete(workerId);
-    });
+    for (const resolve of waiter.resolvers) resolve(result);
+    this._stopWaiters.delete(workerId);
   }
 
   // =========================================================================
   // Command: respond()
   // =========================================================================
 
-  async respond(requestId, answer, actor = 'orchestrator') {
+  respond(requestId, answer, actor = 'orchestrator') {
+    return this._withAuthorityOp(() => this._respond(requestId, answer, actor));
+  }
+
+  async _respond(requestId, answer, actor = 'orchestrator') {
     this.tick();
     return this._resolveRecord(requestId, answer, actor);
   }
@@ -2917,7 +3402,7 @@ export class Coordinator {
           const evidence = this._coordMapEvent(refusedEvent);
           this._coordRecord('publication.refused', { taskId: handle.taskId, requestId, reason: 'stale_fence', publication: record.publication, evidence }, `driver.publication.refused:${handle.taskId}:${requestId}`, 'policy');
         }
-        record.state = 'resolved';
+        this._resolveInteractionAuthority(requestId, record);
         record.consumer = actor;
         record.resolution = { decision: 'deny', reason: 'stale_fence' };
         finishResolving();
@@ -2931,7 +3416,7 @@ export class Coordinator {
         });
         const evidence = this._coordMapEvent(deniedEvent);
         this._coordRecord('publication.denied', { taskId: handle.taskId, requestId, publication: record.publication, evidence }, `driver.publication.denied:${handle.taskId}:${requestId}`, actor);
-        record.state = 'resolved';
+        this._resolveInteractionAuthority(requestId, record);
         record.consumer = actor;
         record.resolution = { decision: 'deny' };
         finishResolving();
@@ -2987,13 +3472,13 @@ export class Coordinator {
         // The publisher may have advanced, so this reservation cannot roll back for retry. The
         // coordinator is poisoned by either authoritative append path, replay requires the atomic
         // coordination commit below, and a racing responder is released instead of hanging.
-        record.state = 'resolved';
+        this._resolveInteractionAuthority(requestId, record);
         record.consumer = actor;
         record.resolution = { decision: 'allow', outcome: 'unknown' };
         finishResolving();
         throw err;
       }
-      record.state = 'resolved';
+      this._resolveInteractionAuthority(requestId, record);
       record.consumer = actor;
       record.resolution = { decision: 'allow' };
       finishResolving();
@@ -3012,7 +3497,7 @@ export class Coordinator {
     };
 
     if (!handle) {
-      record.state = 'resolved';
+      this._resolveInteractionAuthority(requestId, record);
       record.consumer = actor;
       record.resolution = answer;
       clearPending();
@@ -3031,7 +3516,7 @@ export class Coordinator {
         const evidence = this._coordMapEvent(staleEvent);
         this._coordTransition(task, 'working', `task.working:${task.id}:${staleEvent.seq}`, { ...evidence, interaction: { requestId, disposition: 'stale_discarded' } }, actor);
       }
-      record.state = 'resolved';
+      this._resolveInteractionAuthority(requestId, record);
       record.consumer = actor;
       record.resolution = answer;
       clearPending();
@@ -3079,7 +3564,7 @@ export class Coordinator {
       // Delivery was accepted by the native adapter and is not safely retryable. Commit the
       // in-memory single-consumer reservation, release racing responders, and rely on poisoned
       // fail-closed behavior plus replay terminalization for the missing durable resolution.
-      record.state = 'resolved';
+      this._resolveInteractionAuthority(requestId, record);
       record.consumer = actor;
       record.resolution = answer;
       finishResolving();
@@ -3091,7 +3576,7 @@ export class Coordinator {
         const evidence = this._coordMapEvent(resolvedEvent);
         this._coordTransition(task, 'working', `task.working:${task.id}:${resolvedEvent.seq}`, { ...evidence, interaction: { requestId, disposition: 'delivered' } }, actor);
       } catch (err) {
-        record.state = 'resolved';
+        this._resolveInteractionAuthority(requestId, record);
         record.consumer = actor;
         record.resolution = answer;
         finishResolving();
@@ -3099,7 +3584,7 @@ export class Coordinator {
       }
     }
 
-    record.state = 'resolved';
+    this._resolveInteractionAuthority(requestId, record);
     record.consumer = actor;
     record.resolution = answer;
     clearPending();
@@ -3112,7 +3597,7 @@ export class Coordinator {
   // =========================================================================
 
   async result(workerId) {
-    this.tick();
+    this._assertReadable();
     const handle = this._getWorker(workerId);
     const task = this._tasks.get(handle.taskId);
     const attribution = {
@@ -3146,14 +3631,14 @@ export class Coordinator {
 
   /** Return the closed, deployment-owned fleet capability inventory. */
   capabilityCards() {
-    this._assertOperational();
+    this._assertReadable();
     return this._capabilities ? this._capabilities.cards() : [];
   }
 
   /** Return deployment-pinned machine-ingress cards. This inventory is separate from ACI and
    * carries no user, MCP, install, merge, or verification authority. */
   advisoryFeedCards() {
-    this._assertOperational();
+    this._assertReadable();
     return this._advisoryFeeds?.cards?.() ?? [];
   }
 
@@ -3161,40 +3646,40 @@ export class Coordinator {
    * adapter; neither a user actor nor provider body may choose authority. Durable receipt and
    * pending fences are appended before this returns success. */
   async receiveProviderDelivery(providerId, input, ctx = {}) {
-    this._assertOperational();
+    await this._assertOperational();
     if (!this._advisoryFeeds || this.advisoryFeedCards().length === 0 || !this._repoId) throw Object.assign(new Error('provider machine ingress is not deployment-configured'), { code: 'provider_ingress_unavailable' });
     if (ctx && Object.keys(ctx).some((key) => key !== 'signal')) throw Object.assign(new TypeError('provider machine ingress context is invalid'), { code: 'provider_delivery_invalid' });
-    this._authorityOps += 1;
+    const releaseAuthority = this._acquireAuthorityOp();
     try {
       const receipt = await this._advisoryFeeds.verify(providerId, input, { signal: ctx.signal });
       const key = `provider-delivery:${canonicalDigest({ repoId: this._repoId, providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest })}`;
       return this._coordination.recordProviderDelivery({ repoId: this._repoId, receipt }, { actor: `provider:${providerId}`, key });
-    } finally { this._authorityOps -= 1; }
+    } finally { releaseAuthority(); }
   }
 
   /** Exact HTTP-envelope variant for Baton-owned native webhook authenticators. A deployment's
    * fixed HTTPS route supplies providerId; the body and headers cannot select a source. */
   async receiveProviderWebhook(providerId, input, ctx = {}) {
-    this._assertOperational();
+    await this._assertOperational();
     if (!this._advisoryFeeds || this.advisoryFeedCards().length === 0 || !this._repoId || typeof this._advisoryFeeds.verifyWebhook !== 'function') throw Object.assign(new Error('provider machine ingress is not deployment-configured'), { code: 'provider_ingress_unavailable' });
     if (ctx && Object.keys(ctx).some((key) => key !== 'signal')) throw Object.assign(new TypeError('provider machine ingress context is invalid'), { code: 'provider_delivery_invalid' });
-    this._authorityOps += 1;
+    const releaseAuthority = this._acquireAuthorityOp();
     try {
       const receipt = await this._advisoryFeeds.verifyWebhook(providerId, input, { signal: ctx.signal });
       const key = `provider-delivery:${canonicalDigest({ repoId: this._repoId, providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest })}`;
       return this._coordination.recordProviderDelivery({ repoId: this._repoId, receipt }, { actor: `provider:${providerId}`, key });
-    } finally { this._authorityOps -= 1; }
+    } finally { releaseAuthority(); }
   }
 
   /** Run one deployment-pinned authenticated full poll for a degraded source, durably admit every
    * item through ordinary delivery dedupe, then append the sole source-health recovery event. */
   async reconcileProviderSource(providerId, ctx = {}) {
-    this._assertOperational();
+    await this._assertOperational();
     if (typeof providerId !== 'string' || !ctx || Object.keys(ctx).some((key) => key !== 'signal')) throw Object.assign(new TypeError('provider source reconciliation request is invalid'), { code: 'provider_reconciliation_invalid' });
     const card = this.advisoryFeedCards().find((row) => row.providerId === providerId); if (!this._advisoryFeeds || !this._repoId || !card?.modes?.includes('poll') || typeof this._advisoryFeeds.pollFull !== 'function' || typeof this._coordination.recordProviderSourceReconciliation !== 'function') throw Object.assign(new Error('provider full poll is not deployment-configured'), { code: 'provider_poll_unavailable' });
     if (!this._coordination.reusePolicyState(this._repoId)) throw Object.assign(new Error('provider polling requires active reuse policy'), { code: 'reuse_policy_reconciliation_required' });
     const before = this._coordination.providerSourceHealth(this._repoId, providerId, card.cardDigest); if (!before || before.status !== 'reconciliation_required') return Object.freeze({ ok: true, result: 'not_required', health: before, receipts: [] });
-    this._authorityOps += 1;
+    const releaseAuthority = this._acquireAuthorityOp();
     try {
       const polled = await this._advisoryFeeds.pollFull(providerId, { signal: ctx.signal }); const receipts = [];
       for (const receipt of polled.receipts) { if (ctx.signal?.aborted) throw Object.assign(new Error('provider poll cancelled before durable admission'), { code: 'cancelled' }); const key = `provider-delivery:${canonicalDigest({ repoId: this._repoId, providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest })}`; receipts.push(this._coordination.recordProviderDelivery({ repoId: this._repoId, receipt }, { actor: `provider:${providerId}`, key })); }
@@ -3202,12 +3687,12 @@ export class Coordinator {
       const current = this._coordination.providerSourceHealth(this._repoId, providerId, card.cardDigest); if (!current || current.status !== 'reconciliation_required') throw Object.assign(new Error('provider source health changed during full poll'), { code: 'provider_reconciliation_stale' });
       const result = this._coordination.recordProviderSourceReconciliation({ repoId: this._repoId, proof: polled.proof, expectedHealthEvent: current.lastEvent }, { actor: `provider-poller:${providerId}`, key: `provider-poll:${canonicalDigest({ repoId: this._repoId, providerId, sourceEpoch: card.cardDigest, proofDigest: polled.proof.proofDigest })}` });
       return Object.freeze({ ...result, receipts });
-    } finally { this._authorityOps -= 1; }
+    } finally { releaseAuthority(); }
   }
 
   /** Return a deployment-bounded, repository-scoped provider health and processing projection. */
   readProviderStatus(request = {}, ctx = {}) {
-    this._assertOperational(); const config = this._providerRead;
+    this._assertReadable(); const config = this._providerRead;
     if (!config) throw Object.assign(new Error('provider status reads are not deployment-configured'), { code: 'provider_read_unavailable' });
     if (!request || typeof request !== 'object' || Array.isArray(request) || Object.keys(request).some((key) => !['providerId', 'after', 'limit'].includes(key))
       || !ctx || Object.keys(ctx).some((key) => key !== 'repoId') || ctx.repoId !== config.repoId) throw Object.assign(new Error('provider status repository authority mismatch'), { code: ctx?.repoId !== config.repoId ? 'reuse_repo_mismatch' : 'provider_read_invalid' });
@@ -3222,12 +3707,12 @@ export class Coordinator {
    * become sanitized durable deferrals; cancellation and writer-lease loss remain fatal to the
    * scan and never synthesize attempt history. */
   async reconcileDueProviderProcessing(ctx = {}) {
-    this._assertOperational(); const config = this._providerProcessingSchedule;
+    await this._assertOperational(); const config = this._providerProcessingSchedule;
     if (!config) throw Object.assign(new Error('provider processing schedule is not deployment-configured'), { code: 'provider_attempt_unavailable' });
     if (!ctx || Object.keys(ctx).some((key) => key !== 'signal')) throw Object.assign(new TypeError('provider processing scan is invalid'), { code: 'provider_processing_invalid' });
     if (this._providerProcessingScanActive) throw Object.assign(new Error('provider processing scan is already active'), { code: 'provider_processing_scan_active' });
     this._providerProcessingScanActive = true;
-    this._authorityOps += 1;
+    const releaseAuthority = this._acquireAuthorityOp();
     try {
       const due = this._coordination.dueProviderProcessing(config.repoId, new Date(this._now()).toISOString()); const results = [];
       for (const processingId of due) {
@@ -3240,7 +3725,7 @@ export class Coordinator {
           results.push(Object.freeze({ processingId, result: completed.result }));
         } catch (error) {
           if (ctx.signal?.aborted || error?.code === 'cancelled' || error?.name === 'AbortError') throw Object.assign(new Error('provider processing scan cancelled'), { code: 'cancelled' });
-          if (['coordination_writer_lost', 'coordination_write_unavailable', 'operational_log_unavailable', 'coordinator_closed'].includes(error?.code)) throw error;
+          if (['coordination_writer_lost', 'coordination_write_unavailable', 'operational_log_unavailable', 'coordinator_closed', 'coordinator_draining'].includes(error?.code)) throw error;
           const current = this._coordination.providerProcessing(processingId);
           if (['provider_processing_stale', 'provider_deferral_conflict'].includes(error?.code)) { results.push(Object.freeze({ processingId, result: 'stale' })); continue; }
           if (!current || current.status !== 'pending' || current.version !== initial.version || current.lastReceiptEvent !== initial.lastReceiptEvent) {
@@ -3253,20 +3738,20 @@ export class Coordinator {
         }
       }
       return Object.freeze({ ok: true, result: 'scanned', dueCount: due.length, results: Object.freeze(results) });
-    } finally { this._authorityOps -= 1; this._providerProcessingScanActive = false; }
+    } finally { releaseAuthority(); this._providerProcessingScanActive = false; }
   }
 
   /** Freshly reconcile one durable provider processing root without caller-selected coordinates,
    * policy, index epoch, outcome, actor, or idempotency. Green and adverse coordinates complete as
    * one atomic root; only independently refreshed official facts can add monotonic guard authority. */
   async reconcileProviderProcessing(processingId, ctx = {}) {
-    this._assertOperational(); const config = this._providerReconciliation;
+    await this._assertOperational(); const config = this._providerReconciliation;
     if (!config) throw Object.assign(new Error('provider reconciliation is not deployment-configured'), { code: 'provider_reconciliation_unavailable' });
     if (typeof processingId !== 'string' || !ctx || Object.keys(ctx).some((key) => key !== 'signal')) throw Object.assign(new TypeError('provider reconciliation request is invalid'), { code: 'provider_processing_invalid' });
     const initial = this._coordination.providerProcessing(processingId); if (!initial) throw Object.assign(new Error('provider processing root was not found'), { code: 'provider_processing_not_found' });
     if (initial.repoId !== config.repoId) throw Object.assign(new Error('provider reconciliation repository mismatch'), { code: 'reuse_repo_mismatch' });
     if (initial.status !== 'pending') return Object.freeze({ ok: true, result: 'idempotent', processing: initial, event: null });
-    this._authorityOps += 1;
+    const releaseAuthority = this._acquireAuthorityOp();
     try {
       throwIfProviderCancelled(ctx.signal);
       const actor = `provider-reconciler:${initial.providerId}`; const head = this._coordination.reusePolicyState(config.repoId); if (!head) throw Object.assign(new Error('provider reconciliation policy is unavailable'), { code: 'reuse_policy_reconciliation_required' });
@@ -3304,51 +3789,51 @@ export class Coordinator {
         ? this._coordination.recordProviderAdverseCompletion(fields, { actor, key })
         : this._coordination.recordProviderGreenCompletion(fields, { actor, key });
       return Object.freeze({ ...result, dossiers: candidates.map((row) => row.claim) });
-    } finally { this._authorityOps -= 1; }
+    } finally { releaseAuthority(); }
   }
 
   /** Invoke an advertised ACI operation through the coordinator-owned registry. */
   async invokeCapability(name, op, args, ctx = {}) {
-    this._assertOperational();
+    await this._assertOperational();
     if (ctx.transport !== undefined) throw Object.assign(new Error('direct capability callers cannot assert northbound transport'), { code: 'capability_transport_forbidden' });
-    this._authorityOps += 1; try { return await this._capabilityRegistry().invoke(name, op, args, ctx); } finally { this._authorityOps -= 1; }
+    const releaseAuthority = this._acquireAuthorityOp(); try { return await this._capabilityRegistry().invoke(name, op, args, ctx); } finally { releaseAuthority(); }
   }
 
   /** Resume a bounded ACI operation through the same coordinator-owned registry. */
   async resumeCapability(name, op, ref, cursor, ctx = {}) {
-    this._assertOperational();
+    await this._assertOperational();
     if (ctx.transport !== undefined) throw Object.assign(new Error('direct capability callers cannot assert northbound transport'), { code: 'capability_transport_forbidden' });
-    this._authorityOps += 1; try { return await this._capabilityRegistry().resume(name, op, ref, cursor, ctx); } finally { this._authorityOps -= 1; }
+    const releaseAuthority = this._acquireAuthorityOp(); try { return await this._capabilityRegistry().resume(name, op, ref, cursor, ctx); } finally { releaseAuthority(); }
   }
 
   /** Reverify an ACI claim without granting the capability verification authority. */
   async reverifyCapability(name, op, claim, args, ctx = {}) {
-    this._assertOperational();
+    await this._assertOperational();
     if (ctx.transport !== undefined) throw Object.assign(new Error('direct capability callers cannot assert northbound transport'), { code: 'capability_transport_forbidden' });
-    this._authorityOps += 1; try { return await this._capabilityRegistry().reverify(name, op, claim, args, ctx); } finally { this._authorityOps -= 1; }
+    const releaseAuthority = this._acquireAuthorityOp(); try { return await this._capabilityRegistry().reverify(name, op, claim, args, ctx); } finally { releaseAuthority(); }
   }
 
   async invokeCapabilityNorthbound(transport, token, name, op, args, ctx = {}) {
-    this._assertOperational(); if (!hasNorthboundCapabilityAuthority(transport, token)) throw new Error('northbound capability authority refused');
-    this._authorityOps += 1; try { return await this._capabilityRegistry().invoke(name, op, args, { ...ctx, transport }); } finally { this._authorityOps -= 1; }
+    await this._assertOperational(); if (!hasNorthboundCapabilityAuthority(transport, token)) throw new Error('northbound capability authority refused');
+    const releaseAuthority = this._acquireAuthorityOp(); try { return await this._capabilityRegistry().invoke(name, op, args, { ...ctx, transport }); } finally { releaseAuthority(); }
   }
 
   async resumeCapabilityNorthbound(transport, token, name, op, ref, cursor, ctx = {}) {
-    this._assertOperational(); if (!hasNorthboundCapabilityAuthority(transport, token)) throw new Error('northbound capability authority refused');
-    this._authorityOps += 1; try { return await this._capabilityRegistry().resume(name, op, ref, cursor, { ...ctx, transport }); } finally { this._authorityOps -= 1; }
+    await this._assertOperational(); if (!hasNorthboundCapabilityAuthority(transport, token)) throw new Error('northbound capability authority refused');
+    const releaseAuthority = this._acquireAuthorityOp(); try { return await this._capabilityRegistry().resume(name, op, ref, cursor, { ...ctx, transport }); } finally { releaseAuthority(); }
   }
 
   async reverifyCapabilityNorthbound(transport, token, name, op, claim, args, ctx = {}) {
-    this._assertOperational(); if (!hasNorthboundCapabilityAuthority(transport, token)) throw new Error('northbound capability authority refused');
-    this._authorityOps += 1; try { return await this._capabilityRegistry().reverify(name, op, claim, args, { ...ctx, transport }); } finally { this._authorityOps -= 1; }
+    await this._assertOperational(); if (!hasNorthboundCapabilityAuthority(transport, token)) throw new Error('northbound capability authority refused');
+    const releaseAuthority = this._acquireAuthorityOp(); try { return await this._capabilityRegistry().reverify(name, op, claim, args, { ...ctx, transport }); } finally { releaseAuthority(); }
   }
 
   /** Record one immutable build-vs-borrow judgment after the Coordinator freshly reverifies the
    * exact dossier and actual-lockfile SBOM. Capability code supplies evidence only; this method is
    * the sole decision authority and never installs, edits, merges, verifies, or publishes code. */
   async decideReuse(request, ctx = {}) {
-    this._assertOperational();
-    this._authorityOps += 1;
+    await this._assertOperational();
+    const releaseAuthority = this._acquireAuthorityOp();
     try {
     if (!this._reuseDecisionPolicy || typeof this._resolveEnvironmentRef !== 'function') {
       const error = new Error('reuse decision authority is not deployment-configured'); error.code = 'reuse_decision_unavailable'; throw error;
@@ -3424,15 +3909,15 @@ export class Coordinator {
     const priorNode = prior ? knowledgeSnapshot.nodes.find((node) => node.id === prior.nodeId) : null;
     const affectedReadEvents = prior && !priorNode?.validTo ? knowledgeSnapshot.reads.filter((read) => read.nodeIds.includes(prior.nodeId)).map((read) => read.eventSeq) : [];
     return this._coordination.recordReuseDecision({ schemaVersion: 1, id, requestDigest, decisionDigest, decisionArtifactDigest, subjectDigest, ...decisionRecord, dossierRef, sbomRef, dossierSnapshot, sbomSnapshot, reverifyEvidence, artifacts, affectedReadEvents }, { actor, key: ctx.idempotencyKey });
-    } finally { this._authorityOps -= 1; }
+    } finally { releaseAuthority(); }
   }
 
   /** Recheck one immutable reuse lineage without accepting caller-supplied advisory facts. TTL is
    * deterministic from the stored dossier; advisory mode forces Quartermaster's official refresh
    * and lets the store atomically install the coordinate fence plus complete live target set. */
   async recheckReuseDecision(request, ctx = {}) {
-    this._assertOperational();
-    this._authorityOps += 1;
+    await this._assertOperational();
+    const releaseAuthority = this._acquireAuthorityOp();
     try {
     if (!this._reuseDecisionPolicy?.authorizeRecheck) throw Object.assign(new Error('reuse recheck authority is not deployment-configured'), { code: 'reuse_recheck_unavailable' });
     const actor = ctx.actor;
@@ -3478,7 +3963,7 @@ export class Coordinator {
     const reverifyEvidence = this._coordMapEvent(verifiedEvent);
     const result = this._coordination.recordReuseRiskGuard({ requestDigest, seedDecisionId: seed.id, seedExpectedValidityVersion: request.expectedValidityVersion, coordinate: seed.coordinate, dossierRef, dossierSnapshot: snapshot, advisoryIds, maliciousAdvisoryIds, reverifyEvidence, adverse, effectiveAt: snapshot.asOf }, { actor, key: ctx.idempotencyKey });
     return Object.freeze({ ...result, dossier: claim });
-    } finally { this._authorityOps -= 1; }
+    } finally { releaseAuthority(); }
   }
 
   /** Pull-only causal recall. The coordination append is the authority boundary: if the read
@@ -3549,7 +4034,7 @@ export class Coordinator {
   }
 
   list() {
-    this.tick();
+    this._assertReadable();
     return [...this._workers.values()].map((h) => this._publicHandle(h));
   }
 
@@ -3558,21 +4043,21 @@ export class Coordinator {
   // =========================================================================
 
   async wait(timeoutMs = 25000) {
-    this.tick();
+    this._assertReadable();
     const deadline = Date.now() + timeoutMs;
 
     // Always yield at least one real macrotask turn so any in-flight microtask-only
     // background work (e.g. the trust gate, chained purely off resolved promises) has a
     // chance to fully settle before we snapshot the digest.
     await this._sleep(0);
-    this.tick();
+    this._assertReadable();
     let digest = this._collectDigest();
 
     while (digest.attention.length === 0 && digest.facts.length === 0 && Date.now() < deadline) {
       const remaining = deadline - Date.now();
       if (remaining <= 0) break;
       await this._sleep(Math.min(this._waitPollMs, remaining));
-      this.tick();
+      this._assertReadable();
       digest = this._collectDigest();
     }
 
@@ -3830,11 +4315,23 @@ export class Coordinator {
     switch (kind) {
       case 'lifecycle.process_started': {
         const valid = actor === 'worker' && validProcessStartedPayload(payload)
+          && handle.currentIncarnation === true && handle.localAuthority === true
+          && (handle.nativeSpawnPending === true || handle.recoveryPending === true)
           && payload.generation === handle.processGeneration
           && (!handle.processRef || handle.processRef.state === 'closed' || handle.processRef.state === 'unconfirmed_after_restart');
         if (!valid) {
           appendAttributed({ worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'lifecycle.process_attribution_refused', actor: 'policy', payload: boundedProcessObservation(event, 'invalid_process_start') });
-          if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+          const lateCurrentStart = actor === 'worker' && validProcessStartedPayload(payload)
+            && handle.currentIncarnation === true && payload.generation === handle.processGeneration
+            && (!handle.processRef || handle.processRef.state === 'closed' || handle.processRef.state === 'unconfirmed_after_restart');
+          if (lateCurrentStart) {
+            // A spawn Ack promises that no later process start can occur. If an adapter violates
+            // that boundary while this controller can still observe it, reacquire exact transport
+            // ownership and require another two-phase kill plus correlated process close.
+            handle.processRef = { generation: payload.generation, pid: payload.pid, processGroupId: payload.processGroupId, state: 'initializing', ready: false, startedSeq: null, closedSeq: null };
+            handle.localAuthority = true;
+            this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+          } else if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
           break;
         }
         const started = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
@@ -3859,6 +4356,9 @@ export class Coordinator {
         const stopWaiter = this._stopWaiters.get(handle.id);
         if (stopWaiter?.mode === 'kill') this._maybeFinalizeStop(handle.id, stopWaiter);
         if (!stopWaiter && handle.status === 'dead' && handle.cleanupPending !== true) handle.localAuthority = false;
+        if (!stopWaiter && handle.status === 'dead' && handle.cleanupPending === true && !handle.untrustedTransportReap) {
+          this._cleanupClosedTransport(handle, this._tasks.get(handle.taskId)).catch(noop);
+        }
         if (!stopWaiter && !handle.untrustedTransportReap && turnWasTerminal
           && !['dead', 'stopping', 'orphaned'].includes(handle.status)) {
           handle.status = 'exited';
@@ -3889,9 +4389,9 @@ export class Coordinator {
         const wr = (payload && payload.result !== undefined && payload.status === undefined) ? payload.result : payload;
         appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload: wr });
         this._clearWatchdog(handle);
-        if (handle.status !== 'stopping' && handle.status !== 'dead') {
-          this._authorityOps += 1;
-          this._runTrustGate(handle, wr).catch(noop).finally(() => { this._authorityOps -= 1; });
+        if (this._drainState === 'open' && handle.status !== 'stopping' && handle.status !== 'dead') {
+          const releaseAuthority = this._acquireAuthorityOp();
+          this._runTrustGate(handle, wr).catch(noop).finally(releaseAuthority);
         }
         break;
       }
@@ -3939,6 +4439,12 @@ export class Coordinator {
       }
       case 'question.asked': {
         const requestId = payload?.requestId;
+        if (this._drainState !== 'open') {
+          const discarded = appendAttributed({ worker: workerId, harness, turnEpoch, kind: 'control.drain_interaction_discarded', actor: 'policy', payload: { requestId, kind: 'question' } });
+          const task = this._tasks.get(handle.taskId); const evidence = this._coordMapEvent(discarded);
+          this._coordRecord('authority.cancelled', { taskId: task?.id ?? null, workerId, requestId, kind: 'question', reason: 'fleet_drain', evidence }, `driver.authority.cancelled:${workerId}:${requestId}:${discarded.seq}`, 'policy');
+          break;
+        }
         const askedEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
         const task = this._tasks.get(handle.taskId);
         if (task && TERMINAL_TASK_STATUSES.has(task.status)) break;
@@ -3960,6 +4466,7 @@ export class Coordinator {
           this._coordRecord('input.requested', { taskId: task?.id ?? null, workerId, kind: 'question', requestId, blocking: false, evidence }, `driver.input_requested:${handle.taskId}:${askedEvent.seq}`, actor ?? 'worker');
         }
         this._pending.set(requestId, record);
+        this._activeInteractionIds.add(requestId);
         if (payload?.blocking !== false) {
           handle.status = 'blocked';
           handle.pendingQuestionId = requestId;
@@ -3969,6 +4476,12 @@ export class Coordinator {
       }
       case 'approval.requested': {
         const requestId = payload?.requestId;
+        if (this._drainState !== 'open') {
+          const discarded = appendAttributed({ worker: workerId, harness, turnEpoch, kind: 'control.drain_interaction_discarded', actor: 'policy', payload: { requestId, kind: 'approval' } });
+          const task = this._tasks.get(handle.taskId); const evidence = this._coordMapEvent(discarded);
+          this._coordRecord('authority.cancelled', { taskId: task?.id ?? null, workerId, requestId, kind: 'approval', reason: 'fleet_drain', evidence }, `driver.authority.cancelled:${workerId}:${requestId}:${discarded.seq}`, 'policy');
+          break;
+        }
         const askedEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
         const task = this._tasks.get(handle.taskId);
         if (task && TERMINAL_TASK_STATUSES.has(task.status)) break;
@@ -3990,6 +4503,7 @@ export class Coordinator {
           this._coordRecord('input.requested', { taskId: task?.id ?? null, workerId, kind: 'approval', requestId, blocking: false, evidence }, `driver.input_requested:${handle.taskId}:${askedEvent.seq}`, actor ?? 'worker');
         }
         this._pending.set(requestId, record);
+        this._activeInteractionIds.add(requestId);
         if (payload?.blocking !== false) {
           handle.status = 'blocked';
           handle.pendingApprovalId = requestId;
@@ -4611,11 +5125,17 @@ export class Coordinator {
         runtimeScope: null,
         runtimeLease: null,
         spawnAbort: null,
+        worktreeCreationPending: false,
+        nativeSpawnPending: false,
+        nativeSpawnPromise: null,
         processGeneration,
         processRef,
         cleanupPending: false,
         cleanupPromise: null,
         cleanupAfterVerification: false,
+        currentIncarnation: false,
+        ownedWorktreeAuthority: false,
+        localAuthority: false,
         createdAt: new Date(0).toISOString(),
       });
 

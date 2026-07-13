@@ -183,6 +183,7 @@ export class CoordinationStore {
     this._evidence = new Map(); this._scratchFacts = new Map(); this._scratchClaims = new Map(); this._scratchReads = [];
     this._knowledgeNodes = new Map(); this._knowledgeEdges = new Map(); this._knowledgeNodeHistory = new Map(); this._knowledgeEdgeHistory = new Map(); this._knowledgeReads = []; this._knowledgeRecallAssessments = new Map(); this._contamination = [];
     this._webCommands = new Map(); this._webCommandScopes = new Map(); this._mcpCalls = new Map(); this._mcpCallScopes = new Map();
+    this._fleetDrains = new Map();
     this._providerReceipts = new Map(); this._providerDeliveryIds = new Map(); this._providerProcessing = new Map(); this._providerPending = new Map();
     this._providerSequences = new Map(); this._providerSourceHealth = new Map();
   }
@@ -246,8 +247,23 @@ export class CoordinationStore {
     if (observed?.token !== this._writerLease.token || observed?.pid !== this._writerLease.pid) throw new CoordinationRefusal('coordination writer lease was replaced', 'coordination_writer_lost');
   }
 
-  releaseWriterLease() {
+  releaseWriterLease(options = undefined) {
+    if (options !== undefined && (!options || typeof options !== 'object' || Array.isArray(options)
+      || Object.keys(options).sort().join(',') !== 'requireOwned' || typeof options.requireOwned !== 'boolean')) {
+      throw new TypeError('writer lease release options are invalid');
+    }
+    const requireOwned = options?.requireOwned === true;
     const lease = this._writerLease; if (!lease) return false;
+    if (requireOwned) {
+      let observed;
+      try { observed = JSON.parse(readFileSync(lease.path, 'utf8')); }
+      catch { throw new CoordinationRefusal('coordination writer lease is absent or malformed', 'coordination_writer_lost'); }
+      if (observed?.token !== lease.token || observed?.pid !== lease.pid) throw new CoordinationRefusal('coordination writer lease was replaced', 'coordination_writer_lost');
+      try { unlinkSync(lease.path); }
+      catch { throw new CoordinationRefusal('coordination writer lease could not be released', 'coordination_writer_lost'); }
+      if (existsSync(lease.path)) throw new CoordinationRefusal('coordination writer lease release was not exact', 'coordination_writer_lost');
+      this._writerLease = null; return true;
+    }
     try { const observed = JSON.parse(readFileSync(lease.path, 'utf8')); if (observed?.token === lease.token && observed?.pid === process.pid) unlinkSync(lease.path); }
     catch { /* absent or replaced lease is not ours to remove */ }
     this._writerLease = null; return true;
@@ -978,6 +994,83 @@ export class CoordinationStore {
     }).filter(Boolean);
   }
 
+  _validateFleetDrainAdmission(p, event, integrity = false) {
+    const fail = (message) => { throw integrity ? new CoordinationIntegrityError(message, 'fleet_drain_integrity') : new CoordinationRefusal(message, 'fleet_drain_integrity'); };
+    const fields = ['schemaVersion', 'drainId', 'repoId', 'requestDigest', 'targetWorkerIds', 'targetDigest'];
+    if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || p.schemaVersion !== 1
+      || !validRunId(p.repoId) || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '')
+      || p.drainId !== `fleet-drain:${p.requestDigest}` || !Array.isArray(p.targetWorkerIds)
+      || p.targetWorkerIds.length > 100_000 || p.targetWorkerIds.some((id) => !validRunId(id))) fail('fleet drain admission is invalid');
+    const sorted = [...p.targetWorkerIds].sort();
+    if (new Set(p.targetWorkerIds).size !== p.targetWorkerIds.length || JSON.stringify(sorted) !== JSON.stringify(p.targetWorkerIds)
+      || p.targetDigest !== canonicalDigest(p.targetWorkerIds)) fail('fleet drain targets are invalid');
+    const prefix = 'fleet.drain:';
+    if (typeof event.idempotencyKey !== 'string' || !event.idempotencyKey.startsWith(prefix) || event.idempotencyKey.length === prefix.length) fail('fleet drain identity is invalid');
+    const idempotencyKey = event.idempotencyKey.slice(prefix.length);
+    if (!validRunId(idempotencyKey)) fail('fleet drain identity is invalid');
+    if (p.requestDigest !== canonicalDigest({ repoId: p.repoId, idempotencyKey })) fail('fleet drain request binding is invalid');
+    return idempotencyKey;
+  }
+
+  _validateFleetDrainCompletion(p, event, integrity = false) {
+    const fail = (message) => { throw integrity ? new CoordinationIntegrityError(message, 'fleet_drain_integrity') : new CoordinationRefusal(message, 'fleet_drain_integrity'); };
+    const fields = ['schemaVersion', 'drainId', 'receipt'];
+    if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || p.schemaVersion !== 1 || typeof p.drainId !== 'string') fail('fleet drain completion is invalid');
+    const drain = this._fleetDrains.get(p.drainId);
+    if (!drain || drain.status !== 'admitted' || drain.receipt !== null) fail('fleet drain completion has no open admission');
+    const admissionEvent = this._events[drain.admittedEvent - 1];
+    const idempotencyKey = this._validateFleetDrainAdmission(admissionEvent?.payload, admissionEvent ?? {}, integrity);
+    if (event.idempotencyKey !== `fleet.drain.complete:${idempotencyKey}` || event.actor !== admissionEvent.actor) fail('fleet drain completion authority is invalid');
+
+    const receipt = p.receipt;
+    const receiptFields = ['schemaVersion', 'state', 'scope', 'repoId', 'targetCount', 'remainingCount', 'targetDigest', 'counts', 'checks', 'effects', 'receiptDigest'];
+    const countFields = ['pendingCancelled', 'killConfirmed', 'alreadyTerminal', 'processesObserved', 'processesClosed'];
+    const checkFields = ['admissionClosed', 'authorityOpsDrained', 'stopWaitersDrained', 'cleanupDrained', 'localWorkerAuthorityReleased'];
+    const effectFields = ['coordinatorClosed', 'writerReleased', 'transportsClosed'];
+    const dispositionCount = receipt?.counts?.pendingCancelled + receipt?.counts?.killConfirmed + receipt?.counts?.alreadyTerminal;
+    const durableCounts = { pendingCancelled: 0, killConfirmed: 0, alreadyTerminal: 0 };
+    for (const row of drain.dispositions ?? []) {
+      if (!Object.hasOwn(durableCounts, row.disposition)) fail('fleet drain durable disposition is invalid');
+      durableCounts[row.disposition] += 1;
+    }
+    if (!receipt || Object.keys(receipt).sort().join(',') !== receiptFields.sort().join(',') || receipt.schemaVersion !== 1
+      || receipt.state !== 'drained' || receipt.scope !== 'local-controller' || receipt.repoId !== drain.repoId
+      || receipt.targetCount !== drain.targetWorkerIds.length || receipt.remainingCount !== 0 || receipt.targetDigest !== drain.targetDigest
+      || !receipt.counts || Object.keys(receipt.counts).sort().join(',') !== countFields.sort().join(',')
+      || countFields.some((field) => !Number.isSafeInteger(receipt.counts[field]) || receipt.counts[field] < 0 || receipt.counts[field] > receipt.targetCount)
+      || dispositionCount !== receipt.targetCount
+      || (drain.dispositions ?? []).length !== receipt.targetCount
+      || durableCounts.pendingCancelled !== receipt.counts.pendingCancelled
+      || durableCounts.killConfirmed !== receipt.counts.killConfirmed
+      || durableCounts.alreadyTerminal !== receipt.counts.alreadyTerminal
+      || receipt.counts.processesObserved !== receipt.counts.processesClosed
+      || receipt.counts.processesObserved > receipt.counts.killConfirmed + receipt.counts.alreadyTerminal
+      || !receipt.checks || Object.keys(receipt.checks).sort().join(',') !== checkFields.sort().join(',')
+      || checkFields.some((field) => receipt.checks[field] !== true)
+      || !receipt.effects || Object.keys(receipt.effects).sort().join(',') !== effectFields.sort().join(',')
+      || effectFields.some((field) => receipt.effects[field] !== false)
+      || !/^[a-f0-9]{64}$/.test(receipt.receiptDigest ?? '')) fail('fleet drain receipt is invalid');
+    const { receiptDigest, ...receiptCore } = receipt;
+    if (receiptDigest !== canonicalDigest(receiptCore)) fail('fleet drain receipt digest is invalid');
+    return drain;
+  }
+
+  _validateFleetDrainDisposition(p, event, integrity = false) {
+    const fail = (message) => { throw integrity ? new CoordinationIntegrityError(message, 'fleet_drain_integrity') : new CoordinationRefusal(message, 'fleet_drain_integrity'); };
+    const fields = ['schemaVersion', 'drainId', 'workerId', 'disposition'];
+    if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || p.schemaVersion !== 1
+      || typeof p.drainId !== 'string' || !validRunId(p.workerId)
+      || !['pendingCancelled', 'killConfirmed', 'alreadyTerminal'].includes(p.disposition)) fail('fleet drain disposition is invalid');
+    const drain = this._fleetDrains.get(p.drainId);
+    if (!drain || drain.status !== 'admitted' || !drain.targetWorkerIds.includes(p.workerId)) fail('fleet drain disposition has no open target');
+    const admissionEvent = this._events[drain.admittedEvent - 1];
+    const expectedKey = `fleet.drain.disposition:${canonicalDigest({ drainId: p.drainId, workerId: p.workerId })}`;
+    if (event.actor !== admissionEvent?.actor || event.idempotencyKey !== expectedKey) fail('fleet drain disposition authority is invalid');
+    const prior = (drain.dispositions ?? []).find((row) => row.workerId === p.workerId);
+    if (prior && prior.disposition !== p.disposition) fail('fleet drain disposition conflicts with durable history');
+    return drain;
+  }
+
   _apply(event) {
     const p = event.payload;
     if (event.kind === 'provider.processing_deferred') {
@@ -1313,6 +1406,19 @@ export class CoordinationStore {
     } else if (event.kind === 'knowledge.contamination_record') {
       this._validateContaminationRecord(p, event, true);
       this._contamination.push(freeze({ ...clone(p), eventSeq: event.seq, ts: event.ts }));
+    } else if (event.kind === 'fleet.drain_admitted') {
+      this._validateFleetDrainAdmission(p, event, true);
+      this._fleetDrains.set(p.drainId, freeze({ ...clone(p), status: 'admitted', admittedEvent: event.seq, admittedAt: event.ts, dispositions: [], receipt: null, completedEvent: null, completedAt: null }));
+    } else if (event.kind === 'fleet.drain_disposition_recorded') {
+      const old = this._validateFleetDrainDisposition(p, event, true);
+      if (!(old.dispositions ?? []).some((row) => row.workerId === p.workerId)) {
+        const dispositions = [...(old.dispositions ?? []), { workerId: p.workerId, disposition: p.disposition }]
+          .sort((a, b) => old.targetWorkerIds.indexOf(a.workerId) - old.targetWorkerIds.indexOf(b.workerId));
+        this._fleetDrains.set(p.drainId, freeze({ ...clone(old), dispositions }));
+      }
+    } else if (event.kind === 'fleet.drain_completed') {
+      const old = this._validateFleetDrainCompletion(p, event, true);
+      this._fleetDrains.set(p.drainId, freeze({ ...clone(old), status: 'completed', receipt: clone(p.receipt), completedEvent: event.seq, completedAt: event.ts }));
     } else if (event.kind === 'web.command_admitted') {
       const command = freeze({ ...clone(p), status: 'admitted', admittedEvent: event.seq, admittedAt: event.ts, outcome: null, completedEvent: null });
       this._webCommands.set(p.commandId, command);
@@ -1352,6 +1458,56 @@ export class CoordinationStore {
   readyTasks() {
     return [...this._tasks.values()].filter((task) => task.status === 'pending' && task.assignee == null
       && task.deps.every((dep) => this._tasks.get(dep)?.status === 'completed')).map(clone);
+  }
+
+  fleetDrain(id) { return clone(this._fleetDrains.get(id) ?? null); }
+
+  admitFleetDrain(fields, auth) {
+    const preview = { actor: auth?.actor, idempotencyKey: auth?.key, payload: fields };
+    this._validateFleetDrainAdmission(fields, preview);
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      if (prior.kind !== 'fleet.drain_admitted' || prior.actor !== auth.actor || canonicalDigest(prior.payload) !== canonicalDigest(fields)) throw new CoordinationRefusal('fleet drain idempotency conflict', 'fleet_drain_conflict');
+      return freeze({ ok: true, result: 'replay', event: clone(prior), drain: this.fleetDrain(fields.drainId) });
+    }
+    const existing = this._fleetDrains.get(fields.drainId);
+    if (existing) throw new CoordinationRefusal('fleet drain identity conflict', 'fleet_drain_conflict');
+    const event = this._append('fleet.drain_admitted', clone(fields), auth);
+    return freeze({ ok: true, result: 'admitted', event: clone(event), drain: this.fleetDrain(fields.drainId) });
+  }
+
+  recordFleetDrainDisposition(drainId, workerId, disposition, auth) {
+    const payload = { schemaVersion: 1, drainId, workerId, disposition };
+    const key = `fleet.drain.disposition:${canonicalDigest({ drainId, workerId })}`;
+    const preview = { actor: auth?.actor, idempotencyKey: auth?.key, payload };
+    if (auth?.key !== key) throw new CoordinationRefusal('fleet drain disposition identity is invalid', 'fleet_drain_conflict');
+    const existing = this._fleetDrains.get(drainId)?.dispositions?.find((row) => row.workerId === workerId);
+    if (existing) {
+      const prior = this._byKey.get(key);
+      if (!prior || prior.actor !== auth?.actor || canonicalDigest(prior.payload) !== canonicalDigest(payload)) throw new CoordinationRefusal('fleet drain disposition conflict', 'fleet_drain_conflict');
+      return freeze({ ok: true, result: 'replay', event: clone(prior), drain: this.fleetDrain(drainId) });
+    }
+    this._validateFleetDrainDisposition(payload, preview);
+    const prior = this._byKey.get(key);
+    if (prior) throw new CoordinationRefusal('fleet drain disposition idempotency conflict', 'fleet_drain_conflict');
+    const event = this._append('fleet.drain_disposition_recorded', payload, { actor: auth.actor, key });
+    return freeze({ ok: true, result: 'recorded', event: clone(event), drain: this.fleetDrain(drainId) });
+  }
+
+  completeFleetDrain(drainId, receipt, auth) {
+    const payload = { schemaVersion: 1, drainId, receipt: clone(receipt) };
+    const preview = { actor: auth?.actor, idempotencyKey: auth?.key, payload };
+    const existing = this._fleetDrains.get(drainId);
+    if (existing?.status === 'completed') {
+      const prior = this._byKey.get(auth?.key);
+      if (!prior || prior.kind !== 'fleet.drain_completed' || prior.actor !== auth?.actor || canonicalDigest(prior.payload) !== canonicalDigest(payload)) throw new CoordinationRefusal('fleet drain completion conflict', 'fleet_drain_conflict');
+      return freeze({ ok: true, result: 'replay', event: clone(prior), drain: this.fleetDrain(drainId) });
+    }
+    this._validateFleetDrainCompletion(payload, preview);
+    const prior = this._byKey.get(auth.key);
+    if (prior) throw new CoordinationRefusal('fleet drain completion idempotency conflict', 'fleet_drain_conflict');
+    const event = this._append('fleet.drain_completed', payload, auth);
+    return freeze({ ok: true, result: 'completed', event: clone(event), drain: this.fleetDrain(drainId) });
   }
 
   webCommand(id) { return clone(this._webCommands.get(id) ?? null); }

@@ -4,7 +4,7 @@
 // This is the "how to run the whole thing" — a program, authenticated web northbound, or future
 // MCP adapter calls the coordinator's commands; everything underneath is deterministic code.
 
-import { join, basename, sep } from 'node:path';
+import { join, basename, sep, resolve, relative, isAbsolute } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, realpathSync, rmSync } from 'node:fs';
@@ -28,6 +28,22 @@ import { inspectToolchainProjection, prepareToolchainProjection, ToolchainProjec
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const canonicalDigest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
+const deepFreeze = (value) => {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  for (const child of Object.values(value)) deepFreeze(child);
+  return Object.freeze(value);
+};
+const normalizeDrainPolicy = (value) => {
+  const policy = value ?? { maxWorkers: 1024, timeoutMs: 60_000, pollMs: 10 };
+  const fields = ['maxWorkers', 'pollMs', 'timeoutMs'];
+  if (!policy || typeof policy !== 'object' || Array.isArray(policy)
+    || Object.keys(policy).sort().join(',') !== fields.sort().join(',')
+    || fields.some((field) => !Number.isSafeInteger(policy[field]) || policy[field] <= 0)
+    || policy.maxWorkers > 100_000 || policy.timeoutMs > 300_000 || policy.pollMs > policy.timeoutMs) {
+    throw new TypeError('drain policy must be a closed bounded deployment policy');
+  }
+  return Object.freeze({ maxWorkers: policy.maxWorkers, timeoutMs: policy.timeoutMs, pollMs: policy.pollMs });
+};
 
 export { Coordinator, ModelSelectionError, SessionSelectionError, IntegrationError, ReviewSelectionError, PublicationError } from './coordinator.mjs';
 export { MockAdapter, CodexAdapter, ClaudeAdapter, GlmAdapter } from './adapter.mjs';
@@ -129,11 +145,19 @@ function worktreeManager(repoRoot, opts = {}) {
       localGit(['update-ref', '-d', ref], repoRoot, { stdio: 'ignore' });
     },
     async removeVerifyWorktree(verifyPath) {
-      try { localGit(['worktree', 'remove', '--force', verifyPath], repoRoot, { stdio: 'ignore' }); } catch { /* noop */ }
-      try { rmSync(verifyPath, { recursive: true, force: true }); } catch { /* noop */ }
+      const verifyRoot = resolve(repoRoot, '.baton', 'verify'); const candidate = resolve(verifyPath);
+      const within = relative(verifyRoot, candidate);
+      if (within === '' || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) throw Object.assign(new Error('verification cleanup path is outside Baton ownership'), { code: 'worktree_cleanup_failed' });
+      try { localGit(['worktree', 'remove', '--force', candidate], repoRoot, { stdio: 'ignore' }); }
+      catch { rmSync(candidate, { recursive: true, force: true }); }
+      try { localGit(['worktree', 'prune'], repoRoot, { stdio: 'ignore' }); } catch { /* exact postcheck below remains authoritative */ }
+      let registered;
+      try { registered = (await worktreeMod.listWorktrees(repoRoot)).some((entry) => resolve(entry.dir) === candidate); }
+      catch { throw Object.assign(new Error('verification worktree cleanup could not be inspected'), { code: 'worktree_cleanup_failed' }); }
+      if (existsSync(candidate) || registered) throw Object.assign(new Error('verification worktree cleanup was incomplete'), { code: 'worktree_cleanup_failed' });
     },
     // Terminal policy cleanup owns non-evidence task branches as well as their checkout/metadata.
-    async remove(taskId) { try { await worktreeMod.reap(repoRoot, taskId, { force: true, deleteBranch: true }); } catch { /* noop */ } },
+    async remove(taskId) { await worktreeMod.reap(repoRoot, taskId, { force: true, deleteBranch: true }); },
     async validateSessionContext(context) {
       try {
         if (!existsSync(context.worktree)) return { ok: false, reason: 'session worktree no longer exists' };
@@ -163,7 +187,11 @@ function worktreeManager(repoRoot, opts = {}) {
         return { ok: false, reason: `session context validation failed: ${err?.message ?? err}` };
       }
     },
-    async reconcile(expectedActiveTaskIds = []) { try { return await worktreeMod.reconcile(repoRoot, expectedActiveTaskIds); } catch { return null; } },
+    reconcile(expectedActiveTaskIds = []) {
+      const report = worktreeMod.reconcile(repoRoot, expectedActiveTaskIds);
+      if (report.errors.length > 0) throw Object.assign(new Error('worktree reconciliation was incomplete'), { code: 'worktree_cleanup_failed' });
+      return report;
+    },
   };
 }
 
@@ -194,6 +222,10 @@ function refereeFn(task, result, opts) {
  * @returns {{coordinator:Coordinator, story:StoryCompiler, router:AdaptiveRouter, log:Log, coordination:CoordinationStore}}
  */
 export function createDriver(opts) {
+  // DC1: validate before log/store construction or writer admission so malformed shutdown
+  // authority can never be masked by an existing lease or leave filesystem side effects.
+  const drainPolicy = normalizeDrainPolicy(opts.drainPolicy);
+  const deploymentRepoId = opts.repoId ?? 'local';
   if (opts.toolchainProjection !== undefined && (opts.workerDependencyDirs !== undefined || opts.verifyDependencyDirs !== undefined)) throw new TypeError('toolchainProjection cannot be combined with legacy dependency directory options');
   const toolchainProjection = opts.toolchainProjection === undefined ? null : prepareToolchainProjection(opts.toolchainProjection);
   const now = opts.now ?? Date.now;
@@ -254,6 +286,7 @@ export function createDriver(opts) {
   let writerLease = null;
   try {
   writerLease = coordination.claimWriterLease();
+  const driverDrainIdempotencyKey = `driver:drain:${canonicalDigest({ repoId: deploymentRepoId, writerLeaseToken: writerLease.token })}`;
   if (routeLearningPolicy) router.hydrate(coordination.routeObservations());
   const configuredCapabilities = { ...(opts.capabilities ?? {}) };
   for (const [name, factory] of Object.entries(opts.capabilityFactories ?? {})) {
@@ -372,7 +405,7 @@ export function createDriver(opts) {
     routeLearningPolicy,
     coordination,
     repoRoot: opts.repoRoot,
-    repoId: opts.repoId,
+    repoId: deploymentRepoId,
     scratchOraclePolicy: opts.scratchOraclePolicy,
     reuseDecisionPolicy: opts.reuseDecisionPolicy,
     resolveEnvironmentRef: opts.reuseDecisionPolicy === undefined ? null : ({ repoId, indexEpoch, overlayDigest, lockfileDigest }) => {
@@ -399,6 +432,7 @@ export function createDriver(opts) {
     startupRecoveryAuthority,
     budgetPolicy: opts.budgetPolicy,
     watchdog: opts.watchdog,
+    drainPolicy,
   });
 
   let providerPoller = null;
@@ -419,27 +453,115 @@ export function createDriver(opts) {
       onEvent: (event) => log.append({ worker: 'hub-provider-processor', harness: 'baton', turnEpoch: 0, actor: 'policy', kind: event.kind, payload: Object.fromEntries(Object.entries(event).filter(([key]) => key !== 'kind')) }),
     });
   }
-  let sessionRecovery = null; let ready = Promise.resolve(Object.freeze({ status: 'ready', eligible: 0, attached: 0, failed: 0, skipped: 0, failures: Object.freeze([]) }));
+  const coordinatorReady = coordinator.startupReady();
+  coordinatorReady.catch(() => {});
+  let sessionRecovery = null; let ready = coordinatorReady.then(() => Object.freeze({ status: 'ready', eligible: 0, attached: 0, failed: 0, skipped: 0, failures: Object.freeze([]) }));
   if (sessionRecoveryPolicy) {
     sessionRecovery = new SessionRecoverySupervisor({ coordinator, authority: startupRecoveryAuthority, policy: sessionRecoveryPolicy, onEvent: (event) => log.append({ worker: 'hub-session-recovery', harness: 'baton', turnEpoch: 0, actor: 'policy', kind: event.kind, payload: Object.fromEntries(Object.entries(event).filter(([key]) => key !== 'kind')) }) });
-    ready = sessionRecovery.start();
+    const recoveryReady = sessionRecovery.start();
+    ready = Promise.all([coordinatorReady, recoveryReady]).then(([, summary]) => summary);
   }
-  let closed = false;
-  const startProviderSupervisors = () => { if (!closed) { providerProcessor?.start(); providerPoller?.start(); } };
-  if (sessionRecovery) ready.then((summary) => { if (summary.status !== 'failed') startProviderSupervisors(); }); else startProviderSupervisors();
-  const closeAuthority = () => { const authorityClosed = coordinator.closeAuthority(); closed = true; coordination.releaseWriterLease(); return authorityClosed; };
+  ready.catch(() => {});
+  let driverState = 'open'; let drainPromise = null; let drainReceipt = null; let drainActor = null;
+  let drainedFleet = null; let drainedSupervisors = null; let coordinatorAuthorityClosed = false; let writerAuthorityReleased = false;
+  const startProviderSupervisors = () => { if (driverState === 'open') { providerProcessor?.start(); providerPoller?.start(); } };
+  ready.then((summary) => { if (!sessionRecovery || summary.status !== 'failed') startProviderSupervisors(); }).catch(() => {});
+  const closeAuthority = () => {
+    const authorityClosed = coordinator.closeAuthority();
+    coordination.releaseWriterLease();
+    driverState = 'closed';
+    return authorityClosed;
+  };
   const close = () => {
-    if (closed) return false;
+    if (driverState === 'closed') return false;
+    if (driverState !== 'open') throw Object.assign(new Error('driver close is already in progress'), { code: 'driver_closing' });
     if (providerPoller || providerProcessor || sessionRecovery) throw Object.assign(new Error('supervised drivers require await closeAsync()'), { code: 'driver_async_close_required' });
     return closeAuthority();
   };
   const closeAsync = async () => {
-    if (closed) return false;
-    if (sessionRecovery) await sessionRecovery.close();
-    if (providerProcessor) await providerProcessor.close();
-    if (providerPoller) await providerPoller.close();
-    return closeAuthority();
+    if (driverState === 'closed') return false;
+    if (driverState !== 'open') throw Object.assign(new Error('driver close is already in progress'), { code: 'driver_closing' });
+    driverState = 'legacy-closing';
+    try {
+      await coordinatorReady;
+      if (sessionRecovery) await sessionRecovery.close();
+      if (providerProcessor) await providerProcessor.close();
+      if (providerPoller) await providerPoller.close();
+      return closeAuthority();
+    } catch (error) { driverState = 'open'; throw error; }
   };
-  return { coordinator, story, router, log, coordination, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, ready, close, closeAsync };
+  const closeSupervisor = (name, supervisor, deadline) => {
+    if (!supervisor) return Promise.resolve('absent');
+    const remaining = Math.max(1, deadline - Date.now());
+    return new Promise((resolveClose, rejectClose) => {
+      const timer = setTimeout(() => rejectClose(Object.assign(new Error('driver supervisor close exceeded deployment deadline'), { code: 'coordinator_drain_incomplete' })), remaining);
+      if (typeof timer.unref === 'function') timer.unref();
+      Promise.resolve().then(() => supervisor.close()).then(
+        () => { clearTimeout(timer); resolveClose('closed'); },
+        () => { clearTimeout(timer); rejectClose(Object.assign(new Error(`driver ${name} close failed`), { code: 'coordinator_drain_incomplete' })); },
+      );
+    });
+  };
+  const drainAndClose = (actor = 'orchestrator') => {
+    if (typeof actor !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(actor)) return Promise.reject(Object.assign(new TypeError('driver close actor is invalid'), { code: 'driver_close_invalid' }));
+    if (drainReceipt) return drainPromise;
+    if (drainPromise) return drainPromise;
+    if (driverState === 'closed') return Promise.reject(Object.assign(new Error('driver authority is closed'), { code: 'driver_closed' }));
+    if (!['open', 'drain-failed'].includes(driverState)) return Promise.reject(Object.assign(new Error('driver close is already in progress'), { code: 'driver_closing' }));
+    drainActor ??= actor;
+    driverState = 'draining';
+    const operation = (async () => {
+      const deadline = Date.now() + drainPolicy.timeoutMs;
+      const assertWithinDeadline = () => {
+        if (Date.now() >= deadline) throw Object.assign(new Error('driver close exceeded deployment deadline'), { code: 'coordinator_drain_incomplete' });
+      };
+      if (!drainedFleet) {
+        assertWithinDeadline();
+        // drain() fences synchronously before returning its Promise; supervisors are then closed
+        // concurrently so no new scheduled authority can enter behind the fence.
+        const fleetPromise = coordinator.drain({ actor: drainActor, repoId: deploymentRepoId, idempotencyKey: driverDrainIdempotencyKey });
+        const [fleet, recoveryState, processingState, pollingState] = await Promise.all([
+          fleetPromise,
+          closeSupervisor('session recovery', sessionRecovery, deadline),
+          closeSupervisor('provider processing', providerProcessor, deadline),
+          closeSupervisor('provider polling', providerPoller, deadline),
+        ]);
+        assertWithinDeadline();
+        drainedFleet = fleet;
+        drainedSupervisors = Object.freeze({ sessionRecovery: recoveryState, providerProcessing: processingState, providerPolling: pollingState });
+      }
+      if (!coordinatorAuthorityClosed) {
+        assertWithinDeadline();
+        const coordinatorClosed = coordinator.closeAuthority();
+        if (coordinatorClosed !== true) throw Object.assign(new Error('coordinator authority close was not exact'), { code: 'coordinator_drain_incomplete' });
+        coordinatorAuthorityClosed = true;
+        assertWithinDeadline();
+      }
+      if (!writerAuthorityReleased) {
+        assertWithinDeadline();
+        const writerReleased = coordination.releaseWriterLease({ requireOwned: true });
+        if (writerReleased !== true) throw Object.assign(new Error('coordination writer release was not exact'), { code: 'coordination_writer_lost' });
+        writerAuthorityReleased = true;
+        assertWithinDeadline();
+      }
+      const core = {
+        schemaVersion: 1, state: 'closed', fleet: drainedFleet,
+        supervisors: drainedSupervisors,
+        authority: { coordinatorClosed: true, writerReleased: true },
+      };
+      drainReceipt = deepFreeze({ ...core, receiptDigest: canonicalDigest(core) });
+      driverState = 'closed';
+      return drainReceipt;
+    })();
+    drainPromise = operation;
+    operation.catch(() => {
+      if (drainPromise === operation) {
+        drainPromise = null;
+        driverState = coordinator._drainState === 'open' ? 'open' : 'drain-failed';
+      }
+    });
+    return operation;
+  };
+  return { coordinator, story, router, log, coordination, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, ready, close, closeAsync, drainAndClose };
   } catch (error) { if (writerLease) coordination.releaseWriterLease(); throw error; }
 }

@@ -545,6 +545,8 @@ test('AC6: deny and timeout are fail-closed and never call the publisher', async
   const timed = timedPublicationRequest(denied.coordinator, denied.handle.id);
   now += 11;
   denied.coordinator.list();
+  assert.equal(denied.log.read(denied.handle.id).some((entry) => entry.kind === 'publication.denied' && entry.payload.requestId === timed.requestId), false, 'observational reads never execute deadline policy');
+  denied.coordinator.tick();
   await until(() => denied.log.read(denied.handle.id).some((entry) => entry.kind === 'publication.denied' && entry.payload.requestId === timed.requestId));
   assert.equal(denied.calls.length, 0);
 });
@@ -568,7 +570,9 @@ test('AC6: restart drops a pending approval and cannot publish it by replay', as
   const first = await integratedPublicationTask();
   const request = first.coordinator.requestPublication(first.handle.id, { remote: 'origin', ref: 'refs/heads/main' });
   const replayCalls = [];
-  first.close();
+  // This case models process loss, not a graceful handoff. A graceful close must refuse while it
+  // still owns the pending publication decision; the crashed writer lease is the restart fence.
+  assert.equal(first.coordination.releaseWriterLease({ requireOwned: true }), true);
   const replay = createDriver({
     repoRoot: first.root, logDir: first.logDir,
     adapters: { mock: new MockAdapter({ scenario: { outcome: 'completed' } }) },

@@ -43,6 +43,9 @@ export class InvalidShaError extends Error {
 export class WorktreeLockedError extends Error {
   constructor(message) { super(message); this.name = 'WorktreeLockedError'; }
 }
+export class WorktreeCleanupError extends Error {
+  constructor(message) { super(message); this.name = 'WorktreeCleanupError'; this.code = 'worktree_cleanup_failed'; }
+}
 export class StructuredMergeError extends Error {
   constructor(message, code = 'structured_merge_failed') { super(message); this.name = 'StructuredMergeError'; this.code = code; }
 }
@@ -543,27 +546,38 @@ export async function reap(repoRoot, taskId, opts = {}) {
   const dir = wtDirFor(repoRoot, taskId);
   const metaFile = metaPathFor(repoRoot, taskId);
   const projectionExclude = projectionExcludePathFor(repoRoot, taskId);
-  if (!existsSync(dir)) {
-    if (existsSync(metaFile)) rmSync(metaFile, { force: true });
-    if (existsSync(projectionExclude)) rmSync(projectionExclude, { force: true });
-    return; // idempotent no-op
+  if (existsSync(dir)) {
+    const meta = readMeta(repoRoot, taskId);
+    const stopped = !!meta?.stoppedAt;
+    if (!stopped && !opts.force) {
+      throw new WorktreeLockedError(`reap: worktree "${taskId}" was never markStopped (pass {force:true} to override)`);
+    }
+    try { sh('git', ['worktree', 'remove', '--force', dir], repoRoot); }
+    catch { rmSync(dir, { recursive: true, force: true }); }
   }
-  const meta = readMeta(repoRoot, taskId);
-  const stopped = !!meta?.stoppedAt;
-  if (!stopped && !opts.force) {
-    throw new WorktreeLockedError(`reap: worktree "${taskId}" was never markStopped (pass {force:true} to override)`);
-  }
-  try {
-    sh('git', ['worktree', 'remove', '--force', dir], repoRoot);
-  } catch {
-    rmSync(dir, { recursive: true, force: true });
-    try { sh('git', ['worktree', 'prune'], repoRoot); } catch { /* best-effort */ }
-  }
+  // A missing directory may still retain a Git administrative registration. Prune and inspect
+  // before claiming success; D10 cleanup is about ownership, not only pathname absence.
+  try { sh('git', ['worktree', 'prune'], repoRoot); }
+  catch (error) { throw new WorktreeCleanupError('owned worktree administration could not be pruned', { cause: error }); }
   if (opts.deleteBranch) {
-    try { sh('git', ['branch', '-D', `baton/${taskId}`], repoRoot); } catch { /* best-effort */ }
+    try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/baton/${taskId}`], repoRoot); sh('git', ['branch', '-D', `baton/${taskId}`], repoRoot); }
+    catch {
+      // A failed existence probe is the idempotent absent case. A surviving ref below is red.
+    }
   }
   if (existsSync(metaFile)) rmSync(metaFile, { force: true });
   if (existsSync(projectionExclude)) rmSync(projectionExclude, { force: true });
+  const registered = (await listWorktrees(repoRoot)).some((entry) => {
+    try { return realpathSync(entry.dir) === realpathSync(dir); }
+    catch { return pathResolve(entry.dir) === pathResolve(dir); }
+  });
+  let branchPresent = false;
+  if (opts.deleteBranch) {
+    try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/baton/${taskId}`], repoRoot); branchPresent = true; } catch { /* absent */ }
+  }
+  if (existsSync(dir) || existsSync(metaFile) || existsSync(projectionExclude) || registered || branchPresent) {
+    throw new WorktreeCleanupError('owned worktree cleanup did not reach an exact absent state');
+  }
   logEvent(opts, taskId, 'worktree.reaped', { dir });
 }
 
@@ -575,10 +589,10 @@ export async function reap(repoRoot, taskId, opts = {}) {
  * @param {string} repoRoot
  * @param {string[]} expectedActiveTaskIds
  * @param {{log?: object}} [opts]
- * @returns {Promise<{prunedAdminEntries:string[], removedZombieDirs:string[], removedIntegrationDirs:string[], errors:string[]}>}
+ * @returns {Promise<{prunedAdminEntries:string[], removedZombieDirs:string[], removedIntegrationDirs:string[], removedVerifyDirs:string[], errors:string[]}>}
  */
-export async function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
-  const report = { prunedAdminEntries: [], removedZombieDirs: [], removedIntegrationDirs: [], errors: [] };
+export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
+  const report = { prunedAdminEntries: [], removedZombieDirs: [], removedIntegrationDirs: [], removedVerifyDirs: [], errors: [] };
   try {
     sh('git', ['worktree', 'prune'], repoRoot);
   } catch (err) {
@@ -601,49 +615,89 @@ export async function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {})
         logEvent(opts, entry, 'worktree.integration_reconciled', { dir: fullDir });
       } catch (err) { report.errors.push(`${entry}: ${err.message || err}`); }
     }
-    try { if (readdirSync(mergeRoot).length === 0) rmSync(mergeRoot, { recursive: true, force: true }); } catch { /* best effort */ }
+    try { if (readdirSync(mergeRoot).length === 0) rmSync(mergeRoot, { recursive: true, force: true }); } catch (err) { report.errors.push(`integration-root: ${err.message || err}`); }
   }
 
   const expected = new Set(expectedActiveTaskIds);
 
   const wtRoot = join(repoRoot, '.baton', 'wt');
-  if (existsSync(wtRoot)) {
+  {
+    const candidates = new Set();
+    if (existsSync(wtRoot)) {
     for (const entry of readdirSync(wtRoot)) {
-      if (!entry.endsWith('.projection.exclude')) continue;
-      const taskId = entry.slice(0, -'.projection.exclude'.length);
-      if (!expected.has(taskId) || !existsSync(join(wtRoot, taskId))) rmSync(join(wtRoot, entry), { force: true });
+      if (entry.endsWith('.meta.json')) candidates.add(entry.slice(0, -'.meta.json'.length));
+      else if (entry.endsWith('.projection.exclude')) candidates.add(entry.slice(0, -'.projection.exclude'.length));
+      else {
+        try { if (statSync(join(wtRoot, entry)).isDirectory()) candidates.add(entry); } catch { /* inspected below if represented by metadata */ }
+      }
     }
-    for (const entry of readdirSync(wtRoot)) {
-      if (entry.endsWith('.meta.json') || entry.endsWith('.projection.exclude')) continue;
-      const fullDir = join(wtRoot, entry);
-      let isDir = false;
-      try { isDir = statSync(fullDir).isDirectory(); } catch { continue; }
-      if (!isDir) continue;
-      if (expected.has(entry)) continue;
+    }
+    try {
+      for (const taskId of sh('git', ['for-each-ref', '--format=%(refname:strip=3)', 'refs/heads/baton/'], repoRoot).split('\n').filter(Boolean)) candidates.add(taskId);
+    } catch (err) { report.errors.push(`worker-branch-scan: ${err.message || err}`); }
+    for (const taskId of candidates) {
+      const fullDir = join(wtRoot, taskId); const metaFile = metaPathFor(repoRoot, taskId); const projectionExclude = projectionExcludePathFor(repoRoot, taskId);
+      if (expected.has(taskId) && existsSync(fullDir)) continue;
       try {
-        try {
-          sh('git', ['worktree', 'remove', '--force', fullDir], repoRoot);
-        } catch {
-          rmSync(fullDir, { recursive: true, force: true });
+        const hadDir = existsSync(fullDir); const hadResidue = hadDir || existsSync(metaFile) || existsSync(projectionExclude);
+        if (hadDir) {
+          try { sh('git', ['worktree', 'remove', '--force', fullDir], repoRoot); }
+          catch { rmSync(fullDir, { recursive: true, force: true }); }
         }
-        const metaFile = metaPathFor(repoRoot, entry);
         if (existsSync(metaFile)) rmSync(metaFile, { force: true });
-        const projectionExclude = projectionExcludePathFor(repoRoot, entry);
         if (existsSync(projectionExclude)) rmSync(projectionExclude, { force: true });
-        report.removedZombieDirs.push(fullDir);
-        logEvent(opts, entry, 'worktree.reconciled', { dir: fullDir });
+        let branchPresent = false;
+        try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/baton/${taskId}`], repoRoot); branchPresent = true; } catch { /* absent */ }
+        const hadBranch = branchPresent;
+        if (branchPresent) sh('git', ['branch', '-D', `baton/${taskId}`], repoRoot);
+        try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/baton/${taskId}`], repoRoot); branchPresent = true; } catch { branchPresent = false; }
+        if (existsSync(fullDir) || existsSync(metaFile) || existsSync(projectionExclude) || branchPresent) throw new WorktreeCleanupError('reconciled worker ownership remained after cleanup');
+        if (hadDir) report.removedZombieDirs.push(fullDir);
+        if (hadResidue || hadBranch) logEvent(opts, taskId, 'worktree.reconciled', { dir: fullDir });
       } catch (err) {
-        report.errors.push(`${entry}: ${err.message || err}`);
+        report.errors.push(`${taskId}: ${err.message || err}`);
       }
     }
   }
 
-  // Note: `.baton/verify/*` sandboxes are intentionally NOT swept here. They are always
-  // created and reaped synchronously by their own caller (referee/coordinator via
-  // `sandbox.cleanup()`) within the same operation, so they never need boot-time zombie
-  // detection, and sweeping them here would misattribute reconcile events away from the
-  // taskId-scoped `worker` field callers rely on (red workers-trust#9).
-  try { sh('git', ['worktree', 'prune'], repoRoot); } catch { /* best-effort */ }
+  // Verification sandboxes are never resumable. A crash can occur between sandbox creation and
+  // its in-memory finally block, so restart reconciliation owns every abandoned directory.
+  const verifyRoot = join(repoRoot, '.baton', 'verify');
+  if (existsSync(verifyRoot)) {
+    for (const entry of readdirSync(verifyRoot)) {
+      const fullDir = join(verifyRoot, entry);
+      try {
+        try { sh('git', ['worktree', 'remove', '--force', fullDir], repoRoot); }
+        catch { rmSync(fullDir, { recursive: true, force: true }); }
+        if (existsSync(fullDir)) throw new WorktreeCleanupError('verification sandbox remained after cleanup');
+        report.removedVerifyDirs.push(fullDir);
+      } catch (err) { report.errors.push(`${entry}: ${err.message || err}`); }
+    }
+    try { if (readdirSync(verifyRoot).length === 0) rmSync(verifyRoot, { recursive: true, force: true }); } catch (err) { report.errors.push(`verify-root: ${err.message || err}`); }
+  }
+  try { sh('git', ['worktree', 'prune'], repoRoot); }
+  catch (err) { report.errors.push(`final-prune: ${err.message || err}`); }
+  try {
+    const registered = listWorktrees(repoRoot);
+    const verifyPrefix = `${pathResolve(repoRoot, '.baton', 'verify')}${sep}`;
+    const integrationPrefix = `${pathResolve(repoRoot, '.baton', 'integrate')}${sep}`;
+    const workerRoot = pathResolve(repoRoot, '.baton', 'wt');
+    for (const entry of registered) {
+      const absolute = pathResolve(entry.dir);
+      if (absolute.startsWith(verifyPrefix) || absolute.startsWith(integrationPrefix)) {
+        report.errors.push(`registered-owned-sandbox:${basename(absolute)}`);
+        continue;
+      }
+      const withinWorkers = pathRelative(workerRoot, absolute);
+      if (withinWorkers !== '' && withinWorkers !== '..' && !withinWorkers.startsWith(`..${sep}`) && !isAbsolute(withinWorkers)) {
+        const taskId = withinWorkers.split(sep)[0];
+        if (!expected.has(taskId)) report.errors.push(`registered-zombie-worker:${taskId}`);
+      }
+    }
+    for (const taskId of sh('git', ['for-each-ref', '--format=%(refname:strip=3)', 'refs/heads/baton/'], repoRoot).split('\n').filter(Boolean)) {
+      if (!expected.has(taskId) || !existsSync(join(wtRoot, taskId))) report.errors.push(`branch-zombie-worker:${taskId}`);
+    }
+  } catch (err) { report.errors.push(`registration-postcheck: ${err.message || err}`); }
   return report;
 }
 
@@ -688,7 +742,7 @@ export async function changedLines(repoRoot, fromSha, toSha) {
 // ---------------------------------------------------------------------------
 
 /** @param {string} repoRoot @returns {Promise<Array<{dir:string, sha:string|null, branch:string|null, detached:boolean}>>} */
-export async function listWorktrees(repoRoot) {
+export function listWorktrees(repoRoot) {
   const out = sh('git', ['worktree', 'list', '--porcelain'], repoRoot);
   const entries = [];
   let current = null;

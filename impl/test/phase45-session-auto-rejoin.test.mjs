@@ -55,10 +55,10 @@ test('SR2/SR5: authoritative recovery-write loss fails readiness instead of degr
   const supervisor = new SessionRecoverySupervisor({ coordinator, authority, policy: { maxSessions: 1, maxStateRows: 8, timeoutMs: 50 } }); const summary = await supervisor.start(); assert.equal(summary.status, 'failed'); assert.deepEqual(summary.failures, [{ workerId: null, code: 'coordination_write_unavailable' }]); assert.deepEqual(calls.complete, ['coordination_write_unavailable']); assert.equal(await supervisor.close(), true);
 });
 
-test('SR2/SR3: Coordinator readiness barrier blocks ordinary authority but permits its private bounded scan', () => {
+test('SR2/SR3: Coordinator readiness barrier blocks ordinary authority but permits its private bounded scan', async () => {
   const authority = {}; const log = new Log(root('barrier-log')); const coordination = new CoordinationStore(root('barrier-coordination'));
   const coordinator = new Coordinator({ log, coordination, fences: new FenceTable(), adapters: {}, worktrees: { reconcile: async () => {} }, referee: async () => ({}), route: () => null, startupRecoveryAuthority: authority });
-  coordinator.beginStartupRecovery(authority); assert.throws(() => coordinator.list(), (error) => error.code === 'session_recovery_pending'); assert.deepEqual(coordinator.startupRecoveryCandidates(authority, 1), []); assert.throws(() => coordinator.startupRecoveryCandidates({}, 1), (error) => error.code === 'session_recovery_authority'); coordinator.completeStartupRecovery(authority); assert.deepEqual(coordinator.list(), []); assert.equal(coordinator.closeAuthority(), true);
+  coordinator.beginStartupRecovery(authority); assert.throws(() => coordinator.list(), (error) => error.code === 'session_recovery_pending'); assert.deepEqual(coordinator.startupRecoveryCandidates(authority, 1), []); assert.throws(() => coordinator.startupRecoveryCandidates({}, 1), (error) => error.code === 'session_recovery_authority'); coordinator.completeStartupRecovery(authority); assert.deepEqual(coordinator.list(), []); await coordinator.startupReady(); assert.equal(coordinator.closeAuthority(), true);
 });
 
 test('SR1/SR7/SR8: public driver validates opt-in policy, exposes readiness, and requires async close', async () => {

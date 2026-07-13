@@ -490,6 +490,24 @@ test('reconcile leaves directories whose taskId is in expectedActiveTaskIds alon
   assert.ok(!report.removedZombieDirs.some((p) => p.includes('keep-me')));
 });
 
+test('reconcile removes branch-only and metadata-only worker crash residue', async (t) => {
+  const { dir } = makeRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const wtRoot = join(dir, '.baton', 'wt'); mkdirSync(wtRoot, { recursive: true });
+  writeFileSync(join(wtRoot, 'meta-only.meta.json'), '{}\n');
+  sh('git', ['branch', 'baton/branch-only', 'HEAD'], dir);
+  sh('git', ['branch', 'baton/expected-but-missing', 'HEAD'], dir);
+  const { events, log } = stubLog();
+
+  const report = await reconcile(dir, ['expected-but-missing'], { log });
+
+  assert.deepEqual(report.errors, []);
+  assert.equal(existsSync(join(wtRoot, 'meta-only.meta.json')), false);
+  assert.equal(sh('git', ['branch', '--list', 'baton/branch-only'], dir), '');
+  assert.equal(sh('git', ['branch', '--list', 'baton/expected-but-missing'], dir), '', 'an expected ID without its owned directory is not resumable authority');
+  assert.deepEqual(events.filter((event) => event.kind === 'worktree.reconciled').map((event) => event.worker).sort(), ['branch-only', 'expected-but-missing', 'meta-only']);
+});
+
 // ============================================================
 // reconcile() log-event attribution — red workers-trust#9
 // ============================================================
@@ -621,6 +639,6 @@ test('createFromBase, captureCommit, freshVerifySandbox, reap, reconcile each ap
     await reconcile(dir, [], { log });
     assert.ok(events.length >= 1);
     assert.ok(events.every((e) => prefixOk(e.kind)), 'reconcile log kinds');
-    assert.ok(events.every((e) => e.worker === 'zombie'), 'per-directory reconcile attribution (red workers-trust#9)');
+    assert.deepEqual(events.map((event) => event.worker).sort(), ['t1', 'zombie'], 'every directory or branch residue is attributed to its own taskId');
   }
 });

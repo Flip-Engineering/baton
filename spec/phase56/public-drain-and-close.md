@@ -30,6 +30,12 @@ unsafe values, `pollMs > timeoutMs`, `maxWorkers > 100000`, or `timeoutMs > 3000
 writer is claimed. Omission selects one documented fixed safe policy; web/MCP callers cannot
 override it, name a subset, supply paths/PIDs, extend a deadline, or raise a bound.
 
+The deployment policy also derives a fixed internal active-interaction ceiling as the minimum of
+100000, sixteen interactions per configured worker, and one interaction per four deadline
+milliseconds. It is not caller input. Active question, approval, and publication IDs have a
+dedicated index, so drain admission and convergence never scan the unbounded historical record map.
+Max+1 active authority refuses before admission/fencing; resolved history remains queryable.
+
 Only locally controlled workers, cleanup-pending workers, and not-yet-dispatched pending tasks count
 toward `maxWorkers`. Historical replay handles without current local authority are evidence, not
 native transports, and are neither signalled nor counted as live ownership. Exact-limit admission
@@ -84,6 +90,22 @@ idle persistent session is still local authority and must be killed. Cleanup is 
 writer/authority-close claim is made while `cleanupPending`, `cleanupAfterVerification`, an active
 process, a stop waiter, local worker authority, or `_authorityOps` remains.
 
+Asynchronous worktree creation and the native `spawn()` Promise are explicit ownership
+reservations until their late cleanup/refusal path settles. Restart and final-drain reconciliation
+enumerate directory, metadata, projection-exclude, Git registration, branch-only, and runtime-only
+residue, including skipped/failed recovery candidates. A timed-out reconciliation remains one
+owned Promise that retries join; a second cleanup cannot overtake it and attest while the first can
+still mutate. Pending question/approval/publication authority is policy-cancelled/denied, while a
+late ask after the fence is durably discarded and cannot reopen blocked state.
+
+Trusted southbound adapter code is part of Baton's TCB. Its spawn Ack is a seal: it may resolve only
+after the exact process-start event was delivered, or after the adapter has atomically closed its
+pending-spawn reservation and can prove no child will start. Kill `terminal:true` likewise seals
+the reservation. Baton quarantines an observable post-Ack current-generation process behind a new
+kill/process-close boundary, but cannot defend against trusted in-process adapter code that lies
+about a terminal Ack and starts an unreported child after coordinator closure; shipped adapters
+must regression-test this conformance rule.
+
 ### DC5 — bounded timeout and failure truth
 
 The deployment deadline bounds the entire attempt, including in-flight verification and cleanup.
@@ -105,14 +127,32 @@ authority or remove resources until exact close. `closeAuthority()` refuses any
 `localAuthority:true` handle regardless of its status label. Strict writer release verifies the
 same lease token was removed and is absent; lost, replaced, or unlink-red authority is not success.
 
+One deadline begins before target calculation and durable admission, and the driver uses its own
+outer deadline beginning before coordinator drain/supervisor close. Every synchronous durable
+admission/completion, authority-close, and writer-release boundary is checked both before and
+after; a boundary that returns after expiry is red even if its durable effect completed and replay
+can recover that effect. Pending-task and interaction cancellation check/yield against the same
+deadline. No retry starts a competing cleanup whose first timed-out invocation can mutate later.
+
 ### DC6 — durable closed path-free fleet attestation
 
 Before the first stop effect, CoordinationStore appends replay-validated `fleet.drain_admitted` with
 one private drain ID derived from repository plus the northbound/direct idempotency identity, exact
 sorted target worker IDs, their canonical target digest, and the request digest. It appends
-`fleet.drain_completed` only after DC4's shared ownership oracle is empty. Target ordering,
-uniqueness, closed fields, admitted-before-completed order, counts, target digest, and receipt digest
-are validated during live apply and replay. Completion append failure exposes no successful receipt.
+one actor-bound, idempotent `fleet.drain_disposition_recorded` event per fixed target only after its
+exact pending cancellation, kill confirmation, or already-terminal ownership proof. A timed-out
+physical attempt and a new outer idempotency identity reuse or mirror those immutable dispositions;
+they may not relabel a kill-confirmed target as already terminal. It appends `fleet.drain_completed`
+only after DC4's shared ownership oracle is empty. Target ordering, uniqueness, closed fields,
+admitted-before-disposition-before-completed order, disposition completeness, counts, target digest,
+and receipt digest are validated during live apply and replay. Completion append failure exposes no
+successful receipt. Replaying an older completed drain on a fresh controller does not capture that
+controller's physical drain epoch.
+
+Admission and completion replay also require the original actor. In-memory request joins occur only
+after that durable actor validation, and a conflicting actor cannot fence an otherwise-open fresh
+controller. A completed durable receipt is actor-validated before return without inspecting or
+mutating unrelated current interaction authority.
 
 This nested durable record closes the crash window after resource reap but before a web/MCP command
 completion. Retrying an outer command that is still `admitted` re-dispatches only drain using the

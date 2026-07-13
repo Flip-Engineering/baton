@@ -64,7 +64,10 @@ export class SessionRecoverySupervisor {
   async close() {
     if (this._closed) return false;
     this._closing = true; await (this._promise ?? this.start());
-    for (const workerId of [...this._attached]) await this.coordinator.kill(workerId, 'startup_recovery_shutdown', { startupAuthority: this.authority, emergency: true });
+    const fleetDrainOwnsShutdown = typeof this.coordinator._fleetDrainOwnsShutdown === 'function' && this.coordinator._fleetDrainOwnsShutdown();
+    if (!fleetDrainOwnsShutdown) {
+      for (const workerId of [...this._attached]) await this.coordinator.kill(workerId, 'startup_recovery_shutdown', { startupAuthority: this.authority, emergency: true });
+    }
     this._attached.clear(); this._closed = true; this.onEvent({ kind: 'session.recovery_closed' }); return true;
   }
 }

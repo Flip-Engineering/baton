@@ -8,7 +8,7 @@ import { operatorAsset } from './web-operator.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 
 const COMMAND_CAPABILITY = Object.freeze({
-  spawn: 'control', scratch_oracle: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', respond: 'approve',
+  spawn: 'control', scratch_oracle: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', drain: 'emergency_stop', respond: 'approve',
   list: 'observe', result: 'observe', wait: 'observe', capabilities: 'observe', provider_status: 'observe', capability_invoke: 'control', reuse_decide: 'control', reuse_recheck: 'control',
 });
 const FENCE_REQUIRED = new Set(['send', 'interrupt', 'kill']);
@@ -19,6 +19,7 @@ const ARG_FIELDS = Object.freeze({
   send: new Set(['workerId', 'message', 'mode']),
   interrupt: new Set(['workerId', 'then']),
   kill: new Set(['workerId']),
+  drain: new Set(),
   respond: new Set(['requestId', 'answer']),
   list: new Set(),
   result: new Set(['workerId']),
@@ -91,6 +92,7 @@ function dispatchFailure(cause) {
   if (cause?.code === 'provider_read_oversize') return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'provider read exceeded deployment ceiling' } } };
   if (cause?.code === 'provider_read_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: cause.code, message: 'provider read unavailable' } } };
   if (cause?.name === 'WorkerNotFoundError') return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'resource not found' } } };
+  if (['coordinator_drain_capacity', 'coordinator_drain_incomplete', 'coordinator_draining', 'coordinator_closed'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'coordinator lifecycle conflict' } } };
   return { httpStatus: 503, body: { ok: false, error: { code: 'temporarily_unavailable', message: 'command dispatch failed' } } };
 }
 function isRecord(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
@@ -221,6 +223,7 @@ export class WebNorthbound {
     if (!this.authenticate && this.sessions) this.authenticate = this.sessions.authenticator();
     this.isPrincipalActive = opts.isPrincipalActive ?? this.authenticate?.isPrincipalActive ?? null;
     this.maxBodyBytes = opts.maxBodyBytes ?? 64 * 1024;
+    this._drainDispatches = new Map();
     this.edge = opts.edge ?? (opts.edgePolicy ? new WebEdgePolicy(opts.edgePolicy) : null);
     this.admitting = true;
     this.readinessChecks = opts.readinessChecks ?? [];
@@ -311,7 +314,7 @@ export class WebNorthbound {
     if (this.edge) {
       const key = ctx.principal.credentialId;
       const commandCost = envelope.command === 'reuse_recheck' ? (envelope.args.trigger === 'advisory_refresh' ? 20 : 2)
-        : ({ spawn: 10, capability_invoke: 10, reuse_decide: 20, send: 2, interrupt: 2, kill: 2, respond: 2 }[envelope.command] ?? 1);
+        : ({ spawn: 10, capability_invoke: 10, reuse_decide: 20, drain: 10, send: 2, interrupt: 2, kill: 2, respond: 2 }[envelope.command] ?? 1);
       const quota = this.edge.takeCommand(key, commandCost);
       if (!quota.ok) {
         try { this._audit('quota_refused', ctx, { quota: quota.quota }); } catch { return error(503, 'temporarily_unavailable'); }
@@ -339,6 +342,22 @@ export class WebNorthbound {
     }
     if (admission.result === 'replay') {
       try { this._audit('command_replayed', ctx, { command: envelope.command, repoId: envelope.repoId, commandId: admission.command.commandId }); } catch { return error(503, 'temporarily_unavailable'); }
+      if (admission.command.status === 'admitted' && envelope.command === 'drain') {
+        const commandId = admission.command.commandId;
+        const admittedActor = actor({ userId: admission.command.userId, sessionId: admission.command.sessionId });
+        let replayed;
+        try {
+          replayed = await this._dispatchDrain(envelope, admittedActor, commandId);
+        } catch (cause) {
+          const failure = dispatchFailure(cause);
+          try { this.coordination.failWebCommand(commandId, failure, { actor: admittedActor, key: `web.fail:${commandId}` }); } catch { /* no success is returned */ }
+          return result(failure.httpStatus, { ...failure.body, replayed: true });
+        }
+        const outcome = { httpStatus: replayed.status, body: replayed.body };
+        try { this.coordination.completeWebCommand(commandId, outcome, { actor: admittedActor, key: `web.complete:${commandId}` }); }
+        catch { return error(503, 'temporarily_unavailable'); }
+        return { ...replayed, body: { ...replayed.body, replayed: true } };
+      }
       if (admission.command.status === 'admitted') return result(202, { ok: true, commandId: admission.command.commandId, status: 'admitted', replayed: true });
       if (admission.command.status === 'completed' && ['reuse_decide', 'reuse_recheck'].includes(envelope.command)) {
         try { const refreshed = await this._dispatch(envelope, webActor); return { ...refreshed, body: { ...refreshed.body, replayed: true } }; } catch { return error(503, 'temporarily_unavailable'); }
@@ -348,7 +367,9 @@ export class WebNorthbound {
 
     let response;
     try {
-      response = await this._dispatch(envelope, webActor);
+      response = envelope.command === 'drain'
+        ? await this._dispatchDrain(envelope, webActor, envelope.commandId)
+        : await this._dispatch(envelope, webActor);
     } catch (cause) {
       const failure = dispatchFailure(cause);
       try { this.coordination.failWebCommand(envelope.commandId, failure, { actor: webActor, key: `web.fail:${envelope.commandId}` }); } catch { /* no success is returned */ }
@@ -363,6 +384,19 @@ export class WebNorthbound {
       return error(503, 'temporarily_unavailable');
     }
     return response;
+  }
+
+  _dispatchDrain(envelope, webActor, commandId) {
+    const existing = this._drainDispatches.get(commandId);
+    if (existing) return existing;
+    const admittedEnvelope = commandId === envelope.commandId ? envelope : { ...envelope, commandId };
+    const pending = Promise.resolve().then(() => this._dispatch(admittedEnvelope, webActor));
+    this._drainDispatches.set(commandId, pending);
+    void pending.then(
+      () => { if (this._drainDispatches.get(commandId) === pending) this._drainDispatches.delete(commandId); },
+      () => { if (this._drainDispatches.get(commandId) === pending) this._drainDispatches.delete(commandId); },
+    );
+    return pending;
   }
 
   async _dispatch(envelope, webActor) {
@@ -388,6 +422,8 @@ export class WebNorthbound {
       value = await this.coordinator.interrupt(a.workerId, a.then, webActor, { expectedFence: envelope.expectedFence });
     } else if (envelope.command === 'kill') {
       value = await this.coordinator.kill(a.workerId, webActor, { expectedFence: envelope.expectedFence });
+    } else if (envelope.command === 'drain') {
+      value = await this.coordinator.drain({ actor: webActor, repoId: envelope.repoId, idempotencyKey: `web.command:${envelope.commandId}` });
     } else if (envelope.command === 'respond') {
       value = await this.coordinator.respond(a.requestId, a.answer, webActor);
     } else if (envelope.command === 'list') {
