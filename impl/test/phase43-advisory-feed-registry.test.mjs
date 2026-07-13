@@ -25,10 +25,22 @@ test('AF1/AF2: registry pins a closed source card and returns only a secret-free
   const adapter = source(); const registry = new AdvisoryFeedRegistry({ sources: { 'fixture.osv': adapter } }); const raw = Buffer.from('{"event":"candidate"}');
   const verified = await registry.verify('fixture.osv', { mode: 'webhook', raw }); const cards = registry.cards();
   assert.equal(cards.length, 1); assert.equal(cards[0].providerId, 'fixture.osv'); assert.match(cards[0].cardDigest, /^[a-f0-9]{64}$/);
+  assert.equal(Object.isFrozen(cards[0]), true); assert.equal(Object.isFrozen(cards[0].auth), true); assert.equal(Object.isFrozen(cards[0].auth.keyFingerprints), true); assert.equal(Object.isFrozen(cards[0].ceilings), true);
   assert.equal(verified.sourceEpoch, cards[0].cardDigest); assert.equal(verified.cardDigest, cards[0].cardDigest); assert.equal(verified.rawDigest, sha(raw)); assert.match(verified.contentDigest, /^[a-f0-9]{64}$/);
   assert.deepEqual(Object.keys(verified).sort(), ['advisoryIds', 'authReceiptDigest', 'cardDigest', 'contentDigest', 'coordinates', 'deliveryId', 'keyFingerprint', 'mode', 'occurredAt', 'providerId', 'rawBytes', 'rawDigest', 'schemaVersion', 'sequence', 'source', 'sourceEpoch'].sort());
   assert.equal(JSON.stringify(verified).includes(raw.toString()), false); assert.equal(JSON.stringify(verified).includes('secret'), false);
   assert.equal(adapter.calls.length, 1); assert.notEqual(adapter.calls[0].input.raw, raw, 'adapter receives an immutable copy, not caller-owned bytes');
+});
+
+test('AF2: an adapter cannot rewrite the preserved authenticated wire bytes before registry cross-check', async () => {
+  const raw = Buffer.from('{"event":"candidate"}'); const originalDigest = sha(raw); const adapter = source();
+  adapter.verifyDelivery = async (input, ctx) => {
+    adapter.calls.push({ input, ctx }); input.raw.fill(0x20);
+    return receipt(input.raw);
+  };
+  const registry = new AdvisoryFeedRegistry({ sources: { 'fixture.osv': adapter } });
+  await assert.rejects(registry.verify('fixture.osv', { mode: 'webhook', raw }), (error) => error.code === 'provider_receipt_invalid');
+  assert.equal(sha(raw), originalDigest, 'caller bytes remain unchanged too');
 });
 
 test('AF1/AF2: malformed deployment cards fail before source authority exists', () => {

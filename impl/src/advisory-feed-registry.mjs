@@ -14,6 +14,13 @@ const exactNpm = (coordinate) => exactKeys(coordinate, ['ecosystem', 'package', 
   && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(coordinate.version);
 const coordinateKey = (value) => `${value.ecosystem}\0${value.package}\0${value.version}`;
 const sortedUnique = (values, key = (value) => value) => Array.isArray(values) && JSON.stringify(values.map(key)) === JSON.stringify([...new Set(values.map(key))].sort());
+const freeze = (value) => {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value)) freeze(child);
+  }
+  return value;
+};
 
 function validCard(card) {
   if (!exactKeys(card, ['schemaVersion', 'providerId', 'adapterId', 'version', 'modes', 'ecosystem', 'semantics', 'auth', 'ceilings'])
@@ -42,7 +49,7 @@ function validateReceipt(receipt, card, raw, mode, cardDigest) {
   if (!exactKeys(source, ['handle', 'digest', 'bytes', 'mediaType']) || !hex(source.digest) || source.handle !== `art:sha256:${source.digest}`
     || source.digest !== receipt.rawDigest || source.bytes !== receipt.rawBytes || source.mediaType !== 'application/json') throw typed('provider source reference is invalid', 'provider_receipt_invalid');
   const core = { schemaVersion: 1, providerId: card.providerId, sourceEpoch: cardDigest, cardDigest, mode, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest, rawBytes: receipt.rawBytes, authReceiptDigest: receipt.authReceiptDigest, keyFingerprint: receipt.keyFingerprint, occurredAt: receipt.occurredAt, sequence: receipt.sequence, coordinates: receipt.coordinates, advisoryIds: receipt.advisoryIds, source: receipt.source };
-  return Object.freeze({ ...json(core), contentDigest: digest(core) });
+  return freeze({ ...json(core), contentDigest: digest(core) });
 }
 
 /** Deployment-owned registry for provider authentication adapters. It is deliberately not an ACI
@@ -57,18 +64,18 @@ export class AdvisoryFeedRegistry {
       const card = source.card();
       if (!validCard(card) || card.providerId !== providerId) throw new TypeError(`invalid advisory feed card: ${providerId}`);
       const cardDigest = digest(card);
-      this.entries.set(providerId, { source, card: Object.freeze(json(card)), cardDigest });
+      this.entries.set(providerId, { source, card: freeze(json(card)), cardDigest });
     }
   }
 
-  cards() { return [...this.entries.values()].map((entry) => Object.freeze({ ...json(entry.card), cardDigest: entry.cardDigest })).sort((a, b) => a.providerId.localeCompare(b.providerId)); }
+  cards() { return [...this.entries.values()].map((entry) => freeze({ ...json(entry.card), cardDigest: entry.cardDigest })).sort((a, b) => a.providerId.localeCompare(b.providerId)); }
 
   async verify(providerId, input, ctx = {}) {
     const entry = this.entries.get(providerId); if (!entry) throw typed('unknown advisory feed provider', 'provider_not_configured');
     if (!record(input) || !exactKeys(input, ['mode', 'raw']) || !entry.card.modes.includes(input.mode) || !Buffer.isBuffer(input.raw) || input.raw.length === 0 || input.raw.length > entry.card.ceilings.maxDeliveryBytes) throw typed('provider delivery envelope is invalid', 'provider_delivery_invalid');
     if (ctx.signal?.aborted) throw typed('provider delivery verification cancelled', 'cancelled');
-    const raw = Buffer.from(input.raw);
-    const receipt = await entry.source.verifyDelivery(Object.freeze({ mode: input.mode, raw }), Object.freeze({ signal: ctx.signal, cardDigest: entry.cardDigest }));
-    return validateReceipt(receipt, entry.card, raw, input.mode, entry.cardDigest);
+    const preserved = Buffer.from(input.raw); const adapterBytes = Buffer.from(preserved);
+    const receipt = await entry.source.verifyDelivery(Object.freeze({ mode: input.mode, raw: adapterBytes }), Object.freeze({ signal: ctx.signal, cardDigest: entry.cardDigest }));
+    return validateReceipt(receipt, entry.card, preserved, input.mode, entry.cardDigest);
   }
 }
