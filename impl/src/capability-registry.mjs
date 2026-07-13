@@ -76,6 +76,7 @@ export class CapabilityRegistry {
       if (!record(card) || card.name !== name || ops.length === 0 || ops.some((op) => !/^[A-Za-z0-9._:-]{1,256}$/.test(op))
         || ops.some((op) => !record(card.ops[op])
           || (card.ops[op].latency_class !== undefined && !['interactive', 'bounded_batch', 'task'].includes(card.ops[op].latency_class))
+          || (card.ops[op].preflight_output !== undefined && card.ops[op].preflight_output !== true)
           || (card.ops[op].latency_class === 'task' && card.ops[op].interruptible !== true))
         || !jsonValue(card)) throw new TypeError(`invalid capability card: ${name}`);
       const taskOps = ops.filter((op) => card.ops[op].latency_class === 'task').sort();
@@ -128,10 +129,14 @@ export class CapabilityRegistry {
   }
   _capabilityCtx(entry, request, safe) {
     const resolved = typeof entry.context === 'function' ? entry.context(Object.freeze(json(request))) : entry.context;
-    if (resolved === null || resolved === undefined) return safe;
-    if (!record(resolved) || !jsonValue(resolved) || Buffer.byteLength(JSON.stringify(resolved)) > this.maxEnvelopeBytes) throw typed('deployment capability context invalid', 'capability_context_invalid');
-    for (const key of ['actor', 'budgetTokens', 'repoId', 'idempotencyKey', 'transport', 'root', 'signal']) if (Object.hasOwn(resolved, key)) throw typed('deployment capability context attempted to override registry authority', 'capability_context_forbidden');
-    return { ...json(resolved), ...safe };
+    if (resolved !== null && resolved !== undefined) {
+      if (!record(resolved) || !jsonValue(resolved) || Buffer.byteLength(JSON.stringify(resolved)) > this.maxEnvelopeBytes) throw typed('deployment capability context invalid', 'capability_context_invalid');
+      for (const key of ['actor', 'budgetTokens', 'repoId', 'idempotencyKey', 'transport', 'root', 'signal', 'aciOutputPolicy']) if (Object.hasOwn(resolved, key)) throw typed('deployment capability context attempted to override registry authority', 'capability_context_forbidden');
+    }
+    const outputPolicy = entry.card.ops[request.op]?.preflight_output === true
+      ? { aciOutputPolicy: { maxEnvelopeBytes: this.maxEnvelopeBytes, maxPayloadBytes: safe.budgetTokens * 4 } }
+      : {};
+    return { ...(resolved === null || resolved === undefined ? {} : json(resolved)), ...safe, ...outputPolicy };
   }
   _idempotencyBinding(action, capability, op, input, safe) {
     if (safe.idempotencyKey === undefined) return null;

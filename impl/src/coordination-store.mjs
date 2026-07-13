@@ -2208,7 +2208,7 @@ export class CoordinationStore {
     });
     const policyProjection = freeze(clone(policy)); const policyDigest = canonicalDigest(policyProjection);
     const reader = freeze({ readerActor: actor, readerWorker: taskId ? this._tasks.get(taskId)?.assignee ?? null : null, taskId, runId });
-    const requestDigest = canonicalDigest({ request: clone(request), actor, policyDigest });
+    const requestDigest = canonicalDigest({ query, reader: { readerActor: actor, taskId, runId }, policyDigest });
     return { query, policy: policyProjection, policyDigest, reader, requestDigest, observedAt };
   }
 
@@ -2280,6 +2280,8 @@ export class CoordinationStore {
       || payload.observedSeq !== payload.query?.observedSeq || payload.asOf !== payload.query?.asOf || payload.observedAt !== this.observationTime(payload.observedSeq)) fail('knowledge recall receipt shape is invalid');
     const core = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'receiptDigest'));
     if (!/^[a-f0-9]{64}$/.test(payload.receiptDigest ?? '') || payload.receiptDigest !== canonicalDigest(core) || canonicalBytes(payload) > payload.policy.maxReceiptBytes) fail('knowledge recall receipt binding is invalid');
+    const expectedRequestDigest = canonicalDigest({ query: payload.query, reader: { readerActor: payload.readerActor, taskId: payload.taskId ?? null, runId: payload.runId ?? null }, policyDigest: payload.policyDigest });
+    if (payload.requestDigest !== expectedRequestDigest) fail('knowledge recall request identity is invalid');
     const taskId = payload.taskId ?? null; const runId = payload.runId ?? null; const task = taskId === null ? null : this._tasks.get(taskId);
     const readerWorkerAtReceipt = task?.claimedEvent && task.claimedEvent < event.seq ? task.assignee : null;
     if ((taskId !== null && (!task || payload.readerWorker !== readerWorkerAtReceipt || runId !== null))
@@ -2316,16 +2318,22 @@ export class CoordinationStore {
     return freeze({ event, projection: built.projection, replayed: false, receiptBytes: built.receiptBytes });
   }
 
-  previewKnowledgeRecallBounded(request, policy, auth) {
+  recallKnowledgeBounded(request, policy, auth, beforeAppend = null) {
+    if (beforeAppend !== null && typeof beforeAppend !== 'function') throw new TypeError('knowledge recall publication preflight must be a function');
     const preview = this.#knowledgeRecallPreview(request, policy, auth); const projection = preview.projection;
-    return freeze({
-      event: { seq: preview.event.seq, payload: { receiptDigest: preview.event.payload.receiptDigest } }, replayed: preview.replayed, receiptBytes: preview.receiptBytes,
-      publication: { observedSeq: projection.observedSeq, observedAt: projection.observedAt, asOf: projection.asOf, queryDigest: projection.queryDigest, projectionDigest: projection.projectionDigest, nodeBytes: canonicalBytes(projection.nodes), contradictionBytes: canonicalBytes(projection.contradictions) },
-    });
-  }
-
-  recallKnowledgeBounded(request, policy, auth) {
-    const preview = this.#knowledgeRecallPreview(request, policy, auth); if (preview.replayed) return preview;
+    if (beforeAppend) {
+      const priorLastSeq = this._events.length;
+      beforeAppend(freeze({
+        event: { seq: preview.event.seq, payload: { receiptDigest: preview.event.payload.receiptDigest } }, replayed: preview.replayed, receiptBytes: preview.receiptBytes,
+        publication: {
+          observedSeq: projection.observedSeq, observedAt: projection.observedAt, asOf: projection.asOf, queryDigest: projection.queryDigest, projectionDigest: projection.projectionDigest,
+          nodeBytes: canonicalBytes(projection.nodes), contradictionBytes: canonicalBytes(projection.contradictions),
+          jsonNodeBytes: Buffer.byteLength(JSON.stringify(projection.nodes)), jsonContradictionBytes: Buffer.byteLength(JSON.stringify(projection.contradictions)),
+        },
+      }));
+      if (this._events.length !== priorLastSeq) throw new CoordinationRefusal('knowledge recall preflight changed coordination state', 'knowledge_recall_integrity');
+    }
+    if (preview.replayed) return preview;
     const payload = preview.event.payload;
     const fixedTs = this._clock(); const predicted = { schemaVersion: 1, seq: this._events.length + 1, ts: fixedTs, kind: 'knowledge.recall', actor: auth.actor, idempotencyKey: auth.key, payload };
     this._validateKnowledgeRecallPayload(payload, predicted, false); const event = this._append('knowledge.recall', payload, auth, fixedTs);

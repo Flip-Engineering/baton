@@ -113,7 +113,7 @@ test('CI2/CI7: deployment context resolves multi-root operations but cannot repl
     beforeRoot: '/snapshots/invoke', overlayEpoch: 'abc', budgetTokens: 100, signal: undefined,
     actor: 'web:user:session', repoId: 'repo-a', idempotencyKey: 'web.command:command-1', root: '/trusted/repository',
   });
-  for (const context of [{ root: '/attacker-controlled' }, { repoId: 'repo-b' }, { idempotencyKey: 'deployment:forged' }, { transport: 'web' }]) {
+  for (const context of [{ root: '/attacker-controlled' }, { repoId: 'repo-b' }, { idempotencyKey: 'deployment:forged' }, { transport: 'web' }, { aciOutputPolicy: { maxEnvelopeBytes: 1, maxPayloadBytes: 1 } }]) {
     const forbidden = registry(fixture(), { contexts: { fixture: context } });
     await assert.rejects(forbidden.invoke('fixture', 'fixture.read', {}, {
       budgetTokens: 100, repoId: 'repo-a', idempotencyKey: 'direct:trusted',
@@ -121,6 +121,14 @@ test('CI2/CI7: deployment context resolves multi-root operations but cannot repl
   }
   const malformed = registry(fixture(), { contexts: { fixture: () => ({ value: Infinity }) } });
   await assert.rejects(malformed.invoke('fixture', 'fixture.read', {}, { budgetTokens: 100 }), (error) => error.code === 'capability_context_invalid');
+});
+
+test('CI2/CI7: output preflight is closed-card opt-in and carries only registry-derived ceilings', async () => {
+  const capability = fixture({ card: () => ({ name: 'fixture', version: '1', ops: { 'fixture.read': { reverifiable: true, preflight_output: true } } }) });
+  const subject = registry(capability, { maxEnvelopeBytes: 32 * 1024 });
+  await subject.invoke('fixture', 'fixture.read', {}, { budgetTokens: 17, aciOutputPolicy: { maxEnvelopeBytes: 1, maxPayloadBytes: 1 } });
+  assert.deepEqual(capability.calls[0].ctx.aciOutputPolicy, { maxEnvelopeBytes: 32 * 1024, maxPayloadBytes: 68 });
+  assert.throws(() => registry(fixture({ card: () => ({ name: 'fixture', version: '1', ops: { 'fixture.read': { reverifiable: true, preflight_output: false } } }) })), /invalid capability card/);
 });
 
 test('CI2/CI4: cancellation and coordinator-authority smuggling are rejected and audited', async () => {

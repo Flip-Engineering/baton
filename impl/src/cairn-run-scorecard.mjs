@@ -67,7 +67,7 @@ export class CairnRunScorecard {
         || typeof p.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(p.repoId) || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0)
         || p.maxQueryBytes > 64 * 1024 || p.maxQueryTerms > 1_024 || p.maxCandidates > 100_000 || p.maxCandidateBytes > 64 * 1024 * 1024
         || p.maxResults > 1_000 || p.maxGraphDepth > 64 || p.maxGraphRows > 1_000_000 || p.maxSnippetBytes > 64 * 1024 || p.maxReceiptBytes > 16 * 1024 * 1024 || p.maxResultBytes > 16 * 1024 * 1024
-        || typeof this.coordination.previewKnowledgeRecallBounded !== 'function' || typeof this.coordination.recallKnowledgeBounded !== 'function' || typeof this.coordination.reverifyKnowledgeRecall !== 'function') throw new TypeError('Cairn recall configuration is invalid');
+        || typeof this.coordination.recallKnowledgeBounded !== 'function' || typeof this.coordination.reverifyKnowledgeRecall !== 'function') throw new TypeError('Cairn recall configuration is invalid');
       this.knowledgeRecallPolicy = Object.freeze(p); this.knowledgeRecallPolicyDigest = sha256(stable(p));
     }
     mkdirSync(this.artifactRoot, { recursive: true, mode: 0o700 });
@@ -84,7 +84,7 @@ export class CairnRunScorecard {
       ops['causal.audit'] = { latency_class: 'interactive', deterministic: true, side_effects: ['artifact.write'], reverifiable: true };
       ops['causal.trace'] = { latency_class: 'interactive', deterministic: true, side_effects: [], reverifiable: true };
     }
-    if (this.knowledgeRecallPolicy) ops['causal.recall'] = { latency_class: 'interactive', deterministic: true, side_effects: ['coordination.append', 'knowledge.read_receipt'], reverifiable: true };
+    if (this.knowledgeRecallPolicy) ops['causal.recall'] = { latency_class: 'interactive', deterministic: true, side_effects: ['coordination.append', 'knowledge.read_receipt'], reverifiable: true, preflight_output: true };
     return {
       name: 'cairn', version: 1,
       ops,
@@ -215,9 +215,15 @@ export class CairnRunScorecard {
     return result;
   }
 
-  _preflightRecallResult(preview, audit) {
+  _preflightRecallResult(preview, audit, ctx) {
     const p = preview.publication;
-    return this._recallResult({ event: preview.event, receiptBytes: preview.receiptBytes, projection: { observedSeq: p.observedSeq, observedAt: p.observedAt, asOf: p.asOf, queryDigest: p.queryDigest, projectionDigest: p.projectionDigest, nodes: null, contradictions: null } }, audit, { nodeBytes: p.nodeBytes, contradictionBytes: p.contradictionBytes });
+    const result = this._recallResult({ event: preview.event, receiptBytes: preview.receiptBytes, projection: { observedSeq: p.observedSeq, observedAt: p.observedAt, asOf: p.asOf, queryDigest: p.queryDigest, projectionDigest: p.projectionDigest, nodes: null, contradictions: null } }, audit, { nodeBytes: p.nodeBytes, contradictionBytes: p.contradictionBytes });
+    if (ctx?.aciOutputPolicy) {
+      const envelopeBytes = Buffer.byteLength(JSON.stringify(result)) - (2 * Buffer.byteLength('null')) + p.jsonNodeBytes + p.jsonContradictionBytes;
+      const payloadBytes = Buffer.byteLength(JSON.stringify(result.payload)) - (2 * Buffer.byteLength('null')) + p.jsonNodeBytes + p.jsonContradictionBytes;
+      if (envelopeBytes > ctx.aciOutputPolicy.maxEnvelopeBytes || payloadBytes > ctx.aciOutputPolicy.maxPayloadBytes) throw typed('causal recall result exceeded ACI publication ceiling', 'capability_result_oversize');
+    }
+    return result;
   }
 
   _causalRecall(args, ctx, verifyReceiptSeq = null, writeReceipt = true) {
@@ -228,8 +234,8 @@ export class CairnRunScorecard {
     const audit = this._recallAudit(upper); this._knowledgeContext(ctx); const request = { ...clone(args), observedSeq: upper };
     const auth = { actor: ctx.actor, key: `knowledge.recall:${sha256(stable({ repoId: ctx.repoId, actor: ctx.actor, idempotencyKey: ctx.idempotencyKey }))}` };
     if (!writeReceipt) return this._recallResult(this.coordination.reverifyKnowledgeRecall(request, this.knowledgeRecallPolicy, ctx.actor, verifyReceiptSeq), audit);
-    const preview = this.coordination.previewKnowledgeRecallBounded(request, this.knowledgeRecallPolicy, auth); this._preflightRecallResult(preview, audit); this._knowledgeContext(ctx);
-    const recalled = this.coordination.recallKnowledgeBounded(request, this.knowledgeRecallPolicy, auth); this._knowledgeContext(ctx); return this._recallResult(recalled, audit);
+    const recalled = this.coordination.recallKnowledgeBounded(request, this.knowledgeRecallPolicy, auth, (preview) => { this._knowledgeContext(ctx); this._preflightRecallResult(preview, audit, ctx); });
+    this._knowledgeContext(ctx); return this._recallResult(recalled, audit);
   }
 
   _events(worker, throughSeq) {
