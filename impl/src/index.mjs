@@ -62,6 +62,7 @@ export { MergirafResolver } from './structured-merge.mjs';
 export { CapabilityRegistry } from './capability-registry.mjs';
 export { AdvisoryFeedRegistry } from './advisory-feed-registry.mjs';
 export { ProviderPollSupervisor } from './provider-poll-supervisor.mjs';
+export { HttpsHmacAdvisoryFeedSource, signHmacAdvisoryPollPageForTest } from './https-hmac-advisory-feed.mjs';
 export { Ed25519AdvisoryWebhookSource, HmacAdvisoryWebhookSource, signEd25519AdvisoryWebhookForTest, signHmacAdvisoryWebhookForTest } from './hmac-advisory-webhook.mjs';
 
 function localGitEnv() {

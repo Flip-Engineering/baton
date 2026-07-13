@@ -103,5 +103,16 @@ official pending/guard state, replays with zero network, degrades again on a lat
 complete timer/process/worktree/runtime/branch/writer cleanup. Recursive Baton review begins only
 after PF1–PF5 are green; PF6 must be green before enabling automatic scheduling.
 
+Production assembly uses `HttpsHmacAdvisoryFeedSource`, which composes the existing exact-wire HMAC
+webhook boundary. Its deployment owns the fixed HTTPS origin/operation, bearer credential, HMAC key,
+private CA trust, cursor start, and all card ceilings. The default transport uses `https.request`
+directly and never follows redirects. Requests send the private cursor only in an authenticated
+header; responses are canonical bounded pages whose HMAC domain binds operation, poll/page identity,
+observed/final sequence, request/current/next cursor digests, and exact page bytes. Items preserve the
+same canonical hint bytes as webhook delivery, so ordinary receipt dedupe/alias semantics remain.
+Poll and item authentication receipts are secret-derived but secret-free and replay synchronously
+without network; bearer values, raw cursors, CA material, signatures, and URLs never enter receipts,
+proofs, logs, status reads, or coordination state.
+
 This is local deployment-neutral state. No project-manager or homelab runtime is consulted,
 mutated, or required.

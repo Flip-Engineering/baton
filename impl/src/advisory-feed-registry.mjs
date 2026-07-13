@@ -129,7 +129,10 @@ export class AdvisoryFeedRegistry {
     const controller = new AbortController(); const signal = ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal; const deadline = Date.now() + entry.card.poll.maxWallMs;
     const timed = async (promise) => { let timer; try { const remaining = deadline - Date.now(); if (remaining <= 0) throw typed('provider poll exceeded wall-time ceiling', 'provider_poll_timeout'); return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(typed('provider poll exceeded wall-time ceiling', 'provider_poll_timeout')); }, remaining); })]); } finally { clearTimeout(timer); } };
     try {
-      const value = await timed(Promise.resolve(entry.source.pollFull(Object.freeze({ signal }), Object.freeze({ cardDigest: entry.cardDigest }))));
+      const pollToken = Object.freeze({});
+      let value;
+      try { value = await timed(Promise.resolve(entry.source.pollFull(Object.freeze({ signal }), Object.freeze({ cardDigest: entry.cardDigest, pollToken })))); }
+      catch (error) { if (ctx.signal?.aborted) throw typed('provider poll cancelled', 'cancelled'); throw error; }
       const fields = ['schemaVersion', 'providerId', 'pollId', 'observedAt', 'window', 'finalSequence', 'cursorDigest', 'authReceiptDigest', 'keyFingerprint', 'pages'];
       if (!exactKeys(value, fields) || value.schemaVersion !== 1 || value.providerId !== providerId || !bounded(value.pollId, entry.card.ceilings.maxIdentityBytes) || !time(value.observedAt) || !exactKeys(value.window, ['fromSequence', 'toSequence'])
         || !Number.isSafeInteger(value.window.fromSequence) || !Number.isSafeInteger(value.window.toSequence) || value.window.fromSequence < entry.card.poll.initialSequence || value.window.toSequence < value.window.fromSequence || value.finalSequence !== value.window.toSequence
@@ -143,7 +146,7 @@ export class AdvisoryFeedRegistry {
       }
       if (itemBytes.length > entry.card.poll.maxItems || totalBytes > entry.card.poll.maxTotalBytes) throw typed('provider poll exceeded deployment ceiling', 'provider_poll_oversize');
       const receipts = [];
-      for (const raw of itemBytes) { if (signal.aborted) throw typed('provider poll cancelled', 'cancelled'); const receipt = await timed(Promise.resolve(entry.source.verifyDelivery(Object.freeze({ mode: 'poll', raw: Buffer.from(raw) }), Object.freeze({ signal, cardDigest: entry.cardDigest })))); receipts.push(validateReceipt(receipt, entry.card, raw, 'poll', entry.cardDigest)); }
+      for (const raw of itemBytes) { if (signal.aborted) throw typed('provider poll cancelled', 'cancelled'); const receipt = await timed(Promise.resolve(entry.source.verifyDelivery(Object.freeze({ mode: 'poll', raw: Buffer.from(raw) }), Object.freeze({ signal, cardDigest: entry.cardDigest, pollToken })))); receipts.push(validateReceipt(receipt, entry.card, raw, 'poll', entry.cardDigest)); }
       const expectedSequences = Array.from({ length: value.window.toSequence - value.window.fromSequence + 1 }, (_, index) => value.window.fromSequence + index);
       if (JSON.stringify(receipts.map((row) => row.sequence)) !== JSON.stringify(expectedSequences)) throw typed('provider poll sequence window is incomplete', 'provider_poll_incomplete');
       const core = { schemaVersion: 1, providerId, sourceEpoch: entry.cardDigest, cardDigest: entry.cardDigest, pollId: value.pollId, observedAt: value.observedAt, window: json(value.window), finalSequence: value.finalSequence, cursorDigest: value.cursorDigest, authReceiptDigest: value.authReceiptDigest, keyFingerprint: value.keyFingerprint, pageDigests, itemDigests: itemBytes.map(digest), totalBytes, receiptRawDigests: receipts.map((row) => row.rawDigest) };
