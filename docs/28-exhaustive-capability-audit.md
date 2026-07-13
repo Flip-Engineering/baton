@@ -196,10 +196,13 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    semantic-processing, observed-Source, machine-ingress, and store-serialized pending-admission
    foundation plus card-pinned exact-wire HMAC and Ed25519/private-CAS webhook boundaries,
    readiness-critical startup receipt replay, and source-epoch sequence conflict/gap health.
-   Seedless all-green official Quartermaster refresh now ships with deployment index authority,
-   invoke-plus-reverify evidence, async policy/index race refusal, atomic multi-coordinate pending
-   removal, and verified Source lineage. Production HTTPS routing, cursor reconciliation/poll
-   lifecycle, seedless monotonic adverse union/fan-out, bounded reads, and the full live matrix remain.
+   Seedless official Quartermaster processing now covers all-green and mixed/adverse roots with
+   deployment index authority, invoke-plus-reverify evidence, async policy/index race refusal,
+   atomic multi-coordinate pending removal, immutable multi-provider contributions, a grow-only
+   aggregate guard, live Decision/Finding fan-out, manual/provider coexistence, causal Source/
+   Finding/Affects lineage, and stale-but-blocking Phase 42 policy migration. Production HTTPS
+   routing, explicit cursor/full-poll reconciliation completion and poll lifecycle, bounded
+   authenticated reads, durable deferred attempts, and the full authenticated Grok matrix remain.
    Continue the remaining explicitly
    catalogued later rungs, then demand-earned Cairn Rungs 1–4, Vantage, Evidence Ladder, and Skill
    Forge/computer use behind stronger containment.

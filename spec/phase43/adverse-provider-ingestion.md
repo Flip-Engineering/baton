@@ -189,3 +189,20 @@ credential, or external knowledge export. Trusted release/advisory-to-symbol ide
 independently verified Sigstore/SLSA, the exact `internal` decision, clearance/non-resurrection,
 additional ecosystems/providers, Socket/full SCA, composite `fleet_reuse`/`fleet_provenance`, and
 deeper Cairn remain separate catalogued contracts. There is no homelab integration.
+
+## Implementation checkpoint — seedless adverse transaction
+
+Commits `3c491af` and `40cf1d1` ship the seedless store transaction for green, mixed, and adverse
+processing roots. The store retains immutable provider contributions separately from replaceable
+manual guards, derives one grow-only per-repository exact-coordinate aggregate, fans it out to all
+live Decision/dossier targets under the writer lease, drains the complete pending root in the same
+append, and projects receipt → official Source → contribution Finding → aggregate Finding causal
+lineage. Policy A → B invalidates only the policy-bound aggregate Finding and marks the guard stale
+but blocking; contribution Findings remain immutable history. A later current-policy adverse fact
+reprojects the union, while green cannot clear it.
+
+The production Quartermaster integration accepts only its closed npm identity schemas: exact
+`ecosystem/package/version`, optionally plus pinned `system:"NPM"`. Any additional identity field
+or mismatch leaves processing pending. Still unshipped in this phase are production HTTPS route
+assembly, cursor/full-poll reconciliation completion, poll ownership/close/drain, durable deferred
+attempt scheduling, bounded authenticated receipt/health/currentness reads, and their live fixture.

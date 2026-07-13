@@ -1,0 +1,194 @@
+{
+  "at": "2026-07-13T02:53:56.660Z",
+  "repoHead": "3c491af40c8d6082cca832cc7a481c91fa0cbb44",
+  "runId": "phase43-adverse-harness-matrix",
+  "rows": [
+    {
+      "taskId": "phase43-adverse-claude-review",
+      "harness": "claude",
+      "model": "claude-opus-4-6",
+      "workerId": "w-1",
+      "pid": 97431,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "modelRequested": "claude-opus-4-6",
+        "modelResolved": "claude-opus-4-6",
+        "modelObserved": "claude-opus-4-6",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 0,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "terminal": {
+        "status": "failed",
+        "summary": "Not logged in · Please run /login",
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "verification": {
+          "command": null,
+          "claimedExit": null
+        },
+        "openQuestions": [],
+        "budgetUsed": {
+          "tokens": 0,
+          "usd": 0
+        }
+      }
+    },
+    {
+      "taskId": "phase43-adverse-codex-review",
+      "harness": "codex",
+      "model": "gpt-5.6-sol",
+      "workerId": "w-2",
+      "pid": 97436,
+      "result": {
+        "status": "cancelled",
+        "ready": true
+      },
+      "route": {
+        "modelRequested": "gpt-5.6-sol",
+        "modelResolved": "gpt-5.6-sol",
+        "modelObserved": "gpt-5.6-sol",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 103063,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "terminal": null
+    },
+    {
+      "taskId": "phase43-adverse-glm-review",
+      "harness": "glm",
+      "model": "glm-4.7",
+      "workerId": "w-3",
+      "pid": 97442,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "modelRequested": "glm-4.7",
+        "modelResolved": "glm-4.7",
+        "modelObserved": "glm-4.7",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 107952,
+        "usd": 0.788412
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "terminal": {
+        "status": "completed",
+        "summary": "I've completed the adversarial review of the Phase 43 seedless adverse-provider transaction. The review is now available at `reviews/dogfood/phase43-adverse-glm-review.md` with the three required sections:\n\n## Summary\n\n**Verdict: PASS** — The transaction correctly implements seedless provider adverse ingestion.\n\n**Key findings identified (all P1 - properly mitigated):**\n\n1. **Multi-coordinate atomicity** — Appears to have a race condition but is actually correct; uses event-level atomicity with ",
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "verification": {
+          "command": null,
+          "claimedExit": null
+        },
+        "openQuestions": [],
+        "budgetUsed": {
+          "tokens": 107952,
+          "usd": 0.788412
+        }
+      }
+    },
+    {
+      "taskId": "phase43-adverse-grok-review",
+      "harness": "grok",
+      "model": "grok-4.5",
+      "workerId": "w-4",
+      "pid": null,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 0,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "terminal": {
+        "error": "Authentication required",
+        "phase": "spawn"
+      }
+    }
+  ],
+  "responses": [],
+  "kills": [
+    {
+      "taskId": "phase43-adverse-claude-review",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "phase43-adverse-codex-review",
+      "ack": {
+        "ok": true,
+        "result": "already_dead"
+      }
+    },
+    {
+      "taskId": "phase43-adverse-glm-review",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "phase43-adverse-grok-review",
+      "ack": {
+        "ok": true,
+        "result": "already_dead"
+      }
+    }
+  ],
+  "checks": {
+    "runnerHealthy": true,
+    "allHarnessesAdmitted": true,
+    "allExactRoutesRequested": true,
+    "glmCredentialedNativePid": true,
+    "glmFreshVerified": false,
+    "allControlSafe": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimesGone": true,
+    "branchesGone": true,
+    "writerAuthorityReleased": true
+  },
+  "fatal": null,
+  "pass": false
+}
