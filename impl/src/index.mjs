@@ -23,6 +23,7 @@ import { CapabilityRegistry } from './capability-registry.mjs';
 import { AdvisoryFeedRegistry } from './advisory-feed-registry.mjs';
 import { ProviderPollSupervisor } from './provider-poll-supervisor.mjs';
 import { ProviderProcessingSupervisor } from './provider-processing-supervisor.mjs';
+import { SessionRecoverySupervisor } from './session-recovery-supervisor.mjs';
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const canonicalDigest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
@@ -63,6 +64,7 @@ export { MergirafResolver } from './structured-merge.mjs';
 export { CapabilityRegistry } from './capability-registry.mjs';
 export { AdvisoryFeedRegistry } from './advisory-feed-registry.mjs';
 export { ProviderPollSupervisor } from './provider-poll-supervisor.mjs';
+export { SessionRecoverySupervisor } from './session-recovery-supervisor.mjs';
 export { ProviderProcessingSupervisor } from './provider-processing-supervisor.mjs';
 export { HttpsHmacAdvisoryFeedSource, signHmacAdvisoryPollPageForTest } from './https-hmac-advisory-feed.mjs';
 export { Ed25519AdvisoryWebhookSource, HmacAdvisoryWebhookSource, signEd25519AdvisoryWebhookForTest, signHmacAdvisoryWebhookForTest } from './hmac-advisory-webhook.mjs';
@@ -149,7 +151,7 @@ function worktreeManager(repoRoot, opts = {}) {
         return { ok: false, reason: `session context validation failed: ${err?.message ?? err}` };
       }
     },
-    async reconcile() { try { return await worktreeMod.reconcile(repoRoot, []); } catch { return null; } },
+    async reconcile(expectedActiveTaskIds = []) { try { return await worktreeMod.reconcile(repoRoot, expectedActiveTaskIds); } catch { return null; } },
   };
 }
 
@@ -172,6 +174,7 @@ function refereeFn(task, result, opts) {
  *          providerProcessingSchedule?:{intervalMs:number,maxBatch:number,maxAttempts:number,initialBackoffMs:number,maxBackoffMs:number,maxStateRows:number},
  *          providerRead?:{maxProviders:number,maxProcessing:number,maxStateRows:number,maxBytes:number},
  *          routeLearningPolicy?:{mode:'round-robin'|'adaptive'|'auto',halfLifeMs:number,explorationConstant:number,seedDiscount:number,minSamplesForAdaptive:number,defaultPriorSuccessRate:number},
+ *          sessionRecoveryPolicy?:{maxSessions:number,maxStateRows:number,timeoutMs:number},
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
  *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
@@ -192,6 +195,15 @@ export function createDriver(opts) {
       || !Number.isFinite(policy.defaultPriorSuccessRate) || policy.defaultPriorSuccessRate <= 0 || policy.defaultPriorSuccessRate >= 1) throw new TypeError('route learning policy is invalid');
     routeLearningPolicy = Object.freeze({ ...policy });
   }
+  let sessionRecoveryPolicy;
+  if (opts.sessionRecoveryPolicy !== undefined) {
+    const policy = opts.sessionRecoveryPolicy; const fields = ['maxSessions', 'maxStateRows', 'timeoutMs'];
+    if (!policy || Object.keys(policy).sort().join(',') !== fields.sort().join(',') || !Number.isSafeInteger(policy.maxSessions) || policy.maxSessions <= 0 || policy.maxSessions > 1_000
+      || !Number.isSafeInteger(policy.maxStateRows) || policy.maxStateRows < policy.maxSessions || policy.maxStateRows > 100_000
+      || !Number.isSafeInteger(policy.timeoutMs) || policy.timeoutMs <= 0 || policy.timeoutMs > 5 * 60_000) throw new TypeError('session recovery policy is invalid');
+    sessionRecoveryPolicy = Object.freeze({ ...policy });
+  }
+  const startupRecoveryAuthority = sessionRecoveryPolicy ? Object.freeze({}) : null;
   const log = new Log(opts.logDir, () => new Date(now()).toISOString());
   const fences = new FenceTable();
   const router = new AdaptiveRouter({ ...(routeLearningPolicy ?? { mode: 'adaptive' }), now });
@@ -361,6 +373,7 @@ export function createDriver(opts) {
     approvalTimeoutMs: opts.approvalTimeoutMs ?? 60000,
     stopDeadlineMs: opts.stopDeadlineMs ?? 15000,
     recoveryTimeoutMs: opts.recoveryTimeoutMs ?? 15000,
+    startupRecoveryAuthority,
     budgetPolicy: opts.budgetPolicy,
     watchdog: opts.watchdog,
   });
@@ -383,21 +396,27 @@ export function createDriver(opts) {
       onEvent: (event) => log.append({ worker: 'hub-provider-processor', harness: 'baton', turnEpoch: 0, actor: 'policy', kind: event.kind, payload: Object.fromEntries(Object.entries(event).filter(([key]) => key !== 'kind')) }),
     });
   }
-  providerProcessor?.start();
-  providerPoller?.start();
+  let sessionRecovery = null; let ready = Promise.resolve(Object.freeze({ status: 'ready', eligible: 0, attached: 0, failed: 0, skipped: 0, failures: Object.freeze([]) }));
+  if (sessionRecoveryPolicy) {
+    sessionRecovery = new SessionRecoverySupervisor({ coordinator, authority: startupRecoveryAuthority, policy: sessionRecoveryPolicy, onEvent: (event) => log.append({ worker: 'hub-session-recovery', harness: 'baton', turnEpoch: 0, actor: 'policy', kind: event.kind, payload: Object.fromEntries(Object.entries(event).filter(([key]) => key !== 'kind')) }) });
+    ready = sessionRecovery.start();
+  }
   let closed = false;
+  const startProviderSupervisors = () => { if (!closed) { providerProcessor?.start(); providerPoller?.start(); } };
+  if (sessionRecovery) ready.then((summary) => { if (summary.status !== 'failed') startProviderSupervisors(); }); else startProviderSupervisors();
   const closeAuthority = () => { const authorityClosed = coordinator.closeAuthority(); closed = true; coordination.releaseWriterLease(); return authorityClosed; };
   const close = () => {
     if (closed) return false;
-    if (providerPoller || providerProcessor) throw Object.assign(new Error('supervised drivers require await closeAsync()'), { code: 'driver_async_close_required' });
+    if (providerPoller || providerProcessor || sessionRecovery) throw Object.assign(new Error('supervised drivers require await closeAsync()'), { code: 'driver_async_close_required' });
     return closeAuthority();
   };
   const closeAsync = async () => {
     if (closed) return false;
+    if (sessionRecovery) await sessionRecovery.close();
     if (providerProcessor) await providerProcessor.close();
     if (providerPoller) await providerPoller.close();
     return closeAuthority();
   };
-  return { coordinator, story, router, log, coordination, advisoryFeeds, providerPoller, providerProcessor, close, closeAsync };
+  return { coordinator, story, router, log, coordination, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, ready, close, closeAsync };
   } catch (error) { if (writerLease) coordination.releaseWriterLease(); throw error; }
 }

@@ -420,6 +420,9 @@ export class Coordinator {
     this._approvalTimeoutMs = opts.approvalTimeoutMs ?? 60000;
     this._stopDeadlineMs = opts.stopDeadlineMs ?? 15000;
     this._recoveryTimeoutMs = opts.recoveryTimeoutMs ?? 15000;
+    this._startupRecoveryAuthority = opts.startupRecoveryAuthority ?? null;
+    this._startupRecoveryState = this._startupRecoveryAuthority ? 'idle' : 'disabled';
+    this._startupRecoveryError = null;
     this._budgetThresholds = Object.freeze([...(opts.budgetPolicy?.thresholds ?? [0.5, 0.8, 1])].sort((a, b) => a - b));
     this._budgetHardStopAt = opts.budgetPolicy?.hardStopAt ?? 1;
     this._budgetTerminalGraceMs = opts.budgetPolicy?.terminalGraceMs ?? 250;
@@ -546,14 +549,20 @@ export class Coordinator {
       });
     }
 
-    // D10: reconcile first, then rebuild all state purely from the log.
-    if (this._worktrees && typeof this._worktrees.reconcile === 'function') {
-      Promise.resolve(this._worktrees.reconcile()).catch(noop);
-    }
-    if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') {
-      Promise.resolve(this._runtimeScopes.reconcile([])).catch(noop);
-    }
+    // Ordinary startup retains D10's reconcile-before-replay posture. Opt-in automatic native
+    // recovery must first identify the exact replayed session owners; otherwise an empty expected
+    // set would delete the very worktrees whose ownership the fresh handshake must validate.
+    if (!this._startupRecoveryAuthority && this._worktrees && typeof this._worktrees.reconcile === 'function') Promise.resolve(this._worktrees.reconcile()).catch(noop);
+    if (!this._startupRecoveryAuthority && this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') Promise.resolve(this._runtimeScopes.reconcile([])).catch(noop);
     this._replay();
+    if (this._startupRecoveryAuthority) {
+      const eligible = [...this._workers.values()].filter((handle) => {
+        const adapter = this._adapters[handle.vendor];
+        return handle.status === 'orphaned' && handle.sessionRef?.persistence === 'native' && handle.sessionContext?.ownerTaskId && adapter && cardSupportsSession(adapter.card(), { mode: 'resume' });
+      });
+      if (this._worktrees && typeof this._worktrees.reconcile === 'function') Promise.resolve(this._worktrees.reconcile(eligible.map((handle) => handle.sessionContext.ownerTaskId))).catch(noop);
+      if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') Promise.resolve(this._runtimeScopes.reconcile(eligible.map((handle) => handle.id))).catch(noop);
+    }
     this._terminalizeUnattachedCoordinationTasks();
   }
 
@@ -564,8 +573,33 @@ export class Coordinator {
   tick() {
     if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' });
     if (this._fatalError) throw this._fatalError;
+    if (this._startupRecoveryState === 'pending') throw Object.assign(new Error('startup session recovery is pending'), { code: 'session_recovery_pending' });
+    if (this._startupRecoveryState === 'failed') throw this._startupRecoveryError;
     this._sweepDeadlines();
     this._dispatchPass();
+  }
+
+  beginStartupRecovery(authority) {
+    if (!authority || authority !== this._startupRecoveryAuthority || this._startupRecoveryState !== 'idle') throw Object.assign(new Error('startup session recovery authority is unavailable'), { code: 'session_recovery_authority' });
+    this._startupRecoveryState = 'pending';
+  }
+
+  startupRecoveryCandidates(authority, maxStateRows) {
+    if (authority !== this._startupRecoveryAuthority || this._startupRecoveryState !== 'pending') throw Object.assign(new Error('startup session recovery authority is unavailable'), { code: 'session_recovery_authority' });
+    if (!Number.isSafeInteger(maxStateRows) || maxStateRows <= 0 || this._workers.size > maxStateRows) throw Object.assign(new Error('startup session recovery state exceeds deployment capacity'), { code: 'session_recovery_capacity' });
+    const rows = [];
+    for (const handle of this._workers.values()) {
+      const task = this._tasks.get(handle.taskId); const adapter = this._adapters[handle.vendor];
+      if (handle.status !== 'orphaned' || !task || !handle.sessionContext || handle.sessionRef?.persistence !== 'native' || !adapter || !cardSupportsSession(adapter.card(), { mode: 'resume' })) continue;
+      rows.push(handle.id);
+    }
+    return rows;
+  }
+
+  completeStartupRecovery(authority, failureCode = null) {
+    if (authority !== this._startupRecoveryAuthority || this._startupRecoveryState !== 'pending') throw Object.assign(new Error('startup session recovery authority is unavailable'), { code: 'session_recovery_authority' });
+    if (failureCode === null) { this._startupRecoveryState = 'ready'; return; }
+    const error = new Error('startup session recovery failed'); error.code = /^[a-z0-9_]{1,64}$/.test(failureCode) ? failureCode : 'session_recovery_failed'; this._startupRecoveryError = error; this._startupRecoveryState = 'failed';
   }
 
   /** Keep fleet capabilities behind the same coordinator health boundary as every other
@@ -1184,7 +1218,9 @@ export class Coordinator {
   /** PS7: explicitly reattach a replayed native session. Recovery never trusts a stale PID;
    * authority comes only from a fresh adapter handshake that reports the expected native ID. */
   async recover(workerId, opts = {}) {
-    this.tick();
+    const startup = opts.startupAuthority === this._startupRecoveryAuthority && this._startupRecoveryState === 'pending';
+    if (!startup) this.tick();
+    else { if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' }); if (this._fatalError) throw this._fatalError; }
     const handle = this._getWorker(workerId);
     const task = this._tasks.get(handle.taskId);
     if (handle.status !== 'orphaned') return { ok: false, result: 'worker_not_orphaned' };
@@ -1846,11 +1882,13 @@ export class Coordinator {
   }
 
   async kill(workerId, actor = 'orchestrator', opts = {}) {
+    const startup = opts.startupAuthority === this._startupRecoveryAuthority && this._startupRecoveryAuthority !== null;
     if (this._fatalError) {
-      if (opts.emergency !== true) throw this._fatalError;
+      if (opts.emergency !== true && !startup) throw this._fatalError;
       return this._emergencyKillUnlogged(this._getWorker(workerId));
     }
-    this.tick();
+    if (!startup) this.tick();
+    else if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' });
     const handle = this._getWorker(workerId);
     if (opts.expectedFence !== undefined) {
       const check = this._fences.check(workerId, { fence: opts.expectedFence });
