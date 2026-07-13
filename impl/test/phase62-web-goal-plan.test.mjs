@@ -13,7 +13,7 @@ const digest = (character) => character.repeat(64);
 const goal = Object.freeze({ goalId: `goal:${digest('a')}`, version: 1, digest: digest('b') });
 const plan = Object.freeze({ planId: `plan:${digest('c')}`, version: 1, digest: digest('d') });
 const budget = Object.freeze({ tokens: 10_000, usd: 2, wallMin: 10, providerTurns: 8 });
-const verification = Object.freeze({ command: 'node --test', expectExit: 0, timeoutMs: 60_000 });
+const verification = Object.freeze({ command: 'node', arguments: ['--test'], cwd: '.', envAllowlist: ['PATH'], expectExit: 0, expectResult: 'exit_code', timeoutMs: 60_000, maxOutputBytes: 1_000_000, requiredPredecessorEvidence: [] });
 const node = Object.freeze({
   key: 'implement', objective: 'Implement the approved slice', definitionOfDone: ['tests pass'], deps: [],
   pathScope: ['impl/**'], risk: 'high', budget, verification,
@@ -68,7 +68,7 @@ test('GP1/GP4/GP7: web goal and plan commands bind separate powers and transport
   for (const [command, args, power] of cases) {
     const suffix = command.replaceAll('_', '-');
     const refused = await web.execute(context(['observe']), envelope(command, args, `refused-${suffix}`));
-    assert.equal(refused.status, 403);
+    assert.equal(refused.status, 403, JSON.stringify(refused.body));
     const accepted = await web.execute(context([power]), envelope(command, args, suffix));
     assert.equal(accepted.status, 200);
     if (command !== 'goal_plan_status') assert.doesNotMatch(JSON.stringify(accepted.body), /actor|idempotencyKey|principalId|proposerPrincipalId|sessionDigest|private-/);

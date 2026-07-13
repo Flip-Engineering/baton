@@ -9,6 +9,7 @@
 // sandbox.dir, which is `SameWorktreeError`).
 
 import { spawn } from 'node:child_process';
+import { resolve, sep } from 'node:path';
 
 export class SameWorktreeError extends Error {
   constructor(message) { super(message); this.name = 'SameWorktreeError'; }
@@ -73,7 +74,7 @@ function runCommand(command, cwd, timeoutMs) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ exitCode: timedOut ? null : exitCode, output: Buffer.concat(chunks).toString('utf8'), timedOut });
+      resolve({ exitCode: timedOut ? null : exitCode, output: Buffer.concat(chunks).toString('utf8'), timedOut, outputExceeded: false });
     };
 
     const armTimer = () => {
@@ -107,6 +108,45 @@ function runCommand(command, cwd, timeoutMs) {
   });
 }
 
+function runClosedCommand(verification, sandboxDir, timeoutMs) {
+  return new Promise((settle) => {
+    const root = resolve(sandboxDir);
+    const cwd = resolve(root, verification.cwd);
+    if (cwd !== root && !cwd.startsWith(`${root}${sep}`)) {
+      settle({ exitCode: null, output: '', timedOut: false, outputExceeded: false, invalid: 'cwd_outside_sandbox' });
+      return;
+    }
+    const env = Object.fromEntries(verification.envAllowlist
+      .filter((name) => Object.hasOwn(process.env, name))
+      .map((name) => [name, process.env[name]]));
+    const child = spawn(verification.command, verification.arguments, { cwd, detached: true, env, shell: false });
+    const chunks = []; let bytes = 0; let settled = false; let timedOut = false; let outputExceeded = false; let timer;
+    const stop = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* noop */ } } };
+    const finish = (exitCode) => {
+      if (settled) return;
+      settled = true; clearTimeout(timer);
+      settle({ exitCode: timedOut || outputExceeded ? null : exitCode, output: Buffer.concat(chunks).toString('utf8'), timedOut, outputExceeded });
+    };
+    const capture = (chunk) => {
+      if (outputExceeded) return;
+      const remaining = verification.maxOutputBytes - bytes;
+      if (chunk.length > remaining) {
+        if (remaining > 0) chunks.push(chunk.subarray(0, remaining));
+        bytes = verification.maxOutputBytes; outputExceeded = true; stop(); return;
+      }
+      chunks.push(chunk); bytes += chunk.length;
+    };
+    child.stdout?.on('data', capture); child.stderr?.on('data', capture);
+    child.on('error', () => finish(null)); child.on('close', (code) => finish(code));
+    timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);
+  });
+}
+
+function runPinnedVerification(verification, sandboxDir, timeoutMs) {
+  if (Array.isArray(verification.arguments)) return runClosedCommand(verification, sandboxDir, timeoutMs);
+  return runCommand(verification.command, sandboxDir, timeoutMs);
+}
+
 /**
  * Re-derive the truth of a worker's result.
  * @param {object} task
@@ -132,7 +172,7 @@ export async function verify(task, result, sandbox, opts = {}) {
   const timeoutMs = task.verification.timeoutMs ?? 120000;
 
   const start = Date.now();
-  const resultRun = await runCommand(task.verification.command, sandbox.dir, timeoutMs);
+  const resultRun = await runPinnedVerification(task.verification, sandbox.dir, timeoutMs);
   const durationMs = Date.now() - start;
 
   const observedExit = resultRun.timedOut ? null : resultRun.exitCode;
@@ -142,12 +182,12 @@ export async function verify(task, result, sandbox, opts = {}) {
   // diverge from. Only a claim that contradicts the hub's observation is a divergence.
   const hadClaim = claimedExit !== null;
   const matchesClaim = !hadClaim || observedExit === claimedExit;
-  const passed = observedExit === task.verification.expectExit;
+  const passed = !resultRun.timedOut && !resultRun.outputExceeded && observedExit === task.verification.expectExit;
 
   let redGreen = null;
   let baseExit = null;
   if (opts.baseSandbox) {
-    const baseRun = await runCommand(task.verification.command, opts.baseSandbox.dir, timeoutMs);
+    const baseRun = await runPinnedVerification(task.verification, opts.baseSandbox.dir, timeoutMs);
     baseExit = baseRun.timedOut ? null : baseRun.exitCode;
     redGreen = passed && baseExit !== task.verification.expectExit;
   }
@@ -197,7 +237,9 @@ export async function verify(task, result, sandbox, opts = {}) {
   }
 
   let note;
-  if (!matchesClaim) {
+  if (resultRun.outputExceeded) {
+    note = `FAIL: verification output exceeded ${task.verification.maxOutputBytes} bytes.`;
+  } else if (!matchesClaim) {
     note = `Diverged from claim: worker claimed exit ${claimedExit}, hub observed ${observedExit}`
       + `${resultRun.timedOut ? ' (timeout: verification command exceeded the deadline)' : ''}.`;
   } else if (resultRun.timedOut) {
@@ -219,6 +261,7 @@ export async function verify(task, result, sandbox, opts = {}) {
   const verdict = {
     reverified: true,
     observedExit,
+    outputExceeded: resultRun.outputExceeded,
     hadClaim,
     matchesClaim,
     passed,

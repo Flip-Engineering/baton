@@ -512,3 +512,26 @@ test('observedOutputTail is truncated to exactly the last 4000 chars of combined
   assert.equal(verdict.observedOutputTail.length, 4000);
   assert.equal(verdict.observedOutputTail, 'x'.repeat(4000), 'it is the END of the output, not the start');
 });
+
+test('closed plan verification executes argv without a shell, strips ambient env, and fails at the output bound', async (t) => {
+  const sandbox = makeSandbox();
+  t.after(() => sandbox.cleanup());
+  process.env.BATON_TEST_CREDENTIAL = 'must-not-cross';
+  t.after(() => { delete process.env.BATON_TEST_CREDENTIAL; });
+  const verification = {
+    command: 'node',
+    arguments: ['-e', "if (process.env.BATON_TEST_CREDENTIAL) process.exit(9); process.stdout.write('x'.repeat(128));"],
+    cwd: '.', envAllowlist: ['PATH'], expectExit: 0, expectResult: 'exit_code', timeoutMs: 5_000,
+    maxOutputBytes: 64, requiredPredecessorEvidence: [],
+  };
+  const verdict = await verify(
+    makeTask({ verification }),
+    makeResult({ verification: { command: 'node', claimedExit: 0 } }),
+    sandbox,
+  );
+  assert.equal(verdict.outputExceeded, true);
+  assert.equal(verdict.passed, false);
+  assert.equal(verdict.observedExit, null);
+  assert.equal(verdict.observedOutputTail, 'x'.repeat(64));
+  assert.match(verdict.note, /output exceeded 64 bytes/);
+});

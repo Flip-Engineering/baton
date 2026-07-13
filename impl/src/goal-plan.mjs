@@ -124,11 +124,29 @@ export function assertGoalSuccessor(prior, next, policy) {
   }
 }
 
-function normalizeVerification(value, policy) {
-  exactObject(value, ['command', 'expectExit', 'timeoutMs']);
+function normalizeVerification(value, policy, deps) {
+  exactObject(value, ['command', 'arguments', 'cwd', 'envAllowlist', 'expectExit', 'expectResult', 'timeoutMs', 'maxOutputBytes', 'requiredPredecessorEvidence']);
+  const command = normalizedText(value.command, policy.limits.maxTextBytes, 'verification.command');
+  if (command.startsWith('/') || command.includes('\\') || command.split('/').includes('..')
+    || /[\s|&;<>`$()]/u.test(command)) fail('verification executable must be direct and repository-safe', 'plan_verification_invalid');
+  if (!Array.isArray(value.arguments) || value.arguments.length > policy.limits.maxItems
+    || value.arguments.some((argument) => typeof argument !== 'string' || argument.includes('\0') || Buffer.byteLength(argument) > policy.limits.maxTextBytes)) fail('verification arguments are invalid', 'plan_verification_invalid');
+  const cwd = normalizedText(value.cwd, policy.limits.maxTextBytes, 'verification.cwd');
+  if (cwd.startsWith('/') || cwd.includes('\\') || cwd.split('/').includes('..')) fail('verification cwd is outside repository scope', 'plan_verification_invalid');
+  const envAllowlist = normalizedSet(value.envAllowlist, policy.limits.maxItems, 128, 'verification.envAllowlist');
+  if (envAllowlist.some((name) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)
+    || /(?:auth|cookie|credential|key|password|secret|token)/i.test(name))) fail('verification environment allowlist contains a credential-shaped name', 'plan_verification_invalid');
+  const requiredPredecessorEvidence = normalizedSet(value.requiredPredecessorEvidence, policy.limits.maxDepsPerNode, 256, 'verification.requiredPredecessorEvidence');
   if (!Number.isSafeInteger(value.expectExit) || value.expectExit < 0 || value.expectExit > 255
-    || !Number.isSafeInteger(value.timeoutMs) || value.timeoutMs <= 0 || value.timeoutMs > 24 * 60 * 60 * 1000) fail('verification contract is invalid', 'plan_verification_invalid');
-  return { command: normalizedText(value.command, policy.limits.maxTextBytes, 'verification.command'), expectExit: value.expectExit, timeoutMs: value.timeoutMs };
+    || value.expectResult !== 'exit_code'
+    || !Number.isSafeInteger(value.timeoutMs) || value.timeoutMs <= 0 || value.timeoutMs > 24 * 60 * 60 * 1000
+    || !Number.isSafeInteger(value.maxOutputBytes) || value.maxOutputBytes <= 0 || value.maxOutputBytes > 16 * 1024 * 1024
+    || goalPlanDigest(requiredPredecessorEvidence) !== goalPlanDigest(deps)) fail('verification contract is invalid', 'plan_verification_invalid');
+  return {
+    command, arguments: [...value.arguments], cwd, envAllowlist, expectExit: value.expectExit,
+    expectResult: value.expectResult, timeoutMs: value.timeoutMs, maxOutputBytes: value.maxOutputBytes,
+    requiredPredecessorEvidence,
+  };
 }
 function normalizeScope(values, policy) {
   const scope = normalizedSet(values, policy.limits.maxScopePaths, policy.limits.maxTextBytes, 'pathScope');
@@ -147,15 +165,16 @@ function normalizeNode(value, policy, goal) {
   exactObject(value, ['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects']);
   const key = normalizedText(value.key, 256, 'node.key');
   if (!/^[A-Za-z0-9._:-]+$/.test(key)) fail('plan node key is invalid', 'plan_node_invalid');
+  const deps = normalizedSet(value.deps, policy.limits.maxDepsPerNode, 256, 'node.deps');
   const result = {
     key,
     objective: normalizedText(value.objective, policy.limits.maxTextBytes, 'node.objective'),
     definitionOfDone: normalizedSet(value.definitionOfDone, policy.limits.maxItems, policy.limits.maxTextBytes, 'node.definitionOfDone'),
-    deps: normalizedSet(value.deps, policy.limits.maxDepsPerNode, 256, 'node.deps'),
+    deps,
     pathScope: normalizeScope(value.pathScope, policy),
     risk: value.risk,
     budget: normalizeBudget(value.budget, policy, 'plan node'),
-    verification: normalizeVerification(value.verification, policy),
+    verification: normalizeVerification(value.verification, policy, deps),
     routes: normalizeRoutes(value.routes, policy),
     capabilities: normalizedSet(value.capabilities, policy.limits.maxItems, 128, 'node.capabilities'),
     effects: normalizedSet(value.effects, policy.limits.maxItems, 128, 'node.effects'),

@@ -28,7 +28,7 @@ const auth = (principalId, powers, idempotencyKey, extra = {}) => ({
   repoId: 'repo-phase62', runId: null, idempotencyKey, ...extra,
 });
 const budget = (tokens = 20_000) => ({ tokens, usd: 2, wallMin: 10, providerTurns: 8 });
-const verification = Object.freeze({ command: 'node --test', expectExit: 0, timeoutMs: 60_000 });
+const verification = Object.freeze({ command: 'node', arguments: ['--test'], cwd: '.', envAllowlist: ['PATH'], expectExit: 0, expectResult: 'exit_code', timeoutMs: 60_000, maxOutputBytes: 1_000_000, requiredPredecessorEvidence: [] });
 
 class NativePlanAdapter {
   constructor() { this.cb = null; this.spawnCalls = 0; this.promptCalls = 0; }
@@ -137,7 +137,7 @@ test('GP2/GP3/GP8: weakening, cycles, and double-counted budget refuse without d
   const { goal } = await approved(driver, 'baseline');
   const before = driver.coordination.events().length;
   await assert.rejects(driver.coordinator.defineGoal({ objective: 'Weakened', definitionOfDone: [], constraints: [], risk: 'low', budget: budget(30_000), predecessor: { goalId: goal.goalId, version: goal.version, digest: goal.digest } }, auth('goal-owner', ['goal:define'], 'goal:weaken')), (error) => error.code === 'goal_weakened');
-  await assert.rejects(driver.coordinator.proposePlan({ goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest }, predecessor: null, nodes: [{ key: 'a', objective: 'A', definitionOfDone: ['node --test passes'], deps: ['b'], pathScope: [], risk: 'low', budget: budget(15_000), verification, routes: { harnesses: ['mock'], models: [], efforts: [] }, capabilities: ['code'], effects: ['repository_edit'] }, { key: 'b', objective: 'B', definitionOfDone: [], deps: ['a'], pathScope: [], risk: 'low', budget: budget(15_000), verification, routes: { harnesses: ['mock'], models: [], efforts: [] }, capabilities: ['code'], effects: ['repository_edit'] }] }, auth('planner-2', ['plan:propose'], 'plan:cycle')), (error) => ['plan_cycle', 'plan_budget_exceeded'].includes(error.code));
+  await assert.rejects(driver.coordinator.proposePlan({ goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest }, predecessor: null, nodes: [{ key: 'a', objective: 'A', definitionOfDone: ['node --test passes'], deps: ['b'], pathScope: [], risk: 'low', budget: budget(15_000), verification: { ...verification, requiredPredecessorEvidence: ['b'] }, routes: { harnesses: ['mock'], models: [], efforts: [] }, capabilities: ['code'], effects: ['repository_edit'] }, { key: 'b', objective: 'B', definitionOfDone: [], deps: ['a'], pathScope: [], risk: 'low', budget: budget(15_000), verification: { ...verification, requiredPredecessorEvidence: ['a'] }, routes: { harnesses: ['mock'], models: [], efforts: [] }, capabilities: ['code'], effects: ['repository_edit'] }] }, auth('planner-2', ['plan:propose'], 'plan:cycle')), (error) => ['plan_cycle', 'plan_budget_exceeded'].includes(error.code));
   assert.equal(driver.coordination.events().length, before);
   driver.close();
 });

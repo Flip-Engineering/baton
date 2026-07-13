@@ -49,7 +49,7 @@ function makeDriver(authorizations) {
   });
 }
 const budget = { tokens: 20_000, usd: 2, wallMin: 10, providerTurns: 8 };
-const verification = { command: 'node --test', expectExit: 0, timeoutMs: 60_000 };
+const verification = { command: 'node', arguments: ['--test'], cwd: '.', envAllowlist: ['PATH'], expectExit: 0, expectResult: 'exit_code', timeoutMs: 60_000, maxOutputBytes: 1_000_000, requiredPredecessorEvidence: [] };
 
 test('GP1/GP4/GP7: MCP Goal/Plan tools expose closed schemas and bind exact principal powers', async () => {
   const authorizations = []; const driver = makeDriver(authorizations);
@@ -88,7 +88,7 @@ test('GP1/GP4/GP7: MCP Goal/Plan tools expose closed schemas and bind exact prin
       routes: { harnesses: ['mock'], models: [], efforts: [] }, capabilities: ['code', 'test'], effects: ['repository_edit'],
     }],
   });
-  assert.equal(planResponse.result.isError, false);
+  assert.equal(planResponse.result.isError, false, JSON.stringify(planResponse.result));
   assert.doesNotMatch(JSON.stringify(planResponse.result), /actor|idempotencyKey|principalId|proposerPrincipalId|sessionDigest/);
   const plan = planResponse.result.structuredContent.plan;
 

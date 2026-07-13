@@ -34,7 +34,7 @@ const policy = Object.freeze({
 });
 const goalBudget = () => ({ tokens: 20_000, usd: 2, wallMin: 10, providerTurns: 8 });
 const nodeBudget = () => ({ tokens: 10_000, usd: 1, wallMin: 5, providerTurns: 4 });
-const verification = () => ({ command: 'node --test', expectExit: 0, timeoutMs: 60_000 });
+const verification = () => ({ command: 'node', arguments: ['--test'], cwd: '.', envAllowlist: ['PATH'], expectExit: 0, expectResult: 'exit_code', timeoutMs: 60_000, maxOutputBytes: 1_000_000, requiredPredecessorEvidence: [] });
 const ref = (kind, value) => ({
   [`${kind}Id`]: value[`${kind}Id`], version: value.version, digest: value.digest,
 });
@@ -280,6 +280,56 @@ test('GP5/GP8: harness, model, and effort constraints each refuse before dispatc
   store.releaseWriterLease();
 });
 
+test('GP3/GP8: plan verification is closed direct-exec authority with bounded cwd, env, argv, output, and predecessor evidence', () => {
+  const invalid = {
+    shell: { ...verification(), command: 'node && false' },
+    cwd_escape: { ...verification(), cwd: '../outside' },
+    credential_env: { ...verification(), envAllowlist: ['GLM_API_KEY', 'PATH'] },
+    predecessor_mismatch: { ...verification(), requiredPredecessorEvidence: ['missing-node'] },
+    argv_oversize: { ...verification(), arguments: Array(policy.limits.maxItems + 1).fill('x') },
+    output_oversize: { ...verification(), maxOutputBytes: 16 * 1024 * 1024 + 1 },
+  };
+  for (const [name, candidate] of Object.entries(invalid)) {
+    const store = new CoordinationStore(root(`verification-${name}`), { goalPlanPolicy: policy });
+    const goal = store.defineGoal({
+      objective: 'Verify safely', definitionOfDone: ['safe verification'], constraints: [], risk: 'high',
+      budget: goalBudget(), predecessor: null,
+    }, storeAuth('goal-owner', `goal:verification:${name}`)).goal;
+    const before = store.snapshot().lastSeq;
+    assert.throws(() => store.proposePlan({
+      goal: ref('goal', goal), predecessor: null, nodes: [{
+        key: 'verify', objective: 'Run safe verification', definitionOfDone: ['safe verification'], deps: [],
+        pathScope: ['impl/**'], risk: 'high', budget: nodeBudget(), verification: candidate,
+        routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] },
+        capabilities: ['test'], effects: [],
+      }],
+    }, storeAuth('planner', `plan:verification:${name}`)), (error) => error.code === 'plan_verification_invalid', name);
+    assert.equal(store.snapshot().lastSeq, before, name);
+    store.releaseWriterLease();
+  }
+});
+
+test('GP3/GP4: any verification argument change creates a new plan version that requires fresh approval', () => {
+  const store = new CoordinationStore(root('verification-version'), { goalPlanPolicy: policy });
+  const goal = store.defineGoal({
+    objective: 'Version verification', definitionOfDone: ['safe verification'], constraints: [], risk: 'high',
+    budget: goalBudget(), predecessor: null,
+  }, storeAuth('goal-owner', 'goal:verification-version')).goal;
+  const node = (contract) => [{
+    key: 'verify', objective: 'Run verification', definitionOfDone: ['safe verification'], deps: [],
+    pathScope: ['impl/**'], risk: 'high', budget: nodeBudget(), verification: contract,
+    routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] }, capabilities: ['test'], effects: [],
+  }];
+  const first = store.proposePlan({ goal: ref('goal', goal), predecessor: null, nodes: node(verification()) }, storeAuth('planner', 'plan:verification-version:1')).plan;
+  store.approvePlan({ goal: ref('goal', goal), plan: ref('plan', first), expectedDisposition: null, disposition: 'approved' }, storeAuth('approver', 'approval:verification-version:1'));
+  const changed = { ...verification(), arguments: ['--test', 'impl/test/phase62-goal-plan-authority.test.mjs'] };
+  const second = store.proposePlan({ goal: ref('goal', goal), predecessor: ref('plan', first), nodes: node(changed) }, storeAuth('planner', 'plan:verification-version:2')).plan;
+  assert.equal(second.version, 2); assert.notEqual(second.digest, first.digest);
+  const gate = { ...gateFor(goal, second), nodeKey: 'verify', capabilities: ['test'], effects: [] };
+  assert.throws(() => store.previewPlanDispatch(gate, { vendor: 'mock', model: 'model-a', effort: 'low' }), (error) => error.code === 'plan_not_approved');
+  store.releaseWriterLease();
+});
+
 test('GP5/GP8: generic createTask cannot bypass mandatory dispatch or smuggle plan coordinates', () => {
   const store = new CoordinationStore(root('generic'), { goalPlanPolicy: policy });
   const { goal, plan } = definePlan(store, { suffix: 'generic', disposition: 'approved' });
@@ -364,7 +414,7 @@ test('GP5/GP8: caller verification substitution refuses before task, capacity, o
     () => driver.coordinator.spawn('mock', {
       goal: 'Implement the approved slice', constraints: ['No network access'],
       pathScope: ['impl/**'], definitionOfDone: 'node --test passes',
-      verification: { command: 'rm -rf .', expectExit: 0, timeoutMs: 60_000 },
+      verification: { ...verification(), command: 'rm', arguments: ['-rf', '.'] },
       budget: { tokens: 10_000, usd: 1, wallMin: 5 },
     }, {
       taskId: 'brief-substitution', goalPlan: gateFor(goal, plan),

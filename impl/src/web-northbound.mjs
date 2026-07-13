@@ -47,7 +47,7 @@ const GOAL_REF_FIELDS = new Set(['goalId', 'version', 'digest']);
 const PLAN_REF_FIELDS = new Set(['planId', 'version', 'digest']);
 const PLAN_NODE_FIELDS = new Set(['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects']);
 const PLAN_ROUTE_FIELDS = new Set(['harnesses', 'models', 'efforts']);
-const PLAN_VERIFICATION_FIELDS = new Set(['command', 'expectExit', 'timeoutMs']);
+const PLAN_VERIFICATION_FIELDS = new Set(['command', 'arguments', 'cwd', 'envAllowlist', 'expectExit', 'expectResult', 'timeoutMs', 'maxOutputBytes', 'requiredPredecessorEvidence']);
 const PLAN_GATE_FIELDS = new Set(['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'expectedDispatchVersion', 'capabilities', 'effects']);
 const AUTH_PATHS = new Set(['/v1/auth/login', '/v1/auth/refresh', '/v1/auth/logout']);
 const OIDC_START_PATH = '/v1/auth/oidc/start';
@@ -156,8 +156,12 @@ function goalPlanRef(value, kind) {
 }
 function planVerification(value) {
   return exactRecord(value, PLAN_VERIFICATION_FIELDS) && string(value.command)
+    && Array.isArray(value.arguments) && value.arguments.every((argument) => typeof argument === 'string')
+    && string(value.cwd) && stringList(value.envAllowlist) && value.expectResult === 'exit_code'
     && Number.isSafeInteger(value.expectExit) && value.expectExit >= 0 && value.expectExit <= 255
-    && Number.isSafeInteger(value.timeoutMs) && value.timeoutMs > 0;
+    && Number.isSafeInteger(value.timeoutMs) && value.timeoutMs > 0
+    && Number.isSafeInteger(value.maxOutputBytes) && value.maxOutputBytes > 0
+    && stringList(value.requiredPredecessorEvidence);
 }
 function planNode(value) {
   return exactRecord(value, PLAN_NODE_FIELDS) && string(value.key) && string(value.objective)

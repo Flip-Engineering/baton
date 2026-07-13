@@ -112,8 +112,11 @@ const goalPlanBudgetSchema = schema({
   wallMin: { type: 'integer', minimum: 1 }, providerTurns: { type: 'integer', minimum: 1 },
 }, ['tokens', 'usd', 'wallMin', 'providerTurns']);
 const goalPlanVerificationSchema = schema({
-  command: text, expectExit: { type: 'integer', minimum: 0, maximum: 255 }, timeoutMs: { type: 'integer', minimum: 1 },
-}, ['command', 'expectExit', 'timeoutMs']);
+  command: text, arguments: { type: 'array', items: { type: 'string' } }, cwd: text,
+  envAllowlist: textArray, expectExit: { type: 'integer', minimum: 0, maximum: 255 },
+  expectResult: { type: 'string', enum: ['exit_code'] }, timeoutMs: { type: 'integer', minimum: 1 },
+  maxOutputBytes: { type: 'integer', minimum: 1 }, requiredPredecessorEvidence: textArray,
+}, ['command', 'arguments', 'cwd', 'envAllowlist', 'expectExit', 'expectResult', 'timeoutMs', 'maxOutputBytes', 'requiredPredecessorEvidence']);
 const goalPlanRoutesSchema = schema({ harnesses: textArray, models: textArray, efforts: textArray }, ['harnesses', 'models', 'efforts']);
 const goalPlanNodeSchema = schema({
   key: text, objective: text, definitionOfDone: textArray, deps: textArray, pathScope: textArray, risk: text,
@@ -198,9 +201,13 @@ function validGoalPlanBudget(value) {
     && Number.isSafeInteger(value.wallMin) && value.wallMin > 0 && Number.isSafeInteger(value.providerTurns) && value.providerTurns > 0;
 }
 function validGoalPlanVerification(value) {
-  return closedRecord(value, ['command', 'expectExit', 'timeoutMs']) && nonempty(value.command)
+  return closedRecord(value, ['command', 'arguments', 'cwd', 'envAllowlist', 'expectExit', 'expectResult', 'timeoutMs', 'maxOutputBytes', 'requiredPredecessorEvidence']) && nonempty(value.command)
+    && Array.isArray(value.arguments) && value.arguments.every((argument) => typeof argument === 'string')
+    && nonempty(value.cwd) && validTextArray(value.envAllowlist) && value.expectResult === 'exit_code'
     && Number.isSafeInteger(value.expectExit) && value.expectExit >= 0 && value.expectExit <= 255
-    && Number.isSafeInteger(value.timeoutMs) && value.timeoutMs > 0;
+    && Number.isSafeInteger(value.timeoutMs) && value.timeoutMs > 0
+    && Number.isSafeInteger(value.maxOutputBytes) && value.maxOutputBytes > 0
+    && validTextArray(value.requiredPredecessorEvidence);
 }
 function validGoalPlanRoutes(value) {
   return closedRecord(value, ['harnesses', 'models', 'efforts'])
