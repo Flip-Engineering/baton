@@ -9,6 +9,8 @@ import test from 'node:test';
 import { AdvisoryFeedRegistry, HmacAdvisoryWebhookSource, createDriver, signHmacAdvisoryWebhookForTest } from '../src/index.mjs';
 
 const sha = (value) => createHash('sha256').update(value).digest('hex');
+const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
+const objectSha = (value) => sha(Buffer.from(JSON.stringify(canonical(value))));
 const secret = Buffer.alloc(32, 0x43); const keyFingerprint = sha(Buffer.from('phase43-hmac-key-id'));
 const occurredAt = '2026-07-13T04:00:00.000Z'; const now = () => Date.parse('2026-07-13T04:00:01.000Z');
 const body = Buffer.from('{"advisoryIds":["OSV-2026-43"],"coordinates":[{"ecosystem":"npm","package":"@scope/pkg","version":"1.2.3"}],"schemaVersion":1}');
@@ -81,6 +83,11 @@ test('AF2/AF10: private CAS byte substitution is detected during zero-network re
   const privateCas = cas(); const { registry } = fixture({ privateCas }); const receipt = await registry.verifyWebhook('fixture.secure', request());
   privateCas.values.set(receipt.rawDigest, Buffer.from('substituted'));
   await assert.rejects(registry.reverifyReceipt(receipt), (error) => error.code === 'provider_cas_invalid');
+});
+
+test('AF2/AF10: authentication-receipt metadata is recomputed from pinned domain and CAS bytes', async () => {
+  const { registry } = fixture(); const receipt = await registry.verifyWebhook('fixture.secure', request()); const tampered = { ...receipt, authReceiptDigest: '0'.repeat(64) }; const { contentDigest: ignored, ...core } = tampered; void ignored; tampered.contentDigest = objectSha(core);
+  await assert.rejects(registry.reverifyReceipt(tampered), (error) => error.code === 'provider_auth_receipt_invalid');
 });
 
 test('AF2/AF3: Coordinator native webhook ingress durably fences before acknowledging and exact retry is zero-append', async () => {

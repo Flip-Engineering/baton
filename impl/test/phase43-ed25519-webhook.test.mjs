@@ -25,17 +25,23 @@ test('AF1/AF2: Ed25519 card derives the pinned SPKI fingerprint and exact wire r
 });
 
 test('AF2: wrong key, body substitution, malformed/noncanonical signature, and fingerprint disagreement fail closed', async () => {
+  const valid = request().rawHeaders[2][1];
   for (const input of [
     request({ privateKey: other.privateKey }),
     request({ raw: Buffer.from(`${body} `), signedRaw: body }),
     request({ signature: Buffer.alloc(64).toString('base64').replace(/=$/, '') }),
+    request({ signature: `${valid}=` }),
+    request({ signature: valid.slice(0, -2) }),
+    request({ signature: `${valid}\n` }),
+    request({ signature: `-${valid.slice(1)}` }),
     request({ signature: 'not-base64!' }),
-  ]) { const registry = new AdvisoryFeedRegistry({ sources: { 'fixture.ed': source() } }); await assert.rejects(registry.verifyWebhook('fixture.ed', input), (error) => error.code === 'provider_auth_invalid'); }
+  ]) { const registry = new AdvisoryFeedRegistry({ sources: { 'fixture.ed': source() } }); await assert.rejects(registry.verifyWebhook('fixture.ed', input), (error) => ['provider_auth_invalid', 'provider_delivery_invalid'].includes(error.code)); }
   assert.throws(() => source(keys.publicKey, { keyFingerprint: '0'.repeat(64) }), /fingerprint disagrees/);
 });
 
 test('AF2: source epoch/key rotation cannot authenticate an old-key delivery under the new public key', async () => {
-  const oldRegistry = new AdvisoryFeedRegistry({ sources: { 'fixture.ed': source(keys.publicKey) } }); const old = await oldRegistry.verifyWebhook('fixture.ed', request());
-  const rotated = new AdvisoryFeedRegistry({ sources: { 'fixture.ed': source(other.publicKey) } }); assert.notEqual(rotated.cards()[0].cardDigest, old.cardDigest);
+  const privateCas = cas(); const oldRegistry = new AdvisoryFeedRegistry({ sources: { 'fixture.ed': source(keys.publicKey, { privateCas }) } }); const old = await oldRegistry.verifyWebhook('fixture.ed', request());
+  const rotated = new AdvisoryFeedRegistry({ sources: { 'fixture.ed': source(other.publicKey, { privateCas }) } }); assert.notEqual(rotated.cards()[0].cardDigest, old.cardDigest);
   await assert.rejects(rotated.verifyWebhook('fixture.ed', request()), (error) => error.code === 'provider_auth_invalid');
+  await assert.rejects(rotated.reverifyReceipt(old), (error) => ['provider_auth_receipt_invalid', 'provider_receipt_invalid'].includes(error.code));
 });

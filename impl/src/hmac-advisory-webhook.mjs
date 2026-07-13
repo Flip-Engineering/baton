@@ -42,6 +42,7 @@ export class HmacAdvisoryWebhookSource {
   _authCard() { return { scheme: 'hmac-sha256', keyFingerprints: [this.keyFingerprint], domain: 'baton-provider-webhook-v1', signatureEncoding: 'hex', headers: { signature: 'x-baton-signature', deliveryId: 'x-baton-delivery-id', timestamp: 'x-baton-timestamp', sequence: 'x-baton-sequence' } }; }
   _validSignatureEncoding(value) { return /^[a-f0-9]{64}$/.test(value ?? ''); }
   _verifySignature(value, signedDomain) { const expected = createHmac('sha256', this.secret).update(signedDomain).digest(); const observed = Buffer.from(value, 'hex'); return observed.length === expected.length && timingSafeEqual(observed, expected); }
+  _authReceiptDigest(raw, receipt) { const authCard = this._authCard(); const signedDomain = domain({ method: this.callback.method, path: this.callback.path, occurredAt: receipt.occurredAt, deliveryId: receipt.deliveryId, raw }); return sha(stable({ schemaVersion: 1, algorithm: authCard.scheme, keyFingerprint: this.keyFingerprint, domain: authCard.domain, domainDigest: sha(signedDomain) })); }
 
   async verifyWebhook(input, ctx = {}) {
     if (ctx.signal?.aborted) throw typed('provider delivery verification cancelled', 'cancelled');
@@ -68,17 +69,19 @@ export class HmacAdvisoryWebhookSource {
       || JSON.stringify(hint.advisoryIds) !== JSON.stringify([...new Set(hint.advisoryIds)].sort())) throw typed('provider webhook hint is invalid', 'provider_hint_invalid');
     const rawDigest = sha(raw); const stored = await this.privateCas.put(Buffer.from(raw), { digest: rawDigest, bytes: raw.length, signal: ctx.signal });
     if (!exactKeys(stored, ['storeId', 'digest', 'bytes']) || stored.storeId !== this.privateCas.storeId || stored.digest !== rawDigest || stored.bytes !== raw.length) throw typed('provider private CAS did not preserve authenticated bytes', 'provider_cas_invalid');
-    const authCard = this._authCard(); const domainDigest = sha(signedDomain); const authReceiptDigest = sha(stable({ schemaVersion: 1, algorithm: authCard.scheme, keyFingerprint: this.keyFingerprint, domain: authCard.domain, domainDigest }));
+    const authReceiptDigest = this._authReceiptDigest(raw, { occurredAt, deliveryId });
     return { schemaVersion: 1, providerId: this.providerId, deliveryId, rawDigest, rawBytes: raw.length, authReceiptDigest, keyFingerprint: this.keyFingerprint, occurredAt, sequence: Number(sequenceText), coordinates: hint.coordinates, advisoryIds: hint.advisoryIds, source: { handle: `art:sha256:${rawDigest}`, digest: rawDigest, bytes: raw.length, mediaType: 'application/json' } };
   }
 
   async readReceipt(receipt) {
     const raw = await this.privateCas.get(receipt.rawDigest); if (!Buffer.isBuffer(raw) || raw.length !== receipt.rawBytes || sha(raw) !== receipt.rawDigest) throw typed('provider private CAS replay diverged', 'provider_cas_invalid');
+    if (receipt.keyFingerprint !== this.keyFingerprint || receipt.authReceiptDigest !== this._authReceiptDigest(raw, receipt)) throw typed('provider authentication receipt replay diverged', 'provider_auth_receipt_invalid');
     return Buffer.from(raw);
   }
   readReceiptSync(receipt) {
     if (typeof this.privateCas.getSync !== 'function') throw typed('provider private CAS synchronous replay is unavailable', 'provider_replay_unavailable');
     const raw = this.privateCas.getSync(receipt.rawDigest); if (!Buffer.isBuffer(raw) || raw.length !== receipt.rawBytes || sha(raw) !== receipt.rawDigest) throw typed('provider private CAS replay diverged', 'provider_cas_invalid');
+    if (receipt.keyFingerprint !== this.keyFingerprint || receipt.authReceiptDigest !== this._authReceiptDigest(raw, receipt)) throw typed('provider authentication receipt replay diverged', 'provider_auth_receipt_invalid');
     return Buffer.from(raw);
   }
 }
