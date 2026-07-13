@@ -98,9 +98,17 @@ function impact(before, after, changes, depth) {
 export class AtlasCpgDelta {
   constructor(opts = {}) {
     if (!opts.artifactRoot) throw new TypeError('CPG delta artifactRoot required');
-    for (const key of ['maxSourceBytes', 'maxGraphBytes', 'maxDeltaBytes', 'maxImpactDepth', 'maxReachDefPairs', 'maxScopes', 'maxScopeDepth', 'maxBindings', 'maxBindingOccurrences']) if (!Number.isSafeInteger(opts[key]) || opts[key] <= 0) throw new TypeError(`${key} must be deployment-derived`);
+    for (const key of ['maxSourceBytes', 'maxGraphBytes', 'maxDeltaBytes', 'maxImpactDepth', 'maxReachDefPairs']) if (!Number.isSafeInteger(opts[key]) || opts[key] <= 0) throw new TypeError(`${key} must be deployment-derived`);
+    const maxScopes = opts.maxScopes ?? 1024;
+    const maxScopeDepth = opts.maxScopeDepth ?? 64;
+    const maxBindings = opts.maxBindings ?? 4096;
+    const maxBindingOccurrences = opts.maxBindingOccurrences ?? 32768;
+    if (!Number.isSafeInteger(maxScopes) || maxScopes <= 0) throw new TypeError('maxScopes must be a positive safe integer');
+    if (!Number.isSafeInteger(maxScopeDepth) || maxScopeDepth <= 0) throw new TypeError('maxScopeDepth must be a positive safe integer');
+    if (!Number.isSafeInteger(maxBindings) || maxBindings <= 0) throw new TypeError('maxBindings must be a positive safe integer');
+    if (!Number.isSafeInteger(maxBindingOccurrences) || maxBindingOccurrences <= 0) throw new TypeError('maxBindingOccurrences must be a positive safe integer');
     this.artifactRoot = opts.artifactRoot; this.maxDeltaBytes = opts.maxDeltaBytes; this.maxImpactDepth = opts.maxImpactDepth; this.now = opts.now ?? Date.now; this.record = opts.record ?? null;
-    mkdirSync(this.artifactRoot, { recursive: true, mode: 0o700 }); this.cpg = new AtlasCpgSlice({ artifactRoot: join(this.artifactRoot, 'graphs'), maxSourceBytes: opts.maxSourceBytes, maxArtifactBytes: opts.maxGraphBytes, maxReachDefPairs: opts.maxReachDefPairs, maxScopes: opts.maxScopes, maxScopeDepth: opts.maxScopeDepth, maxBindings: opts.maxBindings, maxBindingOccurrences: opts.maxBindingOccurrences, now: this.now, record: this.record });
+    mkdirSync(this.artifactRoot, { recursive: true, mode: 0o700 }); this.cpg = new AtlasCpgSlice({ artifactRoot: join(this.artifactRoot, 'graphs'), maxSourceBytes: opts.maxSourceBytes, maxArtifactBytes: opts.maxGraphBytes, maxReachDefPairs: opts.maxReachDefPairs, maxScopes, maxScopeDepth, maxBindings, maxBindingOccurrences, now: this.now, record: this.record });
   }
   card() { return Object.freeze({ name: 'atlas-cpg-delta', version: '0.1.0', underlying: this.cpg.card().underlying, bindingModel: BINDING_MODEL, graphSchemaVersion: 3, deltaSchemaVersion: 2, ops: { 'cpg.delta': { deterministic: true, latency_class: 'interactive', side_effects: 'writes_content_addressed_artifacts', reverifiable: true } }, limitations: ['semantic keys use named occurrence ordinals', 'impact is graph reachability, not behavioral proof', ...this.cpg.card().limitations] }); }
   async invoke(op, args, ctx) {

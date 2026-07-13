@@ -14,9 +14,17 @@ function names(value, required = true) { return Array.isArray(value) && (!requir
 export class AtlasCpgTaint {
   constructor(opts = {}) {
     if (!opts.artifactRoot) throw new TypeError('CPG taint artifactRoot required');
-    for (const key of ['maxSourceBytes', 'maxGraphBytes', 'maxResultBytes', 'maxDepth', 'maxPaths', 'maxReachDefPairs', 'maxScopes', 'maxScopeDepth', 'maxBindings', 'maxBindingOccurrences']) if (!Number.isSafeInteger(opts[key]) || opts[key] <= 0) throw new TypeError(`${key} must be deployment-derived`);
+    for (const key of ['maxSourceBytes', 'maxGraphBytes', 'maxResultBytes', 'maxDepth', 'maxPaths', 'maxReachDefPairs']) if (!Number.isSafeInteger(opts[key]) || opts[key] <= 0) throw new TypeError(`${key} must be deployment-derived`);
+    const maxScopes = opts.maxScopes ?? 1024;
+    const maxScopeDepth = opts.maxScopeDepth ?? 64;
+    const maxBindings = opts.maxBindings ?? 4096;
+    const maxBindingOccurrences = opts.maxBindingOccurrences ?? 32768;
+    if (!Number.isSafeInteger(maxScopes) || maxScopes <= 0) throw new TypeError('maxScopes must be a positive safe integer');
+    if (!Number.isSafeInteger(maxScopeDepth) || maxScopeDepth <= 0) throw new TypeError('maxScopeDepth must be a positive safe integer');
+    if (!Number.isSafeInteger(maxBindings) || maxBindings <= 0) throw new TypeError('maxBindings must be a positive safe integer');
+    if (!Number.isSafeInteger(maxBindingOccurrences) || maxBindingOccurrences <= 0) throw new TypeError('maxBindingOccurrences must be a positive safe integer');
     this.artifactRoot = opts.artifactRoot; this.maxResultBytes = opts.maxResultBytes; this.maxDepth = opts.maxDepth; this.maxPaths = opts.maxPaths; this.now = opts.now ?? Date.now; this.record = opts.record ?? null;
-    mkdirSync(this.artifactRoot, { recursive: true, mode: 0o700 }); this.cpg = new AtlasCpgSlice({ artifactRoot: join(this.artifactRoot, 'graphs'), maxSourceBytes: opts.maxSourceBytes, maxArtifactBytes: opts.maxGraphBytes, maxReachDefPairs: opts.maxReachDefPairs, maxScopes: opts.maxScopes, maxScopeDepth: opts.maxScopeDepth, maxBindings: opts.maxBindings, maxBindingOccurrences: opts.maxBindingOccurrences, now: this.now, record: this.record });
+    mkdirSync(this.artifactRoot, { recursive: true, mode: 0o700 }); this.cpg = new AtlasCpgSlice({ artifactRoot: join(this.artifactRoot, 'graphs'), maxSourceBytes: opts.maxSourceBytes, maxArtifactBytes: opts.maxGraphBytes, maxReachDefPairs: opts.maxReachDefPairs, maxScopes, maxScopeDepth, maxBindings, maxBindingOccurrences, now: this.now, record: this.record });
   }
   card() { return Object.freeze({ name: 'atlas-cpg-taint', version: '0.2.0', underlying: this.cpg.card().underlying, bindingModel: BINDING_MODEL, graphSchemaVersion: 3, taintSchemaVersion: 2, ops: { 'cpg.taint': { deterministic: true, latency_class: 'interactive', side_effects: 'writes_content_addressed_artifacts', reverifiable: true } }, limitations: ['operator-specified names are policy assertions', 'single-file CFG may-reaching value graph with literal-only dead-branch pruning', 'no general path-condition solving/aliases/heap/implicit flow/exceptions/interprocedural returns/dynamic dispatch'] }); }
   async invoke(op, args, ctx) {
