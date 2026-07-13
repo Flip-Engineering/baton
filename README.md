@@ -21,7 +21,7 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **1112/1112
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **1121/1121
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
@@ -84,7 +84,7 @@ authoring, waiver, clearance, install, project-manager export, or homelab integr
 provider feeds, independently verified provenance, exact `internal` decisions, trusted advisory/
 source identity and true reachability, plan approval, positive clearance, additional ecosystems,
 composite surfaces, and deeper Cairn remain pending. The live policy-cycle proof passes **13/13**;
-the current canonical suite is **1112/1112 green**.
+the current canonical suite is **1121/1121 green**.
 
 Phases 43–50 extend the provider, routing, representation-attestation, and Cairn causal-knowledge
 verticals through durable provider recovery, exact route learning, supervised native-session
@@ -107,6 +107,17 @@ The recursive exact-route gate fresh-verifies the project-key GLM PASS report, r
 provider readiness, starts both Grok routes concurrently, records exact close for all four process
 groups, explicitly kills GLM, and restores every ownership surface. The strict native matrix stays
 honestly red at this installed Grok CLI's pre-readiness authentication refusal.
+Phase 53 closes Cairn's operator contradiction seam. `causal.contradictions` exposes a stable,
+bounded, untrusted-evidence workspace, while `causal.resolve_contradiction` performs an explicit
+authenticated prefix-CAS winner/loser decision through one replay-validated atomic event that
+closes the edge, invalidates only the loser, and records exact prior-reader contamination. Direct,
+authenticated HTTPS, and MCP invoke/reverify share one authority; cancellation and output ceilings
+fail before commit, and post-append cancellation is explicitly commit-wins. Nine grouped Phase 53
+contracts, 65 adjacent Cairn contracts, and the **1121/1121** canonical suite are green. Recursive
+project-key GLM fresh-verifies PASS; exact Codex is honestly budget-cancelled, both Grok groups are
+concurrently auth-red, and every process and ownership surface is exactly closed and reaped. Baton
+remains self-contained: project-manager is architectural inspiration only, with no homelab runtime
+or integration target.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 

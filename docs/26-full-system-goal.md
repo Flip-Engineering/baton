@@ -656,9 +656,28 @@ are green. Recursive Baton independently fresh-verifies the project-key GLM PASS
 exact Codex provider readiness, overlaps two exact Grok process groups, records matching close for
 all four routes, explicitly kills GLM, and restores every owned resource. The strict provider
 matrix remains honestly red at the installed Grok CLI's authentication refusal before readiness.
-Authenticated contradiction UX is next; versioned learned weighting, Playbook/Skill promotion,
-Scratch Board/Bench, Goal/Plan authority, retention/checkpoints, and approval-gated neutral export
-remain explicit. Baton stays self-contained with no project-manager or homelab runtime integration.
+Phase 53 separately closes authenticated contradiction UX; versioned learned weighting,
+Playbook/Skill promotion, Scratch Board/Bench, Goal/Plan authority, retention/checkpoints, and
+approval-gated neutral export remain explicit. Baton stays self-contained with no project-manager
+or homelab runtime integration.
+
+Phase 53 makes unresolved causal conflict operable without adding a second state machine.
+`causal.contradictions` reruns the critical audit at a caller-pinned prefix and returns stable
+canonical pages containing complete live pairs, bounded UTF-8 snippets, and evidence/content
+digests under an explicit untrusted frame. `causal.resolve_contradiction` accepts only an
+authenticated explicit edge/winner/loser selection with exact edge and endpoint versions. One
+schema-versioned replay-validated prefix-CAS event closes the edge, invalidates only the loser, and
+records every bounded ordinary or recall reader of that loser; the winner and all historical views
+remain intact. Direct ACI, authenticated HTTPS, and MCP share trusted transport-derived authority,
+exact idempotency and reverify, and pre-effect audit/output/cancellation/append gates. Preflight
+state mutation refuses rather than rebasing; after the durable append, commit wins and Baton returns
+the receipt. Nine grouped contracts, 65 adjacent Cairn contracts, and the 1121/1121 canonical suite
+are green. Recursive exact project-key GLM fresh-verifies PASS, exact Codex is honestly
+budget-cancelled, two concurrent Grok routes remain auth-red before readiness, and all four exact
+process/ownership lifecycles reap. Learned recall weighting, automatic conflict resolution,
+Playbook/Skill promotion, Scratch Board/Bench, retention/checkpoints, and neutral export remain
+catalogued—not silently folded into this operator seam. The project-manager influence remains
+architectural prior art for Baton's local graph; no homelab or external graph runtime is added.
 
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.

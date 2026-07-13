@@ -98,9 +98,10 @@ bok_export(scope: { project?: string, since_run?: string })
 - Edges: `Informed` (Decision←evidence, = PROV `wasInformedBy`), `ProducedBy` (Finding←run/task, = PROV `wasGeneratedBy`), `DerivedFrom` (= PROV `wasDerivedFrom`), `Supersedes` (bi-temporal invalidation, keeps history), `Contradicts`, `Supports`.
 - **Bi-temporal on every node/edge** (Graphiti): `t_event` (ledger `seq` + wall clock of the thing) and `t_observed` (when promoted); `Supersedes`/`Contradicts` carry `t_valid`/`t_invalid` so a refuted belief is *invalidated, not deleted*.
 
-**Current shipped contract:** Phases 47–50 and 52 ship causal integrity/audit/trace, bounded pull-only
+**Current shipped contract:** Phases 47–50 and 52–53 ship causal integrity/audit/trace, bounded pull-only
 recall, the Phase 49 closed promotion taxonomy, the Phase 50 derived-Scratch exception, and
-Phase 52's verified recall-outcome attribution. Phase
+Phase 52's verified recall-outcome attribution plus Phase 53's authenticated contradiction
+workspace. Phase
 49 admits only closed operator/orchestrator Decisions, policy Counterexamples, and independently
 verified cited observed Scratch Findings. Phase 50 separately permits release, supersession, or
 retraction of Scratch Findings after a fact-bound independent oracle with exact producer/reviewer
@@ -110,6 +111,10 @@ authority. Phase 52 binds task-scoped receipts to later exact verified terminal 
 only pass/fail-after association with `causationClaimed:false`; it neither accepts worker ratings nor
 mutates ranking or confidence. These operations do not promote arbitrary terminal events,
 auto-inject recall, integrate oracle changes, or export to project-manager/homelab.
+Phase 53's stable audited view exposes both sides as bounded untrusted evidence; only an explicit
+authenticated edge/winner/loser/version prefix-CAS may close the edge and invalidate the loser.
+That decision preserves historical truth and contaminates exact earlier ordinary/recall readers,
+without automatic resolution, voting, or confidence mutation.
 
 **Later promotion-policy direction** (not current authority): candidate-generation may eventually
 expand over the ledger, but each source class requires its own closed contract. Candidate classes

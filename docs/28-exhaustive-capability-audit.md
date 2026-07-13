@@ -204,6 +204,19 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    Cairn gate and 1112/1112 canonical suite are green; recursive project-key GLM fresh-verifies
    PASS, while exact Codex and two concurrent Grok process groups retain honest route/lifecycle/reap
    evidence and the current Grok provider-readiness matrix stays authentication-red.
+26. **Cairn authenticated contradiction workspace:** Phase 53 adds deployment-pinned
+   `causal.contradictions` and `causal.resolve_contradiction` operations. The first presents a
+   stable paged audited workspace of complete unresolved pairs using only bounded UTF-8 snippets
+   and evidence/content digests. The second requires the caller to name edge, winner, loser, and
+   all three exposed validity versions, then appends one replay-validated prefix-CAS event that
+   closes the edge, invalidates only the loser, and records every bounded earlier ordinary/recall
+   read. Historical views remain exact. Direct, authenticated HTTPS, and MCP share transport-derived
+   authority; forged actors, stale/reversed races, malformed bundles, audit failures, cancellation,
+   preflight mutation, append failure, and every independent ceiling fail closed. A durable append
+   is explicitly commit-wins. Nine grouped CX tests, the 65-test adjacent Cairn gate, and the
+   1121/1121 canonical suite are green. Recursive project-key GLM fresh-verifies PASS; Codex is
+   honestly budget-cancelled, both Grok groups overlap but remain auth-red, and every process and
+   ownership surface exactly closes and reaps.
 
 ## What remains partial
 
@@ -220,8 +233,8 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   restart hydration, bounded advice, causal integrity, contradiction resolution, and attested
   audit/trace, bounded recall, and the first closed selective-promotion batch now ship locally;
   derived-Scratch independent-oracle release/correction and verified recall-outcome attribution now
-  also ship. Scratch REPL/Bench, authenticated contradiction UX, a later versioned recall-learning
-  policy, Playbook/Skill promotion,
+  also ship, together with the authenticated contradiction workspace. Scratch REPL/Bench, a later
+  versioned recall-learning policy, Playbook/Skill promotion,
   retention/compaction, and optional deployment-neutral export remain partial or pending.
 - Phase 29 closes the former Atlas wiring gap: deployments inject a closed set of real Atlas
   instances, bounds, artifact roots, and optional trusted multi-root contexts into `createDriver()`;
@@ -256,8 +269,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   Evidence Ladder rungs (property/fuzz/BMC/SMT/proof) under honest language/tool ceilings.
 - Vantage, Evidence Ladder as a capability module, Skill Forge/computer use, later
   Cartographer/Quartermaster supply/orientation rungs, and Cairn Playbook/Skill promotion,
-  versioned feedback learning, authenticated contradiction UX, retention, and export rungs remain
-  pending; Phase 52's non-causal outcome-attribution substrate now ships.
+  versioned feedback learning, retention, and export rungs remain pending; Phase 52's non-causal
+  outcome-attribution substrate and Phase 53's authenticated human/orchestrator contradiction seam
+  now ship.
 - Direct structural rewrite apply, live LSP, full SSA/PDG/path solving, interprocedural/alias/heap
   CPG depth, deeper behavioral/provenance attestation overlays, semantic-delta depth, and
   representation choreography.

@@ -121,6 +121,13 @@ batch preserves the historical node/version/score/contradiction exposure and rep
 and no confidence, rank, grounding, validity, promotion, or route changes. This evidence can inform
 a later versioned learning policy, but task success by itself is never a helped-rate.
 
+Phase 53 closes the human/orchestrator contradiction seam without outsourcing the graph. An
+audited stable workspace surfaces complete unresolved pairs as bounded untrusted snippets and
+digests. An authenticated explicit edge/winner/loser/version decision then commits one prefix-CAS
+event that closes the conflict, invalidates only the loser, preserves bitemporal history, and marks
+every bounded earlier ordinary or recall read as contaminated. It performs no automatic voting,
+confidence mutation, or learned ranking, and it adds no project-manager or homelab runtime.
+
 Richer cross-run learning, literature, hypotheses, contradictions, and supersession therefore live in
 Baton's self-contained bitemporal graph under `spec/phase11/coordination-knowledge.md`. They are
 promoted selectively from immutable events/artifacts, never written as an ambient mutable brain.
@@ -152,4 +159,7 @@ targets, never product dependencies.)*
    pass/fail-after association without causal overclaim. The remaining question is whether a later
    versioned policy has enough independently assessed evidence to change ranking at all; automatic
    injection and worker self-rating remain rejected.
-4. Retention/rotation: ledgers grow unbounded; JSONL rotates, SQLite compacts, artifacts are git-GC'd — but the scorecard + decision graph are meant to be permanent. Where's the boundary, and who prunes?
+4. Phase 53 lets an authenticated human or orchestrator resolve a surfaced contradiction through
+   exact prefix-CAS authority. Automatic resolution, worker voting, and confidence mutation remain
+   rejected without a later independent policy contract.
+5. Retention/rotation: ledgers grow unbounded; JSONL rotates, SQLite compacts, artifacts are git-GC'd — but the scorecard + decision graph are meant to be permanent. Where's the boundary, and who prunes?
