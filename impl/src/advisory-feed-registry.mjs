@@ -44,11 +44,11 @@ function validCard(card) {
   if (hasPoll) {
     const p = card.poll; let origin; let operation;
     try { origin = new URL(p?.origin); operation = new URL(p?.operation, origin); } catch { return false; }
-    const numeric = ['maxPages', 'maxItems', 'maxPageBytes', 'maxTotalBytes', 'maxWallMs', 'maxBackoffMs'];
-    pollValid = exactKeys(p, ['origin', 'operation', 'cursorKind', 'initialSequence', 'redirects', 'maxPages', 'maxItems', 'maxPageBytes', 'maxTotalBytes', 'maxWallMs', 'maxBackoffMs'])
+    const numeric = ['maxPages', 'maxItems', 'maxPageBytes', 'maxTotalBytes', 'maxWallMs', 'maxBackoffMs', 'maxClockSkewMs'];
+    pollValid = exactKeys(p, ['origin', 'operation', 'cursorKind', 'initialSequence', 'redirects', 'maxPages', 'maxItems', 'maxPageBytes', 'maxTotalBytes', 'maxWallMs', 'maxBackoffMs', 'maxClockSkewMs'])
       && origin.protocol === 'https:' && origin.href === `${origin.origin}/` && operation.origin === origin.origin && operation.pathname === p.operation && operation.search === '' && operation.hash === '' && typeof p.operation === 'string' && /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]{1,2048}$/.test(p.operation)
       && !p.operation.includes('//') && !p.operation.split('/').some((segment) => ['.', '..'].includes(segment)) && p.cursorKind === 'sequence' && p.redirects === 'deny' && Number.isSafeInteger(p.initialSequence) && p.initialSequence >= 0 && numeric.every((key) => Number.isSafeInteger(p[key]) && p[key] > 0)
-      && p.maxPages <= 10_000 && p.maxItems <= 100_000 && p.maxPageBytes <= 16 * 1024 * 1024 && p.maxTotalBytes <= 64 * 1024 * 1024 && p.maxWallMs <= 60 * 60 * 1_000 && p.maxBackoffMs <= 60 * 60 * 1_000;
+      && p.maxPages <= 10_000 && p.maxItems <= 100_000 && p.maxPageBytes <= 16 * 1024 * 1024 && p.maxTotalBytes <= 64 * 1024 * 1024 && p.maxWallMs <= 60 * 60 * 1_000 && p.maxBackoffMs <= 60 * 60 * 1_000 && p.maxClockSkewMs <= 24 * 60 * 60 * 1_000;
   }
   return pollValid && exactKeys(card.ceilings, ceilingKeys) && Object.values(card.ceilings).every((value) => Number.isSafeInteger(value) && value > 0)
     && card.ceilings.maxDeliveryBytes <= 16 * 1024 * 1024 && card.ceilings.maxCoordinates <= 10_000 && card.ceilings.maxAdvisoryIds <= 100_000 && card.ceilings.maxIdentityBytes <= 4_096

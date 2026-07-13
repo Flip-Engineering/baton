@@ -8,7 +8,7 @@ bounded full poll followed by a replay-valid store transaction may restore sourc
 
 A card advertising `poll` also carries a closed `poll` block: fixed HTTPS origin and operation,
 `sequence` cursor semantics, initial cursor, no-redirect posture, and positive maxima for pages,
-items, page bytes, total bytes, wall time, and backoff. The source implements `pollFull` and
+items, page bytes, total bytes, wall time, backoff, and authenticated-clock skew. The source implements `pollFull` and
 `reverifyPollSync`; construction fails before authority if either is absent. Delivery/user input
 cannot choose endpoint, provider, source epoch, cursor kind, key, policy, repository, or ceilings.
 
@@ -36,10 +36,12 @@ shares the same receipt/processing identity. No prefix is reported complete.
 The completion event binds repository, provider/source epoch, expected degraded-health event,
 inclusive window/final sequence, exact ordered receipt IDs and sequence rows, poll proof digest,
 actor, time, and completion digest. Under the writer lease the store rederives a contiguous window,
-checks every receipt belongs to the source and poll proof, rejects cursor rewind or a final sequence
-below the observed high-water mark, and invokes deployment `reverifyPollSync` over the sanitized
-proof. Only then does health become `healthy`, with a completion event and cursor digest. No guard,
-Finding, Decision, pending official work, or contamination is cleared.
+checks every receipt belongs to the source and poll proof, requires the proof observation to cover
+the expected degraded-health event and remain fresh at completion within the deployment wall-time
+and clock-skew ceilings, rejects cursor rewind or a final sequence below the observed high-water mark,
+and invokes deployment `reverifyPollSync` over the sanitized proof.
+Only then does health become `healthy`, with a completion event and cursor digest. No guard, Finding,
+Decision, pending official work, or contamination is cleared.
 
 ## PF5 — races, idempotency, and replay
 

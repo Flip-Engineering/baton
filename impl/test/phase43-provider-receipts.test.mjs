@@ -18,7 +18,7 @@ function feedSource(state = {}) {
   const card = Object.freeze({
     schemaVersion: 1, providerId: 'fixture.osv', adapterId: 'fixture-v1', version: '1', modes: ['poll', 'webhook'], ecosystem: 'npm', semantics: 'authenticated_hint',
     auth: { scheme: 'injected-test', keyFingerprints: [fingerprint] }, ceilings: { maxDeliveryBytes: 4096, maxCoordinates: 4, maxAdvisoryIds: 8, maxIdentityBytes: 256 },
-    poll: { origin: 'https://fixture.invalid', operation: '/v1/full', cursorKind: 'sequence', initialSequence: 1, redirects: 'deny', maxPages: 2, maxItems: 8, maxPageBytes: 4096, maxTotalBytes: 16384, maxWallMs: 1000, maxBackoffMs: 1000 },
+    poll: { origin: 'https://fixture.invalid', operation: '/v1/full', cursorKind: 'sequence', initialSequence: 1, redirects: 'deny', maxPages: 2, maxItems: 8, maxPageBytes: 4096, maxTotalBytes: 16384, maxWallMs: 1000, maxBackoffMs: 1000, maxClockSkewMs: 300_000 },
   });
   return {
     card: () => card,
@@ -164,6 +164,22 @@ test('PF3-PF5: only an explicit replayable full-poll transaction restores degrad
 test('PF3-PF5: a newer receipt CAS or completion append failure cannot expose healthy state', async () => {
   const stale = await pollWorld(); const expected = stale.store.providerSourceHealth('repo-a', 'fixture.osv', stale.cards[0].cardDigest).lastEvent; stale.store.recordProviderDelivery({ repoId: 'repo-a', receipt: await stale.feeds.verify('fixture.osv', { mode: 'webhook', raw: stale.raw(4) }) }, { actor: 'provider:fixture.osv', key: 'provider:race:4' }); assert.throws(() => stale.store.recordProviderSourceReconciliation({ repoId: 'repo-a', proof: stale.polled.proof, expectedHealthEvent: expected }, { actor: 'provider-poller:fixture.osv', key: 'provider-poll:stale' }), (error) => error.code === 'provider_reconciliation_stale'); assert.equal(stale.store.providerSourceHealth('repo-a', 'fixture.osv', stale.cards[0].cardDigest).status, 'reconciliation_required'); stale.store.releaseWriterLease();
   const failed = await pollWorld(); const append = failed.store._appendFile; failed.store._appendFile = (...args) => { if (String(args[1]).includes('provider.reconciliation_completed')) throw new Error('poll ledger unavailable'); return append(...args); }; const failedExpected = failed.store.providerSourceHealth('repo-a', 'fixture.osv', failed.cards[0].cardDigest).lastEvent; assert.throws(() => failed.store.recordProviderSourceReconciliation({ repoId: 'repo-a', proof: failed.polled.proof, expectedHealthEvent: failedExpected }, { actor: 'provider-poller:fixture.osv', key: 'provider-poll:append-fail' }), /poll ledger unavailable/); assert.equal(failed.store.providerSourceHealth('repo-a', 'fixture.osv', failed.cards[0].cardDigest).status, 'reconciliation_required'); failed.store._appendFile = append; failed.store.releaseWriterLease();
+});
+
+test('PF4/PF5: a poll observed before the degraded-health event cannot restore source health', async () => {
+  const w = await pollWorld();
+  const expectedHealthEvent = w.store.providerSourceHealth('repo-a', 'fixture.osv', w.cards[0].cardDigest).lastEvent;
+  const core = { ...w.polled.proof, observedAt: '2026-07-13T02:00:00.000Z' }; delete core.proofDigest;
+  const staleProof = { ...core, proofDigest: sha(core) };
+  assert.throws(
+    () => w.store.recordProviderSourceReconciliation(
+      { repoId: 'repo-a', proof: staleProof, expectedHealthEvent },
+      { actor: 'provider-poller:fixture.osv', key: 'provider-poll:predates-gap' },
+    ),
+    (error) => error.code === 'provider_reconciliation_stale',
+  );
+  assert.equal(w.store.providerSourceHealth('repo-a', 'fixture.osv', w.cards[0].cardDigest).status, 'reconciliation_required');
+  w.store.releaseWriterLease();
 });
 
 test('PF5: zero-network replay rejects poll proof/cursor mutation and requires poll reverify authority', async () => {
