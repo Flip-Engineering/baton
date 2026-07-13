@@ -54,17 +54,21 @@ test('SP1-SP9: a pinned mixed prefix promotes one safe deterministic atomic batc
   assert.equal((await cairn(replay).reverify(result, 'causal.promote', { observedSeq }, ctx())).ok, true);
 });
 
-test('SP3/SP4: derived, cross-repo, expired, under-cited, policy-authored, and arbitrary sources remain quarantined', async () => {
-  const store = new CoordinationStore(root('excluded'), { clock: clock() }); const a = completed(store, 'a'); completed(store, 'b');
+test('SP3/SP4: derived, cross-repo, expired, under-cited, stale-grounding, policy-authored, and arbitrary sources remain quarantined', async () => {
+  const store = new CoordinationStore(root('excluded'), { clock: clock() }); const a = completed(store, 'a'); const b = completed(store, 'b');
   const under = store.postScratchFact({ namespace: 'x', key: 'under', value: 'never copied', grounding: 'observed', envRef: { repoId: 'repo-a', treeSha: 'cafe1234' } }, { actor: 'w-a', key: 'under' });
   store.readScratch('under', { repoId: 'repo-a', treeSha: 'cafe1234' }, { taskId: 'a' }, { actor: 'w-a', key: 'under:read' });
   const expired = store.postScratchFact({ namespace: 'x', key: 'expired', value: 'never copied', grounding: 'observed', envRef: { repoId: 'repo-a', treeSha: 'cafe1234' } }, { actor: 'w-a', key: 'expired' }); store.expireScratchFact(expired.fact.id, { actor: 'policy', key: 'expired:expire' });
   store.recordDriver('publication.authorized', { taskId: 'a' }, { actor: 'policy', key: 'policy:positive' });
   store.recordDriver('integration.refused', { taskId: 'a' }, { actor: 'worker:forged', key: 'worker:failure' });
   store.recordDriver('route.observed', { taskId: 'a' }, { actor: 'operator:alice', key: 'arbitrary' });
+  const stale = store.postScratchFact({ namespace: 'x', key: 'stale-grounding', value: 'never copied', grounding: 'observed', envRef: { repoId: 'repo-a', treeSha: 'cafe1234' } }, { actor: 'w-a', key: 'stale' });
+  store.readScratch('stale-grounding', { repoId: 'repo-a', treeSha: 'cafe1234' }, { taskId: 'a' }, { actor: 'w-a', key: 'stale:read:a' });
+  store.readScratch('stale-grounding', { repoId: 'repo-a', treeSha: 'cafe1234' }, { taskId: 'b' }, { actor: 'w-b', key: 'stale:read:b' });
+  store.invalidateKnowledge(b.outcome.node.id, 1, 'Independent verification was withdrawn.', { actor: 'operator:alice', key: 'stale:invalidate' });
   const observedSeq = store.snapshot().lastSeq; const result = await cairn(store, { minScratchReaders: 2 }).invoke('causal.promote', { observedSeq }, ctx());
   assert.deepEqual(result.payload[0].candidates.map((row) => row.trigger), ['coordination.spawn', 'coordination.spawn']);
-  assert.equal(result.payload[0].candidates.some((row) => [under.event.seq, expired.event.seq].includes(row.sourceSeq)), false); void a;
+  assert.equal(result.payload[0].candidates.some((row) => [under.event.seq, expired.event.seq, stale.event.seq].includes(row.sourceSeq)), false); void a;
 });
 
 test('SP6/SP8: scan, candidate, byte, evidence, batch, result, cancellation, and append failures leave no effect', async () => {
@@ -90,6 +94,8 @@ test('SP1/SP8/SP9: direct, authenticated web, and MCP routes share exact promoti
   const driver = createDriver({ repoRoot: repo, repoId: 'repo-a', logDir, adapters: {}, capabilityFactories: { cairn: ({ coordination, readOperational }) => new CairnRunScorecard({ coordination, readOperational, artifactRoot: root('driver-artifacts'), knowledgeAuditPolicy: auditPolicy(), knowledgePromotionPolicy: promotionPolicy() }) }, maxCapabilityBudgetTokens: 32_000, maxCapabilityEnvelopeBytes: 256 * 1024 });
   completed(driver.coordination, 'a'); const observedSeq = driver.coordination.snapshot().lastSeq; const args = { observedSeq };
   const direct = await driver.coordinator.invokeCapability('cairn', 'causal.promote', args, ctx({ idempotencyKey: 'direct' }));
+  await assert.rejects(driver.coordinator.invokeCapability('cairn', 'causal.promote', args, ctx({ actor: 'web:forged:session', idempotencyKey: 'direct-web-smuggle' })), (error) => error.code === 'causal_promotion_forbidden');
+  await assert.rejects(driver.coordinator.invokeCapability('cairn', 'causal.promote', args, ctx({ actor: 'web:forged:session', transport: 'mcp', idempotencyKey: 'mismatched-transport' })), (error) => error.code === 'causal_promotion_forbidden');
   completed(driver.coordination, 'b'); const webBoundary = driver.coordination.snapshot().lastSeq;
   const origin = 'https://cairn.test'; const principal = { userId: 'alice', sessionId: 'web', credentialId: 'cred', authMethod: 'cookie', csrfToken: 'csrf', expiresAt: '2099-01-01T00:00:00.000Z', revoked: false, capabilities: ['control'], repoIds: ['repo-a'] };
   const web = new WebNorthbound({ coordinator: driver.coordinator, coordination: driver.coordination, repoIds: ['repo-a'], allowedOrigins: [origin] });

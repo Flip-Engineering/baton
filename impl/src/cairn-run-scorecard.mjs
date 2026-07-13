@@ -286,7 +286,11 @@ export class CairnRunScorecard {
   _causalPromote(args, ctx, verifyReceiptSeq = null, writeReceipt = true) {
     if (!this.knowledgePromotionPolicy) throw typed('causal promotion is not deployment-configured', 'capability_op_unavailable');
     this._knowledgeContext(ctx); const promotionActor = ctx.actor === 'orchestrator' || (typeof ctx.actor === 'string' && ctx.actor.startsWith('operator:'))
-      ? ctx.actor : (typeof ctx.actor === 'string' && (ctx.actor.startsWith('web:') || ctx.actor.startsWith('mcp:')) ? `operator:${ctx.actor}` : null);
+      ? ctx.actor
+      : (ctx.transport === 'web' && typeof ctx.actor === 'string' && ctx.actor.startsWith('web:'))
+        || (ctx.transport === 'mcp' && typeof ctx.actor === 'string' && ctx.actor.startsWith('mcp:'))
+        ? `operator:${ctx.actor}`
+        : null;
     if (promotionActor === null) throw typed('causal promotion actor is not authorized', 'causal_promotion_forbidden');
     const upper = this._causalBoundary(args, ['observedSeq'], verifyReceiptSeq === null ? null : args?.observedSeq); const audit = this._promotionAudit(upper); this._knowledgeContext(ctx);
     if (!writeReceipt) {
