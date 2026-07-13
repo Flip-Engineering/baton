@@ -1,0 +1,277 @@
+{
+  "at": "2026-07-13T09:53:12.336Z",
+  "baseSha": "305c9e31f43f0d5c5f3b0eccbdf757e49afac323",
+  "repoHead": "305c9e31f43f0d5c5f3b0eccbdf757e49afac323",
+  "runId": "phase50-postfix-harness-review",
+  "interpretation": {
+    "implementationReviewPass": "exact routes plus a fresh-verified project-key GLM implementation report and complete cleanup",
+    "harnessMatrixPass": "implementationReviewPass plus provider-ready PID observation for every route, one real-time sample with both Grok turns active and both process groups alive, and a correlated requested kill/confirmation for every route"
+  },
+  "grokAuthProbe": {
+    "authenticated": false,
+    "output": "You are not authenticated.\n\nDefault model: grok-build\n\nAvailable models:\n  * grok-build (default)",
+    "error": null
+  },
+  "credentialMeasurements": {
+    "glm": {
+      "present": true,
+      "ownerOnly": true,
+      "ownedByRunnerUser": true
+    },
+    "codex": {
+      "present": true,
+      "ownerOnly": true,
+      "ownedByRunnerUser": true
+    },
+    "grok": {
+      "present": true,
+      "ownerOnly": true,
+      "ownedByRunnerUser": true
+    }
+  },
+  "ownershipBefore": {
+    "worktrees": [
+      "worktree /Users/wahargis/Development/Experiments/baton",
+      "worktree /private/tmp/baton-phase50-postfix.OuUqZL"
+    ],
+    "branches": [],
+    "worktreeEntries": [],
+    "runtimeEntries": []
+  },
+  "ownershipAfter": {
+    "worktrees": [
+      "worktree /Users/wahargis/Development/Experiments/baton",
+      "worktree /private/tmp/baton-phase50-postfix.OuUqZL"
+    ],
+    "branches": [],
+    "worktreeEntries": [],
+    "runtimeEntries": []
+  },
+  "nativeSamples": [],
+  "attempts": [
+    {
+      "taskId": "phase50-postfix-codex-review",
+      "admitted": true,
+      "error": null
+    },
+    {
+      "taskId": "phase50-postfix-glm-review",
+      "admitted": true,
+      "error": null
+    },
+    {
+      "taskId": "phase50-postfix-grok45-review",
+      "admitted": true,
+      "error": null
+    },
+    {
+      "taskId": "phase50-postfix-grokbuild-review",
+      "admitted": true,
+      "error": null
+    }
+  ],
+  "rows": [
+    {
+      "taskId": "phase50-postfix-codex-review",
+      "harness": "codex",
+      "model": "gpt-5.6-sol",
+      "workerId": "w-1",
+      "pid": null,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "codex",
+        "harnessResolved": "codex@codex-cli 0.5.0",
+        "modelRequested": "gpt-5.6-sol",
+        "modelResolved": "gpt-5.6-sol",
+        "modelObserved": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 0,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "killRequestedSeq": null,
+      "killConfirmationSeq": null,
+      "terminalReason": "codex app-server: \"initialize\" timed out after 45000ms"
+    },
+    {
+      "taskId": "phase50-postfix-glm-review",
+      "harness": "glm",
+      "model": "glm-4.7",
+      "workerId": "w-2",
+      "pid": 5827,
+      "result": {
+        "status": "completed",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "glm",
+        "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+        "modelRequested": "glm-4.7",
+        "modelResolved": "glm-4.7",
+        "modelObserved": "glm-4.7",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 126480,
+        "usd": 0.9838060000000001
+      },
+      "verifyAccept": true,
+      "reportCaptured": true,
+      "killRequestedSeq": 29,
+      "killConfirmationSeq": 31,
+      "terminalReason": ""
+    },
+    {
+      "taskId": "phase50-postfix-grok45-review",
+      "harness": "grok",
+      "model": "grok-4.5",
+      "workerId": "w-3",
+      "pid": null,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 0,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "killRequestedSeq": null,
+      "killConfirmationSeq": null,
+      "terminalReason": "Authentication required"
+    },
+    {
+      "taskId": "phase50-postfix-grokbuild-review",
+      "harness": "grok",
+      "model": "grok-build",
+      "workerId": "w-4",
+      "pid": null,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-build",
+        "modelResolved": "grok-build",
+        "modelObserved": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 0,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "killRequestedSeq": null,
+      "killConfirmationSeq": null,
+      "terminalReason": "Authentication required"
+    }
+  ],
+  "responses": [],
+  "kills": [
+    {
+      "taskId": "phase50-postfix-codex-review",
+      "floorSeq": 5,
+      "ack": {
+        "ok": true,
+        "result": "already_dead"
+      }
+    },
+    {
+      "taskId": "phase50-postfix-glm-review",
+      "floorSeq": 28,
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "phase50-postfix-grok45-review",
+      "floorSeq": 5,
+      "ack": {
+        "ok": true,
+        "result": "already_dead"
+      }
+    },
+    {
+      "taskId": "phase50-postfix-grokbuild-review",
+      "floorSeq": 5,
+      "ack": {
+        "ok": true,
+        "result": "already_dead"
+      }
+    }
+  ],
+  "routeAdmission": {
+    "allAttempted": true,
+    "allAdmitted": true,
+    "exactRequestedResolved": true,
+    "observedIdentityHonest": true,
+    "glmProviderObservedExact": true
+  },
+  "providerProof": {
+    "providerReadyPidByTask": {
+      "phase50-postfix-codex-review": null,
+      "phase50-postfix-glm-review": 5827,
+      "phase50-postfix-grok45-review": null,
+      "phase50-postfix-grokbuild-review": null
+    },
+    "allProviderReadyPidsObserved": false,
+    "twoGrokProviderReadyPidsObserved": false,
+    "simultaneousActiveGrokPidSampleObserved": false,
+    "correlatedKillByTask": {
+      "phase50-postfix-codex-review": false,
+      "phase50-postfix-glm-review": true,
+      "phase50-postfix-grok45-review": false,
+      "phase50-postfix-grokbuild-review": false
+    },
+    "allProviderKillsCorrelated": false
+  },
+  "cleanup": {
+    "observedProcessLeadersGone": true,
+    "observedProcessGroupsGone": true,
+    "taskWorktreesGone": true,
+    "runtimesGone": true,
+    "taskBranchesGone": true,
+    "ownershipSnapshotRestored": true,
+    "writerReleased": true
+  },
+  "reviewProof": {
+    "allTerminal": true,
+    "verifiedReports": [
+      "phase50-postfix-glm-review"
+    ],
+    "baseShaPinned": true,
+    "glmVerifiedReport": true,
+    "atLeastOneVerifiedReport": true
+  },
+  "fatal": null,
+  "implementationReviewPass": true,
+  "harnessMatrixPass": false
+}

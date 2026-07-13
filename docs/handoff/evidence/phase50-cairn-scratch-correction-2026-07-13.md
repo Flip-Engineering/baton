@@ -40,7 +40,7 @@ northbounds receive token-bound capability methods.
 - Phase 50 passes **14/14** grouped SC tests.
 - The adjacent Phase 12 web, Phase 16 MCP, Phase 49, and Phase 50 slice passes **62/62**.
 - The canonical zero-quota suite passes **1038/1038** through `cd impl && npm test`; the initial
-  implementation landed at `16e033e` and the post-review hardening commit is recorded below.
+  implementation landed at `16e033e` and post-review hardening landed at `305c9e3`.
 - Exact configuration, repository, policy, independent route, producer/reviewer route corruption,
   private target bounds, hub-derived Scratch IDs, and oracle non-integration are covered.
 - Accepted, rejected, failed, unbound, generic, post-boundary, and stale oracle provenance are
@@ -91,9 +91,26 @@ terminated every allocation and reaped its worktree, runtime, branch, process, a
 ownership. The report correctly describes the then-missing implementation and must not be cited as
 post-fix review.
 
-The post-implementation matrix will record route admission, provider spawn/PID, native overlap,
-kill confirmation, and full reap as separate facts. A route attempt or concurrent allocation does
-not by itself prove native provider concurrency.
+The post-implementation matrix under
+`docs/reference/evidence/phase50-postfix-harness-review-2026-07-13/` reviewed clean commit
+`305c9e3` through the same four exact routes. All were attempted, admitted, and preserved exact
+harness/model/effort resolution. Project-key GLM `glm-4.7`/low reached provider-ready PID `5827`,
+used 126,480 tokens/$0.983806, wrote a fresh-verified PASS/no-P0-P1 report, received a correlated
+confirmed native kill, and fully reaped.
+
+The exact Codex `gpt-5.6-sol`/low route timed out during app-server initialization. Both Grok
+allocations were concurrent at Baton admission, but the installed CLI and credential file reported
+`Authentication required`; neither reached provider-ready PID or a simultaneous native-process
+sample. Their kill acknowledgements were honestly `already_dead`, not counted as correlated native
+kills. The strict full harness matrix is therefore red, while the separate implementation-review
+gate is green. All process leaders/groups that Baton observed were gone, and every task worktree,
+branch, runtime scope, ownership snapshot, and coordination writer returned to its pre-run state.
+
+This run exposed a concrete next runtime need: emit provider process-start/process-close telemetry
+before initialization or authentication handshakes complete. Today a pre-ready setup process can
+fail and be cleaned up, but the durable ledger cannot prove its PID-specific lifecycle. Route
+admission or concurrent allocation is not native provider concurrency and is never reported as
+such.
 
 ## Retained scope
 
@@ -101,7 +118,8 @@ Phase 50 does not complete Cairn or the full Baton goal. Playbook/Skill promotio
 and utility learning, authenticated contradiction/operator UX, retention/compaction,
 deployment-neutral export, Scratch REPL/Bench, and broader taxonomy contracts remain active.
 Provider-backed session recovery and deeper fork/rewind/checkpoint semantics; quota/seat
-governance; Vantage, the Evidence Ladder, Skill Forge/computer use; deeper AST/CST/SCIP/CPG/IR,
+governance; pre-ready provider process lifecycle telemetry; Vantage, the Evidence Ladder, Skill
+Forge/computer use; deeper AST/CST/SCIP/CPG/IR,
 live LSP, SSA/PDG/path/alias/heap/implicit-flow/interprocedural analysis; semantic merge and
 behavioral fingerprints; and conditional e-graph research remain mechanically retained. Baton
 stays self-contained: project-manager is causal-graph inspiration only, and homelab integration is

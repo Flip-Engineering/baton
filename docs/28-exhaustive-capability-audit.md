@@ -170,15 +170,17 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    transport-binding and post-audit append regressions.
 23. **Cairn Scratch correction and independent-oracle release:** Phase 50 adds a fact-bound
    `scratch_oracle` task whose explicit harness/model/effort route must differ from the producer by
-   harness and model family. Hub-derived Scratch IDs, immutable bounded targets, exact six-field
-   producer/reviewer route commitments, accepted worker/capture/commit/reverification provenance,
-   and non-integrable oracle results prevent evidence substitution. `causal.correct_scratch`
+   harness and model family. Hub-derived Scratch IDs, immutable bounded targets and worktree bases,
+   exact six-field producer/reviewer route commitments, accepted worker/task/run/base/capture/
+   commit/reverification provenance, current unsuperseded artifacts, and non-integrable oracle
+   results prevent evidence substitution. `causal.correct_scratch`
    releases, supersedes, or retracts only the closed Scratch Finding class through one audited
    prefix-CAS event with target validity CAS, exact historical-reader contamination, closed public
    results, token-bound direct/web/MCP transport authority, ACI pre-effect output gates, and full
    replay/idempotency/tamper refusal. Fourteen focused SC tests and 1038/1038 canonical tests are
-   green. Recursive multi-harness availability and native-process evidence are recorded separately
-   and do not inflate implementation status.
+   green. Post-fix project-key GLM fresh-verified the implementation and was kill-confirmed/reaped;
+   Codex initialization and two concurrent Grok allocations remained pre-PID red, so the strict
+   native matrix is separately retained and does not inflate implementation status.
 
 ## What remains partial
 
