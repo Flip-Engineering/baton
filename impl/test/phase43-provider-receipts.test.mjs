@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -14,10 +14,11 @@ const sha = (value) => createHash('sha256').update(Buffer.isBuffer(value) ? valu
 const fingerprint = sha(Buffer.from('phase43-provider-key'));
 const coordinate = Object.freeze({ ecosystem: 'npm', package: '@scope/pkg', version: '1.2.3' });
 
-function feedSource() {
+function feedSource(state = {}) {
   const card = Object.freeze({
-    schemaVersion: 1, providerId: 'fixture.osv', adapterId: 'fixture-v1', version: '1', modes: ['webhook'], ecosystem: 'npm', semantics: 'authenticated_hint',
+    schemaVersion: 1, providerId: 'fixture.osv', adapterId: 'fixture-v1', version: '1', modes: ['poll', 'webhook'], ecosystem: 'npm', semantics: 'authenticated_hint',
     auth: { scheme: 'injected-test', keyFingerprints: [fingerprint] }, ceilings: { maxDeliveryBytes: 4096, maxCoordinates: 4, maxAdvisoryIds: 8, maxIdentityBytes: 256 },
+    poll: { origin: 'https://fixture.invalid', operation: '/v1/full', cursorKind: 'sequence', initialSequence: 1, redirects: 'deny', maxPages: 2, maxItems: 8, maxPageBytes: 4096, maxTotalBytes: 16384, maxWallMs: 1000, maxBackoffMs: 1000 },
   });
   return {
     card: () => card,
@@ -28,14 +29,23 @@ function feedSource() {
         authReceiptDigest: sha(Buffer.from(`auth:${body.deliveryId}`)), keyFingerprint: fingerprint, occurredAt: body.occurredAt, sequence: body.sequence,
         coordinates: [coordinate], advisoryIds: ['OSV-2026-43'], source: { handle: `art:sha256:${rawDigest}`, digest: rawDigest, bytes: raw.length, mediaType: 'application/json' },
       };
-    },
+    }, async pollFull() { if (!state.poll) throw Object.assign(new Error('poll fixture absent'), { code: 'fixture_poll_absent' }); return state.poll; }, reverifyPollSync(proof) { return proof; },
   };
 }
-function registry() { return new AdvisoryFeedRegistry({ sources: { 'fixture.osv': feedSource() } }); }
+function registry(state) { return new AdvisoryFeedRegistry({ sources: { 'fixture.osv': feedSource(state) } }); }
 
 async function verified(feeds, deliveryId, sequence, marker = deliveryId) {
   const raw = Buffer.from(JSON.stringify({ deliveryId, occurredAt: '2026-07-13T03:00:00.000Z', sequence, marker }));
   return feeds.verify('fixture.osv', { mode: 'webhook', raw });
+}
+
+async function pollWorld() {
+  const raw = (sequence) => Buffer.from(JSON.stringify({ deliveryId: `delivery-${sequence}`, occurredAt: '2026-07-13T03:00:00.000Z', sequence, marker: `delivery-${sequence}` })); const state = {}; const feeds = registry(state); const cards = feeds.cards(); const root = mkdtempSync(join(tmpdir(), 'baton-provider-poll-world-'));
+  const store = new CoordinationStore(root, { advisoryFeedCards: cards, advisoryPollReverify: (proof) => feeds.reverifyPollSync(proof), clock: () => '2026-07-13T04:00:01.000Z' });
+  for (const sequence of [1, 3]) store.recordProviderDelivery({ repoId: 'repo-a', receipt: await feeds.verify('fixture.osv', { mode: 'webhook', raw: raw(sequence) }) }, { actor: 'provider:fixture.osv', key: `provider:pre:${sequence}` });
+  const itemBytes = [1, 2, 3].map(raw); state.poll = { schemaVersion: 1, providerId: 'fixture.osv', pollId: 'full-1', observedAt: '2026-07-13T04:00:00.000Z', window: { fromSequence: 1, toSequence: 3 }, finalSequence: 3, cursorDigest: sha('cursor-3'), authReceiptDigest: sha('poll-auth'), keyFingerprint: fingerprint, pages: [{ raw: Buffer.from('{"page":1}'), items: itemBytes }] };
+  const polled = await feeds.pollFull('fixture.osv'); for (const receipt of polled.receipts) store.recordProviderDelivery({ repoId: 'repo-a', receipt }, { actor: 'provider:fixture.osv', key: `provider:poll:${receipt.sequence}` });
+  return { raw, state, feeds, cards, root, store, polled };
 }
 
 test('AF3/AF4/AF6: receipt append atomically creates a sanitized Source and repo-scoped pending fence', async () => {
@@ -140,4 +150,23 @@ test('AF7: one provider sequence cannot be rebound to different authenticated by
   assert.throws(() => store.recordProviderDelivery({ repoId: 'repo-a', receipt: sequenceConflict }, { actor: 'provider:fixture.osv', key: 'provider:conflict' }), (error) => error.code === 'provider_sequence_conflict');
   assert.equal(store.snapshot().lastSeq, 1);
   store.releaseWriterLease();
+});
+
+test('PF3-PF5: only an explicit replayable full-poll transaction restores degraded source health', async () => {
+  const { raw, feeds, cards, root, store, polled } = await pollWorld(); assert.equal(store.providerSourceHealth('repo-a', 'fixture.osv', cards[0].cardDigest).status, 'reconciliation_required');
+  const expectedHealthEvent = store.providerSourceHealth('repo-a', 'fixture.osv', cards[0].cardDigest).lastEvent; const completed = store.recordProviderSourceReconciliation({ repoId: 'repo-a', proof: polled.proof, expectedHealthEvent }, { actor: 'provider-poller:fixture.osv', key: `provider-poll:${polled.proof.proofDigest}` });
+  assert.equal(completed.result, 'healthy'); assert.equal(completed.health.status, 'healthy'); assert.equal(completed.health.cursorDigest, polled.proof.cursorDigest); assert.equal(completed.health.firstGap, null); assert.equal(store.pendingProviderReconciliation('repo-a', coordinate).length > 0, true, 'source completeness cannot clear official-processing work');
+  const seq = store.snapshot().lastSeq; assert.equal(store.recordProviderSourceReconciliation({ repoId: 'repo-a', proof: polled.proof, expectedHealthEvent }, { actor: 'provider-poller:fixture.osv', key: `provider-poll:${polled.proof.proofDigest}` }).result, 'idempotent'); assert.equal(store.snapshot().lastSeq, seq); store.releaseWriterLease();
+  const replay = new CoordinationStore(root, { advisoryFeedCards: cards, advisoryPollReverify: (proof) => feeds.reverifyPollSync(proof), clock: () => '2026-07-13T04:00:02.000Z' }); assert.equal(replay.providerSourceHealth('repo-a', 'fixture.osv', cards[0].cardDigest).status, 'healthy');
+  replay.recordProviderDelivery({ repoId: 'repo-a', receipt: await feeds.verify('fixture.osv', { mode: 'webhook', raw: raw(5) }) }, { actor: 'provider:fixture.osv', key: 'provider:after:5' }); assert.equal(replay.providerSourceHealth('repo-a', 'fixture.osv', cards[0].cardDigest).status, 'reconciliation_required'); replay.releaseWriterLease();
+});
+
+test('PF3-PF5: a newer receipt CAS or completion append failure cannot expose healthy state', async () => {
+  const stale = await pollWorld(); const expected = stale.store.providerSourceHealth('repo-a', 'fixture.osv', stale.cards[0].cardDigest).lastEvent; stale.store.recordProviderDelivery({ repoId: 'repo-a', receipt: await stale.feeds.verify('fixture.osv', { mode: 'webhook', raw: stale.raw(4) }) }, { actor: 'provider:fixture.osv', key: 'provider:race:4' }); assert.throws(() => stale.store.recordProviderSourceReconciliation({ repoId: 'repo-a', proof: stale.polled.proof, expectedHealthEvent: expected }, { actor: 'provider-poller:fixture.osv', key: 'provider-poll:stale' }), (error) => error.code === 'provider_reconciliation_stale'); assert.equal(stale.store.providerSourceHealth('repo-a', 'fixture.osv', stale.cards[0].cardDigest).status, 'reconciliation_required'); stale.store.releaseWriterLease();
+  const failed = await pollWorld(); const append = failed.store._appendFile; failed.store._appendFile = (...args) => { if (String(args[1]).includes('provider.reconciliation_completed')) throw new Error('poll ledger unavailable'); return append(...args); }; const failedExpected = failed.store.providerSourceHealth('repo-a', 'fixture.osv', failed.cards[0].cardDigest).lastEvent; assert.throws(() => failed.store.recordProviderSourceReconciliation({ repoId: 'repo-a', proof: failed.polled.proof, expectedHealthEvent: failedExpected }, { actor: 'provider-poller:fixture.osv', key: 'provider-poll:append-fail' }), /poll ledger unavailable/); assert.equal(failed.store.providerSourceHealth('repo-a', 'fixture.osv', failed.cards[0].cardDigest).status, 'reconciliation_required'); failed.store._appendFile = append; failed.store.releaseWriterLease();
+});
+
+test('PF5: zero-network replay rejects poll proof/cursor mutation and requires poll reverify authority', async () => {
+  const w = await pollWorld(); const expected = w.store.providerSourceHealth('repo-a', 'fixture.osv', w.cards[0].cardDigest).lastEvent; w.store.recordProviderSourceReconciliation({ repoId: 'repo-a', proof: w.polled.proof, expectedHealthEvent: expected }, { actor: 'provider-poller:fixture.osv', key: 'provider-poll:complete' }); w.store.releaseWriterLease();
+  assert.throws(() => new CoordinationStore(w.root, { advisoryFeedCards: w.cards, clock: () => '2026-07-13T04:00:02.000Z' }), (error) => error.code === 'provider_poll_replay_required'); const path = join(w.root, 'events.jsonl'); const events = readFileSync(path, 'utf8').trimEnd().split('\n').map(JSON.parse); events.find((event) => event.kind === 'provider.reconciliation_completed').payload.proof.cursorDigest = 'f'.repeat(64); writeFileSync(path, `${events.map(JSON.stringify).join('\n')}\n`); assert.throws(() => new CoordinationStore(w.root, { advisoryFeedCards: w.cards, advisoryPollReverify: (proof) => w.feeds.reverifyPollSync(proof), clock: () => '2026-07-13T04:00:02.000Z' }), (error) => ['provider_reconciliation_integrity', 'provider_poll_invalid'].includes(error.code));
 });

@@ -72,6 +72,7 @@ export class CoordinationStore {
     this._appendFile = opts.appendFile ?? appendFileSync;
     this._advisoryFeedCards = this._configureAdvisoryFeedCards(opts.advisoryFeedCards ?? []);
     this._advisoryReceiptReverify = opts.advisoryReceiptReverify ?? null;
+    this._advisoryPollReverify = opts.advisoryPollReverify ?? null;
     this._resetProjection();
     this._operationalRead = opts.operationalRead ?? null;
     this._writerLease = null;
@@ -698,6 +699,31 @@ export class CoordinationStore {
     return { deliveryKey, sourceKey };
   }
 
+  _validateProviderReconciliationPayload(p, event, integrity = false) {
+    const fail = (message, code = 'provider_reconciliation_integrity') => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
+    const fields = ['schemaVersion', 'requestDigest', 'completionDigest', 'repoId', 'providerId', 'sourceEpoch', 'expectedHealthEvent', 'proof', 'receiptIds', 'sequenceRows', 'completedAt'];
+    if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || p.schemaVersion !== 1 || !boundedText(p.repoId, 256) || !boundedText(p.providerId, 128) || !/^[a-f0-9]{64}$/.test(p.sourceEpoch ?? '') || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.completionDigest ?? '') || p.completedAt !== event.ts || event.actor !== `provider-poller:${p.providerId}`) fail('provider reconciliation authority is invalid');
+    const configured = this._advisoryFeedCards.get(p.providerId); if (!configured || configured.cardDigest !== p.sourceEpoch || !configured.card.modes?.includes('poll')) fail('provider poll card is unavailable', 'provider_card_mismatch');
+    const proof = p.proof; const proofFields = ['schemaVersion', 'providerId', 'sourceEpoch', 'cardDigest', 'pollId', 'observedAt', 'window', 'finalSequence', 'cursorDigest', 'authReceiptDigest', 'keyFingerprint', 'pageDigests', 'itemDigests', 'totalBytes', 'receiptRawDigests', 'proofDigest'];
+    if (!proof || Object.keys(proof).sort().join(',') !== proofFields.sort().join(',') || proof.schemaVersion !== 1 || proof.providerId !== p.providerId || proof.sourceEpoch !== p.sourceEpoch || proof.cardDigest !== p.sourceEpoch || !boundedText(proof.pollId, configured.card.ceilings.maxIdentityBytes)
+      || !Number.isFinite(Date.parse(proof.observedAt)) || new Date(Date.parse(proof.observedAt)).toISOString() !== proof.observedAt || Date.parse(proof.observedAt) > Date.parse(event.ts) || !proof.window || Object.keys(proof.window).sort().join(',') !== 'fromSequence,toSequence'
+      || !Number.isSafeInteger(proof.window.fromSequence) || !Number.isSafeInteger(proof.window.toSequence) || proof.window.fromSequence < configured.card.poll.initialSequence || proof.window.toSequence < proof.window.fromSequence || proof.finalSequence !== proof.window.toSequence
+      || !/^[a-f0-9]{64}$/.test(proof.cursorDigest ?? '') || !/^[a-f0-9]{64}$/.test(proof.authReceiptDigest ?? '') || !configured.card.auth.keyFingerprints.includes(proof.keyFingerprint) || !/^[a-f0-9]{64}$/.test(proof.proofDigest ?? '')) fail('provider poll proof is invalid');
+    const proofCore = Object.fromEntries(Object.entries(proof).filter(([key]) => key !== 'proofDigest')); if (proof.proofDigest !== canonicalDigest(proofCore)) fail('provider poll proof digest is invalid');
+    if (typeof this._advisoryPollReverify !== 'function') fail('provider poll replay authority is required', 'provider_poll_replay_required');
+    let reverified; try { reverified = this._advisoryPollReverify(clone(proof)); } catch (error) { fail('provider poll replay failed', error?.code ?? 'provider_poll_replay_invalid'); }
+    if (reverified && typeof reverified.then === 'function') fail('provider poll replay must be synchronous', 'provider_poll_replay_required');
+    if (canonicalDigest(reverified) !== canonicalDigest(proof)) fail('provider poll replay diverged', 'provider_poll_replay_invalid');
+    const sourceKey = this._providerSourceKey(p.repoId, p.providerId, p.sourceEpoch); const health = this._providerSourceHealth.get(sourceKey);
+    if (!health || health.status !== 'reconciliation_required' || health.lastEvent !== p.expectedHealthEvent || proof.finalSequence < health.highSequence || proof.window.fromSequence > (health.firstGap?.from ?? health.highSequence)) fail('provider source health changed before reconciliation', 'provider_reconciliation_stale');
+    const sequenceMap = this._providerSequences.get(sourceKey) ?? new Map(); const expectedRows = []; const expectedReceipts = [];
+    for (let sequence = proof.window.fromSequence; sequence <= proof.window.toSequence; sequence += 1) { const row = sequenceMap.get(sequence); const receipt = row ? this._providerReceipts.get(row.receiptId) : null; if (!row || !receipt || receipt.providerId !== p.providerId || receipt.sourceEpoch !== p.sourceEpoch) fail('provider poll sequence window is incomplete', 'provider_reconciliation_incomplete'); expectedRows.push(clone(row)); expectedReceipts.push(receipt); }
+    if (canonicalDigest(p.sequenceRows) !== canonicalDigest(expectedRows) || JSON.stringify(p.receiptIds) !== JSON.stringify(expectedReceipts.map((row) => row.id)) || JSON.stringify(proof.receiptRawDigests) !== JSON.stringify(expectedReceipts.map((row) => row.rawDigest))) fail('provider poll receipt projection is incomplete', 'provider_reconciliation_incomplete');
+    const expectedRequestDigest = canonicalDigest({ actor: event.actor, repoId: p.repoId, providerId: p.providerId, sourceEpoch: p.sourceEpoch, expectedHealthEvent: p.expectedHealthEvent, proofDigest: proof.proofDigest, trigger: 'provider_full_poll_reconciliation' }); if (p.requestDigest !== expectedRequestDigest) fail('provider reconciliation request identity is invalid');
+    const core = Object.fromEntries(Object.entries(p).filter(([key]) => key !== 'completionDigest')); if (p.completionDigest !== canonicalDigest(core)) fail('provider reconciliation completion digest is invalid');
+    return { sourceKey, health };
+  }
+
   _validateProviderGreenPayload(p, event, integrity = false) {
     const fail = (message, code) => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
     const fields = ['schemaVersion', 'requestDigest', 'completionDigest', 'processingId', 'expectedProcessingVersion', 'repoId', 'providerId', 'sourceEpoch', 'receiptIds', 'policy', 'indexBinding', 'observations', 'result'];
@@ -776,7 +802,10 @@ export class CoordinationStore {
 
   _apply(event) {
     const p = event.payload;
-    if (event.kind === 'knowledge.reuse_provider_guarded') {
+    if (event.kind === 'provider.reconciliation_completed') {
+      const { sourceKey, health } = this._validateProviderReconciliationPayload(p, event, true);
+      this._providerSourceHealth.set(sourceKey, freeze({ ...clone(health), status: 'healthy', firstGap: null, finalSequence: p.proof.finalSequence, cursorDigest: p.proof.cursorDigest, proofDigest: p.proof.proofDigest, lastReceiptEvent: health.lastEvent, lastEvent: event.seq, reconciliationEvent: event.seq, reconciledAt: event.ts }));
+    } else if (event.kind === 'knowledge.reuse_provider_guarded') {
       this._validateProviderAdversePayload(p, event, true); const old = this._providerProcessing.get(p.processingId);
       this._providerProcessing.set(p.processingId, freeze({ ...clone(old), status: 'guarded_adverse', version: old.version + 1, requestDigest: p.requestDigest, completionDigest: p.completionDigest, completionEvent: event.seq, observations: p.observations.map((row) => ({ coordinate: clone(row.coordinate), officialDigest: row.officialDigest, factDigest: row.snapshot.factDigest, adverse: row.adverse, contributionId: row.contribution?.id ?? null, asOf: row.snapshot.asOf })) }));
       for (const coordinate of old.coordinates) { const key = this._providerCoordinateKey(old.repoId, coordinate); const pending = new Set(this._providerPending.get(key) ?? []); pending.delete(p.processingId); if (pending.size === 0) this._providerPending.delete(key); else this._providerPending.set(key, pending); }
@@ -820,7 +849,7 @@ export class CoordinationStore {
         if (highSequence !== null && p.receipt.sequence > highSequence + 1) { status = 'reconciliation_required'; firstGap ??= { from: highSequence + 1, to: p.receipt.sequence - 1 }; }
         else if (highSequence !== null && p.receipt.sequence < highSequence) { status = 'reconciliation_required'; firstGap ??= { from: p.receipt.sequence, to: p.receipt.sequence }; }
         highSequence = highSequence === null ? p.receipt.sequence : Math.max(highSequence, p.receipt.sequence);
-        this._providerSourceHealth.set(sourceKey, freeze({ repoId: p.repoId, providerId: p.receipt.providerId, sourceEpoch: p.receipt.sourceEpoch, status, highSequence, firstGap, lastEvent: event.seq }));
+        this._providerSourceHealth.set(sourceKey, freeze({ repoId: p.repoId, providerId: p.receipt.providerId, sourceEpoch: p.receipt.sourceEpoch, status, highSequence, firstGap, lastEvent: event.seq, ...(priorHealth?.reconciliationEvent ? { finalSequence: priorHealth.finalSequence, cursorDigest: priorHealth.cursorDigest, proofDigest: priorHealth.proofDigest, lastReceiptEvent: event.seq, reconciliationEvent: priorHealth.reconciliationEvent, reconciledAt: priorHealth.reconciledAt } : {}) }));
       }
       if (existing) this._providerProcessing.set(p.processingId, freeze({ ...clone(existing), receiptIds: [...existing.receiptIds, p.receiptId], lastReceiptEvent: event.seq }));
       else {
@@ -1323,6 +1352,16 @@ export class CoordinationStore {
   providerSourceHealth(repoId, providerId, sourceEpoch) { return clone(this._providerSourceHealth.get(this._providerSourceKey(repoId, providerId, sourceEpoch)) ?? null); }
   advisoryFeedCards() { return [...this._advisoryFeedCards.values()].map((entry) => freeze({ ...clone(entry.card), cardDigest: entry.cardDigest })).sort((a, b) => a.providerId.localeCompare(b.providerId)); }
   pendingProviderReconciliation(repoId, coordinate) { return this._providerPendingFor(repoId, coordinate).map(clone); }
+
+  recordProviderSourceReconciliation(fields, auth) {
+    if (!boundedText(fields?.repoId, 256) || !fields?.proof || !Number.isSafeInteger(fields.expectedHealthEvent) || auth?.actor !== `provider-poller:${fields.proof.providerId}` || typeof auth?.key !== 'string' || auth.key.length === 0) throw new TypeError('provider source reconciliation authority is invalid');
+    const prior = this._byKey.get(auth.key); if (prior) { if (prior.kind !== 'provider.reconciliation_completed' || prior.payload?.proof?.proofDigest !== fields.proof.proofDigest) throw new CoordinationRefusal('provider reconciliation idempotency conflict', 'provider_reconciliation_conflict'); const health = this.providerSourceHealth(prior.payload.repoId, prior.payload.providerId, prior.payload.sourceEpoch); const current = health?.status === 'healthy' && health.reconciliationEvent === prior.seq; return freeze({ ok: true, result: current ? 'idempotent' : 'historical', current, historical: !current, event: clone(prior), health }); }
+    const proof = clone(fields.proof); const configured = this._advisoryFeedCards.get(proof.providerId); const windowItems = proof.window?.toSequence - proof.window?.fromSequence + 1; if (!configured || !Number.isSafeInteger(windowItems) || windowItems <= 0 || windowItems > configured.card.poll?.maxItems) throw new CoordinationRefusal('provider reconciliation window is invalid', 'provider_reconciliation_incomplete'); const sourceKey = this._providerSourceKey(fields.repoId, proof.providerId, proof.sourceEpoch); const sequenceMap = this._providerSequences.get(sourceKey) ?? new Map(); const sequenceRows = []; const receiptIds = [];
+    for (let sequence = proof.window?.fromSequence; Number.isSafeInteger(sequence) && sequence <= proof.window.toSequence; sequence += 1) { const row = sequenceMap.get(sequence); sequenceRows.push(clone(row ?? null)); receiptIds.push(row?.receiptId ?? null); }
+    const event = { seq: this._events.length + 1, ts: this._clock(), actor: auth.actor, idempotencyKey: auth.key }; const requestDigest = canonicalDigest({ actor: auth.actor, repoId: fields.repoId, providerId: proof.providerId, sourceEpoch: proof.sourceEpoch, expectedHealthEvent: fields.expectedHealthEvent, proofDigest: proof.proofDigest, trigger: 'provider_full_poll_reconciliation' });
+    const core = { schemaVersion: 1, requestDigest, repoId: fields.repoId, providerId: proof.providerId, sourceEpoch: proof.sourceEpoch, expectedHealthEvent: fields.expectedHealthEvent, proof, receiptIds, sequenceRows, completedAt: event.ts }; const payload = { ...core, completionDigest: canonicalDigest(core) };
+    this._validateProviderReconciliationPayload(payload, event, false); const appended = this._append('provider.reconciliation_completed', payload, auth, event.ts); return freeze({ ok: true, result: 'healthy', event: clone(appended), health: this.providerSourceHealth(fields.repoId, proof.providerId, proof.sourceEpoch) });
+  }
 
   providerProcessingAdmission(key, requestDigest) {
     const prior = this._byKey.get(key); if (!prior) return null;

@@ -8,7 +8,8 @@ const sha = (value) => createHash('sha256').update(value).digest('hex');
 const fingerprint = sha('phase43-test-key');
 const card = (overrides = {}) => ({
   schemaVersion: 1, providerId: 'fixture.osv', adapterId: 'fixture-hmac-v1', version: '1', modes: ['poll', 'webhook'], ecosystem: 'npm', semantics: 'authenticated_hint',
-  auth: { scheme: 'injected-test', keyFingerprints: [fingerprint] }, ceilings: { maxDeliveryBytes: 1024, maxCoordinates: 4, maxAdvisoryIds: 8, maxIdentityBytes: 256 }, ...overrides,
+  auth: { scheme: 'injected-test', keyFingerprints: [fingerprint] }, ceilings: { maxDeliveryBytes: 1024, maxCoordinates: 4, maxAdvisoryIds: 8, maxIdentityBytes: 256 },
+  poll: { origin: 'https://fixture.invalid', operation: '/v1/full', cursorKind: 'sequence', initialSequence: 1, redirects: 'deny', maxPages: 2, maxItems: 4, maxPageBytes: 1024, maxTotalBytes: 2048, maxWallMs: 1000, maxBackoffMs: 1000 }, ...overrides,
 });
 const receipt = (raw, overrides = {}) => ({
   schemaVersion: 1, providerId: 'fixture.osv', deliveryId: 'delivery-1', rawDigest: sha(raw), rawBytes: raw.length,
@@ -18,7 +19,7 @@ const receipt = (raw, overrides = {}) => ({
 });
 function source(overrides = {}) {
   const calls = [];
-  return { calls, card: () => card(overrides.card), async verifyDelivery(input, ctx) { calls.push({ input, ctx }); return receipt(input.raw, overrides.receipt); } };
+  return { calls, card: () => card(overrides.card), async verifyDelivery(input, ctx) { calls.push({ input, ctx }); return receipt(input.raw, overrides.receipt); }, async pollFull(ctx) { calls.push({ poll: true, ctx }); return overrides.poll; }, reverifyPollSync(proof) { calls.push({ reverifyPoll: true, proof }); return proof; } };
 }
 
 test('AF1/AF2: registry pins a closed source card and returns only a secret-free authenticated-hint receipt', async () => {
@@ -74,5 +75,26 @@ test('AF2/AF7/AF10: adapter output cannot forge source bytes, key identity, coor
   for (const forged of cases) {
     const registry = new AdvisoryFeedRegistry({ sources: { 'fixture.osv': source({ receipt: forged }) } });
     await assert.rejects(registry.verify('fixture.osv', { mode: 'webhook', raw }), (error) => error.code === 'provider_receipt_invalid');
+  }
+});
+
+test('PF1/PF2: a bounded full poll returns only a sanitized authenticated proof and ordinary verified receipts', async () => {
+  const items = [1, 2, 3].map((sequence) => Buffer.from(JSON.stringify({ sequence }))); const pageRaw = Buffer.from('{"window":"1-3"}'); const adapter = source();
+  adapter.pollFull = async (ctx) => ({ schemaVersion: 1, providerId: 'fixture.osv', pollId: 'poll-1', observedAt: '2026-07-13T04:00:00.000Z', window: { fromSequence: 1, toSequence: 3 }, finalSequence: 3, cursorDigest: sha('opaque-cursor-3'), authReceiptDigest: sha('poll-auth'), keyFingerprint: fingerprint, pages: [{ raw: pageRaw, items }] });
+  adapter.verifyDelivery = async ({ raw }) => { const { sequence } = JSON.parse(raw); return receipt(raw, { deliveryId: `delivery-${sequence}`, sequence, advisoryIds: [] }); };
+  const registry = new AdvisoryFeedRegistry({ sources: { 'fixture.osv': adapter } }); const result = await registry.pollFull('fixture.osv');
+  assert.deepEqual(result.receipts.map((row) => row.sequence), [1, 2, 3]); assert.equal(result.proof.finalSequence, 3); assert.equal(result.proof.pageDigests[0].digest, sha(pageRaw)); assert.deepEqual(result.proof.itemDigests, items.map(sha)); assert.match(result.proof.proofDigest, /^[a-f0-9]{64}$/);
+  const serialized = JSON.stringify(result); assert.equal(serialized.includes(pageRaw.toString()), false); assert.equal(items.some((raw) => serialized.includes(raw.toString())), false); assert.equal(serialized.includes('opaque-cursor-3'), false); assert.equal(registry.reverifyPollSync(result.proof).proofDigest, result.proof.proofDigest);
+});
+
+test('PF1/PF2: missing poll authority and page/item max+1 fail before exposing a partial proof', async () => {
+  assert.throws(() => new AdvisoryFeedRegistry({ sources: { 'fixture.osv': { card: () => card(), verifyDelivery: async () => null } } }), /poll/);
+  for (const pages of [
+    [{ raw: Buffer.alloc(1025), items: [Buffer.from('{}')] }],
+    [{ raw: Buffer.from('{}'), items: Array.from({ length: 5 }, () => Buffer.from('{}')) }],
+    [{ raw: Buffer.alloc(1024), items: [Buffer.alloc(1024)] }, { raw: Buffer.alloc(1024), items: [Buffer.alloc(1)] }],
+  ]) {
+    const adapter = source({ poll: { schemaVersion: 1, providerId: 'fixture.osv', pollId: 'poll-over', observedAt: '2026-07-13T04:00:00.000Z', window: { fromSequence: 1, toSequence: 1 }, finalSequence: 1, cursorDigest: sha('cursor'), authReceiptDigest: sha('poll-auth'), keyFingerprint: fingerprint, pages } }); const registry = new AdvisoryFeedRegistry({ sources: { 'fixture.osv': adapter } });
+    await assert.rejects(registry.pollFull('fixture.osv'), (error) => error.code === 'provider_poll_oversize');
   }
 });

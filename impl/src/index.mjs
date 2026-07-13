@@ -188,6 +188,7 @@ export function createDriver(opts) {
     clock: () => new Date(now()).toISOString(),
     advisoryFeedCards,
     advisoryReceiptReverify: (receipt) => advisoryFeeds.reverifyReceiptSync(receipt),
+    advisoryPollReverify: (proof) => advisoryFeeds.reverifyPollSync(proof),
   });
   if (opts.coordination && advisoryFeedCards.length > 0) {
     if (typeof coordination.advisoryFeedCards !== 'function' || canonicalDigest(coordination.advisoryFeedCards()) !== canonicalDigest(advisoryFeedCards)) throw new TypeError('custom coordination store disagrees with deployment advisory feed cards');

@@ -23,7 +23,9 @@ const freeze = (value) => {
 };
 
 function validCard(card) {
-  const nativeWebhook = ['hmac-sha256', 'ed25519'].includes(card?.auth?.scheme); const topFields = ['schemaVersion', 'providerId', 'adapterId', 'version', 'modes', 'ecosystem', 'semantics', 'auth', 'ceilings', ...(nativeWebhook ? ['webhook', 'privateCas'] : [])];
+  const nativeWebhook = ['hmac-sha256', 'ed25519'].includes(card?.auth?.scheme);
+  const hasPoll = card?.modes?.includes('poll') === true;
+  const topFields = ['schemaVersion', 'providerId', 'adapterId', 'version', 'modes', 'ecosystem', 'semantics', 'auth', 'ceilings', ...(nativeWebhook ? ['webhook', 'privateCas'] : []), ...(hasPoll ? ['poll'] : [])];
   if (!exactKeys(card, topFields)
     || card.schemaVersion !== 1 || !bounded(card.providerId, 128) || !/^[A-Za-z0-9._:-]+$/.test(card.providerId)
     || !bounded(card.adapterId, 128) || !bounded(card.version, 128) || card.ecosystem !== 'npm' || card.semantics !== 'authenticated_hint'
@@ -38,9 +40,32 @@ function validCard(card) {
     || typeof card.webhook.path !== 'string' || !card.webhook.path.startsWith('/') || card.webhook.contentType !== 'application/json' || card.webhook.contentEncoding !== 'identity'
     || !exactKeys(card.privateCas, ['storeId', 'digestAlgorithm']) || !bounded(card.privateCas.storeId, 128) || card.privateCas.digestAlgorithm !== 'sha256')) return false;
   const ceilingKeys = ['maxDeliveryBytes', 'maxCoordinates', 'maxAdvisoryIds', 'maxIdentityBytes', ...(nativeWebhook ? ['maxHeaderCount', 'maxHeaderBytes', 'maxClockSkewMs'] : [])];
-  return exactKeys(card.ceilings, ceilingKeys) && Object.values(card.ceilings).every((value) => Number.isSafeInteger(value) && value > 0)
+  let pollValid = true;
+  if (hasPoll) {
+    const p = card.poll; let origin; let operation;
+    try { origin = new URL(p?.origin); operation = new URL(p?.operation, origin); } catch { return false; }
+    const numeric = ['maxPages', 'maxItems', 'maxPageBytes', 'maxTotalBytes', 'maxWallMs', 'maxBackoffMs'];
+    pollValid = exactKeys(p, ['origin', 'operation', 'cursorKind', 'initialSequence', 'redirects', 'maxPages', 'maxItems', 'maxPageBytes', 'maxTotalBytes', 'maxWallMs', 'maxBackoffMs'])
+      && origin.protocol === 'https:' && origin.href === `${origin.origin}/` && operation.origin === origin.origin && operation.pathname === p.operation && operation.search === '' && operation.hash === '' && typeof p.operation === 'string' && /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]{1,2048}$/.test(p.operation)
+      && !p.operation.includes('//') && !p.operation.split('/').some((segment) => ['.', '..'].includes(segment)) && p.cursorKind === 'sequence' && p.redirects === 'deny' && Number.isSafeInteger(p.initialSequence) && p.initialSequence >= 0 && numeric.every((key) => Number.isSafeInteger(p[key]) && p[key] > 0)
+      && p.maxPages <= 10_000 && p.maxItems <= 100_000 && p.maxPageBytes <= 16 * 1024 * 1024 && p.maxTotalBytes <= 64 * 1024 * 1024 && p.maxWallMs <= 60 * 60 * 1_000 && p.maxBackoffMs <= 60 * 60 * 1_000;
+  }
+  return pollValid && exactKeys(card.ceilings, ceilingKeys) && Object.values(card.ceilings).every((value) => Number.isSafeInteger(value) && value > 0)
     && card.ceilings.maxDeliveryBytes <= 16 * 1024 * 1024 && card.ceilings.maxCoordinates <= 10_000 && card.ceilings.maxAdvisoryIds <= 100_000 && card.ceilings.maxIdentityBytes <= 4_096
     && (!nativeWebhook || (card.ceilings.maxHeaderCount <= 256 && card.ceilings.maxHeaderBytes <= 256 * 1024 && card.ceilings.maxClockSkewMs <= 24 * 60 * 60 * 1_000));
+}
+
+function validatePollProof(proof, card, cardDigest) {
+  const fields = ['schemaVersion', 'providerId', 'sourceEpoch', 'cardDigest', 'pollId', 'observedAt', 'window', 'finalSequence', 'cursorDigest', 'authReceiptDigest', 'keyFingerprint', 'pageDigests', 'itemDigests', 'totalBytes', 'receiptRawDigests', 'proofDigest'];
+  if (!exactKeys(proof, fields) || proof.schemaVersion !== 1 || proof.providerId !== card.providerId || proof.sourceEpoch !== cardDigest || proof.cardDigest !== cardDigest || !bounded(proof.pollId, card.ceilings.maxIdentityBytes) || !time(proof.observedAt)
+    || !exactKeys(proof.window, ['fromSequence', 'toSequence']) || !Number.isSafeInteger(proof.window.fromSequence) || !Number.isSafeInteger(proof.window.toSequence) || proof.window.fromSequence < card.poll.initialSequence || proof.window.toSequence < proof.window.fromSequence || proof.finalSequence !== proof.window.toSequence
+    || !hex(proof.cursorDigest) || !hex(proof.authReceiptDigest) || !card.auth.keyFingerprints.includes(proof.keyFingerprint) || !Array.isArray(proof.pageDigests) || proof.pageDigests.length === 0 || proof.pageDigests.length > card.poll.maxPages
+    || proof.pageDigests.some((row) => !exactKeys(row, ['digest', 'bytes', 'itemCount']) || !hex(row.digest) || !Number.isSafeInteger(row.bytes) || row.bytes <= 0 || row.bytes > card.poll.maxPageBytes || !Number.isSafeInteger(row.itemCount) || row.itemCount <= 0)
+    || !Array.isArray(proof.itemDigests) || proof.itemDigests.length === 0 || proof.itemDigests.length > card.poll.maxItems || proof.window.toSequence - proof.window.fromSequence + 1 !== proof.itemDigests.length || proof.pageDigests.reduce((sum, row) => sum + row.itemCount, 0) !== proof.itemDigests.length || proof.itemDigests.some((value) => !hex(value))
+    || !Number.isSafeInteger(proof.totalBytes) || proof.totalBytes <= 0 || proof.totalBytes > card.poll.maxTotalBytes || !Array.isArray(proof.receiptRawDigests) || proof.receiptRawDigests.length !== proof.itemDigests.length || proof.receiptRawDigests.some((value) => !hex(value)) || JSON.stringify(proof.receiptRawDigests) !== JSON.stringify(proof.itemDigests)) throw typed('provider poll proof is invalid', 'provider_poll_invalid');
+  const core = Object.fromEntries(Object.entries(proof).filter(([key]) => key !== 'proofDigest'));
+  if (proof.proofDigest !== digest(core)) throw typed('provider poll proof digest is invalid', 'provider_poll_invalid');
+  return freeze(json(proof));
 }
 
 function validateReceipt(receipt, card, raw, mode, cardDigest) {
@@ -71,6 +96,7 @@ export class AdvisoryFeedRegistry {
       if (!source || typeof source.card !== 'function' || (typeof source.verifyDelivery !== 'function' && typeof source.verifyWebhook !== 'function')) throw new TypeError(`invalid advisory feed source: ${providerId}`);
       const card = source.card();
       if (!validCard(card) || card.providerId !== providerId) throw new TypeError(`invalid advisory feed card: ${providerId}`);
+      if (card.modes.includes('poll') && (typeof source.pollFull !== 'function' || typeof source.reverifyPollSync !== 'function' || typeof source.verifyDelivery !== 'function')) throw new TypeError(`poll authority is incomplete: ${providerId}`);
       const cardDigest = digest(card);
       this.entries.set(providerId, { source, card: freeze(json(card)), cardDigest });
     }
@@ -94,6 +120,44 @@ export class AdvisoryFeedRegistry {
     if (ctx.signal?.aborted) throw typed('provider delivery verification cancelled', 'cancelled');
     const preserved = Buffer.from(input.raw); const receipt = await entry.source.verifyWebhook(Object.freeze({ method: input.method, path: input.path, rawHeaders: json(input.rawHeaders), raw: Buffer.from(preserved) }), Object.freeze({ signal: ctx.signal, cardDigest: entry.cardDigest }));
     return validateReceipt(receipt, entry.card, preserved, 'webhook', entry.cardDigest);
+  }
+
+  async pollFull(providerId, ctx = {}) {
+    const entry = this.entries.get(providerId); if (!entry) throw typed('unknown advisory feed provider', 'provider_not_configured');
+    if (!entry.card.modes.includes('poll') || typeof entry.source.pollFull !== 'function' || !record(ctx) || Object.keys(ctx).some((key) => key !== 'signal')) throw typed('provider poll is not configured', 'provider_poll_unavailable');
+    if (ctx.signal?.aborted) throw typed('provider poll cancelled', 'cancelled');
+    const controller = new AbortController(); const signal = ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal; const deadline = Date.now() + entry.card.poll.maxWallMs;
+    const timed = async (promise) => { let timer; try { const remaining = deadline - Date.now(); if (remaining <= 0) throw typed('provider poll exceeded wall-time ceiling', 'provider_poll_timeout'); return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(typed('provider poll exceeded wall-time ceiling', 'provider_poll_timeout')); }, remaining); })]); } finally { clearTimeout(timer); } };
+    try {
+      const value = await timed(Promise.resolve(entry.source.pollFull(Object.freeze({ signal }), Object.freeze({ cardDigest: entry.cardDigest }))));
+      const fields = ['schemaVersion', 'providerId', 'pollId', 'observedAt', 'window', 'finalSequence', 'cursorDigest', 'authReceiptDigest', 'keyFingerprint', 'pages'];
+      if (!exactKeys(value, fields) || value.schemaVersion !== 1 || value.providerId !== providerId || !bounded(value.pollId, entry.card.ceilings.maxIdentityBytes) || !time(value.observedAt) || !exactKeys(value.window, ['fromSequence', 'toSequence'])
+        || !Number.isSafeInteger(value.window.fromSequence) || !Number.isSafeInteger(value.window.toSequence) || value.window.fromSequence < entry.card.poll.initialSequence || value.window.toSequence < value.window.fromSequence || value.finalSequence !== value.window.toSequence
+        || !hex(value.cursorDigest) || !hex(value.authReceiptDigest) || !entry.card.auth.keyFingerprints.includes(value.keyFingerprint) || !Array.isArray(value.pages) || value.pages.length === 0) throw typed('provider poll result is invalid', 'provider_poll_invalid');
+      if (value.pages.length > entry.card.poll.maxPages) throw typed('provider poll exceeded deployment ceiling', 'provider_poll_oversize');
+      const pageDigests = []; const itemBytes = []; let totalBytes = 0;
+      for (const page of value.pages) {
+        if (!exactKeys(page, ['raw', 'items']) || !Buffer.isBuffer(page.raw) || page.raw.length === 0 || page.raw.length > entry.card.poll.maxPageBytes || !Array.isArray(page.items) || page.items.length === 0 || page.items.some((raw) => !Buffer.isBuffer(raw) || raw.length === 0)) throw typed('provider poll exceeded deployment ceiling', 'provider_poll_oversize');
+        totalBytes += page.raw.length; for (const raw of page.items) { totalBytes += raw.length; itemBytes.push(Buffer.from(raw)); }
+        pageDigests.push({ digest: digest(page.raw), bytes: page.raw.length, itemCount: page.items.length });
+      }
+      if (itemBytes.length > entry.card.poll.maxItems || totalBytes > entry.card.poll.maxTotalBytes) throw typed('provider poll exceeded deployment ceiling', 'provider_poll_oversize');
+      const receipts = [];
+      for (const raw of itemBytes) { if (signal.aborted) throw typed('provider poll cancelled', 'cancelled'); const receipt = await timed(Promise.resolve(entry.source.verifyDelivery(Object.freeze({ mode: 'poll', raw: Buffer.from(raw) }), Object.freeze({ signal, cardDigest: entry.cardDigest })))); receipts.push(validateReceipt(receipt, entry.card, raw, 'poll', entry.cardDigest)); }
+      const expectedSequences = Array.from({ length: value.window.toSequence - value.window.fromSequence + 1 }, (_, index) => value.window.fromSequence + index);
+      if (JSON.stringify(receipts.map((row) => row.sequence)) !== JSON.stringify(expectedSequences)) throw typed('provider poll sequence window is incomplete', 'provider_poll_incomplete');
+      const core = { schemaVersion: 1, providerId, sourceEpoch: entry.cardDigest, cardDigest: entry.cardDigest, pollId: value.pollId, observedAt: value.observedAt, window: json(value.window), finalSequence: value.finalSequence, cursorDigest: value.cursorDigest, authReceiptDigest: value.authReceiptDigest, keyFingerprint: value.keyFingerprint, pageDigests, itemDigests: itemBytes.map(digest), totalBytes, receiptRawDigests: receipts.map((row) => row.rawDigest) };
+      const proof = validatePollProof({ ...core, proofDigest: digest(core) }, entry.card, entry.cardDigest);
+      return freeze({ proof, receipts: receipts.map((row) => freeze(json(row))) });
+    } finally { controller.abort(); }
+  }
+
+  reverifyPollSync(proof) {
+    const entry = this.entries.get(proof?.providerId); if (!entry || !entry.card.modes.includes('poll') || typeof entry.source.reverifyPollSync !== 'function') throw typed('provider poll replay is unavailable', 'provider_poll_replay_unavailable');
+    const checked = validatePollProof(proof, entry.card, entry.cardDigest); const reverified = entry.source.reverifyPollSync(json(checked));
+    if (reverified && typeof reverified.then === 'function') throw typed('provider poll replay must be synchronous', 'provider_poll_replay_unavailable');
+    const replayed = validatePollProof(reverified, entry.card, entry.cardDigest); if (digest(replayed) !== digest(checked)) throw typed('provider poll replay diverged', 'provider_poll_invalid');
+    return replayed;
   }
 
   async reverifyReceipt(receipt) {

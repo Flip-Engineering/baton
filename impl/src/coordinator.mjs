@@ -105,7 +105,7 @@ const COORDINATION_MUTATORS = new Set([
   'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
   'readScratch', 'expireScratchClaim', 'expireScratchFact', 'addKnowledgeNode', 'promoteKnowledgeNode',
   'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination', 'recordReuseDecision',
-  'recordReuseRiskGuard', 'recordReuseTtlInvalidation', 'activateReusePolicy', 'recordProviderDelivery', 'recordProviderGreenCompletion', 'recordProviderAdverseCompletion',
+  'recordReuseRiskGuard', 'recordReuseTtlInvalidation', 'activateReusePolicy', 'recordProviderDelivery', 'recordProviderGreenCompletion', 'recordProviderAdverseCompletion', 'recordProviderSourceReconciliation',
 ]);
 
 function canonical(value) {
@@ -333,6 +333,10 @@ export class Coordinator {
       if (typeof this._advisoryFeeds.verify !== 'function') throw new TypeError('Coordinator advisory feed registry is missing verify()');
       for (const method of ['recordProviderDelivery', 'pendingProviderReconciliation', 'providerReceipt', 'providerProcessing']) {
         if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
+      }
+      if (advisoryCards.some((card) => card.modes.includes('poll'))) {
+        if (typeof this._advisoryFeeds.pollFull !== 'function' || typeof this._advisoryFeeds.reverifyPollSync !== 'function') throw new TypeError('Coordinator advisory feed registry is missing poll authority');
+        for (const method of ['providerSourceHealth', 'recordProviderSourceReconciliation']) if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
       }
     }
     this._providerReconciliation = null;
@@ -2785,6 +2789,24 @@ export class Coordinator {
       const receipt = await this._advisoryFeeds.verifyWebhook(providerId, input, { signal: ctx.signal });
       const key = `provider-delivery:${canonicalDigest({ repoId: this._repoId, providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest })}`;
       return this._coordination.recordProviderDelivery({ repoId: this._repoId, receipt }, { actor: `provider:${providerId}`, key });
+    } finally { this._authorityOps -= 1; }
+  }
+
+  /** Run one deployment-pinned authenticated full poll for a degraded source, durably admit every
+   * item through ordinary delivery dedupe, then append the sole source-health recovery event. */
+  async reconcileProviderSource(providerId, ctx = {}) {
+    this._assertOperational();
+    if (typeof providerId !== 'string' || !ctx || Object.keys(ctx).some((key) => key !== 'signal')) throw Object.assign(new TypeError('provider source reconciliation request is invalid'), { code: 'provider_reconciliation_invalid' });
+    const card = this.advisoryFeedCards().find((row) => row.providerId === providerId); if (!this._advisoryFeeds || !this._repoId || !card?.modes?.includes('poll') || typeof this._advisoryFeeds.pollFull !== 'function' || typeof this._coordination.recordProviderSourceReconciliation !== 'function') throw Object.assign(new Error('provider full poll is not deployment-configured'), { code: 'provider_poll_unavailable' });
+    if (!this._coordination.reusePolicyState(this._repoId)) throw Object.assign(new Error('provider polling requires active reuse policy'), { code: 'reuse_policy_reconciliation_required' });
+    const before = this._coordination.providerSourceHealth(this._repoId, providerId, card.cardDigest); if (!before || before.status !== 'reconciliation_required') return Object.freeze({ ok: true, result: 'not_required', health: before, receipts: [] });
+    this._authorityOps += 1;
+    try {
+      const polled = await this._advisoryFeeds.pollFull(providerId, { signal: ctx.signal }); const receipts = [];
+      for (const receipt of polled.receipts) { const key = `provider-delivery:${canonicalDigest({ repoId: this._repoId, providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest })}`; receipts.push(this._coordination.recordProviderDelivery({ repoId: this._repoId, receipt }, { actor: `provider:${providerId}`, key })); }
+      const current = this._coordination.providerSourceHealth(this._repoId, providerId, card.cardDigest); if (!current || current.status !== 'reconciliation_required') throw Object.assign(new Error('provider source health changed during full poll'), { code: 'provider_reconciliation_stale' });
+      const result = this._coordination.recordProviderSourceReconciliation({ repoId: this._repoId, proof: polled.proof, expectedHealthEvent: current.lastEvent }, { actor: `provider-poller:${providerId}`, key: `provider-poll:${canonicalDigest({ repoId: this._repoId, providerId, sourceEpoch: card.cardDigest, proofDigest: polled.proof.proofDigest })}` });
+      return Object.freeze({ ...result, receipts });
     } finally { this._authorityOps -= 1; }
   }
 
