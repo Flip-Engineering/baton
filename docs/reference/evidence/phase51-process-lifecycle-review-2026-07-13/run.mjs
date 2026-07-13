@@ -29,7 +29,19 @@ const CODEX_CMD = loginCommand('codex', process.env.BATON_CODEX_CMD);
 const GROK_CMD = loginCommand('grok', process.env.BATON_GROK_CMD);
 const CLAUDE_CMD = loginCommand('claude', process.env.BATON_CLAUDE_CMD);
 const BASE_SHA = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim();
-const REVIEW_CONFIG = REVIEW_PHASE === '53' ? {
+const REVIEW_CONFIG = REVIEW_PHASE === '54' ? {
+  runId: 'phase54-cpg-binding-implementation-review',
+  taskType: 'phase54-cpg-binding-implementation-review',
+  reviewMode: 'This is a postimplementation review. The committed specification, source, derived representations, and tests are all in scope. Distinguish a report that conforms to its requested shape from a semantic PASS verdict.',
+  files: 'spec/phase54/atlas-cpg-lexical-bindings.md, impl/src/atlas-cpg.mjs, impl/src/atlas-cpg-delta.mjs, impl/src/atlas-cpg-taint.mjs, impl/test/phase54-atlas-cpg-lexical-bindings.test.mjs, and the adjacent Phase 18–22 representation tests',
+  future: 'Review only the bounded Phase 54 lexical-binding increment and compatibility with shipped representation authority. Treat closure capture, aliases/heap flow, interprocedural flow, SSA/full PDG, SCIP type identity, e-graphs, semantic merge, behavior equivalence, and other retained representation capabilities as future scope rather than Phase 54 defects.',
+  focus: {
+    codex: 'two-pass declaration/resolution semantics, parameter plus var identity, nearest assignment, closure boundaries, and unsupported syntax honesty',
+    glm: 'artifact/schema integrity, duplicate identity and substituted-child refusal, delta/taint inheritance, resume/reverify, and no new authority',
+    grok45: 'independent ceilings, deterministic formatting-insensitive keys, CFG atomic-control compatibility, cancellation, and max-plus-one behavior',
+    grokbuild: 'adversarial value-flow counterexamples, malformed graph lineage, ACI/transport parity, provenance truth, and missing red gates',
+  },
+} : REVIEW_PHASE === '53' ? {
   runId: 'phase53-contradiction-implementation-review',
   taskType: 'phase53-contradiction-implementation-review',
   reviewMode: 'This is a postimplementation review. The committed specification, source, transports, and tests are all in scope. Do not report their presence or absence abstractly: prove any defect against the committed implementation.',
@@ -69,8 +81,8 @@ const REVIEW_CONFIG = REVIEW_PHASE === '53' ? {
 const RUN_ID = REVIEW_CONFIG.runId;
 const TASK_TYPE = REVIEW_CONFIG.taskType;
 const TASKS = [
-  { taskId: `phase${REVIEW_PHASE}-codex-review`, harness: 'codex', model: 'gpt-5.6-sol', family: 'openai', target: `reviews/dogfood/phase${REVIEW_PHASE}-codex-review.md`, tokens: REVIEW_PHASE === '53' ? 180_000 : 100_000, usd: 2.5, focus: REVIEW_CONFIG.focus.codex },
-  { taskId: `phase${REVIEW_PHASE}-glm-review`, harness: 'glm', model: 'glm-4.7', family: 'glm', target: `reviews/dogfood/phase${REVIEW_PHASE}-glm-review.md`, tokens: REVIEW_PHASE === '53' ? 130_000 : 110_000, usd: REVIEW_PHASE === '53' ? 1.75 : 1.25, focus: REVIEW_CONFIG.focus.glm },
+  { taskId: `phase${REVIEW_PHASE}-codex-review`, harness: 'codex', model: 'gpt-5.6-sol', family: 'openai', target: `reviews/dogfood/phase${REVIEW_PHASE}-codex-review.md`, tokens: ['53', '54'].includes(REVIEW_PHASE) ? 180_000 : 100_000, usd: 2.5, focus: REVIEW_CONFIG.focus.codex },
+  { taskId: `phase${REVIEW_PHASE}-glm-review`, harness: 'glm', model: 'glm-4.7', family: 'glm', target: `reviews/dogfood/phase${REVIEW_PHASE}-glm-review.md`, tokens: ['53', '54'].includes(REVIEW_PHASE) ? 130_000 : 110_000, usd: REVIEW_PHASE === '53' ? 1.75 : REVIEW_PHASE === '54' ? 2.5 : 1.25, focus: REVIEW_CONFIG.focus.glm },
   { taskId: `phase${REVIEW_PHASE}-grok45-review`, harness: 'grok', model: 'grok-4.5', family: 'grok', target: `reviews/dogfood/phase${REVIEW_PHASE}-grok45-review.md`, tokens: 70_000, usd: 2, focus: REVIEW_CONFIG.focus.grok45 },
   { taskId: `phase${REVIEW_PHASE}-grokbuild-review`, harness: 'grok', model: 'grok-build', family: 'grok', target: `reviews/dogfood/phase${REVIEW_PHASE}-grokbuild-review.md`, tokens: 70_000, usd: 2, focus: REVIEW_CONFIG.focus.grokbuild },
 ];
@@ -255,7 +267,8 @@ const cleanup = {
   writerReleased: closed && !existsSync(join(LOG_DIR, 'coordination', 'writer.lease')),
 };
 const reportBinding = (row) => Boolean(row.report && row.verify?.payload?.accept === true && row.report.includes('## Verdict') && row.report.includes('## P0-P1 findings') && row.report.includes('## Required corrections'));
-const reviewProof = { verifiedReports: rows.filter(reportBinding).map((row) => row.taskId), baseShaPinned: git(['rev-parse', 'HEAD']) === BASE_SHA };
+const reportVerdict = (row) => !reportBinding(row) ? null : /(^|[^A-Z])REVISE([^A-Z]|$)/u.test(row.report) ? 'REVISE' : /(^|[^A-Z])PASS([^A-Z]|$)/u.test(row.report) ? 'PASS' : null;
+const reviewProof = { verifiedReports: rows.filter(reportBinding).map((row) => row.taskId), reportVerdicts: Object.fromEntries(rows.map((row) => [row.taskId, reportVerdict(row)])), baseShaPinned: git(['rev-parse', 'HEAD']) === BASE_SHA };
 const glmTaskId = TASKS.find((task) => task.harness === 'glm').taskId;
 const implementationReviewPass = fatal === null && routeProof.exactHarnessModelEffort && routeProof.observationsHonest && reviewProof.verifiedReports.includes(glmTaskId) && Object.values(cleanup).every(Boolean);
 const harnessMatrixPass = implementationReviewPass && rows.length === TASKS.length
@@ -271,7 +284,7 @@ const summary = {
     claudeVersion: execFileSync(CLAUDE_CMD, ['--version'], { encoding: 'utf8' }).trim(),
     executableSelection: 'absolute paths resolved through the logged-in shell',
   },
-  interpretation: { implementationReviewPass: 'exact route attribution, at least the project-key GLM report freshly verified, and complete cleanup', harnessMatrixPass: 'implementationReviewPass plus provider readiness and exact start/close for every route, at least one explicit confirmed kill, and one simultaneous two-Grok live-group sample' },
+  interpretation: { implementationReviewPass: 'execution and report-shape conformance only: exact route attribution, at least the project-key GLM report freshly verified, and complete cleanup; not a semantic correctness verdict', harnessMatrixPass: 'implementationReviewPass plus provider readiness and exact start/close for every route, at least one explicit confirmed kill, and one simultaneous two-Grok live-group sample', reportVerdicts: 'worker-authored semantic dispositions retained separately from report conformance' },
   grokAuthProbe: { authenticated: grokAuthError === null && grokModels.length > 0 && !grokModels.includes('not authenticated'), output: grokModels, error: grokAuthError },
   credentials, ownershipBefore, ownershipAfter, overlapSamples, attempts,
   rows: rows.map((row) => ({ taskId: row.taskId, harness: row.harness, model: row.model, workerId: row.workerId, processStarted: row.processStarted?.payload ?? null, providerReady: Boolean(row.providerReady), processClosed: row.processClosed?.payload ?? null, result: row.result ? { ready: row.result.ready, status: row.result.status } : null, route: { harnessRequested: row.handle.harnessRequested, harnessResolved: row.handle.harnessResolved, modelRequested: row.handle.modelRequested, modelResolved: row.handle.modelResolved, modelObserved: row.handle.modelObserved, effortRequested: row.handle.effortRequested, effortResolved: row.handle.effortResolved, effortObserved: row.handle.effortObserved }, budgetUsed: row.handle.budgetUsed, verifyAccept: row.verify?.payload?.accept ?? false, reportCaptured: Boolean(row.report), killRequestedSeq: row.killRequested?.seq ?? null, killConfirmedSeq: row.killConfirmed?.seq ?? null, terminalReason: String(row.events.findLast((event) => event.kind === 'lifecycle.crashed')?.payload?.error ?? '').slice(0, 512) })),
