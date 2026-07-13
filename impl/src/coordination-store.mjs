@@ -24,6 +24,15 @@ function providerAttemptDelay(policy, windowAttempt) {
   const exponent = Math.min(windowAttempt - 1, Math.ceil(Math.log2(policy.maxBackoffMs / policy.initialBackoffMs)));
   return Math.min(policy.maxBackoffMs, policy.initialBackoffMs * (2 ** exponent));
 }
+function validRoutePolicy(policy) {
+  const fields = ['mode', 'halfLifeMs', 'explorationConstant', 'seedDiscount', 'minSamplesForAdaptive', 'defaultPriorSuccessRate'];
+  return policy && Object.keys(policy).sort().join(',') === fields.sort().join(',') && ['round-robin', 'adaptive', 'auto'].includes(policy.mode)
+    && Number.isSafeInteger(policy.halfLifeMs) && policy.halfLifeMs > 0 && policy.halfLifeMs <= 10 * 365 * 24 * 60 * 60 * 1_000
+    && Number.isFinite(policy.explorationConstant) && policy.explorationConstant > 0 && policy.explorationConstant <= 10
+    && Number.isFinite(policy.seedDiscount) && policy.seedDiscount > 0 && policy.seedDiscount <= 1
+    && Number.isSafeInteger(policy.minSamplesForAdaptive) && policy.minSamplesForAdaptive > 0 && policy.minSamplesForAdaptive <= 1_000_000
+    && Number.isFinite(policy.defaultPriorSuccessRate) && policy.defaultPriorSuccessRate > 0 && policy.defaultPriorSuccessRate < 1;
+}
 function validRunId(value) { return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/.test(value); }
 function validEnvRef(envRef) { return envRef && typeof envRef.repoId === 'string' && envRef.repoId.length > 0 && typeof envRef.treeSha === 'string' && /^[A-Fa-f0-9]{4,128}$/.test(envRef.treeSha); }
 function officialCoordinateMatches(identity, coordinate) { const fields = Object.keys(identity ?? {}).sort().join(','); return ['ecosystem,package,version', 'ecosystem,package,system,version'].includes(fields) && identity.ecosystem === coordinate?.ecosystem && identity.package === coordinate?.package && identity.version === coordinate?.version && (!Object.hasOwn(identity, 'system') || (coordinate.ecosystem === 'npm' && identity.system === 'NPM')); }
@@ -85,6 +94,11 @@ export class CoordinationStore {
         || policy.initialBackoffMs > policy.maxBackoffMs || policy.intervalMs > 24 * 60 * 60 * 1_000 || policy.maxBatch > 10_000 || policy.maxBatch > policy.maxStateRows || policy.maxAttempts > 1_000_000 || policy.maxBackoffMs > 24 * 60 * 60 * 1_000 || policy.maxStateRows > 1_000_000) throw new TypeError('provider attempt policy is invalid');
       this._providerAttemptPolicy = freeze(clone(policy));
     }
+    this._routePolicy = null;
+    if (opts.routePolicy !== undefined) {
+      if (!validRoutePolicy(opts.routePolicy)) throw new TypeError('route learning policy is invalid');
+      this._routePolicy = freeze(clone(opts.routePolicy));
+    }
     this._resetProjection();
     this._operationalRead = opts.operationalRead ?? null;
     this._writerLease = null;
@@ -96,6 +110,7 @@ export class CoordinationStore {
   _resetProjection() {
     this._events = []; this._byKey = new Map(); this._tasks = new Map(); this._runs = new Map(); this._artifacts = new Map();
     this._reuseDecisions = new Map(); this._reuseSubjects = new Map(); this._reuseRiskGuards = new Map(); this._reusePolicyHeads = new Map(); this._reusePolicyTransitions = [];
+    this._routeObservations = new Map();
     this._reuseProviderContributions = new Map(); this._reuseProviderCoordinateContributions = new Map(); this._reuseProviderGuards = new Map();
     this._evidence = new Map(); this._scratchFacts = new Map(); this._scratchClaims = new Map(); this._scratchReads = [];
     this._knowledgeNodes = new Map(); this._knowledgeEdges = new Map(); this._knowledgeReads = []; this._contamination = [];
@@ -217,7 +232,7 @@ export class CoordinationStore {
     }
     const start = this._events.length;
     const events = entries.map((entry, index) => freeze({
-      schemaVersion: 1, seq: start + index + 1, ts: this._clock(), kind: entry.kind,
+      schemaVersion: 1, seq: start + index + 1, ts: entry.fixedTs ?? this._clock(), kind: entry.kind,
       actor: entry.auth.actor, idempotencyKey: entry.auth.key, payload: freeze(clone(entry.payload)),
     }));
     this._appendFile(this.file, `${events.map((event) => JSON.stringify(event)).join('\n')}\n`, 'utf8');
@@ -259,6 +274,37 @@ export class CoordinationStore {
     const runNodeId = `run:${p.runId}`; const artifactNodeId = `run-scorecard:${p.scorecardDigest}`;
     if (this._knowledgeNodes.has(runNodeId) || this._knowledgeNodes.has(artifactNodeId)) fail('run scorecard graph identity already exists', 'duplicate_node');
     return { members, evidence: clone(evidence), runNodeId, artifactNodeId };
+  }
+
+  _validateRouteObservationPayload(p, event, integrity = false) {
+    const fail = (message, code = 'route_observation_integrity') => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
+    const fields = ['schemaVersion', 'policyDigest', 'taskId', 'expectedTaskVersion', 'taskType', 'runId', 'routeKey', 'modelFamily', 'route', 'terminalStatus', 'verifiedWin', 'verificationEvidence', 'observedAt', 'observationDigest'];
+    const routeFields = ['harnessRequested', 'harnessResolved', 'modelRequested', 'modelResolved', 'modelObserved', 'effortRequested', 'effortResolved', 'effortObserved'];
+    if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || p.schemaVersion !== 1 || !this._routePolicy || p.policyDigest !== canonicalDigest(this._routePolicy)
+      || !boundedText(p.taskId, 256) || !boundedText(p.taskType, 256) || (p.runId !== null && !validRunId(p.runId)) || !boundedText(p.routeKey, 4096) || !boundedText(p.modelFamily, 128)
+      || !p.route || Object.keys(p.route).sort().join(',') !== routeFields.sort().join(',') || !['completed', 'failed'].includes(p.terminalStatus) || p.verifiedWin !== (p.terminalStatus === 'completed')
+      || !Number.isSafeInteger(p.expectedTaskVersion) || !Number.isFinite(Date.parse(p.observedAt)) || new Date(Date.parse(p.observedAt)).toISOString() !== p.observedAt || p.observedAt !== event.ts
+      || !/^[a-f0-9]{64}$/.test(p.observationDigest ?? '') || event.actor !== 'policy') fail('route observation shape is invalid');
+    let tuple; try { tuple = JSON.parse(p.routeKey); } catch { fail('route observation key is invalid'); }
+    if (!Array.isArray(tuple) || tuple.length !== 6 || tuple[4] !== p.modelFamily || tuple[5] !== p.taskType || `${tuple[0]}@${tuple[1]}` !== p.route.harnessResolved
+      || tuple[2] !== (p.route.modelResolved ?? 'default') || tuple[3] !== (p.route.effortResolved ?? 'default')) fail('route observation tuple is invalid');
+    const task = this._tasks.get(p.taskId); if (!task || task.taskType !== p.taskType || (task.runId ?? null) !== p.runId) fail('route observation task is invalid', 'route_observation_stale');
+    if (integrity) {
+      if (task.status !== p.terminalStatus || task.version !== p.expectedTaskVersion + 1) fail('route observation terminal task diverged', 'route_observation_stale');
+      const terminal = this._events[task.terminalEvent - 1]; if (!terminal || event.idempotencyKey !== `${terminal.idempotencyKey}:route:${p.taskId}`) fail('route observation idempotency identity diverged');
+    } else if (task.status !== 'working' || task.version !== p.expectedTaskVersion) fail('route observation target is stale', 'route_observation_stale');
+    for (const field of routeFields.filter((name) => !['modelObserved', 'effortObserved'].includes(name))) if ((task[field] ?? null) !== p.route[field]) fail('route observation attribution diverged');
+    if ((task.routeKey ?? null) !== p.routeKey) fail('route observation route key diverged');
+    const evidence = p.verificationEvidence; const mapped = this._events[evidence?.coordinationSeq - 1];
+    if (!evidence || !Number.isSafeInteger(evidence.coordinationSeq) || mapped?.kind !== 'evidence.mapped' || mapped.payload?.kind !== 'verify.reverified'
+      || canonicalDigest({ ...mapped.payload, coordinationSeq: mapped.seq }) !== canonicalDigest(evidence)) fail('route observation verification evidence is invalid');
+    const source = this._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq);
+    if (!source || source.kind !== 'verify.reverified' || source.taskId !== p.taskId || source.payload?.accept !== p.verifiedWin
+      || (source.modelObserved ?? null) !== p.route.modelObserved || (source.effortObserved ?? null) !== p.route.effortObserved) fail('route observation verification outcome diverged');
+    const core = Object.fromEntries(Object.entries(p).filter(([key]) => key !== 'observationDigest'));
+    if (p.observationDigest !== canonicalDigest({ ...core, idempotencyKey: event.idempotencyKey })) fail('route observation digest is invalid');
+    const prior = this._routeObservations.get(p.taskId); if (prior && prior.observationDigest !== p.observationDigest) fail('task route observation conflicts', 'route_observation_conflict');
+    return task;
   }
 
   _validateReuseDecisionPayload(p, event, integrity = false) {
@@ -909,6 +955,11 @@ export class CoordinationStore {
     } else if (event.kind === 'task.transitioned') {
       const old = this._tasks.get(p.id);
       this._tasks.set(p.id, freeze({ ...clone(old), status: p.to, version: p.newVersion, ...(TERMINAL.has(p.to) ? { terminalEvent: event.seq } : {}) }));
+    } else if (event.kind === 'route.outcome_observed') {
+      this._validateRouteObservationPayload(p, event, true); const observation = freeze({ ...clone(p), eventSeq: event.seq }); this._routeObservations.set(p.taskId, observation);
+      const nodeId = `route-stat:${p.observationDigest}`; const evidence = [{ coordinationSeq: p.verificationEvidence.coordinationSeq }, { coordinationSeq: event.seq }];
+      this._knowledgeNodes.set(nodeId, freeze({ id: nodeId, type: 'RouteStat', grounding: 'verified', body: `Verified ${p.verifiedWin ? 'win' : 'loss'} for ${p.routeKey}`, evidence, promotion: { kind: 'RouteStat', trigger: 'route.outcome' }, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: p.verificationEvidence.coordinationSeq, eventTime: this._events[p.verificationEvidence.coordinationSeq - 1]?.ts ?? event.ts, validFrom: event.ts, validTo: null, validityVersion: 1, taskId: p.taskId, taskType: p.taskType, routeKey: p.routeKey, modelFamily: p.modelFamily, verifiedWin: p.verifiedWin, policyDigest: p.policyDigest }));
+      const edgeId = `knowledge-edge:observedin:${nodeId}:task:${p.taskId}`; this._knowledgeEdges.set(edgeId, freeze({ id: edgeId, type: 'ObservedIn', from: nodeId, to: `task:${p.taskId}`, evidence, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: p.verificationEvidence.coordinationSeq, eventTime: this._events[p.verificationEvidence.coordinationSeq - 1]?.ts ?? event.ts, validFrom: event.ts, validTo: null, validityVersion: 1 }));
     } else if (event.kind === 'evidence.mapped') {
       if (!this._operationalRead) throw new CoordinationIntegrityError('mapped operational evidence requires an authoritative resolver', 'evidence_resolver_required');
       const observed = this._operationalRead(p.worker, p.workerSeq);
@@ -1149,7 +1200,9 @@ export class CoordinationStore {
   }
   task(id) { return clone(this._tasks.get(id) ?? null); }
   run(id) { return clone(this._runs.get(id) ?? null); }
-  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
+  routePolicy() { return clone(this._routePolicy); }
+  routeObservations() { return [...this._routeObservations.values()].sort((a, b) => a.eventSeq - b.eventSeq).map(clone); }
+  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
   healthCheck() { try { if (!existsSync(this.file)) return this._events.length === 0; const raw = readFileSync(this.file, 'utf8'); return raw.length === 0 || raw.endsWith('\n'); } catch { return false; } }
   readyTasks() {
     return [...this._tasks.values()].filter((task) => task.status === 'pending' && task.assignee == null
@@ -1336,24 +1389,60 @@ export class CoordinationStore {
   }
 
   transitionTaskWithArtifacts(id, to, expectedVersion, fields, auth, evidence = null) {
+    const structured = Array.isArray(fields) ? { manifests: fields, routeObservation: null } : fields;
+    if (!structured || !Array.isArray(structured.manifests) || Object.keys(structured).some((key) => !['manifests', 'routeObservation'].includes(key))) throw new TypeError('terminal batch fields are invalid');
     const prior = this._byKey.get(auth?.key);
-    if (prior) return { ok: true, result: 'idempotent', event: clone(prior), task: this.task(id), artifacts: this.task(id).artifactIds.map((artifactId) => this.artifact(artifactId)) };
+    if (prior) {
+      if (this._routePolicy) {
+        const task = this._tasks.get(id); const currentRoute = this._routeObservations.get(id) ?? null;
+        const requestedRoute = structured.routeObservation ?? null;
+        const currentRouteRequest = currentRoute ? {
+          taskType: currentRoute.taskType, runId: currentRoute.runId, routeKey: currentRoute.routeKey,
+          modelFamily: currentRoute.modelFamily, route: currentRoute.route, verifiedWin: currentRoute.verifiedWin,
+          verificationEvidence: currentRoute.verificationEvidence,
+        } : null;
+        const requestedManifests = structured.manifests.map((fields) => {
+          const manifest = clone(fields);
+          manifest.digest ??= digest({ taskId: manifest.taskId, kind: manifest.kind, refs: manifest.refs, provenance: manifest.provenance });
+          manifest.id ??= `artifact:${manifest.digest}`;
+          return manifest;
+        });
+        const currentManifests = (task?.artifactIds ?? []).map((artifactId) => {
+          const { createdEvent, version, supersededBy, supersededEvent, ...manifest } = this._artifacts.get(artifactId);
+          return manifest;
+        });
+        const exact = prior.kind === 'task.transitioned' && prior.actor === auth?.actor && prior.payload?.id === id
+          && prior.payload?.to === to && prior.payload?.expectedVersion === expectedVersion
+          && canonicalDigest(prior.payload?.evidence ?? null) === canonicalDigest(evidence ?? null)
+          && canonicalDigest(requestedManifests) === canonicalDigest(currentManifests)
+          && canonicalDigest(requestedRoute) === canonicalDigest(currentRouteRequest);
+        if (!exact) throw new CoordinationRefusal('terminal route-learning transaction conflicts with its idempotency key', 'route_observation_conflict');
+      }
+      return { ok: true, result: 'idempotent', event: clone(prior), task: this.task(id), artifacts: this.task(id).artifactIds.map((artifactId) => this.artifact(artifactId)), routeObservation: clone(this._routeObservations.get(id) ?? null) };
+    }
     const task = this._tasks.get(id);
     if (!task) throw new CoordinationRefusal(`unknown task ${id}`, 'not_found');
     if (TERMINAL.has(task.status)) throw new CoordinationRefusal(`terminal task ${id}`, 'terminal');
     if (task.version !== expectedVersion) throw new CoordinationRefusal(`stale task version ${expectedVersion}`, 'stale_version');
     if (!TRANSITIONS.get(task.status)?.has(to)) throw new CoordinationRefusal(`invalid transition ${task.status}->${to}`, 'invalid_transition');
-    const manifests = (fields ?? []).map((manifest) => this._prepareArtifact(manifest, to));
-    const entries = [{
+    const manifests = structured.manifests.map((manifest) => this._prepareArtifact(manifest, to));
+    const batchTs = this._clock(); const entries = [{
       kind: 'task.transitioned',
       payload: { id, from: task.status, to, expectedVersion, newVersion: expectedVersion + 1, evidence: clone(evidence) },
-      auth,
+      auth, fixedTs: batchTs,
     }, ...manifests.map((manifest) => ({
       kind: 'artifact.registered', payload: manifest,
-      auth: { actor: auth.actor, key: `${auth.key}:artifact:${manifest.id}` },
+      auth: { actor: auth.actor, key: `${auth.key}:artifact:${manifest.id}` }, fixedTs: batchTs,
     }))];
+    if (structured.routeObservation !== null && structured.routeObservation !== undefined) {
+      if (!this._routePolicy || !structured.routeObservation || Object.keys(structured.routeObservation).sort().join(',') !== ['taskType', 'runId', 'routeKey', 'modelFamily', 'route', 'verifiedWin', 'verificationEvidence'].sort().join(',')) throw new CoordinationRefusal('route observation is not deployment-configured', 'route_observation_unavailable');
+      const observedAt = batchTs; const core = { schemaVersion: 1, policyDigest: canonicalDigest(this._routePolicy), taskId: id, expectedTaskVersion: expectedVersion, ...clone(structured.routeObservation), terminalStatus: to, observedAt };
+      const event = { seq: this._events.length + entries.length + 1, ts: observedAt, actor: 'policy', idempotencyKey: `${auth.key}:route:${id}` }; const payload = { ...core, observationDigest: canonicalDigest({ ...core, idempotencyKey: event.idempotencyKey }) };
+      this._validateRouteObservationPayload(payload, event, false);
+      entries.push({ kind: 'route.outcome_observed', payload, auth: { actor: 'policy', key: event.idempotencyKey }, fixedTs: observedAt });
+    }
     const events = this._appendBatch(entries);
-    return { ok: true, result: 'transitioned', event: clone(events[0]), task: this.task(id), artifacts: manifests.map((manifest) => this.artifact(manifest.id)) };
+    return { ok: true, result: 'transitioned', event: clone(events[0]), task: this.task(id), artifacts: manifests.map((manifest) => this.artifact(manifest.id)), routeObservation: clone(this._routeObservations.get(id) ?? null) };
   }
 
   artifact(id) { return clone(this._artifacts.get(id) ?? null); }

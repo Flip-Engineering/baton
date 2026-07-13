@@ -29,18 +29,52 @@ export class CairnRunScorecard {
     this.coordination = opts.coordination;
     this.readOperational = opts.readOperational;
     this.artifactRoot = resolve(opts.artifactRoot);
+    this.routeAdvisor = opts.routeAdvisor ?? null;
+    this.routeAdvice = opts.routeAdvice ?? null;
+    if ((this.routeAdvisor === null) !== (this.routeAdvice === null)) throw new TypeError('Cairn route advice requires router and ceilings together');
+    if (this.routeAdvisor && (typeof this.routeAdvisor.advice !== 'function' || typeof this.routeAdvisor.policy !== 'function' || typeof this.routeAdvisor.snapshot !== 'function' || typeof this.coordination.routeObservations !== 'function'
+      || !this.routeAdvice || Object.keys(this.routeAdvice).sort().join(',') !== ['maxBytes', 'maxCandidates', 'maxRows', 'maxTaskTypeBytes'].sort().join(',')
+      || Object.values(this.routeAdvice).some((value) => !Number.isSafeInteger(value) || value <= 0) || this.routeAdvice.maxCandidates > 10_000 || this.routeAdvice.maxRows > 10_000 || this.routeAdvice.maxRows < this.routeAdvice.maxCandidates || this.routeAdvice.maxTaskTypeBytes > 4_096 || this.routeAdvice.maxBytes > 16 * 1024 * 1024)) throw new TypeError('Cairn route advice configuration is invalid');
     mkdirSync(this.artifactRoot, { recursive: true, mode: 0o700 });
   }
 
   card() {
-    return {
-      name: 'cairn', version: 1,
-      ops: {
-        'run.scorecard': {
-          latency_class: 'interactive', deterministic: true, side_effects: ['artifact.write', 'coordination.append', 'knowledge.promote'], reverifiable: true,
-        },
+    const ops = {
+      'run.scorecard': {
+        latency_class: 'interactive', deterministic: true, side_effects: ['artifact.write', 'coordination.append', 'knowledge.promote'], reverifiable: true,
       },
     };
+    if (this.routeAdvisor) ops['route.advice'] = { latency_class: 'interactive', deterministic: true, side_effects: [], reverifiable: true };
+    return {
+      name: 'cairn', version: 1,
+      ops,
+    };
+  }
+
+  _routeAdvice(args) {
+    if (!this.routeAdvisor) throw typed('route advice is not deployment-configured', 'capability_op_unavailable');
+    if (!args || Object.keys(args).sort().join(',') !== ['candidates', 'observedAt', 'taskType'].sort().join(',') || typeof args.taskType !== 'string' || args.taskType.trim().length === 0 || Buffer.byteLength(args.taskType) > this.routeAdvice.maxTaskTypeBytes
+      || !Number.isFinite(Date.parse(args.observedAt)) || new Date(Date.parse(args.observedAt)).toISOString() !== args.observedAt || !Array.isArray(args.candidates) || args.candidates.length === 0 || args.candidates.length > this.routeAdvice.maxCandidates || args.candidates.length > this.routeAdvice.maxRows) throw typed('route advice request is invalid', 'route_advice_invalid');
+    const candidates = args.candidates.map((row) => {
+      if (!row || Object.keys(row).sort().join(',') !== ['concurrencyCeiling', 'inFlight', 'modelFamily', 'routeKey'].sort().join(',') || typeof row.routeKey !== 'string' || Buffer.byteLength(row.routeKey) > 4096 || typeof row.modelFamily !== 'string' || row.modelFamily.length === 0 || Buffer.byteLength(row.modelFamily) > 128
+        || !Number.isSafeInteger(row.concurrencyCeiling) || row.concurrencyCeiling <= 0 || !Number.isSafeInteger(row.inFlight) || row.inFlight < 0) throw typed('route advice candidate is invalid', 'route_advice_invalid');
+      let tuple; try { tuple = JSON.parse(row.routeKey); } catch { throw typed('route advice tuple is invalid', 'route_advice_invalid'); }
+      if (!Array.isArray(tuple) || tuple.length !== 6 || tuple[4] !== row.modelFamily || tuple[5] !== args.taskType) throw typed('route advice tuple is invalid', 'route_advice_invalid');
+      return { modelVersion: row.routeKey, family: row.modelFamily, concurrencyCeiling: row.concurrencyCeiling, inFlight: row.inFlight };
+    });
+    if (new Set(candidates.map((row) => row.modelVersion)).size !== candidates.length) throw typed('route advice candidates are duplicated', 'route_advice_invalid');
+    const observations = this.coordination.routeObservations(); const latestObservedAt = observations.at(-1)?.observedAt ?? null;
+    if (latestObservedAt && Date.parse(args.observedAt) < Date.parse(latestObservedAt)) throw typed('route advice observation time predates durable evidence', 'route_advice_invalid');
+    const before = this.routeAdvisor.snapshot?.(); const advice = this.routeAdvisor.advice({ taskType: args.taskType }, candidates, { now: Date.parse(args.observedAt) });
+    if (before && stable(before) !== stable(this.routeAdvisor.snapshot())) throw typed('route advice mutated router state', 'route_advice_integrity');
+    const coordinationUpperBound = observations.at(-1)?.eventSeq ?? 0; const core = { schemaVersion: 1, taskType: args.taskType, observedAt: args.observedAt, coordinationUpperBound, policyDigest: sha256(stable(this.routeAdvisor.policy())), selectedRouteKey: advice.selected, effectiveMode: advice.mode, rows: advice.rows.map((row) => ({ routeKey: row.modelVersion, modelFamily: row.family, eligible: row.eligible, verifiedWeight: row.weight, evidenceCount: row.count, successRate: row.rate, score: row.score, seededFrom: row.seededFrom, selected: row.selected, reason: row.reason })) };
+    const document = { ...core, adviceDigest: sha256(stable(core)) };
+    if (document.rows.length > this.routeAdvice.maxRows || Buffer.byteLength(stable(document)) > this.routeAdvice.maxBytes) throw typed('route advice exceeded deployment ceiling', 'route_advice_oversize');
+    return document;
+  }
+
+  _routeResult(document) {
+    return { op: 'route.advice', status: 'ok', summary: `bounded Cairn advice for ${document.taskType}`, payload: [clone(document)], refs: [], cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' }, provenance: { deterministic: true, readOnly: true, coordinationUpperBound: document.coordinationUpperBound, workerAuthority: false, verificationAuthority: false, mergeAuthority: false, approvalAuthority: false, publicationAuthority: false, routingMutationAuthority: false } };
   }
 
   _events(worker, throughSeq) {
@@ -144,6 +178,7 @@ export class CairnRunScorecard {
   _artifactPath(digest) { return join(this.artifactRoot, `${digest}.json`); }
 
   async invoke(op, args, ctx) {
+    if (op === 'route.advice') return this._routeResult(this._routeAdvice(args));
     if (op !== 'run.scorecard') throw typed('unsupported Cairn operation', 'capability_op_unavailable');
     const runId = args?.runId;
     if (!validRunId(runId)) throw typed('runId is invalid', 'invalid_run_id');
@@ -165,6 +200,7 @@ export class CairnRunScorecard {
 
   async reverify(claim, op, args) {
     try {
+      if (op === 'route.advice') { const rebuilt = this._routeAdvice(args); const observed = claim?.payload?.[0]; return { ok: stable(observed) === stable(rebuilt) && observed?.adviceDigest === rebuilt.adviceDigest, digest: rebuilt.adviceDigest }; }
       if (op !== 'run.scorecard' || !validRunId(args?.runId)) return { ok: false, reason: 'invalid_request' };
       const run = this.coordination.run(args.runId);
       if (!run || !existsSync(run.artifact?.path)) return { ok: false, reason: 'missing_seal_or_artifact' };

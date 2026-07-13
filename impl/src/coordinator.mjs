@@ -400,6 +400,8 @@ export class Coordinator {
     });
     this._referee = opts.referee;
     this._route = opts.route;
+    this._routeLearningPolicy = opts.routeLearningPolicy ? Object.freeze({ ...opts.routeLearningPolicy }) : null;
+    if (this._routeLearningPolicy && (typeof opts.coordination.routePolicy !== 'function' || typeof opts.coordination.routeObservations !== 'function' || canonicalDigest(opts.coordination.routePolicy()) !== canonicalDigest(this._routeLearningPolicy))) throw new TypeError('Coordinator route learning policy disagrees with durable coordination');
     this._story = opts.story ?? null;
     this._repoRoot = opts.repoRoot ?? null;
     this._repoId = opts.repoId ?? null;
@@ -3628,12 +3630,25 @@ export class Coordinator {
         });
       }
       const terminalStatus = accept ? 'completed' : 'failed';
+      const routeCard = this._adapters[handle.vendor]?.card(); const routeAttribution = this._routeAttribution(handle, task);
+      const routeObservation = this._routeLearningPolicy ? {
+        taskType: task.taskType ?? 'general', runId: task.runId ?? null,
+        routeKey: task.routeKey ?? routeTupleKey(routeCard, handle.modelResolved, handle.effortResolved, task.taskType),
+        modelFamily: routeCard?.modelSelection?.family ?? 'default',
+        route: {
+          harnessRequested: routeAttribution.harnessRequested, harnessResolved: routeAttribution.harnessResolved,
+          modelRequested: routeAttribution.modelRequested, modelResolved: routeAttribution.modelResolved, modelObserved: routeAttribution.modelObserved,
+          effortRequested: routeAttribution.effortRequested, effortResolved: routeAttribution.effortResolved, effortObserved: routeAttribution.effortObserved,
+        },
+        verifiedWin: accept, verificationEvidence: evidence,
+      } : null;
       trustPhase = 'terminal_batch';
       const terminal = this._coordination.transitionTaskWithArtifacts(
         task.id, terminalStatus, task.coordinationVersion,
-        manifests, { actor: 'policy', key: `task.${terminalStatus}:${task.id}:${verifyEvent.seq}` }, evidence,
+        routeObservation ? { manifests, routeObservation } : manifests, { actor: 'policy', key: `task.${terminalStatus}:${task.id}:${verifyEvent.seq}` }, evidence,
       );
       task.coordinationVersion = terminal.task.version;
+      if (terminal.routeObservation && this._route && typeof this._route.record === 'function') this._route.record(terminal.routeObservation.routeKey, terminal.routeObservation.taskType, terminal.routeObservation.verifiedWin, { family: terminal.routeObservation.modelFamily, taskId: terminal.routeObservation.taskId, now: Date.parse(terminal.routeObservation.observedAt) });
       this._expireScratchClaims(handle, task, `task_${terminalStatus}`);
       const artifactEvidence = terminal.artifacts.map((artifact) => ({ artifactId: artifact.id }));
       trustPhase = 'promotion';
@@ -3670,7 +3685,7 @@ export class Coordinator {
         }
       }
 
-      if (this._route && typeof this._route.record === 'function') {
+      if (!this._routeLearningPolicy && this._route && typeof this._route.record === 'function') {
         const card = this._adapters[handle.vendor]?.card();
         try {
           this._route.record(task.routeKey ?? routeTupleKey(card, handle.modelResolved, handle.effortResolved, task.taskType), task.taskType ?? 'general', accept);

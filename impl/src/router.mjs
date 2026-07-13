@@ -99,6 +99,27 @@ export class AdaptiveRouter {
     return optsNow ?? this._now();
   }
 
+  policy() {
+    return {
+      mode: this.mode, halfLifeMs: this.halfLifeMs, explorationConstant: this.explorationConstant,
+      seedDiscount: this.seedDiscount, minSamplesForAdaptive: this.minSamplesForAdaptive,
+      defaultPriorSuccessRate: this.defaultPriorSuccessRate,
+    };
+  }
+
+  /** Hydrate a fresh router from coordination-ordered verified outcomes. */
+  hydrate(observations) {
+    if (!Array.isArray(observations) || this._buckets.size > 0 || this._appliedTaskIds.size > 0) throw new RouterUsageError('hydrate() requires a fresh router and ordered observations');
+    let priorSeq = 0;
+    for (const row of observations) {
+      if (!row || !Number.isSafeInteger(row.eventSeq) || row.eventSeq <= priorSeq || typeof row.taskId !== 'string' || typeof row.routeKey !== 'string' || typeof row.taskType !== 'string' || typeof row.modelFamily !== 'string' || typeof row.verifiedWin !== 'boolean' || !Number.isFinite(Date.parse(row.observedAt))) throw new RouterUsageError('hydrate() received an invalid route observation');
+      priorSeq = row.eventSeq;
+      const applied = this.record(row.routeKey, row.taskType, row.verifiedWin, { family: row.modelFamily, taskId: row.taskId, now: Date.parse(row.observedAt) });
+      if (!applied.applied) throw new RouterUsageError('hydrate() received a duplicate task observation');
+    }
+    return { applied: observations.length };
+  }
+
   /**
    * Find the most-recently-used bucket for the same family+taskType, excluding
    * `excludeModelVersion`. Read-only.
@@ -261,6 +282,37 @@ export class AdaptiveRouter {
       }
     }
     return best ? best.modelVersion : null;
+  }
+
+  /** Pure read-only advice over a closed candidate set. It never advances round-robin state or
+   * materializes prospective seed buckets. */
+  advice(task, candidates, opts = {}) {
+    const nowMs = this._resolveNow(opts.now); const taskType = task?.taskType;
+    if (typeof taskType !== 'string' || !Array.isArray(candidates)) throw new RouterUsageError('advice() requires a task type and candidate list');
+    const eligible = candidates.filter((candidate) => candidate.inFlight < candidate.concurrencyCeiling);
+    const effectiveMode = eligible.length === 0 ? (this.mode === 'auto' ? 'round-robin' : this.mode) : this._effectiveMode(taskType, eligible, nowMs);
+    const projected = candidates.map((candidate) => {
+      let bucket = this._candidateBucket(candidate, taskType); let seededFrom = bucket?.seededFrom ?? null;
+      if (!bucket) {
+        const predecessor = this._findPredecessor(candidate.family, taskType, candidate.modelVersion);
+        if (predecessor) { const prior = decayedStat(predecessor, nowMs, this.halfLifeMs); bucket = { ...predecessor, modelVersion: candidate.modelVersion, weight: prior.weight * this.seedDiscount, count: prior.count * this.seedDiscount, lastUsedTs: nowMs, firstSeenTs: nowMs, seededFrom: predecessor.modelVersion }; seededFrom = predecessor.modelVersion; }
+      }
+      const decayed = decayedStat(bucket, nowMs, this.halfLifeMs); const rate = decayed.count > 0 ? decayed.weight / decayed.count : this.defaultPriorSuccessRate;
+      return { candidate, bucket, seededFrom, decayed, rate, eligible: candidate.inFlight < candidate.concurrencyCeiling };
+    });
+    const eligibleRows = projected.filter((row) => row.eligible); const totalDecayedCount = eligibleRows.reduce((sum, row) => sum + row.decayed.count, 0); let selected = null; let bestScore = -Infinity;
+    if (effectiveMode === 'round-robin' && eligibleRows.length > 0) selected = eligibleRows[(this._rrCursor.get(taskType) ?? 0) % eligibleRows.length].candidate.modelVersion;
+    else for (const row of eligibleRows) {
+      const score = row.decayed.count < this.minSamplesForAdaptive - EPSILON ? this.defaultPriorSuccessRate : scoreCandidate(row.decayed, totalDecayedCount, { explorationConstant: this.explorationConstant, defaultPriorSuccessRate: this.defaultPriorSuccessRate });
+      if (score > bestScore) { bestScore = score; selected = row.candidate.modelVersion; }
+    }
+    return {
+      mode: effectiveMode, selected,
+      rows: projected.map((row) => {
+        const score = !row.eligible ? null : effectiveMode === 'round-robin' ? null : row.decayed.count < this.minSamplesForAdaptive - EPSILON ? this.defaultPriorSuccessRate : scoreCandidate(row.decayed, totalDecayedCount, { explorationConstant: this.explorationConstant, defaultPriorSuccessRate: this.defaultPriorSuccessRate });
+        return { modelVersion: row.candidate.modelVersion, family: row.candidate.family, eligible: row.eligible, weight: row.decayed.weight, count: row.decayed.count, rate: row.rate, score, seededFrom: row.seededFrom, selected: row.candidate.modelVersion === selected, reason: !row.eligible ? 'concurrency_saturated' : row.candidate.modelVersion === selected ? (effectiveMode === 'round-robin' ? 'round_robin_selected' : 'highest_adaptive_score') : (effectiveMode === 'round-robin' ? 'round_robin_not_selected' : 'lower_adaptive_score') };
+      }),
+    };
   }
 
   /**

@@ -180,9 +180,20 @@ function refereeFn(task, result, opts) {
 export function createDriver(opts) {
   const now = opts.now ?? Date.now;
   if (opts.reuseDecisionPolicy !== undefined && (typeof opts.repoId !== 'string' || opts.repoId.length === 0)) throw new TypeError('reuseDecisionPolicy requires one deployment-bound repoId');
+  let routeLearningPolicy;
+  if (opts.routeLearningPolicy !== undefined) {
+    const policy = opts.routeLearningPolicy; const fields = ['mode', 'halfLifeMs', 'explorationConstant', 'seedDiscount', 'minSamplesForAdaptive', 'defaultPriorSuccessRate'];
+    if (!policy || Object.keys(policy).sort().join(',') !== fields.sort().join(',') || !['round-robin', 'adaptive', 'auto'].includes(policy.mode)
+      || !Number.isSafeInteger(policy.halfLifeMs) || policy.halfLifeMs <= 0 || policy.halfLifeMs > 10 * 365 * 24 * 60 * 60 * 1_000
+      || !Number.isFinite(policy.explorationConstant) || policy.explorationConstant <= 0 || policy.explorationConstant > 10
+      || !Number.isFinite(policy.seedDiscount) || policy.seedDiscount <= 0 || policy.seedDiscount > 1
+      || !Number.isSafeInteger(policy.minSamplesForAdaptive) || policy.minSamplesForAdaptive <= 0 || policy.minSamplesForAdaptive > 1_000_000
+      || !Number.isFinite(policy.defaultPriorSuccessRate) || policy.defaultPriorSuccessRate <= 0 || policy.defaultPriorSuccessRate >= 1) throw new TypeError('route learning policy is invalid');
+    routeLearningPolicy = Object.freeze({ ...policy });
+  }
   const log = new Log(opts.logDir, () => new Date(now()).toISOString());
   const fences = new FenceTable();
-  const router = new AdaptiveRouter({ mode: 'adaptive', now });
+  const router = new AdaptiveRouter({ ...(routeLearningPolicy ?? { mode: 'adaptive' }), now });
   const story = new StoryCompiler({ now });
   const runtimeScopes = opts.runtimeScopes ?? new RuntimeIsolation({
     repoRoot: opts.repoRoot,
@@ -206,20 +217,23 @@ export function createDriver(opts) {
     advisoryReceiptReverify: (receipt) => advisoryFeeds.reverifyReceiptSync(receipt),
     advisoryPollReverify: (proof) => advisoryFeeds.reverifyPollSync(proof),
     ...(providerProcessingPolicy ? { providerAttemptPolicy: providerProcessingPolicy } : {}),
+    ...(routeLearningPolicy ? { routePolicy: routeLearningPolicy } : {}),
   });
   if (opts.coordination && advisoryFeedCards.length > 0) {
     if (typeof coordination.advisoryFeedCards !== 'function' || canonicalDigest(coordination.advisoryFeedCards()) !== canonicalDigest(advisoryFeedCards)) throw new TypeError('custom coordination store disagrees with deployment advisory feed cards');
   }
   if (opts.coordination && providerProcessingPolicy && (typeof coordination.providerAttemptPolicy !== 'function' || canonicalDigest(coordination.providerAttemptPolicy()) !== canonicalDigest(providerProcessingPolicy))) throw new TypeError('custom coordination store disagrees with deployment provider attempt policy');
+  if (opts.coordination && routeLearningPolicy && (typeof coordination.routePolicy !== 'function' || typeof coordination.routeObservations !== 'function' || canonicalDigest(coordination.routePolicy()) !== canonicalDigest(routeLearningPolicy))) throw new TypeError('custom coordination store disagrees with deployment route learning policy');
   let writerLease = null;
   try {
   writerLease = coordination.claimWriterLease();
+  if (routeLearningPolicy) router.hydrate(coordination.routeObservations());
   const configuredCapabilities = { ...(opts.capabilities ?? {}) };
   for (const [name, factory] of Object.entries(opts.capabilityFactories ?? {})) {
     if (Object.hasOwn(configuredCapabilities, name)) throw new TypeError(`duplicate capability registration: ${name}`);
     if (typeof factory !== 'function') throw new TypeError(`capability factory must be a function: ${name}`);
     configuredCapabilities[name] = factory({
-      coordination,
+      coordination, router,
       readOperational: (worker, throughSeq = null) => log.read(worker).filter((event) => throughSeq === null || event.seq <= throughSeq),
       tailOperational: (worker) => log.tail(worker),
     });
@@ -303,7 +317,7 @@ export function createDriver(opts) {
     // and a last-wins Map would silently flip which vendor key receives the dispatch.
     return feasible.find((v) => candidateKey(v) === chosen) ?? null;
   };
-  route.record = (mv, tt, win) => router.record(mv, tt, win);
+  route.record = (mv, tt, win, recordOpts = {}) => router.record(mv, tt, win, recordOpts);
 
   const coordinator = new Coordinator({
     log, fences,
@@ -320,6 +334,7 @@ export function createDriver(opts) {
     providerReconciliation,
     providerProcessingSchedule: providerProcessingPolicy ? { repoId: opts.repoId, ...providerProcessingPolicy } : undefined,
     providerRead,
+    routeLearningPolicy,
     coordination,
     repoRoot: opts.repoRoot,
     repoId: opts.repoId,
