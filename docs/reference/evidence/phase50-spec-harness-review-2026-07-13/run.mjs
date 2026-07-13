@@ -10,6 +10,8 @@ import { CodexAppServerCli, GlmSessionCli, GrokAcpCli, createBrief, createDriver
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(process.env.BATON_REPO ?? resolve(HERE, '../../../..'));
+const OUTPUT = resolve(process.env.BATON_EVIDENCE_DIR ?? HERE);
+const OUTPUT_PREFIX = process.env.BATON_EVIDENCE_PREFIX ?? '';
 const LOG_DIR = mkdtempSync(join(tmpdir(), 'baton-phase50-spec-review-'));
 const GLM_AUTH = resolve(process.env.BATON_GLM_AUTH_FILE ?? resolve(REPO, 'glm_key.json'));
 const CODEX_AUTH = join(homedir(), '.codex', 'auth.json');
@@ -61,7 +63,7 @@ function bounded(events) {
 if (!existsSync(GLM_AUTH)) throw new Error('PENDING-LIVE-no-project-glm-key');
 if (!existsSync(CODEX_AUTH)) throw new Error('PENDING-LIVE-no-codex-auth');
 if (!existsSync(GROK_AUTH)) throw new Error('PENDING-LIVE-no-grok-auth-file');
-mkdirSync(HERE, { recursive: true });
+mkdirSync(OUTPUT, { recursive: true });
 const grokModels = execFileSync('grok', ['models'], { encoding: 'utf8' }).trim();
 const dependencies = existsSync(join(REPO, 'impl', 'node_modules')) ? ['impl/node_modules'] : [];
 const driver = createDriver({
@@ -101,8 +103,8 @@ const checks = {
   writerReleased: closed && !existsSync(join(coordinationRoot, 'writer.lease')) && (!existsSync(coordinationRoot) || !readdirSync(coordinationRoot).some((name) => name.startsWith('writer.claim.'))),
 };
 const summary = { at: new Date().toISOString(), repoHead: git(['rev-parse', 'HEAD']), runId: RUN_ID, grokAuthProbe: { authenticated: !grokModels.includes('not authenticated'), output: grokModels }, credentialPosture: { glm: 'project-local owner-only ignored key loaded only by GlmSessionCli', codex: 'owner-only auth projected into private runtime', grok: 'owner-only auth projected into two private runtimes' }, rows: rows.map((row) => ({ taskId: row.taskId, harness: row.harness, model: row.model, workerId: row.workerId, pid: row.pid, result: row.result ? { status: row.result.status, ready: row.result.ready } : null, route: { harnessRequested: row.handle.harnessRequested, harnessResolved: row.handle.harnessResolved, modelRequested: row.handle.modelRequested, modelResolved: row.handle.modelResolved, modelObserved: row.handle.modelObserved, effortRequested: row.handle.effortRequested, effortResolved: row.handle.effortResolved, effortObserved: row.handle.effortObserved }, budgetUsed: row.handle.budgetUsed, verifyAccept: row.verify?.payload?.accept ?? false, reportCaptured: Boolean(row.report), terminalReason: String(row.events.find((event) => ['lifecycle.turn_completed', 'lifecycle.crashed'].includes(event.kind))?.payload?.error ?? '').slice(0, 512) })), responses, kills, checks, fatal, pass: Object.values(checks).every(Boolean) };
-writeFileSync(join(HERE, 'events.jsonl'), `${rows.flatMap((row) => bounded(row.events).map((event) => JSON.stringify({ taskId: row.taskId, requestedHarness: row.harness, requestedModel: row.model, requestedEffort: 'low', ...event }))).join('\n')}\n`);
-writeFileSync(join(HERE, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
-for (const row of rows) if (row.report) writeFileSync(join(HERE, `${row.taskId}.md`), row.report);
+writeFileSync(join(OUTPUT, `${OUTPUT_PREFIX}events.jsonl`), `${rows.flatMap((row) => bounded(row.events).map((event) => JSON.stringify({ taskId: row.taskId, requestedHarness: row.harness, requestedModel: row.model, requestedEffort: 'low', ...event }))).join('\n')}\n`);
+writeFileSync(join(OUTPUT, `${OUTPUT_PREFIX}summary.json`), `${JSON.stringify(summary, null, 2)}\n`);
+for (const row of rows) if (row.report) writeFileSync(join(OUTPUT, `${OUTPUT_PREFIX}${row.taskId}.md`), row.report);
 rmSync(LOG_DIR, { recursive: true, force: true });
 console.log(JSON.stringify({ pass: summary.pass, rows: summary.rows, checks, fatal }, null, 2)); if (!summary.pass) process.exitCode = 1;
