@@ -307,5 +307,10 @@ adapter):
     turn. Permission-first calls still establish `requested`. This adapter normalization prevents
     one provider action from masquerading as two logical attempts while the coordinator correctly
     retains fail-closed rejection of genuinely repeated `requested` phases (**F3**, test-locked).
+12. The same dogfood found Grok Build replaying stale `in_progress` snapshots after a tool call's
+    `completed` snapshot. The adapter retains per-turn call phase and suppresses only nonterminal
+    regression after a terminal observation; contradictory terminal outcomes still reach the
+    coordinator's fail-closed protocol check. This keeps snapshot transport semantics separate
+    from Baton's logical-call semantics (**F4**, test-locked).
 
 Suite after corrections: **372/372** (+F1 usage test, +F2 tool_call_update test).

@@ -205,10 +205,18 @@ function runPrompt(text) {
   // tool_call_update carrying the completion status + diff content.
   const tcId = `call-${(toolCallSeq += 1)}`;
   update({ sessionUpdate: 'tool_call', toolCallId: tcId, title: 'write', rawInput: { filePath: '/fake/out.txt', content: 'x\n' } });
+  if (text.includes('FAKE:STALE_PROGRESS_AFTER_COMPLETED')) {
+    update({ sessionUpdate: 'tool_call_update', toolCallId: tcId, title: 'Write `/fake/out.txt`', status: 'in_progress' });
+    update({ sessionUpdate: 'tool_call_update', toolCallId: tcId, status: 'in_progress' });
+  }
   update({
     sessionUpdate: 'tool_call_update', toolCallId: tcId, status: 'completed',
     content: [{ type: 'diff', path: '/fake/out.txt', oldText: '', newText: 'x\n' }],
   });
+  if (text.includes('FAKE:STALE_PROGRESS_AFTER_COMPLETED')) {
+    // Phase-59 live Grok replayed an older in-progress snapshot after completion.
+    update({ sessionUpdate: 'tool_call_update', toolCallId: tcId, status: 'in_progress' });
+  }
   scheduleNaturalEnd(text);
 }
 

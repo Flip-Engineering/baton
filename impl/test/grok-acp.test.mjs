@@ -658,7 +658,7 @@ test('GA11: kill() force-ends the worker and emits kill.confirmed once the proce
 });
 
 // ---------------------------------------------------------------------------
-// Live-smoke corrections F1/F2 (probes #3/#4, 2026-07-10, authenticated grok 0.1.216)
+// Live-smoke corrections F1-F4 (probes #3/#4, authenticated Grok)
 // ---------------------------------------------------------------------------
 
 test('F1 (live-pinned): the prompt response _meta becomes a resource.tokens event and the terminal result carries budgetUsed.tokens', async () => {
@@ -692,6 +692,25 @@ test('F2 (live-pinned): tool_call_update (status/diff transitions) maps to conte
     assert.equal(initial.payload.callId, upd.payload.callId);
     assert.equal(initial.payload.phase, 'requested');
     assert.equal(upd.payload.phase, 'completed');
+  } finally {
+    await cleanup(adapter, worker);
+  }
+});
+
+test('F4 (phase59 live-pinned): a stale in_progress snapshot after tool completion cannot regress the logical call', async () => {
+  const adapter = makeAdapter();
+  const events = collect(adapter);
+  const worker = 'w1';
+  try {
+    await adapter.spawn(worker, makeBrief('FAKE:STALE_PROGRESS_AFTER_COMPLETED'), { worktree: freshWorktree() });
+    await until(events, (e) => e.kind === 'lifecycle.turn_completed');
+    const calls = events.filter((e) => e.kind === 'content.tool_call');
+    assert.equal(new Set(calls.map((e) => e.payload.callId)).size, 1, 'the fixture exercises one logical tool call');
+    assert.deepEqual(
+      calls.map((e) => e.payload.phase),
+      ['requested', 'progress', 'progress', 'completed'],
+      'adapter must suppress a stale nonterminal snapshot after the call reached a terminal phase',
+    );
   } finally {
     await cleanup(adapter, worker);
   }

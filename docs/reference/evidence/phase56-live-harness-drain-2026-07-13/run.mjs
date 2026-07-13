@@ -72,8 +72,9 @@ const selectedTaskIds = process.env.BATON_TASK_IDS ? new Set(process.env.BATON_T
 const TASKS = selectedTaskIds ? TASK_CATALOG.filter((task) => selectedTaskIds.has(task.taskId)) : TASK_CATALOG;
 const REQUIRE_GROK_PAIR = TASKS.filter((task) => task.harness === 'grok').length === 2;
 const GOVERNANCE_MODE = process.env.BATON_PROVIDER_GOVERNANCE_MODE ?? null;
-const TASK_TOKEN_BUDGET = Number(process.env.BATON_TASK_TOKEN_BUDGET ?? (REVIEW_PHASE === '56' ? 60_000 : 300_000));
-const TERMINAL_RESERVE_TOKENS = Number(process.env.BATON_TERMINAL_RESERVE_TOKENS ?? TASK_TOKEN_BUDGET);
+const routeTokenBudget = (task) => Number(process.env.BATON_TASK_TOKEN_BUDGET
+  ?? (REVIEW_PHASE === '56' ? 60_000 : task.harness === 'codex' ? 450_000 : 300_000));
+const terminalReserveTokens = (task) => Number(process.env.BATON_TERMINAL_RESERVE_TOKENS ?? routeTokenBudget(task));
 const providerGovernance = GOVERNANCE_MODE ? {
   schemaVersion: 1,
   maxWireFrameBytes: 1024 * 1024,
@@ -84,7 +85,7 @@ const providerGovernance = GOVERNANCE_MODE ? {
     model: task.model,
     effort: 'low',
     terminalReserve: {
-      tokens: TERMINAL_RESERVE_TOKENS,
+      tokens: terminalReserveTokens(task),
       usd: ['claude', 'glm'].includes(task.harness) ? Number(process.env.BATON_TERMINAL_RESERVE_USD ?? 2.5) : 0,
     },
     mode: GOVERNANCE_MODE,
@@ -145,7 +146,7 @@ function brief(task) {
       command: `test -s ${task.target} && grep -Fq '## Verdict' ${task.target} && grep -Fq '## P0-P1 findings' ${task.target} && grep -Fq '## Required corrections' ${task.target} && node impl/scripts/run-evidence.mjs impl/scripts/run-suite.mjs ${REVIEW_TEST}`,
       expectExit: 0, timeoutMs: 180_000,
     },
-    budget: { tokens: TASK_TOKEN_BUDGET, usd: 3, wallMin: 14 },
+    budget: { tokens: routeTokenBudget(task), usd: 3, wallMin: 14 },
   });
 }
 
@@ -359,7 +360,7 @@ try {
     interpretation: { lifecyclePass: `all ${TASKS.length} selected exact routes admitted${REQUIRE_GROK_PAIR ? ', both Grok process groups sampled live simultaneously' : ''}, every started generation closed exactly, driver drain closed coordinator/writer, and all owned residue disappeared`, matrixPass: `lifecyclePass plus exact provider model observation, ${TASKS.length} fresh-verified report(s), and identical worker/verifier toolchain projection binding` },
     manualWorkerKills: false, legacyDriverClose: false, closureReceipt,
     credentialMeasurements, simultaneousGrokSamples, attempts,
-    rows: rows.map((row) => ({ taskId: row.taskId, harness: row.harness, model: row.model, workerId: row.workerId, pid: row.pid ?? null, processGroupId: row.processGroupId ?? null, result: row.result ? { status: row.result.status, ready: row.result.ready, observationOnly: row.result.observationOnly, providerGovernance: row.result.providerGovernance } : null, route: row.handle ? { harnessRequested: row.handle.harnessRequested, harnessResolved: row.handle.harnessResolved, modelRequested: row.handle.modelRequested, modelResolved: row.handle.modelResolved, modelObserved: row.handle.modelObserved, modelMismatch: row.handle.modelMismatch, effortRequested: row.handle.effortRequested, effortResolved: row.handle.effortResolved, effortObserved: row.handle.effortObserved } : null, providerPolicyDigest: row.handle?.providerPolicyDigest ?? null, providerTurn: row.handle?.providerTurn ?? null, budgetUsed: row.handle?.budgetUsed ?? null, verifyAccept: row.verify?.payload?.accept ?? false, budgetAdmission: row.verify?.payload?.budgetAdmission ?? null, providerGovernanceAdmission: row.verify?.payload?.providerGovernanceAdmission ?? null, reportCaptured: Boolean(row.report), processStartedSeq: row.processStarted?.seq ?? null, processClosedSeq: row.processClosed?.seq ?? null, terminalReason: String(row.events?.findLast((event) => ['lifecycle.crashed', 'model.mismatch'].includes(event.kind))?.payload?.error ?? row.events?.findLast((event) => event.kind === 'lifecycle.crashed')?.payload?.reason ?? row.events?.findLast((event) => event.kind === 'lifecycle.turn_completed')?.payload?.result?.summary ?? '').slice(0, 512) })),
+    rows: rows.map((row) => ({ taskId: row.taskId, harness: row.harness, model: row.model, workerId: row.workerId, pid: row.pid ?? null, processGroupId: row.processGroupId ?? null, result: row.result ? { status: row.result.status, ready: row.result.ready, observationOnly: row.result.observationOnly, providerGovernance: row.result.providerGovernance } : null, route: row.handle ? { harnessRequested: row.handle.harnessRequested, harnessResolved: row.handle.harnessResolved, modelRequested: row.handle.modelRequested, modelResolved: row.handle.modelResolved, modelObserved: row.handle.modelObserved, modelMismatch: row.handle.modelMismatch, effortRequested: row.handle.effortRequested, effortResolved: row.handle.effortResolved, effortObserved: row.handle.effortObserved } : null, providerPolicyDigest: row.handle?.providerPolicyDigest ?? null, providerTurn: row.handle?.providerTurn ?? null, budgetUsed: row.handle?.budgetUsed ?? null, verifyAccept: row.verify?.payload?.accept ?? false, budgetAdmission: row.verify?.payload?.budgetAdmission ?? null, providerGovernanceAdmission: row.verify?.payload?.providerGovernanceAdmission ?? null, reportCaptured: Boolean(row.report), processStartedSeq: row.processStarted?.seq ?? null, processClosedSeq: row.processClosed?.seq ?? null, terminalReason: String(row.events?.findLast((event) => ['lifecycle.crashed', 'model.mismatch'].includes(event.kind))?.payload?.error ?? row.events?.findLast((event) => event.kind === 'lifecycle.crashed')?.payload?.reason ?? row.events?.findLast((event) => event.kind === 'lifecycle.turn_completed')?.payload?.result?.summary ?? row.events?.findLast((event) => event.kind === 'lifecycle.turn_completed')?.payload?.summary ?? '').slice(0, 512) })),
     responses, routeAdmission, providerProof, cleanup, projectionProof, reviewProof, ownershipBefore, ownershipAfter, fatal, lifecyclePass, matrixPass,
   };
 } catch (error) {
@@ -393,6 +394,7 @@ if (!ownerRootRemoved) { summary.lifecyclePass = false; summary.matrixPass = fal
 writeFileSync(join(OUTPUT, 'events.jsonl'), `${rows.flatMap((row) => bounded(row.events ?? []).map((event) => JSON.stringify({ taskId: row.taskId, requestedHarness: row.harness, requestedModel: row.model, requestedEffort: 'low', ...event }))).join('\n')}\n`);
 writeFileSync(join(OUTPUT, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
 for (const row of rows) if (row.report) writeFileSync(join(OUTPUT, `${row.taskId}.md`), row.report);
-if (summary.lifecyclePass) rmSync(LOG_DIR, { recursive: true, force: true });
-process.stdout.write(`${JSON.stringify({ lifecyclePass: summary.lifecyclePass, matrixPass: summary.matrixPass, routeAdmission: summary.routeAdmission, providerProof: summary.providerProof, cleanup: summary.cleanup, reviewProof: summary.reviewProof, fatal: summary.fatal, targetWorktreeRemoved: summary.targetWorktreeRemoved, ownerRootRemoved: summary.ownerRootRemoved }, null, 2)}\n`);
+const diagnosticLogRetained = !summary.matrixPass && process.env.BATON_KEEP_FAILED_LOG === '1';
+if (!diagnosticLogRetained) rmSync(LOG_DIR, { recursive: true, force: true });
+process.stdout.write(`${JSON.stringify({ lifecyclePass: summary.lifecyclePass, matrixPass: summary.matrixPass, routeAdmission: summary.routeAdmission, providerProof: summary.providerProof, cleanup: summary.cleanup, reviewProof: summary.reviewProof, fatal: summary.fatal, targetWorktreeRemoved: summary.targetWorktreeRemoved, ownerRootRemoved: summary.ownerRootRemoved, diagnosticLogDir: diagnosticLogRetained ? LOG_DIR : null }, null, 2)}\n`);
 if (!summary.matrixPass) process.exitCode = 1;

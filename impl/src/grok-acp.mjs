@@ -24,6 +24,7 @@ import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirme
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const GROK_TOKEN_METRIC = 'grok_prompt_meta_total_tokens';
+const TERMINAL_TOOL_CALL_PHASES = new Set(['completed', 'failed', 'cancelled']);
 
 function unavailableUsageSeal() {
   return { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null };
@@ -431,17 +432,20 @@ export class GrokAcpCli {
       session.waits.set(requestId, { kind: 'approval', rawId: id, options: params?.options ?? [] });
       const toolCall = params?.toolCall ?? {};
       const callId = String(toolCall.toolCallId ?? toolCall.id ?? `${session.worker}:permission:${id}`);
-      const knownCall = session.activeTurn?.toolCallIds.has(callId) ?? false;
-      session.activeTurn?.toolCallIds.add(callId);
-      this._emit(session, 'content.tool_call', {
-        sessionId: params?.sessionId ?? session.sessionId,
-        turnId: session.activeTurn?.turnId ?? null,
-        ...boundedEvidence(toolCall, this._maxEventPayloadBytes),
-        callId,
-        // Live Grok may announce the call through session/update before asking permission.
-        // The permission request is then a state observation, not a second logical attempt.
-        phase: knownCall ? 'progress' : 'requested',
-      });
+      const priorPhase = session.activeTurn?.toolCallPhases.get(callId) ?? null;
+      if (!TERMINAL_TOOL_CALL_PHASES.has(priorPhase)) {
+        const phase = priorPhase === null ? 'requested' : 'progress';
+        session.activeTurn?.toolCallPhases.set(callId, phase);
+        this._emit(session, 'content.tool_call', {
+          sessionId: params?.sessionId ?? session.sessionId,
+          turnId: session.activeTurn?.turnId ?? null,
+          ...boundedEvidence(toolCall, this._maxEventPayloadBytes),
+          callId,
+          // Live Grok may announce the call through session/update before asking permission.
+          // The permission request is then a state observation, not a second logical attempt.
+          phase,
+        });
+      }
       this._emit(session, 'approval.requested', {
         requestId,
         sessionId: params?.sessionId ?? session.sessionId,
@@ -478,6 +482,20 @@ export class GrokAcpCli {
       case 'tool_call':
       case 'tool_call_update': // live-smoke F2 (probe #4): status transitions + diff content ride a SECOND update kind
         {
+          const terminalStatuses = new Set(['completed', 'failed', 'cancelled', 'rejected']);
+          const callId = String(update.toolCallId ?? `${session.sessionId}:${turnId}:${update.sessionUpdate}`);
+          const priorPhase = session.activeTurn.toolCallPhases.get(callId) ?? null;
+          const phase = update.sessionUpdate === 'tool_call'
+            ? priorPhase === null ? 'requested' : 'progress'
+            : update.status === 'completed' ? 'completed'
+              : update.status === 'cancelled' ? 'cancelled'
+                : terminalStatuses.has(update.status) ? 'failed'
+                  : priorPhase === null ? 'requested' : 'progress';
+          // Grok Build can replay an older in-progress snapshot after completion. Preserve the
+          // coordinator's fail-closed protocol check by dropping only this provider snapshot
+          // regression at the adapter boundary; contradictory terminal outcomes still surface.
+          if (TERMINAL_TOOL_CALL_PHASES.has(priorPhase) && !TERMINAL_TOOL_CALL_PHASES.has(phase)) return;
+          session.activeTurn.toolCallPhases.set(callId, phase);
           const diffs = (update.content ?? []).filter((item) => item?.type === 'diff' && item.path);
           if (diffs.length > 0) {
             this._emit(session, 'content.file_edit', {
@@ -489,21 +507,12 @@ export class GrokAcpCli {
           const eventUpdate = wireEvidence?.truncated === true
             ? { sessionUpdate: update.sessionUpdate, toolCallId: update.toolCallId, title: update.title ?? null, kind: update.kind ?? null, status: update.status ?? null, wireEvidence }
             : wireEvidence;
-          const terminalStatuses = new Set(['completed', 'failed', 'cancelled', 'rejected']);
-          const callId = String(update.toolCallId ?? `${session.sessionId}:${turnId}:${update.sessionUpdate}`);
-          const knownCall = session.activeTurn.toolCallIds.has(callId);
-          session.activeTurn.toolCallIds.add(callId);
           this._emit(session, 'content.tool_call', {
             sessionId: session.sessionId, turnId, ...eventUpdate,
             command: update.rawInput?.command ?? update.rawOutput?.command ?? null,
             exitCode: update.rawOutput?.exit_code ?? null,
             callId,
-            phase: update.sessionUpdate === 'tool_call'
-              ? knownCall ? 'progress' : 'requested'
-              : update.status === 'completed' ? 'completed'
-                : update.status === 'cancelled' ? 'cancelled'
-                  : terminalStatuses.has(update.status) ? 'failed'
-                    : knownCall ? 'progress' : 'requested',
+            phase,
           });
         }
         return;
@@ -522,7 +531,7 @@ export class GrokAcpCli {
     session.turnSeq += 1;
     session.turnEpoch += 1;
     const turnId = `t${session.turnSeq}`; // GA6: ACP has no wire turn id — adapter-minted
-    session.activeTurn = { turnId, toolCallIds: new Set() };
+    session.activeTurn = { turnId, toolCallPhases: new Map() };
     this._emit(session, 'lifecycle.turn_started', { sessionId: session.sessionId, turnId });
     this._sendRequest(session, 'session/prompt', {
       sessionId: session.sessionId,

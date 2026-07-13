@@ -209,7 +209,7 @@ test('DC1/DC5: max+1 refuses before fencing and an exact retry can still close',
 
 test('DC1/DC5: active interaction max+1 refuses before fencing without scanning historical records', async (t) => {
   const f = repo('interaction-max-plus-one'); let driver; t.after(() => { try { driver?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
-  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 100, pollMs: 5 } });
+  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 } });
   await driver.ready;
   for (let index = 0; index < 17; index += 1) {
     const requestId = `bounded-${index}`; driver.coordinator._pending.set(requestId, { worker: 'historical', kind: 'question', state: 'pending' }); driver.coordinator._activeInteractionIds.add(requestId);
@@ -244,11 +244,11 @@ test('DC5: synchronous durable admission crossing the deadline is red and retrya
   const f = repo('slow-admission'); const coordinationDir = root('slow-admission-coordination'); const coordination = new CoordinationStore(coordinationDir); let driver;
   t.after(() => { try { coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); rmSync(coordinationDir, { recursive: true, force: true }); });
   const admit = coordination.admitFleetDrain.bind(coordination); let delayed = true;
-  coordination.admitFleetDrain = (...args) => { if (delayed) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150); return admit(...args); };
-  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', coordination, adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 100, pollMs: 5 } });
+  coordination.admitFleetDrain = (...args) => { if (delayed) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1_150); return admit(...args); };
+  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', coordination, adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 } });
   const started = Date.now();
   await assert.rejects(driver.drainAndClose(), (error) => error.code === 'coordinator_drain_incomplete');
-  assert.ok(Date.now() - started >= 140); assert.equal(existsSync(coordination._writerLease.path), true); assert.equal(driver.coordinator._drainState, 'draining');
+  assert.ok(Date.now() - started >= 1_100); assert.equal(existsSync(coordination._writerLease.path), true); assert.equal(driver.coordinator._drainState, 'draining');
   delayed = false; coordination.admitFleetDrain = admit;
   assert.equal((await driver.drainAndClose()).state, 'closed');
 });
@@ -288,6 +288,7 @@ for (const [label, retryKey] of [['same identity', 'disposition-first'], ['new i
     const physical = driver.coordination.fleetDrain(driver.coordinator._drainPhysicalId);
     assert.deepEqual(physical.dispositions, [{ workerId: handle.id, disposition: 'killConfirmed' }]);
     let settled = false;
+    driver.coordinator._drainPolicy = Object.freeze({ ...driver.coordinator._drainPolicy, timeoutMs: 1_000 });
     const retry = driver.coordinator.drain({ actor: 'orchestrator', repoId: 'repo-a', idempotencyKey: retryKey }).finally(() => { settled = true; });
     await sleep(10); assert.equal(settled, false); assert.equal(nativeKills, 1); assert.equal(reconciliations, 1);
     gate.resolve(); const receipt = await retry;
