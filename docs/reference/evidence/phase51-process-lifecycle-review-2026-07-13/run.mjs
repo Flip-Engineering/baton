@@ -69,8 +69,8 @@ const REVIEW_CONFIG = REVIEW_PHASE === '53' ? {
 const RUN_ID = REVIEW_CONFIG.runId;
 const TASK_TYPE = REVIEW_CONFIG.taskType;
 const TASKS = [
-  { taskId: `phase${REVIEW_PHASE}-codex-review`, harness: 'codex', model: 'gpt-5.6-sol', family: 'openai', target: `reviews/dogfood/phase${REVIEW_PHASE}-codex-review.md`, tokens: 100_000, usd: 2.5, focus: REVIEW_CONFIG.focus.codex },
-  { taskId: `phase${REVIEW_PHASE}-glm-review`, harness: 'glm', model: 'glm-4.7', family: 'glm', target: `reviews/dogfood/phase${REVIEW_PHASE}-glm-review.md`, tokens: 110_000, usd: 1.25, focus: REVIEW_CONFIG.focus.glm },
+  { taskId: `phase${REVIEW_PHASE}-codex-review`, harness: 'codex', model: 'gpt-5.6-sol', family: 'openai', target: `reviews/dogfood/phase${REVIEW_PHASE}-codex-review.md`, tokens: REVIEW_PHASE === '53' ? 180_000 : 100_000, usd: 2.5, focus: REVIEW_CONFIG.focus.codex },
+  { taskId: `phase${REVIEW_PHASE}-glm-review`, harness: 'glm', model: 'glm-4.7', family: 'glm', target: `reviews/dogfood/phase${REVIEW_PHASE}-glm-review.md`, tokens: REVIEW_PHASE === '53' ? 130_000 : 110_000, usd: REVIEW_PHASE === '53' ? 1.75 : 1.25, focus: REVIEW_CONFIG.focus.glm },
   { taskId: `phase${REVIEW_PHASE}-grok45-review`, harness: 'grok', model: 'grok-4.5', family: 'grok', target: `reviews/dogfood/phase${REVIEW_PHASE}-grok45-review.md`, tokens: 70_000, usd: 2, focus: REVIEW_CONFIG.focus.grok45 },
   { taskId: `phase${REVIEW_PHASE}-grokbuild-review`, harness: 'grok', model: 'grok-build', family: 'grok', target: `reviews/dogfood/phase${REVIEW_PHASE}-grokbuild-review.md`, tokens: 70_000, usd: 2, focus: REVIEW_CONFIG.focus.grokbuild },
 ];
@@ -118,7 +118,7 @@ function brief(task) {
     ],
     pathScope: [task.target],
     definitionOfDone: 'The three headings exist and Verdict explicitly says PASS or REVISE.',
-    verification: { command: `test -s ${task.target} && grep -Fq '## P0-P1 findings' ${task.target} && grep -Fq '## Required corrections' ${task.target}`, expectExit: 0, timeoutMs: 30_000 },
+    verification: { command: `test -s ${task.target} && grep -Fqx '## Verdict' ${task.target} && grep -Fqx '## P0-P1 findings' ${task.target} && grep -Fqx '## Required corrections' ${task.target} && grep -Eq '(^|[^A-Z])(PASS|REVISE)([^A-Z]|$)' ${task.target}`, expectExit: 0, timeoutMs: 30_000 },
     budget: { tokens: task.tokens, usd: task.usd, wallMin: 16 },
   });
 }
@@ -160,7 +160,7 @@ const driver = createDriver({
   repoRoot: REPO, logDir: LOG_DIR,
   adapters: {
     codex: new CodexAppServerCli({ cmd: CODEX_CMD, requestTimeoutMs: 45_000, ceiling: 1 }),
-    glm: new GlmSessionCli({ cmd: CLAUDE_CMD, authTokenFile: GLM_AUTH, authTokenJsonPointer: process.env.BATON_GLM_AUTH_JSON_POINTER ?? '/glm_key', model: 'glm-4.7', approvals: false, permissionMode: 'acceptEdits', args: ['--safe-mode', '--no-session-persistence', '--max-budget-usd', '1.25'], ceiling: 1, killGraceMs: 5_000 }),
+    glm: new GlmSessionCli({ cmd: CLAUDE_CMD, authTokenFile: GLM_AUTH, authTokenJsonPointer: process.env.BATON_GLM_AUTH_JSON_POINTER ?? '/glm_key', model: 'glm-4.7', approvals: false, permissionMode: 'acceptEdits', args: ['--safe-mode', '--no-session-persistence', '--max-budget-usd', String(TASKS.find((task) => task.harness === 'glm').usd)], ceiling: 1, killGraceMs: 5_000 }),
     grok: new GrokAcpCli({ cmd: GROK_CMD, requestTimeoutMs: 45_000, ceiling: 2 }),
   },
   runtimeIsolation: { credentialFiles: { codex: [CODEX_AUTH], grok: [GROK_AUTH] } },
