@@ -76,6 +76,19 @@ reconciliation event, pending count, and current/historical processing summaries
 raw bytes, cursor values, signatures, auth receipts, key fingerprints, private paths, endpoint
 inventory, other repositories, or machine-ingress/poll authority.
 
+`createDriver({providerRead:{maxProviders,maxProcessing,maxBytes}})` pins all ceilings. Coordinator
+`readProviderStatus({providerId?,after?,limit?},{repoId})` accepts only the deployment repository,
+an optional configured provider, a public prior processing ID, and a positive limit no greater than
+`maxProcessing`. It returns sorted health rows, `currentProcessing` pending summaries,
+`historicalProcessing` terminal summaries, an optional `nextAfter`, and the coordination event
+high-water. Rows contain only IDs/status/versions/counts and event numbers. If provider rows alone or
+one processing row cannot fit `maxBytes`, the read refuses rather than truncating a row.
+
+Authenticated web command `provider_status` and read-only MCP tool `fleet_provider_status` forward
+the authenticated repo only; neither accepts actor, user, source epoch, cursor digest/value, card,
+endpoint, key, or authorization fields. Web command admission/audit and MCP read audit remain the
+existing northbound contracts; both require `observe`.
+
 ## PF8 — required red and live evidence
 
 Red tests cover missing/unknown poll card fields; endpoint/cursor/ceiling injection; page/item byte

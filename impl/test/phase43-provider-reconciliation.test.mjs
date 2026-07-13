@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { createDriver } from '../src/index.mjs';
+import { McpFleetServer, WebNorthbound, createDriver } from '../src/index.mjs';
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const sha = (value) => createHash('sha256').update(Buffer.isBuffer(value) ? value : JSON.stringify(canonical(value))).digest('hex');
@@ -33,6 +33,7 @@ async function world(overrides = {}) {
   const options = { repoRoot, repoId: 'repo-a', logDir, adapters: {}, now: () => Date.parse('2026-07-13T06:00:01.000Z'), advisoryFeedSources: { 'fixture.green': feedSource('fixture.green', fingerprint, state), 'fixture.green-two': feedSource('fixture.green-two', fingerprintTwo, state) }, capabilities: { 'cartographer-quartermaster': quartermaster(state) }, maxCapabilityBudgetTokens: 10_000, maxCapabilityEnvelopeBytes: 256 * 1024,
     reuseDecisionPolicy: { authorize: async () => true, authorizeRecheck: async () => true, maxNeedBytes: 2048, maxRationaleBytes: 8192, policyReconcile: reconcileLimits }, providerReconciliation: { budgetTokens: 10_000, indexAuthority: authority } };
   if (overrides.providerPolling) options.providerPolling = overrides.providerPolling;
+  if (overrides.providerRead) options.providerRead = overrides.providerRead;
   if (overrides.blockPoll) state.blockPoll = overrides.blockPoll;
   if (overrides.resolvePollOnAbort) state.resolvePollOnAbort = true;
   const driver = createDriver(options); const raw = Buffer.from(JSON.stringify({ deliveryId: 'delivery-green', occurredAt: '2026-07-13T06:00:00.000Z', sequence: 1, coordinates: overrides.coordinates ?? [coordinate] })); const admitted = await driver.coordinator.receiveProviderDelivery('fixture.green', { mode: 'webhook', raw });
@@ -98,6 +99,35 @@ test('PF6: writer-lease loss during fetch leaves health degraded and prevents ev
   await until(() => w.driver.providerPoller.status().find((row) => row.providerId === 'fixture.green')?.lastErrorCode === 'coordination_writer_lost');
   assert.equal(w.driver.coordination.snapshot().lastSeq, before); assert.equal(w.driver.coordination.providerSourceHealth('repo-a', 'fixture.green', epoch).status, 'reconciliation_required'); assert.equal(w.driver.coordination.events().some((event) => event.kind === 'provider.reconciliation_completed'), false);
   assert.equal(await w.driver.closeAsync(), true); assert.throws(() => w.driver.coordinator.tick(), (error) => error.code === 'coordinator_closed');
+});
+
+test('PF7: direct, web, and MCP provider status reads are scoped, bounded, and secret-free', async () => {
+  const w = await world({ providerRead: { maxProviders: 4, maxProcessing: 4, maxStateRows: 32, maxBytes: 8192 } });
+  const direct = w.driver.coordinator.readProviderStatus({}, { repoId: 'repo-a' }); assert.equal(direct.currentProcessing.length, 1); assert.equal(direct.historicalProcessing.length, 0); assert.equal(direct.providers.length, 1);
+  await w.driver.coordinator.reconcileProviderProcessing(w.admitted.processing.id); const completed = w.driver.coordinator.readProviderStatus({ limit: 1 }, { repoId: 'repo-a' }); assert.equal(completed.currentProcessing.length, 0); assert.equal(completed.historicalProcessing.length, 1);
+  const encoded = JSON.stringify(completed); for (const forbidden of ['fixture.invalid', fingerprint, 'authReceiptDigest', 'keyFingerprint', 'cursorValue', 'privateCas', 'rawDigest']) assert.equal(encoded.includes(forbidden), false, forbidden); assert.match(completed.providers[0].cursorDigest ?? '', /^(?:|[a-f0-9]{64})$/);
+  assert.throws(() => w.driver.coordinator.readProviderStatus({}, { repoId: 'repo-b' }), (error) => error.code === 'reuse_repo_mismatch'); assert.throws(() => w.driver.coordinator.readProviderStatus({ limit: 5 }, { repoId: 'repo-a' }), (error) => error.code === 'provider_read_invalid'); assert.throws(() => w.driver.coordinator.readProviderStatus({ providerId: 'unknown.provider' }, { repoId: 'repo-a' }), (error) => error.code === 'provider_read_invalid');
+
+  const principal = { userId: 'observer', sessionId: 'session-1', credentialId: 'credential-1', authMethod: 'bearer', expiresAt: '2099-01-01T00:00:00.000Z', revoked: false, capabilities: ['observe'], repoIds: ['repo-a'] };
+  const web = new WebNorthbound({ coordinator: w.driver.coordinator, coordination: w.driver.coordination, allowedOrigins: ['https://control.test'], repoIds: ['repo-a'], now: () => Date.parse('2026-07-13T06:00:01.000Z') });
+  const webResult = await web.execute({ transport: 'https', origin: 'https://control.test', principal }, { schemaVersion: 1, commandId: 'provider-status-1', idempotencyKey: 'provider-status-1', command: 'provider_status', args: { limit: 1 }, repoId: 'repo-a', origin: 'https://control.test' }); assert.equal(webResult.status, 200); assert.deepEqual(webResult.body.result.providers, completed.providers); assert.deepEqual(webResult.body.result.historicalProcessing, completed.historicalProcessing);
+  const refusedWeb = await web.execute({ transport: 'https', origin: 'https://control.test', principal: { ...principal, capabilities: ['control'] } }, { schemaVersion: 1, commandId: 'provider-status-2', idempotencyKey: 'provider-status-2', command: 'provider_status', args: {}, repoId: 'repo-a', origin: 'https://control.test' }); assert.equal(refusedWeb.status, 403);
+
+  const mcp = new McpFleetServer({ coordinator: w.driver.coordinator, coordination: w.driver.coordination, principal, repoIds: ['repo-a'], maxWaitMs: 1000, maxMessageBytes: 16_384, takeToolQuota: async () => ({ ok: true }) });
+  await mcp.handle({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'pf7-test', version: '1' } } }); await mcp.handle({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  const mcpResult = await mcp.handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'fleet_provider_status', arguments: { repoId: 'repo-a', limit: 1 } } }); assert.equal(mcpResult.result.isError, false); assert.deepEqual(mcpResult.result.structuredContent.providers, completed.providers); assert.deepEqual(mcpResult.result.structuredContent.historicalProcessing, completed.historicalProcessing);
+  const refusedMcp = new McpFleetServer({ coordinator: w.driver.coordinator, coordination: w.driver.coordination, principal: { ...principal, capabilities: ['control'] }, repoIds: ['repo-a'], maxWaitMs: 1000, maxMessageBytes: 16_384, takeToolQuota: async () => ({ ok: true }) }); await refusedMcp.handle({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'pf7-test', version: '1' } } }); await refusedMcp.handle({ jsonrpc: '2.0', method: 'notifications/initialized' }); const denied = await refusedMcp.handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'fleet_provider_status', arguments: { repoId: 'repo-a' } } }); assert.equal(denied.result.structuredContent.error.code, 'forbidden');
+  const secondRaw = Buffer.from(JSON.stringify({ deliveryId: 'provider-read-second', occurredAt: '2026-07-13T06:00:00.000Z', sequence: 1, coordinates: [coordinate] })); await w.driver.coordinator.receiveProviderDelivery('fixture.green-two', { mode: 'webhook', raw: secondRaw });
+  const all = w.driver.coordinator.readProviderStatus({ limit: 4 }, { repoId: 'repo-a' }); const firstPage = w.driver.coordinator.readProviderStatus({ limit: 1 }, { repoId: 'repo-a' }); const secondPage = w.driver.coordinator.readProviderStatus({ after: firstPage.nextAfter, limit: 1 }, { repoId: 'repo-a' });
+  assert.equal(all.currentProcessing.length, 1); assert.equal(all.historicalProcessing.length, 1); assert.match(firstPage.nextAfter, /^provider-processing:[a-f0-9]{64}$/); assert.equal(secondPage.nextAfter, null); assert.deepEqual([...firstPage.currentProcessing, ...firstPage.historicalProcessing, ...secondPage.currentProcessing, ...secondPage.historicalProcessing].map((row) => row.processingId).sort(), [...all.currentProcessing, ...all.historicalProcessing].map((row) => row.processingId).sort());
+  w.driver.close();
+});
+
+test('PF7: provider, state-row, processing, and byte ceilings fail closed at max plus one', async () => {
+  const providerBound = await world({ providerRead: { maxProviders: 1, maxProcessing: 4, maxStateRows: 32, maxBytes: 8192 } }); const raw = Buffer.from(JSON.stringify({ deliveryId: 'provider-bound-second', occurredAt: '2026-07-13T06:00:00.000Z', sequence: 1, coordinates: [coordinate] })); await providerBound.driver.coordinator.receiveProviderDelivery('fixture.green-two', { mode: 'webhook', raw }); assert.throws(() => providerBound.driver.coordinator.readProviderStatus({}, { repoId: 'repo-a' }), (error) => error.code === 'provider_read_oversize'); providerBound.driver.close();
+  const stateBound = await world({ providerRead: { maxProviders: 4, maxProcessing: 4, maxStateRows: 1, maxBytes: 8192 } }); assert.throws(() => stateBound.driver.coordinator.readProviderStatus({}, { repoId: 'repo-a' }), (error) => error.code === 'provider_read_oversize'); stateBound.driver.close();
+  const byteBound = await world({ providerRead: { maxProviders: 4, maxProcessing: 4, maxStateRows: 32, maxBytes: 128 } }); assert.throws(() => byteBound.driver.coordinator.readProviderStatus({}, { repoId: 'repo-a' }), (error) => error.code === 'provider_read_oversize'); byteBound.driver.close();
+  const limitBound = await world({ providerRead: { maxProviders: 4, maxProcessing: 1, maxStateRows: 32, maxBytes: 8192 } }); assert.throws(() => limitBound.driver.coordinator.readProviderStatus({ limit: 2 }, { repoId: 'repo-a' }), (error) => error.code === 'provider_read_invalid'); limitBound.driver.close();
 });
 
 test('AF4: official npm system alias is closed and no extra identity authority is accepted', async () => {

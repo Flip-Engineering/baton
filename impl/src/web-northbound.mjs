@@ -8,7 +8,7 @@ import { operatorAsset } from './web-operator.mjs';
 
 const COMMAND_CAPABILITY = Object.freeze({
   spawn: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', respond: 'approve',
-  list: 'observe', result: 'observe', wait: 'observe', capabilities: 'observe', capability_invoke: 'control', reuse_decide: 'control', reuse_recheck: 'control',
+  list: 'observe', result: 'observe', wait: 'observe', capabilities: 'observe', provider_status: 'observe', capability_invoke: 'control', reuse_decide: 'control', reuse_recheck: 'control',
 });
 const FENCE_REQUIRED = new Set(['send', 'interrupt', 'kill']);
 const TOP_LEVEL = new Set(['schemaVersion', 'commandId', 'idempotencyKey', 'command', 'args', 'repoId', 'runId', 'expectedFence', 'origin', 'clientObservedCursor']);
@@ -22,6 +22,7 @@ const ARG_FIELDS = Object.freeze({
   result: new Set(['workerId']),
   wait: new Set(['timeoutMs']),
   capabilities: new Set(),
+  provider_status: new Set(['providerId', 'after', 'limit']),
   capability_invoke: new Set(['name', 'op', 'action', 'args', 'budgetTokens', 'ref', 'cursor', 'claim', 'workerId', 'note']),
   reuse_decide: new Set(['need', 'choice', 'rationale', 'dossier', 'sbom', 'supersedes', 'budgetTokens']),
   reuse_recheck: new Set(['decisionId', 'expectedValidityVersion', 'trigger', 'budgetTokens']),
@@ -75,6 +76,9 @@ function dispatchFailure(cause) {
   if (['reuse_risk_conflict', 'reuse_ttl_conflict', 'reuse_risk_guarded', 'reuse_risk_stale', 'reuse_not_expired', 'reuse_decision_not_found'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'reuse recheck conflict' } } };
   if (cause?.code === 'reuse_recheck_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: cause.code, message: 'reuse recheck unavailable' } } };
   if (cause?.code === 'reuse_decision_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: cause.code, message: 'reuse decision unavailable' } } };
+  if (cause?.code === 'provider_read_invalid') return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'provider read precondition failed' } } };
+  if (cause?.code === 'provider_read_oversize') return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'provider read exceeded deployment ceiling' } } };
+  if (cause?.code === 'provider_read_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: cause.code, message: 'provider read unavailable' } } };
   if (cause?.name === 'WorkerNotFoundError') return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'resource not found' } } };
   return { httpStatus: 503, body: { ok: false, error: { code: 'temporarily_unavailable', message: 'command dispatch failed' } } };
 }
@@ -122,6 +126,9 @@ function validateEnvelope(envelope) {
     }
   }
   if (['send', 'interrupt', 'kill', 'result'].includes(envelope.command) && !string(envelope.args.workerId)) return `${envelope.command} requires workerId`;
+  if (envelope.command === 'provider_status' && ((Object.hasOwn(envelope.args, 'providerId') && !/^[A-Za-z0-9._:-]{1,128}$/.test(envelope.args.providerId ?? ''))
+    || (Object.hasOwn(envelope.args, 'after') && !/^provider-processing:[a-f0-9]{64}$/.test(envelope.args.after ?? ''))
+    || (Object.hasOwn(envelope.args, 'limit') && (!Number.isSafeInteger(envelope.args.limit) || envelope.args.limit <= 0)))) return 'provider_status requires bounded provider, cursor, and limit';
   if (envelope.command === 'send' && (!string(envelope.args.message) || !['turn', 'steer', 'nudge'].includes(envelope.args.mode))) return 'send requires message and a valid mode';
   if (envelope.command === 'respond' && (!string(envelope.args.requestId) || !Object.hasOwn(envelope.args, 'answer'))) return 'respond requires requestId and answer';
   if (envelope.command === 'reuse_decide' && (!string(envelope.args.need) || !['borrow', 'build'].includes(envelope.args.choice)
@@ -363,6 +370,8 @@ export class WebNorthbound {
       value = await this.coordinator.wait(Math.min(Number(a.timeoutMs ?? 25000), 30000));
     } else if (envelope.command === 'capabilities') {
       value = this.coordinator.capabilityCards();
+    } else if (envelope.command === 'provider_status') {
+      value = this.coordinator.readProviderStatus(a, { repoId: envelope.repoId });
     } else if (envelope.command === 'capability_invoke') {
       const capabilityCtx = { budgetTokens: a.budgetTokens, actor: webActor };
       const action = a.action;

@@ -353,6 +353,15 @@ export class Coordinator {
       for (const method of ['providerProcessingAdmission', 'recordProviderGreenCompletion', 'recordProviderAdverseCompletion', 'reusePolicyState']) if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
       this._providerReconciliation = Object.freeze({ repoId: config.repoId, budgetTokens: config.budgetTokens, indexAuthority: authority, card: Object.freeze({ ...card }) });
     }
+    this._providerRead = null;
+    if (opts.providerRead !== undefined) {
+      const config = opts.providerRead;
+      if (!config || Object.keys(config).sort().join(',') !== ['maxBytes', 'maxProcessing', 'maxProviders', 'maxStateRows', 'repoId'].sort().join(',')
+        || typeof config.repoId !== 'string' || config.repoId.length === 0 || Object.entries(config).filter(([key]) => key !== 'repoId').some(([, value]) => !Number.isSafeInteger(value) || value <= 0)
+        || config.maxProviders > 10_000 || config.maxProcessing > 100_000 || config.maxStateRows > 1_000_000 || config.maxBytes > 16 * 1024 * 1024
+        || typeof opts.coordination.readProviderStatus !== 'function' || advisoryCards.length === 0) throw new TypeError('provider reads require one deployment repository, provider cards, and positive ceilings');
+      this._providerRead = Object.freeze({ ...config });
+    }
     const rawCoordination = opts.coordination;
     this._coordination = new Proxy(rawCoordination, {
       get: (target, property, receiver) => {
@@ -2809,6 +2818,19 @@ export class Coordinator {
       const result = this._coordination.recordProviderSourceReconciliation({ repoId: this._repoId, proof: polled.proof, expectedHealthEvent: current.lastEvent }, { actor: `provider-poller:${providerId}`, key: `provider-poll:${canonicalDigest({ repoId: this._repoId, providerId, sourceEpoch: card.cardDigest, proofDigest: polled.proof.proofDigest })}` });
       return Object.freeze({ ...result, receipts });
     } finally { this._authorityOps -= 1; }
+  }
+
+  /** Return a deployment-bounded, repository-scoped provider health and processing projection. */
+  readProviderStatus(request = {}, ctx = {}) {
+    this._assertOperational(); const config = this._providerRead;
+    if (!config) throw Object.assign(new Error('provider status reads are not deployment-configured'), { code: 'provider_read_unavailable' });
+    if (!request || typeof request !== 'object' || Array.isArray(request) || Object.keys(request).some((key) => !['providerId', 'after', 'limit'].includes(key))
+      || !ctx || Object.keys(ctx).some((key) => key !== 'repoId') || ctx.repoId !== config.repoId) throw Object.assign(new Error('provider status repository authority mismatch'), { code: ctx?.repoId !== config.repoId ? 'reuse_repo_mismatch' : 'provider_read_invalid' });
+    if (request.providerId !== undefined && (!/^[A-Za-z0-9._:-]{1,128}$/.test(request.providerId) || !this.advisoryFeedCards().some((card) => card.providerId === request.providerId))) throw Object.assign(new Error('provider status provider is invalid'), { code: 'provider_read_invalid' });
+    if (request.after !== undefined && !/^provider-processing:[a-f0-9]{64}$/.test(request.after)) throw Object.assign(new Error('provider status cursor is invalid'), { code: 'provider_read_invalid' });
+    if (request.limit !== undefined && (!Number.isSafeInteger(request.limit) || request.limit <= 0 || request.limit > config.maxProcessing)) throw Object.assign(new Error('provider status limit is invalid'), { code: 'provider_read_invalid' });
+    const { repoId, ...ceilings } = config;
+    return this._coordination.readProviderStatus(repoId, request, ceilings);
   }
 
   /** Freshly reconcile one durable provider processing root without caller-selected coordinates,

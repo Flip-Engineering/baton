@@ -166,6 +166,7 @@ function refereeFn(task, result, opts) {
  *          advisoryFeedSources?:Record<string,object>,
  *          providerReconciliation?:{budgetTokens:number,indexAuthority:object},
  *          providerPolling?:{intervalMs:number,initialBackoffMs:number},
+ *          providerRead?:{maxProviders:number,maxProcessing:number,maxStateRows:number,maxBytes:number},
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
  *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
@@ -226,6 +227,13 @@ export function createDriver(opts) {
       || typeof opts.repoId !== 'string' || !Number.isSafeInteger(opts.providerReconciliation.budgetTokens) || opts.providerReconciliation.budgetTokens <= 0
       || opts.providerReconciliation.budgetTokens > (opts.maxCapabilityBudgetTokens ?? 0)) throw new TypeError('provider reconciliation exceeds deployment capability authority');
     providerReconciliation = { repoId: opts.repoId, budgetTokens: opts.providerReconciliation.budgetTokens, indexAuthority: opts.providerReconciliation.indexAuthority };
+  }
+  let providerRead;
+  if (opts.providerRead !== undefined) {
+    if (!opts.providerRead || Object.keys(opts.providerRead).sort().join(',') !== ['maxBytes', 'maxProcessing', 'maxProviders', 'maxStateRows'].sort().join(',')
+      || typeof opts.repoId !== 'string' || advisoryFeedCards.length === 0 || Object.values(opts.providerRead).some((value) => !Number.isSafeInteger(value) || value <= 0)
+      || opts.providerRead.maxProviders > 10_000 || opts.providerRead.maxProcessing > 100_000 || opts.providerRead.maxStateRows > 1_000_000 || opts.providerRead.maxBytes > 16 * 1024 * 1024) throw new TypeError('provider reads require deployment provider cards, repository, and bounded positive ceilings');
+    providerRead = { repoId: opts.repoId, ...opts.providerRead };
   }
   if (opts.reuseDecisionPolicy !== undefined) {
     const card = capabilities.cards().find((item) => item.name === 'cartographer-quartermaster'); const policy = card?.reusePolicy; const ceilings = opts.reuseDecisionPolicy.policyReconcile;
@@ -296,6 +304,7 @@ export function createDriver(opts) {
     capabilities,
     advisoryFeeds,
     providerReconciliation,
+    providerRead,
     coordination,
     repoRoot: opts.repoRoot,
     repoId: opts.repoId,

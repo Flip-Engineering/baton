@@ -1356,6 +1356,42 @@ export class CoordinationStore {
   advisoryFeedCards() { return [...this._advisoryFeedCards.values()].map((entry) => freeze({ ...clone(entry.card), cardDigest: entry.cardDigest })).sort((a, b) => a.providerId.localeCompare(b.providerId)); }
   pendingProviderReconciliation(repoId, coordinate) { return this._providerPendingFor(repoId, coordinate).map(clone); }
 
+  readProviderStatus(repoId, request, ceilings) {
+    if (!boundedText(repoId, 256) || !request || Object.keys(request).some((key) => !['providerId', 'after', 'limit'].includes(key))
+      || (request.providerId !== undefined && !boundedText(request.providerId, 128)) || (request.after !== undefined && !boundedText(request.after, 512))
+      || !ceilings || Object.keys(ceilings).sort().join(',') !== ['maxBytes', 'maxProcessing', 'maxProviders', 'maxStateRows'].sort().join(',')
+      || Object.values(ceilings).some((value) => !Number.isSafeInteger(value) || value <= 0)) throw new CoordinationRefusal('provider read request is invalid', 'provider_read_invalid');
+    const limit = request.limit ?? ceilings.maxProcessing;
+    if (!Number.isSafeInteger(limit) || limit <= 0 || limit > ceilings.maxProcessing) throw new CoordinationRefusal('provider read request is invalid', 'provider_read_invalid');
+    let examined = 0; const processing = []; const pending = new Map();
+    for (const row of this._providerProcessing.values()) {
+      examined += 1; if (examined > ceilings.maxStateRows) throw new CoordinationRefusal('provider read derivation exceeded deployment ceiling', 'provider_read_oversize');
+      if (row.repoId !== repoId || (request.providerId && row.providerId !== request.providerId)) continue;
+      processing.push(row); if (row.status === 'pending') { const key = this._providerSourceKey(row.repoId, row.providerId, row.sourceEpoch); pending.set(key, (pending.get(key) ?? 0) + 1); }
+    }
+    const providers = [];
+    for (const [key, row] of this._providerSourceHealth) {
+      examined += 1; if (examined > ceilings.maxStateRows) throw new CoordinationRefusal('provider read derivation exceeded deployment ceiling', 'provider_read_oversize');
+      if (row.repoId !== repoId || (request.providerId && row.providerId !== request.providerId)) continue;
+      providers.push({ providerId: row.providerId, sourceEpoch: row.sourceEpoch, status: row.status, highSequence: row.highSequence ?? null, finalSequence: row.finalSequence ?? null, firstGap: clone(row.firstGap ?? null), cursorDigest: row.cursorDigest ?? null, lastReceiptEvent: row.lastReceiptEvent ?? row.lastEvent ?? null, reconciliationEvent: row.reconciliationEvent ?? null, pendingCount: pending.get(key) ?? 0 });
+    }
+    providers.sort((a, b) => a.providerId.localeCompare(b.providerId) || a.sourceEpoch.localeCompare(b.sourceEpoch));
+    if (providers.length > ceilings.maxProviders) throw new CoordinationRefusal('provider read provider set exceeded deployment ceiling', 'provider_read_oversize');
+    const summaries = processing.map((row) => ({ processingId: row.id, providerId: row.providerId, sourceEpoch: row.sourceEpoch, status: row.status, version: row.version, coordinateCount: row.coordinates.length, receiptCount: row.receiptIds.length, createdEvent: row.createdEvent, lastReceiptEvent: row.lastReceiptEvent, completionEvent: row.completionEvent ?? null })).sort((a, b) => a.processingId.localeCompare(b.processingId));
+    const available = summaries.filter((row) => request.after === undefined || row.processingId > request.after); const selected = available.slice(0, limit);
+    const response = { schemaVersion: 1, repoId, asOfEvent: this._events.length, providers: clone(providers), currentProcessing: [], historicalProcessing: [], nextAfter: null };
+    const bytes = () => Buffer.byteLength(JSON.stringify(response));
+    if (bytes() > ceilings.maxBytes) throw new CoordinationRefusal('provider read base projection exceeded deployment byte ceiling', 'provider_read_oversize');
+    let consumed = 0;
+    for (const row of selected) {
+      const target = row.status === 'pending' ? response.currentProcessing : response.historicalProcessing; target.push(clone(row));
+      if (bytes() > ceilings.maxBytes) { target.pop(); if (consumed === 0) throw new CoordinationRefusal('provider read row exceeded deployment byte ceiling', 'provider_read_oversize'); break; }
+      consumed += 1;
+    }
+    if (available.length > consumed) response.nextAfter = selected[Math.max(0, consumed - 1)]?.processingId ?? null;
+    return freeze(response);
+  }
+
   recordProviderSourceReconciliation(fields, auth) {
     if (!boundedText(fields?.repoId, 256) || !fields?.proof || !Number.isSafeInteger(fields.expectedHealthEvent) || auth?.actor !== `provider-poller:${fields.proof.providerId}` || typeof auth?.key !== 'string' || auth.key.length === 0) throw new TypeError('provider source reconciliation authority is invalid');
     const prior = this._byKey.get(auth.key); if (prior) { if (prior.kind !== 'provider.reconciliation_completed' || prior.payload?.proof?.proofDigest !== fields.proof.proofDigest) throw new CoordinationRefusal('provider reconciliation idempotency conflict', 'provider_reconciliation_conflict'); const health = this.providerSourceHealth(prior.payload.repoId, prior.payload.providerId, prior.payload.sourceEpoch); const current = health?.status === 'healthy' && health.reconciliationEvent === prior.seq; return freeze({ ok: true, result: current ? 'idempotent' : 'historical', current, historical: !current, event: clone(prior), health }); }
