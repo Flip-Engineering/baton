@@ -26,8 +26,9 @@ function wire(options = {}) {
   const hint = Buffer.from(stable({ schemaVersion: 1, coordinates: [coordinate], advisoryIds: ['OSV-HTTPS-1'] }));
   const request = async (url, init) => {
     assert.equal(String(url), 'https://provider.example/v1/full'); assert.equal(init.headers.authorization, 'Bearer private-fixture-token'); assert.equal(init.headers.accept, 'application/json');
-    const pageIndex = calls++; const requestCursor = pageIndex === 0 ? '1' : 'request-cursor-2'; assert.equal(init.headers['x-baton-cursor'], requestCursor); assert.equal(init.headers['x-baton-page-index'], String(pageIndex));
+    const pageIndex = calls % 2; calls += 1; const requestCursor = pageIndex === 0 ? '1' : 'request-cursor-2'; assert.equal(init.headers['x-baton-cursor'], requestCursor); assert.equal(init.headers['x-baton-page-index'], String(pageIndex));
     if (options.redirect) return { status: 302, rawHeaders: [], raw: Buffer.from('redirect') };
+    if (options.blockSecond && calls === 2) return new Promise((resolve, reject) => init.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted transport'), { name: 'AbortError' })), { once: true }));
     const rows = pageIndex === 0 ? [1, 2] : [3]; const items = rows.map((sequence) => ({ deliveryId: `delivery-${sequence}`, occurredAt, sequence, raw: hint.toString('base64') })); const raw = Buffer.from(stable({ schemaVersion: 1, items }));
     const cursor = pageIndex === 0 ? 'cursor-page-1' : 'cursor-final'; const nextCursor = pageIndex === 0 ? 'request-cursor-2' : null;
     const fields = { operation: '/v1/full', pollId: 'poll-live-1', observedAt: occurredAt, pageIndex, finalSequence: 3, requestCursorDigest: sha(requestCursor), cursorDigest: sha(cursor), nextCursorDigest: nextCursor === null ? null : sha(nextCursor), raw };
@@ -50,4 +51,10 @@ test('PF8: fixed HTTPS HMAC paging yields ordinary dedupable receipts and zero-n
 test('PF8: redirects and page-authentication substitution fail before any receipt is exposed', async () => {
   const redirected = wire({ redirect: true }); const redirectRegistry = new AdvisoryFeedRegistry({ sources: { 'fixture.https': source({ request: redirected.request }) } }); await assert.rejects(redirectRegistry.pollFull('fixture.https'), (error) => error.code === 'provider_poll_redirect');
   const bad = wire({ badSignature: true }); const badRegistry = new AdvisoryFeedRegistry({ sources: { 'fixture.https': source({ request: bad.request }) } }); await assert.rejects(badRegistry.pollFull('fixture.https'), (error) => error.code === 'provider_auth_invalid');
+});
+
+test('PF8: cancellation during page two exposes no prefix and a clean full retry succeeds', async () => {
+  const transport = wire({ blockSecond: true }); const registry = new AdvisoryFeedRegistry({ sources: { 'fixture.https': source({ request: transport.request }) } }); const controller = new AbortController(); const pending = registry.pollFull('fixture.https', { signal: controller.signal });
+  while (transport.calls() < 2) await new Promise((resolve) => setImmediate(resolve)); controller.abort('test-cancel'); await assert.rejects(pending, (error) => error.code === 'cancelled');
+  const retried = await registry.pollFull('fixture.https'); assert.equal(retried.receipts.length, 3); assert.equal(retried.proof.finalSequence, 3); assert.equal(transport.calls(), 4);
 });

@@ -206,8 +206,10 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    CAS, causal freshness, replay, and race-safe non-clearance. Automatic deterministic single-flight
    scheduling, capped backoff, hostile-abort/lease-loss fencing, and asynchronous close/abort/await
    now ship. Repo-scoped count/derivation/byte-bounded authenticated web/MCP provider reads now ship
-   with sanitized health and current/historical processing pagination. Production HTTPS poll
-   transport/live proof, durable deferred attempts, and the full authenticated Grok matrix remain.
+   with sanitized health and current/historical processing pagination. Fixed-origin authenticated
+   no-redirect HTTPS paging, private cursor/credential handling, zero-network replay, and a real TLS
+   recovery/restart/re-degradation/cleanup proof now ship. Durable deferred official attempts,
+   additional provider/ecosystem adapters, and the full authenticated Grok matrix remain.
    Continue the remaining explicitly
    catalogued later rungs, then demand-earned Cairn Rungs 1–4, Vantage, Evidence Ladder, and Skill
    Forge/computer use behind stronger containment.
