@@ -8,7 +8,7 @@ import { AtlasCpgTaint } from '../src/index.mjs';
 const dir = (name) => mkdtempSync(join(tmpdir(), `baton-${name}-`));
 function fixture(source, opts = {}) {
   const root = dir('taint-root'); const artifacts = dir('taint-artifacts'); mkdirSync(join(root, 'src'), { recursive: true }); writeFileSync(join(root, 'src/a.js'), source);
-  const atlas = new AtlasCpgTaint({ artifactRoot: artifacts, maxSourceBytes: 64 * 1024, maxGraphBytes: 512 * 1024, maxResultBytes: 512 * 1024, maxDepth: 16, maxPaths: 32, maxReachDefPairs: 4096, ...opts });
+  const atlas = new AtlasCpgTaint({ artifactRoot: artifacts, maxSourceBytes: 64 * 1024, maxGraphBytes: 512 * 1024, maxResultBytes: 512 * 1024, maxDepth: 16, maxPaths: 32, maxReachDefPairs: 4096, maxScopes: 128, maxScopeDepth: 32, maxBindings: 512, maxBindingOccurrences: 4096, ...opts });
   return { root, artifacts, atlas, args: { path: 'src/a.js', sourceNames: ['readInput'], sinkNames: ['send'], depth: 12 }, ctx: { root, budgetTokens: 10000 } };
 }
 

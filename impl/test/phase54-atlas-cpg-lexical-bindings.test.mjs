@@ -38,6 +38,10 @@ function taintFixture(source, overrides = {}) {
 }
 
 function graphOf(result) { return JSON.parse(readFileSync(result.refs.find((ref) => ref.kind === 'cpg_slice').path, 'utf8')); }
+function publish(rootPath, value, kind) {
+  const bytes = `${JSON.stringify(value)}\n`; const digest = createHash('sha256').update(bytes).digest('hex'); const path = join(rootPath, `${digest}.json`); writeFileSync(path, bytes);
+  return { handle: `art:sha256:${digest}`, kind, digest, bytes: Buffer.byteLength(bytes), path };
+}
 
 test('LB1/LB8/LB10: cards and constructors expose one bounded advisory binding model without new authority', () => {
   const f = sourceFixture('function run(value) { return value }\n'); const card = f.cpg.card();
@@ -110,6 +114,11 @@ test('LB4/LB11: closures and destructuring stay explicit unsupported boundaries 
   assert.deepEqual((await destructured.invoke()).payload, []);
   const destructuredGraph = graphOf(await destructured.taint.cpg.invoke('cpg.build', { path: 'subject.mjs' }, { root: destructured.sourceRoot, budgetTokens: 100_000 }));
   assert.equal(destructuredGraph.nodes.some((node) => node.type === 'identifier' && node.name === 'value' && node.bindingResolution === 'unsupported'), true);
+
+  const caught = taintFixture(`function readInput(){} function send(v){}\nfunction run(){ let value=readInput(); try {} catch(value) { send(value) } }\n`);
+  assert.deepEqual((await caught.invoke()).payload, []);
+  const caughtGraph = graphOf(await caught.taint.cpg.invoke('cpg.build', { path: 'subject.mjs' }, { root: caught.sourceRoot, budgetTokens: 100_000 }));
+  assert.equal(caughtGraph.nodes.some((node) => node.type === 'identifier' && node.name === 'value' && node.bindingResolution === 'unsupported'), true);
 });
 
 test('LB8: scope, depth, binding, occurrence, and reaching-definition ceilings refuse independently before artifact publication', async () => {
@@ -163,4 +172,34 @@ test('LB9/LB10/LB12: complete binding artifacts resume/reverify, reject tamper, 
 
   const old = `${JSON.stringify({ schemaVersion: 2, op: 'cpg.build', nodes: [], edges: [] })}\n`; const digest = createHash('sha256').update(old).digest('hex'); const path = join(clean.artifactRoot, `${digest}.json`); writeFileSync(path, old);
   await assert.rejects(clean.cpg.resume({ digest, path }, `atlas-cpg:${digest}:0`, { budgetTokens: 100 }), (error) => error.code === 'artifact_integrity');
+});
+
+test('LB7/LB9: self-consistent forgeries with duplicate graph identities or substituted derived children fail closed', async () => {
+  const f = sourceFixture('function run(value){ let item=value; use(item) }\n');
+  const result = await f.cpg.invoke('cpg.build', f.args, { ...f.ctx, budgetTokens: 1 }); const graph = graphOf(result);
+  for (const forgedGraph of [
+    { ...graph, nodes: [...graph.nodes, graph.nodes[0]] },
+    { ...graph, edges: [...graph.edges, graph.edges[0]] },
+    { ...graph, nodes: graph.nodes.map((node) => node.type === 'binding' ? { ...node, bindingKey: 'malformed' } : node) },
+  ]) {
+    const forged = publish(f.artifactRoot, forgedGraph, 'cpg_slice');
+    await assert.rejects(f.cpg.resume(forged, `atlas-cpg:${forged.digest}:0`, { budgetTokens: 100_000 }), (error) => error.code === 'artifact_integrity');
+  }
+
+  const taint = taintFixture('function readInput(){} function send(v){} function run(){ let value=readInput(); send(value) }\n');
+  const taintClaim = await taint.taint.invoke('cpg.taint', { path: 'subject.mjs', sourceNames: ['readInput'], sinkNames: ['send'], sanitizerNames: [] }, { root: taint.sourceRoot, budgetTokens: 1 });
+  writeFileSync(join(taint.sourceRoot, 'other.mjs'), 'function other(value){ use(value) }\n');
+  const otherGraph = await taint.taint.cpg.invoke('cpg.build', { path: 'other.mjs' }, { root: taint.sourceRoot, budgetTokens: 100_000 });
+  const taintArtifact = JSON.parse(readFileSync(taintClaim.refs.find((ref) => ref.kind === 'cpg_taint').path, 'utf8')); taintArtifact.graphDigest = otherGraph.refs[0].digest;
+  const forgedTaint = publish(taint.artifactRoot, taintArtifact, 'cpg_taint');
+  await assert.rejects(taint.taint.resume(forgedTaint, `atlas-cpg-taint:${forgedTaint.digest}:0`, { budgetTokens: 100_000 }), (error) => error.code === 'artifact_integrity');
+
+  const beforeRoot = root('sub-before'); const afterRoot = root('sub-after'); const artifactRoot = root('sub-delta');
+  writeFileSync(join(beforeRoot, 'subject.mjs'), 'function run(){ let value=1; use(value) }\n'); writeFileSync(join(afterRoot, 'subject.mjs'), 'function run(){ let value=2; use(value) }\n'); writeFileSync(join(beforeRoot, 'other.mjs'), 'function other(value){ use(value) }\n');
+  const { maxArtifactBytes: maxGraphBytes, ...common } = limits; const delta = new AtlasCpgDelta({ artifactRoot, maxGraphBytes, maxDeltaBytes: 512 * 1024, maxImpactDepth: 8, ...common });
+  const deltaArgs = { beforePath: 'subject.mjs', afterPath: 'subject.mjs', impactDepth: 4 }; const deltaCtx = { beforeRoot, afterRoot, budgetTokens: 1 };
+  const deltaClaim = await delta.invoke('cpg.delta', deltaArgs, deltaCtx); const substitutedGraph = await delta.cpg.invoke('cpg.build', { path: 'other.mjs' }, { root: beforeRoot, budgetTokens: 100_000 });
+  const deltaArtifact = JSON.parse(readFileSync(deltaClaim.refs.find((ref) => ref.kind === 'cpg_delta').path, 'utf8')); deltaArtifact.before.graphDigest = substitutedGraph.refs[0].digest;
+  const forgedDelta = publish(artifactRoot, deltaArtifact, 'cpg_delta');
+  await assert.rejects(delta.resume(forgedDelta, `atlas-cpg-delta:${forgedDelta.digest}:0`, { budgetTokens: 100_000 }), (error) => error.code === 'artifact_integrity');
 });

@@ -9,7 +9,7 @@ const dir = (name) => mkdtempSync(join(tmpdir(), `baton-${name}-`));
 function fixture(source, opts = {}) {
   const root = dir('path-cpg-root'); const artifacts = dir('path-cpg-artifacts');
   mkdirSync(join(root, 'src'), { recursive: true }); writeFileSync(join(root, 'src/a.js'), source);
-  const common = { maxSourceBytes: 64 * 1024, maxReachDefPairs: 128, ...opts };
+  const common = { maxSourceBytes: 64 * 1024, maxReachDefPairs: 128, maxScopes: 128, maxScopeDepth: 32, maxBindings: 512, maxBindingOccurrences: 4096, ...opts };
   const cpg = new AtlasCpgSlice({ artifactRoot: join(artifacts, 'cpg'), maxArtifactBytes: 512 * 1024, ...common });
   const taint = new AtlasCpgTaint({ artifactRoot: join(artifacts, 'taint'), maxGraphBytes: 512 * 1024, maxResultBytes: 512 * 1024, maxDepth: 24, maxPaths: 32, ...common });
   return { root, artifacts, cpg, taint, ctx: { root, budgetTokens: 10000 }, args: { path: 'src/a.js', sourceNames: ['readInput'], sinkNames: ['send'], depth: 20 } };
@@ -79,7 +79,7 @@ test('PS4/PS5: direct arguments remain, while heap and interprocedural return fl
   const direct = fixture(`function readInput(){} function send(v){} function run(){ send(readInput()) }\n`);
   const result = await direct.taint.invoke('cpg.taint', direct.args, direct.ctx);
   assert.equal(result.payload.length, 1); assert.deepEqual(result.payload[0].edgeTypes, ['ARGUMENT_TO']);
-  assert.equal(result.provenance.meaning, 'cfg_may_reach_value_graph_not_safety_proof');
+  assert.equal(result.provenance.meaning, 'cfg_binding_aware_may_reach_value_graph_not_safety_proof');
 
   const heap = fixture(`function readInput(){} function send(v){} function run(o){ o.x=readInput(); send(o.x) }\n`);
   assert.equal((await heap.taint.invoke('cpg.taint', heap.args, heap.ctx)).payload.length, 0);

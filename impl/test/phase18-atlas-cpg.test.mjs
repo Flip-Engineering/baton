@@ -10,7 +10,7 @@ const dir = (name) => mkdtempSync(join(tmpdir(), `baton-${name}-`));
 function fixture(source, opts = {}) {
   const root = dir('cpg-root'); const artifacts = dir('cpg-artifacts');
   mkdirSync(join(root, 'src'), { recursive: true }); writeFileSync(join(root, 'src/a.js'), source);
-  const atlas = new AtlasCpgSlice({ artifactRoot: artifacts, maxSourceBytes: 64 * 1024, maxArtifactBytes: 512 * 1024, maxReachDefPairs: 4096, ...opts });
+  const atlas = new AtlasCpgSlice({ artifactRoot: artifacts, maxSourceBytes: 64 * 1024, maxArtifactBytes: 512 * 1024, maxReachDefPairs: 4096, maxScopes: 128, maxScopeDepth: 32, maxBindings: 512, maxBindingOccurrences: 4096, ...opts });
   return { root, artifacts, atlas, args: { path: 'src/a.js' }, ctx: { root, budgetTokens: 10000 } };
 }
 

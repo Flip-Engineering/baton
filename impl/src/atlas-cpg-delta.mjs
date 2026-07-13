@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { AtlasCpgSlice } from './atlas-cpg.mjs';
+import { AtlasCpgSlice, validateAtlasCpgGraph } from './atlas-cpg.mjs';
 
 const BINDING_MODEL = 'atlas-js-lexical-bindings-v1';
 function sha(value) { return createHash('sha256').update(value).digest('hex'); }
@@ -27,8 +27,8 @@ function semanticGraph(graph) {
     const fn = keyById.get(node.function ?? node.caller) ?? 'file';
     let base;
     if (node.type === 'entry' || node.type === 'exit') base = `${fn}/${node.type}`;
-    else if (node.type === 'scope') base = `${fn}/scope:${node.scopeKind}`;
-    else if (node.type === 'binding') base = `${fn}/binding:${node.bindingKind}:${node.name}`;
+    else if (node.type === 'scope') base = `${fn}/scope:${node.scopeKey}`;
+    else if (node.type === 'binding') base = `${fn}/binding:${node.bindingKey}`;
     else if (node.type === 'statement') base = `${fn}/statement:${node.kind}`;
     else if (node.type === 'identifier') base = `${fn}/identifier:${node.role}:${node.name}`;
     else if (node.type === 'call') base = `${fn}/call:${node.calleeName ?? node.calleeText ?? '<dynamic>'}`;
@@ -57,7 +57,8 @@ function semanticGraph(graph) {
 function loadGraph(result) {
   const ref = result.refs.find((item) => item.kind === 'cpg_slice'); const bytes = readFileSync(ref.path);
   if (sha(bytes) !== ref.digest) throw typed('nested CPG artifact integrity failure', 'artifact_integrity');
-  return { graph: JSON.parse(bytes), ref };
+  let graph; try { graph = validateAtlasCpgGraph(JSON.parse(bytes)); } catch (error) { if (error?.code === 'artifact_integrity') throw error; throw typed('nested CPG artifact JSON invalid', 'artifact_integrity'); }
+  return { graph, ref };
 }
 function compare(before, after) {
   const nodeChanges = []; const edgeChanges = [];
@@ -77,6 +78,8 @@ function impact(before, after, changes, depth) {
   const add = (from, to, reason) => { const list = adjacency.get(from) ?? []; if (!list.some((item) => item.to === to && item.reason === reason)) list.push({ to, reason }); adjacency.set(from, list); };
   for (const graph of [before, after]) for (const edge of graph.edges.values()) {
     if (edge.type === 'CONTAINS') add(edge.to, edge.from, 'container');
+    else if (edge.type === 'DECLARES') add(edge.to, edge.from, 'declaration');
+    else if (edge.type === 'BINDS') add(edge.to, edge.from, 'binding');
     else if (edge.type === 'CALLS') add(edge.to, edge.from, 'caller');
     else if (edge.type === 'REACHING_DEF') add(edge.from, edge.to, 'def_use');
   }
@@ -98,19 +101,12 @@ function impact(before, after, changes, depth) {
 export class AtlasCpgDelta {
   constructor(opts = {}) {
     if (!opts.artifactRoot) throw new TypeError('CPG delta artifactRoot required');
-    for (const key of ['maxSourceBytes', 'maxGraphBytes', 'maxDeltaBytes', 'maxImpactDepth', 'maxReachDefPairs']) if (!Number.isSafeInteger(opts[key]) || opts[key] <= 0) throw new TypeError(`${key} must be deployment-derived`);
-    const maxScopes = opts.maxScopes ?? 1024;
-    const maxScopeDepth = opts.maxScopeDepth ?? 64;
-    const maxBindings = opts.maxBindings ?? 4096;
-    const maxBindingOccurrences = opts.maxBindingOccurrences ?? 32768;
-    if (!Number.isSafeInteger(maxScopes) || maxScopes <= 0) throw new TypeError('maxScopes must be a positive safe integer');
-    if (!Number.isSafeInteger(maxScopeDepth) || maxScopeDepth <= 0) throw new TypeError('maxScopeDepth must be a positive safe integer');
-    if (!Number.isSafeInteger(maxBindings) || maxBindings <= 0) throw new TypeError('maxBindings must be a positive safe integer');
-    if (!Number.isSafeInteger(maxBindingOccurrences) || maxBindingOccurrences <= 0) throw new TypeError('maxBindingOccurrences must be a positive safe integer');
+    for (const key of ['maxSourceBytes', 'maxGraphBytes', 'maxDeltaBytes', 'maxImpactDepth', 'maxReachDefPairs', 'maxScopes', 'maxScopeDepth', 'maxBindings', 'maxBindingOccurrences']) if (!Number.isSafeInteger(opts[key]) || opts[key] <= 0) throw new TypeError(`${key} must be deployment-derived`);
+    const { maxScopes, maxScopeDepth, maxBindings, maxBindingOccurrences } = opts;
     this.artifactRoot = opts.artifactRoot; this.maxDeltaBytes = opts.maxDeltaBytes; this.maxImpactDepth = opts.maxImpactDepth; this.now = opts.now ?? Date.now; this.record = opts.record ?? null;
     mkdirSync(this.artifactRoot, { recursive: true, mode: 0o700 }); this.cpg = new AtlasCpgSlice({ artifactRoot: join(this.artifactRoot, 'graphs'), maxSourceBytes: opts.maxSourceBytes, maxArtifactBytes: opts.maxGraphBytes, maxReachDefPairs: opts.maxReachDefPairs, maxScopes, maxScopeDepth, maxBindings, maxBindingOccurrences, now: this.now, record: this.record });
   }
-  card() { return Object.freeze({ name: 'atlas-cpg-delta', version: '0.1.0', underlying: this.cpg.card().underlying, bindingModel: BINDING_MODEL, graphSchemaVersion: 3, deltaSchemaVersion: 2, ops: { 'cpg.delta': { deterministic: true, latency_class: 'interactive', side_effects: 'writes_content_addressed_artifacts', reverifiable: true } }, limitations: ['semantic keys use named occurrence ordinals', 'impact is graph reachability, not behavioral proof', ...this.cpg.card().limitations] }); }
+  card() { return Object.freeze({ name: 'atlas-cpg-delta', version: '0.1.0', underlying: this.cpg.card().underlying, bindingModel: BINDING_MODEL, graphSchemaVersion: 3, deltaSchemaVersion: 2, ops: { 'cpg.delta': { deterministic: true, latency_class: 'interactive', side_effects: 'writes_content_addressed_artifacts', reverifiable: true } }, ceilings: { ...this.cpg.card().ceilings, maxGraphBytes: this.cpg.maxArtifactBytes, maxDeltaBytes: this.maxDeltaBytes, maxImpactDepth: this.maxImpactDepth }, limitations: ['semantic keys use named occurrence ordinals', 'impact is graph reachability, not behavioral proof', ...this.cpg.card().limitations] }); }
   async invoke(op, args, ctx) {
     if (op !== 'cpg.delta') throw typed('unsupported CPG delta operation', 'unsupported_op'); if (!ctx || !Number.isSafeInteger(ctx.budgetTokens) || ctx.budgetTokens <= 0) throw new TypeError('positive budgetTokens required');
     const depth = args?.impactDepth ?? this.maxImpactDepth; if (!Number.isSafeInteger(depth) || depth < 0 || depth > this.maxImpactDepth) throw typed('impact depth exceeds deployment ceiling', 'impact_depth_exceeded'); abort(ctx); const started = this.now();
@@ -125,7 +121,14 @@ export class AtlasCpgDelta {
     this.record?.({ kind: 'capability.op.completed', actor: ctx.actor ?? 'orchestrator', op, deltaDigest, status, counts, wallMs }); return result;
   }
   async resume(ref, cursor, ctx) {
-    if (!ctx || !Number.isSafeInteger(ctx.budgetTokens) || ctx.budgetTokens <= 0) throw new TypeError('positive budgetTokens required'); const match = /^atlas-cpg-delta:([a-f0-9]{64}):(\d+)$/.exec(cursor ?? ''); if (!match || match[1] !== ref?.digest) throw typed('invalid CPG delta cursor', 'invalid_cursor'); let path; try { path = realpathSync(ref.path); } catch { throw typed('CPG delta artifact unavailable', 'artifact_integrity'); } const root = realpathSync(this.artifactRoot); if (path !== join(root, `${ref.digest}.json`)) throw typed('CPG delta artifact escape', 'artifact_integrity'); const bytes = readFileSync(path); if (sha(bytes) !== ref.digest) throw typed('CPG delta artifact digest mismatch', 'artifact_integrity'); let artifact; try { artifact = JSON.parse(bytes); } catch { throw typed('CPG delta artifact JSON invalid', 'artifact_integrity'); } if (artifact.schemaVersion !== 2 || artifact.bindingModel !== BINDING_MODEL || artifact.op !== 'cpg.delta' || !Array.isArray(artifact.nodeChanges) || !Array.isArray(artifact.edgeChanges) || !Array.isArray(artifact.impact)) throw typed('CPG delta artifact schema mismatch', 'artifact_integrity'); const items = [...artifact.nodeChanges, ...artifact.edgeChanges, ...artifact.impact]; const offset = Number(match[2]); if (!Number.isSafeInteger(offset) || offset < 0 || offset > items.length) throw typed('invalid CPG delta cursor offset', 'invalid_cursor'); const payload = bounded(items.slice(offset), ctx.budgetTokens); const next = offset + payload.length; const truncated = next < items.length; return Object.freeze({ op: 'cpg.delta', status: truncated ? 'needs_resume' : 'ok', summary: `resumed ${payload.length} CPG delta records`, payload, refs: [ref], ...(truncated ? { cursor: `atlas-cpg-delta:${ref.digest}:${next}` } : {}), cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), wall_ms: 0, usd: 0, underlying: this.cpg.card().underlying[0] }, provenance: { deltaDigest: ref.digest, resumed_from: offset, deterministic: true, bindingModel: BINDING_MODEL } });
+    if (!ctx || !Number.isSafeInteger(ctx.budgetTokens) || ctx.budgetTokens <= 0) throw new TypeError('positive budgetTokens required'); const match = /^atlas-cpg-delta:([a-f0-9]{64}):(\d+)$/.exec(cursor ?? ''); if (!match || match[1] !== ref?.digest) throw typed('invalid CPG delta cursor', 'invalid_cursor'); let path; try { path = realpathSync(ref.path); } catch { throw typed('CPG delta artifact unavailable', 'artifact_integrity'); } const root = realpathSync(this.artifactRoot); if (path !== join(root, `${ref.digest}.json`)) throw typed('CPG delta artifact escape', 'artifact_integrity'); const bytes = readFileSync(path); if (sha(bytes) !== ref.digest) throw typed('CPG delta artifact digest mismatch', 'artifact_integrity'); let artifact; try { artifact = JSON.parse(bytes); } catch { throw typed('CPG delta artifact JSON invalid', 'artifact_integrity'); } if (artifact.schemaVersion !== 2 || artifact.bindingModel !== BINDING_MODEL || artifact.op !== 'cpg.delta' || !Array.isArray(artifact.nodeChanges) || !Array.isArray(artifact.edgeChanges) || !Array.isArray(artifact.impact)) throw typed('CPG delta artifact schema mismatch', 'artifact_integrity');
+    for (const child of [artifact.before, artifact.after]) {
+      if (!child || typeof child.path !== 'string' || !/^[a-f0-9]{64}$/u.test(child.sourceDigest ?? '') || !/^[a-f0-9]{64}$/u.test(child.graphDigest ?? '')) throw typed('CPG delta child identity malformed', 'artifact_integrity');
+      const childPath = join(realpathSync(this.cpg.artifactRoot), `${child.graphDigest}.json`); let childBytes; try { childBytes = readFileSync(childPath); } catch { throw typed('CPG delta child unavailable', 'artifact_integrity'); }
+      if (sha(childBytes) !== child.graphDigest) throw typed('CPG delta child digest mismatch', 'artifact_integrity'); let graph; try { graph = validateAtlasCpgGraph(JSON.parse(childBytes)); } catch (error) { if (error?.code === 'artifact_integrity') throw error; throw typed('CPG delta child JSON invalid', 'artifact_integrity'); }
+      if (graph.sourceDigest !== child.sourceDigest || graph.path !== child.path) throw typed('CPG delta child substitution detected', 'artifact_integrity');
+    }
+    const items = [...artifact.nodeChanges, ...artifact.edgeChanges, ...artifact.impact]; const offset = Number(match[2]); if (!Number.isSafeInteger(offset) || offset < 0 || offset > items.length) throw typed('invalid CPG delta cursor offset', 'invalid_cursor'); const payload = bounded(items.slice(offset), ctx.budgetTokens); const next = offset + payload.length; const truncated = next < items.length; return Object.freeze({ op: 'cpg.delta', status: truncated ? 'needs_resume' : 'ok', summary: `resumed ${payload.length} CPG delta records`, payload, refs: [ref], ...(truncated ? { cursor: `atlas-cpg-delta:${ref.digest}:${next}` } : {}), cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), wall_ms: 0, usd: 0, underlying: this.cpg.card().underlying[0] }, provenance: { deltaDigest: ref.digest, resumed_from: offset, deterministic: true, bindingModel: BINDING_MODEL } });
   }
   async reverify(claim, op, args, ctx) { const rerun = await this.invoke(op, args, ctx); return Object.freeze({ ok: rerun.provenance.deltaDigest === claim?.provenance?.deltaDigest && rerun.provenance.bindingModel === claim?.provenance?.bindingModel, observedDeltaDigest: rerun.provenance.deltaDigest, observedBindingModel: rerun.provenance.bindingModel }); }
 }

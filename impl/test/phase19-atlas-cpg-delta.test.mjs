@@ -11,7 +11,7 @@ function write(root, path, content) { mkdirSync(dirname(join(root, path)), { rec
 function fixture(before, after, opts = {}) {
   const beforeRoot = dir('cpg-before'); const afterRoot = dir('cpg-after'); const artifacts = dir('cpg-delta-artifacts');
   write(beforeRoot, 'src/a.js', before); write(afterRoot, 'src/a.js', after);
-  const atlas = new AtlasCpgDelta({ artifactRoot: artifacts, maxSourceBytes: 64 * 1024, maxGraphBytes: 512 * 1024, maxDeltaBytes: 512 * 1024, maxImpactDepth: 8, maxReachDefPairs: 4096, ...opts });
+  const atlas = new AtlasCpgDelta({ artifactRoot: artifacts, maxSourceBytes: 64 * 1024, maxGraphBytes: 512 * 1024, maxDeltaBytes: 512 * 1024, maxImpactDepth: 8, maxReachDefPairs: 4096, maxScopes: 128, maxScopeDepth: 32, maxBindings: 512, maxBindingOccurrences: 4096, ...opts });
   return { beforeRoot, afterRoot, artifacts, atlas, args: { beforePath: 'src/a.js', afterPath: 'src/a.js', impactDepth: 4 }, ctx: { beforeRoot, afterRoot, budgetTokens: 10000 } };
 }
 
@@ -68,5 +68,5 @@ test('CD3/CD4/PS7: literal branch pruning surfaces CFG and reaching-definition e
   assert.equal(artifact.edgeChanges.some((item) => item.change === 'removed' && item.type === 'CFG_TRUE'), true);
   assert.equal(artifact.edgeChanges.some((item) => item.change === 'removed' && item.type === 'REACHING_DEF'), true);
   assert.equal(artifact.impact.some((item) => item.reason === 'changed' && item.nodeKey.includes('identifier')), true);
-  assert.equal(result.provenance.impactMeaning, 'seed_graph_reachability_not_behavioral_proof');
+  assert.equal(result.provenance.impactMeaning, 'binding_aware_seed_graph_reachability_not_behavioral_proof');
 });
