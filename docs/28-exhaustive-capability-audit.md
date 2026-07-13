@@ -229,6 +229,20 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    Build/low all have exact start/close and complete reap evidence; both Groks remain authentication-
    red, Codex crosses its token ceiling in one reported burst, and GLM's terminal lump crosses its
    USD ceiling, so no semantic review report is mislabeled verified.
+28. **Immutable bounded dual-root toolchain projection:** Phase 55 makes target Git identity and
+   dependency/toolchain identity separate deployment inputs. One closed configuration inspects only
+   selected ordinary files/directories under exact mapping/file/directory/byte/path/depth ceilings,
+   rejects links, hardlinks, special/privileged entries, collisions and drift, and exposes only a
+   content/policy identity. Worker, result verifier, base verifier, session resume/replay, and
+   structured merge independently materialize and bind ordinary byte copies. Per-worktree excludes
+   plus capture refusal keep projection bytes out of result commits without requiring target
+   `.gitignore`; failure/reap/reconcile removes owned targets and exclude state. Legacy same-root
+   copying is unchanged and mixed modes refuse before driver authority. Eleven grouped contracts and
+   1141/1141 canonical tests are green. Recursive exact Codex, Claude, project-key GLM, Grok 4.5,
+   and Grok Build routes used the shipped API against a clean dependency-free target: all five
+   process groups closed/reaped, both Grok process intervals overlapped, and GLM fresh-verified under
+   the same projection identity. Projection and lifecycle gates pass; provider matrix remains
+   honestly red because Grok reports unauthenticated.
 
 ## What remains partial
 
@@ -239,11 +253,13 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   pin/exclude/prefer controls, and account quota-window/fleet-seat scheduling.
 - Cross-vendor review is wired, but continuous semantic review automation and structured reject
   postmortems are not.
-- Recursive execution still lacks an immutable dual-root toolchain projection: clean pinned review
-  targets and dependency-complete source hosts are currently staged by the evidence harness. Prompt-
-  only tool-call ceilings are unenforced, provider-terminal usage can arrive too late for a strict
-  pre-spend stop, and the public driver has no single drain-and-close attestation. Phase 54 dogfood
-  reproduced all three frictions while proving that the existing lower-level kill/reap is exact.
+- Recursive execution now has Phase 55's immutable dual-root projection and no longer needs a
+  runner-staged dependency copy. Prompt-only tool-call ceilings remain unenforced, provider-terminal
+  usage can arrive too late for a strict pre-spend stop, and the public driver has no single
+  drain-and-close attestation. Direct exploratory test invocations also accumulated 8,899 stale
+  `baton-*` temporary directories before this run reclaimed them; the canonical suite owner is
+  bounded, but every bespoke recursive/evidence runner still needs the same explicit temp-root
+  ownership contract. These are governance/lifecycle gaps, not reasons to weaken exact reap claims.
 - Structured merge is shipped with an injected Mergiraf-class boundary; a live Mergiraf binary
   proof is absent. Publication has no live remote-push proof.
 - Scratch and causal knowledge primitives ship. Cairn Rungs 0–2 scorecard, verified RouteStats,
@@ -326,8 +342,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    supervised startup auto-rejoin shipped in Phase 45; next are provider-backed recovery proof,
    in-flight continuation, vendor-honest fork/rewind, compaction DoD reinjection,
    quota-window/seat scheduling, and operator route overrides.
-   Before another large recursive build, add an immutable bounded dual-root toolchain projection,
-   route-specific terminal-burst reserve/call governance, and a public drain-and-close attestation.
+   Immutable bounded dual-root toolchain projection shipped in Phase 55. Before another large
+   recursive build, add route-specific terminal-burst reserve/call governance, a public
+   drain-and-close attestation, and enforce temp-root ownership for direct recursive/evidence runs.
 4. **Build capability modules on shared substrate:** Cairn Rung 0 shipped in Phase 31 and
    Cartographer/Quartermaster local Rung 0 shipped in Phase 32, addressed push in Phase 33, and
    bounded scope-drift refresh in Phase 34, external evidence in Phase 36, exact SBOM in Phase 37,

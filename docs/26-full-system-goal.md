@@ -698,9 +698,33 @@ red: Codex crossed a token ceiling in one telemetry burst, GLM reported its usag
 and crossed the USD cap after looping on self-checks, and Grok still refused authentication before
 readiness. The next recursive-runtime increment therefore binds clean target and immutable bounded
 toolchain projection as separate identities, adds route-specific terminal-burst/call governance,
-and exposes a public drain-and-close attestation. This operational work precedes another large
-recursive build; it does not displace provider-backed session continuation, Scratch Board/Bench,
-Skill/Playbook promotion, web/operator depth, evaluation, or any retained representation rung.
+and exposes a public drain-and-close attestation.
+
+Phase 55 ships the first of those recursive-runtime increments. A closed deployment configuration
+pins one absolute private source, source ID, selected mappings, exact file/directory/byte/path/depth
+ceilings, and expected content manifest. Its public identity contains no host path. Baton scans with
+ordinary-file descriptor identity, rejects links/hardlinks/special/privileged entries, snapshots
+bounded bytes, independently copies and verifies worker/result/base-verifier materializations,
+rescans the source, and atomically cleans failure. Projection targets are absent from the target
+commit, per-worktree excluded, and refused if force-added at capture. Worktree readiness, native
+session validation/replay, result/base verification, and structured merge all require the same
+identity; legacy same-root dependency copies remain compatible and mixed configuration refuses
+before writer/worker authority. Eleven grouped contracts and the 1141/1141 canonical suite are
+green.
+
+Recursive proof used this shipped API—not a manual dependency stage—against a clean pinned target.
+Exact Codex `gpt-5.6-sol`/low, Claude Opus/low, project-key GLM `glm-4.7`/low, Grok 4.5/low, and Grok
+Build/low all received the same projection identity. Every one of five process groups has correlated
+kill/close and complete worktree/runtime/branch/writer reap; both Grok intervals overlapped, and GLM
+fresh-verified a report in its independently projected verifier. Projection and lifecycle gates are
+green. The provider matrix stays honestly red because Grok currently reports unauthenticated; the
+GLM report's claimed hardlink P0 is rejected by the cited guard, dedicated regression, and fresh
+verification. The run also exposed 8,899 stale temp directories from earlier direct exploratory
+test invocations, which were reclaimed without touching source or credentials. Temp-root ownership
+for every bespoke evidence runner, route-specific terminal-burst/call governance, and a public
+drain-and-close attestation are therefore next operational slices. This work does not displace
+provider-backed session continuation, Scratch Board/Bench, Skill/Playbook promotion, authenticated
+web/operator depth, evaluation, or any AST/CST/SCIP/CPG/IR/behavior/semantic-merge/e-graph rung.
 
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
@@ -708,7 +732,9 @@ Skill/Playbook promotion, web/operator depth, evaluation, or any retained repres
 3. Make persistent sessions genuinely usable through the driver; supervised startup auto-rejoin
    is shipped in Phase 45 and exact provider-process lifecycle/reap in Phase 51, while broader
    provider-backed recovery proof, in-flight continuation, and vendor-honest fork/rewind depth
-   remain.
+   remain. Phase 55 separately ships immutable bounded toolchain projection for clean-target
+   recursive sessions; terminal-burst/call governance, universal temp-root ownership, and public
+   drain-and-close remain.
 4. Ship OS/credential isolation and budget/watchdog governance.
 5. Complete hardened acceptance and structured integration.
 6. Ship the task/artifact/Scratch substrate and deployment-neutral causal knowledge core.

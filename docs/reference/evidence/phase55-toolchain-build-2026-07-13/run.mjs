@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { GlmSessionCli, createBrief, createDriver } from '../../../../impl/src/index.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SOURCE_REPO = resolve(HERE, '../../../..');
-const REPO = resolve(process.env.BATON_REPO ?? SOURCE_REPO);
+const SOURCE_REPO = realpathSync(resolve(HERE, '../../../..'));
+const REPO = realpathSync(resolve(process.env.BATON_REPO ?? SOURCE_REPO));
 const OUTPUT = resolve(process.env.BATON_EVIDENCE_DIR ?? HERE);
 const GLM_AUTH = resolve(process.env.BATON_GLM_AUTH_FILE ?? join(SOURCE_REPO, 'glm_key.json'));
 const LOG_DIR = mkdtempSync(join(tmpdir(), 'baton-phase55-build-'));
@@ -29,6 +29,9 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
 const groupAlive = (pid) => { try { process.kill(-pid, 0); return true; } catch { return false; } };
 const git = (args) => execFileSync('git', args, { cwd: REPO, encoding: 'utf8' }).trim();
 const names = (path) => existsSync(path) ? readdirSync(path).sort() : [];
+const evidenceJson = (value, space) => JSON.stringify(value, null, space)
+  .replaceAll(SOURCE_REPO, '<source-repo>')
+  .replaceAll(REPO, '<clean-target>');
 const credentialFact = (path) => { try { const stat = statSync(path); return { present: stat.isFile(), ownerOnly: (stat.mode & 0o077) === 0 }; } catch { return { present: false, ownerOnly: false }; } };
 
 async function until(fn, label, timeoutMs = 1_200_000) {
@@ -159,8 +162,8 @@ const summary = {
   kill: { ack: killAck, requestedSeq: killRequested?.seq ?? null, confirmedSeq: killConfirmed?.seq ?? null }, responses, cleanup,
 };
 const kept = new Set(['runtime.scope_created', 'lifecycle.process_started', 'lifecycle.process_ready', 'lifecycle.spawned', 'lifecycle.turn_started', 'resource.tokens', 'lifecycle.turn_completed', 'verify.reverified', 'kill.requested', 'kill.confirmed', 'lifecycle.process_closed', 'control.forced_stop', 'lifecycle.crashed']);
-writeFileSync(join(OUTPUT, 'events.jsonl'), `${events.filter((event) => kept.has(event.kind)).map((event) => JSON.stringify(event)).join('\n')}\n`);
-writeFileSync(join(OUTPUT, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
+writeFileSync(join(OUTPUT, 'events.jsonl'), `${events.filter((event) => kept.has(event.kind)).map((event) => evidenceJson(event)).join('\n')}\n`);
+writeFileSync(join(OUTPUT, 'summary.json'), `${evidenceJson(summary, 2)}\n`);
 if (fatal === null) rmSync(LOG_DIR, { recursive: true, force: true });
 console.log(JSON.stringify(summary, null, 2));
 if (!buildPass) process.exitCode = 1;

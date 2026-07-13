@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,8 +12,8 @@ import {
 } from '../../../../impl/src/index.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SOURCE_REPO = resolve(process.env.BATON_SOURCE_REPO ?? resolve(HERE, '../../../..'));
-const TARGET_REPO = resolve(process.env.BATON_REPO ?? SOURCE_REPO);
+const SOURCE_REPO = realpathSync(resolve(process.env.BATON_SOURCE_REPO ?? resolve(HERE, '../../../..')));
+const TARGET_REPO = realpathSync(resolve(process.env.BATON_REPO ?? SOURCE_REPO));
 const OUTPUT = resolve(process.env.BATON_EVIDENCE_DIR ?? HERE);
 const LOG_DIR = mkdtempSync(join(tmpdir(), 'baton-phase55-projection-review-'));
 const GLM_AUTH = resolve(process.env.BATON_GLM_AUTH_FILE ?? join(SOURCE_REPO, 'glm_key.json'));
@@ -48,8 +48,9 @@ const credentialFact = (path) => {
   catch (error) { return { present: false, ownerOnly: false, ownedByRunnerUser: false, error: error.code ?? 'stat_failed' }; }
 };
 function ownershipSnapshot() {
+  const redact = (line) => line.replaceAll(SOURCE_REPO, '<source-repo>').replaceAll(TARGET_REPO, '<target-repo>');
   return {
-    worktrees: git(['worktree', 'list', '--porcelain']).split('\n').filter((line) => line.startsWith('worktree ')).sort(),
+    worktrees: git(['worktree', 'list', '--porcelain']).split('\n').filter((line) => line.startsWith('worktree ')).map(redact).sort(),
     branches: git(['branch', '--list', 'baton/*']).split('\n').map((line) => line.trim()).filter(Boolean).sort(),
     worktreeEntries: names(join(TARGET_REPO, '.baton', 'wt')),
     runtimeEntries: names(join(TARGET_REPO, '.baton', 'runtime')),

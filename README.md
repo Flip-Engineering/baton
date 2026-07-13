@@ -21,7 +21,7 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **1130/1130
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **1141/1141
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
@@ -84,7 +84,7 @@ authoring, waiver, clearance, install, project-manager export, or homelab integr
 provider feeds, independently verified provenance, exact `internal` decisions, trusted advisory/
 source identity and true reachability, plan approval, positive clearance, additional ecosystems,
 composite surfaces, and deeper Cairn remain pending. The live policy-cycle proof passes **13/13**;
-the current canonical suite is **1130/1130 green**.
+the current canonical suite is **1141/1141 green**.
 
 Phases 43–50 extend the provider, routing, representation-attestation, and Cairn causal-knowledge
 verticals through durable provider recovery, exact route learning, supervised native-session
@@ -128,6 +128,23 @@ tests, and the **1130/1130** canonical suite are green. An exact routed recursiv
 Codex `gpt-5.6-sol`/low, project-key GLM `glm-4.7`/low, and simultaneous Grok 4.5/Grok Build process
 lifecycle and full reap; semantic review conformance remains honestly red because Codex and GLM
 crossed terminal accounting budgets and Grok still reported unauthenticated.
+
+Phase 55 removes a recursive-use deployment fiction exposed by those runs. A clean exact-SHA target
+can now receive a separately attested, immutable, bounded toolchain projection without the evidence
+runner manually staging dependencies. The public projection identity contains only content/policy
+digests and counts; worker, result-verifier, base-verifier, replay, session resume, and structured
+merge bind that identity while receiving independent byte copies. Links, hardlinks, special or
+privileged files, path collisions, source drift, every max+1 ceiling, result-commit contamination,
+and mixed legacy/new configuration fail closed with cleanup. Eleven focused contracts and the
+**1141/1141** canonical suite are green. Recursive Baton then admitted exact Codex
+`gpt-5.6-sol`/low, Claude Opus/low, project-key GLM `glm-4.7`/low, Grok 4.5/low, and Grok Build/low
+against a dependency-free clean target. All five native process groups closed and reaped, the two
+Grok intervals overlapped, and GLM fresh-verified a report through an independently projected
+verifier. The projection/lifecycle gates are green; the strict provider matrix remains honestly red
+because the installed Grok CLI reports unauthenticated. Terminal-burst/call governance, a public
+drain-and-close attestation, provider-backed continuation, Scratch Board/Bench, Skill/Playbook
+promotion, deeper web/operator surfaces and evaluations, and every retained representation rung
+remain in the full-system goal.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 
