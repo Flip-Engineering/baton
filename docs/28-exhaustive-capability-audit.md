@@ -95,6 +95,20 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    offline reverify fail closed. Authenticated web/MCP reach the same Coordinator-owned operation.
    The live official npm proof observes no source mutation or install. This is not a reuse decision,
    transitive advisory scan, reachability proof, provenance verdict, merge, or homelab integration.
+15. **Transitive advisory projection:** Phase 41 scans every exact-input npm component in separately
+   grounded actual or proposed graphs through fixed official OSV QueryBatch semantics, binds private
+   scan-session/request/response evidence, retains typed dependency-path and supported-static-import
+   attention, and permanently leaves vulnerable-function reachability unknown. It grants no waiver,
+   clearance, decision, or mutation authority.
+16. **Reuse policy-epoch reconciliation:** Phase 42 derives the only active policy identity from the
+   deployment-pinned Quartermaster card and reconciles it synchronously under exclusive writer
+   ownership. One bounded replay-validated event closes all mismatched Decisions and Findings,
+   contaminates exact readers, preserves old adverse fences as stale-but-blocking, binds legacy
+   matching Decisions, and projects local Constraint supersession/affect/informing lineage. Green
+   migration never clears inherited adverse state; authenticated web/MCP replay reports current
+   versus historical without accepting policy inputs. No provider request, policy authoring,
+   positive clearance, external knowledge-graph runtime, project-manager export, or homelab
+   integration is introduced.
 
 ## What remains partial
 
@@ -125,12 +139,13 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   Phase 39 closes pull-to-refresh advisory fencing plus exact TTL invalidation, and Phase 40 closes
   the npm proposed-vs-actual graph delta under an isolated resolver supervisor. Phase 41 is now
   shipped as read-only exact-input transitive advisory projection plus conservative dependency/
-  import attention evidence. The authoritative pending ledger in
-  `docs/capabilities/orientation-reuse.md` retains policy-hash invalidation, provider push/feed,
-  positive clearance, exact `internal` decisions, plan approval/binding, trusted advisory-symbol
-  identity and true vulnerability reachability, independent provenance, additional ecosystems,
-  Socket/full-SCA enrichment, composite `fleet_reuse`/`fleet_provenance`, and optional export as
-  distinct later contracts.
+  import attention evidence. Phase 42 closes deployment-card-derived policy-epoch reconciliation,
+  bounded atomic fan-out, non-clearing adverse-guard migration, and exclusive writer ownership. The
+  authoritative pending ledger in `docs/capabilities/orientation-reuse.md` retains provider
+  push/feed, positive clearance, exact `internal` decisions, plan approval/binding, trusted
+  advisory-symbol identity and true vulnerability reachability, independent provenance, additional
+  ecosystems, Socket/full-SCA enrichment, composite `fleet_reuse`/`fleet_provenance`, and optional
+  export as distinct later contracts.
 
 ## What remains pending
 
@@ -171,7 +186,8 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    Cartographer/Quartermaster local Rung 0 shipped in Phase 32, addressed push in Phase 33, and
    bounded scope-drift refresh in Phase 34, external evidence in Phase 36, exact SBOM in Phase 37,
    immutable external reuse decision/promotion in Phase 38, advisory/TTL invalidation in Phase 39,
-   and the isolated proposed npm graph/delta in Phase 40; continue their explicitly
+   the isolated proposed npm graph/delta in Phase 40, transitive advisory projection in Phase 41,
+   and policy-epoch reconciliation in Phase 42; continue their explicitly
    catalogued later rungs, then demand-earned Cairn Rungs 1–4, Vantage, Evidence Ladder, and Skill
    Forge/computer use behind stronger containment.
 5. **Complete northbound/runtime depth:** MCP HTTP/Tasks/daemon, WebSocket, operator takeover,

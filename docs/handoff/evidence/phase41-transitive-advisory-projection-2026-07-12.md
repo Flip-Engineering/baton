@@ -85,3 +85,6 @@ clearance, exact internal decisions, plan approval/binding, independent Sigstore
 ecosystems, Socket/full-SCA enrichment, composite `fleet_reuse`/`fleet_provenance`, or deeper Cairn
 recall/promotion. The authoritative ledger remains in
 `docs/capabilities/orientation-reuse.md`. There is no homelab or project-manager runtime integration.
+
+Subsequent status update: policy-hash invalidation shipped in Phase 42 as deployment-card-derived
+policy-epoch reconciliation. The remaining later boundary is unchanged.

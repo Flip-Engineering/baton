@@ -88,3 +88,6 @@ true vulnerable-function reachability, optional Socket, and independent Sigstore
 remain explicit. The store remains a single-process writer. No installer, package manager,
 lockfile/code mutation, merge, verification acceptance, publication, policy override,
 project-manager export, or homelab integration is introduced.
+
+Subsequent status update: policy-hash invalidation and exclusive writer reconciliation shipped in
+Phase 42. Provider ingestion, positive clearance, and the other listed residuals remain pending.

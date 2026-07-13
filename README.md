@@ -21,7 +21,7 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **882/882
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **911/911
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
@@ -70,15 +70,27 @@ advisory projection over separately grounded actual/proposed graphs, scan-sessio
 raw source evidence, public-registry name/version/SRI identity, deterministic dependency paths,
 and conservative supported-static-import attention. It
 cannot claim vulnerable-function reachability or waive an advisory. Baton's actual 10-coordinate
-lock graph live-proves zero known advisories without calling OSV during offline reverify. Additional
-ecosystems, independent provenance, and the rest of the authoritative Quartermaster ledger remain
-pending. The current canonical suite is **895/895 green**.
+lock graph live-proves zero known advisories without calling OSV during offline reverify. Phase 42
+pins Quartermaster's complete normalized vet-policy commitment in its registered capability card
+and synchronously reconciles durable reuse state before a driver exposes authority. Baseline,
+same-policy restart, and `A → B → A` epochs are replay-bound under exclusive writer ownership. A
+changed policy atomically closes mismatched Decisions and dossier Findings, contaminates exact
+readers, migrates old adverse guards as stale-but-blocking, and projects observed local
+`Constraint`, `Supersedes`, `Affects`, and `Informed` causal lineage. A green current-policy review
+may migrate an inherited fence but never clear it; authenticated web/MCP reads expose only the
+sanitized policy commitment and refresh exact idempotent results as current or historical without
+accepting caller policy hashes or target sets. Reconciliation performs no provider request, policy
+authoring, waiver, clearance, install, project-manager export, or homelab integration. Adverse
+provider feeds, independently verified provenance, exact `internal` decisions, trusted advisory/
+source identity and true reachability, plan approval, positive clearance, additional ecosystems,
+composite surfaces, and deeper Cairn remain pending. The live policy-cycle proof passes **13/13**;
+the current canonical suite is **911/911 green**.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 
 **Everything else supports the driver, and none of it is dropped:** independent verification (re-running a worker's tests so "done" can be trusted), learned routing (which vendor is good at what), a reliable coordination core (so "interrupt worker 3" always lands), telemetry/replay, and worker tools (search, debug, semantic diff). Earlier docs over-billed the *verification* as the product and demoted the *driving* to optional — doc 19 turns that right-side-up.
 
-**Architecture, plainly:** you drive from your CLI agent (Claude Code or Codex is the orchestrator — it decides); underneath, a small reliable program carries out those decisions and does the bookkeeping (dispatch, making interrupts land, re-checking worker claims, the event log). The AI drives; the plumbing makes the driving safe. Southbound, the product tier uses persistent Claude stream-json, Codex app-server, and Grok ACP sessions; one-shot subprocess adapters remain an explicitly limited fire-and-forget tier. Those basic depth gates, audited ACI invocation, Cairn Rung 0, and Cartographer/Quartermaster's local orientation/reuse plus addressed-push rungs now ship; current pursuit is the remaining capability backlog and contract/live-depth gaps. See [docs/28](docs/28-exhaustive-capability-audit.md).
+**Architecture, plainly:** you drive from your CLI agent (Claude Code or Codex is the orchestrator — it decides); underneath, a small reliable program carries out those decisions and does the bookkeeping (dispatch, making interrupts land, re-checking worker claims, the event log). The AI drives; the plumbing makes the driving safe. Southbound, the product tier uses persistent Claude stream-json, Codex app-server, and Grok ACP sessions; one-shot subprocess adapters remain an explicitly limited fire-and-forget tier. Those basic depth gates, audited ACI invocation, Cairn Rung 0, and Cartographer/Quartermaster's local orientation/reuse, addressed-push, and policy-epoch safety rungs now ship; current pursuit is Quartermaster's adverse-only provider feed and independently grounded decision/provenance rungs, followed by the remaining capability and runtime backlog. See [docs/28](docs/28-exhaustive-capability-audit.md).
 
 **Design docs** (`docs/`):
 

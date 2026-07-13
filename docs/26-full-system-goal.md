@@ -479,8 +479,9 @@ Phase 39 adds separate recheck authority, forced official refresh, a permanent e
 adverse fence, store-derived fan-out across every matching live Decision, stale dossier-Finding
 closure, causal risk `Affects` edges, affected-reader contamination, exact-expiry hiding and durable
 TTL closure, plus authenticated web/MCP controls. A green check cannot clear the fence. Provider
-push/polling, policy change, positive clearance, and `internal` remain later. No installer, merge,
-policy override, PM export, or homelab integration is introduced.
+push/polling, positive clearance, and `internal` remain later; Phase 42 separately closes
+deployment-policy change reconciliation. No installer, merge, policy override, PM export, or
+homelab integration is introduced.
 
 Phase 40 ships the separately grounded proposed install graph that Phase 37 intentionally omitted.
 `provenance.plan` accepts one confined actual lockfile path and exact npm coordinate through the
@@ -505,6 +506,23 @@ function reachability waits for trusted release-artifact/export identity, adviso
 mapping, and stronger module-aware Atlas/CPG.
 The full distinct later backlog is authoritative in `docs/capabilities/orientation-reuse.md`; no
 homelab or project-manager runtime integration is introduced.
+
+Phase 42 closes the policy-epoch safety gap. `createDriver()` derives the complete normalized policy
+commitment only from the pinned Quartermaster card, validates it against deployment configuration,
+and synchronously activates it before exposing Coordinator authority. A first baseline binds
+matching legacy Decisions to the observed policy `Constraint`, closes mismatching legacy
+Decisions, and marks legacy guards policy-stale but blocking; later policy changes atomically close
+every mismatched live Decision and
+dossier/risk Finding, contaminate their exact readers, and preserve adverse guards as policy-stale
+but blocking. Constraints form a local `Supersedes` chain and `Affects` invalidated Decisions;
+current Decisions bind their active Constraint with `Informed`. Green review migrates inherited
+adverse state through `DerivedFrom` without clearing it, while a fresh adverse observation records
+guard/Finding supersession lineage. Exact replay validates the policy projection, card, targets,
+graph identities, actor/key/time, normalized allow/deny sets, and six deployment ceilings.
+Exclusive writer claims and the lifetime lease prevent overlapping authority; construction failure
+and explicit close release ownership. Public web/MCP surfaces reveal only the sanitized commitment,
+and no caller can nominate policy or reconciliation targets. This remains Baton's local deployment-
+neutral causal graph: no project-manager or homelab runtime is consulted or mutated.
 
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
