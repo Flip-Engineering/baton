@@ -13,7 +13,7 @@ const nonNegativeInteger = (value, name) => {
   if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`${name} must be a non-negative safe integer`);
   return value;
 };
-const GOAL_PLAN_EVENT_KINDS = new Set(['goal.version_defined', 'plan.version_proposed', 'plan.approval_decided', 'plan.node_dispatched']);
+const GOAL_PLAN_EVENT_KINDS = new Set(['goal.version_defined', 'plan.version_proposed', 'plan.approval_decided', 'plan.node_dispatched', 'plan.node_budget_settled']);
 const GOAL_PLAN_WEB_COMMANDS = new Set(['goal_define', 'plan_propose', 'plan_approve', 'goal_plan_status']);
 const GOAL_PLAN_MCP_TOOLS = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'fleet_goal_plan_status']);
 const AUTHORITY_FIELDS = new Set([

@@ -759,6 +759,9 @@ export class Coordinator {
     this._refinementSeq = 0;
 
     this._seedCoordinationTasks();
+    if (typeof this._coordination.unsettledPlanNodeTasks === 'function' && typeof this._coordination.settlePlanNodeBudget === 'function') {
+      for (const taskId of this._coordination.unsettledPlanNodeTasks()) this._settlePlanNodeBudget(taskId);
+    }
 
     for (const [sourceVendor, adapter] of Object.entries(this._adapters)) {
       adapter.onEvent((e) => {
@@ -3531,8 +3534,20 @@ export class Coordinator {
     if (TERMINAL_TASK_STATUSES.has(to)) {
       const handle = this._workers.get(task.assignee);
       this._expireScratchClaims(handle, task, `task_${to}`);
+      this._settlePlanNodeBudget(task.id);
     }
     return result.task;
+  }
+
+  _settlePlanNodeBudget(taskOrId) {
+    if (!this._coordination || typeof this._coordination.settlePlanNodeBudget !== 'function') return null;
+    const taskId = typeof taskOrId === 'string' ? taskOrId : taskOrId?.id;
+    if (!taskId) return null;
+    const durable = this._coordination.task(taskId);
+    if (!durable || !TERMINAL_TASK_STATUSES.has(durable.status)) return null;
+    return this._coordination.settlePlanNodeBudget(taskId, {
+      actor: 'policy', key: `plan.budget:${canonicalDigest({ taskId, terminalEvent: durable.acceptanceRevocation?.priorTerminalEvent ?? durable.terminalEvent })}`,
+    });
   }
 
   _coordMap(event, key) {
@@ -5900,6 +5915,7 @@ export class Coordinator {
         routeObservation ? { manifests, routeObservation } : manifests, { actor: 'policy', key: `task.${terminalStatus}:${task.id}:${verifyEvent.seq}` }, evidence,
       );
       task.coordinationVersion = terminal.task.version;
+      this._settlePlanNodeBudget(task.id);
       if (terminal.routeObservation && this._route && typeof this._route.record === 'function') this._route.record(terminal.routeObservation.routeKey, terminal.routeObservation.taskType, terminal.routeObservation.verifiedWin, { family: terminal.routeObservation.modelFamily, taskId: terminal.routeObservation.taskId, now: Date.parse(terminal.routeObservation.observedAt) });
       this._expireScratchClaims(handle, task, `task_${terminalStatus}`);
       const artifactEvidence = terminal.artifacts.map((artifact) => ({ artifactId: artifact.id }));

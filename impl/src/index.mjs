@@ -453,6 +453,7 @@ export function createDriver(opts) {
   }
   const coordination = opts.coordination ?? new CoordinationStore(join(opts.logDir, 'coordination'), {
     operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
+    operationalRangeRead: (worker, throughSeq) => log.read(worker).filter((event) => event.seq <= throughSeq),
     clock: () => new Date(now()).toISOString(),
     advisoryFeedCards,
     advisoryReceiptReverify: (receipt) => advisoryFeeds.reverifyReceiptSync(receipt),

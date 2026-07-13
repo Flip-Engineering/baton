@@ -210,7 +210,9 @@ export class CoordinationStore {
       catch (error) { throw new TypeError(error?.message ?? 'goal/plan policy is invalid'); }
     }
     this._resetProjection();
+    if (opts.operationalRangeRead !== undefined && typeof opts.operationalRangeRead !== 'function') throw new TypeError('operationalRangeRead must be a function');
     this._operationalRead = opts.operationalRead ?? null;
+    this._operationalRangeRead = opts.operationalRangeRead ?? null;
     this._writerLease = null;
     this._writerLeaseRequired = false;
     mkdirSync(root, { recursive: true });
@@ -223,7 +225,7 @@ export class CoordinationStore {
     this._routeObservations = new Map();
     this._representations = new Map(); this._representationRequests = new Map();
     this._goals = new Map(); this._goalHeads = new Map(); this._plans = new Map(); this._planHeads = new Map();
-    this._planApprovals = new Map(); this._planDispatches = new Map(); this._planTaskLinks = new Map();
+    this._planApprovals = new Map(); this._planDispatches = new Map(); this._planTaskLinks = new Map(); this._planBudgetSettlements = new Map();
     this._reuseProviderContributions = new Map(); this._reuseProviderCoordinateContributions = new Map(); this._reuseProviderGuards = new Map();
     this._evidence = new Map(); this._scratchFacts = new Map(); this._scratchClaims = new Map(); this._scratchReads = [];
     this._knowledgeNodes = new Map(); this._knowledgeEdges = new Map(); this._knowledgeNodeHistory = new Map(); this._knowledgeEdgeHistory = new Map(); this._knowledgeReads = []; this._knowledgeRecallAssessments = new Map(); this._contamination = [];
@@ -2038,6 +2040,80 @@ export class CoordinationStore {
     return targets;
   }
 
+  _planBudgetFailure(message, code, integrity = false) {
+    this._goalPlanFailure(message, code, integrity);
+  }
+
+  _derivePlanBudgetSettlement(taskId, integrity = false) {
+    const dispatch = this._planTaskLinks.get(taskId); const task = this._tasks.get(taskId);
+    const terminalEvent = task?.acceptanceRevocation?.priorTerminalEvent ?? task?.terminalEvent;
+    const terminal = Number.isSafeInteger(terminalEvent) ? this._events[terminalEvent - 1] : null;
+    if (!dispatch || !task || !terminal || terminal.kind !== 'task.transitioned' || terminal.payload?.id !== taskId
+      || !TERMINAL.has(terminal.payload?.to) || terminal.seq <= dispatch.eventSeq) {
+      this._planBudgetFailure('plan node budget settlement requires one exact terminal plan task', 'plan_budget_not_terminal', integrity);
+    }
+    const initial = clone(dispatch.nodeBudget); const claimed = task.claimedEvent ? this._events[task.claimedEvent - 1] : null;
+    const started = claimed && claimed.seq < terminal.seq ? claimed : this._events[dispatch.eventSeq - 1];
+    const wallMin = Math.ceil(Math.max(0, Date.parse(terminal.ts) - Date.parse(started.ts)) / 60_000 * 1_000_000) / 1_000_000;
+    const evidenceSeq = terminal.payload?.evidence?.coordinationSeq;
+    const mapped = Number.isSafeInteger(evidenceSeq) && evidenceSeq < terminal.seq ? this._events[evidenceSeq - 1] : null;
+    const source = mapped?.kind === 'evidence.mapped' ? this._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq) : null;
+    const mappedExact = mapped?.kind === 'evidence.mapped' && mapped.payload.worker === (task.assignee ?? mapped.payload.worker)
+      && source && digest(source) === mapped.payload.digest && source.kind === mapped.payload.kind;
+    let rows = null;
+    if (mappedExact && this._operationalRangeRead) {
+      const ceiling = Math.min(1_000_000, Math.max(1_024, this._goalPlanPolicy.limits.maxProviderTurns * 1_024));
+      if (mapped.payload.workerSeq > ceiling) this._planBudgetFailure('plan node operational settlement evidence exceeds its ceiling', 'plan_budget_evidence_oversize', integrity);
+      rows = this._operationalRangeRead(mapped.payload.worker, mapped.payload.workerSeq);
+      if (!Array.isArray(rows) || rows.length !== mapped.payload.workerSeq
+        || rows.some((row, index) => row?.worker !== mapped.payload.worker || row.seq !== index + 1 || row.seq > mapped.payload.workerSeq)) {
+        this._planBudgetFailure('plan node operational settlement prefix is incomplete', 'plan_budget_evidence_invalid', integrity);
+      }
+    }
+    const usageRows = rows?.filter((event) => event.kind === 'resource.tokens' && event.actor === 'worker') ?? [];
+    const usageValid = usageRows.every((event) => Number.isFinite(event.payload?.tokens) && event.payload.tokens >= 0
+      && Number.isFinite(event.payload?.usd) && event.payload.usd >= 0);
+    const seal = rows?.findLast((event) => event.payload?.usageSeal && typeof event.payload.usageSeal === 'object')?.payload?.usageSeal ?? null;
+    const tokensExact = usageValid && seal?.tokens === 'reported'; const usdExact = usageValid && seal?.usd === 'reported';
+    const tokens = tokensExact ? usageRows.reduce((sum, event) => sum + event.payload.tokens, 0) : null;
+    const usd = usdExact ? usageRows.reduce((sum, event) => sum + event.payload.usd, 0) : null;
+    const providerTurns = rows ? rows.filter((event) => event.kind === 'lifecycle.turn_started' && event.actor === 'orchestrator').length : null;
+    const availability = {
+      tokens: tokensExact ? 'exact' : 'unavailable', usd: usdExact ? 'exact' : 'unavailable',
+      wallMin: 'exact', providerTurns: rows ? 'exact' : 'unavailable',
+    };
+    const consumed = { tokens, usd, wallMin, providerTurns };
+    const dimension = (key) => availability[key] === 'exact'
+      ? { released: Math.max(0, initial[key] - consumed[key]), held: 0, overrun: Math.max(0, consumed[key] - initial[key]) }
+      : { released: null, held: initial[key], overrun: null };
+    const dimensions = Object.fromEntries(Object.keys(initial).map((key) => [key, dimension(key)]));
+    return {
+      schemaVersion: 1, taskId, binding: clone(dispatch.binding), terminalEvent: terminal.seq, terminalStatus: terminal.payload.to,
+      initial, consumed,
+      released: Object.fromEntries(Object.entries(dimensions).map(([key, value]) => [key, value.released])),
+      held: Object.fromEntries(Object.entries(dimensions).map(([key, value]) => [key, value.held])),
+      overrun: Object.fromEntries(Object.entries(dimensions).map(([key, value]) => [key, value.overrun])),
+      availability,
+      operational: {
+        worker: mappedExact ? mapped.payload.worker : task.assignee ?? task.reservedWorkerId ?? null,
+        throughSeq: rows ? mapped.payload.workerSeq : null,
+        prefixDigest: rows ? canonicalDigest(rows) : null,
+      },
+    };
+  }
+
+  _validatePlanBudgetSettlement(p, event, integrity = false) {
+    const core = Object.fromEntries(Object.entries(p ?? {}).filter(([key]) => key !== 'receiptDigest'));
+    const expected = this._derivePlanBudgetSettlement(p?.taskId, integrity);
+    if (!p || Object.keys(p).sort().join(',') !== [...Object.keys(expected), 'receiptDigest'].sort().join(',')
+      || event?.actor !== 'policy' || !validRunId(event?.idempotencyKey)
+      || p.receiptDigest !== canonicalDigest(core) || canonicalDigest(core) !== canonicalDigest(expected)
+      || this._planBudgetSettlements.has(p.taskId)) {
+      this._planBudgetFailure('plan node budget settlement is malformed or duplicated', 'plan_budget_settlement_integrity', integrity);
+    }
+    return expected;
+  }
+
   _applyGoalPlanEvent(event) {
     const p = event.payload;
     const malformed = (message = 'goal/plan event is malformed') => this._goalPlanFailure(message, 'goal_plan_integrity', true);
@@ -2100,6 +2176,9 @@ export class CoordinationStore {
           || canonicalDigest(node.effects) !== canonicalDigest(p.effects)) malformed();
         const key = this._planNodeKey(plan.planId, plan.version, node.key); if (this._planDispatches.has(key) || this._planTaskLinks.has(p.taskId)) malformed();
         const record = freeze({ ...clone(p), eventSeq: event.seq, dispatchedAt: event.ts, state: 'dispatched' }); this._planDispatches.set(key, record); this._planTaskLinks.set(p.taskId, record);
+      } else if (event.kind === 'plan.node_budget_settled') {
+        this._validatePlanBudgetSettlement(p, event, true);
+        this._planBudgetSettlements.set(p.taskId, freeze({ ...clone(p), eventSeq: event.seq, settledAt: event.ts }));
       }
     } catch (error) {
       if (error instanceof CoordinationIntegrityError) throw error;
@@ -2110,7 +2189,7 @@ export class CoordinationStore {
 
   _apply(event) {
     const p = event.payload;
-    if (['goal.version_defined', 'plan.version_proposed', 'plan.approval_decided', 'plan.node_dispatched'].includes(event.kind)) {
+    if (['goal.version_defined', 'plan.version_proposed', 'plan.approval_decided', 'plan.node_dispatched', 'plan.node_budget_settled'].includes(event.kind)) {
       this._applyGoalPlanEvent(event);
     } else if (event.kind === 'provider.processing_deferred') {
       const processing = this._validateProviderDeferralPayload(p, event, true); this._providerProcessing.set(p.processingId, freeze({ ...clone(processing), attemptCount: p.attempt, lastAttemptEvent: event.seq, lastFailureCode: p.failureCode, nextAttemptAt: p.nextAttemptAt }));
@@ -2781,6 +2860,31 @@ export class CoordinationStore {
     return freeze({ ok: true, result: 'created', dispatchEvent: clone(dispatchEvent), taskEvent: clone(taskEvent), task: this.task(taskPayload.id), dispatch: clone(dispatchPayload) });
   }
 
+  unsettledPlanNodeTasks() {
+    return [...this._planTaskLinks.keys()].filter((taskId) => {
+      const task = this._tasks.get(taskId);
+      return task && Number.isSafeInteger(task.terminalEvent) && !this._planBudgetSettlements.has(taskId);
+    }).sort();
+  }
+
+  settlePlanNodeBudget(taskId, auth) {
+    const dispatch = this._planTaskLinks.get(taskId);
+    if (!dispatch) return freeze({ ok: true, result: 'not_plan_bound', settlement: null, event: null });
+    const priorSettlement = this._planBudgetSettlements.get(taskId);
+    if (priorSettlement) return freeze({ ok: true, result: 'idempotent', settlement: clone(priorSettlement), event: clone(this._events[priorSettlement.eventSeq - 1]) });
+    if (!auth || auth.actor !== 'policy' || !validRunId(auth.key)) throw new CoordinationRefusal('plan node budget settlement authority is invalid', 'plan_budget_settlement_unauthorized');
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      if (prior.kind !== 'plan.node_budget_settled' || prior.payload?.taskId !== taskId) throw new CoordinationRefusal('plan node budget settlement key is bound differently', 'plan_budget_settlement_conflict');
+      return freeze({ ok: true, result: 'idempotent', settlement: clone(prior.payload), event: clone(prior) });
+    }
+    const core = this._derivePlanBudgetSettlement(taskId); const payload = { ...core, receiptDigest: canonicalDigest(core) };
+    const fixedTs = this._clock(); const prospective = { schemaVersion: 1, seq: this._events.length + 1, ts: fixedTs, kind: 'plan.node_budget_settled', actor: auth.actor, idempotencyKey: auth.key, payload };
+    this._validatePlanBudgetSettlement(payload, prospective);
+    const event = this._append('plan.node_budget_settled', payload, auth, fixedTs);
+    return freeze({ ok: true, result: 'settled', settlement: clone(this._planBudgetSettlements.get(taskId)), event: clone(event) });
+  }
+
   goalPlanStatus(fields, auth) {
     if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
     const statusFields = ['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'throughSeq'];
@@ -2808,7 +2912,8 @@ export class CoordinationStore {
       else if (event.kind === 'task.transitioned' && taskStates.has(event.payload.id)) { const row = taskStates.get(event.payload.id); row.status = event.payload.to; if (TERMINAL.has(event.payload.to)) row.terminalEvent = event.seq; }
       else if (event.kind === 'task.acceptance_revoked' && taskStates.has(event.payload.taskId)) { const row = taskStates.get(event.payload.taskId); row.status = 'failed'; row.acceptanceRevocation = true; row.terminalEvent = event.seq; }
     }
-    const dispatches = new Map(relevant.filter((event) => event.kind === 'plan.node_dispatched' && event.payload.binding.planId === plan.planId && event.payload.binding.planVersion === plan.version).map((event) => [event.payload.binding.nodeKey, { event, task: taskStates.get(event.payload.taskId) }]));
+    const visibleSettlements = new Map(relevant.filter((event) => event.kind === 'plan.node_budget_settled').map((event) => [event.payload.taskId, event]));
+    const dispatches = new Map(relevant.filter((event) => event.kind === 'plan.node_dispatched' && event.payload.binding.planId === plan.planId && event.payload.binding.planVersion === plan.version).map((event) => [event.payload.binding.nodeKey, { event, task: taskStates.get(event.payload.taskId), settlement: visibleSettlements.get(event.payload.taskId) ?? null }]));
     const nodes = plan.nodes.map((node) => {
       const dispatched = dispatches.get(node.key); let state = 'blocked';
       if (dispatched) state = dispatched.task?.status === 'completed' && !dispatched.task.acceptanceRevocation ? 'accepted' : (['failed', 'cancelled'].includes(dispatched.task?.status) ? dispatched.task.status : 'dispatched');
@@ -2832,7 +2937,24 @@ export class CoordinationStore {
         }
         terminalOutcome = { status: dispatched.task.status, accepted: dispatched.task.status === 'completed', code };
       }
-      return { key: node.key, deps: clone(node.deps), state, dispatchVersion: dispatched ? 1 : 0, taskId: dispatched?.event.payload.taskId ?? null, terminalEvent: dispatched?.task?.terminalEvent ?? null, terminalOutcome, budget: { initial: clone(node.budget), reserved: dispatched ? clone(node.budget) : { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 }, consumed: { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 }, released: { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 } } };
+      const settlement = dispatched?.settlement?.payload ?? null;
+      const empty = { tokens: null, usd: null, wallMin: null, providerTurns: null };
+      const zero = { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 };
+      const pendingHeld = dispatched ? clone(node.budget) : zero;
+      const settlementStatus = !dispatched ? 'unreserved' : !settlement ? 'pending' : Object.values(settlement.availability).every((value) => value === 'exact') ? 'settled' : 'held';
+      return {
+        key: node.key, deps: clone(node.deps), state, dispatchVersion: dispatched ? 1 : 0,
+        taskId: dispatched?.event.payload.taskId ?? null, terminalEvent: dispatched?.task?.terminalEvent ?? null, terminalOutcome,
+        budget: {
+          status: settlementStatus, initial: clone(node.budget), reserved: dispatched ? clone(node.budget) : zero,
+          consumed: settlement ? clone(settlement.consumed) : empty,
+          released: settlement ? clone(settlement.released) : empty,
+          held: settlement ? clone(settlement.held) : pendingHeld,
+          overrun: settlement ? clone(settlement.overrun) : empty,
+          availability: settlement ? clone(settlement.availability) : { tokens: 'unavailable', usd: 'unavailable', wallMin: 'unavailable', providerTurns: 'unavailable' },
+          settledEvent: dispatched?.settlement?.seq ?? null,
+        },
+      };
     });
     const approval = approvalEvent ? clone(approvalEvent.payload.approval) : null;
     if (approval) { delete approval.principalId; delete approval.sessionDigest; }
@@ -2958,7 +3080,7 @@ export class CoordinationStore {
     }
     return freeze({ ok: true, projection: clone(representation), grounding: 'derived' });
   }
-  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._goalPlanPolicy || this._goals.size > 0 ? { goalPlan: { goals: [...this._goals.values()].map(clone), plans: [...this._plans.values()].map(clone), approvals: [...this._planApprovals.values()].map(clone), dispatches: [...this._planDispatches.values()].map(clone) } } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
+  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._goalPlanPolicy || this._goals.size > 0 ? { goalPlan: { goals: [...this._goals.values()].map(clone), plans: [...this._plans.values()].map(clone), approvals: [...this._planApprovals.values()].map(clone), dispatches: [...this._planDispatches.values()].map(clone), budgetSettlements: [...this._planBudgetSettlements.values()].map(clone) } } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
   healthCheck() { try { if (!existsSync(this.file)) return this._events.length === 0; const raw = readFileSync(this.file, 'utf8'); return raw.length === 0 || raw.endsWith('\n'); } catch { return false; } }
   readyTasks() {
     return [...this._tasks.values()].filter((task) => task.status === 'pending' && task.assignee == null

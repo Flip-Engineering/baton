@@ -183,6 +183,42 @@ test('GP5/GP6/GP8: exact dispatch replay survives restart and changed bytes conf
   replay.releaseWriterLease();
 });
 
+test('GP6/GP8: a terminal crash seam holds the full reservation until one replay-validated budget settlement', () => {
+  const f = dispatchedStore('budget-seam');
+  const claimed = f.store.claimTask(f.fields.id, f.fields.reservedWorkerId, 1, { actor: 'orchestrator', key: 'claim:budget-seam' });
+  f.store.transitionTask(f.fields.id, 'failed', claimed.task.version, { actor: 'policy', key: 'terminal:budget-seam' }, null);
+  const coordinates = {
+    goalId: f.goal.goalId, goalVersion: f.goal.version, goalDigest: f.goal.digest,
+    planId: f.plan.planId, planVersion: f.plan.version, planDigest: f.plan.digest, throughSeq: null,
+  };
+  const scope = { repoId: policy.repoId, runId: null };
+  const pending = f.store.goalPlanStatus(coordinates, scope).nodes[0].budget;
+  assert.equal(pending.status, 'pending'); assert.equal(pending.consumed.tokens, null); assert.equal(pending.held.tokens, 10_000);
+
+  const settled = f.store.settlePlanNodeBudget(f.fields.id, { actor: 'policy', key: 'plan.budget:budget-seam' });
+  assert.equal(settled.result, 'settled');
+  const held = f.store.goalPlanStatus(coordinates, scope).nodes[0].budget;
+  assert.equal(held.status, 'held'); assert.equal(held.consumed.tokens, null); assert.equal(held.released.tokens, null);
+  assert.equal(held.held.tokens, 10_000); assert.equal(held.availability.wallMin, 'exact');
+  assert.equal(f.store.settlePlanNodeBudget(f.fields.id, { actor: 'policy', key: 'plan.budget:budget-seam' }).result, 'idempotent');
+  const expected = f.store.snapshot(); f.store.releaseWriterLease();
+
+  const replay = new CoordinationStore(f.directory, { goalPlanPolicy: policy });
+  assert.deepEqual(replay.snapshot(), expected);
+  replay.releaseWriterLease();
+
+  const file = join(f.directory, 'events.jsonl');
+  const rows = readFileSync(file, 'utf8').trimEnd().split('\n').map(JSON.parse);
+  const settlement = rows.find((event) => event.kind === 'plan.node_budget_settled');
+  settlement.payload.consumed.tokens = 0;
+  const { receiptDigest: _old, ...core } = settlement.payload; settlement.payload.receiptDigest = canonicalDigest(core);
+  writeFileSync(file, `${rows.map(JSON.stringify).join('\n')}\n`);
+  assert.throws(
+    () => new CoordinationStore(f.directory, { goalPlanPolicy: policy }),
+    (error) => error instanceof CoordinationIntegrityError && error.code === 'plan_budget_settlement_integrity',
+  );
+});
+
 test('GP5/GP8: a torn goal_plan_node_dispatch batch fails closed on replay', () => {
   const f = dispatchedStore('torn');
   f.store.releaseWriterLease();

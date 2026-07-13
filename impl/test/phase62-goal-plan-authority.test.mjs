@@ -224,6 +224,9 @@ test('GP5/GP8: plan-bound follow-up and recovery refuse before provider, adapter
   await until(async () => (await driver.coordinator.result(handle.id)).ready === true);
   const accepted = await driver.coordinator.goalPlanStatus(statusCoordinates(goal, plan), auth('observer', ['goal:observe'], 'status:accepted'));
   assert.deepEqual(accepted.nodes[0].terminalOutcome, { status: 'completed', accepted: true, code: 'accepted' });
+  assert.equal(accepted.nodes[0].budget.status, 'held');
+  assert.equal(accepted.nodes[0].budget.consumed.tokens, null);
+  assert.equal(accepted.nodes[0].budget.held.tokens, 10_000);
 
   const beforeFollowUp = { coordination: driver.coordination.events().length, operational: driver.log.read(handle.id).length, spawnCalls: adapter.spawnCalls, promptCalls: adapter.promptCalls };
   assert.deepEqual(await driver.coordinator.send(handle.id, 'continue', 'turn'), { ok: false, result: 'goal_plan_continuation_not_authorized' });
@@ -243,6 +246,33 @@ test('GP5/GP8: plan-bound follow-up and recovery refuse before provider, adapter
   assert.throws(() => driver.coordination.createAndClaimRecoveryRefinement({ refines: 'planned-continuation' }, {}, { actor: 'orchestrator', key: 'recovery:plan-bound' }), (error) => error.code === 'goal_plan_continuation_not_authorized');
   assert.equal(driver.coordination.events().length, beforeRecovery.coordination);
   internal.status = 'idle';
+  await driver.coordinator.kill(handle.id, 'test');
+  await driver.drainAndClose('test');
+});
+
+test('GP6/GP8: exact terminal usage settles and releases each plan budget dimension durably', async () => {
+  const adapter = new MockAdapter({ harness: 'mock', scenario: { outcome: 'completed', delayMs: 1, summary: 'done', files: {}, budgetUsed: { tokens: 9, usd: 0.03 } } });
+  const baseCard = adapter.card.bind(adapter);
+  adapter.card = () => ({ ...baseCard(), modelSelection: { mode: 'exact', configuredDefault: 'model-a', available: ['model-a'], family: 'mock', acceptedPrefixes: ['model-'], acceptedAliases: [], reasoningEffort: ['low'], serviceTier: null, provenance: 'test', refreshedAt: null } });
+  const driver = make('metered-budget', {
+    adapters: { mock: adapter },
+    providerGovernance: {
+      schemaVersion: 1, maxWireFrameBytes: 1024 * 1024, maxProviderCallsPerTurn: 2, maxToolCallsPerTurn: 2,
+      routes: [{ harness: 'mock', model: 'model-a', effort: 'low', terminalReserve: { tokens: 1, usd: 0.01 }, mode: 'observe' }],
+    },
+  });
+  const { goal, plan } = await approved(driver, 'metered-budget');
+  const brief = { goal: 'Implement the approved slice', constraints: ['No network access'], pathScope: ['impl/**'], definitionOfDone: 'node --test passes', verification, budget: { tokens: 10_000, usd: 2, wallMin: 10 } };
+  const gate = { goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest, planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code', 'test'], effects: ['repository_edit'] };
+  const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'planned-metered-budget', model: 'model-a', effort: 'low', goalPlan: gate, actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session', powers: ['plan:dispatch'], idempotencyKey: 'spawn:planned-metered-budget' });
+  await until(() => ['completed', 'failed', 'cancelled'].includes(driver.coordination.task('planned-metered-budget')?.status));
+  const status = await driver.coordinator.goalPlanStatus(statusCoordinates(goal, plan), auth('observer', ['goal:observe'], 'status:metered-budget'));
+  const measured = status.nodes[0].budget;
+  assert.equal(measured.status, 'settled');
+  assert.deepEqual(measured.consumed, { tokens: 9, usd: 0.03, wallMin: measured.consumed.wallMin, providerTurns: 1 });
+  assert.equal(measured.released.tokens, 9_991); assert.equal(measured.released.usd, 1.97);
+  assert.equal(measured.released.providerTurns, 7); assert.equal(measured.held.tokens, 0);
+  assert.equal(driver.coordination.events().filter((event) => event.kind === 'plan.node_budget_settled').length, 1);
   await driver.coordinator.kill(handle.id, 'test');
   await driver.drainAndClose('test');
 });
