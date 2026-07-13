@@ -21,7 +21,7 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **1121/1121
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **1130/1130
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
@@ -84,7 +84,7 @@ authoring, waiver, clearance, install, project-manager export, or homelab integr
 provider feeds, independently verified provenance, exact `internal` decisions, trusted advisory/
 source identity and true reachability, plan approval, positive clearance, additional ecosystems,
 composite surfaces, and deeper Cairn remain pending. The live policy-cycle proof passes **13/13**;
-the current canonical suite is **1121/1121 green**.
+the current canonical suite is **1130/1130 green**.
 
 Phases 43–50 extend the provider, routing, representation-attestation, and Cairn causal-knowledge
 verticals through durable provider recovery, exact route learning, supervised native-session
@@ -118,6 +118,16 @@ project-key GLM fresh-verifies PASS; exact Codex is honestly budget-cancelled, b
 concurrently auth-red, and every process and ownership surface is exactly closed and reaped. Baton
 remains self-contained: project-manager is architectural inspiration only, with no homelab runtime
 or integration target.
+Phase 54 closes a concrete R3 representation unsoundness found by recursively using Baton on
+Baton: lexical bindings, not identifier spelling, now key may-reaching definitions. Deterministic
+function/block scopes, parameter-plus-`var` identity, nearest assignment resolution, explicit
+unsupported closure/destructuring/catch boundaries, binding-aware delta/taint, independent bounds,
+and self-consistent artifact-forgery refusal are executable. The fixed R1–R7 representation packet
+now attests the Phase 54 contract too. Nine focused lexical tests, 13 representation-integration
+tests, and the **1130/1130** canonical suite are green. An exact routed recursive matrix proved
+Codex `gpt-5.6-sol`/low, project-key GLM `glm-4.7`/low, and simultaneous Grok 4.5/Grok Build process
+lifecycle and full reap; semantic review conformance remains honestly red because Codex and GLM
+crossed terminal accounting budgets and Grok still reported unauthenticated.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 

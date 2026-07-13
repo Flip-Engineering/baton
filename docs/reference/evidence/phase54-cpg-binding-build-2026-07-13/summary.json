@@ -1,0 +1,68 @@
+{
+  "at": "2026-07-13T13:02:21.669Z",
+  "baseSha": "dd6adb3a36fc287d08c688deaa172e604fda432a",
+  "repoHead": "dd6adb3a36fc287d08c688deaa172e604fda432a",
+  "buildPass": false,
+  "fatal": null,
+  "credential": {
+    "present": true,
+    "ownerOnly": true
+  },
+  "route": {
+    "harnessRequested": "glm",
+    "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+    "modelRequested": "glm-4.7",
+    "modelResolved": "glm-4.7",
+    "modelObserved": "glm-4.7",
+    "effortRequested": "low",
+    "effortResolved": "low",
+    "effortObserved": null,
+    "routeKey": "[\"glm-via-claude-session\",\"claude-code-2.1.206+zai-anthropic\",\"glm-4.7\",\"low\",\"glm\",\"phase54-cpg-binding-implementation\"]",
+    "exact": false
+  },
+  "result": {
+    "ready": true,
+    "status": "failed"
+  },
+  "budgetUsed": {
+    "tokens": 77390,
+    "usd": 1.792527
+  },
+  "captureSha": "e04a08437af9df1f961f704c9c4d75db2c0173fa",
+  "verifyAccept": false,
+  "processStarted": {
+    "schemaVersion": 1,
+    "generation": 1,
+    "pid": 94101,
+    "processGroupId": 94101,
+    "phase": "initializing"
+  },
+  "processClosed": {
+    "schemaVersion": 1,
+    "generation": 1,
+    "pid": 94101,
+    "processGroupId": 94101,
+    "code": 143,
+    "signal": null,
+    "ready": true
+  },
+  "kill": {
+    "ack": {
+      "ok": true,
+      "result": "confirmed",
+      "emulated": false
+    },
+    "requestedSeq": 66,
+    "confirmedSeq": 69
+  },
+  "responses": [],
+  "cleanup": {
+    "leaderGone": true,
+    "groupGone": true,
+    "taskWorktreeGone": true,
+    "runtimeGone": true,
+    "taskBranchGone": true,
+    "ownershipRestored": true,
+    "writerReleased": true
+  }
+}

@@ -207,6 +207,15 @@ favor of conditional domain-specific research. Deeper precision and every unship
 the goal behind explicit prototype/evaluation gates; a negative result retires a rung through a
 recorded Decision, never through omission.
 
+Phase 54 closes the first measured lexical-identity defect inside R3. Simple supported JS/TS
+parameters, `var`/`let`/`const` declarations, assignment-left definitions, and value references now
+resolve through deterministic function/block scopes and formatting-insensitive binding keys. CPG
+may-reaching definitions, delta, and taint share that identity; unresolved closures and unsupported
+destructuring/catch syntax fabricate no value flow. The graph, derived artifacts, bounds, resume,
+reverify, and fixed R1–R7 attestation packet fail closed. This does not claim closure capture,
+aliases/heap/interprocedural flow, SSA/full PDG, compiler IR, semantic equivalence/merge, or e-graph
+proof; every one remains visible under its existing Decision gate.
+
 ### J. Context, operator, northbound, and runtime
 
 - Vendor-shaped briefs, addressed context, orientation references, constraint/DoD reinjection on
@@ -555,13 +564,15 @@ not claim in-flight turn continuation, checkpoint/rewind parity, or provider-bac
 Phase 46 prevents the representation program from shrinking through documentation drift. The
 `representation.review` ACI operation fixes R1 AST/CST structural work, R2 symbol/SCIP, R3 bounded
 CPG/CFG/path/taint/delta, the R4 compiler-IR ceiling Decision, R5 behavioral fingerprints, R6
-structured merge, and the R7 e-graph Decision into one ordered packet. It reads 20 fixed source and
+structured merge, and the R7 e-graph Decision into one ordered packet. It now reads 21 fixed source and
 contract files from an exact current Git commit, independently bounds files/bytes/rows/artifact/
 context, writes a content-addressed artifact, and reverifies the entire deterministic claim.
 Authenticated ACI reach grants no edit, verification, merge, approval, publication, routing,
 proof, or policy-authoring authority. The packet mechanically retains live LSP, SSA/PDG/path
 solving, alias/heap/implicit flow, exceptions/interprocedural returns, external IR/translation
 validation, true semantic merge, and conditional expression/kernel e-graphs as unbuilt work.
+Phase 54 adds its lexical-binding contract to the R3 attestation row without changing the seven-rung
+inventory or upgrading its bounded status.
 
 Phase 47 closes Cairn Rung 2's causal-integrity prerequisite. Every generic graph append is
 request/content-bound and replay-validated before materialization; all producers retain true
@@ -679,6 +690,18 @@ Playbook/Skill promotion, Scratch Board/Bench, retention/checkpoints, and neutra
 catalogued—not silently folded into this operator seam. The project-manager influence remains
 architectural prior art for Baton's local graph; no homelab or external graph runtime is added.
 
+Phase 54 also records recursive-operation truth rather than only feature truth. Baton exact-routed
+Codex `gpt-5.6-sol`/low, project-key GLM `glm-4.7`/low, Grok 4.5/low, and Grok Build/low from one
+pinned clean target; all four process identities closed, the Grok groups overlapped, and every
+owned process group, worktree, runtime, branch, and writer reaped. The strict review gate remains
+red: Codex crossed a token ceiling in one telemetry burst, GLM reported its usage only at terminal
+and crossed the USD cap after looping on self-checks, and Grok still refused authentication before
+readiness. The next recursive-runtime increment therefore binds clean target and immutable bounded
+toolchain projection as separate identities, adds route-specific terminal-burst/call governance,
+and exposes a public drain-and-close attestation. This operational work precedes another large
+recursive build; it does not displace provider-backed session continuation, Scratch Board/Bench,
+Skill/Playbook promotion, web/operator depth, evaluation, or any retained representation rung.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**
@@ -695,7 +718,8 @@ architectural prior art for Baton's local graph; no homelab or external graph ru
    through Cairn Scratch correction/oracle release; Phase 51 also closes exact process lifecycle
    and reap. The implementation is canonical-green and its recursive exact-route matrix is retained
    as separate operational evidence.**
-8. Expand the representation and capability ladders in measured increments.
+8. Expand the representation and capability ladders in measured increments. **Phase 54 lexical
+   binding identity is shipped; every deeper representation rung remains.**
 9. Add MCP plus authenticated HTTPS/WebSocket user↔orchestrator control, operator surfaces,
    production runtime, and the registered evaluations.
 

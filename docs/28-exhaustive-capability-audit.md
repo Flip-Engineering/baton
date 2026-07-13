@@ -128,7 +128,7 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    loss fails readiness. Async close kills every auto-attached transport before worktree/runtime/
    branch/writer release, and provider supervisors start only after readiness settles.
 19. **Attested representation review packet:** Phase 46 fixes the full R1–R7 inventory in code and
-   attests 20 implementation/contract files from one exact current Git tree. Closed statuses keep
+   now attests 21 implementation/contract files, including Phase 54's R3 binding contract, from one exact current Git tree. Closed statuses keep
    AST/CST proposals, symbol/SCIP, bounded CPG/path, behavioral observation, structured merge, the
    R4 IR ceiling Decision, and R7 e-graph retirement distinct. Independent source/file/row/artifact/
    context bounds, content-addressed artifacts, full-claim reverify, audited ACI/authenticated web
@@ -217,6 +217,18 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    1121/1121 canonical suite are green. Recursive project-key GLM fresh-verifies PASS; Codex is
    honestly budget-cancelled, both Grok groups overlap but remain auth-red, and every process and
    ownership surface exactly closes and reaps.
+27. **Atlas lexical-binding-aware R3:** Phase 54 replaces spelling-keyed reaching definitions with
+   one deterministic, bounded two-pass binding model for simple JS/TS parameters, declarations,
+   assignment-left definitions, and value references. Function/block scope and binding nodes,
+   `DECLARES`/`BINDS`, stable semantic keys, nearest same-function resolution, binding-aware delta,
+   binding-aware taint, explicit unresolved/unsupported boundaries, and every independent ceiling
+   are executable. Resume rejects duplicate/malformed graph identity and derived child substitution;
+   the fixed R1–R7 representation packet now attests the Phase 54 contract. Nine focused lexical
+   contracts, 13 representation-integration contracts, and the 1130/1130 canonical suite are green.
+   Recursive exact Codex `gpt-5.6-sol`/low, project-key GLM `glm-4.7`/low, Grok 4.5/low, and Grok
+   Build/low all have exact start/close and complete reap evidence; both Groks remain authentication-
+   red, Codex crosses its token ceiling in one reported burst, and GLM's terminal lump crosses its
+   USD ceiling, so no semantic review report is mislabeled verified.
 
 ## What remains partial
 
@@ -227,6 +239,11 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   pin/exclude/prefer controls, and account quota-window/fleet-seat scheduling.
 - Cross-vendor review is wired, but continuous semantic review automation and structured reject
   postmortems are not.
+- Recursive execution still lacks an immutable dual-root toolchain projection: clean pinned review
+  targets and dependency-complete source hosts are currently staged by the evidence harness. Prompt-
+  only tool-call ceilings are unenforced, provider-terminal usage can arrive too late for a strict
+  pre-spend stop, and the public driver has no single drain-and-close attestation. Phase 54 dogfood
+  reproduced all three frictions while proving that the existing lower-level kill/reap is exact.
 - Structured merge is shipped with an injected Mergiraf-class boundary; a live Mergiraf binary
   proof is absent. Publication has no live remote-push proof.
 - Scratch and causal knowledge primitives ship. Cairn Rungs 0–2 scorecard, verified RouteStats,
@@ -273,7 +290,7 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   outcome-attribution substrate and Phase 53's authenticated human/orchestrator contradiction seam
   now ship.
 - Direct structural rewrite apply, live LSP, full SSA/PDG/path solving, interprocedural/alias/heap
-  CPG depth, deeper behavioral/provenance attestation overlays, semantic-delta depth, and
+  CPG depth, closure/destructuring/catch binding support, deeper behavioral/provenance attestation overlays, semantic-delta depth, and
   representation choreography.
 - True semantic merge, stacked integration, deploy adapters, rollback automation, and live remote
   publication.
@@ -309,6 +326,8 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    supervised startup auto-rejoin shipped in Phase 45; next are provider-backed recovery proof,
    in-flight continuation, vendor-honest fork/rewind, compaction DoD reinjection,
    quota-window/seat scheduling, and operator route overrides.
+   Before another large recursive build, add an immutable bounded dual-root toolchain projection,
+   route-specific terminal-burst reserve/call governance, and a public drain-and-close attestation.
 4. **Build capability modules on shared substrate:** Cairn Rung 0 shipped in Phase 31 and
    Cartographer/Quartermaster local Rung 0 shipped in Phase 32, addressed push in Phase 33, and
    bounded scope-drift refresh in Phase 34, external evidence in Phase 36, exact SBOM in Phase 37,
@@ -343,7 +362,10 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 5. **Complete northbound/runtime depth:** MCP HTTP/Tasks/daemon, WebSocket, operator takeover,
    OpenTelemetry, and only then a production-core port.
 6. **Pursue representation/trust research only through its Decisions:** higher CPG/IR/semantic
-   merge/e-graph gates, with measured incremental value and no proof-language inflation.
+   merge/e-graph gates, with measured incremental value and no proof-language inflation. Phase 54's
+   lexical binding increment is shipped; closure/destructuring/catch bindings, SSA/PDG/path solving,
+   aliases/heap/interprocedural flow, semantic merge, and conditional expression/kernel e-graphs
+   remain explicitly catalogued.
 7. **Productize evals and conditional federation last:** M0/M1/E2, then multi-machine/A2A/extra
    vendors only if demand earns them.
 
