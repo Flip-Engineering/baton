@@ -70,6 +70,14 @@ export class CairnRunScorecard {
         || typeof this.coordination.recallKnowledgeBounded !== 'function' || typeof this.coordination.reverifyKnowledgeRecall !== 'function') throw new TypeError('Cairn recall configuration is invalid');
       this.knowledgeRecallPolicy = Object.freeze(p); this.knowledgeRecallPolicyDigest = sha256(stable(p));
     }
+    this.knowledgeRecallAssessmentPolicy = opts.knowledgeRecallAssessmentPolicy ? clone(opts.knowledgeRecallAssessmentPolicy) : null;
+    if (this.knowledgeRecallAssessmentPolicy) {
+      const names = ['repoId', 'maxScanEvents', 'maxReceipts', 'maxNodeRefs', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes']; const numeric = names.filter((name) => name !== 'repoId'); const p = this.knowledgeRecallAssessmentPolicy;
+      if (!this.knowledgeAuditPolicy || !this.knowledgeRecallPolicy || Object.keys(p).sort().join(',') !== names.sort().join(',') || p.repoId !== this.knowledgeAuditPolicy.repoId || p.repoId !== this.knowledgeRecallPolicy.repoId
+        || numeric.some((name) => !Number.isSafeInteger(p[name]) || p[name] <= 0) || p.maxScanEvents > 1_000_000 || p.maxReceipts > 100_000 || p.maxNodeRefs > 1_000_000 || p.maxEvidenceRefs > 1_000_000 || p.maxBatchBytes > 16 * 1024 * 1024 || p.maxResultBytes > 16 * 1024 * 1024
+        || typeof this.coordination.assessKnowledgeRecallBatch !== 'function' || typeof this.coordination.reverifyKnowledgeRecallAssessment !== 'function') throw new TypeError('Cairn recall assessment configuration is invalid');
+      this.knowledgeRecallAssessmentPolicy = Object.freeze(p); this.knowledgeRecallAssessmentPolicyDigest = sha256(stable(p));
+    }
     this.knowledgePromotionPolicy = opts.knowledgePromotionPolicy ? clone(opts.knowledgePromotionPolicy) : null;
     if (this.knowledgePromotionPolicy) {
       const names = ['repoId', 'minScratchReaders', 'maxScanEvents', 'maxCandidates', 'maxCandidateBytes', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes'];
@@ -103,6 +111,7 @@ export class CairnRunScorecard {
       ops['causal.trace'] = { latency_class: 'interactive', deterministic: true, side_effects: [], reverifiable: true };
     }
     if (this.knowledgeRecallPolicy) ops['causal.recall'] = { latency_class: 'interactive', deterministic: true, side_effects: ['coordination.append', 'knowledge.read_receipt'], reverifiable: true, preflight_output: true };
+    if (this.knowledgeRecallAssessmentPolicy) ops['causal.assess_recall'] = { latency_class: 'interactive', deterministic: true, side_effects: ['coordination.append', 'knowledge.recall_assessment'], reverifiable: true, preflight_output: true };
     if (this.knowledgePromotionPolicy) ops['causal.promote'] = { latency_class: 'interactive', deterministic: true, side_effects: ['coordination.append', 'knowledge.promote'], reverifiable: true, preflight_output: true };
     if (this.knowledgeScratchCorrectionPolicy) ops['causal.correct_scratch'] = { latency_class: 'interactive', deterministic: true, side_effects: ['coordination.append', 'knowledge.correct'], reverifiable: true, preflight_output: true };
     return {
@@ -180,7 +189,7 @@ export class CairnRunScorecard {
     const metrics = this.coordination.auditKnowledge({ observedSeq: upper, maxStateRows: p.maxStateRows, maxNodes: p.maxNodes, maxEdges: p.maxEdges, maxEvidenceRefs: p.maxEvidenceRefs, maxAuditSamples: p.maxAuditSamples });
     this._knowledgeContext(ctx);
     const retainedScope = { catalogVersion: 1, capabilityIds: [...RETAINED_GOAL_CATALOG] }; retainedScope.catalogDigest = sha256(stable(retainedScope));
-    const core = { schemaVersion: 1, kind: 'baton.cairn.causal-audit', repoId: p.repoId, coordinationUpperBound: upper, coordinationObservedAt: this.coordination.observationTime(upper), policyDigest: this.knowledgePolicyDigest, metrics, disposition: { status: metrics.violations.critical === 0 ? 'pass' : 'fail', criticalViolations: metrics.violations.critical }, unresolvedContradictionsArePreserved: true, retainedScope, retainedNext: ['promotion-breadth', 'playbook-skill-promotion', 'recall-feedback', 'authenticated-contradiction-operator-ux', 'scratch-repl-bench', 'retention-compaction', 'deployment-neutral-export'] };
+    const core = { schemaVersion: 1, kind: 'baton.cairn.causal-audit', repoId: p.repoId, coordinationUpperBound: upper, coordinationObservedAt: this.coordination.observationTime(upper), policyDigest: this.knowledgePolicyDigest, metrics, disposition: { status: metrics.violations.critical === 0 ? 'pass' : 'fail', criticalViolations: metrics.violations.critical }, unresolvedContradictionsArePreserved: true, retainedScope, retainedNext: ['promotion-breadth', 'playbook-skill-promotion', 'versioned-recall-learning-policy', 'authenticated-contradiction-operator-ux', 'scratch-repl-bench', 'retention-compaction', 'deployment-neutral-export'] };
     this._knowledgeContext(ctx);
     const bytes = stable(core); if (Buffer.byteLength(bytes) > p.maxArtifactBytes) throw typed('causal audit artifact exceeded deployment ceiling', 'causal_audit_oversize');
     const packetDigest = sha256(bytes); const path = this._artifactPath(packetDigest); const document = { ...core, auditDigest: packetDigest };
@@ -256,6 +265,49 @@ export class CairnRunScorecard {
     if (!writeReceipt) return this._recallResult(this.coordination.reverifyKnowledgeRecall(request, this.knowledgeRecallPolicy, ctx.actor, verifyReceiptSeq), audit);
     const recalled = this.coordination.recallKnowledgeBounded(request, this.knowledgeRecallPolicy, auth, (preview) => { this._knowledgeContext(ctx); this._preflightRecallResult(preview, audit, ctx); });
     this._knowledgeContext(ctx); return this._recallResult(recalled, audit);
+  }
+
+  _assessmentAudit(upper) {
+    const p = this.knowledgeAuditPolicy; const metrics = this.coordination.auditKnowledge({ observedSeq: upper, maxStateRows: p.maxStateRows, maxNodes: p.maxNodes, maxEdges: p.maxEdges, maxEvidenceRefs: p.maxEvidenceRefs, maxAuditSamples: p.maxAuditSamples });
+    if (metrics.violations.critical > 0) throw typed('causal recall assessment audit gate failed', 'causal_assessment_audit_failed');
+    return { criticalViolations: 0, metricsDigest: sha256(stable(metrics)) };
+  }
+
+  _assessmentResult(assessed, audit) {
+    const p = assessed.projection; const receipt = p.eventSeq === null ? null : { eventSeq: p.eventSeq, digest: p.receiptDigest, bytes: assessed.batchBytes };
+    const document = {
+      schemaVersion: 1, kind: 'baton.cairn.recall-assessment', repoId: p.repoId, coordinationUpperBound: p.observedSeq, coordinationObservedAt: p.observedAt,
+      audit, policyDigest: p.policyDigest, projectionDigest: p.projectionDigest, receipt, assessmentCount: p.assessments.length, assessments: clone(p.assessments), noOp: assessed.noOp === true,
+      causationClaimed: false,
+    };
+    const result = {
+      op: 'causal.assess_recall', status: 'ok', summary: assessed.noOp ? `no eligible Cairn recall assessments for ${p.repoId}` : `atomically recorded ${p.assessments.length} Cairn recall outcome associations for ${p.repoId}`,
+      payload: [document], refs: receipt ? [{ kind: 'cairn-recall-assessment-receipt', digest: receipt.digest, bytes: receipt.bytes, coordinationSeq: receipt.eventSeq }] : [],
+      cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' },
+      provenance: { kind: 'recall-assessment', repoId: p.repoId, coordinationUpperBound: p.observedSeq, policyDigest: p.policyDigest, auditPolicyDigest: this.knowledgePolicyDigest, deterministic: true, readOnly: assessed.noOp === true, coordinationEffect: assessed.noOp ? 'none' : 'knowledge.recall_assessment_batch', causationClaimed: false, workerAuthority: false, editAuthority: false, verificationAuthority: false, mergeAuthority: false, approvalAuthority: false, publicationAuthority: false, routingMutationAuthority: false, proofAuthority: false, noteAuthority: false, policyAuthoringAuthority: false, promotionAuthority: false, validityAuthority: false, confidenceAuthority: false, skillInstallAuthority: false },
+    };
+    if (Buffer.byteLength(stable(result)) > this.knowledgeRecallAssessmentPolicy.maxResultBytes) throw typed('causal recall assessment result exceeded deployment ceiling', 'causal_assessment_oversize'); return result;
+  }
+
+  _preflightAssessmentResult(preview, audit, ctx) {
+    const result = this._assessmentResult(preview, audit);
+    if (ctx?.aciOutputPolicy && (Buffer.byteLength(JSON.stringify(result)) > ctx.aciOutputPolicy.maxEnvelopeBytes || Buffer.byteLength(JSON.stringify(result.payload)) > ctx.aciOutputPolicy.maxPayloadBytes)) throw typed('causal recall assessment result exceeded ACI publication ceiling', 'capability_result_oversize');
+    return result;
+  }
+
+  _causalAssessRecall(args, ctx, verifyReceiptSeq = undefined, writeReceipt = true) {
+    if (!this.knowledgeRecallAssessmentPolicy) throw typed('causal recall assessment is not deployment-configured', 'capability_op_unavailable'); this._knowledgeContext(ctx);
+    const actor = ctx.transport == null && (ctx.actor === 'orchestrator' || (typeof ctx.actor === 'string' && ctx.actor.startsWith('operator:') && !ctx.actor.startsWith('operator:web:') && !ctx.actor.startsWith('operator:mcp:'))) ? ctx.actor
+      : (ctx.transport === 'web' && typeof ctx.actor === 'string' && ctx.actor.startsWith('web:')) || (ctx.transport === 'mcp' && typeof ctx.actor === 'string' && ctx.actor.startsWith('mcp:')) ? `operator:${ctx.actor}` : null;
+    if (actor === null) throw typed('causal recall assessment actor is not authorized', 'causal_assessment_forbidden');
+    if (!args || Object.keys(args).sort().join(',') !== 'observedSeq') throw typed('causal recall assessment request is invalid', 'causal_assessment_invalid');
+    const upper = this._causalBoundary(args, ['observedSeq'], args.observedSeq); const audit = this._assessmentAudit(upper); this._knowledgeContext(ctx);
+    if (!writeReceipt) return this._assessmentResult(this.coordination.reverifyKnowledgeRecallAssessment(this.knowledgeRecallAssessmentPolicy.repoId, upper, this.knowledgeRecallAssessmentPolicy, actor, verifyReceiptSeq), audit);
+    const auth = { actor, key: `knowledge.assess_recall:${sha256(stable({ repoId: ctx.repoId, actor: ctx.actor, idempotencyKey: ctx.idempotencyKey }))}` };
+    const assessed = this.coordination.assessKnowledgeRecallBatch(this.knowledgeRecallAssessmentPolicy.repoId, upper, this.knowledgeRecallAssessmentPolicy, auth, (preview) => { this._knowledgeContext(ctx); this._preflightAssessmentResult(preview, audit, ctx); });
+    this._knowledgeContext(ctx); const result = this._assessmentResult(assessed, audit);
+    if (assessed.noOp && ctx?.aciOutputPolicy && (Buffer.byteLength(JSON.stringify(result)) > ctx.aciOutputPolicy.maxEnvelopeBytes || Buffer.byteLength(JSON.stringify(result.payload)) > ctx.aciOutputPolicy.maxPayloadBytes)) throw typed('causal recall assessment result exceeded ACI publication ceiling', 'capability_result_oversize');
+    return result;
   }
 
   _promotionAudit(upper) {
@@ -446,6 +498,7 @@ export class CairnRunScorecard {
     if (op === 'causal.audit') return this._causalAudit(args, ctx);
     if (op === 'causal.trace') return this._causalTrace(args, ctx);
     if (op === 'causal.recall') return this._causalRecall(args, ctx);
+    if (op === 'causal.assess_recall') return this._causalAssessRecall(args, ctx);
     if (op === 'causal.promote') return this._causalPromote(args, ctx);
     if (op === 'causal.correct_scratch') return this._causalCorrectScratch(args, ctx);
     if (op !== 'run.scorecard') throw typed('unsupported Cairn operation', 'capability_op_unavailable');
@@ -482,6 +535,11 @@ export class CairnRunScorecard {
         if (!Number.isSafeInteger(args?.observedSeq)) return { ok: false, reason: 'observation_boundary_required' };
         const receiptSeq = claim?.payload?.[0]?.receipt?.eventSeq; const rebuilt = this._causalRecall(args, ctx, receiptSeq, false);
         return { ok: stable(claim) === stable(rebuilt), digest: rebuilt.refs[0].digest };
+      }
+      if (op === 'causal.assess_recall') {
+        if (!Number.isSafeInteger(args?.observedSeq)) return { ok: false, reason: 'observation_boundary_required' };
+        const receiptSeq = claim?.payload?.[0]?.receipt?.eventSeq ?? null; const rebuilt = this._causalAssessRecall(args, ctx, receiptSeq, false);
+        return { ok: stable(claim) === stable(rebuilt), digest: rebuilt.payload[0].projectionDigest };
       }
       if (op === 'causal.promote') {
         if (!Number.isSafeInteger(args?.observedSeq)) return { ok: false, reason: 'observation_boundary_required' };
