@@ -194,7 +194,8 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    the isolated proposed npm graph/delta in Phase 40, transitive advisory projection in Phase 41,
    and policy-epoch reconciliation in Phase 42. Phase 43 now has its first provider receipt,
    semantic-processing, observed-Source, machine-ingress, and store-serialized pending-admission
-   foundation; native HTTP authentication/private CAS, official refresh, seedless monotonic adverse
+   foundation plus a card-pinned exact-wire native HMAC/private-CAS webhook boundary; Ed25519,
+   production HTTPS routing and startup CAS replay, official refresh, seedless monotonic adverse
    union/fan-out, cursor/poll lifecycle, bounded read surfaces, and the full live matrix remain.
    Continue the remaining explicitly
    catalogued later rungs, then demand-earned Cairn Rungs 1–4, Vantage, Evidence Ladder, and Skill

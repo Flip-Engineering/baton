@@ -55,8 +55,11 @@ test('AF2: body, method, path, delivery, timestamp, signature, or sensitive-head
     () => request({ timestamp: '2026-07-13T03:00:00.000Z' }),
     () => request({ timestamp: '2026-07-13T04:00:02.000Z' }),
     () => request({ timestamp: 'not-a-time' }),
+    () => request({ timestamp: '2026-07-13T04:00:00Z' }),
+    () => request({ timestamp: '2026-07-13T04:00:00.000+00:00' }),
     () => request({ signature: '0'.repeat(64) }),
     () => { const value = request(); return { ...value, rawHeaders: [...value.rawHeaders, ['x-baton-signature', value.rawHeaders[2][1]] ] }; },
+    () => { const value = request(); return { ...value, rawHeaders: [...value.rawHeaders, ['X-Baton-Signature', value.rawHeaders[2][1]] ] }; },
     () => { const value = request(); return { ...value, rawHeaders: [...value.rawHeaders, ['content-length', String(body.length)]] }; },
   ];
   for (const mutate of mutations) { const { registry, privateCas } = fixture(); await assert.rejects(registry.verifyWebhook('fixture.secure', mutate())); assert.equal(privateCas.calls.length, 0); }
