@@ -388,6 +388,90 @@ test('PL7/PL10: cleanup failure is bounded, retains authority, and cannot report
   assert.throws(() => coordinator.closeAuthority(), /kill\/reap before close/);
 });
 
+test('PL7: confirmed interrupt retains live process and writer authority until terminal kill', async () => {
+  let adapter;
+  adapter = stubAdapter({
+    async interrupt(worker) { queueMicrotask(() => this.emit('control.interrupt_confirmed', worker)); return { ok: true }; },
+    async kill(worker) {
+      queueMicrotask(() => {
+        this.emit('lifecycle.process_closed', worker, { schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, code: null, signal: 'SIGKILL', ready: false });
+        this.emit('kill.confirmed', worker);
+      });
+      return { ok: true };
+    },
+  });
+  const { coordinator } = coordinatorFixture(adapter); const handle = await coordinator.spawn('stub', brief(), { taskId: 'phase51-interrupt-authority', model: 'stub-model', effort: 'low' });
+  await until(() => coordinator.list()[0]?.processRef, 'interrupt process');
+  assert.equal((await coordinator.interrupt(handle.id)).result, 'confirmed');
+  assert.equal(coordinator.list()[0].processRef.state, 'initializing'); assert.equal(coordinator._workers.get(handle.id).localAuthority, true);
+  assert.throws(() => coordinator.closeAuthority(), /kill\/reap before close/);
+  assert.equal((await coordinator.kill(handle.id)).result, 'confirmed'); assert.equal(coordinator.closeAuthority(), true);
+});
+
+test('PL7: forced stop records uncertainty and cannot release writer before a late exact close', async () => {
+  let killCalls = 0; let adapter;
+  adapter = stubAdapter({
+    async kill(worker) {
+      killCalls += 1;
+      if (killCalls <= 2) return { ok: true };
+      queueMicrotask(() => {
+        adapter.emit('lifecycle.process_closed', worker, { schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, code: 0, signal: null, ready: false });
+        adapter.emit('kill.confirmed', worker);
+      });
+      return { ok: true };
+    },
+  });
+  const { coordinator } = coordinatorFixture(adapter);
+  const handle = await coordinator.spawn('stub', brief(), { taskId: 'phase51-forced-authority', model: 'stub-model', effort: 'low' });
+  await until(() => coordinator.list()[0]?.processRef, 'forced process');
+  assert.equal((await coordinator.kill(handle.id)).result, 'forced');
+  assert.equal(coordinator.list()[0].processRef.state, 'unconfirmed_after_restart'); assert.equal(coordinator._workers.get(handle.id).localAuthority, true);
+  assert.throws(() => coordinator.closeAuthority(), /kill\/reap before close/);
+  assert.equal((await coordinator.kill(handle.id)).result, 'confirmed', 'a second kill retries the unconfirmed native reap');
+  assert.equal(killCalls >= 3, true); await until(() => coordinator._workers.get(handle.id).localAuthority === false, 'late exact forced close');
+  assert.equal(coordinator.closeAuthority(), true);
+});
+
+test('PL7/PL10: poisoned emergency kill retries a dead-but-unconfirmed process instead of releasing authority', async () => {
+  let killCalls = 0; let adapter;
+  adapter = stubAdapter({
+    async kill(worker) {
+      killCalls += 1;
+      if (killCalls <= 2) return { ok: true };
+      queueMicrotask(() => {
+        adapter.emit('lifecycle.process_closed', worker, { schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, code: 0, signal: null, ready: false });
+        adapter.emit('kill.confirmed', worker);
+      });
+      return { ok: true };
+    },
+  });
+  const { coordinator } = coordinatorFixture(adapter); const handle = await coordinator.spawn('stub', brief(), { taskId: 'phase51-forced-emergency-retry', model: 'stub-model', effort: 'low' });
+  await until(() => coordinator.list()[0]?.processRef, 'forced emergency process');
+  assert.equal((await coordinator.kill(handle.id)).result, 'forced'); assert.equal(coordinator.list()[0].processRef.state, 'unconfirmed_after_restart');
+  coordinator._fatalError = Object.assign(new Error('fixture poison'), { code: 'operational_log_unavailable' });
+  assert.equal((await coordinator.kill(handle.id, 'policy', { emergency: true })).result, 'confirmed_unlogged');
+  assert.equal(killCalls >= 3, true); assert.equal(coordinator._workers.get(handle.id).processRef.state, 'closed'); assert.equal(coordinator._workers.get(handle.id).localAuthority, false);
+});
+
+test('PL7/PL10: spawn-time log poison cannot exempt locally owned pending resources from drain', async () => {
+  let releaseWorktree; const worktreeGate = new Promise((resolve) => { releaseWorktree = resolve; });
+  const rawLog = new Log(mkdtempSync(join(tmpdir(), 'phase51-pending-poison-log-'))); const append = rawLog.append.bind(rawLog);
+  rawLog.append = (event) => { if (event.kind === 'lifecycle.spawned' && event.actor === 'orchestrator') throw new Error('fixture log failure'); return append(event); };
+  const adapter = stubAdapter({ async spawn() { return new Promise(() => {}); }, async kill() { return { ok: true, terminal: true }; } });
+  const coordination = coordinationForLog(rawLog); let removed = 0;
+  const coordinator = new Coordinator({
+    log: rawLog, coordination, fences: new FenceTable(), adapters: { stub: adapter },
+    worktrees: { create: async () => worktreeGate, remove: async () => { removed += 1; }, reconcile: async () => {} },
+    runtimeScopes: { reconcile: () => {}, create: (worker) => ({ env: {}, replaceEnv: true, posture: { root: `/runtime/${worker}` } }), remove: () => {} },
+    referee: async () => ({}), route: () => 'stub', stopDeadlineMs: 100,
+  });
+  await assert.rejects(coordinator.spawn('stub', brief(), { taskId: 'phase51-pending-poison', model: 'stub-model', effort: 'low' }), (error) => error.code === 'operational_log_unavailable');
+  const owned = [...coordinator._workers.values()][0]; assert.equal(owned.status, 'pending'); assert.equal(owned.localAuthority, true); assert.equal(owned.runtimeScope.active, true);
+  assert.throws(() => coordinator.closeAuthority(), /kill\/reap before close/);
+  assert.equal((await coordinator.kill(owned.id, 'policy', { emergency: true })).result, 'confirmed_unlogged');
+  releaseWorktree({ path: tmpdir() }); await until(() => removed > 0, 'pending poison cleanup');
+});
+
 test('PL7: verification and its deferred cleanup remain writer-authority operations', async () => {
   let releaseReferee; const refereeGate = new Promise((resolve) => { releaseReferee = resolve; }); const removals = [];
   const adapter = stubAdapter(); const log = new Log(mkdtempSync(join(tmpdir(), 'phase51-verify-close-log-'))); const coordination = coordinationForLog(log);
@@ -407,6 +491,28 @@ test('PL7: verification and its deferred cleanup remain writer-authority operati
   releaseReferee({ reverified: true, observedExit: 0 });
   await until(() => removals.length === 1, 'verification cleanup');
   assert.equal(coordinator.closeAuthority(), true);
+});
+
+test('PL7/PL10: runtime cleanup failure during verification is retained and retried before release', async () => {
+  let releaseReferee; const refereeGate = new Promise((resolve) => { releaseReferee = resolve; }); let runtimeRemovals = 0;
+  const adapter = stubAdapter(); const log = new Log(mkdtempSync(join(tmpdir(), 'phase51-verify-runtime-log-'))); const coordination = coordinationForLog(log);
+  const coordinator = new Coordinator({
+    log, coordination, fences: new FenceTable(), adapters: { stub: adapter },
+    worktrees: { create: async () => ({ path: tmpdir() }), capture: async () => ({ sha: 'fixture-sha' }), createVerifyWorktree: async () => ({ path: tmpdir() }), removeVerifyWorktree: async () => {}, remove: async () => {}, reconcile: async () => {} },
+    runtimeScopes: { reconcile: () => {}, create: (worker) => ({ env: {}, replaceEnv: true, posture: { root: `/runtime/${worker}` } }), remove: () => { runtimeRemovals += 1; if (runtimeRemovals < 2) throw new Error('fixture runtime removal failure'); } },
+    referee: async () => refereeGate, route: () => 'stub', stopDeadlineMs: 500,
+  });
+  const handle = await coordinator.spawn('stub', brief(), { taskId: 'phase51-verify-runtime', model: 'stub-model', effort: 'low' });
+  await until(() => coordinator.list()[0]?.processRef, 'verification runtime process');
+  adapter.emit('lifecycle.spawned', handle.id, { sessionId: 'verify-runtime-native', pid: 4242, processGeneration: 1 });
+  adapter.emit('lifecycle.turn_completed', handle.id, { status: 'completed', summary: 'ok', artifacts: { commits: ['fixture-sha'], files: [] }, verification: { command: 'true', claimedExit: 0 }, openQuestions: [], budgetUsed: { tokens: 1, usd: 0 } });
+  await until(() => coordinator._tasks.get('phase51-verify-runtime')?.status === 'verifying', 'runtime verification gate');
+  adapter.emit('lifecycle.process_closed', handle.id, { schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, code: 0, signal: null, ready: true });
+  assert.equal(coordinator._workers.get(handle.id).localAuthority, true); assert.equal(coordinator._workers.get(handle.id).runtimeScope.active, true);
+  assert.throws(() => coordinator.closeAuthority(), /kill\/reap before close/);
+  releaseReferee({ reverified: true, observedExit: 0 });
+  await until(() => coordinator._workers.get(handle.id).status === 'exited' && coordinator._workers.get(handle.id).localAuthority === false, 'verification runtime cleanup retry');
+  assert.equal(runtimeRemovals, 2); assert.equal(coordinator._workers.get(handle.id).runtimeScope.active, false); assert.equal(coordinator.closeAuthority(), true);
 });
 
 test('PL3/PL10: poisoned-log emergency close still requires exact source and process correlation', async () => {
@@ -445,6 +551,71 @@ test('PL3: adapter callback source identity cannot close another adapter worker'
   assert.equal(coordinator.list()[0].processRef.state, 'initializing');
   owner.emit('lifecycle.process_closed', handle.id, { schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, code: 0, signal: null, ready: false });
   owner.emit('kill.confirmed', handle.id); await until(() => coordinator.list()[0].status === 'dead', 'owner exact cleanup');
+});
+
+test('PL3/PL8: rejected recovery identity persists only sanitized readiness and cannot pivot replay sessionRef', async () => {
+  const adapter = stubAdapter(); const { coordinator, log } = coordinatorFixture(adapter); coordinator._stopDeadlineMs = 500;
+  const baseCard = adapter.card; adapter.card = () => ({ ...baseCard(), sessions: { multiTurn: 'native', resume: 'native', fork: 'native' } });
+  const handle = await coordinator.spawn('stub', brief(), { taskId: 'phase51-recovery-identity', model: 'stub-model', effort: 'low' });
+  await until(() => coordinator.list()[0]?.processRef, 'recovery identity seed process');
+  adapter.emit('lifecycle.spawned', handle.id, { sessionId: 'expected-native', pid: 4242, processGeneration: 1 });
+  adapter.emit('lifecycle.process_closed', handle.id, { schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, code: 0, signal: null, ready: true });
+  const internal = coordinator._workers.get(handle.id); const task = coordinator._tasks.get(handle.taskId);
+  internal.status = 'orphaned'; internal.localAuthority = false; internal.sessionContext = { worktree: tmpdir(), ownerTaskId: task.id }; task.sessionContext = internal.sessionContext;
+  adapter.spawn = async (worker, _brief, opts) => {
+    queueMicrotask(() => {
+      adapter.emit('lifecycle.process_started', worker, { schemaVersion: 1, generation: opts.processGeneration, pid: 5252, processGroupId: 5252, phase: 'initializing' });
+      adapter.emit('lifecycle.spawned', worker, { sessionId: 'wrong-native', pid: 5252, processGeneration: opts.processGeneration });
+    });
+    return { ok: true };
+  };
+  adapter.kill = async (worker) => { queueMicrotask(() => adapter.emit('lifecycle.process_closed', worker, { schemaVersion: 1, generation: 2, pid: 5252, processGroupId: 5252, code: 0, signal: null, ready: true })); return { ok: true }; };
+  const recovered = await coordinator.recover(handle.id); assert.equal(recovered.result, 'session_identity_mismatch');
+  await until(() => coordinator.list()[0].processRef.state === 'closed', 'mismatched recovery close');
+  assert.equal(log.read(handle.id).some((event) => event.kind === 'lifecycle.process_ready'), true);
+  assert.equal(log.read(handle.id).some((event) => event.kind === 'lifecycle.spawned' && event.actor === 'worker' && event.payload?.sessionId === 'wrong-native'), false);
+  const replayAdapter = stubAdapter(); const replay = new Coordinator({ log, coordination: coordinator._coordination, fences: new FenceTable(), adapters: { stub: replayAdapter }, worktrees: coordinator._worktrees, referee: async () => ({}), route: () => 'stub', stopDeadlineMs: 500 });
+  assert.equal(replay.list().find((row) => row.id === handle.id).sessionRef.id, 'expected-native');
+});
+
+test('PL7/PL8: recovery refuses a matching provider session that closes before admission commits', async () => {
+  const adapter = stubAdapter(); const { coordinator, log } = coordinatorFixture(adapter); coordinator._stopDeadlineMs = 500;
+  const baseCard = adapter.card; adapter.card = () => ({ ...baseCard(), sessions: { multiTurn: 'native', resume: 'native', fork: 'native' } });
+  const handle = await coordinator.spawn('stub', brief(), { taskId: 'phase51-recovery-fast-close', model: 'stub-model', effort: 'low' });
+  await until(() => coordinator.list()[0]?.processRef, 'fast-close recovery seed');
+  adapter.emit('lifecycle.spawned', handle.id, { sessionId: 'fast-close-native', pid: 4242, processGeneration: 1 });
+  adapter.emit('lifecycle.process_closed', handle.id, { schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, code: 0, signal: null, ready: true });
+  const internal = coordinator._workers.get(handle.id); const task = coordinator._tasks.get(handle.taskId); const worktree = mkdtempSync(join(tmpdir(), 'phase51-fast-close-recovery-wt-'));
+  internal.status = 'orphaned'; internal.localAuthority = false; internal.sessionContext = { worktree, ownerTaskId: task.id }; task.sessionContext = internal.sessionContext;
+  adapter.spawn = async (worker, _brief, opts) => {
+    queueMicrotask(() => {
+      adapter.emit('lifecycle.process_started', worker, { schemaVersion: 1, generation: opts.processGeneration, pid: 6262, processGroupId: 6262, phase: 'initializing' });
+      adapter.emit('lifecycle.spawned', worker, { sessionId: 'fast-close-native', pid: 6262, processGeneration: opts.processGeneration });
+      adapter.emit('lifecycle.process_closed', worker, { schemaVersion: 1, generation: opts.processGeneration, pid: 6262, processGroupId: 6262, code: 0, signal: null, ready: true });
+      adapter.emit('lifecycle.exited', worker, { code: 0, signal: null });
+    });
+    return { ok: true };
+  };
+  adapter.kill = async () => ({ ok: true, terminal: true });
+  const recovered = await coordinator.recover(handle.id); assert.equal(recovered.result, 'recovery_transport_closed');
+  await until(() => internal.localAuthority === false, 'fast-close recovery cleanup');
+  const events = log.read(handle.id); assert.equal(events.some((event) => event.kind === 'control.recovery_attached'), false);
+  assert.equal(events.some((event) => event.kind === 'lifecycle.spawned' && event.payload?.pid === 6262), false, 'buffered session identity does not commit');
+  assert.equal(events.some((event) => event.kind === 'lifecycle.process_ready' && event.payload?.pid === 6262), true);
+  assert.equal(events.some((event) => event.kind === 'lifecycle.process_closed' && event.payload?.pid === 6262), true);
+  assert.equal(internal.status, 'orphaned'); assert.equal(internal.processRef.state, 'closed');
+});
+
+test('PL8: replay preserves historical readiness for an exact late close without claiming a live transport', async () => {
+  const original = stubAdapter(); const { coordinator, log } = coordinatorFixture(original);
+  const handle = await coordinator.spawn('stub', brief(), { taskId: 'phase51-ready-replay-close', model: 'stub-model', effort: 'low' });
+  await until(() => coordinator.list()[0]?.processRef, 'ready replay source');
+  original.emit('lifecycle.spawned', handle.id, { sessionId: 'ready-replay-native', pid: 4242, processGeneration: 1 });
+  const replayAdapter = stubAdapter(); const replay = new Coordinator({ log, coordination: coordinator._coordination, fences: new FenceTable(), adapters: { stub: replayAdapter }, worktrees: coordinator._worktrees, referee: async () => ({}), route: () => 'stub', stopDeadlineMs: 500 });
+  const before = replay.list().find((row) => row.id === handle.id).processRef;
+  assert.equal(before.state, 'unconfirmed_after_restart'); assert.equal(before.ready, true);
+  replayAdapter.emit('lifecycle.process_closed', handle.id, { schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, code: 0, signal: null, ready: true });
+  assert.equal(replay.list().find((row) => row.id === handle.id).processRef.state, 'closed');
 });
 
 test('PL3/PL4/PL8: coordinator exposes a closed processRef and replay never treats an unclosed historical PID as live', async () => {

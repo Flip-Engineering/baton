@@ -1,5 +1,6 @@
 const START_KEYS = ['generation', 'phase', 'pid', 'processGroupId', 'schemaVersion'];
 const CLOSE_KEYS = ['code', 'generation', 'pid', 'processGroupId', 'ready', 'schemaVersion', 'signal'];
+const READY_KEYS = ['generation', 'pid', 'processGroupId', 'schemaVersion'];
 const REAP_UNCONFIRMED_KEYS = ['generation', 'pid', 'processGroupId', 'reason', 'schemaVersion'];
 
 const exactKeys = (value, expected) => value && typeof value === 'object' && !Array.isArray(value)
@@ -92,6 +93,11 @@ export function processReapUnconfirmedPayload(generation, pid, reason) {
   };
 }
 
+export function processReadyPayload(generation, pid) {
+  if (!positiveSafe(pid)) return null;
+  return { schemaVersion: 1, generation: normalizeProcessGeneration(generation), pid, processGroupId: pid };
+}
+
 export function validProcessStartedPayload(payload) {
   return exactKeys(payload, START_KEYS)
     && payload.schemaVersion === 1
@@ -119,4 +125,12 @@ export function validProcessReapUnconfirmedPayload(payload) {
     && positiveSafe(payload.pid)
     && payload.processGroupId === payload.pid
     && ['deadline', 'permission_denied', 'probe_error'].includes(payload.reason);
+}
+
+export function validProcessReadyPayload(payload) {
+  return exactKeys(payload, READY_KEYS)
+    && payload.schemaVersion === 1
+    && positiveSafe(payload.generation)
+    && positiveSafe(payload.pid)
+    && payload.processGroupId === payload.pid;
 }

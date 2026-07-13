@@ -11,7 +11,7 @@ import { Cursor } from './log.mjs';
 import { createBrief, createDigest, wrapFact, wrapProse } from './messages.mjs';
 import { resolveEffort, routeTupleKey } from './route-tuple.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
-import { validProcessClosedPayload, validProcessReapUnconfirmedPayload, validProcessStartedPayload } from './process-lifecycle.mjs';
+import { processReadyPayload, validProcessClosedPayload, validProcessReadyPayload, validProcessReapUnconfirmedPayload, validProcessStartedPayload } from './process-lifecycle.mjs';
 
 const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
 const WORKTREE_FAILURE = Symbol('worktree-failure');
@@ -653,7 +653,8 @@ export class Coordinator {
     // and remain drain-required while idle so resumable/persistent harnesses cannot be orphaned.
     const active = [...this._workers.values()].filter((worker) => worker.localAuthority === true
       && (worker.cleanupPending === true || worker.cleanupAfterVerification === true
-        || !['dead', 'exited', 'pending'].includes(worker.status)));
+        || (worker.processRef !== null && worker.processRef.state !== 'closed')
+        || !['dead', 'exited'].includes(worker.status)));
     if (active.length > 0) throw Object.assign(new Error(`coordinator still owns ${active.length} active worker(s); kill/reap before close`), { code: 'coordinator_not_drained' });
     if (this._authorityOps > 0) throw Object.assign(new Error(`coordinator still has ${this._authorityOps} authority operation(s) in flight`), { code: 'coordinator_not_drained' });
     this._closed = true;
@@ -1347,7 +1348,7 @@ export class Coordinator {
     }
 
     const timeoutMs = opts.timeoutMs ?? this._recoveryTimeoutMs;
-    const admission = { events: [], prelogged: new Map() };
+    const admission = { events: [] };
     admission.spawned = new Promise((resolve) => { admission.resolveSpawned = resolve; });
     handle.turnAdmission = admission;
     const session = normalizeSessionRequest({ mode: 'resume', id: handle.sessionRef.id, context });
@@ -1457,7 +1458,7 @@ export class Coordinator {
       kind: 'lifecycle.turn_started', actor: 'orchestrator', payload: { recovery: true },
       ...this._routeAttribution(handle, activeTask),
     });
-    for (const event of admission.events) this._handleEvent(event, handle.vendor, { preloggedEvent: admission.prelogged.get(event) ?? null });
+    for (const event of admission.events) this._handleEvent(event, handle.vendor, { admittedReady: event.kind === 'lifecycle.spawned' });
     return { ok: true, result: 'attached', handle: this._publicHandle(handle) };
   }
 
@@ -1906,7 +1907,7 @@ export class Coordinator {
 
     // A native adapter can emit turn_started synchronously inside prompt(), before returning its
     // Ack. Queue those events until admission commits; refusal leaves the prior terminal view.
-    const admission = { events: [], prelogged: new Map() };
+    const admission = { events: [] };
     handle.turnAdmission = admission;
     let ack;
     try {
@@ -1960,7 +1961,7 @@ export class Coordinator {
       ...this._routeAttribution(handle, activeTask),
       payload: { followUp: true, message },
     });
-    for (const event of admission.events) this._handleEvent(event, handle.vendor, { preloggedEvent: admission.prelogged.get(event) ?? null });
+    for (const event of admission.events) this._handleEvent(event, handle.vendor, { admittedReady: event.kind === 'lifecycle.spawned' });
     return { ok: true, result: 'ok', emulated: ack.emulated === true };
   }
 
@@ -2011,8 +2012,12 @@ export class Coordinator {
       const check = this._fences.check(workerId, { fence: opts.expectedFence });
       if (!check.ok) return { ok: false, result: 'stale_fence', current: check.current };
     }
-    if (handle.status === 'dead') return { ok: true, result: 'already_dead' };
-    if (handle.status === 'orphaned') {
+    if (handle.status === 'dead' && (handle.localAuthority !== true
+      || (handle.processRef?.state === 'closed' && handle.cleanupPending !== true))) {
+      return { ok: true, result: 'already_dead' };
+    }
+    if (handle.status === 'orphaned' && !(handle.localAuthority === true
+      && ['initializing', 'ready', 'unconfirmed_after_restart'].includes(handle.processRef?.state))) {
       return { ok: false, result: 'session_not_attached', reason: 'restart replay found no controllable adapter session' };
     }
     // CI3: a crashed/exited child cannot emit another kill.confirmed. Treat its authoritative
@@ -2028,7 +2033,8 @@ export class Coordinator {
   }
 
   _emergencyKillUnlogged(handle) {
-    if (handle.status === 'dead' || handle.status === 'exited') {
+    if ((handle.status === 'dead' || handle.status === 'exited')
+      && (!handle.processRef || handle.processRef.state === 'closed')) {
       const runtimeRemoved = this._removeRuntimeScope(handle);
       return this._removeOwnedTaskWorktree(handle, this._tasks.get(handle.taskId)).then(() => {
         if (!runtimeRemoved) return { ok: false, result: 'cleanup_failed_unlogged', auditUnavailable: true };
@@ -2330,7 +2336,7 @@ export class Coordinator {
     handle.cleanupPending = true;
     const cleanup = this._removeTaskWorktree(task).then(() => {
       handle.cleanupPending = handle.runtimeScope?.active === true;
-      handle.cleanupError = null;
+      if (!handle.cleanupPending) handle.cleanupError = null;
     }, (error) => {
       handle.cleanupPending = true;
       handle.cleanupError = 'worktree_cleanup_failed';
@@ -2785,7 +2791,7 @@ export class Coordinator {
 
     const result = { ok: true, result: 'confirmed', emulated: waiter.emulated === true };
     Promise.resolve(waiter.cleanupPromise).then(() => {
-      if (handle) handle.localAuthority = false;
+      if (handle && waiter.mode === 'kill') handle.localAuthority = false;
       for (const resolve of waiter.resolvers) resolve(result);
       this._stopWaiters.delete(workerId);
       this._dispatchPass();
@@ -2844,7 +2850,6 @@ export class Coordinator {
 
     const result = coordinationFailure ? { ok: false, result: 'coordination_unavailable' } : { ok: true, result: 'forced' };
     cleanupPromise.then(() => {
-      if (handle) handle.localAuthority = false;
       for (const resolve of waiter.resolvers) resolve(result);
       this._stopWaiters.delete(workerId);
     }, () => {
@@ -3677,7 +3682,8 @@ export class Coordinator {
       const providerId = payload?.threadId ?? payload?.sessionId;
       const processBound = handle.processRef !== null
         || (payload?.processGeneration !== undefined && payload?.pid !== undefined);
-      const validProviderReady = !processBound || (handle.processRef?.state === 'initializing'
+      const validProviderReady = !processBound || ((handle.processRef?.state === 'initializing'
+        || (opts.admittedReady === true && handle.processRef?.state === 'ready'))
         && payload?.processGeneration === handle.processRef.generation
         && payload?.pid === handle.processRef.pid
         && typeof providerId === 'string' && providerId.length > 0);
@@ -3699,12 +3705,15 @@ export class Coordinator {
         // transactional. Promote only the exact current PID here so a racing close can carry
         // ready:true; session identity, route observations, and turn effects remain buffered.
         const providerId = payload?.threadId ?? payload?.sessionId;
-        const readyEvent = this._log.append({ ...event, ...this._routeAttribution(handle) });
-        handle.turnAdmission.prelogged?.set(event, readyEvent);
         if (handle.processRef?.state === 'initializing'
           && payload?.processGeneration === handle.processRef.generation
           && payload?.pid === handle.processRef.pid
           && typeof providerId === 'string' && providerId.length > 0) {
+          const readyPayload = processReadyPayload(payload.processGeneration, payload.pid);
+          this._log.append({
+            worker: workerId, harness, turnEpoch, kind: 'lifecycle.process_ready', actor: 'policy',
+            payload: readyPayload, ...this._routeAttribution(handle),
+          });
           handle.processRef = { ...handle.processRef, state: 'ready', ready: true };
         }
         handle.turnAdmission.resolveSpawned?.(event);
@@ -3844,6 +3853,7 @@ export class Coordinator {
         this._finishUntrustedTransportReap(handle, handle.processRef);
         const stopWaiter = this._stopWaiters.get(handle.id);
         if (stopWaiter?.mode === 'kill') this._maybeFinalizeStop(handle.id, stopWaiter);
+        if (!stopWaiter && handle.status === 'dead' && handle.cleanupPending !== true) handle.localAuthority = false;
         if (!stopWaiter && !handle.untrustedTransportReap && turnWasTerminal
           && !['dead', 'stopping', 'orphaned'].includes(handle.status)) {
           handle.status = 'exited';
@@ -3999,8 +4009,7 @@ export class Coordinator {
         this._onStopConfirmed(handle, 'kill');
         break;
       default:
-        nativeObservationEvent = opts.preloggedEvent
-          ?? appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        nativeObservationEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
     }
     if (nativeObservation && nativeObservationEvent
       && ((typeof observedModel === 'string' && observedModel.length > 0) || (typeof observedEffort === 'string' && observedEffort.length > 0))) {
@@ -4216,9 +4225,14 @@ export class Coordinator {
     }
 
     if (handle.cleanupAfterVerification) {
-      handle.cleanupAfterVerification = false;
+      const runtimeRemoved = this._removeRuntimeScope(handle);
       await this._removeOwnedTaskWorktree(handle, task);
-      handle.localAuthority = false;
+      if (runtimeRemoved) {
+        handle.cleanupAfterVerification = false;
+        handle.localAuthority = false;
+      } else {
+        handle.cleanupPending = true;
+      }
     }
     handle.status = handle.processRef?.state === 'closed' ? 'exited' : 'idle';
     this._dispatchPass();
@@ -4300,6 +4314,13 @@ export class Coordinator {
               && e.payload.processGroupId === processRef.processGroupId
               && e.payload.ready === processRef.ready) {
               processRef = { ...processRef, state: 'closed', ready: e.payload.ready, closedSeq: e.seq };
+            }
+            break;
+          case 'lifecycle.process_ready':
+            if (validProcessReadyPayload(e.payload) && processRef?.state === 'initializing'
+              && e.payload.generation === processRef.generation && e.payload.pid === processRef.pid
+              && e.payload.processGroupId === processRef.processGroupId) {
+              processRef = { ...processRef, state: 'ready', ready: true };
             }
             break;
           case 'lifecycle.spawned':
@@ -4535,7 +4556,7 @@ export class Coordinator {
         if (!this._taskOrder.includes(taskId)) this._taskOrder.push(taskId);
       }
 
-      if (processRef && ['initializing', 'ready'].includes(processRef.state)) processRef = { ...processRef, state: 'unconfirmed_after_restart', ready: false };
+      if (processRef && ['initializing', 'ready'].includes(processRef.state)) processRef = { ...processRef, state: 'unconfirmed_after_restart' };
       this._workers.set(workerId, {
         id: workerId,
         runId: this._coordination?.task(taskId)?.runId ?? runId ?? null,
