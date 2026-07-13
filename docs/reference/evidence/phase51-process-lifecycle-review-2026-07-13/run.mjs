@@ -15,6 +15,18 @@ const LOG_DIR = mkdtempSync(join(tmpdir(), 'baton-phase51-review-'));
 const GLM_AUTH = resolve(process.env.BATON_GLM_AUTH_FILE ?? resolve(REPO, 'glm_key.json'));
 const CODEX_AUTH = join(homedir(), '.codex', 'auth.json');
 const GROK_AUTH = join(homedir(), '.grok', 'auth.json');
+function loginCommand(name, override) {
+  if (override) return resolve(override);
+  const output = execFileSync('/bin/zsh', ['-lic', `whence -p ${name}`], { encoding: 'utf8' });
+  const candidates = output.split(/\r?\n/u)
+    .map((line) => line.match(/(\/[^\u0007\u001b\r\n]+)$/u)?.[1] ?? null).filter(Boolean);
+  const selected = candidates.at(-1);
+  if (!selected || !existsSync(selected)) throw new Error(`login shell did not resolve ${name}`);
+  return selected;
+}
+const CODEX_CMD = loginCommand('codex', process.env.BATON_CODEX_CMD);
+const GROK_CMD = loginCommand('grok', process.env.BATON_GROK_CMD);
+const CLAUDE_CMD = loginCommand('claude', process.env.BATON_CLAUDE_CMD);
 const BASE_SHA = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim();
 const RUN_ID = 'phase51-process-lifecycle-review';
 const TASK_TYPE = 'phase51-process-lifecycle-implementation-review';
@@ -101,7 +113,7 @@ mkdirSync(OUTPUT, { recursive: true });
 for (const file of ['events.jsonl', 'summary.json', ...TASKS.map((task) => `${task.taskId}.md`)]) rmSync(join(OUTPUT, file), { force: true });
 
 let grokModels = ''; let grokAuthError = null;
-try { grokModels = execFileSync('grok', ['models'], { encoding: 'utf8' }).trim(); }
+try { grokModels = execFileSync(GROK_CMD, ['models'], { encoding: 'utf8' }).trim(); }
 catch (error) { grokAuthError = String(error?.stderr ?? error?.message ?? error).slice(0, 800); }
 const ownershipBefore = ownershipSnapshot();
 const credentials = { glm: credentialFact(GLM_AUTH), codex: credentialFact(CODEX_AUTH), grok: credentialFact(GROK_AUTH) };
@@ -109,9 +121,9 @@ const dependencies = existsSync(join(REPO, 'impl', 'node_modules')) ? ['impl/nod
 const driver = createDriver({
   repoRoot: REPO, logDir: LOG_DIR,
   adapters: {
-    codex: new CodexAppServerCli({ requestTimeoutMs: 45_000, ceiling: 1 }),
-    glm: new GlmSessionCli({ authTokenFile: GLM_AUTH, authTokenJsonPointer: process.env.BATON_GLM_AUTH_JSON_POINTER ?? '/glm_key', model: 'glm-4.7', approvals: false, permissionMode: 'acceptEdits', args: ['--safe-mode', '--no-session-persistence', '--max-budget-usd', '1.25'], ceiling: 1, killGraceMs: 5_000 }),
-    grok: new GrokAcpCli({ requestTimeoutMs: 45_000, ceiling: 2 }),
+    codex: new CodexAppServerCli({ cmd: CODEX_CMD, requestTimeoutMs: 45_000, ceiling: 1 }),
+    glm: new GlmSessionCli({ cmd: CLAUDE_CMD, authTokenFile: GLM_AUTH, authTokenJsonPointer: process.env.BATON_GLM_AUTH_JSON_POINTER ?? '/glm_key', model: 'glm-4.7', approvals: false, permissionMode: 'acceptEdits', args: ['--safe-mode', '--no-session-persistence', '--max-budget-usd', '1.25'], ceiling: 1, killGraceMs: 5_000 }),
+    grok: new GrokAcpCli({ cmd: GROK_CMD, requestTimeoutMs: 45_000, ceiling: 2 }),
   },
   runtimeIsolation: { credentialFiles: { codex: [CODEX_AUTH], grok: [GROK_AUTH] } },
   workerDependencyDirs: dependencies, verifyDependencyDirs: dependencies,
@@ -214,6 +226,12 @@ const harnessMatrixPass = implementationReviewPass && rows.length === TASKS.leng
 
 const summary = {
   at: new Date().toISOString(), baseSha: BASE_SHA, repoHead: git(['rev-parse', 'HEAD']), runId: RUN_ID,
+  tooling: {
+    codexVersion: execFileSync(CODEX_CMD, ['--version'], { encoding: 'utf8' }).trim(),
+    grokVersion: execFileSync(GROK_CMD, ['--version'], { encoding: 'utf8' }).trim(),
+    claudeVersion: execFileSync(CLAUDE_CMD, ['--version'], { encoding: 'utf8' }).trim(),
+    executableSelection: 'absolute paths resolved through the logged-in shell',
+  },
   interpretation: { implementationReviewPass: 'exact route attribution, at least the project-key GLM report freshly verified, and complete cleanup', harnessMatrixPass: 'implementationReviewPass plus provider readiness and exact start/close for every route, at least one explicit confirmed kill, and one simultaneous two-Grok live-group sample' },
   grokAuthProbe: { authenticated: grokAuthError === null && grokModels.length > 0 && !grokModels.includes('not authenticated'), output: grokModels, error: grokAuthError },
   credentials, ownershipBefore, ownershipAfter, overlapSamples, attempts,
