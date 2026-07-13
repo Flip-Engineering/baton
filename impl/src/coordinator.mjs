@@ -105,7 +105,7 @@ const COORDINATION_MUTATORS = new Set([
   'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
   'readScratch', 'expireScratchClaim', 'expireScratchFact', 'addKnowledgeNode', 'promoteKnowledgeNode',
   'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination', 'recordReuseDecision',
-  'recordReuseRiskGuard', 'recordReuseTtlInvalidation', 'activateReusePolicy', 'recordProviderDelivery',
+  'recordReuseRiskGuard', 'recordReuseTtlInvalidation', 'activateReusePolicy', 'recordProviderDelivery', 'recordProviderGreenCompletion',
 ]);
 
 function canonical(value) {
@@ -327,6 +327,20 @@ export class Coordinator {
       for (const method of ['recordProviderDelivery', 'pendingProviderReconciliation', 'providerReceipt', 'providerProcessing']) {
         if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
       }
+    }
+    this._providerReconciliation = null;
+    if (opts.providerReconciliation !== undefined) {
+      const config = opts.providerReconciliation; const authority = config?.indexAuthority; const card = authority?.card?.();
+      if (!config || Object.keys(config).sort().join(',') !== ['budgetTokens', 'indexAuthority', 'repoId'].sort().join(',') || !Number.isSafeInteger(config.budgetTokens) || config.budgetTokens <= 0
+        || typeof config.repoId !== 'string' || !authority || typeof authority.current !== 'function' || typeof authority.reverify !== 'function'
+        || !card || Object.keys(card).sort().join(',') !== ['schemaVersion', 'authorityId', 'repoId', 'atlasCardDigest'].sort().join(',') || card.schemaVersion !== 1 || card.repoId !== config.repoId
+        || typeof card.authorityId !== 'string' || !/^[a-f0-9]{64}$/.test(card.atlasCardDigest ?? '')) throw new TypeError('provider reconciliation requires deployment-owned index authority');
+      const cq = this._capabilities?.cards?.().find((item) => item.name === 'cartographer-quartermaster');
+      if (!cq?.ops?.['reuse.vet'] || cq.actions?.reverify !== true) throw new TypeError('provider reconciliation requires reverifiable Quartermaster reuse.vet');
+      const activePolicy = opts.coordination.reusePolicyState(config.repoId);
+      if (!cq.reusePolicy || !activePolicy || activePolicy.policyHash !== cq.reusePolicy.hash) throw new TypeError('provider reconciliation requires the active Quartermaster policy');
+      for (const method of ['providerProcessingAdmission', 'recordProviderGreenCompletion', 'reusePolicyState']) if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
+      this._providerReconciliation = Object.freeze({ repoId: config.repoId, budgetTokens: config.budgetTokens, indexAuthority: authority, card: Object.freeze({ ...card }) });
     }
     const rawCoordination = opts.coordination;
     this._coordination = new Proxy(rawCoordination, {
@@ -2764,6 +2778,49 @@ export class Coordinator {
       const receipt = await this._advisoryFeeds.verifyWebhook(providerId, input, { signal: ctx.signal });
       const key = `provider-delivery:${canonicalDigest({ repoId: this._repoId, providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest })}`;
       return this._coordination.recordProviderDelivery({ repoId: this._repoId, receipt }, { actor: `provider:${providerId}`, key });
+    } finally { this._authorityOps -= 1; }
+  }
+
+  /** Freshly reconcile one durable provider processing root without caller-selected coordinates,
+   * policy, index epoch, outcome, actor, or idempotency. This first transaction resolves only an
+   * all-green root; adverse observations remain pending for the monotonic guard transaction. */
+  async reconcileProviderProcessing(processingId, ctx = {}) {
+    this._assertOperational(); const config = this._providerReconciliation;
+    if (!config) throw Object.assign(new Error('provider reconciliation is not deployment-configured'), { code: 'provider_reconciliation_unavailable' });
+    if (typeof processingId !== 'string' || !ctx || Object.keys(ctx).some((key) => key !== 'signal')) throw Object.assign(new TypeError('provider reconciliation request is invalid'), { code: 'provider_processing_invalid' });
+    const initial = this._coordination.providerProcessing(processingId); if (!initial) throw Object.assign(new Error('provider processing root was not found'), { code: 'provider_processing_not_found' });
+    if (initial.repoId !== config.repoId) throw Object.assign(new Error('provider reconciliation repository mismatch'), { code: 'reuse_repo_mismatch' });
+    if (initial.status !== 'pending') return Object.freeze({ ok: true, result: 'idempotent', processing: initial, event: null });
+    this._authorityOps += 1;
+    try {
+      const actor = `provider-reconciler:${initial.providerId}`; const head = this._coordination.reusePolicyState(config.repoId); if (!head) throw Object.assign(new Error('provider reconciliation policy is unavailable'), { code: 'reuse_policy_reconciliation_required' });
+      const rawBinding = await config.indexAuthority.current({ repoId: config.repoId, signal: ctx.signal });
+      const bindingFields = ['schemaVersion', 'repoId', 'treeSha', 'indexEpoch', 'atlasCardDigest'];
+      if (!rawBinding || Object.keys(rawBinding).sort().join(',') !== bindingFields.sort().join(',') || rawBinding.schemaVersion !== 1 || rawBinding.repoId !== config.repoId || rawBinding.atlasCardDigest !== config.card.atlasCardDigest
+        || !/^[a-f0-9]{4,128}$/.test(rawBinding.treeSha ?? '') || !/^[a-f0-9]{64}$/.test(rawBinding.indexEpoch ?? '')) throw Object.assign(new Error('provider index binding is invalid'), { code: 'provider_index_changed' });
+      const indexBinding = Object.freeze({ ...rawBinding, bindingDigest: canonicalDigest(rawBinding) }); const policy = Object.freeze({ hash: head.policyHash, version: head.version, constraintId: head.constraintId });
+      const requestDigest = canonicalDigest({ actor, processingId, expectedProcessingVersion: initial.version, repoId: initial.repoId, providerId: initial.providerId, sourceEpoch: initial.sourceEpoch, policy, indexBindingDigest: indexBinding.bindingDigest, trigger: 'official_provider_refresh' });
+      const key = `provider-processing:${requestDigest}`; const admitted = this._coordination.providerProcessingAdmission(key, requestDigest); if (admitted) return admitted;
+      const candidates = [];
+      for (const coordinate of initial.coordinates) {
+        const args = { indexEpoch: indexBinding.indexEpoch, ecosystem: coordinate.ecosystem, package: coordinate.package, version: coordinate.version, refresh: true }; const verifyCtx = { budgetTokens: config.budgetTokens, actor, signal: ctx.signal };
+        const claim = await this._capabilityRegistry().invoke('cartographer-quartermaster', 'reuse.vet', args, verifyCtx); const dossierRef = decisionRef(claim?.refs?.[0], 'dependency-dossier', 'application/vnd.baton.dependency-dossier+json');
+        const check = await this._capabilityRegistry().reverify('cartographer-quartermaster', 'reuse.vet', claim, args, verifyCtx); const snapshot = check.status === 'ok' ? check.payload?.[0]?.snapshot : null; const dossier = claim.payload?.[0];
+        if (!snapshot || !dossier || dossier.factDigest !== snapshot.factDigest || canonicalDigest(snapshot.identity) !== canonicalDigest(coordinate) || !Array.isArray(dossier.advisoryIds) || !Array.isArray(dossier.advisories)) throw Object.assign(new Error('provider official refresh diverged'), { code: 'reuse_evidence_diverged' });
+        const advisoryIds = [...new Set(dossier.advisoryIds)].sort(); const maliciousAdvisoryIds = [...new Set(dossier.advisories.filter((item) => item?.malicious === true).map((item) => item.id))].sort(); candidates.push({ coordinate, dossierRef, snapshot, advisoryIds, maliciousAdvisoryIds, claim });
+      }
+      const currentBinding = await config.indexAuthority.current({ repoId: config.repoId, signal: ctx.signal }); const bindingCheck = await config.indexAuthority.reverify(rawBinding, { signal: ctx.signal }); const currentHead = this._coordination.reusePolicyState(config.repoId);
+      if (canonicalDigest(currentBinding) !== canonicalDigest(rawBinding) || bindingCheck?.ok !== true) throw Object.assign(new Error('provider index changed during refresh'), { code: 'provider_index_changed' });
+      if (!currentHead || currentHead.policyHash !== policy.hash || currentHead.version !== policy.version || currentHead.constraintId !== policy.constraintId) throw Object.assign(new Error('provider policy changed during refresh'), { code: 'reuse_policy_reconciliation_required' });
+      if (candidates.some((row) => row.snapshot.recommendation !== 'borrow_candidate')) throw Object.assign(new Error('provider adverse observation requires monotonic guard completion'), { code: 'provider_adverse_pending' });
+      const observations = [];
+      for (const row of candidates) {
+        const projection = { processingId, coordinate: row.coordinate, dossierDigest: row.dossierRef.digest, factDigest: row.snapshot.factDigest, policyHash: policy.hash, indexBindingDigest: indexBinding.bindingDigest, recommendation: row.snapshot.recommendation, asOf: row.snapshot.asOf, expiresAt: row.snapshot.expiresAt, advisoryIds: row.advisoryIds, maliciousAdvisoryIds: row.maliciousAdvisoryIds }; const officialDigest = canonicalDigest(projection);
+        const verifiedEvent = this._log.append({ worker: 'hub-capability', harness: 'baton', turnEpoch: 0, actor, kind: 'knowledge.reuse_provider_reverified', payload: { ...projection, officialDigest } }); const reverifyEvidence = this._coordMapEvent(verifiedEvent);
+        observations.push({ coordinate: row.coordinate, dossierRef: row.dossierRef, snapshot: row.snapshot, advisoryIds: row.advisoryIds, maliciousAdvisoryIds: row.maliciousAdvisoryIds, reverifyEvidence, officialDigest });
+      }
+      const result = this._coordination.recordProviderGreenCompletion({ requestDigest, processingId, expectedProcessingVersion: initial.version, repoId: initial.repoId, providerId: initial.providerId, sourceEpoch: initial.sourceEpoch, receiptIds: initial.receiptIds, policy, indexBinding, observations }, { actor, key });
+      return Object.freeze({ ...result, dossiers: candidates.map((row) => row.claim) });
     } finally { this._authorityOps -= 1; }
   }
 
