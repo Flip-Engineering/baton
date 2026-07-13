@@ -29,7 +29,7 @@ test('AF1/AF2: registry pins a closed source card and returns only a secret-free
   assert.equal(verified.sourceEpoch, cards[0].cardDigest); assert.equal(verified.cardDigest, cards[0].cardDigest); assert.equal(verified.rawDigest, sha(raw)); assert.match(verified.contentDigest, /^[a-f0-9]{64}$/);
   assert.deepEqual(Object.keys(verified).sort(), ['advisoryIds', 'authReceiptDigest', 'cardDigest', 'contentDigest', 'coordinates', 'deliveryId', 'keyFingerprint', 'mode', 'occurredAt', 'providerId', 'rawBytes', 'rawDigest', 'schemaVersion', 'sequence', 'source', 'sourceEpoch'].sort());
   assert.equal(JSON.stringify(verified).includes(raw.toString()), false); assert.equal(JSON.stringify(verified).includes('secret'), false);
-  assert.equal(adapter.calls.length, 1); assert.notEqual(adapter.calls[0].input.raw, raw, 'adapter receives an immutable copy, not caller-owned bytes');
+  assert.equal(adapter.calls.length, 1); assert.notEqual(adapter.calls[0].input.raw, raw, 'adapter receives an isolated copy, not caller-owned bytes');
 });
 
 test('AF2: an adapter cannot rewrite the preserved authenticated wire bytes before registry cross-check', async () => {
