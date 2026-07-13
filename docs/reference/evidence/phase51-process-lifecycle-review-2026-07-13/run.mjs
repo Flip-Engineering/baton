@@ -29,9 +29,22 @@ const CODEX_CMD = loginCommand('codex', process.env.BATON_CODEX_CMD);
 const GROK_CMD = loginCommand('grok', process.env.BATON_GROK_CMD);
 const CLAUDE_CMD = loginCommand('claude', process.env.BATON_CLAUDE_CMD);
 const BASE_SHA = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim();
-const REVIEW_CONFIG = REVIEW_PHASE === '52' ? {
+const REVIEW_CONFIG = REVIEW_PHASE === '53' ? {
+  runId: 'phase53-contradiction-implementation-review',
+  taskType: 'phase53-contradiction-implementation-review',
+  reviewMode: 'This is a postimplementation review. The committed specification, source, transports, and tests are all in scope. Do not report their presence or absence abstractly: prove any defect against the committed implementation.',
+  files: 'spec/phase53/cairn-authenticated-contradiction-ux.md, spec/phase47/cairn-causal-integrity-audit.md, impl/src/coordination-store.mjs, impl/src/cairn-run-scorecard.mjs, impl/src/web-northbound.mjs, impl/src/mcp-northbound.mjs, and impl/test/phase53-cairn-contradictions.test.mjs',
+  future: 'Review only the Phase 53 implementation and compatibility with shipped Phase 47–52 authority; treat learned weighting, Playbook/Skill promotion, retention/export, representation depth, and other retained capabilities as future scope rather than Phase 53 defects.',
+  focus: {
+    codex: 'versioned event/replay compatibility, single-event contamination atomicity, exact CAS, and historical truth',
+    glm: 'authenticated direct/web/MCP authority, ACI idempotency and output preflight, closed public shapes, and non-bypassability',
+    grok45: 'stable pagination, every independent bound, untrusted snippet handling, and operator-facing refusal semantics',
+    grokbuild: 'concurrency/cancellation/append races, bitemporal views, reverify completeness, and missing adversarial gates',
+  },
+} : REVIEW_PHASE === '52' ? {
   runId: 'phase52-recall-assessment-review',
   taskType: 'phase52-recall-assessment-implementation-review',
+  reviewMode: 'This is an implementation review. The committed specification, source, and tests are all in scope.',
   files: 'spec/phase52/cairn-recall-outcome-attribution.md, impl/src/coordination-store.mjs, impl/src/cairn-run-scorecard.mjs, and impl/test/phase52-cairn-recall-assessment.test.mjs',
   future: 'Treat authenticated contradiction UX, learned weighting, Playbook/Skill promotion, retention/export, and other retained capabilities as future scope rather than Phase 52 defects.',
   focus: {
@@ -43,6 +56,7 @@ const REVIEW_CONFIG = REVIEW_PHASE === '52' ? {
 } : {
   runId: 'phase51-process-lifecycle-review',
   taskType: 'phase51-process-lifecycle-implementation-review',
+  reviewMode: 'This is an implementation review. The committed specification, source, and tests are all in scope.',
   files: 'spec/phase51/pre-ready-process-lifecycle.md, impl/src/process-lifecycle.mjs, the four shipped session/CLI adapters, impl/src/coordinator.mjs, and impl/test/phase51-process-lifecycle.test.mjs',
   future: 'Treat later retained capabilities as future scope rather than Phase 51 defects.',
   focus: {
@@ -94,7 +108,7 @@ async function until(fn, label, timeoutMs = 1_200_000) {
 
 function brief(task) {
   return createBrief({
-    goal: `Adversarially review committed Baton Phase ${REVIEW_PHASE} at ${BASE_SHA.slice(0, 7)}, focusing on ${task.focus}. Read ${REVIEW_CONFIG.files}. Write ${task.target} with exactly the headings "## Verdict", "## P0-P1 findings", and "## Required corrections".`,
+    goal: `Adversarially review committed Baton Phase ${REVIEW_PHASE} at ${BASE_SHA.slice(0, 7)}, focusing on ${task.focus}. ${REVIEW_CONFIG.reviewMode} Read ${REVIEW_CONFIG.files}. Write ${task.target} with exactly the headings "## Verdict", "## P0-P1 findings", and "## Required corrections".`,
     constraints: [
       `Edit only ${task.target}.`,
       'Keep the report under 1400 words and use at most 18 repository/tool calls.',
