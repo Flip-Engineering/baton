@@ -190,8 +190,11 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    bounded scope-drift refresh in Phase 34, external evidence in Phase 36, exact SBOM in Phase 37,
    immutable external reuse decision/promotion in Phase 38, advisory/TTL invalidation in Phase 39,
    the isolated proposed npm graph/delta in Phase 40, transitive advisory projection in Phase 41,
-   and policy-epoch reconciliation in Phase 42. Adverse provider ingestion is specified in Phase 43
-   and now proceeds through red tests/implementation; continue the remaining explicitly
+   and policy-epoch reconciliation in Phase 42. Phase 43 now has its first provider receipt,
+   semantic-processing, observed-Source, machine-ingress, and store-serialized pending-admission
+   foundation; native HTTP authentication/private CAS, official refresh, seedless monotonic adverse
+   union/fan-out, cursor/poll lifecycle, bounded read surfaces, and the full live matrix remain.
+   Continue the remaining explicitly
    catalogued later rungs, then demand-earned Cairn Rungs 1–4, Vantage, Evidence Ladder, and Skill
    Forge/computer use behind stronger containment.
 5. **Complete northbound/runtime depth:** MCP HTTP/Tasks/daemon, WebSocket, operator takeover,

@@ -1,0 +1,133 @@
+{
+  "at": "2026-07-13T01:53:50.901Z",
+  "repoHead": "af536e03905eeaea41cecf98a1077e08116621dc",
+  "runId": "phase43-harness-matrix",
+  "credentialPosture": {
+    "glm": "project-local ignored file loaded only by GlmSessionCli",
+    "codex": "explicit private runtime projection",
+    "claude": "subscription/keychain; no credential file projection"
+  },
+  "rows": [
+    {
+      "taskId": "phase43-claude-boundary-review",
+      "harness": "claude",
+      "model": "claude-opus-4-6",
+      "target": "reviews/dogfood/phase43-claude-boundary-review.md",
+      "workerId": "w-1",
+      "pid": 92359,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "modelRequested": "claude-opus-4-6",
+        "modelResolved": "claude-opus-4-6",
+        "modelObserved": "claude-opus-4-6",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 0,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "reportCaptured": false
+    },
+    {
+      "taskId": "phase43-codex-replay-review",
+      "harness": "codex",
+      "model": "gpt-5.6-sol",
+      "target": "reviews/dogfood/phase43-codex-replay-review.md",
+      "workerId": "w-2",
+      "pid": 92364,
+      "result": {
+        "status": "cancelled",
+        "ready": true
+      },
+      "route": {
+        "modelRequested": "gpt-5.6-sol",
+        "modelResolved": "gpt-5.6-sol",
+        "modelObserved": "gpt-5.6-sol",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 78418,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "reportCaptured": false
+    },
+    {
+      "taskId": "phase43-glm-causal-review",
+      "harness": "glm",
+      "model": "glm-4.7",
+      "target": "reviews/dogfood/phase43-glm-causal-review.md",
+      "workerId": "w-3",
+      "pid": 92370,
+      "result": {
+        "status": "completed",
+        "ready": true
+      },
+      "route": {
+        "modelRequested": "glm-4.7",
+        "modelResolved": "glm-4.7",
+        "modelObserved": "glm-4.7",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 55808,
+        "usd": 0.661629
+      },
+      "verifyAccept": true,
+      "reportCaptured": true
+    }
+  ],
+  "responses": [],
+  "kills": [
+    {
+      "taskId": "phase43-claude-boundary-review",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "phase43-codex-replay-review",
+      "ack": {
+        "ok": true,
+        "result": "already_dead"
+      }
+    },
+    {
+      "taskId": "phase43-glm-causal-review",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "checks": {
+    "noHarnessError": false,
+    "allHarnessesAdmitted": true,
+    "distinctNativePids": true,
+    "concurrentTurns": false,
+    "exactRoutes": true,
+    "freshVerified": false,
+    "reportsCaptured": false,
+    "killSafe": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimesGone": true,
+    "branchesGone": true,
+    "writerAuthorityReleased": true
+  },
+  "fatal": "Error: review gate incomplete: [{\"taskId\":\"phase43-claude-boundary-review\",\"status\":\"failed\",\"report\":false},{\"taskId\":\"phase43-codex-replay-review\",\"status\":\"cancelled\",\"report\":false},{\"taskId\":\"phase43-glm-causal-review\",\"status\":\"completed\",\"report\":true}]\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase43-harness-matrix-review-2026-07-12/run.mjs:36:46\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
+  "pass": false
+}

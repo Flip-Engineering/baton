@@ -136,6 +136,12 @@ grounding is `observed` for authenticated delivery and `derived` for risk projec
 `verified safe`. This extends Baton's local deployment-neutral causal graph only. No external
 project-manager or homelab runtime is consulted or mutated.
 
+Pending reconciliation is processing state, not a knowledge claim: it is exposed through bounded
+pending/currentness metadata and the typed `reuse_provider_pending` admission reason, but does not
+create a Finding or a second causal node. The receipt `Source` node binds the processing identity;
+the later official adverse transaction creates the first derived Finding and its explicit receipt
+and official-evidence lineage. This avoids presenting an authenticated hint as adverse knowledge.
+
 ## AF10 — bounded replay and observation surfaces
 
 Deployment ceilings cover unauthenticated peer/header/body/compression work, authenticated
