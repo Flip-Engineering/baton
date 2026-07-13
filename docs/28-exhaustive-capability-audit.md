@@ -27,7 +27,10 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    typed pre-spawn worktree readiness failure, fresh verification, emergency stop, and complete
    in-process reap. Failed checkout creation cannot fall through to a worker turn or adapter cwd.
 2. **Route specificity:** independent harness, exact model, and effort selection; visible
-   requested/resolved/observed attribution; fail-closed mismatch; concurrent exact Grok routes.
+   requested/resolved/observed attribution; fail-closed mismatch; concurrent provider-observed
+   exact Grok 4.5 and Composer routes. Literal Grok Build has concurrent exact process lifecycle
+   and reap evidence and reaches provider readiness, but Grok CLI 0.2.99 reports `grok-4.5`; the
+   exact-model mismatch is rejected and literal Build acceptance remains red.
 3. **Trust spine:** immutable briefs, pinned verification, red→green, changed-line coverage,
    mutation, independent-family oracle, ff integration, approval-gated exact-SHA publication, and
    opt-in structured staging with post-effect poison semantics.
@@ -203,7 +206,7 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    mutate grounding, validity, confidence, ranking, routing, or promotion. The 54-test adjacent
    Cairn gate and 1112/1112 canonical suite are green; recursive project-key GLM fresh-verifies
    PASS, while exact Codex and two concurrent Grok process groups retain honest route/lifecycle/reap
-   evidence and the current Grok provider-readiness matrix stays authentication-red.
+   evidence and that Phase 52 Grok provider-readiness matrix stayed authentication-red.
 26. **Cairn authenticated contradiction workspace:** Phase 53 adds deployment-pinned
    `causal.contradictions` and `causal.resolve_contradiction` operations. The first presents a
    stable paged audited workspace of complete unresolved pairs using only bounded UTF-8 snippets
@@ -243,6 +246,35 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    process groups closed/reaped, both Grok process intervals overlapped, and GLM fresh-verified under
    the same projection identity. Projection and lifecycle gates pass; provider matrix remains
    honestly red because Grok reports unauthenticated.
+29. **Public exact fleet drain and driver close:** Phase 56 gives direct, authenticated HTTPS, MCP,
+   and the host driver one fenced, replay-validated drain authority. It records every target
+   disposition, closes exact process generations, reconciles process/worktree/runtime/branch and
+   projection residue, then closes coordinator and writer authority under one deadline. The owned
+   evidence wrapper also confines and reaps its full process group and temporary root. Thirty-seven
+   focused contracts and the historical 1179/1179 canonical suite are green. The five-route run
+   proves drain/lifecycle truth, not provider/report success; literal Grok Build remained
+   authentication-red before provider observation.
+30. **Route-bound truthful provider governance:** Phase 57 binds the orchestrator-selected harness,
+   exact model, and effort to a closed strict/observe policy, per-turn reserve/release, native usage
+   seals, provider/tool-call accounting, replay, and sticky post-acceptance revocation. It refuses
+   strict claims when a route lacks native pre-effect support and never calls post-hoc telemetry
+   prevention. Twenty-two grouped contracts and the historical 1256/1256 canonical suite are green;
+   strict native never-cross enforcement and live provider readiness remain separate gates.
+31. **Canonical sparse worker/verifier authority:** Phase 58 carries one exact sparse identity
+   through deployment policy, atomic metadata, Git config/index, worktree events, capture, session
+   replay/resume, verification, and reconciliation. Hidden/out-of-view changes, tracked projection
+   substitution, base/branch smuggling, and physical ownership-root escapes fail closed. Fifty-four
+   focused real-Git contracts are green. Sparse checkout remains materialization/integrity identity,
+   not quota or a hostile-worker sandbox.
+32. **Repo-scoped byte/inode capacity authority:** Phase 59 reserves the exact pinned selected Git
+   tree, attested toolchain, and runtime allowance before worker/verifier effects. Sealed state,
+   generation locks, nonce-bound release, restart adoption/dead-owner release, verifier cleanup,
+   active legacy-close refusal, versioned/digested projection-target-parent accounting, sparse-parent
+   union, and zero-state drain receipts are executable. The historical baseline was 34 focused
+   contracts and 1346/1346 canonical tests; dogfood P1 repairs bring the current canonical suite to
+   1351/1351. The first five-provider run fresh-verified Codex, project-key GLM, and Grok 4.5 and
+   exactly reaped all five routes; Claude login and literal Grok Build model identity remain red.
+   Hard filesystem quota/same-UID isolation and a post-repair live rerun remain pending gates.
 
 ## What remains partial
 
@@ -253,13 +285,13 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   pin/exclude/prefer controls, and account quota-window/fleet-seat scheduling.
 - Cross-vendor review is wired, but continuous semantic review automation and structured reject
   postmortems are not.
-- Recursive execution now has Phase 55's immutable dual-root projection and no longer needs a
-  runner-staged dependency copy. Prompt-only tool-call ceilings remain unenforced, provider-terminal
-  usage can arrive too late for a strict pre-spend stop, and the public driver has no single
-  drain-and-close attestation. Direct exploratory test invocations also accumulated 8,899 stale
-  `baton-*` temporary directories before this run reclaimed them; the canonical suite owner is
-  bounded, but every bespoke recursive/evidence runner still needs the same explicit temp-root
-  ownership contract. These are governance/lifecycle gaps, not reasons to weaken exact reap claims.
+- Recursive execution now has Phase 55's immutable dual-root projection, Phase 56's public exact
+  drain/close plus owned evidence wrapper, Phase 57's truthful route-bound usage/call governance,
+  Phase 58's sparse identity, and Phase 59's pre-effect capacity reservation. Provider-terminal
+  usage can still arrive too late for native never-cross containment, strict provider/tool limits
+  depend on route-native support, and ad hoc direct invocations outside the owned wrapper still need
+  explicit temp-root ownership. These are retained governance/lifecycle gates, not reasons to
+  weaken exact reap claims.
 - Structured merge is shipped with an injected Mergiraf-class boundary; a live Mergiraf binary
   proof is absent. Publication has no live remote-push proof.
 - Scratch and causal knowledge primitives ship. Cairn Rungs 0–2 scorecard, verified RouteStats,
@@ -298,7 +330,8 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 
 ## What remains pending
 
-- Trust ramp policy, plan gate, impact-selected reruns, structured reject postmortems, and higher
+- Trust ramp policy, Goal/Plan authority plus its pre-effect Plan gate, impact-selected reruns,
+  structured reject postmortems, and higher
   Evidence Ladder rungs (property/fuzz/BMC/SMT/proof) under honest language/tool ceilings.
 - Vantage, Evidence Ladder as a capability module, Skill Forge/computer use, later
   Cartographer/Quartermaster supply/orientation rungs, and Cairn Playbook/Skill promotion,
@@ -306,8 +339,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   outcome-attribution substrate and Phase 53's authenticated human/orchestrator contradiction seam
   now ship.
 - Direct structural rewrite apply, live LSP, full SSA/PDG/path solving, interprocedural/alias/heap
-  CPG depth, closure/destructuring/catch binding support, deeper behavioral/provenance attestation overlays, semantic-delta depth, and
-  representation choreography.
+  CPG depth, closure/destructuring/catch binding support, graph-backed `Representation` and
+  semantic-delta producers, deeper behavioral/provenance attestation overlays, and representation
+  choreography. Reserved node types and attestation packets do not satisfy the producer gate.
 - True semantic merge, stacked integration, deploy adapters, rollback automation, and live remote
   publication.
 - Streamable HTTP MCP authorization, MCP Tasks/progress/daemon supervision, WebSocket parity,
@@ -340,8 +374,8 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    safe remote-push fixture remain.
 3. **Finish governance/session continuity:** durable router learning shipped in Phase 44 and
    supervised startup auto-rejoin shipped in Phase 45; next are provider-backed recovery proof,
-   in-flight continuation, vendor-honest fork/rewind, compaction DoD reinjection,
-   quota-window/seat scheduling, and operator route overrides.
+   in-flight continuation, vendor-honest fork/rewind, compaction DoD reinjection, Goal/Plan
+   authority and its pre-effect gate, quota-window/seat scheduling, and operator route overrides.
    Immutable bounded dual-root toolchain projection shipped in Phase 55; public drain/close,
    route-specific terminal-burst/call governance, sparse worker/verifier identity, and repo-scoped
    byte/inode admission shipped in Phases 56–59. The next live gate is the exact five-provider
@@ -371,7 +405,7 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    ship with exact deployment policy, stable bounded due derivation, per-receipt attempt windows,
    replay-safe sanitized events, single-flight supervision, abort/lease fencing, restart
    continuation, and a live outage-to-recovery proof. Additional real provider/ecosystem adapters,
-   positive clearance, and the currently authentication-red Grok matrix remain. Phase 44 then ships
+   positive clearance, and the still-red exact all-provider matrix remain. Phase 44 then ships
    Cairn Rung 1: atomic verified exact-tuple observations, local RouteStat lineage, deployment-pinned
    replay hydration, and bounded authenticated route advice, live- and recursively proved without
    a homelab or external knowledge-graph runtime. Continue the remaining explicitly

@@ -17,8 +17,10 @@ provider, or capacity-state effects.
 
 The default estimator reads the exact pinned Git tree and counts only paths covered by the
 normalized sparse identity (or the full tree), plus unique parent directories. It then adds the
-immutable toolchain projection's attested bytes/files/directories and the deployment runtime
-reserves. The reservation binds base SHA, sparse digest, toolchain projection digest, bytes, and
+immutable toolchain projection's attested bytes/files/total directories and the deployment runtime
+reserves. Total projection directories include unique strict target parents; target parents already
+materialized by the selected sparse tree are unioned rather than double-counted. The reservation
+binds base SHA, sparse digest, toolchain projection digest, bytes, and
 inodes. Observation or estimation failure refuses as `worktree_capacity_unavailable`; a valid
 max-plus-one or free-floor refusal is `worktree_capacity_exceeded`.
 

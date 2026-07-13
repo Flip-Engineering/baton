@@ -114,6 +114,13 @@ function worktreeManager(repoRoot, opts = {}) {
   const verifyReservations = new Map();
   const workerReservations = new Map();
   const pendingWorkerReservations = new Map();
+  const capacityRequest = (baseSha, sparsePaths, sparseCheckoutIdentity) => ({
+    baseSha,
+    sparsePaths,
+    sparseCheckoutIdentity,
+    toolchainProjection: opts.toolchainProjection?.identity() ?? null,
+    toolchainProjectionTargetParents: opts.toolchainProjection?.targetParentPaths() ?? [],
+  });
   return {
     reserveCapacity(taskId, requestedBaseSha = null) {
       if (!opts.worktreeCapacity) return null;
@@ -121,10 +128,10 @@ function worktreeManager(repoRoot, opts = {}) {
       const selected = requestedBaseSha ?? localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
       if (!/^[a-f0-9]{40}$/u.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
       localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
-      const reservation = opts.worktreeCapacity.reserve(`worker:${taskId}`, {
-        baseSha: selected, sparsePaths: opts.workerSparsePaths ?? [], sparseCheckoutIdentity: opts.workerSparseCheckoutIdentity,
-        toolchainProjection: opts.toolchainProjection?.identity() ?? null,
-      });
+      const reservation = opts.worktreeCapacity.reserve(
+        `worker:${taskId}`,
+        capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
+      );
       pendingWorkerReservations.set(taskId, { selected, reservation });
       return Object.freeze({ baseSha: selected, reservation });
     },
@@ -148,10 +155,10 @@ function worktreeManager(repoRoot, opts = {}) {
       }
       let capacityReservation = pending?.reservation;
       if (pending) pendingWorkerReservations.delete(taskId);
-      if (!capacityReservation && opts.worktreeCapacity) capacityReservation = opts.worktreeCapacity.reserve(`worker:${taskId}`, {
-        baseSha: selected, sparsePaths: opts.workerSparsePaths ?? [], sparseCheckoutIdentity: opts.workerSparseCheckoutIdentity,
-        toolchainProjection: opts.toolchainProjection?.identity() ?? null,
-      });
+      if (!capacityReservation && opts.worktreeCapacity) capacityReservation = opts.worktreeCapacity.reserve(
+        `worker:${taskId}`,
+        capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
+      );
       try {
         const r = await worktreeMod.createFromBase(repoRoot, taskId, selected, { dependencyDirs: opts.workerDependencyDirs ?? [], sparsePaths: opts.workerSparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
         if (capacityReservation) workerReservations.set(taskId, capacityReservation);
@@ -175,7 +182,10 @@ function worktreeManager(repoRoot, opts = {}) {
     async createVerifyWorktree(taskId, sha, verifyOpts = {}) {
       const reservationId = `verify:${taskId}:${++verifyReservationSeq}`;
       let capacityReservation;
-      if (opts.worktreeCapacity) capacityReservation = opts.worktreeCapacity.reserve(reservationId, { baseSha: sha, sparseCheckoutIdentity: opts.verifySparseCheckoutIdentity, toolchainProjection: opts.toolchainProjection?.identity() ?? null });
+      if (opts.worktreeCapacity) capacityReservation = opts.worktreeCapacity.reserve(
+        reservationId,
+        capacityRequest(sha, opts.verifySparsePaths ?? [], opts.verifySparseCheckoutIdentity),
+      );
       try {
         const r = await worktreeMod.freshVerifySandbox(repoRoot, taskId, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], requiredPaths: verifyOpts.requiredPaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
         if (capacityReservation) verifyReservations.set(resolve(r.dir ?? r.path), capacityReservation);
@@ -188,7 +198,10 @@ function worktreeManager(repoRoot, opts = {}) {
     async createBaseVerifyWorktree(taskId, sha) {
       const label = `${taskId}-base`; const reservationId = `verify:${label}:${++verifyReservationSeq}`;
       let capacityReservation;
-      if (opts.worktreeCapacity) capacityReservation = opts.worktreeCapacity.reserve(reservationId, { baseSha: sha, sparseCheckoutIdentity: opts.verifySparseCheckoutIdentity, toolchainProjection: opts.toolchainProjection?.identity() ?? null });
+      if (opts.worktreeCapacity) capacityReservation = opts.worktreeCapacity.reserve(
+        reservationId,
+        capacityRequest(sha, opts.verifySparsePaths ?? [], opts.verifySparseCheckoutIdentity),
+      );
       try {
         const r = await worktreeMod.freshVerifySandbox(repoRoot, label, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
         if (capacityReservation) verifyReservations.set(resolve(r.dir ?? r.path), capacityReservation);

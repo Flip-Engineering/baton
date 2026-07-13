@@ -221,6 +221,107 @@ test('WC2: default pinned sparse tree estimate composes projection identity and 
   assert.ok(snapshot.reservations.length <= 1);
 });
 
+test('WC3: projection target-parent inode max+1 refuses before checkout, materialization, or provider effects', async (t) => {
+  const f = fixture('projection-parent-max-plus-one', { projection: true });
+  const { adapter, spawnCalls } = countedBlockingAdapter();
+  const injected = injectedCapacity();
+  const treeBytes = Buffer.byteLength('selected-tree-bytes\n');
+  const treeInodes = 2;
+  const projectionInodes = f.projectionIdentity.fileCount + f.projectionIdentity.directoryCount;
+  const totalBytes = treeBytes + f.projectionIdentity.byteCount + validPolicy.runtimeReserveBytes;
+  const totalInodes = treeInodes + projectionInodes + validPolicy.runtimeReserveInodes;
+  let driver;
+  t.after(() => dispose(driver, f));
+  driver = createDriver({
+    repoRoot: f.repo,
+    logDir: f.logDir,
+    adapters: { mock: adapter },
+    workerSparsePaths: ['src/selected.txt'],
+    toolchainProjection: f.toolchainProjection,
+    worktreeCapacity: { ...validPolicy, maxReservedBytes: totalBytes, maxReservedInodes: totalInodes - 1 },
+    worktreeCapacityObserve: injected.worktreeCapacityObserve,
+  });
+
+  await assert.rejects(
+    driver.coordinator.spawn('mock', brief(), { taskId: 'capacity-projection-parent-max-plus-one' }),
+    (error) => error?.code === 'worktree_capacity_exceeded',
+  );
+  assert.equal(spawnCalls(), 0);
+  assert.equal(driver.coordinator.list().length, 0);
+  assert.equal(existsSync(join(f.repo, '.baton', 'wt', 'capacity-projection-parent-max-plus-one')), false);
+  assert.equal(existsSync(join(f.repo, '.baton', 'runtime')), false);
+  assert.deepEqual(driver.worktreeCapacity.snapshot().reservations, []);
+});
+
+test('WC2: shared projection target parents are unique and sparse-provided parents are not double-counted', async (t) => {
+  const f = fixture('projection-parent-union');
+  write(f.repo, 'vendor/keep.txt', 'tracked sparse parent\n');
+  git(['add', '-A'], f.repo);
+  git(['commit', '-qm', 'add sparse projection parent'], f.repo);
+  f.sha = git(['rev-parse', 'HEAD'], f.repo);
+  const sourceRoot = join(f.world, 'shared-toolchain');
+  write(sourceRoot, 'source-a/index.js', 'module.exports = "a";\n');
+  write(sourceRoot, 'source-b/index.js', 'module.exports = "b";\n');
+  const descriptor = {
+    schemaVersion: 1,
+    sourceRoot,
+    sourceId: 'phase59-shared-parent-toolchain',
+    mappings: [
+      { sourcePath: 'source-a', targetPath: 'vendor/shared/a' },
+      { sourcePath: 'source-b', targetPath: 'vendor/shared/b' },
+    ],
+    limits: {
+      maxMappings: 4, maxFiles: 16, maxDirectories: 16, maxBytes: 64 * 1024,
+      maxFileBytes: 32 * 1024, maxPathBytes: 256, maxDepth: 8,
+    },
+  };
+  const identity = inspectToolchainProjection(descriptor);
+  const toolchainProjection = { ...descriptor, expectedManifestDigest: identity.manifestDigest };
+  const { adapter } = countedBlockingAdapter();
+  const injected = injectedCapacity();
+  const exactInodes = 9;
+  let driver;
+  t.after(() => dispose(driver, f));
+  driver = createDriver({
+    repoRoot: f.repo,
+    logDir: f.logDir,
+    adapters: { mock: adapter },
+    workerSparsePaths: ['vendor/keep.txt'],
+    toolchainProjection,
+    worktreeCapacity: { ...validPolicy, maxReservedInodes: exactInodes },
+    worktreeCapacityObserve: injected.worktreeCapacityObserve,
+  });
+
+  assert.equal(identity.directoryCount, 4, 'two source roots plus unique vendor and vendor/shared parents');
+  assert.equal(identity.targetParentDirectoryCount, 2);
+  const handle = await driver.coordinator.spawn('mock', brief(), { taskId: 'capacity-projection-parent-union' });
+  await until(() => driver.coordinator.list().find((row) => row.id === handle.id)?.pendingQuestionId, 'shared projection parent boundary');
+  assert.equal(driver.worktreeCapacity.snapshot().totals.inodes, exactInodes);
+});
+
+test('WC2: projection target-parent paths must match their attested identity digest', (t) => {
+  const f = fixture('projection-parent-digest', { projection: true });
+  t.after(() => rmSync(f.world, { recursive: true, force: true }));
+  const authority = new WorktreeCapacityAuthority({
+    repoRoot: f.repo,
+    policy: validPolicy,
+    integrityKey: loadOrCreateWorktreeCapacityIntegrityKey(f.repo),
+    observe: () => ({ freeBytes: 10_000, freeInodes: 1_000 }),
+  });
+
+  assert.throws(
+    () => authority.reserve('worker:capacity-projection-parent-digest', {
+      baseSha: f.sha,
+      sparsePaths: ['src/selected.txt'],
+      sparseCheckoutIdentity: sparseCheckoutIdentity(['src/selected.txt']),
+      toolchainProjection: f.projectionIdentity,
+      toolchainProjectionTargetParents: ['src'],
+    }),
+    (error) => error?.code === 'worktree_capacity_unavailable',
+  );
+  assert.deepEqual(authority.snapshot().reservations, []);
+});
+
 test('WC3: byte max+1 refuses typed before worktree, runtime, task, or provider effect', async (t) => {
   const f = fixture('max-plus-one');
   const { adapter, spawnCalls } = countedBlockingAdapter();
@@ -714,4 +815,48 @@ test('WC22: trust-gate capacity refusal exposes a bounded typed code without cap
   assert.equal(refusal?.payload?.code, 'worktree_capacity_exceeded');
   assert.equal(Object.hasOwn(refusal?.payload ?? {}, 'freeBytes'), false);
   assert.equal(Object.hasOwn(refusal?.payload ?? {}, 'reservations'), false);
+});
+
+test('WC23: reconciliation releases dead foreign owners without stealing live foreign capacity', (t) => {
+  const f = fixture('dead-foreign-owner');
+  t.after(() => rmSync(f.world, { recursive: true, force: true }));
+  const policy = { ...validPolicy, maxReservedBytes: 120 };
+  const integrityKey = loadOrCreateWorktreeCapacityIntegrityKey(f.repo);
+  const estimate = () => ({ bytes: 60, inodes: 5 });
+  const observe = () => ({ freeBytes: 10_000, freeInodes: 1_000 });
+  const foreign = new WorktreeCapacityAuthority({
+    repoRoot: f.repo, policy, integrityKey, estimate, observe,
+  });
+  const request = {
+    baseSha: f.sha, sparsePaths: [], sparseCheckoutIdentity: sparseCheckoutIdentity([]), toolchainProjection: null,
+  };
+  foreign.reserve('worker:capacity-dead-foreign', request);
+  const liveForeign = foreign.reserve('worker:capacity-live-foreign', request);
+  const retainedPath = join(f.repo, '.baton', 'wt', 'capacity-dead-foreign');
+  mkdirSync(retainedPath, { recursive: true });
+
+  const statePath = join(f.repo, '.baton', 'capacity', 'reservations.json');
+  const state = JSON.parse(readFileSync(statePath, 'utf8'));
+  const definitelyDeadPid = 2_147_483_647;
+  const reservations = state.reservations.map((row) => row.id === 'worker:capacity-dead-foreign'
+    ? { ...row, pid: definitelyDeadPid }
+    : row);
+  writeFileSync(statePath, `${JSON.stringify(foreign._seal({ ...state, reservations }), null, 2)}\n`, { mode: 0o600 });
+
+  const restarted = new WorktreeCapacityAuthority({
+    repoRoot: f.repo, policy, integrityKey, estimate, observe,
+  });
+  const report = restarted.reconcile([]);
+
+  assert.deepEqual(report.removed, ['worker:capacity-dead-foreign']);
+  assert.deepEqual(report.active, ['worker:capacity-live-foreign']);
+  assert.equal(existsSync(retainedPath), true, 'capacity reconciliation must not claim worktree cleanup authority');
+  const retained = restarted.snapshot().reservations[0];
+  assert.equal(retained.ownerId, liveForeign.ownerId);
+  assert.equal(retained.pid, process.pid);
+
+  const replacement = restarted.reserve('worker:capacity-dead-replacement', request);
+  assert.equal(restarted.snapshot().totals.bytes, 120, 'released dead capacity must be immediately reusable');
+  assert.equal(restarted.release(replacement), true);
+  assert.equal(foreign.release(liveForeign), true);
 });

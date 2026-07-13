@@ -161,7 +161,7 @@ One adapter per vendor, each translating the eight commands into that tool's rea
 - **Codex** — the richest controls: a background "app-server" you talk to over a local socket, with native redirect-a-running-turn, goal-pinning, and cancel. Best raw target. (Its experimental WebSocket transport is *not* production — use the local socket.)
 - **Claude Code** — headless mode (`claude -p`) or the Agent SDK; native interrupt and per-tool approval hooks; steering is emulated (interrupt + re-prompt) and flagged as such.
 - **GLM** — Claude Code pointed at Z.ai's Anthropic-compatible endpoint (officially supported); inherits Claude Code's controls, but with a hard concurrency limit (~1 at a time on the Pro plan) the scheduler must respect.
-- **Grok Build** — native ACP sessions with exact Grok model selection, native cancel, emulated steer, usage metadata, and concurrent session support; authentication readiness is reported honestly rather than inferred from a credential file.
+- **Grok Build** — native ACP sessions with exact Grok model selection, native cancel, emulated steer, usage metadata, and concurrent session support; authentication readiness is reported honestly rather than inferred from a credential file. Literal `grok-build` currently reaches provider readiness, but Grok CLI 0.2.99 reports `grok-4.5`; Baton rejects that exact-model mismatch and still closes/reaps the route. The older provider-observed Composer run covers a distinct model and is not equivalent.
 - **Fallback tier** — any tool that speaks the ACP standard (Gemini CLI and others) via one shared adapter, at reduced control. And a last-resort screen-scraping tier for tools with no real interface, so the fleet view is never blind — just coarse.
 
 Each adapter publishes a **card** saying which controls it supports natively vs. emulates vs. can't do — so the driver never silently pretends an emulated steer is a real one.
@@ -221,20 +221,24 @@ Every feature the exploration produced, with honest status. **Core** = the drive
 | Independent oracle (different vendor writes gate tests) | Trust | Later | `docs/21` |
 | Cross-vendor review pass (different family reviews the semantic diff) | Trust | Earlier | `docs/21` |
 | Delegation-contract brief (structured; "done" = pinned command) | Core/Context | MVP | `docs/21`, `spec/communication-channel.md` |
-| Plan-gate (approve the plan before spending budget) | Context | MVP-adjacent | `docs/21` |
+| Pre-effect Plan gate (approve consequential plans before budget or outside-world effects) | Context/Trust | Required, unshipped; cannot be inferred from a delegation brief | `docs/21`, `docs/26` §E |
+| Goal/Plan authority (bounded dependencies/risk, durable amendments, immutable goal and definition of done) | Core/Context/Trust | Required, unshipped; workers may not weaken the goal or DoD while executing | `docs/26` §E |
 | Story compiler (live plain-language fleet narrative) | Monitoring | Phase 2 | `docs/21`, `docs/14` #16 |
 | Standard telemetry out (OpenTelemetry GenAI) | Monitoring | Later | `docs/21` |
 | Structured postmortem on gate-reject | Debugging | Later | `docs/21` |
 | Structured (syntax-aware) merge rung | Tools | Shipped Phase 26 | `spec/phase26/structured-merge.md`, `docs/21`, `docs/15` |
+| Stacked integration queues + deploy/health/rollback/live-publication authority | Core/Trust/Operate | Later, approval-gated; structured merge or a local fast-forward does not satisfy this row | `docs/26` §E |
 | E-graph/equality-saturation evaluation | Tools/Trust | Shipped Phase 27 negative gate: native repo/function engine retired or redirected; external expression/kernel research conditionally catalogued | `spec/phase27/egraph-evaluation.md`, `docs/15`, `reviews/frontier-features/representation.md` |
 | Governance firewall (re-inject constraints on compaction) | Context | MVP-adjacent | `docs/21`, `docs/12` |
 | Deeper check ladder (proptest→fuzz→proof) | Trust | Later | `docs/capabilities/math-proof.md` |
 | Adaptive, recency-biased routing + durable verified RouteStats | Smart/Memory | Shipped Phase 44; deployment-pinned exact-tuple learning, restart hydration, and read-only Cairn advice | `spec/phase44/cairn-route-stats.md`, `docs/20` |
+| Account/seat-aware quota-window scheduling | Smart/Operate/Safety | Later; quota inputs and RouteStats do not yet provide automatic fleet scheduling | `docs/26` §§D,F |
 | Fast scratchpad / medium task-list / slow knowledge | Memory | Later (task-list MVP) | `docs/08`, capabilities |
 | Replay & counterfactual re-run | Memory | Later (free from log) | `docs/14` #20 |
 | Shared code search | Tools | Later | `docs/capabilities/discovery-search.md` |
 | Structured debugging + record-replay | Tools | Later | `docs/capabilities/debug-interp.md` |
 | Semantic diff (review by meaning) | Tools | Earlier (high value) | `docs/15` |
+| Graph-backed `Representation` and semantic-delta producers | Tools/Memory/Trust | Later; reserved node types and attestation packets do not count as evidence-bound producers | `docs/26` §§G,I |
 | Repo orientation map | Tools | Later | `docs/capabilities/orientation-reuse.md` |
 | Exact dependency dossier + actual-lockfile SBOM | Tools/Safety | Shipped Phases 36–37 | `spec/phase36`, `spec/phase37`, `docs/capabilities/orientation-reuse.md` |
 | Immutable external `borrow\|build` decision + causal promotion | Safety/Memory | Shipped Phase 38 | `spec/phase38/immutable-reuse-decision.md`, `docs/capabilities/orientation-reuse.md` |

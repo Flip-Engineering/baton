@@ -118,7 +118,30 @@ function selected(path, sparseIdentity) {
   return sparseIdentity.mode === 'full' || sparseIdentity.paths.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 }
 
-function defaultEstimate({ repoRoot, baseSha, sparseCheckoutIdentity, toolchainProjection, policy }) {
+function projectionTargetParents(toolchainProjection, parents) {
+  if (!Array.isArray(parents) || parents.length !== toolchainProjection.targetParentDirectoryCount) {
+    throw typed('toolchain projection capacity identity is unavailable', 'worktree_capacity_unavailable');
+  }
+  const unique = new Set();
+  for (const parent of parents) {
+    if (typeof parent !== 'string' || parent.length === 0 || parent.includes('\\')
+      || parent.normalize('NFC') !== parent || /[\u0000-\u001f\u007f]/u.test(parent)) {
+      throw typed('toolchain projection capacity identity is unavailable', 'worktree_capacity_unavailable');
+    }
+    const parts = parent.split('/');
+    if (parts.some((part) => part.length === 0 || part === '.' || part === '..')) {
+      throw typed('toolchain projection capacity identity is unavailable', 'worktree_capacity_unavailable');
+    }
+    unique.add(parent);
+  }
+  const ordered = [...unique].sort((a, b) => a.localeCompare(b));
+  if (unique.size !== parents.length || digest(ordered) !== toolchainProjection.targetParentDirectoryDigest) {
+    throw typed('toolchain projection capacity identity is unavailable', 'worktree_capacity_unavailable');
+  }
+  return unique;
+}
+
+function defaultEstimate({ repoRoot, baseSha, sparseCheckoutIdentity, toolchainProjection, toolchainProjectionTargetParents, policy }) {
   const raw = git(['ls-tree', '-r', '-l', '-z', baseSha], repoRoot);
   let bytes = policy.runtimeReserveBytes;
   let inodes = policy.runtimeReserveInodes;
@@ -133,11 +156,13 @@ function defaultEstimate({ repoRoot, baseSha, sparseCheckoutIdentity, toolchainP
     inodes += 1;
     const parts = path.split('/'); for (let index = 1; index < parts.length; index += 1) directories.add(parts.slice(0, index).join('/'));
   }
-  inodes += directories.size;
   if (toolchainProjection) {
+    const targetParents = projectionTargetParents(toolchainProjection, toolchainProjectionTargetParents);
+    const existingTargetParents = [...targetParents].filter((parent) => directories.has(parent)).length;
     bytes += toolchainProjection.byteCount;
-    inodes += toolchainProjection.fileCount + toolchainProjection.directoryCount;
+    inodes += toolchainProjection.fileCount + toolchainProjection.directoryCount - existingTargetParents;
   }
+  inodes += directories.size;
   return { bytes, inodes };
 }
 
@@ -381,6 +406,8 @@ export class WorktreeCapacityAuthority {
         if (row.kind === 'verify') { removed.push(row.id); return false; }
         const ownedInactive = row.ownerId === this.ownerId && !active.has(row.id);
         if (ownedInactive) { removed.push(row.id); return false; }
+        const deadForeignInactive = row.ownerId !== this.ownerId && !active.has(row.id) && !livePid(row.pid);
+        if (deadForeignInactive) { removed.push(row.id); return false; }
         if (active.has(row.id) && row.kind === 'worker' && row.ownerId !== this.ownerId) {
           const next = Object.freeze({ ...row, ownerId: this.ownerId, nonce: randomBytes(16).toString('hex'), pid: process.pid });
           adopted.push(next); return false;

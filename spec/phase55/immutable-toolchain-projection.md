@@ -33,11 +33,17 @@ Unknown fields, missing bounds, duplicate/overlapping source or target mappings,
 paths, targets under `.git` or `.baton`, a non-directory source root, and a digest mismatch refuse
 before driver authority or a worktree is created.
 
-The immutable public identity is exactly schema version, source ID, manifest digest, projection
-digest, mapping/file/directory/byte counts, and the deployment limits. It contains no source root,
+The immutable public identity is exactly schema version, directory-accounting version, source ID,
+manifest digest, projection digest, mapping/file/directory/target-parent-directory/byte counts, the
+target-parent-directory digest, and
+the deployment limits. `directoryAccountingVersion: 2` makes `directoryCount` the total known
+materialized-directory count: mapped source-tree directories plus the unique strict parents of all
+target mappings. The target-parent count is the overlap-able subset used by capacity estimation;
+the actual relative parent paths remain private to the deployment authority and are checked against
+the public digest before capacity accounting. The identity contains no source root,
 resolved host path, source path, executable path, environment, credential, file content, inode, or
 timestamp. `manifestDigest` binds the sorted closed file/directory manifest; `projectionDigest`
-also binds the source ID, target mapping, and limits.
+also binds the source ID, target mapping, corrected directory accounting, and limits.
 
 ### TP2 — safe, complete source traversal
 
@@ -55,7 +61,8 @@ unambiguous source and destination identity.
 
 The closed limits are `maxMappings`, `maxFiles`, `maxDirectories`, `maxBytes`, `maxFileBytes`,
 `maxPathBytes`, and `maxDepth`. Every value is a positive safe integer within implementation
-ceilings; per-file bytes cannot exceed aggregate bytes. Each independent exact-limit case succeeds
+ceilings; per-file bytes cannot exceed aggregate bytes. The directory ceiling applies to mapped
+source-tree directories plus unique target parents. Each independent exact-limit case succeeds
 and each max+1 case refuses with typed `toolchain_projection_oversize` before a public identity or
 usable copy is returned. There is no truncation, sampling, default, or caller-supplied post-hoc
 override.

@@ -48,6 +48,19 @@ function overlaps(a, b) {
   return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
 }
 
+function targetParentPaths(mappings) {
+  const parents = new Map();
+  for (const mapping of mappings) {
+    const parts = mapping.targetPath.split('/');
+    for (let index = 1; index < parts.length; index += 1) {
+      const path = parts.slice(0, index).join('/');
+      const key = path.toLocaleLowerCase('en-US');
+      if (!parents.has(key)) parents.set(key, path);
+    }
+  }
+  return Object.freeze([...parents.values()].sort((a, b) => a.localeCompare(b)));
+}
+
 function validateConfig(config, withExpected) {
   exactKeys(config, withExpected ? [...BASE_FIELDS, 'expectedManifestDigest'] : BASE_FIELDS, 'toolchain projection configuration is invalid');
   if (config.schemaVersion !== 1 || typeof config.sourceRoot !== 'string' || !isAbsolute(config.sourceRoot)
@@ -154,10 +167,14 @@ function scanProjection(config, actualRoot, sourceSide, retainBytes = false) {
 }
 
 function publicIdentity(config, scanned) {
+  const targetParents = targetParentPaths(config.mappings);
+  const directoryCount = scanned.counters.directories + targetParents.length;
+  if (directoryCount > config.limits.maxDirectories) throw typed('toolchain projection exceeded a deployment limit', 'toolchain_projection_oversize');
   const core = {
-    schemaVersion: 1, sourceId: config.sourceId, manifestDigest: scanned.manifestDigest,
+    schemaVersion: 1, directoryAccountingVersion: 2, sourceId: config.sourceId, manifestDigest: scanned.manifestDigest,
     mappingCount: config.mappings.length, fileCount: scanned.counters.files,
-    directoryCount: scanned.counters.directories, byteCount: scanned.counters.bytes,
+    directoryCount, targetParentDirectoryCount: targetParents.length,
+    targetParentDirectoryDigest: digestValue(targetParents), byteCount: scanned.counters.bytes,
     limits: config.limits,
   };
   return Object.freeze({ ...core, projectionDigest: digestValue({ ...core, mappings: config.mappings }) });
@@ -196,10 +213,12 @@ export function prepareToolchainProjection(rawConfig) {
   const identity = publicIdentity(config, initial);
   if (identity.manifestDigest !== config.expectedManifestDigest) throw typed('toolchain source changed', 'toolchain_projection_changed');
   const targetPaths = Object.freeze(config.mappings.map((mapping) => mapping.targetPath));
+  const targetParents = targetParentPaths(config.mappings);
 
   const authority = {
     identity: () => identity,
     targetPaths: () => [...targetPaths],
+    targetParentPaths: () => [...targetParents],
     matchesIdentity: (candidate) => same(candidate, identity),
     verifyMaterialization: (targetRoot) => {
       try {

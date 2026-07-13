@@ -91,6 +91,12 @@ route-tuple implementation gate. The isolated concurrent Grok rerun is now also 
 requested and provider-observed exact `grok-4.5` and `grok-composer-2.5-fast` routes, resumed one
 session, killed it while working, and fully reaped both workers.
 
+That historical Composer proof is not a literal Grok Build proof. Later recursive runs selected
+literal `grok-build` and proved concurrent process start, exact close, and complete reap. The
+current Grok CLI 0.2.99 reaches provider readiness but reports `grok-4.5`; Baton rejects the
+exact-model mismatch. A literal Grok Build provider observation and accepted report therefore
+remain red; Composer evidence is not a substitute.
+
 Concurrent-provider acceptance includes starting multiple Grok workers at once, observing the
 configured concurrency/card limits, interrupting and killing selected workers, and proving native
 process, worktree, runtime scope, branch, and coordinator-state reap. Missing provider credentials
@@ -249,13 +255,15 @@ proof; every one remains visible under its existing Decision gate.
 
 ## Current pursuit order
 
-Current shipped checkpoints as of 2026-07-11: CK1–CK9 supplies the deployment-neutral task,
+Shipped checkpoint history (with each test count retained at its phase-completion baseline):
+CK1–CK9 supplies the deployment-neutral task,
 artifact, Scratch, and typed causal knowledge authority; Atlas supplies AST structural delta,
 proposal-only structural pattern search/rewrite, shared base/worktree index, lexical orientation,
 symbol/reference/call graph, SCIP JSON, and a first single-file CPG seed with containment,
 control, lexical reaching-def, and honest local-call edges; and
-Phase 12 WN6 supplies the authenticated resumable SSE user-to-orchestrator observation channel;
-and Phase 14 supplies the first-class `{harness, exactModel, effort}` route tuple across cards,
+Phase 12 WN6 supplies the authenticated resumable SSE orchestrator-to-user observation channel,
+while the Phase 12 HTTPS surface supplies authenticated user-to-orchestrator commands; and Phase 14
+supplies the first-class `{harness, exactModel, effort}` route tuple across cards,
 direct and automatic dispatch, authenticated web commands, native wires, durable attribution,
 learning, replay, recovery, review, verification, integration, and commit trailers. The recursive
 Codex route/review gates used exact `gpt-5.6-sol` at `low` effort and fully reaped every worker.
@@ -269,7 +277,10 @@ twelfth clean Codex review was refused by the provider usage limit before a verd
 independent-review gate remains pending. Authenticated concurrent Grok route/kill/reap now passes
 for exact `grok-4.5` and `grok-composer-2.5-fast`: both provider identities were observed, one
 session resumed, a live second turn was killed, and every owned resource was reaped. The first
-rerun also exposed and closed linked-Git-worktree exclusion-path handling. Earlier dogfood exposed
+rerun also exposed and closed linked-Git-worktree exclusion-path handling. That Composer route is
+historical coverage of a distinct model, not literal `grok-build` evidence; current literal Build
+reaches provider readiness but is observed as `grok-4.5`, so exact mismatch rejection and process
+close/reap are green while literal Build acceptance remains red. Earlier dogfood exposed
 a false-green missing-test command and 14,070
 unowned temporary fixture directories that exhausted the host disk; fixture lifecycle ownership
 is therefore an explicit reliability gate, not housekeeping. TF1–TF4 now makes `npm test` own a
@@ -771,8 +782,9 @@ the orchestrator. Closed strict/observe policies bind token metric, usage, provi
 counts, per-turn reservations, terminal seals, policy digest, and route digest through live events,
 result, replay, and post-acceptance revocation. One-shot argv and session routes retain exact model
 and effort, while process lifecycle remains bounded and reapable. The canonical suite reached
-1256/1256 green. GitHub issue #2 remains the public tracking seam for exact harness/model/effort
-routing. This work does not replace provider-backed recovery, authenticated operator depth,
+1256/1256 green. Closed GitHub issue #2 is the public implementation record for exact
+harness/model/effort routing; it is not evidence that the remaining live provider-readiness gate is
+green. This work does not replace provider-backed recovery, authenticated operator depth,
 Scratch/Bench/Skill promotion, or any representation rung.
 
 Phase 58 began as the sparse-worker response to a real Baton-on-Baton ENOSPC failure before any
@@ -795,9 +807,16 @@ provider effects. Repo-scoped HMAC-sealed state, generation locks, nonce-bound r
 adoption, abandoned-verifier cleanup, active legacy-close refusal, and pre-writer-release zero-state
 drain receipts are executable. Legacy un-attested dependency copying refuses when capacity is on.
 The HMAC is corruption detection when its key is withheld, not a hostile same-UID worker boundary;
-OS sandboxing and hard isolated-volume quotas remain explicit later gates. Thirty-four focused
-capacity contracts and the 1346/1346 canonical suite are green. The exact five-provider recursive
-sparse+capacity rerun remains a live acceptance gate, not a claimed completion.
+OS sandboxing and hard isolated-volume quotas remain explicit later gates. The historical Phase 59
+baseline was 34 focused capacity contracts and 1346/1346 canonical tests. The first five-provider
+recursive sparse+capacity run on `afe1ff6` admitted all five exact requests, sampled both Grok
+process groups simultaneously, fresh-verified Codex, project-key GLM, and Grok 4.5 reports, and
+exactly closed/reaped every process/worktree/runtime/branch/writer/capacity surface. Claude remained
+not logged in; literal `grok-build` was observed as `grok-4.5` and rejected. Its reviews exposed two
+P1s: target-parent projection inodes were undercounted, and dead foreign reservation owners could
+remain retained. Versioned/digested total-directory accounting with sparse-parent union and
+dead-owner reconciliation now close both under red/green tests; the canonical suite is 1351/1351.
+A post-repair five-provider rerun remains the live gate, not a claimed all-provider completion.
 
 These operational phases do not narrow the retained system. The self-contained causal/temporal
 knowledge graph remains inspired by repository-local project-manager prior art without homelab or
@@ -815,8 +834,9 @@ catalogued work with their existing evidence-ladder gates.
    provider-backed recovery proof, in-flight continuation, and vendor-honest fork/rewind depth
    remain. Phase 55 separately ships immutable bounded toolchain projection for clean-target
    recursive sessions. Phase 56 ships universal evidence-owner temp/process cleanup plus direct,
-   authenticated web, MCP, and driver drain-and-close; terminal-burst/call governance and deeper
-   provider recovery remain.
+   authenticated web, MCP, and driver drain-and-close. Phase 57 ships deterministic route-bound
+   reservation, usage-seal, provider/tool-call, and post-acceptance revocation governance; strict
+   native pre-effect enforcement, live provider readiness, and deeper provider recovery remain.
 4. Ship OS/credential isolation and budget/watchdog governance.
 5. Complete hardened acceptance and structured integration.
 6. Ship the task/artifact/Scratch substrate and deployment-neutral causal knowledge core.
@@ -829,7 +849,9 @@ catalogued work with their existing evidence-ladder gates.
 8. Expand the representation and capability ladders in measured increments. **Phase 54 lexical
    binding identity is shipped; every deeper representation rung remains.**
 9. Add MCP plus authenticated HTTPS/WebSocket user↔orchestrator control, operator surfaces,
-   production runtime, and the registered evaluations. **Authenticated HTTPS/MCP drain control is
-   shipped in Phase 56; the broader command/operator surface remains.**
+   production runtime, and the registered evaluations. **Authenticated HTTPS user-to-orchestrator
+   commands, resumable SSE observation, MCP stdio fleet tools, and direct/web/MCP drain control are
+   shipped. WebSocket parity, complete Goal/Plan/budget/publication/operator depth, the production
+   runtime, and registered evaluations remain.**
 
 No later step is permission to erase it from the goal.

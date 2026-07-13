@@ -21,14 +21,18 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **1347/1347
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **1351/1351
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
 worktrees, and fresh-worktree trust gates. Live proofs include four concurrent real Grok sessions
 that were interrupted/killed and fully reaped, plus exact concurrent `grok-4.5` and
 `grok-composer-2.5-fast` routes with provider-observed identity, native session resume, live kill,
-idempotent cleanup, and complete process/worktree/runtime/branch reap. Opt-in structured
+idempotent cleanup, and complete process/worktree/runtime/branch reap.
+That Composer run is historical coverage of a distinct model, not literal Grok Build proof:
+the current exact `grok-build` run reaches provider readiness but Grok CLI 0.2.99 reports
+`grok-4.5`; Baton records the mismatch, rejects the route, and still closes/reaps it exactly.
+Opt-in structured
 integration now stages divergent accepted results off-main, wraps an injected Mergiraf-class
 resolver, freshly verifies the merge commit, and only then advances main; true data-flow semantic
 merge remains a separately measured research bet. The active complete scope,
@@ -84,7 +88,7 @@ authoring, waiver, clearance, install, project-manager export, or homelab integr
 provider feeds, independently verified provenance, exact `internal` decisions, trusted advisory/
 source identity and true reachability, plan approval, positive clearance, additional ecosystems,
 composite surfaces, and deeper Cairn remain pending. The live policy-cycle proof passes **13/13**;
-the current canonical suite is **1347/1347 green**.
+the current canonical suite is **1351/1351 green**.
 
 Phases 43–50 extend the provider, routing, representation-attestation, and Cairn causal-knowledge
 verticals through durable provider recovery, exact route learning, supervised native-session
@@ -94,7 +98,7 @@ separates exact process start, provider readiness, and exact close; kill waits f
 death and cleanup, forced/poisoned reaps are retryable, recovery identity remains transactional,
 and authenticated web/MCP status exposes only a bounded process reference. Exact Codex
 `gpt-5.6-sol`/low, GLM `glm-4.7`/low, Grok 4.5/low, and Grok Build/low remain in the recursive
-matrix; the current Grok legs are honestly authentication-red while their concurrent process
+matrix; that Phase 51 attempt's Grok legs were honestly authentication-red while their concurrent process
 groups and all owned resources are proven reaped.
 Phase 52 closes Cairn's feedback-observability gap without inventing causation: the audit-gated
 `causal.assess_recall` operation deterministically binds task-scoped Phase 48 receipts to later exact
@@ -103,10 +107,10 @@ hub-verification and compatible terminal outcomes as `verified_pass_after_recall
 honest coverage/association audit metrics, restart reverify, direct/web/MCP authority, and every
 max+1/output-preflight gate are executable; no worker rating, “helped” claim, ranking/confidence
 mutation, project-manager runtime, or homelab integration is added.
-The recursive exact-route gate fresh-verifies the project-key GLM PASS report, reaches exact Codex
+That Phase 52 recursive exact-route gate fresh-verifies the project-key GLM PASS report, reaches exact Codex
 provider readiness, starts both Grok routes concurrently, records exact close for all four process
 groups, explicitly kills GLM, and restores every ownership surface. The strict native matrix stays
-honestly red at this installed Grok CLI's pre-readiness authentication refusal.
+honestly red at that installed Grok CLI's pre-readiness authentication refusal.
 Phase 53 closes Cairn's operator contradiction seam. `causal.contradictions` exposes a stable,
 bounded, untrusted-evidence workspace, while `causal.resolve_contradiction` performs an explicit
 authenticated prefix-CAS winner/loser decision through one replay-validated atomic event that
@@ -114,7 +118,7 @@ closes the edge, invalidates only the loser, and records exact prior-reader cont
 authenticated HTTPS, and MCP invoke/reverify share one authority; cancellation and output ceilings
 fail before commit, and post-append cancellation is explicitly commit-wins. Nine grouped Phase 53
 contracts, 65 adjacent Cairn contracts, and the **1121/1121** canonical suite are green. Recursive
-project-key GLM fresh-verifies PASS; exact Codex is honestly budget-cancelled, both Grok groups are
+That Phase 53 run's project-key GLM fresh-verifies PASS; exact Codex is honestly budget-cancelled, both Grok groups are
 concurrently auth-red, and every process and ownership surface is exactly closed and reaped. Baton
 remains self-contained: project-manager is architectural inspiration only, with no homelab runtime
 or integration target.
@@ -141,17 +145,25 @@ and mixed legacy/new configuration fail closed with cleanup. Eleven focused cont
 against a dependency-free clean target. All five native process groups closed and reaped, the two
 Grok intervals overlapped, and GLM fresh-verified a report through an independently projected
 verifier. The projection/lifecycle gates are green; the strict provider matrix remains honestly red
-because the installed Grok CLI reports unauthenticated. Terminal-burst/call governance, a public
-drain-and-close attestation, provider-backed continuation, Scratch Board/Bench, Skill/Playbook
-promotion, deeper web/operator surfaces and evaluations, and every retained representation rung
-remain in the full-system goal.
+because the installed Grok CLI reports unauthenticated. At this Phase 55 checkpoint, public
+drain-and-close and deterministic route-bound call/usage governance were still open; Phases 56–57
+below close those deterministic gaps. Strict native pre-effect provider/tool enforcement,
+provider-backed continuation, Scratch Board/Bench, Skill/Playbook promotion, deeper web/operator
+surfaces and evaluations, and every retained representation rung remain in the full-system goal.
 
 Phases 56–59 now ship public exact fleet drain/close, route-bound truthful provider governance,
 canonical sparse worker/verifier identities with hidden-diff refusal, and a repo-scoped byte/inode
 capacity authority. Exact base/branch binding prevents metadata from erasing the admitted diff,
-ownership roots refuse symlink escape, and legacy close refuses live reservations. The current
-five-provider sparse+capacity recursive proof remains an explicit live gate rather than a claimed
-completion.
+ownership roots refuse symlink escape, and legacy close refuses live reservations. Their historical
+phase baselines remain 1179/1179 for Phase 56, 1256/1256 for Phase 57, and 1346/1346 for Phase 59;
+the current canonical result is the 1351/1351 status above. The first exact five-provider
+sparse+capacity recursive proof admitted all five routes, sampled both Grok groups live
+simultaneously, fresh-verified Codex `gpt-5.6-sol`, project-key GLM `glm-4.7`, and Grok 4.5 reports,
+and exactly closed/reaped all five generations with zero capacity residue. The strict matrix remains
+red: Claude is not logged in, and literal `grok-build` was provider-observed as `grok-4.5` and
+rejected for exact-model mismatch. That dogfood also found projection-parent inode undercount and
+dead foreign reservation retention; both now have red/green repairs, and a post-repair recursive
+rerun remains the next live gate. The older Composer proof is not equivalent to literal Build.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 

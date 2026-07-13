@@ -98,7 +98,8 @@ test('TP1/TP2: manifest identity is deterministic, relocation-stable, mapping-bo
   const repeated = inspectToolchainProjection(descriptor(a));
   const relocated = inspectToolchainProjection(descriptor(b));
   assert.deepEqual(first, repeated); assert.deepEqual(first, relocated);
-  assert.deepEqual(Object.keys(first).sort(), ['byteCount', 'directoryCount', 'fileCount', 'limits', 'manifestDigest', 'mappingCount', 'projectionDigest', 'schemaVersion', 'sourceId'].sort());
+  assert.deepEqual(Object.keys(first).sort(), ['byteCount', 'directoryAccountingVersion', 'directoryCount', 'fileCount', 'limits', 'manifestDigest', 'mappingCount', 'projectionDigest', 'schemaVersion', 'sourceId', 'targetParentDirectoryCount', 'targetParentDirectoryDigest'].sort());
+  assert.equal(first.directoryAccountingVersion, 2);
   assert.equal(JSON.stringify(first).includes(a), false); assert.equal(JSON.stringify(first).includes(b), false);
   const remapped = inspectToolchainProjection(descriptor(a, { mappings: [{ sourcePath: 'deps/runtime', targetPath: 'vendor/runtime' }] }));
   assert.equal(remapped.manifestDigest, first.manifestDigest); assert.notEqual(remapped.projectionDigest, first.projectionDigest);

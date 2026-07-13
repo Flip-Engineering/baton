@@ -122,3 +122,8 @@ native session into a second turn, killed it while working, and reaped both proc
 worktrees, runtime scopes, metadata, and branches. Evidence lives under
 `docs/reference/evidence/phase21-grok-concurrent-reap-2026-07-11/`; ambient credentials were not
 projected and isolation was not weakened.
+
+This is a Composer proof, not literal Grok Build acceptance. Subsequent exact `grok-build` routes
+prove concurrent process start/close/reap and now reach provider readiness, but Grok CLI 0.2.99
+reports `grok-4.5`; Baton rejects the exact-model mismatch and no literal Build report is accepted.
+Composer evidence cannot close that gate.
