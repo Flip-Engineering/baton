@@ -11,12 +11,13 @@ family must differ from the producer. The ordinary router remains authoritative 
 resolved, and provider-observed attribution.
 
 The immutable oracle Brief contains the bounded fact assertion and implementation-authored test
-instruction. Durable public metadata contains commitments rather than the value. A usable oracle
-artifact must be accepted and bind the exact oracle worker, task route, harness/version/model/
-effort, capture SHA, paired commit SHA, hub reverification, and exact review metadata. The
-producer/reviewer route commitments each cover the six-field harness, harness version, model,
-effort, family, and task-class tuple. Oracle tasks may exercise their isolated worktree but are
-explicitly non-integrable.
+instruction. Durable public metadata contains commitments rather than the value. The task pins its
+worktree to the fact's immutable tree even if repository HEAD advances. A usable oracle artifact
+must be current, unsuperseded, accepted, and bind the exact oracle worker, task/run, route,
+harness/version/model/effort, fact-tree base SHA, capture SHA, paired commit SHA, hub
+reverification, and exact review metadata. The producer/reviewer route commitments each cover the
+six-field harness, harness version, model, effort, family, and task-class tuple. Oracle tasks may
+exercise their isolated worktree but are explicitly non-integrable.
 
 `cairn/causal.correct_scratch` accepts only three actions:
 
@@ -36,14 +37,17 @@ northbounds receive token-bound capability methods.
 
 ## Red-to-green verification
 
-- Phase 50 passes **11/11** grouped SC tests.
-- The adjacent Phase 12 web, Phase 16 MCP, Phase 49, and Phase 50 slice passes **59/59**.
-- The canonical zero-quota suite passes **1035/1035** through `cd impl && npm test` at implementation
-  commit `16e033e`.
+- Phase 50 passes **14/14** grouped SC tests.
+- The adjacent Phase 12 web, Phase 16 MCP, Phase 49, and Phase 50 slice passes **62/62**.
+- The canonical zero-quota suite passes **1038/1038** through `cd impl && npm test`; the initial
+  implementation landed at `16e033e` and the post-review hardening commit is recorded below.
 - Exact configuration, repository, policy, independent route, producer/reviewer route corruption,
   private target bounds, hub-derived Scratch IDs, and oracle non-integration are covered.
 - Accepted, rejected, failed, unbound, generic, post-boundary, and stale oracle provenance are
-  separated; route/artifact/node/contamination tampering fails restart replay.
+  separated; same-worker cross-task substitution and superseded artifacts are rejected, and
+  route/artifact/node/contamination tampering fails restart replay.
+- A repository-advance regression proves oracle dispatch, durable metadata, and accepted
+  verification retain the exact fact-tree base rather than a later HEAD.
 - Release, observed supersede, derived supersede, and retract prove safe deterministic rows, target
   validity CAS, exact contamination, duplicate/stale conflicts, and closed public results.
 - Scan/read/evidence/batch/result ceilings, pinned-audit failure, ACI output refusal, append failure,
@@ -70,7 +74,10 @@ findings are now regression-locked:
   append cannot transform success into refusal;
 - public result shape is closed and includes `requestDigest` while omitting internal audit timing;
 - route commitments cover exact six-field producer/reviewer tuples; and
-- Scratch fact IDs are hub-derived and oracle tasks cannot enter integration.
+- Scratch fact IDs are hub-derived and oracle tasks cannot enter integration;
+- accepted verification binds the exact oracle task/run and immutable fact-tree base, so another
+  task on the same worker cannot lend provenance; and
+- only current unsuperseded review/commit artifacts qualify for release.
 
 ## Recursive Baton evidence
 

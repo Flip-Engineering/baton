@@ -80,9 +80,12 @@ function localGit(args, cwd, opts = {}) { return execFileSync('git', args, { ...
 /** worktree.mjs's real functions wrapped into the coordinator's manager interface. */
 function worktreeManager(repoRoot, opts = {}) {
   return {
-    async create(taskId) {
+    async create(taskId, requestedBaseSha = null) {
       const base = await worktreeMod.pinBaseSha(repoRoot, {});
-      const r = await worktreeMod.createFromBase(repoRoot, taskId, base.sha, { dependencyDirs: opts.workerDependencyDirs ?? [] });
+      const selected = requestedBaseSha ?? base.sha;
+      if (!/^[a-f0-9]{40}$/.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
+      localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
+      const r = await worktreeMod.createFromBase(repoRoot, taskId, selected, { dependencyDirs: opts.workerDependencyDirs ?? [] });
       return { path: r.dir, branch: r.branch, baseSha: r.baseSha };
     },
     async capture(worktreePath, opts = {}) {

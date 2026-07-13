@@ -55,8 +55,10 @@ producer task ID, producer harness, and producer model family.
 The review Brief pins the full original fact, its commitment, and an implementation-authored
 instruction to test the assertion against the immutable repository/tree coordinate rather than
 trusting its author. Caller constraints are count- and byte-bounded. The caller cannot replace the
-fact snapshot or commitment. The oracle may exercise the fact in its isolated worker worktree, but
-its result is evidence-only and is never an integrable task result.
+fact snapshot or commitment. Durable review metadata and `task.created.worktreeBaseSha` pin the
+exact `fact.envRef.treeSha`; worktree creation uses that commit even if the repository's branch or
+HEAD advances before dispatch. The oracle may exercise the fact in its isolated worker worktree,
+but its result is evidence-only and is never an integrable task result.
 
 ### SC3 — independent exact route
 
@@ -77,14 +79,18 @@ Scratch oracle tasks. Coordinator restart rehydrates it. A successful Scratch or
 accepted `application/vnd.baton.review+json` artifact whose review metadata exactly equals the
 task's durable metadata and whose accepted provenance maps to a hub `verify.reverified` event. The
 accepted artifact provenance MUST bind the exact oracle worker, task route, harness version, model,
-effort, capture SHA, paired commit SHA, accepted verification, and review metadata. Producer and
-reviewer route commitments each cover the exact six-field tuple of harness, harness version, model,
-effort, model family, and task class.
+effort, fact-tree base SHA, capture SHA, paired commit SHA, accepted verification, and review
+metadata. The accepted operational verification source must itself name the exact oracle task and
+run; same-worker evidence from another task is not substitutable. The capture commit may descend
+from the immutable base because the oracle can write an evidence-only report, but its captured
+`baseSha` MUST equal the fact tree. Producer and reviewer route commitments each cover the exact
+six-field tuple of harness, harness version, model, effort, model family, and task class.
 
-The review task, accepted review artifact, full-fact digest, source event, producer route, reviewer
-route, and pinned verification contract form one fact-bound evidence chain. A generic review of the
-producer task, an artifact from another task, a changed target digest, rejected artifact, failed or
-cancelled oracle task, worker report, or unaccepted verification is ineligible.
+The review task, current unsuperseded accepted review and paired commit artifacts, full-fact digest,
+source event, producer route, reviewer route, immutable tree, and pinned verification contract form
+one fact-bound evidence chain. A generic review of the producer task, an artifact from another task,
+a changed target digest, superseded/withdrawn artifact, rejected artifact, failed or cancelled
+oracle task, worker report, or unaccepted verification is ineligible.
 
 ### SC5 — three closed correction actions
 
@@ -212,7 +218,9 @@ capability routes. Canonical `npm test` MUST pass.
 Recursive proof uses Baton itself against clean commits. It requests exact harness/model/effort
 routes including project-key GLM and `gpt-5.6-sol`, attempts multiple Grok routes concurrently,
 records current authentication truth rather than inferring success, and retains explicit native
-PID, worker, worktree, branch, runtime-scope, writer, kill, and reap evidence.
+PID, worker, worktree, branch, runtime-scope, writer, kill, and reap evidence. It also advances a
+fixture repository after fact creation to prove the oracle still dispatches and verifies from the
+fact's immutable tree.
 
 Phase 50 does not claim Playbook/Skill promotion, recall feedback/utility learning, contradiction
 operator UX, retention/compaction/deployment-neutral export, Bench, or the remaining control,
@@ -226,7 +234,8 @@ homelab integration target.
 1. Direct, web, and MCP oracle commands bind the exact fact while preserving selected harness,
    model, and effort; same-harness/family and oversized targets refuse before allocation.
 2. A completed accepted independent oracle releases one derived fact into the exact safe graph;
-   generic, failed, rejected, mismatched, post-boundary, or same-family reviews do not.
+   generic, failed, rejected, mismatched, superseded, borrowed same-worker, post-boundary, or
+   same-family reviews do not.
 3. Qualified observed and independently-oracled replacements atomically supersede a target;
    retraction atomically invalidates it; both retain exact bounded contamination.
 4. Seeded Scratch values, secrets, paths, prompts, Briefs, reasons, and provider payloads appear in
@@ -238,6 +247,8 @@ homelab integration target.
    tail and graph unchanged.
 7. Direct, authenticated web, and authenticated MCP correction claims match and exact read-only
    reverify succeeds; actor, transport, repository, action, args, boundary, and receipt changes fail.
+8. Advancing repository HEAD after the fact is recorded cannot change the oracle worktree or
+   verification base: both remain the exact immutable `fact.envRef.treeSha`.
 
 ## Acceptance gate
 

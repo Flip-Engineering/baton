@@ -35,7 +35,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    hard stops, deterministic watchdogs, and verified-outcome adaptive routing.
 5. **Shared coordination/knowledge substrate:** operational ledger/cursors/replay, durable task and
    artifact authority, Scratch claims/facts/expiry, typed causal knowledge, bitemporal reads,
-   contradiction/supersession, promotion, and contamination evidence—with no homelab dependency.
+   contradiction/supersession, promotion, and contamination evidence. Its typed causal and temporal
+   discipline is inspired by the repository's project-manager prior art, but Baton is self-contained
+   with no external project-manager runtime or homelab dependency.
 6. **Northbound:** authenticated HTTPS commands, resumable SSE, OIDC wire/bootstrap and minimal
    operator assets, edge policy/reconciliation, and MCP stdio tools over the same coordinator.
 7. **Representation implementations:** R1 structural delta/rewrite proposals, R2 symbols/SCIP
@@ -174,7 +176,7 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    releases, supersedes, or retracts only the closed Scratch Finding class through one audited
    prefix-CAS event with target validity CAS, exact historical-reader contamination, closed public
    results, token-bound direct/web/MCP transport authority, ACI pre-effect output gates, and full
-   replay/idempotency/tamper refusal. Eleven focused SC tests and 1035/1035 canonical tests are
+   replay/idempotency/tamper refusal. Fourteen focused SC tests and 1038/1038 canonical tests are
    green. Recursive multi-harness availability and native-process evidence are recorded separately
    and do not inflate implementation status.
 
@@ -229,7 +231,8 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   Cartographer/Quartermaster supply/orientation rungs, and Cairn Playbook/Skill promotion,
   feedback, retention, and export rungs remain pending.
 - Direct structural rewrite apply, live LSP, full SSA/PDG/path solving, interprocedural/alias/heap
-  CPG depth, deeper behavioral/provenance attestation overlays, and representation choreography.
+  CPG depth, deeper behavioral/provenance attestation overlays, semantic-delta depth, and
+  representation choreography.
 - True semantic merge, stacked integration, deploy adapters, rollback automation, and live remote
   publication.
 - Streamable HTTP MCP authorization, MCP Tasks/progress/daemon supervision, WebSocket parity,
@@ -293,8 +296,8 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    Cairn Rung 1: atomic verified exact-tuple observations, local RouteStat lineage, deployment-pinned
    replay hydration, and bounded authenticated route advice, live- and recursively proved without
    a homelab or external knowledge-graph runtime. Continue the remaining explicitly
-   catalogued later rungs, then demand-earned Cairn Rungs 2–4, Vantage, Evidence Ladder, and Skill
-   Forge/computer use behind stronger containment.
+   catalogued later rungs, then demand-earned remaining Cairn Rung 2 depth and Rungs 3–4, Vantage,
+   Evidence Ladder, and Skill Forge/computer use behind stronger containment.
 5. **Complete northbound/runtime depth:** MCP HTTP/Tasks/daemon, WebSocket, operator takeover,
    OpenTelemetry, and only then a production-core port.
 6. **Pursue representation/trust research only through its Decisions:** higher CPG/IR/semantic

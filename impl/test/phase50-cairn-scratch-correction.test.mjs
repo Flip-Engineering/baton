@@ -146,6 +146,16 @@ test('SC1/SC2: oracle policy is exact and oversized facts refuse before worker a
   await reap(driver); driver.close();
 });
 
+test('SC2/SC4: an oracle worktree and verification stay pinned to the fact tree after repository HEAD advances', async () => {
+  const driver = await correctionFixture(); const fact = driver.post('pinned-tree', 'SECRET pinned tree /Users/alice/private'); const factTree = git(['rev-parse', 'HEAD'], driver.repoRoot);
+  writeFileSync(join(driver.repoRoot, 'advanced.txt'), 'later repository state\n'); git(['add', 'advanced.txt'], driver.repoRoot); git(['commit', '-q', '-m', 'advance after fact'], driver.repoRoot); assert.notEqual(git(['rev-parse', 'HEAD'], driver.repoRoot), factTree);
+  const bound = await oracleForFact(driver, fact, 'pinned-tree'); assert.equal(bound.result.status, 'completed');
+  const durable = driver.coordination.task(bound.taskId); assert.equal(durable.worktreeBaseSha, factTree); assert.equal(durable.review.baseSha, factTree);
+  const verified = driver.log.read(bound.oracle.id).find((event) => event.kind === 'verify.reverified'); assert.equal(verified.payload.capture.baseSha, factTree);
+  const result = await driver.coordinator.invokeCapability('cairn', 'causal.correct_scratch', { action: 'release', scratchFactId: fact.id, oracleTaskId: bound.taskId, observedSeq: driver.coordination.snapshot().lastSeq }, { actor: 'operator:alice', repoId: 'repo-a', idempotencyKey: 'pinned-tree:release', budgetTokens: 32_000 }); assert.equal(result.payload[0].replacementGrounding, 'verified');
+  await reap(driver); driver.close();
+});
+
 test('SC5-SC10: an accepted fact-bound independent oracle atomically releases and exactly reverifies one derived Finding', async () => {
   const driver = await correctionFixture(); const fact = driver.post('derived-release', 'SECRET derived release /Users/alice/private');
   const oracle = await driver.coordinator.spawnScratchOracle(fact.id, 'reviewer', { taskId: 'release-oracle', model: 'reviewer-model', effort: 'low', modelPolicy: { allow: ['reviewer-model'], allowFamilies: ['reviewer-family'], reasoningEffort: 'low' }, verification: { command: 'true', expectExit: 0 } });
@@ -153,11 +163,11 @@ test('SC5-SC10: an accepted fact-bound independent oracle atomically releases an
   await assert.rejects(driver.coordinator.integrate(oracle.id), (error) => error.code === 'scratch_oracle_not_integrable');
   const observedSeq = driver.coordination.snapshot().lastSeq; const args = { action: 'release', scratchFactId: fact.id, oracleTaskId: 'release-oracle', observedSeq }; const context = { actor: 'operator:alice', repoId: 'repo-a', idempotencyKey: 'release:direct', budgetTokens: 32_000 };
   const result = await driver.coordinator.invokeCapability('cairn', 'causal.correct_scratch', args, context); const document = result.payload[0];
-  assert.deepEqual(Object.keys(document).sort(), ['action', 'affectedReadCount', 'coordinationUpperBound', 'kind', 'oracleTaskId', 'policyDigest', 'projectionDigest', 'receipt', 'replacement', 'repoId', 'requestDigest', 'schemaVersion', 'targetNodeId', 'targetValidityVersion'].sort());
-  assert.equal(document.action, 'release'); assert.equal(document.replacement.grounding, 'verified'); assert.equal(document.oracleTaskId, 'release-oracle'); assert.equal(document.affectedReadCount, 0);
+  assert.deepEqual(Object.keys(document).sort(), ['action', 'affectedReadCount', 'eventSeq', 'observedSeq', 'oracleTaskId', 'policyDigest', 'projectionDigest', 'receiptDigest', 'replacementGrounding', 'replacementNodeId', 'repoId', 'requestDigest'].sort());
+  assert.equal(document.action, 'release'); assert.equal(document.replacementGrounding, 'verified'); assert.equal(document.oracleTaskId, 'release-oracle'); assert.equal(document.affectedReadCount, 0);
   assert.equal(JSON.stringify(result).includes('SECRET'), false); assert.equal(JSON.stringify(result).includes('/Users/alice/private'), false);
-  const event = driver.coordination.events(document.receipt.eventSeq, 1)[0]; assert.equal(event.kind, 'knowledge.scratch_corrected'); assert.equal(event.payload.nodes.some((node) => node.body.includes('SECRET')), false);
-  const finding = driver.coordination.queryKnowledge({ ids: [document.replacement.nodeId] })[0]; assert.equal(finding.grounding, 'verified');
+  const event = driver.coordination.events(document.eventSeq, 1)[0]; assert.equal(event.kind, 'knowledge.scratch_corrected'); assert.equal(event.payload.nodes.some((node) => node.body.includes('SECRET')), false);
+  const finding = driver.coordination.queryKnowledge({ ids: [document.replacementNodeId] })[0]; assert.equal(finding.grounding, 'verified');
   assert.deepEqual(new Set(driver.coordination.queryKnowledgeEdges().filter((edge) => edge.from === finding.id).map((edge) => edge.type)), new Set(['DerivedFrom', 'VerifiedBy']));
   const verified = await driver.coordinator.reverifyCapability('cairn', 'causal.correct_scratch', result, args, { ...context, idempotencyKey: 'release:verify' }); assert.equal(verified.payload[0].ok, true, JSON.stringify(verified));
   for (const changed of [
@@ -169,24 +179,50 @@ test('SC5-SC10: an accepted fact-bound independent oracle atomically releases an
   await reap(driver); driver.close();
 });
 
+test('SC4: an oracle cannot borrow same-worker verification provenance from another task', async () => {
+  const driver = await correctionFixture(); const bound = await oracledFact(driver, 'borrowed-verification'); const oracleA = bound.taskId; const oracleB = `${oracleA}-substitute`;
+  const events = driver.coordination.events(); const createdA = events.find((event) => event.kind === 'task.created' && event.payload.id === oracleA); const claimedA = events.find((event) => event.kind === 'task.claimed' && event.payload.id === oracleA);
+  driver.coordination.createTask({ ...createdA.payload, id: oracleB }, { actor: 'orchestrator', key: `task:${oracleB}` });
+  const attribution = Object.fromEntries(Object.entries(claimedA.payload).filter(([key]) => !['id', 'worker', 'expectedVersion', 'newVersion'].includes(key)));
+  driver.coordination.claimTask(oracleB, claimedA.payload.worker, 1, { actor: 'orchestrator', key: `claim:${oracleB}` }, attribution);
+  driver.coordination.transitionTask(oracleB, 'completed', 2, { actor: 'policy', key: `complete:${oracleB}` });
+  for (const artifact of events.filter((event) => event.kind === 'artifact.registered' && event.payload.taskId === oracleA && ['commit', 'review'].includes(event.payload.kind))) {
+    const fields = { taskId: oracleB, kind: artifact.payload.kind, refs: artifact.payload.refs, mediaType: artifact.payload.mediaType, accepted: true, provenance: artifact.payload.provenance };
+    if (artifact.payload.review) fields.review = artifact.payload.review;
+    driver.coordination.registerArtifact(fields, { actor: 'policy', key: `artifact:${oracleB}:${artifact.payload.kind}` });
+  }
+  await assert.rejects(driver.coordinator.invokeCapability('cairn', 'causal.correct_scratch', { action: 'release', scratchFactId: bound.fact.id, oracleTaskId: oracleB, observedSeq: driver.coordination.snapshot().lastSeq }, { actor: 'operator:alice', repoId: 'repo-a', idempotencyKey: 'borrowed-verification', budgetTokens: 32_000 }), (error) => error.code === 'causal_correction_conflict');
+  await reap(driver); driver.close();
+});
+
+test('SC4: a superseded accepted oracle artifact cannot release knowledge', async () => {
+  const driver = await correctionFixture(); const bound = await oracledFact(driver, 'withdrawn-oracle'); const task = driver.coordination.task(bound.taskId);
+  const accepted = task.artifactIds.map((id) => driver.coordination.artifact(id)).find((artifact) => artifact.kind === 'review' && artifact.accepted === true);
+  const replacement = driver.coordination.registerArtifact({ taskId: bound.taskId, kind: 'review', refs: accepted.refs, mediaType: accepted.mediaType, accepted: false, provenance: [], review: accepted.review }, { actor: 'policy', key: 'withdrawn-oracle:replacement' });
+  driver.coordination.supersedeArtifact(accepted.id, replacement.artifact.id, 1, { actor: 'policy', key: 'withdrawn-oracle:supersede' });
+  await assert.rejects(driver.coordinator.invokeCapability('cairn', 'causal.correct_scratch', { action: 'release', scratchFactId: bound.fact.id, oracleTaskId: bound.taskId, observedSeq: driver.coordination.snapshot().lastSeq }, { actor: 'operator:alice', repoId: 'repo-a', idempotencyKey: 'withdrawn-oracle:release', budgetTokens: 32_000 }), (error) => error.code === 'causal_correction_conflict');
+  assert.equal(driver.coordination.events().some((event) => event.kind === 'knowledge.scratch_corrected'), false);
+  await reap(driver); driver.close();
+});
+
 test('SC5-SC8: a qualified observed replacement supersedes and retracts with exact contamination', async () => {
   const driver = await correctionFixture(); const target = await promotedObservedTarget(driver, 'target-observed'); const replacement = qualifiedObservedFact(driver, 'replacement-observed');
   const targetRead = driver.coordination.readKnowledge({ ids: [target.nodeId] }, { readerActor: 'operator:alice', taskId: 'consumer-a' }, { actor: 'operator:alice', key: 'knowledge-read:target' });
   const observedSeq = driver.coordination.snapshot().lastSeq; const args = { action: 'supersede', targetNodeId: target.nodeId, expectedValidityVersion: 1, replacementScratchFactId: replacement.fact.id, observedSeq };
   const context = { actor: 'operator:alice', repoId: 'repo-a', idempotencyKey: 'correct:observed', budgetTokens: 32_000 };
   const result = await driver.coordinator.invokeCapability('cairn', 'causal.correct_scratch', args, context); const document = result.payload[0];
-  assert.equal(document.action, 'supersede'); assert.equal(document.replacement.grounding, 'observed'); assert.equal(document.affectedReadCount, 1);
-  const receipt = driver.coordination.events(document.receipt.eventSeq, 1)[0]; assert.deepEqual(receipt.payload.affectedReadEvents, [targetRead.event.seq]);
-  assert.equal(driver.coordination.queryKnowledge({ ids: [target.nodeId] }).length, 0); assert.equal(driver.coordination.queryKnowledge({ ids: [document.replacement.nodeId] })[0].validityVersion, 1);
-  assert.equal(driver.coordination.queryKnowledgeEdges().some((edge) => edge.type === 'Supersedes' && edge.from === document.replacement.nodeId && edge.to === target.nodeId), true);
+  assert.equal(document.action, 'supersede'); assert.equal(document.replacementGrounding, 'observed'); assert.equal(document.affectedReadCount, 1);
+  const receipt = driver.coordination.events(document.eventSeq, 1)[0]; assert.deepEqual(receipt.payload.affectedReadEvents, [targetRead.event.seq]);
+  assert.equal(driver.coordination.queryKnowledge({ ids: [target.nodeId] }).length, 0); assert.equal(driver.coordination.queryKnowledge({ ids: [document.replacementNodeId] })[0].validityVersion, 1);
+  assert.equal(driver.coordination.queryKnowledgeEdges().some((edge) => edge.type === 'Supersedes' && edge.from === document.replacementNodeId && edge.to === target.nodeId), true);
   assert.equal((await driver.coordinator.reverifyCapability('cairn', 'causal.correct_scratch', result, args, { ...context, idempotencyKey: 'correct:observed:verify' })).payload[0].ok, true);
 
-  const replacementRead = driver.coordination.readKnowledge({ ids: [document.replacement.nodeId] }, { readerActor: 'operator:bob', taskId: 'consumer-b' }, { actor: 'operator:bob', key: 'knowledge-read:replacement' });
-  const retractArgs = { action: 'retract', targetNodeId: document.replacement.nodeId, expectedValidityVersion: 1, reason: 'operator_correction', observedSeq: driver.coordination.snapshot().lastSeq };
+  const replacementRead = driver.coordination.readKnowledge({ ids: [document.replacementNodeId] }, { readerActor: 'operator:bob', taskId: 'consumer-b' }, { actor: 'operator:bob', key: 'knowledge-read:replacement' });
+  const retractArgs = { action: 'retract', targetNodeId: document.replacementNodeId, expectedValidityVersion: 1, reason: 'operator_correction', observedSeq: driver.coordination.snapshot().lastSeq };
   const retracted = await driver.coordinator.invokeCapability('cairn', 'causal.correct_scratch', retractArgs, { ...context, idempotencyKey: 'correct:retract' }); const retractDocument = retracted.payload[0];
-  assert.equal(retractDocument.replacement, null); assert.equal(retractDocument.affectedReadCount, 1);
-  assert.deepEqual(driver.coordination.events(retractDocument.receipt.eventSeq, 1)[0].payload.affectedReadEvents, [replacementRead.event.seq]);
-  assert.equal(driver.coordination.queryKnowledge({ ids: [document.replacement.nodeId] }).length, 0);
+  assert.deepEqual(Object.keys(retractDocument).sort(), ['action', 'affectedReadCount', 'eventSeq', 'observedSeq', 'policyDigest', 'projectionDigest', 'receiptDigest', 'repoId', 'requestDigest', 'targetNodeId', 'targetValidityVersion'].sort()); assert.equal(retractDocument.affectedReadCount, 1);
+  assert.deepEqual(driver.coordination.events(retractDocument.eventSeq, 1)[0].payload.affectedReadEvents, [replacementRead.event.seq]);
+  assert.equal(driver.coordination.queryKnowledge({ ids: [document.replacementNodeId] }).length, 0);
   assert.equal((await driver.coordinator.reverifyCapability('cairn', 'causal.correct_scratch', retracted, retractArgs, { ...context, idempotencyKey: 'correct:retract:verify' })).payload[0].ok, true);
   assert.equal(JSON.stringify([result, retracted, receipt]).includes('SECRET'), false); assert.equal(JSON.stringify([result, retracted, receipt]).includes('/Users/alice/private'), false);
   await reap(driver); driver.close();
@@ -200,7 +236,7 @@ test('SC5-SC11: authenticated web supersedes with an independently-oracled fact 
   const web = new WebNorthbound({ coordinator: driver.coordinator, coordination: driver.coordination, repoIds: ['repo-a'], allowedOrigins: [origin] });
   const webArgs = { action: 'supersede', targetNodeId: target.nodeId, expectedValidityVersion: 1, replacementScratchFactId: fact.id, oracleTaskId: 'transport-oracle', observedSeq: driver.coordination.snapshot().lastSeq };
   const webResult = await web.execute({ principal, origin, csrfToken: 'csrf', transport: 'https' }, { schemaVersion: 1, commandId: 'correct-web', idempotencyKey: 'correct-web', command: 'capability_invoke', repoId: 'repo-a', origin, args: { name: 'cairn', op: 'causal.correct_scratch', action: 'invoke', args: webArgs, budgetTokens: 32_000 } });
-  assert.equal(webResult.status, 200, JSON.stringify(webResult.body)); assert.equal(webResult.body.result.payload[0].replacement.grounding, 'verified');
+  assert.equal(webResult.status, 200, JSON.stringify(webResult.body)); assert.equal(webResult.body.result.payload[0].replacementGrounding, 'verified');
   const webVerify = await web.execute({ principal, origin, csrfToken: 'csrf', transport: 'https' }, { schemaVersion: 1, commandId: 'correct-web-verify', idempotencyKey: 'correct-web-verify', command: 'capability_invoke', repoId: 'repo-a', origin, args: { name: 'cairn', op: 'causal.correct_scratch', action: 'reverify', claim: webResult.body.result, args: webArgs, budgetTokens: 32_000 } });
   assert.equal(webVerify.status, 200); assert.equal(webVerify.body.result.payload[0].ok, true);
   const forgedDirect = await driver.coordinator.reverifyCapability('cairn', 'causal.correct_scratch', webResult.body.result, webArgs, { actor: 'operator:web:alice:web-correct', repoId: 'repo-a', idempotencyKey: 'correct-web-forged-direct', budgetTokens: 32_000 }); assert.equal(forgedDirect.payload[0].ok, false);
@@ -208,7 +244,7 @@ test('SC5-SC11: authenticated web supersedes with an independently-oracled fact 
 
   const mcp = new McpFleetServer({ coordinator: driver.coordinator, coordination: driver.coordination, principal: { userId: 'bob', sessionId: 'mcp-correct', capabilities: ['control'], repoIds: ['repo-a'], expiresAt: '2099-01-01T00:00:00.000Z', revoked: false }, repoIds: ['repo-a'], maxWaitMs: 1000, maxMessageBytes: 256 * 1024, takeToolQuota: async () => ({ ok: true }) });
   await mcp.handle({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'phase50', version: '1' } } }); await mcp.handle({ jsonrpc: '2.0', method: 'notifications/initialized' });
-  const replacementId = webResult.body.result.payload[0].replacement.nodeId; const mcpArgs = { action: 'retract', targetNodeId: replacementId, expectedValidityVersion: 1, reason: 'oracle_withdrawn', observedSeq: driver.coordination.snapshot().lastSeq };
+  const replacementId = webResult.body.result.payload[0].replacementNodeId; const mcpArgs = { action: 'retract', targetNodeId: replacementId, expectedValidityVersion: 1, reason: 'oracle_withdrawn', observedSeq: driver.coordination.snapshot().lastSeq };
   const mcpResult = await mcp.handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'fleet_capability_invoke', arguments: { repoId: 'repo-a', idempotencyKey: 'correct-mcp', name: 'cairn', op: 'causal.correct_scratch', action: 'invoke', args: mcpArgs, budgetTokens: 32_000 } } });
   assert.equal(mcpResult.result.isError, false, JSON.stringify(mcpResult)); assert.equal(mcpResult.result.structuredContent.payload[0].action, 'retract');
   const mcpVerify = await mcp.handle({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'fleet_capability_invoke', arguments: { repoId: 'repo-a', idempotencyKey: 'correct-mcp-verify', name: 'cairn', op: 'causal.correct_scratch', action: 'reverify', claim: mcpResult.result.structuredContent, args: mcpArgs, budgetTokens: 32_000 } } });

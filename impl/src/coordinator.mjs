@@ -782,7 +782,7 @@ export class Coordinator {
           ownerTaskId: task.sessionContext.ownerTaskId,
         });
     } else {
-      try { worktreeSource = Promise.resolve(this._worktrees.create(task.id)); }
+      try { worktreeSource = Promise.resolve(this._worktrees.create(task.id, task.worktreeBaseSha ?? null)); }
       catch (error) { worktreeSource = Promise.reject(error); }
     }
     let worktreeReady = worktreeSource
@@ -942,6 +942,8 @@ export class Coordinator {
     const runId = normalizeRunId(opts.runId);
     const modelPolicy = normalizeModelPolicy(opts.model, opts.modelPolicy, opts.effort);
     const effortRequested = opts.effort ?? modelPolicy?.reasoningEffort ?? null;
+    const worktreeBaseSha = opts.worktreeBaseSha ?? null;
+    if (worktreeBaseSha !== null && !/^[a-f0-9]{40}$/.test(worktreeBaseSha)) throw new TypeError('spawn worktreeBaseSha must be an exact commit ID');
     let sessionRequest = normalizeSessionRequest(opts.session);
 
     const taskId = opts.taskId ?? this._autoTaskId();
@@ -999,7 +1001,7 @@ export class Coordinator {
         taskType: opts.taskType ?? 'general', reservedWorkerId: workerId,
         vendorRequested: vendor, modelRequested: opts.model ?? null, modelPolicy,
         effortRequested, effortResolved: null, effortObserved: null, routeKey: null,
-        sessionRequest, ...(opts.review ? { review: Object.freeze({ ...opts.review }) } : {}),
+        sessionRequest, ...(worktreeBaseSha ? { worktreeBaseSha } : {}), ...(opts.review ? { review: Object.freeze({ ...opts.review }) } : {}),
       }, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey ?? `task.created:${taskId}` });
       coordinationVersion = created.task.version;
     }
@@ -1017,6 +1019,7 @@ export class Coordinator {
       effortObserved: null,
       modelPolicy,
       sessionRequest,
+      worktreeBaseSha,
       sessionContext: sessionRequest.mode === 'resume' ? sessionRequest.context : null,
       lineage: sessionRequest.mode === 'new' ? null : Object.freeze({
         relation: sessionRequest.mode,
@@ -1094,7 +1097,7 @@ export class Coordinator {
         modelResolved: durable.modelResolved ?? null, modelObserved: durable.modelObserved ?? null, modelPolicy: durable.modelPolicy,
         effortRequested: durable.effortRequested ?? null, effortResolved: durable.effortResolved ?? null,
         effortObserved: durable.effortObserved ?? null, routeKey: durable.routeKey ?? null,
-        sessionRequest: durable.sessionRequest ?? Object.freeze({ mode: 'new' }),
+        sessionRequest: durable.sessionRequest ?? Object.freeze({ mode: 'new' }), worktreeBaseSha: durable.worktreeBaseSha ?? durable.review?.baseSha ?? null,
         sessionContext: null, lineage: null, refines: durable.refines ?? null,
         status: durable.status, assignee: workerId, worktree: null, result: null, verdict: null,
         capturedSha: null, integration: null, retainedResultRef: null, publication: null,
@@ -1223,7 +1226,7 @@ export class Coordinator {
       kind: 'oracle', parentTaskId: bound.commitment.producerTaskId,
       implementerVendor: null, implementerFamily: tuple[4], implementerHarness: tuple[0],
       reviewerVendor: vendor, reviewerFamily, reviewerHarness, independent: true,
-      baseSha: null, resultSha: null, knowledgeTarget,
+      baseSha: bound.snapshot.envRef.treeSha, resultSha: null, knowledgeTarget,
     });
     const reviewBrief = {
       goal: opts.goal ?? `Independently test derived Scratch fact ${scratchFactId} against its immutable repository coordinate`,
@@ -1241,7 +1244,7 @@ export class Coordinator {
     return this.spawn(vendor, reviewBrief, {
       taskId: opts.taskId, model: opts.model, effort: opts.effort, modelPolicy: opts.modelPolicy,
       taskType: 'oracle', refines: bound.commitment.producerTaskId, runId: opts.runId ?? producer?.runId ?? null,
-      review, actor, idempotencyKey: opts.idempotencyKey,
+      review, actor, idempotencyKey: opts.idempotencyKey, worktreeBaseSha: bound.snapshot.envRef.treeSha,
     });
   }
 
@@ -3710,6 +3713,7 @@ export class Coordinator {
           },
           capture: {
             sha: captured && captured.sha, snapshotted: captured && captured.snapshotted,
+            baseSha: task.sessionContext?.baseSha ?? null,
             vendor: handle.vendor ?? null, model: handle.modelObserved ?? handle.modelResolved ?? null,
             effort: handle.effortObserved ?? handle.effortResolved ?? null,
             routeKey: handle.routeKey ?? null,

@@ -2235,7 +2235,7 @@ export class CoordinationStore {
   }
 
   _scratchCorrectionPrefix(observedSeq) {
-    const prefix = this._events.slice(0, observedSeq); const tasks = new Map(); const scratch = new Map(); const scratchReads = []; const artifacts = [];
+    const prefix = this._events.slice(0, observedSeq); const tasks = new Map(); const scratch = new Map(); const scratchReads = []; const artifacts = []; const supersededArtifacts = new Set();
     for (const event of prefix) {
       if (event.kind === 'task.created') tasks.set(event.payload.id, { created: event, payload: clone(event.payload), status: 'pending', terminalEvent: null, routeKey: event.payload.routeKey ?? null });
       else if (event.kind === 'task.claimed') { const task = tasks.get(event.payload.id); if (task) { task.status = 'working'; task.routeKey = event.payload.routeKey ?? task.routeKey; task.claimed = event; } }
@@ -2244,8 +2244,9 @@ export class CoordinationStore {
       else if (event.kind === 'scratch.fact_expired') { const fact = scratch.get(event.payload.id); if (fact) fact.active = false; }
       else if (event.kind === 'scratch.read') scratchReads.push(event);
       else if (event.kind === 'artifact.registered') artifacts.push(event);
+      else if (event.kind === 'artifact.superseded') supersededArtifacts.add(event.payload.oldId);
     }
-    return { prefix, tasks, scratch, scratchReads, artifacts };
+    return { prefix, tasks, scratch, scratchReads, artifacts, supersededArtifacts };
   }
 
   _eligibleScratchOracle(repoId, factRow, oracleTaskId, state, nodeMap) {
@@ -2260,20 +2261,20 @@ export class CoordinationStore {
     if (!routeMatchesTask(producer, producerRoute) || !routeMatchesTask(task, reviewerRoute)) return null;
     const commitment = { schemaVersion: 1, kind: 'scratch.fact', scratchFactId: fact.id, scratchFactDigest: canonicalDigest(fact), sourceEventSeq: factRow.event.seq, sourceEventDigest: canonicalDigest(factRow.event), repoId, envRefDigest: canonicalDigest(fact.envRef), producerTaskId: fact.ownerTask, producerHarness: producerRoute[0], producerFamily: producerRoute[4], reviewerHarness: reviewerRoute[0], reviewerFamily: reviewerRoute[4] };
     const review = task.payload.review;
-    if (!review || review.kind !== 'oracle' || review.independent !== true || review.parentTaskId !== fact.ownerTask || canonicalDigest(review.knowledgeTarget) !== canonicalDigest(commitment)) return null;
+    if (!review || review.kind !== 'oracle' || review.independent !== true || review.parentTaskId !== fact.ownerTask || review.baseSha !== fact.envRef.treeSha || task.payload.worktreeBaseSha !== fact.envRef.treeSha || canonicalDigest(review.knowledgeTarget) !== canonicalDigest(commitment)) return null;
     const acceptedByOracle = (artifact) => (artifact.provenance ?? []).some((ref) => {
         const mapped = Number.isSafeInteger(ref?.coordinationSeq) ? state.prefix[ref.coordinationSeq - 1] : null; if (mapped?.kind !== 'evidence.mapped' || mapped.payload?.kind !== 'verify.reverified') return false;
         if (mapped.payload.worker !== task.claimed?.payload?.worker || mapped.payload.worker !== task.payload.reservedWorkerId) return false;
-        const source = this._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq); return source?.kind === 'verify.reverified' && source?.payload?.accept === true && source?.routeKey === task.routeKey
+        const source = this._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq); return source?.kind === 'verify.reverified' && source?.taskId === oracleTaskId && source?.runId === task.payload.runId && source?.payload?.accept === true && source?.routeKey === task.routeKey
           && source?.harness === `${reviewerRoute[0]}@${reviewerRoute[1]}` && source?.modelResolved === reviewerRoute[2] && source?.effortResolved === reviewerRoute[3]
-          && source?.payload?.capture?.sha === artifact.refs?.sha && source?.payload?.capture?.model === reviewerRoute[2] && source?.payload?.capture?.effort === reviewerRoute[3] && source?.payload?.capture?.routeKey === task.routeKey;
+          && source?.payload?.capture?.sha === artifact.refs?.sha && source?.payload?.capture?.baseSha === fact.envRef.treeSha && source?.payload?.capture?.model === reviewerRoute[2] && source?.payload?.capture?.effort === reviewerRoute[3] && source?.payload?.capture?.routeKey === task.routeKey;
       });
     const eligible = state.artifacts.filter((event) => {
       const artifact = event.payload; if (artifact.taskId !== oracleTaskId || artifact.kind !== 'review' || artifact.mediaType !== 'application/vnd.baton.review+json' || artifact.accepted !== true || canonicalDigest(artifact.review) !== canonicalDigest(review) || !nodeMap.has(`artifact:${artifact.id}`)) return false;
       if (!artifact.refs || Object.keys(artifact.refs).sort().join(',') !== ['parentTaskId', 'sha'].sort().join(',') || artifact.refs.parentTaskId !== fact.ownerTask || typeof artifact.refs.sha !== 'string' || artifact.refs.sha.length === 0) return false;
-      const pairedCommit = state.artifacts.some((candidate) => candidate.payload?.taskId === oracleTaskId && candidate.payload?.kind === 'commit' && candidate.payload?.mediaType === 'application/vnd.git.commit'
+      const pairedCommit = state.artifacts.some((candidate) => !state.supersededArtifacts.has(candidate.payload?.id) && candidate.payload?.taskId === oracleTaskId && candidate.payload?.kind === 'commit' && candidate.payload?.mediaType === 'application/vnd.git.commit'
         && candidate.payload?.accepted === true && candidate.payload?.refs?.sha === artifact.refs.sha && acceptedByOracle(candidate.payload));
-      return pairedCommit && acceptedByOracle(artifact);
+      return !state.supersededArtifacts.has(artifact.id) && pairedCommit && acceptedByOracle(artifact);
     }).sort((a, b) => a.seq - b.seq);
     if (eligible.length !== 1) return null;
     const artifactEvent = eligible[0]; const mappedSeqs = artifactEvent.payload.provenance.map((ref) => ref.coordinationSeq).filter(Number.isSafeInteger).sort((a, b) => a - b);

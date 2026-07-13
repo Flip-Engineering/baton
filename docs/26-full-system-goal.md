@@ -200,9 +200,12 @@ Representation is negotiated by task phase and cost, not reduced to raw text:
 - representation choreography: orient with a coarse graph, focus with local AST/CPG, finish with
   a semantic delta and attestation overlay, retracting views no longer useful.
 
-The first shipped vertical is AST/structural delta for review. CPG, semantic merge, behavioral
-fingerprints, IR, and e-graphs remain in the goal with explicit prototype/evaluation gates; a
-negative result retires a rung through a recorded Decision, never through omission.
+AST/structural delta was the first shipped representation vertical. Bounded symbol/SCIP, CPG and
+behavioral-fingerprint rungs now also ship; structured merge ships while true semantic merge does
+not, the IR ceiling remains an explicit Decision, and native whole-repo e-graphs are retired in
+favor of conditional domain-specific research. Deeper precision and every unshipped rung remain in
+the goal behind explicit prototype/evaluation gates; a negative result retires a rung through a
+recorded Decision, never through omission.
 
 ### J. Context, operator, northbound, and runtime
 

@@ -180,7 +180,7 @@ export class CairnRunScorecard {
     const metrics = this.coordination.auditKnowledge({ observedSeq: upper, maxStateRows: p.maxStateRows, maxNodes: p.maxNodes, maxEdges: p.maxEdges, maxEvidenceRefs: p.maxEvidenceRefs, maxAuditSamples: p.maxAuditSamples });
     this._knowledgeContext(ctx);
     const retainedScope = { catalogVersion: 1, capabilityIds: [...RETAINED_GOAL_CATALOG] }; retainedScope.catalogDigest = sha256(stable(retainedScope));
-    const core = { schemaVersion: 1, kind: 'baton.cairn.causal-audit', repoId: p.repoId, coordinationUpperBound: upper, coordinationObservedAt: this.coordination.observationTime(upper), policyDigest: this.knowledgePolicyDigest, metrics, disposition: { status: metrics.violations.critical === 0 ? 'pass' : 'fail', criticalViolations: metrics.violations.critical }, unresolvedContradictionsArePreserved: true, retainedScope, retainedNext: ['audit-gated-bounded-lexical-graph-recall', 'promotion-breadth', 'playbook-skill-promotion', 'recall-feedback', 'deployment-neutral-export'] };
+    const core = { schemaVersion: 1, kind: 'baton.cairn.causal-audit', repoId: p.repoId, coordinationUpperBound: upper, coordinationObservedAt: this.coordination.observationTime(upper), policyDigest: this.knowledgePolicyDigest, metrics, disposition: { status: metrics.violations.critical === 0 ? 'pass' : 'fail', criticalViolations: metrics.violations.critical }, unresolvedContradictionsArePreserved: true, retainedScope, retainedNext: ['promotion-breadth', 'playbook-skill-promotion', 'recall-feedback', 'authenticated-contradiction-operator-ux', 'scratch-repl-bench', 'retention-compaction', 'deployment-neutral-export'] };
     this._knowledgeContext(ctx);
     const bytes = stable(core); if (Buffer.byteLength(bytes) > p.maxArtifactBytes) throw typed('causal audit artifact exceeded deployment ceiling', 'causal_audit_oversize');
     const packetDigest = sha256(bytes); const path = this._artifactPath(packetDigest); const document = { ...core, auditDigest: packetDigest };
@@ -316,9 +316,12 @@ export class CairnRunScorecard {
   }
 
   _correctionResult(corrected, audit) {
-    const p = corrected.projection; const receipt = { eventSeq: p.eventSeq, digest: p.receiptDigest };
-    const document = { schemaVersion: 1, kind: 'baton.cairn.scratch-correction', action: p.action, repoId: p.repoId, coordinationUpperBound: p.observedSeq, requestDigest: p.requestDigest, policyDigest: p.policyDigest, projectionDigest: p.projectionDigest, receipt, targetNodeId: p.targetNodeId, targetValidityVersion: p.targetValidityVersion, replacement: clone(p.replacement), oracleTaskId: p.oracleTaskId, affectedReadCount: p.affectedReadCount };
-    const result = { op: 'causal.correct_scratch', status: 'ok', summary: `atomically ${p.action === 'release' ? 'released' : p.action === 'supersede' ? 'superseded' : 'retracted'} one Scratch knowledge claim for ${p.repoId}`, payload: [document], refs: [{ kind: 'cairn-scratch-correction-receipt', digest: receipt.digest, coordinationSeq: receipt.eventSeq }], cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' }, provenance: { kind: 'scratch-correction', repoId: p.repoId, coordinationUpperBound: p.observedSeq, policyDigest: p.policyDigest, auditPolicyDigest: this.knowledgePolicyDigest, deterministic: true, readOnly: false, coordinationEffect: 'knowledge.scratch_corrected', workerAuthority: false, editAuthority: false, verificationAuthority: false, mergeAuthority: false, approvalAuthority: false, publicationAuthority: false, routingMutationAuthority: false, proofAuthority: false, noteAuthority: false, policyAuthoringAuthority: false } };
+    const p = corrected.projection;
+    const document = { action: p.action, repoId: p.repoId, observedSeq: p.observedSeq, eventSeq: p.eventSeq, requestDigest: p.requestDigest, policyDigest: p.policyDigest, projectionDigest: p.projectionDigest, receiptDigest: p.receiptDigest, affectedReadCount: p.affectedReadCount };
+    if (p.targetNodeId !== null) { document.targetNodeId = p.targetNodeId; document.targetValidityVersion = p.targetValidityVersion; }
+    if (p.replacement !== null) { document.replacementNodeId = p.replacement.nodeId; document.replacementGrounding = p.replacement.grounding; }
+    if (p.oracleTaskId !== null) document.oracleTaskId = p.oracleTaskId;
+    const result = { op: 'causal.correct_scratch', status: 'ok', summary: `atomically ${p.action === 'release' ? 'released' : p.action === 'supersede' ? 'superseded' : 'retracted'} one Scratch knowledge claim for ${p.repoId}`, payload: [document], refs: [{ kind: 'cairn-scratch-correction-receipt', digest: p.receiptDigest, coordinationSeq: p.eventSeq }], cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' }, provenance: { kind: 'scratch-correction', repoId: p.repoId, coordinationUpperBound: p.observedSeq, policyDigest: p.policyDigest, auditPolicyDigest: this.knowledgePolicyDigest, deterministic: true, readOnly: false, coordinationEffect: 'knowledge.scratch_corrected', workerAuthority: false, editAuthority: false, verificationAuthority: false, mergeAuthority: false, approvalAuthority: false, publicationAuthority: false, routingMutationAuthority: false, proofAuthority: false, noteAuthority: false, policyAuthoringAuthority: false } };
     if (Buffer.byteLength(stable(result)) > this.knowledgeScratchCorrectionPolicy.maxResultBytes) throw typed('Scratch correction result exceeded deployment ceiling', 'causal_correction_oversize'); return result;
   }
 
@@ -487,7 +490,7 @@ export class CairnRunScorecard {
       }
       if (op === 'causal.correct_scratch') {
         if (!Number.isSafeInteger(args?.observedSeq)) return { ok: false, reason: 'observation_boundary_required' };
-        const receiptSeq = claim?.payload?.[0]?.receipt?.eventSeq; const rebuilt = this._causalCorrectScratch(args, ctx, receiptSeq, false);
+        const receiptSeq = claim?.payload?.[0]?.eventSeq; const rebuilt = this._causalCorrectScratch(args, ctx, receiptSeq, false);
         return { ok: stable(claim) === stable(rebuilt), digest: rebuilt.payload[0].projectionDigest };
       }
       if (op !== 'run.scorecard' || !validRunId(args?.runId)) return { ok: false, reason: 'invalid_request' };
