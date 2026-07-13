@@ -138,9 +138,12 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    graph appends, replay-validated lifecycle rows, observation-version history, pinned valid-time
    views, live typed earlier lineage, authorized CAS contradiction resolution, exact affected-read
    contamination, independently bounded metric audit and live causal trace, repository/transport-
-   bound direct/web/MCP reverify, and a digested stable-ID copy of the full retained goal catalog.
-   The 13 focused contracts and 1003/1003 canonical suite are green. Recursive GLM/Grok/model/
-   effort/kill-reap evidence remains the closing gate, and Phase 48 recall remains next.
+   bound direct/web/MCP reverify, durable request/result-bound ACI idempotency, descriptor-first
+   occupied-artifact bounds, publication-edge cancellation, and a digested stable-ID copy of the
+   full retained goal catalog. The 15 focused contracts and 1005/1005 canonical suite are green.
+   Recursive exact-route GLM and Codex reports are freshly verified with full reap; the current
+   two-Grok retry remains honestly authentication-red before provider PIDs, and Phase 48 recall
+   remains next.
 
 ## What remains partial
 

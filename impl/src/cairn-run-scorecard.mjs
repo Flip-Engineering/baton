@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
@@ -130,19 +130,37 @@ export class CairnRunScorecard {
     return result;
   }
 
+  _readCausalAuditArtifact(path, expectedBytes, packetDigest) {
+    let fd;
+    try {
+      fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); const stat = fstatSync(fd);
+      if (stat.size > this.knowledgeAuditPolicy.maxArtifactBytes) throw typed('causal audit artifact exceeded deployment ceiling', 'causal_audit_oversize');
+      if (!stat.isFile() || stat.size !== expectedBytes || (stat.mode & 0o777) !== 0o600 || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) throw typed('causal audit artifact path is occupied by invalid content, owner, mode, or size', 'causal_audit_integrity');
+      const bytes = readFileSync(fd); if (bytes.length !== expectedBytes || sha256(bytes) !== packetDigest) throw typed('causal audit artifact path is occupied by invalid content', 'causal_audit_integrity');
+    } catch (error) {
+      if (error?.code === 'causal_audit_oversize' || error?.code === 'causal_audit_integrity') throw error;
+      throw typed('causal audit artifact is unavailable or unsafe', 'causal_audit_integrity');
+    } finally { if (fd !== undefined) closeSync(fd); }
+  }
+
   _causalAudit(args, ctx, override = null, writeArtifact = true) {
     this._knowledgeContext(ctx); const upper = this._causalBoundary(args, ['observedSeq'], override); const p = this.knowledgeAuditPolicy;
     const metrics = this.coordination.auditKnowledge({ observedSeq: upper, maxStateRows: p.maxStateRows, maxNodes: p.maxNodes, maxEdges: p.maxEdges, maxEvidenceRefs: p.maxEvidenceRefs, maxAuditSamples: p.maxAuditSamples });
     this._knowledgeContext(ctx);
     const retainedScope = { catalogVersion: 1, capabilityIds: [...RETAINED_GOAL_CATALOG] }; retainedScope.catalogDigest = sha256(stable(retainedScope));
     const core = { schemaVersion: 1, kind: 'baton.cairn.causal-audit', repoId: p.repoId, coordinationUpperBound: upper, coordinationObservedAt: this.coordination.observationTime(upper), policyDigest: this.knowledgePolicyDigest, metrics, disposition: { status: metrics.violations.critical === 0 ? 'pass' : 'fail', criticalViolations: metrics.violations.critical }, unresolvedContradictionsArePreserved: true, retainedScope, retainedNext: ['audit-gated-bounded-lexical-graph-recall', 'promotion-breadth', 'playbook-skill-promotion', 'recall-feedback', 'deployment-neutral-export'] };
+    this._knowledgeContext(ctx);
     const bytes = stable(core); if (Buffer.byteLength(bytes) > p.maxArtifactBytes) throw typed('causal audit artifact exceeded deployment ceiling', 'causal_audit_oversize');
     const packetDigest = sha256(bytes); const path = this._artifactPath(packetDigest); const document = { ...core, auditDigest: packetDigest };
     const result = this._boundedKnowledgeResult({ op: 'causal.audit', status: 'ok', summary: `attested Cairn causal audit for ${p.repoId}`, payload: [document], refs: [{ kind: 'cairn-causal-audit', digest: packetDigest, bytes: Buffer.byteLength(bytes), path }], cost: { tokens_out: Math.ceil(Buffer.byteLength(stable(document)) / 4), wall_ms: 0, usd: 0, underlying: 'cairn:deterministic' }, provenance: this._knowledgeProvenance('causal-audit', upper) });
-    if (existsSync(path)) { const stat = statSync(path); if (sha256(readFileSync(path)) !== packetDigest || (stat.mode & 0o777) !== 0o600 || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) throw typed('causal audit artifact path is occupied by invalid content, owner, or mode', 'causal_audit_integrity'); }
-    else if (writeArtifact) { writeFileSync(path, bytes, { encoding: 'utf8', mode: 0o600, flag: 'wx' }); const stat = statSync(path); if ((stat.mode & 0o777) !== 0o600 || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) throw typed('causal audit artifact owner or mode is invalid', 'causal_audit_integrity'); }
-    else throw typed('causal audit artifact is missing', 'causal_audit_integrity');
-    return result;
+    this._knowledgeContext(ctx); let created = false;
+    try {
+      if (existsSync(path)) this._readCausalAuditArtifact(path, Buffer.byteLength(bytes), packetDigest);
+      else if (writeArtifact) {
+        this._knowledgeContext(ctx); writeFileSync(path, bytes, { encoding: 'utf8', mode: 0o600, flag: 'wx' }); created = true; this._readCausalAuditArtifact(path, Buffer.byteLength(bytes), packetDigest);
+      } else throw typed('causal audit artifact is missing', 'causal_audit_integrity');
+      this._knowledgeContext(ctx); return result;
+    } catch (error) { if (created) rmSync(path, { force: true }); throw error; }
   }
 
   _causalTrace(args, ctx, override = null) {
@@ -282,7 +300,6 @@ export class CairnRunScorecard {
       if (op === 'causal.audit') {
         const upper = claim?.payload?.[0]?.coordinationUpperBound; if (!Number.isSafeInteger(args?.observedSeq)) return { ok: false, reason: 'observation_boundary_required' };
         const rebuilt = this._causalAudit(args, ctx, upper, false); const digest = rebuilt.refs[0].digest;
-        if (!existsSync(rebuilt.refs[0].path) || sha256(readFileSync(rebuilt.refs[0].path)) !== digest) return { ok: false, reason: 'artifact_digest_mismatch' };
         const transported = ['web', 'mcp'].includes(ctx?.transport);
         if ((!transported && typeof claim?.refs?.[0]?.path !== 'string') || (claim?.refs?.[0]?.path !== undefined && resolve(claim.refs[0].path) !== resolve(rebuilt.refs[0].path))) return { ok: false, reason: 'artifact_path_mismatch' };
         return { ok: stable(publicClaim(claim)) === stable(publicClaim(rebuilt)), digest };

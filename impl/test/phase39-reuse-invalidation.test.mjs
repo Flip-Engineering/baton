@@ -42,8 +42,8 @@ async function fixture() {
   });
   const dossierArgs = { indexEpoch: built.provenance.index_epoch, ecosystem: 'npm', package: '@scope/safe-pkg', version: '1.2.3' };
   const sbomArgs = { lockfilePath: 'package-lock.json' }; const ctx = { actor: 'operator:alice', repoId: 'repo-a', budgetTokens: 10_000, idempotencyKey: 'reuse:first' };
-  const dossierClaim = await driver.coordinator.invokeCapability('cartographer-quartermaster', 'reuse.vet', dossierArgs, ctx);
-  const sbomClaim = await driver.coordinator.invokeCapability('cartographer-quartermaster', 'provenance.sbom', sbomArgs, ctx);
+  const dossierClaim = await driver.coordinator.invokeCapability('cartographer-quartermaster', 'reuse.vet', dossierArgs, { ...ctx, idempotencyKey: 'reuse:first:dossier' });
+  const sbomClaim = await driver.coordinator.invokeCapability('cartographer-quartermaster', 'provenance.sbom', sbomArgs, { ...ctx, idempotencyKey: 'reuse:first:sbom' });
   const request = { need: 'safe package capability', choice: 'borrow', rationale: 'Use the exact policy-green candidate.', dossier: { claim: dossierClaim, args: dossierArgs }, sbom: { claim: sbomClaim, args: sbomArgs } };
   return { ...driver, repoRoot, logDir, request, ctx, advance: (ms) => { nowMs += ms; }, setNow: (ms) => { nowMs = ms; }, setAdvisories: (value) => { advisories = value; }, setFetchHook: (value) => { fetchHook = value; }, fetchCalls: () => fetchCalls };
 }

@@ -6,7 +6,11 @@ Cairn Rung 2 is bound to exactly one deployment `repoId` and one closed audit po
 independently caps state rows, nodes, edges, evidence references, violation samples, trace depth,
 trace rows, artifact bytes, and result bytes. Generic ACI invocation carries the authenticated
 repository and northbound idempotency identity; a capability context resolver cannot replace
-either. Baton uses no project-manager, homelab, network, or external graph runtime.
+either. The sole ACI registry binds that identity to repository, actor, action, capability,
+operation, bounded input digest, budget, and terminal result in an owner-only durable record.
+Identical concurrent requests coalesce, identical restart requests replay, changed requests
+conflict, and an incomplete crash record requires reconciliation instead of repeating an unknown
+effect. Baton uses no project-manager, homelab, network, or external graph runtime.
 
 ## CA2 — validated live and replay projection
 
@@ -55,6 +59,9 @@ recall utility, and contamination. It never compresses these into an unexplained
 disposition names critical violations explicitly; a well-formed unresolved contradiction is
 reported but is not silently resolved. Max+1 state refuses instead of emitting a false-green
 partial audit. The canonical packet is mode 0600 and content-addressed by its full bytes.
+An occupied packet is owner/mode/exact-size checked through a no-follow descriptor before bytes are
+read. Cancellation is checked after the audit scan, after observation-time acquisition, immediately
+before publication, and before return; a newly created packet is removed if that gate closes.
 
 ## CA8 — bounded cycle-safe trace
 
@@ -80,6 +87,9 @@ and resolution races, every independent max+1 ceiling, cyclic trace, artifact/cl
 authenticated cross-repo refusal, restart determinism, and zero authority. Recursive Baton review
 starts only after those gates pass and must end with fresh hub verification plus confirmed process,
 worktree, branch, runtime-home, and writer-lease reaping.
+Dogfood-discovered reds additionally cover ACI same-key changed-request conflict, concurrent and
+restart replay, durable result binding without raw input retention, oversized occupied packets
+before read, and cancellation at the publication seam.
 
 Phase 48 bounded lexical/graph recall remains required: audit-gated ranking, contradiction bundles,
 compact durable read receipts, `ReadBy`/contamination, pull-only proof, authenticated ACI reach, and

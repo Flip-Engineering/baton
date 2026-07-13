@@ -225,6 +225,41 @@ test('CA1/CA9: authenticated direct, web, and MCP paths preserve repo and idempo
   assert.equal(driver.close(), true);
 });
 
+test('CA1: capability idempotency is request-bound, result-bound, concurrent-safe, and durable', async () => {
+  const repo = root('idempotency-repo'); const logDir = root('idempotency-log'); const artifactRoot = root('idempotency-artifacts'); execFileSync('git', ['init', '-q'], { cwd: repo });
+  const deploy = () => createDriver({ repoRoot: repo, repoId: 'repo-a', logDir, adapters: {},
+    capabilityFactories: { cairn: ({ coordination, readOperational }) => new CairnRunScorecard({ coordination, readOperational, artifactRoot, knowledgeAuditPolicy: limits() }) },
+    maxCapabilityBudgetTokens: 32_000, maxCapabilityEnvelopeBytes: 256 * 1024,
+  });
+  const firstDriver = deploy(); const g = graph(firstDriver.coordination); const observedSeq = firstDriver.coordination.snapshot().lastSeq; const args = { observedSeq }; const authority = ctx({ idempotencyKey: 'phase47:bound-request' });
+  const [first, duplicate] = await Promise.all([
+    firstDriver.coordinator.invokeCapability('cairn', 'causal.audit', args, authority),
+    firstDriver.coordinator.invokeCapability('cairn', 'causal.audit', args, authority),
+  ]);
+  assert.deepEqual(duplicate, first);
+  await assert.rejects(firstDriver.coordinator.invokeCapability('cairn', 'causal.audit', { observedSeq: observedSeq - 1 }, authority), (error) => error.code === 'capability_idempotency_conflict');
+  await assert.rejects(firstDriver.coordinator.invokeCapability('cairn', 'causal.trace', { nodeId: g.left.node.id, observedSeq }, authority), (error) => error.code === 'capability_idempotency_conflict');
+  const firstEvidence = firstDriver.log.read('hub-capability').filter((event) => event.payload?.idempotencyKey === authority.idempotencyKey);
+  assert.equal(firstEvidence.filter((event) => event.kind === 'capability.op.started').length, 1);
+  assert.equal(firstEvidence.some((event) => event.kind === 'capability.op.replayed'), true);
+  const records = readdirSync(join(logDir, 'capability-idempotency')); assert.equal(records.length, 1); const durable = JSON.parse(readFileSync(join(logDir, 'capability-idempotency', records[0]), 'utf8'));
+  assert.equal(durable.idempotencyKey, authority.idempotencyKey); assert.equal(durable.repoId, 'repo-a'); assert.equal(durable.actor, 'operator:alice'); assert.equal(durable.action, 'invoke'); assert.equal(durable.capability, 'cairn'); assert.equal(durable.op, 'causal.audit'); assert.match(durable.inputDigest, /^[a-f0-9]{64}$/); assert.match(durable.requestDigest, /^[a-f0-9]{64}$/); assert.match(durable.resultDigest, /^[a-f0-9]{64}$/); assert.equal(Object.hasOwn(durable, 'input'), false);
+  assert.equal(firstDriver.close(), true);
+  const restarted = deploy(); const replayed = await restarted.coordinator.invokeCapability('cairn', 'causal.audit', args, authority); assert.deepEqual(replayed, first);
+  const restartEvidence = restarted.log.read('hub-capability').filter((event) => event.payload?.idempotencyKey === authority.idempotencyKey); assert.equal(restartEvidence.filter((event) => event.kind === 'capability.op.started').length, 1); assert.equal(restartEvidence.filter((event) => event.kind === 'capability.op.replayed').length >= 2, true); assert.equal(restarted.close(), true);
+});
+
+test('CA7: occupied artifacts are size-gated before reads and cancellation closes publication', async () => {
+  const artifactRoot = root('occupied-artifacts'); const store = new CoordinationStore(root('occupied-store'), { clock: clock() }); graph(store); const capability = new CairnRunScorecard({ coordination: store, readOperational: () => [], artifactRoot, knowledgeAuditPolicy: limits() }); const result = await capability.invoke('causal.audit', {}, ctx({ idempotencyKey: 'occupied:first' })); const args = { observedSeq: result.payload[0].coordinationUpperBound }; const path = result.refs[0].path;
+  rmSync(path); writeFileSync(path, Buffer.alloc(limits().maxArtifactBytes + 1), { mode: 0o600 });
+  await assert.rejects(capability.invoke('causal.audit', args, ctx({ idempotencyKey: 'occupied:invoke' })), (error) => error.code === 'causal_audit_oversize');
+  const oversizedReverify = await capability.reverify(result, 'causal.audit', args, ctx({ idempotencyKey: 'occupied:reverify' })); assert.deepEqual(oversizedReverify, { ok: false, reason: 'causal_audit_oversize' });
+
+  const cancelRoot = root('publication-cancel-artifacts'); const cancelStore = new CoordinationStore(root('publication-cancel-store'), { clock: clock() }); graph(cancelStore); const abort = new AbortController(); const observationTime = cancelStore.observationTime.bind(cancelStore); cancelStore.observationTime = (...values) => { const observed = observationTime(...values); abort.abort(); return observed; };
+  const cancelled = new CairnRunScorecard({ coordination: cancelStore, readOperational: () => [], artifactRoot: cancelRoot, knowledgeAuditPolicy: limits() });
+  await assert.rejects(cancelled.invoke('causal.audit', {}, ctx({ idempotencyKey: 'cancel:publication', signal: abort.signal })), (error) => error.code === 'cancelled'); assert.deepEqual(readdirSync(cancelRoot), []);
+});
+
 test('CA3/CA9/CA10: pinned audit and live trace replay byte-identically after store restart', async () => {
   const dir = root('restart-store'); const artifacts = root('restart-artifacts'); const store = new CoordinationStore(dir, { clock: clock() }); const g = graph(store, { contradiction: true }); const observedSeq = store.snapshot().lastSeq; const first = new CairnRunScorecard({ coordination: store, readOperational: () => [], artifactRoot: artifacts, knowledgeAuditPolicy: limits() });
   const auditArgs = { observedSeq }; const traceArgs = { nodeId: g.left.node.id, observedSeq }; const audit = await first.invoke('causal.audit', auditArgs, ctx({ idempotencyKey: 'restart:audit:one' })); const trace = await first.invoke('causal.trace', traceArgs, ctx({ idempotencyKey: 'restart:trace:one' }));

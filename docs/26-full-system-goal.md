@@ -570,7 +570,11 @@ uses live typed earlier lineage and reports independent causal/temporal/structur
 contradiction/recall/contamination metrics; bounded live trace counts nodes, edges, evidence, and
 frontier and refuses unrelated graph state over deployment ceilings. Content-addressed mode-0600
 packets and complete direct or transport-canonical reverify are repository-bound through the sole
-ACI path. The packet embeds a versioned digest of stable IDs for the full retained capability
+ACI path. That ACI path now durably binds each idempotency identity to the authenticated repository,
+actor, action, capability, operation, input digest, budget, and result; concurrent duplicates
+coalesce, restart duplicates replay, and changed requests conflict. Audit artifacts are exact-size/
+owner/mode checked through a no-follow descriptor before read, and cancellation closes the final
+publication seam without residue. The packet embeds a versioned digest of stable IDs for the full retained capability
 catalog—including AST/CST/SCIP/CPG/IR, Scratch, Vantage, Evidence Ladder, Skill Forge, session/
 provider/runtime depth, semantic merge/fingerprints, and e-graphs—so Phase 48 recall and the wider
 goal cannot disappear through summary. No external project-manager or homelab runtime is added.
@@ -586,7 +590,7 @@ goal cannot disappear through summary. No external project-manager or homelab ru
 6. Ship the task/artifact/Scratch substrate and deployment-neutral causal knowledge core.
 7. Ship Atlas + AST structural delta + repo map + Cairn scorecard, durable RouteStats/advice, and
    causal integrity/audit/trace as the first capability verticals. **Shipped locally through Cairn
-   Rung 2; recursive Phase 47 provider proof remains before evidence closure.**
+   Rung 2; recursive Phase 47 exact-route evidence is recorded, with final post-fix review pending.**
 8. Expand the representation and capability ladders in measured increments.
 9. Add MCP plus authenticated HTTPS/WebSocket user↔orchestrator control, operator surfaces,
    production runtime, and the registered evaluations.

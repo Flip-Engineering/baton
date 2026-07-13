@@ -147,17 +147,17 @@ test('CI5: provenance sink loss poisons the capability plane before any repeated
 
 test('CI3: resume and reverify share operation, input, budget, root, and authority policy', async () => {
   const capability = fixture(); const subject = registry(capability);
-  const ctx = { budgetTokens: 100, actor: 'mcp:user:session', repoId: 'repo-a', idempotencyKey: 'mcp.call:call-1' };
-  const resumed = await subject.resume('fixture', 'fixture.read', { digest: 'a'.repeat(64) }, 'fixture:1', ctx);
-  const verified = await subject.reverify('fixture', 'fixture.read', { digest: 'same' }, { digest: 'same' }, ctx);
+  const baseCtx = { budgetTokens: 100, actor: 'mcp:user:session', repoId: 'repo-a' };
+  const resumed = await subject.resume('fixture', 'fixture.read', { digest: 'a'.repeat(64) }, 'fixture:1', { ...baseCtx, idempotencyKey: 'mcp.call:resume-1' });
+  const verified = await subject.reverify('fixture', 'fixture.read', { digest: 'same' }, { digest: 'same' }, { ...baseCtx, idempotencyKey: 'mcp.call:reverify-1' });
   assert.equal(resumed.op, 'fixture.read'); assert.equal(verified.status, 'ok'); assert.equal(verified.payload[0].ok, true);
-  for (const call of capability.calls) assert.deepEqual(call.ctx, {
-    budgetTokens: 100, signal: undefined, actor: 'mcp:user:session', repoId: 'repo-a',
-    idempotencyKey: 'mcp.call:call-1', root: '/trusted/repository',
+  assert.deepEqual(capability.calls.map((call) => call.ctx.idempotencyKey), ['mcp.call:resume-1', 'mcp.call:reverify-1']);
+  for (const call of capability.calls) assert.deepEqual({ ...call.ctx, idempotencyKey: undefined }, {
+    budgetTokens: 100, signal: undefined, actor: 'mcp:user:session', repoId: 'repo-a', idempotencyKey: undefined, root: '/trusted/repository',
   });
-  await assert.rejects(subject.resume('fixture', 'fixture.write', {}, 'cursor', ctx), (error) => error.code === 'capability_op_unavailable');
-  await assert.rejects(subject.resume('fixture', 'fixture.read', {}, '', ctx), (error) => error.code === 'capability_resume_invalid');
-  await assert.rejects(subject.reverify('fixture', 'fixture.read', null, {}, ctx), (error) => error.code === 'capability_reverify_invalid');
+  await assert.rejects(subject.resume('fixture', 'fixture.write', {}, 'cursor', { ...baseCtx, idempotencyKey: 'mcp.call:bad-op' }), (error) => error.code === 'capability_op_unavailable');
+  await assert.rejects(subject.resume('fixture', 'fixture.read', {}, '', { ...baseCtx, idempotencyKey: 'mcp.call:bad-cursor' }), (error) => error.code === 'capability_resume_invalid');
+  await assert.rejects(subject.reverify('fixture', 'fixture.read', null, {}, { ...baseCtx, idempotencyKey: 'mcp.call:bad-reverify' }), (error) => error.code === 'capability_reverify_invalid');
 });
 
 test('CI3: cards advertise action support and quarantine task-class ops from synchronous northbounds', async () => {

@@ -1,0 +1,138 @@
+{
+  "at": "2026-07-13T06:51:49.561Z",
+  "repoHead": "51217cf1570711757a30cdad5a7a49fcf0e28cd5",
+  "runId": "phase47-harness-matrix",
+  "credentialPosture": {
+    "glm": "project-local owner-only ignored file loaded only by GlmSessionCli",
+    "codex": "explicit owner-only private runtime projection",
+    "claude": "subscription/keychain; no credential file projection"
+  },
+  "rows": [
+    {
+      "taskId": "phase47-claude-ledger-review",
+      "harness": "claude",
+      "model": "claude-opus-4-6",
+      "target": "reviews/dogfood/phase47-claude-ledger-review.md",
+      "workerId": "w-1",
+      "pid": 83101,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "claude",
+        "harnessResolved": "claude-code@2.1.206",
+        "modelRequested": "claude-opus-4-6",
+        "modelResolved": "claude-opus-4-6",
+        "modelObserved": "claude-opus-4-6",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 0,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "reportCaptured": false
+    },
+    {
+      "taskId": "phase47-codex-aci-review",
+      "harness": "codex",
+      "model": "gpt-5.6-sol",
+      "target": "reviews/dogfood/phase47-codex-aci-review.md",
+      "workerId": "w-2",
+      "pid": 83106,
+      "result": {
+        "status": "cancelled",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "codex",
+        "harnessResolved": "codex@codex-cli 0.144.1",
+        "modelRequested": "gpt-5.6-sol",
+        "modelResolved": "gpt-5.6-sol",
+        "modelObserved": "gpt-5.6-sol",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 208410,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "reportCaptured": false
+    },
+    {
+      "taskId": "phase47-glm-causal-review",
+      "harness": "glm",
+      "model": "glm-4.7",
+      "target": "reviews/dogfood/phase47-glm-causal-review.md",
+      "workerId": "w-3",
+      "pid": 83112,
+      "result": {
+        "status": "completed",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "glm",
+        "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+        "modelRequested": "glm-4.7",
+        "modelResolved": "glm-4.7",
+        "modelObserved": "glm-4.7",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 131475,
+        "usd": 1.1907759999999998
+      },
+      "verifyAccept": true,
+      "reportCaptured": true
+    }
+  ],
+  "responses": [],
+  "kills": [
+    {
+      "taskId": "phase47-claude-ledger-review",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "phase47-codex-aci-review",
+      "ack": {
+        "ok": true,
+        "result": "already_dead"
+      }
+    },
+    {
+      "taskId": "phase47-glm-causal-review",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "checks": {
+    "runnerHealthy": true,
+    "allHarnessesAdmitted": true,
+    "exactRoutesRequestedResolved": true,
+    "exactProviderModelsObserved": true,
+    "freshVerified": false,
+    "reportsCaptured": false,
+    "killSafe": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimesGone": true,
+    "branchesGone": true,
+    "writerAuthorityReleased": true
+  },
+  "fatal": null,
+  "pass": false
+}
