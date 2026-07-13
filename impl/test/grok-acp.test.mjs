@@ -126,6 +126,12 @@ test('GA14/GA15: card() reports harness grok, injected version, steer:emulated, 
   assert.equal(card.verbs.answer, 'unsupported', 'ACP has no ask-user primitive — a named gap, not an emulation');
   assert.equal(card.verbs.kill, 'native');
   assert.equal(card.verbs.pause, 'unsupported');
+  assert.deepEqual(card.governance, {
+    usage: { tokens: 'native', usd: 'unavailable', tokenMetric: 'grok_prompt_meta_total_tokens', terminalSeal: 'native' },
+    providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },
+    toolCalls: { observation: 'native', enforcement: 'unavailable' },
+    maxWireFrameBytes: 1024 * 1024,
+  });
 });
 
 test('GA15: the default version probe describes the injected executable, not a different bare grok on PATH', () => {
@@ -155,6 +161,11 @@ test('GA6: spawn() acks ok:true and drives lifecycle.spawned -> turn_started -> 
     assert.equal(terminal.payload.stopReason, 'end_turn');
     assert.equal(typeof terminal.payload.sessionId, 'string');
     assert.equal(typeof terminal.payload.turnId, 'string', 'ACP has no wire turn id — the adapter mints one (GA6)');
+    assert.equal(terminal.payload.usageSeal.tokens, 'reported');
+    assert.equal(terminal.payload.usageSeal.usd, 'unavailable');
+    const usage = events.find((event) => event.kind === 'resource.tokens');
+    assert.ok(usage && events.indexOf(usage) < events.indexOf(terminal));
+    assert.equal(usage.payload.counterId, terminal.payload.usageSeal.counterId);
   } finally {
     await cleanup(adapter, worker);
   }
@@ -214,6 +225,7 @@ test('GA18: a prompt that resolves as a JSON-RPC ERROR (FAKE:CRASH) emits lifecy
     await adapter.spawn(worker, makeBrief('FAKE:CRASH please fail'), { worktree: freshWorktree() });
     const crash = await until(events, (e) => e.kind === 'lifecycle.crashed');
     assert.match(crash.payload.error, /boom/);
+    assert.deepEqual(crash.payload.usageSeal, { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null });
     await delay(60);
     assert.equal(events.some((e) => e.kind === 'lifecycle.turn_completed'), false);
   } finally {
@@ -229,6 +241,8 @@ test('GA18: stopReason "refusal" maps to lifecycle.crashed with payload.stopReas
     await adapter.spawn(worker, makeBrief('FAKE:REFUSAL do something it declines'), { worktree: freshWorktree() });
     const crash = await until(events, (e) => e.kind === 'lifecycle.crashed');
     assert.equal(crash.payload.stopReason, 'refusal');
+    assert.equal(crash.payload.usageSeal.tokens, 'reported');
+    assert.equal(crash.payload.usageSeal.usd, 'unavailable');
     await delay(60);
     assert.equal(events.some((e) => e.kind === 'lifecycle.turn_completed'), false);
   } finally {
@@ -313,7 +327,7 @@ test('GA13: prompt(..., "steer") acks {ok:true, emulated:true}, emits control.st
     assert.equal(ack.emulated, true, 'the wire lacks steer — the emulation is declared on every Ack');
 
     const steered = await until(events, (e) => e.kind === 'control.steer');
-    assert.equal(steered.actor, 'orchestrator');
+    assert.equal(steered.actor, 'worker');
     assert.equal(steered.payload.emulated, true);
 
     // The steer content runs as a NEW turn on the SAME session and completes.
@@ -359,6 +373,8 @@ test('GA8: interrupt() acks immediately; control.interrupt_confirmed arrives via
     const confirmed = await until(events, (e) => e.kind === 'control.interrupt_confirmed');
     assert.equal(confirmed.worker, worker);
     assert.equal(confirmed.payload.result.status, 'cancelled');
+    assert.equal(confirmed.payload.usageSeal.tokens, 'reported');
+    assert.equal(confirmed.payload.usageSeal.usd, 'unavailable');
   } finally {
     await cleanup(adapter, worker);
   }
@@ -613,6 +629,7 @@ test('GA11: kill() force-ends the worker and emits kill.confirmed once the proce
   assert.equal(ack.ok, true);
   const confirmed = await until(events, (e) => e.kind === 'kill.confirmed');
   assert.equal(confirmed.worker, worker);
+  assert.deepEqual(confirmed.payload.usageSeal, { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null });
   await delay(60);
   assert.equal(events.some((e) => e.kind === 'lifecycle.crashed'), false, 'a deliberate kill is not a worker crash (GA11 close-path absorption)');
 });
@@ -633,6 +650,7 @@ test('F1 (live-pinned): the prompt response _meta becomes a resource.tokens even
     assert.equal(typeof res.payload.outputTokens, 'number');
     const terminal = await until(events, (e) => e.kind === 'lifecycle.turn_completed');
     assert.ok(terminal.payload.result.budgetUsed.tokens > 0, 'GA20 was overturned live: usage IS on the wire and must reach the result');
+    assert.equal(res.payload.counterId, terminal.payload.usageSeal.counterId);
   } finally {
     await cleanup(adapter, worker);
   }
@@ -644,10 +662,13 @@ test('F2 (live-pinned): tool_call_update (status/diff transitions) maps to conte
   const worker = 'w1';
   try {
     await adapter.spawn(worker, makeBrief('trivial'), { worktree: freshWorktree() });
-    await until(events, (e) => e.kind === 'content.tool_call' && e.payload.sessionUpdate === 'tool_call');
+    const initial = await until(events, (e) => e.kind === 'content.tool_call' && e.payload.sessionUpdate === 'tool_call');
     const upd = await until(events, (e) => e.kind === 'content.tool_call' && e.payload.sessionUpdate === 'tool_call_update');
     assert.equal(upd.payload.status, 'completed');
     assert.equal(upd.payload.content?.[0]?.type, 'diff');
+    assert.equal(initial.payload.callId, upd.payload.callId);
+    assert.equal(initial.payload.phase, 'requested');
+    assert.equal(upd.payload.phase, 'completed');
   } finally {
     await cleanup(adapter, worker);
   }

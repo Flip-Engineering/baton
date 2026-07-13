@@ -340,6 +340,12 @@ test('CI3: driver-level wall timeout reaps the real child, worktree, metadata, a
   git(['config', 'user.name', 'Baton Test'], repoRoot);
   git(['commit', '--allow-empty', '-q', '-m', 'base'], repoRoot);
 
+  // Brief budgets use whole-minute deployment ceilings. Scale only the adapter's one-minute
+  // timer so this integration check retains a short wall-clock duration.
+  const realSetTimeout = globalThis.setTimeout;
+  const restoreTimer = () => { globalThis.setTimeout = realSetTimeout; };
+  globalThis.setTimeout = (callback, ms, ...args) => realSetTimeout(callback, ms === 60_000 ? 1_000 : ms, ...args);
+  t.after(restoreTimer);
   const cli = new ClaudeSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], killGraceMs: 20 });
   const { coordinator, log } = createDriver({
     repoRoot,
@@ -350,8 +356,10 @@ test('CI3: driver-level wall timeout reaps the real child, worktree, metadata, a
   const timed = brief('HOLD_UNTIL_INTERRUPT');
   // Keep the integration budget above fixture process startup jitter in the bare parallel suite;
   // the assertion is about real timeout cleanup after a wire session exists.
-  timed.budget.wallMin = 0.01;
+  timed.budget.wallMin = 1;
   const h = await coordinator.spawn('claude', timed, { taskId: 'timeout-reap' });
+  await until(() => log.read(h.id).find((e) => e.kind === 'lifecycle.process_started' && e.actor === 'worker'));
+  restoreTimer();
   const crashed = await until(() => log.read(h.id).find((e) => e.kind === 'lifecycle.crashed' && e.payload?.phase === 'timeout'));
   const events = log.read(h.id);
   const started = events.find((e) => e.kind === 'lifecycle.process_started' && e.actor === 'worker');

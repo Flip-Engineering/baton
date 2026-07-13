@@ -12,6 +12,35 @@ import { lstatSync, readFileSync } from 'node:fs';
 import { renderPrompt } from './cli-adapters.mjs';
 import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
 
+const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
+const CLAUDE_TOKEN_METRIC = 'anthropic_input_plus_output_tokens_excluding_cache';
+
+function unavailableUsageSeal() {
+  return { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null };
+}
+
+function resultUsage(obj, counterId) {
+  const input = obj?.usage?.input_tokens;
+  const output = obj?.usage?.output_tokens;
+  const tokensReported = Number.isSafeInteger(input) && input >= 0 && Number.isSafeInteger(output) && output >= 0;
+  const usdReported = Number.isFinite(obj?.total_cost_usd) && obj.total_cost_usd >= 0;
+  return {
+    reported: tokensReported || usdReported,
+    payload: {
+      source: 'result', accounting: 'delta',
+      ...(tokensReported ? { tokens: input + output } : {}),
+      ...(usdReported ? { usd: obj.total_cost_usd } : {}),
+      ...((tokensReported || usdReported) ? { counterId, tokenMetric: tokensReported ? CLAUDE_TOKEN_METRIC : null } : {}),
+    },
+    seal: {
+      tokens: tokensReported ? 'reported' : 'unavailable',
+      usd: usdReported ? 'reported' : 'unavailable',
+      counterId: (tokensReported || usdReported) ? counterId : null,
+      tokenMetric: tokensReported ? CLAUDE_TOKEN_METRIC : null,
+    },
+  };
+}
+
 const credentialError = (message, code) => Object.assign(new Error(message), { code });
 
 function jsonPointerSegments(pointer) {
@@ -104,6 +133,8 @@ function makeResult(status, summary, usage, usd) {
 export class ClaudeSessionCli {
   /** @param {{cmd,args,env,harness,version,ceiling,maxContext,approvals,sessionId,killGraceMs,model}} opts */
   constructor(opts = {}) {
+    const maxWireFrameBytes = opts.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
+    if (!Number.isSafeInteger(maxWireFrameBytes) || maxWireFrameBytes <= 0) throw new TypeError('maxWireFrameBytes must be a positive safe integer');
     this._cfg = {
       cmd: opts.cmd ?? 'claude',
       args: opts.args ?? [],
@@ -117,6 +148,7 @@ export class ClaudeSessionCli {
       killGraceMs: opts.killGraceMs ?? 5000,
       model: opts.model,
       permissionMode: opts.permissionMode === undefined ? 'acceptEdits' : opts.permissionMode, // E1
+      maxWireFrameBytes,
     };
     /** @type {Map<string, object>} worker -> session */
     this._sessions = new Map();
@@ -132,6 +164,12 @@ export class ClaudeSessionCli {
       authPosture: 'subscription',
       concurrencyCeiling: this._cfg.ceiling,
       maxContext: this._cfg.maxContext,
+      governance: {
+        usage: { tokens: 'native', usd: 'native', tokenMetric: CLAUDE_TOKEN_METRIC, terminalSeal: 'native' },
+        providerCalls: { observation: 'native', enforcement: 'unavailable' },
+        toolCalls: { observation: 'native', enforcement: 'unavailable' },
+        maxWireFrameBytes: this._cfg.maxWireFrameBytes,
+      },
       modelSelection: {
         mode: 'exact',
         configuredDefault: this._cfg.model ?? null,
@@ -172,14 +210,15 @@ export class ClaudeSessionCli {
     if (this._cb) {
       this._cb({
         worker, harness: this._cfg.harness, turnEpoch: 0,
-        actor: 'orchestrator', kind, payload: { phase: 'spawn' },
+        actor: 'worker', kind, payload: { phase: 'spawn', usageSeal: unavailableUsageSeal() },
       });
     }
     return true;
   }
 
   _actorFor(kind) {
-    return kind.startsWith('control.') || kind.startsWith('kill.') ? 'orchestrator' : 'worker';
+    void kind;
+    return 'worker';
   }
 
   /** CS16: once a session-terminal kind fires, no further event is EVER emitted for that worker. */
@@ -266,8 +305,10 @@ export class ClaudeSessionCli {
       sessionIdWire: null,
       turnInFlight: false,
       discardNextResult: false, // CS11
+      pendingInterrupt: null,
       turnEpoch: 0,
       reqSeq: 0,
+      providerCallSeq: 0,
       deadEmitted: false,
       terminal: false, // set once the child process itself has exited
       stopping: false,
@@ -335,12 +376,29 @@ export class ClaudeSessionCli {
     while ((nl = session.buf.indexOf('\n')) !== -1) {
       const line = session.buf.slice(0, nl);
       session.buf = session.buf.slice(nl + 1);
+      if (Buffer.byteLength(line, 'utf8') > this._cfg.maxWireFrameBytes) {
+        this._wireFrameFailure(session);
+        return;
+      }
       if (!line.trim()) continue;
       if (session.terminal) continue; // CS16
       let obj;
       try { obj = JSON.parse(line); } catch { continue; } // tolerant NDJSON reader, like the real CLI
       this._handleWireObject(session, obj);
     }
+    if (!session.terminal && Buffer.byteLength(session.buf, 'utf8') > this._cfg.maxWireFrameBytes) this._wireFrameFailure(session);
+  }
+
+  _wireFrameFailure(session) {
+    if (session.terminal || session.processFailure) return;
+    session.buf = '';
+    session.processFailure = {
+      error: 'provider wire frame exceeded configured byte ceiling',
+      code: 'wire_frame_oversize',
+      phase: 'wire',
+      usageSeal: unavailableUsageSeal(),
+    };
+    this._signal(session, 'SIGKILL');
   }
 
   _handleWireObject(session, obj) {
@@ -361,9 +419,18 @@ export class ClaudeSessionCli {
       case 'assistant': {
         const content = obj.message?.content ?? [];
         const text = content.filter((c) => c.type === 'text').map((c) => c.text).join('');
-        const tool = content.find((c) => c.type === 'tool_use');
-        if (tool) this._emit(session, 'content.tool_call', { name: tool.name, input: tool.input });
-        else if (text) this._emit(session, 'content.message', { text });
+        const tools = content.filter((c) => c.type === 'tool_use');
+        if (!text && tools.length === 0) return;
+        session.providerCallSeq += 1;
+        const providerCallId = String(obj.message?.id ?? obj.uuid ?? `claude:${session.turnEpoch}:${session.providerCallSeq}`);
+        this._emit(session, 'resource.provider_call', { callId: providerCallId, phase: 'completed' });
+        if (text) this._emit(session, 'content.message', { text });
+        tools.forEach((tool, index) => this._emit(session, 'content.tool_call', {
+          callId: String(tool.id ?? `${providerCallId}:tool:${index + 1}`),
+          phase: 'requested',
+          name: tool.name,
+          input: tool.input,
+        }));
         return;
       }
       case 'result':
@@ -382,21 +449,31 @@ export class ClaudeSessionCli {
 
   _handleResult(session, obj) {
     session.turnInFlight = false;
+    const usage = resultUsage(obj, `claude:${session.worker}:${session.turnEpoch}`);
+    if (usage.reported) {
+      this._emit(session, 'resource.tokens', {
+        ...usage.payload,
+        usage: obj.usage ?? null,
+        pid: session.pid,
+        modelRequested: session.modelRequested,
+        modelObserved: session.modelObserved,
+      });
+    }
     if (session.discardNextResult) {
       // CS11: a result frame for the just-interrupted turn is discarded — never surfaced as
       // lifecycle.turn_completed. Single-terminal-per-turn: control.interrupt_confirmed IS the terminal.
       session.discardNextResult = false;
+      if (session.pendingInterrupt) {
+        session.pendingInterrupt.resultSeen = true;
+        session.pendingInterrupt.usageSeal = usage.seal;
+        this._maybeConfirmInterrupt(session);
+      }
       return;
     }
     const status = obj.is_error ? 'failed' : 'completed';
-    const tokens = (obj.usage?.output_tokens ?? 0) + (obj.usage?.input_tokens ?? 0);
-    this._emit(session, 'resource.tokens', {
-      source: 'result', accounting: 'delta', tokens, usd: obj.total_cost_usd ?? 0,
-      usage: obj.usage ?? null, pid: session.pid,
-      modelRequested: session.modelRequested, modelObserved: session.modelObserved,
-    });
     this._emit(session, 'lifecycle.turn_completed', {
       result: makeResult(status, obj.result, obj.usage, obj.total_cost_usd),
+      usageSeal: usage.seal,
       pid: session.pid,
       modelRequested: session.modelRequested,
       modelObserved: session.modelObserved,
@@ -453,12 +530,28 @@ export class ClaudeSessionCli {
    * discard (CS11) — this is set BEFORE the wire round trip so it's armed regardless of ordering.
    */
   _sendInterrupt(session) {
-    if (session.turnInFlight) session.discardNextResult = true;
+    const inFlight = session.turnInFlight;
+    if (inFlight) session.discardNextResult = true;
+    session.pendingInterrupt = {
+      wireConfirmed: false,
+      resultSeen: !inFlight,
+      usageSeal: unavailableUsageSeal(),
+      emitted: false,
+    };
     const wireId = this._nextWireRequestId(session);
     this._emit(session, 'control.interrupt_requested', {});
     const confirmed = new Promise((resolve) => { session.pendingControlRequests.set(wireId, resolve); });
     this._write(session, { type: 'control_request', request_id: wireId, request: { subtype: 'interrupt' } });
     return confirmed;
+  }
+
+  _maybeConfirmInterrupt(session) {
+    const pending = session.pendingInterrupt;
+    if (!pending || pending.emitted || !pending.wireConfirmed || !pending.resultSeen || session.terminal) return;
+    pending.emitted = true;
+    if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
+    this._emit(session, 'control.interrupt_confirmed', { usageSeal: pending.usageSeal });
+    session.pendingInterrupt = null;
   }
 
   // ---------------------------------------------------------------------------
@@ -500,8 +593,8 @@ export class ClaudeSessionCli {
     const confirmed = this._sendInterrupt(session);
     confirmed.then(() => {
       if (session.terminal) return;
-      if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
-      this._emit(session, 'control.interrupt_confirmed', {});
+      if (session.pendingInterrupt) session.pendingInterrupt.wireConfirmed = true;
+      this._maybeConfirmInterrupt(session);
     });
     return { ok: true }; // native — a real control-plane primitive, not a signal (CS9)
   }
@@ -611,14 +704,14 @@ export class ClaudeSessionCli {
     }
     if (session.timeoutFailure) {
       this._emit(session, 'lifecycle.crashed', session.timeoutFailure);
-      if (groupReap.confirmed && session.stopping) this._emit(session, 'kill.confirmed', { signal, terminalCause: 'timeout' });
+      if (groupReap.confirmed && session.stopping) this._emit(session, 'kill.confirmed', { signal, terminalCause: 'timeout', usageSeal: unavailableUsageSeal() });
     } else if (session.processFailure) {
       this._emit(session, 'lifecycle.crashed', session.processFailure);
-      if (groupReap.confirmed && session.stopping) this._emit(session, 'kill.confirmed', { signal, terminalCause: 'process_error' });
+      if (groupReap.confirmed && session.stopping) this._emit(session, 'kill.confirmed', { signal, terminalCause: 'process_error', usageSeal: unavailableUsageSeal() });
     } else if (session.stopping) {
-      if (groupReap.confirmed) this._emit(session, 'kill.confirmed', { signal });
+      if (groupReap.confirmed) this._emit(session, 'kill.confirmed', { signal, usageSeal: unavailableUsageSeal() });
     } else if (session.turnInFlight || code !== 0) {
-      this._emit(session, 'lifecycle.crashed', { error: `exited ${code}${signal ? ` (${signal})` : ''}` });
+      this._emit(session, 'lifecycle.crashed', { error: `exited ${code}${signal ? ` (${signal})` : ''}`, usageSeal: unavailableUsageSeal() });
     }
   }
 
@@ -626,14 +719,14 @@ export class ClaudeSessionCli {
     if (session.terminal) return;
     if (Number.isSafeInteger(session.pid) && session.pid > 0) {
       if (session.processFailure) return;
-      session.processFailure = { error: String(err?.message ?? err), phase: 'process_error' };
+      session.processFailure = { error: String(err?.message ?? err), phase: 'process_error', usageSeal: unavailableUsageSeal() };
       this._signal(session, 'SIGKILL');
       return;
     }
     session.terminal = true;
     if (session.killTimer) clearTimeout(session.killTimer);
     if (session.wallTimer) clearTimeout(session.wallTimer);
-    this._emit(session, 'lifecycle.crashed', { error: String(err?.message ?? err) });
+    this._emit(session, 'lifecycle.crashed', { error: String(err?.message ?? err), usageSeal: unavailableUsageSeal() });
   }
 
   _onWallTimeout(session, timeoutMs) {
@@ -641,6 +734,7 @@ export class ClaudeSessionCli {
     session.timeoutFailure = {
       error: `session wall-time budget exceeded (${timeoutMs}ms)`,
       phase: 'timeout',
+      usageSeal: unavailableUsageSeal(),
     };
     this._signal(session, 'SIGKILL');
   }

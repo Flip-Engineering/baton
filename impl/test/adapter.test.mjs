@@ -145,6 +145,12 @@ test('card() returns a well-formed HarnessCard for all four adapters', () => {
     assert.ok('interrupt' in card.verbs, `${name}.verbs.interrupt required`);
   }
   assert.equal(new GlmAdapter().card().concurrencyCeiling, 1, 'GLM Pro concurrency ceiling is hard-pinned to 1');
+  assert.deepEqual(mock.card().governance, {
+    usage: { tokens: 'native', usd: 'native', tokenMetric: 'mock_scenario_tokens', terminalSeal: 'native' },
+    providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },
+    toolCalls: { observation: 'unavailable', enforcement: 'unavailable' },
+    maxWireFrameBytes: 1024 * 1024,
+  });
 });
 
 test('assertIsAdapter (D1): accepts all four real adapters and rejects anything missing a SESSION method', () => {
@@ -255,6 +261,24 @@ test('SESSION: spawn() acks immediately and emits turn_started -> content.file_e
   assert.equal(kinds.at(-1), 'lifecycle.turn_completed');
   assert.equal(kinds.filter((k) => k === 'content.file_edit').length, 2, 'D3: content.file_edit, one per applied edit');
   assert.ok(existsSync(join(dir, 'a.txt')) && existsSync(join(dir, 'b.txt')));
+  assert.deepEqual(terminal.payload.usageSeal, { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null });
+});
+
+test('MockAdapter reports scenario usage synchronously before terminal with the same counter-bound seal', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const adapter = new MockAdapter({ scenario: { outcome: 'completed', budgetUsed: { tokens: 9, usd: 0.03 } } });
+  const bus = makeEventBus(); adapter.onEvent(bus.cb);
+  await adapter.spawn('usage-worker', makeBrief(), { worktree: dir, timeoutMs: 20_000, turnEpoch: 1 });
+  const terminal = await bus.waitFor((event) => event.kind === 'lifecycle.turn_completed');
+  const usageIndex = bus.events.findIndex((event) => event.kind === 'resource.tokens');
+  const terminalIndex = bus.events.indexOf(terminal);
+  assert.ok(usageIndex >= 0 && usageIndex < terminalIndex);
+  const usage = bus.events[usageIndex];
+  assert.equal(usage.payload.counterId, terminal.payload.usageSeal.counterId);
+  assert.deepEqual(terminal.payload.usageSeal, {
+    tokens: 'reported', usd: 'reported', counterId: 'mock:usage-worker:1', tokenMetric: 'mock_scenario_tokens',
+  });
 });
 
 test('WF3: MockAdapter rejects readiness before announcing a turn or touching disk', async () => {
@@ -392,6 +416,7 @@ test('SESSION: interrupt() acks immediately; control.interrupt_requested logs sy
   assert.equal(confirmed.worker, 'w1');
   assert.equal(confirmed.payload.result.status, 'cancelled');
   assert.equal(confirmed.payload.result.progress, 1 / 3);
+  assert.deepEqual(confirmed.payload.usageSeal, { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null });
 
   assert.ok(existsSync(join(dir, 'a.txt')));
   assert.ok(!existsSync(join(dir, 'b.txt')));
@@ -471,6 +496,7 @@ test('SESSION: kill() arriving during a soft interrupt()\'s wait escalates to ki
 
   const terminal = await bus.waitFor((e) => TERMINAL_KINDS.has(e.kind));
   assert.equal(terminal.kind, 'kill.confirmed', 'kill escalates a pending interrupt — the terminal outcome is a kill, not the softer interrupt');
+  assert.deepEqual(terminal.payload.usageSeal, { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null });
   assert.equal(bus.events.filter((e) => e.kind === 'control.interrupt_confirmed').length, 0, 'the soft interrupt never separately confirms once escalated');
 });
 
@@ -499,6 +525,7 @@ test('SESSION: kill() on a working session acks immediately, logs kill.requested
 
   const confirmed = await bus.waitFor((e) => e.kind === 'kill.confirmed');
   assert.equal(confirmed.worker, 'w1');
+  assert.deepEqual(confirmed.payload.usageSeal, { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null });
   assert.ok(!existsSync(join(dir, 'b.txt')), 'the edit scheduled after the kill point never lands');
 });
 
@@ -680,6 +707,7 @@ test('SESSION: a crashed run emits lifecycle.crashed via onEvent; no terminal co
   await adapter.spawn('w-crash', makeBrief(), { worktree: dir, timeoutMs: 20000 });
   const crashed = await bus.waitFor((e) => e.kind === 'lifecycle.crashed');
   assert.equal(crashed.worker, 'w-crash');
+  assert.deepEqual(crashed.payload.usageSeal, { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null });
 
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(bus.events.filter((e) => e.kind === 'lifecycle.turn_completed').length, 0);

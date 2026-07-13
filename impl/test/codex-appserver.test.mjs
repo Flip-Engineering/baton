@@ -116,6 +116,12 @@ test('XA14/XA15: card() reports harness codex, the injected version, and the nat
   assert.equal(card.verbs.interrupt, 'native');
   assert.equal(card.verbs.approve, 'native');
   assert.equal(card.verbs.pause, 'unsupported');
+  assert.deepEqual(card.governance, {
+    usage: { tokens: 'native', usd: 'unavailable', tokenMetric: 'codex_thread_total_tokens', terminalSeal: 'native' },
+    providerCalls: { observation: 'native', enforcement: 'unavailable' },
+    toolCalls: { observation: 'native', enforcement: 'unavailable' },
+    maxWireFrameBytes: 1024 * 1024,
+  });
 });
 
 test('XA15: the default version probe describes the injected executable, not a different bare codex on PATH', () => {
@@ -141,6 +147,12 @@ test('XA6: spawn() acks ok:true and drives turn_started -> content.message -> li
     assert.equal(terminal.payload.result.status, 'completed');
     assert.equal(typeof terminal.payload.threadId, 'string');
     assert.equal(typeof terminal.payload.turnId, 'string');
+    assert.equal(terminal.payload.usageSeal.tokens, 'reported');
+    assert.equal(terminal.payload.usageSeal.usd, 'unavailable');
+    const usage = events.find((event) => event.kind === 'resource.tokens' && event.payload.turnId === terminal.payload.turnId);
+    assert.ok(usage);
+    assert.equal(usage.payload.counterId, terminal.payload.usageSeal.counterId);
+    assert.ok(events.indexOf(usage) < events.indexOf(terminal));
   } finally {
     await cleanup(adapter, worker);
   }
@@ -169,6 +181,7 @@ test('XA19: a crashed turn (FAKE:CRASH) emits lifecycle.crashed as its sole term
     await adapter.spawn(worker, makeBrief('FAKE:CRASH please fail'), { worktree: freshWorktree() });
     const crash = await until(events, (e) => e.kind === 'lifecycle.crashed');
     assert.match(crash.payload.error, /boom/);
+    assert.deepEqual(crash.payload.usageSeal, { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null });
     await delay(60);
     assert.equal(events.some((e) => e.kind === 'lifecycle.turn_completed'), false);
   } finally {
@@ -266,6 +279,7 @@ test('XA8: interrupt() ends the turn as interrupted via onEvent (control.interru
 
     const confirmed = await until(events, (e) => e.kind === 'control.interrupt_confirmed');
     assert.equal(confirmed.worker, worker);
+    assert.deepEqual(confirmed.payload.usageSeal, { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null });
     // D9: interrupt/kill confirmation is ALWAYS an event, never smuggled onto the Ack return.
     assert.equal(ack.emulated, undefined, 'a native protocol interrupt is not an emulated signal-kill');
   } finally {
@@ -529,4 +543,5 @@ test('XA11: kill() force-ends the worker and emits kill.confirmed once the proce
   assert.equal(ack.ok, true);
   const confirmed = await until(events, (e) => e.kind === 'kill.confirmed');
   assert.equal(confirmed.worker, worker);
+  assert.deepEqual(confirmed.payload.usageSeal, { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null });
 });

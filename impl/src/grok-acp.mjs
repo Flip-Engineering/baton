@@ -22,6 +22,26 @@ import { createHash } from 'node:crypto';
 import { renderBrief } from './adapter.mjs';
 import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
 
+const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
+const GROK_TOKEN_METRIC = 'grok_prompt_meta_total_tokens';
+
+function unavailableUsageSeal() {
+  return { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null };
+}
+
+function promptMetaUsage(meta, counterId) {
+  const reported = Number.isSafeInteger(meta?.totalTokens) && meta.totalTokens >= 0;
+  return {
+    reported,
+    seal: {
+      tokens: reported ? 'reported' : 'unavailable',
+      usd: 'unavailable',
+      counterId: reported ? counterId : null,
+      tokenMetric: reported ? GROK_TOKEN_METRIC : null,
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
@@ -131,6 +151,10 @@ export class GrokAcpCli {
     if (!Number.isSafeInteger(this._maxEventPayloadBytes) || this._maxEventPayloadBytes < 1024) {
       throw new TypeError('GrokAcpCli: maxEventPayloadBytes must be an integer of at least 1024 bytes');
     }
+    this._maxWireFrameBytes = opts.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
+    if (!Number.isSafeInteger(this._maxWireFrameBytes) || this._maxWireFrameBytes <= 0) {
+      throw new TypeError('GrokAcpCli: maxWireFrameBytes must be a positive safe integer');
+    }
 
     // GA15: probed once, synchronously, cached; never throws.
     const versionProbe = opts.versionProbe ?? (() => execFileSync(this._cmd, ['--version']).toString().trim());
@@ -158,6 +182,12 @@ export class GrokAcpCli {
       authPosture: 'subscription',
       concurrencyCeiling: this._ceiling,
       maxContext: this._maxContext,
+      governance: {
+        usage: { tokens: 'native', usd: 'unavailable', tokenMetric: GROK_TOKEN_METRIC, terminalSeal: 'native' },
+        providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },
+        toolCalls: { observation: 'native', enforcement: 'unavailable' },
+        maxWireFrameBytes: this._maxWireFrameBytes,
+      },
       modelSelection: {
         mode: 'exact', configuredDefault: this._model ?? null, available: null, family: 'grok',
         acceptedPrefixes: ['grok-'], acceptedAliases: [],
@@ -195,7 +225,7 @@ export class GrokAcpCli {
     pending.cancelled = true;
     this._pendingSpawns.delete(worker);
     if (this._cb) {
-      this._cb({ worker, harness: 'grok', turnEpoch: 0, actor: 'orchestrator', kind, payload: { phase: 'spawn' } });
+      this._cb({ worker, harness: 'grok', turnEpoch: 0, actor: 'worker', kind, payload: { phase: 'spawn', usageSeal: unavailableUsageSeal() } });
     }
     return true;
   }
@@ -209,7 +239,7 @@ export class GrokAcpCli {
       worker: session.worker,
       harness: 'grok',
       turnEpoch: session.turnEpoch,
-      actor: kind.startsWith('control.') || kind.startsWith('kill.') ? 'orchestrator' : 'worker',
+      actor: 'worker',
       kind,
       payload,
     };
@@ -265,8 +295,13 @@ export class GrokAcpCli {
       while ((nl = session.buf.indexOf('\n')) !== -1) {
         const line = session.buf.slice(0, nl);
         session.buf = session.buf.slice(nl + 1);
+        if (Buffer.byteLength(line, 'utf8') > this._maxWireFrameBytes) {
+          this._wireFrameFailure(session);
+          return;
+        }
         this._onLine(session, line);
       }
+      if (!session.closed && Buffer.byteLength(session.buf, 'utf8') > this._maxWireFrameBytes) this._wireFrameFailure(session);
     });
     session.child.stderr.on('data', () => {}); // nothing on this wire is diagnosed from stderr
     // Writable stream errors (notably an approval racing process exit) are asynchronous and
@@ -275,6 +310,18 @@ export class GrokAcpCli {
     session.child.stdin.on('error', (error) => { session.stdinError = error; });
     session.child.on('close', (code, signal) => this._onClose(session, code, signal));
     session.child.on('error', (error) => this._onProcessError(session, error));
+  }
+
+  _wireFrameFailure(session) {
+    if (session.closed || session.processFailure) return;
+    session.buf = '';
+    session.processFailure = {
+      error: 'provider wire frame exceeded configured byte ceiling',
+      code: 'wire_frame_oversize',
+      phase: 'wire',
+      usageSeal: unavailableUsageSeal(),
+    };
+    this._killChild(session);
   }
 
   async _onClose(session, code, signal) {
@@ -298,24 +345,24 @@ export class GrokAcpCli {
       this._emit(session, 'lifecycle.crashed', session.timeoutFailure);
       if (groupReap.confirmed && session.killing && !session.killConfirmed) {
         session.killConfirmed = true;
-        this._emit(session, 'kill.confirmed', { sessionId: session.sessionId, terminalCause: 'timeout' });
+        this._emit(session, 'kill.confirmed', { sessionId: session.sessionId, terminalCause: 'timeout', usageSeal: unavailableUsageSeal() });
       }
     } else if (session.processFailure) {
       if (session.activeTurn) this._settleTurn(session, session.activeTurn.turnId);
       this._emit(session, 'lifecycle.crashed', session.processFailure);
       if (groupReap.confirmed && session.killing && !session.killConfirmed) {
         session.killConfirmed = true;
-        this._emit(session, 'kill.confirmed', { sessionId: session.sessionId, terminalCause: 'process_error' });
+        this._emit(session, 'kill.confirmed', { sessionId: session.sessionId, terminalCause: 'process_error', usageSeal: unavailableUsageSeal() });
       }
     } else if (session.killing) {
       if (groupReap.confirmed && !session.killConfirmed) {
         session.killConfirmed = true;
-        this._emit(session, 'kill.confirmed', { sessionId: session.sessionId });
+        this._emit(session, 'kill.confirmed', { sessionId: session.sessionId, usageSeal: unavailableUsageSeal() });
       }
     } else if (!session.setupFailed && session.activeTurn) {
       const turnId = session.activeTurn.turnId;
       this._settleTurn(session, turnId);
-      this._emit(session, 'lifecycle.crashed', { sessionId: session.sessionId, turnId, error: `transport closed${code === null ? '' : ` with code ${code}`}${signal ? ` (${signal})` : ''}` });
+      this._emit(session, 'lifecycle.crashed', { sessionId: session.sessionId, turnId, error: `transport closed${code === null ? '' : ` with code ${code}`}${signal ? ` (${signal})` : ''}`, usageSeal: unavailableUsageSeal() });
     }
     // The unbounded prompt (and any in-flight bounded RPC) must not dangle past child death.
     for (const [id, pending] of session.pendingRequests) {
@@ -327,7 +374,7 @@ export class GrokAcpCli {
 
   _onProcessError(session, error) {
     if (session.closed || session.processFailure || !Number.isSafeInteger(session.child?.pid) || session.child.pid <= 0) return;
-    session.processFailure = { error: String(error?.message ?? error), phase: 'process_error' };
+    session.processFailure = { error: String(error?.message ?? error), phase: 'process_error', usageSeal: unavailableUsageSeal() };
     this._killChild(session);
   }
 
@@ -382,6 +429,14 @@ export class GrokAcpCli {
       const requestId = `${session.worker}:apr:${(session.reqIdSeq += 1)}`;
       // Keyed map (X4 lesson): the wire permits multiple pending server->client requests.
       session.waits.set(requestId, { kind: 'approval', rawId: id, options: params?.options ?? [] });
+      const toolCall = params?.toolCall ?? {};
+      this._emit(session, 'content.tool_call', {
+        sessionId: params?.sessionId ?? session.sessionId,
+        turnId: session.activeTurn?.turnId ?? null,
+        ...boundedEvidence(toolCall, this._maxEventPayloadBytes),
+        callId: String(toolCall.toolCallId ?? toolCall.id ?? `${session.worker}:permission:${id}`),
+        phase: 'requested',
+      });
       this._emit(session, 'approval.requested', {
         requestId,
         sessionId: params?.sessionId ?? session.sessionId,
@@ -429,10 +484,17 @@ export class GrokAcpCli {
           const eventUpdate = wireEvidence?.truncated === true
             ? { sessionUpdate: update.sessionUpdate, toolCallId: update.toolCallId, title: update.title ?? null, kind: update.kind ?? null, status: update.status ?? null, wireEvidence }
             : wireEvidence;
+          const terminalStatuses = new Set(['completed', 'failed', 'cancelled', 'rejected']);
           this._emit(session, 'content.tool_call', {
             sessionId: session.sessionId, turnId, ...eventUpdate,
             command: update.rawInput?.command ?? update.rawOutput?.command ?? null,
             exitCode: update.rawOutput?.exit_code ?? null,
+            callId: String(update.toolCallId ?? `${session.sessionId}:${turnId}:${update.sessionUpdate}`),
+            phase: update.sessionUpdate === 'tool_call'
+              ? 'requested'
+              : update.status === 'completed' ? 'completed'
+                : update.status === 'cancelled' ? 'cancelled'
+                  : terminalStatuses.has(update.status) ? 'failed' : 'progress',
           });
         }
         return;
@@ -475,14 +537,17 @@ export class GrokAcpCli {
     // Live-smoke F1 (probe #3): the prompt response's `_meta` carries the turn's full token
     // accounting — surfaced as the one D3 resource kind, tagged by source (XA18 discipline).
     const meta = result._meta ?? null;
-    if (meta) {
+    const counterId = `grok:${session.sessionId}:${turnId}`;
+    const usage = promptMetaUsage(meta, counterId);
+    if (usage.reported) {
       session.modelObserved = meta.modelId ?? session.modelObserved;
       this._emit(session, 'resource.tokens', {
-        source: 'promptMeta', accounting: 'delta', tokens: meta.totalTokens ?? 0, usd: 0,
+        source: 'promptMeta', accounting: 'delta', tokens: meta.totalTokens,
+        tokenMetric: GROK_TOKEN_METRIC, counterId,
         sessionId: session.sessionId, turnId, ...meta,
       });
     }
-    const tokens = meta?.totalTokens ?? 0;
+    const tokens = usage.reported ? meta.totalTokens : 0;
 
     if (stopReason === 'cancelled') {
       const steer = session.steerPending;
@@ -498,7 +563,7 @@ export class GrokAcpCli {
       }
       const res = makeResult('cancelled', 'interrupted', tokens);
       if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
-      this._emit(session, 'control.interrupt_confirmed', { sessionId: session.sessionId, turnId, result: res });
+      this._emit(session, 'control.interrupt_confirmed', { sessionId: session.sessionId, turnId, result: res, usageSeal: usage.seal });
       this._maybeIssueFollowUp(session, turnId);
       return;
     }
@@ -507,7 +572,7 @@ export class GrokAcpCli {
       // GA18: the router-visible refusal signal (the GLM non-refuser tier exists because
       // refusals are routable data) — a refused task is a failed turn, tagged by stopReason.
       this._emit(session, 'lifecycle.crashed', {
-        sessionId: session.sessionId, turnId, error: 'worker refused the task', stopReason: 'refusal',
+        sessionId: session.sessionId, turnId, error: 'worker refused the task', stopReason: 'refusal', usageSeal: usage.seal,
       });
       return;
     }
@@ -515,13 +580,13 @@ export class GrokAcpCli {
     // end_turn and the budget-ish reasons (max_tokens / max_turn_requests) complete the turn;
     // stopReason is surfaced for the coordinator's own policy (GA20: no gating here).
     const res = makeResult('completed', `turn completed (${stopReason})`, tokens);
-    this._emit(session, 'lifecycle.turn_completed', { result: res, sessionId: session.sessionId, turnId, stopReason });
+    this._emit(session, 'lifecycle.turn_completed', { result: res, sessionId: session.sessionId, turnId, stopReason, usageSeal: usage.seal });
   }
 
   _onTurnError(session, turnId, err) {
     if (!this._settleTurn(session, turnId)) return;
     if (session.killing) return; // GA11: a deliberate kill is not a worker crash — kill.confirmed is the terminal
-    this._emit(session, 'lifecycle.crashed', { sessionId: session.sessionId, turnId, error: err.message });
+    this._emit(session, 'lifecycle.crashed', { sessionId: session.sessionId, turnId, error: err.message, usageSeal: unavailableUsageSeal() });
   }
 
   /** R5.1 discipline: a pending follow-up survives only if no newer interrupt()/kill() superseded it. */
@@ -771,6 +836,7 @@ export class GrokAcpCli {
     session.timeoutFailure = {
       error: `session wall-time budget exceeded (${timeoutMs}ms)`,
       phase: 'timeout',
+      usageSeal: unavailableUsageSeal(),
     };
     this._killChild(session);
   }

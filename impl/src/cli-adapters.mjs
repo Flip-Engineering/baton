@@ -15,6 +15,52 @@
 import { spawn } from 'node:child_process';
 import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
 
+const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
+const CODEX_TOKEN_METRIC = 'codex_turn_input_plus_output_tokens';
+const CLAUDE_TOKEN_METRIC = 'anthropic_input_plus_output_tokens_excluding_cache';
+
+function unavailableUsageSeal() {
+  return { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null };
+}
+
+function nativeUsage(usage, usd, tokenMetric, counterId) {
+  const input = usage?.input_tokens;
+  const output = usage?.output_tokens ?? usage?.output;
+  const tokensReported = Number.isSafeInteger(input) && input >= 0 && Number.isSafeInteger(output) && output >= 0;
+  const usdReported = Number.isFinite(usd) && usd >= 0;
+  return {
+    reported: tokensReported || usdReported,
+    payload: {
+      source: 'result', accounting: 'delta',
+      ...(tokensReported ? { tokens: input + output } : {}),
+      ...(usdReported ? { usd } : {}),
+      ...((tokensReported || usdReported) ? { counterId, tokenMetric: tokensReported ? tokenMetric : null } : {}),
+    },
+    seal: {
+      tokens: tokensReported ? 'reported' : 'unavailable',
+      usd: usdReported ? 'reported' : 'unavailable',
+      counterId: (tokensReported || usdReported) ? counterId : null,
+      tokenMetric: tokensReported ? tokenMetric : null,
+    },
+  };
+}
+
+function fixedWireFailure(base) {
+  return {
+    crashed: true,
+    event: {
+      ...base,
+      kind: 'lifecycle.crashed',
+      payload: {
+        error: 'provider wire frame exceeded configured byte ceiling',
+        code: 'wire_frame_oversize',
+        phase: 'wire',
+        usageSeal: unavailableUsageSeal(),
+      },
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Prompt rendering — the delegation contract, per-harness dialect (kept simple/uniform for MVP).
 // ---------------------------------------------------------------------------
@@ -37,30 +83,41 @@ export function renderPrompt(brief) {
 // ---------------------------------------------------------------------------
 
 /** Codex `exec --json`: thread.started / turn.started / item.completed / turn.completed / turn.failed / error. */
-export function parseCodexEvent(o, worker, harness, turnEpoch) {
+export function parseCodexEvent(o, worker, harness, turnEpoch, logicalSequence = 1) {
   const base = { worker, harness, turnEpoch, actor: 'worker' };
   switch (o.type) {
     case 'turn.started': return { event: { ...base, kind: 'lifecycle.turn_started', payload: {} } };
     case 'item.completed': {
       const it = o.item ?? {};
       if (it.type === 'file_change') return { event: { ...base, kind: 'content.file_edit', payload: { changes: it.changes ?? it } } };
-      if (it.type === 'command_execution') return { event: { ...base, kind: 'content.tool_call', payload: { command: it.command, exit: it.exit_code } } };
-      if (it.type === 'agent_message') return { event: { ...base, kind: 'content.message', payload: { text: it.text } }, message: it.text };
-      return { event: { ...base, kind: 'content.tool_call', payload: it } };
+      const callId = String(it.id ?? `codex:${turnEpoch}:${logicalSequence}`);
+      if (it.type === 'command_execution') return { event: { ...base, kind: 'content.tool_call', payload: { callId, phase: 'completed', command: it.command, exit: it.exit_code } } };
+      if (it.type === 'agent_message') {
+        const provider = { ...base, kind: 'resource.provider_call', payload: { callId, phase: 'completed' } };
+        const message = { ...base, kind: 'content.message', payload: { text: it.text } };
+        return { event: message, events: [provider, message], message: it.text };
+      }
+      return { event: { ...base, kind: 'content.tool_call', payload: { ...it, callId, phase: 'completed' } } };
     }
-    case 'turn.completed':
-      return { terminal: true, event: { ...base, kind: 'lifecycle.turn_completed', payload: { result: makeResult('completed', o.usage) } } };
+    case 'turn.completed': {
+      const usage = nativeUsage(o.usage, undefined, CODEX_TOKEN_METRIC, `cli:${worker}:${turnEpoch}`);
+      return {
+        terminal: true,
+        beforeTerminal: usage.reported ? [{ ...base, kind: 'resource.tokens', payload: usage.payload }] : [],
+        event: { ...base, kind: 'lifecycle.turn_completed', payload: { result: makeResult('completed', o.usage), usageSeal: usage.seal } },
+      };
+    }
     case 'turn.failed':
-      return { crashed: true, event: { ...base, kind: 'lifecycle.crashed', payload: { error: o.error?.message ?? 'turn.failed' } } };
+      return { crashed: true, event: { ...base, kind: 'lifecycle.crashed', payload: { error: o.error?.message ?? 'turn.failed', usageSeal: unavailableUsageSeal() } } };
     case 'error':
-      return { crashed: true, event: { ...base, kind: 'lifecycle.crashed', payload: { error: o.message ?? 'error' } } };
+      return { crashed: true, event: { ...base, kind: 'lifecycle.crashed', payload: { error: o.message ?? 'error', usageSeal: unavailableUsageSeal() } } };
     default:
       return {}; // thread.started, item.started, deltas — not surfaced
   }
 }
 
 /** Claude `-p --output-format stream-json`: system / assistant / user / result / rate_limit_event. */
-export function parseClaudeEvent(o, worker, harness, turnEpoch) {
+export function parseClaudeEvent(o, worker, harness, turnEpoch, logicalSequence = 1) {
   const base = { worker, harness, turnEpoch, actor: 'worker' };
   switch (o.type) {
     case 'system':
@@ -69,14 +126,39 @@ export function parseClaudeEvent(o, worker, harness, turnEpoch) {
     case 'assistant': {
       const content = o.message?.content ?? [];
       const text = content.filter((c) => c.type === 'text').map((c) => c.text).join('');
-      const tool = content.find((c) => c.type === 'tool_use');
-      if (tool) return { event: { ...base, kind: 'content.tool_call', payload: { name: tool.name, input: tool.input } } };
-      if (text) return { event: { ...base, kind: 'content.message', payload: { text } }, message: text };
-      return {};
+      const tools = content.filter((c) => c.type === 'tool_use');
+      if (!text && tools.length === 0) return {};
+      const providerCallId = String(o.message?.id ?? o.uuid ?? `claude:${turnEpoch}:${logicalSequence}`);
+      const provider = { ...base, kind: 'resource.provider_call', payload: { callId: providerCallId, phase: 'completed' } };
+      const message = text ? { ...base, kind: 'content.message', payload: { text } } : null;
+      const toolEvents = tools.map((tool, index) => ({
+        ...base,
+        kind: 'content.tool_call',
+        payload: {
+          callId: String(tool.id ?? `${providerCallId}:tool:${index + 1}`),
+          phase: 'requested',
+          name: tool.name,
+          input: tool.input,
+        },
+      }));
+      const events = [provider, ...(message ? [message] : []), ...toolEvents];
+      return { event: toolEvents[0] ?? message, events, ...(text ? { message: text } : {}) };
     }
-    case 'result':
-      if (o.is_error) return { crashed: true, event: { ...base, kind: 'lifecycle.crashed', payload: { error: o.result ?? o.subtype } } };
-      return { terminal: true, event: { ...base, kind: 'lifecycle.turn_completed', payload: { result: makeResult('completed', o.usage, o.result, o.total_cost_usd) } } };
+    case 'result': {
+      const usage = nativeUsage(o.usage, o.total_cost_usd, CLAUDE_TOKEN_METRIC, `cli:${worker}:${turnEpoch}`);
+      if (o.is_error) {
+        return {
+          crashed: true,
+          beforeTerminal: usage.reported ? [{ ...base, kind: 'resource.tokens', payload: usage.payload }] : [],
+          event: { ...base, kind: 'lifecycle.crashed', payload: { error: o.result ?? o.subtype, usageSeal: usage.seal } },
+        };
+      }
+      return {
+        terminal: true,
+        beforeTerminal: usage.reported ? [{ ...base, kind: 'resource.tokens', payload: usage.payload }] : [],
+        event: { ...base, kind: 'lifecycle.turn_completed', payload: { result: makeResult('completed', o.usage, o.result, o.total_cost_usd), usageSeal: usage.seal } },
+      };
+    }
     default:
       return {}; // user (tool results), rate_limit_event, deltas
   }
@@ -100,6 +182,9 @@ function makeResult(status, usage, summary, usd) {
 class CliAdapter {
   /** @param {{harness,version,ceiling,maxContext,cmd,args,parse,env,verbs}} cfg */
   constructor(cfg) {
+    const maxWireFrameBytes = cfg.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
+    if (!Number.isSafeInteger(maxWireFrameBytes) || maxWireFrameBytes <= 0) throw new TypeError('maxWireFrameBytes must be a positive safe integer');
+    cfg.maxWireFrameBytes = maxWireFrameBytes;
     this._cfg = cfg;
     this._live = cfg.live ?? false; // real runs must opt in; tests never spawn a real CLI
     /** @type {Map<string, object>} worker -> session */
@@ -114,6 +199,8 @@ class CliAdapter {
       authPosture: 'subscription',
       concurrencyCeiling: this._cfg.ceiling,
       maxContext: this._cfg.maxContext,
+      governance: this._cfg.governance,
+      modelSelection: this._cfg.modelSelection,
       verbs: this._cfg.verbs,
     };
   }
@@ -130,7 +217,7 @@ class CliAdapter {
 
     const turnEpoch = opts.turnEpoch ?? 1;
     const processGeneration = normalizeProcessGeneration(opts.processGeneration);
-    const args = this._cfg.args(brief);
+    const args = this._cfg.args(brief, { model: opts.model, reasoningEffort: opts.reasoningEffort, serviceTier: opts.serviceTier });
     const child = spawn(this._cfg.cmd, args, {
       cwd,
       env: { ...process.env, ...(this._cfg.env ?? {}) },
@@ -139,7 +226,7 @@ class CliAdapter {
     });
     const session = {
       worker, child, terminal: false, turnSettled: false, processClosePending: false,
-      turnEpoch, buf: '', processGeneration, processClosedEmitted: false,
+      turnEpoch, buf: '', logicalSequence: 0, processGeneration, processClosedEmitted: false,
       processReapTimeoutMs: Number.isSafeInteger(opts.processReapTimeoutMs) && opts.processReapTimeoutMs > 0 ? opts.processReapTimeoutMs : 2000,
       spawnError: null, timeoutFailure: null,
     };
@@ -152,7 +239,7 @@ class CliAdapter {
     child.on('close', (code, signal) => this._onClose(session, code, signal));
     child.on('error', (err) => {
       session.spawnError = err;
-      if (!Number.isSafeInteger(child.pid) || child.pid <= 0) this._finish(session, { crashed: true, event: { worker, harness: this._cfg.harness, turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: String(err.message) } } });
+      if (!Number.isSafeInteger(child.pid) || child.pid <= 0) this._finish(session, { crashed: true, event: { worker, harness: this._cfg.harness, turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: String(err.message), usageSeal: unavailableUsageSeal() } } });
     });
 
     const processStarted = processStartedPayload(session.processGeneration, child.pid);
@@ -164,7 +251,7 @@ class CliAdapter {
     if (opts.timeoutMs) {
       session.timer = setTimeout(() => {
         if (session.terminal || session.stopping || session.timeoutFailure) return;
-        session.timeoutFailure = { error: `session wall-time budget exceeded (${opts.timeoutMs}ms)`, phase: 'timeout' };
+        session.timeoutFailure = { error: `session wall-time budget exceeded (${opts.timeoutMs}ms)`, phase: 'timeout', usageSeal: unavailableUsageSeal() };
         this._signal(worker, 'SIGKILL');
       }, opts.timeoutMs);
     }
@@ -176,15 +263,32 @@ class CliAdapter {
     let nl;
     while ((nl = session.buf.indexOf('\n')) !== -1) {
       const line = session.buf.slice(0, nl); session.buf = session.buf.slice(nl + 1);
+      if (Buffer.byteLength(line, 'utf8') > this._cfg.maxWireFrameBytes) {
+        this._failWireFrame(session);
+        return;
+      }
       if (!line.trim()) continue;
       if (session.turnSettled) continue; // once the turn settles, trailing output cannot duplicate it
       let obj; try { obj = JSON.parse(line); } catch { continue; }
-      const parsed = this._cfg.parse(obj, session.worker, this._cfg.harness, session.turnEpoch);
+      session.logicalSequence = (session.logicalSequence ?? 0) + 1;
+      const parsed = this._cfg.parse(obj, session.worker, this._cfg.harness, session.turnEpoch, session.logicalSequence);
       // A terminal/crash event is emitted exactly once, by _finish; other events emit here. Emitting
       // in only one place per line is what keeps the append-only log gap-free and single-terminal.
       if (parsed.terminal || parsed.crashed) this._finish(session, parsed);
-      else if (parsed.event) this._emit(parsed.event);
+      else for (const event of parsed.events ?? (parsed.event ? [parsed.event] : [])) this._emit(event);
     }
+    if (!session.turnSettled && Buffer.byteLength(session.buf, 'utf8') > this._cfg.maxWireFrameBytes) this._failWireFrame(session);
+  }
+
+  _failWireFrame(session) {
+    if (session.turnSettled) return;
+    session.buf = '';
+    const base = { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker' };
+    this._finish(session, fixedWireFailure(base));
+    session.wireFailure = true;
+    session.stopping = true;
+    session.killMode = 'kill';
+    this._signal(session.worker, 'SIGKILL');
   }
 
   async _onClose(session, code, signal) {
@@ -204,24 +308,46 @@ class CliAdapter {
     if (session.timeoutFailure) {
       this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: session.timeoutFailure });
       session.turnSettled = true;
-      if (groupReap.confirmed && session.stopping) this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: session.killMode === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed', payload: { signal, terminalCause: 'timeout' } });
+      if (groupReap.confirmed && session.stopping) this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: session.killMode === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed', payload: { signal, terminalCause: 'timeout', usageSeal: unavailableUsageSeal() } });
+    } else if (session.wireFailure) {
+      // The oversize frame is a provider failure, but the adapter also initiated a real
+      // process-group kill. Preserve both facts: lifecycle.crashed describes the turn while
+      // kill.confirmed is emitted only after exact group reaping succeeds. A coordinator that
+      // begins/joins stop handling after the crash must not wait forever for confirmation.
+      if (groupReap.confirmed && !session.killConfirmed) {
+        session.killConfirmed = true;
+        this._emit({
+          worker: session.worker,
+          harness: this._cfg.harness,
+          turnEpoch: session.turnEpoch,
+          actor: 'worker',
+          kind: 'kill.confirmed',
+          payload: {
+            signal,
+            terminalCause: 'wire_frame_oversize',
+            usageSeal: unavailableUsageSeal(),
+          },
+        });
+      }
+      return;
     } else if (session.stopping) {
-      if (groupReap.confirmed) this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: session.killMode === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed', payload: { signal } });
+      if (groupReap.confirmed) this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: session.killMode === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed', payload: { signal, usageSeal: unavailableUsageSeal() } });
       session.turnSettled = true;
     } else if (session.turnSettled) {
       return;
     } else if (session.spawnError) {
-      this._finish(session, { crashed: true, event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: String(session.spawnError.message) } } });
+      this._finish(session, { crashed: true, event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: String(session.spawnError.message), usageSeal: unavailableUsageSeal() } } });
     } else if (code === 0) {
-      this._finish(session, { event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.turn_completed', payload: { result: makeResult('completed') } } });
+      this._finish(session, { event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.turn_completed', payload: { result: makeResult('completed'), usageSeal: unavailableUsageSeal() } } });
     } else {
-      this._finish(session, { crashed: true, event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: `exited ${code} (${signal})` } } });
+      this._finish(session, { crashed: true, event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: `exited ${code} (${signal})`, usageSeal: unavailableUsageSeal() } } });
     }
   }
 
   _finish(session, parsed) {
     if (session.turnSettled) return;
     session.turnSettled = true;
+    for (const event of parsed.beforeTerminal ?? []) this._emit(event);
     if (parsed.event) this._emit(parsed.event);
   }
 
@@ -259,9 +385,28 @@ export class CodexCli extends CliAdapter {
   constructor(opts = {}) {
     super({
       harness: 'codex', version: opts.version ?? '0.144.0', ceiling: opts.ceiling ?? 4, maxContext: 272000, live: opts.live,
+      maxWireFrameBytes: opts.maxWireFrameBytes,
+      governance: {
+        usage: { tokens: 'native', usd: 'unavailable', tokenMetric: CODEX_TOKEN_METRIC, terminalSeal: 'native' },
+        providerCalls: { observation: 'native', enforcement: 'unavailable' },
+        toolCalls: { observation: 'native', enforcement: 'unavailable' },
+        maxWireFrameBytes: opts.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES,
+      },
+      modelSelection: {
+        mode: 'exact', configuredDefault: opts.model ?? null, available: null, family: 'openai',
+        acceptedPrefixes: ['gpt-', 'o1', 'o3', 'o4', 'codex-'], acceptedAliases: [],
+        reasoningEffort: ['minimal', 'low', 'medium', 'high', 'xhigh'], serviceTier: null,
+        provenance: 'adapter-configuration', refreshedAt: null,
+      },
       cmd: 'codex',
       // exec is one-shot + JSONL; sandbox to workspace writes; skip the git-repo check (we ARE in a worktree).
-      args: () => ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write', ...(opts.model ? ['-m', opts.model] : [])],
+      args: (_brief, route = {}) => {
+        const model = route.model ?? opts.model;
+        const effort = route.reasoningEffort;
+        return ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write',
+          ...(model ? ['-m', model] : []),
+          ...(effort ? ['-c', `model_reasoning_effort=${JSON.stringify(effort)}`] : [])];
+      },
       parse: parseCodexEvent,
       env: opts.env,
       // SC8: canonical 8 keys, honest values — interrupt is a signal (emulated), kill is a real
@@ -275,8 +420,28 @@ export class ClaudeCli extends CliAdapter {
   constructor(opts = {}) {
     super({
       harness: opts.harness ?? 'claude-code', version: opts.version ?? '2.1.206', ceiling: opts.ceiling ?? 4, maxContext: 200000, live: opts.live,
+      maxWireFrameBytes: opts.maxWireFrameBytes,
+      governance: {
+        usage: { tokens: 'native', usd: 'native', tokenMetric: CLAUDE_TOKEN_METRIC, terminalSeal: 'native' },
+        providerCalls: { observation: 'native', enforcement: 'unavailable' },
+        toolCalls: { observation: 'native', enforcement: 'unavailable' },
+        maxWireFrameBytes: opts.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES,
+      },
+      modelSelection: {
+        mode: 'exact', configuredDefault: opts.model ?? null, available: null,
+        family: opts.modelFamily ?? (opts.harness === 'glm-via-claude' ? 'glm' : 'claude'),
+        acceptedPrefixes: opts.acceptedPrefixes ?? (opts.harness === 'glm-via-claude' ? ['glm-'] : ['claude-']),
+        acceptedAliases: opts.acceptedAliases ?? (opts.harness === 'glm-via-claude' ? [] : ['sonnet', 'opus', 'haiku']),
+        reasoningEffort: ['low', 'medium', 'high', 'xhigh', 'max'], serviceTier: null,
+        provenance: 'adapter-configuration', refreshedAt: null,
+      },
       cmd: 'claude',
-      args: () => ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', ...(opts.model ? ['--model', opts.model] : [])],
+      args: (_brief, route = {}) => {
+        const model = route.model ?? opts.model;
+        return ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits',
+          ...(model ? ['--model', model] : []),
+          ...(route.reasoningEffort ? ['--effort', route.reasoningEffort] : [])];
+      },
       parse: parseClaudeEvent,
       env: opts.env,
       // SC8: steer/pause previously claimed 'emulated' while steer() is an honest ok:false stub
@@ -295,7 +460,7 @@ export class ZCodeCli extends ClaudeCli {
     const token = opts.authToken ?? process.env.Z_AI_API_KEY ?? process.env.ZHIPU_API_KEY;
     super({
       harness: 'glm-via-claude', version: opts.version ?? 'claude-cli+zai-anthropic', ceiling: opts.ceiling ?? 1, // Z.ai Pro ≈ 1 in-flight
-      model: opts.model, env: {
+      model: opts.model, maxWireFrameBytes: opts.maxWireFrameBytes, env: {
         ANTHROPIC_BASE_URL: opts.baseUrl ?? 'https://api.z.ai/api/anthropic',
         ANTHROPIC_AUTH_TOKEN: token ?? '',
         ...(opts.model ? { ANTHROPIC_DEFAULT_OPUS_MODEL: opts.model, ANTHROPIC_DEFAULT_SONNET_MODEL: opts.model } : {}),
@@ -314,6 +479,18 @@ export class PiCli extends CliAdapter {
   constructor(opts = {}) {
     super({
       harness: 'pi', version: opts.version ?? '0.0.0', ceiling: opts.ceiling ?? 4, maxContext: opts.maxContext ?? 128000, live: opts.live,
+      maxWireFrameBytes: opts.maxWireFrameBytes,
+      governance: {
+        usage: { tokens: 'unavailable', usd: 'unavailable', tokenMetric: null, terminalSeal: 'native' },
+        providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },
+        toolCalls: { observation: 'unavailable', enforcement: 'unavailable' },
+        maxWireFrameBytes: opts.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES,
+      },
+      modelSelection: {
+        mode: 'exact', configuredDefault: opts.model ?? null, available: opts.model ? [opts.model] : null,
+        family: 'pi', acceptedPrefixes: [], acceptedAliases: [], reasoningEffort: null, serviceTier: null,
+        provenance: 'adapter-configuration', refreshedAt: null,
+      },
       cmd: opts.cmd ?? 'pi',
       args: opts.args ?? (() => ['--headless']),
       parse: opts.parse ?? parseClaudeEvent, // assume a Claude-ish stream until confirmed

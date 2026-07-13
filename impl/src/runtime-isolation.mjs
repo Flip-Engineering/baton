@@ -42,10 +42,9 @@ export class RuntimeIsolation {
     const config = privateDir(family === 'grok' ? join(home, '.grok') : join(root, 'config', family));
 
     const env = {};
-    const stripped = [];
     for (const [key, value] of Object.entries(this.baseEnv)) {
       if (value === undefined) continue;
-      if ((SECRET_NAME.test(key) || PROVIDER_OR_INJECTION.test(key)) && !this.keepEnv.has(key)) { stripped.push(key); continue; }
+      if ((SECRET_NAME.test(key) || PROVIDER_OR_INJECTION.test(key)) && !this.keepEnv.has(key)) continue;
       env[key] = value;
     }
     env.HOME = home;
@@ -71,31 +70,47 @@ export class RuntimeIsolation {
     }
 
     const projectedEnv = this.credentialEnv[family] ?? this.credentialEnv[vendor] ?? {};
+    let projectedEnvCount = 0;
     for (const [key, value] of Object.entries(projectedEnv)) {
-      if (value !== undefined && value !== null) env[key] = String(value);
+      if (value !== undefined && value !== null) {
+        env[key] = String(value);
+        projectedEnvCount += 1;
+      }
     }
 
-    const projectedFiles = [];
+    let projectedFileCount = 0;
     for (const source of this.credentialFiles[family] ?? this.credentialFiles[vendor] ?? []) {
       if (!existsSync(source)) continue;
       const target = join(config, basename(source));
       copyFileSync(source, target);
       chmodSync(target, 0o600);
-      projectedFiles.push(basename(target));
+      projectedFileCount += 1;
     }
+
+    const credentialCount = projectedEnvCount + projectedFileCount;
+    const credentialMechanism = projectedEnvCount > 0 && projectedFileCount > 0
+      ? 'mixed'
+      : projectedEnvCount > 0 ? 'environment' : projectedFileCount > 0 ? 'file' : 'none';
 
     return {
       env,
       replaceEnv: true,
+      // Operational paths stay on the private lease. `posture` is logged and returned by public
+      // status surfaces, so it must never carry host/runtime paths or credential inventory names.
+      paths: Object.freeze({ root, home, tmp, config }),
       posture: Object.freeze({
-        root, home, tmp, config, family,
-        strippedEnvKeys: Object.freeze(stripped.sort()),
-        projectedEnvKeys: Object.freeze(Object.keys(projectedEnv).sort()),
-        projectedFiles: Object.freeze(projectedFiles.sort()),
-        permissions: { directories: '0700', credentialFiles: '0600' },
+        schemaVersion: 1,
+        family,
+        credential: Object.freeze({
+          mechanism: credentialMechanism,
+          state: credentialCount > 0 ? 'materialized' : 'absent',
+          count: credentialCount,
+        }),
+        permissions: Object.freeze({ directories: '0700', credentialFiles: '0600' }),
         sandboxPolicy: family === 'codex'
           ? 'wire-workspaceWrite-network-deny'
           : family === 'grok' ? 'native-workspace-profile' : 'settings-enabled-network-deny',
+        active: true,
       }),
     };
   }

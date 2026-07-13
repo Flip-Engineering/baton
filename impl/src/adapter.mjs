@@ -18,6 +18,28 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 const STOP_SETTLE_MS = 8;
+const MOCK_TOKEN_METRIC = 'mock_scenario_tokens';
+
+function mockUsage(scenario, counterId) {
+  const usage = scenario?.budgetUsed;
+  const tokensReported = Number.isSafeInteger(usage?.tokens) && usage.tokens >= 0;
+  const usdReported = Number.isFinite(usage?.usd) && usage.usd >= 0;
+  return {
+    payload: {
+      source: 'mockScenario', accounting: 'delta',
+      ...(tokensReported ? { tokens: usage.tokens } : {}),
+      ...(usdReported ? { usd: usage.usd } : {}),
+      ...((tokensReported || usdReported) ? { counterId, tokenMetric: tokensReported ? MOCK_TOKEN_METRIC : null } : {}),
+    },
+    seal: {
+      tokens: tokensReported ? 'reported' : 'unavailable',
+      usd: usdReported ? 'reported' : 'unavailable',
+      counterId: (tokensReported || usdReported) ? counterId : null,
+      tokenMetric: tokensReported ? MOCK_TOKEN_METRIC : null,
+    },
+    reported: tokensReported || usdReported,
+  };
+}
 
 function localGitEnv() {
   const env = {};
@@ -162,6 +184,12 @@ export class MockAdapter {
       authPosture: 'api_key',
       concurrencyCeiling: this._concurrencyCeiling,
       maxContext: this._maxContext,
+      governance: {
+        usage: { tokens: 'native', usd: 'native', tokenMetric: MOCK_TOKEN_METRIC, terminalSeal: 'native' },
+        providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },
+        toolCalls: { observation: 'unavailable', enforcement: 'unavailable' },
+        maxWireFrameBytes: 1024 * 1024,
+      },
       // SC8: canonical 8-verb card. steer rides prompt(mode:'steer'), approve/answer ride the
       // respond flow — all genuinely implemented here; pause has no implementation and says so.
       verbs: { spawn: 'native', prompt: 'native', steer: 'native', interrupt: 'native', approve: 'native', answer: 'native', kill: 'native', pause: 'unsupported' },
@@ -184,7 +212,7 @@ export class MockAdapter {
       harness: `${this._harness}@${this._version}`,
       turnEpoch: session.opts.turnEpoch ?? 0,
       kind,
-      actor: kind.startsWith('control.') || kind.startsWith('kill.') ? 'orchestrator' : 'worker',
+      actor: 'worker',
       payload,
     };
     if (session.opts.log) session.opts.log.append({ ...evt });
@@ -259,7 +287,10 @@ export class MockAdapter {
         session.crashed = true;
         session.terminal = true;
         this._clearTimers(session);
-        this._emit(session, 'lifecycle.crashed', { error: String(err?.message ?? err) });
+        this._emit(session, 'lifecycle.crashed', {
+          error: String(err?.message ?? err),
+          usageSeal: { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null },
+        });
       }
     });
 
@@ -371,7 +402,10 @@ export class MockAdapter {
     session.terminal = true;
     this._clearTimers(session);
     session.haltController.abort();
-    this._emit(session, 'lifecycle.crashed', { error: 'simulated crash (scenario.crashAfterMs elapsed)' });
+    this._emit(session, 'lifecycle.crashed', {
+      error: 'simulated crash (scenario.crashAfterMs elapsed)',
+      usageSeal: { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null },
+    });
   }
 
   _triggerTimeout(worker) {
@@ -399,8 +433,10 @@ export class MockAdapter {
       openQuestions: [],
       budgetUsed: session.scenario.budgetUsed ?? { tokens: 0, usd: 0 },
     };
+    const usage = mockUsage(session.scenario, `mock:${session.worker}:${session.opts.turnEpoch ?? 0}`);
+    if (usage.reported) this._emit(session, 'resource.tokens', usage.payload);
     const kind = session.stopKind === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed';
-    this._emit(session, kind, { result });
+    this._emit(session, kind, { result, usageSeal: usage.seal });
   }
 
   _finalizeNatural(session) {
@@ -435,7 +471,9 @@ export class MockAdapter {
       budgetUsed: scenario.budgetUsed ?? { tokens: 0, usd: 0 },
     };
     if (status === 'blocked') result.blocker = scenario.blocker;
-    this._emit(session, 'lifecycle.turn_completed', { result });
+    const usage = mockUsage(scenario, `mock:${session.worker}:${session.opts.turnEpoch ?? 0}`);
+    if (usage.reported) this._emit(session, 'resource.tokens', usage.payload);
+    this._emit(session, 'lifecycle.turn_completed', { result, usageSeal: usage.seal });
   }
 
   async _applyEdit(session, edit) {

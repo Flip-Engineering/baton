@@ -14,6 +14,25 @@ import { spawn, execFileSync } from 'node:child_process';
 import { renderBrief } from './adapter.mjs';
 import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
 
+const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
+const CODEX_TOKEN_METRIC = 'codex_thread_total_tokens';
+
+function unavailableUsageSeal() {
+  return { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null };
+}
+
+function tokenUsageSeal(session, turnId) {
+  const tokens = session.lastTokenUsage?.totalTokens;
+  const reported = Number.isSafeInteger(tokens) && tokens >= 0
+    && (session.lastTokenTurnId == null || turnId == null || session.lastTokenTurnId === turnId);
+  return {
+    tokens: reported ? 'reported' : 'unavailable',
+    usd: 'unavailable',
+    counterId: reported ? session.threadId : null,
+    tokenMetric: reported ? CODEX_TOKEN_METRIC : null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
@@ -85,6 +104,8 @@ export class CodexAppServerCli {
     this._ceiling = opts.ceiling ?? 4;
     this._maxContext = opts.maxContext ?? 200000;
     this._model = opts.model;
+    this._maxWireFrameBytes = opts.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
+    if (!Number.isSafeInteger(this._maxWireFrameBytes) || this._maxWireFrameBytes <= 0) throw new TypeError('maxWireFrameBytes must be a positive safe integer');
 
     // XA15: probed once, synchronously, at construction; cached; never throws (a harness card
     // must always be producible even when `codex` isn't installed on this machine).
@@ -113,6 +134,12 @@ export class CodexAppServerCli {
       authPosture: 'subscription',
       concurrencyCeiling: this._ceiling,
       maxContext: this._maxContext,
+      governance: {
+        usage: { tokens: 'native', usd: 'unavailable', tokenMetric: CODEX_TOKEN_METRIC, terminalSeal: 'native' },
+        providerCalls: { observation: 'native', enforcement: 'unavailable' },
+        toolCalls: { observation: 'native', enforcement: 'unavailable' },
+        maxWireFrameBytes: this._maxWireFrameBytes,
+      },
       modelSelection: {
         mode: 'exact', configuredDefault: this._model ?? null, available: null, family: 'openai',
         acceptedPrefixes: ['gpt-', 'o1', 'o3', 'o4', 'codex-'], acceptedAliases: [],
@@ -147,7 +174,7 @@ export class CodexAppServerCli {
     pending.cancelled = true;
     this._pendingSpawns.delete(worker);
     if (this._cb) {
-      this._cb({ worker, harness: 'codex', turnEpoch: 0, actor: 'orchestrator', kind, payload: { phase: 'spawn' } });
+      this._cb({ worker, harness: 'codex', turnEpoch: 0, actor: 'worker', kind, payload: { phase: 'spawn', usageSeal: unavailableUsageSeal() } });
     }
     return true;
   }
@@ -161,7 +188,7 @@ export class CodexAppServerCli {
       worker: session.worker,
       harness: 'codex',
       turnEpoch: session.turnEpoch,
-      actor: kind.startsWith('control.') || kind.startsWith('kill.') ? 'orchestrator' : 'worker',
+      actor: 'worker',
       kind,
       payload,
     };
@@ -202,12 +229,29 @@ export class CodexAppServerCli {
       while ((nl = session.buf.indexOf('\n')) !== -1) {
         const line = session.buf.slice(0, nl);
         session.buf = session.buf.slice(nl + 1);
+        if (Buffer.byteLength(line, 'utf8') > this._maxWireFrameBytes) {
+          this._wireFrameFailure(session);
+          return;
+        }
         this._onLine(session, line);
       }
+      if (!session.terminal && Buffer.byteLength(session.buf, 'utf8') > this._maxWireFrameBytes) this._wireFrameFailure(session);
     });
     session.child.stderr.on('data', () => {}); // discard; nothing on this wire is diagnosed from stderr
     session.child.on('close', (code, signal) => this._onClose(session, code, signal));
     session.child.on('error', (error) => this._onProcessError(session, error));
+  }
+
+  _wireFrameFailure(session) {
+    if (session.terminal || session.processFailure) return;
+    session.buf = '';
+    session.processFailure = {
+      error: 'provider wire frame exceeded configured byte ceiling',
+      code: 'wire_frame_oversize',
+      phase: 'wire',
+      usageSeal: unavailableUsageSeal(),
+    };
+    this._killChild(session);
   }
 
   async _onClose(session, code, signal) {
@@ -230,24 +274,24 @@ export class CodexAppServerCli {
       this._emit(session, 'lifecycle.crashed', session.timeoutFailure);
       if (groupReap.confirmed && session.killing && !session.killConfirmed) {
         session.killConfirmed = true;
-        this._emit(session, 'kill.confirmed', { threadId: session.threadId, terminalCause: 'timeout' });
+        this._emit(session, 'kill.confirmed', { threadId: session.threadId, terminalCause: 'timeout', usageSeal: unavailableUsageSeal() });
       }
     } else if (session.processFailure) {
       this._emit(session, 'lifecycle.crashed', session.processFailure);
       if (groupReap.confirmed && session.killing && !session.killConfirmed) {
         session.killConfirmed = true;
-        this._emit(session, 'kill.confirmed', { threadId: session.threadId, terminalCause: 'process_error' });
+        this._emit(session, 'kill.confirmed', { threadId: session.threadId, terminalCause: 'process_error', usageSeal: unavailableUsageSeal() });
       }
     } else if (session.killing) {
       if (groupReap.confirmed && !session.killConfirmed) {
         session.killConfirmed = true;
-        this._emit(session, 'kill.confirmed', { threadId: session.threadId });
+        this._emit(session, 'kill.confirmed', { threadId: session.threadId, usageSeal: unavailableUsageSeal() });
       }
     } else if (!session.setupFailed && session.activeTurn) {
       const turnId = session.activeTurn.id;
       session.terminalTurns.add(turnId);
       session.activeTurn = null;
-      this._emit(session, 'lifecycle.crashed', { threadId: session.threadId, turnId, error: `transport closed${code === null ? '' : ` with code ${code}`}${signal ? ` (${signal})` : ''}` });
+      this._emit(session, 'lifecycle.crashed', { threadId: session.threadId, turnId, error: `transport closed${code === null ? '' : ` with code ${code}`}${signal ? ` (${signal})` : ''}`, usageSeal: unavailableUsageSeal() });
     }
     for (const [id, pending] of session.pendingRequests) {
       session.pendingRequests.delete(id); if (pending.timer) clearTimeout(pending.timer);
@@ -257,7 +301,7 @@ export class CodexAppServerCli {
 
   _onProcessError(session, error) {
     if (session.terminal || session.processFailure || !Number.isSafeInteger(session.child?.pid) || session.child.pid <= 0) return;
-    session.processFailure = { error: String(error?.message ?? error), phase: 'process_error' };
+    session.processFailure = { error: String(error?.message ?? error), phase: 'process_error', usageSeal: unavailableUsageSeal() };
     this._killChild(session);
   }
 
@@ -320,6 +364,14 @@ export class CodexAppServerCli {
       // Keyed map (not a single slot): the wire permits multiple pending server->client
       // requests, and clobbering an earlier one would leave its rawId unanswerable — a wedge.
       session.waits.set(requestId, { kind: 'approval', rawId: id, threadId: params.threadId, turnId: params.turnId, itemId: params.itemId });
+      this._emit(session, 'content.tool_call', {
+        callId: String(params.itemId ?? `${session.worker}:approval:${id}`),
+        phase: 'requested',
+        threadId: params.threadId,
+        turnId: params.turnId,
+        command: params.command ?? null,
+        kind,
+      });
       this._emit(session, 'approval.requested', {
         requestId, kind, threadId: params.threadId, turnId: params.turnId, itemId: params.itemId,
         command: params.command, cwd: params.cwd, reason: params.reason,
@@ -364,9 +416,17 @@ export class CodexAppServerCli {
         if (this._isTerminalTurn(session, turnId)) return; // XA16: trailing deltas after terminal are dropped
         const item = params.item ?? {};
         if (item.type === 'agentMessage') {
+          this._emit(session, 'resource.provider_call', {
+            callId: String(item.id ?? `codex:${turnId}:agentMessage`),
+            phase: 'completed',
+            threadId: params.threadId,
+            turnId,
+          });
           this._emit(session, 'content.message', { threadId: params.threadId, turnId, text: item.text });
         } else if (item.type === 'commandExecution' || item.type === 'mcpToolCall') {
           this._emit(session, 'content.tool_call', {
+            callId: String(item.id ?? `codex:${turnId}:${item.type}`),
+            phase: 'completed',
             threadId: params.threadId, turnId, item,
             command: item.command ?? item.tool ?? null,
             exitCode: item.exitCode ?? null,
@@ -389,6 +449,7 @@ export class CodexAppServerCli {
         if (status === 'failed') {
           this._emit(session, 'lifecycle.crashed', {
             threadId: params.threadId, turnId, error: params.turn?.error?.message ?? 'turn failed',
+            usageSeal: tokenUsageSeal(session, turnId),
           });
           return;
         }
@@ -397,23 +458,28 @@ export class CodexAppServerCli {
           // coordinator awaits; the thread survives (activeTurn cleared above, session stays).
           const result = makeResult('cancelled', 'interrupted', session.lastTokenUsage);
           if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
-          this._emit(session, 'control.interrupt_confirmed', { threadId: params.threadId, turnId, result });
+          this._emit(session, 'control.interrupt_confirmed', { threadId: params.threadId, turnId, result, usageSeal: tokenUsageSeal(session, turnId) });
           this._maybeIssueFollowUp(session, turnId);
           return;
         }
         const result = makeResult('completed', 'turn completed', session.lastTokenUsage);
         // R11: payload is {result, ...meta} with NO top-level `status` key (that key is the
         // wrapped/naked discriminator the coordinator's normalization branches on).
-        this._emit(session, 'lifecycle.turn_completed', { result, threadId: params.threadId, turnId });
+        this._emit(session, 'lifecycle.turn_completed', { result, threadId: params.threadId, turnId, usageSeal: tokenUsageSeal(session, turnId) });
         return;
       }
       case 'thread/tokenUsage/updated': {
         session.lastTokenUsage = params.tokenUsage?.total ?? null;
-        this._emit(session, 'resource.tokens', {
-          source: 'tokenUsage', accounting: 'cumulative',
-          tokens: params.tokenUsage?.total?.totalTokens ?? 0, usd: 0,
-          threadId: params.threadId, turnId: params.turnId, tokenUsage: params.tokenUsage,
-        });
+        session.lastTokenTurnId = params.turnId ?? null;
+        const tokens = params.tokenUsage?.total?.totalTokens;
+        if (Number.isSafeInteger(tokens) && tokens >= 0) {
+          this._emit(session, 'resource.tokens', {
+            source: 'tokenUsage', accounting: 'cumulative', tokens,
+            counterId: params.threadId ?? session.threadId,
+            tokenMetric: CODEX_TOKEN_METRIC,
+            threadId: params.threadId, turnId: params.turnId, tokenUsage: params.tokenUsage,
+          });
+        }
         return;
       }
       case 'account/rateLimits/updated': {
@@ -490,6 +556,7 @@ export class CodexAppServerCli {
       waits: new Map(), // requestId -> pending approval/question (XA9/XA12; keyed, never clobbered)
       terminalTurns: new Set(), // XA16
       lastTokenUsage: null,
+      lastTokenTurnId: null,
       stopGeneration: 0, pendingFollowUp: null, // R5.1
       killing: false, killConfirmed: false, terminal: false,
       modelRequested: opts.model ?? this._model ?? null,
@@ -725,6 +792,7 @@ export class CodexAppServerCli {
     session.timeoutFailure = {
       error: `session wall-time budget exceeded (${timeoutMs}ms)`,
       phase: 'timeout',
+      usageSeal: unavailableUsageSeal(),
     };
     this._killChild(session);
   }

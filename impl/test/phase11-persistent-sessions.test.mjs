@@ -210,7 +210,7 @@ test('PS3: interrupt-with-follow-up reopens coordinator state before the adapter
   const { c, verifyCalls } = harness(ad);
   const h = await c.spawn('session', brief(), { taskId: 'interrupt-follow' });
   const stopping = c.interrupt(h.id, 'continue after interrupt', 'human');
-  ad.emit(h.id, 'control.interrupt_confirmed', {}, 1, 'orchestrator');
+  ad.emit(h.id, 'control.interrupt_confirmed', {}, 1, 'worker');
   await stopping;
   assert.equal(c.list()[0].status, 'working');
   assert.equal((await c.result(h.id)).ready, false);

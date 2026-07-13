@@ -129,6 +129,12 @@ test('card declares steer as NATIVE (erratum E2: mid-turn stream-json injection 
   assert.equal(card.verbs.prompt, 'native');
   assert.equal(card.verbs.interrupt, 'native');
   assert.equal(card.verbs.kill, 'native');
+  assert.deepEqual(card.governance, {
+    usage: { tokens: 'native', usd: 'native', tokenMetric: 'anthropic_input_plus_output_tokens_excluding_cache', terminalSeal: 'native' },
+    providerCalls: { observation: 'native', enforcement: 'unavailable' },
+    toolCalls: { observation: 'native', enforcement: 'unavailable' },
+    maxWireFrameBytes: 1024 * 1024,
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -136,7 +142,7 @@ test('card declares steer as NATIVE (erratum E2: mid-turn stream-json injection 
 // ---------------------------------------------------------------------------
 
 test('CS2/CS3: spawn delivers the Brief as the first turn; lifecycle.spawned carries the WIRE session_id, not a client-generated one', async () => {
-  const { cli, waitForKind } = harness();
+  const { cli, events, waitForKind } = harness();
   const w = 'w1';
   const ack = await cli.spawn(w, brief('add rate limiting to the login route'), { worktree: process.cwd() });
   assert.equal(ack.ok, true);
@@ -155,6 +161,11 @@ test('CS2/CS3: spawn delivers the Brief as the first turn; lifecycle.spawned car
   const completed = await waitForKind('lifecycle.turn_completed');
   assert.equal(completed.worker, w);
   assert.equal(completed.payload.pid, spawned.payload.pid, 'same process for spawn as for the session lifecycle event');
+  assert.deepEqual(completed.payload.usageSeal.tokens, 'reported');
+  assert.deepEqual(completed.payload.usageSeal.usd, 'reported');
+  const usage = events.find((event) => event.kind === 'resource.tokens');
+  assert.ok(usage && events.indexOf(usage) < events.indexOf(completed));
+  assert.equal(usage.payload.counterId, completed.payload.usageSeal.counterId);
 
   await cli.kill(w);
   await waitForKind('kill.confirmed');
@@ -253,7 +264,7 @@ test('CS8/E2: steer when NO turn is in flight simply begins the next turn (wire 
 // ---------------------------------------------------------------------------
 
 test('CS9/CS10: interrupt() Acks immediately (native, not a signal); confirmed stop is a LATER event; the session survives for a follow-up prompt', async () => {
-  const { cli, waitForKind } = harness();
+  const { cli, events, waitForKind } = harness();
   const w = 'w1';
   await cli.spawn(w, brief('HOLD_UNTIL_INTERRUPT'), { worktree: process.cwd() });
   const spawned = await waitForKind('lifecycle.spawned');
@@ -265,6 +276,11 @@ test('CS9/CS10: interrupt() Acks immediately (native, not a signal); confirmed s
 
   const confirmed = await waitForKind('control.interrupt_confirmed');
   assert.equal(confirmed.worker, w);
+  assert.equal(confirmed.payload.usageSeal.tokens, 'reported', 'the interrupted result is accounted before confirmation');
+  assert.equal(confirmed.payload.usageSeal.usd, 'reported');
+  const usage = events.find((event) => event.kind === 'resource.tokens');
+  assert.ok(usage && events.indexOf(usage) < events.indexOf(confirmed));
+  assert.equal(usage.payload.counterId, confirmed.payload.usageSeal.counterId);
 
   // Session survives: a normal follow-up prompt completes successfully on the SAME pid.
   await cli.prompt(w, 'still alive?', 'turn');
@@ -407,6 +423,7 @@ test('CS14: kill() ends an unresponsive process by escalating SIGTERM to SIGKILL
   const elapsed = Date.now() - started;
   assert.ok(elapsed >= 60, 'the SIGKILL escalation genuinely waited out the grace window, not an instant kill');
   assert.equal(confirmed.worker, w);
+  assert.deepEqual(confirmed.payload.usageSeal, { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null });
 });
 
 test('CS14: kill() on a cooperative process confirms promptly via plain SIGTERM (no escalation needed)', async () => {
@@ -445,6 +462,7 @@ test('CS17: a genuine vendor process failure maps to lifecycle.crashed (distinct
   await cli.spawn(w, brief('TRIGGER_CRASH'), { worktree: process.cwd() });
   const crashed = await waitForKind('lifecycle.crashed', 3000);
   assert.equal(crashed.worker, w);
+  assert.deepEqual(crashed.payload.usageSeal, { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null });
 });
 
 test('CS16: no event is ever emitted for a worker after its session-terminal event fires', async () => {

@@ -66,6 +66,21 @@ export function validateBrief(fields) {
     }
     if (typeof fields.verification.expectExit !== 'number') errors.push('verification.expectExit must be a number');
   }
+  if (fields.budget == null || typeof fields.budget !== 'object' || Array.isArray(fields.budget)) {
+    errors.push('budget is required with exact tokens, usd, and wallMin ceilings');
+  } else if (Object.keys(fields.budget).sort().join(',') !== 'tokens,usd,wallMin') {
+    errors.push('budget must contain exactly tokens, usd, and wallMin');
+  } else {
+    if (!Number.isSafeInteger(fields.budget.tokens) || fields.budget.tokens <= 0) {
+      errors.push('budget.tokens must be a positive safe integer');
+    }
+    if (!Number.isFinite(fields.budget.usd) || fields.budget.usd < 0) {
+      errors.push('budget.usd must be a finite nonnegative number');
+    }
+    if (!Number.isSafeInteger(fields.budget.wallMin) || fields.budget.wallMin <= 0) {
+      errors.push('budget.wallMin must be a positive safe integer');
+    }
+  }
   if (fields.pathScope != null) {
     if (!Array.isArray(fields.pathScope)) errors.push('pathScope must be a string[] of repo-relative globs');
     else for (const p of fields.pathScope) {
@@ -92,7 +107,7 @@ export function createBrief(fields) {
     // CI1: preserve the whole verification contract (timeout, coverage command, and future
     // numbered extensions) while still owning a detached snapshot of the nested object.
     verification: { ...snapshot.verification },
-    budget: { ...(snapshot.budget ?? { tokens: 0, usd: 0, wallMin: 0 }) },
+    budget: { ...snapshot.budget, usd: snapshot.budget.usd === 0 ? 0 : snapshot.budget.usd },
   };
   if (snapshot.briefTemplate) brief.briefTemplate = snapshot.briefTemplate;
   if (snapshot.orientationRef) brief.orientationRef = snapshot.orientationRef;

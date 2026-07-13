@@ -25,6 +25,7 @@ import { ProviderPollSupervisor } from './provider-poll-supervisor.mjs';
 import { ProviderProcessingSupervisor } from './provider-processing-supervisor.mjs';
 import { SessionRecoverySupervisor } from './session-recovery-supervisor.mjs';
 import { inspectToolchainProjection, prepareToolchainProjection, ToolchainProjectionError } from './toolchain-projection.mjs';
+import { normalizeProviderGovernancePolicy } from './provider-governance.mjs';
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const canonicalDigest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
@@ -48,6 +49,7 @@ const normalizeDrainPolicy = (value) => {
 export { Coordinator, ModelSelectionError, SessionSelectionError, IntegrationError, ReviewSelectionError, PublicationError } from './coordinator.mjs';
 export { MockAdapter, CodexAdapter, ClaudeAdapter, GlmAdapter } from './adapter.mjs';
 export { inspectToolchainProjection, prepareToolchainProjection, ToolchainProjectionError } from './toolchain-projection.mjs';
+export { normalizeProviderGovernancePolicy, providerGovernanceRoute } from './provider-governance.mjs';
 // SC2: the session tier IS the product surface — constructible from the entry point.
 export { ClaudeSessionCli, GlmSessionCli } from './claude-session.mjs';
 export { CodexAppServerCli } from './codex-appserver.mjs';
@@ -218,6 +220,7 @@ function refereeFn(task, result, opts) {
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
  *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
+ *          providerGovernance?:object,
  *          workerDependencyDirs?:string[], verifyDependencyDirs?:string[], verifySparsePaths?:string[], toolchainProjection?:object}} opts
  * @returns {{coordinator:Coordinator, story:StoryCompiler, router:AdaptiveRouter, log:Log, coordination:CoordinationStore}}
  */
@@ -225,6 +228,9 @@ export function createDriver(opts) {
   // DC1: validate before log/store construction or writer admission so malformed shutdown
   // authority can never be masked by an existing lease or leave filesystem side effects.
   const drainPolicy = normalizeDrainPolicy(opts.drainPolicy);
+  const providerGovernance = opts.providerGovernance === undefined
+    ? null
+    : normalizeProviderGovernancePolicy(opts.providerGovernance, Object.keys(opts.adapters ?? {}));
   const deploymentRepoId = opts.repoId ?? 'local';
   if (opts.toolchainProjection !== undefined && (opts.workerDependencyDirs !== undefined || opts.verifyDependencyDirs !== undefined)) throw new TypeError('toolchainProjection cannot be combined with legacy dependency directory options');
   const toolchainProjection = opts.toolchainProjection === undefined ? null : prepareToolchainProjection(opts.toolchainProjection);
@@ -431,6 +437,7 @@ export function createDriver(opts) {
     recoveryTimeoutMs: opts.recoveryTimeoutMs ?? 15000,
     startupRecoveryAuthority,
     budgetPolicy: opts.budgetPolicy,
+    ...(providerGovernance ? { providerGovernance: providerGovernance.projection } : {}),
     watchdog: opts.watchdog,
     drainPolicy,
   });

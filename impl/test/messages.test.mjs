@@ -118,6 +118,33 @@ test('createBrief: empty pathScope ([]) is accepted (explicitly unscoped)', () =
   assert.deepEqual(brief.pathScope, []);
 });
 
+test('createBrief: budget is a required closed set of safe task ceilings', () => {
+  const missing = validBriefFields();
+  delete missing.budget;
+  assert.throws(() => createBrief(missing), (error) => error instanceof ValidationError
+    && error.errors.some((item) => item.includes('budget is required')));
+  assert.throws(() => createBrief(validBriefFields({ budget: { tokens: 1, usd: 0, wallMin: 1, secret: 'no' } })), ValidationError);
+  assert.deepEqual(createBrief(validBriefFields({ budget: { tokens: 1, usd: 0, wallMin: 1 } })).budget, { tokens: 1, usd: 0, wallMin: 1 });
+});
+
+test('createBrief: token and wall ceilings are positive safe integers and USD is finite nonnegative', () => {
+  for (const tokens of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Infinity, NaN, '1']) {
+    const result = validateBrief(validBriefFields({ budget: { tokens, usd: 0, wallMin: 1 } }));
+    assert.equal(result.ok, false); assert.ok(result.errors.some((item) => item.includes('budget.tokens')));
+  }
+  for (const wallMin of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Infinity, NaN, '1']) {
+    const result = validateBrief(validBriefFields({ budget: { tokens: 1, usd: 0, wallMin } }));
+    assert.equal(result.ok, false); assert.ok(result.errors.some((item) => item.includes('budget.wallMin')));
+  }
+  for (const usd of [-0.01, Infinity, -Infinity, NaN, '0']) {
+    const result = validateBrief(validBriefFields({ budget: { tokens: 1, usd, wallMin: 1 } }));
+    assert.equal(result.ok, false); assert.ok(result.errors.some((item) => item.includes('budget.usd')));
+  }
+  assert.doesNotThrow(() => createBrief(validBriefFields({
+    budget: { tokens: Number.MAX_SAFE_INTEGER, usd: 0.0001, wallMin: Number.MAX_SAFE_INTEGER },
+  })));
+});
+
 test('validateBrief: returns {ok:false, errors:[...]} without throwing, for programmatic checks', () => {
   const fields = validBriefFields();
   delete fields.goal;

@@ -11,7 +11,7 @@ const TRANSITIONS = new Map([
 const KNOWLEDGE_NODE_TYPES = new Set(['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Decision', 'Hypothesis', 'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample', 'Representation', 'ScratchFact', 'Source']);
 const KNOWLEDGE_EDGE_TYPES = new Set(['Supports', 'Contradicts', 'Supersedes', 'Informed', 'ProducedBy', 'Contains', 'DependsOn', 'Refines', 'ReadBy', 'VerifiedBy', 'DerivedFrom', 'Affects', 'Cites', 'ObservedIn']);
 const KNOWLEDGE_GROUNDINGS = new Set(['verified', 'observed', 'derived', 'asserted']);
-const KNOWLEDGE_PROJECTION_FIELDS = new Set(['contentDigest', 'observedSeq', 'observedAt', 'eventTimeSeq', 'eventTime', 'validityVersion', 'invalidatedBy', 'derivedFromEvent', 'resolvedBy', 'winnerId', 'loserId', 'resolutionReason']);
+const KNOWLEDGE_PROJECTION_FIELDS = new Set(['contentDigest', 'observedSeq', 'observedAt', 'eventTimeSeq', 'eventTime', 'validityVersion', 'invalidatedBy', 'acceptanceInvalidation', 'derivedFromEvent', 'resolvedBy', 'winnerId', 'loserId', 'resolutionReason']);
 const KNOWLEDGE_RECALL_POLICY_FIELDS = ['repoId', 'maxQueryBytes', 'maxQueryTerms', 'maxCandidates', 'maxCandidateBytes', 'maxResults', 'maxGraphDepth', 'maxGraphRows', 'maxSnippetBytes', 'maxReceiptBytes', 'maxResultBytes'];
 const KNOWLEDGE_RECALL_ASSESSMENT_POLICY_FIELDS = ['repoId', 'maxScanEvents', 'maxReceipts', 'maxNodeRefs', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes'];
 const KNOWLEDGE_PROMOTION_POLICY_FIELDS = ['repoId', 'minScratchReaders', 'maxScanEvents', 'maxCandidates', 'maxCandidateBytes', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes'];
@@ -22,6 +22,9 @@ const CONTRADICTION_ADMIN_EVENTS = new Set(['evidence.mapped', 'web.command_admi
 const PROMOTION_DECISION_KINDS = new Set(['control.stop_requested', 'follow_up.requested', 'publication.authorized', 'publication.denied']);
 const PROMOTION_FAILURE_KINDS = new Set(['integration.incomplete', 'integration.refused', 'publication.refused', 'recovery.claimed_without_spawn']);
 const PROVIDER_FAILURE_CODES = new Set(['provider_index_changed', 'reuse_policy_reconciliation_required', 'reuse_evidence_diverged', 'capability_refused', 'provider_processing_failed']);
+const ACCEPTANCE_REVOCATION_EVIDENCE_KINDS = new Set(['resource.provider_telemetry_invalid', 'resource.provider_governance_exceeded']);
+const ARTIFACT_LIFECYCLE_FIELDS = new Set(['createdEvent', 'version', 'supersededBy', 'supersededEvent', 'acceptanceInvalidation']);
+const ACCEPTANCE_REVOCATION_LIMITS = Object.freeze({ maxStateRows: 1_000_000, maxTargets: 100_000, maxReferences: 1_000_000, maxPayloadBytes: 16 * 1024 * 1024 });
 
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
 function digest(value) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
@@ -1071,6 +1074,138 @@ export class CoordinationStore {
     return drain;
   }
 
+  _acceptanceRevocationFailure(message, code, integrity = false) {
+    throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code);
+  }
+
+  _acceptanceRevocationRequest(fields, auth) {
+    const expected = ['evidence', 'expectedTaskVersion', 'schemaVersion', 'taskId'];
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+      || Object.keys(fields).sort().join(',') !== expected.sort().join(',') || fields.schemaVersion !== 1
+      || typeof fields.taskId !== 'string' || fields.taskId.length === 0 || Buffer.byteLength(fields.taskId) > 4_096
+      || !Number.isSafeInteger(fields.expectedTaskVersion) || fields.expectedTaskVersion <= 0
+      || !fields.evidence || typeof fields.evidence !== 'object' || Array.isArray(fields.evidence)
+      || Object.keys(fields.evidence).join(',') !== 'coordinationSeq'
+      || !Number.isSafeInteger(fields.evidence.coordinationSeq) || fields.evidence.coordinationSeq <= 0) {
+      throw new CoordinationRefusal('task acceptance revocation request is invalid', 'acceptance_revocation_invalid');
+    }
+    if (!promotionActor(auth?.actor) || typeof auth?.key !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(auth.key)) {
+      throw new CoordinationRefusal('task acceptance revocation authority is invalid', 'acceptance_revocation_unauthorized');
+    }
+    return clone(fields);
+  }
+
+  _acceptanceRevocationEvidence(task, coordinationSeq, integrity = false) {
+    const mapped = this._events[coordinationSeq - 1];
+    const source = mapped?.kind === 'evidence.mapped' && this._operationalRead
+      ? this._operationalRead(mapped.payload?.worker, mapped.payload?.workerSeq) : null;
+    if (!mapped || mapped.kind !== 'evidence.mapped' || coordinationSeq <= (task?.terminalEvent ?? Number.POSITIVE_INFINITY)
+      || !ACCEPTANCE_REVOCATION_EVIDENCE_KINDS.has(mapped.payload?.kind)
+      || mapped.payload?.worker !== task?.assignee || !source || digest(source) !== mapped.payload?.digest
+      || source.kind !== mapped.payload.kind || !boundedText(source.payload?.code, 256)) {
+      this._acceptanceRevocationFailure('task acceptance revocation evidence is not later mapped provider telemetry or governance evidence', 'acceptance_revocation_evidence_invalid', integrity);
+    }
+    return {
+      coordinationSeq, worker: mapped.payload.worker, workerSeq: mapped.payload.workerSeq,
+      digest: mapped.payload.digest, kind: mapped.payload.kind, providerCode: source.payload.code,
+    };
+  }
+
+  _acceptanceRevocationTargets(task, evidenceSeq, integrity = false) {
+    if (this._artifacts.size > ACCEPTANCE_REVOCATION_LIMITS.maxStateRows
+      || this._knowledgeNodes.size > ACCEPTANCE_REVOCATION_LIMITS.maxStateRows
+      || this._knowledgeReads.length > ACCEPTANCE_REVOCATION_LIMITS.maxStateRows) {
+      this._acceptanceRevocationFailure('task acceptance revocation state scan exceeded its ceiling', 'acceptance_revocation_oversize', integrity);
+    }
+    const artifacts = [...this._artifacts.values()]
+      .filter((artifact) => artifact.taskId === task.id && artifact.accepted === true)
+      .sort((a, b) => a.id.localeCompare(b.id));
+    if (artifacts.length === 0 || artifacts.some((artifact) => artifact.createdEvent >= evidenceSeq
+      || Object.hasOwn(artifact, 'acceptanceInvalidation'))) {
+      this._acceptanceRevocationFailure('task has no earlier unrevoked accepted artifacts', 'acceptance_revocation_unavailable', integrity);
+    }
+    if (artifacts.length > ACCEPTANCE_REVOCATION_LIMITS.maxTargets) {
+      this._acceptanceRevocationFailure('task acceptance revocation artifact set exceeded its ceiling', 'acceptance_revocation_oversize', integrity);
+    }
+    const acceptedIds = new Set(artifacts.map((artifact) => artifact.id));
+    const canonicalNodeIds = new Map(artifacts.map((artifact) => [`artifact:${artifact.id}`, artifact.id]));
+    const affectedReads = new Map(); let referenceCount = 0;
+    for (const read of this._knowledgeReads) for (const nodeId of read.nodeIds ?? []) {
+      referenceCount += 1;
+      if (referenceCount > ACCEPTANCE_REVOCATION_LIMITS.maxReferences) this._acceptanceRevocationFailure('task acceptance revocation read references exceeded their ceiling', 'acceptance_revocation_oversize', integrity);
+      const rows = affectedReads.get(nodeId) ?? []; rows.push(read.eventSeq); affectedReads.set(nodeId, rows);
+    }
+    const artifactTargets = artifacts.map((artifact) => ({
+      artifactId: artifact.id, expectedVersion: artifact.version, newVersion: artifact.version + 1, invalidationVersion: 1,
+    }));
+    const knowledgeTargets = [...this._knowledgeNodes.values()].map((node) => {
+      if (node.type !== 'Artifact' || node.validTo !== null) return null;
+      referenceCount += (node.evidence ?? []).length;
+      if (referenceCount > ACCEPTANCE_REVOCATION_LIMITS.maxReferences) this._acceptanceRevocationFailure('task acceptance revocation evidence references exceeded their ceiling', 'acceptance_revocation_oversize', integrity);
+      const artifactIds = [...new Set([
+        ...(canonicalNodeIds.has(node.id) ? [canonicalNodeIds.get(node.id)] : []),
+        ...(node.evidence ?? []).filter((ref) => typeof ref?.artifactId === 'string' && acceptedIds.has(ref.artifactId)).map((ref) => ref.artifactId),
+      ])].sort();
+      if (artifactIds.length === 0) return null;
+      return {
+        nodeId: node.id, artifactIds, expectedValidityVersion: node.validityVersion,
+        newValidityVersion: node.validityVersion + 1, invalidationVersion: 1,
+        affectedReadEvents: clone(affectedReads.get(node.id) ?? []),
+      };
+    }).filter(Boolean).sort((a, b) => a.nodeId.localeCompare(b.nodeId));
+    if (knowledgeTargets.length > ACCEPTANCE_REVOCATION_LIMITS.maxTargets) {
+      this._acceptanceRevocationFailure('task acceptance revocation knowledge target set exceeded its ceiling', 'acceptance_revocation_oversize', integrity);
+    }
+    return { artifactTargets, knowledgeTargets };
+  }
+
+  _validateAcceptanceRevocationPayload(p, event, integrity = false) {
+    const expected = ['artifactTargets', 'evidence', 'expectedTaskVersion', 'knowledgeTargets', 'newTaskVersion', 'receiptDigest', 'requestDigest', 'schemaVersion', 'taskId'];
+    const evidenceFields = ['coordinationSeq', 'digest', 'kind', 'providerCode', 'worker', 'workerSeq'];
+    const core = Object.fromEntries(Object.entries(p ?? {}).filter(([key]) => key !== 'receiptDigest'));
+    if (!p || typeof p !== 'object' || Array.isArray(p) || Object.keys(p).sort().join(',') !== expected.sort().join(',')
+      || p.schemaVersion !== 1 || p.receiptDigest !== canonicalDigest(core)
+      || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.receiptDigest ?? '')
+      || typeof p.taskId !== 'string' || p.taskId.length === 0 || Buffer.byteLength(p.taskId) > 4_096
+      || !Number.isSafeInteger(p.expectedTaskVersion) || p.expectedTaskVersion <= 0
+      || !Number.isSafeInteger(p.newTaskVersion) || !Array.isArray(p.artifactTargets) || !Array.isArray(p.knowledgeTargets)
+      || p.artifactTargets.length > ACCEPTANCE_REVOCATION_LIMITS.maxTargets || p.knowledgeTargets.length > ACCEPTANCE_REVOCATION_LIMITS.maxTargets
+      || !p.evidence || typeof p.evidence !== 'object' || Array.isArray(p.evidence)
+      || Object.keys(p.evidence).sort().join(',') !== evidenceFields.sort().join(',')
+      || !promotionActor(event?.actor) || typeof event?.idempotencyKey !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(event.idempotencyKey)
+      || !Number.isSafeInteger(event.seq) || !Number.isFinite(Date.parse(event.ts))) {
+      this._acceptanceRevocationFailure('task acceptance revocation payload is malformed', 'acceptance_revocation_integrity', integrity);
+    }
+    if (canonicalBytes(p) > ACCEPTANCE_REVOCATION_LIMITS.maxPayloadBytes) {
+      this._acceptanceRevocationFailure('task acceptance revocation payload exceeded its ceiling', 'acceptance_revocation_oversize', integrity);
+    }
+    const request = { schemaVersion: 1, taskId: p.taskId, expectedTaskVersion: p.expectedTaskVersion, evidence: { coordinationSeq: p.evidence?.coordinationSeq } };
+    const expectedRequestDigest = canonicalDigest({ actor: event.actor, idempotencyKey: event.idempotencyKey, request });
+    if (p.requestDigest !== expectedRequestDigest || p.newTaskVersion !== p.expectedTaskVersion + 1) {
+      this._acceptanceRevocationFailure('task acceptance revocation request or task version is malformed', 'acceptance_revocation_integrity', integrity);
+    }
+    const task = this._tasks.get(p.taskId);
+    const terminal = Number.isSafeInteger(task?.terminalEvent) ? this._events[task.terminalEvent - 1] : null;
+    if (!task || task.status !== 'completed' || task.version !== p.expectedTaskVersion
+      || terminal?.kind !== 'task.transitioned' || terminal.payload?.id !== task.id || terminal.payload?.to !== 'completed') {
+      const code = task && task.version !== p.expectedTaskVersion ? 'stale_version' : 'acceptance_revocation_unavailable';
+      this._acceptanceRevocationFailure('task acceptance revocation requires the exact completed task version', code, integrity);
+    }
+    const evidence = this._acceptanceRevocationEvidence(task, p.evidence?.coordinationSeq, integrity);
+    if (canonicalDigest(p.evidence) !== canonicalDigest(evidence)) {
+      this._acceptanceRevocationFailure('task acceptance revocation evidence snapshot changed', 'acceptance_revocation_evidence_invalid', integrity);
+    }
+    const targets = this._acceptanceRevocationTargets(task, evidence.coordinationSeq, integrity);
+    if (targets.knowledgeTargets.some((target) => Date.parse(this._knowledgeNodes.get(target.nodeId)?.validFrom) > Date.parse(event.ts))) {
+      this._acceptanceRevocationFailure('task acceptance revocation would create an invalid knowledge interval', 'acceptance_revocation_integrity', integrity);
+    }
+    if (canonicalDigest(p.artifactTargets) !== canonicalDigest(targets.artifactTargets)
+      || canonicalDigest(p.knowledgeTargets) !== canonicalDigest(targets.knowledgeTargets)) {
+      this._acceptanceRevocationFailure('task acceptance revocation target versions changed', 'acceptance_revocation_target_changed', integrity);
+    }
+    return targets;
+  }
+
   _apply(event) {
     const p = event.payload;
     if (event.kind === 'provider.processing_deferred') {
@@ -1148,6 +1283,29 @@ export class CoordinationStore {
     } else if (event.kind === 'task.transitioned') {
       const old = this._tasks.get(p.id);
       this._tasks.set(p.id, freeze({ ...clone(old), status: p.to, version: p.newVersion, ...(TERMINAL.has(p.to) ? { terminalEvent: event.seq } : {}) }));
+    } else if (event.kind === 'task.acceptance_revoked') {
+      this._validateAcceptanceRevocationPayload(p, event, true);
+      const old = this._tasks.get(p.taskId);
+      const evidence = [{ coordinationSeq: p.evidence.coordinationSeq }];
+      this._tasks.set(p.taskId, freeze({
+        ...clone(old), status: 'failed', version: p.newTaskVersion, terminalEvent: event.seq,
+        acceptanceRevocation: freeze({ schemaVersion: 1, version: 1, priorTerminalEvent: old.terminalEvent, eventSeq: event.seq, evidence: clone(evidence) }),
+      }));
+      for (const target of p.artifactTargets) {
+        const artifact = this._artifacts.get(target.artifactId);
+        this._artifacts.set(target.artifactId, freeze({
+          ...clone(artifact), accepted: false, version: target.newVersion,
+          acceptanceInvalidation: freeze({ schemaVersion: 1, version: target.invalidationVersion, eventSeq: event.seq, taskId: p.taskId, evidence: clone(evidence) }),
+        }));
+      }
+      for (const target of p.knowledgeTargets) {
+        const node = this._knowledgeNodes.get(target.nodeId);
+        this._setKnowledgeNode(event, target.nodeId, freeze({
+          ...clone(node), validTo: event.ts, validityVersion: target.newValidityVersion, invalidatedBy: event.seq,
+          acceptanceInvalidation: freeze({ schemaVersion: 1, version: target.invalidationVersion, eventSeq: event.seq, taskId: p.taskId, artifactIds: clone(target.artifactIds), evidence: clone(evidence) }),
+        }));
+        this._contamination.push(freeze({ nodeId: target.nodeId, invalidationEvent: event.seq, affectedReadEvents: clone(target.affectedReadEvents), eventSeq: event.seq, ts: event.ts }));
+      }
     } else if (event.kind === 'route.outcome_observed') {
       this._validateRouteObservationPayload(p, event, true); const observation = freeze({ ...clone(p), eventSeq: event.seq }); this._routeObservations.set(p.taskId, observation);
       const nodeId = `route-stat:${p.observationDigest}`; const evidence = [{ coordinationSeq: p.verificationEvidence.coordinationSeq }, { coordinationSeq: event.seq }];
@@ -1643,6 +1801,45 @@ export class CoordinationStore {
     return { ok: true, result: 'transitioned', event: clone(event), task: this.task(id) };
   }
 
+  revokeTaskAcceptance(fields, auth) {
+    const request = this._acceptanceRevocationRequest(fields, auth);
+    const requestDigest = canonicalDigest({ actor: auth.actor, idempotencyKey: auth.key, request });
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      const core = Object.fromEntries(Object.entries(prior.payload ?? {}).filter(([key]) => key !== 'receiptDigest'));
+      if (prior.kind !== 'task.acceptance_revoked' || prior.actor !== auth.actor
+        || prior.payload?.requestDigest !== requestDigest || prior.payload?.receiptDigest !== canonicalDigest(core)) {
+        throw new CoordinationRefusal('task acceptance revocation idempotency conflict', 'acceptance_revocation_conflict');
+      }
+      return freeze({
+        ok: true, result: 'idempotent', event: clone(prior), task: this.task(request.taskId),
+        artifacts: prior.payload.artifactTargets.map((target) => this.artifact(target.artifactId)),
+        knowledgeNodes: prior.payload.knowledgeTargets.map((target) => clone(this._knowledgeNodes.get(target.nodeId))),
+      });
+    }
+    const task = this._tasks.get(request.taskId);
+    if (!task || task.status !== 'completed' || task.version !== request.expectedTaskVersion) {
+      const code = task && task.version !== request.expectedTaskVersion ? 'stale_version' : 'acceptance_revocation_unavailable';
+      throw new CoordinationRefusal('task acceptance revocation requires the exact completed task version', code);
+    }
+    const evidence = this._acceptanceRevocationEvidence(task, request.evidence.coordinationSeq);
+    const targets = this._acceptanceRevocationTargets(task, evidence.coordinationSeq);
+    const core = {
+      schemaVersion: 1, requestDigest, taskId: request.taskId, expectedTaskVersion: request.expectedTaskVersion,
+      newTaskVersion: request.expectedTaskVersion + 1, evidence, ...targets,
+    };
+    const payload = { ...core, receiptDigest: canonicalDigest(core) };
+    const fixedTs = this._clock();
+    const prospective = { schemaVersion: 1, seq: this._events.length + 1, ts: fixedTs, kind: 'task.acceptance_revoked', actor: auth.actor, idempotencyKey: auth.key, payload };
+    this._validateAcceptanceRevocationPayload(payload, prospective, false);
+    const event = this._append('task.acceptance_revoked', payload, auth, fixedTs);
+    return freeze({
+      ok: true, result: 'revoked', event: clone(event), task: this.task(request.taskId),
+      artifacts: targets.artifactTargets.map((target) => this.artifact(target.artifactId)),
+      knowledgeNodes: targets.knowledgeTargets.map((target) => clone(this._knowledgeNodes.get(target.nodeId))),
+    });
+  }
+
   mapOperationalEvent(operationalEvent, auth) {
     const prior = this._byKey.get(auth?.key);
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), evidence: clone(prior.payload) };
@@ -1669,6 +1866,7 @@ export class CoordinationStore {
     const task = this._tasks.get(fields?.taskId);
     if (!task) throw new CoordinationRefusal(`unknown artifact task ${fields?.taskId}`, 'not_found');
     const manifest = clone(fields);
+    if (Object.keys(manifest).some((field) => ARTIFACT_LIFECYCLE_FIELDS.has(field))) throw new CoordinationRefusal('artifact manifest uses lifecycle-owned fields', 'reserved_artifact_field');
     manifest.digest ??= digest({ taskId: manifest.taskId, kind: manifest.kind, refs: manifest.refs, provenance: manifest.provenance });
     manifest.id ??= `artifact:${manifest.digest}`;
     if (this._artifacts.has(manifest.id)) throw new CoordinationRefusal(`duplicate artifact ${manifest.id}`, 'duplicate_artifact');
@@ -2299,6 +2497,7 @@ export class CoordinationStore {
     for (const event of prefix) {
       if (event.kind === 'task.created') taskStatus.set(event.payload.id, 'pending');
       else if (event.kind === 'task.transitioned') taskStatus.set(event.payload.id, event.payload.to);
+      else if (event.kind === 'task.acceptance_revoked') taskStatus.set(event.payload.taskId, 'failed');
       else if (event.kind === 'scratch.fact_posted') scratch.set(event.payload.id, { event, active: true });
       else if (event.kind === 'scratch.fact_expired') { const row = scratch.get(event.payload.id); if (row) row.active = false; }
       else if (event.kind === 'scratch.read') scratchReads.push(event);
@@ -2420,6 +2619,7 @@ export class CoordinationStore {
       if (event.kind === 'task.created') tasks.set(event.payload.id, { created: event, payload: clone(event.payload), status: 'pending', terminalEvent: null, routeKey: event.payload.routeKey ?? null });
       else if (event.kind === 'task.claimed') { const task = tasks.get(event.payload.id); if (task) { task.status = 'working'; task.routeKey = event.payload.routeKey ?? task.routeKey; task.claimed = event; } }
       else if (event.kind === 'task.transitioned') { const task = tasks.get(event.payload.id); if (task) { task.status = event.payload.to; if (TERMINAL.has(event.payload.to)) task.terminalEvent = event; } }
+      else if (event.kind === 'task.acceptance_revoked') { const task = tasks.get(event.payload.taskId); if (task) { task.status = 'failed'; task.terminalEvent = event; } }
       else if (event.kind === 'scratch.fact_posted') scratch.set(event.payload.id, { event, active: true });
       else if (event.kind === 'scratch.fact_expired') { const fact = scratch.get(event.payload.id); if (fact) fact.active = false; }
       else if (event.kind === 'scratch.read') scratchReads.push(event);

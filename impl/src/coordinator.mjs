@@ -12,9 +12,30 @@ import { createBrief, createDigest, wrapFact, wrapProse } from './messages.mjs';
 import { resolveEffort, routeTupleKey } from './route-tuple.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { processReadyPayload, validProcessClosedPayload, validProcessReadyPayload, validProcessReapUnconfirmedPayload, validProcessStartedPayload } from './process-lifecycle.mjs';
+import { normalizeProviderGovernancePolicy, providerGovernanceRoute, validateProviderGovernanceCard } from './provider-governance.mjs';
 
 const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
 const WORKTREE_FAILURE = Symbol('worktree-failure');
+const LOGICAL_CALL_PHASES = new Set(['requested', 'progress', 'completed', 'failed', 'cancelled']);
+
+function validLogicalCallId(value) {
+  return typeof value === 'string' && value.length > 0
+    && Buffer.byteLength(value) <= 256 && !value.includes('\0');
+}
+
+function validLogicalCallPhase(value) {
+  return typeof value === 'string' && LOGICAL_CALL_PHASES.has(value);
+}
+
+function logicalCallTransition(prior, next) {
+  if (prior === undefined) return next === 'progress' ? 'invalid' : 'new';
+  if (next === 'requested') return 'invalid';
+  if (['completed', 'failed', 'cancelled'].includes(prior)) {
+    return prior === next ? 'duplicate' : 'invalid';
+  }
+  if (next === 'progress') return 'progress';
+  return 'terminal';
+}
 
 function boundedProcessObservation(event, code, extra = {}) {
   const payload = event?.payload && typeof event.payload === 'object' && !Array.isArray(event.payload) ? event.payload : {};
@@ -162,6 +183,32 @@ function canonical(value) {
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
 }
 function canonicalDigest(value) { return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex'); }
+function replayProviderGovernanceRoute(event, vendor, model, effort) {
+  const payload = event?.payload;
+  const reserve = payload?.reserve;
+  if (typeof vendor !== 'string' || vendor.length === 0 || Buffer.byteLength(vendor) > 128
+    || typeof model !== 'string' || model.length === 0 || Buffer.byteLength(model) > 128
+    || typeof effort !== 'string' || effort.length === 0 || Buffer.byteLength(effort) > 128
+    || !['strict', 'observe'].includes(payload?.mode)
+    || !reserve || typeof reserve !== 'object' || Array.isArray(reserve)
+    || Object.keys(reserve).sort().join(',') !== 'tokens,usd'
+    || !Number.isSafeInteger(reserve.tokens) || reserve.tokens < 0
+    || typeof reserve.usd !== 'number' || !Number.isFinite(reserve.usd) || reserve.usd < 0
+    || !/^[a-f0-9]{64}$/u.test(payload?.policyDigest ?? '')
+    || !/^[a-f0-9]{64}$/u.test(payload?.routeDigest ?? '')) return null;
+  const route = {
+    harness: vendor,
+    model,
+    effort,
+    terminalReserve: { tokens: reserve.tokens, usd: reserve.usd === 0 ? 0 : reserve.usd },
+    mode: payload.mode,
+  };
+  if (canonicalDigest(route) !== payload.routeDigest) return null;
+  return {
+    route: deepFreeze({ ...route, digest: payload.routeDigest }),
+    policyDigest: payload.policyDigest,
+  };
+}
 function providerProcessingFailureCode(error) {
   if (['provider_index_changed', 'reuse_policy_reconciliation_required', 'reuse_evidence_diverged'].includes(error?.code)) return error.code;
   if (typeof error?.code === 'string' && error.code.startsWith('capability_')) return 'capability_refused';
@@ -385,6 +432,13 @@ export class Coordinator {
     this._log = new Proxy(opts.log, { get: (target, property, receiver) => { const value = Reflect.get(target, property, receiver); if (typeof value !== 'function') return value; const bound = value.bind(target); return property === 'append' ? (...args) => { if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' }); return bound(...args); } : bound; } });
     this._fences = opts.fences;
     this._adapters = opts.adapters;
+    this._providerGovernance = opts.providerGovernance === undefined
+      ? null
+      : normalizeProviderGovernancePolicy(opts.providerGovernance, Object.keys(this._adapters));
+    if (this._providerGovernance) {
+      for (const adapter of Object.values(this._adapters)) validateProviderGovernanceCard(adapter.card());
+      if (typeof opts.coordination.revokeTaskAcceptance !== 'function') throw new TypeError('Coordinator coordination store is missing revokeTaskAcceptance()');
+    }
     this._worktrees = opts.worktrees;
     this._runtimeScopes = opts.runtimeScopes ?? null;
     this._capabilities = opts.capabilities ?? null;
@@ -496,9 +550,23 @@ export class Coordinator {
     this._startupCleanupPromises = [];
     this._startupCleanupPending = 0;
     this._startupCleanupError = null;
-    this._budgetThresholds = Object.freeze([...(opts.budgetPolicy?.thresholds ?? [0.5, 0.8, 1])].sort((a, b) => a - b));
-    this._budgetHardStopAt = opts.budgetPolicy?.hardStopAt ?? 1;
-    this._budgetTerminalGraceMs = opts.budgetPolicy?.terminalGraceMs ?? 250;
+    const budgetPolicy = opts.budgetPolicy ?? {};
+    const budgetPolicyKeys = new Set(['hardStopAt', 'terminalGraceMs', 'thresholds']);
+    if (!budgetPolicy || typeof budgetPolicy !== 'object' || Array.isArray(budgetPolicy)
+      || Object.keys(budgetPolicy).some((key) => !budgetPolicyKeys.has(key))) throw new TypeError('budget policy must be a closed bounded deployment policy');
+    const budgetThresholds = budgetPolicy.thresholds ?? [0.5, 0.8, 1];
+    const budgetHardStopAt = budgetPolicy.hardStopAt ?? 1;
+    const budgetTerminalGraceMs = budgetPolicy.terminalGraceMs ?? 250;
+    if (!Array.isArray(budgetThresholds) || budgetThresholds.length === 0 || budgetThresholds.length > 32
+      || budgetThresholds.some((value) => !Number.isFinite(value) || value <= 0 || value > 100)
+      || new Set(budgetThresholds).size !== budgetThresholds.length
+      || !Number.isFinite(budgetHardStopAt) || budgetHardStopAt <= 0 || budgetHardStopAt > 100
+      || !Number.isSafeInteger(budgetTerminalGraceMs) || budgetTerminalGraceMs < 0 || budgetTerminalGraceMs > 60_000) {
+      throw new TypeError('budget policy must be a closed bounded deployment policy');
+    }
+    this._budgetThresholds = Object.freeze([...budgetThresholds].sort((a, b) => a - b));
+    this._budgetHardStopAt = budgetHardStopAt;
+    this._budgetTerminalGraceMs = budgetTerminalGraceMs;
     const scopeAction = opts.watchdog?.scopeAction ?? 'kill';
     let scopeOrientation = null;
     if (scopeAction === 'orient') {
@@ -609,21 +677,41 @@ export class Coordinator {
     for (const [sourceVendor, adapter] of Object.entries(this._adapters)) {
       adapter.onEvent((e) => {
         if (this._closed) return;
-        if (this._fatalError) {
-          this._observeEmergencyTerminal(e, sourceVendor);
+        if (!e || typeof e !== 'object' || e.actor !== 'worker') {
+          const handle = this._workers.get(e?.worker);
+          if (!this._fatalError && handle) {
+            this._log.append({
+              worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+              kind: 'lifecycle.process_attribution_refused', actor: 'policy',
+              payload: boundedProcessObservation(e, 'adapter_actor_authority_refused', { sourceVendor }),
+              ...this._routeAttribution(handle),
+            });
+          }
           return;
         }
-        try { this._handleEvent(e, sourceVendor); } catch (err) {
+        // The callback itself is the southbound trust boundary. An adapter can describe only
+        // worker observations; it can never mint orchestrator/policy authority or choose the
+        // deployment-owned harness attribution by putting those strings on a wire event.
+        const observed = {
+          ...(e && typeof e === 'object' ? e : {}),
+          actor: 'worker',
+          harness: this._harnessOf(sourceVendor),
+        };
+        if (this._fatalError) {
+          this._observeEmergencyTerminal(observed, sourceVendor);
+          return;
+        }
+        try { this._handleEvent(observed, sourceVendor); } catch (err) {
           // Adapter callbacks are an asynchronous trust boundary. A fatal authoritative-write
           // failure has already poisoned this coordinator; do not let it become an uncaught
           // process exception. The next ordinary public command observes the fatal error. An
           // explicit emergency stop may still consume native confirmation without inventing a
           // durable event, solely so owned process/worktree/runtime resources can be reaped.
           if (!this._fatalError) throw err;
-          const handle = this._workers.get(e?.worker);
-          if (['kill.confirmed', 'lifecycle.process_closed'].includes(e?.kind)) {
-            this._observeEmergencyTerminal(e, sourceVendor);
-          } else if (handle?.localAuthority === true && e?.kind === 'lifecycle.process_started') {
+          const handle = this._workers.get(observed.worker);
+          if (['kill.confirmed', 'lifecycle.process_closed'].includes(observed.kind)) {
+            this._observeEmergencyTerminal(observed, sourceVendor);
+          } else if (handle?.localAuthority === true && observed.kind === 'lifecycle.process_started') {
             this._emergencyKillUnlogged(handle).catch(noop);
           }
         }
@@ -1177,6 +1265,154 @@ export class Coordinator {
     };
   }
 
+  _providerRoutePolicy(handle) {
+    if (!this._providerGovernance || !handle?.vendor || !handle.modelResolved || !handle.effortResolved) return null;
+    return providerGovernanceRoute(this._providerGovernance, handle.vendor, handle.modelResolved, handle.effortResolved);
+  }
+
+  _providerCapabilityRefusal(handle, route) {
+    const adapter = this._adapters[handle.vendor];
+    const governance = adapter?.card()?.governance;
+    if (!governance) return 'provider_governance_card_unavailable';
+    if (!Number.isSafeInteger(governance.maxWireFrameBytes)
+      || governance.maxWireFrameBytes <= 0
+      || governance.maxWireFrameBytes > this._providerGovernance.projection.maxWireFrameBytes) return 'wire_frame_bound_unavailable';
+    if (route.mode !== 'strict') return null;
+    if (governance.usage?.terminalSeal !== 'native') return 'terminal_usage_seal_unavailable';
+    if (route.terminalReserve.tokens > 0 && governance.usage?.tokens !== 'native') return 'native_token_usage_unavailable';
+    if (route.terminalReserve.usd > 0 && governance.usage?.usd !== 'native') return 'native_usd_usage_unavailable';
+    if (governance.providerCalls?.enforcement !== 'native_pre_effect') return 'provider_call_pre_effect_enforcement_unavailable';
+    if (governance.toolCalls?.enforcement !== 'approval_pre_effect') return 'tool_call_pre_effect_enforcement_unavailable';
+    if (typeof adapter?.bindProviderGovernance !== 'function') return 'provider_policy_binding_unavailable';
+    return null;
+  }
+
+  _bindStrictProviderGovernance(handle, route) {
+    if (route.mode !== 'strict') return { ok: true, binding: null };
+    const core = {
+      schemaVersion: 1,
+      policyDigest: this._providerGovernance.digest,
+      routeDigest: route.digest,
+      harness: handle.vendor,
+      model: handle.modelResolved,
+      effort: handle.effortResolved,
+      maxWireFrameBytes: this._providerGovernance.projection.maxWireFrameBytes,
+      maxProviderCallsPerTurn: this._providerGovernance.projection.maxProviderCallsPerTurn,
+      maxToolCallsPerTurn: this._providerGovernance.projection.maxToolCallsPerTurn,
+      terminalReserve: { ...route.terminalReserve },
+    };
+    const envelope = deepFreeze({ ...core, bindingDigest: canonicalDigest(core) });
+    let ack;
+    try { ack = this._adapters[handle.vendor].bindProviderGovernance(envelope); }
+    catch { return { ok: false, code: 'provider_policy_binding_refused' }; }
+    if (!ack || typeof ack !== 'object' || typeof ack.then === 'function'
+      || Object.keys(ack).sort().join(',') !== ['bindingDigest', 'ok'].sort().join(',')
+      || ack.ok !== true || ack.bindingDigest !== envelope.bindingDigest) {
+      return { ok: false, code: 'provider_policy_binding_refused' };
+    }
+    return { ok: true, binding: { mechanism: 'adapter_sync_pre_effect', bindingDigest: envelope.bindingDigest } };
+  }
+
+  _admitProviderTurn(handle, task, phase) {
+    const route = this._providerRoutePolicy(handle);
+    handle.providerGovernance = route;
+    handle.providerPolicyDigest = route ? this._providerGovernance?.digest ?? null : null;
+    if (!this._providerGovernance) return { ok: true, route: null };
+    if (!route) {
+      const event = this._log.append({
+        worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'resource.provider_turn_refused', actor: 'policy', ...this._routeAttribution(handle, task),
+        payload: {
+          phase,
+          code: 'exact_provider_route_unconfigured',
+          policyDigest: this._providerGovernance.digest,
+          harness: handle.vendor ?? null,
+          model: handle.modelResolved ?? null,
+          effort: handle.effortResolved ?? null,
+        },
+      });
+      return { ok: false, route: null, event, code: 'exact_provider_route_unconfigured' };
+    }
+    const limits = {
+      tokens: Number(task?.brief?.budget?.tokens ?? 0),
+      usd: Number(task?.brief?.budget?.usd ?? 0),
+    };
+    const used = { ...handle.budgetUsed };
+    const remaining = {
+      tokens: limits.tokens > 0 ? Math.max(0, limits.tokens - used.tokens) : 0,
+      usd: limits.usd > 0 ? Math.max(0, limits.usd - used.usd) : 0,
+    };
+    const capabilityRefusal = this._providerCapabilityRefusal(handle, route);
+    const headroomRefusal = route.terminalReserve.tokens > 0 && (limits.tokens <= 0 || remaining.tokens < route.terminalReserve.tokens)
+      ? 'token_reserve_unavailable'
+      : route.terminalReserve.usd > 0 && (limits.usd <= 0 || remaining.usd < route.terminalReserve.usd)
+        ? 'usd_reserve_unavailable'
+        : null;
+    let refusal = capabilityRefusal ?? headroomRefusal;
+    const strictBinding = refusal ? { ok: false, binding: null } : this._bindStrictProviderGovernance(handle, route);
+    refusal ??= strictBinding.ok ? null : strictBinding.code;
+    const core = {
+      phase,
+      policyDigest: this._providerGovernance.digest,
+      routeDigest: route.digest,
+      harness: route.harness,
+      model: route.model,
+      effort: route.effort,
+      mode: route.mode,
+      reserve: { ...route.terminalReserve },
+      used,
+      limits,
+      remaining,
+      providerCallLimit: this._providerGovernance.projection.maxProviderCallsPerTurn,
+      toolCallLimit: this._providerGovernance.projection.maxToolCallsPerTurn,
+      ...(strictBinding.binding ? { strictBinding: strictBinding.binding } : {}),
+    };
+    const event = this._log.append({
+      worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+      kind: refusal ? 'resource.provider_turn_refused' : 'resource.provider_turn_admitted', actor: 'policy',
+      ...this._routeAttribution(handle, task),
+      payload: refusal ? { ...core, code: refusal } : core,
+    });
+    if (refusal) return { ok: false, route, event, code: refusal };
+    handle.providerTurn = {
+      admissionSeq: event.seq,
+      phase,
+      usage: { tokens: 0, usd: 0 },
+      counterIds: new Set(),
+      counterObservations: new Map(),
+      providerCallIds: new Set(),
+      providerCallPhases: new Map(),
+      anonymousProviderCalls: 0,
+      providerCalls: 0,
+      toolCallIds: new Set(),
+      toolCallPhases: new Map(),
+      anonymousToolCalls: 0,
+      toolCalls: 0,
+      violation: null,
+      sealed: false,
+    };
+    handle.providerTerminalSeal = null;
+    return { ok: true, route, event };
+  }
+
+  _failInitialProviderAdmission(handle, task, admission) {
+    const evidence = this._coordMapEvent(admission.event);
+    this._coordTransition(task, 'failed', `task.failed:${task.id}:provider_turn:${admission.event.seq}`, evidence);
+    task.status = 'failed';
+    handle.status = 'exited';
+    handle.localAuthority = false;
+  }
+
+  _releaseProviderTurnAdmission(handle, code) {
+    if (!handle.providerGovernance || !handle.providerTurn || handle.providerTurn.sealed) return;
+    this._log.append({
+      worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+      kind: 'resource.provider_turn_released', actor: 'policy', ...this._routeAttribution(handle),
+      payload: { admissionSeq: handle.providerTurn.admissionSeq, code, used: { ...handle.providerTurn.usage } },
+    });
+    handle.providerTurn.sealed = true;
+  }
+
   _dispatch(task, vendor, model, effort) {
     const handle = this._workers.get(task.assignee);
     const workerId = handle.id;
@@ -1202,11 +1438,17 @@ export class Coordinator {
     const harness = this._harnessOf(vendor);
     handle.currentIncarnation = true;
     handle.localAuthority = true;
+    const providerAdmission = this._admitProviderTurn(handle, task, 'spawn');
+    if (!providerAdmission.ok) {
+      this._failInitialProviderAdmission(handle, task, providerAdmission);
+      return;
+    }
     let runtime;
     try {
       runtime = this._ensureRuntimeScope(handle);
     } catch (err) {
       try { this._runtimeScopes?.remove?.(workerId); } catch { /* best effort */ }
+      this._releaseProviderTurnAdmission(handle, 'runtime_scope_unavailable');
       const crashEvent = this._log.append({
         worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'lifecycle.crashed', actor: 'policy',
         ...this._routeAttribution(handle, task),
@@ -1304,6 +1546,7 @@ export class Coordinator {
         taskId: task.id, brief: task.brief, vendorRequested: task.vendorRequested, vendorResolved: vendor,
         modelRequested: task.modelRequested, modelResolved: task.modelResolved, modelPolicy: task.modelPolicy,
         effortRequested: task.effortRequested, effortResolved: task.effortResolved, routeKey: task.routeKey,
+        ...(handle.providerGovernance ? { providerGovernance: handle.providerGovernance } : {}),
         sessionRequest: task.sessionRequest,
         lineage: task.lineage,
         review: task.review,
@@ -1372,6 +1615,7 @@ export class Coordinator {
     // to fail only a still-live spawn; it may never clobber cancellation or duplicate a crash.
     if (TERMINAL_TASK_STATUSES.has(task.status)) return false;
     if (handle.status === 'stopping' || handle.status === 'dead' || handle.status === 'idle' || handle.status === 'exited') return false;
+    this._releaseProviderTurnAdmission(handle, ack?.[WORKTREE_FAILURE] === true ? 'worktree_unavailable' : 'spawn_refused');
     const worktreeFailure = ack?.[WORKTREE_FAILURE] === true;
     const phase = worktreeFailure ? 'worktree' : 'spawn';
     const crashEvent = this._log.append({
@@ -1546,6 +1790,12 @@ export class Coordinator {
       usageCumulative: new Map(),
       budgetStopTimer: null,
       turnTerminalObserved: false,
+      providerGovernance: null,
+      providerPolicyDigest: null,
+      providerTurn: null,
+      providerPolicyHardExceeded: false,
+      providerTelemetryFailed: false,
+      providerTerminalSeal: null,
       watchdogActions: new Set(),
       recentFailedActions: [],
       watchdogGeneration: 0,
@@ -1605,6 +1855,8 @@ export class Coordinator {
         pendingQuestionId: null, budgetUsed: { tokens: 0, usd: 0 }, budgetThresholdsFired: new Set(),
         budgetHardExceeded: false,
         usageCumulative: new Map(), budgetStopTimer: null, turnTerminalObserved: false,
+        providerGovernance: null, providerPolicyDigest: null, providerTurn: null, providerPolicyHardExceeded: false,
+        providerTelemetryFailed: false, providerTerminalSeal: null,
         watchdogActions: new Set(), recentFailedActions: [],
         watchdogGeneration: 0, watchdogTimer: null, runtimeScope: null, runtimeLease: null,
         spawnAbort: null, processGeneration: 0, processRef: null, cleanupPending: false, cleanupPromise: null, cleanupAfterVerification: false, createdAt: new Date(0).toISOString(),
@@ -1810,6 +2062,9 @@ export class Coordinator {
       return { ok: false, result: err.code ?? 'session_context_mismatch', reason: err.message };
     }
 
+    const providerAdmission = this._admitProviderTurn(handle, task, 'recovery');
+    if (!providerAdmission.ok) return { ok: false, result: 'provider_turn_refused', reason: providerAdmission.code };
+
     const timeoutMs = opts.timeoutMs ?? this._recoveryTimeoutMs;
     const admission = { events: [] };
     admission.spawned = new Promise((resolve) => { admission.resolveSpawned = resolve; });
@@ -1876,6 +2131,7 @@ export class Coordinator {
 
     if (failed) {
       if (handle.turnAdmission === admission) handle.turnAdmission = null;
+      this._releaseProviderTurnAdmission(handle, failed.result);
       handle.status = 'orphaned';
       this._scheduleUntrustedTransportReap(handle, adapter, { reason: failed.result });
       this._log.append({
@@ -1891,6 +2147,7 @@ export class Coordinator {
       activeTask = this._createCoordinationRefinement(handle, task, 'recovery');
     } catch (err) {
       if (handle.turnAdmission === admission) handle.turnAdmission = null;
+      this._releaseProviderTurnAdmission(handle, 'recovery_refinement_aborted');
       handle.status = 'orphaned';
       this._scheduleUntrustedTransportReap(handle, adapter, { reason: 'recovery_refinement_aborted' });
       this._log.append({
@@ -2206,6 +2463,20 @@ export class Coordinator {
       pendingApprovalId: handle.pendingApprovalId,
       pendingQuestionId: handle.pendingQuestionId,
       budgetUsed: { ...handle.budgetUsed },
+      providerGovernance: handle.providerGovernance ?? null,
+      providerPolicyDigest: handle.providerPolicyDigest ?? null,
+      providerTurn: handle.providerTurn ? {
+        admissionSeq: handle.providerTurn.admissionSeq,
+        phase: handle.providerTurn.phase,
+        usage: { ...handle.providerTurn.usage },
+        providerCalls: handle.providerTurn.providerCalls,
+        toolCalls: handle.providerTurn.toolCalls,
+        violation: handle.providerTurn.violation,
+        sealed: handle.providerTurn.sealed,
+      } : null,
+      providerTerminalSeal: handle.providerTerminalSeal ?? null,
+      providerPolicyHardExceeded: handle.providerPolicyHardExceeded === true,
+      providerTelemetryFailed: handle.providerTelemetryFailed === true,
       createdAt: handle.createdAt,
     };
   }
@@ -2329,6 +2600,10 @@ export class Coordinator {
       }
     }
 
+    if (handle.providerGovernance && mode === 'steer' && card?.verbs?.steer === 'emulated') {
+      return this._interruptThenGoverned(handle, message, opts.actor ?? 'orchestrator');
+    }
+
     const stamp = this._fences.issue(workerId);
     const harness = this._harnessOf(handle.vendor);
     const ack = await this._adapters[handle.vendor].prompt(workerId, message, mode);
@@ -2376,6 +2651,9 @@ export class Coordinator {
       if (!preCheck.ok) return { ok: false, result: 'stale_fence', current: preCheck.current };
     }
 
+    const providerAdmission = this._admitProviderTurn(handle, task, 'follow_up');
+    if (!providerAdmission.ok) return { ok: false, result: 'provider_turn_refused', reason: providerAdmission.code };
+
     const requestedEvent = this._log.append({
       worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
       kind: 'control.follow_up_requested', actor: opts.actor ?? 'orchestrator',
@@ -2396,17 +2674,20 @@ export class Coordinator {
     } catch (err) {
       if (handle.turnAdmission === admission) handle.turnAdmission = null;
       if (admission.events.length > 0) this._rejectContradictoryAdmission(handle, admission, err);
+      else this._releaseProviderTurnAdmission(handle, 'delivery_exception');
       return { ok: false, result: 'delivery_exception', reason: String(err?.message ?? err) };
     }
     // A crash/exit is intentionally processed immediately instead of queued. It wins over an Ack
     // from the same call and can never be overwritten by reopening the prior terminal task.
     if (handle.status !== 'idle') {
       if (handle.turnAdmission === admission) handle.turnAdmission = null;
+      this._releaseProviderTurnAdmission(handle, 'worker_not_active');
       return { ok: false, result: 'worker_not_active' };
     }
     if (!ack || ack.ok !== true) {
       if (handle.turnAdmission === admission) handle.turnAdmission = null;
       if (admission.events.length > 0) this._rejectContradictoryAdmission(handle, admission, ack?.reason);
+      else this._releaseProviderTurnAdmission(handle, 'delivery_refused');
       return { ok: false, result: ack?.reason ?? 'delivery_refused', reason: ack?.reason };
     }
 
@@ -2416,6 +2697,7 @@ export class Coordinator {
       activeTask = this._createCoordinationRefinement(handle, task, 'follow_up');
     } catch (err) {
       if (handle.turnAdmission === admission) handle.turnAdmission = null;
+      this._releaseProviderTurnAdmission(handle, 'follow_up_refinement_aborted');
       handle.status = 'orphaned';
       this._scheduleUntrustedTransportReap(handle, this._adapters[handle.vendor], {
         reason: 'follow_up_refinement_aborted',
@@ -2478,7 +2760,20 @@ export class Coordinator {
     if (handle.status === 'orphaned') {
       return { ok: false, result: 'session_not_attached', reason: 'restart replay found no controllable adapter session' };
     }
+    if (then !== undefined && handle.providerGovernance) return this._interruptThenGoverned(handle, then, actor);
     return this._beginStop(handle, 'interrupt', then, actor);
+  }
+
+  async _interruptThenGoverned(handle, then, actor) {
+    // Never delegate `then` to an adapter: Codex/Grok can otherwise create the next provider
+    // turn internally before Baton has sealed this turn and reserved the next exact route.
+    const stopped = await this._beginStop(handle, 'interrupt', undefined, actor);
+    if (!stopped?.ok || stopped.result !== 'confirmed') return stopped;
+    const task = this._tasks.get(handle.taskId);
+    const follow = await this._deliverFollowUp(handle, task, then, { actor });
+    return follow.ok
+      ? { ...stopped, followUp: 'admitted' }
+      : { ok: false, result: 'follow_up_refused', stopped: stopped.result, reason: follow.reason ?? follow.result };
   }
 
   async kill(workerId, actor = 'orchestrator', opts = {}) {
@@ -3047,32 +3342,130 @@ export class Coordinator {
   _normalizeUsage(handle, payload) {
     const source = payload?.source ?? 'unknown';
     const wireAccounting = payload?.accounting ?? (payload?.tokenUsage ? 'cumulative' : 'delta');
-    const rawTokens = Number(payload?.tokens ?? payload?.totalTokens ?? payload?.tokenUsage?.total?.totalTokens ?? 0);
-    const rawUsd = Number(payload?.usd ?? payload?.totalCostUsd ?? 0);
+    const governed = handle.providerGovernance != null;
+    const own = (value, key) => value !== null && typeof value === 'object' && Object.hasOwn(value, key);
+    const tokenTotal = payload?.tokenUsage?.total;
+    const tokensReported = own(payload, 'tokens') || own(payload, 'totalTokens') || own(tokenTotal, 'totalTokens');
+    const usdReported = own(payload, 'usd') || own(payload, 'totalCostUsd');
+    const rawTokens = own(payload, 'tokens') ? payload.tokens
+      : own(payload, 'totalTokens') ? payload.totalTokens
+        : own(tokenTotal, 'totalTokens') ? tokenTotal.totalTokens : 0;
+    const rawUsd = own(payload, 'usd') ? payload.usd : own(payload, 'totalCostUsd') ? payload.totalCostUsd : 0;
+    if (governed && !['delta', 'cumulative'].includes(wireAccounting)) return { invalidCode: 'usage_accounting_invalid' };
+    if (governed && ((tokensReported && (!Number.isSafeInteger(rawTokens) || rawTokens < 0))
+      || (usdReported && (typeof rawUsd !== 'number' || !Number.isFinite(rawUsd) || rawUsd < 0)))) {
+      return { invalidCode: 'usage_value_invalid' };
+    }
+    const normalizedRawTokens = governed ? rawTokens : Number(rawTokens);
+    const normalizedRawUsd = governed ? rawUsd : Number(rawUsd);
+    const counterId = payload?.counterId ?? source;
+    if (governed && (typeof counterId !== 'string' || counterId.length === 0 || Buffer.byteLength(counterId) > 256 || counterId.includes('\0'))) return { invalidCode: 'usage_counter_invalid' };
+    const tokenMetric = payload?.tokenMetric ?? null;
+    if (governed && tokensReported) {
+      const expectedMetric = this._adapters[handle.vendor]?.card()?.governance?.usage?.tokenMetric ?? null;
+      if (typeof tokenMetric !== 'string' || tokenMetric.length === 0 || Buffer.byteLength(tokenMetric) > 256
+        || tokenMetric.includes('\0') || tokenMetric !== expectedMetric) return { invalidCode: 'usage_token_metric_invalid' };
+    }
     const deltaFor = (dimension, current) => {
       if (!Number.isFinite(current) || current < 0) return 0;
       if (wireAccounting !== 'cumulative') return current;
-      const key = `${source}:${dimension}`;
+      const key = `${counterId}:${dimension}`;
       const prior = handle.usageCumulative.get(key) ?? 0;
+      if (governed && current < prior) return null;
       handle.usageCumulative.set(key, current);
       return current >= prior ? current - prior : current;
     };
+    const tokens = deltaFor('tokens', normalizedRawTokens);
+    const usd = deltaFor('usd', normalizedRawUsd);
+    if (tokens === null || usd === null) return { invalidCode: 'usage_counter_regressed' };
     return {
       ...payload,
-      tokens: deltaFor('tokens', rawTokens), usd: deltaFor('usd', rawUsd), accounting: 'delta',
-      wireAccounting, wireTokens: rawTokens, wireUsd: rawUsd,
+      tokens, usd, accounting: 'delta', counterId,
+      tokenMetric: tokensReported ? tokenMetric : null,
+      reportedDimensions: { tokens: tokensReported, usd: usdReported },
+      wireAccounting, wireTokens: normalizedRawTokens, wireUsd: normalizedRawUsd,
     };
+  }
+
+  _scheduleProviderStop(handle, action = 'kill') {
+    if (handle.status !== 'working' || handle.turnTerminalObserved || handle.budgetStopTimer != null) return;
+    handle.budgetStopTimer = this._setTimeout(() => {
+      handle.budgetStopTimer = null;
+      if (handle.status === 'working' && !handle.turnTerminalObserved) this._beginStop(handle, action, undefined, 'policy').catch(noop);
+    }, this._budgetTerminalGraceMs);
+    if (handle.budgetStopTimer && typeof handle.budgetStopTimer.unref === 'function') handle.budgetStopTimer.unref();
+  }
+
+  _recordProviderGovernanceViolation(handle, code, details = {}, action = 'kill') {
+    if (!handle.providerGovernance || handle.providerTurn?.violation) return null;
+    if (handle.providerTurn) handle.providerTurn.violation = code;
+    handle.providerPolicyHardExceeded = true;
+    const task = this._tasks.get(handle.taskId);
+    const event = this._log.append({
+      worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+      kind: 'resource.provider_governance_exceeded', actor: 'policy', ...this._routeAttribution(handle, task),
+      payload: { code, action, mode: handle.providerGovernance.mode, routeDigest: handle.providerGovernance.digest, ...details },
+    });
+    this._revokeAcceptedProviderOutcome(handle, event);
+    this._scheduleProviderStop(handle, action);
+    return event;
+  }
+
+  _recordProviderTelemetryInvalid(handle, code, details = {}) {
+    if (!handle.providerGovernance) return null;
+    if (handle.providerTurn?.violation) return null;
+    if (handle.providerTurn) handle.providerTurn.violation = code;
+    handle.providerTelemetryFailed = true;
+    handle.providerPolicyHardExceeded = true;
+    const task = this._tasks.get(handle.taskId);
+    const invalid = this._log.append({
+      worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+      kind: 'resource.provider_telemetry_invalid', actor: 'policy', ...this._routeAttribution(handle, task),
+      payload: { code, action: 'kill', ...details },
+    });
+    this._revokeAcceptedProviderOutcome(handle, invalid);
+    this._scheduleProviderStop(handle, 'kill');
+    return invalid;
+  }
+
+  _recordProviderTurnUsage(handle, payload) {
+    if (!handle.providerGovernance || !handle.providerTurn || handle.providerTurn.sealed) return;
+    handle.providerTurn.usage.tokens += payload.tokens;
+    handle.providerTurn.usage.usd += payload.usd;
+    const reserve = handle.providerGovernance.terminalReserve;
+    if ((reserve.tokens > 0 && handle.providerTurn.usage.tokens > reserve.tokens)
+      || (reserve.usd > 0 && handle.providerTurn.usage.usd > reserve.usd)) {
+      this._recordProviderGovernanceViolation(handle, 'terminal_reserve_exceeded', {
+        usedThisTurn: { ...handle.providerTurn.usage }, reserve: { ...reserve },
+      });
+    }
   }
 
   _recordUsage(handle, event) {
     const task = this._tasks.get(handle.taskId);
-    const payload = this._normalizeUsage(handle, event.payload ?? {});
+    const payload = handle.providerGovernance && handle.turnTerminalObserved
+      ? { invalidCode: 'usage_after_terminal' }
+      : this._normalizeUsage(handle, event.payload ?? {});
+    if (payload.invalidCode) {
+      return this._recordProviderTelemetryInvalid(handle, payload.invalidCode);
+    }
     handle.budgetUsed.tokens += payload.tokens;
     handle.budgetUsed.usd += payload.usd;
+    if (handle.providerTurn && typeof payload.counterId === 'string') {
+      handle.providerTurn.counterIds.add(payload.counterId);
+      const prior = handle.providerTurn.counterObservations.get(payload.counterId)
+        ?? { tokens: false, usd: false, tokenMetric: null };
+      handle.providerTurn.counterObservations.set(payload.counterId, {
+        tokens: prior.tokens || payload.reportedDimensions.tokens,
+        usd: prior.usd || payload.reportedDimensions.usd,
+        tokenMetric: payload.reportedDimensions.tokens ? payload.tokenMetric : prior.tokenMetric,
+      });
+    }
     const usageEvent = this._log.append({
       ...event, payload,
       ...this._routeAttribution(handle, task),
     });
+    this._recordProviderTurnUsage(handle, payload);
     const tokenLimit = Number(task?.brief?.budget?.tokens ?? 0);
     const usdLimit = Number(task?.brief?.budget?.usd ?? 0);
     const tokenRatio = tokenLimit > 0 ? handle.budgetUsed.tokens / tokenLimit : 0;
@@ -3096,14 +3489,142 @@ export class Coordinator {
       });
     }
     if (hard) handle.budgetHardExceeded = true;
-    if (hard && handle.status === 'working' && !handle.turnTerminalObserved && handle.budgetStopTimer == null) {
-      handle.budgetStopTimer = this._setTimeout(() => {
-        handle.budgetStopTimer = null;
-        if (handle.status === 'working' && !handle.turnTerminalObserved) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
-      }, this._budgetTerminalGraceMs);
-      if (handle.budgetStopTimer && typeof handle.budgetStopTimer.unref === 'function') handle.budgetStopTimer.unref();
-    }
+    if (hard) this._scheduleProviderStop(handle, 'kill');
     return usageEvent;
+  }
+
+  _validateTerminalUsageSeal(handle, seal) {
+    if (!handle.providerGovernance) return { ok: true, seal: null };
+    const fields = ['counterId', 'tokenMetric', 'tokens', 'usd'];
+    if (!seal || typeof seal !== 'object' || Array.isArray(seal)
+      || Object.keys(seal).sort().join(',') !== fields.sort().join(',')) return { ok: false, code: 'usage_seal_invalid' };
+    const availability = new Set(['reported', 'unavailable', 'not_applicable']);
+    if (!availability.has(seal.tokens) || !availability.has(seal.usd)) return { ok: false, code: 'usage_seal_invalid' };
+    if (seal.counterId !== null && (typeof seal.counterId !== 'string' || seal.counterId.length === 0 || Buffer.byteLength(seal.counterId) > 256 || seal.counterId.includes('\0'))) return { ok: false, code: 'usage_seal_invalid' };
+    if (seal.tokenMetric !== null && (typeof seal.tokenMetric !== 'string' || seal.tokenMetric.length === 0 || Buffer.byteLength(seal.tokenMetric) > 256 || seal.tokenMetric.includes('\0'))) return { ok: false, code: 'usage_seal_invalid' };
+    const reported = seal.tokens === 'reported' || seal.usd === 'reported';
+    if (reported && (seal.counterId === null || !handle.providerTurn?.counterIds?.has(seal.counterId))) return { ok: false, code: 'usage_seal_counter_unobserved' };
+    if (!reported && seal.counterId !== null) return { ok: false, code: 'usage_seal_invalid' };
+    if (seal.tokens !== 'reported' && seal.tokenMetric !== null) return { ok: false, code: 'usage_seal_invalid' };
+    const observation = seal.counterId === null ? null : handle.providerTurn?.counterObservations?.get(seal.counterId) ?? null;
+    if (seal.tokens === 'reported' && observation?.tokens !== true) return { ok: false, code: 'usage_seal_tokens_unobserved' };
+    if (seal.usd === 'reported' && observation?.usd !== true) return { ok: false, code: 'usage_seal_usd_unobserved' };
+    if (seal.tokens !== 'reported' && observation?.tokens === true) return { ok: false, code: 'usage_seal_tokens_contradiction' };
+    if (seal.usd !== 'reported' && observation?.usd === true) return { ok: false, code: 'usage_seal_usd_contradiction' };
+    const usageCard = this._adapters[handle.vendor]?.card()?.governance?.usage;
+    if (seal.tokens === 'reported' && usageCard?.tokens !== 'native') return { ok: false, code: 'usage_seal_card_contradiction' };
+    if (seal.usd === 'reported' && usageCard?.usd !== 'native') return { ok: false, code: 'usage_seal_card_contradiction' };
+    if (seal.tokens === 'reported') {
+      const metric = usageCard?.tokenMetric ?? null;
+      if (seal.tokenMetric === null || seal.tokenMetric !== metric || observation?.tokenMetric !== metric) return { ok: false, code: 'usage_seal_metric_mismatch' };
+    }
+    if (handle.providerGovernance.terminalReserve.tokens > 0 && seal.tokens !== 'reported') return { ok: false, code: 'token_usage_unavailable' };
+    if (handle.providerGovernance.terminalReserve.usd > 0 && seal.usd !== 'reported') return { ok: false, code: 'usd_usage_unavailable' };
+    if (handle.providerTurn?.sealed) return { ok: false, code: 'usage_seal_duplicate' };
+    return { ok: true, seal: deepFreeze({ tokens: seal.tokens, usd: seal.usd, counterId: seal.counterId, tokenMetric: seal.tokenMetric }) };
+  }
+
+  _failTerminalProviderGovernance(handle, terminalEvent, code, beginStop = true) {
+    handle.providerTelemetryFailed = true;
+    handle.providerPolicyHardExceeded = true;
+    if (handle.providerTurn) { handle.providerTurn.sealed = true; handle.providerTurn.violation ??= code; }
+    const task = this._tasks.get(handle.taskId);
+    const invalid = this._log.append({
+      worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+      kind: 'resource.provider_telemetry_invalid', actor: 'policy', ...this._routeAttribution(handle, task),
+      payload: { code, terminalSeq: terminalEvent.seq, action: 'kill' },
+    });
+    this._revokeAcceptedProviderOutcome(handle, invalid);
+    if (task && !TERMINAL_TASK_STATUSES.has(task.status)) {
+      const evidence = this._coordMapEvent(invalid);
+      this._coordTransition(task, 'failed', `task.failed:${task.id}:provider_telemetry:${invalid.seq}`, evidence);
+      task.status = 'failed';
+    }
+    if (beginStop && !['dead', 'stopping', 'exited'].includes(handle.status)) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+  }
+
+  _revokeAcceptedProviderOutcome(handle, event) {
+    const task = this._tasks.get(handle.taskId);
+    const durable = task ? this._coordination.task(task.id) : null;
+    if (!task || durable?.status !== 'completed') return null;
+    try {
+      const evidence = this._coordMapEvent(event);
+      const revoked = this._coordination.revokeTaskAcceptance({
+        schemaVersion: 1,
+        taskId: task.id,
+        expectedTaskVersion: durable.version,
+        evidence: { coordinationSeq: evidence.coordinationSeq },
+      }, { actor: 'orchestrator', key: `task.acceptance_revoked:${task.id}:${event.seq}` });
+      task.status = 'failed';
+      task.coordinationVersion = revoked.task.version;
+      return revoked;
+    } catch (error) {
+      throw this._poisonCoordination(error);
+    }
+  }
+
+  _observeLogicalProviderCall(handle, payload) {
+    if (!handle.providerGovernance || !handle.providerTurn) return;
+    if (handle.providerTurn.sealed) {
+      this._recordProviderGovernanceViolation(handle, 'provider_call_after_terminal');
+      return;
+    }
+    const callId = payload?.callId ?? null;
+    const phase = payload?.phase ?? null;
+    if (!validLogicalCallId(callId)) {
+      this._recordProviderTelemetryInvalid(handle, 'provider_call_id_invalid');
+      return;
+    }
+    if (!validLogicalCallPhase(phase)) {
+      this._recordProviderTelemetryInvalid(handle, 'provider_call_phase_invalid');
+      return;
+    }
+    const transition = logicalCallTransition(handle.providerTurn.providerCallPhases.get(callId), phase);
+    if (transition === 'invalid') {
+      this._recordProviderTelemetryInvalid(handle, phase === 'requested' ? 'provider_call_phase_duplicate' : 'provider_call_phase_invalid');
+      return;
+    }
+    if (transition === 'duplicate' || transition === 'progress' || transition === 'terminal') {
+      handle.providerTurn.providerCallPhases.set(callId, phase);
+      return;
+    }
+    handle.providerTurn.providerCallIds.add(callId);
+    handle.providerTurn.providerCallPhases.set(callId, phase);
+    handle.providerTurn.providerCalls += 1;
+    const limit = this._providerGovernance.projection.maxProviderCallsPerTurn;
+    if (handle.providerTurn.providerCalls > limit) this._recordProviderGovernanceViolation(handle, 'provider_call_limit_exceeded', { observed: handle.providerTurn.providerCalls, limit });
+  }
+
+  _observeLogicalToolCall(handle, payload) {
+    if (!handle.providerGovernance || !handle.providerTurn) return;
+    if (handle.providerTurn.sealed) {
+      this._recordProviderGovernanceViolation(handle, 'tool_call_after_terminal');
+      return;
+    }
+    const callId = payload?.callId ?? payload?.toolCallId ?? payload?.tool_use_id ?? payload?.item?.id ?? null;
+    const phase = payload?.phase ?? null;
+    if (!validLogicalCallId(callId)) {
+      this._recordProviderTelemetryInvalid(handle, 'tool_call_id_invalid');
+      return;
+    }
+    if (!validLogicalCallPhase(phase)) {
+      this._recordProviderTelemetryInvalid(handle, 'tool_call_phase_invalid');
+      return;
+    }
+    const transition = logicalCallTransition(handle.providerTurn.toolCallPhases.get(callId), phase);
+    if (transition === 'invalid') {
+      this._recordProviderTelemetryInvalid(handle, phase === 'requested' ? 'tool_call_phase_duplicate' : 'tool_call_phase_invalid');
+      return;
+    }
+    if (transition === 'duplicate' || transition === 'progress' || transition === 'terminal') {
+      handle.providerTurn.toolCallPhases.set(callId, phase);
+      return;
+    }
+    handle.providerTurn.toolCallIds.add(callId);
+    handle.providerTurn.toolCallPhases.set(callId, phase);
+    handle.providerTurn.toolCalls += 1;
+    const limit = this._providerGovernance.projection.maxToolCallsPerTurn;
+    if (handle.providerTurn.toolCalls > limit) this._recordProviderGovernanceViolation(handle, 'tool_call_limit_exceeded', { observed: handle.providerTurn.toolCalls, limit });
   }
 
   _clearBudgetStop(handle) {
@@ -3126,8 +3647,13 @@ export class Coordinator {
       this._resetWatchdogTurn(handle);
       return;
     }
+    if (event.kind === 'resource.provider_call') {
+      this._observeLogicalProviderCall(handle, event.payload ?? {});
+      return;
+    }
     if (event.kind === 'content.tool_call') {
       const payload = event.payload ?? {};
+      this._observeLogicalToolCall(handle, payload);
       const command = payload.command ?? payload.cmd ?? payload.item?.command ?? payload.rawInput?.command ?? payload.rawOutput?.command;
       const exitCode = payload.exitCode ?? payload.item?.exitCode ?? payload.rawOutput?.exit_code;
       const status = payload.status ?? payload.item?.status ?? (exitCode !== undefined ? 'completed' : null);
@@ -3200,10 +3726,19 @@ export class Coordinator {
     this._finalizeStop(workerId, waiter);
   }
 
-  _onStopConfirmed(handle, confirmKind) {
+  _onStopConfirmed(handle, confirmKind, payload = {}) {
     const waiter = this._stopWaiters.get(handle.id);
     if (!waiter) return;
     if (confirmKind !== waiter.mode) return; // stale/mismatched confirmation — ignore
+    if (handle.providerGovernance && handle.providerTurn && !handle.providerTurn.sealed) {
+      const verdict = this._validateTerminalUsageSeal(handle, payload?.usageSeal ?? null);
+      waiter.providerSealVerdict = verdict;
+      handle.turnTerminalObserved = true;
+      if (verdict.seal) {
+        handle.providerTerminalSeal = verdict.seal;
+        handle.providerTurn.sealed = true;
+      }
+    }
     waiter.confirmReceived = true;
     this._maybeFinalizeStop(handle.id, waiter);
   }
@@ -3216,11 +3751,15 @@ export class Coordinator {
     const harness = handle ? this._harnessOf(handle.vendor) : '';
     const kind = waiter.mode === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed';
     const ev = {
-      worker: workerId, harness, turnEpoch: handle ? this._safeTurnEpoch(handle) : 0, kind, actor: 'worker', payload: {},
+      worker: workerId, harness, turnEpoch: handle ? this._safeTurnEpoch(handle) : 0, kind, actor: 'worker',
+      payload: waiter.providerSealVerdict?.seal ? { usageSeal: waiter.providerSealVerdict.seal } : {},
       ...(handle ? this._routeAttribution(handle) : {}),
     };
     if (waiter.emulated) ev.emulated = true;
     const stopEvent = this._log.append(ev);
+    if (handle && waiter.providerSealVerdict && !waiter.providerSealVerdict.ok) {
+      this._failTerminalProviderGovernance(handle, stopEvent, waiter.providerSealVerdict.code, false);
+    }
 
     try {
       if (handle) {
@@ -3600,6 +4139,14 @@ export class Coordinator {
     this._assertReadable();
     const handle = this._getWorker(workerId);
     const task = this._tasks.get(handle.taskId);
+    const providerGovernance = handle.providerGovernance ? {
+      policyDigest: handle.providerPolicyDigest ?? null,
+      routeDigest: handle.providerGovernance.digest,
+      mode: handle.providerGovernance.mode,
+      observationOnly: handle.providerGovernance.mode === 'observe',
+      hardExceeded: handle.providerPolicyHardExceeded === true,
+      telemetryFailed: handle.providerTelemetryFailed === true,
+    } : null;
     const attribution = {
       taskId: task?.id ?? handle.taskId ?? null,
       runId: task?.runId ?? handle.runId ?? null,
@@ -3623,6 +4170,8 @@ export class Coordinator {
       integration: task?.integration ?? null,
       publication: task?.publication ?? null,
       retainedResultRef: task?.retainedResultRef ?? null,
+      providerGovernance,
+      observationOnly: providerGovernance?.observationOnly === true,
     };
     if (!task) return { ready: false, status: handle.status, ...attribution };
     if (!TERMINAL_TASK_STATUSES.has(task.status)) return { ready: false, status: task.status, ...attribution };
@@ -4267,7 +4816,8 @@ export class Coordinator {
 
       const selection = this._adapters[handle.vendor]?.card()?.modelSelection;
       const requestedAlias = selection?.acceptedAliases?.includes(handle.modelResolved);
-      if (handle.modelResolved && observedModel !== handle.modelResolved && !requestedAlias && !handle.modelMismatch) {
+      const legacyAliasObservation = requestedAlias && !handle.providerGovernance;
+      if (handle.modelResolved && observedModel !== handle.modelResolved && !legacyAliasObservation && !handle.modelMismatch) {
         handle.modelMismatch = { requested: handle.modelResolved, observed: observedModel };
         const mismatchTask = this._tasks.get(handle.taskId);
         if (mismatchTask) {
@@ -4387,8 +4937,20 @@ export class Coordinator {
         // Adapters may wrap the WorkerResult as { result } (MockAdapter) or emit it directly
         // (coordinator.test). Normalize so the logged claim and the gate both see the WorkerResult.
         const wr = (payload && payload.result !== undefined && payload.status === undefined) ? payload.result : payload;
-        appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload: wr });
+        const sealVerdict = this._validateTerminalUsageSeal(handle, payload?.usageSeal ?? null);
+        const terminalEvent = appendAttributed({
+          worker: workerId, harness, turnEpoch, kind, actor,
+          payload: sealVerdict.seal ? { ...wr, usageSeal: sealVerdict.seal } : wr,
+        });
         this._clearWatchdog(handle);
+        if (!sealVerdict.ok) {
+          this._failTerminalProviderGovernance(handle, terminalEvent, sealVerdict.code);
+          break;
+        }
+        if (sealVerdict.seal) {
+          handle.providerTerminalSeal = sealVerdict.seal;
+          if (handle.providerTurn) handle.providerTurn.sealed = true;
+        }
         if (this._drainState === 'open' && handle.status !== 'stopping' && handle.status !== 'dead') {
           const releaseAuthority = this._acquireAuthorityOp();
           this._runTrustGate(handle, wr).catch(noop).finally(releaseAuthority);
@@ -4396,7 +4958,16 @@ export class Coordinator {
         break;
       }
       case 'lifecycle.crashed': {
-        const terminalEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        const sealVerdict = this._validateTerminalUsageSeal(handle, payload?.usageSeal ?? null);
+        const terminalEvent = appendAttributed({
+          worker: workerId, harness, turnEpoch, kind, actor,
+          payload: sealVerdict.seal ? { ...payload, usageSeal: sealVerdict.seal } : payload,
+        });
+        if (!sealVerdict.ok) this._failTerminalProviderGovernance(handle, terminalEvent, sealVerdict.code);
+        if (sealVerdict.seal) {
+          handle.providerTerminalSeal = sealVerdict.seal;
+          if (handle.providerTurn) handle.providerTurn.sealed = true;
+        }
         const task = this._tasks.get(handle.taskId);
         const failActiveTask = task && !TERMINAL_TASK_STATUSES.has(task.status)
           && task.status !== 'verifying' && !turnWasTerminal;
@@ -4522,10 +5093,10 @@ export class Coordinator {
         break;
       }
       case 'control.interrupt_confirmed':
-        this._onStopConfirmed(handle, 'interrupt');
+        this._onStopConfirmed(handle, 'interrupt', payload);
         break;
       case 'kill.confirmed':
-        this._onStopConfirmed(handle, 'kill');
+        this._onStopConfirmed(handle, 'kill', payload);
         break;
       default:
         nativeObservationEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
@@ -4599,7 +5170,10 @@ export class Coordinator {
       const refereeAccept = this._accept(verdict, acceptOpts);
       // Provider usage can arrive only as a terminal lump. Native kill cannot claw back that
       // spend, but an over-hard-limit artifact must still fail admission and router learning.
-      const accept = refereeAccept && handle.budgetHardExceeded !== true;
+      const accept = refereeAccept
+        && handle.budgetHardExceeded !== true
+        && handle.providerPolicyHardExceeded !== true
+        && handle.providerTelemetryFailed !== true;
       const verifyEvent = this._log.append({
         worker: handle.id,
         harness,
@@ -4611,6 +5185,23 @@ export class Coordinator {
           verdict,
           accept,
           budgetAdmission: { hardExceeded: handle.budgetHardExceeded === true, refereeAccept, used: { ...handle.budgetUsed }, limits: { tokens: Number(task.brief.budget?.tokens ?? 0), usd: Number(task.brief.budget?.usd ?? 0) } },
+          providerGovernanceAdmission: handle.providerGovernance ? {
+            policyDigest: handle.providerPolicyDigest ?? this._providerGovernance?.digest ?? null,
+            routeDigest: handle.providerGovernance.digest,
+            mode: handle.providerGovernance.mode,
+            observationOnly: handle.providerGovernance.mode === 'observe',
+            hardExceeded: handle.providerPolicyHardExceeded === true,
+            telemetryFailed: handle.providerTelemetryFailed === true,
+            terminalSeal: handle.providerTerminalSeal,
+            turn: handle.providerTurn ? {
+              admissionSeq: handle.providerTurn.admissionSeq,
+              usage: { ...handle.providerTurn.usage },
+              providerCalls: handle.providerTurn.providerCalls,
+              toolCalls: handle.providerTurn.toolCalls,
+              violation: handle.providerTurn.violation,
+              sealed: handle.providerTurn.sealed,
+            } : null,
+          } : null,
           acceptOpts: {
             requireRedGreen: this._acceptOpts.requireRedGreen ?? false,
             requireCoverage: this._acceptOpts.requireCoverage ?? false,
@@ -4814,6 +5405,12 @@ export class Coordinator {
       let budgetHardExceeded = false;
       const budgetThresholdsFired = new Set();
       const usageCumulative = new Map();
+      let providerGovernance = null;
+      let providerPolicyDigest = null;
+      let providerTurn = null;
+      let providerPolicyHardExceeded = false;
+      let providerTelemetryFailed = false;
+      let providerTerminalSeal = null;
 
       for (const e of events) {
         runId = e.runId ?? runId;
@@ -4861,6 +5458,7 @@ export class Coordinator {
             modelRequested = e.payload?.modelRequested ?? modelRequested;
             modelResolved = e.payload?.modelResolved ?? modelResolved;
             modelPolicy = e.payload?.modelPolicy ?? modelPolicy;
+            if (e.actor === 'orchestrator') providerGovernance = e.payload?.providerGovernance ?? providerGovernance;
             sessionRequest = e.payload?.sessionRequest ?? sessionRequest;
             lineage = e.payload?.lineage ?? lineage;
             review = e.payload?.review ?? review;
@@ -4890,15 +5488,151 @@ export class Coordinator {
             sessionContext = e.payload ?? sessionContext;
             break;
           case 'resource.tokens':
-            budgetUsed.tokens += Number(e.payload?.tokens ?? 0);
-            budgetUsed.usd += Number(e.payload?.usd ?? 0);
+            if (e.actor !== 'worker') break;
+            {
+            const replayTokens = providerGovernance ? e.payload?.tokens : Number(e.payload?.tokens ?? 0);
+            const replayUsd = providerGovernance ? e.payload?.usd : Number(e.payload?.usd ?? 0);
+            if (!(providerGovernance ? Number.isSafeInteger(replayTokens) : Number.isFinite(replayTokens)) || replayTokens < 0
+              || !Number.isFinite(replayUsd) || replayUsd < 0) {
+              providerTelemetryFailed = true;
+              providerPolicyHardExceeded = true;
+              if (providerTurn) providerTurn.violation ??= 'usage_value_invalid';
+              break;
+            }
+            budgetUsed.tokens += replayTokens;
+            budgetUsed.usd += replayUsd;
+            if (providerTurn) {
+              providerTurn.usage.tokens += replayTokens;
+              providerTurn.usage.usd += replayUsd;
+              if (typeof e.payload?.counterId === 'string') {
+                providerTurn.counterIds.add(e.payload.counterId);
+                const dimensions = e.payload?.reportedDimensions;
+                const prior = providerTurn.counterObservations.get(e.payload.counterId)
+                  ?? { tokens: false, usd: false, tokenMetric: null };
+                const tokensObserved = dimensions?.tokens === true;
+                const usdObserved = dimensions?.usd === true;
+                providerTurn.counterObservations.set(e.payload.counterId, {
+                  tokens: prior.tokens || tokensObserved,
+                  usd: prior.usd || usdObserved,
+                  tokenMetric: tokensObserved ? e.payload?.tokenMetric ?? null : prior.tokenMetric,
+                });
+              }
+            }
             if (e.payload?.wireAccounting === 'cumulative') {
-              const source = e.payload?.source ?? 'unknown';
-              usageCumulative.set(`${source}:tokens`, Number(e.payload?.wireTokens ?? 0));
-              usageCumulative.set(`${source}:usd`, Number(e.payload?.wireUsd ?? 0));
+              const counterId = e.payload?.counterId ?? e.payload?.source ?? 'unknown';
+              usageCumulative.set(`${counterId}:tokens`, Number(e.payload?.wireTokens ?? 0));
+              usageCumulative.set(`${counterId}:usd`, Number(e.payload?.wireUsd ?? 0));
+            }
             }
             break;
+          case 'resource.provider_turn_admitted':
+            if (e.actor !== 'policy') break;
+            {
+              const eventVendor = e.payload?.harness
+                ?? Object.keys(this._adapters).find((vendor) => this._harnessOf(vendor) === e.harnessResolved)
+                ?? vendorResolved;
+              const eventModel = e.payload?.model ?? e.modelResolved ?? modelResolved;
+              const eventEffort = e.payload?.effort ?? e.effortResolved ?? effortResolved;
+              const historical = replayProviderGovernanceRoute(
+                e,
+                eventVendor,
+                eventModel,
+                eventEffort,
+              );
+              if (!historical) {
+                providerPolicyHardExceeded = true;
+                providerTelemetryFailed = true;
+                break;
+              }
+              providerGovernance = historical.route;
+              providerPolicyDigest = historical.policyDigest;
+              if (this._providerGovernance && e.payload?.policyDigest === this._providerGovernance.digest) {
+              const admittedRoute = providerGovernanceRoute(
+                this._providerGovernance,
+                eventVendor,
+                eventModel,
+                eventEffort,
+              );
+              if (admittedRoute && admittedRoute.digest === e.payload?.routeDigest
+                && admittedRoute.mode === e.payload?.mode
+                && canonicalDigest(admittedRoute.terminalReserve) === canonicalDigest(e.payload?.reserve)) {
+                providerGovernance = admittedRoute;
+                providerPolicyDigest = this._providerGovernance.digest;
+              } else {
+                providerPolicyHardExceeded = true;
+                providerTelemetryFailed = true;
+              }
+            }
+            }
+            providerTurn = {
+              admissionSeq: e.seq, phase: e.payload?.phase ?? null, usage: { tokens: 0, usd: 0 }, counterIds: new Set(),
+              counterObservations: new Map(),
+              providerCallIds: new Set(), providerCallPhases: new Map(), anonymousProviderCalls: 0, providerCalls: 0,
+              toolCallIds: new Set(), toolCallPhases: new Map(), anonymousToolCalls: 0, toolCalls: 0,
+              violation: null, sealed: false,
+            };
+            break;
+          case 'resource.provider_turn_released':
+            if (e.actor !== 'policy') break;
+            if (providerTurn && e.payload?.admissionSeq === providerTurn.admissionSeq) providerTurn.sealed = true;
+            break;
+          case 'resource.provider_call': {
+            if (e.actor !== 'worker' || !providerTurn || providerTurn.sealed) break;
+            const callId = e.payload?.callId;
+            const phase = e.payload?.phase;
+            if (!validLogicalCallId(callId) || !validLogicalCallPhase(phase)) {
+              providerTelemetryFailed = true; providerPolicyHardExceeded = true;
+              providerTurn.violation ??= validLogicalCallId(callId) ? 'provider_call_phase_invalid' : 'provider_call_id_invalid';
+              break;
+            }
+            const transition = logicalCallTransition(providerTurn.providerCallPhases.get(callId), phase);
+            if (transition === 'invalid') {
+              providerTelemetryFailed = true; providerPolicyHardExceeded = true;
+              providerTurn.violation ??= phase === 'requested' ? 'provider_call_phase_duplicate' : 'provider_call_phase_invalid';
+              break;
+            }
+            providerTurn.providerCallPhases.set(callId, phase);
+            if (transition !== 'new') break;
+            providerTurn.providerCallIds.add(callId);
+            providerTurn.providerCalls += 1;
+            break;
+          }
+          case 'content.tool_call': {
+            if (e.actor !== 'worker' || !providerTurn || providerTurn.sealed) break;
+            const callId = e.payload?.callId ?? e.payload?.toolCallId ?? e.payload?.tool_use_id ?? e.payload?.item?.id;
+            const phase = e.payload?.phase;
+            if (!validLogicalCallId(callId) || !validLogicalCallPhase(phase)) {
+              providerTelemetryFailed = true; providerPolicyHardExceeded = true;
+              providerTurn.violation ??= validLogicalCallId(callId) ? 'tool_call_phase_invalid' : 'tool_call_id_invalid';
+              break;
+            }
+            const transition = logicalCallTransition(providerTurn.toolCallPhases.get(callId), phase);
+            if (transition === 'invalid') {
+              providerTelemetryFailed = true; providerPolicyHardExceeded = true;
+              providerTurn.violation ??= phase === 'requested' ? 'tool_call_phase_duplicate' : 'tool_call_phase_invalid';
+              break;
+            }
+            providerTurn.toolCallPhases.set(callId, phase);
+            if (transition !== 'new') break;
+            providerTurn.toolCallIds.add(callId);
+            providerTurn.toolCalls += 1;
+            break;
+          }
+          case 'resource.provider_governance_exceeded':
+            if (e.actor !== 'policy') break;
+            providerPolicyHardExceeded = true;
+            if (providerTurn) providerTurn.violation = e.payload?.code ?? 'provider_governance_exceeded';
+            terminalStatus = 'failed';
+            break;
+          case 'resource.provider_telemetry_invalid':
+            if (e.actor !== 'policy') break;
+            providerTelemetryFailed = true;
+            providerPolicyHardExceeded = true;
+            if (providerTurn) providerTurn.violation ??= e.payload?.code ?? 'provider_telemetry_invalid';
+            terminalStatus = 'failed';
+            break;
           case 'resource.budget_threshold':
+            if (e.actor !== 'policy') break;
             if (typeof e.payload?.threshold === 'number') budgetThresholdsFired.add(e.payload.threshold);
             if (e.payload?.hardStop === true) budgetHardExceeded = true;
             break;
@@ -4917,6 +5651,8 @@ export class Coordinator {
           case 'lifecycle.turn_completed':
             if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) {
               lastResult = e.payload;
+              providerTerminalSeal = e.payload?.usageSeal ?? providerTerminalSeal;
+              if (providerTurn && providerTerminalSeal) providerTurn.sealed = true;
               terminalStatus = 'verifying';
             }
             break;
@@ -4944,6 +5680,10 @@ export class Coordinator {
             if (this._coordination?.publicationAuthority(taskId, e)) publication = e.payload ?? publication;
             break;
           case 'lifecycle.crashed':
+            providerTerminalSeal = e.payload?.usageSeal ?? providerTerminalSeal;
+            if (providerTurn && providerTerminalSeal) providerTurn.sealed = true;
+            if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) terminalStatus = 'failed';
+            break;
           case 'control.forced_stop':
           case 'control.recovery_terminalized':
             if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) terminalStatus = 'failed';
@@ -4953,6 +5693,10 @@ export class Coordinator {
             break;
           case 'kill.confirmed':
           case 'control.interrupt_confirmed':
+            if (e.actor === 'worker') {
+              providerTerminalSeal = e.payload?.usageSeal ?? providerTerminalSeal;
+              if (providerTurn && providerTerminalSeal) providerTurn.sealed = true;
+            }
             if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) terminalStatus = 'cancelled';
             break;
           case 'question.asked':
@@ -5118,6 +5862,12 @@ export class Coordinator {
         usageCumulative,
         budgetStopTimer: null,
         turnTerminalObserved: false,
+        providerGovernance,
+        providerPolicyDigest,
+        providerTurn,
+        providerPolicyHardExceeded,
+        providerTelemetryFailed,
+        providerTerminalSeal,
         watchdogActions: new Set(),
         recentFailedActions: [],
         watchdogGeneration: 0,

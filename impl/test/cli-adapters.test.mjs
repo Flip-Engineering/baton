@@ -5,6 +5,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import {
   CodexCli, ClaudeCli, ZCodeCli, PiCli, CLI_ADAPTERS,
   parseCodexEvent, parseClaudeEvent, renderPrompt,
@@ -37,6 +39,27 @@ test('parseCodexEvent maps the real event stream: turn.started->turn_started, ag
   assert.equal(out[3].event.kind, 'lifecycle.turn_completed');
   assert.equal(out[3].event.payload.result.status, 'completed');
   assert.equal(out[3].event.worker, 'w1');
+  assert.deepEqual(out[2].events.map((event) => event.kind), ['resource.provider_call', 'content.message']);
+  assert.deepEqual(out[2].events[0].payload, { callId: 'item_0', phase: 'completed' });
+});
+
+test('one-shot usage is emitted before terminal with a matching explicit counter and truthful availability seal', () => {
+  const codex = parseCodexEvent({ type: 'turn.completed', usage: { input_tokens: 7, output_tokens: 3 } }, 'w1', 'codex', 4);
+  assert.equal(codex.beforeTerminal[0].kind, 'resource.tokens');
+  assert.deepEqual(codex.beforeTerminal[0].payload, {
+    source: 'result', accounting: 'delta', tokens: 10,
+    counterId: 'cli:w1:4', tokenMetric: 'codex_turn_input_plus_output_tokens',
+  });
+  assert.deepEqual(codex.event.payload.usageSeal, {
+    tokens: 'reported', usd: 'unavailable', counterId: 'cli:w1:4',
+    tokenMetric: 'codex_turn_input_plus_output_tokens',
+  });
+
+  const missing = parseCodexEvent({ type: 'turn.completed', usage: { output_tokens: 3 } }, 'w1', 'codex', 5);
+  assert.deepEqual(missing.beforeTerminal, []);
+  assert.deepEqual(missing.event.payload.usageSeal, {
+    tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null,
+  });
 });
 
 test('parseCodexEvent surfaces command_execution and file_change items, and treats turn.failed/error as a crash', () => {
@@ -70,6 +93,27 @@ test('parseClaudeEvent: an is_error result is a crash; a tool_use assistant mess
   assert.equal(tool.event.payload.name, 'Edit');
 });
 
+test('parseClaudeEvent preserves text plus every tool_use with stable logical call ids and phases', () => {
+  const parsed = parseClaudeEvent({
+    type: 'assistant',
+    message: {
+      id: 'msg-native',
+      content: [
+        { type: 'text', text: 'working' },
+        { type: 'tool_use', id: 'tool-a', name: 'Read', input: { path: 'a' } },
+        { type: 'tool_use', id: 'tool-b', name: 'Edit', input: { path: 'b' } },
+      ],
+    },
+  }, 'w1', 'claude', 2);
+  assert.deepEqual(parsed.events.map((event) => event.kind), [
+    'resource.provider_call', 'content.message', 'content.tool_call', 'content.tool_call',
+  ]);
+  assert.deepEqual(parsed.events[0].payload, { callId: 'msg-native', phase: 'completed' });
+  assert.deepEqual(parsed.events.slice(2).map((event) => [event.payload.callId, event.payload.phase]), [
+    ['tool-a', 'requested'], ['tool-b', 'requested'],
+  ]);
+});
+
 // ---------- cards + conformance ----------
 
 test('all CLI adapters conform to the session Adapter interface', () => {
@@ -86,6 +130,14 @@ test('cards report the right harness identity and concurrency; GLM/Z-Code is pin
   assert.equal(z.harness, 'glm-via-claude');
   assert.equal(z.concurrencyCeiling, 1, 'Z.ai Pro ≈ 1 in-flight is a hard limit');
   assert.equal(new CodexCli().card().verbs.interrupt, 'emulated');
+  assert.deepEqual(new CodexCli().card().governance.usage, {
+    tokens: 'native', usd: 'unavailable', tokenMetric: 'codex_turn_input_plus_output_tokens', terminalSeal: 'native',
+  });
+  assert.deepEqual(new ClaudeCli().card().governance.providerCalls, { observation: 'native', enforcement: 'unavailable' });
+  assert.deepEqual(new PiCli().card().governance.usage, { tokens: 'unavailable', usd: 'unavailable', tokenMetric: null, terminalSeal: 'native' });
+  assert.deepEqual(new CodexCli({ model: 'gpt-5.6-sol' }).card().modelSelection.configuredDefault, 'gpt-5.6-sol');
+  assert.deepEqual(new ClaudeCli({ model: 'opus' }).card().modelSelection.reasoningEffort, ['low', 'medium', 'high', 'xhigh', 'max']);
+  assert.equal(new ZCodeCli({ model: 'glm-4.7' }).card().modelSelection.family, 'glm');
 });
 
 test('Z-Code injects the Z.ai Anthropic-compatible endpoint into the child env', () => {
@@ -100,6 +152,15 @@ test('argv: codex uses exec --json workspace-write; claude uses -p stream-json a
   assert.ok(cargs.includes('exec') && cargs.includes('--json') && cargs.includes('workspace-write'));
   const clargs = new ClaudeCli()._cfg.args({});
   assert.ok(clargs.includes('-p') && clargs.includes('stream-json') && clargs.includes('acceptEdits'));
+});
+
+test('one-shot argv binds each coordinator-selected model and effort instead of constructor defaults', () => {
+  const codex = new CodexCli({ model: 'constructor-model' })._cfg.args({}, { model: 'gpt-5.6-sol', reasoningEffort: 'low' });
+  assert.deepEqual(codex.slice(codex.indexOf('-m')), ['-m', 'gpt-5.6-sol', '-c', 'model_reasoning_effort="low"']);
+  const claude = new ClaudeCli({ model: 'constructor-model' })._cfg.args({}, { model: 'claude-opus-4-6', reasoningEffort: 'low' });
+  assert.deepEqual(claude.slice(claude.indexOf('--model')), ['--model', 'claude-opus-4-6', '--effort', 'low']);
+  const glm = new ZCodeCli({ model: 'constructor-model' })._cfg.args({}, { model: 'glm-4.7', reasoningEffort: 'low' });
+  assert.deepEqual(glm.slice(glm.indexOf('--model')), ['--model', 'glm-4.7', '--effort', 'low']);
 });
 
 // ---------- the live guard + Pi placeholder ----------
@@ -147,7 +208,78 @@ test('_onData emits each terminal event exactly once and ignores trailing output
   assert.equal(session.terminal, false);
   assert.equal(seen.filter((k) => k === 'lifecycle.turn_completed').length, 1, 'exactly one terminal');
   assert.equal(seen.filter((k) => k === 'lifecycle.crashed').length, 0, 'no crash after a clean terminal');
-  assert.deepEqual(seen, ['lifecycle.turn_started', 'content.message', 'lifecycle.turn_completed']);
+  assert.deepEqual(seen, ['lifecycle.turn_started', 'resource.provider_call', 'content.message', 'lifecycle.turn_completed']);
+});
+
+test('_onData orders authoritative usage before terminal and oversized frames fail closed without echoing provider bytes', () => {
+  const ordered = new CodexCli();
+  const events = [];
+  ordered.onEvent((event) => events.push(event));
+  ordered._onData({ worker: 'w1', terminal: false, turnEpoch: 3, buf: '', logicalSequence: 0 }, `${JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 2, output_tokens: 1 } })}\n`);
+  assert.deepEqual(events.map((event) => event.kind), ['resource.tokens', 'lifecycle.turn_completed']);
+  assert.equal(events[0].payload.counterId, events[1].payload.usageSeal.counterId);
+
+  const bounded = new CodexCli({ maxWireFrameBytes: 32 });
+  const failures = [];
+  bounded.onEvent((event) => failures.push(event));
+  const session = { worker: 'w2', terminal: false, turnEpoch: 1, buf: '', logicalSequence: 0 };
+  bounded._onData(session, `{"secret":"${'x'.repeat(64)}"}\n`);
+  assert.equal(session.buf, '');
+  assert.equal(session.turnSettled, true);
+  assert.equal(failures.length, 1);
+  assert.deepEqual(failures[0].payload, {
+    error: 'provider wire frame exceeded configured byte ceiling', code: 'wire_frame_oversize', phase: 'wire',
+    usageSeal: { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null },
+  });
+  assert.doesNotMatch(JSON.stringify(failures), /xxxxxxxx/);
+});
+
+test('oversized one-shot wire frame kills and exactly reaps the owned process group before kill.confirmed', async (t) => {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  t.after(() => {
+    try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already exactly reaped */ }
+  });
+  await once(child, 'spawn');
+
+  const adapter = new CodexCli({ maxWireFrameBytes: 32 });
+  const events = [];
+  let resolveConfirmed;
+  const confirmed = new Promise((resolve) => { resolveConfirmed = resolve; });
+  adapter.onEvent((event) => {
+    events.push(event);
+    if (event.kind === 'kill.confirmed') resolveConfirmed(event);
+  });
+  const session = {
+    worker: 'wire-close-worker', child, terminal: false, turnSettled: false,
+    processClosePending: false, processClosedEmitted: false, processGeneration: 1,
+    processReapTimeoutMs: 2000, turnEpoch: 1, buf: '', logicalSequence: 0,
+    spawnError: null, timeoutFailure: null,
+  };
+  adapter._sessions.set(session.worker, session);
+  child.once('close', (code, signal) => adapter._onClose(session, code, signal));
+
+  adapter._onData(session, `{"secret":"${'z'.repeat(64)}"}\n`);
+  let timeout;
+  const killEvent = await Promise.race([
+    confirmed,
+    new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('kill confirmation timed out after oversized-frame close')), 3000); }),
+  ]).finally(() => clearTimeout(timeout));
+
+  assert.equal(session.terminal, true);
+  assert.equal(session.processClosedEmitted, true);
+  assert.deepEqual(events.map((event) => event.kind), [
+    'lifecycle.crashed', 'lifecycle.process_closed', 'kill.confirmed',
+  ]);
+  assert.equal(events.filter((event) => event.kind === 'kill.confirmed').length, 1);
+  assert.equal(events.filter((event) => event.kind === 'lifecycle.process_reap_unconfirmed').length, 0);
+  assert.equal(killEvent.actor, 'worker');
+  assert.equal(killEvent.payload.terminalCause, 'wire_frame_oversize');
+  assert.deepEqual(killEvent.payload.usageSeal, {
+    tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null,
+  });
 });
 
 test('_onData handles a split terminal line arriving across two chunks without duplicating it', () => {
