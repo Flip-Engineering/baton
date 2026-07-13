@@ -17,6 +17,16 @@ export function goalPlanCanonical(value) {
 export function goalPlanDigest(value) {
   return createHash('sha256').update(JSON.stringify(goalPlanCanonical(value))).digest('hex');
 }
+const PRIVATE_PROJECTION_FIELDS = new Set([
+  'actor', 'idempotencyKey', 'principalId', 'proposerPrincipalId', 'sessionDigest',
+]);
+export function sanitizeGoalPlanProjection(value) {
+  if (Array.isArray(value)) return value.map(sanitizeGoalPlanProjection);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !PRIVATE_PROJECTION_FIELDS.has(key))
+    .map(([key, child]) => [key, sanitizeGoalPlanProjection(child)]));
+}
 function fail(message, code) { throw new GoalPlanValidationError(message, code); }
 function exactObject(value, fields, code = 'goal_plan_invalid') {
   if (!value || typeof value !== 'object' || Array.isArray(value)

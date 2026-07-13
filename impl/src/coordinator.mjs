@@ -1789,8 +1789,8 @@ export class Coordinator {
 
   goalPlanStatus(fields, ctx) {
     return this._withAuthorityOp(async () => {
-      await this._goalPlanAuth(ctx, 'goal:observe', 'goal_plan_status', fields);
-      return this._coordination.goalPlanStatus(fields);
+      const auth = await this._goalPlanAuth(ctx, 'goal:observe', 'goal_plan_status', fields);
+      return this._coordination.goalPlanStatus(fields, auth);
     });
   }
 

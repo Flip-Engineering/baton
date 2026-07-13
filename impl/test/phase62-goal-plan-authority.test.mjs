@@ -79,6 +79,14 @@ test('GP1-GP4/GP6/GP8: goals and plans are append-only, bounded, distinct-author
   const status = await driver.coordinator.goalPlanStatus({ goalId: goal.goalId, planId: plan.planId, throughSeq: null }, auth('observer', ['goal:observe'], 'status:one'));
   assert.equal(status.goal.digest, goal.digest); assert.equal(status.plan.digest, plan.digest);
   assert.equal(status.approval.disposition, 'approved'); assert.equal(status.nodes[0].state, 'ready');
+  await assert.rejects(
+    driver.coordinator.goalPlanStatus({ goalId: goal.goalId, planId: plan.planId, throughSeq: null }, auth('observer', ['goal:observe'], 'status:cross-run', { runId: 'other-run' })),
+    (error) => error.code === 'not_found',
+  );
+  await assert.rejects(
+    driver.coordinator.goalPlanStatus({ goalId: goal.goalId, planId: plan.planId, throughSeq: null }, auth('observer', ['goal:observe'], 'status:cross-repo', { repoId: 'other-repo' })),
+    (error) => error.code === 'goal_plan_unauthorized',
+  );
   await assert.rejects(driver.coordinator.approvePlan({ goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest }, plan: { planId: plan.planId, version: plan.version, digest: plan.digest }, expectedDisposition: null, disposition: 'approved' }, auth('planner', ['plan:approve'], 'approval:self')), (error) => error.code === 'plan_self_approval');
   driver.close();
 });

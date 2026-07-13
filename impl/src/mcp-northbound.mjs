@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
+import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
 
 const PROTOCOL_VERSION = '2025-11-25';
 const CAPABILITY = Object.freeze({
@@ -11,6 +12,7 @@ const CAPABILITY = Object.freeze({
 });
 const STATEFUL = new Set(['fleet_spawn', 'fleet_scratch_oracle', 'fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'fleet_send', 'fleet_respond', 'fleet_interrupt', 'fleet_capability_invoke', 'fleet_reuse_decide', 'fleet_reuse_recheck', 'fleet_kill', 'fleet_drain']);
 const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve']);
+const GOAL_PLAN_MUTATIONS = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve']);
 const FENCED = new Set(['fleet_send', 'fleet_interrupt', 'fleet_kill']);
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
 const SESSION_FIELDS = new Set(['mode', 'id', 'lastTurnId', 'context']);
@@ -456,6 +458,11 @@ export class McpFleetServer {
       if (admission.call.status === 'completed' && ['fleet_reuse_decide', 'fleet_reuse_recheck'].includes(name)) {
         try { return toolResult(await this._dispatch(name, args, actor, admission.call.callId)); } catch { return toolError('temporarily_unavailable'); }
       }
+      if (GOAL_PLAN_MUTATIONS.has(name)) {
+        const prior = admission.call.outcome;
+        if (!record(prior?.structuredContent)) return toolError('command_outcome_unknown');
+        return toolResult(sanitizeGoalPlanProjection(prior.structuredContent), prior.isError === true);
+      }
       return clone(admission.call.outcome);
     }
     let outcome;
@@ -534,7 +541,7 @@ export class McpFleetServer {
     else if (name === 'fleet_kill') value = await this.coordinator.kill(args.workerId, actor, { expectedFence: args.expectedFence });
     else if (name === 'fleet_drain') value = await this.coordinator.drain({ actor, repoId: args.repoId, idempotencyKey: `mcp.call:${callId}` });
     if (value?.result === 'stale_fence') throw Object.assign(new Error('stale fence'), { mcpCode: 'stale_fence' });
-    return normalized(value);
+    return normalized(GOAL_PLAN_MUTATIONS.has(name) ? sanitizeGoalPlanProjection(value) : value);
   }
 
   _goalPlanContext(name, args, actor, callId, principal = this.principal) {

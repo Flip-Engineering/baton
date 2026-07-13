@@ -75,6 +75,7 @@ test('GP1/GP4/GP7: MCP Goal/Plan tools expose closed schemas and bind exact prin
   };
   const goalResponse = await rpc(owner, 3, 'fleet_goal_define', goalArgs);
   assert.equal(goalResponse.result.isError, false);
+  assert.doesNotMatch(JSON.stringify(goalResponse.result), /actor|idempotencyKey|principalId|proposerPrincipalId|sessionDigest/);
   const goal = goalResponse.result.structuredContent.goal;
   const replay = await rpc(owner, 4, 'fleet_goal_define', goalArgs);
   assert.deepEqual(replay.result, goalResponse.result);
@@ -88,6 +89,7 @@ test('GP1/GP4/GP7: MCP Goal/Plan tools expose closed schemas and bind exact prin
     }],
   });
   assert.equal(planResponse.result.isError, false);
+  assert.doesNotMatch(JSON.stringify(planResponse.result), /actor|idempotencyKey|principalId|proposerPrincipalId|sessionDigest/);
   const plan = planResponse.result.structuredContent.plan;
 
   const approvalResponse = await rpc(approver, 6, 'fleet_plan_approve', {
@@ -96,6 +98,7 @@ test('GP1/GP4/GP7: MCP Goal/Plan tools expose closed schemas and bind exact prin
     plan: { planId: plan.planId, version: plan.version, digest: plan.digest }, expectedDisposition: null, disposition: 'approved',
   });
   assert.equal(approvalResponse.result.isError, false);
+  assert.doesNotMatch(JSON.stringify(approvalResponse.result), /actor|idempotencyKey|principalId|proposerPrincipalId|sessionDigest/);
 
   const statusResponse = await rpc(observer, 7, 'fleet_goal_plan_status', {
     repoId: 'repo-phase62-mcp', goalId: goal.goalId, planId: plan.planId, throughSeq: null,
@@ -110,6 +113,14 @@ test('GP1/GP4/GP7: MCP Goal/Plan tools expose closed schemas and bind exact prin
     { operation: 'plan_approve', power: 'plan:approve', principalId: 'approver' },
     { operation: 'goal_plan_status', power: 'goal:observe', principalId: 'observer' },
   ]);
+  const crossRun = await rpc(observer, 8, 'fleet_goal_plan_status', {
+    repoId: 'repo-phase62-mcp', runId: 'other-run', goalId: goal.goalId, planId: plan.planId, throughSeq: null,
+  });
+  assert.equal(crossRun.result.isError, true); assert.match(crossRun.result.content[0].text, /not_found/);
+  const crossRepo = await rpc(observer, 9, 'fleet_goal_plan_status', {
+    repoId: 'other-repo', goalId: goal.goalId, planId: plan.planId, throughSeq: null,
+  });
+  assert.equal(crossRepo.result.isError, true); assert.match(crossRepo.result.content[0].text, /forbidden/);
   driver.close();
 });
 
@@ -160,8 +171,13 @@ test('GP7/GP8: admitted Goal mutation replay reconciles through the original dur
   driver.coordination.completeMcpCall = complete;
   const reconciled = await rpc(owner, 3, 'fleet_goal_define', args);
   assert.equal(reconciled.result.isError, false);
+  assert.doesNotMatch(JSON.stringify(reconciled.result), /actor|idempotencyKey|principalId|proposerPrincipalId|sessionDigest/);
   assert.match(reconciled.result.structuredContent.goal.goalId, /^goal:[a-f0-9]{64}$/);
   assert.equal(driver.coordination.events().filter((event) => event.kind === 'goal.version_defined').length, 1);
+  const completedReplay = await rpc(owner, 4, 'fleet_goal_define', args);
+  assert.equal(completedReplay.result.isError, false);
+  assert.doesNotMatch(JSON.stringify(completedReplay.result), /actor|idempotencyKey|principalId|proposerPrincipalId|sessionDigest/);
+  assert.deepEqual(completedReplay.result, reconciled.result);
   driver.close();
 });
 

@@ -6,6 +6,7 @@ import { WebEdgePolicy, WebReadinessAuthority } from './web-edge.mjs';
 import { OidcBrowserFlow, csrfCookie } from './web-oidc.mjs';
 import { operatorAsset } from './web-operator.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
+import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
 
 const COMMAND_CAPABILITY = Object.freeze({
   spawn: 'control', scratch_oracle: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', drain: 'emergency_stop', respond: 'approve',
@@ -14,6 +15,7 @@ const COMMAND_CAPABILITY = Object.freeze({
 });
 const FENCE_REQUIRED = new Set(['send', 'interrupt', 'kill']);
 const RECONCILABLE = new Set(['goal_define', 'plan_propose', 'plan_approve']);
+const GOAL_PLAN_MUTATIONS = new Set(['goal_define', 'plan_propose', 'plan_approve']);
 const TOP_LEVEL = new Set(['schemaVersion', 'commandId', 'idempotencyKey', 'command', 'args', 'repoId', 'runId', 'expectedFence', 'origin', 'clientObservedCursor']);
 const ARG_FIELDS = Object.freeze({
   spawn: new Set(['harness', 'model', 'effort', 'modelPolicy', 'brief', 'taskId', 'deps', 'taskType', 'session', 'refines', 'goalPlan']),
@@ -475,7 +477,10 @@ export class WebNorthbound {
       if (admission.command.status === 'completed' && ['reuse_decide', 'reuse_recheck'].includes(envelope.command)) {
         try { const refreshed = await this._dispatch(envelope, webActor, ctx.principal); return { ...refreshed, body: { ...refreshed.body, replayed: true } }; } catch { return error(503, 'temporarily_unavailable'); }
       }
-      return result(admission.command.outcome.httpStatus, { ...json(admission.command.outcome.body), replayed: true });
+      const replayBody = GOAL_PLAN_MUTATIONS.has(envelope.command)
+        ? sanitizeGoalPlanProjection(admission.command.outcome.body)
+        : json(admission.command.outcome.body);
+      return result(admission.command.outcome.httpStatus, { ...replayBody, replayed: true });
     }
 
     let response;
@@ -588,7 +593,8 @@ export class WebNorthbound {
       value = await this.coordinator.recheckReuseDecision(a, { actor: webActor, repoId: envelope.repoId, budgetTokens: a.budgetTokens, idempotencyKey: `web.command:${envelope.commandId}` });
     }
     if (value?.result === 'stale_fence') return error(409, 'stale_fence');
-    return result(200, { ok: true, commandId: envelope.commandId, result: json(value) });
+    const projected = GOAL_PLAN_MUTATIONS.has(envelope.command) ? sanitizeGoalPlanProjection(value) : json(value);
+    return result(200, { ok: true, commandId: envelope.commandId, result: projected });
   }
 
   async handle(req, res) {

@@ -123,14 +123,15 @@ function dispatchedStore(name) {
 
 test('GP5/GP6/GP8: exact dispatch replay survives restart and changed bytes conflict without a second task', () => {
   const f = dispatchedStore('restart');
-  const beforeStatus = f.store.goalPlanStatus({ goalId: f.goal.goalId, planId: f.plan.planId, throughSeq: null });
+  const scope = { repoId: policy.repoId, runId: null };
+  const beforeStatus = f.store.goalPlanStatus({ goalId: f.goal.goalId, planId: f.plan.planId, throughSeq: null }, scope);
   const beforeSnapshot = f.store.snapshot();
   f.store.releaseWriterLease();
 
   const replay = new CoordinationStore(f.directory, { goalPlanPolicy: policy });
   assert.deepEqual(replay.snapshot(), beforeSnapshot);
   assert.deepEqual(
-    replay.goalPlanStatus({ goalId: f.goal.goalId, planId: f.plan.planId, throughSeq: null }),
+    replay.goalPlanStatus({ goalId: f.goal.goalId, planId: f.plan.planId, throughSeq: null }, scope),
     beforeStatus,
   );
   assert.equal(replay.task(f.fields.id).brief.goalPlan.planDigest, f.plan.digest);

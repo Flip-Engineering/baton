@@ -2665,16 +2665,19 @@ export class CoordinationStore {
     return freeze({ ok: true, result: 'created', dispatchEvent: clone(dispatchEvent), taskEvent: clone(taskEvent), task: this.task(taskPayload.id), dispatch: clone(dispatchPayload) });
   }
 
-  goalPlanStatus(fields) {
+  goalPlanStatus(fields, auth) {
     if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
     if (!fields || Object.keys(fields).sort().join(',') !== ['goalId', 'planId', 'throughSeq'].sort().join(',')
       || typeof fields.goalId !== 'string' || typeof fields.planId !== 'string'
+      || !auth || auth.repoId !== this._goalPlanPolicy.repoId || !(auth.runId === null || validRunId(auth.runId))
       || (fields.throughSeq !== null && (!Number.isSafeInteger(fields.throughSeq) || fields.throughSeq < 0 || fields.throughSeq > this._events.length))) throw new CoordinationRefusal('goal/plan status query is invalid', 'goal_plan_status_invalid');
     const throughSeq = fields.throughSeq ?? this._events.length;
     const relevant = this._events.filter((event) => event.seq <= throughSeq);
     const goalEvent = [...relevant].reverse().find((event) => event.kind === 'goal.version_defined' && event.payload.goal.goalId === fields.goalId);
     const planEvent = [...relevant].reverse().find((event) => event.kind === 'plan.version_proposed' && event.payload.plan.planId === fields.planId);
-    if (!goalEvent || !planEvent || planEvent.payload.plan.goal.goalId !== fields.goalId) throw new CoordinationRefusal('goal/plan status target is unavailable', 'not_found');
+    if (!goalEvent || !planEvent || planEvent.payload.plan.goal.goalId !== fields.goalId
+      || goalEvent.payload.goal.repoId !== auth.repoId || goalEvent.payload.goal.runId !== auth.runId
+      || planEvent.payload.plan.repoId !== auth.repoId || planEvent.payload.plan.runId !== auth.runId) throw new CoordinationRefusal('goal/plan status target is unavailable', 'not_found');
     const goal = clone(goalEvent.payload.goal); const plan = clone(planEvent.payload.plan);
     delete goal.principalId; delete plan.proposerPrincipalId;
     const approvalEvent = [...relevant].reverse().find((event) => event.kind === 'plan.approval_decided' && event.payload.approval.plan.planId === plan.planId && event.payload.approval.plan.version === plan.version);

@@ -42,9 +42,9 @@ const statusArgs = () => ({ goalId: goal.goalId, planId: plan.planId, throughSeq
 function fixture(coordinator = {}) {
   const calls = [];
   const methods = {
-    async defineGoal(request, auth) { calls.push({ operation: 'goal_define', request, auth }); return { goal: { ...goal } }; },
-    async proposePlan(request, auth) { calls.push({ operation: 'plan_propose', request, auth }); return { plan: { ...plan } }; },
-    async approvePlan(request, auth) { calls.push({ operation: 'plan_approve', request, auth }); return { approval: { disposition: 'approved' } }; },
+    async defineGoal(request, auth) { calls.push({ operation: 'goal_define', request, auth }); return { goal: { ...goal, principalId: 'private-goal-principal' }, event: { payload: { goal: { principalId: 'private-nested-goal-principal' } } } }; },
+    async proposePlan(request, auth) { calls.push({ operation: 'plan_propose', request, auth }); return { plan: { ...plan, proposerPrincipalId: 'private-plan-principal' }, event: { payload: { plan: { proposerPrincipalId: 'private-nested-plan-principal' } } } }; },
+    async approvePlan(request, auth) { calls.push({ operation: 'plan_approve', request, auth }); return { approval: { disposition: 'approved', principalId: 'private-approval-principal', sessionDigest: digest('e') }, event: { payload: { approval: { principalId: 'private-nested-approval-principal', sessionDigest: digest('f') } } } }; },
     async goalPlanStatus(request, auth) { calls.push({ operation: 'goal_plan_status', request, auth }); return { goal: { ...goal }, plan: { ...plan }, nodes: [] }; },
     async spawn(harness, brief, opts) { calls.push({ operation: 'spawn', harness, brief, opts }); return { id: 'worker-1', taskId: opts.taskId }; },
     ...coordinator,
@@ -71,6 +71,7 @@ test('GP1/GP4/GP7: web goal and plan commands bind separate powers and transport
     assert.equal(refused.status, 403);
     const accepted = await web.execute(context([power]), envelope(command, args, suffix));
     assert.equal(accepted.status, 200);
+    if (command !== 'goal_plan_status') assert.doesNotMatch(JSON.stringify(accepted.body), /actor|idempotencyKey|principalId|proposerPrincipalId|sessionDigest|private-/);
   }
   assert.equal(calls.length, 4);
   for (const [index, call] of calls.entries()) {
@@ -138,6 +139,7 @@ test('GP5/GP7/GP8: lost responses reconcile Goal/Plan mutations and gated spawn 
     const replay = await web.execute({ ...context(powers), principal: retryPrincipal }, { ...admitted, commandId: `${admitted.commandId}-retry` });
     assert.equal(replay.status, 200);
     assert.equal(replay.body.replayed, true);
+    if (command !== 'spawn') assert.doesNotMatch(JSON.stringify(replay.body), /actor|idempotencyKey|principalId|proposerPrincipalId|sessionDigest|private-/);
     assert.equal(calls.length, 2);
     const replayedCall = calls[1];
     const auth = command === 'spawn' ? replayedCall.opts : replayedCall.auth;
@@ -148,6 +150,13 @@ test('GP5/GP7/GP8: lost responses reconcile Goal/Plan mutations and gated spawn 
     assert.equal(auth.idempotencyKey, `web.command:${admitted.commandId}`);
     if (command === 'spawn') assert.equal(replayedCall.opts.taskId, `web-${admitted.commandId}`);
     assert.equal(coordination.webCommand(admitted.commandId).status, 'completed');
+    if (command !== 'spawn') {
+      const completedReplay = await web.execute(context(powers), { ...admitted, commandId: `${admitted.commandId}-completed-retry` });
+      assert.equal(completedReplay.status, 200);
+      assert.equal(completedReplay.body.replayed, true);
+      assert.doesNotMatch(JSON.stringify(completedReplay.body), /actor|idempotencyKey|principalId|proposerPrincipalId|sessionDigest|private-/);
+      assert.equal(calls.length, 2);
+    }
   }
 });
 
