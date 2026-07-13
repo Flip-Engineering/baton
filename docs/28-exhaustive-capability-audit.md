@@ -276,6 +276,19 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    and Grok 4.5 and exactly reaped all five routes; all three post-repair reports have no P0/P1.
    Claude login and literal Grok Build model identity remain red. Hard filesystem quota/same-UID
    isolation remains a later boundary.
+33. **Attach-only native recovery:** Phase 60 commits recovery identity before continuation and
+   durably distinguishes accepted, refused, and dispatch-unknown outcomes without automatic
+   redelivery. Provider seats and resources remain owned through exact stop/reap. The current
+   implementation and recursive lifecycle matrix are green; provider-backed recovery and the
+   retained adapter/crash acceptance rows remain open rather than inferred.
+34. **Graph-backed R1–R3 Representation producers:** Phase 61 fixes structural, SCIP, and bounded
+   CPG mappings behind the sole ACI registry; current-card/environment binding, immediate source
+   reverify, exact primary artifacts, stable identity, mode-0600 receipts, atomic Cairn lineage,
+   replay/reconcile, direct/web/MCP parity, and every independent bound are executable. The
+   canonical suite is 1415/1415. Baton produced and freshly reverified its own committed R1 delta,
+   then admitted all five exact low-effort recursive routes; project-key GLM and Grok 4.5
+   fresh-verified while all five process/ownership surfaces reaped. Claude login, Codex terminal
+   reserve, and literal Build identity remain external red gates.
 
 ## What remains partial
 
@@ -340,9 +353,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   outcome-attribution substrate and Phase 53's authenticated human/orchestrator contradiction seam
   now ship.
 - Direct structural rewrite apply, live LSP, full SSA/PDG/path solving, interprocedural/alias/heap
-  CPG depth, closure/destructuring/catch binding support, graph-backed `Representation` and
-  semantic-delta producers, deeper behavioral/provenance attestation overlays, and representation
-  choreography. Reserved node types and attestation packets do not satisfy the producer gate.
+  CPG depth, closure/destructuring/catch binding support, deeper behavioral/provenance attestation
+  overlays, and representation choreography. Phase 61 closes fixed graph-backed R1 structural,
+  R2 SCIP, and R3 bounded CPG production; it does not satisfy deeper precision or R4–R7 gates.
 - True semantic merge, stacked integration, deploy adapters, rollback automation, and live remote
   publication.
 - Streamable HTTP MCP authorization, MCP Tasks/progress/daemon supervision, WebSocket parity,
@@ -379,10 +392,11 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    authority and its pre-effect gate, quota-window/seat scheduling, and operator route overrides.
    Immutable bounded dual-root toolchain projection shipped in Phase 55; public drain/close,
    route-specific terminal-burst/call governance, sparse worker/verifier identity, and repo-scoped
-   byte/inode admission shipped in Phases 56–59. The exact five-provider sparse+capacity recursive
+   byte/inode admission shipped in Phases 56–59, attach-only recovery in Phase 60, and fixed
+   graph-backed R1–R3 production in Phase 61. The exact five-provider recursive
    run now proves concurrent Groks and exact drain/reap twice; Claude login and literal Build
    identity remain external acceptance gaps while internal pursuit moves to Goal/Plan authority,
-   provider-backed continuation, and the retained capability/representation backlog.
+   provider-backed continuation, Goal/Plan authority, and the retained capability/representation backlog.
 4. **Build capability modules on shared substrate:** Cairn Rung 0 shipped in Phase 31 and
    Cartographer/Quartermaster local Rung 0 shipped in Phase 32, addressed push in Phase 33, and
    bounded scope-drift refresh in Phase 34, external evidence in Phase 36, exact SBOM in Phase 37,
@@ -413,7 +427,8 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    replay hydration, and bounded authenticated route advice, live- and recursively proved without
    a homelab or external knowledge-graph runtime. Continue the remaining explicitly
    catalogued later rungs, then demand-earned remaining Cairn Rung 2 depth and Rungs 3–4, Vantage,
-   Evidence Ladder, and Skill Forge/computer use behind stronger containment.
+   Evidence Ladder, and Skill Forge/computer use behind stronger containment. Phase 61 now closes
+   the first graph-backed R1–R3 producer vertical without deleting any deeper rung.
 5. **Complete northbound/runtime depth:** MCP HTTP/Tasks/daemon, WebSocket, operator takeover,
    OpenTelemetry, and only then a production-core port.
 6. **Pursue representation/trust research only through its Decisions:** higher CPG/IR/semantic
