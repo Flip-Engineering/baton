@@ -490,8 +490,118 @@ export class CoordinationStore {
         || canonicalDigest(first.payload.binding) !== canonicalDigest(second.payload.brief?.goalPlan)) {
         fail(`goal/plan dispatch at seq ${first.seq} is torn or mismatched`);
       }
+      this._validateGoalPlanDispatchPair(first, second, true);
       index += 1;
     }
+  }
+
+  _historicalTaskState(taskId, throughSeq) {
+    let state = null;
+    for (const event of this._events) {
+      if (event.seq > throughSeq) break;
+      if (event.kind === 'task.created' && event.payload?.id === taskId) state = { status: 'pending', acceptanceRevocation: false };
+      else if (state && event.kind === 'task.claimed' && event.payload?.id === taskId) state.status = 'working';
+      else if (state && event.kind === 'task.transitioned' && event.payload?.id === taskId) state.status = event.payload.to;
+      else if (state && event.kind === 'task.acceptance_revoked' && event.payload?.taskId === taskId) { state.status = 'failed'; state.acceptanceRevocation = true; }
+    }
+    return state;
+  }
+
+  _validateGoalPlanDispatchPair(dispatchEvent, taskEvent, integrity = false) {
+    const fail = (message) => this._goalPlanFailure(
+      message,
+      integrity ? 'goal_plan_dispatch_integrity' : 'plan_dispatch_invalid',
+      integrity,
+    );
+    const p = dispatchEvent?.payload; const task = taskEvent?.payload;
+    const authorityFields = ['principalId', 'repoId', 'runId'];
+    const bindingFields = ['schemaVersion', 'goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'approvalDigest', 'policyDigest', 'dispatchVersion'];
+    if (!p || !task || !p.authority || Object.keys(p.authority).sort().join(',') !== authorityFields.sort().join(',')
+      || !validRunId(p.authority.principalId) || p.authority.repoId !== this._goalPlanPolicy?.repoId
+      || !(p.authority.runId === null || validRunId(p.authority.runId))
+      || !p.binding || Object.keys(p.binding).sort().join(',') !== bindingFields.sort().join(',')) fail('goal/plan dispatch authority or binding is malformed');
+
+    const prefix = this._events.filter((event) => event.seq < dispatchEvent.seq);
+    const goalEvent = prefix.findLast((event) => event.kind === 'goal.version_defined'
+      && event.payload.goal.goalId === p.binding.goalId && event.payload.goal.version === p.binding.goalVersion);
+    const planEvent = prefix.findLast((event) => event.kind === 'plan.version_proposed'
+      && event.payload.plan.planId === p.binding.planId && event.payload.plan.version === p.binding.planVersion);
+    const goal = goalEvent?.payload?.goal; const plan = planEvent?.payload?.plan;
+    if (!goal || !plan || goal.digest !== p.binding.goalDigest || plan.digest !== p.binding.planDigest
+      || goal.repoId !== p.authority.repoId || goal.runId !== p.authority.runId
+      || plan.repoId !== p.authority.repoId || plan.runId !== p.authority.runId
+      || canonicalDigest(plan.goal) !== canonicalDigest({ goalId: goal.goalId, version: goal.version, digest: goal.digest })) fail('goal/plan dispatch references stale goal or plan authority');
+
+    const goalHead = prefix.filter((event) => event.kind === 'goal.version_defined'
+      && event.payload.goal.repoId === goal.repoId && event.payload.goal.runId === goal.runId).at(-1)?.payload?.goal;
+    const planHead = prefix.filter((event) => event.kind === 'plan.version_proposed'
+      && canonicalDigest(event.payload.plan.goal) === canonicalDigest(plan.goal)).at(-1)?.payload?.plan;
+    if (goalHead?.goalId !== goal.goalId || goalHead.version !== goal.version || goalHead.digest !== goal.digest
+      || planHead?.planId !== plan.planId || planHead.version !== plan.version || planHead.digest !== plan.digest) fail('goal/plan dispatch used superseded authority');
+
+    const approvalEvent = prefix.findLast((event) => event.kind === 'plan.approval_decided'
+      && event.payload.approval.plan.planId === plan.planId && event.payload.approval.plan.version === plan.version);
+    const approval = approvalEvent?.payload?.approval;
+    if (!approval || approval.disposition !== 'approved' || approval.digest !== p.binding.approvalDigest
+      || approval.policyDigest !== this._goalPlanPolicy.policyDigest || p.binding.policyDigest !== this._goalPlanPolicy.policyDigest
+      || Date.parse(dispatchEvent.ts) < Date.parse(approval.decidedAt)
+      || Date.parse(dispatchEvent.ts) - Date.parse(approval.decidedAt) > this._goalPlanPolicy.approvalTtlMs) fail('goal/plan dispatch lacks current approval authority');
+
+    const node = plan.nodes.find((row) => row.key === p.binding.nodeKey);
+    if (!node || p.binding.schemaVersion !== 1 || p.binding.dispatchVersion !== 1
+      || p.expectedDispatchVersion !== 0 || p.newDispatchVersion !== 1
+      || canonicalDigest(node.budget) !== canonicalDigest(p.nodeBudget)
+      || canonicalDigest(node.capabilities) !== canonicalDigest(p.capabilities)
+      || canonicalDigest(node.effects) !== canonicalDigest(p.effects)) fail('goal/plan dispatch node authority changed');
+    if (prefix.some((event) => event.kind === 'plan.node_dispatched'
+      && event.payload.binding.planId === plan.planId && event.payload.binding.planVersion === plan.version
+      && event.payload.binding.nodeKey === node.key)) fail('goal/plan node was dispatched more than once');
+
+    if (!p.route || Object.keys(p.route).sort().join(',') !== ['effort', 'model', 'vendor'].sort().join(',')
+      || (node.routes.harnesses.length > 0 && !node.routes.harnesses.includes(p.route.vendor))
+      || (node.routes.models.length > 0 && !node.routes.models.includes(p.route.model))
+      || (node.routes.efforts.length > 0 && !node.routes.efforts.includes(p.route.effort))) fail('goal/plan dispatch route is outside approved authority');
+
+    const resolvedDeps = [];
+    for (const depKey of node.deps) {
+      const depDispatch = prefix.findLast((event) => event.kind === 'plan.node_dispatched'
+        && event.payload.binding.planId === plan.planId && event.payload.binding.planVersion === plan.version
+        && event.payload.binding.nodeKey === depKey);
+      const depTaskId = depDispatch?.payload?.taskId; const depState = depTaskId ? this._historicalTaskState(depTaskId, dispatchEvent.seq - 1) : null;
+      if (!depTaskId || depState?.status !== 'completed' || depState.acceptanceRevocation) fail('goal/plan dispatch dependency was not durably accepted');
+      resolvedDeps.push(depTaskId);
+    }
+    resolvedDeps.sort();
+    if (canonicalDigest(resolvedDeps) !== canonicalDigest(p.resolvedDeps)) fail('goal/plan dispatch dependency linkage changed');
+
+    const expectedBinding = {
+      schemaVersion: 1, goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest,
+      planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, nodeKey: node.key,
+      approvalDigest: approval.digest, policyDigest: this._goalPlanPolicy.policyDigest, dispatchVersion: 1,
+    };
+    if (canonicalDigest(expectedBinding) !== canonicalDigest(p.binding)) fail('goal/plan dispatch binding changed');
+    const expectedBrief = buildAuthoritativeBrief(goal, plan, node, expectedBinding);
+    const expectedTaskFields = ['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'effortResolved', 'effortObserved', 'routeKey', 'sessionRequest'];
+    if (Object.keys(task).sort().join(',') !== expectedTaskFields.sort().join(',')) fail('goal/plan task field set changed');
+    if (task.id !== p.taskId || !boundedText(task.reservedWorkerId, 4_096)) fail('goal/plan task physical identity changed');
+    if (canonicalDigest(task.brief) !== canonicalDigest(expectedBrief)) fail('goal/plan authoritative Brief changed');
+    if (canonicalDigest(task.deps) !== canonicalDigest(resolvedDeps)) fail('goal/plan task dependencies changed');
+    if (task.refines !== null || task.runId !== goal.runId || task.taskType !== 'general') fail('goal/plan task lineage, run, or type changed');
+    if (task.vendorRequested !== p.route.vendor || task.modelRequested !== p.route.model || task.modelPolicy !== null
+      || task.effortRequested !== p.route.effort || task.effortResolved !== null || task.effortObserved !== null || task.routeKey !== null) fail('goal/plan task route fields changed');
+    if (canonicalDigest(task.sessionRequest) !== canonicalDigest({ mode: 'new' })) fail('goal/plan task session fields changed');
+    if (prefix.some((event) => event.kind === 'task.created' && event.payload.id === task.id)
+      || p.taskPayloadDigest !== canonicalDigest(task)) fail('goal/plan task identity or payload digest changed');
+
+    const gate = {
+      goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest,
+      planId: plan.planId, planVersion: plan.version, planDigest: plan.digest,
+      nodeKey: node.key, expectedDispatchVersion: 0,
+      capabilities: clone(node.capabilities), effects: clone(node.effects),
+    };
+    const expectedRequestDigest = goalPlanDigest({ principalId: p.authority.principalId, gate, route: p.route, task });
+    if (p.requestDigest !== expectedRequestDigest) fail('goal/plan dispatch request digest changed');
+    return true;
   }
 
   _recoveryFailure(message, code, integrity) {
@@ -1979,7 +2089,7 @@ export class CoordinationStore {
         if (approval.digest !== goalPlanDigest(core) || p.requestDigest !== goalPlanDigest({ principalId: approval.principalId, sessionDigest: approval.sessionDigest, goal: approval.goal, plan: approval.plan, disposition: approval.disposition, expectedDisposition: null })) malformed();
         const key = this._planVersionKey(plan.planId, plan.version); if (this._planApprovals.has(key)) malformed(); this._planApprovals.set(key, freeze(clone(approval)));
       } else if (event.kind === 'plan.node_dispatched') {
-        if (Object.keys(p).sort().join(',') !== ['binding', 'capabilities', 'effects', 'expectedDispatchVersion', 'newDispatchVersion', 'nodeBudget', 'requestDigest', 'resolvedDeps', 'route', 'schemaVersion', 'taskId', 'taskPayloadDigest'].sort().join(',')
+        if (Object.keys(p).sort().join(',') !== ['authority', 'binding', 'capabilities', 'effects', 'expectedDispatchVersion', 'newDispatchVersion', 'nodeBudget', 'requestDigest', 'resolvedDeps', 'route', 'schemaVersion', 'taskId', 'taskPayloadDigest'].sort().join(',')
           || p.schemaVersion !== 1 || p.expectedDispatchVersion !== 0 || p.newDispatchVersion !== 1 || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.taskPayloadDigest ?? '')) malformed();
         const binding = p.binding; const plan = this._plans.get(this._planVersionKey(binding?.planId, binding?.planVersion));
         const goal = this._goals.get(this._goalVersionKey(binding?.goalId, binding?.goalVersion));
@@ -2653,12 +2763,18 @@ export class CoordinationStore {
     if (canonicalDigest(fields?.deps ?? []) !== canonicalDigest(state.resolvedDeps)) throw new CoordinationRefusal('task dependencies differ from the plan DAG', 'plan_dependency_mismatch');
     if (fields?.runId !== state.goal.runId || fields?.vendorRequested !== route.vendor || (fields?.modelRequested ?? null) !== route.model || (fields?.effortRequested ?? null) !== route.effort) throw new CoordinationRefusal('task route differs from the plan dispatch', 'plan_route_mismatch');
     const taskPayload = clone(fields); const dispatchPayload = {
-      schemaVersion: 1, requestDigest, binding: clone(state.binding), taskId: taskPayload.id,
+      schemaVersion: 1, requestDigest,
+      authority: { principalId: auth.principalId, repoId: auth.repoId, runId: auth.runId ?? null },
+      binding: clone(state.binding), taskId: taskPayload.id,
       taskPayloadDigest: canonicalDigest(taskPayload), expectedDispatchVersion: 0, newDispatchVersion: 1,
       resolvedDeps: clone(state.resolvedDeps), nodeBudget: clone(state.node.budget),
       route: clone(route), capabilities: clone(state.node.capabilities), effects: clone(state.node.effects),
     };
-    const fixedTs = this._clock(); const [dispatchEvent, taskEvent] = this._appendBatch([
+    const fixedTs = this._clock();
+    const prospectiveDispatch = { seq: this._events.length + 1, ts: fixedTs, payload: dispatchPayload };
+    const prospectiveTask = { seq: this._events.length + 2, ts: fixedTs, payload: taskPayload };
+    this._validateGoalPlanDispatchPair(prospectiveDispatch, prospectiveTask, false);
+    const [dispatchEvent, taskEvent] = this._appendBatch([
       { kind: 'plan.node_dispatched', payload: dispatchPayload, auth: { actor: auth.actor, key: auth.key }, fixedTs },
       { kind: 'task.created', payload: taskPayload, auth: { actor: auth.actor, key: `${auth.key}:task` }, fixedTs },
     ], 'goal_plan_node_dispatch');

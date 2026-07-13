@@ -1817,6 +1817,10 @@ export class Coordinator {
     normalizePhysicalOwnerId(taskId, 'taskId');
     const reconcileExistingPlanTask = this._tasks.has(taskId) && Boolean(opts.goalPlan);
     if (this._tasks.has(taskId) && !reconcileExistingPlanTask) throw new DuplicateTaskIdError(`duplicate taskId "${taskId}"`);
+    if (opts.goalPlan && (opts.refines != null || (opts.taskType != null && opts.taskType !== 'general')
+      || opts.review != null || worktreeBaseSha !== null || sessionRequest.mode !== 'new' || modelPolicy !== null)) {
+      throw Object.assign(new Error('plan-gated execution fields require explicit plan authority'), { code: 'plan_execution_mismatch' });
+    }
     if (vendor !== 'auto' && !this._adapters[vendor]) throw new UnknownVendorError(`unknown vendor "${vendor}"`);
     if (vendor !== 'auto' && !cardSupportsSession(this._adapters[vendor].card(), sessionRequest)) {
       throw new SessionSelectionError(`harness "${vendor}" does not support session mode "${sessionRequest.mode}"`);

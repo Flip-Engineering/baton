@@ -11,6 +11,12 @@ import {
 } from '../src/index.mjs';
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase62-red-${name}-`));
+const canonical = (value) => {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+};
+const canonicalDigest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 const policy = Object.freeze({
   schemaVersion: 1,
   repoId: 'repo-phase62-red',
@@ -104,7 +110,7 @@ function taskFields(state, route, id = 'planned-task') {
     effortResolved: null,
     effortObserved: null,
     routeKey: null,
-    sessionRequest: { mode: 'new', id: null, context: null },
+    sessionRequest: { mode: 'new' },
   };
 }
 
@@ -119,6 +125,29 @@ function dispatchedStore(name) {
   const auth = storeAuth('dispatcher', `dispatch:${name}`);
   const created = store.createPlanGatedTask(fields, gate, route, auth);
   return { directory, store, goal, plan, gate, route, fields, auth, created };
+}
+
+function rewriteDispatchPair(directory, mutate) {
+  const file = join(directory, 'events.jsonl');
+  const rows = readFileSync(file, 'utf8').trimEnd().split('\n').map(JSON.parse);
+  const dispatch = rows.find((event) => event.kind === 'plan.node_dispatched');
+  const task = rows[dispatch.seq];
+  mutate(dispatch.payload, task.payload);
+  dispatch.payload.taskPayloadDigest = canonicalDigest(task.payload);
+  const b = dispatch.payload.binding;
+  const gate = {
+    goalId: b.goalId, goalVersion: b.goalVersion, goalDigest: b.goalDigest,
+    planId: b.planId, planVersion: b.planVersion, planDigest: b.planDigest,
+    nodeKey: b.nodeKey, expectedDispatchVersion: 0,
+    capabilities: dispatch.payload.capabilities, effects: dispatch.payload.effects,
+  };
+  dispatch.payload.requestDigest = canonicalDigest({ principalId: dispatch.payload.authority.principalId, gate, route: dispatch.payload.route, task: task.payload });
+  const batchId = canonicalDigest({
+    schemaVersion: 1, kind: 'goal_plan_node_dispatch',
+    entries: [dispatch, task].map((event) => ({ kind: event.kind, actor: event.actor, idempotencyKey: event.idempotencyKey, payload: event.payload })),
+  });
+  dispatch.batch.id = batchId; task.batch.id = batchId;
+  writeFileSync(file, `${rows.map(JSON.stringify).join('\n')}\n`);
 }
 
 test('GP5/GP6/GP8: exact dispatch replay survives restart and changed bytes conflict without a second task', () => {
@@ -166,6 +195,32 @@ test('GP5/GP8: a torn goal_plan_node_dispatch batch fails closed on replay', () 
     () => new CoordinationStore(f.directory, { goalPlanPolicy: policy }),
     (error) => error instanceof CoordinationIntegrityError && error.code === 'goal_plan_batch_integrity',
   );
+});
+
+test('GP5/GP8: forged dispatch pairs fail semantic replay even after superficial digests are recomputed', () => {
+  const mutations = {
+    approval_digest: (p, task) => { p.binding.approvalDigest = 'a'.repeat(64); task.brief.goalPlan.approvalDigest = p.binding.approvalDigest; },
+    policy_digest: (p, task) => { p.binding.policyDigest = 'b'.repeat(64); task.brief.goalPlan.policyDigest = p.binding.policyDigest; },
+    route: (p, task) => { p.route.model = 'outside-plan'; task.modelRequested = 'outside-plan'; },
+    deps: (p, task) => { p.resolvedDeps = ['forged-dependency']; task.deps = ['forged-dependency']; },
+    capabilities: (p, task) => { p.capabilities = ['code']; task.brief.capabilities = ['code']; },
+    effects: (p, task) => { p.effects = []; task.brief.effects = []; },
+    verification: (_p, task) => { task.brief.verification.command = 'false'; },
+    budget: (p, task) => { p.nodeBudget.tokens -= 1; task.brief.budget.tokens -= 1; },
+    goal_coordinate: (p, task) => { p.binding.goalDigest = 'c'.repeat(64); task.brief.goalPlan.goalDigest = p.binding.goalDigest; },
+    refines: (_p, task) => { task.refines = 'unchecked-prior'; },
+    session: (_p, task) => { task.sessionRequest = { mode: 'resume', id: 'unchecked-session' }; },
+  };
+  for (const [name, mutate] of Object.entries(mutations)) {
+    const fixture = dispatchedStore(`forged-${name}`);
+    fixture.store.releaseWriterLease();
+    rewriteDispatchPair(fixture.directory, mutate);
+    assert.throws(
+      () => new CoordinationStore(fixture.directory, { goalPlanPolicy: policy }),
+      (error) => error instanceof CoordinationIntegrityError && ['goal_plan_integrity', 'goal_plan_dispatch_integrity'].includes(error.code),
+      name,
+    );
+  }
 });
 
 test('GP4/GP5/GP8: self, rejected, and goal-superseded approvals cannot dispatch', () => {
@@ -320,6 +375,35 @@ test('GP5/GP8: caller verification substitution refuses before task, capacity, o
   );
   assert.equal(driver.coordination.snapshot().lastSeq, beforeSeq);
   assert.equal(driver.coordination.task('brief-substitution'), null);
+  assert.deepEqual(driver.worktreeCapacity.snapshot(), beforeCapacity);
+  assert.equal(capacityObservations, beforeObservations);
+  assert.equal(spawnCalls, 0);
+  assert.deepEqual(driver.coordinator.list(), []);
+  const approvedBrief = {
+    goal: 'Implement the approved slice', constraints: ['No network access'],
+    pathScope: ['impl/**'], definitionOfDone: 'node --test passes', verification: verification(),
+    budget: { tokens: 10_000, usd: 1, wallMin: 5 },
+  };
+  const forbidden = [
+    { refines: 'prior-task' },
+    { taskType: 'review' },
+    { session: { mode: 'resume', id: 'native-session' } },
+    { review: { parentTaskId: 'prior-task' } },
+    { worktreeBaseSha: 'd'.repeat(40) },
+    { modelPolicy: { allow: ['model-a'] } },
+  ];
+  for (const [index, extra] of forbidden.entries()) {
+    await assert.rejects(
+      () => driver.coordinator.spawn('mock', approvedBrief, {
+        taskId: `execution-substitution-${index}`, goalPlan: gateFor(goal, plan),
+        actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session',
+        powers: ['plan:dispatch'], idempotencyKey: `dispatch:execution-substitution-${index}`,
+        ...extra,
+      }),
+      (error) => error.code === 'plan_execution_mismatch',
+    );
+  }
+  assert.equal(driver.coordination.snapshot().lastSeq, beforeSeq);
   assert.deepEqual(driver.worktreeCapacity.snapshot(), beforeCapacity);
   assert.equal(capacityObservations, beforeObservations);
   assert.equal(spawnCalls, 0);

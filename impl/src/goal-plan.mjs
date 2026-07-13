@@ -207,6 +207,7 @@ export function buildAuthoritativeBrief(goal, plan, node, binding) {
     constraints: clone(goal.constraints),
     pathScope: clone(node.pathScope),
     tools: [],
+    outputFormat: '',
     definitionOfDone: node.definitionOfDone.join('\n'),
     verification: clone(node.verification),
     budget: { tokens: node.budget.tokens, usd: node.budget.usd, wallMin: node.budget.wallMin },
