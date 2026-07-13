@@ -8,7 +8,7 @@ const TRANSITIONS = new Map([
   ['working', new Set(['input_required', 'completed', 'failed', 'cancelled'])],
   ['input_required', new Set(['working', 'failed', 'cancelled'])],
 ]);
-const KNOWLEDGE_NODE_TYPES = new Set(['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Decision', 'Hypothesis', 'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample', 'Representation', 'ScratchFact']);
+const KNOWLEDGE_NODE_TYPES = new Set(['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Decision', 'Hypothesis', 'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample', 'Representation', 'ScratchFact', 'Source']);
 const KNOWLEDGE_EDGE_TYPES = new Set(['Supports', 'Contradicts', 'Supersedes', 'Informed', 'ProducedBy', 'Contains', 'DependsOn', 'Refines', 'ReadBy', 'VerifiedBy', 'DerivedFrom', 'Affects', 'Cites', 'ObservedIn']);
 
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
@@ -69,6 +69,7 @@ export class CoordinationStore {
     this.file = join(root, 'events.jsonl');
     this._clock = opts.clock ?? (() => new Date().toISOString());
     this._appendFile = opts.appendFile ?? appendFileSync;
+    this._advisoryFeedCards = this._configureAdvisoryFeedCards(opts.advisoryFeedCards ?? []);
     this._resetProjection();
     this._operationalRead = opts.operationalRead ?? null;
     this._writerLease = null;
@@ -83,6 +84,18 @@ export class CoordinationStore {
     this._evidence = new Map(); this._scratchFacts = new Map(); this._scratchClaims = new Map(); this._scratchReads = [];
     this._knowledgeNodes = new Map(); this._knowledgeEdges = new Map(); this._knowledgeReads = []; this._contamination = [];
     this._webCommands = new Map(); this._webCommandScopes = new Map(); this._mcpCalls = new Map(); this._mcpCallScopes = new Map();
+    this._providerReceipts = new Map(); this._providerDeliveryIds = new Map(); this._providerProcessing = new Map(); this._providerPending = new Map();
+  }
+
+  _configureAdvisoryFeedCards(cards) {
+    if (!Array.isArray(cards)) throw new TypeError('advisory feed cards must be an array');
+    const configured = new Map();
+    for (const value of cards) {
+      const card = clone(value); const cardDigest = card?.cardDigest; if (card && typeof card === 'object') delete card.cardDigest;
+      if (!boundedText(card?.providerId, 128) || !/^[a-f0-9]{64}$/.test(cardDigest ?? '') || canonicalDigest(card) !== cardDigest || configured.has(card.providerId)) throw new TypeError('advisory feed card is invalid');
+      configured.set(card.providerId, freeze({ card: freeze(card), cardDigest }));
+    }
+    return configured;
   }
 
   _reloadProjection() { this._resetProjection(); this._load(); }
@@ -242,6 +255,7 @@ export class CoordinationStore {
       || p.affectedReadEvents.some((seq) => !Number.isSafeInteger(seq) || seq < 1 || seq >= event.seq)) fail('reuse affected-reader projection is invalid', 'reuse_decision_integrity');
     const coordinate = p.coordinate;
     if (!coordinate || Object.keys(coordinate).sort().join(',') !== 'ecosystem,package,version' || coordinate.ecosystem !== 'npm' || !boundedText(coordinate.package, 256) || !boundedText(coordinate.version, 256)) fail('reuse decision exact package coordinate is invalid', 'invalid_reuse_coordinate');
+    if (this._providerPendingFor(p.envRef.repoId, coordinate).length > 0) fail('exact package coordinate has an unresolved authenticated provider delivery', 'reuse_provider_pending');
     if (!/^[a-f0-9]{64}$/.test(p.indexEpoch ?? '') || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.evidenceProjectionDigest ?? '')
       || !/^[a-f0-9]{64}$/.test(p.subjectDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.decisionDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.decisionArtifactDigest ?? '')
       || p.subjectDigest !== canonicalDigest({ envRef: p.envRef, indexEpoch: p.indexEpoch, need: p.need, coordinate, policyHash: p.dossierSnapshot?.policyHash })) fail('reuse decision subject identity is invalid', 'reuse_decision_integrity');
@@ -579,9 +593,58 @@ export class CoordinationStore {
     if (p.invalidationDigest !== canonicalDigest(core)) fail('reuse TTL invalidation digest is invalid', 'reuse_ttl_integrity');
   }
 
+  _providerCoordinateKey(repoId, coordinate) { return canonicalDigest({ repoId, coordinate }); }
+
+  _providerPendingFor(repoId, coordinate) {
+    const ids = this._providerPending.get(this._providerCoordinateKey(repoId, coordinate)) ?? new Set();
+    return [...ids].map((id) => this._providerProcessing.get(id)).filter(Boolean).sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  _validateProviderDeliveryPayload(p, event, integrity = false) {
+    const fail = (message, code) => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
+    if (!p || Object.keys(p).sort().join(',') !== ['contentIdentity', 'processingId', 'receipt', 'receiptDigest', 'receiptId', 'repoId', 'schemaVersion'].sort().join(',') || p.schemaVersion !== 1
+      || !boundedText(p.repoId, 256) || !/^provider:[A-Za-z0-9._:-]{1,128}$/.test(event.actor ?? '')) fail('provider delivery authority is invalid', 'provider_delivery_integrity');
+    const receipt = p.receipt; const fields = ['schemaVersion', 'providerId', 'sourceEpoch', 'cardDigest', 'mode', 'deliveryId', 'rawDigest', 'rawBytes', 'authReceiptDigest', 'keyFingerprint', 'occurredAt', 'receivedAt', 'sequence', 'coordinates', 'advisoryIds', 'verificationDigest'];
+    if (!receipt || Object.keys(receipt).sort().join(',') !== fields.sort().join(',') || receipt.schemaVersion !== 1 || event.actor !== `provider:${receipt.providerId}`
+      || !boundedText(receipt.providerId, 128) || !boundedText(receipt.deliveryId, 4_096) || !/^[a-f0-9]{64}$/.test(receipt.sourceEpoch ?? '') || receipt.sourceEpoch !== receipt.cardDigest
+      || !/^[a-f0-9]{64}$/.test(receipt.rawDigest ?? '') || !/^[a-f0-9]{64}$/.test(receipt.authReceiptDigest ?? '') || !/^[a-f0-9]{64}$/.test(receipt.keyFingerprint ?? '')
+      || !/^[a-f0-9]{64}$/.test(receipt.verificationDigest ?? '') || receipt.receivedAt !== event.ts || !Number.isFinite(Date.parse(receipt.occurredAt)) || new Date(Date.parse(receipt.occurredAt)).toISOString() !== receipt.occurredAt
+      || (receipt.sequence !== null && (!Number.isSafeInteger(receipt.sequence) || receipt.sequence < 0))) fail('provider delivery receipt is invalid', 'provider_delivery_integrity');
+    const configured = this._advisoryFeedCards.get(receipt.providerId);
+    if (!configured) fail('provider source card is required for replay', 'provider_card_required');
+    const card = configured.card;
+    if (configured.cardDigest !== receipt.cardDigest || !card.modes?.includes(receipt.mode) || !card.auth?.keyFingerprints?.includes(receipt.keyFingerprint)
+      || !Number.isSafeInteger(receipt.rawBytes) || receipt.rawBytes <= 0 || receipt.rawBytes > card.ceilings?.maxDeliveryBytes) fail('provider delivery is not bound to its source card', 'provider_card_mismatch');
+    const coordinateKey = (coordinate) => `${coordinate?.ecosystem}\0${coordinate?.package}\0${coordinate?.version}`;
+    const sortedCoordinates = Array.isArray(receipt.coordinates) && JSON.stringify(receipt.coordinates.map(coordinateKey)) === JSON.stringify([...new Set(receipt.coordinates.map(coordinateKey))].sort());
+    if (!sortedCoordinates || receipt.coordinates.length === 0 || receipt.coordinates.length > card.ceilings.maxCoordinates || receipt.coordinates.some((coordinate) => !coordinate || Object.keys(coordinate).sort().join(',') !== 'ecosystem,package,version'
+      || coordinate.ecosystem !== card.ecosystem || !boundedText(coordinate.package, 256) || !boundedText(coordinate.version, 256))) fail('provider delivery coordinates are invalid', 'provider_delivery_integrity');
+    if (!Array.isArray(receipt.advisoryIds) || receipt.advisoryIds.length > card.ceilings.maxAdvisoryIds || JSON.stringify(receipt.advisoryIds) !== JSON.stringify([...new Set(receipt.advisoryIds)].sort())
+      || receipt.advisoryIds.some((id) => !boundedText(id, card.ceilings.maxIdentityBytes))) fail('provider advisory identities are invalid', 'provider_delivery_integrity');
+    const expectedIdentity = canonicalDigest({ repoId: p.repoId, providerId: receipt.providerId, sourceEpoch: receipt.sourceEpoch, coordinates: receipt.coordinates, advisoryIds: receipt.advisoryIds });
+    const expectedProcessingId = `provider-processing:${expectedIdentity}`; const expectedReceiptId = `provider-receipt:${canonicalDigest({ repoId: p.repoId, providerId: receipt.providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest })}`;
+    if (p.contentIdentity !== expectedIdentity || p.processingId !== expectedProcessingId || p.receiptId !== expectedReceiptId || p.receiptDigest !== canonicalDigest({ repoId: p.repoId, receipt })) fail('provider delivery identities are invalid', 'provider_delivery_integrity');
+    const deliveryKey = canonicalDigest({ repoId: p.repoId, providerId: receipt.providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId });
+    const priorId = this._providerDeliveryIds.get(deliveryKey);
+    if (priorId) fail('provider delivery identity already exists in the ledger', 'provider_delivery_duplicate');
+    return { deliveryKey };
+  }
+
   _apply(event) {
     const p = event.payload;
-    if (event.kind === 'task.created') {
+    if (event.kind === 'provider.delivery_received') {
+      const { deliveryKey } = this._validateProviderDeliveryPayload(p, event, true); const existing = this._providerProcessing.get(p.processingId);
+      const receipt = freeze({ id: p.receiptId, receiptDigest: p.receiptDigest, processingId: p.processingId, repoId: p.repoId, providerId: p.receipt.providerId, sourceEpoch: p.receipt.sourceEpoch, deliveryId: p.receipt.deliveryId, rawDigest: p.receipt.rawDigest, rawBytes: p.receipt.rawBytes, authReceiptDigest: p.receipt.authReceiptDigest, keyFingerprint: p.receipt.keyFingerprint, occurredAt: p.receipt.occurredAt, receivedAt: p.receipt.receivedAt, sequence: p.receipt.sequence, coordinates: clone(p.receipt.coordinates), advisoryIds: clone(p.receipt.advisoryIds), verificationDigest: p.receipt.verificationDigest, nodeId: `source:provider-receipt:${p.receiptDigest}`, recordedEvent: event.seq });
+      this._providerReceipts.set(p.receiptId, receipt); this._providerDeliveryIds.set(deliveryKey, p.receiptId);
+      if (existing) this._providerProcessing.set(p.processingId, freeze({ ...clone(existing), receiptIds: [...existing.receiptIds, p.receiptId], lastReceiptEvent: event.seq }));
+      else {
+        const processing = freeze({ id: p.processingId, contentIdentity: p.contentIdentity, repoId: p.repoId, providerId: p.receipt.providerId, sourceEpoch: p.receipt.sourceEpoch, coordinates: clone(p.receipt.coordinates), advisoryIds: clone(p.receipt.advisoryIds), status: 'pending', version: 1, receiptIds: [p.receiptId], createdEvent: event.seq, lastReceiptEvent: event.seq });
+        this._providerProcessing.set(p.processingId, processing);
+        for (const coordinate of p.receipt.coordinates) { const key = this._providerCoordinateKey(p.repoId, coordinate); const pending = new Set(this._providerPending.get(key) ?? []); pending.add(p.processingId); this._providerPending.set(key, pending); }
+      }
+      const nodeId = receipt.nodeId;
+      this._knowledgeNodes.set(nodeId, freeze({ id: nodeId, type: 'Source', grounding: 'observed', body: `Authenticated ${p.receipt.providerId} delivery ${p.receipt.deliveryId}`, evidence: [{ coordinationSeq: event.seq }], promotion: { kind: 'ProviderDelivery', trigger: 'provider.delivery' }, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: event.seq, eventTime: p.receipt.occurredAt, validFrom: event.ts, validTo: null, validityVersion: 1, repoId: p.repoId, providerId: p.receipt.providerId, sourceEpoch: p.receipt.sourceEpoch, receiptDigest: p.receiptDigest, processingId: p.processingId }));
+    } else if (event.kind === 'task.created') {
       if (p.runId != null && this._runs.get(p.runId)?.status === 'sealed') {
         throw new CoordinationIntegrityError(`task ${p.id} was admitted to sealed run ${p.runId}`, 'run_sealed');
       }
@@ -833,7 +896,7 @@ export class CoordinationStore {
   }
   task(id) { return clone(this._tasks.get(id) ?? null); }
   run(id) { return clone(this._runs.get(id) ?? null); }
-  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
+  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
   healthCheck() { try { if (!existsSync(this.file)) return this._events.length === 0; const raw = readFileSync(this.file, 'utf8'); return raw.length === 0 || raw.endsWith('\n'); } catch { return false; } }
   readyTasks() {
     return [...this._tasks.values()].filter((task) => task.status === 'pending' && task.assignee == null
@@ -1065,6 +1128,40 @@ export class CoordinationStore {
     return freeze({ ok: true, result: previousPolicyHash === null ? 'baseline' : 'reconciled', event: clone(appended), head: this.reusePolicyState(fields.repoId), decisionTargets: clone(targets.decisionTargets), bindingTargets: clone(targets.bindingTargets), findingTargets: clone(targets.findingTargets), guardTargets: clone(targets.guardTargets) });
   }
 
+  providerReceipt(id) { return clone(this._providerReceipts.get(id) ?? null); }
+  providerProcessing(id) { return clone(this._providerProcessing.get(id) ?? null); }
+  advisoryFeedCards() { return [...this._advisoryFeedCards.values()].map((entry) => freeze({ ...clone(entry.card), cardDigest: entry.cardDigest })).sort((a, b) => a.providerId.localeCompare(b.providerId)); }
+  pendingProviderReconciliation(repoId, coordinate) { return this._providerPendingFor(repoId, coordinate).map(clone); }
+
+  recordProviderDelivery(fields, auth) {
+    const receipt = fields?.receipt; const repoId = fields?.repoId;
+    if (!boundedText(repoId, 256) || typeof auth?.actor !== 'string' || typeof auth?.key !== 'string' || auth.actor.length === 0 || auth.key.length === 0) throw new TypeError('provider repo, actor, and idempotency key required');
+    const inputFields = ['schemaVersion', 'providerId', 'sourceEpoch', 'cardDigest', 'mode', 'deliveryId', 'rawDigest', 'rawBytes', 'authReceiptDigest', 'keyFingerprint', 'occurredAt', 'sequence', 'coordinates', 'advisoryIds', 'source', 'contentDigest'];
+    if (!receipt || Object.keys(receipt).sort().join(',') !== inputFields.sort().join(',') || receipt.schemaVersion !== 1 || receipt.sourceEpoch !== receipt.cardDigest
+      || !receipt.source || Object.keys(receipt.source).sort().join(',') !== ['bytes', 'digest', 'handle', 'mediaType'].sort().join(',') || receipt.source.digest !== receipt.rawDigest || receipt.source.bytes !== receipt.rawBytes
+      || receipt.source.handle !== `art:sha256:${receipt.rawDigest}` || receipt.source.mediaType !== 'application/json') throw new CoordinationRefusal('verified provider receipt is invalid', 'provider_receipt_invalid');
+    const verificationCore = { schemaVersion: 1, providerId: receipt.providerId, sourceEpoch: receipt.sourceEpoch, cardDigest: receipt.cardDigest, mode: receipt.mode, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest, rawBytes: receipt.rawBytes, authReceiptDigest: receipt.authReceiptDigest, keyFingerprint: receipt.keyFingerprint, occurredAt: receipt.occurredAt, sequence: receipt.sequence, coordinates: receipt.coordinates, advisoryIds: receipt.advisoryIds, source: receipt.source };
+    if (receipt.contentDigest !== canonicalDigest(verificationCore)) throw new CoordinationRefusal('verified provider receipt digest is invalid', 'provider_receipt_invalid');
+    const receivedAt = this._clock(); const sanitized = { schemaVersion: 1, providerId: receipt.providerId, sourceEpoch: receipt.sourceEpoch, cardDigest: receipt.cardDigest, mode: receipt.mode, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest, rawBytes: receipt.rawBytes, authReceiptDigest: receipt.authReceiptDigest, keyFingerprint: receipt.keyFingerprint, occurredAt: receipt.occurredAt, receivedAt, sequence: receipt.sequence, coordinates: clone(receipt.coordinates), advisoryIds: clone(receipt.advisoryIds), verificationDigest: receipt.contentDigest };
+    const contentIdentity = canonicalDigest({ repoId, providerId: receipt.providerId, sourceEpoch: receipt.sourceEpoch, coordinates: receipt.coordinates, advisoryIds: receipt.advisoryIds });
+    const processingId = `provider-processing:${contentIdentity}`; const receiptId = `provider-receipt:${canonicalDigest({ repoId, providerId: receipt.providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest })}`;
+    const payload = { schemaVersion: 1, receiptId, processingId, contentIdentity, repoId, receipt: sanitized, receiptDigest: canonicalDigest({ repoId, receipt: sanitized }) };
+    const priorEvent = this._byKey.get(auth.key);
+    if (priorEvent) {
+      if (priorEvent.kind !== 'provider.delivery_received' || priorEvent.payload?.repoId !== repoId || priorEvent.payload?.receipt?.providerId !== receipt.providerId || priorEvent.payload?.receipt?.deliveryId !== receipt.deliveryId || priorEvent.payload?.receipt?.rawDigest !== receipt.rawDigest) throw new CoordinationRefusal('provider delivery idempotency conflict', 'provider_delivery_conflict');
+      return freeze({ ok: true, result: 'idempotent', event: clone(priorEvent), receipt: this.providerReceipt(priorEvent.payload.receiptId), processing: this.providerProcessing(priorEvent.payload.processingId) });
+    }
+    const deliveryKey = canonicalDigest({ repoId, providerId: receipt.providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId }); const priorId = this._providerDeliveryIds.get(deliveryKey);
+    if (priorId) {
+      const prior = this._providerReceipts.get(priorId); if (prior.rawDigest !== receipt.rawDigest) throw new CoordinationRefusal('provider delivery identity was reused with different authenticated bytes', 'provider_delivery_conflict');
+      return freeze({ ok: true, result: 'duplicate', event: null, receipt: clone(prior), processing: this.providerProcessing(prior.processingId) });
+    }
+    const aliased = this._providerProcessing.has(processingId); const event = { seq: this._events.length + 1, ts: receivedAt, actor: auth.actor };
+    this._validateProviderDeliveryPayload(payload, event, false);
+    const appended = this._append('provider.delivery_received', payload, auth, receivedAt);
+    return freeze({ ok: true, result: aliased ? 'aliased' : 'recorded', event: clone(appended), receipt: this.providerReceipt(receiptId), processing: this.providerProcessing(processingId) });
+  }
+
   reuseDecision(id) { return clone(this._reuseDecisions.get(id) ?? null); }
   reuseSubjectHead(subjectDigest) { const id = this._reuseSubjects.get(subjectDigest); return id ? this.reuseDecision(id) : null; }
   currentReuseDecision(subjectDigest) {
@@ -1074,14 +1171,15 @@ export class CoordinationStore {
     if (!node || node.validTo || !Number.isFinite(observed) || observed >= Date.parse(decision.dossierSnapshot?.expiresAt ?? '')) return null;
     const guard = this._reuseRiskGuards.get(canonicalDigest(decision.coordinate));
     if (guard?.blocked === true && (decision.choice === 'borrow' || decision.dossierSnapshot?.factDigest !== guard.factDigest)) return null;
+    if (this._providerPendingFor(decision.envRef?.repoId, decision.coordinate).length > 0) return null;
     return decision;
   }
   reuseRiskGuard(coordinate) { return clone(this._reuseRiskGuards.get(canonicalDigest(coordinate)) ?? null); }
   reuseDecisionAdmission(key, requestDigest) {
     const prior = this._byKey.get(key); if (!prior) return null;
     if (!['knowledge.reuse_decided', 'reuse.decision_request_bound'].includes(prior.kind) || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('reuse decision idempotency conflict', 'reuse_decision_conflict');
-    const decision = this.reuseDecision(prior.payload.id ?? prior.payload.decisionId); const head = decision ? this._reusePolicyHeads.get(decision.envRef?.repoId) : null; const historical = Boolean(head && decision.dossierSnapshot?.policyHash !== head.policyHash);
-    return freeze({ ok: true, result: historical ? 'historical' : 'idempotent', current: !historical, historical, event: clone(prior), decision });
+    const decision = this.reuseDecision(prior.payload.id ?? prior.payload.decisionId); const current = Boolean(decision && this.currentReuseDecision(decision.subjectDigest)?.id === decision.id); const historical = !current;
+    return freeze({ ok: true, result: historical ? 'historical' : 'idempotent', current, historical, event: clone(prior), decision });
   }
 
   reuseRiskAdmission(key, requestDigest) {

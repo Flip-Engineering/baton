@@ -20,6 +20,7 @@ import { RuntimeIsolation } from './runtime-isolation.mjs';
 import { CoordinationStore } from './coordination-store.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
 import { CapabilityRegistry } from './capability-registry.mjs';
+import { AdvisoryFeedRegistry } from './advisory-feed-registry.mjs';
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const canonicalDigest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
@@ -58,6 +59,7 @@ export { NpmProposalResolver } from './npm-proposal-resolver.mjs';
 export { PublicSupplyChainOracle } from './supply-chain-oracle.mjs';
 export { MergirafResolver } from './structured-merge.mjs';
 export { CapabilityRegistry } from './capability-registry.mjs';
+export { AdvisoryFeedRegistry } from './advisory-feed-registry.mjs';
 
 function localGitEnv() {
   const env = {}; for (const [key, value] of Object.entries(process.env)) if (!key.startsWith('GIT_')) env[key] = value;
@@ -158,6 +160,7 @@ function refereeFn(task, result, opts) {
  * @param {{repoRoot:string, logDir:string, adapters:Record<string,object>, now?:()=>number,
  *          approvalTimeoutMs?:number, stopDeadlineMs?:number,
  *          capabilities?:Record<string,object>, capabilityFactories?:Record<string,Function>, capabilityContexts?:Record<string,object|Function>,
+ *          advisoryFeedSources?:Record<string,object>,
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
  *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
@@ -175,10 +178,17 @@ export function createDriver(opts) {
     repoRoot: opts.repoRoot,
     ...(opts.runtimeIsolation ?? {}),
   });
+  const advisoryFeeds = new AdvisoryFeedRegistry({ sources: opts.advisoryFeedSources ?? {} });
+  const advisoryFeedCards = advisoryFeeds.cards();
+  if (advisoryFeedCards.length > 0 && (typeof opts.repoId !== 'string' || opts.repoId.length === 0)) throw new TypeError('advisory feed sources require one deployment-bound repoId');
   const coordination = opts.coordination ?? new CoordinationStore(join(opts.logDir, 'coordination'), {
     operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
     clock: () => new Date(now()).toISOString(),
+    advisoryFeedCards,
   });
+  if (opts.coordination && advisoryFeedCards.length > 0) {
+    if (typeof coordination.advisoryFeedCards !== 'function' || canonicalDigest(coordination.advisoryFeedCards()) !== canonicalDigest(advisoryFeedCards)) throw new TypeError('custom coordination store disagrees with deployment advisory feed cards');
+  }
   let writerLease = null;
   try {
   writerLease = coordination.claimWriterLease();
@@ -270,8 +280,10 @@ export function createDriver(opts) {
     }),
     runtimeScopes,
     capabilities,
+    advisoryFeeds,
     coordination,
     repoRoot: opts.repoRoot,
+    repoId: opts.repoId,
     reuseDecisionPolicy: opts.reuseDecisionPolicy,
     resolveEnvironmentRef: opts.reuseDecisionPolicy === undefined ? null : ({ repoId, indexEpoch, overlayDigest, lockfileDigest }) => {
       if (repoId !== opts.repoId) throw Object.assign(new Error('reuse decision repository authority mismatch'), { code: 'reuse_repo_mismatch' });
@@ -299,6 +311,6 @@ export function createDriver(opts) {
   });
 
   let closed = false;
-  return { coordinator, story, router, log, coordination, close: () => { if (closed) return false; coordinator.closeAuthority(); closed = true; return coordination.releaseWriterLease(); } };
+  return { coordinator, story, router, log, coordination, advisoryFeeds, close: () => { if (closed) return false; coordinator.closeAuthority(); closed = true; return coordination.releaseWriterLease(); } };
   } catch (error) { if (writerLease) coordination.releaseWriterLease(); throw error; }
 }

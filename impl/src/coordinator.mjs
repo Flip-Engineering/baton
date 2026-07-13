@@ -105,7 +105,7 @@ const COORDINATION_MUTATORS = new Set([
   'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
   'readScratch', 'expireScratchClaim', 'expireScratchFact', 'addKnowledgeNode', 'promoteKnowledgeNode',
   'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination', 'recordReuseDecision',
-  'recordReuseRiskGuard', 'recordReuseTtlInvalidation', 'activateReusePolicy',
+  'recordReuseRiskGuard', 'recordReuseTtlInvalidation', 'activateReusePolicy', 'recordProviderDelivery',
 ]);
 
 function canonical(value) {
@@ -320,6 +320,14 @@ export class Coordinator {
         }
       }
     }
+    this._advisoryFeeds = opts.advisoryFeeds ?? null;
+    const advisoryCards = this._advisoryFeeds?.cards?.() ?? [];
+    if (advisoryCards.length > 0) {
+      if (typeof this._advisoryFeeds.verify !== 'function') throw new TypeError('Coordinator advisory feed registry is missing verify()');
+      for (const method of ['recordProviderDelivery', 'pendingProviderReconciliation', 'providerReceipt', 'providerProcessing']) {
+        if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
+      }
+    }
     const rawCoordination = opts.coordination;
     this._coordination = new Proxy(rawCoordination, {
       get: (target, property, receiver) => {
@@ -339,6 +347,7 @@ export class Coordinator {
     this._route = opts.route;
     this._story = opts.story ?? null;
     this._repoRoot = opts.repoRoot ?? null;
+    this._repoId = opts.repoId ?? null;
     this._resolveEnvironmentRef = opts.resolveEnvironmentRef ?? null;
     this._reuseDecisionPolicy = null;
     if (opts.reuseDecisionPolicy !== undefined) {
@@ -2719,6 +2728,28 @@ export class Coordinator {
     return this._capabilities ? this._capabilities.cards() : [];
   }
 
+  /** Return deployment-pinned machine-ingress cards. This inventory is separate from ACI and
+   * carries no user, MCP, install, merge, or verification authority. */
+  advisoryFeedCards() {
+    this._assertOperational();
+    return this._advisoryFeeds?.cards?.() ?? [];
+  }
+
+  /** Admit one machine-authenticated provider delivery. The fixed provider route selects the
+   * adapter; neither a user actor nor provider body may choose authority. Durable receipt and
+   * pending fences are appended before this returns success. */
+  async receiveProviderDelivery(providerId, input, ctx = {}) {
+    this._assertOperational();
+    if (!this._advisoryFeeds || this.advisoryFeedCards().length === 0 || !this._repoId) throw Object.assign(new Error('provider machine ingress is not deployment-configured'), { code: 'provider_ingress_unavailable' });
+    if (ctx && Object.keys(ctx).some((key) => key !== 'signal')) throw Object.assign(new TypeError('provider machine ingress context is invalid'), { code: 'provider_delivery_invalid' });
+    this._authorityOps += 1;
+    try {
+      const receipt = await this._advisoryFeeds.verify(providerId, input, { signal: ctx.signal });
+      const key = `provider-delivery:${canonicalDigest({ repoId: this._repoId, providerId, sourceEpoch: receipt.sourceEpoch, deliveryId: receipt.deliveryId, rawDigest: receipt.rawDigest })}`;
+      return this._coordination.recordProviderDelivery({ repoId: this._repoId, receipt }, { actor: `provider:${providerId}`, key });
+    } finally { this._authorityOps -= 1; }
+  }
+
   /** Invoke an advertised ACI operation through the coordinator-owned registry. */
   async invokeCapability(name, op, args, ctx = {}) {
     this._assertOperational();
@@ -2769,6 +2800,9 @@ export class Coordinator {
     }
     if (request.choice === 'borrow' && this._coordination.reuseRiskGuard(coordinate)?.blocked === true) {
       throw Object.assign(new Error('exact package coordinate is blocked by an advisory observation'), { code: 'reuse_risk_guarded' });
+    }
+    if (typeof this._coordination.pendingProviderReconciliation === 'function' && this._coordination.pendingProviderReconciliation(ctx.repoId, coordinate).length > 0) {
+      throw Object.assign(new Error('exact package coordinate has an unresolved authenticated provider delivery'), { code: 'reuse_provider_pending' });
     }
     const dossierRef = decisionRef(request.dossier.claim?.refs?.[0], 'dependency-dossier', 'application/vnd.baton.dependency-dossier+json');
     const sbomRef = decisionRef(request.sbom.claim?.refs?.[0], 'lockfile-sbom', 'application/vnd.cyclonedx+json');
