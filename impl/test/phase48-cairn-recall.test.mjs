@@ -102,6 +102,14 @@ test('BR3/BR4/BR6/BR8: closed requests and every deployment ceiling fail closed 
   await assert.rejects(invoke(cairn(store, { maxReceiptBytes: 1 }), {}, 'bad:receipt'), (error) => error.code === 'causal_recall_oversize');
   await assert.rejects(invoke(cairn(store, { maxResultBytes: 1 }), {}, 'bad:result'), (error) => error.code === 'causal_recall_oversize');
   assert.equal(store.snapshot().knowledge.reads.length, 0);
+
+  const deep = new CoordinationStore(root('depth-store'), { clock: clock() }); const created = deep.createTask(task('depth-source'), { actor: 'orchestrator', key: 'depth:task' });
+  for (const [id, body] of [['finding:depth-a', 'rootonly'], ['finding:depth-b', 'middle'], ['finding:depth-c', 'tail']]) deep.addKnowledgeNode({ id, type: 'Finding', grounding: 'observed', body, evidence: [{ coordinationSeq: created.event.seq }] }, { actor: 'policy', key: `depth:${id}` });
+  deep.addKnowledgeEdge({ type: 'DerivedFrom', from: 'finding:depth-b', to: 'finding:depth-a', evidence: [{ coordinationSeq: created.event.seq }] }, { actor: 'policy', key: 'depth:edge-ab' });
+  deep.addKnowledgeEdge({ type: 'DerivedFrom', from: 'finding:depth-c', to: 'finding:depth-b', evidence: [{ coordinationSeq: created.event.seq }] }, { actor: 'policy', key: 'depth:edge-bc' });
+  const deepObservedSeq = deep.snapshot().lastSeq;
+  await assert.rejects(cairn(deep, { maxGraphDepth: 1 }).invoke('causal.recall', { text: 'rootonly', limit: 3, observedSeq: deepObservedSeq, seedNodeIds: ['finding:depth-a'], reader: {} }, ctx({ idempotencyKey: 'bad:graph-depth' })), (error) => error.code === 'causal_recall_oversize');
+  assert.equal(deep.snapshot().knowledge.reads.length, 0, 'maxGraphDepth+1 refuses without a partial receipt');
 });
 
 test('BR6/BR7/BR9: receipt, ReadBy, contamination, replay, and read-only reverify are exact', async () => {

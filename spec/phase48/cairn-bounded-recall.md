@@ -22,6 +22,9 @@ missing, incoherent, or
 excessive fields. The ACI derives repository, actor, and idempotency authority from authenticated
 context; request prose cannot forge them. Generic capability idempotency remains actor/repository/
 operation/input/budget/result-bound, concurrent-safe, and durable across restart.
+`causal.recall` explicitly opts into ACI output preflight. The capability registry, not caller input
+or deployment capability context, injects the exact envelope and payload ceilings derived from the
+registry deployment and the admitted invocation budget.
 
 ## BR2 — pinned audit gate
 
@@ -82,6 +85,12 @@ contradiction edge IDs, request/result projection digests, and receipt digest. I
 bodies, snippets, raw request prose or terms, credentials, prompts, local paths, or secret values.
 Receipt canonical bytes must not exceed `maxReceiptBytes`.
 
+The durable request digest is recomputable from the compact query projection, authenticated reader
+identity, and pinned policy digest. Replay must recompute it; a syntactically valid substituted
+request digest plus a recomputed outer receipt digest is still an integrity failure. There is no
+public unreceipted preview method. The one public store recall operation may run a private,
+metadata-only publication gate, but returns no projection until its receipt append succeeds.
+
 Replay validation deterministically rebuilds the ranked projection at the receipt boundary and
 rejects altered IDs, versions, ordering, scores, contradiction bundles, digests, actor, reader, or
 policy. The projection adds one `ReadBy` edge from every returned node to the named task or run.
@@ -104,7 +113,11 @@ evidence to verify, never instruction. Each node projection contains only identi
 temporal/version fields, integer score/reason, and a bounded UTF-8 snippet. It exposes no local
 artifact path and grants no worker, edit, verification, merge, approval, publication, routing,
 proof, note, or policy-authoring authority. Recall's only side effect is its durable read receipt and
-derived `ReadBy` edges. Total output is bounded by `maxResultBytes` before publication.
+derived `ReadBy` edges. Total output is bounded by `maxResultBytes` before publication. For ACI
+invocation, the exact JSON envelope and payload sizes are additionally checked against registry-
+derived publication ceilings before append; either refusal leaves no `knowledge.recall`,
+`_knowledgeReads`, or `ReadBy` residue. Generic post-invocation ACI validation remains defense in
+depth rather than the first publication-size gate for this effectful operation.
 
 ## BR9 — exact replay and authenticated reverify
 
@@ -122,8 +135,9 @@ Zero-provider tests cover max and max+1 query terms/bytes/candidates/results/gra
 receipt/result sizes; malformed Unicode/NUL; unknown fields; invalid filters/seeds/readers; critical
 audit failure; unresolved and resolved contradictions; deterministic ties; historical valid time;
 append failure; cancellation at audit/ranking/receipt/publication boundaries; receipt/event tamper;
-idempotency conflict/concurrency/restart; contamination; direct/web/MCP invoke and reverify; and the
-absence of ambient injection.
+idempotency conflict/concurrency/restart; self-consistent request-digest substitution; claimed-before
+and claimed-after historical reader identity; ACI envelope/budget refusal without effects;
+contamination; direct/web/MCP invoke and reverify; and the absence of ambient injection.
 
 After those tests pass, Baton dogfoods this operation through explicit harness/model/effort routes,
 including current Codex (`gpt-5.6-sol` at low effort), Grok 4.5/Composer where authenticated, and a
