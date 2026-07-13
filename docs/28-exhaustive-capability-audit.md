@@ -192,6 +192,15 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    and Grok Build/low routes all produce exact start/close evidence and complete cleanup; the two
    Grok groups overlap, GLM fresh-verifies, and the strict provider matrix remains honestly red at
    the installed Grok CLI's unauthenticated readiness boundary.
+25. **Cairn verified recall-outcome attribution:** Phase 52 adds a deployment-pinned
+   `causal.assess_recall` operation that accepts only one observation boundary and deterministically
+   selects task-scoped Phase 48 receipts followed by exact mapped hub verification and compatible
+   terminal outcome. One compact atomic batch binds the historical exposure plus task/run/worker/
+   route/verification/terminal evidence and reports `verified_pass_after_recall` or
+   `verified_fail_after_recall` with `causationClaimed:false`. Nine grouped RA tests cover exclusions,
+   borrowed evidence, races, contamination, audit/cancellation/append failure, every max+1 ceiling,
+   restart/tamper, output preflight, and direct/web/MCP parity. It does not accept worker ratings or
+   mutate grounding, validity, confidence, ranking, routing, or promotion.
 
 ## What remains partial
 
@@ -207,8 +216,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 - Scratch and causal knowledge primitives ship. Cairn Rungs 0–2 scorecard, verified RouteStats,
   restart hydration, bounded advice, causal integrity, contradiction resolution, and attested
   audit/trace, bounded recall, and the first closed selective-promotion batch now ship locally;
-  derived-Scratch independent-oracle release/correction now also ships. Scratch REPL/Bench,
-  authenticated contradiction UX, recall feedback, Playbook/Skill promotion,
+  derived-Scratch independent-oracle release/correction and verified recall-outcome attribution now
+  also ship. Scratch REPL/Bench, authenticated contradiction UX, a later versioned recall-learning
+  policy, Playbook/Skill promotion,
   retention/compaction, and optional deployment-neutral export remain partial or pending.
 - Phase 29 closes the former Atlas wiring gap: deployments inject a closed set of real Atlas
   instances, bounds, artifact roots, and optional trusted multi-root contexts into `createDriver()`;
@@ -243,7 +253,8 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   Evidence Ladder rungs (property/fuzz/BMC/SMT/proof) under honest language/tool ceilings.
 - Vantage, Evidence Ladder as a capability module, Skill Forge/computer use, later
   Cartographer/Quartermaster supply/orientation rungs, and Cairn Playbook/Skill promotion,
-  feedback, retention, and export rungs remain pending.
+  versioned feedback learning, authenticated contradiction UX, retention, and export rungs remain
+  pending; Phase 52's non-causal outcome-attribution substrate now ships.
 - Direct structural rewrite apply, live LSP, full SSA/PDG/path solving, interprocedural/alias/heap
   CPG depth, deeper behavioral/provenance attestation overlays, semantic-delta depth, and
   representation choreography.

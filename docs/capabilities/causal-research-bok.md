@@ -98,15 +98,18 @@ bok_export(scope: { project?: string, since_run?: string })
 - Edges: `Informed` (Decision←evidence, = PROV `wasInformedBy`), `ProducedBy` (Finding←run/task, = PROV `wasGeneratedBy`), `DerivedFrom` (= PROV `wasDerivedFrom`), `Supersedes` (bi-temporal invalidation, keeps history), `Contradicts`, `Supports`.
 - **Bi-temporal on every node/edge** (Graphiti): `t_event` (ledger `seq` + wall clock of the thing) and `t_observed` (when promoted); `Supersedes`/`Contradicts` carry `t_valid`/`t_invalid` so a refuted belief is *invalidated, not deleted*.
 
-**Current shipped contract:** Phases 47–50 ship causal integrity/audit/trace, bounded pull-only
-recall, the Phase 49 closed promotion taxonomy, and the Phase 50 derived-Scratch exception. Phase
+**Current shipped contract:** Phases 47–50 and 52 ship causal integrity/audit/trace, bounded pull-only
+recall, the Phase 49 closed promotion taxonomy, the Phase 50 derived-Scratch exception, and
+Phase 52's verified recall-outcome attribution. Phase
 49 admits only closed operator/orchestrator Decisions, policy Counterexamples, and independently
 verified cited observed Scratch Findings. Phase 50 separately permits release, supersession, or
 retraction of Scratch Findings after a fact-bound independent oracle with exact producer/reviewer
 harness-version-model-effort-family-task-class commitments. These operations are audited,
 repository-bound, deterministic, replay-validated, and reachable through token-bound direct/web/MCP
-authority. They do not promote arbitrary terminal events, auto-inject recall, integrate oracle
-changes, or export to project-manager/homelab.
+authority. Phase 52 binds task-scoped receipts to later exact verified terminal outcomes but records
+only pass/fail-after association with `causationClaimed:false`; it neither accepts worker ratings nor
+mutates ranking or confidence. These operations do not promote arbitrary terminal events,
+auto-inject recall, integrate oracle changes, or export to project-manager/homelab.
 
 **Later promotion-policy direction** (not current authority): candidate-generation may eventually
 expand over the ledger, but each source class requires its own closed contract. Candidate classes
@@ -136,7 +139,12 @@ Six layers, defense-in-depth, because recalled content is still model input and 
 3. **Bi-temporal validity filter.** Recall returns **currently-valid** facts only (Graphiti invalidation); superseded and contradicted claims are excluded unless the caller passes `as_of`. You cannot re-poison a fleet with a belief a later run already refuted.
 4. **Token-bounded, ranked, deduped — a slice, not a briefing.** `budget_tokens` (default 700) caps it; output is claims + handles, not a PM-style topic-similarity fan-out (doc 08 §2's explicit anti-pattern for worker context). The orchestrator's context is the scarcest resource (doc 05 §3).
 5. **Confidence-gated with contradictions surfaced.** Low-confidence / single-observation claims are marked and down-ranked; a `Contradicts` pair surfaces *both sides with the conflict flagged*, never one side silently.
-6. **Feedback loop closes the poison.** Because every recall is a ledger event and every run gets a scorecard, a recalled claim that preceded a *failed* run has its confidence down-weighted automatically; recalls that rarely fire or rarely help drive the "kill the graph" decision (Limitations). Poison decays; it doesn't accumulate.
+6. **Feedback is observable before it is learnable.** Because every recall is a ledger event,
+   Phase 52 can bind an exact historical exposure to a later exact hub-verified pass/fail outcome.
+   Baton explicitly does **not** infer “helped” or “harmed” and does not down-weight confidence from a
+   failed task: task difficulty, route choice, and unrelated defects are confounders. Coverage,
+   pass/fail-after association, and later contamination make poison investigation and a future
+   kill-the-graph decision measurable; learned weighting requires a separate versioned policy.
 
 ### Agent-ergonomic output shape (concrete, token-bounded)
 
@@ -186,12 +194,14 @@ The rungs are a *cost-justified gradient*; each ships value alone, and most flee
 - **Rung 0 — the run scorecard (MVP, near-free).** Auto-generated at run end from the ledger: brief coverage (from I7 verification), verified-vs-asserted completions, interventions (`control.*` actor≠policy), unaddressed approvals, per-worker cost/outcome. One row. No graph, no recall. **Ships with the supervisor** — this is doc 08's cheap-and-high-value #1, and it's the smallest useful version. If you build nothing else, build this.
 - **Rung 1 — RouteStats + `bok_route`.** Per (harness × task-class) *verified* win/loss counters, updated from scorecards; `bok_route` reads them; the scheduler consumes them. Doc 08 Q2's "cheap 80%." Cheap counters, no causal graph. Kicks in once a task-class has recurred enough for the Wilson bound to mean anything.
 - **Rung 2 — the causal shadow-graph + `bok_note`/`bok_trace`/`bok_audit`.** Provenance-integral, bi-temporal Decision/Finding graph (doc 08's decision-provenance #2: "audit the conductor"). The audit gates trust. Build only for long-horizon programs.
-- **Rung 3 — `bok_recall`.** Explicit, token-bounded, provenance-framed, feedback-looped recall — the re-entry path. Worth it only once the graph has mass *and* task-classes recur (else recall never fires).
+- **Rung 3 — `bok_recall` + outcome attribution.** Explicit, token-bounded, provenance-framed
+  recall plus non-causal verified pass/fail-after association — the re-entry and observability path.
+  Worth it only once the graph has mass and task-classes recur (else recall never fires).
 - **Rung 4 — generic `bok_export` + Playbooks.** Audit-gated content-addressed export is a deployment-neutral copy with no remote side effect; Playbooks (verified reused recipes) are the procedural leg. Baton's own graph remains authoritative until an explicit local retention policy compacts it.
 
 ## Limitations & honest residuals
 
-- **When to build a BoK vs just ship (the required honest question).** A BoK pays back only when three conditions all hold: **(a) task-classes recur** (relearning cost is real), **(b) outcomes are verifiable** (I7 — else you accumulate unverified claims, i.e. poison), and **(c) the program is long-horizon** (months). For a one-shot "fix this bug and ship," everything past Rung 0 is pure overhead. The anti-pattern is **building a BoK to feel rigorous**: an unaudited graph re-injects wrong beliefs with false authority, strictly worse than no memory. `bok_audit` below threshold **fails closed** — recall and export disabled. And if every run is novel, recall never fires; measure recall hit-rate × helped-rate and *kill the graph* when it's dead weight. Doc 08's stance holds: Baton ships operational + coordinative; its epistemic graph is local and optional by deployment policy, never an external runtime dependency.
+- **When to build a BoK vs just ship (the required honest question).** A BoK pays back only when three conditions all hold: **(a) task-classes recur** (relearning cost is real), **(b) outcomes are verifiable** (I7 — else you accumulate unverified claims, i.e. poison), and **(c) the program is long-horizon** (months). For a one-shot "fix this bug and ship," everything past Rung 0 is pure overhead. The anti-pattern is **building a BoK to feel rigorous**: an unaudited graph re-injects wrong beliefs with false authority, strictly worse than no memory. `bok_audit` below threshold **fails closed** — recall and export disabled. And if every run is novel, recall never fires; measure recall coverage and verified outcome association first, then add an explicitly assessed helped-rate only if a later policy can ground it without worker self-rating or task-success causal overclaim. Kill the graph when it is dead weight. Doc 08's stance holds: Baton ships operational + coordinative; its epistemic graph is local and optional by deployment policy, never an external runtime dependency.
 - **The verification ceiling.** The BoK is only as trustworthy as I7. Task-classes with no runnable verification command (design, docs, judgment calls) yield `asserted` Findings — recorded, marked, but *never routed on*. "What worked, and why" is honest only where "worked" is machine-checkable.
 - **Task-class taxonomy is the hard unsolved input.** RouteStats and recall both key on "task-class," and mis-clustering makes routing learn noise (the documented "routing collapse," [arXiv 2602.03478](https://arxiv.org/pdf/2602.03478)). Start with **human/brief-declared classes**; do not auto-cluster early. This is the single most likely thing to make the module quietly wrong.
 - **Re-poisoning is mitigated, not eliminated.** The six layers reduce but don't zero a determined prompt-injection through recalled content — recall output is still model input. Keeping recall read-only, bounded, provenance-framed, and audited is the ceiling of what's achievable without a separate defense.

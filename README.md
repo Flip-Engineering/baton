@@ -96,6 +96,13 @@ and authenticated web/MCP status exposes only a bounded process reference. Exact
 `gpt-5.6-sol`/low, GLM `glm-4.7`/low, Grok 4.5/low, and Grok Build/low remain in the recursive
 matrix; the current Grok legs are honestly authentication-red while their concurrent process
 groups and all owned resources are proven reaped.
+Phase 52 closes Cairn's feedback-observability gap without inventing causation: the audit-gated
+`causal.assess_recall` operation deterministically binds task-scoped Phase 48 receipts to later exact
+hub-verification and compatible terminal outcomes as `verified_pass_after_recall` or
+`verified_fail_after_recall`. The compact append-before-return batch, historical exposure digests,
+honest coverage/association audit metrics, restart reverify, direct/web/MCP authority, and every
+max+1/output-preflight gate are executable; no worker rating, “helped” claim, ranking/confidence
+mutation, project-manager runtime, or homelab integration is added.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 

@@ -112,6 +112,15 @@ then releases, supersedes, or retracts only the closed Scratch Finding class thr
 prefix-CAS event with exact earlier-reader contamination. Scratch IDs are hub-derived, public
 results are closed metadata projections, and trusted web/MCP transport identity is token-bound.
 
+Phase 52 closes recall feedback's observability prerequisite without turning correlation into
+authority. `causal.assess_recall` scans one audited prefix and selects only task-scoped Phase 48
+receipts followed by exact mapped hub verification and a compatible terminal state. Its compact
+batch preserves the historical node/version/score/contradiction exposure and reports only
+`verified_pass_after_recall` or `verified_fail_after_recall`, always with
+`causationClaimed:false`. Workers cannot rate memory, callers cannot nominate favorable receipts,
+and no confidence, rank, grounding, validity, promotion, or route changes. This evidence can inform
+a later versioned learning policy, but task success by itself is never a helped-rate.
+
 Richer cross-run learning, literature, hypotheses, contradictions, and supersession therefore live in
 Baton's self-contained bitemporal graph under `spec/phase11/coordination-knowledge.md`. They are
 promoted selectively from immutable events/artifacts, never written as an ambient mutable brain.
@@ -139,5 +148,8 @@ targets, never product dependencies.)*
 
 1. Promotion policy: Phases 49–50 resolve a closed first subset for consequential Decisions, closed policy Counterexamples, independently verified cited observed Scratch, and fact-bound independent-oracle release/correction of derived Scratch. Separate contracts are still required for Playbook/Skill promotion and any later taxonomy expansion; arbitrary events never become knowledge by default.
 2. Cross-run identity: Phase 44 ships the cheap exact harness/version/model/effort/family/task-class win/loss table. Generalized claims such as "Codex is bad at auth refactors" remain explicit causal Findings, never automatic route evidence.
-3. Does the orchestrator read the scorecard of *past* runs as context for a new run, and if so how do we keep that from re-poisoning its context (doc 06 Q3)? Probably: only on explicit `fleet_recall(query)`, never auto-injected.
+3. Phase 48 answers re-entry with explicit pull-only recall, and Phase 52 measures verified
+   pass/fail-after association without causal overclaim. The remaining question is whether a later
+   versioned policy has enough independently assessed evidence to change ranking at all; automatic
+   injection and worker self-rating remain rejected.
 4. Retention/rotation: ledgers grow unbounded; JSONL rotates, SQLite compacts, artifacts are git-GC'd — but the scorecard + decision graph are meant to be permanent. Where's the boundary, and who prunes?

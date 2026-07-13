@@ -594,7 +594,7 @@ closed ACI card opts into registry-derived envelope/payload preflight so size re
 receipt or read effect. Exact Codex and project-key GLM recursive reviews supplied the red tests and
 fresh verification; the latest exact Grok 4.5/Composer pair remains honestly auth-red before native
 PIDs while all allocations and ownership reap. Recall feedback, broader selective promotion,
-Playbook/Skill promotion, authenticated contradiction UX, and deployment-neutral export remain
+Playbook/Skill promotion, authenticated contradiction UX, and deployment-neutral export remained
 catalogued next; no homelab or external project-manager runtime is added.
 
 Phase 49 ships the first broader selective-promotion batch without placing the knowledge plane on a
@@ -606,7 +606,7 @@ safe bodies and digested metadata omit briefs, Scratch values, prompts, commands
 URLs, credentials, and provider payloads. Direct, authenticated web, and MCP invocation/reverify
 share exact repository/actor/idempotency authority and pre-effect result gates. Derived Scratch
 remains quarantined. Correction/supersession and independent-oracle release, Playbook/Skill
-promotion, recall feedback/utility, authenticated contradiction UX, retention/compaction, and
+promotion, Phase 52 recall outcome attribution, authenticated contradiction UX, retention/compaction, and
 deployment-neutral export remain mechanically retained. Baton remains self-contained: the local
 project-manager material is causal-graph inspiration only, and homelab integration is excluded.
 
@@ -619,7 +619,7 @@ reverification. Oracle tasks may test in isolation but can never integrate their
 one audited prefix-CAS event with exact historical-reader contamination, target validity CAS,
 restart replay, pre-effect ACI result gates, and token-bound direct/web/MCP identity. Scratch IDs are
 hub-derived and public results contain only closed metadata. Playbook/Skill promotion, recall
-feedback/utility, authenticated contradiction UX, retention/compaction, deployment-neutral export,
+outcome attribution, authenticated contradiction UX, retention/compaction, deployment-neutral export,
 Bench, and every retained control/session/representation/capability rung remain explicit. No
 homelab or external project-manager runtime is introduced.
 
@@ -638,6 +638,22 @@ green. Recursive Baton exact-routes Codex `gpt-5.6-sol`/low, project-key GLM `gl
 retained, with simultaneous Grok process groups observed. GLM fresh-verifies its report, while the
 strict provider matrix remains honestly red because the installed Grok CLI reports unauthenticated
 before readiness. No homelab or external project-manager runtime is introduced.
+
+Phase 52 closes Cairn's recall-feedback observability prerequisite without making a causal claim.
+`causal.assess_recall` accepts only a pinned observation boundary, reruns the critical graph audit,
+and selects every previously unassessed task-scoped Phase 48 receipt whose exact historical
+exposure preceded exact mapped `verify.reverified` evidence and a compatible terminal transition.
+One compact append-before-return event binds receipt, task/run/worker/route, node/version/score/
+contradiction commitments, verification, terminal outcome, policy, and digests. Its only outcome
+codes are `verified_pass_after_recall` and `verified_fail_after_recall`, always paired with
+`causationClaimed:false`; task success is not mislabeled “helped,” worker feedback is not authority,
+and no grounding, validity, confidence, ranking, routing, or promotion state changes. Honest audit
+axes now report eligible/assessed coverage, pass/fail-after association, distinct exposed nodes, and
+later contamination. Exact no-op/idempotency/race/restart/tamper behavior, all independent ceilings,
+ACI pre-effect output refusal, and direct/authenticated-web/MCP invoke and reverify are executable.
+Authenticated contradiction UX is next; versioned learned weighting, Playbook/Skill promotion,
+Scratch Board/Bench, Goal/Plan authority, retention/checkpoints, and approval-gated neutral export
+remain explicit. Baton stays self-contained with no project-manager or homelab runtime integration.
 
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
