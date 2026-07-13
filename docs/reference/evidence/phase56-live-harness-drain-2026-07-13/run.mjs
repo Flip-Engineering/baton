@@ -26,6 +26,7 @@ const REVIEW_ARTIFACTS = Object.freeze({
   58: ['capacity-aware-sparse-workers', 'sparse-worker-worktree'],
   59: ['worktree-capacity-authority', 'worktree-capacity-authority'],
   60: ['attach-only-native-recovery', 'coordination-recovery'],
+  61: ['graph-backed-representations', 'representation-producer'],
 });
 const reviewArtifact = REVIEW_ARTIFACTS[REVIEW_PHASE];
 if (!reviewArtifact && (!process.env.BATON_REVIEW_SPEC || !process.env.BATON_REVIEW_TEST)) throw new Error('PENDING-LIVE-review-artifact-mapping-required');
@@ -33,8 +34,8 @@ const REVIEW_SPEC = process.env.BATON_REVIEW_SPEC ?? `spec/phase${REVIEW_PHASE}/
 const REVIEW_TEST = process.env.BATON_REVIEW_TEST ?? `impl/test/phase${REVIEW_PHASE}-${reviewArtifact[1]}.test.mjs`;
 const TARGET_REPO = join(OWNER_ROOT, `phase${REVIEW_PHASE}-clean-target`);
 const LOG_DIR = mkdtempSync(join(tmpdir(), `baton-phase${REVIEW_PHASE}-live-log-`));
-const RUN_ID = REVIEW_PHASE === '56' ? 'phase56-live-harness-drain' : REVIEW_PHASE === '60' ? 'phase60-native-recovery-review' : `phase${REVIEW_PHASE}-live-harness-governance`;
-const TASK_TYPE = REVIEW_PHASE === '56' ? 'phase56-drain-adversarial-review' : REVIEW_PHASE === '60' ? 'phase60-native-recovery-adversarial-review' : `phase${REVIEW_PHASE}-governance-adversarial-review`;
+const RUN_ID = REVIEW_PHASE === '56' ? 'phase56-live-harness-drain' : REVIEW_PHASE === '60' ? 'phase60-native-recovery-review' : REVIEW_PHASE === '61' ? 'phase61-graph-representation-review' : `phase${REVIEW_PHASE}-live-harness-governance`;
+const TASK_TYPE = REVIEW_PHASE === '56' ? 'phase56-drain-adversarial-review' : REVIEW_PHASE === '60' ? 'phase60-native-recovery-adversarial-review' : REVIEW_PHASE === '61' ? 'phase61-representation-adversarial-review' : `phase${REVIEW_PHASE}-governance-adversarial-review`;
 const phase57Focus = [
   'callback provenance, exact route binding, and forged policy/orchestrator authority',
   'dimension-complete usage seals, metric binding, and post-acceptance revocation',
@@ -56,6 +57,13 @@ const phase60Focus = [
   'concurrent Grok recovery authority, process-generation correlation, interrupt, kill, and exact reap',
   'reflexive Baton-on-Baton recovery friction plus retained Phase 61 representation and Phase 62 Goal/Plan scope',
 ];
+const phase61Focus = [
+  'fixed producer mapping, exact source-card and environment binding, stable identity, and authority denial',
+  'immediate source reverify, primary artifact selection, honest resume, receipt integrity, and preflight ordering',
+  'project-key GLM isolation, graph transaction replay, causal endpoints, and request-bound idempotency',
+  'concurrent Grok review authority, route/model/effort specificity, process correlation, kill, and exact reap',
+  'reflexive Baton-on-Baton representation friction plus retained R4-R7 and Phase 62 Goal/Plan scope',
+];
 const phase56Focus = [
   'drain fencing, exact async ownership, deadline truth, and driver close ordering',
   'durable replay, actor binding, receipt validation, and crash recovery',
@@ -74,7 +82,7 @@ const TASK_CATALOG = routes.map((route, index) => ({
   ...route,
   taskId: `phase${REVIEW_PHASE}-${route.suffix}`,
   target: `reviews/dogfood/phase${REVIEW_PHASE}-${route.suffix}.md`,
-  focus: ({ 56: phase56Focus, 57: phase57Focus, 59: phase59Focus, 60: phase60Focus }[REVIEW_PHASE] ?? phase56Focus)[index],
+  focus: ({ 56: phase56Focus, 57: phase57Focus, 59: phase59Focus, 60: phase60Focus, 61: phase61Focus }[REVIEW_PHASE] ?? phase56Focus)[index],
 }));
 const selectedTaskIds = process.env.BATON_TASK_IDS ? new Set(process.env.BATON_TASK_IDS.split(',').filter(Boolean)) : null;
 const TASKS = selectedTaskIds ? TASK_CATALOG.filter((task) => selectedTaskIds.has(task.taskId)) : TASK_CATALOG;
