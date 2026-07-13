@@ -28,6 +28,7 @@ import { SessionRecoverySupervisor } from './session-recovery-supervisor.mjs';
 import { inspectToolchainProjection, prepareToolchainProjection, ToolchainProjectionError } from './toolchain-projection.mjs';
 import { normalizeProviderGovernancePolicy } from './provider-governance.mjs';
 import { loadOrCreateWorktreeCapacityIntegrityKey, normalizeWorktreeCapacityPolicy, WorktreeCapacityAuthority } from './worktree-capacity.mjs';
+import { normalizeGoalPlanPolicy } from './goal-plan.mjs';
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const canonicalDigest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
@@ -358,6 +359,7 @@ function refereeFn(task, result, opts) {
  *          sessionRecoveryPolicy?:{maxSessions:number,maxStateRows:number,timeoutMs:number},
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
  *          representationProduction?:{policy:object,artifactRoot:string,authorize:Function,resolveEnvironment:Function},
+ *          goalPlanAuthority?:{policy:object,authorize:Function},
  *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
  *          providerGovernance?:object,
@@ -378,6 +380,16 @@ export function createDriver(opts) {
     && (!representationProduction || Object.keys(representationProduction).sort().join(',') !== ['artifactRoot', 'authorize', 'policy', 'resolveEnvironment'].sort().join(',')
       || typeof opts.repoId !== 'string' || representationProduction.policy?.repoId !== opts.repoId)) {
     throw new TypeError('representationProduction must be one closed deployment-repository configuration');
+  }
+  let goalPlanAuthority;
+  if (opts.goalPlanAuthority !== undefined) {
+    if (!opts.goalPlanAuthority || Object.keys(opts.goalPlanAuthority).sort().join(',') !== ['authorize', 'policy'].sort().join(',')
+      || typeof opts.goalPlanAuthority.authorize !== 'function') throw new TypeError('goalPlanAuthority must be one closed deployment-repository configuration');
+    try {
+      const policy = normalizeGoalPlanPolicy(opts.goalPlanAuthority.policy);
+      if (policy.repoId !== deploymentRepoId) throw new TypeError('goalPlanAuthority repository does not match deployment');
+      goalPlanAuthority = Object.freeze({ policy, authorize: opts.goalPlanAuthority.authorize });
+    } catch (error) { throw new TypeError(error?.message ?? 'goalPlanAuthority policy is invalid'); }
   }
   const worktreeCapacityPolicy = opts.worktreeCapacity === undefined ? null : normalizeWorktreeCapacityPolicy(opts.worktreeCapacity);
   if (opts.worktreeCapacityObserve !== undefined && typeof opts.worktreeCapacityObserve !== 'function') throw new TypeError('worktreeCapacityObserve must be a function');
@@ -448,6 +460,7 @@ export function createDriver(opts) {
     ...(providerProcessingPolicy ? { providerAttemptPolicy: providerProcessingPolicy } : {}),
     ...(routeLearningPolicy ? { routePolicy: routeLearningPolicy } : {}),
     ...(representationProduction ? { representationPolicy: representationProduction.policy } : {}),
+    ...(goalPlanAuthority ? { goalPlanPolicy: goalPlanAuthority.policy } : {}),
   });
   if (opts.coordination && advisoryFeedCards.length > 0) {
     if (typeof coordination.advisoryFeedCards !== 'function' || canonicalDigest(coordination.advisoryFeedCards()) !== canonicalDigest(advisoryFeedCards)) throw new TypeError('custom coordination store disagrees with deployment advisory feed cards');
@@ -455,6 +468,7 @@ export function createDriver(opts) {
   if (opts.coordination && providerProcessingPolicy && (typeof coordination.providerAttemptPolicy !== 'function' || canonicalDigest(coordination.providerAttemptPolicy()) !== canonicalDigest(providerProcessingPolicy))) throw new TypeError('custom coordination store disagrees with deployment provider attempt policy');
   if (opts.coordination && routeLearningPolicy && (typeof coordination.routePolicy !== 'function' || typeof coordination.routeObservations !== 'function' || canonicalDigest(coordination.routePolicy()) !== canonicalDigest(routeLearningPolicy))) throw new TypeError('custom coordination store disagrees with deployment route learning policy');
   if (opts.coordination && representationProduction && (typeof coordination.representationPolicy !== 'function' || canonicalDigest(coordination.representationPolicy()) !== canonicalDigest(representationProduction.policy))) throw new TypeError('custom coordination store disagrees with deployment representation policy');
+  if (opts.coordination && goalPlanAuthority && (typeof coordination.goalPlanPolicy !== 'function' || canonicalDigest(coordination.goalPlanPolicy()) !== canonicalDigest(goalPlanAuthority.policy))) throw new TypeError('custom coordination store disagrees with deployment goal/plan policy');
   let writerLease = null;
   try {
   writerLease = coordination.claimWriterLease();
@@ -618,6 +632,7 @@ export function createDriver(opts) {
     ...(providerGovernance ? { providerGovernance: providerGovernance.projection } : {}),
     watchdog: opts.watchdog,
     drainPolicy,
+    ...(goalPlanAuthority ? { goalPlanAuthority } : {}),
   });
 
   let providerPoller = null;

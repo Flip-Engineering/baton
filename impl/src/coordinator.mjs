@@ -14,6 +14,7 @@ import { hasNorthboundCapabilityAuthority } from './northbound-capability-author
 import { processReadyPayload, validProcessClosedPayload, validProcessReadyPayload, validProcessReapUnconfirmedPayload, validProcessStartedPayload } from './process-lifecycle.mjs';
 import { normalizeProviderGovernancePolicy, providerGovernanceRoute, validateProviderGovernanceCard } from './provider-governance.mjs';
 import { normalizePhysicalOwnerId, normalizeSparseCheckoutIdentity, normalizeSparsePaths, sparseCheckoutIdentity } from './worktree.mjs';
+import { GoalPlanValidationError, goalPlanDigest, normalizeGoalPlanContext, semanticBriefCore } from './goal-plan.mjs';
 
 const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
 const WORKTREE_FAILURE = Symbol('worktree-failure');
@@ -154,6 +155,7 @@ const COORDINATION_MUTATORS = new Set([
   'recordReuseRiskGuard', 'recordReuseTtlInvalidation', 'activateReusePolicy', 'recordProviderDelivery', 'recordProviderGreenCompletion', 'recordProviderAdverseCompletion', 'recordProviderSourceReconciliation', 'recordProviderProcessingDeferral',
   'admitFleetDrain', 'recordFleetDrainDisposition', 'completeFleetDrain',
   'recordRepresentationProduction',
+  'defineGoal', 'proposePlan', 'approvePlan', 'createPlanGatedTask',
 ]);
 
 const DEFAULT_DRAIN_POLICY = Object.freeze({ maxWorkers: 1024, maxInteractions: 15_000, timeoutMs: 60_000, pollMs: 10 });
@@ -581,6 +583,19 @@ export class Coordinator {
     this._story = opts.story ?? null;
     this._repoRoot = opts.repoRoot ?? null;
     this._repoId = opts.repoId ?? null;
+    this._goalPlanAuthority = null;
+    if (opts.goalPlanAuthority !== undefined) {
+      const authority = opts.goalPlanAuthority;
+      if (!authority || Object.keys(authority).sort().join(',') !== ['authorize', 'policy'].sort().join(',')
+        || typeof authority.authorize !== 'function' || typeof opts.coordination.goalPlanPolicy !== 'function'
+        || canonicalDigest(opts.coordination.goalPlanPolicy()) !== canonicalDigest(authority.policy)) {
+        throw new TypeError('Goal/Plan authority requires exact deployment policy and authorizer');
+      }
+      for (const method of ['defineGoal', 'proposePlan', 'approvePlan', 'goalPlanStatus', 'previewPlanDispatch', 'createPlanGatedTask']) {
+        if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
+      }
+      this._goalPlanAuthority = Object.freeze({ policy: Object.freeze({ ...authority.policy }), authorize: authority.authorize });
+    }
     this._scratchOraclePolicy = null;
     if (opts.scratchOraclePolicy !== undefined) {
       const policy = opts.scratchOraclePolicy; const fields = ['repoId', 'maxTargetBytes', 'maxConstraints', 'maxConstraintBytes'];
@@ -1744,6 +1759,42 @@ export class Coordinator {
   }
 
   // =========================================================================
+  // First-class Goal/Plan authority
+  // =========================================================================
+
+  async _goalPlanAuth(ctx, power, operation, request) {
+    if (!this._goalPlanAuthority) throw Object.assign(new Error('goal/plan authority is not configured'), { code: 'goal_plan_unavailable' });
+    let normalized;
+    try { normalized = normalizeGoalPlanContext(ctx, this._goalPlanAuthority.policy, power); }
+    catch (error) {
+      if (error instanceof GoalPlanValidationError) throw Object.assign(new Error(error.message), { code: error.code });
+      throw error;
+    }
+    const allowed = await this._goalPlanAuthority.authorize(Object.freeze({ operation, power, principalId: normalized.principalId, repoId: normalized.repoId, runId: normalized.runId, requestDigest: goalPlanDigest(request) }));
+    if (allowed !== true) throw Object.assign(new Error('goal/plan authority denied the operation'), { code: 'goal_plan_unauthorized' });
+    return normalized;
+  }
+
+  defineGoal(fields, ctx) {
+    return this._withAuthorityOp(async () => this._coordination.defineGoal(fields, await this._goalPlanAuth(ctx, 'goal:define', 'goal_define', fields)));
+  }
+
+  proposePlan(fields, ctx) {
+    return this._withAuthorityOp(async () => this._coordination.proposePlan(fields, await this._goalPlanAuth(ctx, 'plan:propose', 'plan_propose', fields)));
+  }
+
+  approvePlan(fields, ctx) {
+    return this._withAuthorityOp(async () => this._coordination.approvePlan(fields, await this._goalPlanAuth(ctx, 'plan:approve', 'plan_approve', fields)));
+  }
+
+  goalPlanStatus(fields, ctx) {
+    return this._withAuthorityOp(async () => {
+      await this._goalPlanAuth(ctx, 'goal:observe', 'goal_plan_status', fields);
+      return this._coordination.goalPlanStatus(fields);
+    });
+  }
+
+  // =========================================================================
   // Command: spawn()
   // =========================================================================
 
@@ -1752,11 +1803,9 @@ export class Coordinator {
   }
 
   async _spawn(vendor, brief, opts = {}) {
-    this.tick();
-
     // CI1: admission is the pinning boundary. Never retain caller-owned mutable state and never
     // allow a malformed raw object to become a task merely because the caller skipped createBrief.
-    const admittedBrief = createBrief(brief);
+    let admittedBrief = null;
     const runId = normalizeRunId(opts.runId);
     const modelPolicy = normalizeModelPolicy(opts.model, opts.modelPolicy, opts.effort);
     const effortRequested = opts.effort ?? modelPolicy?.reasoningEffort ?? null;
@@ -1809,36 +1858,69 @@ export class Coordinator {
       if (this._drainState !== 'open') throw Object.assign(new Error('coordinator admission is draining'), { code: 'coordinator_draining' });
     }
 
-    const deps = opts.deps ? [...opts.deps] : [];
-    this._assertNoCycle(taskId, deps);
-
-    let capacityPrepared = false;
-    if (sessionRequest.mode === 'new' && typeof this._worktrees?.reserveCapacity === 'function') {
-      const prepared = await this._worktrees.reserveCapacity(taskId, worktreeBaseSha);
-      if (prepared?.baseSha) worktreeBaseSha = prepared.baseSha;
-      capacityPrepared = prepared !== null;
-      if (this._drainState !== 'open') {
-        if (capacityPrepared) await Promise.resolve(this._worktrees.releaseCapacity?.(taskId));
-        throw Object.assign(new Error('coordinator admission is draining'), { code: 'coordinator_draining' });
+    const planMandatory = this._goalPlanAuthority?.policy?.mandatory === true;
+    if (planMandatory && !opts.goalPlan) throw Object.assign(new Error('an approved goal/plan node is required'), { code: 'goal_plan_required' });
+    if (opts.goalPlan && !this._goalPlanAuthority) throw Object.assign(new Error('goal/plan authority is not configured'), { code: 'goal_plan_unavailable' });
+    if (opts.goalPlan && vendor === 'auto') throw Object.assign(new Error('plan-gated dispatch requires an exact harness'), { code: 'plan_route_mismatch' });
+    let planAuth = null; let planState = null;
+    const routeBinding = { vendor, model: opts.model ?? null, effort: effortRequested ?? null };
+    if (opts.goalPlan) {
+      planAuth = await this._goalPlanAuth({
+        actor: opts.actor, principalId: opts.principalId, sessionId: opts.sessionId,
+        powers: opts.powers, repoId: this._repoId, runId,
+        idempotencyKey: opts.idempotencyKey ?? `task.created:${taskId}`,
+      }, 'plan:dispatch', 'plan_dispatch', { gate: opts.goalPlan, route: routeBinding, taskId });
+      planState = this._coordination.previewPlanDispatch(opts.goalPlan, routeBinding);
+      if (brief?.goalPlan !== undefined) throw Object.assign(new Error('caller cannot supply authoritative goal/plan Brief coordinates'), { code: 'plan_brief_mismatch' });
+      const supplied = semanticBriefCore(brief);
+      for (const [key, value] of Object.entries(supplied ?? {})) {
+        if (canonicalDigest(value) !== canonicalDigest(planState.brief[key])) throw Object.assign(new Error(`caller Brief field ${key} differs from the approved plan`), { code: 'plan_brief_mismatch' });
       }
+      admittedBrief = createBrief(planState.brief);
+    } else {
+      admittedBrief = createBrief(brief);
     }
 
+    const deps = planState ? [...planState.resolvedDeps] : (opts.deps ? [...opts.deps] : []);
+    if (planState && opts.deps && canonicalDigest([...opts.deps].sort()) !== canonicalDigest(deps)) throw Object.assign(new Error('caller dependencies differ from the approved plan DAG'), { code: 'plan_dependency_mismatch' });
+    this._assertNoCycle(taskId, deps);
+
     const workerId = this._allocWorkerId();
+    const taskFields = () => ({
+      id: taskId, brief: admittedBrief, deps, refines: opts.refines ?? null,
+      runId,
+      taskType: opts.taskType ?? 'general', reservedWorkerId: workerId,
+      vendorRequested: vendor, modelRequested: opts.model ?? null, modelPolicy,
+      effortRequested, effortResolved: null, effortObserved: null, routeKey: null,
+      sessionRequest, ...(worktreeBaseSha ? { worktreeBaseSha } : {}), ...(opts.review ? { review: Object.freeze({ ...opts.review }) } : {}),
+    });
     let coordinationVersion = null;
+    if (planState) {
+      const created = this._coordination.createPlanGatedTask(taskFields(), opts.goalPlan, routeBinding, planAuth);
+      coordinationVersion = created.task.version;
+    }
+
+    let capacityPrepared = false;
     try {
-      if (this._coordination) {
-        const created = this._coordination.createTask({
-        id: taskId, brief: admittedBrief, deps, refines: opts.refines ?? null,
-        runId,
-        taskType: opts.taskType ?? 'general', reservedWorkerId: workerId,
-        vendorRequested: vendor, modelRequested: opts.model ?? null, modelPolicy,
-        effortRequested, effortResolved: null, effortObserved: null, routeKey: null,
-        sessionRequest, ...(worktreeBaseSha ? { worktreeBaseSha } : {}), ...(opts.review ? { review: Object.freeze({ ...opts.review }) } : {}),
-        }, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey ?? `task.created:${taskId}` });
+      if (sessionRequest.mode === 'new' && typeof this._worktrees?.reserveCapacity === 'function') {
+        const prepared = await this._worktrees.reserveCapacity(taskId, worktreeBaseSha);
+        if (prepared?.baseSha) worktreeBaseSha = prepared.baseSha;
+        capacityPrepared = prepared !== null;
+        if (this._drainState !== 'open') {
+          if (capacityPrepared) await Promise.resolve(this._worktrees.releaseCapacity?.(taskId));
+          throw Object.assign(new Error('coordinator admission is draining'), { code: 'coordinator_draining' });
+        }
+      }
+      if (this._coordination && !planState) {
+        const created = this._coordination.createTask(taskFields(), { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey ?? `task.created:${taskId}` });
         coordinationVersion = created.task.version;
       }
     } catch (error) {
       if (capacityPrepared) await Promise.resolve(this._worktrees.releaseCapacity?.(taskId));
+      if (planState) {
+        try { this._coordination.transitionTask(taskId, 'cancelled', 1, { actor: 'policy', key: `task.cancelled:${taskId}:admission` }); }
+        catch (transitionError) { throw this._poisonCoordination(transitionError); }
+      }
       throw error;
     }
     const task = {

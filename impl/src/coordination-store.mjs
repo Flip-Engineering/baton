@@ -1,6 +1,10 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import {
+  GoalPlanValidationError, assertGoalSuccessor, buildAuthoritativeBrief, goalPlanCanonical,
+  goalPlanDigest, normalizeGoalPlanPolicy, normalizeGoalRequest, normalizePlanRequest, semanticBriefCore,
+} from './goal-plan.mjs';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 const TRANSITIONS = new Map([
@@ -200,6 +204,11 @@ export class CoordinationStore {
       if (!validRepresentationPolicy(opts.representationPolicy)) throw new TypeError('representation policy is invalid');
       this._representationPolicy = freeze(clone(opts.representationPolicy));
     }
+    this._goalPlanPolicy = null;
+    if (opts.goalPlanPolicy !== undefined) {
+      try { this._goalPlanPolicy = freeze(clone(normalizeGoalPlanPolicy(opts.goalPlanPolicy))); }
+      catch (error) { throw new TypeError(error?.message ?? 'goal/plan policy is invalid'); }
+    }
     this._resetProjection();
     this._operationalRead = opts.operationalRead ?? null;
     this._writerLease = null;
@@ -213,6 +222,8 @@ export class CoordinationStore {
     this._reuseDecisions = new Map(); this._reuseSubjects = new Map(); this._reuseRiskGuards = new Map(); this._reusePolicyHeads = new Map(); this._reusePolicyTransitions = [];
     this._routeObservations = new Map();
     this._representations = new Map(); this._representationRequests = new Map();
+    this._goals = new Map(); this._goalHeads = new Map(); this._plans = new Map(); this._planHeads = new Map();
+    this._planApprovals = new Map(); this._planDispatches = new Map(); this._planTaskLinks = new Map();
     this._reuseProviderContributions = new Map(); this._reuseProviderCoordinateContributions = new Map(); this._reuseProviderGuards = new Map();
     this._evidence = new Map(); this._scratchFacts = new Map(); this._scratchClaims = new Map(); this._scratchReads = [];
     this._knowledgeNodes = new Map(); this._knowledgeEdges = new Map(); this._knowledgeNodeHistory = new Map(); this._knowledgeEdgeHistory = new Map(); this._knowledgeReads = []; this._knowledgeRecallAssessments = new Map(); this._contamination = [];
@@ -324,6 +335,7 @@ export class CoordinationStore {
       this._apply(event);
     }
       this._validateRecoveryReplayTransactions();
+      this._validateGoalPlanReplayTransactions();
     } finally { this._loading = false; }
   }
 
@@ -349,7 +361,7 @@ export class CoordinationStore {
   _appendBatch(entries, batchKind = null) {
     this._assertWriterLease();
     if (!Array.isArray(entries) || entries.length === 0) throw new TypeError('coordination batch requires entries');
-    if (batchKind !== null && !['recovery_refinement_create_claim', 'recovery_dispatch_refusal'].includes(batchKind)) {
+    if (batchKind !== null && !['recovery_refinement_create_claim', 'recovery_dispatch_refusal', 'goal_plan_node_dispatch'].includes(batchKind)) {
       throw new TypeError('coordination batch kind is invalid');
     }
     const keys = new Set();
@@ -443,6 +455,40 @@ export class CoordinationStore {
           || task?.status !== 'failed' || task?.terminalEvent !== second.seq) {
           fail(`recovery refusal transaction at seq ${first.seq} did not close its exact refinement`);
         }
+      }
+      index += 1;
+    }
+  }
+
+  _goalPlanFailure(message, code, integrity = false) {
+    throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code);
+  }
+
+  _goalScopeKey(repoId, runId) { return `${repoId}\0${runId ?? ''}`; }
+  _goalVersionKey(goalId, version) { return `${goalId}\0${version}`; }
+  _planVersionKey(planId, version) { return `${planId}\0${version}`; }
+  _planHeadKey(goal) { return `${goal.goalId}\0${goal.version}\0${goal.digest}`; }
+  _planNodeKey(planId, version, nodeKey) { return `${planId}\0${version}\0${nodeKey}`; }
+
+  _validateGoalPlanReplayTransactions() {
+    const fail = (message) => this._goalPlanFailure(message, 'goal_plan_batch_integrity', true);
+    for (let index = 0; index < this._events.length; index += 1) {
+      const first = this._events[index];
+      const isDispatch = first.kind === 'plan.node_dispatched' || first.batch?.kind === 'goal_plan_node_dispatch';
+      const isBoundTask = first.kind === 'task.created' && first.payload?.brief?.goalPlan;
+      if (!isDispatch && !isBoundTask) continue;
+      if (first.kind !== 'plan.node_dispatched' || !first.batch || first.batch.schemaVersion !== 1
+        || first.batch.kind !== 'goal_plan_node_dispatch' || first.batch.index !== 0 || first.batch.count !== 2
+        || !/^[a-f0-9]{64}$/.test(first.batch.id ?? '')) fail(`goal/plan dispatch at seq ${first.seq} lacks an exact batch identity`);
+      const second = this._events[index + 1];
+      if (!second || second.kind !== 'task.created' || second.seq !== first.seq + 1 || second.ts !== first.ts
+        || second.actor !== first.actor || second.idempotencyKey !== `${first.idempotencyKey}:task`
+        || !second.batch || second.batch.schemaVersion !== 1 || second.batch.kind !== 'goal_plan_node_dispatch'
+        || second.batch.id !== first.batch.id || second.batch.index !== 1 || second.batch.count !== 2
+        || this._recoveryBatchIdentity('goal_plan_node_dispatch', [first, second]) !== first.batch.id
+        || first.payload.taskId !== second.payload.id || first.payload.taskPayloadDigest !== canonicalDigest(second.payload)
+        || canonicalDigest(first.payload.binding) !== canonicalDigest(second.payload.brief?.goalPlan)) {
+        fail(`goal/plan dispatch at seq ${first.seq} is torn or mismatched`);
       }
       index += 1;
     }
@@ -1882,9 +1928,81 @@ export class CoordinationStore {
     return targets;
   }
 
+  _applyGoalPlanEvent(event) {
+    const p = event.payload;
+    const malformed = (message = 'goal/plan event is malformed') => this._goalPlanFailure(message, 'goal_plan_integrity', true);
+    if (!this._goalPlanPolicy || !p || typeof p !== 'object' || Array.isArray(p) || p.schemaVersion !== 1) malformed();
+    try {
+      if (event.kind === 'goal.version_defined') {
+        if (Object.keys(p).sort().join(',') !== ['goal', 'requestDigest', 'schemaVersion'].sort().join(',') || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '')) malformed();
+        const g = p.goal;
+        if (!g || Object.keys(g).sort().join(',') !== ['budget', 'constraints', 'definedAt', 'definedEvent', 'definitionOfDone', 'digest', 'goalId', 'objective', 'policyDigest', 'predecessor', 'principalId', 'repoId', 'risk', 'runId', 'schemaVersion', 'version'].sort().join(',')) malformed();
+        const normalized = normalizeGoalRequest({ objective: g.objective, definitionOfDone: g.definitionOfDone, constraints: g.constraints, risk: g.risk, budget: g.budget, predecessor: g.predecessor }, this._goalPlanPolicy);
+        const core = { schemaVersion: 1, repoId: g.repoId, runId: g.runId, ...normalized, policyDigest: g.policyDigest };
+        if (g.schemaVersion !== 1 || g.repoId !== this._goalPlanPolicy.repoId || g.policyDigest !== this._goalPlanPolicy.policyDigest
+          || !validRunId(g.principalId) || g.definedEvent !== event.seq || g.definedAt !== event.ts
+          || g.digest !== goalPlanDigest(core) || p.requestDigest !== goalPlanDigest({ principalId: g.principalId, ...core })) malformed();
+        const scopeKey = this._goalScopeKey(g.repoId, g.runId); const head = this._goalHeads.get(scopeKey);
+        if (g.predecessor === null) {
+          if (head || g.version !== 1 || g.goalId !== `goal:${goalPlanDigest({ schemaVersion: 1, repoId: g.repoId, runId: g.runId, firstDigest: g.digest })}`) malformed();
+        } else {
+          if (!head || head.goalId !== g.goalId || head.version !== g.predecessor.version || head.digest !== g.predecessor.digest || g.version !== head.version + 1) malformed();
+          assertGoalSuccessor(this._goals.get(this._goalVersionKey(head.goalId, head.version)), normalized, this._goalPlanPolicy);
+        }
+        const frozen = freeze(clone(g)); this._goals.set(this._goalVersionKey(g.goalId, g.version), frozen); this._goalHeads.set(scopeKey, frozen);
+      } else if (event.kind === 'plan.version_proposed') {
+        if (Object.keys(p).sort().join(',') !== ['plan', 'requestDigest', 'schemaVersion'].sort().join(',') || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '')) malformed();
+        const plan = p.plan;
+        if (!plan || Object.keys(plan).sort().join(',') !== ['digest', 'goal', 'nodes', 'planId', 'policyDigest', 'predecessor', 'proposedAt', 'proposedEvent', 'proposerPrincipalId', 'repoId', 'runId', 'schemaVersion', 'totals', 'version'].sort().join(',')) malformed();
+        const goal = this._goals.get(this._goalVersionKey(plan.goal?.goalId, plan.goal?.version));
+        if (!goal || goal.digest !== plan.goal.digest) malformed();
+        const normalized = normalizePlanRequest({ goal: plan.goal, predecessor: plan.predecessor, nodes: plan.nodes }, this._goalPlanPolicy, goal);
+        const core = { schemaVersion: 1, repoId: plan.repoId, runId: plan.runId, goal: normalized.goal, predecessor: normalized.predecessor, nodes: normalized.nodes, totals: normalized.totals, policyDigest: plan.policyDigest };
+        if (plan.schemaVersion !== 1 || plan.repoId !== goal.repoId || plan.runId !== goal.runId || plan.policyDigest !== this._goalPlanPolicy.policyDigest
+          || !validRunId(plan.proposerPrincipalId) || plan.proposedEvent !== event.seq || plan.proposedAt !== event.ts
+          || plan.digest !== goalPlanDigest(core) || p.requestDigest !== goalPlanDigest({ proposerPrincipalId: plan.proposerPrincipalId, ...core })) malformed();
+        const headKey = this._planHeadKey(plan.goal); const head = this._planHeads.get(headKey);
+        if (plan.predecessor === null) {
+          if (head || plan.version !== 1 || plan.planId !== `plan:${goalPlanDigest({ schemaVersion: 1, goal: plan.goal, firstDigest: plan.digest })}`) malformed();
+        } else if (!head || head.planId !== plan.planId || head.version !== plan.predecessor.version || head.digest !== plan.predecessor.digest || plan.version !== head.version + 1) malformed();
+        const frozen = freeze(clone(plan)); this._plans.set(this._planVersionKey(plan.planId, plan.version), frozen); this._planHeads.set(headKey, frozen);
+      } else if (event.kind === 'plan.approval_decided') {
+        if (Object.keys(p).sort().join(',') !== ['approval', 'requestDigest', 'schemaVersion'].sort().join(',') || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '')) malformed();
+        const approval = p.approval;
+        if (!approval || Object.keys(approval).sort().join(',') !== ['decidedAt', 'decidedEvent', 'digest', 'disposition', 'goal', 'plan', 'policyDigest', 'principalId', 'schemaVersion', 'sessionDigest'].sort().join(',')) malformed();
+        const plan = this._plans.get(this._planVersionKey(approval.plan?.planId, approval.plan?.version));
+        if (!plan || plan.digest !== approval.plan.digest || goalPlanDigest(plan.goal) !== goalPlanDigest(approval.goal)
+          || plan.proposerPrincipalId === approval.principalId || !['approved', 'rejected'].includes(approval.disposition)
+          || approval.policyDigest !== this._goalPlanPolicy.policyDigest || approval.decidedEvent !== event.seq || approval.decidedAt !== event.ts
+          || !/^[a-f0-9]{64}$/.test(approval.sessionDigest ?? '') || !validRunId(approval.principalId)) malformed();
+        const core = Object.fromEntries(Object.entries(approval).filter(([key]) => !['digest', 'decidedEvent', 'decidedAt'].includes(key)));
+        if (approval.digest !== goalPlanDigest(core) || p.requestDigest !== goalPlanDigest({ principalId: approval.principalId, sessionDigest: approval.sessionDigest, goal: approval.goal, plan: approval.plan, disposition: approval.disposition, expectedDisposition: null })) malformed();
+        const key = this._planVersionKey(plan.planId, plan.version); if (this._planApprovals.has(key)) malformed(); this._planApprovals.set(key, freeze(clone(approval)));
+      } else if (event.kind === 'plan.node_dispatched') {
+        if (Object.keys(p).sort().join(',') !== ['binding', 'capabilities', 'effects', 'expectedDispatchVersion', 'newDispatchVersion', 'nodeBudget', 'requestDigest', 'resolvedDeps', 'route', 'schemaVersion', 'taskId', 'taskPayloadDigest'].sort().join(',')
+          || p.schemaVersion !== 1 || p.expectedDispatchVersion !== 0 || p.newDispatchVersion !== 1 || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.taskPayloadDigest ?? '')) malformed();
+        const binding = p.binding; const plan = this._plans.get(this._planVersionKey(binding?.planId, binding?.planVersion));
+        const goal = this._goals.get(this._goalVersionKey(binding?.goalId, binding?.goalVersion));
+        const node = plan?.nodes.find((row) => row.key === binding?.nodeKey);
+        if (!plan || !goal || !node || plan.digest !== binding.planDigest || goal.digest !== binding.goalDigest
+          || canonicalDigest(node.budget) !== canonicalDigest(p.nodeBudget)
+          || canonicalDigest(node.capabilities) !== canonicalDigest(p.capabilities)
+          || canonicalDigest(node.effects) !== canonicalDigest(p.effects)) malformed();
+        const key = this._planNodeKey(plan.planId, plan.version, node.key); if (this._planDispatches.has(key) || this._planTaskLinks.has(p.taskId)) malformed();
+        const record = freeze({ ...clone(p), eventSeq: event.seq, dispatchedAt: event.ts, state: 'dispatched' }); this._planDispatches.set(key, record); this._planTaskLinks.set(p.taskId, record);
+      }
+    } catch (error) {
+      if (error instanceof CoordinationIntegrityError) throw error;
+      if (error instanceof GoalPlanValidationError) malformed(error.message);
+      throw error;
+    }
+  }
+
   _apply(event) {
     const p = event.payload;
-    if (event.kind === 'provider.processing_deferred') {
+    if (['goal.version_defined', 'plan.version_proposed', 'plan.approval_decided', 'plan.node_dispatched'].includes(event.kind)) {
+      this._applyGoalPlanEvent(event);
+    } else if (event.kind === 'provider.processing_deferred') {
       const processing = this._validateProviderDeferralPayload(p, event, true); this._providerProcessing.set(p.processingId, freeze({ ...clone(processing), attemptCount: p.attempt, lastAttemptEvent: event.seq, lastFailureCode: p.failureCode, nextAttemptAt: p.nextAttemptAt }));
     } else if (event.kind === 'provider.reconciliation_completed') {
       const { sourceKey, health } = this._validateProviderReconciliationPayload(p, event, true);
@@ -2355,6 +2473,202 @@ export class CoordinationStore {
   run(id) { return clone(this._runs.get(id) ?? null); }
   routePolicy() { return clone(this._routePolicy); }
   representationPolicy() { return clone(this._representationPolicy); }
+  goalPlanPolicy() { return clone(this._goalPlanPolicy); }
+  goalVersion(goalId, version) { return clone(this._goals.get(this._goalVersionKey(goalId, version)) ?? null); }
+  planVersion(planId, version) { return clone(this._plans.get(this._planVersionKey(planId, version)) ?? null); }
+
+  defineGoal(fields, auth) {
+    if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
+    let request;
+    try { request = normalizeGoalRequest(fields, this._goalPlanPolicy); }
+    catch (error) {
+      if (error instanceof GoalPlanValidationError) {
+        const code = fields?.predecessor && error.message === 'definitionOfDone is invalid' ? 'goal_weakened' : error.code;
+        throw new CoordinationRefusal(error.message, code);
+      }
+      throw error;
+    }
+    const coreBase = { schemaVersion: 1, repoId: auth.repoId, runId: auth.runId ?? null, ...request, policyDigest: this._goalPlanPolicy.policyDigest };
+    const requestDigest = goalPlanDigest({ principalId: auth.principalId, ...coreBase });
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      if (prior.kind !== 'goal.version_defined' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('goal idempotency key is bound differently', 'goal_conflict');
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), goal: clone(prior.payload.goal) });
+    }
+    const scopeKey = this._goalScopeKey(auth.repoId, auth.runId ?? null); const head = this._goalHeads.get(scopeKey);
+    if (request.predecessor === null && head) throw new CoordinationRefusal('goal predecessor is required', 'goal_predecessor_required');
+    if (request.predecessor !== null && (!head || head.goalId !== request.predecessor.goalId || head.version !== request.predecessor.version || head.digest !== request.predecessor.digest)) throw new CoordinationRefusal('goal predecessor is stale', 'goal_stale');
+    if ((head?.version ?? 0) >= this._goalPlanPolicy.limits.maxGoalVersions) throw new CoordinationRefusal('goal version ceiling reached', 'goal_version_limit');
+    if (head) {
+      try { assertGoalSuccessor(head, request, this._goalPlanPolicy); }
+      catch (error) { if (error instanceof GoalPlanValidationError) throw new CoordinationRefusal(error.message, error.code); throw error; }
+    }
+    const version = (head?.version ?? 0) + 1; const digestValue = goalPlanDigest(coreBase);
+    const goalId = head?.goalId ?? `goal:${goalPlanDigest({ schemaVersion: 1, repoId: auth.repoId, runId: auth.runId ?? null, firstDigest: digestValue })}`;
+    const fixedTs = this._clock(); const goal = {
+      schemaVersion: 1, goalId, version, digest: digestValue, repoId: auth.repoId, runId: auth.runId ?? null,
+      objective: request.objective, definitionOfDone: request.definitionOfDone, constraints: request.constraints,
+      risk: request.risk, budget: request.budget, predecessor: request.predecessor,
+      policyDigest: this._goalPlanPolicy.policyDigest, principalId: auth.principalId,
+      definedEvent: this._events.length + 1, definedAt: fixedTs,
+    };
+    const event = this._append('goal.version_defined', { schemaVersion: 1, requestDigest, goal }, { actor: auth.actor, key: auth.key }, fixedTs);
+    return freeze({ ok: true, result: 'defined', event: clone(event), goal: clone(goal) });
+  }
+
+  proposePlan(fields, auth) {
+    if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
+    const goal = this._goals.get(this._goalVersionKey(fields?.goal?.goalId, fields?.goal?.version));
+    if (!goal || goal.digest !== fields?.goal?.digest || goal.repoId !== auth.repoId || goal.runId !== (auth.runId ?? null)) throw new CoordinationRefusal('plan goal is unavailable', 'goal_stale');
+    let request;
+    try { request = normalizePlanRequest(fields, this._goalPlanPolicy, goal); }
+    catch (error) { if (error instanceof GoalPlanValidationError) throw new CoordinationRefusal(error.message, error.code); throw error; }
+    const coreBase = { schemaVersion: 1, repoId: auth.repoId, runId: auth.runId ?? null, goal: request.goal, predecessor: request.predecessor, nodes: request.nodes, totals: request.totals, policyDigest: this._goalPlanPolicy.policyDigest };
+    const requestDigest = goalPlanDigest({ proposerPrincipalId: auth.principalId, ...coreBase });
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      if (prior.kind !== 'plan.version_proposed' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('plan idempotency key is bound differently', 'plan_conflict');
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), plan: clone(prior.payload.plan) });
+    }
+    const headKey = this._planHeadKey(request.goal); const head = this._planHeads.get(headKey);
+    if (request.predecessor === null && head) throw new CoordinationRefusal('plan predecessor is required', 'plan_predecessor_required');
+    if (request.predecessor !== null && (!head || head.planId !== request.predecessor.planId || head.version !== request.predecessor.version || head.digest !== request.predecessor.digest)) throw new CoordinationRefusal('plan predecessor is stale', 'plan_stale');
+    if ((head?.version ?? 0) >= this._goalPlanPolicy.limits.maxPlanVersions) throw new CoordinationRefusal('plan version ceiling reached', 'plan_version_limit');
+    const version = (head?.version ?? 0) + 1; const digestValue = goalPlanDigest(coreBase);
+    const planId = head?.planId ?? `plan:${goalPlanDigest({ schemaVersion: 1, goal: request.goal, firstDigest: digestValue })}`;
+    const fixedTs = this._clock(); const plan = {
+      schemaVersion: 1, planId, version, digest: digestValue, repoId: auth.repoId, runId: auth.runId ?? null,
+      goal: request.goal, predecessor: request.predecessor, nodes: request.nodes, totals: request.totals,
+      policyDigest: this._goalPlanPolicy.policyDigest, proposerPrincipalId: auth.principalId,
+      proposedEvent: this._events.length + 1, proposedAt: fixedTs,
+    };
+    const event = this._append('plan.version_proposed', { schemaVersion: 1, requestDigest, plan }, { actor: auth.actor, key: auth.key }, fixedTs);
+    return freeze({ ok: true, result: 'proposed', event: clone(event), plan: clone(plan) });
+  }
+
+  approvePlan(fields, auth) {
+    if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
+    const expectedFields = ['goal', 'plan', 'expectedDisposition', 'disposition'];
+    if (!fields || Object.keys(fields).sort().join(',') !== expectedFields.sort().join(',') || fields.expectedDisposition !== null || !['approved', 'rejected'].includes(fields.disposition)) throw new CoordinationRefusal('plan approval request is invalid', 'plan_approval_invalid');
+    const plan = this._plans.get(this._planVersionKey(fields.plan?.planId, fields.plan?.version));
+    const goal = this._goals.get(this._goalVersionKey(fields.goal?.goalId, fields.goal?.version));
+    if (!plan || !goal || plan.digest !== fields.plan?.digest || goal.digest !== fields.goal?.digest || goalPlanDigest(plan.goal) !== goalPlanDigest(fields.goal)
+      || plan.repoId !== auth.repoId || plan.runId !== (auth.runId ?? null)) throw new CoordinationRefusal('plan approval target is stale', 'plan_stale');
+    const requestDigest = goalPlanDigest({ principalId: auth.principalId, sessionDigest: auth.sessionDigest, goal: fields.goal, plan: fields.plan, disposition: fields.disposition, expectedDisposition: null });
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      if (prior.kind !== 'plan.approval_decided' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('approval idempotency key is bound differently', 'plan_approval_conflict');
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), approval: clone(prior.payload.approval) });
+    }
+    if (plan.proposerPrincipalId === auth.principalId) throw new CoordinationRefusal('a plan proposer cannot approve the same version', 'plan_self_approval');
+    const approvalKey = this._planVersionKey(plan.planId, plan.version);
+    if (this._planApprovals.has(approvalKey)) throw new CoordinationRefusal('plan disposition is already decided', 'plan_approval_stale');
+    const fixedTs = this._clock(); const core = {
+      schemaVersion: 1, goal: clone(fields.goal), plan: clone(fields.plan), disposition: fields.disposition,
+      policyDigest: this._goalPlanPolicy.policyDigest, principalId: auth.principalId, sessionDigest: auth.sessionDigest,
+    };
+    const approval = { ...core, digest: goalPlanDigest(core), decidedEvent: this._events.length + 1, decidedAt: fixedTs };
+    const event = this._append('plan.approval_decided', { schemaVersion: 1, requestDigest, approval }, { actor: auth.actor, key: auth.key }, fixedTs);
+    return freeze({ ok: true, result: 'decided', event: clone(event), approval: clone(approval) });
+  }
+
+  _planDispatchState(gate, route) {
+    const fields = ['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'expectedDispatchVersion', 'capabilities', 'effects'];
+    if (!gate || typeof gate !== 'object' || Array.isArray(gate) || Object.keys(gate).sort().join(',') !== fields.sort().join(',')
+      || gate.expectedDispatchVersion !== 0 || !route || Object.keys(route).sort().join(',') !== ['effort', 'model', 'vendor'].sort().join(',')) throw new CoordinationRefusal('plan dispatch coordinates are invalid', 'plan_dispatch_invalid');
+    const goal = this._goals.get(this._goalVersionKey(gate.goalId, gate.goalVersion)); const plan = this._plans.get(this._planVersionKey(gate.planId, gate.planVersion));
+    if (!goal || !plan || goal.digest !== gate.goalDigest || plan.digest !== gate.planDigest || plan.goal.goalId !== goal.goalId || plan.goal.version !== goal.version || plan.goal.digest !== goal.digest) throw new CoordinationRefusal('plan dispatch coordinates are stale', 'plan_stale');
+    const goalHead = this._goalHeads.get(this._goalScopeKey(goal.repoId, goal.runId)); const planHead = this._planHeads.get(this._planHeadKey(plan.goal));
+    if (goalHead?.goalId !== goal.goalId || goalHead.version !== goal.version || goalHead.digest !== goal.digest
+      || planHead?.planId !== plan.planId || planHead.version !== plan.version || planHead.digest !== plan.digest) throw new CoordinationRefusal('plan dispatch coordinates are superseded', 'plan_stale');
+    const approval = this._planApprovals.get(this._planVersionKey(plan.planId, plan.version));
+    if (!approval || approval.disposition !== 'approved' || approval.policyDigest !== this._goalPlanPolicy.policyDigest) throw new CoordinationRefusal('plan is not currently approved', 'plan_not_approved');
+    if (Date.parse(this._clock()) - Date.parse(approval.decidedAt) > this._goalPlanPolicy.approvalTtlMs) throw new CoordinationRefusal('plan approval expired', 'plan_approval_expired');
+    const node = plan.nodes.find((row) => row.key === gate.nodeKey); if (!node) throw new CoordinationRefusal('plan node is unavailable', 'plan_node_not_found');
+    const dispatchKey = this._planNodeKey(plan.planId, plan.version, node.key);
+    if (this._planDispatches.has(dispatchKey)) throw new CoordinationRefusal('plan node dispatch version is stale', 'plan_dispatch_stale');
+    const capabilities = [...gate.capabilities].sort(); const effects = [...gate.effects].sort();
+    if (canonicalDigest(capabilities) !== canonicalDigest(node.capabilities) || canonicalDigest(effects) !== canonicalDigest(node.effects)) throw new CoordinationRefusal('plan node capabilities/effects changed', 'plan_effect_mismatch');
+    if ((node.routes.harnesses.length > 0 && !node.routes.harnesses.includes(route.vendor))
+      || (node.routes.models.length > 0 && !node.routes.models.includes(route.model))
+      || (node.routes.efforts.length > 0 && !node.routes.efforts.includes(route.effort))) throw new CoordinationRefusal('requested route is outside the approved plan node', 'plan_route_mismatch');
+    const resolvedDeps = [];
+    for (const depKey of node.deps) {
+      const dep = this._planDispatches.get(this._planNodeKey(plan.planId, plan.version, depKey)); const task = dep ? this._tasks.get(dep.taskId) : null;
+      if (!dep || !task || task.status !== 'completed' || task.acceptanceRevocation) throw new CoordinationRefusal('plan node dependency is not durably accepted', 'plan_dependency_incomplete');
+      resolvedDeps.push(task.id);
+    }
+    const binding = {
+      schemaVersion: 1, goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest,
+      planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, nodeKey: node.key,
+      approvalDigest: approval.digest, policyDigest: this._goalPlanPolicy.policyDigest, dispatchVersion: 1,
+    };
+    return freeze({ goal: clone(goal), plan: clone(plan), node: clone(node), approval: clone(approval), binding, resolvedDeps: resolvedDeps.sort(), brief: buildAuthoritativeBrief(goal, plan, node, binding) });
+  }
+
+  previewPlanDispatch(gate, route) { return this._planDispatchState(gate, route); }
+
+  createPlanGatedTask(fields, gate, route, auth) {
+    if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
+    const requestDigest = goalPlanDigest({ principalId: auth.principalId, gate, route, task: fields }); const prior = this._byKey.get(auth.key);
+    if (prior) {
+      const second = this._events[prior.seq];
+      if (prior.kind !== 'plan.node_dispatched' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest
+        || second?.kind !== 'task.created' || second.batch?.id !== prior.batch?.id) throw new CoordinationRefusal('plan dispatch idempotency key is bound differently', 'plan_dispatch_conflict');
+      return freeze({ ok: true, result: 'idempotent', dispatchEvent: clone(prior), taskEvent: clone(second), task: this.task(second.payload.id), dispatch: clone(prior.payload) });
+    }
+    const state = this._planDispatchState(gate, route);
+    if (this._tasks.has(fields?.id)) throw new CoordinationRefusal('plan task id already exists', 'duplicate_task');
+    if (canonicalDigest(semanticBriefCore(fields?.brief)) !== canonicalDigest(semanticBriefCore(state.brief))
+      || canonicalDigest(fields?.brief?.goalPlan) !== canonicalDigest(state.binding)
+      || canonicalDigest(fields?.brief?.capabilities) !== canonicalDigest(state.node.capabilities)
+      || canonicalDigest(fields?.brief?.effects) !== canonicalDigest(state.node.effects)
+      || fields?.brief?.providerTurns !== state.node.budget.providerTurns) throw new CoordinationRefusal('task Brief differs from the approved authoritative Brief', 'plan_brief_mismatch');
+    if (canonicalDigest(fields?.deps ?? []) !== canonicalDigest(state.resolvedDeps)) throw new CoordinationRefusal('task dependencies differ from the plan DAG', 'plan_dependency_mismatch');
+    if (fields?.runId !== state.goal.runId || fields?.vendorRequested !== route.vendor || (fields?.modelRequested ?? null) !== route.model || (fields?.effortRequested ?? null) !== route.effort) throw new CoordinationRefusal('task route differs from the plan dispatch', 'plan_route_mismatch');
+    const taskPayload = clone(fields); const dispatchPayload = {
+      schemaVersion: 1, requestDigest, binding: clone(state.binding), taskId: taskPayload.id,
+      taskPayloadDigest: canonicalDigest(taskPayload), expectedDispatchVersion: 0, newDispatchVersion: 1,
+      resolvedDeps: clone(state.resolvedDeps), nodeBudget: clone(state.node.budget),
+      route: clone(route), capabilities: clone(state.node.capabilities), effects: clone(state.node.effects),
+    };
+    const fixedTs = this._clock(); const [dispatchEvent, taskEvent] = this._appendBatch([
+      { kind: 'plan.node_dispatched', payload: dispatchPayload, auth: { actor: auth.actor, key: auth.key }, fixedTs },
+      { kind: 'task.created', payload: taskPayload, auth: { actor: auth.actor, key: `${auth.key}:task` }, fixedTs },
+    ], 'goal_plan_node_dispatch');
+    return freeze({ ok: true, result: 'created', dispatchEvent: clone(dispatchEvent), taskEvent: clone(taskEvent), task: this.task(taskPayload.id), dispatch: clone(dispatchPayload) });
+  }
+
+  goalPlanStatus(fields) {
+    if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
+    if (!fields || Object.keys(fields).sort().join(',') !== ['goalId', 'planId', 'throughSeq'].sort().join(',')
+      || typeof fields.goalId !== 'string' || typeof fields.planId !== 'string'
+      || (fields.throughSeq !== null && (!Number.isSafeInteger(fields.throughSeq) || fields.throughSeq < 0 || fields.throughSeq > this._events.length))) throw new CoordinationRefusal('goal/plan status query is invalid', 'goal_plan_status_invalid');
+    const throughSeq = fields.throughSeq ?? this._events.length;
+    const relevant = this._events.filter((event) => event.seq <= throughSeq);
+    const goalEvent = [...relevant].reverse().find((event) => event.kind === 'goal.version_defined' && event.payload.goal.goalId === fields.goalId);
+    const planEvent = [...relevant].reverse().find((event) => event.kind === 'plan.version_proposed' && event.payload.plan.planId === fields.planId);
+    if (!goalEvent || !planEvent || planEvent.payload.plan.goal.goalId !== fields.goalId) throw new CoordinationRefusal('goal/plan status target is unavailable', 'not_found');
+    const goal = clone(goalEvent.payload.goal); const plan = clone(planEvent.payload.plan);
+    const approvalEvent = [...relevant].reverse().find((event) => event.kind === 'plan.approval_decided' && event.payload.approval.plan.planId === plan.planId && event.payload.approval.plan.version === plan.version);
+    const taskStates = new Map();
+    for (const event of relevant) {
+      if (event.kind === 'task.created') taskStates.set(event.payload.id, { status: 'pending', terminalEvent: null, acceptanceRevocation: false });
+      else if (event.kind === 'task.claimed' && taskStates.has(event.payload.id)) taskStates.get(event.payload.id).status = 'working';
+      else if (event.kind === 'task.transitioned' && taskStates.has(event.payload.id)) { const row = taskStates.get(event.payload.id); row.status = event.payload.to; if (TERMINAL.has(event.payload.to)) row.terminalEvent = event.seq; }
+      else if (event.kind === 'task.acceptance_revoked' && taskStates.has(event.payload.taskId)) { const row = taskStates.get(event.payload.taskId); row.status = 'failed'; row.acceptanceRevocation = true; row.terminalEvent = event.seq; }
+    }
+    const dispatches = new Map(relevant.filter((event) => event.kind === 'plan.node_dispatched' && event.payload.binding.planId === plan.planId && event.payload.binding.planVersion === plan.version).map((event) => [event.payload.binding.nodeKey, { event, task: taskStates.get(event.payload.taskId) }]));
+    const nodes = plan.nodes.map((node) => {
+      const dispatched = dispatches.get(node.key); let state = 'blocked';
+      if (dispatched) state = dispatched.task?.status === 'completed' && !dispatched.task.acceptanceRevocation ? 'accepted' : (['failed', 'cancelled'].includes(dispatched.task?.status) ? dispatched.task.status : 'dispatched');
+      else if (node.deps.every((dep) => dispatches.get(dep)?.task?.status === 'completed' && !dispatches.get(dep).task.acceptanceRevocation)) state = 'ready';
+      return { key: node.key, deps: clone(node.deps), state, dispatchVersion: dispatched ? 1 : 0, taskId: dispatched?.event.payload.taskId ?? null, terminalEvent: dispatched?.task?.terminalEvent ?? null, budget: { initial: clone(node.budget), reserved: dispatched ? clone(node.budget) : { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 }, consumed: { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 }, released: { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 } } };
+    });
+    const status = { coordinationUpperBound: throughSeq, goal, plan, approval: approvalEvent ? clone(approvalEvent.payload.approval) : null, nodes };
+    if (Buffer.byteLength(JSON.stringify(goalPlanCanonical(status))) > this._goalPlanPolicy.limits.maxStatusBytes) throw new CoordinationRefusal('goal/plan status exceeds deployment ceiling', 'goal_plan_status_oversize');
+    return freeze(status);
+  }
   routeObservations() { return [...this._routeObservations.values()].sort((a, b) => a.eventSeq - b.eventSeq).map(clone); }
   recoveryDispatchState(workerId) { return clone(this._recoveryDispatches.get(workerId) ?? null); }
   representationProduction(identityDigest) { return clone(this._representations.get(identityDigest) ?? null); }
@@ -2473,7 +2787,7 @@ export class CoordinationStore {
     }
     return freeze({ ok: true, projection: clone(representation), grounding: 'derived' });
   }
-  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
+  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._goalPlanPolicy || this._goals.size > 0 ? { goalPlan: { goals: [...this._goals.values()].map(clone), plans: [...this._plans.values()].map(clone), approvals: [...this._planApprovals.values()].map(clone), dispatches: [...this._planDispatches.values()].map(clone) } } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
   healthCheck() { try { if (!existsSync(this.file)) return this._events.length === 0; const raw = readFileSync(this.file, 'utf8'); return raw.length === 0 || raw.endsWith('\n'); } catch { return false; } }
   readyTasks() {
     return [...this._tasks.values()].filter((task) => task.status === 'pending' && task.assignee == null
@@ -2603,6 +2917,12 @@ export class CoordinationStore {
   createTask(fields, auth) {
     if (fields?.relation === 'recovery') {
       throw new CoordinationRefusal('recovery relation requires the dedicated atomic refinement API', 'recovery_refinement_api_required');
+    }
+    if (fields?.brief?.goalPlan) {
+      throw new CoordinationRefusal('plan-bound tasks require the dedicated atomic dispatch API', 'goal_plan_dispatch_api_required');
+    }
+    if (this._goalPlanPolicy?.mandatory) {
+      throw new CoordinationRefusal('an approved goal/plan node is required', 'goal_plan_required');
     }
     const prior = this._byKey.get(auth?.key);
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), task: this.task(prior.payload.id) };
