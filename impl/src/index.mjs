@@ -6,6 +6,7 @@
 
 import { join, basename, sep } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, realpathSync, rmSync } from 'node:fs';
 
 import { Log } from './log.mjs';
@@ -19,6 +20,9 @@ import { RuntimeIsolation } from './runtime-isolation.mjs';
 import { CoordinationStore } from './coordination-store.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
 import { CapabilityRegistry } from './capability-registry.mjs';
+
+const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
+const canonicalDigest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 
 export { Coordinator, ModelSelectionError, SessionSelectionError, IntegrationError, ReviewSelectionError, PublicationError } from './coordinator.mjs';
 export { MockAdapter, CodexAdapter, ClaudeAdapter, GlmAdapter } from './adapter.mjs';
@@ -155,7 +159,7 @@ function refereeFn(task, result, opts) {
  *          approvalTimeoutMs?:number, stopDeadlineMs?:number,
  *          capabilities?:Record<string,object>, capabilityFactories?:Record<string,Function>, capabilityContexts?:Record<string,object|Function>,
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
- *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number},
+ *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
  *          workerDependencyDirs?:string[], verifyDependencyDirs?:string[], verifySparsePaths?:string[]}} opts
  * @returns {{coordinator:Coordinator, story:StoryCompiler, router:AdaptiveRouter, log:Log, coordination:CoordinationStore}}
@@ -175,6 +179,9 @@ export function createDriver(opts) {
     operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
     clock: () => new Date(now()).toISOString(),
   });
+  let writerLease = null;
+  try {
+  writerLease = coordination.claimWriterLease();
   const configuredCapabilities = { ...(opts.capabilities ?? {}) };
   for (const [name, factory] of Object.entries(opts.capabilityFactories ?? {})) {
     if (Object.hasOwn(configuredCapabilities, name)) throw new TypeError(`duplicate capability registration: ${name}`);
@@ -196,6 +203,17 @@ export function createDriver(opts) {
       coordination.mapOperationalEvent(logged, { actor: event.actor, key: `evidence:${logged.worker}:${logged.seq}` });
     },
   });
+  if (opts.reuseDecisionPolicy !== undefined) {
+    const card = capabilities.cards().find((item) => item.name === 'cartographer-quartermaster'); const policy = card?.reusePolicy; const ceilings = opts.reuseDecisionPolicy.policyReconcile;
+    if (!policy || Object.keys(policy).sort().join(',') !== ['schemaVersion', 'policyId', 'hash', 'projection'].sort().join(',') || policy.schemaVersion !== 1 || policy.policyId !== 'quartermaster-vet-policy-v1' || !/^[a-f0-9]{64}$/.test(policy.hash ?? '') || canonicalDigest(policy.projection) !== policy.hash) throw new TypeError('reuse decision authority requires a valid Quartermaster policy card');
+    if (!ceilings || Object.keys(ceilings).sort().join(',') !== ['maxDecisionTargets', 'maxGuardTargets', 'maxAffectedReads', 'maxStateRows', 'maxObservedPolicyHashes', 'maxEventBytes'].sort().join(',') || Object.values(ceilings).some((value) => !Number.isSafeInteger(value) || value <= 0)) throw new TypeError('reuse decision authority requires policy reconciliation ceilings');
+    const runtimePolicy = configuredCapabilities['cartographer-quartermaster'];
+    if (!runtimePolicy || runtimePolicy.vetPolicyHash !== policy.hash || canonicalDigest(runtimePolicy.vetPolicy) !== policy.hash) throw new TypeError('Quartermaster policy card disagrees with its immutable runtime policy');
+    const head = coordination.reusePolicyState(opts.repoId); const expectedVersion = head?.version ?? 0;
+    const activated = coordination.activateReusePolicy({ repoId: opts.repoId, policy, policyCardDigest: canonicalDigest(policy), ceilings }, { actor: 'policy:deployment', key: `reuse-policy:${opts.repoId}:${expectedVersion}:${policy.hash}` });
+    const requiredVersion = head?.policyHash === policy.hash && head?.policyCardDigest === canonicalDigest(policy) ? expectedVersion : expectedVersion + 1;
+    if (activated?.head?.policyHash !== policy.hash || activated.head.policyCardDigest !== canonicalDigest(policy) || activated.head.version !== requiredVersion) throw Object.assign(new Error('reuse policy activation did not establish the deployment policy'), { code: 'reuse_policy_integrity' });
+  }
   const publisher = Object.hasOwn(opts, 'publisher') ? opts.publisher : async ({ remote, ref, sha }) => {
     execFileSync('git', ['push', '--porcelain', remote, `${sha}:${ref}`], { cwd: opts.repoRoot, stdio: 'ignore' });
     return { transport: 'git-push' };
@@ -280,5 +298,7 @@ export function createDriver(opts) {
     watchdog: opts.watchdog,
   });
 
-  return { coordinator, story, router, log, coordination };
+  let closed = false;
+  return { coordinator, story, router, log, coordination, close: () => { if (closed) return false; coordinator.closeAuthority(); closed = true; return coordination.releaseWriterLease(); } };
+  } catch (error) { if (writerLease) coordination.releaseWriterLease(); throw error; }
 }

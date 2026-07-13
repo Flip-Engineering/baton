@@ -38,7 +38,7 @@ async function fixture() {
   const driver = createDriver({ repoRoot, repoId: 'repo-a', logDir, adapters: {}, now,
     capabilityFactories: { 'cartographer-quartermaster': () => capability }, capabilityContexts: { 'cartographer-quartermaster': { worktreeRoot: repoRoot } },
     maxCapabilityBudgetTokens: 10_000, maxCapabilityEnvelopeBytes: 256 * 1024,
-    reuseDecisionPolicy: { authorize: ({ actor }) => /^operator:/.test(actor), authorizeRecheck: ({ actor }) => /^operator:/.test(actor), maxNeedBytes: 2_048, maxRationaleBytes: 8_192 },
+    reuseDecisionPolicy: { authorize: ({ actor }) => /^operator:/.test(actor), authorizeRecheck: ({ actor }) => /^operator:/.test(actor), maxNeedBytes: 2_048, maxRationaleBytes: 8_192, policyReconcile: { maxDecisionTargets: 64, maxGuardTargets: 64, maxAffectedReads: 256, maxStateRows: 10_000, maxObservedPolicyHashes: 64, maxEventBytes: 512 * 1024 } },
   });
   const dossierArgs = { indexEpoch: built.provenance.index_epoch, ecosystem: 'npm', package: '@scope/safe-pkg', version: '1.2.3' };
   const sbomArgs = { lockfilePath: 'package-lock.json' }; const ctx = { actor: 'operator:alice', repoId: 'repo-a', budgetTokens: 10_000, idempotencyKey: 'reuse:first' };

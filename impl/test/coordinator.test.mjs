@@ -1668,9 +1668,10 @@ test('at-least-once wait() (D11): a digest not yet followed by a subsequent wait
   const fences1 = new FenceTable();
   const adapter1 = new ScriptableAdapter();
   const worktrees1 = new SpyWorktreeManager();
+  const coordination1 = coordinationForLog(log1);
   const coordinator1 = new Coordinator({
     log: log1,
-    coordination: coordinationForLog(log1),
+    coordination: coordination1,
     fences: fences1,
     adapters: { mock: adapter1 },
     worktrees: worktrees1,
@@ -1689,10 +1690,11 @@ test('at-least-once wait() (D11): a digest not yet followed by a subsequent wait
     `D11 pins the cursor floor at ${cursorFloorPath}; a future refactor must not silently move it`
   );
 
-  // Simulate a crash: a brand-new Coordinator/Log/Cursor stack pointed at the same on-disk
+  // Simulate a restart after an explicit writer handoff: a brand-new Coordinator/Log/Cursor stack pointed at the same on-disk
   // log directory, with NO further wait() ever having been called to ack the digest above.
   // Constructed the NORMAL way (D10): no manual fences.register() — replay from the log
   // directory alone must recover the worker that coordinator1 spawned.
+  coordination1.releaseWriterLease();
   const log2 = new Log(logDir);
   const fences2 = new FenceTable();
   const worktrees2 = new SpyWorktreeManager();

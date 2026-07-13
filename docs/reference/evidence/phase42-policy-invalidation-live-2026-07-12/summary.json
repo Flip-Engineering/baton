@@ -1,0 +1,64 @@
+{
+  "at": "2026-07-13T01:03:38.876Z",
+  "scope": {
+    "repository": "isolated temporary Git fixture",
+    "oracle": "injected deterministic mock",
+    "nativeWorkersCreated": 0,
+    "externalRuntimeIntegrations": []
+  },
+  "cleanup": {
+    "handles": [
+      {
+        "id": "hub-capability",
+        "status": "orphaned",
+        "worktree": null,
+        "runtimeScope": null
+      }
+    ],
+    "nativeSpawnCount": 0,
+    "worktreeEntries": [],
+    "runtimeEntries": [],
+    "branches": "",
+    "status": ""
+  },
+  "baseline": {
+    "repoId": "phase42-live",
+    "policyHash": "9e36db675fc2608548de014e38d118b64120def87c8018e1fc6da19437dd5453",
+    "policyId": "quartermaster-vet-policy-v1",
+    "policyCardDigest": "e733d2c378bb900eb948bbcc68dfd4f404e0d1f92a96717cbd373e50a51cb5ec",
+    "projection": {
+      "ttlMs": 60000,
+      "licenseAllow": [
+        "MIT"
+      ],
+      "licenseDeny": [],
+      "minScorecard": 7,
+      "requireProviderVerifiedProvenance": true,
+      "blockDeprecated": true
+    },
+    "version": 1,
+    "activatedAt": "2026-07-12T18:00:00.000Z",
+    "eventSeq": 1,
+    "constraintId": "constraint:reuse-policy:c52eb1fca468996afac8b45e69edc6dfea3c3baf9f12442e216cae95c117658b"
+  },
+  "transitionVersion": 2,
+  "policyA": "9e36db675fc2608548de014e38d118b64120def87c8018e1fc6da19437dd5453",
+  "policyB": "c1bf52831c59e933585f2810cbef32ece030662090f03c7bc499ca52174a14f9",
+  "fetchCalls": 9,
+  "checks": {
+    "baselineFromCard": true,
+    "zeroOracleCallsDuringReconciliation": true,
+    "monotonicPolicyVersion": true,
+    "completeDecisionClosure": true,
+    "causalConstraint": true,
+    "staleGuardStillBlocks": true,
+    "greenReviewMigratesNotClears": true,
+    "currentBuildAllowed": true,
+    "borrowStillRefused": true,
+    "boundedTransition": true,
+    "replayExact": true,
+    "writerAuthorityReleased": true,
+    "cleanFixture": true
+  },
+  "pass": true
+}

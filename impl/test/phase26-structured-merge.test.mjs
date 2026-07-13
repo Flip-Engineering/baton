@@ -202,7 +202,7 @@ test('SM8: post-main coordination failure poisons and replay does not invent str
   await assert.rejects(coordinator.integrate(handle.id, { strategy: 'structured' }), (error) => error.code === 'coordination_write_unavailable');
   const moved = git(['rev-parse', 'HEAD'], root); assert.equal(git(['show', '-s', '--format=%P', moved], root).split(' ').length, 2);
   coordination._appendFile = rawAppend;
-  const replay = createDriver({ repoRoot: root, logDir, coordination, adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, structuredMerge: resolver, watchdog: { stallMs: 0 } });
+  coordinator.closeAuthority(); coordination.releaseWriterLease(); const replay = createDriver({ repoRoot: root, logDir, coordination, adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, structuredMerge: resolver, watchdog: { stallMs: 0 } });
   assert.equal((await replay.coordinator.result(handle.id)).integration, null);
 });
 
@@ -224,7 +224,7 @@ test('SM7/SM8: a post-fast-forward validation failure poisons instead of recordi
   assert.equal(coordination.events().some((event) => event.kind === 'driver.recorded' && event.payload.kind === 'integration.incomplete'), true);
   assert.throws(() => coordinator.list(), (error) => error.code === 'structured_post_effect_inconsistent');
   rmSync(join(root, 'post-effect-dirt.txt'));
-  const replay = createDriver({ repoRoot: root, logDir, coordination, adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, structuredMerge: resolver, watchdog: { stallMs: 0 } });
+  coordinator.closeAuthority(); coordination.releaseWriterLease(); const replay = createDriver({ repoRoot: root, logDir, coordination, adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, structuredMerge: resolver, watchdog: { stallMs: 0 } });
   assert.equal((await replay.coordinator.result(handle.id)).integration, null);
 });
 

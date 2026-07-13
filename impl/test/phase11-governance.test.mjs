@@ -36,8 +36,9 @@ function adapter() {
 
 function system(ad, opts = {}) {
   const log = opts.log ?? new Log(mkdtempSync(join(tmpdir(), 'baton-gv-log-')));
+  const coordination = coordinationForLog(log);
   const c = new Coordinator({
-    log, coordination: coordinationForLog(log), fences: new FenceTable(), adapters: { stub: ad },
+    log, coordination, fences: new FenceTable(), adapters: { stub: ad },
     worktrees: {
       create: async (taskId) => ({ path: opts.worktreePath ?? `/tmp/${taskId}` }), capture: async () => ({ sha: 'x' }),
       createVerifyWorktree: async () => ({ path: tmpdir() }), removeVerifyWorktree: async () => {},
@@ -53,12 +54,12 @@ function system(ad, opts = {}) {
     capabilities: opts.capabilities,
     now: opts.now,
   });
-  return { c, log };
+  return { c, log, coordination };
 }
 
 test('GV1/GV2: cumulative snapshots become monotonic deltas and thresholds fire once', async () => {
   const ad = adapter();
-  const { c, log } = system(ad);
+  const { c, log, coordination } = system(ad);
   const h = await c.spawn('stub', brief());
   ad.emit(h.id, 'resource.tokens', { source: 'codex', accounting: 'cumulative', tokens: 60, usd: 0.1 });
   ad.emit(h.id, 'resource.tokens', { source: 'codex', accounting: 'cumulative', tokens: 60, usd: 0.1 });
@@ -100,9 +101,10 @@ test('GV3: a terminal claim adjacent to final over-budget usage cancels the pend
 
 test('GV2: replay restores canonical budget totals and fired thresholds', async () => {
   const ad = adapter();
-  const { c, log } = system(ad);
+  const { c, log, coordination } = system(ad);
   const h = await c.spawn('stub', brief());
   ad.emit(h.id, 'resource.tokens', { source: 'delta', accounting: 'delta', tokens: 60, usd: 0.2 });
+  coordination.releaseWriterLease();
   const replay = system(adapter(), { log }).c;
   assert.deepEqual(replay.list()[0].budgetUsed, { tokens: 60, usd: 0.2 });
   assert.equal(log.read(h.id).filter((event) => event.kind === 'resource.budget_threshold' && event.payload.threshold === 0.5).length, 1);
@@ -110,9 +112,10 @@ test('GV2: replay restores canonical budget totals and fired thresholds', async 
 
 test('GV1/GV2: replay restores cumulative baselines so resumed snapshots do not double count', async () => {
   const ad = adapter();
-  const { c, log } = system(ad);
+  const { c, log, coordination } = system(ad);
   const h = await c.spawn('stub', brief());
   ad.emit(h.id, 'resource.tokens', { source: 'codex', accounting: 'cumulative', tokens: 60, usd: 0.1 });
+  coordination.releaseWriterLease();
   const replayAdapter = adapter();
   const replay = system(replayAdapter, { log }).c;
   replayAdapter.emit(h.id, 'resource.tokens', { source: 'codex', accounting: 'cumulative', tokens: 90, usd: 0.2 });

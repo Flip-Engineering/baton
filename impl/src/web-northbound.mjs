@@ -312,6 +312,9 @@ export class WebNorthbound {
     if (admission.result === 'replay') {
       try { this._audit('command_replayed', ctx, { command: envelope.command, repoId: envelope.repoId, commandId: admission.command.commandId }); } catch { return error(503, 'temporarily_unavailable'); }
       if (admission.command.status === 'admitted') return result(202, { ok: true, commandId: admission.command.commandId, status: 'admitted', replayed: true });
+      if (admission.command.status === 'completed' && ['reuse_decide', 'reuse_recheck'].includes(envelope.command)) {
+        try { const refreshed = await this._dispatch(envelope, webActor); return { ...refreshed, body: { ...refreshed.body, replayed: true } }; } catch { return error(503, 'temporarily_unavailable'); }
+      }
       return result(admission.command.outcome.httpStatus, { ...json(admission.command.outcome.body), replayed: true });
     }
 

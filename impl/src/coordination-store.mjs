@@ -1,5 +1,5 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
@@ -69,29 +69,75 @@ export class CoordinationStore {
     this.file = join(root, 'events.jsonl');
     this._clock = opts.clock ?? (() => new Date().toISOString());
     this._appendFile = opts.appendFile ?? appendFileSync;
-    this._events = [];
-    this._byKey = new Map();
-    this._tasks = new Map();
-    this._runs = new Map();
-    this._artifacts = new Map();
-    this._reuseDecisions = new Map();
-    this._reuseSubjects = new Map();
-    this._reuseRiskGuards = new Map();
-    this._evidence = new Map();
-    this._scratchFacts = new Map();
-    this._scratchClaims = new Map();
-    this._scratchReads = [];
-    this._knowledgeNodes = new Map();
-    this._knowledgeEdges = new Map();
-    this._knowledgeReads = [];
-    this._contamination = [];
-    this._webCommands = new Map();
-    this._webCommandScopes = new Map();
-    this._mcpCalls = new Map();
-    this._mcpCallScopes = new Map();
+    this._resetProjection();
     this._operationalRead = opts.operationalRead ?? null;
+    this._writerLease = null;
+    this._writerLeaseRequired = false;
     mkdirSync(root, { recursive: true });
     this._load();
+  }
+
+  _resetProjection() {
+    this._events = []; this._byKey = new Map(); this._tasks = new Map(); this._runs = new Map(); this._artifacts = new Map();
+    this._reuseDecisions = new Map(); this._reuseSubjects = new Map(); this._reuseRiskGuards = new Map(); this._reusePolicyHeads = new Map(); this._reusePolicyTransitions = [];
+    this._evidence = new Map(); this._scratchFacts = new Map(); this._scratchClaims = new Map(); this._scratchReads = [];
+    this._knowledgeNodes = new Map(); this._knowledgeEdges = new Map(); this._knowledgeReads = []; this._contamination = [];
+    this._webCommands = new Map(); this._webCommandScopes = new Map(); this._mcpCalls = new Map(); this._mcpCallScopes = new Map();
+  }
+
+  _reloadProjection() { this._resetProjection(); this._load(); }
+
+  claimWriterLease() {
+    if (this._writerLease) throw new CoordinationRefusal('coordination writer is already active', 'coordination_writer_busy');
+    const path = join(this.root, 'writer.lease'); const token = randomUUID(); const claimToken = randomUUID(); const claimPath = join(this.root, `writer.claim.${claimToken}`);
+    const payload = { schemaVersion: 1, pid: process.pid, token, acquiredAt: this._clock() };
+    const claim = () => writeFileSync(path, `${JSON.stringify(payload)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    writeFileSync(claimPath, `${JSON.stringify({ schemaVersion: 1, pid: process.pid, token: claimToken, acquiredAt: this._clock() })}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    try {
+      const liveClaims = [];
+      for (const name of readdirSync(this.root).filter((item) => item.startsWith('writer.claim.')).sort()) {
+        const candidatePath = join(this.root, name); let candidate;
+        try { candidate = JSON.parse(readFileSync(candidatePath, 'utf8')); } catch { throw new CoordinationRefusal('coordination writer claim is malformed', 'coordination_writer_busy'); }
+        if (candidate?.schemaVersion !== 1 || !Number.isSafeInteger(candidate.pid) || candidate.pid <= 0 || typeof candidate.token !== 'string' || name !== `writer.claim.${candidate.token}`) throw new CoordinationRefusal('coordination writer claim is malformed', 'coordination_writer_busy');
+        let alive = false; try { process.kill(candidate.pid, 0); alive = true; } catch (cause) { if (cause?.code === 'EPERM') alive = true; }
+        if (!alive) { unlinkSync(candidatePath); continue; }
+        liveClaims.push(name);
+      }
+      // A claim is intentionally a short fail-closed exclusion window, not an election.
+      // If two claimants overlap, both may retry after their unique claims are removed; neither
+      // may infer that lexicographic ordering grants authority over an already-live claimant.
+      if (liveClaims.some((name) => name !== `writer.claim.${claimToken}`)) throw new CoordinationRefusal('coordination writer claim is already active', 'coordination_writer_busy');
+      if (existsSync(path)) {
+        let prior; try { prior = JSON.parse(readFileSync(path, 'utf8')); } catch { throw new CoordinationRefusal('coordination writer lease is malformed', 'coordination_writer_busy'); }
+        let alive = false;
+        if (Number.isSafeInteger(prior?.pid) && prior.pid > 0) { try { process.kill(prior.pid, 0); alive = true; } catch (cause) { if (cause?.code === 'EPERM') alive = true; } }
+        if (alive) throw new CoordinationRefusal('coordination writer is already active', 'coordination_writer_busy');
+        unlinkSync(path);
+      }
+      try { claim(); } catch (error) { if (error?.code === 'EEXIST') throw new CoordinationRefusal('coordination writer is already active', 'coordination_writer_busy'); throw error; }
+    } finally {
+      try { const observed = JSON.parse(readFileSync(claimPath, 'utf8')); if (observed?.token === claimToken) unlinkSync(claimPath); } catch { /* claim guard was already removed or replaced */ }
+    }
+    this._writerLease = freeze({ path, token, pid: process.pid }); this._writerLeaseRequired = true;
+    try { this._reloadProjection(); } catch (error) { this.releaseWriterLease(); throw error; }
+    return clone(this._writerLease);
+  }
+
+  _assertWriterLease() {
+    const path = join(this.root, 'writer.lease');
+    if (!this._writerLease) {
+      if (this._writerLeaseRequired || existsSync(path)) throw new CoordinationRefusal('coordination writer authority is absent', 'coordination_writer_lost');
+      this.claimWriterLease(); return;
+    }
+    let observed; try { observed = JSON.parse(readFileSync(path, 'utf8')); } catch { throw new CoordinationRefusal('coordination writer lease is absent or malformed', 'coordination_writer_lost'); }
+    if (observed?.token !== this._writerLease.token || observed?.pid !== this._writerLease.pid) throw new CoordinationRefusal('coordination writer lease was replaced', 'coordination_writer_lost');
+  }
+
+  releaseWriterLease() {
+    const lease = this._writerLease; if (!lease) return false;
+    try { const observed = JSON.parse(readFileSync(lease.path, 'utf8')); if (observed?.token === lease.token && observed?.pid === process.pid) unlinkSync(lease.path); }
+    catch { /* absent or replaced lease is not ours to remove */ }
+    this._writerLease = null; return true;
   }
 
   _load() {
@@ -115,6 +161,7 @@ export class CoordinationStore {
   }
 
   _append(kind, payload, { actor, key }, fixedTs = null) {
+    this._assertWriterLease();
     if (typeof actor !== 'string' || actor.length === 0) throw new TypeError('coordination actor required');
     if (typeof key !== 'string' || key.length === 0) throw new TypeError('coordination idempotency key required');
     const prior = this._byKey.get(key);
@@ -128,6 +175,7 @@ export class CoordinationStore {
   }
 
   _appendBatch(entries) {
+    this._assertWriterLease();
     if (!Array.isArray(entries) || entries.length === 0) throw new TypeError('coordination batch requires entries');
     const keys = new Set();
     for (const entry of entries) {
@@ -216,6 +264,8 @@ export class CoordinationStore {
       || dossier.indexEpoch !== p.indexEpoch || !['borrow_candidate', 'block', 'blocked_pending_vet'].includes(dossier.recommendation)) fail('reuse dossier projection is invalid', 'reuse_evidence_invalid');
     if (!/^[a-f0-9]{64}$/.test(dossier.overlayDigest ?? '') || p.envRef.indexEpoch !== p.indexEpoch
       || p.envRef.overlayDigest !== dossier.overlayDigest) fail('reuse dossier is not bound to the effective tree', 'reuse_environment_mismatch');
+    const policyHead = this._reusePolicyHeads.get(p.envRef.repoId);
+    if (policyHead && dossier.policyHash !== policyHead.policyHash) fail('reuse dossier policy is not current', 'reuse_policy_reconciliation_required');
     const asOf = Date.parse(dossier.asOf); const expiresAt = Date.parse(dossier.expiresAt); const decisionAt = Date.parse(event.ts);
     if (!Number.isFinite(asOf) || !Number.isFinite(expiresAt) || !Number.isFinite(decisionAt) || asOf > decisionAt || decisionAt >= expiresAt) fail('reuse dossier is stale or temporally incoherent', 'reuse_evidence_stale');
     const riskGuard = this._reuseRiskGuards.get(canonicalDigest(coordinate));
@@ -304,11 +354,116 @@ export class CoordinationStore {
     const decisionNodeId = `decision:reuse:${p.decisionDigest}`;
     const newEdgeIds = [
       `knowledge-edge:informed:${decisionNodeId}:${dossierFinding}`, `knowledge-edge:informed:${decisionNodeId}:${sbomFinding}`,
+      ...(policyHead?.constraintId ? [`knowledge-edge:informed:${decisionNodeId}:${policyHead.constraintId}`] : []),
       `knowledge-edge:producedby:${p.artifacts[2].id}:${decisionNodeId}`,
       ...(p.supersedes ? [`knowledge-edge:supersedes:${p.id}:${p.supersedes.decisionId}`] : []),
     ];
     if (newEdgeIds.some((id) => this._knowledgeEdges.has(id))) fail('reuse decision edge identity already exists', 'reuse_namespace_conflict');
     return { evidenceSeq };
+  }
+
+  _reusePolicyTargets(repoId, policyHash, ceilings = {}) {
+    const decisionTargets = []; const bindingTargets = []; const findingTargets = new Map(); const guardTargets = []; const observedPolicyHashes = new Set();
+    const maxDecisions = Number.isSafeInteger(ceilings.maxDecisionTargets) && ceilings.maxDecisionTargets > 0 ? ceilings.maxDecisionTargets : 100_000;
+    const maxGuards = Number.isSafeInteger(ceilings.maxGuardTargets) && ceilings.maxGuardTargets > 0 ? ceilings.maxGuardTargets : 100_000;
+    const maxFindings = maxDecisions + maxGuards; const maxStateRows = Number.isSafeInteger(ceilings.maxStateRows) && ceilings.maxStateRows > 0 ? ceilings.maxStateRows : 1_000_000; const maxHashes = Number.isSafeInteger(ceilings.maxObservedPolicyHashes) && ceilings.maxObservedPolicyHashes > 0 ? ceilings.maxObservedPolicyHashes : 1_024;
+    let examinedStateRows = 0; let derivationOverflow = false; const examine = (count = 1) => { examinedStateRows += count; if (examinedStateRows > maxStateRows) derivationOverflow = true; return !derivationOverflow; };
+    const readIndex = new Map();
+    for (const read of this._knowledgeReads) {
+      if (!examine()) break;
+      for (const nodeId of read.nodeIds) { if (!examine()) break; const rows = readIndex.get(nodeId) ?? []; rows.push(read.eventSeq); readIndex.set(nodeId, rows); }
+      if (derivationOverflow) break;
+    }
+    const readsFor = (nodeId) => clone(readIndex.get(nodeId) ?? []); const priorHead = this._reusePolicyHeads.get(repoId);
+    for (const decision of this._reuseDecisions.values()) {
+      if (!examine()) break;
+      if (decision.envRef?.repoId !== repoId) continue;
+      const node = this._knowledgeNodes.get(decision.nodeId); if (!node || node.validTo) continue;
+      if (/^[a-f0-9]{64}$/.test(decision.dossierSnapshot?.policyHash ?? '')) observedPolicyHashes.add(decision.dossierSnapshot.policyHash);
+      const target = { decisionId: decision.id, nodeId: decision.nodeId, subjectDigest: decision.subjectDigest, priorPolicyHash: decision.dossierSnapshot.policyHash, expectedValidityVersion: node.validityVersion, affectedReadEvents: readsFor(decision.nodeId) };
+      if (decision.dossierSnapshot?.policyHash === policyHash && !priorHead) bindingTargets.push(target); else if (decision.dossierSnapshot?.policyHash !== policyHash) decisionTargets.push(target);
+      if (decisionTargets.length + bindingTargets.length > maxDecisions || observedPolicyHashes.size > maxHashes) { derivationOverflow = true; break; }
+    }
+    for (const node of this._knowledgeNodes.values()) {
+      if (!examine()) break;
+      if (node.type !== 'Finding' || node.validTo || node.repoId !== repoId || node.policyHash === policyHash || !['reuse.decision', 'reuse.risk'].includes(node.promotion?.trigger)) continue;
+      const created = this._events[node.observedSeq - 1]; const authoritative = node.promotion.trigger === 'reuse.decision'
+        ? created?.kind === 'knowledge.reuse_decided' && node.id === `finding:dependency-dossier:${created.payload?.dossierRef?.digest}`
+        : created?.kind === 'knowledge.reuse_risk_guarded' && node.id === `finding:reuse-risk:${created.payload?.guardDigest}`;
+      if (!authoritative) continue;
+      findingTargets.set(node.id, { nodeId: node.id, expectedValidityVersion: node.validityVersion, affectedReadEvents: readsFor(node.id) });
+      if (findingTargets.size > maxFindings) { derivationOverflow = true; break; }
+    }
+    for (const [coordinateKey, guard] of this._reuseRiskGuards) {
+      if (!examine()) break;
+      if (guard.repoId === repoId && /^[a-f0-9]{64}$/.test(guard.policyHash ?? '')) observedPolicyHashes.add(guard.policyHash);
+      if (guard.repoId !== repoId || (guard.policyHash === policyHash && guard.policyStale !== true && guard.requiredPolicyHash == null)) continue;
+      const riskFindingId = `finding:reuse-risk:${guard.guardDigest}`; const finding = this._knowledgeNodes.get(riskFindingId);
+      if (finding && !finding.validTo) findingTargets.delete(riskFindingId);
+      guardTargets.push({ coordinateKey, coordinate: guard.coordinate, guardDigest: guard.guardDigest, priorPolicyHash: guard.policyHash, expectedPolicyValidityVersion: guard.policyValidityVersion ?? 1, riskFindingId: finding && !finding.validTo ? riskFindingId : null, affectedRiskFindingReadEvents: finding && !finding.validTo ? readsFor(riskFindingId) : [] });
+      if (guardTargets.length > maxGuards || observedPolicyHashes.size > maxHashes) { derivationOverflow = true; break; }
+    }
+    const priorConstraint = priorHead?.constraintId ? this._knowledgeNodes.get(priorHead.constraintId) : null;
+    const priorConstraintTarget = priorConstraint && !priorConstraint.validTo ? { nodeId: priorConstraint.id, expectedValidityVersion: priorConstraint.validityVersion, affectedReadEvents: readsFor(priorConstraint.id) } : null;
+    return {
+      decisionTargets: decisionTargets.sort((a, b) => a.decisionId.localeCompare(b.decisionId)),
+      bindingTargets: bindingTargets.sort((a, b) => a.decisionId.localeCompare(b.decisionId)),
+      findingTargets: [...findingTargets.values()].sort((a, b) => a.nodeId.localeCompare(b.nodeId)),
+      guardTargets: guardTargets.sort((a, b) => a.coordinateKey.localeCompare(b.coordinateKey)),
+      priorConstraintTarget,
+      observedPolicyHashes: [...observedPolicyHashes].sort(),
+      examinedStateRows,
+      derivationOverflow,
+    };
+  }
+
+  _validateReusePolicyPayload(p, event, integrity = false) {
+    const fail = (message, code = 'reuse_policy_integrity') => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
+    const fields = ['schemaVersion', 'requestDigest', 'transitionDigest', 'repoId', 'expectedPolicyVersion', 'previousPolicyHash', 'policy', 'policyCardDigest', 'effectiveAt', 'ceilings', 'decisionTargets', 'bindingTargets', 'findingTargets', 'guardTargets', 'priorConstraintTarget', 'observedPolicyHashes', 'examinedStateRows', 'derivationOverflow', 'targetSetDigest', 'constraintId'];
+    if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || p.schemaVersion !== 1 || !boundedText(p.repoId, 256) || p.effectiveAt !== event.ts
+      || !boundedText(event.actor, 256) || typeof event.idempotencyKey !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(event.idempotencyKey)
+      || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.transitionDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.policyCardDigest ?? '')) fail('reuse policy transition shape is invalid');
+    const policy = p.policy; const projectionFields = ['blockDeprecated', 'licenseAllow', 'licenseDeny', 'minScorecard', 'requireProviderVerifiedProvenance', 'ttlMs'];
+    if (!policy || Object.keys(policy).sort().join(',') !== ['schemaVersion', 'policyId', 'hash', 'projection'].sort().join(',') || policy.schemaVersion !== 1 || policy.policyId !== 'quartermaster-vet-policy-v1' || !/^[a-f0-9]{64}$/.test(policy.hash ?? '')
+      || !policy.projection || Object.keys(policy.projection).sort().join(',') !== projectionFields.sort().join(',') || canonicalDigest(policy.projection) !== policy.hash || canonicalDigest(policy) !== p.policyCardDigest) fail('reuse policy identity is invalid');
+    const projection = policy.projection;
+    if (!Number.isSafeInteger(projection.ttlMs) || projection.ttlMs <= 0 || !Array.isArray(projection.licenseAllow) || !Array.isArray(projection.licenseDeny) || projection.licenseAllow.length > 256 || projection.licenseDeny.length > 256
+      || projection.licenseAllow.some((item) => !boundedText(item, 256)) || projection.licenseDeny.some((item) => !boundedText(item, 256)) || ![true, false].includes(projection.requireProviderVerifiedProvenance) || ![true, false].includes(projection.blockDeprecated)
+      || JSON.stringify(projection.licenseAllow) !== JSON.stringify([...new Set(projection.licenseAllow)].sort()) || JSON.stringify(projection.licenseDeny) !== JSON.stringify([...new Set(projection.licenseDeny)].sort()) || projection.licenseAllow.some((item) => projection.licenseDeny.includes(item))
+      || (projection.minScorecard !== null && (!Number.isFinite(projection.minScorecard) || projection.minScorecard < 0 || projection.minScorecard > 10))) fail('reuse policy projection is invalid');
+    const head = this._reusePolicyHeads.get(p.repoId) ?? null;
+    if (p.expectedPolicyVersion !== (head?.version ?? 0) || p.previousPolicyHash !== (head?.policyHash ?? null)) fail('reuse policy version is stale', 'reuse_policy_stale');
+    const eventAt = Date.parse(event.ts);
+    const priorEventAt = Date.parse(this._events[event.seq - 2]?.ts ?? event.ts);
+    if (!Number.isFinite(eventAt) || new Date(eventAt).toISOString() !== event.ts || !Number.isFinite(priorEventAt) || eventAt < priorEventAt || (head && eventAt < Date.parse(head.activatedAt))) fail('reuse policy effective time is invalid');
+    const expectedRequestDigest = canonicalDigest({ actor: event.actor, repoId: p.repoId, expectedPolicyVersion: p.expectedPolicyVersion, previousPolicyHash: p.previousPolicyHash, currentPolicyHash: policy.hash, policyCardDigest: p.policyCardDigest, trigger: 'deployment_policy_activation' });
+    if (p.requestDigest !== expectedRequestDigest) fail('reuse policy request identity is invalid');
+    const ceilings = p.ceilings;
+    if (!ceilings || Object.keys(ceilings).sort().join(',') !== ['maxDecisionTargets', 'maxGuardTargets', 'maxAffectedReads', 'maxStateRows', 'maxObservedPolicyHashes', 'maxEventBytes'].sort().join(',')
+      || Object.values(ceilings).some((value) => !Number.isSafeInteger(value) || value <= 0) || ceilings.maxDecisionTargets > 100_000 || ceilings.maxGuardTargets > 100_000 || ceilings.maxAffectedReads > 1_000_000 || ceilings.maxStateRows > 10_000_000 || ceilings.maxObservedPolicyHashes > 100_000 || ceilings.maxEventBytes > 64 * 1024 * 1024) fail('reuse policy ceilings are invalid', 'reuse_policy_oversize');
+    const expected = this._reusePolicyTargets(p.repoId, policy.hash, ceilings);
+    if (canonicalDigest(expected.decisionTargets) !== canonicalDigest(p.decisionTargets) || canonicalDigest(expected.bindingTargets) !== canonicalDigest(p.bindingTargets) || canonicalDigest(expected.findingTargets) !== canonicalDigest(p.findingTargets) || canonicalDigest(expected.guardTargets) !== canonicalDigest(p.guardTargets) || canonicalDigest(expected.priorConstraintTarget) !== canonicalDigest(p.priorConstraintTarget) || canonicalDigest(expected.observedPolicyHashes) !== canonicalDigest(p.observedPolicyHashes) || expected.examinedStateRows !== p.examinedStateRows || expected.derivationOverflow !== p.derivationOverflow) fail('reuse policy target projection is invalid');
+    const affectedReads = [...p.decisionTargets, ...p.bindingTargets, ...p.findingTargets, ...(p.priorConstraintTarget ? [p.priorConstraintTarget] : [])].reduce((sum, target) => sum + target.affectedReadEvents.length, 0) + p.guardTargets.reduce((sum, target) => sum + target.affectedRiskFindingReadEvents.length, 0);
+    if (p.derivationOverflow || p.examinedStateRows > ceilings.maxStateRows || p.observedPolicyHashes.length > ceilings.maxObservedPolicyHashes || p.decisionTargets.length + p.bindingTargets.length > ceilings.maxDecisionTargets || p.findingTargets.length > ceilings.maxDecisionTargets + ceilings.maxGuardTargets || p.guardTargets.length > ceilings.maxGuardTargets || affectedReads > ceilings.maxAffectedReads) fail('reuse policy target projection exceeded deployment ceiling', 'reuse_policy_oversize');
+    for (const target of [...p.decisionTargets, ...p.bindingTargets, ...p.findingTargets, ...(p.priorConstraintTarget ? [p.priorConstraintTarget] : [])]) if (eventAt < Date.parse(this._knowledgeNodes.get(target.nodeId)?.validFrom ?? '')) fail('reuse policy transition predates a target');
+    for (const target of p.guardTargets) if (eventAt < Date.parse(this._reuseRiskGuards.get(target.coordinateKey)?.asOf ?? '')) fail('reuse policy transition predates a guard');
+    const targetSet = { decisionTargets: p.decisionTargets, bindingTargets: p.bindingTargets, findingTargets: p.findingTargets, guardTargets: p.guardTargets, priorConstraintTarget: p.priorConstraintTarget, observedPolicyHashes: p.observedPolicyHashes, examinedStateRows: p.examinedStateRows, derivationOverflow: p.derivationOverflow };
+    if (p.targetSetDigest !== canonicalDigest(targetSet)) fail('reuse policy target digest is invalid');
+    const version = p.expectedPolicyVersion + 1; const expectedConstraint = `constraint:reuse-policy:${canonicalDigest({ repoId: p.repoId, policyHash: policy.hash, version })}`;
+    if (p.constraintId !== expectedConstraint || this._knowledgeNodes.has(expectedConstraint)) fail('reuse policy constraint identity is invalid', 'reuse_namespace_conflict');
+    for (const target of [...p.decisionTargets, ...p.findingTargets, ...p.guardTargets.filter((item) => item.riskFindingId).map((item) => ({ nodeId: item.riskFindingId }))]) if (this._knowledgeEdges.has(`knowledge-edge:affects:${expectedConstraint}:${target.nodeId}`)) fail('reuse policy edge identity is preoccupied', 'reuse_namespace_conflict');
+    for (const target of p.bindingTargets) if (this._knowledgeEdges.has(`knowledge-edge:informed:${target.nodeId}:${expectedConstraint}`)) fail('reuse policy binding edge identity is preoccupied', 'reuse_namespace_conflict');
+    if (p.priorConstraintTarget && this._knowledgeEdges.has(`knowledge-edge:supersedes:${expectedConstraint}:${p.priorConstraintTarget.nodeId}`)) fail('reuse policy lineage edge identity is preoccupied', 'reuse_namespace_conflict');
+    const core = Object.fromEntries(Object.entries(p).filter(([key]) => key !== 'transitionDigest'));
+    if (p.transitionDigest !== canonicalDigest(core)) fail('reuse policy transition digest is invalid');
+    const exactEvent = { schemaVersion: 1, seq: event.seq, ts: event.ts, kind: 'knowledge.reuse_policy_reconciled', actor: event.actor, idempotencyKey: event.idempotencyKey, payload: p };
+    if (Buffer.byteLength(`${JSON.stringify(exactEvent)}\n`) > ceilings.maxEventBytes) fail('reuse policy transition exceeded event byte ceiling', 'reuse_policy_oversize');
+    return { version, head };
+  }
+
+  _guardFromRiskPayload(p, event) {
+    const seed = this._reuseDecisions.get(p.seedDecisionId); const prior = this._reuseRiskGuards.get(canonicalDigest(p.coordinate));
+    return freeze({ coordinate: clone(p.coordinate), repoId: seed.envRef.repoId, blocked: true, dossierDigest: p.dossierRef.digest, factDigest: p.dossierSnapshot.factDigest, policyHash: p.dossierSnapshot.policyHash, recommendation: p.dossierSnapshot.recommendation, asOf: p.dossierSnapshot.asOf, expiresAt: p.dossierSnapshot.expiresAt, advisoryIds: clone(p.advisoryIds), maliciousAdvisoryIds: clone(p.maliciousAdvisoryIds), eventSeq: event.seq, guardDigest: p.guardDigest, supersedesGuardDigest: prior?.guardDigest ?? null, policyValidityVersion: (prior?.policyValidityVersion ?? 0) + 1, policyStale: false, inheritedAdverse: false });
   }
 
   _reuseRiskTargets(coordinate, snapshot) {
@@ -344,9 +499,10 @@ export class CoordinationStore {
       || !/^[a-f0-9]{64}$/.test(p.dossierRef?.digest ?? '') || p.dossierRef.handle !== `art:sha256:${p.dossierRef.digest}`
       || !Number.isSafeInteger(p.dossierRef.bytes) || p.dossierRef.bytes <= 0) fail('reuse risk dossier reference is invalid', 'reuse_evidence_invalid');
     const snapshot = p.dossierSnapshot;
+    const policyHead = this._reusePolicyHeads.get(seed.envRef.repoId);
     if (!snapshot || snapshot.identity?.ecosystem !== p.coordinate.ecosystem || snapshot.identity?.package !== p.coordinate.package
       || snapshot.identity?.version !== p.coordinate.version || snapshot.indexEpoch !== seed.indexEpoch
-      || snapshot.overlayDigest !== seed.envRef.overlayDigest || snapshot.policyHash !== seed.dossierSnapshot.policyHash
+      || snapshot.overlayDigest !== seed.envRef.overlayDigest || snapshot.policyHash !== (policyHead?.policyHash ?? seed.dossierSnapshot.policyHash)
       || !/^[a-f0-9]{64}$/.test(snapshot.factDigest ?? '') || !['borrow_candidate', 'block', 'blocked_pending_vet'].includes(snapshot.recommendation)) fail('reuse risk dossier projection is invalid', 'reuse_evidence_invalid');
     const asOf = Date.parse(snapshot.asOf); const expiresAt = Date.parse(snapshot.expiresAt); const eventAt = Date.parse(event.ts);
     if (!Number.isFinite(asOf) || !Number.isFinite(expiresAt) || !Number.isFinite(eventAt) || asOf > eventAt || eventAt >= expiresAt
@@ -365,6 +521,7 @@ export class CoordinationStore {
       || source.payload?.requestDigest !== p.requestDigest || source.payload?.seedDecisionId !== p.seedDecisionId
       || source.payload?.expectedValidityVersion !== p.seedExpectedValidityVersion
       || source.payload?.dossierDigest !== p.dossierRef.digest || source.payload?.factDigest !== snapshot.factDigest
+      || source.payload?.policyHash !== snapshot.policyHash
       || source.payload?.recommendation !== snapshot.recommendation || source.payload?.asOf !== snapshot.asOf
       || source.payload?.expiresAt !== snapshot.expiresAt
       || canonicalDigest(source.payload?.advisoryIds) !== canonicalDigest(p.advisoryIds)
@@ -374,11 +531,21 @@ export class CoordinationStore {
     if (canonicalDigest(expectedTargets) !== canonicalDigest(p.targets) || p.targetSetDigest !== canonicalDigest(p.targets)) fail('reuse risk target projection is invalid', 'reuse_risk_integrity');
     const core = { requestDigest: p.requestDigest, seedDecisionId: p.seedDecisionId, seedExpectedValidityVersion: p.seedExpectedValidityVersion, coordinate: p.coordinate, dossierRef: p.dossierRef, dossierSnapshot: snapshot, advisoryIds: p.advisoryIds, maliciousAdvisoryIds: p.maliciousAdvisoryIds, reverifyEvidence: p.reverifyEvidence, adverse, effectiveAt: p.effectiveAt, targetSetDigest: p.targetSetDigest };
     if (p.guardDigest !== canonicalDigest(core)) fail('reuse risk digest is invalid', 'reuse_risk_integrity');
-    if (adverse) {
+    const inheritedMigration = !adverse && activeGuard?.blocked === true && activeGuard.policyStale === true;
+    let inheritedSourceFindingId = null; let predecessorFindingId = null;
+    if (adverse || inheritedMigration) {
       const findingId = `finding:reuse-risk:${p.guardDigest}`;
       if (this._knowledgeNodes.has(findingId) || p.targets.some((target) => this._knowledgeEdges.has(`knowledge-edge:affects:${findingId}:${target.nodeId}`))) fail('reuse risk graph identity is preoccupied', 'reuse_namespace_conflict');
+      if (inheritedMigration) {
+        inheritedSourceFindingId = `finding:reuse-risk:${activeGuard.inheritedFromGuardDigest ?? activeGuard.guardDigest}`;
+        if (!this._knowledgeNodes.has(inheritedSourceFindingId) || this._knowledgeEdges.has(`knowledge-edge:derived:${findingId}:${inheritedSourceFindingId}`)) fail('inherited adverse source is absent or preoccupied', 'reuse_namespace_conflict');
+      }
+      if (adverse && activeGuard) {
+        predecessorFindingId = `finding:reuse-risk:${activeGuard.guardDigest}`;
+        if (!this._knowledgeNodes.has(predecessorFindingId) || this._knowledgeEdges.has(`knowledge-edge:supersedes:${findingId}:${predecessorFindingId}`)) fail('adverse predecessor source is absent or preoccupied', 'reuse_namespace_conflict');
+      }
     }
-    return { adverse };
+    return { adverse, inheritedMigration, inheritedSourceFindingId, predecessorFindingId };
   }
 
   _ttlTarget(decision) {
@@ -458,6 +625,44 @@ export class CoordinationStore {
       }
       const producedId = `knowledge-edge:producedby:${p.scorecardDigest}:${p.runId}`;
       this._knowledgeEdges.set(producedId, freeze({ id: producedId, type: 'ProducedBy', from: artifactNodeId, to: runNodeId, evidence, observedSeq: event.seq, observedAt: event.ts, ...temporal, validFrom: event.ts, validTo: null, validityVersion: 1 }));
+    } else if (event.kind === 'knowledge.reuse_policy_reconciled') {
+      const { version, head: priorHead } = this._validateReusePolicyPayload(p, event, true);
+      if (p.priorConstraintTarget) {
+        const prior = this._knowledgeNodes.get(p.priorConstraintTarget.nodeId); this._knowledgeNodes.set(prior.id, freeze({ ...clone(prior), validTo: event.ts, validityVersion: prior.validityVersion + 1, invalidatedBy: event.seq }));
+        this._contamination.push(freeze({ nodeId: prior.id, invalidationEvent: event.seq, affectedReadEvents: clone(p.priorConstraintTarget.affectedReadEvents), eventSeq: event.seq, ts: event.ts }));
+      }
+      for (const target of p.bindingTargets) {
+        const node = this._knowledgeNodes.get(target.nodeId); const informedBy = [...new Set([...(node.informedBy ?? []), p.constraintId])];
+        this._knowledgeNodes.set(target.nodeId, freeze({ ...clone(node), informedBy, policyBoundBy: event.seq }));
+        const edgeId = `knowledge-edge:informed:${target.nodeId}:${p.constraintId}`; const evidence = [{ coordinationSeq: node.observedSeq }, { coordinationSeq: event.seq }];
+        this._knowledgeEdges.set(edgeId, freeze({ id: edgeId, type: 'Informed', from: target.nodeId, to: p.constraintId, evidence, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: event.seq, eventTime: event.ts, validFrom: event.ts, validTo: null, validityVersion: 1 }));
+      }
+      const constraint = freeze({ id: p.constraintId, type: 'Constraint', grounding: 'observed', body: `Active reuse policy ${p.policy.hash} for ${p.repoId}`, evidence: [{ coordinationSeq: event.seq }], promotion: { kind: 'ReusePolicy', trigger: 'reuse.policy' }, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: event.seq, eventTime: event.ts, validFrom: event.ts, validTo: null, validityVersion: 1, policyVersion: version, policyHash: p.policy.hash, policyCardDigest: p.policyCardDigest, transitionDigest: p.transitionDigest, repoId: p.repoId });
+      this._knowledgeNodes.set(p.constraintId, constraint);
+      if (p.priorConstraintTarget) {
+        const edgeId = `knowledge-edge:supersedes:${p.constraintId}:${p.priorConstraintTarget.nodeId}`;
+        this._knowledgeEdges.set(edgeId, freeze({ id: edgeId, type: 'Supersedes', from: p.constraintId, to: p.priorConstraintTarget.nodeId, evidence: [{ coordinationSeq: event.seq }], observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: event.seq, eventTime: event.ts, validFrom: event.ts, validTo: null, validityVersion: 1 }));
+      }
+      for (const target of p.decisionTargets) {
+        const node = this._knowledgeNodes.get(target.nodeId); this._knowledgeNodes.set(target.nodeId, freeze({ ...clone(node), validTo: event.ts, validityVersion: node.validityVersion + 1, invalidatedBy: event.seq }));
+        this._contamination.push(freeze({ nodeId: target.nodeId, invalidationEvent: event.seq, affectedReadEvents: clone(target.affectedReadEvents), eventSeq: event.seq, ts: event.ts }));
+        const edgeId = `knowledge-edge:affects:${p.constraintId}:${target.nodeId}`; this._knowledgeEdges.set(edgeId, freeze({ id: edgeId, type: 'Affects', from: p.constraintId, to: target.nodeId, evidence: [{ coordinationSeq: event.seq }], observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: event.seq, eventTime: event.ts, validFrom: event.ts, validTo: null, validityVersion: 1 }));
+      }
+      for (const target of p.findingTargets) {
+        const node = this._knowledgeNodes.get(target.nodeId); this._knowledgeNodes.set(target.nodeId, freeze({ ...clone(node), validTo: event.ts, validityVersion: node.validityVersion + 1, invalidatedBy: event.seq }));
+        this._contamination.push(freeze({ nodeId: target.nodeId, invalidationEvent: event.seq, affectedReadEvents: clone(target.affectedReadEvents), eventSeq: event.seq, ts: event.ts }));
+        const edgeId = `knowledge-edge:affects:${p.constraintId}:${target.nodeId}`; this._knowledgeEdges.set(edgeId, freeze({ id: edgeId, type: 'Affects', from: p.constraintId, to: target.nodeId, evidence: [{ coordinationSeq: event.seq }], observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: event.seq, eventTime: event.ts, validFrom: event.ts, validTo: null, validityVersion: 1 }));
+      }
+      for (const target of p.guardTargets) {
+        const guard = this._reuseRiskGuards.get(target.coordinateKey); this._reuseRiskGuards.set(target.coordinateKey, freeze({ ...clone(guard), policyStale: true, inheritedAdverse: true, inheritedFromGuardDigest: guard.inheritedFromGuardDigest ?? guard.guardDigest, inheritedFactDigest: guard.inheritedFactDigest ?? guard.factDigest, inheritedPolicyHash: guard.inheritedPolicyHash ?? guard.policyHash, inheritedAdvisoryIds: clone(guard.inheritedAdvisoryIds ?? guard.advisoryIds), inheritedMaliciousAdvisoryIds: clone(guard.inheritedMaliciousAdvisoryIds ?? guard.maliciousAdvisoryIds), inheritedEventSeq: guard.inheritedEventSeq ?? guard.eventSeq, requiredPolicyHash: p.policy.hash, policyValidTo: event.ts, policyValidityVersion: (guard.policyValidityVersion ?? 1) + 1, policyInvalidatedBy: event.seq }));
+        if (target.riskFindingId) {
+          const node = this._knowledgeNodes.get(target.riskFindingId); this._knowledgeNodes.set(target.riskFindingId, freeze({ ...clone(node), validTo: event.ts, validityVersion: node.validityVersion + 1, invalidatedBy: event.seq }));
+          this._contamination.push(freeze({ nodeId: target.riskFindingId, invalidationEvent: event.seq, affectedReadEvents: clone(target.affectedRiskFindingReadEvents), eventSeq: event.seq, ts: event.ts }));
+          const edgeId = `knowledge-edge:affects:${p.constraintId}:${target.riskFindingId}`; this._knowledgeEdges.set(edgeId, freeze({ id: edgeId, type: 'Affects', from: p.constraintId, to: target.riskFindingId, evidence: [{ coordinationSeq: event.seq }], observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: event.seq, eventTime: event.ts, validFrom: event.ts, validTo: null, validityVersion: 1 }));
+        }
+      }
+      const head = freeze({ repoId: p.repoId, policyHash: p.policy.hash, policyId: p.policy.policyId, policyCardDigest: p.policyCardDigest, projection: clone(p.policy.projection), version, activatedAt: event.ts, eventSeq: event.seq, constraintId: p.constraintId });
+      this._reusePolicyHeads.set(p.repoId, head); this._reusePolicyTransitions.push(freeze({ ...clone(p), recordedEvent: event.seq, recordedAt: event.ts, version }));
     } else if (event.kind === 'knowledge.reuse_decided') {
       const { evidenceSeq } = this._validateReuseDecisionPayload(p, event, true);
       for (const manifest of p.artifacts) {
@@ -469,17 +674,19 @@ export class CoordinationStore {
       const sbomFinding = `finding:lockfile-sbom:${p.sbomRef.digest}`;
       const findings = [[dossierFinding, `Verified dependency dossier for ${p.coordinate.package}@${p.coordinate.version}`, p.artifacts[0].id], [sbomFinding, `Verified actual lockfile SBOM ${p.sbomSnapshot.lockfileDigest}`, p.artifacts[1].id]];
       for (const [id, body, artifactId] of findings) {
-        if (!this._knowledgeNodes.has(id)) this._knowledgeNodes.set(id, freeze({ id, type: 'Finding', grounding: 'derived', body, evidence: [{ coordinationSeq: evidenceSeq }, { artifactId }], promotion: { kind: 'ReuseEvidence', trigger: 'reuse.decision' }, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: evidenceSeq, eventTime: this._events[evidenceSeq - 1]?.ts ?? event.ts, expiresAt: id === dossierFinding ? p.dossierSnapshot.expiresAt : null, validFrom: event.ts, validTo: null, validityVersion: 1 }));
+        if (!this._knowledgeNodes.has(id)) this._knowledgeNodes.set(id, freeze({ id, type: 'Finding', grounding: 'derived', body, evidence: [{ coordinationSeq: evidenceSeq }, { artifactId }], promotion: { kind: 'ReuseEvidence', trigger: 'reuse.decision' }, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: evidenceSeq, eventTime: this._events[evidenceSeq - 1]?.ts ?? event.ts, expiresAt: id === dossierFinding ? p.dossierSnapshot.expiresAt : null, validFrom: event.ts, validTo: null, validityVersion: 1, ...(id === dossierFinding ? { repoId: p.envRef.repoId, policyHash: p.dossierSnapshot.policyHash } : {}) }));
         const edgeId = `knowledge-edge:derived:${id}:${artifactId}`;
         if (!this._knowledgeEdges.has(edgeId)) this._knowledgeEdges.set(edgeId, freeze({ id: edgeId, type: 'DerivedFrom', from: id, to: `artifact:${artifactId}`, evidence: [{ coordinationSeq: evidenceSeq }], observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: evidenceSeq, eventTime: this._events[evidenceSeq - 1]?.ts ?? event.ts, validFrom: event.ts, validTo: null, validityVersion: 1 }));
       }
       const nodeId = `decision:reuse:${p.decisionDigest}`;
       const decisionArtifactId = p.artifacts[2].id;
       const evidence = [{ coordinationSeq: evidenceSeq }, { artifactId: decisionArtifactId }];
-      this._knowledgeNodes.set(nodeId, freeze({ id: nodeId, type: 'Decision', grounding: 'observed', body: `${p.choice} ${p.coordinate.package}@${p.coordinate.version} for ${p.need}`, evidence, informedBy: [dossierFinding, sbomFinding], promotion: { kind: 'Decision', trigger: 'reuse.decision' }, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: evidenceSeq, eventTime: this._events[evidenceSeq - 1]?.ts ?? event.ts, expiresAt: p.dossierSnapshot.expiresAt, validFrom: event.ts, validTo: null, validityVersion: 1 }));
-      for (const findingId of [dossierFinding, sbomFinding]) {
+      const policyConstraintId = this._reusePolicyHeads.get(p.envRef.repoId)?.constraintId ?? null;
+      this._knowledgeNodes.set(nodeId, freeze({ id: nodeId, type: 'Decision', grounding: 'observed', body: `${p.choice} ${p.coordinate.package}@${p.coordinate.version} for ${p.need}`, evidence, informedBy: [dossierFinding, sbomFinding, ...(policyConstraintId ? [policyConstraintId] : [])], promotion: { kind: 'Decision', trigger: 'reuse.decision' }, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: evidenceSeq, eventTime: this._events[evidenceSeq - 1]?.ts ?? event.ts, expiresAt: p.dossierSnapshot.expiresAt, validFrom: event.ts, validTo: null, validityVersion: 1, repoId: p.envRef.repoId, policyHash: p.dossierSnapshot.policyHash }));
+      for (const findingId of [dossierFinding, sbomFinding, ...(policyConstraintId ? [policyConstraintId] : [])]) {
         const id = `knowledge-edge:informed:${nodeId}:${findingId}`;
-        this._knowledgeEdges.set(id, freeze({ id, type: 'Informed', from: nodeId, to: findingId, evidence: [{ coordinationSeq: evidenceSeq }], observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: evidenceSeq, eventTime: this._events[evidenceSeq - 1]?.ts ?? event.ts, validFrom: event.ts, validTo: null, validityVersion: 1 }));
+        const edgeEvidence = findingId === policyConstraintId ? [{ coordinationSeq: this._reusePolicyHeads.get(p.envRef.repoId).eventSeq }, { coordinationSeq: evidenceSeq }] : [{ coordinationSeq: evidenceSeq }];
+        this._knowledgeEdges.set(id, freeze({ id, type: 'Informed', from: nodeId, to: findingId, evidence: edgeEvidence, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: evidenceSeq, eventTime: this._events[evidenceSeq - 1]?.ts ?? event.ts, validFrom: event.ts, validTo: null, validityVersion: 1 }));
       }
       const producedId = `knowledge-edge:producedby:${decisionArtifactId}:${nodeId}`;
       this._knowledgeEdges.set(producedId, freeze({ id: producedId, type: 'ProducedBy', from: `artifact:${decisionArtifactId}`, to: nodeId, evidence, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: evidenceSeq, eventTime: this._events[evidenceSeq - 1]?.ts ?? event.ts, validFrom: event.ts, validTo: null, validityVersion: 1 }));
@@ -495,18 +702,26 @@ export class CoordinationStore {
       const record = freeze({ ...clone(p), nodeId, recordedEvent: event.seq, recordedAt: event.ts });
       this._reuseDecisions.set(p.id, record); this._reuseSubjects.set(p.subjectDigest, p.id);
     } else if (event.kind === 'knowledge.reuse_risk_guarded') {
-      const { adverse } = this._validateReuseRiskPayload(p, event, true);
+      const { adverse, inheritedMigration, inheritedSourceFindingId, predecessorFindingId } = this._validateReuseRiskPayload(p, event, true);
       let riskFindingId = null;
       if (adverse) {
-        this._reuseRiskGuards.set(canonicalDigest(p.coordinate), freeze({
-          coordinate: clone(p.coordinate), blocked: true, dossierDigest: p.dossierRef.digest,
-          factDigest: p.dossierSnapshot.factDigest, policyHash: p.dossierSnapshot.policyHash,
-          recommendation: p.dossierSnapshot.recommendation, asOf: p.dossierSnapshot.asOf,
-          expiresAt: p.dossierSnapshot.expiresAt, advisoryIds: clone(p.advisoryIds),
-          maliciousAdvisoryIds: clone(p.maliciousAdvisoryIds), eventSeq: event.seq, guardDigest: p.guardDigest,
-        }));
+        this._reuseRiskGuards.set(canonicalDigest(p.coordinate), this._guardFromRiskPayload(p, event));
         riskFindingId = `finding:reuse-risk:${p.guardDigest}`;
-        this._knowledgeNodes.set(riskFindingId, freeze({ id: riskFindingId, type: 'Finding', grounding: 'derived', body: `Adverse external evidence for ${p.coordinate.package}@${p.coordinate.version}`, evidence: [{ coordinationSeq: p.reverifyEvidence.coordinationSeq }], promotion: { kind: 'ReuseRisk', trigger: 'reuse.risk' }, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: p.reverifyEvidence.coordinationSeq, eventTime: this._events[p.reverifyEvidence.coordinationSeq - 1]?.ts ?? event.ts, validFrom: p.effectiveAt, validTo: null, validityVersion: 1 }));
+        this._knowledgeNodes.set(riskFindingId, freeze({ id: riskFindingId, type: 'Finding', grounding: 'derived', body: `Adverse external evidence for ${p.coordinate.package}@${p.coordinate.version}`, evidence: [{ coordinationSeq: p.reverifyEvidence.coordinationSeq }], promotion: { kind: 'ReuseRisk', trigger: 'reuse.risk' }, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: p.reverifyEvidence.coordinationSeq, eventTime: this._events[p.reverifyEvidence.coordinationSeq - 1]?.ts ?? event.ts, validFrom: p.effectiveAt, validTo: null, validityVersion: 1, repoId: this._reuseDecisions.get(p.seedDecisionId).envRef.repoId, policyHash: p.dossierSnapshot.policyHash }));
+        if (predecessorFindingId) {
+          const lineageId = `knowledge-edge:supersedes:${riskFindingId}:${predecessorFindingId}`; const evidence = [{ coordinationSeq: p.reverifyEvidence.coordinationSeq }, { coordinationSeq: this._knowledgeNodes.get(predecessorFindingId).observedSeq }];
+          this._knowledgeEdges.set(lineageId, freeze({ id: lineageId, type: 'Supersedes', from: riskFindingId, to: predecessorFindingId, evidence, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: p.reverifyEvidence.coordinationSeq, eventTime: this._events[p.reverifyEvidence.coordinationSeq - 1]?.ts ?? event.ts, validFrom: p.effectiveAt, validTo: null, validityVersion: 1 }));
+        }
+      } else {
+        const key = canonicalDigest(p.coordinate); const inherited = this._reuseRiskGuards.get(key);
+        if (inheritedMigration) {
+          const inheritedFromGuardDigest = inherited.inheritedFromGuardDigest ?? inherited.guardDigest; const inheritedEventSeq = inherited.inheritedEventSeq ?? inherited.eventSeq;
+          this._reuseRiskGuards.set(key, freeze({ ...clone(inherited), dossierDigest: p.dossierRef.digest, factDigest: p.dossierSnapshot.factDigest, policyHash: p.dossierSnapshot.policyHash, recommendation: p.dossierSnapshot.recommendation, asOf: p.dossierSnapshot.asOf, expiresAt: p.dossierSnapshot.expiresAt, advisoryIds: [], maliciousAdvisoryIds: [], eventSeq: event.seq, guardDigest: p.guardDigest, policyStale: false, inheritedAdverse: true, inheritedFromGuardDigest, inheritedFactDigest: inherited.inheritedFactDigest ?? inherited.factDigest, inheritedPolicyHash: inherited.inheritedPolicyHash ?? inherited.policyHash, inheritedAdvisoryIds: clone(inherited.inheritedAdvisoryIds ?? inherited.advisoryIds), inheritedMaliciousAdvisoryIds: clone(inherited.inheritedMaliciousAdvisoryIds ?? inherited.maliciousAdvisoryIds), inheritedEventSeq, requiredPolicyHash: null, policyValidTo: null, policyValidityVersion: (inherited.policyValidityVersion ?? 1) + 1, policyInvalidatedBy: null }));
+          riskFindingId = `finding:reuse-risk:${p.guardDigest}`; const evidence = [{ coordinationSeq: p.reverifyEvidence.coordinationSeq }, { coordinationSeq: inheritedEventSeq }];
+          this._knowledgeNodes.set(riskFindingId, freeze({ id: riskFindingId, type: 'Finding', grounding: 'derived', body: `Current-policy review retains inherited adverse fence for ${p.coordinate.package}@${p.coordinate.version}`, evidence, promotion: { kind: 'ReuseRisk', trigger: 'reuse.risk' }, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: p.reverifyEvidence.coordinationSeq, eventTime: this._events[p.reverifyEvidence.coordinationSeq - 1]?.ts ?? event.ts, validFrom: p.effectiveAt, validTo: null, validityVersion: 1, repoId: this._reuseDecisions.get(p.seedDecisionId).envRef.repoId, policyHash: p.dossierSnapshot.policyHash }));
+          const lineageId = `knowledge-edge:derived:${riskFindingId}:${inheritedSourceFindingId}`;
+          this._knowledgeEdges.set(lineageId, freeze({ id: lineageId, type: 'DerivedFrom', from: riskFindingId, to: inheritedSourceFindingId, evidence, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: p.reverifyEvidence.coordinationSeq, eventTime: this._events[p.reverifyEvidence.coordinationSeq - 1]?.ts ?? event.ts, validFrom: p.effectiveAt, validTo: null, validityVersion: 1 }));
+        }
       }
       for (const target of p.targets) {
         if (riskFindingId) {
@@ -618,7 +833,7 @@ export class CoordinationStore {
   }
   task(id) { return clone(this._tasks.get(id) ?? null); }
   run(id) { return clone(this._runs.get(id) ?? null); }
-  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
+  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
   healthCheck() { try { if (!existsSync(this.file)) return this._events.length === 0; const raw = readFileSync(this.file, 'utf8'); return raw.length === 0 || raw.endsWith('\n'); } catch { return false; } }
   readyTasks() {
     return [...this._tasks.values()].filter((task) => task.status === 'pending' && task.assignee == null
@@ -827,10 +1042,34 @@ export class CoordinationStore {
 
   artifact(id) { return clone(this._artifacts.get(id) ?? null); }
 
+  reusePolicyState(repoId) { return clone(this._reusePolicyHeads.get(repoId) ?? null); }
+  activateReusePolicy(fields, auth) {
+    this._assertWriterLease();
+    if (!boundedText(auth?.actor, 256) || typeof auth?.key !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(auth.key)) throw new TypeError('bounded reuse policy actor and idempotency key required');
+    const head = this._reusePolicyHeads.get(fields?.repoId) ?? null; const policy = clone(fields?.policy);
+    if (head?.policyHash === policy?.hash && head?.policyCardDigest === fields?.policyCardDigest) return freeze({ ok: true, result: 'current', event: null, head: clone(head), decisionTargets: [], bindingTargets: [], findingTargets: [], guardTargets: [] });
+    const expectedPolicyVersion = head?.version ?? 0; const previousPolicyHash = head?.policyHash ?? null; const targets = this._reusePolicyTargets(fields?.repoId, policy?.hash, fields?.ceilings); const event = { seq: this._events.length + 1, ts: this._clock(), actor: auth.actor, idempotencyKey: auth.key };
+    const requestDigest = canonicalDigest({ actor: auth.actor, repoId: fields?.repoId, expectedPolicyVersion, previousPolicyHash, currentPolicyHash: policy?.hash, policyCardDigest: fields?.policyCardDigest, trigger: 'deployment_policy_activation' });
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      if (prior.kind !== 'knowledge.reuse_policy_reconciled' || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('reuse policy idempotency conflict', 'reuse_policy_conflict');
+      const current = this._reusePolicyHeads.get(fields?.repoId);
+      if (!current || current.policyHash !== policy?.hash || current.policyCardDigest !== fields?.policyCardDigest) throw new CoordinationRefusal('reuse policy idempotent state is unavailable', 'reuse_policy_integrity');
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), head: clone(current), decisionTargets: clone(prior.payload.decisionTargets), bindingTargets: clone(prior.payload.bindingTargets), findingTargets: clone(prior.payload.findingTargets), guardTargets: clone(prior.payload.guardTargets) });
+    }
+    const constraintId = `constraint:reuse-policy:${canonicalDigest({ repoId: fields?.repoId, policyHash: policy?.hash, version: expectedPolicyVersion + 1 })}`;
+    const targetSetDigest = canonicalDigest(targets); const core = { schemaVersion: 1, requestDigest, repoId: fields?.repoId, expectedPolicyVersion, previousPolicyHash, policy, policyCardDigest: fields?.policyCardDigest, effectiveAt: event.ts, ceilings: clone(fields?.ceilings), ...targets, targetSetDigest, constraintId };
+    const payload = { ...core, transitionDigest: canonicalDigest(core) };
+    this._validateReusePolicyPayload(payload, event, false);
+    const appended = this._append('knowledge.reuse_policy_reconciled', payload, auth, event.ts);
+    return freeze({ ok: true, result: previousPolicyHash === null ? 'baseline' : 'reconciled', event: clone(appended), head: this.reusePolicyState(fields.repoId), decisionTargets: clone(targets.decisionTargets), bindingTargets: clone(targets.bindingTargets), findingTargets: clone(targets.findingTargets), guardTargets: clone(targets.guardTargets) });
+  }
+
   reuseDecision(id) { return clone(this._reuseDecisions.get(id) ?? null); }
   reuseSubjectHead(subjectDigest) { const id = this._reuseSubjects.get(subjectDigest); return id ? this.reuseDecision(id) : null; }
   currentReuseDecision(subjectDigest) {
     const decision = this.reuseSubjectHead(subjectDigest); if (!decision) return null;
+    const policyHead = this._reusePolicyHeads.get(decision.envRef?.repoId); if (policyHead && decision.dossierSnapshot?.policyHash !== policyHead.policyHash) return null;
     const node = this._knowledgeNodes.get(decision.nodeId); const observed = Date.parse(this._clock());
     if (!node || node.validTo || !Number.isFinite(observed) || observed >= Date.parse(decision.dossierSnapshot?.expiresAt ?? '')) return null;
     const guard = this._reuseRiskGuards.get(canonicalDigest(decision.coordinate));
@@ -841,13 +1080,25 @@ export class CoordinationStore {
   reuseDecisionAdmission(key, requestDigest) {
     const prior = this._byKey.get(key); if (!prior) return null;
     if (!['knowledge.reuse_decided', 'reuse.decision_request_bound'].includes(prior.kind) || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('reuse decision idempotency conflict', 'reuse_decision_conflict');
-    return freeze({ ok: true, result: 'idempotent', event: clone(prior), decision: this.reuseDecision(prior.payload.id ?? prior.payload.decisionId) });
+    const decision = this.reuseDecision(prior.payload.id ?? prior.payload.decisionId); const head = decision ? this._reusePolicyHeads.get(decision.envRef?.repoId) : null; const historical = Boolean(head && decision.dossierSnapshot?.policyHash !== head.policyHash);
+    return freeze({ ok: true, result: historical ? 'historical' : 'idempotent', current: !historical, historical, event: clone(prior), decision });
   }
 
   reuseRiskAdmission(key, requestDigest) {
     const prior = this._byKey.get(key); if (!prior) return null;
     if (prior.kind !== 'knowledge.reuse_risk_guarded' || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('reuse risk idempotency conflict', 'reuse_risk_conflict');
-    return freeze({ ok: true, result: 'idempotent', event: clone(prior), guard: this.reuseRiskGuard(prior.payload.coordinate), targets: clone(prior.payload.targets) });
+    const p = prior.payload; const seed = this._reuseDecisions.get(p.seedDecisionId); const head = seed ? this._reusePolicyHeads.get(seed.envRef?.repoId) : null;
+    const active = this._reuseRiskGuards.get(canonicalDigest(p.coordinate));
+    const laterReview = this._events.slice(prior.seq).find((item) => item.kind === 'knowledge.reuse_risk_guarded' && canonicalDigest(item.payload?.coordinate) === canonicalDigest(p.coordinate));
+    const inheritedEvent = !p.adverse ? [...this._events.slice(0, prior.seq - 1)].reverse().find((item) => item.kind === 'knowledge.reuse_risk_guarded' && item.payload?.adverse === true && canonicalDigest(item.payload.coordinate) === canonicalDigest(p.coordinate)) : null;
+    const currentGuard = Boolean(active && active.guardDigest === p.guardDigest && active.policyHash === p.dossierSnapshot.policyHash && active.policyStale !== true && (!head || active.policyHash === head.policyHash));
+    const currentGreenObservation = Boolean(!p.adverse && !inheritedEvent && !laterReview && (!head || p.dossierSnapshot.policyHash === head.policyHash)); const current = currentGuard || currentGreenObservation;
+    let guard = current ? clone(active ?? null) : null;
+    if (!guard && (p.adverse || inheritedEvent)) {
+      guard = { coordinate: clone(p.coordinate), repoId: seed?.envRef?.repoId ?? null, blocked: true, dossierDigest: p.dossierRef.digest, factDigest: p.dossierSnapshot.factDigest, policyHash: p.dossierSnapshot.policyHash, recommendation: p.dossierSnapshot.recommendation, asOf: p.dossierSnapshot.asOf, expiresAt: p.dossierSnapshot.expiresAt, advisoryIds: clone(p.advisoryIds), maliciousAdvisoryIds: clone(p.maliciousAdvisoryIds), eventSeq: prior.seq, guardDigest: p.guardDigest, policyStale: Boolean(head && p.dossierSnapshot.policyHash !== head.policyHash), inheritedAdverse: !p.adverse,
+        ...(!p.adverse && inheritedEvent ? { inheritedFromGuardDigest: inheritedEvent.payload.guardDigest, inheritedFactDigest: inheritedEvent.payload.dossierSnapshot.factDigest, inheritedPolicyHash: inheritedEvent.payload.dossierSnapshot.policyHash, inheritedAdvisoryIds: clone(inheritedEvent.payload.advisoryIds), inheritedMaliciousAdvisoryIds: clone(inheritedEvent.payload.maliciousAdvisoryIds), inheritedEventSeq: inheritedEvent.seq } : {}) };
+    }
+    return freeze({ ok: true, result: current ? 'idempotent' : 'historical', current, historical: !current, event: clone(prior), guard: clone(guard), targets: clone(p.targets) });
   }
 
   recordReuseRiskGuard(fields, auth) {
@@ -885,8 +1136,7 @@ export class CoordinationStore {
     if (typeof auth?.actor !== 'string' || auth.actor.length === 0 || typeof auth?.key !== 'string' || auth.key.length === 0) throw new TypeError('reuse decision actor and idempotency key required');
     const priorEvent = this._byKey.get(auth.key);
     if (priorEvent) {
-      if (!['knowledge.reuse_decided', 'reuse.decision_request_bound'].includes(priorEvent.kind) || priorEvent.payload?.requestDigest !== fields?.requestDigest) throw new CoordinationRefusal('reuse decision idempotency conflict', 'reuse_decision_conflict');
-      return freeze({ ok: true, result: 'idempotent', event: clone(priorEvent), decision: this.reuseDecision(priorEvent.payload.id ?? priorEvent.payload.decisionId) });
+      return this.reuseDecisionAdmission(auth.key, fields?.requestDigest);
     }
     const existing = this._reuseDecisions.get(fields?.id);
     if (existing) {

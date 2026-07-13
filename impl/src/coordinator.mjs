@@ -105,7 +105,7 @@ const COORDINATION_MUTATORS = new Set([
   'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
   'readScratch', 'expireScratchClaim', 'expireScratchFact', 'addKnowledgeNode', 'promoteKnowledgeNode',
   'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination', 'recordReuseDecision',
-  'recordReuseRiskGuard', 'recordReuseTtlInvalidation',
+  'recordReuseRiskGuard', 'recordReuseTtlInvalidation', 'activateReusePolicy',
 ]);
 
 function canonical(value) {
@@ -302,10 +302,12 @@ export class Coordinator {
   /** @param {object} opts */
   constructor(opts) {
     if (!opts?.coordination) throw new TypeError('Coordinator requires a durable coordination store');
-    for (const method of ['snapshot', 'task', 'integrationAuthority', 'publicationAuthority', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent', 'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'artifact', 'recordReuseDecision', 'reuseDecision', 'reuseDecisionAdmission', 'reuseRiskGuard', 'recordReuseRiskGuard', 'reuseRiskAdmission', 'recordReuseTtlInvalidation', 'reuseTtlAdmission', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
+    for (const method of ['snapshot', 'task', 'integrationAuthority', 'publicationAuthority', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent', 'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'artifact', 'recordReuseDecision', 'reuseDecision', 'reuseDecisionAdmission', 'reusePolicyState', 'activateReusePolicy', 'reuseRiskGuard', 'recordReuseRiskGuard', 'reuseRiskAdmission', 'recordReuseTtlInvalidation', 'reuseTtlAdmission', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
       if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
     }
-    this._log = opts.log;
+    this._closed = false;
+    this._authorityOps = 0;
+    this._log = new Proxy(opts.log, { get: (target, property, receiver) => { const value = Reflect.get(target, property, receiver); if (typeof value !== 'function') return value; const bound = value.bind(target); return property === 'append' ? (...args) => { if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' }); return bound(...args); } : bound; } });
     this._fences = opts.fences;
     this._adapters = opts.adapters;
     this._worktrees = opts.worktrees;
@@ -344,7 +346,9 @@ export class Coordinator {
       if (!policy || typeof policy.authorize !== 'function' || !Number.isSafeInteger(policy.maxNeedBytes) || policy.maxNeedBytes <= 0
         || !Number.isSafeInteger(policy.maxRationaleBytes) || policy.maxRationaleBytes <= 0) throw new TypeError('reuse decision policy requires actor authorization and text ceilings');
       if (policy.authorizeRecheck !== undefined && typeof policy.authorizeRecheck !== 'function') throw new TypeError('reuse decision authorizeRecheck must be a function');
-      this._reuseDecisionPolicy = Object.freeze({ authorize: policy.authorize, authorizeRecheck: policy.authorizeRecheck ?? null, maxNeedBytes: policy.maxNeedBytes, maxRationaleBytes: policy.maxRationaleBytes });
+      const reconcile = policy.policyReconcile;
+      if (!reconcile || Object.keys(reconcile).sort().join(',') !== ['maxDecisionTargets', 'maxGuardTargets', 'maxAffectedReads', 'maxStateRows', 'maxObservedPolicyHashes', 'maxEventBytes'].sort().join(',') || Object.values(reconcile).some((value) => !Number.isSafeInteger(value) || value <= 0)) throw new TypeError('reuse decision policy requires reconciliation ceilings');
+      this._reuseDecisionPolicy = Object.freeze({ authorize: policy.authorize, authorizeRecheck: policy.authorizeRecheck ?? null, maxNeedBytes: policy.maxNeedBytes, maxRationaleBytes: policy.maxRationaleBytes, policyReconcile: Object.freeze({ ...reconcile }) });
     }
     this._now = opts.now || Date.now;
     this._approvalTimeoutMs = opts.approvalTimeoutMs ?? 60000;
@@ -492,6 +496,7 @@ export class Coordinator {
   // =========================================================================
 
   tick() {
+    if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' });
     if (this._fatalError) throw this._fatalError;
     this._sweepDeadlines();
     this._dispatchPass();
@@ -501,6 +506,19 @@ export class Coordinator {
    * public command. Northbounds call these methods; they never receive a second controller. */
   _assertOperational() {
     this.tick();
+  }
+
+  /** Irreversibly fence this controller before its durable writer lease is handed off. */
+  closeAuthority() {
+    if (this._closed) return false;
+    // Durable replay handles describe prior ownership; they are not native transports owned by
+    // this Coordinator instance. Locally dispatched handles are marked at the resource boundary
+    // and remain drain-required while idle so resumable/persistent harnesses cannot be orphaned.
+    const active = [...this._workers.values()].filter((worker) => worker.localAuthority === true && !['dead', 'exited', 'pending'].includes(worker.status));
+    if (active.length > 0) throw Object.assign(new Error(`coordinator still owns ${active.length} active worker(s); kill/reap before close`), { code: 'coordinator_not_drained' });
+    if (this._authorityOps > 0) throw Object.assign(new Error(`coordinator still has ${this._authorityOps} authority operation(s) in flight`), { code: 'coordinator_not_drained' });
+    this._closed = true;
+    return true;
   }
 
   _capabilityRegistry() {
@@ -621,6 +639,7 @@ export class Coordinator {
     task.routeKey = routeTupleKey(this._adapters[vendor]?.card(), task.modelResolved, task.effortResolved, task.taskType);
     handle.routeKey = task.routeKey;
     const harness = this._harnessOf(vendor);
+    handle.localAuthority = true;
     let runtime;
     try {
       runtime = this._ensureRuntimeScope(handle);
@@ -941,6 +960,7 @@ export class Coordinator {
       runtimeScope: null,
       runtimeLease: null,
       spawnAbort: null,
+      localAuthority: false,
       createdAt: new Date(this._now()).toISOString(),
     };
     this._workers.set(workerId, handle);
@@ -984,6 +1004,7 @@ export class Coordinator {
         watchdogActions: new Set(), recentFailedActions: [],
         watchdogGeneration: 0, watchdogTimer: null, runtimeScope: null, runtimeLease: null,
         spawnAbort: null, createdAt: new Date(0).toISOString(),
+        localAuthority: false,
       });
       const match = /^w-(\d+)$/.exec(workerId);
       if (match) this._workerSeq = Math.max(this._workerSeq, Number(match[1]));
@@ -1812,7 +1833,23 @@ export class Coordinator {
     if (waiter.timerHandle && typeof waiter.timerHandle.unref === 'function') waiter.timerHandle.unref();
 
     Promise.resolve(this._adapters[handle.vendor].kill(handle.id)).then((ack) => {
-      if (ack?.ok !== false || waiter.settled) return;
+      if (waiter.settled) return;
+      // Session adapters may truthfully report that the native transport was already terminal;
+      // no later kill.confirmed event can exist in that case. Treat the terminal Ack as the
+      // confirmation and finish the same runtime/worktree reap before releasing authority.
+      if (ack?.ok === true && ack?.terminal === true) {
+        waiter.settled = true;
+        if (waiter.timerHandle != null) this._clearTimeout(waiter.timerHandle);
+        this._fatalStopWaiters.delete(handle.id);
+        handle.status = 'dead';
+        this._removeRuntimeScope(handle);
+        Promise.resolve(this._removeTaskWorktree(this._tasks.get(handle.taskId))).finally(() => {
+          const result = { ok: true, result: 'confirmed_unlogged', auditUnavailable: true };
+          for (const resolve of waiter.resolvers) resolve(result);
+        });
+        return;
+      }
+      if (ack?.ok !== false) return;
       waiter.settled = true;
       if (waiter.timerHandle != null) this._clearTimeout(waiter.timerHandle);
       this._fatalStopWaiters.delete(handle.id);
@@ -2685,19 +2722,19 @@ export class Coordinator {
   /** Invoke an advertised ACI operation through the coordinator-owned registry. */
   async invokeCapability(name, op, args, ctx = {}) {
     this._assertOperational();
-    return this._capabilityRegistry().invoke(name, op, args, ctx);
+    this._authorityOps += 1; try { return await this._capabilityRegistry().invoke(name, op, args, ctx); } finally { this._authorityOps -= 1; }
   }
 
   /** Resume a bounded ACI operation through the same coordinator-owned registry. */
   async resumeCapability(name, op, ref, cursor, ctx = {}) {
     this._assertOperational();
-    return this._capabilityRegistry().resume(name, op, ref, cursor, ctx);
+    this._authorityOps += 1; try { return await this._capabilityRegistry().resume(name, op, ref, cursor, ctx); } finally { this._authorityOps -= 1; }
   }
 
   /** Reverify an ACI claim without granting the capability verification authority. */
   async reverifyCapability(name, op, claim, args, ctx = {}) {
     this._assertOperational();
-    return this._capabilityRegistry().reverify(name, op, claim, args, ctx);
+    this._authorityOps += 1; try { return await this._capabilityRegistry().reverify(name, op, claim, args, ctx); } finally { this._authorityOps -= 1; }
   }
 
   /** Record one immutable build-vs-borrow judgment after the Coordinator freshly reverifies the
@@ -2705,6 +2742,8 @@ export class Coordinator {
    * the sole decision authority and never installs, edits, merges, verifies, or publishes code. */
   async decideReuse(request, ctx = {}) {
     this._assertOperational();
+    this._authorityOps += 1;
+    try {
     if (!this._reuseDecisionPolicy || typeof this._resolveEnvironmentRef !== 'function') {
       const error = new Error('reuse decision authority is not deployment-configured'); error.code = 'reuse_decision_unavailable'; throw error;
     }
@@ -2776,6 +2815,7 @@ export class Coordinator {
     const priorNode = prior ? knowledgeSnapshot.nodes.find((node) => node.id === prior.nodeId) : null;
     const affectedReadEvents = prior && !priorNode?.validTo ? knowledgeSnapshot.reads.filter((read) => read.nodeIds.includes(prior.nodeId)).map((read) => read.eventSeq) : [];
     return this._coordination.recordReuseDecision({ schemaVersion: 1, id, requestDigest, decisionDigest, decisionArtifactDigest, subjectDigest, ...decisionRecord, dossierRef, sbomRef, dossierSnapshot, sbomSnapshot, reverifyEvidence, artifacts, affectedReadEvents }, { actor, key: ctx.idempotencyKey });
+    } finally { this._authorityOps -= 1; }
   }
 
   /** Recheck one immutable reuse lineage without accepting caller-supplied advisory facts. TTL is
@@ -2783,6 +2823,8 @@ export class Coordinator {
    * and lets the store atomically install the coordinate fence plus complete live target set. */
   async recheckReuseDecision(request, ctx = {}) {
     this._assertOperational();
+    this._authorityOps += 1;
+    try {
     if (!this._reuseDecisionPolicy?.authorizeRecheck) throw Object.assign(new Error('reuse recheck authority is not deployment-configured'), { code: 'reuse_recheck_unavailable' });
     const actor = ctx.actor;
     if (typeof actor !== 'string' || actor.length === 0 || actor.length > 256) throw Object.assign(new Error('reuse recheck actor is not authorized'), { code: 'reuse_recheck_forbidden' });
@@ -2822,11 +2864,12 @@ export class Coordinator {
     const riskProjectionDigest = canonicalDigest({ coordinate: seed.coordinate, dossierRef, dossierSnapshot: snapshot, advisoryIds, maliciousAdvisoryIds, adverse });
     const verifiedEvent = this._log.append({
       worker: 'hub-capability', harness: 'baton', turnEpoch: 0, actor, kind: 'knowledge.reuse_risk_reverified',
-      payload: { requestDigest, seedDecisionId: seed.id, expectedValidityVersion: request.expectedValidityVersion, dossierDigest: dossierRef.digest, factDigest: snapshot.factDigest, recommendation: snapshot.recommendation, asOf: snapshot.asOf, expiresAt: snapshot.expiresAt, advisoryIds, maliciousAdvisoryIds, adverse, riskProjectionDigest },
+      payload: { requestDigest, seedDecisionId: seed.id, expectedValidityVersion: request.expectedValidityVersion, dossierDigest: dossierRef.digest, factDigest: snapshot.factDigest, policyHash: snapshot.policyHash, recommendation: snapshot.recommendation, asOf: snapshot.asOf, expiresAt: snapshot.expiresAt, advisoryIds, maliciousAdvisoryIds, adverse, riskProjectionDigest },
     });
     const reverifyEvidence = this._coordMapEvent(verifiedEvent);
     const result = this._coordination.recordReuseRiskGuard({ requestDigest, seedDecisionId: seed.id, seedExpectedValidityVersion: request.expectedValidityVersion, coordinate: seed.coordinate, dossierRef, dossierSnapshot: snapshot, advisoryIds, maliciousAdvisoryIds, reverifyEvidence, adverse, effectiveAt: snapshot.asOf }, { actor, key: ctx.idempotencyKey });
     return Object.freeze({ ...result, dossier: claim });
+    } finally { this._authorityOps -= 1; }
   }
 
   /** Pull-only causal recall. The coordination append is the authority boundary: if the read

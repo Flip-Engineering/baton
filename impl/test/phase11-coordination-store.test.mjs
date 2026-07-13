@@ -40,7 +40,7 @@ test('CK8: direct Coordinator construction refuses an optional coordination side
 test('CK1: append failure is fatal and leaves event/task projections unchanged', () => {
   const store = new CoordinationStore(dir(), { appendFile: () => { throw new Error('disk full'); } });
   assert.throws(() => store.createTask(fields('a'), { actor: 'orchestrator', key: 'a' }), /disk full/);
-  assert.deepEqual(store.snapshot(), { tasks: [], runs: [], artifacts: [], reuseDecisions: [], reuseRiskGuards: [], evidence: [], scratch: { facts: [], claims: [], reads: [] }, knowledge: { nodes: [], edges: [], reads: [], contamination: [] }, lastSeq: 0 });
+  assert.deepEqual(store.snapshot(), { tasks: [], runs: [], artifacts: [], reuseDecisions: [], reuseRiskGuards: [], reusePolicy: { heads: [], transitions: [] }, evidence: [], scratch: { facts: [], claims: [], reads: [] }, knowledge: { nodes: [], edges: [], reads: [], contamination: [] }, lastSeq: 0 });
 });
 
 test('CK8/CK9: public spawn poisons before publishing any handle when task creation cannot append', async () => {
@@ -185,7 +185,8 @@ test('CK1/CK9: terminal artifact-batch failure poisons the driver and restarts a
   assert.equal(driver.coordination.snapshot().artifacts.length, 0);
   assert.throws(() => driver.coordinator.list(), (error) => error.code === 'coordination_write_unavailable');
 
-  const replay = make({ mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) });
+  assert.deepEqual(await driver.coordinator.kill(handle.id, 'test-replay-handoff', { emergency: true }), { ok: true, result: 'confirmed_unlogged', auditUnavailable: true });
+  driver.close(); const replay = make({ mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) });
   assert.equal(replay.coordination.task('terminal-batch-failure').status, 'failed');
   assert.equal((await replay.coordinator.result(handle.id)).status, 'failed');
 });
@@ -261,7 +262,7 @@ test('CK8/CK9: public driver exposes coordination and queued DAG survives restar
   assert.deepEqual(first.coordination.readyTasks().map((task) => task.id), ['base']);
   assert.equal(first.log.workers().length, 0, 'neither queued task reached a worker log');
 
-  const replay = make();
+  first.close(); const replay = make();
   assert.deepEqual(replay.coordinator.list().map((worker) => worker.taskId), ['base', 'child']);
   assert.equal(replay.coordinator.list().find((worker) => worker.id === base.id)?.status, 'pending');
   assert.equal(replay.coordinator.list().find((worker) => worker.id === child.id)?.status, 'pending');
@@ -284,6 +285,7 @@ test('CK2/CK9: restart terminalizes a durable claim that crashed before operatio
   const task = fields('claimed-before-spawn');
   coordination.createTask(task, { actor: 'orchestrator', key: 'create-crash-task' });
   coordination.claimTask(task.id, task.reservedWorkerId, 1, { actor: 'orchestrator', key: 'claim-crash-task' });
+  coordination.releaseWriterLease();
 
   const replay = createDriver({
     repoRoot: repo,
@@ -503,7 +505,7 @@ test('CK8/CK9: cancellation completion failure resolves bounded, keeps stop inte
   assert.equal(driver.coordinator._workers.get(handle.id).status, 'dead');
   assert.throws(() => driver.coordinator.list(), (error) => error.code === 'coordination_write_unavailable');
   driver.coordination._appendFile = rawAppend;
-  const replay = createDriver({ repoRoot: repo, logDir, coordination: driver.coordination, adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 0 } });
+  driver.close(); const replay = createDriver({ repoRoot: repo, logDir, coordination: driver.coordination, adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 0 } });
   assert.equal(replay.coordination.task('cancel-completion-failure').status, 'failed');
 });
 

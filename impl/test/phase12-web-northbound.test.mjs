@@ -288,6 +288,7 @@ test('WN4: admitted and completed idempotency state survives coordination-store 
   const firstStore = new CoordinationStore(directory);
   const first = new WebNorthbound({ coordinator, coordination: firstStore, repoIds: ['repo-a'], allowedOrigins: ['https://control.example.test'], now: () => Date.parse('2026-07-11T12:00:00.000Z') });
   assert.equal((await first.execute(context(), envelope())).status, 200);
+  firstStore.releaseWriterLease();
   const restartedStore = new CoordinationStore(directory);
   const restarted = new WebNorthbound({ coordinator, coordination: restartedStore, repoIds: ['repo-a'], allowedOrigins: ['https://control.example.test'], now: () => Date.parse('2026-07-11T12:00:00.000Z') });
   const replay = await restarted.execute(context(), envelope({ commandId: 'different-client-command-id' }));

@@ -364,6 +364,7 @@ export class CartographerQuartermaster {
         ...(this.proposalResolver ? { 'provenance.plan': { latency_class: 'bounded_batch', deterministic: false, side_effects: ['isolated_registry_resolution', 'content_addressed_artifact'], reverifiable: true } } : {}),
         ...(this.advisoryScanner ? { 'provenance.advisories': { latency_class: 'bounded_batch', deterministic: false, side_effects: ['external_api', 'content_addressed_artifact'], reverifiable: true } } : {}),
       },
+      ...(this.externalOracle ? { reusePolicy: { schemaVersion: 1, policyId: 'quartermaster-vet-policy-v1', hash: this.vetPolicyHash, projection: this.vetPolicy } } : {}),
       underlying: ['atlas-index:code.seed', 'atlas-index:repo.map'],
       limitations: [
         this.externalOracle ? 'External dossier is fail-closed and package-level; import observation is not vulnerable-function reachability' : 'External vet is not deployment-configured',

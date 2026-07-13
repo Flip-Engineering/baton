@@ -84,6 +84,13 @@ async function integratedPublicationTask({ now, approvalTimeoutMs = 1000 } = {})
   return { ...driver, root, logDir, handle, calls };
 }
 
+const closeForReplay = async (coordinator, coordination) => {
+  for (const worker of coordinator._workers.values()) {
+    if (worker.localAuthority === true && !['dead', 'exited', 'pending'].includes(worker.status)) await coordinator.kill(worker.id, 'test-replay-handoff');
+  }
+  coordinator.closeAuthority(); coordination.releaseWriterLease();
+};
+
 test('AC1: createDriver requireRedGreen proves base red and result green', async () => {
   const root = repo();
   commitBase(root);
@@ -291,7 +298,7 @@ test('AC5: ff-only integration reaps the worker/worktree/branch and records exac
   assert.equal(coordination.queryKnowledge({ types: ['Decision'] }).some((node) => node.id.startsWith('decision:integrate:')), true);
   assert.equal(coordination.events().some((entry) => entry.kind === 'knowledge.promoted' && entry.payload.promotion?.trigger === 'integration'), true);
 
-  const replay = createDriver({
+  await closeForReplay(coordinator, coordination); const replay = createDriver({
     repoRoot: root, logDir, coordination,
     adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 0 },
   });
@@ -315,7 +322,7 @@ test('CK9: post-merge authority-batch failure poisons and replay refuses integra
   assert.equal(coordination.queryKnowledge({ types: ['Decision'] }).some((node) => node.id.startsWith('decision:integrate:')), false);
 
   coordination._appendFile = rawAppend;
-  const replay = createDriver({
+  await closeForReplay(coordinator, coordination); const replay = createDriver({
     repoRoot: root, logDir, coordination,
     adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 0 },
   });
@@ -339,7 +346,7 @@ test('CK9: replay rejects an asymmetric integration decision without driver and 
     evidence: [{ coordinationSeq: mapped.evidence.coordinationSeq }],
   }, { kind: 'Decision', trigger: 'integration' }, { actor: 'human', key: `split-integration:decision:${operational.seq}` });
 
-  const replay = createDriver({
+  await closeForReplay(coordinator, coordination); const replay = createDriver({
     repoRoot: root, logDir, coordination,
     adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 0 },
   });
@@ -447,7 +454,7 @@ test('AC6: publication has no side effect before approval and allow publishes th
   assert.equal(coordination.queryKnowledge({ types: ['Decision'] }).some((node) => node.id.startsWith('decision:publish:')), true);
   assert.equal(coordination.events().some((entry) => entry.kind === 'knowledge.promoted' && entry.payload.promotion?.trigger === 'publication'), true);
 
-  const replay = createDriver({
+  await closeForReplay(coordinator, coordination); const replay = createDriver({
     repoRoot: root, logDir, coordination,
     adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) },
     publisher: async () => { throw new Error('replay must never republish'); }, watchdog: { stallMs: 0 },
@@ -470,7 +477,7 @@ test('CK9: replay rejects an asymmetric publication decision without its paired 
     evidence: [{ coordinationSeq: mapped.evidence.coordinationSeq }],
   }, { kind: 'Decision', trigger: 'publication' }, { actor: 'human', key: `split:decision:${operational.seq}` });
 
-  const replay = createDriver({
+  await closeForReplay(coordinator, coordination); const replay = createDriver({
     repoRoot: root, logDir, coordination,
     adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) },
     publisher: async () => { throw new Error('replay must never republish'); }, watchdog: { stallMs: 0 },
@@ -517,7 +524,7 @@ test('CK8/CK9: post-publish completion failure is bounded and preserves prior au
   assert.throws(() => coordinator.list(), (error) => error.code === 'coordination_write_unavailable');
 
   coordination._appendFile = rawAppend;
-  const replay = createDriver({
+  await closeForReplay(coordinator, coordination); const replay = createDriver({
     repoRoot: root, logDir, coordination,
     adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) },
     publisher: async () => { throw new Error('replay must never republish'); }, watchdog: { stallMs: 0 },
@@ -561,6 +568,7 @@ test('AC6: restart drops a pending approval and cannot publish it by replay', as
   const first = await integratedPublicationTask();
   const request = first.coordinator.requestPublication(first.handle.id, { remote: 'origin', ref: 'refs/heads/main' });
   const replayCalls = [];
+  first.close();
   const replay = createDriver({
     repoRoot: first.root, logDir: first.logDir,
     adapters: { mock: new MockAdapter({ scenario: { outcome: 'completed' } }) },

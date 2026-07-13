@@ -282,7 +282,13 @@ export class McpFleetServer {
       admission = this.coordination.admitMcpCall({ callId, scopeKey, requestDigest: this.callDigest(args), tool: name, repoId: args.repoId, userId: this.principal.userId }, { actor, key: `mcp.admit:${scopeKey}` });
     } catch { return toolError('temporarily_unavailable'); }
     if (!admission.ok) return toolError(admission.result === 'idempotency_conflict' ? 'idempotency_conflict' : 'invalid_call');
-    if (admission.result === 'replay') return admission.call.status === 'admitted' ? toolError('call_admitted') : clone(admission.call.outcome);
+    if (admission.result === 'replay') {
+      if (admission.call.status === 'admitted') return toolError('call_admitted');
+      if (admission.call.status === 'completed' && ['fleet_reuse_decide', 'fleet_reuse_recheck'].includes(name)) {
+        try { return toolResult(await this._dispatch(name, args, actor, admission.call.callId)); } catch { return toolError('temporarily_unavailable'); }
+      }
+      return clone(admission.call.outcome);
+    }
     let outcome;
     try { outcome = toolResult(await this._dispatch(name, args, actor, callId)); }
     catch (cause) {

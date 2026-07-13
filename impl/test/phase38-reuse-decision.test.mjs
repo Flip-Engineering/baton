@@ -46,7 +46,7 @@ async function fixture({ blocked = false } = {}) {
     capabilityFactories: { 'cartographer-quartermaster': () => capability },
     capabilityContexts: { 'cartographer-quartermaster': { worktreeRoot: repoRoot } },
     maxCapabilityBudgetTokens: 10_000, maxCapabilityEnvelopeBytes: 256 * 1024,
-    reuseDecisionPolicy: { authorize: ({ actor }) => /^(?:operator|web|mcp):/.test(actor), maxNeedBytes: 2_048, maxRationaleBytes: 8_192 },
+    reuseDecisionPolicy: { authorize: ({ actor }) => /^(?:operator|web|mcp):/.test(actor), maxNeedBytes: 2_048, maxRationaleBytes: 8_192, policyReconcile: { maxDecisionTargets: 64, maxGuardTargets: 64, maxAffectedReads: 256, maxStateRows: 10_000, maxObservedPolicyHashes: 64, maxEventBytes: 512 * 1024 } },
   });
   const dossierArgs = { indexEpoch: built.provenance.index_epoch, ecosystem: 'npm', package: '@scope/safe-pkg', version: '1.2.3' };
   const sbomArgs = { lockfilePath: 'package-lock.json' };
@@ -65,9 +65,10 @@ test('RD1-RD5: green evidence records immutable fleet artifacts, derived Finding
   const snapshot = f.coordination.snapshot();
   assert.equal(snapshot.reuseDecisions.length, 1); assert.equal(snapshot.artifacts.length, 3);
   const decision = snapshot.knowledge.nodes.find((node) => node.id === result.decision.nodeId);
-  assert.equal(decision.type, 'Decision'); assert.equal(decision.grounding, 'observed'); assert.equal(decision.informedBy.length, 2);
-  assert.equal(decision.informedBy.every((id) => snapshot.knowledge.nodes.find((node) => node.id === id)?.grounding === 'derived'), true);
-  assert.equal(snapshot.knowledge.edges.filter((edge) => edge.type === 'Informed' && edge.from === decision.id).length, 2);
+  assert.equal(decision.type, 'Decision'); assert.equal(decision.grounding, 'observed'); assert.equal(decision.informedBy.length, 3);
+  assert.equal(decision.informedBy.filter((id) => id.startsWith('finding:')).every((id) => snapshot.knowledge.nodes.find((node) => node.id === id)?.grounding === 'derived'), true);
+  assert.equal(snapshot.knowledge.edges.filter((edge) => edge.type === 'Informed' && edge.from === decision.id).length, 3);
+  assert.ok(snapshot.knowledge.edges.some((edge) => edge.type === 'Informed' && edge.from === decision.id && edge.to.startsWith('constraint:reuse-policy:')));
   assert.equal(f.log.read('hub-capability').some((event) => event.kind === 'knowledge.reuse_evidence_reverified' && event.actor === f.ctx.actor), true);
 });
 

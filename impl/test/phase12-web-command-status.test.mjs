@@ -55,6 +55,7 @@ test('RC1/RC2/RC3: admitted and terminal status are sanitized and read-only', as
 test('RC1/RC2: status survives restart and credential rotation for the same user', async () => {
   const s = setup(); const issued = s.issue(); const principal = s.sessions.authenticate({ headers: { cookie: cookie(issued) } });
   admit(s, principal); const rotated = s.sessions.rotate(principal.sessionId, { actor: 'test' });
+  s.coordination.releaseWriterLease();
   const restarted = setup(s.directory);
   const response = await get(restarted.web, '/v1/commands/command-1', cookie(rotated));
   assert.equal(response.status, 200); assert.equal(response.body.command.status, 'admitted');
