@@ -13,6 +13,13 @@ const nonNegativeInteger = (value, name) => {
   if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`${name} must be a non-negative safe integer`);
   return value;
 };
+const GOAL_PLAN_EVENT_KINDS = new Set(['goal.version_defined', 'plan.version_proposed', 'plan.approval_decided', 'plan.node_dispatched']);
+const GOAL_PLAN_WEB_COMMANDS = new Set(['goal_define', 'plan_propose', 'plan_approve', 'goal_plan_status']);
+const GOAL_PLAN_MCP_TOOLS = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'fleet_goal_plan_status']);
+const AUTHORITY_FIELDS = new Set([
+  'credentialId', 'credentialDigest', 'principalId', 'principalDigest', 'proposerPrincipalId',
+  'sessionId', 'sessionDigest', 'userId', 'tokenDigest', 'csrfTokenDigest',
+]);
 
 export class WebEventStream {
   constructor(opts) {
@@ -179,6 +186,7 @@ export class WebEventStream {
       return response(503, 'temporarily_unavailable');
     }
     const boundary = snapshot.lastSeq;
+    snapshot = this._projectSnapshot(snapshot, principal);
     const requested = cursor == null || cursor === '' ? null : Number(cursor);
     if (requested !== null && (!Number.isSafeInteger(requested)
       || requested < Math.max(0, boundary - this.replayLimit) || requested > boundary)) {
@@ -281,7 +289,9 @@ export class WebEventStream {
             endSocket();
             return;
           }
-          if (!send(event)) break;
+          const projected = this._projectEvent(event, principal);
+          if (projected === null) { next = event.seq + 1; continue; }
+          if (!send(projected)) break;
         }
       } catch {
         disconnect('stream_read_failed');
@@ -321,6 +331,79 @@ export class WebEventStream {
   }
 
   shutdown() { this.accepting = false; for (const close of [...this.connections]) close(); }
+
+  _canObserveGoalPlan(principal) {
+    return Array.isArray(principal?.capabilities) && principal.capabilities.includes('goal:observe');
+  }
+
+  _redactAuthority(value) {
+    if (Array.isArray(value)) return value.map((item) => this._redactAuthority(item));
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value)
+      .filter(([key]) => !AUTHORITY_FIELDS.has(key))
+      .map(([key, item]) => [key, this._redactAuthority(item)]));
+  }
+
+  _stripGoalPlan(value) {
+    if (Array.isArray(value)) return value.map((item) => this._stripGoalPlan(item));
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value)
+      .filter(([key]) => key !== 'goalPlan')
+      .map(([key, item]) => [key, this._stripGoalPlan(item)]));
+  }
+
+  _redactGoalPlanInternals(value) {
+    if (Array.isArray(value)) return value.map((item) => this._redactGoalPlanInternals(item));
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.entries(value)
+      .filter(([key]) => !AUTHORITY_FIELDS.has(key) && !['requestDigest', 'scopeKey'].includes(key))
+      .map(([key, item]) => [key, this._redactGoalPlanInternals(item)]));
+  }
+
+  _isGoalPlanEvent(event) {
+    const payload = event?.payload ?? {};
+    if (GOAL_PLAN_EVENT_KINDS.has(event?.kind) || payload?.brief?.goalPlan) return true;
+    if (event?.kind === 'web.command_admitted') return GOAL_PLAN_WEB_COMMANDS.has(payload.command);
+    if (event?.kind === 'mcp.call_admitted') return GOAL_PLAN_MCP_TOOLS.has(payload.tool);
+    if (event?.kind === 'web.audit') return GOAL_PLAN_WEB_COMMANDS.has(payload.command);
+    if (event?.kind === 'mcp.audit') return GOAL_PLAN_MCP_TOOLS.has(payload.tool);
+    if (['web.command_completed', 'web.command_failed'].includes(event?.kind)) {
+      const command = typeof this.coordination.webCommand === 'function' ? this.coordination.webCommand(payload.commandId) : null;
+      return GOAL_PLAN_WEB_COMMANDS.has(command?.command) || this._containsGoalPlan(payload.outcome);
+    }
+    if (['mcp.call_completed', 'mcp.call_failed'].includes(event?.kind)) {
+      const call = typeof this.coordination.mcpCall === 'function' ? this.coordination.mcpCall(payload.callId) : null;
+      return GOAL_PLAN_MCP_TOOLS.has(call?.tool) || this._containsGoalPlan(payload.outcome);
+    }
+    return this._containsGoalPlan(payload);
+  }
+
+  _containsGoalPlan(value) {
+    if (Array.isArray(value)) return value.some((item) => this._containsGoalPlan(item));
+    if (!value || typeof value !== 'object') return false;
+    if (Object.hasOwn(value, 'goalPlan') || Object.hasOwn(value, 'goalId') || Object.hasOwn(value, 'planId')) return true;
+    return Object.values(value).some((item) => this._containsGoalPlan(item));
+  }
+
+  _projectSnapshot(snapshot, principal) {
+    const projected = this._redactAuthority(clone(snapshot));
+    if (!this._canObserveGoalPlan(principal)) return this._stripGoalPlan(projected);
+    if (projected.goalPlan) projected.goalPlan = this._redactGoalPlanInternals(projected.goalPlan);
+    for (const task of projected.tasks ?? []) if (task?.brief?.goalPlan) task.brief.goalPlan = this._redactGoalPlanInternals(task.brief.goalPlan);
+    return projected;
+  }
+
+  _projectEvent(event, principal) {
+    const goalPlanEvent = this._isGoalPlanEvent(event);
+    if (!this._canObserveGoalPlan(principal) && goalPlanEvent) return null;
+    let projected = this._redactAuthority(clone(event));
+    if (goalPlanEvent) {
+      projected = this._redactGoalPlanInternals(projected);
+      delete projected.idempotencyKey;
+      projected.actor = 'goal-plan:authorized';
+    } else if (typeof projected.actor === 'string' && (projected.actor.startsWith('web:') || projected.actor.startsWith('mcp:'))) projected.actor = 'northbound:authenticated';
+    return projected;
+  }
 
   _contentTrust(event) {
     const kind = event?.kind ?? '';

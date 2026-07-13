@@ -110,3 +110,32 @@ test('GP5/GP8: mandatory plan-gated spawn binds Brief/route/budget and has one c
   await driver.coordinator.kill(attempts.find((row) => row.status === 'fulfilled').value.id, 'orchestrator');
   driver.close();
 });
+
+test('GP5/GP6/GP8: an admitted plan-gated spawn reconciles an exact lost-response retry without duplicate effects', async () => {
+  const driver = make('dispatch-reconcile'); const { goal, plan } = await approved(driver, 'dispatch-reconcile');
+  const brief = { goal: 'Implement the approved slice', constraints: ['No network access'], pathScope: ['impl/**'], definitionOfDone: 'node --test passes', verification, budget: { tokens: 10_000, usd: 2, wallMin: 10 } };
+  const gate = { goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest, planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code', 'test'], effects: ['repository_edit'] };
+  const opts = { taskId: 'planned-reconcile', goalPlan: gate, actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session', powers: ['plan:dispatch'], idempotencyKey: 'spawn:planned-reconcile' };
+
+  const admitted = await driver.coordinator.spawn('mock', brief, opts);
+  const tasksBefore = driver.coordination.events().filter((event) => event.kind === 'task.created').length;
+  const workersBefore = driver.coordinator.list().length;
+  const replayed = await driver.coordinator.spawn('mock', brief, opts);
+  assert.equal(replayed.id, admitted.id);
+  assert.equal(driver.coordination.events().filter((event) => event.kind === 'task.created').length, tasksBefore);
+  assert.equal(driver.coordinator.list().length, workersBefore);
+
+  await assert.rejects(
+    () => driver.coordinator.spawn('mock', { ...brief, goal: 'Substituted objective' }, opts),
+    (error) => error.code === 'plan_dispatch_conflict',
+  );
+  await assert.rejects(
+    () => driver.coordinator.spawn('mock', brief, { ...opts, idempotencyKey: 'spawn:changed-key' }),
+    (error) => error.code === 'plan_dispatch_conflict',
+  );
+  assert.equal(driver.coordination.events().filter((event) => event.kind === 'task.created').length, tasksBefore);
+  assert.equal(driver.coordinator.list().length, workersBefore);
+  await driver.coordinator.kill(admitted.id, 'orchestrator');
+  await driver.coordinator.drain({ actor: 'test', repoId: 'repo-phase62', idempotencyKey: 'drain:planned-reconcile' });
+  driver.close();
+});

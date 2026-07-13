@@ -10,11 +10,13 @@ import { northboundCapabilityToken } from './northbound-capability-authority.mjs
 const COMMAND_CAPABILITY = Object.freeze({
   spawn: 'control', scratch_oracle: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', drain: 'emergency_stop', respond: 'approve',
   list: 'observe', result: 'observe', wait: 'observe', capabilities: 'observe', provider_status: 'observe', capability_invoke: 'control', reuse_decide: 'control', reuse_recheck: 'control',
+  goal_define: 'goal:define', plan_propose: 'plan:propose', plan_approve: 'plan:approve', goal_plan_status: 'goal:observe',
 });
 const FENCE_REQUIRED = new Set(['send', 'interrupt', 'kill']);
+const RECONCILABLE = new Set(['goal_define', 'plan_propose', 'plan_approve']);
 const TOP_LEVEL = new Set(['schemaVersion', 'commandId', 'idempotencyKey', 'command', 'args', 'repoId', 'runId', 'expectedFence', 'origin', 'clientObservedCursor']);
 const ARG_FIELDS = Object.freeze({
-  spawn: new Set(['harness', 'model', 'effort', 'modelPolicy', 'brief', 'taskId', 'deps', 'taskType', 'session', 'refines']),
+  spawn: new Set(['harness', 'model', 'effort', 'modelPolicy', 'brief', 'taskId', 'deps', 'taskType', 'session', 'refines', 'goalPlan']),
   scratch_oracle: new Set(['scratchFactId', 'harness', 'model', 'effort', 'modelPolicy', 'verification', 'budget', 'constraints', 'goal', 'definitionOfDone', 'taskId']),
   send: new Set(['workerId', 'message', 'mode']),
   interrupt: new Set(['workerId', 'then']),
@@ -29,11 +31,22 @@ const ARG_FIELDS = Object.freeze({
   capability_invoke: new Set(['name', 'op', 'action', 'args', 'budgetTokens', 'ref', 'cursor', 'claim', 'workerId', 'note']),
   reuse_decide: new Set(['need', 'choice', 'rationale', 'dossier', 'sbom', 'supersedes', 'budgetTokens']),
   reuse_recheck: new Set(['decisionId', 'expectedValidityVersion', 'trigger', 'budgetTokens']),
+  goal_define: new Set(['objective', 'definitionOfDone', 'constraints', 'risk', 'budget', 'predecessor']),
+  plan_propose: new Set(['goal', 'predecessor', 'nodes']),
+  plan_approve: new Set(['goal', 'plan', 'expectedDisposition', 'disposition']),
+  goal_plan_status: new Set(['goalId', 'planId', 'throughSeq']),
 });
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
 const VERIFICATION_FIELDS = new Set(['command', 'expectExit', 'timeoutMs', 'coverageCommand', 'mutationCommand']);
 const BUDGET_FIELDS = new Set(['tokens', 'usd', 'wallMin']);
+const GOAL_PLAN_BUDGET_FIELDS = new Set(['tokens', 'usd', 'wallMin', 'providerTurns']);
+const GOAL_REF_FIELDS = new Set(['goalId', 'version', 'digest']);
+const PLAN_REF_FIELDS = new Set(['planId', 'version', 'digest']);
+const PLAN_NODE_FIELDS = new Set(['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects']);
+const PLAN_ROUTE_FIELDS = new Set(['harnesses', 'models', 'efforts']);
+const PLAN_VERIFICATION_FIELDS = new Set(['command', 'expectExit', 'timeoutMs']);
+const PLAN_GATE_FIELDS = new Set(['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'expectedDispatchVersion', 'capabilities', 'effects']);
 const AUTH_PATHS = new Set(['/v1/auth/login', '/v1/auth/refresh', '/v1/auth/logout']);
 const OIDC_START_PATH = '/v1/auth/oidc/start';
 const OIDC_CALLBACK_PATH = '/v1/auth/oidc/callback';
@@ -54,6 +67,23 @@ function actor(principal) { return `web:${principal.userId}:${principal.sessionI
 function result(status, body) { return Object.freeze({ status, body: Object.freeze(body) }); }
 function error(status, code, message = code) { return result(status, { ok: false, error: { code, message } }); }
 function dispatchFailure(cause) {
+  const goalPlanCode = cause?.code;
+  if (goalPlanCode === 'goal_plan_unauthorized') return { httpStatus: 403, body: { ok: false, error: { code: goalPlanCode, message: 'goal/plan authority forbidden' } } };
+  if (goalPlanCode === 'goal_plan_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: goalPlanCode, message: 'goal/plan authority unavailable' } } };
+  if (goalPlanCode === 'not_found' || goalPlanCode === 'plan_node_not_found') return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'resource not found' } } };
+  if (['goal_plan_invalid', 'goal_plan_status_invalid', 'goal_reference_invalid', 'plan_reference_invalid', 'goal_too_large',
+    'plan_approval_invalid', 'plan_budget_exceeded', 'plan_cycle', 'plan_dangling_dependency', 'plan_duplicate_node',
+    'plan_effect_invalid', 'plan_goal_mismatch', 'plan_node_invalid', 'plan_node_limit', 'plan_scope_invalid',
+    'plan_too_large', 'plan_verification_invalid', 'plan_dispatch_invalid'].includes(goalPlanCode)) {
+    return { httpStatus: 400, body: { ok: false, error: { code: goalPlanCode, message: 'goal/plan precondition failed' } } };
+  }
+  if (['goal_conflict', 'goal_predecessor_required', 'goal_stale', 'goal_version_limit', 'goal_weakened',
+    'plan_approval_conflict', 'plan_approval_expired', 'plan_approval_stale', 'plan_brief_mismatch', 'plan_conflict',
+    'plan_dependency_incomplete', 'plan_dependency_mismatch', 'plan_dispatch_conflict', 'plan_dispatch_stale',
+    'plan_effect_mismatch', 'plan_not_approved', 'plan_predecessor_required', 'plan_route_mismatch', 'plan_self_approval',
+    'plan_stale', 'plan_version_limit', 'goal_plan_required'].includes(goalPlanCode)) {
+    return { httpStatus: 409, body: { ok: false, error: { code: goalPlanCode, message: 'goal/plan state conflict' } } };
+  }
   if (['ModelSelectionError', 'SessionSelectionError', 'DuplicateTaskIdError', 'UnknownVendorError', 'DependencyCycleError', 'TypeError'].includes(cause?.name)) {
     return { httpStatus: 400, body: { ok: false, error: { code: 'invalid_command', message: 'command precondition failed' } } };
   }
@@ -102,6 +132,48 @@ function containsForbiddenKey(value) {
   return Object.entries(value).some(([key, child]) => FORBIDDEN_KEY.test(key) || containsForbiddenKey(child));
 }
 function string(value) { return typeof value === 'string' && value.length > 0; }
+function exactRecord(value, fields) {
+  return isRecord(value) && Object.keys(value).length === fields.size
+    && Object.keys(value).every((key) => fields.has(key));
+}
+function stringList(value) {
+  return Array.isArray(value) && value.every(string) && new Set(value).size === value.length;
+}
+function goalPlanBudget(value) {
+  return exactRecord(value, GOAL_PLAN_BUDGET_FIELDS)
+    && Number.isSafeInteger(value.tokens) && value.tokens > 0
+    && Number.isFinite(value.usd) && value.usd >= 0
+    && Number.isSafeInteger(value.wallMin) && value.wallMin > 0
+    && Number.isSafeInteger(value.providerTurns) && value.providerTurns > 0;
+}
+function goalPlanRef(value, kind) {
+  const fields = kind === 'goal' ? GOAL_REF_FIELDS : PLAN_REF_FIELDS;
+  const id = value?.[`${kind}Id`];
+  return exactRecord(value, fields) && new RegExp(`^${kind}:[a-f0-9]{64}$`).test(id ?? '')
+    && Number.isSafeInteger(value.version) && value.version > 0 && /^[a-f0-9]{64}$/.test(value.digest ?? '');
+}
+function planVerification(value) {
+  return exactRecord(value, PLAN_VERIFICATION_FIELDS) && string(value.command)
+    && Number.isSafeInteger(value.expectExit) && value.expectExit >= 0 && value.expectExit <= 255
+    && Number.isSafeInteger(value.timeoutMs) && value.timeoutMs > 0;
+}
+function planNode(value) {
+  return exactRecord(value, PLAN_NODE_FIELDS) && string(value.key) && string(value.objective)
+    && stringList(value.definitionOfDone) && stringList(value.deps) && stringList(value.pathScope)
+    && string(value.risk) && goalPlanBudget(value.budget) && planVerification(value.verification)
+    && exactRecord(value.routes, PLAN_ROUTE_FIELDS) && stringList(value.routes.harnesses)
+    && stringList(value.routes.models) && stringList(value.routes.efforts)
+    && stringList(value.capabilities) && stringList(value.effects);
+}
+function planGate(value) {
+  return exactRecord(value, PLAN_GATE_FIELDS)
+    && /^goal:[a-f0-9]{64}$/.test(value.goalId ?? '') && Number.isSafeInteger(value.goalVersion) && value.goalVersion > 0
+    && /^[a-f0-9]{64}$/.test(value.goalDigest ?? '')
+    && /^plan:[a-f0-9]{64}$/.test(value.planId ?? '') && Number.isSafeInteger(value.planVersion) && value.planVersion > 0
+    && /^[a-f0-9]{64}$/.test(value.planDigest ?? '') && string(value.nodeKey)
+    && Number.isSafeInteger(value.expectedDispatchVersion) && value.expectedDispatchVersion >= 0
+    && stringList(value.capabilities) && stringList(value.effects);
+}
 function validProviderClaims(value) {
   if (!isRecord(value)) return false;
   const allowed = new Set(['userId', 'authMethod', 'capabilities', 'repoIds', 'ttlMs']);
@@ -137,6 +209,28 @@ function validateEnvelope(envelope) {
       const unknownPolicy = Object.keys(envelope.args.modelPolicy).find((key) => !MODEL_POLICY_FIELDS.has(key));
       if (unknownPolicy) return 'unknown_model_policy_field';
     }
+    if (Object.hasOwn(envelope.args, 'goalPlan') && !planGate(envelope.args.goalPlan)) return 'plan-gated spawn fields are invalid';
+  }
+  if (envelope.command === 'goal_define') {
+    if (!exactRecord(envelope.args, ARG_FIELDS.goal_define) || !string(envelope.args.objective)
+      || !stringList(envelope.args.definitionOfDone) || envelope.args.definitionOfDone.length === 0
+      || !stringList(envelope.args.constraints) || !string(envelope.args.risk) || !goalPlanBudget(envelope.args.budget)
+      || !(envelope.args.predecessor === null || goalPlanRef(envelope.args.predecessor, 'goal'))) return 'goal_define requires one closed goal version';
+  }
+  if (envelope.command === 'plan_propose') {
+    if (!exactRecord(envelope.args, ARG_FIELDS.plan_propose) || !goalPlanRef(envelope.args.goal, 'goal')
+      || !(envelope.args.predecessor === null || goalPlanRef(envelope.args.predecessor, 'plan'))
+      || !Array.isArray(envelope.args.nodes) || envelope.args.nodes.length === 0 || !envelope.args.nodes.every(planNode)) return 'plan_propose requires one closed plan DAG';
+  }
+  if (envelope.command === 'plan_approve') {
+    if (!exactRecord(envelope.args, ARG_FIELDS.plan_approve) || !goalPlanRef(envelope.args.goal, 'goal')
+      || !goalPlanRef(envelope.args.plan, 'plan') || envelope.args.expectedDisposition !== null
+      || !['approved', 'rejected'].includes(envelope.args.disposition)) return 'plan_approve requires exact undecided goal and plan coordinates';
+  }
+  if (envelope.command === 'goal_plan_status') {
+    if (!exactRecord(envelope.args, ARG_FIELDS.goal_plan_status) || !/^goal:[a-f0-9]{64}$/.test(envelope.args.goalId ?? '')
+      || !/^plan:[a-f0-9]{64}$/.test(envelope.args.planId ?? '')
+      || !(envelope.args.throughSeq === null || (Number.isSafeInteger(envelope.args.throughSeq) && envelope.args.throughSeq >= 0))) return 'goal_plan_status requires exact bounded coordinates';
   }
   if (envelope.command === 'scratch_oracle') {
     if (!string(envelope.args.scratchFactId) || !string(envelope.args.harness) || !isRecord(envelope.args.verification)
@@ -347,7 +441,26 @@ export class WebNorthbound {
         const admittedActor = actor({ userId: admission.command.userId, sessionId: admission.command.sessionId });
         let replayed;
         try {
-          replayed = await this._dispatchDrain(envelope, admittedActor, commandId);
+          replayed = await this._dispatchDrain(envelope, admittedActor, commandId, ctx.principal);
+        } catch (cause) {
+          const failure = dispatchFailure(cause);
+          try { this.coordination.failWebCommand(commandId, failure, { actor: admittedActor, key: `web.fail:${commandId}` }); } catch { /* no success is returned */ }
+          return result(failure.httpStatus, { ...failure.body, replayed: true });
+        }
+        const outcome = { httpStatus: replayed.status, body: replayed.body };
+        try { this.coordination.completeWebCommand(commandId, outcome, { actor: admittedActor, key: `web.complete:${commandId}` }); }
+        catch { return error(503, 'temporarily_unavailable'); }
+        return { ...replayed, body: { ...replayed.body, replayed: true } };
+      }
+      if (admission.command.status === 'admitted' && (RECONCILABLE.has(envelope.command)
+        || (envelope.command === 'spawn' && envelope.args.goalPlan))) {
+        const commandId = admission.command.commandId;
+        const admittedActor = actor({ userId: admission.command.userId, sessionId: admission.command.sessionId });
+        const admittedPrincipal = { ...ctx.principal, userId: admission.command.userId, sessionId: admission.command.sessionId };
+        const admittedEnvelope = commandId === envelope.commandId ? envelope : { ...envelope, commandId };
+        let replayed;
+        try {
+          replayed = await this._dispatch(admittedEnvelope, admittedActor, admittedPrincipal);
         } catch (cause) {
           const failure = dispatchFailure(cause);
           try { this.coordination.failWebCommand(commandId, failure, { actor: admittedActor, key: `web.fail:${commandId}` }); } catch { /* no success is returned */ }
@@ -360,7 +473,7 @@ export class WebNorthbound {
       }
       if (admission.command.status === 'admitted') return result(202, { ok: true, commandId: admission.command.commandId, status: 'admitted', replayed: true });
       if (admission.command.status === 'completed' && ['reuse_decide', 'reuse_recheck'].includes(envelope.command)) {
-        try { const refreshed = await this._dispatch(envelope, webActor); return { ...refreshed, body: { ...refreshed.body, replayed: true } }; } catch { return error(503, 'temporarily_unavailable'); }
+        try { const refreshed = await this._dispatch(envelope, webActor, ctx.principal); return { ...refreshed, body: { ...refreshed.body, replayed: true } }; } catch { return error(503, 'temporarily_unavailable'); }
       }
       return result(admission.command.outcome.httpStatus, { ...json(admission.command.outcome.body), replayed: true });
     }
@@ -368,8 +481,8 @@ export class WebNorthbound {
     let response;
     try {
       response = envelope.command === 'drain'
-        ? await this._dispatchDrain(envelope, webActor, envelope.commandId)
-        : await this._dispatch(envelope, webActor);
+        ? await this._dispatchDrain(envelope, webActor, envelope.commandId, ctx.principal)
+        : await this._dispatch(envelope, webActor, ctx.principal);
     } catch (cause) {
       const failure = dispatchFailure(cause);
       try { this.coordination.failWebCommand(envelope.commandId, failure, { actor: webActor, key: `web.fail:${envelope.commandId}` }); } catch { /* no success is returned */ }
@@ -386,11 +499,11 @@ export class WebNorthbound {
     return response;
   }
 
-  _dispatchDrain(envelope, webActor, commandId) {
+  _dispatchDrain(envelope, webActor, commandId, principal) {
     const existing = this._drainDispatches.get(commandId);
     if (existing) return existing;
     const admittedEnvelope = commandId === envelope.commandId ? envelope : { ...envelope, commandId };
-    const pending = Promise.resolve().then(() => this._dispatch(admittedEnvelope, webActor));
+    const pending = Promise.resolve().then(() => this._dispatch(admittedEnvelope, webActor, principal));
     this._drainDispatches.set(commandId, pending);
     void pending.then(
       () => { if (this._drainDispatches.get(commandId) === pending) this._drainDispatches.delete(commandId); },
@@ -399,16 +512,38 @@ export class WebNorthbound {
     return pending;
   }
 
-  async _dispatch(envelope, webActor) {
+  async _dispatch(envelope, webActor, principal) {
     const a = envelope.args;
+    const needsGoalPlanPrincipal = ['goal_define', 'plan_propose', 'plan_approve', 'goal_plan_status'].includes(envelope.command)
+      || (envelope.command === 'spawn' && Boolean(a.goalPlan));
+    if (needsGoalPlanPrincipal && !principal) throw new TypeError('Goal/Plan web dispatch requires its authenticated principal');
+    const goalPlanCtx = principal ? {
+      actor: webActor, principalId: principal.userId, sessionId: principal.sessionId,
+      powers: [...principal.capabilities], repoId: envelope.repoId, runId: envelope.runId ?? null,
+      idempotencyKey: `web.command:${envelope.commandId}`,
+    } : null;
     let value;
     if (envelope.command === 'spawn') {
+      const goalPlan = a.goalPlan ? json(a.goalPlan) : undefined;
       value = await this.coordinator.spawn(a.harness, a.brief, {
         model: a.model, effort: a.effort, modelPolicy: a.modelPolicy, taskId: a.taskId ?? `web-${envelope.commandId}`,
         deps: a.deps, taskType: a.taskType, session: a.session, refines: a.refines,
         runId: envelope.runId ?? null,
-        actor: webActor, idempotencyKey: `web.command:${envelope.commandId}`,
+        actor: webActor,
+        ...(goalPlan ? {
+          principalId: principal.userId, sessionId: principal.sessionId, powers: [...principal.capabilities],
+          goalPlan, capabilities: goalPlan.capabilities, effects: goalPlan.effects,
+        } : {}),
+        idempotencyKey: `web.command:${envelope.commandId}`,
       });
+    } else if (envelope.command === 'goal_define') {
+      value = await this.coordinator.defineGoal(a, goalPlanCtx);
+    } else if (envelope.command === 'plan_propose') {
+      value = await this.coordinator.proposePlan(a, goalPlanCtx);
+    } else if (envelope.command === 'plan_approve') {
+      value = await this.coordinator.approvePlan(a, goalPlanCtx);
+    } else if (envelope.command === 'goal_plan_status') {
+      value = await this.coordinator.goalPlanStatus(a, goalPlanCtx);
     } else if (envelope.command === 'scratch_oracle') {
       value = await this.coordinator.spawnScratchOracle(a.scratchFactId, a.harness, {
         model: a.model, effort: a.effort, modelPolicy: a.modelPolicy, verification: a.verification,

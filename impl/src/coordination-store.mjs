@@ -2609,6 +2609,31 @@ export class CoordinationStore {
 
   previewPlanDispatch(gate, route) { return this._planDispatchState(gate, route); }
 
+  reconcilePlanGatedTask(taskId, gate, route, auth) {
+    if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
+    const prior = this._byKey.get(auth?.key); const taskEvent = prior ? this._events[prior.seq] : null;
+    const binding = prior?.payload?.binding;
+    const expectedBinding = gate && typeof gate === 'object' ? {
+      goalId: gate.goalId, goalVersion: gate.goalVersion, goalDigest: gate.goalDigest,
+      planId: gate.planId, planVersion: gate.planVersion, planDigest: gate.planDigest, nodeKey: gate.nodeKey,
+    } : null;
+    const observedBinding = binding ? {
+      goalId: binding.goalId, goalVersion: binding.goalVersion, goalDigest: binding.goalDigest,
+      planId: binding.planId, planVersion: binding.planVersion, planDigest: binding.planDigest, nodeKey: binding.nodeKey,
+    } : null;
+    if (!prior || prior.kind !== 'plan.node_dispatched' || prior.actor !== auth.actor
+      || prior.payload?.taskId !== taskId || taskEvent?.kind !== 'task.created'
+      || taskEvent.batch?.id !== prior.batch?.id || taskEvent.payload?.id !== taskId
+      || gate?.expectedDispatchVersion !== 0
+      || canonicalDigest(expectedBinding) !== canonicalDigest(observedBinding)
+      || canonicalDigest(gate?.capabilities) !== canonicalDigest(prior.payload?.capabilities)
+      || canonicalDigest(gate?.effects) !== canonicalDigest(prior.payload?.effects)
+      || canonicalDigest(route) !== canonicalDigest(prior.payload?.route)) {
+      throw new CoordinationRefusal('plan dispatch replay differs from the admitted transaction', 'plan_dispatch_conflict');
+    }
+    return freeze({ ok: true, result: 'reconciled', dispatchEvent: clone(prior), taskEvent: clone(taskEvent), task: this.task(taskId), dispatch: clone(prior.payload) });
+  }
+
   createPlanGatedTask(fields, gate, route, auth) {
     if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
     const requestDigest = goalPlanDigest({ principalId: auth.principalId, gate, route, task: fields }); const prior = this._byKey.get(auth.key);
@@ -2651,6 +2676,7 @@ export class CoordinationStore {
     const planEvent = [...relevant].reverse().find((event) => event.kind === 'plan.version_proposed' && event.payload.plan.planId === fields.planId);
     if (!goalEvent || !planEvent || planEvent.payload.plan.goal.goalId !== fields.goalId) throw new CoordinationRefusal('goal/plan status target is unavailable', 'not_found');
     const goal = clone(goalEvent.payload.goal); const plan = clone(planEvent.payload.plan);
+    delete goal.principalId; delete plan.proposerPrincipalId;
     const approvalEvent = [...relevant].reverse().find((event) => event.kind === 'plan.approval_decided' && event.payload.approval.plan.planId === plan.planId && event.payload.approval.plan.version === plan.version);
     const taskStates = new Map();
     for (const event of relevant) {
@@ -2666,7 +2692,9 @@ export class CoordinationStore {
       else if (node.deps.every((dep) => dispatches.get(dep)?.task?.status === 'completed' && !dispatches.get(dep).task.acceptanceRevocation)) state = 'ready';
       return { key: node.key, deps: clone(node.deps), state, dispatchVersion: dispatched ? 1 : 0, taskId: dispatched?.event.payload.taskId ?? null, terminalEvent: dispatched?.task?.terminalEvent ?? null, budget: { initial: clone(node.budget), reserved: dispatched ? clone(node.budget) : { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 }, consumed: { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 }, released: { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 } } };
     });
-    const status = { coordinationUpperBound: throughSeq, goal, plan, approval: approvalEvent ? clone(approvalEvent.payload.approval) : null, nodes };
+    const approval = approvalEvent ? clone(approvalEvent.payload.approval) : null;
+    if (approval) { delete approval.principalId; delete approval.sessionDigest; }
+    const status = { coordinationUpperBound: throughSeq, goal, plan, approval, nodes };
     if (Buffer.byteLength(JSON.stringify(goalPlanCanonical(status))) > this._goalPlanPolicy.limits.maxStatusBytes) throw new CoordinationRefusal('goal/plan status exceeds deployment ceiling', 'goal_plan_status_oversize');
     return freeze(status);
   }

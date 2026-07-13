@@ -46,10 +46,10 @@ async function initialized(server) {
   assert.deepEqual(await server.handle({ jsonrpc: '2.0', method: 'notifications/initialized' }), null);
 }
 
-test('MN1/MN4/CI6/PF7: handshake and deterministic closed fifteen-tool inventory', async () => {
+test('MN1/MN4/CI6/PF7: handshake and deterministic closed nineteen-tool inventory', async () => {
   const { server } = setup(); await initialized(server);
   const response = await request(server, 2, 'tools/list', {});
-  assert.deepEqual(response.result.tools.map((tool) => tool.name), ['fleet_spawn', 'fleet_scratch_oracle', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt', 'fleet_result', 'fleet_list', 'fleet_capabilities', 'fleet_provider_status', 'fleet_capability_invoke', 'fleet_reuse_decide', 'fleet_reuse_recheck', 'fleet_kill', 'fleet_drain']);
+  assert.deepEqual(response.result.tools.map((tool) => tool.name), ['fleet_spawn', 'fleet_scratch_oracle', 'fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'fleet_goal_plan_status', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt', 'fleet_result', 'fleet_list', 'fleet_capabilities', 'fleet_provider_status', 'fleet_capability_invoke', 'fleet_reuse_decide', 'fleet_reuse_recheck', 'fleet_kill', 'fleet_drain']);
   assert.equal(response.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
   assert.equal(response.result.tools.every((tool) => tool.execution.taskSupport === 'forbidden'), true);
   assert.equal(response.result.tools[0].inputSchema.properties.modelPolicy.additionalProperties, false);
@@ -216,6 +216,13 @@ test('MN3/MN4/MN6: scope, capability, fence, unknown fields, and credential fiel
     assert.equal(response.result.isError, true);
   }
   assert.deepEqual(s.calls, []);
+  const forged = setup({ principal: principal({ capabilities: ['control'] }) }); await initialized(forged.server);
+  const forgedCapability = await request(forged.server, 20, 'tools/call', {
+    name: 'fleet_spawn', arguments: { repoId: 'repo-a', idempotencyKey: 'forged-capability', harness: 'x', brief: { capabilities: ['emergency_stop'] } },
+  });
+  assert.equal(forgedCapability.result.isError, true);
+  assert.match(forgedCapability.result.content[0].text, /credential_fields_forbidden/);
+  assert.deepEqual(forged.calls, []);
 });
 
 test('MN3/MN8: injected quota and durable audit fail closed before dispatch', async () => {
@@ -307,5 +314,5 @@ test('MN2/MN3: the packaged subprocess entry runs a configured MCP handshake wit
   const stdout = execFileSync(process.execPath, ['scripts/mcp-stdio.mjs', configPath], { cwd: new URL('..', import.meta.url), input: `${frames.map(JSON.stringify).join('\n')}\n`, encoding: 'utf8' });
   const responses = stdout.trim().split('\n').map(JSON.parse);
   assert.deepEqual(responses.map((response) => response.id), [1, 2]);
-  assert.equal(responses[1].result.tools.length, 15);
+  assert.equal(responses[1].result.tools.length, 19);
 });

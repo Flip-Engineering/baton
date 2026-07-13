@@ -591,7 +591,7 @@ export class Coordinator {
         || canonicalDigest(opts.coordination.goalPlanPolicy()) !== canonicalDigest(authority.policy)) {
         throw new TypeError('Goal/Plan authority requires exact deployment policy and authorizer');
       }
-      for (const method of ['defineGoal', 'proposePlan', 'approvePlan', 'goalPlanStatus', 'previewPlanDispatch', 'createPlanGatedTask']) {
+      for (const method of ['defineGoal', 'proposePlan', 'approvePlan', 'goalPlanStatus', 'previewPlanDispatch', 'createPlanGatedTask', 'reconcilePlanGatedTask']) {
         if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
       }
       this._goalPlanAuthority = Object.freeze({ policy: Object.freeze({ ...authority.policy }), authorize: authority.authorize });
@@ -1815,7 +1815,8 @@ export class Coordinator {
 
     const taskId = opts.taskId ?? this._autoTaskId();
     normalizePhysicalOwnerId(taskId, 'taskId');
-    if (this._tasks.has(taskId)) throw new DuplicateTaskIdError(`duplicate taskId "${taskId}"`);
+    const reconcileExistingPlanTask = this._tasks.has(taskId) && Boolean(opts.goalPlan);
+    if (this._tasks.has(taskId) && !reconcileExistingPlanTask) throw new DuplicateTaskIdError(`duplicate taskId "${taskId}"`);
     if (vendor !== 'auto' && !this._adapters[vendor]) throw new UnknownVendorError(`unknown vendor "${vendor}"`);
     if (vendor !== 'auto' && !cardSupportsSession(this._adapters[vendor].card(), sessionRequest)) {
       throw new SessionSelectionError(`harness "${vendor}" does not support session mode "${sessionRequest.mode}"`);
@@ -1870,8 +1871,19 @@ export class Coordinator {
         powers: opts.powers, repoId: this._repoId, runId,
         idempotencyKey: opts.idempotencyKey ?? `task.created:${taskId}`,
       }, 'plan:dispatch', 'plan_dispatch', { gate: opts.goalPlan, route: routeBinding, taskId });
-      planState = this._coordination.previewPlanDispatch(opts.goalPlan, routeBinding);
       if (brief?.goalPlan !== undefined) throw Object.assign(new Error('caller cannot supply authoritative goal/plan Brief coordinates'), { code: 'plan_brief_mismatch' });
+      if (reconcileExistingPlanTask) {
+        const reconciled = this._coordination.reconcilePlanGatedTask(taskId, opts.goalPlan, routeBinding, planAuth);
+        const durableBrief = reconciled.task?.brief;
+        const supplied = semanticBriefCore(brief);
+        for (const [key, value] of Object.entries(supplied ?? {})) {
+          if (canonicalDigest(value) !== canonicalDigest(durableBrief?.[key])) throw Object.assign(new Error(`caller Brief field ${key} differs from the admitted task`), { code: 'plan_dispatch_conflict' });
+        }
+        const existingTask = this._tasks.get(taskId); const handle = this._workers.get(existingTask?.assignee);
+        if (!handle) throw this._poisonCoordination(Object.assign(new Error('reconciled plan task lacks its reserved handle'), { code: 'goal_plan_integrity' }));
+        return this._publicHandle(handle);
+      }
+      planState = this._coordination.previewPlanDispatch(opts.goalPlan, routeBinding);
       const supplied = semanticBriefCore(brief);
       for (const [key, value] of Object.entries(supplied ?? {})) {
         if (canonicalDigest(value) !== canonicalDigest(planState.brief[key])) throw Object.assign(new Error(`caller Brief field ${key} differs from the approved plan`), { code: 'plan_brief_mismatch' });
