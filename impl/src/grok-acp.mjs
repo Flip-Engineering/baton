@@ -20,6 +20,7 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { renderBrief } from './adapter.mjs';
+import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -272,18 +273,49 @@ export class GrokAcpCli {
     // bypass try/catch around write(). Own the event so EPIPE cannot become a process-global
     // uncaught exception; each write callback still returns the failed delivery to its caller.
     session.child.stdin.on('error', (error) => { session.stdinError = error; });
-    session.child.on('close', () => this._onClose(session));
-    session.child.on('error', () => {}); // spawn-time ENOENT surfaces via the pending initialize timeout
+    session.child.on('close', (code, signal) => this._onClose(session, code, signal));
+    session.child.on('error', (error) => this._onProcessError(session, error));
   }
 
-  _onClose(session) {
-    session.closed = true;
+  async _onClose(session, code, signal) {
+    if (session.processClosedEmitted || session.processClosePending) return;
+    session.processClosePending = true;
     if (session.wallTimer) clearTimeout(session.wallTimer);
+    const groupReap = await reapOwnedProcessGroup(session.child.pid, { timeoutMs: session.processReapTimeoutMs });
+    session.closed = true;
+    if (groupReap.confirmed) {
+      session.processClosedEmitted = true;
+      const processClosed = processClosedPayload(session.processGeneration, session.child.pid, code, signal, session.providerReady);
+      if (processClosed) this._emit(session, 'lifecycle.process_closed', processClosed);
+    } else {
+      const unconfirmed = processReapUnconfirmedPayload(session.processGeneration, session.child.pid, groupReap.reason);
+      if (unconfirmed) this._emit(session, 'lifecycle.process_reap_unconfirmed', unconfirmed);
+    }
     // GA11: kill.confirmed fires once the OS confirms the process is gone (D1: an event, never
     // the Ack); the pending-request settlement below then absorbs the prompt silently (killing).
-    if (session.killing && !session.killConfirmed) {
-      session.killConfirmed = true;
-      this._emit(session, 'kill.confirmed', { sessionId: session.sessionId });
+    if (session.timeoutFailure) {
+      if (session.activeTurn) this._settleTurn(session, session.activeTurn.turnId);
+      this._emit(session, 'lifecycle.crashed', session.timeoutFailure);
+      if (groupReap.confirmed && session.killing && !session.killConfirmed) {
+        session.killConfirmed = true;
+        this._emit(session, 'kill.confirmed', { sessionId: session.sessionId, terminalCause: 'timeout' });
+      }
+    } else if (session.processFailure) {
+      if (session.activeTurn) this._settleTurn(session, session.activeTurn.turnId);
+      this._emit(session, 'lifecycle.crashed', session.processFailure);
+      if (groupReap.confirmed && session.killing && !session.killConfirmed) {
+        session.killConfirmed = true;
+        this._emit(session, 'kill.confirmed', { sessionId: session.sessionId, terminalCause: 'process_error' });
+      }
+    } else if (session.killing) {
+      if (groupReap.confirmed && !session.killConfirmed) {
+        session.killConfirmed = true;
+        this._emit(session, 'kill.confirmed', { sessionId: session.sessionId });
+      }
+    } else if (!session.setupFailed && session.activeTurn) {
+      const turnId = session.activeTurn.turnId;
+      this._settleTurn(session, turnId);
+      this._emit(session, 'lifecycle.crashed', { sessionId: session.sessionId, turnId, error: `transport closed${code === null ? '' : ` with code ${code}`}${signal ? ` (${signal})` : ''}` });
     }
     // The unbounded prompt (and any in-flight bounded RPC) must not dangle past child death.
     for (const [id, pending] of session.pendingRequests) {
@@ -291,6 +323,12 @@ export class GrokAcpCli {
       if (pending.timer) clearTimeout(pending.timer);
       pending.reject(new Error('grok agent stdio closed before responding'));
     }
+  }
+
+  _onProcessError(session, error) {
+    if (session.closed || session.processFailure || !Number.isSafeInteger(session.child?.pid) || session.child.pid <= 0) return;
+    session.processFailure = { error: String(error?.message ?? error), phase: 'process_error' };
+    this._killChild(session);
   }
 
   _onLine(session, line) {
@@ -519,6 +557,7 @@ export class GrokAcpCli {
     if (pending.cancelled || opts.signal?.aborted) return { ok: false, reason: 'spawn cancelled before child creation', cancelled: true };
     if (!cwd) return { ok: false, reason: 'spawn requires a worktree (opts.worktree, or opts.worktreeReady resolving {path})' };
 
+    const processGeneration = normalizeProcessGeneration(opts.processGeneration);
     const modelRequested = opts.model ?? this._model ?? null;
     const sandboxRequested = opts.sandbox ?? 'workspace';
     const childArgs = withGrokModelArgs(this._args, {
@@ -537,6 +576,9 @@ export class GrokAcpCli {
 
     const session = {
       worker, child, buf: '',
+      processGeneration, processClosedEmitted: false, processClosePending: false, providerReady: false, setupFailed: false,
+      processReapTimeoutMs: Number.isSafeInteger(opts.processReapTimeoutMs) && opts.processReapTimeoutMs > 0 ? opts.processReapTimeoutMs : 2000,
+      timeoutFailure: null, processFailure: null,
       reqSeq: 0, reqIdSeq: 0, turnSeq: 0,
       pendingRequests: new Map(),
       sessionId: null, activeTurn: null, turnEpoch: 0,
@@ -552,6 +594,8 @@ export class GrokAcpCli {
     };
     this._sessions.set(worker, session);
     this._attachChild(session);
+    const processStarted = processStartedPayload(session.processGeneration, child.pid);
+    if (processStarted) this._emit(session, 'lifecycle.process_started', processStarted);
     if (opts.timeoutMs > 0) {
       session.wallTimer = setTimeout(() => this._onWallTimeout(session, opts.timeoutMs), opts.timeoutMs);
       if (typeof session.wallTimer.unref === 'function') session.wallTimer.unref();
@@ -566,8 +610,8 @@ export class GrokAcpCli {
         clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
       });
     } catch (err) {
+      session.setupFailed = true;
       this._killChild(session);
-      this._sessions.delete(worker);
       return { ok: false, reason: err.message, code: err.code };
     }
 
@@ -582,15 +626,17 @@ export class GrokAcpCli {
     } catch (err) {
       // GA10: the [live]-pinned -32000 auth gate (and any other setup failure) kills the
       // now-useless child and resolves a typed failure — never retried internally.
+      session.setupFailed = true;
       this._killChild(session);
-      this._sessions.delete(worker);
       return { ok: false, reason: err.message, code: err.code };
     }
     // ACP load responses should echo the identity, but retain the requested durable reference
     // if an implementation returns only replay metadata.
     session.sessionId = newResult.sessionId ?? opts.session?.id;
+    session.providerReady = true;
     this._emit(session, 'lifecycle.spawned', {
       sessionId: session.sessionId, pid: child.pid,
+      processGeneration: session.processGeneration,
       modelRequested: session.modelRequested, modelObserved: session.modelObserved,
       sandboxRequested: session.sandboxRequested,
     });
@@ -708,9 +754,10 @@ export class GrokAcpCli {
   // -------------------------------------------------------------------------
 
   async kill(worker) {
-    if (this._emitPendingStop(worker, 'kill.confirmed')) return { ok: true };
     const session = this._sessions.get(worker);
+    if (!session && this._emitPendingStop(worker, 'kill.confirmed')) return { ok: true };
     if (!session || !session.child) return { ok: true }; // already gone — a moot no-op
+    if (session.closed && session.processClosedEmitted) return { ok: true, terminal: true };
     session.steerPending = null;
     session.pendingFollowUp = null; // R5.1: abandon any pending auto-follow-up
     if (session.killing) return { ok: true };
@@ -720,12 +767,11 @@ export class GrokAcpCli {
   }
 
   _onWallTimeout(session, timeoutMs) {
-    if (session.closed) return;
-    this._emit(session, 'lifecycle.crashed', {
+    if (session.closed || session.killing) return;
+    session.timeoutFailure = {
       error: `session wall-time budget exceeded (${timeoutMs}ms)`,
       phase: 'timeout',
-    });
-    session.killing = true;
+    };
     this._killChild(session);
   }
 }

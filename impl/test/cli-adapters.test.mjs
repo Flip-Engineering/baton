@@ -143,7 +143,8 @@ test('_onData emits each terminal event exactly once and ignores trailing output
     { type: 'turn.failed', error: { message: 'also trailing' } },
   ].map((o) => JSON.stringify(o)).join('\n') + '\n';
   a._onData(session, stream);
-  assert.equal(session.terminal, true);
+  assert.equal(session.turnSettled, true);
+  assert.equal(session.terminal, false);
   assert.equal(seen.filter((k) => k === 'lifecycle.turn_completed').length, 1, 'exactly one terminal');
   assert.equal(seen.filter((k) => k === 'lifecycle.crashed').length, 0, 'no crash after a clean terminal');
   assert.deepEqual(seen, ['lifecycle.turn_started', 'content.message', 'lifecycle.turn_completed']);

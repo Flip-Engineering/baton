@@ -10,6 +10,7 @@
 import { spawn } from 'node:child_process';
 import { lstatSync, readFileSync } from 'node:fs';
 import { renderPrompt } from './cli-adapters.mjs';
+import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
 
 const credentialError = (message, code) => Object.assign(new Error(message), { code });
 
@@ -183,7 +184,7 @@ export class ClaudeSessionCli {
 
   /** CS16: once a session-terminal kind fires, no further event is EVER emitted for that worker. */
   _emit(session, kind, payload) {
-    if (session.deadEmitted) return;
+    if (session.deadEmitted && !['lifecycle.process_closed', 'lifecycle.process_reap_unconfirmed', 'kill.confirmed'].includes(kind)) return;
     const evt = {
       worker: session.worker,
       harness: this._cfg.harness,
@@ -235,6 +236,7 @@ export class ClaudeSessionCli {
       }),
     ];
 
+    const processGeneration = normalizeProcessGeneration(opts.processGeneration);
     let child;
     try {
       child = spawn(this._cfg.cmd, argv, {
@@ -253,6 +255,12 @@ export class ClaudeSessionCli {
       worker,
       child,
       pid: child.pid,
+      processGeneration,
+      processClosedEmitted: false,
+      processClosePending: false,
+      processReapTimeoutMs: Number.isSafeInteger(opts.processReapTimeoutMs) && opts.processReapTimeoutMs > 0 ? opts.processReapTimeoutMs : 2000,
+      timeoutFailure: null,
+      processFailure: null,
       buf: '',
       spawnedEmitted: false,
       sessionIdWire: null,
@@ -283,6 +291,9 @@ export class ClaudeSessionCli {
 
     child.on('close', (code, signal) => this._onClose(session, code, signal));
     child.on('error', (err) => this._onSpawnError(session, err));
+
+    const processStarted = processStartedPayload(session.processGeneration, session.pid);
+    if (processStarted) this._emit(session, 'lifecycle.process_started', processStarted);
 
     // The Brief is the FIRST turn; stdin is left open (never .end()-ed) — the entire reason
     // session mode exists (CS2).
@@ -342,6 +353,7 @@ export class ClaudeSessionCli {
           session.modelObserved = obj.model ?? null;
           this._emit(session, 'lifecycle.spawned', {
             sessionId: obj.session_id, pid: session.pid,
+            processGeneration: session.processGeneration,
             modelRequested: session.modelRequested, modelObserved: session.modelObserved,
           });
         }
@@ -561,9 +573,10 @@ export class ClaudeSessionCli {
   }
 
   async kill(worker) {
-    if (this._emitPendingStop(worker, 'kill.confirmed')) return { ok: true };
     const session = this._sessions.get(worker);
-    if (!session || session.terminal) return { ok: true }; // D9: kill always resolves
+    if (!session && this._emitPendingStop(worker, 'kill.confirmed')) return { ok: true };
+    if (!session) return { ok: true }; // D9: kill always resolves
+    if (session.terminal) return { ok: true, terminal: true };
     if (!session.stopping) {
       session.stopping = true;
       this._emit(session, 'kill.requested', {});
@@ -581,22 +594,42 @@ export class ClaudeSessionCli {
   // Process lifecycle — CS16/CS17
   // ---------------------------------------------------------------------------
 
-  _onClose(session, code, signal) {
-    if (session.terminal) return;
-    session.terminal = true;
+  async _onClose(session, code, signal) {
+    if (session.terminal || session.processClosePending) return;
+    session.processClosePending = true;
     if (session.killTimer) clearTimeout(session.killTimer);
     if (session.wallTimer) clearTimeout(session.wallTimer);
-    if (session.stopping) {
-      this._emit(session, 'kill.confirmed', { signal });
-    } else if (code === 0) {
-      this._emit(session, 'lifecycle.exited', { code });
-    } else {
+    const groupReap = await reapOwnedProcessGroup(session.pid, { timeoutMs: session.processReapTimeoutMs });
+    session.terminal = true;
+    if (groupReap.confirmed && !session.processClosedEmitted) {
+      session.processClosedEmitted = true;
+      const processClosed = processClosedPayload(session.processGeneration, session.pid, code, signal, session.spawnedEmitted);
+      if (processClosed) this._emit(session, 'lifecycle.process_closed', processClosed);
+    } else if (!groupReap.confirmed) {
+      const unconfirmed = processReapUnconfirmedPayload(session.processGeneration, session.pid, groupReap.reason);
+      if (unconfirmed) this._emit(session, 'lifecycle.process_reap_unconfirmed', unconfirmed);
+    }
+    if (session.timeoutFailure) {
+      this._emit(session, 'lifecycle.crashed', session.timeoutFailure);
+      if (groupReap.confirmed && session.stopping) this._emit(session, 'kill.confirmed', { signal, terminalCause: 'timeout' });
+    } else if (session.processFailure) {
+      this._emit(session, 'lifecycle.crashed', session.processFailure);
+      if (groupReap.confirmed && session.stopping) this._emit(session, 'kill.confirmed', { signal, terminalCause: 'process_error' });
+    } else if (session.stopping) {
+      if (groupReap.confirmed) this._emit(session, 'kill.confirmed', { signal });
+    } else if (session.turnInFlight || code !== 0) {
       this._emit(session, 'lifecycle.crashed', { error: `exited ${code}${signal ? ` (${signal})` : ''}` });
     }
   }
 
   _onSpawnError(session, err) {
     if (session.terminal) return;
+    if (Number.isSafeInteger(session.pid) && session.pid > 0) {
+      if (session.processFailure) return;
+      session.processFailure = { error: String(err?.message ?? err), phase: 'process_error' };
+      this._signal(session, 'SIGKILL');
+      return;
+    }
     session.terminal = true;
     if (session.killTimer) clearTimeout(session.killTimer);
     if (session.wallTimer) clearTimeout(session.wallTimer);
@@ -604,12 +637,11 @@ export class ClaudeSessionCli {
   }
 
   _onWallTimeout(session, timeoutMs) {
-    if (session.terminal || session.deadEmitted) return;
-    this._emit(session, 'lifecycle.crashed', {
+    if (session.terminal || session.deadEmitted || session.stopping) return;
+    session.timeoutFailure = {
       error: `session wall-time budget exceeded (${timeoutMs}ms)`,
       phase: 'timeout',
-    });
-    session.stopping = true;
+    };
     this._signal(session, 'SIGKILL');
   }
 }

@@ -353,13 +353,17 @@ test('CI3: driver-level wall timeout reaps the real child, worktree, metadata, a
   timed.budget.wallMin = 0.01;
   const h = await coordinator.spawn('claude', timed, { taskId: 'timeout-reap' });
   const crashed = await until(() => log.read(h.id).find((e) => e.kind === 'lifecycle.crashed' && e.payload?.phase === 'timeout'));
-  const pid = log.read(h.id).find((e) => e.kind === 'lifecycle.spawned' && e.actor === 'worker')?.payload?.pid;
+  const events = log.read(h.id);
+  const started = events.find((e) => e.kind === 'lifecycle.process_started' && e.actor === 'worker');
+  const closed = events.find((e) => e.kind === 'lifecycle.process_closed' && e.actor === 'worker');
+  const pid = started?.payload?.pid;
   assert.ok(pid, 'a real child process must have existed');
-  assert.ok(crashed);
+  assert.ok(closed && crashed); assert.equal(closed.payload.pid, pid); assert.equal(closed.payload.generation, started.payload.generation);
+  assert.ok(started.seq < closed.seq && closed.seq < crashed.seq, 'exact OS close precedes its timeout crash');
 
   const killed = await coordinator.kill(h.id, 'policy');
-  assert.ok(['confirmed', 'forced'].includes(killed.result), 'turn crash never substitutes for transport-death confirmation');
-  assert.equal(log.read(h.id).some((event) => event.kind === 'kill.requested'), true);
+  assert.equal(killed.result, 'already_dead', 'the matching OS close is transport-death confirmation');
+  assert.equal(log.read(h.id).some((event) => event.kind === 'kill.requested'), false, 'no impossible second kill is armed after exact close');
   await until(() => {
     try { process.kill(pid, 0); return false; } catch { return true; }
   });

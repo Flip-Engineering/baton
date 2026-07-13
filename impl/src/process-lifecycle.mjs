@@ -1,0 +1,122 @@
+const START_KEYS = ['generation', 'phase', 'pid', 'processGroupId', 'schemaVersion'];
+const CLOSE_KEYS = ['code', 'generation', 'pid', 'processGroupId', 'ready', 'schemaVersion', 'signal'];
+const REAP_UNCONFIRMED_KEYS = ['generation', 'pid', 'processGroupId', 'reason', 'schemaVersion'];
+
+const exactKeys = (value, expected) => value && typeof value === 'object' && !Array.isArray(value)
+  && Object.keys(value).sort().join('\0') === [...expected].sort().join('\0');
+const positiveSafe = (value) => Number.isSafeInteger(value) && value > 0;
+
+export function processGroupAlive(processGroupId) {
+  if (!positiveSafe(processGroupId)) return false;
+  try {
+    process.kill(-processGroupId, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== 'ESRCH';
+  }
+}
+
+function probeProcessGroup(processGroupId, probe) {
+  try {
+    probe(-processGroupId, 0);
+    return { alive: true, reason: 'alive' };
+  } catch (error) {
+    if (error?.code === 'ESRCH') return { alive: false, reason: null };
+    if (error?.code === 'EPERM') return { alive: true, reason: 'permission_denied' };
+    return { alive: true, reason: 'probe_error' };
+  }
+}
+
+/**
+ * A detached group leader's `close` event proves only that leader was reaped. Any descendants
+ * still carrying the group ID remain Baton's responsibility. Escalate the orphaned group and do
+ * not release exact-close evidence until a real group probe reports ESRCH.
+ */
+export async function reapOwnedProcessGroup(processGroupId, opts = {}) {
+  if (!positiveSafe(processGroupId)) return Object.freeze({ confirmed: false, reason: 'invalid_group' });
+  const probe = opts.probe ?? process.kill.bind(process);
+  const signal = opts.signal ?? process.kill.bind(process);
+  const now = opts.now ?? Date.now;
+  const sleep = opts.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const timeoutMs = Number.isSafeInteger(opts.timeoutMs) && opts.timeoutMs >= 0 ? opts.timeoutMs : 2000;
+  const pollMs = Number.isSafeInteger(opts.pollMs) && opts.pollMs > 0 ? opts.pollMs : 5;
+  const maxAttempts = Number.isSafeInteger(opts.maxAttempts) && opts.maxAttempts > 0 ? opts.maxAttempts : 500;
+  let observed = probeProcessGroup(processGroupId, probe);
+  if (!observed.alive) return Object.freeze({ confirmed: true, reason: null });
+  try { signal(-processGroupId, 'SIGKILL'); } catch (error) {
+    if (error?.code === 'ESRCH') return Object.freeze({ confirmed: true, reason: null });
+    if (error?.code === 'EPERM') return Object.freeze({ confirmed: false, reason: 'permission_denied' });
+  }
+  const deadline = now() + timeoutMs;
+  for (let attempts = 0; attempts < maxAttempts && now() <= deadline; attempts += 1) {
+    observed = probeProcessGroup(processGroupId, probe);
+    if (!observed.alive) return Object.freeze({ confirmed: true, reason: null });
+    if (observed.reason === 'permission_denied') return Object.freeze({ confirmed: false, reason: observed.reason });
+    await sleep(pollMs);
+  }
+  return Object.freeze({ confirmed: false, reason: observed.reason === 'probe_error' ? 'probe_error' : 'deadline' });
+}
+
+export function normalizeProcessGeneration(value) {
+  const generation = value ?? 1;
+  if (!positiveSafe(generation)) throw new TypeError('processGeneration must be a positive safe integer');
+  return generation;
+}
+
+export function processStartedPayload(generation, pid) {
+  if (!positiveSafe(pid)) return null;
+  return { schemaVersion: 1, generation: normalizeProcessGeneration(generation), pid, processGroupId: pid, phase: 'initializing' };
+}
+
+export function processClosedPayload(generation, pid, code, signal, ready) {
+  if (!positiveSafe(pid)) return null;
+  return {
+    schemaVersion: 1,
+    generation: normalizeProcessGeneration(generation),
+    pid,
+    processGroupId: pid,
+    code: Number.isSafeInteger(code) ? code : null,
+    signal: typeof signal === 'string' && /^SIG[A-Z0-9]{1,16}$/.test(signal) ? signal : null,
+    ready: ready === true,
+  };
+}
+
+export function processReapUnconfirmedPayload(generation, pid, reason) {
+  if (!positiveSafe(pid)) return null;
+  return {
+    schemaVersion: 1,
+    generation: normalizeProcessGeneration(generation),
+    pid,
+    processGroupId: pid,
+    reason: ['deadline', 'permission_denied', 'probe_error'].includes(reason) ? reason : 'probe_error',
+  };
+}
+
+export function validProcessStartedPayload(payload) {
+  return exactKeys(payload, START_KEYS)
+    && payload.schemaVersion === 1
+    && positiveSafe(payload.generation)
+    && positiveSafe(payload.pid)
+    && payload.processGroupId === payload.pid
+    && payload.phase === 'initializing';
+}
+
+export function validProcessClosedPayload(payload) {
+  return exactKeys(payload, CLOSE_KEYS)
+    && payload.schemaVersion === 1
+    && positiveSafe(payload.generation)
+    && positiveSafe(payload.pid)
+    && payload.processGroupId === payload.pid
+    && (payload.code === null || Number.isSafeInteger(payload.code))
+    && (payload.signal === null || (typeof payload.signal === 'string' && /^SIG[A-Z0-9]{1,16}$/.test(payload.signal)))
+    && typeof payload.ready === 'boolean';
+}
+
+export function validProcessReapUnconfirmedPayload(payload) {
+  return exactKeys(payload, REAP_UNCONFIRMED_KEYS)
+    && payload.schemaVersion === 1
+    && positiveSafe(payload.generation)
+    && positiveSafe(payload.pid)
+    && payload.processGroupId === payload.pid
+    && ['deadline', 'permission_denied', 'probe_error'].includes(payload.reason);
+}

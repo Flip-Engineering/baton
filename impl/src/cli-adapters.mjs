@@ -13,6 +13,7 @@
 // tests never invoke a real CLI.
 
 import { spawn } from 'node:child_process';
+import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
 
 // ---------------------------------------------------------------------------
 // Prompt rendering — the delegation contract, per-harness dialect (kept simple/uniform for MVP).
@@ -128,6 +129,7 @@ class CliAdapter {
     if (!cwd) return { ok: false, reason: 'no worktree' };
 
     const turnEpoch = opts.turnEpoch ?? 1;
+    const processGeneration = normalizeProcessGeneration(opts.processGeneration);
     const args = this._cfg.args(brief);
     const child = spawn(this._cfg.cmd, args, {
       cwd,
@@ -135,20 +137,37 @@ class CliAdapter {
       detached: true, // own process group, so interrupt can signal the whole tree
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    const session = { worker, child, terminal: false, turnEpoch, buf: '' };
+    const session = {
+      worker, child, terminal: false, turnSettled: false, processClosePending: false,
+      turnEpoch, buf: '', processGeneration, processClosedEmitted: false,
+      processReapTimeoutMs: Number.isSafeInteger(opts.processReapTimeoutMs) && opts.processReapTimeoutMs > 0 ? opts.processReapTimeoutMs : 2000,
+      spawnError: null, timeoutFailure: null,
+    };
     this._sessions.set(worker, session);
-
-    // The prompt is fed on stdin (both codex exec and claude -p accept piped stdin).
-    try { child.stdin.write(renderPrompt(brief) + '\n'); child.stdin.end(); } catch { /* pipe race */ }
 
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => this._onData(session, chunk));
     child.stderr.on('data', () => {}); // discard; errors surface via the event stream / exit code
 
     child.on('close', (code, signal) => this._onClose(session, code, signal));
-    child.on('error', (err) => this._finish(session, { crashed: true, event: { worker, harness: this._cfg.harness, turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: String(err.message) } } }));
+    child.on('error', (err) => {
+      session.spawnError = err;
+      if (!Number.isSafeInteger(child.pid) || child.pid <= 0) this._finish(session, { crashed: true, event: { worker, harness: this._cfg.harness, turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: String(err.message) } } });
+    });
 
-    if (opts.timeoutMs) session.timer = setTimeout(() => this._signal(worker, 'SIGKILL'), opts.timeoutMs);
+    const processStarted = processStartedPayload(session.processGeneration, child.pid);
+    if (processStarted) this._emit({ worker, harness: this._cfg.harness, turnEpoch, actor: 'worker', kind: 'lifecycle.process_started', payload: processStarted });
+
+    // The prompt is fed on stdin (both codex exec and claude -p accept piped stdin).
+    try { child.stdin.write(renderPrompt(brief) + '\n'); child.stdin.end(); } catch { /* pipe race */ }
+
+    if (opts.timeoutMs) {
+      session.timer = setTimeout(() => {
+        if (session.terminal || session.stopping || session.timeoutFailure) return;
+        session.timeoutFailure = { error: `session wall-time budget exceeded (${opts.timeoutMs}ms)`, phase: 'timeout' };
+        this._signal(worker, 'SIGKILL');
+      }, opts.timeoutMs);
+    }
     return { ok: true };
   }
 
@@ -158,7 +177,7 @@ class CliAdapter {
     while ((nl = session.buf.indexOf('\n')) !== -1) {
       const line = session.buf.slice(0, nl); session.buf = session.buf.slice(nl + 1);
       if (!line.trim()) continue;
-      if (session.terminal) continue; // once terminal, trailing output is ignored (no duplicate terminals)
+      if (session.turnSettled) continue; // once the turn settles, trailing output cannot duplicate it
       let obj; try { obj = JSON.parse(line); } catch { continue; }
       const parsed = this._cfg.parse(obj, session.worker, this._cfg.harness, session.turnEpoch);
       // A terminal/crash event is emitted exactly once, by _finish; other events emit here. Emitting
@@ -168,12 +187,31 @@ class CliAdapter {
     }
   }
 
-  _onClose(session, code, signal) {
-    if (session.terminal) return;
-    // The stream ended without a terminal event (e.g. killed, or a crash). If we asked it to stop,
-    // report a confirmed stop; otherwise a nonzero exit is a crash, a zero exit a (bare) completion.
-    if (session.stopping) {
-      this._finish(session, { event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: session.killMode === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed', payload: { signal } }, confirmedStop: true });
+  async _onClose(session, code, signal) {
+    if (session.terminal || session.processClosePending) return;
+    session.processClosePending = true;
+    if (session.timer) clearTimeout(session.timer);
+    const groupReap = await reapOwnedProcessGroup(session.child.pid, { timeoutMs: session.processReapTimeoutMs });
+    session.terminal = true;
+    if (groupReap.confirmed && !session.processClosedEmitted) {
+      session.processClosedEmitted = true;
+      const processClosed = processClosedPayload(session.processGeneration, session.child.pid, code, signal, false);
+      if (processClosed) this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.process_closed', payload: processClosed });
+    } else if (!groupReap.confirmed) {
+      const unconfirmed = processReapUnconfirmedPayload(session.processGeneration, session.child.pid, groupReap.reason);
+      if (unconfirmed) this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.process_reap_unconfirmed', payload: unconfirmed });
+    }
+    if (session.timeoutFailure) {
+      this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: session.timeoutFailure });
+      session.turnSettled = true;
+      if (groupReap.confirmed && session.stopping) this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: session.killMode === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed', payload: { signal, terminalCause: 'timeout' } });
+    } else if (session.stopping) {
+      if (groupReap.confirmed) this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: session.killMode === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed', payload: { signal } });
+      session.turnSettled = true;
+    } else if (session.turnSettled) {
+      return;
+    } else if (session.spawnError) {
+      this._finish(session, { crashed: true, event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: String(session.spawnError.message) } } });
     } else if (code === 0) {
       this._finish(session, { event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.turn_completed', payload: { result: makeResult('completed') } } });
     } else {
@@ -182,9 +220,8 @@ class CliAdapter {
   }
 
   _finish(session, parsed) {
-    if (session.terminal) return;
-    session.terminal = true;
-    if (session.timer) clearTimeout(session.timer);
+    if (session.turnSettled) return;
+    session.turnSettled = true;
     if (parsed.event) this._emit(parsed.event);
   }
 
@@ -203,6 +240,7 @@ class CliAdapter {
   }
   async kill(worker) {
     const s = this._sessions.get(worker);
+    if (s?.terminal && s.processClosedEmitted) return { ok: true, terminal: true };
     if (s && !s.terminal) { s.stopping = true; s.killMode = 'kill'; this._signal(worker, 'SIGKILL'); }
     return { ok: true };
   }

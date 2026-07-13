@@ -12,6 +12,7 @@
 
 import { spawn, execFileSync } from 'node:child_process';
 import { renderBrief } from './adapter.mjs';
+import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -205,19 +206,59 @@ export class CodexAppServerCli {
       }
     });
     session.child.stderr.on('data', () => {}); // discard; nothing on this wire is diagnosed from stderr
-    session.child.on('close', () => this._onClose(session));
-    session.child.on('error', () => {}); // spawn-time ENOENT etc. surfaces via the pending initialize timeout/reject
+    session.child.on('close', (code, signal) => this._onClose(session, code, signal));
+    session.child.on('error', (error) => this._onProcessError(session, error));
   }
 
-  _onClose(session) {
-    session.terminal = true;
+  async _onClose(session, code, signal) {
+    if (session.processClosedEmitted || session.processClosePending) return;
+    session.processClosePending = true;
     if (session.wallTimer) clearTimeout(session.wallTimer);
+    const groupReap = await reapOwnedProcessGroup(session.child.pid, { timeoutMs: session.processReapTimeoutMs });
+    session.terminal = true;
+    if (groupReap.confirmed) {
+      session.processClosedEmitted = true;
+      const processClosed = processClosedPayload(session.processGeneration, session.child.pid, code, signal, session.providerReady);
+      if (processClosed) this._emit(session, 'lifecycle.process_closed', processClosed);
+    } else {
+      const unconfirmed = processReapUnconfirmedPayload(session.processGeneration, session.child.pid, groupReap.reason);
+      if (unconfirmed) this._emit(session, 'lifecycle.process_reap_unconfirmed', unconfirmed);
+    }
     // XA11: kill.confirmed is emitted from the child's 'close' handler, once the OS confirms
     // the process is gone — never from the Ack itself (D1: confirmed-stop is always an event).
-    if (session.killing && !session.killConfirmed) {
-      session.killConfirmed = true;
-      this._emit(session, 'kill.confirmed', { threadId: session.threadId });
+    if (session.timeoutFailure) {
+      this._emit(session, 'lifecycle.crashed', session.timeoutFailure);
+      if (groupReap.confirmed && session.killing && !session.killConfirmed) {
+        session.killConfirmed = true;
+        this._emit(session, 'kill.confirmed', { threadId: session.threadId, terminalCause: 'timeout' });
+      }
+    } else if (session.processFailure) {
+      this._emit(session, 'lifecycle.crashed', session.processFailure);
+      if (groupReap.confirmed && session.killing && !session.killConfirmed) {
+        session.killConfirmed = true;
+        this._emit(session, 'kill.confirmed', { threadId: session.threadId, terminalCause: 'process_error' });
+      }
+    } else if (session.killing) {
+      if (groupReap.confirmed && !session.killConfirmed) {
+        session.killConfirmed = true;
+        this._emit(session, 'kill.confirmed', { threadId: session.threadId });
+      }
+    } else if (!session.setupFailed && session.activeTurn) {
+      const turnId = session.activeTurn.id;
+      session.terminalTurns.add(turnId);
+      session.activeTurn = null;
+      this._emit(session, 'lifecycle.crashed', { threadId: session.threadId, turnId, error: `transport closed${code === null ? '' : ` with code ${code}`}${signal ? ` (${signal})` : ''}` });
     }
+    for (const [id, pending] of session.pendingRequests) {
+      session.pendingRequests.delete(id); if (pending.timer) clearTimeout(pending.timer);
+      pending.reject(new Error('codex app-server closed before responding'));
+    }
+  }
+
+  _onProcessError(session, error) {
+    if (session.terminal || session.processFailure || !Number.isSafeInteger(session.child?.pid) || session.child.pid <= 0) return;
+    session.processFailure = { error: String(error?.message ?? error), phase: 'process_error' };
+    this._killChild(session);
   }
 
   _onLine(session, line) {
@@ -428,6 +469,7 @@ export class CodexAppServerCli {
     if (pending.cancelled || opts.signal?.aborted) return { ok: false, reason: 'spawn cancelled before child creation', cancelled: true };
     if (!cwd) return { ok: false, reason: 'spawn requires a worktree (opts.worktree, or opts.worktreeReady resolving {path})' };
 
+    const processGeneration = normalizeProcessGeneration(opts.processGeneration);
     const child = this._spawnFn(this._cmd, this._args, {
       env: opts.replaceEnv
         ? { ...(opts.env ?? {}), ...(this._env ?? {}) }
@@ -438,6 +480,9 @@ export class CodexAppServerCli {
 
     const session = {
       worker, child, buf: '',
+      processGeneration, processClosedEmitted: false, processClosePending: false, providerReady: false, setupFailed: false,
+      processReapTimeoutMs: Number.isSafeInteger(opts.processReapTimeoutMs) && opts.processReapTimeoutMs > 0 ? opts.processReapTimeoutMs : 2000,
+      timeoutFailure: null, processFailure: null,
       reqSeq: 0, reqIdSeq: 0,
       pendingRequests: new Map(),
       threadId: null, activeTurn: null, turnEpoch: 0,
@@ -458,6 +503,8 @@ export class CodexAppServerCli {
     };
     this._sessions.set(worker, session);
     this._attachChild(session);
+    const processStarted = processStartedPayload(session.processGeneration, child.pid);
+    if (processStarted) this._emit(session, 'lifecycle.process_started', processStarted);
     if (opts.timeoutMs > 0) {
       session.wallTimer = setTimeout(() => this._onWallTimeout(session, opts.timeoutMs), opts.timeoutMs);
       if (typeof session.wallTimer.unref === 'function') session.wallTimer.unref();
@@ -466,8 +513,8 @@ export class CodexAppServerCli {
     try {
       await this._sendRequest(session, 'initialize', { clientInfo: { name: 'baton', version: '0.1.0' } });
     } catch (err) {
+      session.setupFailed = true;
       this._killChild(session);
-      this._sessions.delete(worker);
       return { ok: false, reason: err.message, code: err.code };
     }
     this._writeRaw(session, { method: 'initialized', params: {} });
@@ -493,16 +540,18 @@ export class CodexAppServerCli {
     } catch (err) {
       // XA10: -32001 (or any thread/start failure) kills the now-useless child and resolves a
       // typed failure — never retried internally, never a crash-loop.
+      session.setupFailed = true;
       this._killChild(session);
-      this._sessions.delete(worker);
       return { ok: false, reason: err.message, code: err.code };
     }
     session.threadId = threadResult.thread.id;
     session.modelObserved = threadResult.model ?? session.modelRequested;
+    session.providerReady = true;
     // R6.1: parity with the Claude session adapter's lifecycle.spawned — the wire's own
     // testimony to its session identifier, additive alongside the coordinator's own record.
     this._emit(session, 'lifecycle.spawned', {
       threadId: session.threadId, pid: child.pid,
+      processGeneration: session.processGeneration,
       modelRequested: session.modelRequested, modelObserved: session.modelObserved,
       effortObserved: threadResult.effort ?? null, serviceTier: session.serviceTier,
     });
@@ -518,8 +567,8 @@ export class CodexAppServerCli {
         input: [{ type: 'text', text: renderBrief(brief, 'codex-v2') }],
       });
     } catch (err) {
+      session.setupFailed = true;
       this._killChild(session);
-      this._sessions.delete(worker);
       return { ok: false, reason: err.message, code: err.code };
     }
     // XA6: the Ack resolves once turn/start's response arrives (turn accepted), not once the
@@ -659,9 +708,10 @@ export class CodexAppServerCli {
   // -------------------------------------------------------------------------
 
   async kill(worker) {
-    if (this._emitPendingStop(worker, 'kill.confirmed')) return { ok: true };
     const session = this._sessions.get(worker);
+    if (!session && this._emitPendingStop(worker, 'kill.confirmed')) return { ok: true };
     if (!session || !session.child) return { ok: true }; // already gone — a moot no-op, not a failure
+    if (session.terminal && session.processClosedEmitted) return { ok: true, terminal: true };
     session.stopGeneration += 1;
     session.pendingFollowUp = null; // R5.1: abandon any pending auto-follow-up
     if (session.killing) return { ok: true };
@@ -671,12 +721,11 @@ export class CodexAppServerCli {
   }
 
   _onWallTimeout(session, timeoutMs) {
-    if (session.terminal) return;
-    this._emit(session, 'lifecycle.crashed', {
+    if (session.terminal || session.killing) return;
+    session.timeoutFailure = {
       error: `session wall-time budget exceeded (${timeoutMs}ms)`,
       phase: 'timeout',
-    });
-    session.killing = true;
+    };
     this._killChild(session);
   }
 }
