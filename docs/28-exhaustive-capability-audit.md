@@ -203,9 +203,10 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    Finding/Affects lineage, and stale-but-blocking Phase 42 policy migration. Production HTTPS
    routing remains, while manual explicit cursor/full-poll reconciliation completion now ships with
    closed poll cards, authenticated bounded proof, staged receipt admission, store-derived recovery
-   CAS, causal freshness, replay, and race-safe non-clearance. Automatic single-flight poll
-   lifecycle/close-drain, bounded authenticated reads, durable deferred attempts, and the full
-   authenticated Grok matrix remain.
+   CAS, causal freshness, replay, and race-safe non-clearance. Automatic deterministic single-flight
+   scheduling, capped backoff, hostile-abort/lease-loss fencing, and asynchronous close/abort/await
+   now ship. Bounded authenticated reads, production HTTPS poll transport/live proof, durable
+   deferred attempts, and the full authenticated Grok matrix remain.
    Continue the remaining explicitly
    catalogued later rungs, then demand-earned Cairn Rungs 1–4, Vantage, Evidence Ladder, and Skill
    Forge/computer use behind stronger containment.
