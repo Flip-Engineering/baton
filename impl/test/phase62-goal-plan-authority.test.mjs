@@ -30,6 +30,47 @@ const auth = (principalId, powers, idempotencyKey, extra = {}) => ({
 const budget = (tokens = 20_000) => ({ tokens, usd: 2, wallMin: 10, providerTurns: 8 });
 const verification = Object.freeze({ command: 'node --test', expectExit: 0, timeoutMs: 60_000 });
 
+class NativePlanAdapter {
+  constructor() { this.cb = null; this.spawnCalls = 0; this.promptCalls = 0; }
+  onEvent(cb) { this.cb = cb; }
+  card() {
+    return {
+      harness: 'mock', version: 'phase62-native', authPosture: 'none', concurrencyCeiling: 2, maxContext: 100_000,
+      verbs: { spawn: 'native', prompt: 'native', steer: 'native', interrupt: 'native', approve: 'native', answer: 'native', kill: 'native', pause: 'unsupported' },
+      sessions: { multiTurn: 'native', resume: 'native', fork: 'native' },
+    };
+  }
+  async spawn(worker, brief) {
+    this.spawnCalls += 1;
+    queueMicrotask(() => {
+      this.cb?.({ worker, harness: 'mock@phase62-native', turnEpoch: 1, actor: 'worker', kind: 'lifecycle.spawned', payload: { sessionId: `session-${worker}`, pid: 4242 } });
+      this.cb?.({
+        worker, harness: 'mock@phase62-native', turnEpoch: 1, actor: 'worker', kind: 'lifecycle.turn_completed',
+        payload: { status: 'completed', summary: 'done', artifacts: { files: [] }, verification: { command: brief.verification.command, claimedExit: 0 }, openQuestions: [] },
+      });
+    });
+    return { ok: true };
+  }
+  async prompt() { this.promptCalls += 1; return { ok: true }; }
+  async interrupt() { return { ok: true }; }
+  async kill(worker) {
+    this.cb?.({ worker, harness: 'mock@phase62-native', turnEpoch: 1, actor: 'worker', kind: 'kill.confirmed', payload: {} });
+    return { ok: true };
+  }
+  async approve() { return { ok: true }; }
+  async answer() { return { ok: true }; }
+}
+
+async function until(fn, timeoutMs = 3_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await fn();
+    if (value) return value;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error('condition not met');
+}
+
 function make(name, overrides = {}) {
   const repo = root(`${name}-repo`);
   execFileSync('git', ['init', '-q'], { cwd: repo });
@@ -146,4 +187,38 @@ test('GP5/GP6/GP8: an admitted plan-gated spawn reconciles an exact lost-respons
   await driver.coordinator.kill(admitted.id, 'orchestrator');
   await driver.coordinator.drain({ actor: 'test', repoId: 'repo-phase62', idempotencyKey: 'drain:planned-reconcile' });
   driver.close();
+});
+
+test('GP5/GP8: plan-bound follow-up and recovery refuse before provider, adapter, runtime, task, or log effects', async () => {
+  const adapter = new NativePlanAdapter();
+  const driver = make('continuation-refusal', {
+    adapters: { mock: adapter },
+    referee: async () => ({ reverified: true, passed: true, observedExit: 0, matchesClaim: true }),
+  });
+  const { goal, plan } = await approved(driver, 'continuation-refusal');
+  const brief = { goal: 'Implement the approved slice', constraints: ['No network access'], pathScope: ['impl/**'], definitionOfDone: 'node --test passes', verification, budget: { tokens: 10_000, usd: 2, wallMin: 10 } };
+  const gate = { goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest, planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code', 'test'], effects: ['repository_edit'] };
+  const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'planned-continuation', goalPlan: gate, actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session', powers: ['plan:dispatch'], idempotencyKey: 'spawn:planned-continuation' });
+  await until(async () => (await driver.coordinator.result(handle.id)).ready === true);
+
+  const beforeFollowUp = { coordination: driver.coordination.events().length, operational: driver.log.read(handle.id).length, spawnCalls: adapter.spawnCalls, promptCalls: adapter.promptCalls };
+  assert.deepEqual(await driver.coordinator.send(handle.id, 'continue', 'turn'), { ok: false, result: 'goal_plan_continuation_not_authorized' });
+  assert.deepEqual(
+    { coordination: driver.coordination.events().length, operational: driver.log.read(handle.id).length, spawnCalls: adapter.spawnCalls, promptCalls: adapter.promptCalls },
+    beforeFollowUp,
+  );
+
+  const internal = driver.coordinator._workers.get(handle.id);
+  internal.status = 'orphaned';
+  const beforeRecovery = { coordination: driver.coordination.events().length, operational: driver.log.read(handle.id).length, spawnCalls: adapter.spawnCalls, promptCalls: adapter.promptCalls };
+  assert.deepEqual(await driver.coordinator.recover(handle.id), { ok: false, result: 'goal_plan_continuation_not_authorized' });
+  assert.deepEqual(
+    { coordination: driver.coordination.events().length, operational: driver.log.read(handle.id).length, spawnCalls: adapter.spawnCalls, promptCalls: adapter.promptCalls },
+    beforeRecovery,
+  );
+  assert.throws(() => driver.coordination.createAndClaimRecoveryRefinement({ refines: 'planned-continuation' }, {}, { actor: 'orchestrator', key: 'recovery:plan-bound' }), (error) => error.code === 'goal_plan_continuation_not_authorized');
+  assert.equal(driver.coordination.events().length, beforeRecovery.coordination);
+  internal.status = 'idle';
+  await driver.coordinator.kill(handle.id, 'test');
+  await driver.drainAndClose('test');
 });

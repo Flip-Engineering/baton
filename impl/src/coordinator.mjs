@@ -2287,6 +2287,9 @@ export class Coordinator {
     if (!task || !handle.sessionRef || handle.sessionRef.persistence !== 'native') {
       return { ok: false, result: 'session_not_resumable' };
     }
+    if (task.brief?.goalPlan) {
+      return { ok: false, result: 'goal_plan_continuation_not_authorized' };
+    }
     if (task.runId && this._coordination.run?.(task.runId)?.status === 'sealed') throw Object.assign(new Error(`run ${task.runId} is sealed`), { name: 'CoordinationRefusal', code: 'run_sealed' });
     const adapter = this._adapters[handle.vendor];
     if (!adapter || !cardSupportsSession(adapter.card(), { mode: 'resume' })) {
@@ -3059,6 +3062,9 @@ export class Coordinator {
       && handle.status === 'idle'
       && task && TERMINAL_TASK_STATUSES.has(task.status)
       && ['native', 'emulated'].includes(card?.sessions?.multiTurn);
+    if (reusableFollowUp && task.brief?.goalPlan) {
+      return { ok: false, result: 'goal_plan_continuation_not_authorized' };
+    }
     if (reusableFollowUp && task.runId && this._coordination.run?.(task.runId)?.status === 'sealed') {
       throw Object.assign(new Error(`run ${task.runId} is sealed`), { name: 'CoordinationRefusal', code: 'run_sealed' });
     }
@@ -3570,6 +3576,11 @@ export class Coordinator {
 
   _createCoordinationRefinement(handle, prior, relation) {
     if (!this._coordination) return prior;
+    if (prior.brief?.goalPlan) {
+      throw Object.assign(new Error('plan-bound continuation requires a separately approved plan node'), {
+        name: 'CoordinationRefusal', code: 'goal_plan_continuation_not_authorized',
+      });
+    }
     const id = `${prior.id}:refinement-${++this._refinementSeq}`;
     const created = this._coordination.createTask({
       id, brief: prior.brief, deps: [], refines: prior.id, taskType: prior.taskType,
@@ -3595,6 +3606,11 @@ export class Coordinator {
 
   _createCoordinationRecoveryRefinement(handle, prior) {
     if (!this._coordination) return prior;
+    if (prior.brief?.goalPlan) {
+      throw Object.assign(new Error('plan-bound recovery requires a separately approved plan node'), {
+        name: 'CoordinationRefusal', code: 'goal_plan_continuation_not_authorized',
+      });
+    }
     const id = `recovery:${canonicalDigest({
       priorTaskId: prior.id,
       workerId: handle.id,

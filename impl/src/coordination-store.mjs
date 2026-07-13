@@ -2976,6 +2976,9 @@ export class CoordinationStore {
     if (!priorTask || (fields?.runId != null && this._runs.get(fields.runId)?.status === 'sealed')) {
       throw new CoordinationRefusal('recovery refinement target is unavailable', 'recovery_refinement_unavailable');
     }
+    if (priorTask.brief?.goalPlan) {
+      throw new CoordinationRefusal('plan-bound recovery requires a separately approved plan node', 'goal_plan_continuation_not_authorized');
+    }
     const createdPayload = this._validateRecoveryRefinementRequest(fields, attribution, priorTask, false);
     const claimedPayload = this._normalizedRecoveryClaimedPayload(createdPayload, attribution);
     const prior = this._byKey.get(auth?.key);
