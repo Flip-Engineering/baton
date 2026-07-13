@@ -88,7 +88,7 @@ export class CodexAppServerCli {
 
     // XA15: probed once, synchronously, at construction; cached; never throws (a harness card
     // must always be producible even when `codex` isn't installed on this machine).
-    const versionProbe = opts.versionProbe ?? (() => execFileSync('codex', ['--version']).toString().trim());
+    const versionProbe = opts.versionProbe ?? (() => execFileSync(this._cmd, ['--version']).toString().trim());
     try {
       this._version = versionProbe();
     } catch {

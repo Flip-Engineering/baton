@@ -128,6 +128,11 @@ test('GA14/GA15: card() reports harness grok, injected version, steer:emulated, 
   assert.equal(card.verbs.pause, 'unsupported');
 });
 
+test('GA15: the default version probe describes the injected executable, not a different bare grok on PATH', () => {
+  const adapter = new GrokAcpCli({ cmd: process.execPath, requestTimeoutMs: 100 });
+  assert.equal(adapter.card().version, process.version);
+});
+
 // ---------------------------------------------------------------------------
 // GA6: spawn = initialize -> session/new -> first prompt dispatch; natural completion
 // ---------------------------------------------------------------------------

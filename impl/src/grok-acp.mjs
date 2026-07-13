@@ -133,7 +133,7 @@ export class GrokAcpCli {
     }
 
     // GA15: probed once, synchronously, cached; never throws.
-    const versionProbe = opts.versionProbe ?? (() => execFileSync('grok', ['--version']).toString().trim());
+    const versionProbe = opts.versionProbe ?? (() => execFileSync(this._cmd, ['--version']).toString().trim());
     try {
       this._version = versionProbe();
     } catch {

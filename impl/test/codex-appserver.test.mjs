@@ -118,6 +118,11 @@ test('XA14/XA15: card() reports harness codex, the injected version, and the nat
   assert.equal(card.verbs.pause, 'unsupported');
 });
 
+test('XA15: the default version probe describes the injected executable, not a different bare codex on PATH', () => {
+  const adapter = new CodexAppServerCli({ cmd: process.execPath, requestTimeoutMs: 100 });
+  assert.equal(adapter.card().version, process.version);
+});
+
 // ---------------------------------------------------------------------------
 // XA1/XA6: spawn = initialize + thread/start + first turn; natural completion
 // ---------------------------------------------------------------------------
