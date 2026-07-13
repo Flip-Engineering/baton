@@ -59,6 +59,9 @@ Only a current adverse official observation can append `knowledge.reuse_provider
 false adverse hint with a green official refresh is ignored as a hint. A provider signal that names
 no current Decision is still processed and retained; the transaction is coordinate-owned rather
 than dependent on a caller-selected seed Decision.
+The guard's `effectiveAt` is exactly the freshly reverified official observation's `asOf`, never the
+provider receipt's occurred/received time. The receipt grounds delivery and coordinate selection;
+the official fact alone grounds both adverse meaning and its effective time.
 
 ## AF5 — monotonic multi-source adverse union
 
@@ -69,6 +72,8 @@ correction events, newer omission, successful polling, key rotation, provider re
 change, or one source's state cannot clear, replace, downgrade, or hide another source. The
 aggregate coordinate fence stays blocked until a separate future positive-clearance transaction
 explicitly addresses every retained adverse source.
+A future clearance transaction must enumerate and address every then-active `(sourceId,
+sourceEpoch, officialFactDigest)` contribution. Partial-source clearing is forbidden.
 
 ## AF6 — store-serialized fan-out and policy races
 
@@ -80,6 +85,9 @@ Supersession/manual-refresh/provider/policy-transition races cannot double-inval
 current target. If policy changes during asynchronous refresh, the official result must be retried
 or rejected for active-policy mismatch; an already-appended adverse guard migrates through Phase 42
 as stale-but-blocking.
+Provider contributions themselves remain policy-independent immutable history. Their policy-bound
+aggregate risk projection participates explicitly in Phase 42 guard targeting/migration; a policy
+change may stale and reproject that aggregate but cannot delete any contribution.
 
 Multi-coordinate delivery is atomic at receipt/pending admission. Processing may use deterministic
 replayable per-coordinate children only when one completion root binds the complete coordinate set,
@@ -120,7 +128,8 @@ may cross handoff.
 
 ## AF9 — local causal provenance
 
-Each authenticated receipt is an observed local source node/evidence record. Each official adverse
+Each authenticated receipt is an `observed` local source node/evidence record because sender and
+delivery were authenticated but adverse meaning was not yet independently established. Each official adverse
 Finding/guard is `DerivedFrom` its receipt and freshly reverified official evidence, then `Affects`
 the exact invalidated Decisions/Findings. Aggregate source lineage remains queryable historically;
 grounding is `observed` for authenticated delivery and `derived` for risk projection, never

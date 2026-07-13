@@ -161,6 +161,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   deeper operator surfaces, and OpenTelemetry GenAI export.
 - Reproducible M0/M1/E2 evaluation programs, automatic account-aware scheduling, and a production
   Go/Elixir core after executable contracts stabilize.
+- Provider-terminal lump usage can cross nominal token/USD ceilings before Baton receives telemetry;
+  preauthorization/headroom and post-overrun artifact-admission policy remain explicit governance
+  work. Provider-native budget flags are not treated as hard until live evidence proves enforcement.
 
 ## Explicit Decisions and conditional research
 
@@ -187,7 +190,8 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    bounded scope-drift refresh in Phase 34, external evidence in Phase 36, exact SBOM in Phase 37,
    immutable external reuse decision/promotion in Phase 38, advisory/TTL invalidation in Phase 39,
    the isolated proposed npm graph/delta in Phase 40, transitive advisory projection in Phase 41,
-   and policy-epoch reconciliation in Phase 42; continue their explicitly
+   and policy-epoch reconciliation in Phase 42. Adverse provider ingestion is specified in Phase 43
+   and now proceeds through red tests/implementation; continue the remaining explicitly
    catalogued later rungs, then demand-earned Cairn Rungs 1–4, Vantage, Evidence Ladder, and Skill
    Forge/computer use behind stronger containment.
 5. **Complete northbound/runtime depth:** MCP HTTP/Tasks/daemon, WebSocket, operator takeover,
