@@ -36,7 +36,7 @@ const ARG_FIELDS = Object.freeze({
   goal_define: new Set(['objective', 'definitionOfDone', 'constraints', 'risk', 'budget', 'predecessor']),
   plan_propose: new Set(['goal', 'predecessor', 'nodes']),
   plan_approve: new Set(['goal', 'plan', 'expectedDisposition', 'disposition']),
-  goal_plan_status: new Set(['goalId', 'planId', 'throughSeq']),
+  goal_plan_status: new Set(['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'throughSeq']),
 });
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
@@ -237,7 +237,9 @@ function validateEnvelope(envelope) {
   }
   if (envelope.command === 'goal_plan_status') {
     if (!exactRecord(envelope.args, ARG_FIELDS.goal_plan_status) || !/^goal:[a-f0-9]{64}$/.test(envelope.args.goalId ?? '')
+      || !Number.isSafeInteger(envelope.args.goalVersion) || envelope.args.goalVersion <= 0 || !/^[a-f0-9]{64}$/.test(envelope.args.goalDigest ?? '')
       || !/^plan:[a-f0-9]{64}$/.test(envelope.args.planId ?? '')
+      || !Number.isSafeInteger(envelope.args.planVersion) || envelope.args.planVersion <= 0 || !/^[a-f0-9]{64}$/.test(envelope.args.planDigest ?? '')
       || !(envelope.args.throughSeq === null || (Number.isSafeInteger(envelope.args.throughSeq) && envelope.args.throughSeq >= 0))) return 'goal_plan_status requires exact bounded coordinates';
   }
   if (envelope.command === 'scratch_oracle') {

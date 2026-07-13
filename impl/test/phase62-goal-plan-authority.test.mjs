@@ -29,6 +29,10 @@ const auth = (principalId, powers, idempotencyKey, extra = {}) => ({
 });
 const budget = (tokens = 20_000) => ({ tokens, usd: 2, wallMin: 10, providerTurns: 8 });
 const verification = Object.freeze({ command: 'node', arguments: ['--test'], cwd: '.', envAllowlist: ['PATH'], expectExit: 0, expectResult: 'exit_code', timeoutMs: 60_000, maxOutputBytes: 1_000_000, requiredPredecessorEvidence: [] });
+const statusCoordinates = (goal, plan) => ({
+  goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest,
+  planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, throughSeq: null,
+});
 
 class NativePlanAdapter {
   constructor() { this.cb = null; this.spawnCalls = 0; this.promptCalls = 0; }
@@ -120,15 +124,26 @@ test('GP1-GP4/GP6/GP8: goals and plans are append-only, bounded, distinct-author
   assert.match(goal.goalId, /^goal:[a-f0-9]{64}$/); assert.equal(goal.version, 1);
   assert.match(plan.planId, /^plan:[a-f0-9]{64}$/); assert.equal(plan.version, 1);
   assert.equal(approval.disposition, 'approved'); assert.notEqual(approval.principalId, plan.proposerPrincipalId);
-  const status = await driver.coordinator.goalPlanStatus({ goalId: goal.goalId, planId: plan.planId, throughSeq: null }, auth('observer', ['goal:observe'], 'status:one'));
+  const status = await driver.coordinator.goalPlanStatus(statusCoordinates(goal, plan), auth('observer', ['goal:observe'], 'status:one'));
   assert.equal(status.goal.digest, goal.digest); assert.equal(status.plan.digest, plan.digest);
   assert.equal(status.approval.disposition, 'approved'); assert.equal(status.nodes[0].state, 'ready');
+  const amended = (await driver.coordinator.defineGoal({
+    objective: goal.objective, definitionOfDone: [...goal.definitionOfDone, 'exact historical status remains coherent'],
+    constraints: [...goal.constraints], risk: goal.risk, budget: { ...goal.budget },
+    predecessor: { goalId: goal.goalId, version: goal.version, digest: goal.digest },
+  }, auth('goal-owner', ['goal:define'], 'goal:amended'))).goal;
+  const historical = await driver.coordinator.goalPlanStatus(statusCoordinates(goal, plan), auth('observer', ['goal:observe'], 'status:historical'));
+  assert.equal(historical.goal.version, 1); assert.equal(historical.plan.goal.version, 1);
   await assert.rejects(
-    driver.coordinator.goalPlanStatus({ goalId: goal.goalId, planId: plan.planId, throughSeq: null }, auth('observer', ['goal:observe'], 'status:cross-run', { runId: 'other-run' })),
+    driver.coordinator.goalPlanStatus(statusCoordinates(amended, plan), auth('observer', ['goal:observe'], 'status:mixed-versions')),
     (error) => error.code === 'not_found',
   );
   await assert.rejects(
-    driver.coordinator.goalPlanStatus({ goalId: goal.goalId, planId: plan.planId, throughSeq: null }, auth('observer', ['goal:observe'], 'status:cross-repo', { repoId: 'other-repo' })),
+    driver.coordinator.goalPlanStatus(statusCoordinates(goal, plan), auth('observer', ['goal:observe'], 'status:cross-run', { runId: 'other-run' })),
+    (error) => error.code === 'not_found',
+  );
+  await assert.rejects(
+    driver.coordinator.goalPlanStatus(statusCoordinates(goal, plan), auth('observer', ['goal:observe'], 'status:cross-repo', { repoId: 'other-repo' })),
     (error) => error.code === 'goal_plan_unauthorized',
   );
   await assert.rejects(driver.coordinator.approvePlan({ goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest }, plan: { planId: plan.planId, version: plan.version, digest: plan.digest }, expectedDisposition: null, disposition: 'approved' }, auth('planner', ['plan:approve'], 'approval:self')), (error) => error.code === 'plan_self_approval');
@@ -155,7 +170,7 @@ test('GP5/GP8: mandatory plan-gated spawn binds Brief/route/budget and has one c
   const attempts = await Promise.allSettled(['planned-a', 'planned-b'].map((taskId) => driver.coordinator.spawn('mock', brief, { taskId, model: 'model-a', effort: 'low', goalPlan: gate, actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session', powers: ['plan:dispatch'], idempotencyKey: `spawn:${taskId}` })));
   assert.equal(attempts.filter((row) => row.status === 'fulfilled').length, 1);
   assert.equal(attempts.filter((row) => row.status === 'rejected' && row.reason?.code === 'plan_dispatch_stale').length, 1);
-  const status = await driver.coordinator.goalPlanStatus({ goalId: goal.goalId, planId: plan.planId, throughSeq: null }, auth('observer', ['goal:observe'], 'status:dispatch'));
+  const status = await driver.coordinator.goalPlanStatus(statusCoordinates(goal, plan), auth('observer', ['goal:observe'], 'status:dispatch'));
   assert.equal(status.nodes[0].state, 'dispatched'); assert.match(status.nodes[0].taskId, /^planned-/);
   const durable = driver.coordination.task(status.nodes[0].taskId);
   assert.equal(durable.brief.goalPlan.planDigest, plan.digest); assert.equal(durable.brief.goalPlan.nodeKey, 'implement');

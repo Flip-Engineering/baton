@@ -144,9 +144,11 @@ const TOOL_DEFINITIONS = Object.freeze([
     expectedDisposition: { type: 'null' }, disposition: { type: 'string', enum: ['approved', 'rejected'] },
   }, ['repoId', 'idempotencyKey', 'goal', 'plan', 'expectedDisposition', 'disposition']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_goal_plan_status', description: 'Read a bounded replay-validated Goal/Plan projection at an exact event boundary.', inputSchema: schema({
-    ...repo, runId, goalId: { type: 'string', pattern: '^goal:[a-f0-9]{64}$' }, planId: { type: 'string', pattern: '^plan:[a-f0-9]{64}$' },
+    ...repo, runId,
+    goalId: { type: 'string', pattern: '^goal:[a-f0-9]{64}$' }, goalVersion: { type: 'integer', minimum: 1 }, goalDigest: digest,
+    planId: { type: 'string', pattern: '^plan:[a-f0-9]{64}$' }, planVersion: { type: 'integer', minimum: 1 }, planDigest: digest,
     throughSeq: { oneOf: [{ type: 'integer', minimum: 0 }, { type: 'null' }] },
-  }, ['repoId', 'goalId', 'planId', 'throughSeq']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  }, ['repoId', 'goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'throughSeq']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_send', description: 'Send a turn, steer, or nudge to a fenced worker.', inputSchema: schema({ ...repo, ...idem, ...fence, workerId: text, message: text, mode: { type: 'string', enum: ['turn', 'steer', 'nudge'] } }, ['repoId', 'idempotencyKey', 'expectedFence', 'workerId', 'message', 'mode']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_wait', description: 'Wait for fleet events for at most the host-safe bounded interval.', inputSchema: schema({ ...repo, timeoutMs: { type: 'integer', minimum: 0 } }, ['repoId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_respond', description: 'Answer one pending approval or question.', inputSchema: schema({ ...repo, ...idem, requestId: text, answer: {} }, ['repoId', 'idempotencyKey', 'requestId', 'answer']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
@@ -276,7 +278,10 @@ function validateArguments(name, args) {
   if (name === 'fleet_plan_approve' && (!validGoalRef(args.goal) || !validPlanRef(args.plan) || args.expectedDisposition !== null
     || !['approved', 'rejected'].includes(args.disposition)
     || (Object.hasOwn(args, 'runId') && !/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId ?? '')))) return 'invalid_plan_approval';
-  if (name === 'fleet_goal_plan_status' && (!/^goal:[a-f0-9]{64}$/.test(args.goalId ?? '') || !/^plan:[a-f0-9]{64}$/.test(args.planId ?? '')
+  if (name === 'fleet_goal_plan_status' && (!/^goal:[a-f0-9]{64}$/.test(args.goalId ?? '')
+    || !Number.isSafeInteger(args.goalVersion) || args.goalVersion <= 0 || !/^[a-f0-9]{64}$/.test(args.goalDigest ?? '')
+    || !/^plan:[a-f0-9]{64}$/.test(args.planId ?? '')
+    || !Number.isSafeInteger(args.planVersion) || args.planVersion <= 0 || !/^[a-f0-9]{64}$/.test(args.planDigest ?? '')
     || (args.throughSeq !== null && (!Number.isSafeInteger(args.throughSeq) || args.throughSeq < 0))
     || (Object.hasOwn(args, 'runId') && !/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId ?? '')))) return 'invalid_goal_plan_status';
   if (name === 'fleet_scratch_oracle') {
@@ -526,7 +531,8 @@ export class McpFleetServer {
       goal: args.goal, plan: args.plan, expectedDisposition: args.expectedDisposition, disposition: args.disposition,
     }, this._goalPlanContext(name, args, actor, callId, principal));
     else if (name === 'fleet_goal_plan_status') value = await this.coordinator.goalPlanStatus({
-      goalId: args.goalId, planId: args.planId, throughSeq: args.throughSeq,
+      goalId: args.goalId, goalVersion: args.goalVersion, goalDigest: args.goalDigest,
+      planId: args.planId, planVersion: args.planVersion, planDigest: args.planDigest, throughSeq: args.throughSeq,
     }, this._goalPlanContext(name, args, actor, callId, principal));
     else if (name === 'fleet_send') value = await this.coordinator.send(args.workerId, args.message, args.mode, { expectedFence: args.expectedFence, actor });
     else if (name === 'fleet_wait') value = await this.coordinator.wait(Math.min(args.timeoutMs ?? this.maxWaitMs, this.maxWaitMs));

@@ -53,6 +53,10 @@ function makeDriver(authorizations) {
 }
 const budget = { tokens: 20_000, usd: 2, wallMin: 10, providerTurns: 8 };
 const verification = { command: 'node', arguments: ['--test'], cwd: '.', envAllowlist: ['PATH'], expectExit: 0, expectResult: 'exit_code', timeoutMs: 60_000, maxOutputBytes: 1_000_000, requiredPredecessorEvidence: [] };
+const statusCoordinates = (goal, plan) => ({
+  goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest,
+  planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, throughSeq: null,
+});
 
 test('GP1/GP4/GP7: MCP Goal/Plan tools expose closed schemas and bind exact principal powers', async () => {
   const authorizations = []; const driver = makeDriver(authorizations);
@@ -104,7 +108,7 @@ test('GP1/GP4/GP7: MCP Goal/Plan tools expose closed schemas and bind exact prin
   assert.doesNotMatch(JSON.stringify(approvalResponse.result), /actor|idempotencyKey|principalId|proposerPrincipalId|sessionDigest/);
 
   const statusResponse = await rpc(observer, 7, 'fleet_goal_plan_status', {
-    repoId: 'repo-phase62-mcp', goalId: goal.goalId, planId: plan.planId, throughSeq: null,
+    repoId: 'repo-phase62-mcp', ...statusCoordinates(goal, plan),
   });
   assert.equal(statusResponse.result.isError, false);
   assert.equal(statusResponse.result.structuredContent.goal.digest, goal.digest);
@@ -117,11 +121,11 @@ test('GP1/GP4/GP7: MCP Goal/Plan tools expose closed schemas and bind exact prin
     { operation: 'goal_plan_status', power: 'goal:observe', principalId: 'observer' },
   ]);
   const crossRun = await rpc(observer, 8, 'fleet_goal_plan_status', {
-    repoId: 'repo-phase62-mcp', runId: 'other-run', goalId: goal.goalId, planId: plan.planId, throughSeq: null,
+    repoId: 'repo-phase62-mcp', runId: 'other-run', ...statusCoordinates(goal, plan),
   });
   assert.equal(crossRun.result.isError, true); assert.match(crossRun.result.content[0].text, /not_found/);
   const crossRepo = await rpc(observer, 9, 'fleet_goal_plan_status', {
-    repoId: 'other-repo', goalId: goal.goalId, planId: plan.planId, throughSeq: null,
+    repoId: 'other-repo', ...statusCoordinates(goal, plan),
   });
   assert.equal(crossRepo.result.isError, true); assert.match(crossRepo.result.content[0].text, /forbidden/);
   driver.close();
@@ -263,7 +267,9 @@ test('GP7/GP8: MCP Goal/Plan refusals are stable, scoped, and do not dispatch', 
   assert.equal(weakened.result.isError, true); assert.match(weakened.result.content[0].text, /goal_weakened/);
   assert.equal(weakened.result.content[0].text.includes('private goal details'), false);
   const status = await rpc(authorized, 3, 'fleet_goal_plan_status', {
-    repoId: 'repo-phase62-mcp', goalId: `goal:${'a'.repeat(64)}`, planId: `plan:${'b'.repeat(64)}`, throughSeq: null,
+    repoId: 'repo-phase62-mcp',
+    goalId: `goal:${'a'.repeat(64)}`, goalVersion: 1, goalDigest: 'c'.repeat(64),
+    planId: `plan:${'b'.repeat(64)}`, planVersion: 1, planDigest: 'd'.repeat(64), throughSeq: null,
   });
   assert.equal(status.result.isError, true); assert.match(status.result.content[0].text, /goal_plan_status_invalid/);
   const forbidden = await rpc(denied, 4, 'fleet_goal_define', { ...goalArgs, idempotencyKey: 'goal-forbidden' });

@@ -37,7 +37,10 @@ const goalArgs = () => ({
 });
 const planArgs = () => ({ goal: { ...goal }, predecessor: null, nodes: [{ ...node, budget: { ...budget }, verification: { ...verification }, routes: { ...node.routes } }] });
 const approvalArgs = () => ({ goal: { ...goal }, plan: { ...plan }, expectedDisposition: null, disposition: 'approved' });
-const statusArgs = () => ({ goalId: goal.goalId, planId: plan.planId, throughSeq: null });
+const statusArgs = () => ({
+  goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest,
+  planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, throughSeq: null,
+});
 
 function fixture(coordinator = {}) {
   const calls = [];

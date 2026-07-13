@@ -2783,15 +2783,19 @@ export class CoordinationStore {
 
   goalPlanStatus(fields, auth) {
     if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
-    if (!fields || Object.keys(fields).sort().join(',') !== ['goalId', 'planId', 'throughSeq'].sort().join(',')
-      || typeof fields.goalId !== 'string' || typeof fields.planId !== 'string'
+    const statusFields = ['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'throughSeq'];
+    if (!fields || Object.keys(fields).sort().join(',') !== statusFields.sort().join(',')
+      || typeof fields.goalId !== 'string' || !Number.isSafeInteger(fields.goalVersion) || fields.goalVersion <= 0 || !/^[a-f0-9]{64}$/.test(fields.goalDigest ?? '')
+      || typeof fields.planId !== 'string' || !Number.isSafeInteger(fields.planVersion) || fields.planVersion <= 0 || !/^[a-f0-9]{64}$/.test(fields.planDigest ?? '')
       || !auth || auth.repoId !== this._goalPlanPolicy.repoId || !(auth.runId === null || validRunId(auth.runId))
       || (fields.throughSeq !== null && (!Number.isSafeInteger(fields.throughSeq) || fields.throughSeq < 0 || fields.throughSeq > this._events.length))) throw new CoordinationRefusal('goal/plan status query is invalid', 'goal_plan_status_invalid');
     const throughSeq = fields.throughSeq ?? this._events.length;
     const relevant = this._events.filter((event) => event.seq <= throughSeq);
-    const goalEvent = [...relevant].reverse().find((event) => event.kind === 'goal.version_defined' && event.payload.goal.goalId === fields.goalId);
-    const planEvent = [...relevant].reverse().find((event) => event.kind === 'plan.version_proposed' && event.payload.plan.planId === fields.planId);
-    if (!goalEvent || !planEvent || planEvent.payload.plan.goal.goalId !== fields.goalId
+    const goalEvent = relevant.find((event) => event.kind === 'goal.version_defined' && event.payload.goal.goalId === fields.goalId
+      && event.payload.goal.version === fields.goalVersion && event.payload.goal.digest === fields.goalDigest);
+    const planEvent = relevant.find((event) => event.kind === 'plan.version_proposed' && event.payload.plan.planId === fields.planId
+      && event.payload.plan.version === fields.planVersion && event.payload.plan.digest === fields.planDigest);
+    if (!goalEvent || !planEvent || canonicalDigest(planEvent.payload.plan.goal) !== canonicalDigest({ goalId: fields.goalId, version: fields.goalVersion, digest: fields.goalDigest })
       || goalEvent.payload.goal.repoId !== auth.repoId || goalEvent.payload.goal.runId !== auth.runId
       || planEvent.payload.plan.repoId !== auth.repoId || planEvent.payload.plan.runId !== auth.runId) throw new CoordinationRefusal('goal/plan status target is unavailable', 'not_found');
     const goal = clone(goalEvent.payload.goal); const plan = clone(planEvent.payload.plan);
