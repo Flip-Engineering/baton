@@ -21,7 +21,7 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **911/911
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **1101/1101
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
@@ -84,13 +84,24 @@ authoring, waiver, clearance, install, project-manager export, or homelab integr
 provider feeds, independently verified provenance, exact `internal` decisions, trusted advisory/
 source identity and true reachability, plan approval, positive clearance, additional ecosystems,
 composite surfaces, and deeper Cairn remain pending. The live policy-cycle proof passes **13/13**;
-the current canonical suite is **911/911 green**.
+the current canonical suite is **1101/1101 green**.
+
+Phases 43–50 extend the provider, routing, representation-attestation, and Cairn causal-knowledge
+verticals through durable provider recovery, exact route learning, supervised native-session
+rejoin, bitemporal causal audit, bounded recall, selective promotion, and independent-oracle
+Scratch correction. Phase 51 closes the pre-ready native-process gap: every shipped real adapter
+separates exact process start, provider readiness, and exact close; kill waits for process-group
+death and cleanup, forced/poisoned reaps are retryable, recovery identity remains transactional,
+and authenticated web/MCP status exposes only a bounded process reference. Exact Codex
+`gpt-5.6-sol`/low, GLM `glm-4.7`/low, Grok 4.5/low, and Grok Build/low remain in the recursive
+matrix; the current Grok legs are honestly authentication-red while their concurrent process
+groups and all owned resources are proven reaped.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 
 **Everything else supports the driver, and none of it is dropped:** independent verification (re-running a worker's tests so "done" can be trusted), learned routing (which vendor is good at what), a reliable coordination core (so "interrupt worker 3" always lands), telemetry/replay, and worker tools (search, debug, semantic diff). Earlier docs over-billed the *verification* as the product and demoted the *driving* to optional — doc 19 turns that right-side-up.
 
-**Architecture, plainly:** you drive from your CLI agent (Claude Code or Codex is the orchestrator — it decides); underneath, a small reliable program carries out those decisions and does the bookkeeping (dispatch, making interrupts land, re-checking worker claims, the event log). The AI drives; the plumbing makes the driving safe. Southbound, the product tier uses persistent Claude stream-json, Codex app-server, and Grok ACP sessions; one-shot subprocess adapters remain an explicitly limited fire-and-forget tier. Those basic depth gates, audited ACI invocation, Cairn Rung 0, and Cartographer/Quartermaster's local orientation/reuse, addressed-push, and policy-epoch safety rungs now ship; current pursuit is Quartermaster's adverse-only provider feed and independently grounded decision/provenance rungs, followed by the remaining capability and runtime backlog. See [docs/28](docs/28-exhaustive-capability-audit.md).
+**Architecture, plainly:** you drive from your CLI agent (Claude Code or Codex is the orchestrator — it decides); underneath, a small reliable program carries out those decisions and does the bookkeeping (dispatch, making interrupts land, re-checking worker claims, the event log). The AI drives; the plumbing makes the driving safe. Southbound, the product tier uses persistent Claude stream-json, Codex app-server, and Grok ACP sessions; one-shot subprocess adapters remain an explicitly limited fire-and-forget tier. Those basic depth gates, audited ACI invocation, Cairn's current causal audit/recall/promotion/correction rungs, and Cartographer/Quartermaster's local orientation/reuse, addressed-push, provider, and policy-epoch safety rungs now ship; exact provider process lifecycle and reap also ship. Current pursuit is the remaining shared-knowledge, representation, authenticated web/runtime, evaluation, and session-depth backlog. See [docs/28](docs/28-exhaustive-capability-audit.md).
 
 **Design docs** (`docs/`):
 

@@ -623,20 +623,38 @@ feedback/utility, authenticated contradiction UX, retention/compaction, deployme
 Bench, and every retained control/session/representation/capability rung remain explicit. No
 homelab or external project-manager runtime is introduced.
 
+Phase 51 closes the native-process evidence and reap gap exposed by recursive exact-route runs.
+Claude/GLM, Codex, Grok, and live one-shot workers now emit a closed, credential-free
+`process_started`/provider-ready/`process_closed` sequence bound to a coordinator-selected
+generation, PID, group, and adapter source. Readiness and session identity remain distinct;
+transactional recovery persists only sanitized process readiness until exact native identity is
+accepted. Kill confirmation requires exact close, process-group death, and owned cleanup;
+interrupt retains reusable-session authority, forced disposition retains writer authority, and
+ordinary or poisoned emergency kill can retry a dead-but-unconfirmed reap. Replay accepts an exact
+late close without treating historical PIDs as live. Direct, authenticated web, and MCP list expose
+only the bounded process reference. The 63 focused contracts and 1101/1101 canonical suite are
+green. Recursive Baton exact-routes Codex `gpt-5.6-sol`/low, project-key GLM `glm-4.7`/low, Grok
+`grok-4.5`/low, and Grok Build/low; all four start/close pairs and full ownership restoration are
+retained, with simultaneous Grok process groups observed. GLM fresh-verifies its report, while the
+strict provider matrix remains honestly red because the installed Grok CLI reports unauthenticated
+before readiness. No homelab or external project-manager runtime is introduced.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**
 3. Make persistent sessions genuinely usable through the driver; supervised startup auto-rejoin
-   is shipped in Phase 45, while provider-backed recovery, in-flight continuation, and vendor-honest
-   fork/rewind depth remain.
+   is shipped in Phase 45 and exact provider-process lifecycle/reap in Phase 51, while broader
+   provider-backed recovery proof, in-flight continuation, and vendor-honest fork/rewind depth
+   remain.
 4. Ship OS/credential isolation and budget/watchdog governance.
 5. Complete hardened acceptance and structured integration.
 6. Ship the task/artifact/Scratch substrate and deployment-neutral causal knowledge core.
 7. Ship Atlas + AST structural delta + repo map + Cairn scorecard, durable RouteStats/advice,
    causal integrity/audit/trace, audit-gated bounded recall, audit-gated selective promotion, and
    fact-bound Scratch oracle correction as the first capability verticals. **Shipped locally
-   through Cairn Scratch correction/oracle release; Phase 50 implementation is canonical-green and
-   its recursive exact-route matrix is retained as separate operational evidence.**
+   through Cairn Scratch correction/oracle release; Phase 51 also closes exact process lifecycle
+   and reap. The implementation is canonical-green and its recursive exact-route matrix is retained
+   as separate operational evidence.**
 8. Expand the representation and capability ladders in measured increments.
 9. Add MCP plus authenticated HTTPS/WebSocket user↔orchestrator control, operator surfaces,
    production runtime, and the registered evaluations.

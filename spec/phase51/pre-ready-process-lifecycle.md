@@ -70,8 +70,9 @@ match the current generation and may not replace an active process. A close must
 generation, PID, and process-group ID of the current process. Duplicate, stale, future, malformed,
 or cross-worker events are refused as attribution and cannot close or replace current authority.
 
-The operational log retains the original event and a bounded policy violation when possible;
-current-process attribution remains unchanged and Baton initiates a safe kill for an invalid event
+The operational log retains a bounded payload-key/type shape digest plus safe correlation fields,
+never the untrusted raw provider payload, and records a policy violation when possible.
+Current-process attribution remains unchanged and Baton initiates a safe kill for an invalid event
 from an otherwise live worker. An authoritative-log failure poisons ordinary control but preserves
 the existing emergency reap path.
 
@@ -118,16 +119,25 @@ For deliberate kill, the per-worker order is:
 3. durable coordinator `kill.confirmed`, after adapter Ack and close confirmation converge.
 
 Only then do runtime scope, worktree, branch, and stop-waiter ownership disappear. The process
-leader and process group must both be gone. Unexpected natural/crash closure similarly records the
-matching process close before its terminal lifecycle event. `driver.close()`/`closeAsync()` cannot
-release the writer while an owned started generation lacks close or forced-stop disposition.
+leader and process group must both be gone. A confirmed interrupt retains process and writer
+authority because its reusable session remains alive. A forced-stop deadline records
+`unconfirmed_after_restart` and may remove bounded task/runtime allocations, but it cannot release
+writer authority; a later ordinary or emergency `kill()` retries the native reap until the exact
+close arrives. Unexpected natural/crash closure similarly records the matching process close
+before its terminal lifecycle event. `driver.close()`/`closeAsync()` cannot release the writer
+while an owned started generation lacks exact close or cleanup remains pending.
 
 ### PL8 — recovery and replay honesty
 
-Replay reconstructs the latest exact process generation and its start/ready/close evidence. A
-started generation without a durable close becomes `unconfirmed_after_restart`, never `ready` or
-live merely because its historical PID is present. Native reattachment allocates generation+1 and
-must close it independently. Stale close from generation N cannot affect generation N+1.
+Replay reconstructs the latest exact process generation and its start/ready/close evidence. During
+transactional recovery/follow-up admission, a sanitized policy-origin `lifecycle.process_ready`
+event persists only generation/PID/group readiness; provider session identity stays buffered until
+admission succeeds. A started generation without a durable close becomes
+`unconfirmed_after_restart`, never live merely because its historical PID is present. Its
+historical `ready` bit remains available for exact late-close correlation without claiming a live
+transport. Native reattachment allocates generation+1, must still be open when admission commits,
+and must close independently. Stale close from generation N cannot affect generation N+1, and
+rejected recovery identity cannot pivot the durable session reference.
 
 Process events remain operational evidence; they do not invent a live transport after restart.
 The existing native session-recovery handshake remains the only authority to regain control.
@@ -198,7 +208,12 @@ behavioral fingerprints, or conditional e-graph research. Every item remains in 
    cannot mutate current process authority; the live process is stopped safely.
 7. Replay marks an unclosed historical generation unconfirmed and a new recovery generation is
    independent; an old close cannot close the new process.
-8. Append/coordination poison still permits emergency kill/reap and never reports ordinary success.
+8. Append/coordination poison still permits emergency kill/reap, including retry of a
+   dead-but-unconfirmed forced disposition, and never reports ordinary success.
+9. Interrupt retains writer authority; forced stop cannot release it; a second ordinary or
+   emergency kill can obtain a late exact close and finish cleanup.
+10. Recovery that observes the expected provider identity but closes before commit is refused;
+    rejected recovery persists only sanitized readiness and cannot rewrite session identity.
 
 ## Acceptance gate
 

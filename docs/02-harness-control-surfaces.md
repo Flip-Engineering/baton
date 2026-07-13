@@ -129,7 +129,7 @@ Legend: ✅ native · ⚠️ emulable with adapter work · ❌ absent. (Gemini c
 
 **Design consequence:** the common denominator is poor but the union is rich. A lowest-common-denominator protocol wastes Codex's steering and Claude's hooks; the hub should expose a **capability-negotiated** surface (each adapter publishes a "harness card" of supported primitives, and the orchestrator's tools degrade gracefully — e.g. `steer` falls back to interrupt+reprompt with an explicit `emulated: true` flag in telemetry).
 
-## Baton implementation status (phase 10.1, live)
+## Baton implementation status (through Phase 51, live)
 
 The matrix above is no longer only adapter research. `ClaudeSessionCli`, `CodexAppServerCli`, and
 `GrokAcpCli` are exported through `impl/src/index.mjs` and driven by `createDriver()` in the shipped
@@ -145,3 +145,14 @@ branches were reaped. Evidence: `reference/evidence/grok-multi-reap-2026-07-10/`
 Phase 11 subsequently wired exact model selection, resume/fork/recovery, token/USD governance,
 red→green/coverage/mutation acceptance, independent oracle provenance, fast-forward integration,
 and approval-gated publication. Remaining depth is tracked in `25-capability-gap.md`.
+
+Phase 51 now gives every shipped real-child adapter the same closed process vocabulary without
+flattening their provider handshakes: coordinator-selected generation and exact PID/group
+`lifecycle.process_started`, provider-specific `lifecycle.spawned` readiness, then exact
+`lifecycle.process_closed`. Kill confirmation waits for close, group death, and cleanup; forced and
+poisoned emergency disposition can be retried; replay and recovery preserve exact correlation
+without treating historical PIDs as live. The orchestrator independently selects harness, exact
+model, and effort—currently including Codex `gpt-5.6-sol`/low, GLM `glm-4.7`/low, Grok
+`grok-4.5`/low, and Grok Build/low—and public web/MCP status exposes only the bounded process
+reference. Current recursive evidence honestly records the installed Grok CLI as unauthenticated
+before provider readiness while still proving concurrent process start, exact close, and full reap.

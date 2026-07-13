@@ -181,10 +181,22 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    green. Post-fix project-key GLM fresh-verified the implementation and was kill-confirmed/reaped;
    Codex initialization and two concurrent Grok allocations remained pre-PID red, so the strict
    native matrix is separately retained and does not inflate implementation status.
+24. **Exact pre-ready provider process lifecycle and reap:** Phase 51 separates OS child existence,
+   provider readiness, session identity, terminal close, and resource cleanup for Claude/GLM,
+   Codex, Grok, and the live one-shot tier. Coordinator-selected generations, exact PID/group and
+   source correlation, bounded refusal digests, setup/timeout/kill ordering, descendant-group reap,
+   retryable forced and poisoned emergency kill, writer/verification cleanup authority,
+   transactional recovery readiness, late-close replay, and bounded auth-protected public status
+   are executable. Sixty-three focused PL contracts and 1101/1101 canonical tests are green.
+   Recursive exact Codex `gpt-5.6-sol`/low, project-key GLM `glm-4.7`/low, Grok `grok-4.5`/low,
+   and Grok Build/low routes all produce exact start/close evidence and complete cleanup; the two
+   Grok groups overlap, GLM fresh-verifies, and the strict provider matrix remains honestly red at
+   the installed Grok CLI's unauthenticated readiness boundary.
 
 ## What remains partial
 
-- In-flight session continuation, provider-backed crash/rejoin proof, deeper fork/rewind/checkpoint parity, and vendor-specific context,
+- Exact provider-process lifecycle/reap and transactional recovery readiness now ship; in-flight
+  session continuation, broader provider-backed crash/rejoin proof, deeper fork/rewind/checkpoint parity, and vendor-specific context,
   hook, broker, extension, and reconfiguration surfaces.
 - Full Claude/Codex sandbox denial parity, contamination UX, operator
   pin/exclude/prefer controls, and account quota-window/fleet-seat scheduling.
