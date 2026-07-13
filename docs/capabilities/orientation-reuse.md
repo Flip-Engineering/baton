@@ -140,6 +140,7 @@ Long operations (whole-repo SCIP index, deep transitive vet) are **DAG tasks**, 
 - Phase 39 keeps those Decisions temporally honest: current recall hides them at exact dossier expiry, explicit TTL recheck closes their validity, and a Coordinator-forced official refresh atomically installs an exact-coordinate adverse fence, closes every stale matching Decision/dossier Finding, records affected readers, and projects a local derived risk Finding with `Affects` edges. Green refresh cannot silently clear a fence.
 - Phase 40 separately resolves one exact npm request under a measured disposable supervisor and emits a proposed-not-installed CycloneDX graph plus typed actual delta. It cannot install, decide, merge, or waive advisories; reachability and independent provenance remain later rungs.
 - Phase 42 makes deployment-policy change temporally and causally explicit. Observed policy `Constraint` nodes form a `Supersedes` chain, changed constraints `Affect` invalidated Decisions, and current Decisions are `Informed` by their active constraint. Green review migrates inherited adverse state through `DerivedFrom` without clearing it; a fresh adverse observation records guard and risk-Finding `Supersedes` lineage. All of this remains local and deployment-neutral, with no project-manager or homelab runtime integration.
+- Phase 43 adds deployment-owned adverse-provider hints without granting provider clearance authority. Authenticated webhook and bounded full-poll receipts remain observed Sources and pending fences until seedless official Quartermaster invoke-plus-reverify completes the whole semantic root. Gaps require authenticated full-poll recovery; ordinary official failures become sanitized durable attempts under exact deployment backoff/batch ceilings. One supervised scan is cancellation/lease fenced, restart-continuable, and observable only through bounded authenticated status. Immutable multi-provider adverse contributions grow into the existing guard and causal Finding/Affects lineage; green processing never clears an adverse guard.
 - The architecture brief's **module summary** (from community detection) promotes to a durable Finding per module — the reusable "what this repo *is*."
 - Cross-run recall is **explicit and pull-only**: `fleet_recall("has anyone vetted a JWT lib for this repo?")` hits the decision cache; never auto-injected into a worker's context (doc 08 §7 Q3 — avoid re-poisoning).
 
@@ -220,16 +221,19 @@ part of the contract; grouping here does not authorize a mega-phase.
    grounded actual and proposed npm graphs, deterministic dependency-path witnesses, and narrowly
    named supported-static-import observation. It never claims vulnerable-function reachability or
    waives an advisory.
-3. **Independent evidence sources:** adverse-only provider feed/webhook/poll ingestion,
-   independently verified Sigstore/SLSA provenance, and the separately grounded exact `internal`
-   reuse-decision transaction.
-4. **Deeper analysis:** trusted release-artifact-to-source/export identity, advisory-to-symbol
+3. **Adverse provider evidence — shipped Phase 43:** generic authenticated webhook/full-poll
+   ingestion, source-health recovery, seedless official processing, grow-only multi-provider union,
+   durable supervised retry, bounded authenticated observation, replay, and cleanup. Real provider
+   and additional ecosystem adapters remain separate contracts and grant no positive clearance.
+4. **Remaining independent evidence sources:** independently verified Sigstore/SLSA provenance and
+   the separately grounded exact `internal` reuse-decision transaction.
+5. **Deeper analysis:** trusted release-artifact-to-source/export identity, advisory-to-symbol
    mapping, stronger module-aware/interprocedural Atlas/CPG, and only then true vulnerable-function
    reachability with `unknown` as the default.
-5. **Authority-bearing composition:** proposed-plan approval/binding into a new reuse Decision;
+6. **Authority-bearing composition:** proposed-plan approval/binding into a new reuse Decision;
    positive clearance as its own non-resurrection transaction; high-level `fleet_reuse` and
    unified `fleet_provenance` surfaces.
-6. **Breadth after semantics:** ecosystems added one at a time with their own exact inventory,
+7. **Breadth after semantics:** ecosystems added one at a time with their own exact inventory,
    oracle, resolver, provenance, and replay contracts; optional Socket and Syft/Grype/Trivy-class
    fuller SCA enrichment remain separate sources, not shortcuts.
 
@@ -244,7 +248,7 @@ deployment-neutral causal graph.
 - **Centrality ≠ task relevance.** PageRank/betweenness is a *prior*, not truth; the real signal is the orchestrator's `focus`. So the module's value is bounded by the orchestrator's judgment — and a *confidently wrong* orientation push (`fleet_orient_worker` to the wrong subsystem) misleads exactly as efficiently as a right one helps. Attention-steering is a loaded gun.
 - **Map staleness vs cost.** Per-SHA immutability is clean but a hot worktree churns the cache; tree-sitter def/ref maps must be diffed or rebuilt (only SCIP is truly incremental, and only for languages with a SCIP indexer). Cross-file semantic edges need a live language server per language — heavy, and LSP quality is uneven (great for TS/Go/Rust, weak for dynamic/templated/DSL code).
 - **Reachability is advisory, never a shipping license.** Call graphs are incomplete for reflection, dynamic dispatch, DI, `eval`, FFI. A false "unreachable" that deprioritizes a real vuln is a security regression. Rule: reachability may *reorder* attention; it may **never** be the reason to ship a known-vulnerable, non-attested dependency.
-- **Verdict freshness — the Shai-Hulud problem.** A package safe yesterday is malicious today (compromised maintainer, worm). Caching a `BORROW_OK` verdict by `(package, version)` alone is unsafe; every cached decision needs a TTL **and** advisory-feed invalidation, and the ledger's temporal-integrity rule (doc 08 §2.2) means the dossier's `as_of` timestamp is load-bearing — a decision inherits the staleness of its evidence. Phases 39 and 42 close deterministic TTL/pull-refresh and deployment-policy change; unsolicited provider ingestion and separately authorized positive clearance remain absent.
+- **Verdict freshness — the Shai-Hulud problem.** A package safe yesterday is malicious today (compromised maintainer, worm). Caching a `BORROW_OK` verdict by `(package, version)` alone is unsafe; every cached decision needs a TTL **and** advisory-feed invalidation, and the ledger's temporal-integrity rule (doc 08 §2.2) means the dossier's `as_of` timestamp is load-bearing — a decision inherits the staleness of its evidence. Phases 39 and 42 close deterministic TTL/pull-refresh and deployment-policy change; Phase 43 closes generic adverse-only authenticated provider ingestion through official processing and durable retry. Real provider adapters and separately authorized positive clearance remain absent.
 - **Third-party metadata is an injection surface.** Package READMEs, descriptions, and even symbol docstrings are untrusted content (doc 06 Q4). Dossiers and slices must delimit third-party prose as untrusted `prose` (doc 09 facts-vs-prose typing); an agent must never *act* on a package's self-description.
 - **Human-authored priors can lie.** AGENTS.md and CODEOWNERS drift; the computed map can contradict them. The module surfaces both and flags disagreement (`conventions` vs observed structure) — it does not silently pick a winner.
 - **External-oracle dependency.** deps.dev/OSV/Socket are network services with rate limits and outages; the MVP must degrade to "unknown, blocked pending vet" rather than default-allow (mirroring doc 05 §5's deny-with-message on approver timeout). "Unknown" is a safe verdict; "assume safe" is not.

@@ -1,9 +1,9 @@
-# System Validation — living full-system ledger through Phase 42
+# System Validation — living full-system ledger through Phase 43
 
 Originally validated 2026-07-11 through Phase 11; updated through the 2026-07-12 coordinator-owned
 capability plane, credentialed GLM live gate, Cairn Rung 0, and Cartographer/Quartermaster local,
-external-evidence, SBOM, decision, invalidation, proposed-graph, transitive-advisory, and policy-epoch
-reconciliation rungs. Historical milestone counts remain in their rows;
+external-evidence, SBOM, decision, invalidation, proposed-graph, transitive-advisory, policy-epoch,
+and authenticated provider-ingress/reconciliation/retry rungs. Historical milestone counts remain in their rows;
 the top canonical row and latest handoffs are the current authority.
 
 ## Verdict
@@ -144,6 +144,7 @@ out-of-scope edit rules invoke bounded interrupt/kill without pretending to judg
 | Phase 43 bounded poll lifecycle | `docs/handoff/evidence/phase43-poll-lifecycle-2026-07-12.md`; 65 focused Phase 42/43 contracts and 960/960 canonical tests cover deterministic single-flight scheduling, capped backoff/reset, automatic recovery, sanitized lifecycle, strict async close, hostile abort-resolve behavior, post-close append refusal, concurrent writer exclusion, lease loss, and complete timer/poll/writer drain. Recursive Baton routed credentialed `glm-4.7`/low to native PID `23803`, fresh-verified within 150k/$1.25, confirmed kill, and fully reaped all ownership. The report's self-contradictory close-order P0 was refuted and its intended late-write edge was strengthened with an explicit adversarial regression. Production HTTPS transport/live proof, authenticated bounded reads, deferred attempts, and the auth-red Grok rerun remain explicit. |
 | Phase 43 authenticated bounded provider reads | `docs/handoff/evidence/phase43-provider-reads-2026-07-12.md`; 67 focused Phase 42/43, 194 combined web/MCP/Phase 42/43, and 962/962 canonical tests cover one-repo observe authorization, closed web/MCP schemas, provider/processing/derivation/byte max+1, hard maxima, sanitized health/current/historical summaries, cursor pagination including an intervening status transition, and exhaustive forbidden-field absence. Recursive Baton routed credentialed `glm-4.7`/low to native PID `52084`, fresh-verified within 150k/$1.25, confirmed kill, and fully reaped all ownership. Three findings based on nonexistent or lower-layer-only code were refuted against direct regressions. Production HTTPS transport/live proof, deferred attempts, and the auth-red Grok rerun remain explicit. |
 | Phase 43 production HTTPS poll transport/live proof | `docs/handoff/evidence/phase43-https-poll-live-2026-07-12.md`; 70 focused Phase 42/43 and 965/965 canonical tests cover fixed-origin TLS, no redirects, private bearer/cursors/CA, exact timing-safe page HMAC domains, private per-call poll authority, staged item admission, webhook/poll byte identity, CAS receipt and poll-proof replay, cancellation at page boundaries, and retry. The real two-page TLS fixture proves gap/recovery/pending retention/zero-network restart/re-degradation/status/writer/fleet cleanup with every summary check true. A disk-full prelaunch exposed 43,749 stale bare-test roots, which were reaped; the exact credentialed `glm-4.7`/low rerun on PID `83152` fresh-verified, confirmed kill, and fully reaped. The report's false post-failure byte-counter claim was refuted; its page-two abort suggestion became a green regression. Durable deferred official attempts, extra providers/ecosystems, and the auth-red Grok rerun remain explicit. |
+| Phase 43 durable deferred official processing | `docs/handoff/evidence/phase43-provider-processing-retries-2026-07-12.md`; 78 focused Phase 42/43 and 973/973 canonical tests cover exact deployment retry policy, bounded stable due selection, canonical closed-code deferral identity, O(1) doubled/capped backoff, per-receipt attempt windows with lifetime history, max-attempt blocking, exact replay/policy/key/time/CAS integrity, completion/receipt/append races, single-flight supervision, hostile abort and writer-loss fencing, restart continuation, and PF7 non-leakage. The live outage→deferral→restart→success proof passes nine checks with complete cleanup. Exact credentialed `glm-4.7`/low on PID `72783` used 99,259 tokens/$0.616934, fresh-verified a PASS/no-P0-P1 report, received confirmed kill, and fully reaped. Current Claude and Grok authentication remain environment-red; Codex exact `gpt-5.6-sol`/low was observed and budget-cancelled; all harness refusal/cancellation ownership reaped. Additional provider/ecosystem adapters and positive clearance remain explicit. |
 | Persistent two-turn Grok | `docs/reference/evidence/phase11-grok-persistent-session-2026-07-11/summary.json` has all 16 checks true; same session/PID, two fresh verdicts, full reap |
 | Isolated governance Grok | `docs/reference/evidence/phase11-grok-governance-2026-07-11/summary.json` has all 16 checks true; private credential scope, real sandbox denial, canonical usage, automatic budget kill, full reap |
 | Acceptance/integration | `docs/handoff/evidence/phase11-acceptance-integration-2026-07-11.md`; 16 focused temp-repo tests cover AC1–AC6 and the full suite is 502/502 |
@@ -235,8 +236,10 @@ These are absent, not implied by the green suite:
    evidence/freshness floor, actual npm lockfile SBOM, immutable reuse decisions/invalidation, and
    an isolated proposed npm graph/delta plus exact-input transitive advisory projection,
    conservative dependency/import attention, and deployment-card-derived policy-epoch
-   reconciliation. Additional ecosystems, provider advisory push, positive clearance, true
-   vulnerability reachability, and independent provenance verification remain.
+   reconciliation plus authenticated provider webhook/full-poll hints, health recovery, official
+   adverse processing, durable retry, and bounded observation. Additional real provider adapters
+   and ecosystems, positive clearance, true vulnerability reachability, and independent provenance
+   verification remain.
 9. **Test-fixture crash reconciliation.** Repeated dogfood/full-suite runs leaked 14,070
    Baton-named temporary fixture directories and exhausted the host disk even though registered
    worker processes, worktrees, branches, and runtime scopes were clean. TF1–TF4 now gives the
@@ -261,8 +264,8 @@ harness + exact-model + effort route specificity gate (issue #2) now also ships.
 the quota/proxy/readiness/shutdown edge-policy increment locally; its final detached clean review
 is pending a provider reset. MCP stdio, authenticated web control, audited ACI invocation, Cairn
 Rung 0, and Cartographer/Quartermaster local orientation/reuse, addressed-push, external-evidence,
-decision/invalidation, advisory-projection, and policy-epoch rungs now ship; the next active pursuit
-is adverse-only provider ingestion and their other catalogued later rungs, followed by the remaining
+decision/invalidation, advisory-projection, policy-epoch, and generic adverse-provider rungs now
+ship through durable retry and observation; the next active pursuit is the remaining catalogued
 capability, session/governance, and production northbound depth. The earlier Phase 21 isolated,
 authenticated concurrent Grok exact-route/interrupt/resume/kill/reap passed with provider-observed
 identities and complete cleanup; the current Phase 42 recursive attempt is authentication-red before

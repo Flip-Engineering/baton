@@ -140,9 +140,12 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
   the npm proposed-vs-actual graph delta under an isolated resolver supervisor. Phase 41 is now
   shipped as read-only exact-input transitive advisory projection plus conservative dependency/
   import attention evidence. Phase 42 closes deployment-card-derived policy-epoch reconciliation,
-  bounded atomic fan-out, non-clearing adverse-guard migration, and exclusive writer ownership. The
-  authoritative pending ledger in `docs/capabilities/orientation-reuse.md` retains provider
-  push/feed, positive clearance, exact `internal` decisions, plan approval/binding, trusted
+  bounded atomic fan-out, non-clearing adverse-guard migration, and exclusive writer ownership.
+  Phase 43 closes the generic adverse-provider vertical through authenticated webhook/full-poll
+  ingress, source-health recovery, official processing, durable supervised retries, bounded
+  authenticated observation, replay, and cleanup. The authoritative pending ledger in
+  `docs/capabilities/orientation-reuse.md` retains real provider/ecosystem adapters, positive
+  clearance, exact `internal` decisions, plan approval/binding, trusted
   advisory-symbol identity and true vulnerability reachability, independent provenance, additional
   ecosystems, Socket/full-SCA enrichment, composite `fleet_reuse`/`fleet_provenance`, and optional
   export as distinct later contracts.
@@ -200,17 +203,19 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    deployment index authority, invoke-plus-reverify evidence, async policy/index race refusal,
    atomic multi-coordinate pending removal, immutable multi-provider contributions, a grow-only
    aggregate guard, live Decision/Finding fan-out, manual/provider coexistence, causal Source/
-   Finding/Affects lineage, and stale-but-blocking Phase 42 policy migration. Production HTTPS
-   routing remains, while manual explicit cursor/full-poll reconciliation completion now ships with
+   Finding/Affects lineage, and stale-but-blocking Phase 42 policy migration. Manual explicit
+   cursor/full-poll reconciliation completion ships with
    closed poll cards, authenticated bounded proof, staged receipt admission, store-derived recovery
    CAS, causal freshness, replay, and race-safe non-clearance. Automatic deterministic single-flight
    scheduling, capped backoff, hostile-abort/lease-loss fencing, and asynchronous close/abort/await
    now ship. Repo-scoped count/derivation/byte-bounded authenticated web/MCP provider reads now ship
    with sanitized health and current/historical processing pagination. Fixed-origin authenticated
    no-redirect HTTPS paging, private cursor/credential handling, zero-network replay, and a real TLS
-   recovery/restart/re-degradation/cleanup proof now ship. Durable deferred official attempts,
-   additional provider/ecosystem adapters, and the full authenticated Grok matrix remain.
-   Continue the remaining explicitly
+   recovery/restart/re-degradation/cleanup proof now ship. Durable deferred official attempts also
+   ship with exact deployment policy, stable bounded due derivation, per-receipt attempt windows,
+   replay-safe sanitized events, single-flight supervision, abort/lease fencing, restart
+   continuation, and a live outage-to-recovery proof. Additional real provider/ecosystem adapters,
+   positive clearance, and the currently authentication-red Grok matrix remain. Continue the remaining explicitly
    catalogued later rungs, then demand-earned Cairn Rungs 1–4, Vantage, Evidence Ladder, and Skill
    Forge/computer use behind stronger containment.
 5. **Complete northbound/runtime depth:** MCP HTTP/Tasks/daemon, WebSocket, operator takeover,
