@@ -726,6 +726,38 @@ drain-and-close attestation are therefore next operational slices. This work doe
 provider-backed session continuation, Scratch Board/Bench, Skill/Playbook promotion, authenticated
 web/operator depth, evaluation, or any AST/CST/SCIP/CPG/IR/behavior/semantic-merge/e-graph rung.
 
+Phase 56 ships the public drain-and-close and universal evidence-owner cleanup increment. Direct
+ACI, authenticated HTTPS, and MCP now expose one actor-pinned, idempotent `coordinator.drain`
+contract, while the host driver exposes `drainAndClose` to stop supervisors, fence admission,
+durably record every target disposition, close exact process generations, reconcile historical
+worktree/runtime/branch/projection residue, close coordinator authority, and release the writer
+lease under one deadline. Replay validates the disposition set and counts; a completed historical
+drain cannot claim a new controller's physical epoch. The owned evidence wrapper now confines the
+entire process group and temporary root, escalates TERM to KILL, and proves both gone. Thirty-seven
+focused contracts and the 1179/1179 canonical suite are green.
+
+Recursive Baton-on-Baton proof selected exact harness, model, and effort for Codex
+`gpt-5.6-sol`/low, Claude Opus/low, project-key GLM `glm-4.7`/low, Grok 4.5/low, and Grok Build/low.
+All five routes admitted concurrently; both Grok process groups were sampled alive at the same
+instant, and every started generation, leader, group, worktree, runtime, branch, projection, target,
+coordinator, writer, and evidence-owner root reaped through `drainAndClose`, with no manual worker
+kill or legacy close. A focused GLM retry completed, stayed inside its raised declared budget,
+fresh-verified Phase 56, and captured an accepted report. The provider matrix remains honestly red:
+Grok's isolated ACP sessions still report authentication required despite an owner-only projected
+login file, Codex app-server closed before a response in the five-route run, and Claude did not
+produce an accepted report. Concurrent full checkouts also exposed a real capacity limit because
+historical evidence dominates the repository; sparse verifier projection is now proven, while
+capacity-aware sparse worker checkouts and explicit headless provider credential readiness remain
+next operational work alongside route-specific terminal-burst/call governance.
+
+Phase 56 does not narrow the system goal. Provider-backed continuation/recovery, authenticated
+user↔orchestrator web/operator depth beyond the shipped drain, Scratch Board/Bench, Skill/Playbook
+promotion, trust and evaluation, Atlas/representation expansion, deeper AST/CST/SCIP/CPG/IR and
+behavioral analysis, semantic merge, and conditional expression/kernel e-graphs all remain. The
+shared causal/temporal knowledge graph remains a self-contained Baton system inspired by the
+repository's project-manager material only; no homelab or external project-manager runtime,
+credential, query, mutation, or integration is in scope.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**
@@ -733,8 +765,9 @@ web/operator depth, evaluation, or any AST/CST/SCIP/CPG/IR/behavior/semantic-mer
    is shipped in Phase 45 and exact provider-process lifecycle/reap in Phase 51, while broader
    provider-backed recovery proof, in-flight continuation, and vendor-honest fork/rewind depth
    remain. Phase 55 separately ships immutable bounded toolchain projection for clean-target
-   recursive sessions; terminal-burst/call governance, universal temp-root ownership, and public
-   drain-and-close remain.
+   recursive sessions. Phase 56 ships universal evidence-owner temp/process cleanup plus direct,
+   authenticated web, MCP, and driver drain-and-close; terminal-burst/call governance and deeper
+   provider recovery remain.
 4. Ship OS/credential isolation and budget/watchdog governance.
 5. Complete hardened acceptance and structured integration.
 6. Ship the task/artifact/Scratch substrate and deployment-neutral causal knowledge core.
@@ -747,6 +780,7 @@ web/operator depth, evaluation, or any AST/CST/SCIP/CPG/IR/behavior/semantic-mer
 8. Expand the representation and capability ladders in measured increments. **Phase 54 lexical
    binding identity is shipped; every deeper representation rung remains.**
 9. Add MCP plus authenticated HTTPS/WebSocket user↔orchestrator control, operator surfaces,
-   production runtime, and the registered evaluations.
+   production runtime, and the registered evaluations. **Authenticated HTTPS/MCP drain control is
+   shipped in Phase 56; the broader command/operator surface remains.**
 
 No later step is permission to erase it from the goal.

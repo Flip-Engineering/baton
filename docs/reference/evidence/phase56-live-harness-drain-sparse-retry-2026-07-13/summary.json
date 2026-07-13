@@ -1,0 +1,314 @@
+{
+  "at": "2026-07-13T16:51:52.174Z",
+  "implementationSha": "7fa58561ccfe93b3392c64548f08f1d529dd70df",
+  "runId": "phase56-live-harness-drain",
+  "interpretation": {
+    "lifecyclePass": "all five exact routes admitted, both Grok process groups sampled live simultaneously, every started generation closed exactly, driver drain closed coordinator/writer, and all owned residue disappeared",
+    "matrixPass": "lifecyclePass plus five fresh-verified reports and identical worker/verifier toolchain projection binding"
+  },
+  "manualWorkerKills": false,
+  "legacyDriverClose": false,
+  "closureReceipt": {
+    "schemaVersion": 1,
+    "state": "closed",
+    "fleet": {
+      "schemaVersion": 1,
+      "state": "drained",
+      "scope": "local-controller",
+      "repoId": "baton-phase56-live",
+      "targetCount": 3,
+      "remainingCount": 0,
+      "targetDigest": "e6157b864f385f62068a0f8563f4862301851ae83c5873e19debb50aa8c5cfe8",
+      "counts": {
+        "pendingCancelled": 0,
+        "killConfirmed": 2,
+        "alreadyTerminal": 1,
+        "processesObserved": 2,
+        "processesClosed": 2
+      },
+      "checks": {
+        "admissionClosed": true,
+        "authorityOpsDrained": true,
+        "stopWaitersDrained": true,
+        "cleanupDrained": true,
+        "localWorkerAuthorityReleased": true
+      },
+      "effects": {
+        "coordinatorClosed": false,
+        "writerReleased": false,
+        "transportsClosed": false
+      },
+      "receiptDigest": "5157860274d57f88cf560a290cd8a1724cf0257fef39d6538cfba45b444f13e3"
+    },
+    "supervisors": {
+      "sessionRecovery": "absent",
+      "providerProcessing": "absent",
+      "providerPolling": "absent"
+    },
+    "authority": {
+      "coordinatorClosed": true,
+      "writerReleased": true
+    },
+    "receiptDigest": "e40b5e105142a17b7dfc0a70393f3fa974503e8c395657d88b3dae15f22772a8"
+  },
+  "credentialMeasurements": {
+    "glm": {
+      "present": true,
+      "ownerOnly": true,
+      "ownedByRunnerUser": true
+    },
+    "codex": {
+      "present": true,
+      "ownerOnly": true,
+      "ownedByRunnerUser": true
+    },
+    "grok": {
+      "present": true,
+      "ownerOnly": true,
+      "ownedByRunnerUser": true
+    }
+  },
+  "simultaneousGrokSamples": [],
+  "attempts": [
+    {
+      "taskId": "phase56-codex-review",
+      "admitted": true,
+      "error": null
+    },
+    {
+      "taskId": "phase56-claude-review",
+      "admitted": true,
+      "error": null
+    },
+    {
+      "taskId": "phase56-glm-review",
+      "admitted": true,
+      "error": null
+    },
+    {
+      "taskId": "phase56-grok45-review",
+      "admitted": true,
+      "error": null
+    },
+    {
+      "taskId": "phase56-grokbuild-review",
+      "admitted": true,
+      "error": null
+    }
+  ],
+  "rows": [
+    {
+      "taskId": "phase56-codex-review",
+      "harness": "codex",
+      "model": "gpt-5.6-sol",
+      "workerId": "w-1",
+      "pid": 1406,
+      "processGroupId": 1406,
+      "result": {
+        "status": "cancelled",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "codex",
+        "harnessResolved": "codex@codex-cli 0.144.1",
+        "modelRequested": "gpt-5.6-sol",
+        "modelResolved": "gpt-5.6-sol",
+        "modelObserved": "gpt-5.6-sol",
+        "modelMismatch": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "processStartedSeq": 5,
+      "processClosedSeq": 26,
+      "terminalReason": ""
+    },
+    {
+      "taskId": "phase56-claude-review",
+      "harness": "claude",
+      "model": "claude-opus-4-6",
+      "workerId": "w-2",
+      "pid": 1412,
+      "processGroupId": 1412,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "claude",
+        "harnessResolved": "claude-code@2.1.206",
+        "modelRequested": "claude-opus-4-6",
+        "modelResolved": "claude-opus-4-6",
+        "modelObserved": "claude-opus-4-6",
+        "modelMismatch": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "processStartedSeq": 5,
+      "processClosedSeq": 14,
+      "terminalReason": ""
+    },
+    {
+      "taskId": "phase56-glm-review",
+      "harness": "glm",
+      "model": "glm-4.7",
+      "workerId": "w-3",
+      "pid": 1424,
+      "processGroupId": 1424,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "glm",
+        "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+        "modelRequested": "glm-4.7",
+        "modelResolved": "glm-4.7",
+        "modelObserved": "glm-4.7",
+        "modelMismatch": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "processStartedSeq": 5,
+      "processClosedSeq": 41,
+      "terminalReason": ""
+    },
+    {
+      "taskId": "phase56-grok45-review",
+      "harness": "grok",
+      "model": "grok-4.5",
+      "workerId": "w-4",
+      "pid": 1428,
+      "processGroupId": 1428,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.2.99 (b1b49ccb71a7)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": null,
+        "modelMismatch": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "processStartedSeq": 5,
+      "processClosedSeq": 8,
+      "terminalReason": "Authentication required"
+    },
+    {
+      "taskId": "phase56-grokbuild-review",
+      "harness": "grok",
+      "model": "grok-build",
+      "workerId": "w-5",
+      "pid": null,
+      "processGroupId": null,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.2.99 (b1b49ccb71a7)",
+        "modelRequested": "grok-build",
+        "modelResolved": "grok-build",
+        "modelObserved": null,
+        "modelMismatch": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "processStartedSeq": null,
+      "processClosedSeq": null,
+      "terminalReason": "worktree unavailable"
+    }
+  ],
+  "responses": [],
+  "routeAdmission": {
+    "allAttempted": true,
+    "allAdmitted": true,
+    "exactRequestedResolved": true,
+    "noObservedMismatch": true
+  },
+  "providerProof": {
+    "startedProcessCount": 4,
+    "allFiveProcessesStarted": false,
+    "simultaneousActiveGrokPidSampleObserved": false,
+    "everyStartedProcessClosedExactly": true,
+    "everyStartedLeaderGone": true,
+    "everyStartedGroupGone": true
+  },
+  "cleanup": {
+    "closureReceiptPresent": true,
+    "coordinatorClosed": true,
+    "writerReleased": true,
+    "taskWorktreesGone": true,
+    "runtimesGone": true,
+    "taskBranchesGone": true,
+    "targetDependencyAbsent": true,
+    "ownershipSnapshotRestored": true
+  },
+  "projectionProof": {
+    "identity": {
+      "schemaVersion": 1,
+      "sourceId": "baton-local-node-toolchain",
+      "manifestDigest": "b35c83cea12285a9236ad7912dd37ab6c0e3b4dd55a14c77cf77dff45dcc86ed",
+      "mappingCount": 1,
+      "fileCount": 22,
+      "directoryCount": 6,
+      "byteCount": 7357718,
+      "limits": {
+        "maxMappings": 1,
+        "maxFiles": 50000,
+        "maxDirectories": 10000,
+        "maxBytes": 536870912,
+        "maxFileBytes": 67108864,
+        "maxPathBytes": 2048,
+        "maxDepth": 64
+      },
+      "projectionDigest": "e46aa5673aaebf908b58137910ce645da0b762c2324e649ed1416e614da80d5a"
+    },
+    "allWorkersBound": false,
+    "allVerifiersBound": true,
+    "sourcePathAbsentFromBoundedEvents": true
+  },
+  "reviewProof": {
+    "terminalTaskCount": 5,
+    "verifiedReports": [],
+    "allFiveVerified": false
+  },
+  "ownershipBefore": {
+    "branches": [],
+    "worktreeEntries": [],
+    "runtimeEntries": [],
+    "verifyEntries": [],
+    "integrateEntries": []
+  },
+  "ownershipAfter": {
+    "branches": [],
+    "worktreeEntries": [],
+    "runtimeEntries": [],
+    "verifyEntries": [],
+    "integrateEntries": []
+  },
+  "fatal": null,
+  "lifecyclePass": false,
+  "matrixPass": false,
+  "targetWorktreeRemoved": true,
+  "removalError": null
+}
