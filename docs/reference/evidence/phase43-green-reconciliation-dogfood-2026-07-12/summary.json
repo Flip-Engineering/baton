@@ -1,0 +1,66 @@
+{
+  "at": "2026-07-13T02:35:24.084Z",
+  "repoHead": "f58498b7a5bc8bfb8334513c8140e8cd07228f06",
+  "runId": "phase43-green-reconciliation-review",
+  "credentialPosture": {
+    "glm": "project-local ignored file loaded only by GlmSessionCli",
+    "codex": "explicit private runtime projection",
+    "claude": "subscription/keychain; no credential file projection"
+  },
+  "rows": [
+    {
+      "taskId": "phase43-glm-green-reconciliation-review",
+      "harness": "glm",
+      "model": "glm-4.7",
+      "target": "reviews/dogfood/phase43-glm-green-reconciliation-review.md",
+      "workerId": "w-1",
+      "pid": 15860,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "modelRequested": "glm-4.7",
+        "modelResolved": "glm-4.7",
+        "modelObserved": "glm-4.7",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 113126,
+        "usd": 0.800926
+      },
+      "verifyAccept": false,
+      "reportCaptured": false
+    }
+  ],
+  "responses": [],
+  "kills": [
+    {
+      "taskId": "phase43-glm-green-reconciliation-review",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "checks": {
+    "noHarnessError": false,
+    "allHarnessesAdmitted": true,
+    "distinctNativePids": true,
+    "concurrentTurns": true,
+    "exactRoutes": true,
+    "freshVerified": false,
+    "reportsCaptured": false,
+    "killSafe": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimesGone": true,
+    "branchesGone": true,
+    "writerAuthorityReleased": true
+  },
+  "fatal": "Error: review gate incomplete: [{\"taskId\":\"phase43-glm-green-reconciliation-review\",\"status\":\"failed\",\"report\":false}]\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase43-green-reconciliation-dogfood-2026-07-12/run.mjs:34:46\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
+  "pass": false
+}
