@@ -315,6 +315,7 @@ test('GP3/GP8: plan verification is closed direct-exec authority with bounded cw
     shell: { ...verification(), command: 'node && false' },
     cwd_escape: { ...verification(), cwd: '../outside' },
     credential_env: { ...verification(), envAllowlist: ['GLM_API_KEY', 'PATH'] },
+    credential_argument: { ...verification(), arguments: ['--test', 'access_token=abcdefghijklmnopqrstuvwx'] },
     predecessor_mismatch: { ...verification(), requiredPredecessorEvidence: ['missing-node'] },
     argv_oversize: { ...verification(), arguments: Array(policy.limits.maxItems + 1).fill('x') },
     output_oversize: { ...verification(), maxOutputBytes: 16 * 1024 * 1024 + 1 },
@@ -333,7 +334,7 @@ test('GP3/GP8: plan verification is closed direct-exec authority with bounded cw
         routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] },
         capabilities: ['test'], effects: [],
       }],
-    }, storeAuth('planner', `plan:verification:${name}`)), (error) => error.code === 'plan_verification_invalid', name);
+    }, storeAuth('planner', `plan:verification:${name}`)), (error) => error.code === (name === 'credential_argument' ? 'goal_plan_secret_rejected' : 'plan_verification_invalid'), name);
     assert.equal(store.snapshot().lastSeq, before, name);
     store.releaseWriterLease();
   }

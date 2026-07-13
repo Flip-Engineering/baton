@@ -95,7 +95,7 @@ function make(name, overrides = {}) {
   });
 }
 
-async function approved(driver, suffix = 'one') {
+async function approved(driver, suffix = 'one', nodeVerification = verification) {
   const goalResult = await driver.coordinator.defineGoal({
     objective: 'Ship one plan-gated change', definitionOfDone: ['node --test passes'],
     constraints: ['No network access'], risk: 'high', budget: budget(), predecessor: null,
@@ -105,7 +105,7 @@ async function approved(driver, suffix = 'one') {
     goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest }, predecessor: null,
     nodes: [{
       key: 'implement', objective: 'Implement the approved slice', definitionOfDone: ['node --test passes'],
-      deps: [], pathScope: ['impl/**'], risk: 'high', budget: budget(10_000), verification,
+      deps: [], pathScope: ['impl/**'], risk: 'high', budget: budget(10_000), verification: nodeVerification,
       routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] }, capabilities: ['code', 'test'], effects: ['repository_edit'],
     }],
   }, auth('planner', ['plan:propose'], `plan:${suffix}`));
@@ -152,8 +152,10 @@ test('GP1-GP4/GP6/GP8: goals and plans are append-only, bounded, distinct-author
 
 test('GP2/GP3/GP8: weakening, cycles, and double-counted budget refuse without durable prefixes', async () => {
   const driver = make('invalid');
-  const { goal } = await approved(driver, 'baseline');
+  const { goal, plan } = await approved(driver, 'baseline');
   const before = driver.coordination.events().length;
+  await assert.rejects(driver.coordinator.defineGoal({ objective: 'Rotate api_key=abcdefghijklmnopqrstuvwx', definitionOfDone: [...goal.definitionOfDone], constraints: [...goal.constraints], risk: goal.risk, budget: { ...goal.budget }, predecessor: { goalId: goal.goalId, version: goal.version, digest: goal.digest } }, auth('goal-owner', ['goal:define'], 'goal:credential')), (error) => error.code === 'goal_plan_secret_rejected');
+  await assert.rejects(driver.coordinator.proposePlan({ goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest }, predecessor: { planId: plan.planId, version: plan.version, digest: plan.digest }, nodes: [{ key: 'a', objective: 'Use -----BEGIN PRIVATE KEY----- here', definitionOfDone: ['node --test passes'], deps: [], pathScope: ['**'], risk: 'high', budget: budget(10_000), verification, routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] }, capabilities: ['code'], effects: ['repository_edit'] }] }, auth('planner-2', ['plan:propose'], 'plan:credential')), (error) => error.code === 'goal_plan_secret_rejected');
   await assert.rejects(driver.coordinator.defineGoal({ objective: 'Weakened', definitionOfDone: [], constraints: [], risk: 'low', budget: budget(30_000), predecessor: { goalId: goal.goalId, version: goal.version, digest: goal.digest } }, auth('goal-owner', ['goal:define'], 'goal:weaken')), (error) => error.code === 'goal_weakened');
   await assert.rejects(driver.coordinator.proposePlan({ goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest }, predecessor: null, nodes: [{ key: 'a', objective: 'A', definitionOfDone: ['node --test passes'], deps: ['b'], pathScope: ['**'], risk: 'low', budget: budget(15_000), verification: { ...verification, requiredPredecessorEvidence: ['b'] }, routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] }, capabilities: ['code'], effects: ['repository_edit'] }, { key: 'b', objective: 'B', definitionOfDone: [], deps: ['a'], pathScope: ['**'], risk: 'low', budget: budget(15_000), verification: { ...verification, requiredPredecessorEvidence: ['a'] }, routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] }, capabilities: ['code'], effects: ['repository_edit'] }] }, auth('planner-2', ['plan:propose'], 'plan:cycle')), (error) => ['plan_cycle', 'plan_budget_exceeded'].includes(error.code));
   assert.equal(driver.coordination.events().length, before);
@@ -175,6 +177,8 @@ test('GP5/GP8: mandatory plan-gated spawn binds Brief/route/budget and has one c
   const durable = driver.coordination.task(status.nodes[0].taskId);
   assert.equal(durable.brief.goalPlan.planDigest, plan.digest); assert.equal(durable.brief.goalPlan.nodeKey, 'implement');
   await driver.coordinator.kill(attempts.find((row) => row.status === 'fulfilled').value.id, 'orchestrator');
+  const cancelled = await driver.coordinator.goalPlanStatus(statusCoordinates(goal, plan), auth('observer', ['goal:observe'], 'status:cancelled'));
+  assert.deepEqual(cancelled.nodes[0].terminalOutcome, { status: 'cancelled', accepted: false, code: 'cancelled' });
   driver.close();
 });
 
@@ -218,6 +222,8 @@ test('GP5/GP8: plan-bound follow-up and recovery refuse before provider, adapter
   const gate = { goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest, planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code', 'test'], effects: ['repository_edit'] };
   const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'planned-continuation', model: 'model-a', effort: 'low', goalPlan: gate, actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session', powers: ['plan:dispatch'], idempotencyKey: 'spawn:planned-continuation' });
   await until(async () => (await driver.coordinator.result(handle.id)).ready === true);
+  const accepted = await driver.coordinator.goalPlanStatus(statusCoordinates(goal, plan), auth('observer', ['goal:observe'], 'status:accepted'));
+  assert.deepEqual(accepted.nodes[0].terminalOutcome, { status: 'completed', accepted: true, code: 'accepted' });
 
   const beforeFollowUp = { coordination: driver.coordination.events().length, operational: driver.log.read(handle.id).length, spawnCalls: adapter.spawnCalls, promptCalls: adapter.promptCalls };
   assert.deepEqual(await driver.coordinator.send(handle.id, 'continue', 'turn'), { ok: false, result: 'goal_plan_continuation_not_authorized' });
@@ -238,5 +244,20 @@ test('GP5/GP8: plan-bound follow-up and recovery refuse before provider, adapter
   assert.equal(driver.coordination.events().length, beforeRecovery.coordination);
   internal.status = 'idle';
   await driver.coordinator.kill(handle.id, 'test');
+  await driver.drainAndClose('test');
+});
+
+test('GP6: status exposes a stable verification refusal code without private verifier prose', async () => {
+  const adapter = new NativePlanAdapter();
+  const driver = make('verification-refusal-status', { adapters: { mock: adapter } });
+  const failingVerification = { ...verification, expectExit: 1 };
+  const { goal, plan } = await approved(driver, 'verification-refusal-status', failingVerification);
+  const brief = { goal: 'Implement the approved slice', constraints: ['No network access'], pathScope: ['impl/**'], definitionOfDone: 'node --test passes', verification: failingVerification, budget: { tokens: 10_000, usd: 2, wallMin: 10 } };
+  const gate = { goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest, planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code', 'test'], effects: ['repository_edit'] };
+  const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'planned-verification-refusal', model: 'model-a', effort: 'low', goalPlan: gate, actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session', powers: ['plan:dispatch'], idempotencyKey: 'spawn:planned-verification-refusal' });
+  await until(async () => (await driver.coordinator.result(handle.id)).ready === true);
+  const status = await driver.coordinator.goalPlanStatus(statusCoordinates(goal, plan), auth('observer', ['goal:observe'], 'status:verification-refusal'));
+  assert.deepEqual(status.nodes[0].terminalOutcome, { status: 'failed', accepted: false, code: 'verification_failed' });
+  assert.deepEqual(Object.keys(status.nodes[0].terminalOutcome).sort(), ['accepted', 'code', 'status']);
   await driver.drainAndClose('test');
 });

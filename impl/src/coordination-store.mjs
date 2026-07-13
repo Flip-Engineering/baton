@@ -2813,7 +2813,26 @@ export class CoordinationStore {
       const dispatched = dispatches.get(node.key); let state = 'blocked';
       if (dispatched) state = dispatched.task?.status === 'completed' && !dispatched.task.acceptanceRevocation ? 'accepted' : (['failed', 'cancelled'].includes(dispatched.task?.status) ? dispatched.task.status : 'dispatched');
       else if (node.deps.every((dep) => dispatches.get(dep)?.task?.status === 'completed' && !dispatches.get(dep).task.acceptanceRevocation)) state = 'ready';
-      return { key: node.key, deps: clone(node.deps), state, dispatchVersion: dispatched ? 1 : 0, taskId: dispatched?.event.payload.taskId ?? null, terminalEvent: dispatched?.task?.terminalEvent ?? null, budget: { initial: clone(node.budget), reserved: dispatched ? clone(node.budget) : { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 }, consumed: { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 }, released: { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 } } };
+      let terminalOutcome = null;
+      if (dispatched?.task?.acceptanceRevocation) {
+        terminalOutcome = { status: 'failed', accepted: false, code: 'acceptance_revoked' };
+      } else if (dispatched?.task && TERMINAL.has(dispatched.task.status)) {
+        let code = dispatched.task.status === 'completed' ? 'accepted' : dispatched.task.status === 'cancelled' ? 'cancelled' : 'task_failed';
+        if (dispatched.task.status === 'failed') {
+          const terminal = relevant.find((event) => event.seq === dispatched.task.terminalEvent);
+          const evidenceSeq = terminal?.payload?.evidence?.coordinationSeq;
+          const mapped = Number.isSafeInteger(evidenceSeq) && evidenceSeq <= throughSeq ? this._events[evidenceSeq - 1] : null;
+          const source = mapped?.kind === 'evidence.mapped' ? this._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq) : null;
+          if (source && digest(source) === mapped.payload.digest && source.kind === mapped.payload.kind) {
+            if (source.kind === 'verify.reverified' && source.payload?.accept === false) code = 'verification_failed';
+            else if (typeof source.payload?.code === 'string' && /^[a-z0-9_]{1,64}$/u.test(source.payload.code)) code = source.payload.code;
+            else if (source.kind === 'lifecycle.crashed') code = source.payload?.phase === 'worktree' ? 'worktree_unavailable' : 'spawn_refused';
+            else if (source.kind === 'control.recovery_terminalized') code = 'recovery_terminalized';
+          }
+        }
+        terminalOutcome = { status: dispatched.task.status, accepted: dispatched.task.status === 'completed', code };
+      }
+      return { key: node.key, deps: clone(node.deps), state, dispatchVersion: dispatched ? 1 : 0, taskId: dispatched?.event.payload.taskId ?? null, terminalEvent: dispatched?.task?.terminalEvent ?? null, terminalOutcome, budget: { initial: clone(node.budget), reserved: dispatched ? clone(node.budget) : { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 }, consumed: { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 }, released: { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 } } };
     });
     const approval = approvalEvent ? clone(approvalEvent.payload.approval) : null;
     if (approval) { delete approval.principalId; delete approval.sessionDigest; }

@@ -32,10 +32,20 @@ function exactObject(value, fields, code = 'goal_plan_invalid') {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).sort().join(',') !== [...fields].sort().join(',')) fail('goal/plan object has unknown or missing fields', code);
 }
+const SECRET_SHAPED_TEXT = Object.freeze([
+  /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/u,
+  /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|credential|password|secret)\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{12,}/iu,
+  /\b(?:sk|sk-proj)-[A-Za-z0-9_-]{16,}\b/u,
+  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/u,
+  /\bAKIA[A-Z0-9]{16}\b/u,
+  /\beyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/u,
+]);
+function secretShapedText(value) { return SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value)); }
 function normalizedText(value, maxBytes, label) {
   if (typeof value !== 'string' || value.includes('\0')) fail(`${label} is invalid`, 'goal_plan_invalid');
   const normalized = value.normalize('NFKC').trim();
   if (normalized.length === 0 || Buffer.byteLength(normalized) > maxBytes) fail(`${label} is invalid`, 'goal_plan_invalid');
+  if (secretShapedText(normalized)) fail(`${label} contains credential-shaped content`, 'goal_plan_secret_rejected');
   return normalized;
 }
 function normalizedSet(values, limit, maxBytes, label, { empty = true } = {}) {
@@ -131,6 +141,7 @@ function normalizeVerification(value, policy, deps) {
     || /[\s|&;<>`$()]/u.test(command)) fail('verification executable must be direct and repository-safe', 'plan_verification_invalid');
   if (!Array.isArray(value.arguments) || value.arguments.length > policy.limits.maxItems
     || value.arguments.some((argument) => typeof argument !== 'string' || argument.includes('\0') || Buffer.byteLength(argument) > policy.limits.maxTextBytes)) fail('verification arguments are invalid', 'plan_verification_invalid');
+  if (value.arguments.some((argument) => secretShapedText(argument.normalize('NFKC')))) fail('verification arguments contain credential-shaped content', 'goal_plan_secret_rejected');
   const cwd = normalizedText(value.cwd, policy.limits.maxTextBytes, 'verification.cwd');
   if (cwd.startsWith('/') || cwd.includes('\\') || cwd.split('/').includes('..')) fail('verification cwd is outside repository scope', 'plan_verification_invalid');
   const envAllowlist = normalizedSet(value.envAllowlist, policy.limits.maxItems, 128, 'verification.envAllowlist');
