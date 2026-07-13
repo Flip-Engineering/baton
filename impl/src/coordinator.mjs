@@ -824,6 +824,7 @@ export class Coordinator {
             ...(this._repoRoot ? { repoRoot: this._repoRoot } : {}),
             ...(res.baseSha ? { baseSha: res.baseSha } : {}),
             ...(res.branch ? { branch: res.branch } : {}),
+            ...(res.toolchainProjection ? { toolchainProjection: res.toolchainProjection } : {}),
             ownerTaskId: res.ownerTaskId ?? task.sessionContext?.ownerTaskId ?? task.id,
           });
           task.sessionContext = sessionContext;
@@ -1519,7 +1520,7 @@ export class Coordinator {
     }
     await this._removeTaskWorktree(task);
 
-    let integrated; let structuredStage = null; let structuredVerifyPath = null; let structuredFinalizeStarted = false;
+    let integrated; let structuredStage = null; let structuredVerifyPath = null; let structuredFinalizeStarted = false; let structuredToolchainProjection = null;
     try {
       if (strategy === 'ff-only') {
         integrated = await this._worktrees.integrate(task.capturedSha, { strategy });
@@ -1527,6 +1528,10 @@ export class Coordinator {
         structuredStage = await this._worktrees.stageStructuredIntegration(task.id, task.capturedSha);
         const created = await this._worktrees.createVerifyWorktree(`${task.id}-structured-merge`, structuredStage.stageSha);
         structuredVerifyPath = created?.path ?? null;
+        structuredToolchainProjection = created?.toolchainProjection ?? null;
+        const workerToolchainProjection = task.sessionContext?.toolchainProjection ?? null;
+        if ((workerToolchainProjection || structuredToolchainProjection)
+          && (!workerToolchainProjection || !structuredToolchainProjection || canonicalDigest(workerToolchainProjection) !== canonicalDigest(structuredToolchainProjection))) throw Object.assign(new Error('structured verification toolchain projection mismatch'), { code: 'structured_verification_environment_mismatch' });
         const verdict = await this._referee(task, { verification: { claimedExit: null } }, {
           pinnedVerification: task.brief.verification,
           sandbox: structuredVerifyPath,
@@ -1541,11 +1546,11 @@ export class Coordinator {
           worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
           kind: 'integration.merge_reverified', actor: 'policy',
           ...this._routeAttribution(handle, task),
-          payload: { strategy, stageSha: structuredStage.stageSha, verdict, accept: accepted },
+          payload: { strategy, stageSha: structuredStage.stageSha, verdict, accept: accepted, ...(structuredToolchainProjection ? { toolchainProjection: structuredToolchainProjection } : {}) },
         });
         if (!accepted) throw Object.assign(new Error('structured merge candidate failed fresh pinned verification'), { code: 'structured_verification_failed' });
         structuredFinalizeStarted = true;
-        integrated = { ...(await this._worktrees.finalizeStructuredIntegration(structuredStage)), verdict };
+        integrated = { ...(await this._worktrees.finalizeStructuredIntegration(structuredStage)), verdict, ...(structuredToolchainProjection ? { toolchainProjection: structuredToolchainProjection } : {}) };
       }
     } catch (err) {
       if (structuredVerifyPath) await this._worktrees.removeVerifyWorktree(structuredVerifyPath);
@@ -4037,6 +4042,8 @@ export class Coordinator {
 
     let verifyPath = null;
     let baseVerifyPath = null;
+    let verifierToolchainProjection = null;
+    let baseVerifierToolchainProjection = null;
     let trustPhase = 'capture';
     try {
       // C5: thread the dispatching vendor through to captureCommit so the snapshot
@@ -4049,11 +4056,18 @@ export class Coordinator {
       const sha = captured && captured.sha;
       const created = await this._worktrees.createVerifyWorktree(task.id, sha);
       verifyPath = created && created.path;
+      verifierToolchainProjection = created?.toolchainProjection ?? null;
+      const workerToolchainProjection = task.sessionContext?.toolchainProjection ?? null;
+      if ((workerToolchainProjection || verifierToolchainProjection)
+        && (!workerToolchainProjection || !verifierToolchainProjection || canonicalDigest(workerToolchainProjection) !== canonicalDigest(verifierToolchainProjection))) throw Object.assign(new Error('verification toolchain projection mismatch'), { code: 'verification_environment_mismatch' });
 
       const baseSha = task.sessionContext?.baseSha ?? null;
       if (this._acceptOpts.requireRedGreen && baseSha && typeof this._worktrees.createBaseVerifyWorktree === 'function') {
         const baseCreated = await this._worktrees.createBaseVerifyWorktree(task.id, baseSha);
         baseVerifyPath = baseCreated?.path ?? null;
+        baseVerifierToolchainProjection = baseCreated?.toolchainProjection ?? null;
+        if ((workerToolchainProjection || baseVerifierToolchainProjection)
+          && (!workerToolchainProjection || !baseVerifierToolchainProjection || canonicalDigest(workerToolchainProjection) !== canonicalDigest(baseVerifierToolchainProjection))) throw Object.assign(new Error('base verification toolchain projection mismatch'), { code: 'verification_environment_mismatch' });
       }
       if (this._acceptOpts.requireCoverage && baseSha && sha && typeof this._worktrees.changedLines === 'function') {
         task.changedLines = await this._worktrees.changedLines(baseSha, sha);
@@ -4094,6 +4108,8 @@ export class Coordinator {
             vendor: handle.vendor ?? null, model: handle.modelObserved ?? handle.modelResolved ?? null,
             effort: handle.effortObserved ?? handle.effortResolved ?? null,
             routeKey: handle.routeKey ?? null,
+            ...(workerToolchainProjection ? { toolchainProjection: workerToolchainProjection, verifierToolchainProjection } : {}),
+            ...(baseVerifierToolchainProjection ? { baseVerifierToolchainProjection } : {}),
           },
         },
       });

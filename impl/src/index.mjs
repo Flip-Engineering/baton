@@ -87,19 +87,19 @@ function worktreeManager(repoRoot, opts = {}) {
       const selected = requestedBaseSha ?? base.sha;
       if (!/^[a-f0-9]{40}$/.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
       localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
-      const r = await worktreeMod.createFromBase(repoRoot, taskId, selected, { dependencyDirs: opts.workerDependencyDirs ?? [] });
-      return { path: r.dir, branch: r.branch, baseSha: r.baseSha };
+      const r = await worktreeMod.createFromBase(repoRoot, taskId, selected, { dependencyDirs: opts.workerDependencyDirs ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
+      return { path: r.dir, branch: r.branch, baseSha: r.baseSha, ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
     },
     async capture(worktreePath, opts = {}) {
       return worktreeMod.captureCommit(repoRoot, basename(worktreePath), { vendor: opts.vendor, model: opts.model, effort: opts.effort });
     },
     async createVerifyWorktree(taskId, sha) {
-      const r = await worktreeMod.freshVerifySandbox(repoRoot, taskId, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [] });
-      return { path: r.dir ?? r.path };
+      const r = await worktreeMod.freshVerifySandbox(repoRoot, taskId, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
+      return { path: r.dir ?? r.path, ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
     },
     async createBaseVerifyWorktree(taskId, sha) {
-      const r = await worktreeMod.freshVerifySandbox(repoRoot, `${taskId}-base`, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [] });
-      return { path: r.dir ?? r.path };
+      const r = await worktreeMod.freshVerifySandbox(repoRoot, `${taskId}-base`, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
+      return { path: r.dir ?? r.path, ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
     },
     async changedLines(baseSha, resultSha) {
       return worktreeMod.changedLines(repoRoot, baseSha, resultSha);
@@ -152,6 +152,12 @@ function worktreeManager(repoRoot, opts = {}) {
         if (context.baseSha) {
           localGit(['merge-base', '--is-ancestor', context.baseSha, 'HEAD'], worktree, { stdio: 'ignore' });
         }
+        if (opts.toolchainProjection) {
+          if (!context.toolchainProjection || !opts.toolchainProjection.matchesIdentity(context.toolchainProjection)
+            || !worktreeMod.validateToolchainProjectionMetadata(repoRoot, context.ownerTaskId ?? basename(worktree), context.toolchainProjection)) return { ok: false, reason: 'session toolchain projection identity mismatch' };
+          try { opts.toolchainProjection.verifyMaterialization(worktree); }
+          catch { return { ok: false, reason: 'session toolchain projection materialization mismatch' }; }
+        } else if (context.toolchainProjection) return { ok: false, reason: 'session toolchain projection is not configured' };
         return { ok: true };
       } catch (err) {
         return { ok: false, reason: `session context validation failed: ${err?.message ?? err}` };
@@ -184,10 +190,12 @@ function refereeFn(task, result, opts) {
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
  *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
- *          workerDependencyDirs?:string[], verifyDependencyDirs?:string[], verifySparsePaths?:string[]}} opts
+ *          workerDependencyDirs?:string[], verifyDependencyDirs?:string[], verifySparsePaths?:string[], toolchainProjection?:object}} opts
  * @returns {{coordinator:Coordinator, story:StoryCompiler, router:AdaptiveRouter, log:Log, coordination:CoordinationStore}}
  */
 export function createDriver(opts) {
+  if (opts.toolchainProjection !== undefined && (opts.workerDependencyDirs !== undefined || opts.verifyDependencyDirs !== undefined)) throw new TypeError('toolchainProjection cannot be combined with legacy dependency directory options');
+  const toolchainProjection = opts.toolchainProjection === undefined ? null : prepareToolchainProjection(opts.toolchainProjection);
   const now = opts.now ?? Date.now;
   if (opts.reuseDecisionPolicy !== undefined && (typeof opts.repoId !== 'string' || opts.repoId.length === 0)) throw new TypeError('reuseDecisionPolicy requires one deployment-bound repoId');
   let routeLearningPolicy;
@@ -352,6 +360,7 @@ export function createDriver(opts) {
       workerDependencyDirs: opts.workerDependencyDirs,
       verifyDependencyDirs: opts.verifyDependencyDirs,
       verifySparsePaths: opts.verifySparsePaths,
+      toolchainProjection,
       structuredMerge: opts.structuredMerge,
     }),
     runtimeScopes,

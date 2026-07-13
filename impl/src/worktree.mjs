@@ -85,6 +85,10 @@ function metaPathFor(repoRoot, taskId) {
   return join(repoRoot, '.baton', 'wt', `${taskId}.meta.json`);
 }
 
+function projectionExcludePathFor(repoRoot, taskId) {
+  return join(repoRoot, '.baton', 'wt', `${taskId}.projection.exclude`);
+}
+
 function readMeta(repoRoot, taskId) {
   const f = metaPathFor(repoRoot, taskId);
   if (!existsSync(f)) return null;
@@ -129,6 +133,27 @@ function materializeDependencies(dir, sources) {
   return copied;
 }
 
+function configureProjectionExcludes(repoRoot, worktreeDir, taskId, targetPaths) {
+  const excludePath = projectionExcludePathFor(repoRoot, taskId);
+  mkdirSync(dirname(excludePath), { recursive: true });
+  writeFileSync(excludePath, `${targetPaths.map((path) => `/${path}`).join('\n')}\n`, { encoding: 'utf8', mode: 0o600 });
+  gitFile(['config', 'extensions.worktreeConfig', 'true'], repoRoot, { stdio: 'pipe' });
+  gitFile(['config', '--worktree', 'core.excludesFile', excludePath], worktreeDir, { stdio: 'pipe' });
+  return excludePath;
+}
+
+function trackedProjectionPaths(worktreeDir, targetPaths) {
+  if (targetPaths.length === 0) return [];
+  const raw = gitFile(['ls-files', '-z', '--', ...targetPaths], worktreeDir, { encoding: 'utf8' });
+  return raw.split('\0').filter(Boolean);
+}
+
+export function validateToolchainProjectionMetadata(repoRoot, taskId, identity) {
+  const meta = readMeta(repoRoot, taskId);
+  return !!meta?.toolchainProjection && JSON.stringify(meta.toolchainProjection) === JSON.stringify(identity)
+    && Array.isArray(meta.toolchainProjectionTargets) && meta.toolchainProjectionTargets.length > 0;
+}
+
 function sparseProjection(paths = []) {
   if (!Array.isArray(paths)) throw new TypeError('sparse verification paths must be an array');
   return paths.map((path) => {
@@ -160,19 +185,6 @@ export function ensureBatonExcluded(repoRoot) {
 // ---------------------------------------------------------------------------
 // pinBaseSha
 // ---------------------------------------------------------------------------
-
-/**
- * Extract projection target paths from a projection identity
- * @param {object} identity - Toolchain projection identity
- * @returns {string[]} Array of target paths
- */
-function extractProjectionTargets(identity) {
-  if (!identity || !identity.schemaVersion) return [];
-  // The identity doesn't contain the mappings directly, but we can reconstruct
-  // target paths from the limit/mapping information. For now, return empty array
-  // and rely on the authority to track targets.
-  return [];
-}
 
 /**
  * @param {string} repoRoot
@@ -231,16 +243,18 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
     throw err;
   }
 
-  let copiedDependencies;
+  let copiedDependencies = [];
   let toolchainProjection;
   let toolchainProjectionTargets;
+  let projectionExcludePath;
 
   try {
-    // Materialize legacy dependencies or toolchain projection
     if (opts.toolchainProjection) {
+      toolchainProjectionTargets = opts.toolchainProjection.targetPaths();
+      projectionExcludePath = configureProjectionExcludes(repoRoot, dir, taskId, toolchainProjectionTargets);
       const result = opts.toolchainProjection.materialize(dir);
       toolchainProjection = result.identity;
-      toolchainProjectionTargets = result.materializedTargets;
+      if (JSON.stringify(result.materializedTargets) !== JSON.stringify(toolchainProjectionTargets)) throw new ToolchainProjectionError('toolchain materialization is invalid', 'toolchain_projection_materialization_failed');
     } else {
       copiedDependencies = materializeDependencies(dir, sources);
     }
@@ -249,34 +263,23 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
     catch { rmSync(dir, { recursive: true, force: true }); }
     try { sh('git', ['branch', '-D', branch], repoRoot); } catch { /* best-effort */ }
     try { sh('git', ['worktree', 'prune'], repoRoot); } catch { /* best-effort */ }
+    if (projectionExcludePath) rmSync(projectionExcludePath, { force: true });
     throw err;
   }
 
   const createdAt = new Date().toISOString();
 
   // Store metadata including projection target paths for exclusion
-  const meta = {
-    taskId, branch, baseSha, createdAt, stoppedAt: null,
-    copiedDependencies,
-  };
+  const meta = { taskId, branch, baseSha, createdAt, stoppedAt: null, copiedDependencies };
   if (toolchainProjection) {
     meta.toolchainProjection = toolchainProjection;
     meta.toolchainProjectionTargets = toolchainProjectionTargets;
-
-    // TP5: Add projection targets to .git/info/exclude in the worktree
-    // This ensures they never show up in git status and cannot be accidentally committed
-    const gitInfoDir = join(dir, '.git', 'info');
-    mkdirSync(gitInfoDir, { recursive: true });
-    const gitInfoExclude = join(gitInfoDir, 'exclude');
-    let existingExclude = '';
-    try { existingExclude = readFileSync(gitInfoExclude, 'utf8'); } catch { /* ignore */ }
-    const excludeLines = toolchainProjectionTargets.map((t) => `/${t}\n${t}/**\n`).join('');
-    writeFileSync(gitInfoExclude, `${existingExclude}\n# Baton toolchain projection (managed)\n${excludeLines}`, 'utf8');
+    meta.projectionExclude = `${taskId}.projection.exclude`;
   }
   writeMeta(repoRoot, taskId, meta);
 
-  logEvent(opts, taskId, 'worktree.created', { dir, branch, baseSha, copiedDependencies, toolchainProjection });
-  return { taskId, dir, branch, baseSha, createdAt, copiedDependencies, toolchainProjection };
+  logEvent(opts, taskId, 'worktree.created', { dir, branch, baseSha, copiedDependencies, ...(toolchainProjection ? { toolchainProjection } : {}) });
+  return { taskId, dir, branch, baseSha, createdAt, copiedDependencies, ...(toolchainProjection ? { toolchainProjection } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -298,28 +301,12 @@ export async function captureCommit(repoRoot, taskId, opts = {}) {
   // TP5: Read metadata to get projection targets for exclusion
   const meta = readMeta(repoRoot, taskId);
   const projectionTargets = meta?.toolchainProjectionTargets ?? [];
+  if (trackedProjectionPaths(dir, projectionTargets).length > 0) throw new ToolchainProjectionError('toolchain projection entered the result index', 'toolchain_projection_materialization_failed');
 
   let snapshotted = false;
   if (!isClean(dir)) {
-    // TP5: Exclude projection targets from git add
-    // Get list of all files, filter out projection targets, then add the rest
-    const allFiles = sh('git', ['ls-files', '-o', '--exclude-standard', '--full-name'], dir).split('\n').filter(Boolean);
-
-    const filesToAdd = allFiles.filter((file) => {
-      // Check if file matches any projection target
-      for (const target of projectionTargets) {
-        if (file === target || file.startsWith(`${target}/`) || file.startsWith(`${target}\\`)) {
-          return false; // Exclude
-        }
-      }
-      return true; // Include
-    });
-
-    // Add each non-projection file explicitly
-    for (const file of filesToAdd) {
-      sh('git', ['add', file], dir);
-    }
-
+    sh('git', ['add', '-A'], dir);
+    if (trackedProjectionPaths(dir, projectionTargets).length > 0) throw new ToolchainProjectionError('toolchain projection entered the result index', 'toolchain_projection_materialization_failed');
     const vendor = opts.vendor;
     const authorName = vendor ? `baton-worker-${vendor}` : 'baton-snapshot';
     const authorEmail = `${authorName}@localhost`;
@@ -330,19 +317,6 @@ export async function captureCommit(repoRoot, taskId, opts = {}) {
     const message = `baton snapshot: ${taskId}\n\n${trailerLines.join('\n')}\n`;
     sh('git', ['commit', '-q', '-m', message, `--author=${authorName} <${authorEmail}>`], dir);
     snapshotted = true;
-
-    // TP5: After commit, check that no projection targets were added
-    // Force-added projection targets should cause failure
-    try {
-      const checkResult = sh('git', ['ls-files', '--error-unmatch', ...projectionTargets.flatMap(t => [t, `${t}/**`])], dir, { stdio: 'pipe' });
-      // If we get here, projection targets were added - fail closed
-      throw new ToolchainProjectionError('projection targets were force-added into result commit', 'toolchain_projection_materialization_failed');
-    } catch (err) {
-      // Expected - projection targets should NOT be in the index
-      if (!err.message.includes('did not match any files')) {
-        throw err;
-      }
-    }
   }
   const sha = sh('git', ['rev-parse', 'HEAD'], dir);
   logEvent(opts, taskId, 'worktree.captured', { sha, snapshotted });
@@ -539,8 +513,8 @@ export async function freshVerifySandbox(repoRoot, label, sha, opts = {}) {
     throw err;
   }
 
-  logEvent(opts, 'worktree', 'worktree.verify_sandbox_created', { dir, sha: fullSha, label, copiedDependencies, sparsePaths, toolchainProjection });
-  return { dir, sha: fullSha, copiedDependencies, sparsePaths, toolchainProjection, cleanup };
+  logEvent(opts, 'worktree', 'worktree.verify_sandbox_created', { dir, sha: fullSha, label, copiedDependencies, sparsePaths, ...(toolchainProjection ? { toolchainProjection } : {}) });
+  return { dir, sha: fullSha, copiedDependencies, sparsePaths, ...(toolchainProjection ? { toolchainProjection } : {}), cleanup };
 }
 
 // ---------------------------------------------------------------------------
@@ -568,8 +542,10 @@ export async function markStopped(repoRoot, taskId) {
 export async function reap(repoRoot, taskId, opts = {}) {
   const dir = wtDirFor(repoRoot, taskId);
   const metaFile = metaPathFor(repoRoot, taskId);
+  const projectionExclude = projectionExcludePathFor(repoRoot, taskId);
   if (!existsSync(dir)) {
     if (existsSync(metaFile)) rmSync(metaFile, { force: true });
+    if (existsSync(projectionExclude)) rmSync(projectionExclude, { force: true });
     return; // idempotent no-op
   }
   const meta = readMeta(repoRoot, taskId);
@@ -587,6 +563,7 @@ export async function reap(repoRoot, taskId, opts = {}) {
     try { sh('git', ['branch', '-D', `baton/${taskId}`], repoRoot); } catch { /* best-effort */ }
   }
   if (existsSync(metaFile)) rmSync(metaFile, { force: true });
+  if (existsSync(projectionExclude)) rmSync(projectionExclude, { force: true });
   logEvent(opts, taskId, 'worktree.reaped', { dir });
 }
 
@@ -632,7 +609,12 @@ export async function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {})
   const wtRoot = join(repoRoot, '.baton', 'wt');
   if (existsSync(wtRoot)) {
     for (const entry of readdirSync(wtRoot)) {
-      if (entry.endsWith('.meta.json')) continue;
+      if (!entry.endsWith('.projection.exclude')) continue;
+      const taskId = entry.slice(0, -'.projection.exclude'.length);
+      if (!expected.has(taskId) || !existsSync(join(wtRoot, taskId))) rmSync(join(wtRoot, entry), { force: true });
+    }
+    for (const entry of readdirSync(wtRoot)) {
+      if (entry.endsWith('.meta.json') || entry.endsWith('.projection.exclude')) continue;
       const fullDir = join(wtRoot, entry);
       let isDir = false;
       try { isDir = statSync(fullDir).isDirectory(); } catch { continue; }
@@ -646,6 +628,8 @@ export async function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {})
         }
         const metaFile = metaPathFor(repoRoot, entry);
         if (existsSync(metaFile)) rmSync(metaFile, { force: true });
+        const projectionExclude = projectionExcludePathFor(repoRoot, entry);
+        if (existsSync(projectionExclude)) rmSync(projectionExclude, { force: true });
         report.removedZombieDirs.push(fullDir);
         logEvent(opts, entry, 'worktree.reconciled', { dir: fullDir });
       } catch (err) {
