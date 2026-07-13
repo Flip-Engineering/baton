@@ -99,9 +99,18 @@ policy-authored integration/publication/recovery Counterexamples, and same-repos
 Scratch Findings only after distinct completed tasks independently ground them in live verified
 outcomes. One replay-validated atomic batch retains fixed safe text, closed identifiers/digests,
 and exact causal edges without copying briefs, Scratch values, prompts, paths, reasons, commands,
-URLs, credentials, or provider payloads. Derived Scratch remains quarantined pending a distinct
-independent-oracle and correction policy. Direct, authenticated web, and MCP invoke/reverify share
-the same repository-bound authority and pre-effect publication gates.
+URLs, credentials, or provider payloads. Phase 49 leaves derived Scratch quarantined pending a
+distinct independent-oracle and correction policy. Direct, authenticated web, and MCP
+invoke/reverify share the same repository-bound authority and pre-effect publication gates.
+
+Phase 50 closes that quarantined Scratch lifecycle without making arbitrary ledger events
+promotable. A derived fact can enter the graph only through a fact-bound oracle task whose explicit
+harness, exact model, effort, and model family are independently routed from the producer. The
+accepted review artifact is bound to the oracle worker, exact route tuple, capture/commit SHA, and
+hub reverification, and the oracle task itself cannot integrate code. `causal.correct_scratch`
+then releases, supersedes, or retracts only the closed Scratch Finding class through one audited
+prefix-CAS event with exact earlier-reader contamination. Scratch IDs are hub-derived, public
+results are closed metadata projections, and trusted web/MCP transport identity is token-bound.
 
 Richer cross-run learning, literature, hypotheses, contradictions, and supersession therefore live in
 Baton's self-contained bitemporal graph under `spec/phase11/coordination-knowledge.md`. They are
@@ -128,7 +137,7 @@ targets, never product dependencies.)*
 
 ## 7. Open questions
 
-1. Promotion policy: Phase 49 resolves a closed first subset for consequential Decisions, closed policy Counterexamples, and independently verified cited observed Scratch. Separate contracts are still required for derived-Scratch oracle release and correction/supersession, Playbook/Skill promotion, and any later taxonomy expansion; arbitrary events never become knowledge by default.
+1. Promotion policy: Phases 49–50 resolve a closed first subset for consequential Decisions, closed policy Counterexamples, independently verified cited observed Scratch, and fact-bound independent-oracle release/correction of derived Scratch. Separate contracts are still required for Playbook/Skill promotion and any later taxonomy expansion; arbitrary events never become knowledge by default.
 2. Cross-run identity: Phase 44 ships the cheap exact harness/version/model/effort/family/task-class win/loss table. Generalized claims such as "Codex is bad at auth refactors" remain explicit causal Findings, never automatic route evidence.
 3. Does the orchestrator read the scorecard of *past* runs as context for a new run, and if so how do we keep that from re-poisoning its context (doc 06 Q3)? Probably: only on explicit `fleet_recall(query)`, never auto-injected.
 4. Retention/rotation: ledgers grow unbounded; JSONL rotates, SQLite compacts, artifacts are git-GC'd — but the scorecard + decision graph are meant to be permanent. Where's the boundary, and who prunes?

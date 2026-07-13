@@ -159,12 +159,24 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    becomes a Finding only through distinct completed tasks with live verified outcome grounding.
    One atomic replay-validated batch uses fixed safe bodies, closed identifiers/digests, exact
    causal edges, max+1 ceilings, ACI pre-effect result gates, and direct/web/MCP invoke/reverify.
-   Eight focused SP tests and 1024/1024 canonical tests are green. Derived-Scratch oracle release,
-   correction/supersession, Playbook/Skill promotion, recall feedback, contradiction UX,
-   retention/compaction, and deployment-neutral export remain explicit. Final exact project-key
+   Eight focused SP tests and 1024/1024 canonical tests are green. Phase 49 left derived-Scratch
+   oracle release and correction/supersession explicit for Phase 50; Playbook/Skill promotion,
+   recall feedback, contradiction UX, retention/compaction, and deployment-neutral export remain.
+   Final exact project-key
    GLM `glm-4.7`/low review on PID `46906` fresh-verified, confirmed kill, and fully reaped; its
    non-reproducing transport, boundary, and ACI-preflight claims are dispositioned with explicit
    transport-binding and post-audit append regressions.
+23. **Cairn Scratch correction and independent-oracle release:** Phase 50 adds a fact-bound
+   `scratch_oracle` task whose explicit harness/model/effort route must differ from the producer by
+   harness and model family. Hub-derived Scratch IDs, immutable bounded targets, exact six-field
+   producer/reviewer route commitments, accepted worker/capture/commit/reverification provenance,
+   and non-integrable oracle results prevent evidence substitution. `causal.correct_scratch`
+   releases, supersedes, or retracts only the closed Scratch Finding class through one audited
+   prefix-CAS event with target validity CAS, exact historical-reader contamination, closed public
+   results, token-bound direct/web/MCP transport authority, ACI pre-effect output gates, and full
+   replay/idempotency/tamper refusal. Eleven focused SC tests and 1035/1035 canonical tests are
+   green. Recursive multi-harness availability and native-process evidence are recorded separately
+   and do not inflate implementation status.
 
 ## What remains partial
 
@@ -179,9 +191,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 - Scratch and causal knowledge primitives ship. Cairn Rungs 0–2 scorecard, verified RouteStats,
   restart hydration, bounded advice, causal integrity, contradiction resolution, and attested
   audit/trace, bounded recall, and the first closed selective-promotion batch now ship locally;
-  Scratch REPL/Bench, authenticated contradiction UX, recall feedback, derived-Scratch independent-
-  oracle release and correction, Playbook/Skill promotion, retention/compaction, and optional
-  deployment-neutral export remain partial or pending.
+  derived-Scratch independent-oracle release/correction now also ships. Scratch REPL/Bench,
+  authenticated contradiction UX, recall feedback, Playbook/Skill promotion,
+  retention/compaction, and optional deployment-neutral export remain partial or pending.
 - Phase 29 closes the former Atlas wiring gap: deployments inject a closed set of real Atlas
   instances, bounds, artifact roots, and optional trusted multi-root contexts into `createDriver()`;
   Coordinator owns the sole registry handle, and authenticated web/MCP reuse that invoke/resume/
@@ -214,7 +226,8 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 - Trust ramp policy, plan gate, impact-selected reruns, structured reject postmortems, and higher
   Evidence Ladder rungs (property/fuzz/BMC/SMT/proof) under honest language/tool ceilings.
 - Vantage, Evidence Ladder as a capability module, Skill Forge/computer use, later
-  Cartographer/Quartermaster supply/orientation rungs, and Cairn promotion/feedback/export rungs remain pending.
+  Cartographer/Quartermaster supply/orientation rungs, and Cairn Playbook/Skill promotion,
+  feedback, retention, and export rungs remain pending.
 - Direct structural rewrite apply, live LSP, full SSA/PDG/path solving, interprocedural/alias/heap
   CPG depth, deeper behavioral/provenance attestation overlays, and representation choreography.
 - True semantic merge, stacked integration, deploy adapters, rollback automation, and live remote

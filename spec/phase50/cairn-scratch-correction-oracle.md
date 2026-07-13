@@ -43,6 +43,7 @@ row, body, grounding, or evidence fields are forbidden.
 `Coordinator.spawnScratchOracle(scratchFactId, harness, opts)` and the authenticated web/MCP
 `scratch_oracle` surfaces accept an active same-repository `grounding:'derived'` Scratch fact only.
 The fact MUST name its producer task, and that task MUST have a durable resolved route tuple.
+Scratch fact IDs are hub-derived content identifiers; a caller-supplied Scratch `id` is refused.
 
 Baton snapshots the full fact assertion into the private worker Brief so the reviewer can test the
 actual claim, but the snapshot is detached, immutable, and bounded by `maxTargetBytes`. Durable
@@ -54,7 +55,8 @@ producer task ID, producer harness, and producer model family.
 The review Brief pins the full original fact, its commitment, and an implementation-authored
 instruction to test the assertion against the immutable repository/tree coordinate rather than
 trusting its author. Caller constraints are count- and byte-bounded. The caller cannot replace the
-fact snapshot or commitment.
+fact snapshot or commitment. The oracle may exercise the fact in its isolated worker worktree, but
+its result is evidence-only and is never an integrable task result.
 
 ### SC3 — independent exact route
 
@@ -73,7 +75,11 @@ effort refuses before worker allocation; Baton never silently substitutes one.
 `task.created` durably records the closed review metadata for both ordinary review tasks and
 Scratch oracle tasks. Coordinator restart rehydrates it. A successful Scratch oracle produces an
 accepted `application/vnd.baton.review+json` artifact whose review metadata exactly equals the
-task's durable metadata and whose accepted provenance maps to a hub `verify.reverified` event.
+task's durable metadata and whose accepted provenance maps to a hub `verify.reverified` event. The
+accepted artifact provenance MUST bind the exact oracle worker, task route, harness version, model,
+effort, capture SHA, paired commit SHA, accepted verification, and review metadata. Producer and
+reviewer route commitments each cover the exact six-field tuple of harness, harness version, model,
+effort, model family, and task class.
 
 The review task, accepted review artifact, full-fact digest, source event, producer route, reviewer
 route, and pinned verification contract form one fact-bound evidence chain. A generic review of the
@@ -93,7 +99,8 @@ cancelled oracle task, worker report, or unaccepted verification is ineligible.
 `release` is only for an active derived fact with a fact-bound independent oracle. `supersede`
 accepts either a Phase-49-qualified observed replacement or a derived replacement with a
 fact-bound independent oracle. `retract` adds no replacement and does not claim a competing fact.
-Free-text rationale is not copied into the graph or receipt.
+Free-text rationale is not copied into the graph or receipt. Release is an explicit Phase 50
+correction exception path; it does not widen or reuse Phase 49's promotion taxonomy.
 
 ### SC6 — closed target and replacement qualification
 
@@ -141,6 +148,14 @@ must never expose a partial correction. The event contains schema version, actio
 pinned boundary/time, exact policy and digest, request/evidence/projection/receipt digests, target
 CAS when present, complete safe rows, and the bounded contamination projection.
 
+Affected reads are exactly all earlier `knowledge.read` events at or before the pinned boundary
+whose `nodeIds` include the target; exceeding `maxAffectedReads` refuses rather than truncates. The
+event append is a CAS against the pinned prefix. Between the supplied/default boundary and that
+append, only the exact non-semantic admission/evidence events `evidence.mapped`,
+`web.command_admitted`, and `mcp.call_admitted` may intervene. Any task, Scratch, knowledge-read,
+graph, lifecycle, or other event conflicts. Cancellation is checked again at the actual write
+boundary; once the atomic append linearizes, a later abort cannot rewrite success as refusal.
+
 ### SC9 — replay, idempotency, and bounded refusal
 
 Replay recomputes the historical request, source facts, reader/oracle qualification, target state,
@@ -157,10 +172,12 @@ preflight output so the exact bounded public result is checked before the event 
 
 ### SC10 — bounded public result and exact reverify
 
-The public result exposes only action, repository, boundary, event sequence, request/policy/
-projection/receipt digests, target ID/version when present, replacement Finding ID/grounding when
-present, oracle task ID when present, and affected-read count. It contains no private fact snapshot,
-Scratch value, Brief, route credentials, path, prompt, or prose.
+The public result is a closed projection exposing only `action`, `repoId`, `observedSeq`, `eventSeq`,
+`requestDigest`, `policyDigest`, `projectionDigest`, `receiptDigest`, `targetNodeId`,
+`targetValidityVersion`, `replacementNodeId`, `replacementGrounding`, `oracleTaskId`, and
+`affectedReadCount`; optional fields are absent rather than filled with private detail. It contains
+no audit packet/time, private fact snapshot, Scratch value, Brief, route credentials, path, prompt,
+or prose.
 
 `reverify(claim,'causal.correct_scratch',args,ctx)` is read-only. It locates the receipt, reruns the
 historical derivation, and compares the complete compact claim and authority. Tampering, omitted
@@ -178,7 +195,9 @@ result surfaces prove resolved/observed values and allow interrupt, kill, and fu
 
 Direct, authenticated web, and authenticated MCP `causal.correct_scratch` invocation and reverify
 continue through the ACI capability plane. Transport actor normalization occurs only from trusted
-northbound context and cannot be forged by direct callers.
+northbound context and cannot be forged by direct callers. Web/MCP receive token-bound capability
+methods from the northbound authority; a direct caller-supplied `ctx.transport` is refused rather
+than trusted.
 
 ### SC12 — proof and retained full-system scope
 

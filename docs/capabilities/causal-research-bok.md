@@ -87,24 +87,39 @@ bok_audit(scope?: { project?: string })
 bok_trace(node_id: NodeId, depth?: number = 3)
   -> ProvenancePath  // walk a claim back to the ledger events / artifacts that justify it
 
-// ── OPTIONAL INTERCHANGE (one-way, audit-gated, approval-gated) ──
-bok_export(scope: { project?: string, since_run?: string }, target: `pm://${string}`)
-  -> { promoted: {findings, decisions, edges}, skipped_failing_audit: number, pm_ids: NodeId[] }
+// ── OPTIONAL INTERCHANGE (later, local, audit-gated, approval-gated) ──
+bok_export(scope: { project?: string, since_run?: string })
+  -> { artifact_ref: ArtifactRef, promoted: {findings, decisions, edges}, skipped_failing_audit: number }
 ```
 
-**Node & edge model** (a strict, machine-written subset of PM's, so export is a shape-map not a translation):
+**Node & edge model** (a strict, machine-written Baton model informed by PM's causal discipline):
 
 - Nodes: `RunScorecard` (1/run), `Decision` (orchestrator/human consequential choice: spawn / reroute-after-refusal / accept-result / merge / abort), `Finding` (a *verified* outcome on a task-class), `RouteStat` (per harness×task-class counter), `Playbook` (Rung 4: a reused, verified recipe).
 - Edges: `Informed` (Decision←evidence, = PROV `wasInformedBy`), `ProducedBy` (Finding←run/task, = PROV `wasGeneratedBy`), `DerivedFrom` (= PROV `wasDerivedFrom`), `Supersedes` (bi-temporal invalidation, keeps history), `Contradicts`, `Supports`.
 - **Bi-temporal on every node/edge** (Graphiti): `t_event` (ledger `seq` + wall clock of the thing) and `t_observed` (when promoted); `Supersedes`/`Contradicts` carry `t_valid`/`t_invalid` so a refuted belief is *invalidated, not deleted*.
 
-**The promotion policy** (answers doc 08 Q1 — what auto-qualifies, no per-event tax): the promoter is candidate-generation over the ledger, firing on exactly:
+**Current shipped contract:** Phases 47–50 ship causal integrity/audit/trace, bounded pull-only
+recall, the Phase 49 closed promotion taxonomy, and the Phase 50 derived-Scratch exception. Phase
+49 admits only closed operator/orchestrator Decisions, policy Counterexamples, and independently
+verified cited observed Scratch Findings. Phase 50 separately permits release, supersession, or
+retraction of Scratch Findings after a fact-bound independent oracle with exact producer/reviewer
+harness-version-model-effort-family-task-class commitments. These operations are audited,
+repository-bound, deterministic, replay-validated, and reachable through token-bound direct/web/MCP
+authority. They do not promote arbitrary terminal events, auto-inject recall, integrate oracle
+changes, or export to project-manager/homelab.
+
+**Later promotion-policy direction** (not current authority): candidate-generation may eventually
+expand over the ledger, but each source class requires its own closed contract. Candidate classes
+under consideration are:
 - **terminal task transitions** (`completed`/`failed`/`cancelled`) → `Finding` candidate, with the hub-run I7 verification result attached (`grounding: verified|asserted`);
 - **`control.*` with `actor ≠ policy`** (human/orchestrator steer, reroute, interrupt, accept, merge, abort) → `Decision` candidate;
 - **`resource.budget.threshold_crossed`, `health.{refusal,loop,reroute}`** → context edges onto the relevant Decision/Finding;
 - **every run boundary** → a `RunScorecard` (always, even at Rung 0).
 
-A candidate becomes a durable node only if it (a) passes the temporal-coherence check and (b) has ≥1 evidence edge. Confidence is **deterministic, not LLM-judged**: `verified pass` → high; `asserted` → low; RouteStat confidence is the Wilson lower bound on wins/n. Cheap, auditable, un-gameable at write time.
+A candidate may become a durable node only through a shipped closed policy, after temporal and
+evidence checks. Confidence is **deterministic, not LLM-judged**: `verified pass` may support high
+grounding while `asserted` cannot authorize the current positive promotion routes; RouteStat
+confidence is the Wilson lower bound on wins/n. Cheap, auditable, and mechanically attributable.
 
 ### Integration with the three planes
 

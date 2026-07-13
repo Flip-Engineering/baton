@@ -607,6 +607,19 @@ promotion, recall feedback/utility, authenticated contradiction UX, retention/co
 deployment-neutral export remain mechanically retained. Baton remains self-contained: the local
 project-manager material is causal-graph inspiration only, and homelab integration is excluded.
 
+Phase 50 closes the derived-Scratch exception without broadening general promotion. A
+`scratch_oracle` task pins one hub-derived fact and routes its reviewer by explicit harness, exact
+model, effort, and model policy; reviewer harness and family must differ from the producer, and the
+accepted artifact binds exact producer/reviewer route tuples, worker, capture/commit SHA, and hub
+reverification. Oracle tasks may test in isolation but can never integrate their result.
+`causal.correct_scratch` releases, supersedes, or retracts only the closed Scratch Finding class in
+one audited prefix-CAS event with exact historical-reader contamination, target validity CAS,
+restart replay, pre-effect ACI result gates, and token-bound direct/web/MCP identity. Scratch IDs are
+hub-derived and public results contain only closed metadata. Playbook/Skill promotion, recall
+feedback/utility, authenticated contradiction UX, retention/compaction, deployment-neutral export,
+Bench, and every retained control/session/representation/capability rung remain explicit. No
+homelab or external project-manager runtime is introduced.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**
@@ -617,9 +630,10 @@ project-manager material is causal-graph inspiration only, and homelab integrati
 5. Complete hardened acceptance and structured integration.
 6. Ship the task/artifact/Scratch substrate and deployment-neutral causal knowledge core.
 7. Ship Atlas + AST structural delta + repo map + Cairn scorecard, durable RouteStats/advice,
-   causal integrity/audit/trace, audit-gated bounded recall, and audit-gated selective promotion as
-   the first capability verticals. **Shipped locally through Cairn selective promotion; Phase 49
-   exact-route evidence is recorded.**
+   causal integrity/audit/trace, audit-gated bounded recall, audit-gated selective promotion, and
+   fact-bound Scratch oracle correction as the first capability verticals. **Shipped locally
+   through Cairn Scratch correction/oracle release; Phase 50 implementation is canonical-green and
+   its recursive exact-route matrix is retained as separate operational evidence.**
 8. Expand the representation and capability ladders in measured increments.
 9. Add MCP plus authenticated HTTPS/WebSocket user↔orchestrator control, operator surfaces,
    production runtime, and the registered evaluations.
