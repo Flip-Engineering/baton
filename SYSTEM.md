@@ -228,7 +228,7 @@ Every feature the exploration produced, with honest status. **Core** = the drive
 | E-graph/equality-saturation evaluation | Tools/Trust | Shipped Phase 27 negative gate: native repo/function engine retired or redirected; external expression/kernel research conditionally catalogued | `spec/phase27/egraph-evaluation.md`, `docs/15`, `reviews/frontier-features/representation.md` |
 | Governance firewall (re-inject constraints on compaction) | Context | MVP-adjacent | `docs/21`, `docs/12` |
 | Deeper check ladder (proptest→fuzz→proof) | Trust | Later | `docs/capabilities/math-proof.md` |
-| Adaptive, recency-biased routing | Smart | Later | `docs/20` |
+| Adaptive, recency-biased routing + durable verified RouteStats | Smart/Memory | Shipped Phase 44; deployment-pinned exact-tuple learning, restart hydration, and read-only Cairn advice | `spec/phase44/cairn-route-stats.md`, `docs/20` |
 | Fast scratchpad / medium task-list / slow knowledge | Memory | Later (task-list MVP) | `docs/08`, capabilities |
 | Replay & counterfactual re-run | Memory | Later (free from log) | `docs/14` #20 |
 | Shared code search | Tools | Later | `docs/capabilities/discovery-search.md` |
@@ -242,6 +242,7 @@ Every feature the exploration produced, with honest status. **Core** = the drive
 | Transitive advisory projection | Tools/Safety | Shipped Phase 41; exact-input OSV observation and dependency/import attention only, never vulnerable-function proof or waiver | `spec/phase41/transitive-advisory-projection.md`, `docs/handoff/evidence/phase41-transitive-advisory-projection-2026-07-12.md` |
 | Reuse policy-epoch reconciliation | Safety/Memory | Shipped Phase 42; deployment-card-derived baseline/change reconciliation, bounded atomic fan-out, stale-but-blocking guard migration, exclusive writer lifetime, and local causal Constraint lineage; no positive clearance | `spec/phase42/policy-hash-invalidation.md`, `docs/handoff/evidence/phase42-policy-invalidation-2026-07-12.md` |
 | Adverse provider ingress, recovery, official processing, and durable retry | Safety/Memory/Operate | Shipped Phase 43; authenticated webhook/full poll, source health, seedless adverse union, exact deployment retries, bounded observe-only status, replay and cleanup; no positive clearance | `spec/phase43`, `docs/handoff/evidence/phase43-provider-processing-retries-2026-07-12.md` |
+| Cairn Rung 1 route evidence and advice | Smart/Memory/Operate | Shipped Phase 44; verified terminal outcomes atomically promote immutable RouteStats, hydrate the router on restart, and expose bounded read-only advice through direct/web/MCP ACI | `spec/phase44/cairn-route-stats.md`, `docs/handoff/evidence/phase44-cairn-route-stats-2026-07-12.md` |
 | Reusable verified skills/recipes | Tools | Later | `docs/capabilities/skills-computeruse.md` |
 | Per-vendor briefs, context-on-demand, re-inject-on-compaction | Context | MVP-adjacent | `docs/12` |
 | OS-sandbox boundary, scoped secrets, contagion tracking | Safety | MVP-adjacent | `docs/09` §C, `docs/14` |

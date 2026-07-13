@@ -109,19 +109,27 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    versus historical without accepting policy inputs. No provider request, policy authoring,
    positive clearance, external knowledge-graph runtime, project-manager export, or homelab
    integration is introduced.
+17. **Cairn Rung 1 durable route learning:** Phase 44 atomically records one exact
+   harness/version/model/effort/family/task-class observation only from the hub's authoritative
+   terminal verification. The deployment policy is replay-pinned; same-key changed terminal,
+   artifact, evidence, or route bytes refuse; append failure exposes no terminal, artifact,
+   RouteStat, or live-router update. Startup hydrates a fresh router from coordination-ordered
+   observations before dispatch. Cairn's bounded `route.advice` is deterministic and read-only,
+   reachable through the existing authenticated direct/web/MCP capability path, and grants no
+   routing-mutation, verification, merge, approval, publication, or worker authority.
 
 ## What remains partial
 
 - Automatic session rejoin, deeper fork/rewind/checkpoint parity, and vendor-specific context,
   hook, broker, extension, and reconfiguration surfaces.
-- Full Claude/Codex sandbox denial parity, contamination UX, persistent router learning, operator
+- Full Claude/Codex sandbox denial parity, contamination UX, operator
   pin/exclude/prefer controls, and account quota-window/fleet-seat scheduling.
 - Cross-vendor review is wired, but continuous semantic review automation and structured reject
   postmortems are not.
 - Structured merge is shipped with an injected Mergiraf-class boundary; a live Mergiraf binary
   proof is absent. Publication has no live remote-push proof.
-- Scratch and causal knowledge primitives ship. Cairn Rung 0's scorecard/promoter now ships;
-  Scratch REPL/Bench and Cairn RouteStats/route advice, causal audit/recall, contradiction UX,
+- Scratch and causal knowledge primitives ship. Cairn Rungs 0–1 scorecard, verified RouteStats,
+  restart hydration, and bounded advice now ship; Scratch REPL/Bench, causal audit/recall, contradiction UX,
   and optional deployment-neutral export remain partial or pending.
 - Phase 29 closes the former Atlas wiring gap: deployments inject a closed set of real Atlas
   instances, bounds, artifact roots, and optional trusted multi-root contexts into `createDriver()`;
@@ -155,7 +163,7 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 - Trust ramp policy, plan gate, impact-selected reruns, structured reject postmortems, and higher
   Evidence Ladder rungs (property/fuzz/BMC/SMT/proof) under honest language/tool ceilings.
 - Vantage, Evidence Ladder as a capability module, Skill Forge/computer use, later
-  Cartographer/Quartermaster supply/orientation rungs, and Cairn Rungs 1–4 remain pending.
+  Cartographer/Quartermaster supply/orientation rungs, and Cairn Rungs 2–4 remain pending.
 - Direct structural rewrite apply, live LSP, full SSA/PDG/path solving, interprocedural/alias/heap
   CPG depth, attestation overlays, and representation choreography.
 - True semantic merge, stacked integration, deploy adapters, rollback automation, and live remote
@@ -188,8 +196,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 2. **Close environment/live honesty gates:** GLM credentialed smoke without key disclosure shipped
    in Phase 30; live Mergiraf, real-browser OIDC, independent edge-policy review, and an optional
    safe remote-push fixture remain.
-3. **Finish governance/session continuity:** auto-rejoin, vendor-honest fork/rewind, compaction DoD
-   reinjection, quota-window/seat scheduling, route overrides, and durable router learning.
+3. **Finish governance/session continuity:** durable router learning shipped in Phase 44; next are
+   supervised auto-rejoin, vendor-honest fork/rewind, compaction DoD reinjection,
+   quota-window/seat scheduling, and operator route overrides.
 4. **Build capability modules on shared substrate:** Cairn Rung 0 shipped in Phase 31 and
    Cartographer/Quartermaster local Rung 0 shipped in Phase 32, addressed push in Phase 33, and
    bounded scope-drift refresh in Phase 34, external evidence in Phase 36, exact SBOM in Phase 37,
@@ -215,8 +224,11 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    ship with exact deployment policy, stable bounded due derivation, per-receipt attempt windows,
    replay-safe sanitized events, single-flight supervision, abort/lease fencing, restart
    continuation, and a live outage-to-recovery proof. Additional real provider/ecosystem adapters,
-   positive clearance, and the currently authentication-red Grok matrix remain. Continue the remaining explicitly
-   catalogued later rungs, then demand-earned Cairn Rungs 1–4, Vantage, Evidence Ladder, and Skill
+   positive clearance, and the currently authentication-red Grok matrix remain. Phase 44 then ships
+   Cairn Rung 1: atomic verified exact-tuple observations, local RouteStat lineage, deployment-pinned
+   replay hydration, and bounded authenticated route advice, live- and recursively proved without
+   a homelab or external knowledge-graph runtime. Continue the remaining explicitly
+   catalogued later rungs, then demand-earned Cairn Rungs 2–4, Vantage, Evidence Ladder, and Skill
    Forge/computer use behind stronger containment.
 5. **Complete northbound/runtime depth:** MCP HTTP/Tasks/daemon, WebSocket, operator takeover,
    OpenTelemetry, and only then a production-core port.

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +9,8 @@ import test from 'node:test';
 import { CairnRunScorecard, McpFleetServer, MockAdapter, WebNorthbound, createBrief, createDriver } from '../src/index.mjs';
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-route-stats-${name}-`));
+const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
+const sha = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 const until = async (fn, label, timeoutMs = 5000) => { const deadline = Date.now() + timeoutMs; while (Date.now() < deadline) { const value = await fn(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 5)); } throw new Error(`timed out waiting for ${label}`); };
 function repo() { const path = root('repo'); execFileSync('git', ['init', '-q'], { cwd: path }); execFileSync('git', ['-c', 'user.name=Baton Test', '-c', 'user.email=baton@example.test', 'commit', '--allow-empty', '-q', '-m', 'base'], { cwd: path }); return path; }
 function brief(target, command = `test -s ${target}`) { return createBrief({ goal: `write ${target}`, constraints: [], pathScope: [target], definitionOfDone: `${target} passes`, verification: { command, expectExit: 0, timeoutMs: 5000 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } }); }
@@ -21,7 +24,7 @@ test('RS1-RS3: hub-verified terminal atomically records one exact route observat
   const beforeRetry = w.driver.coordination.events().length; const retry = terminal(...structuredClone(terminalArgs)); assert.equal(retry.result, 'idempotent'); assert.equal(w.driver.coordination.events().length, beforeRetry); const changed = structuredClone(terminalArgs); changed[3].routeObservation.modelFamily = 'substituted-family'; assert.throws(() => terminal(...changed), (error) => error.code === 'route_observation_conflict'); assert.equal(w.driver.coordination.events().length, beforeRetry);
   const snapshot = w.driver.coordination.snapshot(); const node = snapshot.knowledge.nodes.find((item) => item.type === 'RouteStat' && item.taskId === 'route-win'); assert.ok(node); assert.ok(snapshot.knowledge.edges.some((edge) => edge.type === 'ObservedIn' && edge.from === node.id && edge.to === 'task:route-win'));
   const firstRouter = w.driver.router.snapshot(); assert.deepEqual(firstRouter.appliedTaskIds, ['route-win']); await w.driver.coordinator.kill(handle.id, 'policy'); w.driver.close();
-  const replay = createDriver(w.options); assert.deepEqual(replay.coordination.routeObservations(), rows); assert.deepEqual(replay.router.snapshot().buckets, firstRouter.buckets); assert.deepEqual(replay.router.snapshot().appliedTaskIds, ['route-win']); replay.close();
+  const replay = createDriver({ ...w.options, now: () => Date.parse('2026-07-20T10:00:00.000Z') }); assert.deepEqual(replay.coordination.routeObservations(), rows); assert.deepEqual(replay.router.snapshot().buckets, firstRouter.buckets); assert.deepEqual(replay.router.snapshot().appliedTaskIds, ['route-win']); replay.close();
 });
 
 test('RS1/RS5: verified failure learns one loss while pre-verification cancellation learns nothing', async () => {
@@ -53,5 +56,6 @@ test('RS2-RS4/RS7: replay rejects policy and observation mutation, and later evi
   const second = await w.driver.coordinator.spawn('primary', brief('done.txt'), { taskId: 'route-second', taskType: 'implementation', model: 'mock-route-model', effort: 'low' }); await until(async () => (await w.driver.coordinator.result(second.id)).ready, 'second evidence'); const drift = await w.driver.coordinator.reverifyCapability('cairn', 'route.advice', claim, args, { actor: 'orchestrator', budgetTokens: 4000 }); assert.equal(drift.status, 'diverged'); await w.driver.coordinator.kill(first.id, 'policy'); await w.driver.coordinator.kill(second.id, 'policy'); w.driver.close();
   assert.throws(() => createDriver({ ...w.options, routeLearningPolicy: { ...w.options.routeLearningPolicy, halfLifeMs: 60_000 } }), (error) => error.code === 'route_observation_integrity');
   const path = join(w.logDir ?? w.options.logDir, 'coordination', 'events.jsonl'); const original = readFileSync(path, 'utf8'); let events = original.trimEnd().split('\n').map(JSON.parse); let observed = events.find((event) => event.kind === 'route.outcome_observed'); observed.idempotencyKey = `${observed.idempotencyKey}:substituted`; writeFileSync(path, `${events.map(JSON.stringify).join('\n')}\n`); assert.throws(() => createDriver(w.options), (error) => error.code === 'route_observation_integrity'); writeFileSync(path, original);
+  events = original.trimEnd().split('\n').map(JSON.parse); observed = events.find((event) => event.kind === 'route.outcome_observed'); observed.payload.verifiedWin = !observed.payload.verifiedWin; const { observationDigest, ...core } = observed.payload; observed.payload.observationDigest = sha({ ...core, idempotencyKey: observed.idempotencyKey }); writeFileSync(path, `${events.map(JSON.stringify).join('\n')}\n`); assert.throws(() => createDriver(w.options), (error) => error.code === 'route_observation_integrity'); writeFileSync(path, original);
   events = original.trimEnd().split('\n').map(JSON.parse); observed = events.find((event) => event.kind === 'route.outcome_observed'); observed.payload.modelFamily = 'substituted-family'; writeFileSync(path, `${events.map(JSON.stringify).join('\n')}\n`); assert.throws(() => createDriver(w.options), (error) => error.code === 'route_observation_integrity');
 });

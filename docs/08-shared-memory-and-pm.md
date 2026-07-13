@@ -63,6 +63,13 @@ and high-value:
 1. **The run scorecard** (§2, PM's health-score idea): auto-generated at fleet-run end from the ledger — brief coverage, verified-vs-asserted completions, interventions, budget, per-worker cost. Durable, queryable, one row per run.
 2. **Decision provenance** (§2, PM's causal backbone): the orchestrator's consequential choices (spawn, reroute-after-refusal, accept-result, merge) written as decision records with edges to the justifying events. This is the "audit the conductor, not just the musicians" requirement from doc 06 Q3, made concrete.
 
+Phase 44 resolves the cheap cross-run routing case without turning anecdotes into ambient truth.
+Each hub-reverified terminal outcome atomically promotes one immutable exact-tuple `RouteStat`, and a
+deployment-pinned router hydrates only from those ordered observations. Cairn exposes bounded,
+read-only advice over a caller-supplied candidate set; callers cannot supply outcomes or mutate
+routing. Broader claims such as “a family is bad at auth” still require an explicit Finding with
+evidence rather than being inferred from this narrow win/loss table.
+
 Richer cross-run learning, literature, hypotheses, contradictions, and supersession therefore live in
 Baton's self-contained bitemporal graph under `spec/phase11/coordination-knowledge.md`. They are
 promoted selectively from immutable events/artifacts, never written as an ambient mutable brain.
@@ -88,6 +95,6 @@ targets, never product dependencies.)*
 ## 7. Open questions
 
 1. Promotion policy: what *automatically* qualifies an event/outcome for the scorecard and the decision graph, without a per-event tax or a curation backlog? (Candidate: terminal task transitions + all `control.*` with `actor≠policy` + budget/refusal/reroute events.)
-2. Cross-run identity: is "Codex is bad at auth refactors" a baton concern (routing table that learns) or strictly PM's (a Finding a human promotes)? Leaning PM, but a thin per-harness win/loss counter in the scorecard may be the cheap 80%.
+2. Cross-run identity: Phase 44 ships the cheap exact harness/version/model/effort/family/task-class win/loss table. Generalized claims such as "Codex is bad at auth refactors" remain explicit causal Findings, never automatic route evidence.
 3. Does the orchestrator read the scorecard of *past* runs as context for a new run, and if so how do we keep that from re-poisoning its context (doc 06 Q3)? Probably: only on explicit `fleet_recall(query)`, never auto-injected.
 4. Retention/rotation: ledgers grow unbounded; JSONL rotates, SQLite compacts, artifacts are git-GC'd — but the scorecard + decision graph are meant to be permanent. Where's the boundary, and who prunes?

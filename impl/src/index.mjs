@@ -171,6 +171,7 @@ function refereeFn(task, result, opts) {
  *          providerPolling?:{intervalMs:number,initialBackoffMs:number},
  *          providerProcessingSchedule?:{intervalMs:number,maxBatch:number,maxAttempts:number,initialBackoffMs:number,maxBackoffMs:number,maxStateRows:number},
  *          providerRead?:{maxProviders:number,maxProcessing:number,maxStateRows:number,maxBytes:number},
+ *          routeLearningPolicy?:{mode:'round-robin'|'adaptive'|'auto',halfLifeMs:number,explorationConstant:number,seedDiscount:number,minSamplesForAdaptive:number,defaultPriorSuccessRate:number},
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
  *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,

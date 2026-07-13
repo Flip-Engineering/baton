@@ -391,8 +391,9 @@ marks prose DoD coverage honestly unavailable. One content-addressed artifact an
 `run.sealed` event materialize the Run/Artifact nodes and Contains/ProducedBy edges together, so a
 torn line fails as a truncated tail and no multi-line prefix can grant half a run's authority.
 Reverify replays the exact bounds and rejects missing evidence, attribution drift, path substitution,
-or byte tamper. RouteStats, causal audit/recall, contradiction UX, and optional deployment-neutral
-export remain explicit Cairn Rungs 1–4; none is implied by the Rung 0 scorecard.
+or byte tamper. Phase 44 separately ships RouteStats and route advice as Cairn Rung 1; causal
+audit/recall, contradiction UX, and optional deployment-neutral export remain explicit Cairn
+Rungs 2–4 and are not implied by either earlier rung.
 
 Phase 32 ships the local Cartographer/Quartermaster floor without adding a second repository map.
 `orientation.slice` provides focused typed `brief` and `map` views over an explicit immutable Atlas
@@ -524,14 +525,29 @@ and explicit close release ownership. Public web/MCP surfaces reveal only the sa
 and no caller can nominate policy or reconciliation targets. This remains Baton's local deployment-
 neutral causal graph: no project-manager or homelab runtime is consulted or mutated.
 
+Phase 44 closes the durable adaptive-routing and Cairn Rung 1 gap. The hub atomically binds each
+terminal hub-verification outcome to one exact harness/version/model/effort/family/task-class
+observation under a deployment-pinned policy. Exact retry is zero-effect; changed terminal,
+artifact, evidence, or route bytes refuse; append failure updates neither the coordination
+projection nor the live router. Immutable verified `RouteStat` nodes retain task lineage, and a
+fresh router hydrates from their ordered observations before dispatch on restart. Cairn's bounded
+`route.advice` reads this evidence through the sole direct/authenticated-web/MCP capability plane
+without accepting outcomes or gaining routing-mutation authority. Live two-route restart proof and
+an exact credentialed `glm-4.7`/low recursive run both verify no replay double-count and complete
+kill/reap. Phase 45 supervised auto-rejoin, Phase 46 representation attestation, later causal
+audit/recall and contradiction hardening, and every higher AST/SCIP/CPG/IR/behavior/merge/e-graph
+contract remain in the goal. No homelab or external project-manager runtime is introduced.
+
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
 2. Ship independent harness + exact-model + effort selection and attribution. **Shipped.**
-3. Make persistent sessions genuinely usable through the driver; add resume/fork/rejoin.
+3. Make persistent sessions genuinely usable through the driver; supervised auto-rejoin is next,
+   followed by vendor-honest fork/rewind depth.
 4. Ship OS/credential isolation and budget/watchdog governance.
 5. Complete hardened acceptance and structured integration.
 6. Ship the task/artifact/Scratch substrate and deployment-neutral causal knowledge core.
-7. Ship Atlas + AST structural delta + repo map + scorecard as the first capability vertical.
+7. Ship Atlas + AST structural delta + repo map + Cairn scorecard and durable RouteStats/advice as
+   the first capability verticals. **Shipped through Cairn Rung 1.**
 8. Expand the representation and capability ladders in measured increments.
 9. Add MCP plus authenticated HTTPS/WebSocket user↔orchestrator control, operator surfaces,
    production runtime, and the registered evaluations.
