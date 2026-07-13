@@ -9,9 +9,9 @@ import { fileURLToPath } from 'node:url';
 import { CodexAppServerCli, GlmSessionCli, createBrief, createDriver } from '../../../../impl/src/index.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const REPO = resolve(HERE, '../../../..');
+const REPO = resolve(process.env.BATON_REPO ?? resolve(HERE, '../../../..'));
 const LOG_DIR = mkdtempSync(join(tmpdir(), 'baton-phase49-spec-review-'));
-const GLM_AUTH = resolve(REPO, 'glm_key.json');
+const GLM_AUTH = resolve(process.env.BATON_GLM_AUTH_FILE ?? resolve(REPO, 'glm_key.json'));
 const CODEX_AUTH = join(homedir(), '.codex', 'auth.json');
 const RUN_ID = 'phase49-spec-review';
 const tasks = [
@@ -83,7 +83,9 @@ const overlap = windows.length === 2 && Math.max(...windows.map((row) => Date.pa
 const coordinationRoot = join(LOG_DIR, 'coordination');
 const checks = {
   runnerHealthy: fatal === null, bothAdmitted: rows.length === tasks.length,
-  exactRoutes: rows.every((row) => row.handle.harnessRequested === row.harness && row.handle.harnessResolved === row.harness && row.handle.modelRequested === row.model && row.handle.modelResolved === row.model && row.handle.effortRequested === 'low' && row.handle.effortResolved === 'low'),
+  exactRoutes: rows.every((row) => row.handle.harnessRequested === row.harness
+    && (row.harness === 'codex' ? row.handle.harnessResolved.startsWith('codex@codex-cli ') : row.handle.harnessResolved.startsWith('glm-via-claude-session@claude-code-'))
+    && row.handle.modelRequested === row.model && row.handle.modelResolved === row.model && row.handle.effortRequested === 'low' && row.handle.effortResolved === 'low'),
   providerIdentityHonest: rows.every((row) => row.handle.modelObserved === null || row.handle.modelObserved === row.model),
   terminal: rows.every((row) => row.result?.ready), reportsVerified: rows.every((row) => row.result?.status === 'completed' && row.verify?.payload?.accept === true && row.report?.includes('## Required contract corrections')),
   overlappingTurns: overlap, distinctPids: new Set(rows.map((row) => row.pid).filter(Number.isSafeInteger)).size === rows.filter((row) => Number.isSafeInteger(row.pid)).length,
