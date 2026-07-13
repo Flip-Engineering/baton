@@ -162,8 +162,10 @@ simultaneously, fresh-verified Codex `gpt-5.6-sol`, project-key GLM `glm-4.7`, a
 and exactly closed/reaped all five generations with zero capacity residue. The strict matrix remains
 red: Claude is not logged in, and literal `grok-build` was provider-observed as `grok-4.5` and
 rejected for exact-model mismatch. That dogfood also found projection-parent inode undercount and
-dead foreign reservation retention; both now have red/green repairs, and a post-repair recursive
-rerun remains the next live gate. The older Composer proof is not equivalent to literal Build.
+dead foreign reservation retention; both now have red/green repairs. The post-repair rerun on
+`7780266` repeated the three accepted fresh verifications and exact five-generation cleanup, and
+all three returned reports now have no P0/P1. The strict external matrix is still red only at Claude
+login and literal Build identity. The older Composer proof is not equivalent to literal Build.
 
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 

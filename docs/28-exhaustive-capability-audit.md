@@ -272,9 +272,10 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    active legacy-close refusal, versioned/digested projection-target-parent accounting, sparse-parent
    union, and zero-state drain receipts are executable. The historical baseline was 34 focused
    contracts and 1346/1346 canonical tests; dogfood P1 repairs bring the current canonical suite to
-   1351/1351. The first five-provider run fresh-verified Codex, project-key GLM, and Grok 4.5 and
-   exactly reaped all five routes; Claude login and literal Grok Build model identity remain red.
-   Hard filesystem quota/same-UID isolation and a post-repair live rerun remain pending gates.
+   1351/1351. Both pre- and post-repair five-provider runs fresh-verified Codex, project-key GLM,
+   and Grok 4.5 and exactly reaped all five routes; all three post-repair reports have no P0/P1.
+   Claude login and literal Grok Build model identity remain red. Hard filesystem quota/same-UID
+   isolation remains a later boundary.
 
 ## What remains partial
 
@@ -378,8 +379,10 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    authority and its pre-effect gate, quota-window/seat scheduling, and operator route overrides.
    Immutable bounded dual-root toolchain projection shipped in Phase 55; public drain/close,
    route-specific terminal-burst/call governance, sparse worker/verifier identity, and repo-scoped
-   byte/inode admission shipped in Phases 56–59. The next live gate is the exact five-provider
-   sparse+capacity recursive run with concurrent Groks and exact drain/reap evidence.
+   byte/inode admission shipped in Phases 56–59. The exact five-provider sparse+capacity recursive
+   run now proves concurrent Groks and exact drain/reap twice; Claude login and literal Build
+   identity remain external acceptance gaps while internal pursuit moves to Goal/Plan authority,
+   provider-backed continuation, and the retained capability/representation backlog.
 4. **Build capability modules on shared substrate:** Cairn Rung 0 shipped in Phase 31 and
    Cartographer/Quartermaster local Rung 0 shipped in Phase 32, addressed push in Phase 33, and
    bounded scope-drift refresh in Phase 34, external evidence in Phase 36, exact SBOM in Phase 37,

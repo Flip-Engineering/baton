@@ -816,7 +816,10 @@ not logged in; literal `grok-build` was observed as `grok-4.5` and rejected. Its
 P1s: target-parent projection inodes were undercounted, and dead foreign reservation owners could
 remain retained. Versioned/digested total-directory accounting with sparse-parent union and
 dead-owner reconciliation now close both under red/green tests; the canonical suite is 1351/1351.
-A post-repair five-provider rerun remains the live gate, not a claimed all-provider completion.
+The post-repair run on `7780266` again admitted all five exact requests, observed both Grok groups
+simultaneously, fresh-verified Codex/GLM/Grok 4.5, returned three reports with no P0/P1, and exactly
+closed/reaped every ownership and capacity surface. Claude login and literal Build provider identity
+remain external red gates; the all-provider matrix is not claimed complete.
 
 These operational phases do not narrow the retained system. The self-contained causal/temporal
 knowledge graph remains inspired by repository-local project-manager prior art without homelab or
