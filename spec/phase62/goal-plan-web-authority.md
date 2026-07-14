@@ -51,6 +51,11 @@ worker-selected executable. Verification is immutable plan-owned authority rathe
 Brief prose or a worker suggestion. Dependencies must name nodes in the same version; self edges,
 cycles, duplicates, dangling nodes, and ambiguous order refuse.
 
+Risk is an execution-control tier, not an estimate that may be averaged across subtasks. The ordered
+deployment `riskClasses` define the minimum controls inherited from the goal: every node must retain
+or strengthen its exact goal version's tier. A node below that floor refuses as `plan_risk_mismatch`;
+deployments may additionally impose a node-risk ceiling or stronger approver policy.
+
 Plan allocations may not exceed the exact goal version's budgets, and each node allocation must fit
 deployment policy. Shared or contingency budget must be represented explicitly rather than counted
 twice. The plan digest covers canonical node and edge order, budgets, goal digest, policy digest,
@@ -67,6 +72,11 @@ An approval requires `plan:approve`, repository/run scope, exact goal version, e
 and digest, expected approval state, and a fresh session. The proposer of a plan cannot approve that
 same version, even when the account also holds both roles; deployment may require a still stronger
 two-person or risk-tier policy.
+
+New proposals and approvals require those exact goal and plan coordinates to be the live heads at
+the admission event. Superseded authority refuses before append. An exact idempotent retry of a
+previously admitted request still returns its original immutable record after later supersession;
+this reconciles a lost response and does not create fresh authority.
 
 Approval is an append-only decision with server-derived actor and fixed `approved|rejected`
 disposition. Compare-and-swap admits at most one live disposition for the exact version. Rejection,
@@ -132,6 +142,10 @@ events through a requested authorized upper bound. It reports version/digest ide
 disposition, node dependency and dispatch states, initial/reserved/consumed/released budget totals,
 linked task IDs and terminal outcomes, and closed refusal codes. It excludes credentials, prompts,
 full worker prose, raw provider payloads, host paths, and hidden policy internals.
+
+Head liveness is computed at the requested upper bound. An undispatched node is `stale` when either
+its goal or its plan version is no longer the head at that boundary; a task dispatched before
+supersession continues to report its pinned task state and terminal outcome.
 
 Authenticated SSE/WebSocket delivery carries the same append-only goal/plan/approval/dispatch
 events and resumable cursors as other coordination state. Browser disconnect, reconnect, stale UI,

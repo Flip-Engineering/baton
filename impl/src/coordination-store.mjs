@@ -2147,6 +2147,8 @@ export class CoordinationStore {
         if (plan.schemaVersion !== 1 || plan.repoId !== goal.repoId || plan.runId !== goal.runId || plan.policyDigest !== this._goalPlanPolicy.policyDigest
           || !validRunId(plan.proposerPrincipalId) || plan.proposedEvent !== event.seq || plan.proposedAt !== event.ts
           || plan.digest !== goalPlanDigest(core) || p.requestDigest !== goalPlanDigest({ proposerPrincipalId: plan.proposerPrincipalId, ...core })) malformed();
+        const goalHead = this._goalHeads.get(this._goalScopeKey(goal.repoId, goal.runId));
+        if (!goalHead || goalHead.goalId !== goal.goalId || goalHead.version !== goal.version || goalHead.digest !== goal.digest) malformed('plan proposal references a superseded goal');
         const headKey = this._planHeadKey(plan.goal); const head = this._planHeads.get(headKey);
         if (plan.predecessor === null) {
           if (head || plan.version !== 1 || plan.planId !== `plan:${goalPlanDigest({ schemaVersion: 1, goal: plan.goal, firstDigest: plan.digest })}`) malformed();
@@ -2163,6 +2165,11 @@ export class CoordinationStore {
           || !/^[a-f0-9]{64}$/.test(approval.sessionDigest ?? '') || !validRunId(approval.principalId)) malformed();
         const core = Object.fromEntries(Object.entries(approval).filter(([key]) => !['digest', 'decidedEvent', 'decidedAt'].includes(key)));
         if (approval.digest !== goalPlanDigest(core) || p.requestDigest !== goalPlanDigest({ principalId: approval.principalId, sessionDigest: approval.sessionDigest, goal: approval.goal, plan: approval.plan, disposition: approval.disposition, expectedDisposition: null })) malformed();
+        const goal = this._goals.get(this._goalVersionKey(approval.goal?.goalId, approval.goal?.version));
+        const goalHead = goal ? this._goalHeads.get(this._goalScopeKey(goal.repoId, goal.runId)) : null;
+        const planHead = this._planHeads.get(this._planHeadKey(plan.goal));
+        if (!goal || !goalHead || goalHead.goalId !== goal.goalId || goalHead.version !== goal.version || goalHead.digest !== goal.digest
+          || !planHead || planHead.planId !== plan.planId || planHead.version !== plan.version || planHead.digest !== plan.digest) malformed('plan approval references superseded authority');
         const key = this._planVersionKey(plan.planId, plan.version); if (this._planApprovals.has(key)) malformed(); this._planApprovals.set(key, freeze(clone(approval)));
       } else if (event.kind === 'plan.node_dispatched') {
         if (Object.keys(p).sort().join(',') !== ['authority', 'binding', 'capabilities', 'effects', 'expectedDispatchVersion', 'newDispatchVersion', 'nodeBudget', 'requestDigest', 'resolvedDeps', 'route', 'schemaVersion', 'taskId', 'taskPayloadDigest'].sort().join(',')
@@ -2719,6 +2726,8 @@ export class CoordinationStore {
       if (prior.kind !== 'plan.version_proposed' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('plan idempotency key is bound differently', 'plan_conflict');
       return freeze({ ok: true, result: 'idempotent', event: clone(prior), plan: clone(prior.payload.plan) });
     }
+    const goalHead = this._goalHeads.get(this._goalScopeKey(auth.repoId, auth.runId ?? null));
+    if (!goalHead || goalHead.goalId !== goal.goalId || goalHead.version !== goal.version || goalHead.digest !== goal.digest) throw new CoordinationRefusal('plan goal is superseded', 'goal_stale');
     const headKey = this._planHeadKey(request.goal); const head = this._planHeads.get(headKey);
     if (request.predecessor === null && head) throw new CoordinationRefusal('plan predecessor is required', 'plan_predecessor_required');
     if (request.predecessor !== null && (!head || head.planId !== request.predecessor.planId || head.version !== request.predecessor.version || head.digest !== request.predecessor.digest)) throw new CoordinationRefusal('plan predecessor is stale', 'plan_stale');
@@ -2749,6 +2758,10 @@ export class CoordinationStore {
       if (prior.kind !== 'plan.approval_decided' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('approval idempotency key is bound differently', 'plan_approval_conflict');
       return freeze({ ok: true, result: 'idempotent', event: clone(prior), approval: clone(prior.payload.approval) });
     }
+    const goalHead = this._goalHeads.get(this._goalScopeKey(auth.repoId, auth.runId ?? null));
+    const planHead = this._planHeads.get(this._planHeadKey(plan.goal));
+    if (!goalHead || goalHead.goalId !== goal.goalId || goalHead.version !== goal.version || goalHead.digest !== goal.digest
+      || !planHead || planHead.planId !== plan.planId || planHead.version !== plan.version || planHead.digest !== plan.digest) throw new CoordinationRefusal('plan approval target is superseded', 'plan_stale');
     if (plan.proposerPrincipalId === auth.principalId) throw new CoordinationRefusal('a plan proposer cannot approve the same version', 'plan_self_approval');
     const approvalKey = this._planVersionKey(plan.planId, plan.version);
     if (this._planApprovals.has(approvalKey)) throw new CoordinationRefusal('plan disposition is already decided', 'plan_approval_stale');
@@ -2904,6 +2917,12 @@ export class CoordinationStore {
       || planEvent.payload.plan.repoId !== auth.repoId || planEvent.payload.plan.runId !== auth.runId) throw new CoordinationRefusal('goal/plan status target is unavailable', 'not_found');
     const goal = clone(goalEvent.payload.goal); const plan = clone(planEvent.payload.plan);
     delete goal.principalId; delete plan.proposerPrincipalId;
+    const goalHeadEvent = [...relevant].reverse().find((event) => event.kind === 'goal.version_defined'
+      && event.payload.goal.repoId === auth.repoId && event.payload.goal.runId === auth.runId);
+    const planHeadEvent = [...relevant].reverse().find((event) => event.kind === 'plan.version_proposed'
+      && canonicalDigest(event.payload.plan.goal) === canonicalDigest(planEvent.payload.plan.goal));
+    const goalCurrent = goalHeadEvent?.payload.goal.goalId === goal.goalId && goalHeadEvent.payload.goal.version === goal.version && goalHeadEvent.payload.goal.digest === goal.digest;
+    const planCurrent = planHeadEvent?.payload.plan.planId === plan.planId && planHeadEvent.payload.plan.version === plan.version && planHeadEvent.payload.plan.digest === plan.digest;
     const approvalEvent = [...relevant].reverse().find((event) => event.kind === 'plan.approval_decided' && event.payload.approval.plan.planId === plan.planId && event.payload.approval.plan.version === plan.version);
     const taskStates = new Map();
     for (const event of relevant) {
@@ -2917,6 +2936,7 @@ export class CoordinationStore {
     const nodes = plan.nodes.map((node) => {
       const dispatched = dispatches.get(node.key); let state = 'blocked';
       if (dispatched) state = dispatched.task?.status === 'completed' && !dispatched.task.acceptanceRevocation ? 'accepted' : (['failed', 'cancelled'].includes(dispatched.task?.status) ? dispatched.task.status : 'dispatched');
+      else if (!goalCurrent || !planCurrent) state = 'stale';
       else if (node.deps.every((dep) => dispatches.get(dep)?.task?.status === 'completed' && !dispatches.get(dep).task.acceptanceRevocation)) state = 'ready';
       let terminalOutcome = null;
       if (dispatched?.task?.acceptanceRevocation) {

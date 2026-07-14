@@ -127,6 +127,7 @@ test('GP1-GP4/GP6/GP8: goals and plans are append-only, bounded, distinct-author
   const status = await driver.coordinator.goalPlanStatus(statusCoordinates(goal, plan), auth('observer', ['goal:observe'], 'status:one'));
   assert.equal(status.goal.digest, goal.digest); assert.equal(status.plan.digest, plan.digest);
   assert.equal(status.approval.disposition, 'approved'); assert.equal(status.nodes[0].state, 'ready');
+  await assert.rejects(driver.coordinator.approvePlan({ goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest }, plan: { planId: plan.planId, version: plan.version, digest: plan.digest }, expectedDisposition: null, disposition: 'approved' }, auth('planner', ['plan:approve'], 'approval:self')), (error) => error.code === 'plan_self_approval');
   const amended = (await driver.coordinator.defineGoal({
     objective: goal.objective, definitionOfDone: [...goal.definitionOfDone, 'exact historical status remains coherent'],
     constraints: [...goal.constraints], risk: goal.risk, budget: { ...goal.budget },
@@ -134,6 +135,7 @@ test('GP1-GP4/GP6/GP8: goals and plans are append-only, bounded, distinct-author
   }, auth('goal-owner', ['goal:define'], 'goal:amended'))).goal;
   const historical = await driver.coordinator.goalPlanStatus(statusCoordinates(goal, plan), auth('observer', ['goal:observe'], 'status:historical'));
   assert.equal(historical.goal.version, 1); assert.equal(historical.plan.goal.version, 1);
+  assert.equal(historical.nodes[0].state, 'stale');
   await assert.rejects(
     driver.coordinator.goalPlanStatus(statusCoordinates(amended, plan), auth('observer', ['goal:observe'], 'status:mixed-versions')),
     (error) => error.code === 'not_found',
@@ -146,7 +148,6 @@ test('GP1-GP4/GP6/GP8: goals and plans are append-only, bounded, distinct-author
     driver.coordinator.goalPlanStatus(statusCoordinates(goal, plan), auth('observer', ['goal:observe'], 'status:cross-repo', { repoId: 'other-repo' })),
     (error) => error.code === 'goal_plan_unauthorized',
   );
-  await assert.rejects(driver.coordinator.approvePlan({ goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest }, plan: { planId: plan.planId, version: plan.version, digest: plan.digest }, expectedDisposition: null, disposition: 'approved' }, auth('planner', ['plan:approve'], 'approval:self')), (error) => error.code === 'plan_self_approval');
   driver.close();
 });
 
@@ -157,7 +158,7 @@ test('GP2/GP3/GP8: weakening, cycles, and double-counted budget refuse without d
   await assert.rejects(driver.coordinator.defineGoal({ objective: 'Rotate api_key=abcdefghijklmnopqrstuvwx', definitionOfDone: [...goal.definitionOfDone], constraints: [...goal.constraints], risk: goal.risk, budget: { ...goal.budget }, predecessor: { goalId: goal.goalId, version: goal.version, digest: goal.digest } }, auth('goal-owner', ['goal:define'], 'goal:credential')), (error) => error.code === 'goal_plan_secret_rejected');
   await assert.rejects(driver.coordinator.proposePlan({ goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest }, predecessor: { planId: plan.planId, version: plan.version, digest: plan.digest }, nodes: [{ key: 'a', objective: 'Use -----BEGIN PRIVATE KEY----- here', definitionOfDone: ['node --test passes'], deps: [], pathScope: ['**'], risk: 'high', budget: budget(10_000), verification, routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] }, capabilities: ['code'], effects: ['repository_edit'] }] }, auth('planner-2', ['plan:propose'], 'plan:credential')), (error) => error.code === 'goal_plan_secret_rejected');
   await assert.rejects(driver.coordinator.defineGoal({ objective: 'Weakened', definitionOfDone: [], constraints: [], risk: 'low', budget: budget(30_000), predecessor: { goalId: goal.goalId, version: goal.version, digest: goal.digest } }, auth('goal-owner', ['goal:define'], 'goal:weaken')), (error) => error.code === 'goal_weakened');
-  await assert.rejects(driver.coordinator.proposePlan({ goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest }, predecessor: null, nodes: [{ key: 'a', objective: 'A', definitionOfDone: ['node --test passes'], deps: ['b'], pathScope: ['**'], risk: 'low', budget: budget(15_000), verification: { ...verification, requiredPredecessorEvidence: ['b'] }, routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] }, capabilities: ['code'], effects: ['repository_edit'] }, { key: 'b', objective: 'B', definitionOfDone: [], deps: ['a'], pathScope: ['**'], risk: 'low', budget: budget(15_000), verification: { ...verification, requiredPredecessorEvidence: ['a'] }, routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] }, capabilities: ['code'], effects: ['repository_edit'] }] }, auth('planner-2', ['plan:propose'], 'plan:cycle')), (error) => ['plan_cycle', 'plan_budget_exceeded'].includes(error.code));
+  await assert.rejects(driver.coordinator.proposePlan({ goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest }, predecessor: null, nodes: [{ key: 'a', objective: 'A', definitionOfDone: ['node --test passes'], deps: ['b'], pathScope: ['**'], risk: 'high', budget: budget(15_000), verification: { ...verification, requiredPredecessorEvidence: ['b'] }, routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] }, capabilities: ['code'], effects: ['repository_edit'] }, { key: 'b', objective: 'B', definitionOfDone: [], deps: ['a'], pathScope: ['**'], risk: 'high', budget: budget(15_000), verification: { ...verification, requiredPredecessorEvidence: ['a'] }, routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] }, capabilities: ['code'], effects: ['repository_edit'] }] }, auth('planner-2', ['plan:propose'], 'plan:cycle')), (error) => ['plan_cycle', 'plan_budget_exceeded'].includes(error.code));
   assert.equal(driver.coordination.events().length, before);
   driver.close();
 });

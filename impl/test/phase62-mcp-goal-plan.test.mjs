@@ -131,6 +131,72 @@ test('GP1/GP4/GP7: MCP Goal/Plan tools expose closed schemas and bind exact prin
   driver.close();
 });
 
+test('GP3/GP4/GP6/GP7: MCP preserves risk floors, exact heads, and as-of stale status', async () => {
+  const authorizations = []; const driver = makeDriver(authorizations);
+  const direct = (principalId, powers, idempotencyKey) => ({
+    actor: `direct:${principalId}`, principalId, sessionId: `${principalId}-session`, powers,
+    repoId: 'repo-phase62-mcp', runId: null, idempotencyKey,
+  });
+  const { goal: firstGoal } = await driver.coordinator.defineGoal({
+    objective: 'Preserve MCP exact authority', definitionOfDone: ['node --test passes'], constraints: [], risk: 'high', budget, predecessor: null,
+  }, direct('owner', ['goal:define'], 'goal:mcp-heads'));
+  const planRequest = (predecessor, risk = 'high') => ({
+    goal: { goalId: firstGoal.goalId, version: firstGoal.version, digest: firstGoal.digest }, predecessor,
+    nodes: [{
+      key: 'implement', objective: 'Implement exact authority', definitionOfDone: ['node --test passes'], deps: [], pathScope: ['impl/**'],
+      risk, budget: { tokens: 10_000, usd: 1, wallMin: 5, providerTurns: 4 }, verification,
+      routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] }, capabilities: ['code'], effects: ['repository_edit'],
+    }],
+  });
+  const { plan: firstPlan } = await driver.coordinator.proposePlan(planRequest(null), direct('planner', ['plan:propose'], 'plan:mcp-heads:1'));
+  const approved = await driver.coordinator.approvePlan({
+    goal: { goalId: firstGoal.goalId, version: firstGoal.version, digest: firstGoal.digest },
+    plan: { planId: firstPlan.planId, version: firstPlan.version, digest: firstPlan.digest }, expectedDisposition: null, disposition: 'approved',
+  }, direct('approver', ['plan:approve'], 'approval:mcp-heads:1'));
+  const { plan: secondPlan } = await driver.coordinator.proposePlan(planRequest({ planId: firstPlan.planId, version: firstPlan.version, digest: firstPlan.digest }), direct('planner', ['plan:propose'], 'plan:mcp-heads:2'));
+  const planner = server(driver.coordinator, driver.coordination, principal('mcp-planner', ['plan:propose']));
+  const approver = server(driver.coordinator, driver.coordination, principal('mcp-approver', ['plan:approve']));
+  const observer = server(driver.coordinator, driver.coordination, principal('mcp-observer', ['goal:observe']));
+  await Promise.all([initialize(planner), initialize(approver), initialize(observer)]);
+
+  const coordinates = {
+    repoId: 'repo-phase62-mcp', goalId: firstGoal.goalId, goalVersion: firstGoal.version, goalDigest: firstGoal.digest,
+    planId: firstPlan.planId, planVersion: firstPlan.version, planDigest: firstPlan.digest,
+  };
+  const historical = await rpc(observer, 2, 'fleet_goal_plan_status', { ...coordinates, throughSeq: approved.event.seq });
+  assert.equal(historical.result.isError, false); assert.equal(historical.result.structuredContent.nodes[0].state, 'ready');
+  const current = await rpc(observer, 3, 'fleet_goal_plan_status', { ...coordinates, throughSeq: null });
+  assert.equal(current.result.isError, false); assert.equal(current.result.structuredContent.nodes[0].state, 'stale');
+
+  const beforeRisk = driver.coordination.events().filter((event) => event.kind.startsWith('plan.')).length;
+  const risk = await rpc(planner, 4, 'fleet_plan_propose', {
+    repoId: 'repo-phase62-mcp', idempotencyKey: 'plan-mcp-risk-floor',
+    ...planRequest({ planId: secondPlan.planId, version: secondPlan.version, digest: secondPlan.digest }, 'low'),
+  });
+  assert.equal(risk.result.isError, true); assert.match(risk.result.content[0].text, /plan_risk_mismatch/);
+  assert.equal(driver.coordination.events().filter((event) => event.kind.startsWith('plan.')).length, beforeRisk);
+
+  const staleApproval = await rpc(approver, 5, 'fleet_plan_approve', {
+    repoId: 'repo-phase62-mcp', idempotencyKey: 'approval-mcp-stale-plan',
+    goal: { goalId: firstGoal.goalId, version: firstGoal.version, digest: firstGoal.digest },
+    plan: { planId: firstPlan.planId, version: firstPlan.version, digest: firstPlan.digest }, expectedDisposition: null, disposition: 'approved',
+  });
+  assert.equal(staleApproval.result.isError, true); assert.match(staleApproval.result.content[0].text, /plan_stale/);
+
+  await driver.coordinator.defineGoal({
+    objective: 'Preserve MCP exact authority', definitionOfDone: ['node --test passes'], constraints: [], risk: 'high', budget,
+    predecessor: { goalId: firstGoal.goalId, version: firstGoal.version, digest: firstGoal.digest },
+  }, direct('owner', ['goal:define'], 'goal:mcp-heads:2'));
+  const beforeGoalStale = driver.coordination.events().filter((event) => event.kind === 'plan.version_proposed').length;
+  const staleGoal = await rpc(planner, 6, 'fleet_plan_propose', {
+    repoId: 'repo-phase62-mcp', idempotencyKey: 'plan-mcp-stale-goal',
+    ...planRequest({ planId: secondPlan.planId, version: secondPlan.version, digest: secondPlan.digest }),
+  });
+  assert.equal(staleGoal.result.isError, true); assert.match(staleGoal.result.content[0].text, /goal_stale/);
+  assert.equal(driver.coordination.events().filter((event) => event.kind === 'plan.version_proposed').length, beforeGoalStale);
+  driver.close();
+});
+
 test('GP5/GP7: fleet_spawn carries one closed Goal/Plan gate and transport-derived dispatch identity', async () => {
   const calls = [];
   const coordinator = { async spawn(harness, brief, opts) { calls.push({ harness, brief, opts }); return { id: 'worker-1', fence: 1 }; } };

@@ -150,6 +150,19 @@ function rewriteDispatchPair(directory, mutate) {
   writeFileSync(file, `${rows.map(JSON.stringify).join('\n')}\n`);
 }
 
+function rewriteGoalPlanOrder(directory, order) {
+  const file = join(directory, 'events.jsonl');
+  const rows = readFileSync(file, 'utf8').trimEnd().split('\n').map(JSON.parse);
+  const rewritten = order.map((index) => rows[index]);
+  for (const [index, event] of rewritten.entries()) {
+    event.seq = index + 1;
+    if (event.kind === 'goal.version_defined') event.payload.goal.definedEvent = event.seq;
+    if (event.kind === 'plan.version_proposed') event.payload.plan.proposedEvent = event.seq;
+    if (event.kind === 'plan.approval_decided') event.payload.approval.decidedEvent = event.seq;
+  }
+  writeFileSync(file, `${rewritten.map(JSON.stringify).join('\n')}\n`);
+}
+
 test('GP5/GP6/GP8: exact dispatch replay survives restart and changed bytes conflict without a second task', () => {
   const f = dispatchedStore('restart');
   const scope = { repoId: policy.repoId, runId: null };
@@ -298,6 +311,123 @@ test('GP4/GP5/GP8: self, rejected, and goal-superseded approvals cannot dispatch
   );
   assert.equal(staleStore.snapshot().goalPlan.dispatches.length, 0);
   staleStore.releaseWriterLease();
+});
+
+test('GP3/GP4/GP8: plan nodes cannot downgrade goal risk and exact current heads govern new proposals and approvals', () => {
+  const directory = root('heads-risk');
+  const store = new CoordinationStore(directory, { goalPlanPolicy: policy });
+  const goalRequest = {
+    objective: 'Preserve exact plan authority', definitionOfDone: ['node --test passes'], constraints: [],
+    risk: 'high', budget: goalBudget(), predecessor: null,
+  };
+  const goal = store.defineGoal(goalRequest, storeAuth('goal-owner', 'goal:heads-risk:1')).goal;
+  const makeNode = (risk = 'high') => [{
+    key: 'implement', objective: 'Implement exact authority', definitionOfDone: ['node --test passes'], deps: [],
+    pathScope: ['impl/**'], risk, budget: nodeBudget(), verification: verification(),
+    routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] },
+    capabilities: ['code'], effects: ['repository_edit'],
+  }];
+  const beforeRisk = store.snapshot().lastSeq;
+  assert.throws(
+    () => store.proposePlan({ goal: ref('goal', goal), predecessor: null, nodes: makeNode('low') }, storeAuth('planner', 'plan:heads-risk:low')),
+    (error) => error.code === 'plan_risk_mismatch',
+  );
+  assert.equal(store.snapshot().lastSeq, beforeRisk);
+
+  const firstRequest = { goal: ref('goal', goal), predecessor: null, nodes: makeNode() };
+  const firstAuth = storeAuth('planner', 'plan:heads-risk:1');
+  const first = store.proposePlan(firstRequest, firstAuth).plan;
+  const approvalRequest = { goal: ref('goal', goal), plan: ref('plan', first), expectedDisposition: null, disposition: 'approved' };
+  const approvalAuth = storeAuth('approver', 'approval:heads-risk:1');
+  const firstApproval = store.approvePlan(approvalRequest, approvalAuth);
+  const second = store.proposePlan({ goal: ref('goal', goal), predecessor: ref('plan', first), nodes: makeNode() }, storeAuth('planner', 'plan:heads-risk:2')).plan;
+
+  const statusCoordinates = {
+    goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest,
+    planId: first.planId, planVersion: first.version, planDigest: first.digest,
+  };
+  const scope = { repoId: policy.repoId, runId: null };
+  assert.equal(store.goalPlanStatus({ ...statusCoordinates, throughSeq: firstApproval.event.seq }, scope).nodes[0].state, 'ready');
+  assert.equal(store.goalPlanStatus({ ...statusCoordinates, throughSeq: null }, scope).nodes[0].state, 'stale');
+
+  assert.equal(store.approvePlan(approvalRequest, approvalAuth).result, 'idempotent', 'lost approval response still coalesces after plan supersession');
+  const amended = store.defineGoal({ ...goalRequest, predecessor: ref('goal', goal) }, storeAuth('goal-owner', 'goal:heads-risk:2')).goal;
+  assert.equal(amended.version, 2);
+  assert.equal(store.proposePlan(firstRequest, firstAuth).result, 'idempotent', 'lost proposal response still coalesces after goal supersession');
+
+  const beforeStale = store.snapshot().lastSeq;
+  assert.throws(
+    () => store.proposePlan({ goal: ref('goal', goal), predecessor: ref('plan', second), nodes: makeNode() }, storeAuth('planner', 'plan:heads-risk:stale-goal')),
+    (error) => error.code === 'goal_stale',
+  );
+  assert.throws(
+    () => store.approvePlan({ goal: ref('goal', goal), plan: ref('plan', second), expectedDisposition: null, disposition: 'approved' }, storeAuth('other-approver', 'approval:heads-risk:stale-goal')),
+    (error) => error.code === 'plan_stale',
+  );
+  assert.equal(store.snapshot().lastSeq, beforeStale);
+  store.releaseWriterLease();
+
+  const planStale = new CoordinationStore(root('plan-head-stale'), { goalPlanPolicy: policy });
+  const staleGoal = planStale.defineGoal(goalRequest, storeAuth('goal-owner', 'goal:plan-head-stale')).goal;
+  const staleFirst = planStale.proposePlan({ goal: ref('goal', staleGoal), predecessor: null, nodes: makeNode() }, storeAuth('planner', 'plan:plan-head-stale:1')).plan;
+  planStale.proposePlan({ goal: ref('goal', staleGoal), predecessor: ref('plan', staleFirst), nodes: makeNode() }, storeAuth('planner', 'plan:plan-head-stale:2'));
+  const beforePlanStale = planStale.snapshot().lastSeq;
+  assert.throws(
+    () => planStale.approvePlan({ goal: ref('goal', staleGoal), plan: ref('plan', staleFirst), expectedDisposition: null, disposition: 'approved' }, storeAuth('approver', 'approval:plan-head-stale')),
+    (error) => error.code === 'plan_stale',
+  );
+  assert.equal(planStale.snapshot().lastSeq, beforePlanStale);
+  planStale.releaseWriterLease();
+
+  const pinned = dispatchedStore('status-pinned');
+  pinned.store.defineGoal({
+    objective: 'Ship the amended plan-gated change', definitionOfDone: ['node --test passes'],
+    constraints: ['No network access'], risk: 'high', budget: goalBudget(), predecessor: ref('goal', pinned.goal),
+  }, storeAuth('goal-owner', 'goal:status-pinned:amend'));
+  const pinnedStatus = pinned.store.goalPlanStatus({
+    goalId: pinned.goal.goalId, goalVersion: pinned.goal.version, goalDigest: pinned.goal.digest,
+    planId: pinned.plan.planId, planVersion: pinned.plan.version, planDigest: pinned.plan.digest, throughSeq: null,
+  }, scope);
+  assert.equal(pinnedStatus.nodes[0].state, 'dispatched');
+  assert.equal(pinnedStatus.nodes[0].taskId, pinned.fields.id);
+  pinned.store.releaseWriterLease();
+});
+
+test('GP4/GP8: replay rejects proposals and approvals admitted after their exact authority heads were superseded', () => {
+  const proposalDirectory = root('replay-stale-goal-head');
+  const proposalStore = new CoordinationStore(proposalDirectory, { goalPlanPolicy: policy });
+  const goalRequest = {
+    objective: 'Reject reordered stale authority', definitionOfDone: ['node --test passes'], constraints: [],
+    risk: 'high', budget: goalBudget(), predecessor: null,
+  };
+  const nodes = [{
+    key: 'implement', objective: 'Implement exact authority', definitionOfDone: ['node --test passes'], deps: [],
+    pathScope: ['impl/**'], risk: 'high', budget: nodeBudget(), verification: verification(),
+    routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] }, capabilities: ['code'], effects: ['repository_edit'],
+  }];
+  const goal = proposalStore.defineGoal(goalRequest, storeAuth('goal-owner', 'goal:replay-head:1')).goal;
+  const first = proposalStore.proposePlan({ goal: ref('goal', goal), predecessor: null, nodes }, storeAuth('planner', 'plan:replay-head:1')).plan;
+  proposalStore.proposePlan({ goal: ref('goal', goal), predecessor: ref('plan', first), nodes }, storeAuth('planner', 'plan:replay-head:2'));
+  proposalStore.defineGoal({ ...goalRequest, predecessor: ref('goal', goal) }, storeAuth('goal-owner', 'goal:replay-head:2'));
+  proposalStore.releaseWriterLease();
+  rewriteGoalPlanOrder(proposalDirectory, [0, 1, 3, 2]);
+  assert.throws(
+    () => new CoordinationStore(proposalDirectory, { goalPlanPolicy: policy }),
+    (error) => error instanceof CoordinationIntegrityError && error.code === 'goal_plan_integrity',
+  );
+
+  const approvalDirectory = root('replay-stale-plan-head');
+  const approvalStore = new CoordinationStore(approvalDirectory, { goalPlanPolicy: policy });
+  const approvalGoal = approvalStore.defineGoal(goalRequest, storeAuth('goal-owner', 'goal:replay-approval')).goal;
+  const approvalFirst = approvalStore.proposePlan({ goal: ref('goal', approvalGoal), predecessor: null, nodes }, storeAuth('planner', 'plan:replay-approval:1')).plan;
+  approvalStore.approvePlan({ goal: ref('goal', approvalGoal), plan: ref('plan', approvalFirst), expectedDisposition: null, disposition: 'approved' }, storeAuth('approver', 'approval:replay-approval'));
+  approvalStore.proposePlan({ goal: ref('goal', approvalGoal), predecessor: ref('plan', approvalFirst), nodes }, storeAuth('planner', 'plan:replay-approval:2'));
+  approvalStore.releaseWriterLease();
+  rewriteGoalPlanOrder(approvalDirectory, [0, 1, 3, 2]);
+  assert.throws(
+    () => new CoordinationStore(approvalDirectory, { goalPlanPolicy: policy }),
+    (error) => error instanceof CoordinationIntegrityError && error.code === 'goal_plan_integrity',
+  );
 });
 
 test('GP5/GP8: harness, model, and effort constraints each refuse before dispatch', () => {

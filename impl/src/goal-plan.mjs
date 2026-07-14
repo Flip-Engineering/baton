@@ -190,7 +190,7 @@ function normalizeNode(value, policy, goal) {
     capabilities: normalizedSet(value.capabilities, policy.limits.maxItems, 128, 'node.capabilities'),
     effects: normalizedSet(value.effects, policy.limits.maxItems, 128, 'node.effects'),
   };
-  riskIndex(policy, result.risk);
+  if (riskIndex(policy, result.risk) < riskIndex(policy, goal.risk)) fail('plan node risk weakens the goal execution-control tier', 'plan_risk_mismatch');
   if (result.definitionOfDone.some((item) => !goal.definitionOfDone.includes(item))) fail('plan node assigns an unknown definition-of-done item', 'plan_goal_mismatch');
   if (result.capabilities.some((item) => !policy.capabilityClasses.includes(item)) || result.effects.some((item) => !policy.effectClasses.includes(item))) fail('plan node exceeds deployment capability/effect policy', 'plan_effect_invalid');
   return result;

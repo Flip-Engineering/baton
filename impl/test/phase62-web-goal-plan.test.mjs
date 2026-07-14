@@ -162,6 +162,52 @@ test('GP5/GP7/GP8: authenticated web rejects conflicting plan-owned Brief fields
   await driver.drainAndClose('test');
 });
 
+test('GP3/GP4/GP6/GP7: authenticated web preserves risk floors, exact heads, and as-of stale status', async () => {
+  const driver = realWebDriver();
+  const direct = (principalId, powers, idempotencyKey) => ({ actor: `direct:${principalId}`, principalId, sessionId: `${principalId}-session`, powers, repoId: REPO, runId: RUN, idempotencyKey });
+  const { goal: firstGoal } = await driver.coordinator.defineGoal(goalArgs(), direct('owner', ['goal:define'], 'goal:web-heads'));
+  const planRequest = (predecessor, risk = 'high') => ({
+    goal: { goalId: firstGoal.goalId, version: firstGoal.version, digest: firstGoal.digest }, predecessor,
+    nodes: [{ ...node, risk, budget: { ...budget }, verification: { ...verification }, routes: { ...node.routes } }],
+  });
+  const { plan: firstPlan } = await driver.coordinator.proposePlan(planRequest(null), direct('planner', ['plan:propose'], 'plan:web-heads:1'));
+  const approved = await driver.coordinator.approvePlan({
+    goal: { goalId: firstGoal.goalId, version: firstGoal.version, digest: firstGoal.digest },
+    plan: { planId: firstPlan.planId, version: firstPlan.version, digest: firstPlan.digest }, expectedDisposition: null, disposition: 'approved',
+  }, direct('approver', ['plan:approve'], 'approval:web-heads:1'));
+  const { plan: secondPlan } = await driver.coordinator.proposePlan(planRequest({ planId: firstPlan.planId, version: firstPlan.version, digest: firstPlan.digest }), direct('planner', ['plan:propose'], 'plan:web-heads:2'));
+  const web = new WebNorthbound({ coordinator: driver.coordinator, coordination: driver.coordination, repoIds: [REPO], allowedOrigins: [ORIGIN], now: () => Date.parse('2026-07-13T12:00:00.000Z') });
+
+  const historical = await web.execute(context(['goal:observe']), envelope('goal_plan_status', {
+    goalId: firstGoal.goalId, goalVersion: firstGoal.version, goalDigest: firstGoal.digest,
+    planId: firstPlan.planId, planVersion: firstPlan.version, planDigest: firstPlan.digest, throughSeq: approved.event.seq,
+  }, 'status-before-plan-supersession'));
+  assert.equal(historical.status, 200); assert.equal(historical.body.result.nodes[0].state, 'ready');
+  const current = await web.execute(context(['goal:observe']), envelope('goal_plan_status', {
+    goalId: firstGoal.goalId, goalVersion: firstGoal.version, goalDigest: firstGoal.digest,
+    planId: firstPlan.planId, planVersion: firstPlan.version, planDigest: firstPlan.digest, throughSeq: null,
+  }, 'status-after-plan-supersession'));
+  assert.equal(current.status, 200); assert.equal(current.body.result.nodes[0].state, 'stale');
+
+  const beforeRisk = driver.coordination.events().filter((event) => event.kind.startsWith('plan.')).length;
+  const risk = await web.execute(context(['plan:propose']), envelope('plan_propose', planRequest({ planId: secondPlan.planId, version: secondPlan.version, digest: secondPlan.digest }, 'low'), 'risk-floor'));
+  assert.equal(risk.status, 400); assert.equal(risk.body.error.code, 'plan_risk_mismatch');
+  assert.equal(driver.coordination.events().filter((event) => event.kind.startsWith('plan.')).length, beforeRisk);
+
+  const staleApproval = await web.execute(context(['plan:approve']), envelope('plan_approve', {
+    goal: { goalId: firstGoal.goalId, version: firstGoal.version, digest: firstGoal.digest },
+    plan: { planId: firstPlan.planId, version: firstPlan.version, digest: firstPlan.digest }, expectedDisposition: null, disposition: 'approved',
+  }, 'stale-plan-approval'));
+  assert.equal(staleApproval.status, 409); assert.equal(staleApproval.body.error.code, 'plan_stale');
+
+  await driver.coordinator.defineGoal({ ...goalArgs(), predecessor: { goalId: firstGoal.goalId, version: firstGoal.version, digest: firstGoal.digest } }, direct('owner', ['goal:define'], 'goal:web-heads:2'));
+  const beforeGoalStale = driver.coordination.events().filter((event) => event.kind === 'plan.version_proposed').length;
+  const staleGoal = await web.execute(context(['plan:propose']), envelope('plan_propose', planRequest({ planId: secondPlan.planId, version: secondPlan.version, digest: secondPlan.digest }), 'stale-goal-proposal'));
+  assert.equal(staleGoal.status, 409); assert.equal(staleGoal.body.error.code, 'goal_stale');
+  assert.equal(driver.coordination.events().filter((event) => event.kind === 'plan.version_proposed').length, beforeGoalStale);
+  await driver.drainAndClose('test');
+});
+
 test('GP5/GP7/GP8: lost responses reconcile Goal/Plan mutations and gated spawn under the original admission identity', async () => {
   const cases = [
     ['goal_define', goalArgs(), ['goal:define']],
