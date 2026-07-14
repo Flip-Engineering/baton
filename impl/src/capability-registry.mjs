@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { compareCanonicalStrings } from './canonical-order.mjs';
 const typed = (message, code) => Object.assign(new Error(message), { code });
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const json = (value) => JSON.parse(JSON.stringify(value));
@@ -113,7 +114,7 @@ export class CapabilityRegistry {
       throw this.recordFailure;
     }
   }
-  cards() { if (this.recordFailure) throw this.recordFailure; return [...this.entries].sort(([a], [b]) => a.localeCompare(b)).map(([name, entry]) => Object.freeze({ ...json(entry.card), name })); }
+  cards() { if (this.recordFailure) throw this.recordFailure; return [...this.entries].sort(([a], [b]) => compareCanonicalStrings(a, b)).map(([name, entry]) => Object.freeze({ ...json(entry.card), name })); }
   _entry(name) { const entry = this.entries.get(name); if (!entry) throw typed('unknown capability', 'capability_not_found'); return entry; }
   _op(entry, op) {
     if (typeof op !== 'string' || !Object.hasOwn(entry.card.ops, op)) throw typed('operation not advertised by capability', 'capability_op_unavailable');

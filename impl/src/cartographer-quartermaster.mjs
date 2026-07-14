@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { compareCanonicalStrings } from './canonical-order.mjs';
 
 const typed = (message, code) => Object.assign(new Error(message), { code });
 const sha = (value) => createHash('sha256').update(value).digest('hex');
@@ -127,7 +128,7 @@ function npmGraph(raw, policy, grounding, { requireRegistry = false, allowedOrig
   if (raw.length > policy.maxLockfileBytes) throw typed('lockfile exceeds deployment ceiling', grounding === 'actual_lockfile' ? 'sbom_oversize' : 'proposal_oversize');
   let lock; try { lock = JSON.parse(raw); } catch { throw typed('lockfile JSON invalid', grounding === 'actual_lockfile' ? 'sbom_schema_invalid' : 'proposal_schema_invalid'); }
   if (lock?.lockfileVersion !== 3 || !lock.packages || typeof lock.packages !== 'object' || Array.isArray(lock.packages)) throw typed('npm package-lock v3 packages map required', grounding === 'actual_lockfile' ? 'sbom_schema_invalid' : 'proposal_schema_invalid');
-  const entries = Object.entries(lock.packages).filter(([key]) => key !== '').sort(([a], [b]) => a.localeCompare(b));
+  const entries = Object.entries(lock.packages).filter(([key]) => key !== '').sort(([a], [b]) => compareCanonicalStrings(a, b));
   if (entries.length > policy.maxComponents) throw typed('component count exceeds deployment ceiling', grounding === 'actual_lockfile' ? 'sbom_oversize' : 'proposal_oversize');
   const components = [];
   for (const [key, item] of entries) {
@@ -160,7 +161,7 @@ function npmGraph(raw, policy, grounding, { requireRegistry = false, allowedOrig
     const fromRef = key === '' ? rootRef : componentByPath.get(key)?.['bom-ref']; if (!fromRef) continue;
     const dependsOn = [];
     for (const [field, type] of [['dependencies', 'runtime'], ['optionalDependencies', 'optional'], ['devDependencies', 'dev'], ['peerDependencies', 'peer']]) {
-      for (const [name, spec] of Object.entries(item[field] ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
+      for (const [name, spec] of Object.entries(item[field] ?? {}).sort(([a], [b]) => compareCanonicalStrings(a, b))) {
         const target = resolveLockDependency(lock.packages, key, name); const targetRef = target ? componentByPath.get(target)?.['bom-ref'] : null;
         const row = { from: key === '' ? '' : key, name, type, spec };
         if (targetRef) { dependsOn.push(targetRef); requestEdges.push({ ...row, to: target }); } else unresolvedEdges.push(row);
@@ -168,7 +169,7 @@ function npmGraph(raw, policy, grounding, { requireRegistry = false, allowedOrig
     }
     dependencies.push({ ref: fromRef, dependsOn: [...new Set(dependsOn)].sort() });
   }
-  requestEdges.sort((a, b) => stable(a).localeCompare(stable(b))); unresolvedEdges.sort((a, b) => stable(a).localeCompare(stable(b)));
+  requestEdges.sort((a, b) => compareCanonicalStrings(stable(a), stable(b))); unresolvedEdges.sort((a, b) => compareCanonicalStrings(stable(a), stable(b)));
   const edgeCount = requestEdges.length + unresolvedEdges.length;
   if (Number.isSafeInteger(policy.maxEdges) && edgeCount > policy.maxEdges) throw typed('dependency edge count exceeds deployment ceiling', grounding === 'actual_lockfile' ? 'sbom_oversize' : 'proposal_oversize');
   const digest = sha(raw);
@@ -182,7 +183,7 @@ function graphDelta(actual, proposed) {
   const edges = (graph) => new Map(graph.requestEdges.map((row) => [stable(row), row]));
   const ae = edges(actual); const pe = edges(proposed);
   const unresolved = (graph) => new Map(graph.unresolvedEdges.map((row) => [stable(row), row])); const au = unresolved(actual); const pu = unresolved(proposed);
-  const rootRequests = (graph) => Object.fromEntries(['dependencies', 'optionalDependencies', 'devDependencies', 'peerDependencies'].map((field) => [field, Object.fromEntries(Object.entries(graph.root.entry[field] ?? {}).sort(([a], [b]) => a.localeCompare(b)))]));
+  const rootRequests = (graph) => Object.fromEntries(['dependencies', 'optionalDependencies', 'devDependencies', 'peerDependencies'].map((field) => [field, Object.fromEntries(Object.entries(graph.root.entry[field] ?? {}).sort(([a], [b]) => compareCanonicalStrings(a, b)))]));
   const delta = { rootRequest: { before: rootRequests(actual), after: rootRequests(proposed) }, added, removed, changed, edgesAdded: [...pe].filter(([key]) => !ae.has(key)).map(([, row]) => row), edgesRemoved: [...ae].filter(([key]) => !pe.has(key)).map(([, row]) => row), unresolvedEdgesAdded: [...pu].filter(([key]) => !au.has(key)).map(([, row]) => row), unresolvedEdgesRemoved: [...au].filter(([key]) => !pu.has(key)).map(([, row]) => row) };
   return { ...delta, counts: { componentsAdded: added.length, componentsRemoved: removed.length, componentsChanged: changed.length, edgesAdded: delta.edgesAdded.length, edgesRemoved: delta.edgesRemoved.length, unresolvedAdded: delta.unresolvedEdgesAdded.length, unresolvedRemoved: delta.unresolvedEdgesRemoved.length, rootRequestChanged: stable(delta.rootRequest.before) === stable(delta.rootRequest.after) ? 0 : 1 } };
 }
@@ -208,7 +209,7 @@ function advisoryGraphSnapshot(graph, grounding, source, policy) {
     peer: prop(component, 'baton:peer') === 'true', devOptional: prop(component, 'baton:devOptional') === 'true', link: prop(component, 'baton:link') === 'true',
     resolved: prop(component, 'baton:resolved'),
     registryEligible: prop(component, 'baton:link') !== 'true' && validPackagePath(prop(component, 'baton:lockfile_path')) && pathPackageName(prop(component, 'baton:lockfile_path')) === component.name && validSri(prop(component, 'baton:integrity')) && publicNpmRegistryResolution(prop(component, 'baton:resolved'), component.name, component.version),
-  })).sort((a, b) => a.path.localeCompare(b.path));
+  })).sort((a, b) => compareCanonicalStrings(a.path, b.path));
   const sourceLockfilePath = source.lockfilePath ?? source.planQuery?.lockfilePath ?? '';
   if (Buffer.byteLength(sourceLockfilePath) > policy.maxPathBytes || components.some((component) => Buffer.byteLength(component.path) > policy.maxPathBytes)
     || graph.requestEdges.some((edge) => Buffer.byteLength(edge.from) > policy.maxPathBytes || Buffer.byteLength(edge.to) > policy.maxPathBytes)) throw typed('advisory graph path exceeded deployment ceiling', 'advisory_projection_oversize');
@@ -217,7 +218,7 @@ function advisoryGraphSnapshot(graph, grounding, source, policy) {
 function shortestDependencyPaths(snapshot, maxDepth, abort = () => {}) {
   const adjacency = new Map();
   for (const edge of snapshot.requestEdges) { const rows = adjacency.get(edge.from) ?? []; rows.push(edge); adjacency.set(edge.from, rows); }
-  for (const rows of adjacency.values()) rows.sort((a, b) => stable(a).localeCompare(stable(b)));
+  for (const rows of adjacency.values()) rows.sort((a, b) => compareCanonicalStrings(stable(a), stable(b)));
   const paths = new Map([['', []]]); const depths = new Map([['', 0]]); const depthExceeded = new Set(); const queue = [''];
   while (queue.length) {
     abort();
@@ -241,7 +242,7 @@ function advisoryImportSnapshot(full, atlasProvenance, atlasCard, relevantPackag
     if (!item || typeof item.path !== 'string' || !stringArray(item.imports) || !Number.isSafeInteger(item.parseErrors) || item.parseErrors < 0 || typeof item.language !== 'string') throw typed('Atlas advisory map schema mismatch', 'advisory_atlas_integrity');
     if (Buffer.byteLength(item.path) > policy.maxPathBytes || item.imports.some((source) => Buffer.byteLength(source) > policy.maxImportSourceBytes)) throw typed('Atlas advisory map text exceeded deployment ceiling', 'advisory_projection_oversize');
     return { path: item.path, language: item.language, imports: [...item.imports].filter((source) => relevantPackages.has(npmImportPackage(source))).sort(), parseErrors: item.parseErrors };
-  }).sort((a, b) => a.path.localeCompare(b.path));
+  }).sort((a, b) => compareCanonicalStrings(a.path, b.path));
   return { schemaVersion: 1, indexEpoch: atlasProvenance.index_epoch, overlayDigest: atlasProvenance.overlay_digest ?? null, staleness: atlasProvenance.staleness, atlasArtifactDigest: atlasProvenance.artifactDigest, atlasCardDigest: sha(stable(atlasCard)), atlasUnderlying: atlasCard.underlying, supportedLanguages: atlasCard.languages, indexedLanguages: [...new Set(files.map((file) => file.language))].sort(), coverageMeaning: 'addressed_atlas_indexed_files_only_not_repository_completeness', files };
 }
 function advisoryProjection(snapshot, scan, imports, policy, abort = () => {}) {
@@ -261,7 +262,7 @@ function advisoryProjection(snapshot, scan, imports, policy, abort = () => {}) {
     parseErrors += file.parseErrors;
     for (const source of file.imports) { const packageName = npmImportPackage(source); if (!packageName) continue; const rows = importRows.get(packageName) ?? []; rows.push({ path: file.path, source }); importRows.set(packageName, rows); }
   }
-  for (const rows of importRows.values()) rows.sort((a, b) => stable(a).localeCompare(stable(b)));
+  for (const rows of importRows.values()) rows.sort((a, b) => compareCanonicalStrings(stable(a), stable(b)));
   const items = [];
   for (const component of snapshot.components) {
     abort(); if (!component.registryEligible || !component.version || !exactNpm(component.name, component.version)) continue;
@@ -287,7 +288,7 @@ function advisoryProjection(snapshot, scan, imports, policy, abort = () => {}) {
       if (items.length > policy.maxProjectionRows) throw typed('advisory projection exceeded deployment ceiling', 'advisory_projection_oversize');
     }
   }
-  items.sort((a, b) => stable(a).localeCompare(stable(b)));
+  items.sort((a, b) => compareCanonicalStrings(stable(a), stable(b)));
   const incompleteReasons = [...new Set([...(snapshot.unresolvedEdges.length ? ['unresolved_dependency_graph'] : []), ...(snapshot.components.some((component) => !component.registryEligible || !component.version || !exactNpm(component.name, component.version ?? '')) ? ['unsupported_component_identity'] : []), ...(ambiguousPackageNames.size ? ['ambiguous_package_instance_resolution'] : []), ...(snapshot.components.filter((component) => component.registryEligible).some((component) => depthExceeded.has(component.path)) ? ['path_depth_ceiling_exceeded'] : []), ...(snapshot.components.filter((component) => component.registryEligible).some((component) => !paths.has(component.path) && !depthExceeded.has(component.path)) ? ['component_without_root_path'] : []), ...(parseErrors ? ['atlas_parse_errors'] : [])])].sort();
   return { items, incompleteReasons, counts: { components: snapshot.components.length, coordinates: scan.coordinates.length, advisories: scan.results.reduce((sum, row) => sum + row.advisories.length, 0), rows: items.length, importWitnesses: [...importRows.values()].reduce((sum, rows) => sum + rows.length, 0), unresolvedEdges: snapshot.unresolvedEdges.length, atlasParseErrors: parseErrors } };
 }
@@ -601,7 +602,7 @@ export class CartographerQuartermaster {
       const snapshot = advisoryGraphSnapshot(selected.graph, grounding, selected.source, this.advisoryPolicy);
       const coordinates = [...new Map(snapshot.components.filter((component) => component.registryEligible && component.version && exactNpm(component.name, component.version))
         .map((component) => { const coordinate = { ecosystem: 'npm', package: component.name, version: component.version }; return [coordinateKey(coordinate), coordinate]; })).values()]
-        .sort((a, b) => coordinateKey(a).localeCompare(coordinateKey(b)));
+        .sort((a, b) => compareCanonicalStrings(coordinateKey(a), coordinateKey(b)));
       if (coordinates.length > this.advisoryPolicy.scannerCeilings.maxScanComponents) throw typed('advisory graph exceeded scanner component ceiling', 'advisory_projection_oversize');
       const scan = await this.advisoryScanner.scan({ coordinates }, { signal: ctx.signal }); this._abort(ctx);
       if (scan?.scannerId !== this.advisoryPolicy.scannerId || stable(scan.coordinates) !== stable(coordinates)) throw typed('advisory scanner returned a different manifest', 'advisory_scan_coordinate_mismatch');
@@ -698,7 +699,7 @@ export class CartographerQuartermaster {
       if (raw.length > this.sbomPolicy.maxLockfileBytes) throw typed('SBOM lockfile exceeds deployment ceiling', 'sbom_oversize');
       let lock; try { lock = JSON.parse(raw); } catch { throw typed('SBOM lockfile JSON invalid', 'sbom_schema_invalid'); }
       if (lock?.lockfileVersion !== 3 || !lock.packages || typeof lock.packages !== 'object' || Array.isArray(lock.packages)) throw typed('SBOM requires npm package-lock v3 packages map', 'sbom_schema_invalid');
-      const entries = Object.entries(lock.packages).filter(([key]) => key !== '').sort(([a], [b]) => a.localeCompare(b));
+      const entries = Object.entries(lock.packages).filter(([key]) => key !== '').sort(([a], [b]) => compareCanonicalStrings(a, b));
       if (entries.length > this.sbomPolicy.maxComponents) throw typed('SBOM component count exceeds deployment ceiling', 'sbom_oversize');
       const components = [];
       for (const [key, item] of entries) {

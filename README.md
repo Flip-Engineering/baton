@@ -48,7 +48,8 @@ self-contained project-manager-inspired causal/temporal knowledge graph, is pres
 
 Phase 29 now makes deployment-injected Atlas capabilities real fleet tools through one
 Coordinator-owned registry. The same bounded invoke/resume/reverify path is available through the
-authenticated web command surface and the twelve-tool MCP inventory; deployment-owned multi-root
+authenticated Web command surface and the explicit advanced MCP compatibility inventory; the
+ordinary application-backed MCP surface is the shared Run bus. Deployment-owned multi-root
 contexts cannot override actor, budget, repository root, or cancellation, and capability output
 cannot claim verification or merge authority. Phase 30 also live-proves the credentialed GLM leg:
 exact `glm-4.7` at native `low` effort was provider-observed, freshly verified, normally killed,
@@ -226,11 +227,35 @@ pinned tests), mandatory Goal/Plan binding, budget settlement, lifecycle, and cl
 GLM `glm-4.7`/low at `230db8e`. These focused greens do not relabel the original five-provider
 matrix.
 
-**What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
+**What baton is:** a run-centric **fleet application** — one orchestrator agent directs full Claude
+Code / Codex / GLM / Grok workers across vendors while Baton compiles the objective into approved
+work, routes it, watches it, handles attention, verifies it, and closes its resources. The
+Coordinator is the safety kernel beneath that application, not the interface every agent should
+have to assemble manually. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)` remain core uses.
 
 **Everything else supports the driver, and none of it is dropped:** independent verification (re-running a worker's tests so "done" can be trusted), learned routing (which vendor is good at what), a reliable coordination core (so "interrupt worker 3" always lands), telemetry/replay, and worker tools (search, debug, semantic diff). Earlier docs over-billed the *verification* as the product and demoted the *driving* to optional — doc 19 turns that right-side-up.
 
-**Architecture, plainly:** you drive from your CLI agent (Claude Code or Codex is the orchestrator — it decides); underneath, a small reliable program carries out those decisions and does the bookkeeping (dispatch, making interrupts land, re-checking worker claims, the event log). The AI drives; the plumbing makes the driving safe. Southbound, the product tier uses persistent Claude stream-json, Codex app-server, and Grok ACP sessions; one-shot subprocess adapters remain an explicitly limited fire-and-forget tier. Those basic depth gates, audited ACI invocation, Cairn's current causal audit/recall/promotion/correction rungs, Cartographer/Quartermaster's local orientation/reuse, addressed-push, provider and policy-epoch safety rungs, exact provider lifecycle/reap, and initial Goal/Plan authority now ship. Current pursuit retains richer Goal/Plan evidence and amendment policy, authorized continuation/recovery, native session depth, Baton's self-contained project-manager-inspired causal/temporal knowledge graph, authenticated web/runtime depth, Vantage, Evidence Ladder, Scratch Board/Bench, Skill Forge/computer use, registered evaluations, Atlas AST/CST and lexical precision, native SCIP/symbol graphs, deeper CPG/CFG/SSA/PDG and semantic deltas, conditional compiler IR, behavioral fingerprints, true semantic merge, conditional expression/kernel e-graphs, and later Cartographer/Quartermaster and Cairn rungs. Homelab integration is excluded. See [docs/28](docs/28-exhaustive-capability-audit.md).
+**Architecture, plainly:** the ordinary surface is one Run application: concise intent and
+deployment profile, visible Plan approval, exact route, one bounded RunView, attention, evidence,
+and cleanup. Direct embedding, authenticated Web, MCP, and the browser Run desk share that command
+bus; the safe primary CLI/serve adapter remains to be built over it. Underneath,
+the reliable Coordinator kernel makes dispatch, fencing, verification, replay, and reap exact.
+Phase 64 now ships the initial Run bus through direct embedding, authenticated Web, MCP stdio, and
+the authenticated browser desk: start, status, distinct approval, bounded wait, answer, and
+server-fenced steering all return one RunView. Durable `run.stop` fences further Run effects,
+reaps that Run's exact workers, survives restart, and leaves other Runs and the Baton host live.
+Accepted verification now pins its exact commit before disposable branch cleanup. `run.evidence`
+returns a bounded stable manifest, while policy-gated `run.adopt` durably selects that result
+without merging, changing the checkout, or publishing; both are first-class in Web, MCP, and the
+browser Run desk.
+MCP EOF/signals separately invoke the host-only exact deployment shutdown path. A safe primary CLI,
+cursor follow, materialized result export, semantic review, recovery, and multi-node
+scheduling remain active work. Southbound, the product tier
+uses persistent Claude stream-json, Codex app-server, and Grok ACP sessions; one-shot subprocess
+adapters remain an explicitly limited fire-and-forget tier. All retained Goal/Plan, causal graph,
+Vantage, Evidence Ladder, Scratch, Skill Forge, Atlas AST/CST/SCIP/CPG/IR, semantic merge,
+behavioral fingerprint, evaluation, and later capability scope remains in [docs/28](docs/28-exhaustive-capability-audit.md).
+Homelab integration is excluded.
 
 **Design docs** (`docs/`):
 

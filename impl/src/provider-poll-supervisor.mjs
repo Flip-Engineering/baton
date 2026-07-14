@@ -1,3 +1,5 @@
+import { compareCanonicalStrings } from './canonical-order.mjs';
+
 function typed(message, code) { return Object.assign(new Error(message), { code }); }
 const positive = (value) => Number.isSafeInteger(value) && value > 0;
 
@@ -70,7 +72,7 @@ export class ProviderPollSupervisor {
   }
 
   status() {
-    return [...this._rows.values()].sort((a, b) => a.providerId.localeCompare(b.providerId)).map((row) => Object.freeze({
+    return [...this._rows.values()].sort((a, b) => compareCanonicalStrings(a.providerId, b.providerId)).map((row) => Object.freeze({
       providerId: row.providerId, active: row.promise !== null, scheduled: row.timer !== null, attempts: row.attempts,
       backoffMs: row.backoffMs, lastResult: row.lastResult, lastErrorCode: row.lastErrorCode,
     }));

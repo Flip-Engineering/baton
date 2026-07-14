@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { compareCanonicalStrings } from './canonical-order.mjs';
 
 const typed = (message, code) => Object.assign(new Error(message), { code });
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -102,7 +103,7 @@ export class AdvisoryFeedRegistry {
     }
   }
 
-  cards() { return [...this.entries.values()].map((entry) => freeze({ ...json(entry.card), cardDigest: entry.cardDigest })).sort((a, b) => a.providerId.localeCompare(b.providerId)); }
+  cards() { return [...this.entries.values()].map((entry) => freeze({ ...json(entry.card), cardDigest: entry.cardDigest })).sort((a, b) => compareCanonicalStrings(a.providerId, b.providerId)); }
 
   async verify(providerId, input, ctx = {}) {
     const entry = this.entries.get(providerId); if (!entry) throw typed('unknown advisory feed provider', 'provider_not_configured');

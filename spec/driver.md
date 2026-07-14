@@ -1,19 +1,22 @@
-# The Fleet Driver (assembly spec)
+# Fleet kernel assembly spec
 
 *The one place that says "here is the driver, as a single runnable program." The other specs each define a part; this ties them into one buildable thing. Plain language. This is the spec to build against.*
 
 ## What the driver is
 
-One coordinator program. Your CLI agent (Claude Code or Codex) is the boss on top — it *decides* what to do. The driver is the reliable layer underneath that *carries out* those decisions and does the bookkeeping. It runs as a small long-lived process (or, later, an Elixir/OTP app — see doc 17) that owns:
+One coordinator program underneath `BatonApplication`. A human or orchestrator expresses an outcome through the Run API; the application compiles and schedules it. The driver is the reliable kernel that carries out approved decisions and does the bookkeeping. It runs as a long-lived process that owns:
 
 - the pool of workers (each a Codex / Claude / GLM coding tool running in its own copy of the repo),
 - the log of everything that happened,
 - the machinery that makes commands land reliably (version-stamps so stale commands are rejected; confirming a worker actually stopped before moving on),
 - re-running a worker's tests before believing "done."
 
-## The commands the boss (your CLI agent) can give it
+## Internal kernel commands and advanced compatibility surface
 
-This is the driver's whole API — eight commands. (In the current design these are exposed as MCP tools so your CLI agent can call them, but the driver is a normal program and could expose them any way.)
+These eight worker primitives are the Coordinator's kernel API, not the ordinary application. The
+`BatonApplication` scheduler lowers approved Plan nodes to them. Operators use interrupt, kill, and
+drain directly only for emergency control; an explicit advanced Web/MCP surface retains them for
+compatibility and diagnosis.
 
 | Command | What it does | Built from |
 |---|---|---|
@@ -26,7 +29,9 @@ This is the driver's whole API — eight commands. (In the current design these 
 | `list()` | See all workers, their status, budget, and any pending questions/approvals | supervisor (state) |
 | `kill(worker)` | End a worker, confirming the process is really gone | supervisor (kill sequence) |
 
-Your CLI agent uses these to drive: "spawn a Codex worker on this," "wait," "worker 2 is asking whether to use library X — respond with Y," "interrupt worker 3, its approach is wrong," "is worker 1 really done?"
+The normal caller instead uses `run.start`, reads the proposed Plan, calls `run.approve`, and follows
+one RunView. It answers attention through `run.answer`; the application owns task IDs, Briefs,
+dispatch gates, worker selection, and status folding.
 
 ## What the driver's main loop does
 
@@ -63,7 +68,7 @@ The prototype (`prototype/`) is this loop, minus the live feed and steering, alr
 
 ## The four features you named, and where each lives here
 
-1. **An orchestrator directs workers** → the API above + the dispatch step. Your CLI agent decides; the driver executes.
+1. **An orchestrator directs Runs** → the application bus + the dispatch step. The caller decides the outcome and approval; the scheduler and driver execute.
 2. **Messaging both ways** → `send` (down) and `wait`/`respond` (up, including a worker asking questions). Full message shapes in `spec/communication-channel.md`.
 3. **Telemetry / monitoring** → step 3: every worker action becomes a log entry and a live-feed line, with derived signals (stall/loop/budget/scope). Event shapes in doc 05. *(Gap the audit flagged: the live human-facing feed itself needs its own small design — a text stream is enough for v0.)*
 4. **Interruption / steering** → `interrupt` and `send(mode=steer)`, made dependable by step 2's version-stamps and the confirm-it-stopped rule. This was your original red-team target and it's the most hardened part.

@@ -15,7 +15,15 @@ if (!configPath) {
     if (typeof factory !== 'function') throw new TypeError('MCP config module must export default or createMcpServer()');
     const configured = await factory();
     const server = configured instanceof McpFleetServer ? configured : new McpFleetServer(configured);
-    await serveMcpStdio(server);
+    const stopInput = () => { if (!process.stdin.destroyed) process.stdin.destroy(); };
+    process.on('SIGINT', stopInput);
+    process.on('SIGTERM', stopInput);
+    try {
+      await serveMcpStdio(server);
+    } finally {
+      process.off('SIGINT', stopInput);
+      process.off('SIGTERM', stopInput);
+    }
   } catch (error) {
     process.stderr.write(`baton-mcp startup failed: ${error?.message ?? error}\n`);
     process.exitCode = 1;

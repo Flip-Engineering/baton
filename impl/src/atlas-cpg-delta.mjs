@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AtlasCpgSlice, validateAtlasCpgGraph } from './atlas-cpg.mjs';
+import { compareCanonicalStrings } from './canonical-order.mjs';
 
 const BINDING_MODEL = 'atlas-js-lexical-bindings-v1';
 const PRIMARY_KIND = 'cpg_delta';
@@ -45,12 +46,12 @@ function reverifyBudget(claim, ctx) {
 
 function semanticGraph(graph) {
   const keyById = new Map(); const records = new Map(); const ordinals = new Map();
-  const functions = graph.nodes.filter((node) => node.type === 'function').sort((a, b) => start(a) - start(b) || a.id.localeCompare(b.id));
+  const functions = graph.nodes.filter((node) => node.type === 'function').sort((a, b) => start(a) - start(b) || compareCanonicalStrings(a.id, b.id));
   for (const node of functions) {
     const base = `function:${node.name}:${node.kind}`; const ordinal = (ordinals.get(base) ?? 0) + 1; ordinals.set(base, ordinal);
     const key = `${base}#${ordinal}`; keyById.set(node.id, key); records.set(key, { key, id: node.id, range: node.range ?? null, projection: { type: node.type, kind: node.kind, name: node.name } });
   }
-  const rest = graph.nodes.filter((node) => node.type !== 'function').sort((a, b) => start(a) - start(b) || a.id.localeCompare(b.id));
+  const rest = graph.nodes.filter((node) => node.type !== 'function').sort((a, b) => start(a) - start(b) || compareCanonicalStrings(a.id, b.id));
   for (const node of rest) {
     const fn = keyById.get(node.function ?? node.caller) ?? 'file';
     let base;
@@ -124,7 +125,7 @@ function compare(before, after) {
   for (const [key, current] of after.records) if (!before.records.has(key)) nodeChanges.push({ recordType: 'node_change', change: 'added', key, before: null, after: { id: current.id, range: current.range, ...current.projection } });
   for (const [key, edge] of before.edges) if (!after.edges.has(key)) edgeChanges.push({ recordType: 'edge_change', change: 'removed', key, type: edge.type, from: edge.from, to: edge.to, beforeId: edge.id, afterId: null });
   for (const [key, edge] of after.edges) if (!before.edges.has(key)) edgeChanges.push({ recordType: 'edge_change', change: 'added', key, type: edge.type, from: edge.from, to: edge.to, beforeId: null, afterId: edge.id });
-  const order = { removed: 0, modified: 1, added: 2 }; nodeChanges.sort((a, b) => order[a.change] - order[b.change] || a.key.localeCompare(b.key)); edgeChanges.sort((a, b) => order[a.change] - order[b.change] || a.key.localeCompare(b.key));
+  const order = { removed: 0, modified: 1, added: 2 }; nodeChanges.sort((a, b) => order[a.change] - order[b.change] || compareCanonicalStrings(a.key, b.key)); edgeChanges.sort((a, b) => order[a.change] - order[b.change] || compareCanonicalStrings(a.key, b.key));
   return { nodeChanges, edgeChanges };
 }
 function impact(before, after, changes, depth) {
@@ -143,13 +144,13 @@ function impact(before, after, changes, depth) {
   while (queue.length) {
     const current = queue.shift(); const prior = seen.get(current.nodeKey); if (prior !== undefined && prior <= current.distance) continue;
     seen.set(current.nodeKey, current.distance); if (current.distance >= depth) continue;
-    for (const next of (adjacency.get(current.nodeKey) ?? []).sort((a, b) => a.to.localeCompare(b.to) || a.reason.localeCompare(b.reason))) queue.push({ nodeKey: next.to, distance: current.distance + 1, reason: next.reason });
+    for (const next of (adjacency.get(current.nodeKey) ?? []).sort((a, b) => compareCanonicalStrings(a.to, b.to) || compareCanonicalStrings(a.reason, b.reason))) queue.push({ nodeKey: next.to, distance: current.distance + 1, reason: next.reason });
   }
   return [...seen].map(([nodeKey, distance]) => {
     if (seeds.has(nodeKey)) return { recordType: 'impact', nodeKey, distance, reason: 'changed' };
     let reason = 'reachable'; for (const [from, links] of adjacency) if ((seen.get(from) ?? Infinity) + 1 === distance) { const link = links.find((item) => item.to === nodeKey); if (link) { reason = link.reason; break; } }
     return { recordType: 'impact', nodeKey, distance, reason };
-  }).sort((a, b) => a.distance - b.distance || a.nodeKey.localeCompare(b.nodeKey));
+  }).sort((a, b) => a.distance - b.distance || compareCanonicalStrings(a.nodeKey, b.nodeKey));
 }
 
 export class AtlasCpgDelta {

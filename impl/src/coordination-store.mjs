@@ -1,4 +1,7 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync, chmodSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync,
+  readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync,
+} from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import {
@@ -6,6 +9,14 @@ import {
   goalPlanDigest, normalizeGoalPlanPolicy, normalizeGoalRequest, normalizePlanRequest, planBriefMatches,
 } from './goal-plan.mjs';
 import { usdFromNanos, usdToNanos } from './usd.mjs';
+import {
+  CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings,
+  normalizeCanonicalOrderMigration, normalizeCanonicalOrderPolicy,
+} from './canonical-order.mjs';
+
+const CANONICAL_ORDER_MIGRATION = Symbol('canonical-order-migration');
+const CANONICAL_ORDER_RECEIPT = 'canonical-order-receipt.json';
+const CANONICAL_ORDER_TEMP_PREFIX = '.canonical-order-receipt.';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 const TRANSITIONS = new Map([
@@ -54,6 +65,7 @@ function canonical(value) {
 }
 function canonicalDigest(value) { return digest(canonical(value)); }
 function canonicalBytes(value) { return Buffer.byteLength(JSON.stringify(canonical(value))); }
+function sha256Bytes(value) { return createHash('sha256').update(value).digest('hex'); }
 function normalizedRecallText(value) { return value.normalize('NFKC').toLowerCase().trim().replace(/\s+/gu, ' '); }
 function recallTerms(value) { return [...new Set(normalizedRecallText(value).match(/[\p{L}\p{N}]+/gu) ?? [])]; }
 function validUnicodeScalarString(value) {
@@ -134,6 +146,8 @@ function validRepresentationPolicy(policy) {
     && policy.maxResultRefs <= 256 && policy.maxResultBytes <= 16 * 1024 * 1024;
 }
 function validRunId(value) { return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/.test(value); }
+function validResultSha(value) { return typeof value === 'string' && /^[a-f0-9]{40,64}$/u.test(value); }
+function retainedResultRef(sha) { return `refs/baton/results/${sha}`; }
 function promotionActor(value) { return value === 'orchestrator' || (typeof value === 'string' && value.startsWith('operator:')); }
 function validEnvRef(envRef) { return envRef && typeof envRef.repoId === 'string' && envRef.repoId.length > 0 && typeof envRef.treeSha === 'string' && /^[A-Fa-f0-9]{4,128}$/.test(envRef.treeSha); }
 function officialCoordinateMatches(identity, coordinate) { const fields = Object.keys(identity ?? {}).sort().join(','); return ['ecosystem,package,version', 'ecosystem,package,system,version'].includes(fields) && identity.ecosystem === coordinate?.ecosystem && identity.package === coordinate?.package && identity.version === coordinate?.version && (!Object.hasOwn(identity, 'system') || (coordinate.ecosystem === 'npm' && identity.system === 'NPM')); }
@@ -183,8 +197,18 @@ export class CoordinationStore {
   constructor(root, opts = {}) {
     this.root = root;
     this.file = join(root, 'events.jsonl');
+    this._canonicalOrderReceiptFile = join(root, CANONICAL_ORDER_RECEIPT);
     this._clock = opts.clock ?? (() => new Date().toISOString());
     this._appendFile = opts.appendFile ?? appendFileSync;
+    if (Object.hasOwn(opts, 'canonicalOrderMigration')) {
+      throw new TypeError('canonical order migration is offline-only; use migrateCanonicalOrderLedger()');
+    }
+    this._canonicalOrderPolicy = opts.canonicalOrderPolicy === undefined
+      ? null : normalizeCanonicalOrderPolicy(opts.canonicalOrderPolicy);
+    this._canonicalOrderMigration = opts[CANONICAL_ORDER_MIGRATION] === undefined
+      ? null : normalizeCanonicalOrderMigration(opts[CANONICAL_ORDER_MIGRATION], this._canonicalOrderPolicy);
+    this._canonicalOrderReceipt = null;
+    mkdirSync(root, { recursive: true });
     this._advisoryFeedCards = this._configureAdvisoryFeedCards(opts.advisoryFeedCards ?? []);
     this._advisoryReceiptReverify = opts.advisoryReceiptReverify ?? null;
     this._advisoryPollReverify = opts.advisoryPollReverify ?? null;
@@ -216,9 +240,208 @@ export class CoordinationStore {
     this._operationalRangeRead = opts.operationalRangeRead ?? null;
     this._writerLease = null;
     this._writerLeaseRequired = false;
-    mkdirSync(root, { recursive: true });
-    this._load();
+    if (this._canonicalOrderPolicy) this._openCanonicalOrderLedger();
+    else this._load();
   }
+
+  _canonicalOrderFail(message, code = 'canonical_order_integrity') {
+    throw new CoordinationRefusal(message, code);
+  }
+
+  _readCanonicalLedger() {
+    const policy = this._canonicalOrderPolicy;
+    const raw = existsSync(this.file) ? readFileSync(this.file) : Buffer.alloc(0);
+    if (raw.byteLength > policy.maxLedgerBytes) this._canonicalOrderFail('coordination ledger exceeds canonical-order byte ceiling', 'canonical_order_migration_invalid');
+    if (raw.byteLength === 0) return { raw, events: [], offsets: [] };
+    if (raw.at(-1) !== 0x0a) this._canonicalOrderFail('coordination ledger has a truncated canonical-order prefix');
+    const text = raw.toString('utf8');
+    if (!Buffer.from(text, 'utf8').equals(raw)) this._canonicalOrderFail('coordination ledger is not exact UTF-8');
+    const lines = text.slice(0, -1).split('\n');
+    if (lines.length > policy.maxEvents) this._canonicalOrderFail('coordination ledger exceeds canonical-order event ceiling', 'canonical_order_migration_invalid');
+    const events = []; const offsets = []; let offset = 0;
+    for (let index = 0; index < lines.length; index += 1) {
+      const framedBytes = Buffer.byteLength(lines[index], 'utf8') + 1;
+      if (framedBytes > policy.maxEventBytes) this._canonicalOrderFail(`coordination event ${index + 1} exceeds canonical-order byte ceiling`, 'canonical_order_migration_invalid');
+      let event;
+      try { event = JSON.parse(lines[index]); }
+      catch { this._canonicalOrderFail(`coordination event ${index + 1} is invalid JSON`); }
+      events.push(event); offset += framedBytes; offsets.push(offset);
+    }
+    return { raw, events, offsets };
+  }
+
+  _canonicalPrefixEventDigest(events) {
+    let ordered;
+    try { ordered = canonicalJson(events, { maxDepth: 256, maxNodes: 1_000_000 }); }
+    catch (error) { this._canonicalOrderFail(`coordination prefix cannot be canonically bounded: ${error?.message ?? error}`); }
+    return sha256Bytes(Buffer.from(JSON.stringify(ordered), 'utf8'));
+  }
+
+  _canonicalReceiptCore(mode, ledger, createdAt, cutPolicy = this._canonicalOrderPolicy) {
+    const throughSeq = ledger.events.length;
+    const prefixBytes = throughSeq === 0 ? 0 : ledger.offsets[throughSeq - 1];
+    const prefix = ledger.raw.subarray(0, prefixBytes);
+    return {
+      schemaVersion: 1,
+      canonicalOrderVersion: CANONICAL_ORDER_VERSION,
+      mode,
+      throughSeq,
+      prefixBytes,
+      prefixDigest: sha256Bytes(prefix),
+      prefixEventDigest: this._canonicalPrefixEventDigest(ledger.events),
+      policy: clone(this._canonicalOrderPolicy),
+      cutPolicy: clone(cutPolicy),
+      createdAt,
+    };
+  }
+
+  _receiptBytes(receipt) {
+    return Buffer.from(`${JSON.stringify(canonicalJson(receipt, { maxDepth: 16, maxNodes: 128 }))}\n`, 'utf8');
+  }
+
+  _validateCanonicalReceipt(receipt, bytes, ledger) {
+    const fields = ['canonicalOrderVersion', 'createdAt', 'cutPolicy', 'mode', 'policy', 'prefixBytes', 'prefixDigest', 'prefixEventDigest', 'receiptDigest', 'schemaVersion', 'throughSeq'];
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
+      || Object.keys(receipt).sort(compareCanonicalStrings).join(',') !== fields.sort(compareCanonicalStrings).join(',')) {
+      this._canonicalOrderFail('canonical-order receipt has unknown or missing fields');
+    }
+    if (receipt.schemaVersion !== 1 || receipt.canonicalOrderVersion !== CANONICAL_ORDER_VERSION
+      || !['empty_bootstrap', 'adopt_compatible'].includes(receipt.mode)
+      || !Number.isSafeInteger(receipt.throughSeq) || receipt.throughSeq < 0
+      || !Number.isSafeInteger(receipt.prefixBytes) || receipt.prefixBytes < 0
+      || !/^[a-f0-9]{64}$/.test(receipt.prefixDigest ?? '')
+      || !/^[a-f0-9]{64}$/.test(receipt.prefixEventDigest ?? '')
+      || !/^[a-f0-9]{64}$/.test(receipt.receiptDigest ?? '')
+      || !Number.isFinite(Date.parse(receipt.createdAt)) || new Date(Date.parse(receipt.createdAt)).toISOString() !== receipt.createdAt) {
+      this._canonicalOrderFail('canonical-order receipt is malformed or from an unsupported version');
+    }
+    let receiptPolicy; let cutPolicy;
+    try { receiptPolicy = normalizeCanonicalOrderPolicy(receipt.policy); cutPolicy = normalizeCanonicalOrderPolicy(receipt.cutPolicy); }
+    catch { this._canonicalOrderFail('canonical-order receipt policy is malformed'); }
+    if (canonicalDigest(receiptPolicy) !== canonicalDigest(this._canonicalOrderPolicy)) this._canonicalOrderFail('canonical-order receipt policy differs from deployment authority');
+    if (Object.keys(cutPolicy).some((key) => cutPolicy[key] > receiptPolicy[key])) this._canonicalOrderFail('canonical-order receipt cut exceeds deployment authority');
+    const core = Object.fromEntries(Object.entries(receipt).filter(([key]) => key !== 'receiptDigest'));
+    if (receipt.receiptDigest !== sha256Bytes(Buffer.from(JSON.stringify(canonicalJson(core, { maxDepth: 16, maxNodes: 128 })), 'utf8'))) {
+      this._canonicalOrderFail('canonical-order receipt digest is invalid');
+    }
+    const canonicalBytesValue = this._receiptBytes(receipt);
+    if (bytes.byteLength > this._canonicalOrderPolicy.maxReceiptBytes || !bytes.equals(canonicalBytesValue)) {
+      this._canonicalOrderFail('canonical-order receipt bytes are non-canonical or oversized');
+    }
+    if (receipt.throughSeq > ledger.events.length) this._canonicalOrderFail('canonical-order receipt names a missing prefix');
+    const prefixBytes = receipt.throughSeq === 0 ? 0 : ledger.offsets[receipt.throughSeq - 1];
+    const prefix = ledger.raw.subarray(0, prefixBytes);
+    if (receipt.prefixBytes !== prefixBytes || receipt.prefixDigest !== sha256Bytes(prefix)
+      || receipt.prefixEventDigest !== this._canonicalPrefixEventDigest(ledger.events.slice(0, receipt.throughSeq))) {
+      this._canonicalOrderFail('canonical-order pinned prefix diverged');
+    }
+    if ((receipt.mode === 'empty_bootstrap') !== (receipt.throughSeq === 0)) this._canonicalOrderFail('canonical-order receipt mode conflicts with its prefix');
+    return freeze(clone(receipt));
+  }
+
+  _readCanonicalReceipt(ledger = this._readCanonicalLedger()) {
+    if (!existsSync(this._canonicalOrderReceiptFile)) return null;
+    let stat;
+    try { stat = lstatSync(this._canonicalOrderReceiptFile); }
+    catch { this._canonicalOrderFail('canonical-order receipt is unavailable'); }
+    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || stat.size > this._canonicalOrderPolicy.maxReceiptBytes) {
+      this._canonicalOrderFail('canonical-order receipt path or size is invalid');
+    }
+    const bytes = readFileSync(this._canonicalOrderReceiptFile);
+    let receipt;
+    try { receipt = JSON.parse(bytes.toString('utf8')); }
+    catch { this._canonicalOrderFail('canonical-order receipt is invalid JSON'); }
+    return this._validateCanonicalReceipt(receipt, bytes, ledger);
+  }
+
+  _openCanonicalOrderLedger() {
+    const ledger = this._readCanonicalLedger();
+    const receipt = this._readCanonicalReceipt(ledger);
+    if (receipt) {
+      this._canonicalOrderReceipt = receipt;
+      this._load();
+      return;
+    }
+    if (ledger.raw.byteLength === 0) {
+      if (!this._canonicalOrderMigration) this._load();
+      return;
+    }
+    if (this._canonicalOrderMigration) return;
+    this._canonicalOrderFail('non-empty coordination history requires explicit canonical-order adoption', 'canonical_order_migration_required');
+  }
+
+  _cleanupCanonicalOrderTemps() {
+    this._assertWriterLease();
+    for (const name of readdirSync(this.root).filter((entry) => entry.startsWith(CANONICAL_ORDER_TEMP_PREFIX))) {
+      try { unlinkSync(join(this.root, name)); } catch { this._canonicalOrderFail('canonical-order temporary receipt could not be removed'); }
+    }
+  }
+
+  _writeCanonicalReceipt(mode, ledger, cutPolicy = this._canonicalOrderPolicy) {
+    this._assertWriterLease();
+    this._cleanupCanonicalOrderTemps();
+    const createdAt = this._clock();
+    if (!Number.isFinite(Date.parse(createdAt)) || new Date(Date.parse(createdAt)).toISOString() !== createdAt) this._canonicalOrderFail('canonical-order receipt clock is invalid');
+    const core = this._canonicalReceiptCore(mode, ledger, createdAt, cutPolicy);
+    const receipt = { ...core, receiptDigest: sha256Bytes(Buffer.from(JSON.stringify(canonicalJson(core, { maxDepth: 16, maxNodes: 128 })), 'utf8')) };
+    const bytes = this._receiptBytes(receipt);
+    if (bytes.byteLength > this._canonicalOrderPolicy.maxReceiptBytes) this._canonicalOrderFail('canonical-order receipt exceeds its byte ceiling');
+    const temp = join(this.root, `${CANONICAL_ORDER_TEMP_PREFIX}${randomUUID()}`);
+    let fd = null;
+    try {
+      fd = openSync(temp, 'wx', 0o600); writeFileSync(fd, bytes); fsyncSync(fd); closeSync(fd); fd = null;
+      renameSync(temp, this._canonicalOrderReceiptFile); chmodSync(this._canonicalOrderReceiptFile, 0o600);
+      try { const rootFd = openSync(this.root, 'r'); try { fsyncSync(rootFd); } finally { closeSync(rootFd); } } catch { /* directory fsync is not supported on every host */ }
+    } catch (error) {
+      if (fd !== null) try { closeSync(fd); } catch { /* best effort after failed receipt write */ }
+      try { unlinkSync(temp); } catch { /* rename may already have committed */ }
+      throw error;
+    }
+    this._canonicalOrderReceipt = this._readCanonicalReceipt(ledger);
+    return clone(this._canonicalOrderReceipt);
+  }
+
+  _ensureCanonicalOrderReceipt() {
+    if (!this._canonicalOrderPolicy) return null;
+    this._assertWriterLease();
+    const ledger = this._readCanonicalLedger();
+    const current = this._readCanonicalReceipt(ledger);
+    if (current) {
+      if (this._canonicalOrderMigration) {
+        const migration = this._canonicalOrderMigration;
+        const expectedMode = migration.mode === 'reset_empty' ? 'empty_bootstrap' : 'adopt_compatible';
+        const requestedCut = Object.fromEntries(['maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes'].map((key) => [key, migration[key]]));
+        if (current.mode !== expectedMode
+          || canonicalDigest(current.cutPolicy) !== canonicalDigest(requestedCut)
+          || (migration.mode === 'adopt_compatible' && (current.prefixDigest !== migration.expectedPrefixDigest || current.throughSeq !== migration.expectedEvents))) {
+          this._canonicalOrderFail('canonical-order migration conflicts with the existing receipt', 'canonical_order_migration_invalid');
+        }
+      }
+      this._canonicalOrderReceipt = current; return clone(current);
+    }
+    if (this._canonicalOrderMigration) {
+      const migration = this._canonicalOrderMigration;
+      if (Object.keys(migration).filter((key) => key !== 'mode' && !key.startsWith('expected')).some((key) => migration[key] > this._canonicalOrderPolicy[key])) {
+        this._canonicalOrderFail('canonical-order migration exceeds deployment authority', 'canonical_order_migration_invalid');
+      }
+      if (migration.mode === 'reset_empty') {
+        if (ledger.raw.byteLength !== 0 || ledger.events.length !== 0) this._canonicalOrderFail('canonical-order reset requires a newly selected empty ledger', 'canonical_order_migration_invalid');
+        const cutPolicy = Object.fromEntries(['maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes'].map((key) => [key, migration[key]]));
+        return this._writeCanonicalReceipt('empty_bootstrap', ledger, cutPolicy);
+      }
+      if (ledger.raw.byteLength === 0 || ledger.events.length !== migration.expectedEvents
+        || sha256Bytes(ledger.raw) !== migration.expectedPrefixDigest) {
+        this._canonicalOrderFail('canonical-order adoption identity differs from the ledger', 'canonical_order_migration_invalid');
+      }
+      this._resetProjection(); this._load();
+      const cutPolicy = Object.fromEntries(['maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes'].map((key) => [key, migration[key]]));
+      return this._writeCanonicalReceipt('adopt_compatible', ledger, cutPolicy);
+    }
+    if (ledger.raw.byteLength !== 0) this._canonicalOrderFail('non-empty coordination history requires explicit canonical-order adoption', 'canonical_order_migration_required');
+    return this._writeCanonicalReceipt('empty_bootstrap', ledger);
+  }
+
+  canonicalOrderReceipt() { return clone(this._canonicalOrderReceipt); }
 
   _resetProjection() {
     this._events = []; this._byKey = new Map(); this._tasks = new Map(); this._runs = new Map(); this._artifacts = new Map();
@@ -231,7 +454,7 @@ export class CoordinationStore {
     this._evidence = new Map(); this._scratchFacts = new Map(); this._scratchClaims = new Map(); this._scratchReads = [];
     this._knowledgeNodes = new Map(); this._knowledgeEdges = new Map(); this._knowledgeNodeHistory = new Map(); this._knowledgeEdgeHistory = new Map(); this._knowledgeReads = []; this._knowledgeRecallAssessments = new Map(); this._contamination = [];
     this._webCommands = new Map(); this._webCommandScopes = new Map(); this._mcpCalls = new Map(); this._mcpCallScopes = new Map();
-    this._fleetDrains = new Map();
+    this._fleetDrains = new Map(); this._runStops = new Map(); this._runResultAdoptions = new Map();
     this._recoveryDispatches = new Map();
     this._providerReceipts = new Map(); this._providerDeliveryIds = new Map(); this._providerProcessing = new Map(); this._providerPending = new Map();
     this._providerSequences = new Map(); this._providerSourceHealth = new Map();
@@ -282,7 +505,10 @@ export class CoordinationStore {
       try { const observed = JSON.parse(readFileSync(claimPath, 'utf8')); if (observed?.token === claimToken) unlinkSync(claimPath); } catch { /* claim guard was already removed or replaced */ }
     }
     this._writerLease = freeze({ path, token, pid: process.pid }); this._writerLeaseRequired = true;
-    try { this._reloadProjection(); } catch (error) { this.releaseWriterLease(); throw error; }
+    try {
+      if (this._canonicalOrderPolicy) this._ensureCanonicalOrderReceipt();
+      this._reloadProjection();
+    } catch (error) { this.releaseWriterLease(); throw error; }
     return clone(this._writerLease);
   }
 
@@ -1178,7 +1404,7 @@ export class CoordinationStore {
     if (!validRunId(p?.runId)) fail('runId is invalid', 'invalid_run_id');
     if (this._runs.has(p.runId)) fail(`duplicate run seal ${p.runId}`, 'duplicate_run_seal');
     if (!Number.isSafeInteger(p.coordinationUpperBound) || p.coordinationUpperBound !== eventSeq - 1) fail('run coordination prefix is invalid', 'run_prefix_changed');
-    const members = [...this._tasks.values()].filter((task) => task.runId === p.runId).sort((a, b) => a.id.localeCompare(b.id));
+    const members = [...this._tasks.values()].filter((task) => task.runId === p.runId).sort((a, b) => compareCanonicalStrings(a.id, b.id));
     if (members.length === 0) fail(`unknown run ${p.runId}`, 'run_not_found');
     const taskIds = Array.isArray(p.taskIds) ? [...p.taskIds].sort() : [];
     if (JSON.stringify(taskIds) !== JSON.stringify(members.map((task) => task.id))) fail('run membership is invalid', 'run_membership_changed');
@@ -1420,10 +1646,10 @@ export class CoordinationStore {
     const priorConstraint = priorHead?.constraintId ? this._knowledgeNodes.get(priorHead.constraintId) : null;
     const priorConstraintTarget = priorConstraint && !priorConstraint.validTo ? { nodeId: priorConstraint.id, expectedValidityVersion: priorConstraint.validityVersion, affectedReadEvents: readsFor(priorConstraint.id) } : null;
     return {
-      decisionTargets: decisionTargets.sort((a, b) => a.decisionId.localeCompare(b.decisionId)),
-      bindingTargets: bindingTargets.sort((a, b) => a.decisionId.localeCompare(b.decisionId)),
-      findingTargets: [...findingTargets.values()].sort((a, b) => a.nodeId.localeCompare(b.nodeId)),
-      guardTargets: guardTargets.sort((a, b) => a.coordinateKey.localeCompare(b.coordinateKey)),
+      decisionTargets: decisionTargets.sort((a, b) => compareCanonicalStrings(a.decisionId, b.decisionId)),
+      bindingTargets: bindingTargets.sort((a, b) => compareCanonicalStrings(a.decisionId, b.decisionId)),
+      findingTargets: [...findingTargets.values()].sort((a, b) => compareCanonicalStrings(a.nodeId, b.nodeId)),
+      guardTargets: guardTargets.sort((a, b) => compareCanonicalStrings(a.coordinateKey, b.coordinateKey)),
       priorConstraintTarget,
       observedPolicyHashes: [...observedPolicyHashes].sort(),
       examinedStateRows,
@@ -1495,7 +1721,7 @@ export class CoordinationStore {
         affectedFindingReadEvents: finding && !finding.validTo ? this._knowledgeReads.filter((read) => read.nodeIds.includes(findingId)).map((read) => read.eventSeq) : [],
       });
     }
-    return targets.sort((a, b) => a.decisionId.localeCompare(b.decisionId));
+    return targets.sort((a, b) => compareCanonicalStrings(a.decisionId, b.decisionId));
   }
 
   _validateReuseRiskPayload(p, event, integrity = false) {
@@ -1598,7 +1824,7 @@ export class CoordinationStore {
 
   _providerPendingFor(repoId, coordinate) {
     const ids = this._providerPending.get(this._providerCoordinateKey(repoId, coordinate)) ?? new Set();
-    return [...ids].map((id) => this._providerProcessing.get(id)).filter(Boolean).sort((a, b) => a.id.localeCompare(b.id));
+    return [...ids].map((id) => this._providerProcessing.get(id)).filter(Boolean).sort((a, b) => compareCanonicalStrings(a.id, b.id));
   }
 
   _providerAdverseCeilings(repoId) {
@@ -1622,7 +1848,7 @@ export class CoordinationStore {
       targets.push({ decisionId: decision.id, nodeId: decision.nodeId, subjectDigest: decision.subjectDigest, expectedValidityVersion: node.validityVersion, dossierFindingId: finding && !finding.validTo ? findingId : null, affectedDecisionReadEvents: readsFor(decision.nodeId), affectedFindingReadEvents: finding && !finding.validTo ? readsFor(findingId) : [] });
       if (targets.length > ceilings.maxDecisionTargets || derivationOverflow) { derivationOverflow = true; break; }
     }
-    return { targets: targets.sort((a, b) => a.decisionId.localeCompare(b.decisionId)), examinedStateRows, affectedReads, derivationOverflow };
+    return { targets: targets.sort((a, b) => compareCanonicalStrings(a.decisionId, b.decisionId)), examinedStateRows, affectedReads, derivationOverflow };
   }
 
   _providerContribution(row, processing, policy) {
@@ -1632,7 +1858,7 @@ export class CoordinationStore {
 
   _providerAggregate(repoId, coordinate, contribution, policy) {
     const coordinateKey = this._providerCoordinateKey(repoId, coordinate); const ids = new Set(this._reuseProviderCoordinateContributions.get(coordinateKey) ?? []); ids.add(contribution.id);
-    const contributions = [...ids].map((id) => id === contribution.id ? contribution : this._reuseProviderContributions.get(id)).filter(Boolean).sort((a, b) => a.id.localeCompare(b.id));
+    const contributions = [...ids].map((id) => id === contribution.id ? contribution : this._reuseProviderContributions.get(id)).filter(Boolean).sort((a, b) => compareCanonicalStrings(a.id, b.id));
     const prior = this._reuseProviderGuards.get(coordinateKey); const asOf = contributions.map((item) => item.asOf).sort().at(-1);
     const core = { repoId, coordinate: clone(coordinate), blocked: true, contributionIds: contributions.map((item) => item.id), advisoryIds: [...new Set(contributions.flatMap((item) => item.advisoryIds))].sort(), maliciousAdvisoryIds: [...new Set(contributions.flatMap((item) => item.maliciousAdvisoryIds))].sort(), asOf, policyHash: policy.hash, policyVersion: policy.version, policyValidityVersion: (prior?.policyValidityVersion ?? 0) + 1, policyStale: false, requiredPolicyHash: null };
     return freeze({ ...core, guardDigest: canonicalDigest(core) });
@@ -1909,6 +2135,228 @@ export class CoordinationStore {
     return drain;
   }
 
+  _runStopTargets(runId) {
+    const tasks = [...this._tasks.values()].filter((task) => task.runId === runId).sort((a, b) => compareCanonicalStrings(a.id, b.id));
+    if (tasks.length > 100_000) throw new CoordinationRefusal('run stop target set exceeds capacity', 'run_stop_capacity');
+    const targetTaskIds = tasks.map((task) => task.id);
+    const targetWorkerIds = [...new Set(tasks.map((task) => task.reservedWorkerId ?? task.assignee).filter(Boolean))]
+      .sort(compareCanonicalStrings);
+    return { targetTaskIds, targetWorkerIds, targetDigest: canonicalDigest({ targetTaskIds, targetWorkerIds }) };
+  }
+
+  _validateRunStopAdmission(p, event, integrity = false) {
+    const fail = (message, code = 'run_stop_integrity') => {
+      throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code);
+    };
+    const fields = ['schemaVersion', 'repoId', 'runId', 'reasonDigest', 'requestDigest', 'targetTaskIds', 'targetWorkerIds', 'targetDigest'];
+    if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || p.schemaVersion !== 1
+      || !validRunId(p.repoId) || !validRunId(p.runId) || !/^[a-f0-9]{64}$/.test(p.reasonDigest ?? '')
+      || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.targetDigest ?? '')
+      || !Array.isArray(p.targetTaskIds) || !Array.isArray(p.targetWorkerIds)
+      || p.targetTaskIds.length > 100_000 || p.targetWorkerIds.length > 100_000
+      || p.targetTaskIds.some((id) => !boundedText(id, 4_096)) || p.targetWorkerIds.some((id) => !validRunId(id))) {
+      fail('run stop admission is invalid');
+    }
+    if (new Set(p.targetTaskIds).size !== p.targetTaskIds.length || new Set(p.targetWorkerIds).size !== p.targetWorkerIds.length
+      || JSON.stringify([...p.targetTaskIds].sort(compareCanonicalStrings)) !== JSON.stringify(p.targetTaskIds)
+      || JSON.stringify([...p.targetWorkerIds].sort(compareCanonicalStrings)) !== JSON.stringify(p.targetWorkerIds)
+      || p.requestDigest !== canonicalDigest({ repoId: p.repoId, runId: p.runId, reasonDigest: p.reasonDigest })
+      || p.targetDigest !== canonicalDigest({ targetTaskIds: p.targetTaskIds, targetWorkerIds: p.targetWorkerIds })) {
+      fail('run stop admission binding is invalid');
+    }
+    if (event.idempotencyKey !== `run.stop:${p.runId}` || !boundedText(event.actor, 256)) fail('run stop authority is invalid');
+    const targets = this._runStopTargets(p.runId);
+    if (canonicalDigest(targets) !== canonicalDigest({
+      targetTaskIds: p.targetTaskIds, targetWorkerIds: p.targetWorkerIds, targetDigest: p.targetDigest,
+    })) fail('run stop target snapshot diverged');
+    return targets;
+  }
+
+  _validateRunStopCompletion(p, event, integrity = false) {
+    const fail = (message) => {
+      throw integrity ? new CoordinationIntegrityError(message, 'run_stop_integrity') : new CoordinationRefusal(message, 'run_stop_integrity');
+    };
+    if (!p || Object.keys(p).sort().join(',') !== ['receipt', 'runId', 'schemaVersion'].join(',')
+      || p.schemaVersion !== 1 || !validRunId(p.runId)) fail('run stop completion is invalid');
+    const stop = this._runStops.get(p.runId);
+    if (!stop || stop.status !== 'stopping' || stop.receipt !== null) fail('run stop completion has no open admission');
+    if (event.idempotencyKey !== `run.stop.complete:${p.runId}` || event.actor !== stop.actor) fail('run stop completion authority is invalid');
+    const receipt = p.receipt;
+    const receiptFields = ['schemaVersion', 'state', 'scope', 'repoId', 'runId', 'targetCount', 'remainingCount', 'targetDigest', 'counts', 'checks', 'effects', 'receiptDigest'];
+    const countFields = ['pendingCancelled', 'killConfirmed', 'alreadyTerminal', 'processesObserved', 'processesClosed'];
+    const checkFields = ['dispatchClosed', 'interactionsResolved', 'runAuthorityReleased'];
+    const effectFields = ['coordinatorClosed', 'writerReleased', 'transportsClosed'];
+    if (!receipt || Object.keys(receipt).sort().join(',') !== receiptFields.sort().join(',') || receipt.schemaVersion !== 1
+      || receipt.state !== 'stopped' || receipt.scope !== 'run' || receipt.repoId !== stop.repoId || receipt.runId !== stop.runId
+      || receipt.targetCount !== stop.targetWorkerIds.length || receipt.remainingCount !== 0 || receipt.targetDigest !== stop.targetDigest
+      || !receipt.counts || Object.keys(receipt.counts).sort().join(',') !== countFields.sort().join(',')
+      || countFields.some((field) => !Number.isSafeInteger(receipt.counts[field]) || receipt.counts[field] < 0 || receipt.counts[field] > receipt.targetCount)
+      || receipt.counts.pendingCancelled + receipt.counts.killConfirmed + receipt.counts.alreadyTerminal !== receipt.targetCount
+      || receipt.counts.processesObserved !== receipt.counts.processesClosed
+      || !receipt.checks || Object.keys(receipt.checks).sort().join(',') !== checkFields.sort().join(',')
+      || checkFields.some((field) => receipt.checks[field] !== true)
+      || !receipt.effects || Object.keys(receipt.effects).sort().join(',') !== effectFields.sort().join(',')
+      || effectFields.some((field) => receipt.effects[field] !== false)
+      || !/^[a-f0-9]{64}$/.test(receipt.receiptDigest ?? '')) fail('run stop receipt is invalid');
+    const { receiptDigest, ...core } = receipt;
+    if (receiptDigest !== canonicalDigest(core)) fail('run stop receipt digest is invalid');
+    return stop;
+  }
+
+  _runResultAdoptionKey(runId, nodeKey) { return `${runId}\0${nodeKey}`; }
+
+  _runResultAdoptionFailure(message, code = 'run_result_adoption_integrity', integrity = false) {
+    throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code);
+  }
+
+  _normalizeRunResultAdoptionRequest(fields, event, integrity = false) {
+    const fail = (message, code = 'run_result_adoption_invalid') => this._runResultAdoptionFailure(message, code, integrity);
+    const expected = ['evidenceDigest', 'nodeKey', 'reasonDigest', 'repoId', 'requestDigest', 'resultSha', 'runId', 'schemaVersion', 'taskId'];
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+      || Object.keys(fields).sort().join(',') !== expected.sort().join(',') || fields.schemaVersion !== 1
+      || !validRunId(fields.repoId) || !validRunId(fields.runId) || !boundedText(fields.nodeKey, 256)
+      || !boundedText(fields.taskId, 4_096) || !validResultSha(fields.resultSha)
+      || !/^[a-f0-9]{64}$/.test(fields.evidenceDigest ?? '') || !/^[a-f0-9]{64}$/.test(fields.reasonDigest ?? '')
+      || !/^[a-f0-9]{64}$/.test(fields.requestDigest ?? '')) fail('run result adoption request is invalid');
+    const requestCore = {
+      repoId: fields.repoId, runId: fields.runId, nodeKey: fields.nodeKey, taskId: fields.taskId,
+      resultSha: fields.resultSha, evidenceDigest: fields.evidenceDigest, reasonDigest: fields.reasonDigest,
+    };
+    if (fields.requestDigest !== canonicalDigest(requestCore)) fail('run result adoption request digest is invalid');
+    const expectedKey = `run.result_adoption:${fields.runId}:${fields.nodeKey}`;
+    if (event?.idempotencyKey !== expectedKey || !boundedText(event?.actor, 256)) fail('run result adoption authority is invalid');
+    return freeze({ ...clone(requestCore), requestDigest: fields.requestDigest });
+  }
+
+  _deriveRunResultAdoptionBinding(request, integrity = false) {
+    const fail = (message, code = 'run_result_adoption_unavailable') => this._runResultAdoptionFailure(message, code, integrity);
+    const task = this._tasks.get(request.taskId);
+    const dispatch = this._planTaskLinks.get(request.taskId);
+    const goalPlan = task?.brief?.goalPlan;
+    if (!task || task.runId !== request.runId || task.status !== 'completed' || task.acceptanceRevocation
+      || !dispatch || !goalPlan || dispatch.taskId !== task.id || dispatch.binding?.nodeKey !== request.nodeKey
+      || canonicalDigest(dispatch.binding) !== canonicalDigest(goalPlan)) {
+      fail('run result adoption requires the exact completed approved Plan task');
+    }
+    const goal = this._goals.get(this._goalVersionKey(goalPlan.goalId, goalPlan.goalVersion));
+    const plan = this._plans.get(this._planVersionKey(goalPlan.planId, goalPlan.planVersion));
+    const approval = this._planApprovals.get(this._planVersionKey(goalPlan.planId, goalPlan.planVersion));
+    const node = plan?.nodes?.find((row) => row.key === request.nodeKey);
+    if (!goal || !plan || !approval || approval.disposition !== 'approved' || !node
+      || goal.repoId !== request.repoId || goal.runId !== request.runId
+      || plan.repoId !== request.repoId || plan.runId !== request.runId
+      || goal.digest !== goalPlan.goalDigest || plan.digest !== goalPlan.planDigest
+      || approval.digest !== goalPlan.approvalDigest) {
+      fail('run result adoption Plan authority is unavailable');
+    }
+    const artifacts = task.artifactIds.map((id) => this._artifacts.get(id)).filter(Boolean);
+    const active = (artifact) => artifact.accepted === true && artifact.supersededBy === null
+      && !Object.hasOwn(artifact, 'acceptanceInvalidation');
+    const commits = artifacts.filter((artifact) => active(artifact) && artifact.kind === 'commit'
+      && artifact.refs?.sha === request.resultSha
+      && artifact.refs?.retainedResultRef === retainedResultRef(request.resultSha));
+    if (commits.length !== 1) fail('run result adoption requires one active accepted retained commit artifact');
+    const commit = commits[0];
+    const commitEvidence = new Set((commit.provenance ?? []).map((ref) => ref?.coordinationSeq).filter(Number.isSafeInteger));
+    const verifications = artifacts.filter((artifact) => active(artifact) && artifact.kind === 'verification'
+      && (artifact.provenance ?? []).some((ref) => commitEvidence.has(ref?.coordinationSeq)));
+    if (verifications.length !== 1) fail('run result adoption requires one active accepted verification artifact');
+    const verification = verifications[0];
+    const shared = (verification.provenance ?? []).map((ref) => ref?.coordinationSeq)
+      .filter((seq) => Number.isSafeInteger(seq) && commitEvidence.has(seq)).sort((a, b) => a - b);
+    if (shared.length !== 1) fail('run result adoption verification provenance is ambiguous');
+    const mapped = this._events[shared[0] - 1];
+    const source = mapped?.kind === 'evidence.mapped'
+      ? this._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq) : null;
+    if (!mapped || mapped.payload?.kind !== 'verify.reverified' || source?.kind !== 'verify.reverified'
+      || source.actor !== 'policy' || source.worker !== task.assignee || source.taskId !== task.id
+      || source.payload?.accept !== true || digest(source) !== mapped.payload.digest
+      || verification.refs?.worker !== mapped.payload.worker || verification.refs?.workerSeq !== mapped.payload.workerSeq) {
+      fail('run result adoption verification evidence is not the accepted task result');
+    }
+    return freeze({
+      taskVersion: task.version,
+      goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest },
+      plan: { planId: plan.planId, version: plan.version, digest: plan.digest },
+      approvalDigest: approval.digest,
+      commitArtifact: { id: commit.id, digest: commit.digest },
+      verificationArtifact: { id: verification.id, digest: verification.digest },
+      verificationEvidence: {
+        coordinationSeq: mapped.seq, worker: mapped.payload.worker,
+        workerSeq: mapped.payload.workerSeq, digest: mapped.payload.digest,
+      },
+    });
+  }
+
+  _validateRunResultAdoptionAdmission(p, event, integrity = false) {
+    const fail = (message, code = 'run_result_adoption_integrity') => this._runResultAdoptionFailure(message, code, integrity);
+    const fields = ['adoptionDigest', 'binding', 'evidenceDigest', 'nodeKey', 'reasonDigest', 'repoId', 'requestDigest', 'resultSha', 'retainedResultRef', 'runId', 'schemaVersion', 'taskId'];
+    if (!p || typeof p !== 'object' || Array.isArray(p)
+      || Object.keys(p).sort().join(',') !== fields.sort().join(',') || p.schemaVersion !== 1
+      || !/^[a-f0-9]{64}$/.test(p.adoptionDigest ?? '')) fail('run result adoption admission is malformed');
+    const request = this._normalizeRunResultAdoptionRequest(Object.fromEntries(
+      ['schemaVersion', 'repoId', 'runId', 'nodeKey', 'taskId', 'resultSha', 'evidenceDigest', 'reasonDigest', 'requestDigest']
+        .map((key) => [key, p[key]]),
+    ), event, integrity);
+    if (p.retainedResultRef !== retainedResultRef(request.resultSha)) fail('run result adoption retained ref is invalid');
+    const binding = this._deriveRunResultAdoptionBinding(request, integrity);
+    if (canonicalDigest(p.binding) !== canonicalDigest(binding)) fail('run result adoption binding diverged');
+    const core = Object.fromEntries(Object.entries(p).filter(([key]) => key !== 'adoptionDigest'));
+    if (p.adoptionDigest !== canonicalDigest(core)) fail('run result adoption admission digest is invalid');
+    if (this._runResultAdoptions.has(this._runResultAdoptionKey(p.runId, p.nodeKey))) fail('run result adoption identity is already occupied');
+    return binding;
+  }
+
+  _validateRunResultAdoptionCompletion(p, event, integrity = false) {
+    const fail = (message, code = 'run_result_adoption_integrity') => this._runResultAdoptionFailure(message, code, integrity);
+    if (!p || typeof p !== 'object' || Array.isArray(p)
+      || Object.keys(p).sort().join(',') !== ['nodeKey', 'receipt', 'runId', 'schemaVersion'].join(',')
+      || p.schemaVersion !== 1 || !validRunId(p.runId) || !boundedText(p.nodeKey, 256)) {
+      fail('run result adoption completion is malformed');
+    }
+    const adoption = this._runResultAdoptions.get(this._runResultAdoptionKey(p.runId, p.nodeKey));
+    if (!adoption || adoption.status !== 'pending' || adoption.receipt !== null) fail('run result adoption completion has no pending admission');
+    if (event?.idempotencyKey !== `run.result_adoption.complete:${p.runId}:${p.nodeKey}` || event.actor !== adoption.actor) {
+      fail('run result adoption completion authority is invalid');
+    }
+    const binding = this._deriveRunResultAdoptionBinding(adoption, integrity);
+    if (canonicalDigest(binding) !== canonicalDigest(adoption.binding)) fail('run result adoption accepted authority changed before completion');
+    const receipt = p.receipt;
+    const receiptFields = ['binding', 'checks', 'effects', 'nodeKey', 'receiptDigest', 'repoId', 'result', 'runId', 'schemaVersion', 'scope', 'state', 'taskId'];
+    const bindingFields = ['admissionDigest', 'approvalDigest', 'commitArtifactDigest', 'commitArtifactId', 'evidenceDigest', 'goalDigest', 'planDigest', 'verificationArtifactDigest', 'verificationArtifactId'];
+    const checkFields = ['mainUnchanged', 'refPinned', 'taskAccepted', 'verificationAccepted', 'worktreeIndependent'];
+    const effectFields = ['indexChanged', 'mainHeadChanged', 'published', 'workingTreeChanged'];
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
+      || Object.keys(receipt).sort().join(',') !== receiptFields.sort().join(',') || receipt.schemaVersion !== 1
+      || receipt.state !== 'adopted' || receipt.scope !== 'run-result' || receipt.repoId !== adoption.repoId
+      || receipt.runId !== adoption.runId || receipt.nodeKey !== adoption.nodeKey || receipt.taskId !== adoption.taskId
+      || !receipt.binding || Object.keys(receipt.binding).sort().join(',') !== bindingFields.sort().join(',')
+      || canonicalDigest(receipt.binding) !== canonicalDigest({
+        admissionDigest: adoption.adoptionDigest, evidenceDigest: adoption.evidenceDigest,
+        goalDigest: adoption.binding.goal.digest, planDigest: adoption.binding.plan.digest,
+        approvalDigest: adoption.binding.approvalDigest,
+        commitArtifactId: adoption.binding.commitArtifact.id, commitArtifactDigest: adoption.binding.commitArtifact.digest,
+        verificationArtifactId: adoption.binding.verificationArtifact.id,
+        verificationArtifactDigest: adoption.binding.verificationArtifact.digest,
+      })
+      || !receipt.result || Object.keys(receipt.result).sort().join(',') !== ['ref', 'sha'].join(',')
+      || receipt.result.sha !== adoption.resultSha || receipt.result.ref !== adoption.retainedResultRef
+      || !receipt.checks || Object.keys(receipt.checks).sort().join(',') !== checkFields.sort().join(',')
+      || checkFields.some((field) => receipt.checks[field] !== true)
+      || !receipt.effects || Object.keys(receipt.effects).sort().join(',') !== effectFields.sort().join(',')
+      || effectFields.some((field) => receipt.effects[field] !== false)
+      || !/^[a-f0-9]{64}$/.test(receipt.receiptDigest ?? '')) fail('run result adoption receipt is invalid');
+    const { receiptDigest, ...core } = receipt;
+    if (receiptDigest !== canonicalDigest(core)) fail('run result adoption receipt digest is invalid');
+    return adoption;
+  }
+
+  _assertRunAdmissionOpen(runId) {
+    if (runId != null && this._runStops.has(runId)) {
+      throw new CoordinationRefusal(`run ${runId} is stopping`, 'run_stopping');
+    }
+  }
+
   _acceptanceRevocationFailure(message, code, integrity = false) {
     throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code);
   }
@@ -1954,7 +2402,7 @@ export class CoordinationStore {
     }
     const artifacts = [...this._artifacts.values()]
       .filter((artifact) => artifact.taskId === task.id && artifact.accepted === true)
-      .sort((a, b) => a.id.localeCompare(b.id));
+      .sort((a, b) => compareCanonicalStrings(a.id, b.id));
     if (artifacts.length === 0 || artifacts.some((artifact) => artifact.createdEvent >= evidenceSeq
       || Object.hasOwn(artifact, 'acceptanceInvalidation'))) {
       this._acceptanceRevocationFailure('task has no earlier unrevoked accepted artifacts', 'acceptance_revocation_unavailable', integrity);
@@ -1987,7 +2435,7 @@ export class CoordinationStore {
         newValidityVersion: node.validityVersion + 1, invalidationVersion: 1,
         affectedReadEvents: clone(affectedReads.get(node.id) ?? []),
       };
-    }).filter(Boolean).sort((a, b) => a.nodeId.localeCompare(b.nodeId));
+    }).filter(Boolean).sort((a, b) => compareCanonicalStrings(a.nodeId, b.nodeId));
     if (knowledgeTargets.length > ACCEPTANCE_REVOCATION_LIMITS.maxTargets) {
       this._acceptanceRevocationFailure('task acceptance revocation knowledge target set exceeded its ceiling', 'acceptance_revocation_oversize', integrity);
     }
@@ -2209,6 +2657,18 @@ export class CoordinationStore {
 
   _apply(event) {
     const p = event.payload;
+    let admittedRunId = null;
+    if (event.kind === 'goal.version_defined') admittedRunId = p?.goal?.runId ?? null;
+    else if (event.kind === 'plan.version_proposed') admittedRunId = p?.plan?.runId ?? null;
+    else if (event.kind === 'plan.approval_decided') {
+      admittedRunId = this._plans.get(this._planVersionKey(p?.approval?.plan?.planId, p?.approval?.plan?.version))?.runId ?? null;
+    } else if (event.kind === 'plan.node_dispatched') {
+      admittedRunId = this._plans.get(this._planVersionKey(p?.binding?.planId, p?.binding?.planVersion))?.runId ?? null;
+    } else if (event.kind === 'task.created') admittedRunId = p?.runId ?? null;
+    else if (event.kind === 'task.claimed') admittedRunId = this._tasks.get(p?.id)?.runId ?? null;
+    if (admittedRunId !== null && this._runStops.has(admittedRunId)) {
+      throw new CoordinationIntegrityError(`effect ${event.kind} was admitted after run ${admittedRunId} began stopping`, 'run_stopping');
+    }
     if (['goal.version_defined', 'plan.version_proposed', 'plan.approval_decided', 'plan.node_dispatched', 'plan.node_budget_settled'].includes(event.kind)) {
       this._applyGoalPlanEvent(event);
     } else if (event.kind === 'provider.processing_deferred') {
@@ -2320,6 +2780,7 @@ export class CoordinationStore {
       if (!observed || digest(observed) !== p.digest) throw new CoordinationIntegrityError(`operational evidence mismatch ${p.worker}:${p.workerSeq}`, 'evidence_mismatch');
       this._evidence.set(`${p.worker}:${p.workerSeq}`, freeze({ ...clone(p), coordinationSeq: event.seq }));
     } else if (event.kind === 'artifact.registered') {
+      this._validateProvisionalResultRef(p, true);
       this._artifacts.set(p.id, freeze({ ...clone(p), createdEvent: event.seq, version: 1, supersededBy: null, supersededEvent: null }));
       const task = this._tasks.get(p.taskId);
       this._tasks.set(p.taskId, freeze({ ...clone(task), artifactIds: [...task.artifactIds, p.id] }));
@@ -2648,6 +3109,28 @@ export class CoordinationStore {
     } else if (event.kind === 'fleet.drain_completed') {
       const old = this._validateFleetDrainCompletion(p, event, true);
       this._fleetDrains.set(p.drainId, freeze({ ...clone(old), status: 'completed', receipt: clone(p.receipt), completedEvent: event.seq, completedAt: event.ts }));
+    } else if (event.kind === 'run.stop_admitted') {
+      this._validateRunStopAdmission(p, event, true);
+      this._runStops.set(p.runId, freeze({
+        ...clone(p), actor: event.actor, status: 'stopping', admittedEvent: event.seq, admittedAt: event.ts,
+        receipt: null, completedEvent: null, completedAt: null,
+      }));
+    } else if (event.kind === 'run.stop_completed') {
+      const old = this._validateRunStopCompletion(p, event, true);
+      this._runStops.set(p.runId, freeze({
+        ...clone(old), status: 'stopped', receipt: clone(p.receipt), completedEvent: event.seq, completedAt: event.ts,
+      }));
+    } else if (event.kind === 'run.result_adoption_admitted') {
+      this._validateRunResultAdoptionAdmission(p, event, true);
+      this._runResultAdoptions.set(this._runResultAdoptionKey(p.runId, p.nodeKey), freeze({
+        ...clone(p), actor: event.actor, status: 'pending', admittedEvent: event.seq, admittedAt: event.ts,
+        receipt: null, completedEvent: null, completedAt: null,
+      }));
+    } else if (event.kind === 'run.result_adoption_completed') {
+      const old = this._validateRunResultAdoptionCompletion(p, event, true);
+      this._runResultAdoptions.set(this._runResultAdoptionKey(p.runId, p.nodeKey), freeze({
+        ...clone(old), status: 'adopted', receipt: clone(p.receipt), completedEvent: event.seq, completedAt: event.ts,
+      }));
     } else if (event.kind === 'web.command_admitted') {
       const command = freeze({ ...clone(p), status: 'admitted', admittedEvent: event.seq, admittedAt: event.ts, outcome: null, completedEvent: null });
       this._webCommands.set(p.commandId, command);
@@ -2666,6 +3149,8 @@ export class CoordinationStore {
       // Append-only MCP security/audit record; it deliberately owns no tool authority.
     } else if (event.kind === 'web.audit') {
       // Append-only security/audit record; it deliberately owns no command authority.
+    } else {
+      throw new CoordinationIntegrityError(`unsupported coordination event kind ${event.kind}`, 'unsupported_event_kind');
     }
   }
 
@@ -2683,6 +3168,7 @@ export class CoordinationStore {
   routePolicy() { return clone(this._routePolicy); }
   representationPolicy() { return clone(this._representationPolicy); }
   goalPlanPolicy() { return clone(this._goalPlanPolicy); }
+  canonicalOrderPolicy() { return clone(this._canonicalOrderPolicy); }
   goalVersion(goalId, version) { return clone(this._goals.get(this._goalVersionKey(goalId, version)) ?? null); }
   planVersion(planId, version) { return clone(this._plans.get(this._planVersionKey(planId, version)) ?? null); }
 
@@ -2704,6 +3190,7 @@ export class CoordinationStore {
       if (prior.kind !== 'goal.version_defined' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('goal idempotency key is bound differently', 'goal_conflict');
       return freeze({ ok: true, result: 'idempotent', event: clone(prior), goal: clone(prior.payload.goal) });
     }
+    this._assertRunAdmissionOpen(auth.runId ?? null);
     const scopeKey = this._goalScopeKey(auth.repoId, auth.runId ?? null); const head = this._goalHeads.get(scopeKey);
     if (request.predecessor === null && head) throw new CoordinationRefusal('goal predecessor is required', 'goal_predecessor_required');
     if (request.predecessor !== null && (!head || head.goalId !== request.predecessor.goalId || head.version !== request.predecessor.version || head.digest !== request.predecessor.digest)) throw new CoordinationRefusal('goal predecessor is stale', 'goal_stale');
@@ -2739,6 +3226,7 @@ export class CoordinationStore {
       if (prior.kind !== 'plan.version_proposed' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('plan idempotency key is bound differently', 'plan_conflict');
       return freeze({ ok: true, result: 'idempotent', event: clone(prior), plan: clone(prior.payload.plan) });
     }
+    this._assertRunAdmissionOpen(auth.runId ?? null);
     const goalHead = this._goalHeads.get(this._goalScopeKey(auth.repoId, auth.runId ?? null));
     if (!goalHead || goalHead.goalId !== goal.goalId || goalHead.version !== goal.version || goalHead.digest !== goal.digest) throw new CoordinationRefusal('plan goal is superseded', 'goal_stale');
     const headKey = this._planHeadKey(request.goal); const head = this._planHeads.get(headKey);
@@ -2771,6 +3259,7 @@ export class CoordinationStore {
       if (prior.kind !== 'plan.approval_decided' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('approval idempotency key is bound differently', 'plan_approval_conflict');
       return freeze({ ok: true, result: 'idempotent', event: clone(prior), approval: clone(prior.payload.approval) });
     }
+    this._assertRunAdmissionOpen(plan.runId);
     const goalHead = this._goalHeads.get(this._goalScopeKey(auth.repoId, auth.runId ?? null));
     const planHead = this._planHeads.get(this._planHeadKey(plan.goal));
     if (!goalHead || goalHead.goalId !== goal.goalId || goalHead.version !== goal.version || goalHead.digest !== goal.digest
@@ -2794,6 +3283,7 @@ export class CoordinationStore {
       || !route || Object.keys(route).sort().join(',') !== ['effort', 'model', 'vendor'].sort().join(',')) throw new CoordinationRefusal('plan dispatch coordinates are invalid', 'plan_dispatch_invalid');
     const goal = this._goals.get(this._goalVersionKey(gate.goalId, gate.goalVersion)); const plan = this._plans.get(this._planVersionKey(gate.planId, gate.planVersion));
     if (!goal || !plan || goal.digest !== gate.goalDigest || plan.digest !== gate.planDigest || plan.goal.goalId !== goal.goalId || plan.goal.version !== goal.version || plan.goal.digest !== goal.digest) throw new CoordinationRefusal('plan dispatch coordinates are stale', 'plan_stale');
+    this._assertRunAdmissionOpen(goal.runId);
     const goalHead = this._goalHeads.get(this._goalScopeKey(goal.repoId, goal.runId)); const planHead = this._planHeads.get(this._planHeadKey(plan.goal));
     if (goalHead?.goalId !== goal.goalId || goalHead.version !== goal.version || goalHead.digest !== goal.digest
       || planHead?.planId !== plan.planId || planHead.version !== plan.version || planHead.digest !== plan.digest) throw new CoordinationRefusal('plan dispatch coordinates are superseded', 'plan_stale');
@@ -3113,7 +3603,7 @@ export class CoordinationStore {
     }
     return freeze({ ok: true, projection: clone(representation), grounding: 'derived' });
   }
-  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), artifacts: [...this._artifacts.values()].map(clone), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._goalPlanPolicy || this._goals.size > 0 ? { goalPlan: { goals: [...this._goals.values()].map(clone), plans: [...this._plans.values()].map(clone), approvals: [...this._planApprovals.values()].map(clone), dispatches: [...this._planDispatches.values()].map(clone), budgetSettlements: [...this._planBudgetSettlements.values()].map(clone) } } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
+  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), ...(this._runStops.size > 0 ? { runStops: [...this._runStops.values()].map(clone) } : {}), ...(this._runResultAdoptions.size > 0 ? { runResultAdoptions: [...this._runResultAdoptions.values()].map(clone) } : {}), artifacts: [...this._artifacts.values()].map(clone), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._goalPlanPolicy || this._goals.size > 0 ? { goalPlan: { goals: [...this._goals.values()].map(clone), plans: [...this._plans.values()].map(clone), approvals: [...this._planApprovals.values()].map(clone), dispatches: [...this._planDispatches.values()].map(clone), budgetSettlements: [...this._planBudgetSettlements.values()].map(clone) } } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
   healthCheck() { try { if (!existsSync(this.file)) return this._events.length === 0; const raw = readFileSync(this.file, 'utf8'); return raw.length === 0 || raw.endsWith('\n'); } catch { return false; } }
   readyTasks() {
     return [...this._tasks.values()].filter((task) => task.status === 'pending' && task.assignee == null
@@ -3121,6 +3611,116 @@ export class CoordinationStore {
   }
 
   fleetDrain(id) { return clone(this._fleetDrains.get(id) ?? null); }
+
+  runStop(runId) { return clone(this._runStops.get(runId) ?? null); }
+
+  runResultAdoption(runId, nodeKey) {
+    if (!validRunId(runId) || !boundedText(nodeKey, 256)) throw new TypeError('run result adoption coordinates are invalid');
+    return clone(this._runResultAdoptions.get(this._runResultAdoptionKey(runId, nodeKey)) ?? null);
+  }
+
+  pendingRunResultAdoptions(limit = 1_000) {
+    if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) throw new TypeError('run result adoption scan limit is invalid');
+    return [...this._runResultAdoptions.values()].filter((adoption) => adoption.status === 'pending')
+      .sort((a, b) => a.admittedEvent - b.admittedEvent).slice(0, limit).map(clone);
+  }
+
+  admitRunResultAdoption(fields, auth) {
+    const preview = { actor: auth?.actor, idempotencyKey: auth?.key };
+    const request = this._normalizeRunResultAdoptionRequest(fields, preview, false);
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      if (prior.kind !== 'run.result_adoption_admitted' || prior.actor !== auth.actor
+        || prior.payload?.requestDigest !== request.requestDigest) {
+        throw new CoordinationRefusal('run result adoption idempotency conflict', 'run_result_adoption_conflict');
+      }
+      return freeze({ ok: true, result: 'replay', event: clone(prior), adoption: this.runResultAdoption(fields.runId, fields.nodeKey) });
+    }
+    if (this._runResultAdoptions.has(this._runResultAdoptionKey(fields.runId, fields.nodeKey))) {
+      throw new CoordinationRefusal('run result adoption identity conflict', 'run_result_adoption_conflict');
+    }
+    const binding = this._deriveRunResultAdoptionBinding(request, false);
+    const core = {
+      schemaVersion: 1, ...clone(request), retainedResultRef: retainedResultRef(request.resultSha), binding: clone(binding),
+    };
+    const payload = { ...core, adoptionDigest: canonicalDigest(core) };
+    this._validateRunResultAdoptionAdmission(payload, { ...preview, payload }, false);
+    const event = this._append('run.result_adoption_admitted', payload, auth);
+    return freeze({ ok: true, result: 'admitted', event: clone(event), adoption: this.runResultAdoption(fields.runId, fields.nodeKey) });
+  }
+
+  completeRunResultAdoption(fields, auth) {
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+      || Object.keys(fields).sort().join(',') !== ['nodeKey', 'receipt', 'runId', 'schemaVersion'].join(',')) {
+      throw new CoordinationRefusal('run result adoption completion is invalid', 'run_result_adoption_invalid');
+    }
+    const payload = clone(fields);
+    const adoption = this._runResultAdoptions.get(this._runResultAdoptionKey(fields.runId, fields.nodeKey));
+    if (adoption?.status === 'adopted') {
+      const prior = this._byKey.get(auth?.key);
+      if (!prior || prior.kind !== 'run.result_adoption_completed' || prior.actor !== auth?.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
+        throw new CoordinationRefusal('run result adoption completion conflict', 'run_result_adoption_conflict');
+      }
+      return freeze({ ok: true, result: 'replay', event: clone(prior), adoption: this.runResultAdoption(fields.runId, fields.nodeKey) });
+    }
+    const preview = { actor: auth?.actor, idempotencyKey: auth?.key, payload };
+    this._validateRunResultAdoptionCompletion(payload, preview, false);
+    if (this._byKey.has(auth.key)) throw new CoordinationRefusal('run result adoption completion idempotency conflict', 'run_result_adoption_conflict');
+    const event = this._append('run.result_adoption_completed', payload, auth);
+    return freeze({ ok: true, result: 'completed', event: clone(event), adoption: this.runResultAdoption(fields.runId, fields.nodeKey) });
+  }
+
+  pendingRunStops(limit = 1_000) {
+    if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) throw new TypeError('run stop scan limit is invalid');
+    return [...this._runStops.values()].filter((stop) => stop.status === 'stopping')
+      .sort((a, b) => a.admittedEvent - b.admittedEvent).slice(0, limit).map(clone);
+  }
+
+  admitRunStop(fields, auth) {
+    const expectedFields = ['schemaVersion', 'repoId', 'runId', 'reasonDigest', 'requestDigest'];
+    if (!fields || Object.keys(fields).sort().join(',') !== expectedFields.sort().join(',') || fields.schemaVersion !== 1
+      || !validRunId(fields.repoId) || !validRunId(fields.runId) || !/^[a-f0-9]{64}$/.test(fields.reasonDigest ?? '')
+      || fields.requestDigest !== canonicalDigest({ repoId: fields.repoId, runId: fields.runId, reasonDigest: fields.reasonDigest })
+      || auth?.key !== `run.stop:${fields.runId}` || !boundedText(auth?.actor, 256)) {
+      throw new CoordinationRefusal('run stop request is invalid', 'run_stop_invalid');
+    }
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      if (prior.kind !== 'run.stop_admitted' || prior.actor !== auth.actor || prior.payload?.requestDigest !== fields.requestDigest) {
+        throw new CoordinationRefusal('run stop idempotency conflict', 'run_stop_conflict');
+      }
+      return freeze({ ok: true, result: 'replay', event: clone(prior), stop: this.runStop(fields.runId) });
+    }
+    if (this._runStops.has(fields.runId)) throw new CoordinationRefusal('run stop identity conflict', 'run_stop_conflict');
+    const known = this._goalHeads.has(this._goalScopeKey(fields.repoId, fields.runId))
+      || [...this._tasks.values()].some((task) => task.runId === fields.runId);
+    if (!known) throw new CoordinationRefusal(`unknown run ${fields.runId}`, 'not_found');
+    const targets = this._runStopTargets(fields.runId);
+    const payload = { ...clone(fields), ...targets };
+    const preview = { actor: auth.actor, idempotencyKey: auth.key, payload };
+    this._validateRunStopAdmission(payload, preview);
+    const event = this._append('run.stop_admitted', payload, auth);
+    return freeze({ ok: true, result: 'admitted', event: clone(event), stop: this.runStop(fields.runId) });
+  }
+
+  completeRunStop(runId, receipt, auth) {
+    const payload = { schemaVersion: 1, runId, receipt: clone(receipt) };
+    const stop = this._runStops.get(runId);
+    if (stop?.status === 'stopped') {
+      const prior = this._byKey.get(auth?.key);
+      if (!prior || prior.kind !== 'run.stop_completed' || prior.actor !== auth?.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
+        throw new CoordinationRefusal('run stop completion conflict', 'run_stop_conflict');
+      }
+      return freeze({ ok: true, result: 'replay', event: clone(prior), stop: this.runStop(runId) });
+    }
+    const preview = { actor: auth?.actor, idempotencyKey: auth?.key, payload };
+    this._validateRunStopCompletion(payload, preview);
+    if (this._byKey.has(auth.key)) throw new CoordinationRefusal('run stop completion idempotency conflict', 'run_stop_conflict');
+    const event = this._append('run.stop_completed', payload, auth);
+    return freeze({ ok: true, result: 'completed', event: clone(event), stop: this.runStop(runId) });
+  }
 
   admitFleetDrain(fields, auth) {
     const preview = { actor: auth?.actor, idempotencyKey: auth?.key, payload: fields };
@@ -3256,6 +3856,7 @@ export class CoordinationStore {
     if (this._tasks.has(fields.id)) throw new CoordinationRefusal(`duplicate task ${fields.id}`, 'duplicate_task');
     const runId = fields.runId ?? null;
     if (runId !== null && !validRunId(runId)) throw new CoordinationRefusal('task runId is invalid', 'invalid_run_id');
+    this._assertRunAdmissionOpen(runId);
     if (runId !== null && this._runs.get(runId)?.status === 'sealed') throw new CoordinationRefusal(`run ${runId} is sealed`, 'run_sealed');
     const deps = [...(fields.deps ?? [])];
     for (const dep of deps) if (!this._tasks.has(dep)) throw new CoordinationRefusal(`missing dependency ${dep}`, 'missing_dependency');
@@ -3296,6 +3897,7 @@ export class CoordinationStore {
     if (this._tasks.has(fields.id)) {
       throw new CoordinationRefusal('recovery refinement target is unavailable', 'recovery_refinement_unavailable');
     }
+    this._assertRunAdmissionOpen(fields.runId ?? null);
     const fixedTs = this._clock();
     const [createdEvent, claimedEvent] = this._appendBatch([
       { kind: 'task.created', payload: createdPayload, auth, fixedTs },
@@ -3336,6 +3938,7 @@ export class CoordinationStore {
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), task: this.task(id) };
     const task = this._tasks.get(id);
     if (!task) throw new CoordinationRefusal(`unknown task ${id}`, 'not_found');
+    this._assertRunAdmissionOpen(task.runId ?? null);
     if (TERMINAL.has(task.status)) throw new CoordinationRefusal(`terminal task ${id}`, 'terminal');
     if (task.version !== expectedVersion) throw new CoordinationRefusal(`stale task version ${expectedVersion}`, 'stale_version');
     if (task.assignee != null) throw new CoordinationRefusal(`already assigned ${id}`, 'already_assigned');
@@ -3421,6 +4024,18 @@ export class CoordinationStore {
     return { ok: true, result: 'registered', event: clone(event), artifact: clone(this._artifacts.get(manifest.id)) };
   }
 
+  _validateProvisionalResultRef(manifest, integrity = false) {
+    if (!Object.hasOwn(manifest?.refs ?? {}, 'retainedResultRef')) return true;
+    const valid = manifest.kind === 'commit' && manifest.accepted === true
+      && validResultSha(manifest.refs?.sha)
+      && manifest.refs.retainedResultRef === retainedResultRef(manifest.refs.sha);
+    if (!valid) {
+      if (integrity) throw new CoordinationIntegrityError('accepted result artifact retained ref is invalid', 'run_result_ref_integrity');
+      throw new CoordinationRefusal('accepted result artifact retained ref is invalid', 'result_ref_invalid');
+    }
+    return true;
+  }
+
   _prepareArtifact(fields, terminalStatus) {
     const task = this._tasks.get(fields?.taskId);
     if (!task) throw new CoordinationRefusal(`unknown artifact task ${fields?.taskId}`, 'not_found');
@@ -3428,6 +4043,7 @@ export class CoordinationStore {
     if (Object.keys(manifest).some((field) => ARTIFACT_LIFECYCLE_FIELDS.has(field))) throw new CoordinationRefusal('artifact manifest uses lifecycle-owned fields', 'reserved_artifact_field');
     manifest.digest ??= digest({ taskId: manifest.taskId, kind: manifest.kind, refs: manifest.refs, provenance: manifest.provenance });
     manifest.id ??= `artifact:${manifest.digest}`;
+    this._validateProvisionalResultRef(manifest, false);
     if (this._artifacts.has(manifest.id)) throw new CoordinationRefusal(`duplicate artifact ${manifest.id}`, 'duplicate_artifact');
     if (manifest.accepted === true && (!Array.isArray(manifest.provenance) || manifest.provenance.length === 0)) {
       throw new CoordinationRefusal('accepted artifact requires provenance', 'missing_provenance');
@@ -3532,7 +4148,7 @@ export class CoordinationStore {
   providerProcessing(id) { return clone(this._providerProcessing.get(id) ?? null); }
   providerSourceHealth(repoId, providerId, sourceEpoch) { return clone(this._providerSourceHealth.get(this._providerSourceKey(repoId, providerId, sourceEpoch)) ?? null); }
   providerAttemptPolicy() { return clone(this._providerAttemptPolicy); }
-  advisoryFeedCards() { return [...this._advisoryFeedCards.values()].map((entry) => freeze({ ...clone(entry.card), cardDigest: entry.cardDigest })).sort((a, b) => a.providerId.localeCompare(b.providerId)); }
+  advisoryFeedCards() { return [...this._advisoryFeedCards.values()].map((entry) => freeze({ ...clone(entry.card), cardDigest: entry.cardDigest })).sort((a, b) => compareCanonicalStrings(a.providerId, b.providerId)); }
   pendingProviderReconciliation(repoId, coordinate) { return this._providerPendingFor(repoId, coordinate).map(clone); }
 
   dueProviderProcessing(repoId, at) {
@@ -3583,9 +4199,9 @@ export class CoordinationStore {
       if (row.repoId !== repoId || (request.providerId && row.providerId !== request.providerId)) continue;
       providers.push({ providerId: row.providerId, sourceEpoch: row.sourceEpoch, status: row.status, highSequence: row.highSequence ?? null, finalSequence: row.finalSequence ?? null, firstGap: clone(row.firstGap ?? null), cursorDigest: row.cursorDigest ?? null, lastReceiptEvent: row.lastReceiptEvent ?? row.lastEvent ?? null, reconciliationEvent: row.reconciliationEvent ?? null, pendingCount: pending.get(key) ?? 0 });
     }
-    providers.sort((a, b) => a.providerId.localeCompare(b.providerId) || a.sourceEpoch.localeCompare(b.sourceEpoch));
+    providers.sort((a, b) => compareCanonicalStrings(a.providerId, b.providerId) || compareCanonicalStrings(a.sourceEpoch, b.sourceEpoch));
     if (providers.length > ceilings.maxProviders) throw new CoordinationRefusal('provider read provider set exceeded deployment ceiling', 'provider_read_oversize');
-    const summaries = processing.map((row) => ({ processingId: row.id, providerId: row.providerId, sourceEpoch: row.sourceEpoch, status: row.status, version: row.version, coordinateCount: row.coordinates.length, receiptCount: row.receiptIds.length, createdEvent: row.createdEvent, lastReceiptEvent: row.lastReceiptEvent, completionEvent: row.completionEvent ?? null, attemptCount: row.attemptCount ?? 0, lastAttemptEvent: row.lastAttemptEvent ?? null, lastFailureCode: row.lastFailureCode ?? null, nextAttemptAt: row.nextAttemptAt ?? null })).sort((a, b) => a.processingId.localeCompare(b.processingId));
+    const summaries = processing.map((row) => ({ processingId: row.id, providerId: row.providerId, sourceEpoch: row.sourceEpoch, status: row.status, version: row.version, coordinateCount: row.coordinates.length, receiptCount: row.receiptIds.length, createdEvent: row.createdEvent, lastReceiptEvent: row.lastReceiptEvent, completionEvent: row.completionEvent ?? null, attemptCount: row.attemptCount ?? 0, lastAttemptEvent: row.lastAttemptEvent ?? null, lastFailureCode: row.lastFailureCode ?? null, nextAttemptAt: row.nextAttemptAt ?? null })).sort((a, b) => compareCanonicalStrings(a.processingId, b.processingId));
     const available = summaries.filter((row) => request.after === undefined || row.processingId > request.after); const selected = available.slice(0, limit);
     const response = { schemaVersion: 1, repoId, asOfEvent: this._events.length, providers: clone(providers), currentProcessing: [], historicalProcessing: [], nextAfter: null };
     const bytes = () => Buffer.byteLength(JSON.stringify(response));
@@ -4193,8 +4809,8 @@ export class CoordinationStore {
       const verified = readerTaskIds.map((taskId) => { const outcome = verifiedOutcomes.get(taskId); return this._knowledgePayload({ id: `knowledge-edge:verifiedby:${nodeId}:${outcome.id}`, type: 'VerifiedBy', from: nodeId, to: outcome.id, evidence: [{ coordinationSeq: byTask.get(taskId).seq }, { coordinationSeq: outcome.observedSeq }] }); });
       candidates.push({ nodeId, type: 'Finding', trigger: 'scratch.cited_observed', sourceSeq: source.seq, sourceKind, sourceDigest: canonicalDigest(source) }); nodes.push(sourceNode, finding); edges.push(derived, ...verified);
     }
-    const order = (a, b) => a.sourceSeq - b.sourceSeq || a.sourceKind.localeCompare(b.sourceKind) || a.nodeId.localeCompare(b.nodeId); candidates.sort(order);
-    const candidateOrder = new Map(candidates.map((row, index) => [row.nodeId, index])); nodes.sort((a, b) => (candidateOrder.get(a.id) ?? candidateOrder.get(a.id.replace(/^scratch-source:/, 'promotion:')) ?? Number.MAX_SAFE_INTEGER) - (candidateOrder.get(b.id) ?? candidateOrder.get(b.id.replace(/^scratch-source:/, 'promotion:')) ?? Number.MAX_SAFE_INTEGER) || a.id.localeCompare(b.id)); edges.sort((a, b) => a.id.localeCompare(b.id));
+    const order = (a, b) => a.sourceSeq - b.sourceSeq || compareCanonicalStrings(a.sourceKind, b.sourceKind) || compareCanonicalStrings(a.nodeId, b.nodeId); candidates.sort(order);
+    const candidateOrder = new Map(candidates.map((row, index) => [row.nodeId, index])); nodes.sort((a, b) => (candidateOrder.get(a.id) ?? candidateOrder.get(a.id.replace(/^scratch-source:/, 'promotion:')) ?? Number.MAX_SAFE_INTEGER) - (candidateOrder.get(b.id) ?? candidateOrder.get(b.id.replace(/^scratch-source:/, 'promotion:')) ?? Number.MAX_SAFE_INTEGER) || compareCanonicalStrings(a.id, b.id)); edges.sort((a, b) => compareCanonicalStrings(a.id, b.id));
     if (candidates.length > policy.maxCandidates) throw new CoordinationRefusal('knowledge promotion candidates exceeded deployment ceiling', 'causal_promotion_oversize');
     const candidateBytes = candidates.reduce((sum, candidate) => sum + canonicalBytes({ candidate, nodes: nodes.filter((node) => node.id === candidate.nodeId || node.sourceSeq === candidate.sourceSeq), edges: edges.filter((edge) => edge.from === candidate.nodeId) }), 0);
     const evidenceRefs = [...nodes, ...edges].reduce((sum, row) => sum + (row.evidence?.length ?? 0), 0);
@@ -4369,7 +4985,7 @@ export class CoordinationStore {
       edges.push(this._knowledgePayload({ id: `knowledge-edge:verifiedby:${findingId}:${oracle.artifactNodeId}`, type: 'VerifiedBy', from: findingId, to: oracle.artifactNodeId, evidence: [{ coordinationSeq: oracle.artifactEventSeq }, { artifactId: oracle.artifactId }] }));
     }
     if (target) edges.push(this._knowledgePayload({ id: `knowledge-edge:supersedes:${findingId}:${target.nodeId}`, type: 'Supersedes', from: findingId, to: target.nodeId, evidence: findingEvidence, expectedValidityVersion: target.expectedValidityVersion }));
-    const nodes = [sourceNode, finding].sort((a, b) => a.id.localeCompare(b.id)); edges.sort((a, b) => a.id.localeCompare(b.id));
+    const nodes = [sourceNode, finding].sort((a, b) => compareCanonicalStrings(a.id, b.id)); edges.sort((a, b) => compareCanonicalStrings(a.id, b.id));
     for (const node of nodes) if ((this._knowledgeNodeHistory.get(node.id) ?? []).some((version) => version.observedSeq < beforeEventSeq)) throw new CoordinationRefusal('Scratch correction node namespace is occupied', 'causal_correction_conflict');
     for (const edge of edges) if ((this._knowledgeEdgeHistory.get(edge.id) ?? []).some((version) => version.observedSeq < beforeEventSeq)) throw new CoordinationRefusal('Scratch correction edge namespace is occupied', 'causal_correction_conflict');
     const affectedReadEvents = target ? this._knowledgeReads.filter((read) => read.eventSeq <= observedSeq && read.nodeIds.includes(target.nodeId)).map((read) => read.eventSeq) : [];
@@ -4478,9 +5094,9 @@ export class CoordinationStore {
     if (!validKnowledgeContradictionPolicy(policy) || policy.repoId !== repoId) throw new CoordinationRefusal('knowledge contradiction list policy is invalid', 'causal_contradiction_invalid');
     const request = this._contradictionListRequest(rawRequest, policy); const nodes = this.queryKnowledge({ observedSeq: request.observedSeq }); const edges = this.queryKnowledgeEdges({ observedSeq: request.observedSeq });
     if (edges.length > policy.maxScanEdges) throw new CoordinationRefusal('knowledge contradiction edge scan exceeded deployment ceiling', 'causal_contradiction_oversize');
-    const nodeMap = new Map(nodes.map((node) => [node.id, node])); const contradictions = edges.filter((edge) => edge.type === 'Contradicts').sort((a, b) => a.id.localeCompare(b.id));
+    const nodeMap = new Map(nodes.map((node) => [node.id, node])); const contradictions = edges.filter((edge) => edge.type === 'Contradicts').sort((a, b) => compareCanonicalStrings(a.id, b.id));
     const rows = contradictions.map((edge) => {
-      const endpoints = [nodeMap.get(edge.from), nodeMap.get(edge.to)].sort((a, b) => (a?.id ?? '').localeCompare(b?.id ?? ''));
+      const endpoints = [nodeMap.get(edge.from), nodeMap.get(edge.to)].sort((a, b) => compareCanonicalStrings(a?.id ?? '', b?.id ?? ''));
       if (edge.validTo || edge.resolvedBy || endpoints.length !== 2 || endpoints.some((node) => !node || node.validTo) || endpoints[0].id === endpoints[1].id || endpoints[0].type !== endpoints[1].type) throw new CoordinationRefusal('knowledge contradiction bundle is malformed', 'causal_contradiction_integrity');
       const safeEndpoints = endpoints.map((node) => ({
         id: node.id, type: node.type, grounding: node.grounding, contentDigest: node.contentDigest,
@@ -4661,7 +5277,7 @@ export class CoordinationStore {
       if (node.validTo && Date.parse(node.validTo) <= effectiveAt) return false;
       if (node.expiresAt && Number.isFinite(effectiveAt) && effectiveAt >= Date.parse(node.expiresAt)) return false;
       return true;
-    }).sort((a, b) => a.id.localeCompare(b.id)).map(clone);
+    }).sort((a, b) => compareCanonicalStrings(a.id, b.id)).map(clone);
   }
 
   queryKnowledgeEdges(query = {}) {
@@ -4674,7 +5290,7 @@ export class CoordinationStore {
       if (Date.parse(edge.validFrom) > effectiveAt) return false;
       if (edge.validTo && Date.parse(edge.validTo) <= effectiveAt) return false;
       return true;
-    }).sort((a, b) => a.id.localeCompare(b.id)).map(clone);
+    }).sort((a, b) => compareCanonicalStrings(a.id, b.id)).map(clone);
   }
 
   _prepareKnowledgeRecall(request, policy, actor) {
@@ -4736,7 +5352,7 @@ export class CoordinationStore {
     }
     const allEdges = this.queryKnowledgeEdges({ observedSeq: query.observedSeq, asOf: query.asOf }).filter((edge) => edge.type !== 'ReadBy' && nodeMap.has(edge.from) && nodeMap.has(edge.to));
     const incident = new Map(); for (const edge of allEdges) for (const id of [edge.from, edge.to]) { const rows = incident.get(id) ?? []; rows.push(edge); incident.set(id, rows); }
-    for (const rows of incident.values()) rows.sort((a, b) => a.id.localeCompare(b.id));
+    for (const rows of incident.values()) rows.sort((a, b) => compareCanonicalStrings(a.id, b.id));
     const sources = [...new Set([...query.seedNodeIds, ...eligible.filter((node) => (lexical.get(node.id)?.score ?? 0) > 0).map((node) => node.id)])].sort();
     const distances = new Map(sources.map((id) => [id, 0])); const queue = sources.map((id) => ({ id, depth: 0 })); const seenNodes = new Set(); const seenEdges = new Set(); let graphRows = 0;
     while (queue.length > 0) {
@@ -4754,11 +5370,11 @@ export class CoordinationStore {
       const lex = lexical.get(node.id) ?? { idExact: false, idMatches: 0, typeMatches: 0, bodyMatches: 0, score: 0 }; const graphDistance = distances.get(node.id) ?? null; const graphScore = graphDistance === null ? 0 : Math.max(1, 30 - 5 * graphDistance);
       return { node, score: lex.score + graphScore, reason: { idExact: lex.idExact, idMatches: lex.idMatches, typeMatches: lex.typeMatches, bodyMatches: lex.bodyMatches, graphDistance, graphScore } };
     };
-    const ranked = eligible.map(rank).filter((row) => row.score > 0).sort((a, b) => b.score - a.score || a.node.id.localeCompare(b.node.id));
-    const selected = ranked.slice(0, query.limit); const selectedIds = new Set(selected.map((row) => row.node.id)); const finalIds = new Set(selectedIds); const contradictionEdges = allEdges.filter((edge) => edge.type === 'Contradicts').sort((a, b) => a.id.localeCompare(b.id));
+    const ranked = eligible.map(rank).filter((row) => row.score > 0).sort((a, b) => b.score - a.score || compareCanonicalStrings(a.node.id, b.node.id));
+    const selected = ranked.slice(0, query.limit); const selectedIds = new Set(selected.map((row) => row.node.id)); const finalIds = new Set(selectedIds); const contradictionEdges = allEdges.filter((edge) => edge.type === 'Contradicts').sort((a, b) => compareCanonicalStrings(a.id, b.id));
     let changed = true; while (changed) { changed = false; for (const edge of contradictionEdges) if (finalIds.has(edge.from) || finalIds.has(edge.to)) for (const id of [edge.from, edge.to]) if (!finalIds.has(id)) { finalIds.add(id); changed = true; } }
     if (finalIds.size > query.limit || finalIds.size > policy.maxResults) throw new CoordinationRefusal('knowledge recall contradiction bundle exceeded deployment ceiling', 'causal_recall_oversize');
-    const rows = [...finalIds].map((id) => rank(nodeMap.get(id))).sort((a, b) => b.score - a.score || a.node.id.localeCompare(b.node.id)).map(({ node, score, reason }) => {
+    const rows = [...finalIds].map((id) => rank(nodeMap.get(id))).sort((a, b) => b.score - a.score || compareCanonicalStrings(a.node.id, b.node.id)).map(({ node, score, reason }) => {
       const fullReason = { ...reason, selected: selectedIds.has(node.id), contradictionPeer: !selectedIds.has(node.id) }; const reasonDigest = canonicalDigest(fullReason);
       const safe = Object.fromEntries(['id', 'type', 'grounding', 'observedSeq', 'eventTimeSeq', 'validFrom', 'validTo', 'validityVersion'].filter((key) => Object.hasOwn(node, key)).map((key) => [key, clone(node[key])]));
       return { ...safe, score, reason: fullReason, reasonDigest, snippet: utf8Snippet(node.body, policy.maxSnippetBytes) };
@@ -5002,7 +5618,7 @@ export class CoordinationStore {
     const allNodes = this.queryKnowledge({ observedSeq }); const allEdges = this.queryKnowledgeEdges({ observedSeq });
     const nodeMap = new Map(allNodes.map((node) => [node.id, node])); if (!nodeMap.has(nodeId)) throw new CoordinationRefusal(`unknown or non-current knowledge node ${nodeId}`, 'not_found');
     const causalTypes = new Set(['Supports', 'Contradicts', 'Supersedes', 'Informed', 'ProducedBy', 'Contains', 'DependsOn', 'Refines', 'VerifiedBy', 'DerivedFrom', 'Affects', 'Cites', 'ObservedIn']);
-    const incident = new Map(); for (const edge of allEdges.filter((row) => causalTypes.has(row.type) && nodeMap.has(row.from) && nodeMap.has(row.to)).sort((a, b) => a.id.localeCompare(b.id))) for (const id of [edge.from, edge.to]) { const rows = incident.get(id) ?? []; rows.push(edge); incident.set(id, rows); }
+    const incident = new Map(); for (const edge of allEdges.filter((row) => causalTypes.has(row.type) && nodeMap.has(row.from) && nodeMap.has(row.to)).sort((a, b) => compareCanonicalStrings(a.id, b.id))) for (const id of [edge.from, edge.to]) { const rows = incident.get(id) ?? []; rows.push(edge); incident.set(id, rows); }
     const queue = [{ id: nodeId, depth: 0 }]; const seenNodes = new Set(); const seenEdges = new Set(); const selectedNodes = []; const selectedEdges = []; const frontier = new Set(); let evidenceRefs = 0;
     const assertRows = () => { if (selectedNodes.length + selectedEdges.length + evidenceRefs + frontier.size > maxRows || evidenceRefs > maxEvidenceRefs) throw new CoordinationRefusal('causal trace exceeded deployment ceiling', 'causal_trace_oversize'); };
     while (queue.length > 0) {
@@ -5019,7 +5635,7 @@ export class CoordinationStore {
     const safeNode = (node) => Object.fromEntries(['id', 'type', 'grounding', 'observedSeq', 'eventTimeSeq', 'validFrom', 'validTo', 'validityVersion'].filter((key) => Object.hasOwn(node, key)).map((key) => [key, clone(node[key])]));
     const safeEdge = (edge) => Object.fromEntries(['id', 'type', 'from', 'to', 'observedSeq', 'eventTimeSeq', 'validFrom', 'validTo', 'validityVersion', 'resolvedBy', 'winnerId', 'loserId'].filter((key) => Object.hasOwn(edge, key)).map((key) => [key, clone(edge[key])]));
     const evidence = [...selectedNodes, ...selectedEdges].flatMap((row) => (row.evidence ?? []).map((ref) => ({ ownerId: row.id, ...clone(ref) })));
-    return freeze({ nodeId, observedSeq, observedAt: this.observationTime(observedSeq), complete: frontier.size === 0, frontier: [...frontier].sort(), nodes: selectedNodes.sort((a, b) => a.id.localeCompare(b.id)).map(safeNode), edges: selectedEdges.sort((a, b) => a.id.localeCompare(b.id)).map(safeEdge), evidence });
+    return freeze({ nodeId, observedSeq, observedAt: this.observationTime(observedSeq), complete: frontier.size === 0, frontier: [...frontier].sort(), nodes: selectedNodes.sort((a, b) => compareCanonicalStrings(a.id, b.id)).map(safeNode), edges: selectedEdges.sort((a, b) => compareCanonicalStrings(a.id, b.id)).map(safeEdge), evidence });
   }
 
   auditKnowledge(options = {}) {
@@ -5059,7 +5675,7 @@ export class CoordinationStore {
       ...verifiedFindings.filter((node) => !completeFindings.includes(node)).map((node) => ({ axis: 'grounding', code: 'verified_finding_without_lineage', id: node.id })),
       ...routeStats.filter((node) => !completeRouteStats.includes(node)).map((node) => ({ axis: 'grounding', code: 'route_stat_without_observation', id: node.id })),
       ...contradictions.filter((edge) => !validResolution(edge) && !(!edge.resolvedBy && !edge.validTo && liveNodeIds.has(edge.from) && liveNodeIds.has(edge.to))).map((edge) => ({ axis: 'contradiction', code: 'malformed_contradiction_lifecycle', id: edge.id })),
-    ].sort((a, b) => `${a.axis}:${a.code}:${a.id}`.localeCompare(`${b.axis}:${b.code}:${b.id}`));
+    ].sort((a, b) => compareCanonicalStrings(`${a.axis}:${a.code}:${a.id}`, `${b.axis}:${b.code}:${b.id}`));
     const recalls = reads.filter((row) => row.readKind === 'recall'); const taskScopedRecalls = recalls.filter((row) => typeof row.taskId === 'string');
     const eligibleRecallRows = taskScopedRecalls.filter((row) => this._recallAssessmentCandidate(this._events[row.eventSeq - 1], observedSeq) !== null); const eligibleRecallSeqs = new Set(eligibleRecallRows.map((row) => row.eventSeq)); const assessedEligible = assessments.filter((row) => eligibleRecallSeqs.has(row.recallEventSeq));
     const verifiedPassAfterRecall = assessedEligible.filter((row) => row.outcome === 'verified_pass_after_recall').length; const verifiedFailAfterRecall = assessedEligible.filter((row) => row.outcome === 'verified_fail_after_recall').length;
@@ -5084,6 +5700,31 @@ export class CoordinationStore {
       violations: { critical: violations.length, total: violations.length, samples: violations.slice(0, sampleLimit), omittedSamples: Math.max(0, violations.length - sampleLimit) },
     });
   }
+}
+
+/** Offline-only canonical-order compatibility cut. This acquires the same exclusive writer lease
+ * as the live store, validates/replays the exact raw prefix, commits only the private receipt, and
+ * never rewrites a coordination byte. It is intentionally absent from Coordinator/web/MCP. */
+export function migrateCanonicalOrderLedger(root, options) {
+  if (typeof root !== 'string' || root.length === 0 || root.includes('\0')) throw new TypeError('canonical-order migration root is invalid');
+  if (!options || typeof options !== 'object' || Array.isArray(options)
+    || Object.keys(options).some((key) => !['clock', 'migration', 'policy'].includes(key))
+    || !options.policy || !options.migration || (options.clock !== undefined && typeof options.clock !== 'function')) {
+    throw new TypeError('canonical-order offline migration options are invalid');
+  }
+  const policy = normalizeCanonicalOrderPolicy(options.policy);
+  const migration = normalizeCanonicalOrderMigration(options.migration, policy);
+  const store = new CoordinationStore(root, {
+    canonicalOrderPolicy: policy,
+    [CANONICAL_ORDER_MIGRATION]: migration,
+    ...(options.clock ? { clock: options.clock } : {}),
+  });
+  store.claimWriterLease();
+  try {
+    const receipt = store.canonicalOrderReceipt();
+    if (!receipt) throw new CoordinationRefusal('canonical-order migration did not commit a receipt', 'canonical_order_migration_invalid');
+    return receipt;
+  } finally { store.releaseWriterLease({ requireOwned: true }); }
 }
 
 /** Convenience for explicit hand-wired assemblies and tests. Production `createDriver()` still

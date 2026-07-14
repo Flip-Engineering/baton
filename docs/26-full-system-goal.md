@@ -26,6 +26,15 @@ knowledge, and give workers the complete capability and representation planes be
 must be reachable through the public assembly, test-locked, adversarially reviewed, and live-proven
 where a real harness or operating-system boundary is involved.
 
+Completion also requires one integrated, run-centric application. A caller supplies a concise
+objective plus a deployment-owned profile and route choice; Baton owns Goal/Plan compilation,
+approval presentation, dependency scheduling, fences, Brief derivation, attention, recovery,
+verification, semantic state, evidence, and cleanup. Direct embedding, the `baton` CLI,
+authenticated Web, and MCP must call one command registry and return one bounded `RunView`.
+Low-level Coordinator verbs and raw receipts remain an advanced kernel/debugging surface, not the
+normal agent control surface. A phase-specific runner that manually recreates this choreography is
+evidence that the application is incomplete, not an acceptable product interface.
+
 The implementation loop for every increment is:
 
 1. verify current reality;
@@ -48,7 +57,9 @@ result but may not bypass Baton's normal fresh-verification and integration auth
 
 ### A. Fleet control and reliability
 
-- Eight public commands: spawn, send, wait, respond, interrupt, result, list, kill.
+- One primary Run command bus: start, status/watch, approve, answer, steer, durable stop/reap,
+  recover, and evidence. The original spawn, send, wait, respond, interrupt, result, list, and kill verbs
+  remain the advanced kernel and emergency-control surface beneath it.
 - Ordered delivery, human-over-policy fencing, single-consumer interactions, two-phase stop,
   terminal monotonicity, bounded setup/turn/stop operations, and process/worktree reap.
 - Persistent multi-turn workers; interrupt-follow-up; resume, fork, rejoin, checkpoint, rewind, and
@@ -893,6 +904,25 @@ budget settlement, lifecycle, and cleanup for
 Codex `gpt-5.6-sol`/low at `9ce83e9` and project-key GLM `glm-4.7`/low at `230db8e`. These focused
 greens do not relabel the original five-provider matrix.
 
+Phase 64 is now the product-integration priority exposed by recursive use. The initial Run
+vertical compiles a concise intent and immutable deployment profile into Goal/Plan authority,
+stops at a readable distinct-principal approval, dispatches the exact approved harness/model/effort
+once, reconstructs approval-pending and approved-undispatched runs across process restart, folds a
+bounded credential-filtered `RunView`, routes answers and server-fenced steering through the Run,
+and exactly shuts down the deployment. Direct embedding, authenticated Web, the browser Run desk,
+and the default MCP stdio surface now use the shared registry; the stdio host invokes the same
+host-only shutdown on EOF/signals. Durable `run.stop` atomically fences later Run effects, snapshots
+and reaps its exact worker set, records a restart-recoverable receipt, and leaves the host and other
+Runs live. Fleet-wide host authority remains separately named `application.shutdown`. The remaining
+completion gate is the safe primary CLI/serve host; cursor-based follow; materialized result
+export; recovery; structured semantic review; multi-node scheduling; and replacement of phase-specific recursive runners with declarative
+application use.
+
+Accepted verification now provisionally pins the exact commit before disposable branch cleanup.
+`run.evidence` projects one bounded content-addressed terminal manifest, and policy-gated
+`run.adopt` records an exact restart-safe result selection without merging, checking out, changing
+the working tree, or publishing. Direct, authenticated Web/browser, and MCP share those commands.
+
 These operational phases do not narrow the retained system. Baton's deployment-neutral
 causal/temporal knowledge graph remains self-contained and inspired by repository-local
 project-manager prior art. Remaining work includes authenticated user-to-orchestrator control
@@ -951,5 +981,13 @@ is explicitly out of scope.
    direct/web/MCP authority. WebSocket parity, richer Goal/Plan verification/evidence, authorized
    continuation/recovery, amendments, publication/operator depth, the production runtime, and
    registered evaluations remain.**
+
+10. Finish the integrated Run application before treating further leaf capability expansion as a
+    usable product: one command registry and `RunView` across direct/CLI/Web/MCP, durable scheduling
+    and attention, honest semantic state, run-scoped evidence/close, then recursive multi-harness
+    dogfood through that surface. **Direct, authenticated Web/browser, and default MCP now share
+    exact-route start/approval/restart/answer/steer/stop/RunView behavior. Run stop is durable and
+    scoped; the MCP host separately closes through exact deployment shutdown. Safe CLI/serve
+    lifecycle and evidence/recovery/semantic depth remain red.**
 
 No later step is permission to erase it from the goal.

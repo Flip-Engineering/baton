@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { Lang, parse } from '@ast-grep/napi';
+import { compareCanonicalStrings } from './canonical-order.mjs';
 
 const require = createRequire(import.meta.url);
 const AST_GREP_VERSION = require('@ast-grep/napi/package.json').version;
@@ -109,10 +110,10 @@ function extractFile(path, bytes, langName, lang) {
     }
   }
   visit(root);
-  definitions.sort((a, b) => a.symbol.localeCompare(b.symbol));
-  occurrences.sort((a, b) => a.range.start.line - b.range.start.line || a.range.start.column - b.range.start.column || a.name.localeCompare(b.name));
+  definitions.sort((a, b) => compareCanonicalStrings(a.symbol, b.symbol));
+  occurrences.sort((a, b) => a.range.start.line - b.range.start.line || a.range.start.column - b.range.start.column || compareCanonicalStrings(a.name, b.name));
   calls.sort((a, b) => a.range.start.line - b.range.start.line || a.range.start.column - b.range.start.column);
-  imports.sort((a, b) => a.source.localeCompare(b.source));
+  imports.sort((a, b) => compareCanonicalStrings(a.source, b.source));
   return { path, digest: sha(bytes), bytes: bytes.length, language: langName, lineCount: lines.length, lines, definitions, occurrences, calls, imports, parseErrors: errors };
 }
 
@@ -120,7 +121,7 @@ function scan(root, opts, ctx) {
   const files = [];
   function walk(dir, prefix = '') {
     checkAbort(ctx);
-    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => compareCanonicalStrings(a.name, b.name))) {
       checkAbort(ctx);
       if (entry.isSymbolicLink()) continue;
       const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
@@ -136,7 +137,7 @@ function scan(root, opts, ctx) {
     }
   }
   walk(root);
-  return files.sort((a, b) => a.path.localeCompare(b.path));
+  return files.sort((a, b) => compareCanonicalStrings(a.path, b.path));
 }
 
 function resolveGraph(files) {
@@ -144,7 +145,7 @@ function resolveGraph(files) {
   for (const file of files) for (const definition of file.definitions) {
     const list = byName.get(definition.name) ?? []; list.push(definition); byName.set(definition.name, list);
   }
-  for (const list of byName.values()) list.sort((a, b) => a.symbol.localeCompare(b.symbol));
+  for (const list of byName.values()) list.sort((a, b) => compareCanonicalStrings(a.symbol, b.symbol));
   for (const file of files) {
     for (const occurrence of file.occurrences) if (occurrence.role === 'reference') {
       const candidates = byName.get(occurrence.name) ?? [];
@@ -345,22 +346,22 @@ export class AtlasCodeIndex {
         const hay = args.caseSensitive ? line : line.toLowerCase(); let from = 0;
         while ((from = hay.indexOf(needle, from)) !== -1) { items.push({ path: file.path, range: { start: { line: index + 1, column: from + 1 }, end: { line: index + 1, column: from + needle.length + 1 } }, preview: line }); from += Math.max(1, needle.length); }
       });
-      items.sort((a, b) => a.path.localeCompare(b.path) || a.range.start.line - b.range.start.line || a.range.start.column - b.range.start.column); summary = `${items.length} lexical hits for ${JSON.stringify(args.query)}`;
+      items.sort((a, b) => compareCanonicalStrings(a.path, b.path) || a.range.start.line - b.range.start.line || a.range.start.column - b.range.start.column); summary = `${items.length} lexical hits for ${JSON.stringify(args.query)}`;
     } else if (op === 'symbol.search') {
       const query = String(args.query ?? '').toLowerCase(); if (!query) throw typed('symbol query required', 'invalid_query');
       items = view.files.flatMap((file) => file.definitions).map((item) => {
         const name = item.name.toLowerCase(); const container = String(item.container ?? '').toLowerCase();
         const rank = name === query ? 0 : name.startsWith(query) ? 1 : name.includes(query) ? 2 : container.includes(query) ? 3 : item.symbol.toLowerCase().includes(query) ? 4 : null;
         return rank == null ? null : { ...item, rank };
-      }).filter(Boolean).sort((a, b) => a.rank - b.rank || a.symbol.localeCompare(b.symbol)).map(({ rank, ...item }) => item); summary = `${items.length} symbol definitions matching ${JSON.stringify(args.query)}`;
+      }).filter(Boolean).sort((a, b) => a.rank - b.rank || compareCanonicalStrings(a.symbol, b.symbol)).map(({ rank, ...item }) => item); summary = `${items.length} symbol definitions matching ${JSON.stringify(args.query)}`;
     } else if (op === 'symbol.references') {
       const definitions = view.files.flatMap((file) => file.definitions); let target = null;
       if (args.symbol) target = definitions.find((item) => item.symbol === args.symbol) ?? null;
       else { const matches = definitions.filter((item) => item.name === args.name); if (matches.length === 1) target = matches[0]; else if (matches.length > 1) throw typed('symbol name is ambiguous; pass stable symbol', 'ambiguous_symbol'); }
       if (!target) throw typed('symbol not found', 'symbol_not_found');
-      items = view.files.flatMap((file) => file.occurrences).filter((item) => item.symbol === target.symbol || item.candidates?.includes(target.symbol)).map((item) => ({ ...item, target: target.symbol, ambiguous: item.symbol == null })).sort((a, b) => a.path.localeCompare(b.path) || a.range.start.line - b.range.start.line || a.range.start.column - b.range.start.column); summary = `${items.length} occurrences of ${target.name}`;
+      items = view.files.flatMap((file) => file.occurrences).filter((item) => item.symbol === target.symbol || item.candidates?.includes(target.symbol)).map((item) => ({ ...item, target: target.symbol, ambiguous: item.symbol == null })).sort((a, b) => compareCanonicalStrings(a.path, b.path) || a.range.start.line - b.range.start.line || a.range.start.column - b.range.start.column); summary = `${items.length} occurrences of ${target.name}`;
     } else if (op === 'graph.calls') {
-      items = view.files.flatMap((file) => file.calls).filter((item) => !args.symbol || item.caller === args.symbol || item.resolved === args.symbol || item.candidates.includes(args.symbol)).sort((a, b) => a.path.localeCompare(b.path) || a.range.start.line - b.range.start.line); summary = `${items.length} call edges${args.symbol ? ' touching requested symbol' : ''}`;
+      items = view.files.flatMap((file) => file.calls).filter((item) => !args.symbol || item.caller === args.symbol || item.resolved === args.symbol || item.candidates.includes(args.symbol)).sort((a, b) => compareCanonicalStrings(a.path, b.path) || a.range.start.line - b.range.start.line); summary = `${items.length} call edges${args.symbol ? ' touching requested symbol' : ''}`;
     } else if (op === 'repo.map') {
       items = view.files.map((file) => ({ path: file.path, language: file.language, lines: file.lineCount, symbols: file.definitions.length, references: file.occurrences.filter((item) => item.role === 'reference').length, imports: file.imports.map((item) => item.source), calls: file.calls.length, parseErrors: file.parseErrors.length })); summary = `${items.length} files; ${items.reduce((sum, item) => sum + item.symbols, 0)} symbols; ${items.reduce((sum, item) => sum + item.calls, 0)} calls`;
     } else if (op === 'code.seed') {
@@ -369,7 +370,7 @@ export class AtlasCodeIndex {
         const symbols = file.definitions.filter((definition) => terms.some((term) => definition.name.toLowerCase().includes(term)));
         const lexical = file.lines.reduce((count, line) => count + (terms.some((term) => line.toLowerCase().includes(term)) ? 1 : 0), 0);
         return { path: file.path, score: symbols.length * 5 + lexical + file.imports.length * 0.1, symbols, imports: file.imports.map((item) => item.source), calls: file.calls.filter((call) => terms.includes(call.calleeName.toLowerCase())) };
-      }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score || a.path.localeCompare(b.path)); summary = `${items.length} orientation files for ${terms.join(', ')}`;
+      }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score || compareCanonicalStrings(a.path, b.path)); summary = `${items.length} orientation files for ${terms.join(', ')}`;
     } else if (op === 'scip.export') {
       const documents = view.files.map((file) => ({
         relativePath: file.path, language: file.language,

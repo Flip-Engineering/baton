@@ -247,10 +247,12 @@ evidence and disagreement are retained in
    process groups closed/reaped, both Grok process intervals overlapped, and GLM fresh-verified under
    the same projection identity. Projection and lifecycle gates pass; provider matrix remains
    honestly red because Grok reports unauthenticated.
-29. **Public exact fleet drain and driver close:** Phase 56 gives direct, authenticated HTTPS, MCP,
-   and the host driver one fenced, replay-validated drain authority. It records every target
-   disposition, closes exact process generations, reconciles process/worktree/runtime/branch and
-   projection residue, then closes coordinator and writer authority under one deadline. The owned
+29. **Public exact fleet drain and driver close:** Phase 56 gives direct, authenticated HTTPS, and
+   MCP a fenced replay-validated coordinator drain, and gives the process-owning host a stronger
+   driver close. Drain records every target disposition, closes exact process generations, and
+   reconciles process/worktree/runtime/branch and projection residue while retaining transport and
+   writer authority. Host close performs that drain and then closes coordinator and writer authority
+   under one deadline. The owned
    evidence wrapper also confines and reaps its full process group and temporary root. Thirty-seven
    focused contracts and the historical 1179/1179 canonical suite are green. The five-route run
    proves drain/lifecycle truth, not provider/report success; literal Grok Build remained
@@ -379,6 +381,15 @@ evidence and disagreement are retained in
 
 ## What remains pending
 
+- The primary product gap is completing the integrated Run application over the already-strong
+  fleet kernel. Phase 64 now has concise intent/profile → Goal/Plan → distinct approval → exact
+  dispatch → bounded RunView → answer/steer → durable Run-scoped stop/reap → host deployment shutdown, plus restart scheduling
+  across the approval/dispatch boundary. Direct, authenticated Web/browser, and default MCP are thin
+  projections of the shared registry; MCP EOF/signals use an injected host shutdown authority. A safe
+  primary CLI/serve lifecycle, cursor follow, recovery, evidence, structured semantic review,
+  and multi-node scheduling remain red. Run stop now closes dispatch in the coordination ledger,
+  snapshots exact targets, resumes before startup scheduling, and reaps without disturbing other Runs. Fleet-wide shutdown is named
+  `application.shutdown` and must not masquerade as `run.close`.
 - Trust ramp policy, richer Goal/Plan verification/evidence and amendment authority,
   impact-selected reruns, structured reject postmortems, and higher
   Evidence Ladder rungs (property/fuzz/BMC/SMT/proof) under honest language/tool ceilings.
@@ -472,8 +483,11 @@ evidence and disagreement are retained in
    catalogued later rungs, then demand-earned remaining Cairn Rung 2 depth and Rungs 3–4, Vantage,
    Evidence Ladder, and Skill Forge/computer use behind stronger containment. Phase 61 now closes
    the first graph-backed R1–R3 producer vertical without deleting any deeper rung.
-5. **Complete northbound/runtime depth:** MCP HTTP/Tasks/daemon, WebSocket, operator takeover,
-   OpenTelemetry, and only then a production-core port.
+5. **Complete the integrated application and northbound/runtime depth:** extend the shipped Phase 64 Run
+   registry/View/scheduler/accepted-result-retention/adoption/evidence vertical with materialized
+   export, recovery, semantic review, multi-node composition, and a safe CLI/serve host; keep
+   authenticated Web and MCP thin; replace phase-specific dogfood runners; then MCP HTTP/Tasks/daemon, WebSocket,
+   operator takeover, OpenTelemetry, and only then a production-core port.
 6. **Pursue representation/trust research only through its Decisions:** higher CPG/IR/semantic
    merge/e-graph gates, with measured incremental value and no proof-language inflation. Phase 54's
    lexical binding increment is shipped; closure/destructuring/catch bindings, SSA/PDG/path solving,

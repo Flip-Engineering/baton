@@ -29,6 +29,7 @@ import { inspectToolchainProjection, prepareToolchainProjection, ToolchainProjec
 import { normalizeProviderGovernancePolicy } from './provider-governance.mjs';
 import { loadOrCreateWorktreeCapacityIntegrityKey, normalizeWorktreeCapacityPolicy, WorktreeCapacityAuthority } from './worktree-capacity.mjs';
 import { normalizeGoalPlanPolicy } from './goal-plan.mjs';
+import { normalizeCanonicalOrderPolicy } from './canonical-order.mjs';
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const canonicalDigest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
@@ -63,7 +64,7 @@ export { verify, accept } from './referee.mjs';
 export { AdaptiveRouter } from './router.mjs';
 export { routeTupleKey, resolveEffort } from './route-tuple.mjs';
 export { RuntimeIsolation, isSecretEnvName } from './runtime-isolation.mjs';
-export { CoordinationStore, CoordinationIntegrityError, CoordinationRefusal, coordinationForLog } from './coordination-store.mjs';
+export { CoordinationStore, CoordinationIntegrityError, CoordinationRefusal, coordinationForLog, migrateCanonicalOrderLedger } from './coordination-store.mjs';
 export { WebNorthbound, createAuthenticatedWebServer, validateWebCommandEnvelope } from './web-northbound.mjs';
 export { WebEventStream } from './web-stream.mjs';
 export { WebEdgePolicy, WebReadinessAuthority, FixedWindowQuota, ConcurrentQuota, resolveEdgeRequest } from './web-edge.mjs';
@@ -92,6 +93,7 @@ export { AdvisoryFeedRegistry } from './advisory-feed-registry.mjs';
 export { ProviderPollSupervisor } from './provider-poll-supervisor.mjs';
 export { SessionRecoverySupervisor } from './session-recovery-supervisor.mjs';
 export { ProviderProcessingSupervisor } from './provider-processing-supervisor.mjs';
+export { BatonApplication, APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs } from './application.mjs';
 export { HttpsHmacAdvisoryFeedSource, signHmacAdvisoryPollPageForTest } from './https-hmac-advisory-feed.mjs';
 export { Ed25519AdvisoryWebhookSource, HmacAdvisoryWebhookSource, signEd25519AdvisoryWebhookForTest, signHmacAdvisoryWebhookForTest } from './hmac-advisory-webhook.mjs';
 
@@ -238,6 +240,13 @@ function worktreeManager(repoRoot, opts = {}) {
       localGit(['update-ref', ref, sha], repoRoot, { stdio: 'ignore' });
       return ref;
     },
+    async resolveResult(ref) {
+      if (typeof ref !== 'string' || !/^refs\/baton\/results\/[a-f0-9]{40,64}$/u.test(ref)) {
+        throw Object.assign(new Error('result ref is outside Baton ownership'), { code: 'result_ref_invalid' });
+      }
+      try { return localGit(['rev-parse', '--verify', `${ref}^{commit}`], repoRoot, { encoding: 'utf8' }).trim(); }
+      catch { return null; }
+    },
     async releaseResult(ref) {
       localGit(['update-ref', '-d', ref], repoRoot, { stdio: 'ignore' });
     },
@@ -360,6 +369,7 @@ function refereeFn(task, result, opts) {
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
  *          representationProduction?:{policy:object,artifactRoot:string,authorize:Function,resolveEnvironment:Function},
  *          goalPlanAuthority?:{policy:object,authorize:Function},
+ *          canonicalOrderPolicy?:{maxLedgerBytes:number,maxEventBytes:number,maxEvents:number,maxReceiptBytes:number},
  *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
  *          providerGovernance?:object,
@@ -391,6 +401,8 @@ export function createDriver(opts) {
       goalPlanAuthority = Object.freeze({ policy, authorize: opts.goalPlanAuthority.authorize });
     } catch (error) { throw new TypeError(error?.message ?? 'goalPlanAuthority policy is invalid'); }
   }
+  const canonicalOrderPolicy = opts.canonicalOrderPolicy === undefined
+    ? null : normalizeCanonicalOrderPolicy(opts.canonicalOrderPolicy);
   const worktreeCapacityPolicy = opts.worktreeCapacity === undefined ? null : normalizeWorktreeCapacityPolicy(opts.worktreeCapacity);
   if (opts.worktreeCapacityObserve !== undefined && typeof opts.worktreeCapacityObserve !== 'function') throw new TypeError('worktreeCapacityObserve must be a function');
   if (opts.worktreeCapacityEstimate !== undefined && typeof opts.worktreeCapacityEstimate !== 'function') throw new TypeError('worktreeCapacityEstimate must be a function');
@@ -462,6 +474,7 @@ export function createDriver(opts) {
     ...(routeLearningPolicy ? { routePolicy: routeLearningPolicy } : {}),
     ...(representationProduction ? { representationPolicy: representationProduction.policy } : {}),
     ...(goalPlanAuthority ? { goalPlanPolicy: goalPlanAuthority.policy } : {}),
+    ...(canonicalOrderPolicy ? { canonicalOrderPolicy } : {}),
   });
   if (opts.coordination && advisoryFeedCards.length > 0) {
     if (typeof coordination.advisoryFeedCards !== 'function' || canonicalDigest(coordination.advisoryFeedCards()) !== canonicalDigest(advisoryFeedCards)) throw new TypeError('custom coordination store disagrees with deployment advisory feed cards');
@@ -470,6 +483,7 @@ export function createDriver(opts) {
   if (opts.coordination && routeLearningPolicy && (typeof coordination.routePolicy !== 'function' || typeof coordination.routeObservations !== 'function' || canonicalDigest(coordination.routePolicy()) !== canonicalDigest(routeLearningPolicy))) throw new TypeError('custom coordination store disagrees with deployment route learning policy');
   if (opts.coordination && representationProduction && (typeof coordination.representationPolicy !== 'function' || canonicalDigest(coordination.representationPolicy()) !== canonicalDigest(representationProduction.policy))) throw new TypeError('custom coordination store disagrees with deployment representation policy');
   if (opts.coordination && goalPlanAuthority && (typeof coordination.goalPlanPolicy !== 'function' || canonicalDigest(coordination.goalPlanPolicy()) !== canonicalDigest(goalPlanAuthority.policy))) throw new TypeError('custom coordination store disagrees with deployment goal/plan policy');
+  if (opts.coordination && canonicalOrderPolicy && (typeof coordination.canonicalOrderPolicy !== 'function' || typeof coordination.canonicalOrderReceipt !== 'function' || canonicalDigest(coordination.canonicalOrderPolicy()) !== canonicalDigest(canonicalOrderPolicy))) throw new TypeError('custom coordination store disagrees with deployment canonical-order policy');
   let writerLease = null;
   try {
   writerLease = coordination.claimWriterLease();

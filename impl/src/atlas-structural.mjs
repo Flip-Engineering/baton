@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { Lang, parse } from '@ast-grep/napi';
+import { compareCanonicalStrings } from './canonical-order.mjs';
 
 const require = createRequire(import.meta.url);
 const AST_GREP_VERSION = require('@ast-grep/napi/package.json').version;
@@ -146,7 +147,7 @@ function delta(before, after) {
     else if (current.fingerprint !== unit.fingerprint) changes.push({ change: 'modified', id, kind: unit.kind, name: unit.name, container: unit.container, beforeRange: unit.range, afterRange: current.range, beforeFingerprint: unit.fingerprint, afterFingerprint: current.fingerprint });
   }
   for (const [id, unit] of right) if (!left.has(id)) changes.push({ change: 'added', id, kind: unit.kind, name: unit.name, container: unit.container, beforeRange: null, beforeFingerprint: null, afterRange: unit.range, afterFingerprint: unit.fingerprint });
-  return changes.sort((a, b) => CHANGE_ORDER[a.change] - CHANGE_ORDER[b.change] || a.id.localeCompare(b.id) || (a.beforeRange?.start.line ?? a.afterRange.start.line) - (b.beforeRange?.start.line ?? b.afterRange.start.line));
+  return changes.sort((a, b) => CHANGE_ORDER[a.change] - CHANGE_ORDER[b.change] || compareCanonicalStrings(a.id, b.id) || (a.beforeRange?.start.line ?? a.afterRange.start.line) - (b.beforeRange?.start.line ?? b.afterRange.start.line));
 }
 
 export class AtlasStructuralDelta {

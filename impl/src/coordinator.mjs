@@ -1086,6 +1086,101 @@ export class Coordinator {
     return Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
   }
 
+  /** Stop and reap one durable Run target set without fencing or closing unrelated Runs. The
+   * coordination store admits the Run stop before this method is called, so late dispatch/claim
+   * cannot enter the target set while physical ownership converges here. */
+  async stopRunTargets(targetWorkerIds, actor = 'orchestrator') {
+    if (!Array.isArray(targetWorkerIds) || targetWorkerIds.length > this._drainPolicy.maxWorkers
+      || targetWorkerIds.some((id) => typeof id !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(id))
+      || new Set(targetWorkerIds).size !== targetWorkerIds.length
+      || JSON.stringify([...targetWorkerIds].sort()) !== JSON.stringify(targetWorkerIds)
+      || typeof actor !== 'string' || actor.length === 0 || actor.length > 256) {
+      throw Object.assign(new TypeError('Run stop target authority is invalid'), { code: 'coordinator_run_stop_invalid' });
+    }
+    if (this._closed || this._drainState !== 'open') {
+      throw Object.assign(new Error('coordinator authority is not open'), { code: 'coordinator_closed' });
+    }
+    await Promise.all(this._startupCleanupPromises);
+    if (this._startupCleanupError) throw Object.assign(new Error('Run stop startup reconciliation is incomplete'), { code: 'coordinator_run_stop_incomplete' });
+    const deadline = Date.now() + this._drainPolicy.timeoutMs;
+    const dispositions = new Map();
+
+    const cancelTask = async (handle, task, kind) => {
+      const cancelled = this._log.append({
+        worker: handle.id, harness: handle.vendor ? this._harnessOf(handle.vendor) : '', turnEpoch: this._safeTurnEpoch(handle),
+        kind, actor, ...this._routeAttribution(handle, task), payload: {},
+      });
+      const evidence = this._coordMapEvent(cancelled);
+      if (task && !TERMINAL_TASK_STATUSES.has(task.status)) {
+        this._coordTransition(task, 'cancelled', `task.cancelled:${task.id}:${cancelled.seq}`, evidence);
+        task.status = 'cancelled';
+      }
+      handle.status = 'dead';
+      const runtimeRemoved = this._removeRuntimeScope(handle);
+      await this._removeOwnedTaskWorktree(handle, task);
+      if (!runtimeRemoved) throw Object.assign(new Error('Run stop runtime cleanup failed'), { code: 'coordinator_run_stop_incomplete' });
+      if (!handle.processRef || handle.processRef.state === 'closed') handle.localAuthority = false;
+    };
+
+    const attempt = async (workerId) => {
+      if (dispositions.has(workerId)) return;
+      const handle = this._workers.get(workerId);
+      if (!handle) {
+        const durable = this._coordination.snapshot().tasks.find((task) => (task.reservedWorkerId ?? task.assignee) === workerId);
+        if (!durable || TERMINAL_TASK_STATUSES.has(durable.status)) dispositions.set(workerId, 'alreadyTerminal');
+        return;
+      }
+      const task = this._tasks.get(handle.taskId);
+      for (const requestId of [handle.pendingApprovalId, handle.pendingQuestionId].filter(Boolean)) {
+        try { await this._resolveRecord(requestId, { decision: 'cancel' }, actor); } catch { /* kill retries the same authority */ }
+      }
+      if (task?.status === 'pending' || handle.status === 'pending') {
+        await cancelTask(handle, task, 'control.run_stop_cancelled');
+        dispositions.set(workerId, 'pendingCancelled');
+        return;
+      }
+      if (!this._ownsLocalResources(handle) && (!handle.processRef || handle.processRef.state === 'closed')) {
+        if (task && !TERMINAL_TASK_STATUSES.has(task.status)) await cancelTask(handle, task, 'control.run_stop_cancelled');
+        dispositions.set(workerId, 'alreadyTerminal');
+        return;
+      }
+      try {
+        const result = await this.kill(workerId, actor);
+        if (result?.ok && result.result === 'confirmed') dispositions.set(workerId, 'killConfirmed');
+        else if (result?.ok && ['already_dead', 'already_stopped'].includes(result.result)
+          && !this._ownsLocalResources(handle) && (!handle.processRef || handle.processRef.state === 'closed')) {
+          dispositions.set(workerId, 'alreadyTerminal');
+        }
+      } catch { /* bounded convergence below retries exact physical state */ }
+    };
+
+    while (Date.now() <= deadline) {
+      await Promise.all(targetWorkerIds.map(attempt));
+      const targets = targetWorkerIds.map((id) => this._workers.get(id)).filter(Boolean);
+      const resourcesReleased = targets.every((handle) => !this._ownsLocalResources(handle)
+        && (!handle.processRef || handle.processRef.state === 'closed'));
+      const interactionsResolved = targets.every((handle) => !handle.pendingApprovalId && !handle.pendingQuestionId);
+      if (dispositions.size === targetWorkerIds.length && resourcesReleased && interactionsResolved) {
+        const processesObserved = targets.filter((handle) => handle.processRef !== null).length;
+        const processesClosed = targets.filter((handle) => handle.processRef?.state === 'closed').length;
+        if (processesObserved !== processesClosed) break;
+        return Object.freeze({
+          targetCount: targetWorkerIds.length,
+          counts: Object.freeze({
+            pendingCancelled: [...dispositions.values()].filter((value) => value === 'pendingCancelled').length,
+            killConfirmed: [...dispositions.values()].filter((value) => value === 'killConfirmed').length,
+            alreadyTerminal: [...dispositions.values()].filter((value) => value === 'alreadyTerminal').length,
+            processesObserved,
+            processesClosed,
+          }),
+          checks: Object.freeze({ interactionsResolved: true, runAuthorityReleased: true }),
+        });
+      }
+      await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - Date.now())));
+    }
+    throw Object.assign(new Error('Run stop did not converge before its deadline'), { code: 'coordinator_run_stop_incomplete' });
+  }
+
   _ownsLocalResources(handle) {
     if (!handle) return false;
     const processOwned = handle.currentIncarnation === true && handle.processRef && handle.processRef.state !== 'closed';
@@ -2851,6 +2946,58 @@ export class Coordinator {
     return { ok: true, result: 'integrated', integration };
   }
 
+  /** Preserve an accepted result under Baton's protected result-ref namespace without merging it. */
+  preserveResult(workerId, expectedSha) {
+    return this._withAuthorityOp(() => this._preserveResult(workerId, expectedSha));
+  }
+
+  async _preserveResult(workerId, expectedSha) {
+    this.tick();
+    const handle = this._getWorker(workerId);
+    const task = this._tasks.get(handle.taskId);
+    if (!task || task.status !== 'completed' || !task.capturedSha) {
+      throw new IntegrationError('result preservation requires an accepted captured task result', 'result_not_accepted');
+    }
+    if (expectedSha !== task.capturedSha) {
+      throw new IntegrationError('result preservation SHA differs from the accepted result', 'result_sha_mismatch');
+    }
+    return this._pinAcceptedResult(task, expectedSha);
+  }
+
+  async _pinAcceptedResult(task, expectedSha) {
+    if (!this._worktrees || typeof this._worktrees.retainResult !== 'function'
+      || typeof this._worktrees.resolveResult !== 'function') {
+      throw new IntegrationError('worktree manager does not implement accepted-result preservation', 'result_retention_unavailable');
+    }
+    const ref = await this._worktrees.retainResult(expectedSha);
+    const resolved = await this._worktrees.resolveResult(ref);
+    if (resolved !== expectedSha) {
+      throw new IntegrationError('protected result ref does not resolve to the accepted commit', 'result_ref_mismatch');
+    }
+    task.retainedResultRef = ref;
+    return Object.freeze({ sha: expectedSha, ref, state: 'pinned' });
+  }
+
+  /** Reverify the physical protected ref for an accepted result without creating or changing it. */
+  async inspectPreservedResult(workerId, expectedSha) {
+    this._assertReadable();
+    const handle = this._getWorker(workerId);
+    const task = this._tasks.get(handle.taskId);
+    if (!task || task.status !== 'completed' || task.capturedSha !== expectedSha || !task.retainedResultRef) {
+      return Object.freeze({ sha: expectedSha, ref: task?.retainedResultRef ?? null, state: 'unavailable' });
+    }
+    if (!this._worktrees || typeof this._worktrees.resolveResult !== 'function') {
+      return Object.freeze({ sha: expectedSha, ref: task.retainedResultRef, state: 'unverifiable' });
+    }
+    const resolved = await this._worktrees.resolveResult(task.retainedResultRef);
+    return Object.freeze({
+      sha: expectedSha,
+      ref: task.retainedResultRef,
+      state: resolved === expectedSha ? 'pinned' : resolved === null ? 'missing' : 'mismatch',
+      resolved,
+    });
+  }
+
   /** AC6: create an approval-gated exact-SHA publication request. No side effect occurs here. */
   requestPublication(workerId, target = {}, actor = 'orchestrator') {
     this.tick();
@@ -4542,6 +4689,24 @@ export class Coordinator {
     return this._resolveRecord(requestId, answer, actor);
   }
 
+  /** Bounded ownership projection used by run-centric application answer routing. */
+  interactionStatus(requestId) {
+    this._assertReadable();
+    if (typeof requestId !== 'string' || requestId.length === 0 || Buffer.byteLength(requestId) > 4_096) return null;
+    const record = this._pending.get(requestId);
+    if (!record) return null;
+    const handle = this._workers.get(record.worker);
+    const task = handle ? this._tasks.get(handle.taskId) : null;
+    return Object.freeze({
+      requestId,
+      kind: record.kind,
+      state: record.state,
+      workerId: record.worker,
+      taskId: task?.id ?? null,
+      runId: task?.runId ?? null,
+    });
+  }
+
   async _resolveRecord(requestId, answer, actor) {
     const record = this._pending.get(requestId);
     if (!record) return { ok: false, result: 'not_found' };
@@ -4815,6 +4980,7 @@ export class Coordinator {
       review: task?.review ?? null,
       integration: task?.integration ?? null,
       publication: task?.publication ?? null,
+      capturedSha: task?.capturedSha ?? null,
       retainedResultRef: task?.retainedResultRef ?? null,
       providerGovernance,
       observationOnly: providerGovernance?.observationOnly === true,
@@ -4829,6 +4995,15 @@ export class Coordinator {
   capabilityCards() {
     this._assertReadable();
     return this._capabilities ? this._capabilities.cards() : [];
+  }
+
+  /** Deployment adapter inventory for application-owned exact route selectors. Cards contain
+   * capability metadata only; credential values and adapter/session objects are never exposed. */
+  routeCards() {
+    this._assertReadable();
+    return deepFreeze(Object.entries(this._adapters)
+      .map(([name, adapter]) => ({ name, card: JSON.parse(JSON.stringify(adapter.card())) }))
+      .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
   }
 
   /** Return deployment-pinned machine-ingress cards. This inventory is separate from ACI and
@@ -5835,6 +6010,14 @@ export class Coordinator {
         && handle.budgetHardExceeded !== true
         && handle.providerPolicyHardExceeded !== true
         && handle.providerTelemetryFailed !== true;
+      // An accepted commit must remain reachable independently of its disposable task branch.
+      // Standard Baton deployments provide this authority; legacy injected worktree fixtures may
+      // omit it and therefore remain unable to expose Run-level adoption.
+      let retainedResultRef = null;
+      if (accept && captured?.sha && typeof this._worktrees?.retainResult === 'function'
+        && typeof this._worktrees?.resolveResult === 'function') {
+        retainedResultRef = (await this._pinAcceptedResult(task, captured.sha)).ref;
+      }
       const verifyEvent = this._log.append({
         worker: handle.id,
         harness,
@@ -5870,6 +6053,7 @@ export class Coordinator {
           },
           capture: {
             sha: captured && captured.sha, snapshotted: captured && captured.snapshotted,
+            retainedResultRef,
             baseSha: task.sessionContext?.baseSha ?? null,
             vendor: handle.vendor ?? null, model: handle.modelObserved ?? handle.modelResolved ?? null,
             effort: handle.effortObserved ?? handle.effortResolved ?? null,
@@ -5888,7 +6072,10 @@ export class Coordinator {
       const manifests = [];
       if (captured?.sha) {
         manifests.push({
-          taskId: task.id, kind: 'commit', refs: { sha: captured.sha }, mediaType: 'application/vnd.git.commit',
+          taskId: task.id, kind: 'commit', refs: {
+            sha: captured.sha,
+            ...(retainedResultRef ? { retainedResultRef } : {}),
+          }, mediaType: 'application/vnd.git.commit',
           accepted: accept, provenance: [evidence],
         });
         if (task.review) {
@@ -5927,6 +6114,16 @@ export class Coordinator {
         verifiedWin: accept, verificationEvidence: evidence,
       } : null;
       trustPhase = 'terminal_batch';
+      // A Run-scoped stop can cancel this task while its already-admitted verifier is still
+      // running. The stop's terminal transition remains authoritative; a late verification may
+      // be retained as evidence, but it must neither reopen the task nor poison coordination as
+      // though the expected cancellation were an integrity failure.
+      const durableBeforeTerminal = this._coordination.task(task.id);
+      if (durableBeforeTerminal && TERMINAL_TASK_STATUSES.has(durableBeforeTerminal.status)) {
+        task.status = durableBeforeTerminal.status;
+        task.coordinationVersion = durableBeforeTerminal.version;
+        return;
+      }
       const terminal = this._coordination.transitionTaskWithArtifacts(
         task.id, terminalStatus, task.coordinationVersion,
         routeObservation ? { manifests, routeObservation } : manifests, { actor: 'policy', key: `task.${terminalStatus}:${task.id}:${verifyEvent.seq}` }, evidence,
@@ -5947,6 +6144,7 @@ export class Coordinator {
       trustPhase = 'complete';
       task.status = accept ? 'completed' : 'failed';
       task.capturedSha = captured?.sha ?? null;
+      task.retainedResultRef = retainedResultRef;
 
       if (task.review?.parentWorkerId) {
         const parentHandle = this._workers.get(task.review.parentWorkerId);
@@ -6354,6 +6552,7 @@ export class Coordinator {
               verdict = e.payload?.verdict ?? null;
               terminalStatus = e.payload?.accept ? 'completed' : 'failed';
               capturedSha = e.payload?.capture?.sha ?? capturedSha;
+              retainedResultRef = e.payload?.capture?.retainedResultRef ?? retainedResultRef;
             }
             break;
           case 'integration.completed':

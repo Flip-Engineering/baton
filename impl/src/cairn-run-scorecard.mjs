@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { compareCanonicalStrings } from './canonical-order.mjs';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 const INTERVENTIONS = new Set([
@@ -466,7 +467,7 @@ export class CairnRunScorecard {
 
   _build(runId, sealed = null) {
     const snapshot = this.coordination.snapshot();
-    const tasks = snapshot.tasks.filter((task) => task.runId === runId).sort((a, b) => a.id.localeCompare(b.id));
+    const tasks = snapshot.tasks.filter((task) => task.runId === runId).sort((a, b) => compareCanonicalStrings(a.id, b.id));
     if (tasks.length === 0) throw typed(`unknown run ${runId}`, 'run_not_found');
     if (tasks.some((task) => !TERMINAL.has(task.status))) throw typed(`run ${runId} is not terminal`, 'run_not_terminal');
     const expectedIds = sealed?.taskIds ?? tasks.map((task) => task.id);
