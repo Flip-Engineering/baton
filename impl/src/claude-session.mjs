@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process';
 import { lstatSync, readFileSync } from 'node:fs';
 import { renderPrompt } from './cli-adapters.mjs';
 import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
+import { usdToNanos } from './usd.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const CLAUDE_TOKEN_METRIC = 'anthropic_input_plus_output_tokens_excluding_cache';
@@ -22,13 +23,16 @@ function unavailableUsageSeal() {
 function resultUsage(obj, counterId) {
   const input = obj?.usage?.input_tokens;
   const output = obj?.usage?.output_tokens;
-  const tokensReported = Number.isSafeInteger(input) && input >= 0 && Number.isSafeInteger(output) && output >= 0;
-  const usdReported = Number.isFinite(obj?.total_cost_usd) && obj.total_cost_usd >= 0;
+  const tokenTotal = Number.isSafeInteger(input) && input >= 0 && Number.isSafeInteger(output) && output >= 0
+    ? input + output
+    : null;
+  const tokensReported = Number.isSafeInteger(tokenTotal);
+  const usdReported = usdToNanos(obj?.total_cost_usd) !== null;
   return {
     reported: tokensReported || usdReported,
     payload: {
       source: 'result', accounting: 'delta',
-      ...(tokensReported ? { tokens: input + output } : {}),
+      ...(tokensReported ? { tokens: tokenTotal } : {}),
       ...(usdReported ? { usd: obj.total_cost_usd } : {}),
       ...((tokensReported || usdReported) ? { counterId, tokenMetric: tokensReported ? CLAUDE_TOKEN_METRIC : null } : {}),
     },

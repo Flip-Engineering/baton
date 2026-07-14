@@ -104,14 +104,14 @@ function emitAssistantText(text) {
   send({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
 }
 
-function emitResult({ text = '', isError = false, stopReason = null } = {}) {
+function emitResult({ text = '', isError = false, stopReason = null, totalCostUsd = 0.0001 } = {}) {
   send({
     type: 'result',
     subtype: isError ? 'error_during_execution' : 'success',
     is_error: isError,
     result: text,
     usage: { input_tokens: 10, output_tokens: Math.max(1, text.length) },
-    total_cost_usd: 0.0001,
+    total_cost_usd: totalCostUsd,
     stop_reason: stopReason,
   });
 }
@@ -200,6 +200,14 @@ function startNonApprovalTurn(text) {
   if (text.includes('REPORT_CWD')) {
     emitAssistantText(`cwd is ${process.cwd()}`);
     emitResult({ text: `cwd:${process.cwd()}` });
+    currentTurn = null;
+    drainQueue();
+    return;
+  }
+
+  if (text.includes('REPORT_INEXACT_USD')) {
+    emitAssistantText('provider returned a cost outside nano-USD authority');
+    emitResult({ text: 'inexact-usd', totalCostUsd: 0.1000000001 });
     currentTurn = null;
     drainQueue();
     return;

@@ -171,6 +171,25 @@ test('CS2/CS3: spawn delivers the Brief as the first turn; lifecycle.spawned car
   await waitForKind('kill.confirmed');
 });
 
+test('provider cost outside exact nano-USD authority holds only USD while preserving exact token evidence', async () => {
+  const { cli, events, waitForKind } = harness();
+  const w = 'inexact-usd';
+  try {
+    await cli.spawn(w, brief('REPORT_INEXACT_USD'), { worktree: process.cwd() });
+    const completed = await waitForKind('lifecycle.turn_completed');
+    const usage = events.find((event) => event.kind === 'resource.tokens');
+    assert.ok(usage, 'the independently valid token dimension remains observable');
+    assert.equal(usage.payload.tokens, 21);
+    assert.equal(Object.hasOwn(usage.payload, 'usd'), false, 'provider cost is not rounded into authority');
+    assert.equal(completed.payload.usageSeal.tokens, 'reported');
+    assert.equal(completed.payload.usageSeal.usd, 'unavailable');
+    assert.equal(completed.payload.usageSeal.counterId, usage.payload.counterId);
+  } finally {
+    await cli.kill(w);
+    await waitForKind('kill.confirmed');
+  }
+});
+
 test('Phase 60: resume attachOnly performs the native handshake but emits no turn or provider work before prompt()', async () => {
   const { cli, events, waitForKind } = harness();
   const w = 'phase60-claude-attach';
