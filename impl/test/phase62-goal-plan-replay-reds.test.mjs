@@ -10,6 +10,7 @@ import test from 'node:test';
 import {
   CoordinationIntegrityError, CoordinationStore, MockAdapter, createDriver,
 } from '../src/index.mjs';
+import { normalizeGoalPlanPolicy, normalizeGoalRequest, normalizePlanRequest } from '../src/goal-plan.mjs';
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase62-red-${name}-`));
 const canonical = (value) => {
@@ -541,6 +542,44 @@ test('GP3/GP8: canonical plan node ordering is locale-independent code-unit orde
   }, storeAuth('planner', 'plan:node-order')).plan;
   assert.deepEqual(plan.nodes.map((node) => node.key), ['A', 'a']);
   store.releaseWriterLease();
+});
+
+test('GP2/GP3/GP8: a deep policy-bounded DAG validates iteratively and deep cycles refuse typed', () => {
+  const nodeCount = 15_000;
+  const deepPolicy = normalizeGoalPlanPolicy({
+    schemaVersion: 1, repoId: 'repo-deep-dag', mandatory: true, approvalTtlMs: 60_000,
+    riskClasses: ['high'], effectClasses: ['repository_edit'], capabilityClasses: ['code'],
+    limits: {
+      maxGoalVersions: 2, maxPlanVersions: 2, maxNodes: nodeCount, maxDepsPerNode: 1,
+      maxTextBytes: 256, maxItems: 4, maxScopePaths: 1, maxRouteValues: 1,
+      maxGoalBytes: 64 * 1024, maxPlanBytes: 64 * 1024 * 1024, maxStatusBytes: 64 * 1024 * 1024,
+      maxTokens: nodeCount, maxUsd: 1, maxWallMin: nodeCount, maxProviderTurns: nodeCount,
+    },
+  });
+  const normalizedGoal = normalizeGoalRequest({
+    objective: 'Validate a deep bounded DAG', definitionOfDone: ['deep graph validates'], constraints: [], risk: 'high',
+    budget: { tokens: nodeCount, usd: 0, wallMin: nodeCount, providerTurns: nodeCount }, predecessor: null,
+  }, deepPolicy);
+  const deepGoal = { ...normalizedGoal, goalId: `goal:${'a'.repeat(64)}`, version: 1, digest: 'b'.repeat(64) };
+  const nodes = Array.from({ length: nodeCount }, (_, index) => {
+    const key = `n${String(index).padStart(5, '0')}`;
+    const deps = index === 0 ? [] : [`n${String(index - 1).padStart(5, '0')}`];
+    return {
+      key, objective: `Validate node ${index}`, definitionOfDone: index === nodeCount - 1 ? ['deep graph validates'] : [],
+      deps, pathScope: ['impl/**'], risk: 'high', budget: { tokens: 1, usd: 0, wallMin: 1, providerTurns: 1 },
+      verification: { command: 'node', arguments: [], cwd: '.', envAllowlist: [], expectExit: 0, expectResult: 'exit_code', timeoutMs: 1, maxOutputBytes: 1, requiredPredecessorEvidence: deps },
+      routes: { harnesses: ['mock'], models: ['model'], efforts: ['low'] }, capabilities: ['code'], effects: ['repository_edit'],
+    };
+  });
+  const request = { goal: ref('goal', deepGoal), predecessor: null, nodes };
+  assert.equal(normalizePlanRequest(request, deepPolicy, deepGoal).nodes.length, nodeCount);
+  const cyclic = nodes.map((node, index) => index === 0 ? {
+    ...node, deps: [nodes.at(-1).key], verification: { ...node.verification, requiredPredecessorEvidence: [nodes.at(-1).key] },
+  } : node);
+  assert.throws(
+    () => normalizePlanRequest({ ...request, nodes: cyclic }, deepPolicy, deepGoal),
+    (error) => error.code === 'plan_cycle' && error.name === 'GoalPlanValidationError',
+  );
 });
 
 test('GP3/GP8: plan bytes and replay stay identical across host locales', () => {

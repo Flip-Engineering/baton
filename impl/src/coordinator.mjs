@@ -14,7 +14,7 @@ import { hasNorthboundCapabilityAuthority } from './northbound-capability-author
 import { processReadyPayload, validProcessClosedPayload, validProcessReadyPayload, validProcessReapUnconfirmedPayload, validProcessStartedPayload } from './process-lifecycle.mjs';
 import { normalizeProviderGovernancePolicy, providerGovernanceRoute, validateProviderGovernanceCard } from './provider-governance.mjs';
 import { normalizePhysicalOwnerId, normalizeSparseCheckoutIdentity, normalizeSparsePaths, sparseCheckoutIdentity } from './worktree.mjs';
-import { GoalPlanValidationError, goalPlanDigest, normalizeGoalPlanContext, semanticBriefCore } from './goal-plan.mjs';
+import { GoalPlanValidationError, goalPlanDigest, normalizeGoalPlanContext, planBriefMatches } from './goal-plan.mjs';
 import { addUsd, subtractUsdFloor, usdFromNanos, usdToNanos } from './usd.mjs';
 
 const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
@@ -1883,19 +1883,13 @@ export class Coordinator {
       if (reconcileExistingPlanTask) {
         const reconciled = this._coordination.reconcilePlanGatedTask(taskId, opts.goalPlan, routeBinding, planAuth);
         const durableBrief = reconciled.task?.brief;
-        const supplied = semanticBriefCore(brief);
-        for (const [key, value] of Object.entries(supplied ?? {})) {
-          if (canonicalDigest(value) !== canonicalDigest(durableBrief?.[key])) throw Object.assign(new Error(`caller Brief field ${key} differs from the admitted task`), { code: 'plan_dispatch_conflict' });
-        }
+        if (!planBriefMatches(brief, durableBrief)) throw Object.assign(new Error('caller Brief differs from the admitted task'), { code: 'plan_dispatch_conflict' });
         const existingTask = this._tasks.get(taskId); const handle = this._workers.get(existingTask?.assignee);
         if (!handle) throw this._poisonCoordination(Object.assign(new Error('reconciled plan task lacks its reserved handle'), { code: 'goal_plan_integrity' }));
         return this._publicHandle(handle);
       }
       planState = this._coordination.previewPlanDispatch(opts.goalPlan, routeBinding);
-      const supplied = semanticBriefCore(brief);
-      for (const [key, value] of Object.entries(supplied ?? {})) {
-        if (canonicalDigest(value) !== canonicalDigest(planState.brief[key])) throw Object.assign(new Error(`caller Brief field ${key} differs from the approved plan`), { code: 'plan_brief_mismatch' });
-      }
+      if (!planBriefMatches(brief, planState.brief)) throw Object.assign(new Error('caller Brief differs from the approved plan'), { code: 'plan_brief_mismatch' });
       admittedBrief = createBrief(planState.brief);
     } else {
       admittedBrief = createBrief(brief);

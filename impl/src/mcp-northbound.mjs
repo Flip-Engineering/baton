@@ -19,6 +19,7 @@ const SESSION_FIELDS = new Set(['mode', 'id', 'lastTurnId', 'context']);
 const SESSION_CONTEXT_FIELDS = new Set(['worktree', 'repoRoot', 'baseSha', 'branch', 'ownerTaskId']);
 const VERIFICATION_FIELDS = new Set(['command', 'expectExit', 'timeoutMs', 'coverageCommand', 'mutationCommand']);
 const BUDGET_FIELDS = new Set(['tokens', 'usd', 'wallMin']);
+const PLAN_BRIEF_FIELDS = ['goal', 'constraints', 'pathScope', 'tools', 'outputFormat', 'definitionOfDone', 'verification', 'budget', 'providerTurns', 'capabilities', 'effects'];
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization|actor|userId|sessionId|capabilities|repoIds)$/i;
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,256}$/;
 
@@ -118,6 +119,15 @@ const goalPlanVerificationSchema = schema({
   expectResult: { type: 'string', enum: ['exit_code'] }, timeoutMs: { type: 'integer', minimum: 1 },
   maxOutputBytes: { type: 'integer', minimum: 1 }, requiredPredecessorEvidence: textArray,
 }, ['command', 'arguments', 'cwd', 'envAllowlist', 'expectExit', 'expectResult', 'timeoutMs', 'maxOutputBytes', 'requiredPredecessorEvidence']);
+const planBriefBudgetSchema = schema({
+  tokens: { type: 'integer', minimum: 1 }, usd: { type: 'number', minimum: 0 }, wallMin: { type: 'integer', minimum: 1 },
+}, ['tokens', 'usd', 'wallMin']);
+const planBriefSchema = schema({
+  goal: text, constraints: textArray, pathScope: textArray, tools: textArray,
+  outputFormat: { type: 'string' }, definitionOfDone: { type: 'string' },
+  verification: goalPlanVerificationSchema, budget: planBriefBudgetSchema,
+  providerTurns: { type: 'integer', minimum: 1 }, capabilities: textArray, effects: textArray,
+}, PLAN_BRIEF_FIELDS);
 const goalPlanRoutesSchema = schema({ harnesses: textArray, models: textArray, efforts: textArray }, ['harnesses', 'models', 'efforts']);
 const goalPlanNodeSchema = schema({
   key: text, objective: text, definitionOfDone: textArray, deps: textArray, pathScope: textArray, risk: text,
@@ -127,10 +137,14 @@ const goalPlanNodeSchema = schema({
 const spawnGoalPlanSchema = schema({
   goalId: { type: 'string', pattern: '^goal:[a-f0-9]{64}$' }, goalVersion: { type: 'integer', minimum: 1 }, goalDigest: digest,
   planId: { type: 'string', pattern: '^plan:[a-f0-9]{64}$' }, planVersion: { type: 'integer', minimum: 1 }, planDigest: digest,
-  nodeKey: text, expectedDispatchVersion: { type: 'integer', minimum: 0 }, capabilities: textArray, effects: textArray,
+  nodeKey: text, expectedDispatchVersion: { const: 0 }, capabilities: textArray, effects: textArray,
 }, ['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'expectedDispatchVersion', 'capabilities', 'effects']);
+const fleetSpawnSchema = {
+  ...schema({ ...repo, ...idem, runId, harness: text, model: text, effort: text, modelPolicy: schema({ allow: textArray, deny: textArray, prefer: textArray, allowFamilies: textArray, denyFamilies: textArray, reasoningEffort: text, serviceTier: text }), brief: { type: 'object' }, taskId: text, deps: textArray, taskType: text, session: schema({ mode: { type: 'string', enum: ['new', 'resume', 'fork'] }, id: text, lastTurnId: text, context: schema({ worktree: text, repoRoot: text, baseSha: text, branch: text, ownerTaskId: text }, ['worktree']) }), refines: text, goalPlan: spawnGoalPlanSchema }, ['repoId', 'idempotencyKey', 'harness', 'brief']),
+  allOf: [{ if: { required: ['goalPlan'] }, then: { properties: { brief: planBriefSchema } } }],
+};
 const TOOL_DEFINITIONS = Object.freeze([
-  { name: 'fleet_spawn', description: 'Spawn one Baton worker with independently selected harness, model, effort, run, and approved Goal/Plan node.', inputSchema: schema({ ...repo, ...idem, runId, harness: text, model: text, effort: text, modelPolicy: schema({ allow: textArray, deny: textArray, prefer: textArray, allowFamilies: textArray, denyFamilies: textArray, reasoningEffort: text, serviceTier: text }), brief: { type: 'object' }, taskId: text, deps: textArray, taskType: text, session: schema({ mode: { type: 'string', enum: ['new', 'resume', 'fork'] }, id: text, lastTurnId: text, context: schema({ worktree: text, repoRoot: text, baseSha: text, branch: text, ownerTaskId: text }, ['worktree']) }), refines: text, goalPlan: spawnGoalPlanSchema }, ['repoId', 'idempotencyKey', 'harness', 'brief']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_spawn', description: 'Spawn one Baton worker with independently selected harness, model, effort, run, and approved Goal/Plan node.', inputSchema: fleetSpawnSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_scratch_oracle', description: 'Spawn an explicitly routed independent oracle over one immutable derived Scratch fact.', inputSchema: schema({ ...repo, ...idem, runId, scratchFactId: text, harness: text, model: text, effort: text, modelPolicy: schema({ allow: textArray, deny: textArray, prefer: textArray, allowFamilies: textArray, denyFamilies: textArray, reasoningEffort: text, serviceTier: text }), verification: { type: 'object' }, budget: { type: 'object' }, constraints: textArray, goal: text, definitionOfDone: text, taskId: text }, ['repoId', 'idempotencyKey', 'scratchFactId', 'harness', 'verification']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_goal_define', description: 'Define one immutable bounded Goal version under the injected repository principal.', inputSchema: schema({
     ...repo, ...idem, runId, objective: text, definitionOfDone: textArray, constraints: textArray, risk: text,
@@ -233,6 +247,17 @@ function validSpawnGoalPlan(value) {
     && nonempty(value.nodeKey) && value.expectedDispatchVersion === 0
     && validTextArray(value.capabilities) && validTextArray(value.effects);
 }
+function validPlanBrief(value) {
+  return closedRecord(value, PLAN_BRIEF_FIELDS) && nonempty(value.goal)
+    && validTextArray(value.constraints) && validTextArray(value.pathScope) && validTextArray(value.tools)
+    && typeof value.outputFormat === 'string' && typeof value.definitionOfDone === 'string'
+    && validGoalPlanVerification(value.verification) && closedRecord(value.budget, BUDGET_FIELDS)
+    && Number.isSafeInteger(value.budget.tokens) && value.budget.tokens > 0
+    && Number.isFinite(value.budget.usd) && value.budget.usd >= 0
+    && Number.isSafeInteger(value.budget.wallMin) && value.budget.wallMin > 0
+    && Number.isSafeInteger(value.providerTurns) && value.providerTurns > 0
+    && validTextArray(value.capabilities) && validTextArray(value.effects);
+}
 
 function validateArguments(name, args) {
   if (!record(args)) return 'invalid_arguments';
@@ -259,6 +284,7 @@ function validateArguments(name, args) {
     }
     if (Object.hasOwn(args, 'deps') && (!Array.isArray(args.deps) || !args.deps.every(nonempty))) return 'invalid_dependencies';
     if (Object.hasOwn(args, 'goalPlan') && !validSpawnGoalPlan(args.goalPlan)) return 'invalid_goal_plan';
+    if (Object.hasOwn(args, 'goalPlan') && !validPlanBrief(args.brief)) return 'invalid_plan_brief';
     if (Object.hasOwn(args, 'session')) {
       if (!record(args.session) || Object.keys(args.session).some((key) => !SESSION_FIELDS.has(key))) return 'invalid_session';
       const mode = args.session.mode ?? 'new';

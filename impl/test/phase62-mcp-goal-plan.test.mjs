@@ -57,6 +57,12 @@ const statusCoordinates = (goal, plan) => ({
   goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest,
   planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, throughSeq: null,
 });
+const plannedBrief = (overrides = {}) => ({
+  goal: 'Implement MCP Goal Plan authority', constraints: ['No network access'], pathScope: ['impl/**'],
+  tools: [], outputFormat: '', definitionOfDone: 'node --test passes', verification,
+  budget: { tokens: 10_000, usd: 1, wallMin: 5 }, providerTurns: 4,
+  capabilities: ['code', 'test'], effects: ['repository_edit'], ...overrides,
+});
 
 test('GP1/GP4/GP7: MCP Goal/Plan tools expose closed schemas and bind exact principal powers', async () => {
   const authorizations = []; const driver = makeDriver(authorizations);
@@ -75,6 +81,13 @@ test('GP1/GP4/GP7: MCP Goal/Plan tools expose closed schemas and bind exact prin
   assert.equal(planSchema.properties.goal.additionalProperties, false);
   assert.equal(planSchema.properties.nodes.items.additionalProperties, false);
   assert.equal(planSchema.properties.nodes.items.properties.verification.additionalProperties, false);
+  const spawnSchema = listed.result.tools.find((tool) => tool.name === 'fleet_spawn').inputSchema;
+  assert.equal(spawnSchema.properties.goalPlan.properties.expectedDispatchVersion.const, 0);
+  assert.equal(spawnSchema.allOf[0].then.properties.brief.additionalProperties, false);
+  assert.deepEqual(spawnSchema.allOf[0].then.properties.brief.required, [
+    'goal', 'constraints', 'pathScope', 'tools', 'outputFormat', 'definitionOfDone',
+    'verification', 'budget', 'providerTurns', 'capabilities', 'effects',
+  ]);
 
   const goalArgs = {
     repoId: 'repo-phase62-mcp', idempotencyKey: 'goal-one', objective: 'Ship MCP Goal Plan authority',
@@ -208,8 +221,23 @@ test('GP5/GP7: fleet_spawn carries one closed Goal/Plan gate and transport-deriv
     planId: `plan:${'c'.repeat(64)}`, planVersion: 2, planDigest: 'd'.repeat(64),
     nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code', 'test'], effects: ['repository_edit'],
   };
+  const empty = await rpc(mcp, 2, 'fleet_spawn', {
+    repoId: 'repo-phase62-mcp', idempotencyKey: 'spawn-plan-empty', harness: 'mock', brief: {}, goalPlan,
+  });
+  assert.equal(empty.result.isError, true); assert.match(empty.result.content[0].text, /invalid_plan_brief/);
+  assert.equal(calls.length, 0);
+  const unknown = await rpc(mcp, 2, 'fleet_spawn', {
+    repoId: 'repo-phase62-mcp', idempotencyKey: 'spawn-plan-unknown', harness: 'mock', brief: { ...plannedBrief(), unexpected: true }, goalPlan,
+  });
+  assert.equal(unknown.result.isError, true); assert.match(unknown.result.content[0].text, /invalid_plan_brief/);
+  assert.equal(calls.length, 0);
+  const futureDispatch = await rpc(mcp, 2, 'fleet_spawn', {
+    repoId: 'repo-phase62-mcp', idempotencyKey: 'spawn-plan-future-version', harness: 'mock', brief: plannedBrief(), goalPlan: { ...goalPlan, expectedDispatchVersion: 1 },
+  });
+  assert.equal(futureDispatch.result.isError, true); assert.match(futureDispatch.result.content[0].text, /invalid_goal_plan/);
+  assert.equal(calls.length, 0);
   const response = await rpc(mcp, 2, 'fleet_spawn', {
-    repoId: 'repo-phase62-mcp', idempotencyKey: 'spawn-plan-one', harness: 'mock', model: 'gpt-5.6-sol', effort: 'low', brief: {}, goalPlan,
+    repoId: 'repo-phase62-mcp', idempotencyKey: 'spawn-plan-one', harness: 'mock', model: 'gpt-5.6-sol', effort: 'low', brief: plannedBrief({ definitionOfDone: '' }), goalPlan,
   });
   assert.equal(response.result.isError, false);
   assert.deepEqual(calls[0].opts.goalPlan, goalPlan);
@@ -218,12 +246,12 @@ test('GP5/GP7: fleet_spawn carries one closed Goal/Plan gate and transport-deriv
   assert.equal(JSON.stringify(calls[0]).includes('spawn-plan-one'), false);
 
   const forged = await rpc(mcp, 3, 'fleet_spawn', {
-    repoId: 'repo-phase62-mcp', idempotencyKey: 'spawn-plan-forged', harness: 'mock', brief: {}, goalPlan,
+    repoId: 'repo-phase62-mcp', idempotencyKey: 'spawn-plan-forged', harness: 'mock', brief: plannedBrief(), goalPlan,
     principalId: 'forged',
   });
   assert.equal(forged.result.isError, true); assert.match(forged.result.content[0].text, /unknown_argument_field/);
   const malformed = await rpc(mcp, 4, 'fleet_spawn', {
-    repoId: 'repo-phase62-mcp', idempotencyKey: 'spawn-plan-malformed', harness: 'mock', brief: {}, goalPlan: { ...goalPlan, effects: undefined },
+    repoId: 'repo-phase62-mcp', idempotencyKey: 'spawn-plan-malformed', harness: 'mock', brief: plannedBrief(), goalPlan: { ...goalPlan, effects: undefined },
   });
   assert.equal(malformed.result.isError, true); assert.match(malformed.result.content[0].text, /invalid_goal_plan/);
   assert.equal(calls.length, 1);
@@ -287,10 +315,20 @@ test('GP5/GP7/GP8: admitted plan-gated fleet_spawn replay returns the one origin
     planId: plan.planId, planVersion: plan.version, planDigest: plan.digest,
     nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code'], effects: ['repository_edit'],
   };
-  const matchingBrief = {
-    goal: 'Implement the one admitted node', constraints: [], pathScope: ['impl/**'], definitionOfDone: 'one worker admission exists',
-    verification, budget: { tokens: 10_000, usd: 1, wallMin: 5 },
-  };
+  const matchingBrief = plannedBrief({
+    goal: 'Implement the one admitted node', constraints: [], definitionOfDone: 'one worker admission exists',
+    capabilities: ['code'],
+  });
+  for (const [index, omitted] of Object.keys(matchingBrief).entries()) {
+    const incomplete = { ...matchingBrief }; delete incomplete[omitted];
+    const refused = await rpc(dispatcher, 40 + index, 'fleet_spawn', {
+      repoId: 'repo-phase62-mcp', idempotencyKey: `spawn-omission-${index}`, taskId: `mcp-plan-omission-${index}`,
+      harness: 'mock', model: 'model-a', effort: 'low', brief: incomplete, goalPlan: gate,
+    });
+    assert.equal(refused.result.isError, true); assert.match(refused.result.content[0].text, /invalid_plan_brief/);
+  }
+  assert.equal(driver.coordination.events().filter((event) => ['plan.node_dispatched', 'task.created'].includes(event.kind)).length, 0);
+  assert.equal(driver.coordinator.list().length, 0);
   const beforeConflicts = driver.coordination.events().length;
   for (const [index, conflict] of [{ providerTurns: 3 }, { capabilities: ['test'] }, { effects: [] }].entries()) {
     const refused = await rpc(dispatcher, 20 + index, 'fleet_spawn', {
@@ -302,7 +340,7 @@ test('GP5/GP7/GP8: admitted plan-gated fleet_spawn replay returns the one origin
   assert.equal(driver.coordination.events().filter((event) => ['plan.node_dispatched', 'task.created'].includes(event.kind)).length, 0);
   assert.equal(driver.coordination.events().length, beforeConflicts + 6, 'each MCP refusal records only call admission and closed failure');
   const args = {
-    repoId: 'repo-phase62-mcp', idempotencyKey: 'spawn-lost-response', taskId: 'mcp-plan-reconcile', harness: 'mock', model: 'model-a', effort: 'low', brief: {},
+    repoId: 'repo-phase62-mcp', idempotencyKey: 'spawn-lost-response', taskId: 'mcp-plan-reconcile', harness: 'mock', model: 'model-a', effort: 'low', brief: matchingBrief,
     goalPlan: gate,
   };
   const complete = driver.coordination.completeMcpCall.bind(driver.coordination);

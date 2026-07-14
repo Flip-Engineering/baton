@@ -29,6 +29,12 @@ const auth = (principalId, powers, idempotencyKey, extra = {}) => ({
 });
 const budget = (tokens = 20_000) => ({ tokens, usd: 2, wallMin: 10, providerTurns: 8 });
 const verification = Object.freeze({ command: 'node', arguments: ['--test'], cwd: '.', envAllowlist: ['PATH'], expectExit: 0, expectResult: 'exit_code', timeoutMs: 60_000, maxOutputBytes: 1_000_000, requiredPredecessorEvidence: [] });
+const plannedBrief = (overrides = {}) => ({
+  goal: 'Implement the approved slice', constraints: ['No network access'], pathScope: ['impl/**'],
+  tools: [], outputFormat: '', definitionOfDone: 'node --test passes', verification,
+  budget: { tokens: 10_000, usd: 2, wallMin: 10 }, providerTurns: 8,
+  capabilities: ['code', 'test'], effects: ['repository_edit'], ...overrides,
+});
 const statusCoordinates = (goal, plan) => ({
   goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest,
   planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, throughSeq: null,
@@ -165,7 +171,7 @@ test('GP2/GP3/GP8: weakening, cycles, and double-counted budget refuse without d
 
 test('GP5/GP8: mandatory plan-gated spawn binds Brief/route/budget and has one concurrent CAS winner before effects', async () => {
   const driver = make('dispatch'); const { goal, plan } = await approved(driver, 'dispatch');
-  const brief = { goal: 'Implement the approved slice', constraints: ['No network access'], pathScope: ['impl/**'], definitionOfDone: 'node --test passes', verification, budget: { tokens: 10_000, usd: 2, wallMin: 10 } };
+  const brief = plannedBrief();
   const effectsBefore = driver.coordination.events().length;
   await assert.rejects(driver.coordinator.spawn('mock', brief, { taskId: 'ungated' }), (error) => error.code === 'goal_plan_required');
   assert.equal(driver.coordination.events().length, effectsBefore);
@@ -183,15 +189,27 @@ test('GP5/GP8: mandatory plan-gated spawn binds Brief/route/budget and has one c
   driver.close();
 });
 
-test('GP5/GP8: caller Brief provider turns, capabilities, and effects must match the approved node before mutation', async () => {
+test('GP5/GP8: every caller Brief field must be present and match the approved node before mutation', async () => {
   const driver = make('brief-authority-conflicts'); const { goal, plan } = await approved(driver, 'brief-authority-conflicts');
-  const brief = { goal: 'Implement the approved slice', constraints: ['No network access'], pathScope: ['impl/**'], definitionOfDone: 'node --test passes', verification, budget: { tokens: 10_000, usd: 2, wallMin: 10 } };
+  const brief = plannedBrief();
   const gate = { goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest, planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code', 'test'], effects: ['repository_edit'] };
   const before = driver.coordination.events().length;
+  for (const [index, omitted] of Object.keys(brief).entries()) {
+    const incomplete = { ...brief }; delete incomplete[omitted];
+    await assert.rejects(
+      driver.coordinator.spawn('mock', incomplete, {
+        taskId: `planned-brief-omission-${index}`, model: 'model-a', effort: 'low', goalPlan: gate,
+        actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session',
+        powers: ['plan:dispatch'], idempotencyKey: `spawn:planned-brief-omission-${index}`,
+      }),
+      (error) => error.code === 'plan_brief_mismatch',
+    );
+  }
   const conflicts = [
     { providerTurns: 7 },
     { capabilities: ['code'] },
     { effects: [] },
+    { unexpected: 'ignored-before-fix' },
   ];
   for (const [index, conflict] of conflicts.entries()) {
     await assert.rejects(
@@ -211,7 +229,7 @@ test('GP5/GP8: caller Brief provider turns, capabilities, and effects must match
 
 test('GP5/GP6/GP8: an admitted plan-gated spawn reconciles an exact lost-response retry without duplicate effects', async () => {
   const driver = make('dispatch-reconcile'); const { goal, plan } = await approved(driver, 'dispatch-reconcile');
-  const brief = { goal: 'Implement the approved slice', constraints: ['No network access'], pathScope: ['impl/**'], definitionOfDone: 'node --test passes', verification, budget: { tokens: 10_000, usd: 2, wallMin: 10 } };
+  const brief = plannedBrief();
   const gate = { goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest, planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code', 'test'], effects: ['repository_edit'] };
   const opts = { taskId: 'planned-reconcile', model: 'model-a', effort: 'low', goalPlan: gate, actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session', powers: ['plan:dispatch'], idempotencyKey: 'spawn:planned-reconcile' };
 
@@ -223,11 +241,19 @@ test('GP5/GP6/GP8: an admitted plan-gated spawn reconciles an exact lost-respons
   assert.equal(driver.coordination.events().filter((event) => event.kind === 'task.created').length, tasksBefore);
   assert.equal(driver.coordinator.list().length, workersBefore);
 
+  for (const omitted of Object.keys(brief)) {
+    const incomplete = { ...brief }; delete incomplete[omitted];
+    await assert.rejects(
+      () => driver.coordinator.spawn('mock', incomplete, opts),
+      (error) => error.code === 'plan_dispatch_conflict',
+    );
+  }
+
   await assert.rejects(
     () => driver.coordinator.spawn('mock', { ...brief, goal: 'Substituted objective' }, opts),
     (error) => error.code === 'plan_dispatch_conflict',
   );
-  for (const conflict of [{ providerTurns: 7 }, { capabilities: ['code'] }, { effects: [] }]) {
+  for (const conflict of [{ providerTurns: 7 }, { capabilities: ['code'] }, { effects: [] }, { unexpected: 'ignored-before-fix' }]) {
     await assert.rejects(
       () => driver.coordinator.spawn('mock', { ...brief, ...conflict }, opts),
       (error) => error.code === 'plan_dispatch_conflict',
@@ -251,7 +277,7 @@ test('GP5/GP8: plan-bound follow-up and recovery refuse before provider, adapter
     referee: async () => ({ reverified: true, passed: true, observedExit: 0, matchesClaim: true }),
   });
   const { goal, plan } = await approved(driver, 'continuation-refusal');
-  const brief = { goal: 'Implement the approved slice', constraints: ['No network access'], pathScope: ['impl/**'], definitionOfDone: 'node --test passes', verification, budget: { tokens: 10_000, usd: 2, wallMin: 10 } };
+  const brief = plannedBrief();
   const gate = { goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest, planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code', 'test'], effects: ['repository_edit'] };
   const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'planned-continuation', model: 'model-a', effort: 'low', goalPlan: gate, actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session', powers: ['plan:dispatch'], idempotencyKey: 'spawn:planned-continuation' });
   await until(async () => (await driver.coordinator.result(handle.id)).ready === true);
@@ -295,7 +321,7 @@ test('GP6/GP8: exact terminal usage settles and releases each plan budget dimens
     },
   });
   const { goal, plan } = await approved(driver, 'metered-budget');
-  const brief = { goal: 'Implement the approved slice', constraints: ['No network access'], pathScope: ['impl/**'], definitionOfDone: 'node --test passes', verification, budget: { tokens: 10_000, usd: 2, wallMin: 10 } };
+  const brief = plannedBrief();
   const gate = { goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest, planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code', 'test'], effects: ['repository_edit'] };
   const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'planned-metered-budget', model: 'model-a', effort: 'low', goalPlan: gate, actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session', powers: ['plan:dispatch'], idempotencyKey: 'spawn:planned-metered-budget' });
   await until(() => ['completed', 'failed', 'cancelled'].includes(driver.coordination.task('planned-metered-budget')?.status));
@@ -315,7 +341,7 @@ test('GP6: status exposes a stable verification refusal code without private ver
   const driver = make('verification-refusal-status', { adapters: { mock: adapter } });
   const failingVerification = { ...verification, expectExit: 1 };
   const { goal, plan } = await approved(driver, 'verification-refusal-status', failingVerification);
-  const brief = { goal: 'Implement the approved slice', constraints: ['No network access'], pathScope: ['impl/**'], definitionOfDone: 'node --test passes', verification: failingVerification, budget: { tokens: 10_000, usd: 2, wallMin: 10 } };
+  const brief = plannedBrief({ verification: failingVerification });
   const gate = { goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest, planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code', 'test'], effects: ['repository_edit'] };
   const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'planned-verification-refusal', model: 'model-a', effort: 'low', goalPlan: gate, actor: 'direct:dispatcher', principalId: 'dispatcher', sessionId: 'dispatcher-session', powers: ['plan:dispatch'], idempotencyKey: 'spawn:planned-verification-refusal' });
   await until(async () => (await driver.coordinator.result(handle.id)).ready === true);

@@ -42,6 +42,12 @@ const statusArgs = () => ({
   goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest,
   planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, throughSeq: null,
 });
+const plannedBrief = (overrides = {}) => ({
+  goal: node.objective, constraints: ['No network'], pathScope: ['impl/**'], tools: [], outputFormat: '',
+  definitionOfDone: 'tests pass', verification: { ...verification },
+  budget: { tokens: 10_000, usd: 2, wallMin: 10 }, providerTurns: 8,
+  capabilities: ['code', 'test'], effects: ['repository_edit'], ...overrides,
+});
 
 function fixture(coordinator = {}) {
   const calls = [];
@@ -116,9 +122,21 @@ test('GP5/GP7: plan-gated web spawn forwards one closed gate and transport-deriv
     nodeKey: 'implement', expectedDispatchVersion: 0,
     capabilities: ['code', 'test'], effects: ['repository_edit'],
   };
-  const brief = { goal: node.objective, constraints: ['No network'], pathScope: ['impl/**'], definitionOfDone: 'tests pass', verification: { ...verification }, budget: { tokens: 10_000, usd: 2, wallMin: 10 } };
+  const brief = plannedBrief();
+  const empty = await web.execute(context(['control', 'plan:dispatch']), envelope('spawn', {
+    harness: 'mock', model: 'model-exact', effort: 'low', brief: {}, goalPlan,
+  }, 'planned-spawn-empty'));
+  assert.equal(empty.status, 400); assert.equal(calls.length, 0);
+  const unknown = await web.execute(context(['control', 'plan:dispatch']), envelope('spawn', {
+    harness: 'mock', model: 'model-exact', effort: 'low', brief: { ...brief, unexpected: true }, goalPlan,
+  }, 'planned-spawn-unknown'));
+  assert.equal(unknown.status, 400); assert.equal(calls.length, 0);
+  const futureDispatch = await web.execute(context(['control', 'plan:dispatch']), envelope('spawn', {
+    harness: 'mock', model: 'model-exact', effort: 'low', brief, goalPlan: { ...goalPlan, expectedDispatchVersion: 1 },
+  }, 'planned-spawn-future-version'));
+  assert.equal(futureDispatch.status, 400); assert.equal(calls.length, 0);
   const response = await web.execute(context(['control', 'plan:dispatch']), envelope('spawn', {
-    harness: 'mock', model: 'model-exact', effort: 'low', brief, goalPlan,
+    harness: 'mock', model: 'model-exact', effort: 'low', brief: { ...brief, definitionOfDone: '' }, goalPlan,
   }, 'planned-spawn'));
   assert.equal(response.status, 200);
   assert.equal(calls.length, 1);
@@ -131,7 +149,7 @@ test('GP5/GP7: plan-gated web spawn forwards one closed gate and transport-deriv
   assert.equal(calls[0].opts.actor, 'web:user-1:session-1');
 });
 
-test('GP5/GP7/GP8: authenticated web rejects conflicting plan-owned Brief fields before task dispatch', async () => {
+test('GP5/GP7/GP8: authenticated web rejects omitted or conflicting plan-owned Brief fields before task dispatch', async () => {
   const driver = realWebDriver();
   const direct = (principalId, powers, idempotencyKey) => ({ actor: `direct:${principalId}`, principalId, sessionId: `${principalId}-session`, powers, repoId: REPO, runId: RUN, idempotencyKey });
   const { goal: approvedGoal } = await driver.coordinator.defineGoal(goalArgs(), direct('owner', ['goal:define'], 'goal:web-conflicts'));
@@ -150,7 +168,17 @@ test('GP5/GP7/GP8: authenticated web rejects conflicting plan-owned Brief fields
     planId: approvedPlan.planId, planVersion: approvedPlan.version, planDigest: approvedPlan.digest,
     nodeKey: 'implement', expectedDispatchVersion: 0, capabilities: ['code', 'test'], effects: ['repository_edit'],
   };
-  const matchingBrief = { goal: node.objective, constraints: ['No network'], pathScope: ['impl/**'], definitionOfDone: 'tests pass', verification: { ...verification }, budget: { tokens: 10_000, usd: 2, wallMin: 10 } };
+  const matchingBrief = plannedBrief();
+  for (const [index, omitted] of Object.keys(matchingBrief).entries()) {
+    const incomplete = { ...matchingBrief }; delete incomplete[omitted];
+    const response = await web.execute(context(['control', 'plan:dispatch']), envelope('spawn', {
+      harness: 'mock', model: 'model-exact', effort: 'low', taskId: `web-plan-omission-${index}`,
+      brief: incomplete, goalPlan: gate,
+    }, `plan-omission-${index}`));
+    assert.equal(response.status, 400); assert.equal(response.body.error.code, 'invalid_command');
+  }
+  assert.equal(driver.coordination.events().filter((event) => ['plan.node_dispatched', 'task.created'].includes(event.kind)).length, 0);
+  assert.equal(driver.coordinator.list().length, 0);
   for (const [index, conflict] of [{ providerTurns: 7 }, { capabilities: ['code'] }, { effects: [] }].entries()) {
     const response = await web.execute(context(['control', 'plan:dispatch']), envelope('spawn', {
       harness: 'mock', model: 'model-exact', effort: 'low', taskId: `web-plan-conflict-${index}`,
@@ -215,7 +243,7 @@ test('GP5/GP7/GP8: lost responses reconcile Goal/Plan mutations and gated spawn 
     ['plan_approve', approvalArgs(), ['plan:approve']],
     ['spawn', {
       harness: 'mock', model: 'model-exact', effort: 'low',
-      brief: { goal: node.objective, constraints: ['No network'], pathScope: ['impl/**'], definitionOfDone: 'tests pass', verification: { ...verification }, budget: { tokens: 10_000, usd: 2, wallMin: 10 } },
+      brief: plannedBrief(),
       goalPlan: {
         goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest,
         planId: plan.planId, planVersion: plan.version, planDigest: plan.digest,

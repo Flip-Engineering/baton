@@ -209,13 +209,21 @@ function assertDag(nodes) {
     if (node.deps.includes(node.key)) fail('plan contains a self dependency', 'plan_cycle');
     if (node.deps.some((dep) => !keys.has(dep))) fail('plan contains a dangling dependency', 'plan_dangling_dependency');
   }
-  const visiting = new Set(); const visited = new Set(); const byKey = new Map(nodes.map((node) => [node.key, node]));
-  const visit = (key) => {
-    if (visiting.has(key)) fail('plan contains a dependency cycle', 'plan_cycle');
-    if (visited.has(key)) return;
-    visiting.add(key); for (const dep of byKey.get(key).deps) visit(dep); visiting.delete(key); visited.add(key);
-  };
-  for (const key of [...keys].sort()) visit(key);
+  const remainingDeps = new Map(nodes.map((node) => [node.key, node.deps.length]));
+  const dependents = new Map(nodes.map((node) => [node.key, []]));
+  for (const node of nodes) for (const dep of node.deps) dependents.get(dep).push(node.key);
+  const ready = nodes.filter((node) => node.deps.length === 0).map((node) => node.key);
+  let visited = 0;
+  for (let index = 0; index < ready.length; index += 1) {
+    const key = ready[index];
+    visited += 1;
+    for (const dependent of dependents.get(key)) {
+      const next = remainingDeps.get(dependent) - 1;
+      remainingDeps.set(dependent, next);
+      if (next === 0) ready.push(dependent);
+    }
+  }
+  if (visited !== nodes.length) fail('plan contains a dependency cycle', 'plan_cycle');
 }
 
 export function normalizePlanRequest(value, policy, goal) {
@@ -262,10 +270,24 @@ export function buildAuthoritativeBrief(goal, plan, node, binding) {
   };
 }
 
+export const PLAN_BRIEF_FIELDS = Object.freeze([
+  'goal', 'constraints', 'pathScope', 'tools', 'outputFormat', 'definitionOfDone',
+  'verification', 'budget', 'providerTurns', 'capabilities', 'effects',
+]);
+
 export function semanticBriefCore(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
-  return Object.fromEntries(['goal', 'constraints', 'pathScope', 'tools', 'outputFormat', 'definitionOfDone', 'verification', 'budget', 'providerTurns', 'capabilities', 'effects']
+  return Object.fromEntries(PLAN_BRIEF_FIELDS
     .filter((key) => Object.hasOwn(value, key)).map((key) => [key, clone(value[key])]));
+}
+
+export function planBriefMatches(value, authoritative, { goalPlanCoordinates = false } = {}) {
+  const supplied = semanticBriefCore(value);
+  const expected = semanticBriefCore(authoritative);
+  const fields = goalPlanCoordinates ? [...PLAN_BRIEF_FIELDS, 'goalPlan'] : PLAN_BRIEF_FIELDS;
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).sort().join('\0') === [...fields].sort().join('\0')
+    && goalPlanDigest(supplied) === goalPlanDigest(expected);
 }
 
 export function normalizeGoalPlanContext(ctx, policy, power) {

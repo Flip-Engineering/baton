@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import {
   GoalPlanValidationError, assertGoalSuccessor, buildAuthoritativeBrief, goalPlanCanonical,
-  goalPlanDigest, normalizeGoalPlanPolicy, normalizeGoalRequest, normalizePlanRequest, semanticBriefCore,
+  goalPlanDigest, normalizeGoalPlanPolicy, normalizeGoalRequest, normalizePlanRequest, planBriefMatches,
 } from './goal-plan.mjs';
 import { usdFromNanos, usdToNanos } from './usd.mjs';
 
@@ -2860,7 +2860,7 @@ export class CoordinationStore {
     }
     const state = this._planDispatchState(gate, route);
     if (this._tasks.has(fields?.id)) throw new CoordinationRefusal('plan task id already exists', 'duplicate_task');
-    if (canonicalDigest(semanticBriefCore(fields?.brief)) !== canonicalDigest(semanticBriefCore(state.brief))
+    if (!planBriefMatches(fields?.brief, state.brief, { goalPlanCoordinates: true })
       || canonicalDigest(fields?.brief?.goalPlan) !== canonicalDigest(state.binding)
       || canonicalDigest(fields?.brief?.capabilities) !== canonicalDigest(state.node.capabilities)
       || canonicalDigest(fields?.brief?.effects) !== canonicalDigest(state.node.effects)

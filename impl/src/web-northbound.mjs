@@ -49,6 +49,7 @@ const PLAN_NODE_FIELDS = new Set(['key', 'objective', 'definitionOfDone', 'deps'
 const PLAN_ROUTE_FIELDS = new Set(['harnesses', 'models', 'efforts']);
 const PLAN_VERIFICATION_FIELDS = new Set(['command', 'arguments', 'cwd', 'envAllowlist', 'expectExit', 'expectResult', 'timeoutMs', 'maxOutputBytes', 'requiredPredecessorEvidence']);
 const PLAN_GATE_FIELDS = new Set(['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'expectedDispatchVersion', 'capabilities', 'effects']);
+const PLAN_BRIEF_FIELDS = new Set(['goal', 'constraints', 'pathScope', 'tools', 'outputFormat', 'definitionOfDone', 'verification', 'budget', 'providerTurns', 'capabilities', 'effects']);
 const AUTH_PATHS = new Set(['/v1/auth/login', '/v1/auth/refresh', '/v1/auth/logout']);
 const OIDC_START_PATH = '/v1/auth/oidc/start';
 const OIDC_CALLBACK_PATH = '/v1/auth/oidc/callback';
@@ -179,7 +180,18 @@ function planGate(value) {
     && /^[a-f0-9]{64}$/.test(value.goalDigest ?? '')
     && /^plan:[a-f0-9]{64}$/.test(value.planId ?? '') && Number.isSafeInteger(value.planVersion) && value.planVersion > 0
     && /^[a-f0-9]{64}$/.test(value.planDigest ?? '') && string(value.nodeKey)
-    && Number.isSafeInteger(value.expectedDispatchVersion) && value.expectedDispatchVersion >= 0
+    && value.expectedDispatchVersion === 0
+    && stringList(value.capabilities) && stringList(value.effects);
+}
+function planBrief(value) {
+  return exactRecord(value, PLAN_BRIEF_FIELDS) && string(value.goal)
+    && stringList(value.constraints) && stringList(value.pathScope) && stringList(value.tools)
+    && typeof value.outputFormat === 'string' && typeof value.definitionOfDone === 'string'
+    && planVerification(value.verification) && exactRecord(value.budget, BUDGET_FIELDS)
+    && Number.isSafeInteger(value.budget.tokens) && value.budget.tokens > 0
+    && Number.isFinite(value.budget.usd) && value.budget.usd >= 0
+    && Number.isSafeInteger(value.budget.wallMin) && value.budget.wallMin > 0
+    && Number.isSafeInteger(value.providerTurns) && value.providerTurns > 0
     && stringList(value.capabilities) && stringList(value.effects);
 }
 function validProviderClaims(value) {
@@ -217,7 +229,7 @@ function validateEnvelope(envelope) {
       const unknownPolicy = Object.keys(envelope.args.modelPolicy).find((key) => !MODEL_POLICY_FIELDS.has(key));
       if (unknownPolicy) return 'unknown_model_policy_field';
     }
-    if (Object.hasOwn(envelope.args, 'goalPlan') && !planGate(envelope.args.goalPlan)) return 'plan-gated spawn fields are invalid';
+    if (Object.hasOwn(envelope.args, 'goalPlan') && (!planGate(envelope.args.goalPlan) || !planBrief(envelope.args.brief))) return 'plan-gated spawn fields are invalid';
   }
   if (envelope.command === 'goal_define') {
     if (!exactRecord(envelope.args, ARG_FIELDS.goal_define) || !string(envelope.args.objective)
