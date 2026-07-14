@@ -27,15 +27,18 @@ const REVIEW_ARTIFACTS = Object.freeze({
   59: ['worktree-capacity-authority', 'worktree-capacity-authority'],
   60: ['attach-only-native-recovery', 'coordination-recovery'],
   61: ['graph-backed-representations', 'representation-producer'],
+  62: ['goal-plan-web-authority', 'goal-plan-authority'],
 });
 const reviewArtifact = REVIEW_ARTIFACTS[REVIEW_PHASE];
 if (!reviewArtifact && (!process.env.BATON_REVIEW_SPEC || !process.env.BATON_REVIEW_TEST)) throw new Error('PENDING-LIVE-review-artifact-mapping-required');
 const REVIEW_SPEC = process.env.BATON_REVIEW_SPEC ?? `spec/phase${REVIEW_PHASE}/${reviewArtifact[0]}.md`;
 const REVIEW_TEST = process.env.BATON_REVIEW_TEST ?? `impl/test/phase${REVIEW_PHASE}-${reviewArtifact[1]}.test.mjs`;
+const REVIEW_TESTS = Object.freeze(REVIEW_TEST.trim().split(/\s+/u).filter(Boolean));
+if (REVIEW_TESTS.length === 0) throw new Error('PENDING-LIVE-review-test-set-required');
 const TARGET_REPO = join(OWNER_ROOT, `phase${REVIEW_PHASE}-clean-target`);
 const LOG_DIR = mkdtempSync(join(tmpdir(), `baton-phase${REVIEW_PHASE}-live-log-`));
-const RUN_ID = REVIEW_PHASE === '56' ? 'phase56-live-harness-drain' : REVIEW_PHASE === '60' ? 'phase60-native-recovery-review' : REVIEW_PHASE === '61' ? 'phase61-graph-representation-review' : `phase${REVIEW_PHASE}-live-harness-governance`;
-const TASK_TYPE = REVIEW_PHASE === '56' ? 'phase56-drain-adversarial-review' : REVIEW_PHASE === '60' ? 'phase60-native-recovery-adversarial-review' : REVIEW_PHASE === '61' ? 'phase61-representation-adversarial-review' : `phase${REVIEW_PHASE}-governance-adversarial-review`;
+const RUN_ID = REVIEW_PHASE === '56' ? 'phase56-live-harness-drain' : REVIEW_PHASE === '60' ? 'phase60-native-recovery-review' : REVIEW_PHASE === '61' ? 'phase61-graph-representation-review' : REVIEW_PHASE === '62' ? 'phase62-goal-plan-authority-review' : `phase${REVIEW_PHASE}-live-harness-governance`;
+const TASK_TYPE = REVIEW_PHASE === '56' ? 'phase56-drain-adversarial-review' : REVIEW_PHASE === '60' ? 'phase60-native-recovery-adversarial-review' : REVIEW_PHASE === '61' ? 'phase61-representation-adversarial-review' : REVIEW_PHASE === '62' ? 'phase62-goal-plan-adversarial-review' : `phase${REVIEW_PHASE}-governance-adversarial-review`;
 const phase57Focus = [
   'callback provenance, exact route binding, and forged policy/orchestrator authority',
   'dimension-complete usage seals, metric binding, and post-acceptance revocation',
@@ -64,6 +67,13 @@ const phase61Focus = [
   'concurrent Grok review authority, route/model/effort specificity, process correlation, kill, and exact reap',
   'reflexive Baton-on-Baton representation friction plus retained R4-R7 and Phase 62 Goal/Plan scope',
 ];
+const phase62Focus = [
+  'append-only goal and plan canonicalization, bounded DAG and budget authority, and immutable plan-owned verification',
+  'distinct proposer and approver authority, stale or rejected decisions, policy drift, and exact approval replay',
+  'project-key GLM isolation, authoritative Brief derivation, pre-effect node dispatch CAS, and restart reconciliation',
+  'concurrent Grok route/model/effort constraints, atomic dispatch/task batches, process correlation, kill, and exact reap',
+  'authenticated web and MCP parity, status/event truth, reflexive Baton-on-Baton friction, and retained later authority',
+];
 const phase56Focus = [
   'drain fencing, exact async ownership, deadline truth, and driver close ordering',
   'durable replay, actor binding, receipt validation, and crash recovery',
@@ -82,18 +92,22 @@ const TASK_CATALOG = routes.map((route, index) => ({
   ...route,
   taskId: `phase${REVIEW_PHASE}-${route.suffix}`,
   target: `reviews/dogfood/phase${REVIEW_PHASE}-${route.suffix}.md`,
-  focus: ({ 56: phase56Focus, 57: phase57Focus, 59: phase59Focus, 60: phase60Focus, 61: phase61Focus }[REVIEW_PHASE] ?? phase56Focus)[index],
+  focus: ({ 56: phase56Focus, 57: phase57Focus, 59: phase59Focus, 60: phase60Focus, 61: phase61Focus, 62: phase62Focus }[REVIEW_PHASE] ?? phase56Focus)[index],
 }));
 const selectedTaskIds = process.env.BATON_TASK_IDS ? new Set(process.env.BATON_TASK_IDS.split(',').filter(Boolean)) : null;
 const TASKS = selectedTaskIds ? TASK_CATALOG.filter((task) => selectedTaskIds.has(task.taskId)) : TASK_CATALOG;
 const REQUIRE_GROK_PAIR = TASKS.filter((task) => task.harness === 'grok').length === 2;
 const GOVERNANCE_MODE = process.env.BATON_PROVIDER_GOVERNANCE_MODE ?? null;
+const MAX_WIRE_FRAME_BYTES = Number(process.env.BATON_MAX_WIRE_FRAME_BYTES ?? 16 * 1024 * 1024);
+if (!Number.isSafeInteger(MAX_WIRE_FRAME_BYTES) || MAX_WIRE_FRAME_BYTES <= 0 || MAX_WIRE_FRAME_BYTES > 16 * 1024 * 1024) {
+  throw new Error('PENDING-LIVE-baton-max-wire-frame-bytes-invalid');
+}
 const routeTokenBudget = (task) => Number(process.env.BATON_TASK_TOKEN_BUDGET
   ?? (REVIEW_PHASE === '56' ? 60_000 : task.harness === 'codex' ? 450_000 : 300_000));
 const terminalReserveTokens = (task) => Number(process.env.BATON_TERMINAL_RESERVE_TOKENS ?? routeTokenBudget(task));
 const providerGovernance = GOVERNANCE_MODE ? {
   schemaVersion: 1,
-  maxWireFrameBytes: 1024 * 1024,
+  maxWireFrameBytes: MAX_WIRE_FRAME_BYTES,
   maxProviderCallsPerTurn: 100,
   maxToolCallsPerTurn: 100,
   routes: TASK_CATALOG.map((task) => ({
@@ -122,6 +136,48 @@ const worktreeCapacity = capacityEnabled ? Object.freeze({
   runtimeReserveBytes: boundedInteger('BATON_CAPACITY_RUNTIME_BYTES', 64 * 1024 * 1024),
   runtimeReserveInodes: boundedInteger('BATON_CAPACITY_RUNTIME_INODES', 10_000),
 }) : null;
+const PHASE62_REPO_ID = 'baton-phase62-live';
+const PHASE62_NODE_PROVIDER_TURNS = 100;
+const phase62GoalPlanPolicy = REVIEW_PHASE === '62' ? Object.freeze({
+  schemaVersion: 1,
+  repoId: PHASE62_REPO_ID,
+  mandatory: true,
+  approvalTtlMs: 60 * 60 * 1000,
+  riskClasses: Object.freeze(['low', 'medium', 'high', 'critical']),
+  effectClasses: Object.freeze(['provider_call', 'repository_edit']),
+  capabilityClasses: Object.freeze(['code', 'test']),
+  limits: Object.freeze({
+    maxGoalVersions: 8, maxPlanVersions: 8, maxNodes: 8, maxDepsPerNode: 8,
+    maxTextBytes: 8 * 1024, maxItems: 32, maxScopePaths: 8, maxRouteValues: 8,
+    maxGoalBytes: 128 * 1024, maxPlanBytes: 512 * 1024, maxStatusBytes: 512 * 1024,
+    maxTokens: 10_000_000, maxUsd: 100, maxWallMin: 24 * 60, maxProviderTurns: 10_000,
+  }),
+}) : null;
+const PHASE62_AUTHORITY = Object.freeze({
+  goal_define: Object.freeze({ power: 'goal:define', principalId: 'phase62-goal-owner' }),
+  plan_propose: Object.freeze({ power: 'plan:propose', principalId: 'phase62-planner' }),
+  plan_approve: Object.freeze({ power: 'plan:approve', principalId: 'phase62-approver' }),
+  plan_dispatch: Object.freeze({ power: 'plan:dispatch', principalId: 'phase62-dispatcher' }),
+  goal_plan_status: Object.freeze({ power: 'goal:observe', principalId: 'phase62-observer' }),
+});
+const phase62Authorize = async ({ operation, power, principalId, repoId, runId }) => {
+  const expected = PHASE62_AUTHORITY[operation];
+  return REVIEW_PHASE === '62' && expected?.power === power && expected.principalId === principalId
+    && repoId === PHASE62_REPO_ID && runId === RUN_ID;
+};
+const phase62Context = (operation, idempotencyKey) => {
+  const authority = PHASE62_AUTHORITY[operation];
+  if (!authority) throw new Error(`PENDING-LIVE-phase62-authority-${operation}-invalid`);
+  return {
+    actor: `direct:${authority.principalId}`,
+    principalId: authority.principalId,
+    sessionId: `${authority.principalId}-session`,
+    powers: [authority.power],
+    repoId: PHASE62_REPO_ID,
+    runId: RUN_ID,
+    idempotencyKey,
+  };
+};
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 const alive = (pid) => { try { if (!pid) return false; process.kill(pid, 0); return true; } catch { return false; } };
 const groupAlive = (pgid) => { try { if (!pgid) return false; process.kill(-pgid, 0); return true; } catch { return false; } };
@@ -148,9 +204,24 @@ async function until(fn, label, timeoutMs = 900_000) {
 }
 
 function brief(task) {
+  const phase62Constraints = [
+    'Do not inspect credentials or environment, use network tools, commit, push, deploy, or access homelab/project-manager.',
+    'Write a Markdown document at exactly the path named in the node objective; do not rename it, change its extension, or make it executable source code.',
+    'Edit only the single repository path in this approved plan node scope and leave every other path unchanged.',
+    'Ground confirmed defects in exact committed source and distinguish them from retained later scope.',
+    'Keep the report under 700 words and use at most 8 repository/tool calls.',
+  ].sort();
+  const verificationScript = [
+    "const { execFileSync } = require('node:child_process');",
+    "const { readFileSync } = require('node:fs');",
+    "const [target, ...testFiles] = process.argv.slice(1);",
+    "const report = readFileSync(target, 'utf8');",
+    "for (const heading of ['## Verdict', '## P0-P1 findings', '## Required corrections']) if (!report.includes(heading)) process.exit(1);",
+    "execFileSync(process.execPath, ['impl/scripts/run-evidence.mjs', 'impl/scripts/run-suite.mjs', ...testFiles], { stdio: 'inherit' });",
+  ].join(' ');
   return createBrief({
     goal: `Independently review committed Phase ${REVIEW_PHASE} at ${IMPLEMENTATION_SHA.slice(0, 7)}, focusing on ${task.focus}. Inspect ${REVIEW_SPEC} and its implementation/tests. Write ${task.target} with exactly the headings "## Verdict", "## P0-P1 findings", and "## Required corrections".`,
-    constraints: [
+    constraints: REVIEW_PHASE === '62' ? phase62Constraints : [
       `Edit only ${task.target}.`,
       'Keep the report under 700 words and use at most 8 repository/tool calls.',
       'Ground confirmed defects in exact committed source and distinguish them from retained later scope.',
@@ -159,10 +230,16 @@ function brief(task) {
     pathScope: [task.target],
     definitionOfDone: 'All three headings exist and the verdict explicitly says PASS or REVISE.',
     verification: {
-      command: `test -s ${task.target} && grep -Fq '## Verdict' ${task.target} && grep -Fq '## P0-P1 findings' ${task.target} && grep -Fq '## Required corrections' ${task.target} && node impl/scripts/run-evidence.mjs impl/scripts/run-suite.mjs ${REVIEW_TEST}`,
-      expectExit: 0, timeoutMs: 180_000,
+      command: 'node', arguments: ['-e', verificationScript, task.target, ...REVIEW_TESTS], cwd: '.',
+      envAllowlist: ['PATH'], expectExit: 0, expectResult: 'exit_code', timeoutMs: 180_000,
+      maxOutputBytes: 2 * 1024 * 1024, requiredPredecessorEvidence: [],
     },
     budget: { tokens: routeTokenBudget(task), usd: 3, wallMin: 14 },
+    ...(REVIEW_PHASE === '62' ? {
+      providerTurns: PHASE62_NODE_PROVIDER_TURNS,
+      capabilities: ['code', 'test'],
+      effects: ['provider_call', 'repository_edit'],
+    } : {}),
   });
 }
 
@@ -185,9 +262,12 @@ function bounded(events) {
 }
 
 function targetOwnership(git) {
+  const worktreeEntries = names(join(TARGET_REPO, '.baton', 'wt'));
+  const localTaskIds = new Set(worktreeEntries.map((entry) => entry
+    .replace(/\.meta\.json$/u, '').replace(/\.projection\.exclude$/u, '')));
   return {
-    branches: git(['branch', '--list', 'baton/*']).split('\n').map((line) => line.trim()).filter(Boolean).sort(),
-    worktreeEntries: names(join(TARGET_REPO, '.baton', 'wt')),
+    branches: [...localTaskIds].flatMap((taskId) => git(['branch', '--list', `baton/${taskId}`]).split('\n').map((line) => line.trim()).filter(Boolean)).sort(),
+    worktreeEntries,
     runtimeEntries: names(join(TARGET_REPO, '.baton', 'runtime')),
     verifyEntries: names(join(TARGET_REPO, '.baton', 'verify')),
     integrateEntries: names(join(TARGET_REPO, '.baton', 'integrate')),
@@ -211,6 +291,7 @@ const credentialMeasurements = { glm: credentialFact(GLM_AUTH), codex: credentia
 const attempts = []; const rows = []; const responses = []; const simultaneousGrokSamples = [];
 let ownershipBefore = null; let ownershipAfter = null; let closureReceipt = null; let fatal = null; let driver = null; let pumping = true;
 let pump = Promise.resolve();
+let phase62AuthoritySetup = null; let phase62Status = null; let phase62Proof = null;
 
 try {
   const sparseWorkerPaths = Number(REVIEW_PHASE) >= 57 ? ['impl', `spec/phase${REVIEW_PHASE}`, 'reviews/dogfood'] : [];
@@ -236,12 +317,13 @@ try {
   driver = createDriver({
     repoRoot: TARGET_REPO, logDir: LOG_DIR, repoId: `baton-phase${REVIEW_PHASE}-live`,
     adapters: {
-      codex: new CodexAppServerCli({ requestTimeoutMs: 45_000, ceiling: 1 }),
-      claude: new ClaudeSessionCli({ approvals: true, permissionMode: 'default', ceiling: 1 }),
-      glm: new GlmSessionCli({ authTokenFile: GLM_AUTH, authTokenJsonPointer: process.env.BATON_GLM_AUTH_JSON_POINTER ?? '/glm_key', model: 'glm-4.7', approvals: false, permissionMode: 'acceptEdits', args: ['--safe-mode', '--no-session-persistence', '--max-budget-usd', '3.00'], ceiling: 1, killGraceMs: 5_000 }),
-      grok: new GrokAcpCli({ requestTimeoutMs: 45_000, ceiling: 2 }),
+      codex: new CodexAppServerCli({ requestTimeoutMs: 45_000, maxWireFrameBytes: MAX_WIRE_FRAME_BYTES, ceiling: 1 }),
+      claude: new ClaudeSessionCli({ approvals: true, permissionMode: 'default', maxWireFrameBytes: MAX_WIRE_FRAME_BYTES, ceiling: 1 }),
+      glm: new GlmSessionCli({ authTokenFile: GLM_AUTH, authTokenJsonPointer: process.env.BATON_GLM_AUTH_JSON_POINTER ?? '/glm_key', model: 'glm-4.7', approvals: false, permissionMode: 'acceptEdits', args: ['--safe-mode', '--no-session-persistence', '--max-budget-usd', '3.00'], maxWireFrameBytes: MAX_WIRE_FRAME_BYTES, ceiling: 1, killGraceMs: 5_000 }),
+      grok: new GrokAcpCli({ requestTimeoutMs: 45_000, maxWireFrameBytes: MAX_WIRE_FRAME_BYTES, ceiling: 2 }),
     },
     runtimeIsolation: { credentialFiles: runtimeCredentialFiles },
+    ...(phase62GoalPlanPolicy ? { goalPlanAuthority: { policy: phase62GoalPlanPolicy, authorize: phase62Authorize } } : {}),
     ...(providerGovernance ? { providerGovernance } : {}),
     ...(worktreeCapacity ? { worktreeCapacity } : {}),
     toolchainProjection: { ...projectionDescriptor, expectedManifestDigest: projectionIdentity.manifestDigest },
@@ -253,6 +335,55 @@ try {
   });
   await driver.ready;
   const { coordinator, log } = driver;
+  if (REVIEW_PHASE === '62') {
+    const taskBriefs = TASK_CATALOG.map((task) => ({ task, brief: brief(task) }));
+    const goalBudget = taskBriefs.reduce((sum, row) => ({
+      tokens: sum.tokens + row.brief.budget.tokens,
+      usd: sum.usd + row.brief.budget.usd,
+      wallMin: sum.wallMin + row.brief.budget.wallMin,
+      providerTurns: sum.providerTurns + PHASE62_NODE_PROVIDER_TURNS,
+    }), { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 });
+    const goalResult = await coordinator.defineGoal({
+      objective: `Independently review committed Phase 62 at ${IMPLEMENTATION_SHA.slice(0, 7)} across all five exact provider routes under mandatory Goal/Plan authority.`,
+      definitionOfDone: ['All three headings exist and the verdict explicitly says PASS or REVISE.'],
+      constraints: [...taskBriefs[0].brief.constraints],
+      risk: 'high',
+      budget: goalBudget,
+      predecessor: null,
+    }, phase62Context('goal_define', 'phase62:goal:define'));
+    const goal = goalResult.goal;
+    const goalRef = { goalId: goal.goalId, version: goal.version, digest: goal.digest };
+    const planResult = await coordinator.proposePlan({
+      goal: goalRef,
+      predecessor: null,
+      nodes: taskBriefs.map(({ task, brief: taskBrief }) => ({
+        key: task.taskId,
+        objective: taskBrief.goal,
+        definitionOfDone: [taskBrief.definitionOfDone],
+        deps: [],
+        pathScope: [...taskBrief.pathScope],
+        risk: 'high',
+        budget: { ...taskBrief.budget, providerTurns: PHASE62_NODE_PROVIDER_TURNS },
+        verification: { ...taskBrief.verification },
+        routes: { harnesses: [task.harness], models: [task.model], efforts: ['low'] },
+        capabilities: ['code', 'test'],
+        effects: ['provider_call', 'repository_edit'],
+      })),
+    }, phase62Context('plan_propose', 'phase62:plan:propose'));
+    const plan = planResult.plan;
+    const planRef = { planId: plan.planId, version: plan.version, digest: plan.digest };
+    const approvalResult = await coordinator.approvePlan({
+      goal: goalRef, plan: planRef, expectedDisposition: null, disposition: 'approved',
+    }, phase62Context('plan_approve', 'phase62:plan:approve'));
+    const approval = approvalResult.approval;
+    const gates = Object.fromEntries(plan.nodes.map((node) => [node.key, Object.freeze({
+      goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest,
+      planId: plan.planId, planVersion: plan.version, planDigest: plan.digest,
+      nodeKey: node.key, expectedDispatchVersion: 0,
+      capabilities: [...node.capabilities], effects: [...node.effects],
+    })]));
+    phase62AuthoritySetup = Object.freeze({ goal, plan, approval, gates });
+  }
   pump = (async () => {
     const consumed = new Set();
     while (pumping) {
@@ -274,8 +405,14 @@ try {
 
   const settled = await Promise.allSettled(TASKS.map(async (task) => {
     const handle = await coordinator.spawn(task.harness, brief(task), {
-      taskId: task.taskId, taskType: TASK_TYPE, runId: RUN_ID, model: task.model, effort: 'low',
-      modelPolicy: { allow: [task.model], allowFamilies: [task.family], reasoningEffort: 'low' },
+      taskId: task.taskId, ...(REVIEW_PHASE === '62' ? {} : { taskType: TASK_TYPE }),
+      runId: RUN_ID, model: task.model, effort: 'low',
+      ...(REVIEW_PHASE === '62' ? {} : { modelPolicy: { allow: [task.model], allowFamilies: [task.family], reasoningEffort: 'low' } }),
+      ...(REVIEW_PHASE === '62' ? {
+        goalPlan: phase62AuthoritySetup.gates[task.taskId],
+        actor: 'direct:phase62-dispatcher', principalId: 'phase62-dispatcher', sessionId: 'phase62-dispatcher-session',
+        powers: ['plan:dispatch'], idempotencyKey: `phase62:dispatch:${task.taskId}`,
+      } : {}),
     });
     const row = { ...task, workerId: handle.id, handle }; rows.push(row); return row;
   }));
@@ -289,6 +426,91 @@ try {
     if (row.result.status === 'completed' && row.verify?.payload?.accept === true && sha) {
       try { row.report = targetGit(['show', `${sha}:${row.target}`]); } catch { row.report = null; }
     }
+  }
+  if (REVIEW_PHASE === '62') {
+    phase62Status = await coordinator.goalPlanStatus({
+      goalId: phase62AuthoritySetup.goal.goalId,
+      goalVersion: phase62AuthoritySetup.goal.version,
+      goalDigest: phase62AuthoritySetup.goal.digest,
+      planId: phase62AuthoritySetup.plan.planId,
+      planVersion: phase62AuthoritySetup.plan.version,
+      planDigest: phase62AuthoritySetup.plan.digest,
+      throughSeq: null,
+    }, phase62Context('goal_plan_status', 'phase62:goal-plan:status'));
+    const coordinationEvents = driver.coordination.events();
+    const bySeq = new Map(coordinationEvents.map((event) => [event.seq, event]));
+    const bindings = TASKS.map((task) => {
+      const dispatch = coordinationEvents.find((event) => event.kind === 'plan.node_dispatched' && event.payload?.binding?.nodeKey === task.taskId);
+      const created = dispatch ? bySeq.get(dispatch.seq + 1) : null;
+      const durableTask = driver.coordination.task(task.taskId);
+      const statusNode = phase62Status.nodes.find((node) => node.key === task.taskId) ?? null;
+      const planNode = phase62AuthoritySetup.plan.nodes.find((node) => node.key === task.taskId) ?? null;
+      const gate = phase62AuthoritySetup.gates[task.taskId];
+      const binding = durableTask?.brief?.goalPlan ?? null;
+      const bindingExact = binding?.goalId === gate.goalId && binding?.goalVersion === gate.goalVersion && binding?.goalDigest === gate.goalDigest
+        && binding?.planId === gate.planId && binding?.planVersion === gate.planVersion && binding?.planDigest === gate.planDigest
+        && binding?.nodeKey === gate.nodeKey && binding?.approvalDigest === phase62AuthoritySetup.approval.digest
+        && binding?.policyDigest === phase62AuthoritySetup.goal.policyDigest && binding?.dispatchVersion === 1;
+      const authoritativeBriefExact = same(durableTask?.brief?.verification, planNode?.verification)
+        && same(durableTask?.brief?.budget, planNode ? { tokens: planNode.budget.tokens, usd: planNode.budget.usd, wallMin: planNode.budget.wallMin } : null)
+        && same(durableTask?.brief?.constraints, phase62AuthoritySetup.goal.constraints)
+        && same(durableTask?.brief?.pathScope, planNode?.pathScope)
+        && durableTask?.brief?.goal === planNode?.objective && durableTask?.brief?.providerTurns === planNode?.budget?.providerTurns;
+      const batchExact = dispatch?.batch?.kind === 'goal_plan_node_dispatch' && dispatch.batch.index === 0 && dispatch.batch.count === 2
+        && created?.kind === 'task.created' && created?.payload?.id === task.taskId
+        && created?.batch?.kind === dispatch.batch.kind && created?.batch?.id === dispatch.batch.id
+        && created?.batch?.index === 1 && created?.batch?.count === 2 && created?.ts === dispatch.ts
+        && created?.actor === dispatch.actor && created?.idempotencyKey === `${dispatch.idempotencyKey}:task`;
+      const statusExact = statusNode?.taskId === task.taskId && statusNode?.dispatchVersion === 1
+        && ['accepted', 'failed', 'cancelled', 'dispatched'].includes(statusNode?.state)
+        && (['accepted', 'failed', 'cancelled'].includes(statusNode?.state)
+          ? ['held', 'settled'].includes(statusNode?.budget?.status)
+          : statusNode?.budget?.status === 'pending');
+      return {
+        taskId: task.taskId,
+        binding,
+        bindingExact,
+        authoritativeBriefExact,
+        status: statusNode,
+        statusExact,
+        batch: dispatch && created ? {
+          id: dispatch.batch?.id ?? null,
+          dispatchSeq: dispatch.seq,
+          taskSeq: created.seq,
+          kind: dispatch.batch?.kind ?? null,
+          count: dispatch.batch?.count ?? null,
+        } : null,
+        batchExact,
+      };
+    });
+    phase62Proof = {
+      configuredMandatory: phase62GoalPlanPolicy?.mandatory === true,
+      goal: {
+        goalId: phase62AuthoritySetup.goal.goalId,
+        version: phase62AuthoritySetup.goal.version,
+        digest: phase62AuthoritySetup.goal.digest,
+        policyDigest: phase62AuthoritySetup.goal.policyDigest,
+      },
+      plan: {
+        planId: phase62AuthoritySetup.plan.planId,
+        version: phase62AuthoritySetup.plan.version,
+        digest: phase62AuthoritySetup.plan.digest,
+        nodeCount: phase62AuthoritySetup.plan.nodes.length,
+        exactRoutes: phase62AuthoritySetup.plan.nodes.map((node) => ({ key: node.key, routes: node.routes, verification: node.verification })),
+      },
+      approval: {
+        digest: phase62AuthoritySetup.approval.digest,
+        disposition: phase62AuthoritySetup.approval.disposition,
+        proposerPrincipalId: phase62AuthoritySetup.plan.proposerPrincipalId,
+        approverPrincipalId: phase62AuthoritySetup.approval.principalId,
+        distinctPrincipal: phase62AuthoritySetup.plan.proposerPrincipalId !== phase62AuthoritySetup.approval.principalId,
+      },
+      status: phase62Status,
+      bindings,
+    };
+    phase62Proof.pass = phase62Proof.configuredMandatory && phase62Proof.plan.nodeCount === 5
+      && phase62Proof.approval.disposition === 'approved' && phase62Proof.approval.distinctPrincipal
+      && bindings.length === TASKS.length && bindings.every((row) => row.bindingExact && row.authoritativeBriefExact && row.batchExact && row.statusExact);
   }
 } catch (error) {
   fatal = String(error?.stack ?? error);
@@ -322,7 +544,7 @@ try {
   const exactRoute = (row) => {
     try {
       const tuple = JSON.parse(row.handle.routeKey);
-      return Array.isArray(tuple) && tuple.length === 6 && `${tuple[0]}@${tuple[1]}` === row.handle.harnessResolved && tuple[2] === row.model && tuple[3] === 'low' && tuple[4] === row.family && tuple[5] === TASK_TYPE;
+      return Array.isArray(tuple) && tuple.length === 6 && `${tuple[0]}@${tuple[1]}` === row.handle.harnessResolved && tuple[2] === row.model && tuple[3] === 'low' && tuple[4] === row.family && tuple[5] === (REVIEW_PHASE === '62' ? 'general' : TASK_TYPE);
     } catch { return false; }
   };
   const routeAdmission = {
@@ -370,19 +592,19 @@ try {
     allVerifiersBound: rows.filter((row) => row.verify).every((row) => same(row.verify.payload?.capture?.toolchainProjection, projectionIdentity) && same(row.verify.payload?.capture?.verifierToolchainProjection, projectionIdentity)),
     sourcePathAbsentFromBoundedEvents: rows.every((row) => !JSON.stringify(bounded(row.events ?? [])).includes(SOURCE_REPO)),
   };
-  const lifecyclePass = fatal === null && routeAdmission.allAdmitted && routeAdmission.exactRequestedResolved && routeAdmission.allGovernedBeforeEffect && providerProof.allSelectedProcessesStarted && (!REQUIRE_GROK_PAIR || providerProof.simultaneousActiveGrokPidSampleObserved) && providerProof.everyStartedProcessClosedExactly && providerProof.everyRequestedKillConfirmed && providerProof.zeroReapUnconfirmed && providerProof.everyStartedLeaderGone && providerProof.everyStartedGroupGone && Object.values(cleanup).every(Boolean);
+  const lifecyclePass = fatal === null && routeAdmission.allAdmitted && routeAdmission.exactRequestedResolved && routeAdmission.allGovernedBeforeEffect && providerProof.allSelectedProcessesStarted && (!REQUIRE_GROK_PAIR || providerProof.simultaneousActiveGrokPidSampleObserved) && providerProof.everyStartedProcessClosedExactly && providerProof.everyRequestedKillConfirmed && providerProof.zeroReapUnconfirmed && providerProof.everyStartedLeaderGone && providerProof.everyStartedGroupGone && Object.values(cleanup).every(Boolean) && (REVIEW_PHASE !== '62' || phase62Proof?.pass === true);
   const matrixPass = lifecyclePass && routeAdmission.noObservedMismatch && routeAdmission.providerObservationComplete && reviewProof.allSelectedVerified && projectionProof.allWorkersBound && projectionProof.allVerifiersBound && projectionProof.sourcePathAbsentFromBoundedEvents;
   summary = {
     at: new Date().toISOString(), implementationSha: IMPLEMENTATION_SHA, runId: RUN_ID, selectedTaskIds: TASKS.map((task) => task.taskId),
-    interpretation: { lifecyclePass: `all ${TASKS.length} selected exact routes admitted${REQUIRE_GROK_PAIR ? ', both Grok process groups sampled live simultaneously' : ''}, every started generation closed exactly, driver drain closed coordinator/writer, and all owned residue disappeared`, matrixPass: `lifecyclePass plus exact provider model observation, ${TASKS.length} fresh-verified report(s), and identical worker/verifier toolchain projection binding` },
+    interpretation: { lifecyclePass: `all ${TASKS.length} selected exact routes admitted${REVIEW_PHASE === '62' ? ' through one mandatory approved five-node Goal/Plan with exact authoritative Brief and atomic dispatch/task batch proof' : ''}${REQUIRE_GROK_PAIR ? ', both Grok process groups sampled live simultaneously' : ''}, every started generation closed exactly, driver drain closed coordinator/writer, and all owned residue disappeared`, matrixPass: `lifecyclePass plus exact provider model observation, ${TASKS.length} fresh-verified report(s), and identical worker/verifier toolchain projection binding` },
     manualWorkerKills: false, legacyDriverClose: false, capacityPolicy: worktreeCapacity, closureReceipt,
     credentialMeasurements, simultaneousGrokSamples, attempts,
     rows: rows.map((row) => ({ taskId: row.taskId, harness: row.harness, model: row.model, workerId: row.workerId, pid: row.pid ?? null, processGroupId: row.processGroupId ?? null, result: row.result ? { status: row.result.status, ready: row.result.ready, observationOnly: row.result.observationOnly, providerGovernance: row.result.providerGovernance } : null, route: row.handle ? { harnessRequested: row.handle.harnessRequested, harnessResolved: row.handle.harnessResolved, modelRequested: row.handle.modelRequested, modelResolved: row.handle.modelResolved, modelObserved: row.handle.modelObserved, modelMismatch: row.handle.modelMismatch, effortRequested: row.handle.effortRequested, effortResolved: row.handle.effortResolved, effortObserved: row.handle.effortObserved } : null, providerPolicyDigest: row.handle?.providerPolicyDigest ?? null, providerTurn: row.handle?.providerTurn ?? null, budgetUsed: row.handle?.budgetUsed ?? null, verifyAccept: row.verify?.payload?.accept ?? false, budgetAdmission: row.verify?.payload?.budgetAdmission ?? null, providerGovernanceAdmission: row.verify?.payload?.providerGovernanceAdmission ?? null, reportCaptured: Boolean(row.report), processStartedSeq: row.processStarted?.seq ?? null, processClosedSeq: row.processClosed?.seq ?? null, terminalReason: String(row.events?.findLast((event) => ['lifecycle.crashed', 'model.mismatch'].includes(event.kind))?.payload?.error ?? row.events?.findLast((event) => event.kind === 'lifecycle.crashed')?.payload?.reason ?? row.events?.findLast((event) => event.kind === 'lifecycle.turn_completed')?.payload?.result?.summary ?? row.events?.findLast((event) => event.kind === 'lifecycle.turn_completed')?.payload?.summary ?? '').slice(0, 512) })),
-    responses, routeAdmission, providerProof, cleanup, projectionProof, reviewProof, ownershipBefore, ownershipAfter, fatal, lifecyclePass, matrixPass,
+    responses, routeAdmission, providerProof, cleanup, projectionProof, reviewProof, ...(REVIEW_PHASE === '62' ? { goalPlanProof: phase62Proof } : {}), ownershipBefore, ownershipAfter, fatal, lifecyclePass, matrixPass,
   };
 } catch (error) {
   fatal = [fatal, String(error?.stack ?? error)].filter(Boolean).join('\n');
-  summary = { at: new Date().toISOString(), implementationSha: IMPLEMENTATION_SHA, runId: RUN_ID, capacityPolicy: worktreeCapacity, fatal, lifecyclePass: false, matrixPass: false };
+  summary = { at: new Date().toISOString(), implementationSha: IMPLEMENTATION_SHA, runId: RUN_ID, capacityPolicy: worktreeCapacity, ...(REVIEW_PHASE === '62' ? { goalPlanProof: phase62Proof } : {}), fatal, lifecyclePass: false, matrixPass: false };
 }
 
 if (targetAttempted) {
@@ -412,5 +634,5 @@ if (!ownerRootReadyForSupervisorReap) { summary.lifecyclePass = false; summary.m
 writeFileSync(join(OUTPUT, 'events.jsonl'), `${rows.flatMap((row) => bounded(row.events ?? []).map((event) => JSON.stringify({ taskId: row.taskId, requestedHarness: row.harness, requestedModel: row.model, requestedEffort: 'low', ...event }))).join('\n')}\n`);
 writeFileSync(join(OUTPUT, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
 for (const row of rows) if (row.report) writeFileSync(join(OUTPUT, `${row.taskId}.md`), row.report);
-process.stdout.write(`${JSON.stringify({ lifecyclePass: summary.lifecyclePass, matrixPass: summary.matrixPass, routeAdmission: summary.routeAdmission, providerProof: summary.providerProof, cleanup: summary.cleanup, reviewProof: summary.reviewProof, fatal: summary.fatal, targetWorktreeRemoved: summary.targetWorktreeRemoved, ownerRootReadyForSupervisorReap: summary.ownerRootReadyForSupervisorReap, diagnosticLogDir: diagnosticLogRetained ? LOG_DIR : null }, null, 2)}\n`);
+process.stdout.write(`${JSON.stringify({ lifecyclePass: summary.lifecyclePass, matrixPass: summary.matrixPass, routeAdmission: summary.routeAdmission, providerProof: summary.providerProof, cleanup: summary.cleanup, reviewProof: summary.reviewProof, ...(REVIEW_PHASE === '62' ? { goalPlanProof: summary.goalPlanProof } : {}), fatal: summary.fatal, targetWorktreeRemoved: summary.targetWorktreeRemoved, ownerRootReadyForSupervisorReap: summary.ownerRootReadyForSupervisorReap, diagnosticLogDir: diagnosticLogRetained ? LOG_DIR : null }, null, 2)}\n`);
 if (!summary.matrixPass) process.exitCode = 1;

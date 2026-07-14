@@ -13,11 +13,10 @@ live-proven control/trust/northbound spine and an unusually broad executable sub
 capability plane, several governance/session depths, higher trust/evaluation programs, and parts
 of the production northbound/runtime remain partial or pending.
 
-The two independent Phase 28 auditors produced complementary exhaustive matrices: a 71-row
-primary A–J matrix and an 83-row expanded subfeature matrix. The primary matrix contains 26
-unambiguously shipped labels, 28 partial labels, 22 pending labels, six conditionally catalogued
-labels, and two explicit retirements; combined-status rows make those labels intentionally
-non-exclusive. The exact row-level evidence and disagreement are retained in
+The historical Phase 28 snapshot produced a 71-row primary matrix and an 83-row expanded matrix.
+Its non-exclusive status totals are retained as evidence of that checkpoint, not as current feature
+totals; the phase entries and remaining-work sections below supersede them. The exact row-level
+evidence and disagreement are retained in
 `docs/reference/evidence/phase28-exhaustive-capability-audit-grok-review-2026-07-11/`.
 
 ## What is genuinely shipped
@@ -30,7 +29,9 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    requested/resolved/observed attribution; fail-closed mismatch; concurrent provider-observed
    exact Grok 4.5 and Composer routes. Literal Grok Build has concurrent exact process lifecycle
    and reap evidence and reaches provider readiness, but Grok CLI 0.2.99 reports `grok-4.5`; the
-   exact-model mismatch is rejected and literal Build acceptance remains red.
+   exact-model mismatch is rejected and literal Build acceptance remains red. The shipped tuple
+   contract and current evidence are retained in closed
+   [GitHub #2](https://github.com/wahargis/baton/issues/2).
 3. **Trust spine:** immutable briefs, pinned verification, red→green, changed-line coverage,
    mutation, independent-family oracle, ff integration, approval-gated exact-SHA publication, and
    opt-in structured staging with post-effect poison semantics.
@@ -271,8 +272,8 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    generation locks, nonce-bound release, restart adoption/dead-owner release, verifier cleanup,
    active legacy-close refusal, versioned/digested projection-target-parent accounting, sparse-parent
    union, and zero-state drain receipts are executable. The historical baseline was 34 focused
-   contracts and 1346/1346 canonical tests; dogfood P1 repairs bring the current canonical suite to
-   1351/1351. Both pre- and post-repair five-provider runs fresh-verified Codex, project-key GLM,
+   contracts and 1346/1346 canonical tests; the post-Phase-59 repair baseline was 1351/1351. Both
+   pre- and post-repair five-provider runs fresh-verified Codex, project-key GLM,
    and Grok 4.5 and exactly reaped all five routes; all three post-repair reports have no P0/P1.
    Claude login and literal Grok Build model identity remain red. Hard filesystem quota/same-UID
    isolation remains a later boundary.
@@ -285,20 +286,54 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    CPG mappings behind the sole ACI registry; current-card/environment binding, immediate source
    reverify, exact primary artifacts, stable identity, mode-0600 receipts, atomic Cairn lineage,
    replay/reconcile, direct/web/MCP parity, and every independent bound are executable. The
-   canonical suite is 1415/1415. Baton produced and freshly reverified its own committed R1 delta,
+   Phase 61 baseline was 1415/1415. Baton produced and freshly reverified its own committed R1 delta,
    then admitted all five exact low-effort recursive routes; project-key GLM and Grok 4.5
    fresh-verified while all five process/ownership surfaces reaped. Claude login, Codex terminal
    reserve, and literal Build identity remain external red gates.
+35. **Initial append-only Goal/Plan authority and settlement:** Phase 62 was introduced at
+   `f4b8f46` and hardened through `230db8e`. Bounded immutable goal/plan versions, distinct
+   proposer/approver authority, locale-independent plan ordering, exact nano-USD authority,
+   iterative DAG validation, exact node route/capability/effect/verification commitments, complete
+   closed authoritative Briefs, current-head dispatch, atomic pre-effect dispatch/task batches,
+   and durable consumed/released/held/overrun settlement are executable. Generic task creation
+   cannot bypass a mandatory scope; direct, authenticated HTTPS/SSE, and MCP share the same typed
+   authority. The canonical suite is 1470/1470. The original mandatory five-node proof at
+   `45072eb` admitted exact low-effort Codex `gpt-5.6-sol`, Claude Opus, project-key GLM `glm-4.7`,
+   Grok 4.5, and literal Grok Build; both Groks overlapped and all ownership state reaped exactly.
+   Its strict matrix remains honestly red at Claude login, absent Codex report, the concurrent GLM
+   verifier failure, and literal Build observed as `grok-4.5`. Focused Codex at `9ce83e9` and
+   project-key GLM at `230db8e` independently passed route observation, mechanical report
+   verification (required shape plus pinned tests), Goal/Plan binding, settlement, lifecycle, and
+   cleanup without relabeling the original matrix.
 
 ## What remains partial
 
 - Exact provider-process lifecycle/reap and transactional recovery readiness now ship; in-flight
   session continuation, broader provider-backed crash/rejoin proof, deeper fork/rewind/checkpoint parity, and vendor-specific context,
   hook, broker, extension, and reconfiguration surfaces.
+- Initial Goal/Plan definition, proposal, approval, status, mandatory spawn gating, web/MCP parity,
+  reservation, terminal consumed/released/held/overrun settlement, replay, and status projection
+  now ship. Richer verification/evidence predicates, authorized continuation/recovery nodes,
+  amendments and migration, child/refinement allocation, live budget reallocation or increase,
+  portfolio scheduling, richer risk/multi-principal approval, and distinct
+  integration/publication/deploy/rollback authorities remain partial or pending.
+- Canonical determinism is only locally hardened so far. Phase 62 plan and provider-policy ordering
+  are locale-independent, but multiple Atlas, Cairn, supply-chain, capacity, and projection
+  artifacts still use host-locale `localeCompare`. A repository-wide canonical-order audit,
+  migration/version policy, and cross-locale replay gate remain open in
+  [GitHub #4](https://github.com/wahargis/baton/issues/4).
+- Same-task-ID branch namespaces across independent controllers and branch-only crash residue still
+  need explicit ownership and reconciliation contracts; see
+  [GitHub #5](https://github.com/wahargis/baton/issues/5).
+- Goal/Plan capability/effect declarations provide bounded commitments and dispatch checks, but
+  finer-grained effect enforcement, authorized continuation/recovery, live amendments, and richer
+  risk/multi-principal policy remain open.
 - Full Claude/Codex sandbox denial parity, contamination UX, operator
   pin/exclude/prefer controls, and account quota-window/fleet-seat scheduling.
 - Cross-vendor review is wired, but continuous semantic review automation and structured reject
-  postmortems are not.
+  postmortems are not. Current recursive report verification proves artifact shape and pinned tests,
+  not claim-to-source semantic accuracy; the dogfood-exposed oracle gap is tracked in
+  [GitHub #6](https://github.com/wahargis/baton/issues/6).
 - Recursive execution now has Phase 55's immutable dual-root projection, Phase 56's public exact
   drain/close plus owned evidence wrapper, Phase 57's truthful route-bound usage/call governance,
   Phase 58's sparse identity, and Phase 59's pre-effect capacity reservation. Provider-terminal
@@ -344,22 +379,26 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
 
 ## What remains pending
 
-- Trust ramp policy, Goal/Plan authority plus its pre-effect Plan gate, impact-selected reruns,
-  structured reject postmortems, and higher
+- Trust ramp policy, richer Goal/Plan verification/evidence and amendment authority,
+  impact-selected reruns, structured reject postmortems, and higher
   Evidence Ladder rungs (property/fuzz/BMC/SMT/proof) under honest language/tool ceilings.
 - Vantage, Evidence Ladder as a capability module, Skill Forge/computer use, later
   Cartographer/Quartermaster supply/orientation rungs, and Cairn Playbook/Skill promotion,
   versioned feedback learning, retention, and export rungs remain pending; Phase 52's non-causal
   outcome-attribution substrate and Phase 53's authenticated human/orchestrator contradiction seam
   now ship.
-- Direct structural rewrite apply, live LSP, full SSA/PDG/path solving, interprocedural/alias/heap
-  CPG depth, closure/destructuring/catch binding support, deeper behavioral/provenance attestation
+- Direct structural rewrite apply, deeper AST/CST and lexical representation, live LSP/native SCIP,
+  full SSA/PDG/path solving, interprocedural/alias/heap CPG depth, compiler IR/translation
+  validation, closure/destructuring/catch binding support, deeper behavioral/provenance attestation
   overlays, and representation choreography. Phase 61 closes fixed graph-backed R1 structural,
   R2 SCIP, and R3 bounded CPG production; it does not satisfy deeper precision or R4–R7 gates.
 - True semantic merge, stacked integration, deploy adapters, rollback automation, and live remote
   publication.
 - Streamable HTTP MCP authorization, MCP Tasks/progress/daemon supervision, WebSocket parity,
   deeper operator surfaces, and OpenTelemetry GenAI export.
+- Deeper authenticated web user-to-orchestrator policy/control, and the remaining retention,
+  learning, contradiction, and planning depth of Baton's self-contained project-manager-inspired
+  causal knowledge graph. This remains a local Baton design; homelab integration is out of scope.
 - Reproducible M0/M1/E2 evaluation programs, automatic account-aware scheduling, and a production
   Go/Elixir core after executable contracts stabilize.
 - Provider-terminal lump usage can cross nominal token/USD ceilings before Baton receives telemetry;
@@ -388,15 +427,19 @@ non-exclusive. The exact row-level evidence and disagreement are retained in
    safe remote-push fixture remain.
 3. **Finish governance/session continuity:** durable router learning shipped in Phase 44 and
    supervised startup auto-rejoin shipped in Phase 45; next are provider-backed recovery proof,
-   in-flight continuation, vendor-honest fork/rewind, compaction DoD reinjection, Goal/Plan
-   authority and its pre-effect gate, quota-window/seat scheduling, and operator route overrides.
+   in-flight continuation, vendor-honest fork/rewind, compaction DoD reinjection, richer Goal/Plan
+   verification/evidence, authorized continuation/recovery, quota-window/seat scheduling, and
+   operator route overrides.
    Immutable bounded dual-root toolchain projection shipped in Phase 55; public drain/close,
    route-specific terminal-burst/call governance, sparse worker/verifier identity, and repo-scoped
    byte/inode admission shipped in Phases 56–59, attach-only recovery in Phase 60, and fixed
-   graph-backed R1–R3 production in Phase 61. The exact five-provider recursive
-   run now proves concurrent Groks and exact drain/reap twice; Claude login and literal Build
-   identity remain external acceptance gaps while internal pursuit moves to Goal/Plan authority,
-   provider-backed continuation, Goal/Plan authority, and the retained capability/representation backlog.
+   graph-backed R1–R3 production in Phase 61, and initial append-only Goal/Plan, its atomic
+   pre-effect gate, and durable settlement in Phase 62. The Phase 62 exact five-provider recursive
+   run proves mandatory plan binding, concurrent Groks, and exact drain/reap; Claude login, the
+   absent Codex report, the concurrent GLM verifier failure, and literal Build identity remain
+   honest external/report gates. Focused Codex and project-key GLM retries independently pass.
+   Internal pursuit continues with provider-backed continuation and the retained Goal/Plan,
+   capability, causal-knowledge, web/runtime, and representation backlog.
 4. **Build capability modules on shared substrate:** Cairn Rung 0 shipped in Phase 31 and
    Cartographer/Quartermaster local Rung 0 shipped in Phase 32, addressed push in Phase 33, and
    bounded scope-drift refresh in Phase 34, external evidence in Phase 36, exact SBOM in Phase 37,

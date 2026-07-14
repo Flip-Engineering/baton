@@ -16,12 +16,15 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 
 ## → Read [SYSTEM.md](SYSTEM.md) first
 
-**[SYSTEM.md](SYSTEM.md) is the single authoritative design** — the whole thing synthesized into one correct, plain, feature-complete picture: the fleet driver, its reliable coordinator core, the four core features (direct workers, two-way messaging, telemetry, interrupt/steer), and the supporting features (re-verification, adaptive routing, memory, worker tools, safety), with a build order and an honest feature index. Everything in `docs/` below is the exploration and the depth behind it; [GLOSSARY.md](GLOSSARY.md) decodes any leftover jargon.
+**[SYSTEM.md](SYSTEM.md) is the concise architecture overview.**
+[docs/26](docs/26-full-system-goal.md) is the retained full-system goal and scope ledger;
+[docs/28](docs/28-exhaustive-capability-audit.md) is the shipped/partial/pending status audit.
+[GLOSSARY.md](GLOSSARY.md) decodes any leftover jargon.
 
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **1415/1415
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **1470/1470
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
@@ -36,8 +39,12 @@ Opt-in structured
 integration now stages divergent accepted results off-main, wraps an injected Mergiraf-class
 resolver, freshly verifies the merge commit, and only then advances main; true data-flow semantic
 merge remains a separately measured research bet. The active complete scope,
-including AST/CPG/IR/behavior/semantic-merge/e-graph rungs and the deployment-neutral causal
-knowledge graph, is preserved in [docs/26](docs/26-full-system-goal.md).
+including Atlas AST/CST and lexical work, native SCIP/symbol graphs, CPG/CFG/PDG/SSA and semantic
+deltas, conditional compiler IR/translation validation, behavioral fingerprints, true semantic
+merge, conditional expression/kernel e-graphs, Vantage, Evidence Ladder, Scratch Board/Bench,
+Skill Forge/computer use, later Cartographer/Quartermaster and Cairn rungs, and Baton's
+self-contained project-manager-inspired causal/temporal knowledge graph, is preserved in
+[docs/26](docs/26-full-system-goal.md). Homelab integration is explicitly out of scope.
 
 Phase 29 now makes deployment-injected Atlas capabilities real fleet tools through one
 Coordinator-owned registry. The same bounded invoke/resume/reverify path is available through the
@@ -88,7 +95,7 @@ authoring, waiver, clearance, install, project-manager export, or homelab integr
 provider feeds, independently verified provenance, exact `internal` decisions, trusted advisory/
 source identity and true reachability, plan approval, positive clearance, additional ecosystems,
 composite surfaces, and deeper Cairn remain pending. The live policy-cycle proof passes **13/13**;
-the current canonical suite is **1415/1415 green**.
+the current canonical suite is **1470/1470 green**.
 
 Phases 43–50 extend the provider, routing, representation-attestation, and Cairn causal-knowledge
 verticals through durable provider recovery, exact route learning, supervised native-session
@@ -156,7 +163,7 @@ canonical sparse worker/verifier identities with hidden-diff refusal, and a repo
 capacity authority. Exact base/branch binding prevents metadata from erasing the admitted diff,
 ownership roots refuse symlink escape, and legacy close refuses live reservations. Their historical
 phase baselines remain 1179/1179 for Phase 56, 1256/1256 for Phase 57, and 1346/1346 for Phase 59;
-the current canonical result is the 1415/1415 status above. The first exact five-provider
+the current canonical result is the 1470/1470 status above. The first exact five-provider
 sparse+capacity recursive proof admitted all five routes, sampled both Grok groups live
 simultaneously, fresh-verified Codex `gpt-5.6-sol`, project-key GLM `glm-4.7`, and Grok 4.5 reports,
 and exactly closed/reaped all five generations with zero capacity residue. The strict matrix remains
@@ -176,7 +183,7 @@ automatically redelivered. Provider seats stay reserved until exact stop/reap an
 settlement. Closed store APIs reject forged not-sent evidence, generic recovery-task bypasses,
 unverified or cross-worker lineage, context substitution, and newline-complete torn transactions.
 The persistent-session gate is 43/43, the dedicated store/replay gate is 7/7, and the current
-canonical result is the 1415/1415 status above. The first recursive five-route Phase 60 review
+canonical result is the 1470/1470 status above. The first recursive five-route Phase 60 review
 admitted all exact routes, sampled both Groks live concurrently, independently verified Codex
 `gpt-5.6-sol`, project-key GLM `glm-4.7`, and Grok 4.5, and exactly killed/reaped every process and
 ownership surface. Its strict external matrix remains honestly red at Claude login and literal
@@ -189,7 +196,7 @@ current-card and immutable-environment binding, immediate source reverify, exact
 stable identities, mode-0600 receipts, atomic `DerivedFrom`/`ProducedBy`/`ObservedIn` lineage,
 request-bound replay, completed-result integrity checks, and direct/authenticated-web/MCP parity are
 executable. The retained R1–R7 packet now mechanically includes the Phase 61 contract and producer
-for R1–R3. The canonical suite is **1415/1415 green**. Baton also produced and freshly reverified an
+for R1–R3. The Phase 61 baseline was **1415/1415 green**. Baton also produced and freshly reverified an
 R1 representation of its own committed retention-source delta. Its five-route recursive review
 admitted exact Codex `gpt-5.6-sol`, Claude Opus, project-key GLM `glm-4.7`, Grok 4.5, and literal
 Grok Build at low effort; both Grok groups were live concurrently and all five generations and
@@ -197,11 +204,33 @@ ownership surfaces reaped. GLM and Grok 4.5 reports fresh-verified. The strict m
 honestly red at Claude login, a Codex terminal-reserve overrun, and literal `grok-build` being
 provider-observed as `grok-4.5`.
 
+Phase 62's initial Goal/Plan authority was introduced at `f4b8f46` and hardened through committed
+checkpoint `230db8e`. Append-only goal and bounded plan versions, distinct proposer/approver
+decisions, locale-independent plan ordering, exact nano-USD authority, complete closed
+authoritative Briefs, exact harness/model/effort constraints, immutable plan-owned verification,
+atomic pre-effect `plan.node_dispatched` + `task.created`, current-head enforcement, iterative DAG
+validation, and durable consumed/released/held/overrun settlement now gate mandatory-scope work.
+Direct, authenticated HTTPS/SSE, and MCP use the same authority and lost-response reconciliation;
+unauthorized stream observers do not receive Goal/Plan state. The canonical suite is **1470/1470
+green**.
+
+The original five-route proof at `45072eb` used one approved five-node plan to admit exact
+low-effort Codex `gpt-5.6-sol`, Claude Opus, project-key GLM `glm-4.7`, Grok 4.5, and literal Grok
+Build routes. Both Grok process groups were live concurrently, every started generation closed
+exactly, every requested kill was confirmed, and all owned resources returned to zero. Its strict
+report matrix remains honestly red at Claude login, its absent Codex report, its concurrent GLM
+verifier failure, and literal Build being provider-observed as `grok-4.5`. Later focused retries
+independently passed exact route observation, mechanical report verification (required shape plus
+pinned tests), mandatory Goal/Plan binding, budget settlement, lifecycle, and cleanup for Codex
+`gpt-5.6-sol`/low at `9ce83e9` and project-key
+GLM `glm-4.7`/low at `230db8e`. These focused greens do not relabel the original five-provider
+matrix.
+
 **What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
 
 **Everything else supports the driver, and none of it is dropped:** independent verification (re-running a worker's tests so "done" can be trusted), learned routing (which vendor is good at what), a reliable coordination core (so "interrupt worker 3" always lands), telemetry/replay, and worker tools (search, debug, semantic diff). Earlier docs over-billed the *verification* as the product and demoted the *driving* to optional — doc 19 turns that right-side-up.
 
-**Architecture, plainly:** you drive from your CLI agent (Claude Code or Codex is the orchestrator — it decides); underneath, a small reliable program carries out those decisions and does the bookkeeping (dispatch, making interrupts land, re-checking worker claims, the event log). The AI drives; the plumbing makes the driving safe. Southbound, the product tier uses persistent Claude stream-json, Codex app-server, and Grok ACP sessions; one-shot subprocess adapters remain an explicitly limited fire-and-forget tier. Those basic depth gates, audited ACI invocation, Cairn's current causal audit/recall/promotion/correction rungs, and Cartographer/Quartermaster's local orientation/reuse, addressed-push, provider, and policy-epoch safety rungs now ship; exact provider process lifecycle and reap also ship. Current pursuit is the remaining shared-knowledge, representation, authenticated web/runtime, evaluation, and session-depth backlog. See [docs/28](docs/28-exhaustive-capability-audit.md).
+**Architecture, plainly:** you drive from your CLI agent (Claude Code or Codex is the orchestrator — it decides); underneath, a small reliable program carries out those decisions and does the bookkeeping (dispatch, making interrupts land, re-checking worker claims, the event log). The AI drives; the plumbing makes the driving safe. Southbound, the product tier uses persistent Claude stream-json, Codex app-server, and Grok ACP sessions; one-shot subprocess adapters remain an explicitly limited fire-and-forget tier. Those basic depth gates, audited ACI invocation, Cairn's current causal audit/recall/promotion/correction rungs, Cartographer/Quartermaster's local orientation/reuse, addressed-push, provider and policy-epoch safety rungs, exact provider lifecycle/reap, and initial Goal/Plan authority now ship. Current pursuit retains richer Goal/Plan evidence and amendment policy, authorized continuation/recovery, native session depth, Baton's self-contained project-manager-inspired causal/temporal knowledge graph, authenticated web/runtime depth, Vantage, Evidence Ladder, Scratch Board/Bench, Skill Forge/computer use, registered evaluations, Atlas AST/CST and lexical precision, native SCIP/symbol graphs, deeper CPG/CFG/SSA/PDG and semantic deltas, conditional compiler IR, behavioral fingerprints, true semantic merge, conditional expression/kernel e-graphs, and later Cartographer/Quartermaster and Cairn rungs. Homelab integration is excluded. See [docs/28](docs/28-exhaustive-capability-audit.md).
 
 **Design docs** (`docs/`):
 

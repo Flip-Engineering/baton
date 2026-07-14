@@ -65,15 +65,18 @@ argument, timeout, expected result, or evidence requirement, creates a new plan 
 new approval.
 
 USD authority is represented and aggregated as checked integer nano-USD while retaining the public
-`usd` number field. Goal, node, deployment-limit, reserve, and exact provider-usage values may have at most
-nine decimal places and must remain within the safe-integer nano-USD range; unrepresentable values
-refuse or remain unavailable/held rather than round into authority. Node keys use locale-independent
-UTF-16 code-unit order, never host locale or ICU collation, before plan bytes are digested.
+`usd` number field. Goal, plan-node, deployment-limit, and reserve inputs must be exactly
+representable within nine fractional decimal digits and the safe-integer nano-USD range or refuse
+before append. Provider usage that cannot be represented exactly is never rounded into authority:
+that dimension becomes unavailable and its reservation remains held. Plan node keys use
+locale-independent UTF-16 code-unit order before canonical bytes are digested. This clause does not
+certify canonical ordering in other artifact families.
 
 Phase 62 ledgers written before this exact-USD and canonical-ordering cut are pre-release state and
-are not silently rewritten. An upgrading deployment must reset that experimental ledger or perform an
-explicit identity-preserving migration; replay of legacy floating-total or locale-ordered identities
-fails closed.
+are not silently reinterpreted. A deployment with such state must reset that experimental ledger or
+run an explicit offline, receipt-producing migration before adopting the corrected canonicalization.
+Replay fails closed on incompatible historical bytes; a production-stable schema requires versioned
+canonicalization rather than an implicit hard cut.
 
 ## GP4 — proposer and approver are distinct authorities
 
@@ -158,11 +161,12 @@ Head liveness is computed at the requested upper bound. An undispatched node is 
 its goal or its plan version is no longer the head at that boundary; a task dispatched before
 supersession continues to report its pinned task state and terminal outcome.
 
-Authenticated SSE/WebSocket delivery carries the same append-only goal/plan/approval/dispatch
-events and resumable cursors as other coordination state. Browser disconnect, reconnect, stale UI,
-or lost command response never changes a goal, revokes approval, releases a node, or cancels work.
-Durable command reconciliation returns the original admitted transaction and task identity without
-replaying an effect or performing a second spawn.
+Authenticated SSE delivery carries the append-only Goal/Plan events and resumable cursors used by
+coordination state. Browser disconnect, reconnect, stale UI, or lost command response never changes
+a goal, revokes approval, releases a node, or cancels work. A future WebSocket adapter must preserve
+exactly the same authority, cursor, reconnect, and disconnect semantics; its absence is not called
+parity. Durable command reconciliation returns the original admitted transaction and task identity
+without replaying an effect or performing a second spawn.
 
 ## GP7 — authenticated web and MCP parity
 

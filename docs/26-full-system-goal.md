@@ -298,7 +298,7 @@ without replaying effects. The combined Phase 12 suite is 100/100 and the full s
 678/678. Phase 16 MN1–MN10 now adds the standard MCP 2025-11-25 stdio handshake and eight
 closed fleet tools over the same coordinator, including independent harness/model/effort inputs,
 fixed injected authority, deployment-owned quota, bounded waits, durable effect admission, and
-restart-safe replay. Its 14 focused tests and the current 692/692 full suite are green, including
+restart-safe replay. Its 14 focused tests and the Phase 16 baseline of 692/692 are green, including
 fatal UTF-8/output handling, lifecycle readiness, closed nested schemas, and deployment-derived
 frame limits. A recursive exact-route review reached native `gpt-5.6-sol` and then hit the provider
 usage limit; all owned resources were reaped but no independent verdict is claimed. Streamable
@@ -310,8 +310,12 @@ cleanup. The in-app browser interaction remains pending because its required exe
 not exposed; the wire proof is not relabeled as a browser pass.
 
 Phase 61's graph-backed R1 structural-delta, R2 SCIP-snapshot, and R3 bounded-CPG producers are now
-committed, recursively dogfooded, and retained by the fixed R1–R7 packet. The active dependency-
-ordered increment is Phase 62 append-only Goal/Plan authority and its pre-effect spawn gate.
+committed, recursively dogfooded, and retained by the fixed R1–R7 packet. Phase 62's append-only
+Goal/Plan authority, current-head enforcement, atomic pre-effect spawn gate, and terminal
+consumed/released/held/overrun settlement now ship across direct, authenticated web/SSE, and MCP
+surfaces. The next dependency-ordered work retains richer Goal/Plan evidence and amendment policy,
+authorized continuation/recovery, provider-backed native-session depth, the remaining capability
+and R4–R7 representation ladders, and deeper authenticated operator/runtime control.
 Real-browser OIDC/control/stream/logout proof when its bridge is
 available, optional WebSocket parity, Streamable HTTP MCP/tasks/daemon depth, and deeper operator
 surfaces remain after those safety-ordered gates. Proposal-only structural rewrite now ships with a
@@ -322,7 +326,7 @@ continuation now ship. Phase 22 adds correct braced-if/else CFG, deployment-boun
 may-reaching definitions, direct identifier-copy flow, immediate-only nested value edges, and
 literal-dead-branch pruning, including reachable `else if` chains and conservative may-unions
 inside atomic unsupported control. AST boolean leaves prune comment-bearing dead arms without
-orphan join edges. The combined R3 gate is 31/31 focused and the current canonical suite is
+orphan join edges. The combined R3 gate is 31/31 focused and the Phase 22 canonical baseline was
 776/776 green. Independent exact-model closure passes from Grok 4.5 and Grok Composer both found
 no remaining actionable PS1–PS8 defect; their freshly verified reports and complete kill/reap
 evidence are retained with the Phase 22 handoff.
@@ -835,7 +839,7 @@ Dedicated store APIs bind not-sent refusal to exact zero-fact operational eviden
 recovery-task mutation and unverified/context-substituted lineage, and fail replay on newline-
 complete torn create/claim or refusal/transition batches. The Phase 11 persistent-session gate is
 43/43, the dedicated store/replay gate is 7/7, adjacent adapter/lifecycle validation is green, and
-the canonical suite is 1415/1415. Provider-backed recursive evidence and the remaining NR7
+the Phase 60 baseline was 1415/1415. Provider-backed recursive evidence and the remaining NR7
 crash/adapter rows remain separate acceptance gates.
 
 The first Phase 60 recursive five-route review then admitted Codex `gpt-5.6-sol`, Claude Opus,
@@ -856,7 +860,7 @@ Cairn event creates the derived `Representation`, source `Artifact`, and `Derive
 and `ObservedIn` lineage; equivalent concurrent requests coalesce and append loss exposes no
 positive graph result. Direct, authenticated HTTPS, and MCP invoke/reverify share the same ACI and
 authorization path. The retained R1–R7 packet now mechanically includes this producer for R1–R3.
-The canonical suite is 1415/1415.
+The Phase 61 baseline was 1415/1415.
 
 Baton then used the shipped producer to mint and freshly reverify an R1 representation of its own
 committed retention-source delta, with every authority field false and its owned evidence root
@@ -866,24 +870,55 @@ all five generations and ownership surfaces reaped. GLM and Grok 4.5 fresh-verif
 The strict matrix stays honestly red at Claude login, a Codex terminal-reserve overrun, and literal
 Build being provider-observed as `grok-4.5`.
 
-These operational phases do not narrow the retained system. The self-contained causal/temporal
-knowledge graph remains inspired by repository-local project-manager prior art without homelab or
-external runtime integration. Authenticated web user-to-orchestrator command/control, exact route
-selection, provider sessions, Scratch Board/Bench, Skill/Playbook promotion, evaluation, Atlas
-AST/CST and lexical representation, SCIP/symbol graph, CPG, IR/SSA/PDG and semantic delta,
-behavioral fingerprints, semantic merge, and conditional expression/kernel e-graphs all remain
-catalogued work with their existing evidence-ladder gates.
+Phase 62 ships the initial Goal/Plan authority vertical, introduced at `f4b8f46` and hardened
+through committed checkpoint `230db8e`. Goals and bounded DAG plans are immutable append-only
+versions. A distinct principal approves the exact plan digest; every node fixes its scope, budget,
+capability/effect classes, exact harness/model/effort constraint, and plan-owned verification.
+Locale-independent plan ordering, exact nano-USD authority, iterative bounded DAG validation,
+complete closed Brief comparison, current-head enforcement, and atomic pre-effect
+`plan.node_dispatched` + `task.created` batches now fail closed across direct, authenticated
+HTTPS/SSE, and the four companion MCP tools. Terminal plan work durably settles exact or
+lower-bound consumed, released, held, and overrun dimensions from operational evidence. The
+canonical suite is 1470/1470.
 
-The retained dependency chain is explicit: Phase 60 closes covered attach-only native recovery
-before provider work; Phase 61 promotes the existing bounded R1 structural delta, R2 SCIP snapshot,
-and R3 CPG delta through freshly reverified graph-backed Representation producers; Phase 62 adds
+The original recursive five-route proof at `45072eb` used one mandatory approved five-node plan
+for exact low-effort Codex `gpt-5.6-sol`, Claude Opus, project-key GLM `glm-4.7`, Grok 4.5, and
+literal Grok Build. All node bindings and atomic dispatch/task batches were exact. Both Grok
+process groups were sampled live concurrently; every started generation closed exactly, requested
+kills were confirmed, and all owned state returned to zero. Its strict matrix remains honestly red
+at Claude login, its absent Codex report, its concurrent GLM verifier failure, and literal
+`grok-build` being observed as `grok-4.5`. Focused retries independently passed exact route
+observation, mechanical report verification (required shape plus pinned tests), Goal/Plan binding,
+budget settlement, lifecycle, and cleanup for
+Codex `gpt-5.6-sol`/low at `9ce83e9` and project-key GLM `glm-4.7`/low at `230db8e`. These focused
+greens do not relabel the original five-provider matrix.
+
+These operational phases do not narrow the retained system. Baton's deployment-neutral
+causal/temporal knowledge graph remains self-contained and inspired by repository-local
+project-manager prior art. Remaining work includes authenticated user-to-orchestrator control
+depth, exact provider sessions, Scratch Board/Bench, Vantage, Evidence Ladder, Skill Forge and
+Playbook promotion, later Cartographer/Quartermaster and Cairn rungs, registered evaluations,
+Atlas AST/CST and lexical precision, native SCIP/symbol graphs, deeper CPG/CFG/SSA/PDG and semantic
+deltas, conditional compiler IR, behavioral fingerprints, true semantic merge, and conditional
+expression/kernel e-graphs. Homelab integration is excluded.
+
+The retained dependency chain is explicit: Phase 60 closes covered attach-only native recovery;
+Phase 61 promotes the existing bounded R1 structural delta, R2 SCIP snapshot, and R3 CPG delta
+through freshly reverified graph-backed Representation producers; and Phase 62 now ships
 append-only Goal/Plan `goal_define`, `plan_propose`, `plan_approve`, `goal_plan_status`, and
 plan-gated spawn authority over direct and authenticated web surfaces, with exact
-`fleet_goal_plan_status` and companion MCP tools. This is a safety order, not a scope reduction.
-Native session depth, live budget amendments, distinct integration/publication/deploy/rollback
-approval commands, remaining operator and MCP/runtime depth, deeper R1–R7 representation
-precision, registered evaluation, and production hardening all remain after that chain under their
-existing gates.
+`fleet_goal_plan_status` and companion MCP tools. This safety order is not a scope reduction.
+Initial node-budget reservation, terminal consumed/released/held/overrun settlement, replay, and
+status projection now ship. Remaining Goal/Plan work includes richer verification/evidence
+predicates, authorized continuation and recovery nodes, amendments and migration,
+child/refinement allocation, live budget reallocation or increase, portfolio scheduling, richer
+risk and multi-principal approval policy, and distinct integration/publication/deploy/rollback
+authorities. Native session depth,
+remaining authenticated web/operator and MCP/runtime depth, deeper AST/CST/SCIP/CPG/IR/SSA/PDG
+and R4–R7 representation precision, true semantic merge, conditional e-graphs, registered
+evaluation, and production hardening all remain under their existing gates. The shared knowledge
+system remains Baton's self-contained project-manager-inspired causal graph; homelab integration
+is explicitly out of scope.
 
 1. Repair P0 control integrity: immutable briefs, truthful responses, crash-safe idempotent kill,
    provenance, story identity, replay identity, and complete cleanup.
@@ -912,7 +947,9 @@ existing gates.
 9. Add MCP plus authenticated HTTPS/WebSocket user↔orchestrator control, operator surfaces,
    production runtime, and the registered evaluations. **Authenticated HTTPS user-to-orchestrator
    commands, resumable SSE observation, MCP stdio fleet tools, and direct/web/MCP drain control are
-   shipped. WebSocket parity, complete Goal/Plan/budget/publication/operator depth, the production
-   runtime, and registered evaluations remain.**
+   shipped. Phase 62 also ships initial Goal/Plan commands, observation, and plan-gated spawn over
+   direct/web/MCP authority. WebSocket parity, richer Goal/Plan verification/evidence, authorized
+   continuation/recovery, amendments, publication/operator depth, the production runtime, and
+   registered evaluations remain.**
 
 No later step is permission to erase it from the goal.
