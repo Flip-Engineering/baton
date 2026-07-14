@@ -3,6 +3,7 @@
 // projection and its digest are exposed to callers and durable evidence.
 
 import { createHash } from 'node:crypto';
+import { usdFromNanos, usdToNanos } from './usd.mjs';
 
 const POLICY_FIELDS = Object.freeze([
   'schemaVersion',
@@ -49,6 +50,10 @@ function positiveSafeInteger(value) {
   return Number.isSafeInteger(value) && value > 0;
 }
 
+function compareCodeUnits(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (record(value)) {
@@ -86,7 +91,7 @@ function normalizeHarnesses(harnesses) {
     seen.add(harness);
     normalized.push(harness);
   }
-  return Object.freeze(normalized.sort((left, right) => left.localeCompare(right)));
+  return Object.freeze(normalized.sort(compareCodeUnits));
 }
 
 /**
@@ -120,7 +125,7 @@ export function normalizeProviderGovernancePolicy(value, harnesses) {
       || !exactFields(route.terminalReserve, RESERVE_FIELDS)
       || !Number.isSafeInteger(route.terminalReserve.tokens) || route.terminalReserve.tokens < 0
       || route.terminalReserve.tokens > MAX_TERMINAL_RESERVE_TOKENS
-      || !Number.isFinite(route.terminalReserve.usd) || route.terminalReserve.usd < 0
+      || usdToNanos(route.terminalReserve.usd) === null
       || route.terminalReserve.usd > MAX_TERMINAL_RESERVE_USD) {
       throw invalid();
     }
@@ -134,13 +139,13 @@ export function normalizeProviderGovernancePolicy(value, harnesses) {
       effort: route.effort,
       terminalReserve: {
         tokens: route.terminalReserve.tokens,
-        usd: route.terminalReserve.usd === 0 ? 0 : route.terminalReserve.usd,
+        usd: usdFromNanos(usdToNanos(route.terminalReserve.usd)),
       },
       mode: route.mode,
     };
-  }).sort((left, right) => left.harness.localeCompare(right.harness)
-    || left.model.localeCompare(right.model)
-    || left.effort.localeCompare(right.effort));
+  }).sort((left, right) => compareCodeUnits(left.harness, right.harness)
+    || compareCodeUnits(left.model, right.model)
+    || compareCodeUnits(left.effort, right.effort));
 
   if (knownHarnesses.some((harness) => !coveredHarnesses.has(harness))) {
     throw invalid('provider governance must cover every configured harness');

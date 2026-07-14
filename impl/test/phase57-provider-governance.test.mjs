@@ -159,6 +159,21 @@ test('PG4: native usage and matching seal are processed before successful trust 
   assert.deepEqual(verified.payload.providerGovernanceAdmission.turn.usage, { tokens: 20, usd: 0.2 });
 });
 
+test('PG4/PG6: exact nano-USD deltas aggregate identically live and on replay', async () => {
+  const ad = adapter(); const f = system(ad);
+  const handle = await f.coordinator.spawn('stub', brief(), { taskId: 'pg-exact-usd', model: 'stub-1', effort: 'low' });
+  usage(ad, handle.id, { tokens: 10, usd: 0.1 });
+  usage(ad, handle.id, { tokens: 10, usd: 0.2 });
+  terminal(ad, handle.id);
+  await until(() => f.coordination.task(handle.taskId).status === 'completed');
+  assert.equal(f.coordinator.list()[0].budgetUsed.usd, 0.3);
+  assert.equal(f.coordinator.list()[0].providerTurn.usage.usd, 0.3);
+  f.coordination.releaseWriterLease();
+  const replayed = system(adapter(), { log: f.log }).coordinator.list()[0];
+  assert.equal(replayed.budgetUsed.usd, 0.3);
+  assert.equal(replayed.providerTurn.usage.usd, 0.3);
+});
+
 test('PG4: missing terminal usage seal fails before verification and reaps the untrusted session', async () => {
   const ad = adapter(); const f = system(ad);
   const handle = await f.coordinator.spawn('stub', brief(), { taskId: 'pg-no-seal', model: 'stub-1', effort: 'low' });
@@ -302,6 +317,7 @@ test('PG1: a governed alias route rejects a different observed model instead of 
 test('PG4: malformed and regressing governed telemetry fail closed instead of manufacturing zero or reset credit', async () => {
   for (const [label, events, code] of [
     ['nan', [{ tokens: NaN, usd: 0, accounting: 'delta' }], 'usage_value_invalid'],
+    ['sub-nano', [{ tokens: 1, usd: 0.5000000000000001, accounting: 'delta' }], 'usage_value_invalid'],
     ['accounting', [{ tokens: 1, usd: 0, accounting: 'guess' }], 'usage_accounting_invalid'],
     ['regression', [{ tokens: 20, usd: 0, accounting: 'cumulative' }, { tokens: 10, usd: 0, accounting: 'cumulative' }], 'usage_counter_regressed'],
   ]) {

@@ -64,6 +64,17 @@ or prose formatting cannot change graph semantics; any semantic field change, in
 argument, timeout, expected result, or evidence requirement, creates a new plan version requiring a
 new approval.
 
+USD authority is represented and aggregated as checked integer nano-USD while retaining the public
+`usd` number field. Goal, node, deployment-limit, reserve, and exact provider-usage values may have at most
+nine decimal places and must remain within the safe-integer nano-USD range; unrepresentable values
+refuse or remain unavailable/held rather than round into authority. Node keys use locale-independent
+UTF-16 code-unit order, never host locale or ICU collation, before plan bytes are digested.
+
+Phase 62 ledgers written before this exact-USD and canonical-ordering cut are pre-release state and
+are not silently rewritten. An upgrading deployment must reset that experimental ledger or perform an
+explicit identity-preserving migration; replay of legacy floating-total or locale-ordered identities
+fails closed.
+
 ## GP4 — proposer and approver are distinct authorities
 
 Authentication derives stable user, session, credential, and actor identity. Authorization has

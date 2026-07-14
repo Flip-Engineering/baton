@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { usdFromNanos, usdToNanos } from './usd.mjs';
 
 export class GoalPlanValidationError extends Error {
   constructor(message, code = 'goal_plan_invalid') {
@@ -68,16 +69,19 @@ function normalizePredecessor(value, kind) {
 }
 function normalizeBudget(value, policy, label) {
   exactObject(value, ['tokens', 'usd', 'wallMin', 'providerTurns']);
+  const usdNanos = usdToNanos(value.usd);
+  const canonicalUsd = usdNanos === null ? null : usdFromNanos(usdNanos);
   if (!Number.isSafeInteger(value.tokens) || value.tokens <= 0 || value.tokens > policy.limits.maxTokens
-    || !Number.isFinite(value.usd) || value.usd < 0 || value.usd > policy.limits.maxUsd
+    || canonicalUsd === null || usdNanos > usdToNanos(policy.limits.maxUsd)
     || !Number.isSafeInteger(value.wallMin) || value.wallMin <= 0 || value.wallMin > policy.limits.maxWallMin
     || !Number.isSafeInteger(value.providerTurns) || value.providerTurns <= 0 || value.providerTurns > policy.limits.maxProviderTurns) {
     fail(`${label} budget is invalid`, 'plan_budget_exceeded');
   }
-  return { tokens: value.tokens, usd: value.usd === 0 ? 0 : value.usd, wallMin: value.wallMin, providerTurns: value.providerTurns };
+  return { tokens: value.tokens, usd: canonicalUsd, wallMin: value.wallMin, providerTurns: value.providerTurns };
 }
 function budgetWithin(a, b) {
-  return a.tokens <= b.tokens && a.usd <= b.usd && a.wallMin <= b.wallMin && a.providerTurns <= b.providerTurns;
+  const aUsd = usdToNanos(a.usd); const bUsd = usdToNanos(b.usd);
+  return aUsd !== null && bUsd !== null && a.tokens <= b.tokens && aUsd <= bUsd && a.wallMin <= b.wallMin && a.providerTurns <= b.providerTurns;
 }
 function riskIndex(policy, risk) {
   const index = policy.riskClasses.indexOf(risk);
@@ -99,12 +103,15 @@ export function normalizeGoalPlanPolicy(value) {
   const effectClasses = normalizedSet(raw.effectClasses, 128, 128, 'effectClasses');
   const capabilityClasses = normalizedSet(raw.capabilityClasses, 128, 128, 'capabilityClasses');
   const integerLimits = ['maxGoalVersions', 'maxPlanVersions', 'maxNodes', 'maxDepsPerNode', 'maxTextBytes', 'maxItems', 'maxScopePaths', 'maxRouteValues', 'maxGoalBytes', 'maxPlanBytes', 'maxStatusBytes', 'maxTokens', 'maxWallMin', 'maxProviderTurns'];
+  const maxUsdNanos = usdToNanos(raw.limits.maxUsd);
+  const canonicalMaxUsd = maxUsdNanos === null ? null : usdFromNanos(maxUsdNanos);
   if (integerLimits.some((key) => !Number.isSafeInteger(raw.limits[key]) || raw.limits[key] <= 0)
-    || !Number.isFinite(raw.limits.maxUsd) || raw.limits.maxUsd < 0
+    || canonicalMaxUsd === null
     || raw.limits.maxGoalVersions > 1_000_000 || raw.limits.maxPlanVersions > 1_000_000
     || raw.limits.maxNodes > 100_000 || raw.limits.maxDepsPerNode > 100_000
     || raw.limits.maxTextBytes > 1024 * 1024 || raw.limits.maxGoalBytes > 16 * 1024 * 1024
     || raw.limits.maxPlanBytes > 64 * 1024 * 1024 || raw.limits.maxStatusBytes > 64 * 1024 * 1024) fail('goal/plan policy limits are invalid', 'goal_plan_policy_invalid');
+  raw.limits.maxUsd = canonicalMaxUsd;
   const normalizedPolicy = { ...clone(raw), riskClasses: risks, effectClasses, capabilityClasses, limits: clone(raw.limits) };
   const policyDigest = goalPlanDigest(normalizedPolicy);
   if (suppliedDigest !== undefined && suppliedDigest !== policyDigest) fail('goal/plan policy digest is invalid', 'goal_plan_policy_invalid');
@@ -216,15 +223,22 @@ export function normalizePlanRequest(value, policy, goal) {
   const goalRef = normalizeRef(value.goal, 'goal');
   if (goalRef.goalId !== goal.goalId || goalRef.version !== goal.version || goalRef.digest !== goal.digest) fail('plan goal reference is stale', 'goal_stale');
   if (!Array.isArray(value.nodes) || value.nodes.length === 0 || value.nodes.length > policy.limits.maxNodes) fail('plan node count is invalid', 'plan_node_limit');
-  const nodes = value.nodes.map((node) => normalizeNode(node, policy, goal)).sort((a, b) => a.key.localeCompare(b.key));
+  const nodes = value.nodes.map((node) => normalizeNode(node, policy, goal)).sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   assertDag(nodes);
   const covered = new Set(nodes.flatMap((node) => node.definitionOfDone));
   if (goal.definitionOfDone.some((item) => !covered.has(item))) fail('plan does not cover the goal definition of done', 'plan_goal_mismatch');
   const totals = { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 };
-  for (const node of nodes) for (const key of Object.keys(totals)) {
-    totals[key] += node.budget[key];
-    if (!Number.isSafeInteger(totals[key]) && key !== 'usd') fail('plan budget aggregation overflowed', 'plan_budget_exceeded');
+  let totalUsdNanos = 0;
+  for (const node of nodes) {
+    for (const key of ['tokens', 'wallMin', 'providerTurns']) {
+      totals[key] += node.budget[key];
+      if (!Number.isSafeInteger(totals[key])) fail('plan budget aggregation overflowed', 'plan_budget_exceeded');
+    }
+    totalUsdNanos += usdToNanos(node.budget.usd);
+    if (!Number.isSafeInteger(totalUsdNanos)) fail('plan budget aggregation overflowed', 'plan_budget_exceeded');
   }
+  totals.usd = usdFromNanos(totalUsdNanos);
+  if (totals.usd === null || totalUsdNanos > usdToNanos(goal.budget.usd)) fail('plan allocations exceed goal budget', 'plan_budget_exceeded');
   if (!budgetWithin(totals, goal.budget)) fail('plan allocations exceed goal budget', 'plan_budget_exceeded');
   const result = { goal: goalRef, predecessor: normalizePredecessor(value.predecessor, 'plan'), nodes, totals };
   if (Buffer.byteLength(JSON.stringify(goalPlanCanonical(result))) > policy.limits.maxPlanBytes) fail('plan exceeds deployment byte ceiling', 'plan_too_large');

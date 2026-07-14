@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 import {
@@ -474,6 +475,83 @@ test('GP3/GP5: every plan node declares explicit scope and selectable harness/mo
     assert.equal(store.snapshot().lastSeq, before);
     store.releaseWriterLease();
   }
+});
+
+test('GP3/GP8: USD authority uses exact bounded units for validation and aggregation', () => {
+  const makeNode = (key, usd, definitionOfDone) => ({
+    key, objective: `Implement ${key}`, definitionOfDone, deps: [], pathScope: ['impl/**'], risk: 'high',
+    budget: { tokens: 10_000, usd, wallMin: 5, providerTurns: 4 }, verification: verification(),
+    routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] }, capabilities: ['code'], effects: ['repository_edit'],
+  });
+
+  const rounded = new CoordinationStore(root('usd-rounded-overallocation'), { goalPlanPolicy: policy });
+  const roundedGoal = rounded.defineGoal({
+    objective: 'Reject rounded budget authority', definitionOfDone: ['exact budget'], constraints: [], risk: 'high',
+    budget: { tokens: 20_000, usd: 1, wallMin: 10, providerTurns: 8 }, predecessor: null,
+  }, storeAuth('goal-owner', 'goal:usd-rounded')).goal;
+  const before = rounded.snapshot().lastSeq;
+  assert.throws(
+    () => rounded.proposePlan({
+      goal: ref('goal', roundedGoal), predecessor: null,
+      nodes: [makeNode('whole', 1, ['exact budget']), makeNode('fraction', Number.EPSILON / 4, [])],
+    }, storeAuth('planner', 'plan:usd-rounded')),
+    (error) => error.code === 'plan_budget_exceeded',
+  );
+  assert.equal(rounded.snapshot().lastSeq, before);
+  rounded.releaseWriterLease();
+
+  const exact = new CoordinationStore(root('usd-exact-aggregation'), { goalPlanPolicy: policy });
+  const exactGoal = exact.defineGoal({
+    objective: 'Aggregate exact budget authority', definitionOfDone: ['exact budget'], constraints: [], risk: 'high',
+    budget: { tokens: 20_000, usd: 0.3, wallMin: 10, providerTurns: 8 }, predecessor: null,
+  }, storeAuth('goal-owner', 'goal:usd-exact')).goal;
+  const plan = exact.proposePlan({
+    goal: ref('goal', exactGoal), predecessor: null,
+    nodes: [makeNode('tenths', 0.1, ['exact budget']), makeNode('fifths', 0.2, [])],
+  }, storeAuth('planner', 'plan:usd-exact')).plan;
+  assert.equal(plan.totals.usd, 0.3);
+  exact.releaseWriterLease();
+
+  const nanos = new CoordinationStore(root('usd-nine-decimal'), { goalPlanPolicy: policy });
+  const nanosGoal = nanos.defineGoal({
+    objective: 'Retain nano-USD budget authority', definitionOfDone: ['exact budget'], constraints: [], risk: 'high',
+    budget: { tokens: 20_000, usd: 1.000000001, wallMin: 10, providerTurns: 8 }, predecessor: null,
+  }, storeAuth('goal-owner', 'goal:usd-nine-decimal')).goal;
+  const nanosPlan = nanos.proposePlan({
+    goal: ref('goal', nanosGoal), predecessor: null,
+    nodes: [makeNode('whole', 1, ['exact budget']), makeNode('nano', 0.000000001, [])],
+  }, storeAuth('planner', 'plan:usd-nine-decimal')).plan;
+  assert.equal(nanosPlan.totals.usd, 1.000000001);
+  nanos.releaseWriterLease();
+});
+
+test('GP3/GP8: canonical plan node ordering is locale-independent code-unit order', () => {
+  const store = new CoordinationStore(root('node-code-unit-order'), { goalPlanPolicy: policy });
+  const goal = store.defineGoal({
+    objective: 'Canonicalize plan order', definitionOfDone: ['upper', 'lower'], constraints: [], risk: 'high',
+    budget: goalBudget(), predecessor: null,
+  }, storeAuth('goal-owner', 'goal:node-order')).goal;
+  const makeNode = (key, done) => ({
+    key, objective: `Implement ${key}`, definitionOfDone: [done], deps: [], pathScope: ['impl/**'], risk: 'high',
+    budget: nodeBudget(), verification: verification(), routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] },
+    capabilities: ['code'], effects: ['repository_edit'],
+  });
+  const plan = store.proposePlan({
+    goal: ref('goal', goal), predecessor: null, nodes: [makeNode('a', 'lower'), makeNode('A', 'upper')],
+  }, storeAuth('planner', 'plan:node-order')).plan;
+  assert.deepEqual(plan.nodes.map((node) => node.key), ['A', 'a']);
+  store.releaseWriterLease();
+});
+
+test('GP3/GP8: plan bytes and replay stay identical across host locales', () => {
+  const fixture = fileURLToPath(new URL('./fixtures/phase62-locale-plan.js', import.meta.url));
+  const run = (locale, mode, directory) => JSON.parse(execFileSync(process.execPath, [fixture, mode, directory], {
+    encoding: 'utf8', env: { ...process.env, LANG: locale, LC_ALL: locale },
+  }));
+  const enDirectory = root('locale-en'); const trDirectory = root('locale-tr');
+  const en = run('en_US.UTF-8', 'create', enDirectory); const tr = run('tr_TR.UTF-8', 'create', trDirectory);
+  assert.deepEqual(en, tr);
+  assert.deepEqual(run('tr_TR.UTF-8', 'replay', enDirectory), en);
 });
 
 test('GP3/GP8: plan verification is closed direct-exec authority with bounded cwd, env, argv, output, and predecessor evidence', () => {

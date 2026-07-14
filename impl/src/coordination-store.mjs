@@ -5,6 +5,7 @@ import {
   GoalPlanValidationError, assertGoalSuccessor, buildAuthoritativeBrief, goalPlanCanonical,
   goalPlanDigest, normalizeGoalPlanPolicy, normalizeGoalRequest, normalizePlanRequest, semanticBriefCore,
 } from './goal-plan.mjs';
+import { usdFromNanos, usdToNanos } from './usd.mjs';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 const TRANSITIONS = new Map([
@@ -2071,21 +2072,33 @@ export class CoordinationStore {
       }
     }
     const usageRows = rows?.filter((event) => event.kind === 'resource.tokens' && event.actor === 'worker') ?? [];
-    const usageValid = usageRows.every((event) => Number.isFinite(event.payload?.tokens) && event.payload.tokens >= 0
-      && Number.isFinite(event.payload?.usd) && event.payload.usd >= 0);
+    const tokenUsageValid = usageRows.every((event) => Number.isFinite(event.payload?.tokens) && event.payload.tokens >= 0);
+    const usdNanoRows = usageRows.map((event) => usdToNanos(event.payload?.usd));
+    const totalUsdNanos = usdNanoRows.reduce((sum, value) => value === null ? Number.NaN : sum + value, 0);
+    const projectedUsd = Number.isSafeInteger(totalUsdNanos) ? usdFromNanos(totalUsdNanos) : null;
+    const initialUsdNanos = usdToNanos(initial.usd);
+    const releasedUsd = projectedUsd === null || initialUsdNanos === null
+      ? null
+      : usdFromNanos(Math.max(0, initialUsdNanos - totalUsdNanos));
+    const overrunUsd = projectedUsd === null || initialUsdNanos === null
+      ? null
+      : usdFromNanos(Math.max(0, totalUsdNanos - initialUsdNanos));
+    const usdUsageValid = projectedUsd !== null && releasedUsd !== null && overrunUsd !== null;
     const seal = rows?.findLast((event) => event.payload?.usageSeal && typeof event.payload.usageSeal === 'object')?.payload?.usageSeal ?? null;
-    const tokensExact = usageValid && seal?.tokens === 'reported'; const usdExact = usageValid && seal?.usd === 'reported';
+    const tokensExact = tokenUsageValid && seal?.tokens === 'reported'; const usdExact = usdUsageValid && seal?.usd === 'reported';
     const tokens = tokensExact ? usageRows.reduce((sum, event) => sum + event.payload.tokens, 0) : null;
-    const usd = usdExact ? usageRows.reduce((sum, event) => sum + event.payload.usd, 0) : null;
+    const usd = usdExact ? projectedUsd : null;
     const providerTurns = rows ? rows.filter((event) => event.kind === 'lifecycle.turn_started' && event.actor === 'orchestrator').length : null;
     const availability = {
       tokens: tokensExact ? 'exact' : 'unavailable', usd: usdExact ? 'exact' : 'unavailable',
       wallMin: 'exact', providerTurns: rows ? 'exact' : 'unavailable',
     };
     const consumed = { tokens, usd, wallMin, providerTurns };
-    const dimension = (key) => availability[key] === 'exact'
-      ? { released: Math.max(0, initial[key] - consumed[key]), held: 0, overrun: Math.max(0, consumed[key] - initial[key]) }
-      : { released: null, held: initial[key], overrun: null };
+    const dimension = (key) => {
+      if (availability[key] !== 'exact') return { released: null, held: initial[key], overrun: null };
+      if (key !== 'usd') return { released: Math.max(0, initial[key] - consumed[key]), held: 0, overrun: Math.max(0, consumed[key] - initial[key]) };
+      return { released: releasedUsd, held: 0, overrun: overrunUsd };
+    };
     const dimensions = Object.fromEntries(Object.keys(initial).map((key) => [key, dimension(key)]));
     return {
       schemaVersion: 1, taskId, binding: clone(dispatch.binding), terminalEvent: terminal.seq, terminalStatus: terminal.payload.to,

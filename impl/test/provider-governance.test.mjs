@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 import {
   normalizeProviderGovernancePolicy,
@@ -62,6 +64,17 @@ test('normalization exposes only a deeply immutable path-free projection and det
   assert.equal(providerGovernanceRoute(normalized, 'codex', 'gpt-5.6-sol', 'low').terminalReserve.tokens, 10_000);
 });
 
+test('policy route ordering and digest are locale-independent', () => {
+  const fixture = fileURLToPath(new URL('./fixtures/provider-governance-locale.js', import.meta.url));
+  const run = (locale) => JSON.parse(execFileSync(process.execPath, [fixture, 'run'], {
+    encoding: 'utf8', env: { ...process.env, LANG: locale, LC_ALL: locale },
+  }));
+  const en = run('en_US.UTF-8');
+  const tr = run('tr_TR.UTF-8');
+  assert.deepEqual(en, tr);
+  assert.deepEqual(en.harnesses, ['I', 'i']);
+});
+
 test('route lookup is exact across harness, model, and effort and exposes no public Map', () => {
   const normalized = normalizeProviderGovernancePolicy(policy(), harnesses);
   const found = providerGovernanceRoute(normalized, 'grok', 'grok-build', 'low');
@@ -105,14 +118,17 @@ test('wire, provider-call, and tool-call ceilings require positive bounded safe 
   }
 });
 
-test('terminal reserves accept safe nonnegative tokens and finite nonnegative USD only', () => {
+test('terminal reserves accept exact bounded nano-USD only', () => {
   const withReserve = (terminalReserve) => policy({
     routes: [route({ terminalReserve }), policy().routes[1]],
   });
   assert.doesNotThrow(() => normalizeProviderGovernancePolicy(withReserve({ tokens: 0, usd: 0 }), harnesses));
+  assert.doesNotThrow(() => normalizeProviderGovernancePolicy(withReserve({ tokens: 0, usd: 0.000000001 }), harnesses));
   assert.doesNotThrow(() => normalizeProviderGovernancePolicy(withReserve({ tokens: 100_000_000, usd: 1_000_000 }), harnesses));
   rejects(withReserve({ tokens: 100_000_001, usd: 0 }));
   rejects(withReserve({ tokens: 0, usd: 1_000_000.01 }));
+  rejects(withReserve({ tokens: 0, usd: 0.0000000001 }));
+  rejects(withReserve({ tokens: 0, usd: 0.5000000000000001 }));
   for (const tokens of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, Infinity, NaN, '1']) rejects(withReserve({ tokens, usd: 0 }));
   for (const usd of [-0.01, Infinity, -Infinity, NaN, '0']) rejects(withReserve({ tokens: 0, usd }));
 });

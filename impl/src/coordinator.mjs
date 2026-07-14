@@ -15,6 +15,7 @@ import { processReadyPayload, validProcessClosedPayload, validProcessReadyPayloa
 import { normalizeProviderGovernancePolicy, providerGovernanceRoute, validateProviderGovernanceCard } from './provider-governance.mjs';
 import { normalizePhysicalOwnerId, normalizeSparseCheckoutIdentity, normalizeSparsePaths, sparseCheckoutIdentity } from './worktree.mjs';
 import { GoalPlanValidationError, goalPlanDigest, normalizeGoalPlanContext, semanticBriefCore } from './goal-plan.mjs';
+import { addUsd, subtractUsdFloor, usdFromNanos, usdToNanos } from './usd.mjs';
 
 const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
 const WORKTREE_FAILURE = Symbol('worktree-failure');
@@ -199,14 +200,14 @@ function replayProviderGovernanceRoute(event, vendor, model, effort) {
     || !reserve || typeof reserve !== 'object' || Array.isArray(reserve)
     || Object.keys(reserve).sort().join(',') !== 'tokens,usd'
     || !Number.isSafeInteger(reserve.tokens) || reserve.tokens < 0
-    || typeof reserve.usd !== 'number' || !Number.isFinite(reserve.usd) || reserve.usd < 0
+    || usdToNanos(reserve.usd) === null
     || !/^[a-f0-9]{64}$/u.test(payload?.policyDigest ?? '')
     || !/^[a-f0-9]{64}$/u.test(payload?.routeDigest ?? '')) return null;
   const route = {
     harness: vendor,
     model,
     effort,
-    terminalReserve: { tokens: reserve.tokens, usd: reserve.usd === 0 ? 0 : reserve.usd },
+    terminalReserve: { tokens: reserve.tokens, usd: usdFromNanos(usdToNanos(reserve.usd)) },
     mode: payload.mode,
   };
   if (canonicalDigest(route) !== payload.routeDigest) return null;
@@ -1441,12 +1442,12 @@ export class Coordinator {
     }
     const limits = {
       tokens: Number(task?.brief?.budget?.tokens ?? 0),
-      usd: Number(task?.brief?.budget?.usd ?? 0),
+      usd: usdFromNanos(usdToNanos(Number(task?.brief?.budget?.usd ?? 0))) ?? 0,
     };
     const used = { ...handle.budgetUsed };
     const remaining = {
       tokens: limits.tokens > 0 ? Math.max(0, limits.tokens - used.tokens) : 0,
-      usd: limits.usd > 0 ? Math.max(0, limits.usd - used.usd) : 0,
+      usd: limits.usd > 0 ? subtractUsdFloor(limits.usd, used.usd) ?? 0 : 0,
     };
     const capabilityRefusal = this._providerCapabilityRefusal(handle, route);
     const headroomRefusal = route.terminalReserve.tokens > 0 && (limits.tokens <= 0 || remaining.tokens < route.terminalReserve.tokens)
@@ -3981,11 +3982,11 @@ export class Coordinator {
     const rawUsd = own(payload, 'usd') ? payload.usd : own(payload, 'totalCostUsd') ? payload.totalCostUsd : 0;
     if (governed && !['delta', 'cumulative'].includes(wireAccounting)) return { invalidCode: 'usage_accounting_invalid' };
     if (governed && ((tokensReported && (!Number.isSafeInteger(rawTokens) || rawTokens < 0))
-      || (usdReported && (typeof rawUsd !== 'number' || !Number.isFinite(rawUsd) || rawUsd < 0)))) {
+      || (usdReported && usdToNanos(rawUsd) === null))) {
       return { invalidCode: 'usage_value_invalid' };
     }
     const normalizedRawTokens = governed ? rawTokens : Number(rawTokens);
-    const normalizedRawUsd = governed ? rawUsd : Number(rawUsd);
+    const normalizedRawUsd = governed ? usdFromNanos(usdToNanos(rawUsd)) : Number(rawUsd);
     const counterId = payload?.counterId ?? source;
     if (governed && (typeof counterId !== 'string' || counterId.length === 0 || Buffer.byteLength(counterId) > 256 || counterId.includes('\0'))) return { invalidCode: 'usage_counter_invalid' };
     const tokenMetric = payload?.tokenMetric ?? null;
@@ -4001,6 +4002,7 @@ export class Coordinator {
       const prior = handle.usageCumulative.get(key) ?? 0;
       if (governed && current < prior) return null;
       handle.usageCumulative.set(key, current);
+      if (dimension === 'usd') return current >= prior ? subtractUsdFloor(current, prior) : current;
       return current >= prior ? current - prior : current;
     };
     const tokens = deltaFor('tokens', normalizedRawTokens);
@@ -4059,7 +4061,9 @@ export class Coordinator {
   _recordProviderTurnUsage(handle, payload) {
     if (!handle.providerGovernance || !handle.providerTurn || handle.providerTurn.sealed) return;
     handle.providerTurn.usage.tokens += payload.tokens;
-    handle.providerTurn.usage.usd += payload.usd;
+    const nextUsd = addUsd(handle.providerTurn.usage.usd, payload.usd);
+    if (nextUsd === null) return this._recordProviderTelemetryInvalid(handle, 'usage_value_invalid');
+    handle.providerTurn.usage.usd = nextUsd;
     const reserve = handle.providerGovernance.terminalReserve;
     if ((reserve.tokens > 0 && handle.providerTurn.usage.tokens > reserve.tokens)
       || (reserve.usd > 0 && handle.providerTurn.usage.usd > reserve.usd)) {
@@ -4077,8 +4081,12 @@ export class Coordinator {
     if (payload.invalidCode) {
       return this._recordProviderTelemetryInvalid(handle, payload.invalidCode);
     }
+    const nextBudgetUsd = handle.providerGovernance
+      ? addUsd(handle.budgetUsed.usd, payload.usd)
+      : handle.budgetUsed.usd + payload.usd;
+    if (nextBudgetUsd === null) return this._recordProviderTelemetryInvalid(handle, 'usage_value_invalid');
     handle.budgetUsed.tokens += payload.tokens;
-    handle.budgetUsed.usd += payload.usd;
+    handle.budgetUsed.usd = nextBudgetUsd;
     if (handle.providerTurn && typeof payload.counterId === 'string') {
       handle.providerTurn.counterIds.add(payload.counterId);
       const prior = handle.providerTurn.counterObservations.get(payload.counterId)
@@ -6155,17 +6163,21 @@ export class Coordinator {
             const replayTokens = providerGovernance ? e.payload?.tokens : Number(e.payload?.tokens ?? 0);
             const replayUsd = providerGovernance ? e.payload?.usd : Number(e.payload?.usd ?? 0);
             if (!(providerGovernance ? Number.isSafeInteger(replayTokens) : Number.isFinite(replayTokens)) || replayTokens < 0
-              || !Number.isFinite(replayUsd) || replayUsd < 0) {
+              || (providerGovernance ? usdToNanos(replayUsd) === null : !Number.isFinite(replayUsd) || replayUsd < 0)) {
               providerTelemetryFailed = true;
               providerPolicyHardExceeded = true;
               if (providerTurn) providerTurn.violation ??= 'usage_value_invalid';
               break;
             }
+            const nextBudgetUsd = providerGovernance ? addUsd(budgetUsed.usd, replayUsd) : budgetUsed.usd + replayUsd;
+            if (nextBudgetUsd === null) { providerTelemetryFailed = true; providerPolicyHardExceeded = true; if (providerTurn) providerTurn.violation ??= 'usage_value_invalid'; break; }
             budgetUsed.tokens += replayTokens;
-            budgetUsed.usd += replayUsd;
+            budgetUsed.usd = nextBudgetUsd;
             if (providerTurn) {
               providerTurn.usage.tokens += replayTokens;
-              providerTurn.usage.usd += replayUsd;
+              const nextTurnUsd = providerGovernance ? addUsd(providerTurn.usage.usd, replayUsd) : providerTurn.usage.usd + replayUsd;
+              if (nextTurnUsd === null) { providerTelemetryFailed = true; providerPolicyHardExceeded = true; providerTurn.violation ??= 'usage_value_invalid'; break; }
+              providerTurn.usage.usd = nextTurnUsd;
               if (typeof e.payload?.counterId === 'string') {
                 providerTurn.counterIds.add(e.payload.counterId);
                 const dimensions = e.payload?.reportedDimensions;
