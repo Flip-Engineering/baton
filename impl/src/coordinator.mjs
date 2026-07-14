@@ -31,6 +31,12 @@ function validLogicalCallPhase(value) {
   return typeof value === 'string' && LOGICAL_CALL_PHASES.has(value);
 }
 
+function addSafeTokenCounts(left, right) {
+  if (!Number.isSafeInteger(left) || left < 0 || !Number.isSafeInteger(right) || right < 0) return null;
+  const total = left + right;
+  return Number.isSafeInteger(total) ? total : null;
+}
+
 function logicalCallTransition(prior, next) {
   if (prior === undefined) return next === 'progress' ? 'invalid' : 'new';
   if (next === 'requested') return 'invalid';
@@ -4052,12 +4058,9 @@ export class Coordinator {
     return invalid;
   }
 
-  _recordProviderTurnUsage(handle, payload) {
+  _recordProviderTurnUsage(handle, nextUsage) {
     if (!handle.providerGovernance || !handle.providerTurn || handle.providerTurn.sealed) return;
-    handle.providerTurn.usage.tokens += payload.tokens;
-    const nextUsd = addUsd(handle.providerTurn.usage.usd, payload.usd);
-    if (nextUsd === null) return this._recordProviderTelemetryInvalid(handle, 'usage_value_invalid');
-    handle.providerTurn.usage.usd = nextUsd;
+    handle.providerTurn.usage = nextUsage;
     const reserve = handle.providerGovernance.terminalReserve;
     if ((reserve.tokens > 0 && handle.providerTurn.usage.tokens > reserve.tokens)
       || (reserve.usd > 0 && handle.providerTurn.usage.usd > reserve.usd)) {
@@ -4075,11 +4078,23 @@ export class Coordinator {
     if (payload.invalidCode) {
       return this._recordProviderTelemetryInvalid(handle, payload.invalidCode);
     }
+    const governed = handle.providerGovernance != null;
+    const nextBudgetTokens = governed
+      ? addSafeTokenCounts(handle.budgetUsed.tokens, payload.tokens)
+      : handle.budgetUsed.tokens + payload.tokens;
     const nextBudgetUsd = handle.providerGovernance
       ? addUsd(handle.budgetUsed.usd, payload.usd)
       : handle.budgetUsed.usd + payload.usd;
-    if (nextBudgetUsd === null) return this._recordProviderTelemetryInvalid(handle, 'usage_value_invalid');
-    handle.budgetUsed.tokens += payload.tokens;
+    const updatesActiveTurn = governed && handle.providerTurn && !handle.providerTurn.sealed;
+    const nextTurnUsage = updatesActiveTurn ? {
+      tokens: addSafeTokenCounts(handle.providerTurn.usage.tokens, payload.tokens),
+      usd: addUsd(handle.providerTurn.usage.usd, payload.usd),
+    } : null;
+    if (nextBudgetTokens === null || nextBudgetUsd === null
+      || (nextTurnUsage && (nextTurnUsage.tokens === null || nextTurnUsage.usd === null))) {
+      return this._recordProviderTelemetryInvalid(handle, 'usage_value_invalid');
+    }
+    handle.budgetUsed.tokens = nextBudgetTokens;
     handle.budgetUsed.usd = nextBudgetUsd;
     if (handle.providerTurn && typeof payload.counterId === 'string') {
       handle.providerTurn.counterIds.add(payload.counterId);
@@ -4095,7 +4110,7 @@ export class Coordinator {
       ...event, payload,
       ...this._routeAttribution(handle, task),
     });
-    this._recordProviderTurnUsage(handle, payload);
+    if (nextTurnUsage) this._recordProviderTurnUsage(handle, nextTurnUsage);
     const tokenLimit = Number(task?.brief?.budget?.tokens ?? 0);
     const usdLimit = Number(task?.brief?.budget?.usd ?? 0);
     const tokenRatio = tokenLimit > 0 ? handle.budgetUsed.tokens / tokenLimit : 0;
@@ -6163,15 +6178,25 @@ export class Coordinator {
               if (providerTurn) providerTurn.violation ??= 'usage_value_invalid';
               break;
             }
+            const nextBudgetTokens = providerGovernance ? addSafeTokenCounts(budgetUsed.tokens, replayTokens) : budgetUsed.tokens + replayTokens;
             const nextBudgetUsd = providerGovernance ? addUsd(budgetUsed.usd, replayUsd) : budgetUsed.usd + replayUsd;
-            if (nextBudgetUsd === null) { providerTelemetryFailed = true; providerPolicyHardExceeded = true; if (providerTurn) providerTurn.violation ??= 'usage_value_invalid'; break; }
-            budgetUsed.tokens += replayTokens;
+            const nextTurnTokens = providerGovernance && providerTurn
+              ? addSafeTokenCounts(providerTurn.usage.tokens, replayTokens)
+              : providerTurn ? providerTurn.usage.tokens + replayTokens : null;
+            const nextTurnUsd = providerTurn
+              ? (providerGovernance ? addUsd(providerTurn.usage.usd, replayUsd) : providerTurn.usage.usd + replayUsd)
+              : null;
+            if (nextBudgetTokens === null || nextBudgetUsd === null
+              || (providerTurn && (nextTurnTokens === null || nextTurnUsd === null))) {
+              providerTelemetryFailed = true;
+              providerPolicyHardExceeded = true;
+              if (providerTurn) providerTurn.violation ??= 'usage_value_invalid';
+              break;
+            }
+            budgetUsed.tokens = nextBudgetTokens;
             budgetUsed.usd = nextBudgetUsd;
             if (providerTurn) {
-              providerTurn.usage.tokens += replayTokens;
-              const nextTurnUsd = providerGovernance ? addUsd(providerTurn.usage.usd, replayUsd) : providerTurn.usage.usd + replayUsd;
-              if (nextTurnUsd === null) { providerTelemetryFailed = true; providerPolicyHardExceeded = true; providerTurn.violation ??= 'usage_value_invalid'; break; }
-              providerTurn.usage.usd = nextTurnUsd;
+              providerTurn.usage = { tokens: nextTurnTokens, usd: nextTurnUsd };
               if (typeof e.payload?.counterId === 'string') {
                 providerTurn.counterIds.add(e.payload.counterId);
                 const dimensions = e.payload?.reportedDimensions;

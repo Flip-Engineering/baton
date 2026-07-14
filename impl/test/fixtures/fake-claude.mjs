@@ -104,13 +104,19 @@ function emitAssistantText(text) {
   send({ type: 'assistant', message: { content: [{ type: 'text', text }] } });
 }
 
-function emitResult({ text = '', isError = false, stopReason = null, totalCostUsd = 0.0001 } = {}) {
+function emitResult({
+  text = '',
+  isError = false,
+  stopReason = null,
+  totalCostUsd = 0.0001,
+  usage = { input_tokens: 10, output_tokens: Math.max(1, text.length) },
+} = {}) {
   send({
     type: 'result',
     subtype: isError ? 'error_during_execution' : 'success',
     is_error: isError,
     result: text,
-    usage: { input_tokens: 10, output_tokens: Math.max(1, text.length) },
+    usage,
     total_cost_usd: totalCostUsd,
     stop_reason: stopReason,
   });
@@ -208,6 +214,17 @@ function startNonApprovalTurn(text) {
   if (text.includes('REPORT_INEXACT_USD')) {
     emitAssistantText('provider returned a cost outside nano-USD authority');
     emitResult({ text: 'inexact-usd', totalCostUsd: 0.1000000001 });
+    currentTurn = null;
+    drainQueue();
+    return;
+  }
+
+  if (text.includes('REPORT_TOKEN_SUM_OVERFLOW')) {
+    emitAssistantText('provider returned individually safe token operands with an unsafe sum');
+    emitResult({
+      text: 'token-sum-overflow',
+      usage: { input_tokens: Number.MAX_SAFE_INTEGER, output_tokens: 1 },
+    });
     currentTurn = null;
     drainQueue();
     return;

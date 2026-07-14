@@ -62,6 +62,32 @@ test('one-shot usage is emitted before terminal with a matching explicit counter
   });
 });
 
+test('one-shot usage never rounds inexact USD or emits an unsafe token sum', () => {
+  const mixed = parseClaudeEvent({
+    type: 'result', subtype: 'success', is_error: false, result: 'mixed',
+    usage: { input_tokens: 10, output_tokens: 11 }, total_cost_usd: 0.1000000001,
+  }, 'w1', 'claude', 6);
+  assert.equal(mixed.beforeTerminal.length, 1);
+  assert.deepEqual(mixed.beforeTerminal[0].payload, {
+    source: 'result', accounting: 'delta', tokens: 21,
+    counterId: 'cli:w1:6', tokenMetric: 'anthropic_input_plus_output_tokens_excluding_cache',
+  });
+  assert.deepEqual(mixed.event.payload.usageSeal, {
+    tokens: 'reported', usd: 'unavailable', counterId: 'cli:w1:6',
+    tokenMetric: 'anthropic_input_plus_output_tokens_excluding_cache',
+  });
+  assert.deepEqual(mixed.event.payload.result.budgetUsed, { tokens: 21, usd: 0 });
+
+  const overflow = parseCodexEvent({
+    type: 'turn.completed', usage: { input_tokens: Number.MAX_SAFE_INTEGER, output_tokens: 1 },
+  }, 'w2', 'codex', 7);
+  assert.deepEqual(overflow.beforeTerminal, []);
+  assert.deepEqual(overflow.event.payload.usageSeal, {
+    tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null,
+  });
+  assert.deepEqual(overflow.event.payload.result.budgetUsed, { tokens: 0, usd: 0 });
+});
+
 test('parseCodexEvent surfaces command_execution and file_change items, and treats turn.failed/error as a crash', () => {
   const cmd = parseCodexEvent({ type: 'item.completed', item: { type: 'command_execution', command: 'ls', exit_code: 0 } }, 'w1', 'codex', 1);
   assert.equal(cmd.event.kind, 'content.tool_call');

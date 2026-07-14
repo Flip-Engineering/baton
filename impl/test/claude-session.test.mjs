@@ -190,6 +190,25 @@ test('provider cost outside exact nano-USD authority holds only USD while preser
   }
 });
 
+test('provider token operands whose sum is unsafe hold tokens without emitting an unsafe result claim', async () => {
+  const { cli, events, waitForKind } = harness();
+  const w = 'token-sum-overflow';
+  try {
+    await cli.spawn(w, brief('REPORT_TOKEN_SUM_OVERFLOW'), { worktree: process.cwd() });
+    const completed = await waitForKind('lifecycle.turn_completed');
+    const usage = events.find((event) => event.kind === 'resource.tokens');
+    assert.ok(usage, 'the independently valid USD dimension remains observable');
+    assert.equal(Object.hasOwn(usage.payload, 'tokens'), false);
+    assert.equal(usage.payload.usd, 0.0001);
+    assert.equal(completed.payload.usageSeal.tokens, 'unavailable');
+    assert.equal(completed.payload.usageSeal.usd, 'reported');
+    assert.deepEqual(completed.payload.result.budgetUsed, { tokens: 0, usd: 0.0001 });
+  } finally {
+    await cli.kill(w);
+    await waitForKind('kill.confirmed');
+  }
+});
+
 test('Phase 60: resume attachOnly performs the native handshake but emits no turn or provider work before prompt()', async () => {
   const { cli, events, waitForKind } = harness();
   const w = 'phase60-claude-attach';

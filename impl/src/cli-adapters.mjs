@@ -14,6 +14,7 @@
 
 import { spawn } from 'node:child_process';
 import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
+import { usdToNanos } from './usd.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const CODEX_TOKEN_METRIC = 'codex_turn_input_plus_output_tokens';
@@ -23,16 +24,23 @@ function unavailableUsageSeal() {
   return { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null };
 }
 
-function nativeUsage(usage, usd, tokenMetric, counterId) {
+function safeUsageTokenTotal(usage) {
   const input = usage?.input_tokens;
   const output = usage?.output_tokens ?? usage?.output;
-  const tokensReported = Number.isSafeInteger(input) && input >= 0 && Number.isSafeInteger(output) && output >= 0;
-  const usdReported = Number.isFinite(usd) && usd >= 0;
+  if (!Number.isSafeInteger(input) || input < 0 || !Number.isSafeInteger(output) || output < 0) return null;
+  const total = input + output;
+  return Number.isSafeInteger(total) ? total : null;
+}
+
+function nativeUsage(usage, usd, tokenMetric, counterId) {
+  const tokenTotal = safeUsageTokenTotal(usage);
+  const tokensReported = tokenTotal !== null;
+  const usdReported = usdToNanos(usd) !== null;
   return {
     reported: tokensReported || usdReported,
     payload: {
       source: 'result', accounting: 'delta',
-      ...(tokensReported ? { tokens: input + output } : {}),
+      ...(tokensReported ? { tokens: tokenTotal } : {}),
       ...(usdReported ? { usd } : {}),
       ...((tokensReported || usdReported) ? { counterId, tokenMetric: tokensReported ? tokenMetric : null } : {}),
     },
@@ -165,13 +173,15 @@ export function parseClaudeEvent(o, worker, harness, turnEpoch, logicalSequence 
 }
 
 function makeResult(status, usage, summary, usd) {
+  const tokens = safeUsageTokenTotal(usage);
+  const exactUsd = usdToNanos(usd) === null ? null : usd;
   return {
     status,
     summary: (summary ?? '').slice(0, 500),
     artifacts: { commits: [], files: [] }, // the trust gate reads the real git diff; the worker need not report it
     verification: { command: null, claimedExit: null }, // NOT trusted — the hub re-runs the pinned check
     openQuestions: [],
-    budgetUsed: { tokens: (usage?.output_tokens ?? usage?.output ?? 0) + (usage?.input_tokens ?? 0), usd: usd ?? 0 },
+    budgetUsed: { tokens: tokens ?? 0, usd: exactUsd ?? 0 },
   };
 }
 

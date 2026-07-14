@@ -20,12 +20,16 @@ function unavailableUsageSeal() {
   return { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null };
 }
 
+function safeUsageTokenTotal(usage) {
+  const input = usage?.input_tokens;
+  const output = usage?.output_tokens;
+  if (!Number.isSafeInteger(input) || input < 0 || !Number.isSafeInteger(output) || output < 0) return null;
+  const total = input + output;
+  return Number.isSafeInteger(total) ? total : null;
+}
+
 function resultUsage(obj, counterId) {
-  const input = obj?.usage?.input_tokens;
-  const output = obj?.usage?.output_tokens;
-  const tokenTotal = Number.isSafeInteger(input) && input >= 0 && Number.isSafeInteger(output) && output >= 0
-    ? input + output
-    : null;
+  const tokenTotal = safeUsageTokenTotal(obj?.usage);
   const tokensReported = Number.isSafeInteger(tokenTotal);
   const usdReported = usdToNanos(obj?.total_cost_usd) !== null;
   return {
@@ -120,13 +124,15 @@ export function buildClaudeSessionArgs({ approvals = false, sessionId, forkSessi
 // ---------------------------------------------------------------------------
 
 function makeResult(status, summary, usage, usd) {
+  const tokens = safeUsageTokenTotal(usage);
+  const exactUsd = usdToNanos(usd) === null ? null : usd;
   return {
     status,
     summary: (summary ?? '').slice(0, 500),
     artifacts: { commits: [], files: [] },
     verification: { command: null, claimedExit: null },
     openQuestions: [],
-    budgetUsed: { tokens: (usage?.output_tokens ?? 0) + (usage?.input_tokens ?? 0), usd: usd ?? 0 },
+    budgetUsed: { tokens: tokens ?? 0, usd: exactUsd ?? 0 },
   };
 }
 

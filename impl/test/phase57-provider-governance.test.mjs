@@ -174,6 +174,29 @@ test('PG4/PG6: exact nano-USD deltas aggregate identically live and on replay', 
   assert.equal(replayed.providerTurn.usage.usd, 0.3);
 });
 
+test('PG4/PG6: token aggregation overflow refuses before append or mutation and replays the sticky failure', async () => {
+  const ad = adapter();
+  const f = system(ad, { providerGovernance: policy({ terminalReserve: { tokens: 0, usd: 0 } }) });
+  const handle = await f.coordinator.spawn('stub', brief({ tokens: Number.MAX_SAFE_INTEGER, usd: 1, wallMin: 1 }), {
+    taskId: 'pg-token-sum-overflow', model: 'stub-1', effort: 'low',
+  });
+  const acceptedTokens = Number.MAX_SAFE_INTEGER - 10;
+  usage(ad, handle.id, { tokens: acceptedTokens, usd: 0, counterId: 'first' });
+  usage(ad, handle.id, { tokens: 20, usd: 0, counterId: 'overflow' });
+  await until(() => f.coordinator.list()[0].providerTelemetryFailed === true);
+  const events = f.log.read(handle.id);
+  assert.equal(events.filter((event) => event.kind === 'resource.tokens').length, 1);
+  assert.equal(events.find((event) => event.kind === 'resource.provider_telemetry_invalid')?.payload?.code, 'usage_value_invalid');
+  assert.deepEqual(f.coordinator.list()[0].budgetUsed, { tokens: acceptedTokens, usd: 0 });
+  assert.deepEqual(f.coordinator.list()[0].providerTurn.usage, { tokens: acceptedTokens, usd: 0 });
+  await until(() => ad.calls.kill === 1 && f.coordination.task(handle.taskId).status === 'failed');
+  f.coordination.releaseWriterLease();
+  const replayed = system(adapter(), { log: f.log, providerGovernance: policy({ terminalReserve: { tokens: 0, usd: 0 } }) }).coordinator.list()[0];
+  assert.deepEqual(replayed.budgetUsed, { tokens: acceptedTokens, usd: 0 });
+  assert.deepEqual(replayed.providerTurn.usage, { tokens: acceptedTokens, usd: 0 });
+  assert.equal(replayed.providerTelemetryFailed, true);
+});
+
 test('PG4: missing terminal usage seal fails before verification and reaps the untrusted session', async () => {
   const ad = adapter(); const f = system(ad);
   const handle = await f.coordinator.spawn('stub', brief(), { taskId: 'pg-no-seal', model: 'stub-1', effort: 'low' });
