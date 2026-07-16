@@ -1,4 +1,4 @@
-# Baton MCP stdio
+# Baton MCP stdio — Run surface and advanced kernel compatibility
 
 Run Baton as a standard MCP subprocess with a deployment-owned configuration factory:
 
@@ -10,10 +10,11 @@ The module exports `default` or `createMcpServer()`. It may return an existing
 `McpFleetServer`, or its constructor options:
 
 ```js
-import { createDriver } from '/absolute/path/to/baton/impl/src/index.mjs';
+import { BatonApplication, createDriver } from '/absolute/path/to/baton/impl/src/index.mjs';
+import { profiles, applicationPrincipals, authorizeApplication } from './baton-deployment.mjs';
 
 export default async function createMcpServer() {
-  const { coordinator, coordination } = createDriver({
+  const driver = createDriver({
     // repository, log, adapters, runtime isolation, and trust policy
     repoId: 'repo-id',
     // Optional Phase 38-39 authority; omission disables reuse decisions/rechecks.
@@ -24,16 +25,33 @@ export default async function createMcpServer() {
       maxRationaleBytes: 8192,
     },
   });
+  const application = new BatonApplication({
+    driver,
+    repoId: 'repo-id',
+    profiles,
+    principals: applicationPrincipals,
+    authorize: authorizeApplication,
+  });
   return {
-    coordinator,
-    coordination,
+    coordinator: driver.coordinator,
+    coordination: driver.coordination,
+    application,
+    // Application-backed servers default to the eleven-tool Run surface.
+    // Use `advanced` or `combined` only for an explicit kernel-control deployment.
+    surface: 'application',
     principal: {
       userId: 'operator',
       sessionId: 'local-mcp-host',
-      capabilities: ['control', 'observe', 'approve', 'emergency_stop'],
+      capabilities: ['control', 'observe', 'approve', 'emergency_stop', 'adopt_result', 'review', 'integrate_result'],
       repoIds: ['repo-id'],
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
       revoked: false,
+    },
+    // Host lifecycle authority, never a remotely callable MCP tool.
+    shutdownPrincipal: {
+      actor: 'mcp-host:local',
+      principalId: 'mcp-host',
+      sessionId: 'local-mcp-host',
     },
     repoIds: ['repo-id'],
     // Derive this from the embedding host's accepted frame/memory budget.
@@ -46,10 +64,25 @@ export default async function createMcpServer() {
 
 Do not place bearer tokens or provider credentials in MCP tool arguments or the command
 line. The host factory owns credential projection, fixed principal identity, quota policy,
-and adapter construction. Tool calls can independently choose `harness`, `model`, and
-`effort`; the coordinator remains the only fleet authority.
+adapter construction, immutable Run profiles, and application principals. `fleet_run_start`
+selects the exact `harness`/`model`/`effort` tuple from an allowed profile; the application and
+coordinator remain the only workflow and fleet authorities.
 
-The closed inventory has twelve tools. `fleet_reuse_decide` accepts a bounded `borrow|build`
+The default application-backed inventory is exactly eleven tools: `fleet_run_start`,
+`fleet_run_status`, `fleet_run_approve`, `fleet_run_wait`, `fleet_run_answer`, and
+`fleet_run_steer`, plus `fleet_run_stop`, `fleet_run_evidence`, and `fleet_run_adopt`. Steering resolves Run ownership and the current worker
+fence inside the application. Stop durably closes only that Run to later effects and returns its
+exact reap receipt. Evidence is a fresh read; adoption selects an exact protected result and
+requires `adopt_result` without merging or publishing. `fleet_run_review` selects a deployment-pinned
+exact independent reviewer route and consumes `review`; `fleet_run_integrate` binds a fresh evidence
+manifest and consumes the separate `integrate_result` authority for one profile-allowed local
+strategy. Neither operation publishes or deploys. The surface does not advertise deployment shutdown, Run close, worker kill, or
+fleet drain. The original nineteen
+`fleet_*` kernel tools remain available only through an explicit `surface: 'advanced'`; a
+`combined` inventory is opt-in for diagnosis and migration. An application-free factory is
+therefore an advanced-kernel-only deployment, not the ordinary Baton experience.
+
+Among the advanced tools, `fleet_reuse_decide` accepts a bounded `borrow|build`
 judgment, exact `reuse.vet` and `provenance.sbom` claims/arguments, and optional
 validity-version supersession. Baton freshly reverifies both artifacts and requires the configured
 clean repository identity. It never installs a package, mutates a lockfile, merges code, or accepts
@@ -57,3 +90,9 @@ a caller-supplied actor. `fleet_reuse_recheck` accepts only an exact decision/ve
 `advisory_refresh|ttl_expired`: advisory facts are derived by a Coordinator-forced official refresh,
 and TTL uses the immutable stored expiry. An adverse refresh fences the exact coordinate and
 invalidates all matching live Decisions atomically; it grants no package or code authority.
+
+`fleet_drain` is not `application.shutdown`: it reaps coordinator-owned workers while retaining
+the MCP transport and writer authority. The process-owning host must call
+`application.shutdown` during its own bounded finalization and signal handling. The packaged stdio
+host does so on EOF, `SIGINT`, and `SIGTERM` using the injected `shutdownPrincipal`; a failed shutdown
+is visible to the host and retryable.

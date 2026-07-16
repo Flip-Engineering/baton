@@ -121,11 +121,11 @@ test('GL1: owner-only raw/JSON credential files load without values entering dia
 test('GL1/GL2: authTokenFile and exact GLM model mapping reach only the fake child boundary', async () => {
   const GlmSessionCli = await importGlm(); const key = join(mkdtempSync(join(tmpdir(), 'baton-glm-key-wire-')), 'key.json');
   writeFileSync(key, JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: 'fake-file-token' } })); chmodSync(key, 0o600);
-  const cli = new GlmSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], authTokenFile: key, authTokenJsonPointer: '/env/ANTHROPIC_AUTH_TOKEN', model: 'glm-4.7' });
+  const cli = new GlmSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], authTokenFile: key, authTokenJsonPointer: '/env/ANTHROPIC_AUTH_TOKEN', model: 'glm-5.2' });
   const c = collect(cli); const wt = mkdtempSync(join(tmpdir(), 'baton-glm-key-wt-'));
   try {
-    assert.equal(cli.card().modelSelection.configuredDefault, 'glm-4.7');
-    const ack = await cli.spawn('glm-file', brief('REPORT_ENV:ANTHROPIC_AUTH_TOKEN'), { worktree: wt, model: 'glm-4.7' });
+    assert.equal(cli.card().modelSelection.configuredDefault, 'glm-5.2');
+    const ack = await cli.spawn('glm-file', brief('REPORT_ENV:ANTHROPIC_AUTH_TOKEN'), { worktree: wt, model: 'glm-5.2' });
     assert.equal(ack.ok, true, ack.reason);
     const done = await c.waitFor((event) => event.kind === 'lifecycle.turn_completed' && event.worker === 'glm-file');
     assert.ok(done.payload.result.summary.includes('env:ANTHROPIC_AUTH_TOKEN=fake-file-token'));

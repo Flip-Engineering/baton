@@ -39,7 +39,7 @@ function collect(adapter) { const events = []; adapter.onEvent((event) => events
 function adapterCases() {
   return [
     ['claude', () => new ClaudeSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], killGraceMs: 20 }), 'HOLD_UNTIL_INTERRUPT'],
-    ['glm', () => new GlmSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], authToken: 'fixture-only', model: 'glm-4.7', killGraceMs: 20 }), 'HOLD_UNTIL_INTERRUPT'],
+    ['glm', () => new GlmSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], authToken: 'fixture-only', model: 'glm-5.2', killGraceMs: 20 }), 'HOLD_UNTIL_INTERRUPT'],
     ['codex', () => new CodexAppServerCli({ cmd: process.execPath, args: [FAKE_CODEX, '--serve'], requestTimeoutMs: 1500, versionProbe: () => 'fake' }), 'FAKE:STAY_OPEN'],
     ['grok', () => new GrokAcpCli({ cmd: process.execPath, args: [FAKE_GROK, '--serve'], requestTimeoutMs: 1500, versionProbe: () => 'fake' }), 'FAKE:STAY_OPEN'],
   ];

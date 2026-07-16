@@ -30,6 +30,23 @@ function system(claims = {}) {
   const sessions = new WebSessionStore(root('operator-sessions'), { now: () => NOW });
   const coordination = new CoordinationStore(root('operator-coordination'));
   const fleetCalls = [];
+  const application = {
+    repoId: 'repo-a',
+    card() {
+      return {
+        schemaVersion: 1, repoId: 'repo-a',
+        commands: ['application.help', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.review', 'run.integrate', 'run.export', 'application.shutdown'],
+        profiles: [{
+          name: 'standard', digest: 'a'.repeat(64), routes: [{ harness: 'grok', model: 'grok-4-code', effort: 'high' }], pathScope: ['impl/**'],
+          reviewPolicy: { mode: 'required', routes: [{ harness: 'reviewer', model: 'review-model', effort: 'low' }], reportPath: '.baton/review.json', maxFindings: 20, maxReportBytes: 65_536 },
+          integrationPolicy: { mode: 'manual', strategies: ['ff-only'], requireAdoptedResult: true, requireSemanticReview: true },
+          followPolicy: { mode: 'enabled', maxWaitMs: 25_000, maxChanges: 64, maxResponseBytes: 262_144, maxScanEvents: 1_024 },
+        }],
+      };
+    },
+    async authorizeReplay() { return true; },
+    async command() { throw new Error('asset reads must not dispatch application commands'); },
+  };
   const issued = sessions.issue({
     userId: claims.userId ?? 'operator', authMethod: 'cookie',
     capabilities: claims.capabilities ?? ['observe', 'control', 'approve', 'emergency_stop'],
@@ -37,7 +54,7 @@ function system(claims = {}) {
   }, { actor: 'test' });
   const web = new WebNorthbound({
     coordinator: new Proxy({}, { get: (_target, key) => () => { fleetCalls.push(key); return []; } }),
-    coordination, sessions, repoIds: ['repo-a'], allowedOrigins: [ORIGIN], now: () => NOW,
+    coordination, sessions, application, repoIds: ['repo-a'], allowedOrigins: [ORIGIN], now: () => NOW,
   });
   return { web, issued, sessions, coordination, fleetCalls };
 }
@@ -47,7 +64,7 @@ const sessionCookie = (issued) => `__Host-baton_session=${issued.token}`;
 test('BU1: operator assets require one active observe-capable repository session', async () => {
   const s = system();
   assert.equal((await get(s.web, '/control')).status, 401);
-  for (const path of ['/control', '/control/app.js', '/control/app.css', '/v1/session']) {
+  for (const path of ['/control', '/control/app.js', '/control/app.css', '/v1/session', '/v1/application-card']) {
     const response = await get(s.web, path, { cookie: sessionCookie(s.issued), 'sec-fetch-site': 'same-origin' });
     assert.equal(response.status, 200, path);
     assert.equal(response.headers['cache-control'], 'no-store');
@@ -78,15 +95,19 @@ test('BU1/BU2: HTML and session projection are CSP-bound and sanitized', async (
   for (const forbidden of ['sessionId', 'credentialId', 'csrfTokenDigest', s.issued.token]) {
     assert.equal(session.rawBody.includes(forbidden), false);
   }
+  const card = await get(s.web, '/v1/application-card', headers);
+  assert.deepEqual(card.body.application.profiles[0].routes[0], { harness: 'grok', model: 'grok-4-code', effort: 'high' });
+  assert.equal(card.rawBody.includes('application.shutdown'), false, 'host lifecycle commands are absent from the remote card');
 });
 
-test('BU3/BU4/BU5/BU6: static client wires route tuple, fences, idempotency, stream, and logout without unsafe sinks', async () => {
+test('BU3/BU4/BU5/BU6: static client makes Run flow primary and keeps fenced reap in the advanced seat without unsafe sinks', async () => {
   const s = system();
   const script = await get(s.web, '/control/app.js', { cookie: sessionCookie(s.issued), 'sec-fetch-site': 'same-origin' });
   assert.match(script.headers['content-type'], /^text\/javascript/);
-  for (const term of ['harness', 'model', 'effort', 'expectedFence', 'idempotencyKey', 'crypto.randomUUID', 'x-baton-csrf', '/v1/stream-tickets', 'EventSource', '/v1/auth/logout']) {
+  for (const term of ['run_start', 'run_status', 'run_follow', 'run_inspect', 'run_act', 'run_wait', 'run_answer', 'run_steer', 'run_stop', 'actionId', 'inputSchema', 'approve_plan', 'semantic_review', 'integrate', 'Follow Run', 'activeFollowPolicy', 'followLoop', 'review-form', 'review-route', 'review-reason', 'integrate-form', 'integration-strategy', 'integration-reason', 'semantic-summary', 'steer-target', 'steer-mode', 'steer-reason', 'stop-form', 'stop-reason', 'progress-list', 'renderProgress', '/v1/application-card', 'harness', 'model', 'effort', 'expectedFence', 'kill', 'drain', 'idempotencyKey', 'crypto.randomUUID', 'x-baton-csrf', '/v1/stream-tickets', 'EventSource', '/v1/auth/logout']) {
     assert.equal(script.body.includes(term), true, term);
   }
+  assert.equal(script.body.includes("command('spawn'"), false);
   assert.equal(script.body.includes('innerHTML'), false);
   assert.equal(script.body.includes('document.write'), false);
   assert.match(script.body, /textContent/);

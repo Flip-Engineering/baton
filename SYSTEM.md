@@ -6,7 +6,7 @@
 
 ## 1. What baton is, in one paragraph
 
-Baton is a **fleet driver**: it lets one orchestrator agent — your Claude Code or Codex CLI — direct a fleet of full coding tools from different vendors (Codex, Claude Code, GLM, Grok Build), sending them work, watching everything they do, and interrupting and steering them mid-run, in either direction. Underneath your orchestrator sits a small, reliable coordinator program that carries out its decisions dependably and keeps the books. Around that core are the features that make the driving *good*: it re-runs a worker's tests before believing "done," it learns which harness/model/effort route is best at what (and keeps that current as new models ship), it remembers what past runs taught, it hands workers sharper tools, and it keeps everyone safe in sandboxes. The orchestrator decides; the coordinator makes the decisions land; the workers do the work; the supporting features make it trustworthy, smart, and safe.
+Baton is a **Run application over a fleet kernel**: one orchestrator or human supplies a concise outcome, chooses an allowed harness/model/effort route, reviews the generated Plan, and then follows one RunView through execution, attention, verification, review, evidence, and cleanup. Under that application sits a small, reliable coordinator that dispatches full coding tools from different vendors (Codex, Claude Code, GLM, Grok Build), carries decisions dependably, and keeps the books. The ordinary user does not sequence worker lifecycle primitives. The application scheduler lowers an approved Run into them; advanced worker controls remain available for emergency intervention and compatibility. The orchestrator decides; the application integrates the workflow; the coordinator makes it land; the workers do the work.
 
 ## 2. The shape
 
@@ -14,9 +14,9 @@ Four layers. The top decides, the middle executes, the bottom works, and the fea
 
 ```
    ┌─ YOU / your orchestrator agent (Claude Code or Codex) ── DECIDES ──────────────┐
-   │   "spawn a Codex worker here", "interrupt worker 2", "is this really done?"     │
+   │   "achieve this outcome", "approve this Plan", "answer this Run's question"     │
    └──────────────────────────────┬─────────────────────────────────────────────────┘
-                                   │  eight commands (§4)
+                                   │  Run intent / RunView (§3.1)
    ┌───────────────────────────────▼─────────────────────────────────────────────────┐
    │  THE COORDINATOR  ── a small reliable program (Elixir/OTP or Go) ── EXECUTES      │
    │  • dispatch  • carry commands reliably  • stream telemetry  • the trust gate      │
@@ -34,24 +34,37 @@ The one design rule that holds this together: **the orchestrator is an AI, but t
 
 ---
 
-## 3. The coordinator core
+## 3. The Run application and coordinator core
 
 The heart of the system. Full assembly spec: [`spec/driver.md`](spec/driver.md). It is one long-lived program that owns the worker pool, the event log, the reliability machinery, and the trust gate.
 
-### 3.1 The eight commands (the whole API)
+### 3.1 The Run application (ordinary API)
 
-Everything the orchestrator can do, and nothing it can't:
+The ordinary embedded, authenticated Web, `baton` CLI, and MCP surfaces share this application bus.
+The CLI is a bearer-authenticated client of the Web bus, so a one-shot command never becomes a
+second in-process controller or gains deployment-shutdown authority:
 
 | Command | Does |
 |---|---|
-| `spawn(vendor, task)` | start a worker on a task in its own repo copy |
-| `send(worker, message, mode)` | message a worker — `nudge` (read at next pause), `steer` (redirect now), `turn` (new instruction) |
-| `wait(timeout)` | park until a worker needs attention, then return a short digest of what changed |
-| `respond(request, answer)` | answer a worker's question, or approve/deny a risky action it asked about |
-| `interrupt(worker, then?)` | stop what a worker is doing now, confirmed; optional follow-up |
-| `result(worker)` | get a finished worker's result — *after the coordinator re-ran its tests itself* |
-| `list()` | all workers: status, budget, pending questions |
-| `kill(worker)` | end a worker, confirming the process is really gone |
+| `run.start(intent)` | compile a concise objective/profile/exact route into a readable proposed Plan with zero worker effects |
+| `run.status(run)` | return one bounded RunView rather than scattered receipts and projections |
+| `run.approve(run, planDigest)` | record distinct approval and let the resident scheduler dispatch dependency-ready work once |
+| `run.wait(run, timeout)` | wait a bounded interval and return the next RunView |
+| `run.answer(run, request, answer)` | answer one Run-owned question or approval exactly once |
+| `run.steer(run, target, mode, message, reason)` | bind a Run-owned worker to its current server fence and nudge, redirect now, or request a new turn |
+| `run.stop(run, reason)` | durably close that Run to new effects, kill/reap its exact workers, and return one stop receipt without closing Baton or other Runs |
+| `run.evidence(run)` | return one bounded content-addressed terminal manifest from authoritative Goal/Plan, route, verification, result, adoption, and stop facts |
+| `run.adopt(run, node, resultSha, evidenceDigest, reason)` | designate an exact preserved verified result without merging, checking out, changing the working tree, or publishing |
+| `run.review(run, exactRoute, reason)` | run one independently routed structured semantic review over the immutable accepted result and return its grounded findings in the RunView |
+| `run.integrate(run, evidenceDigest, strategy, reason)` | apply one policy-allowed local integration only after fresh evidence, result-selection, and semantic gates pass; never push or deploy |
+
+`run.recover` is planned but not yet shipped. The Coordinator's
+`spawn`, `send`, `interrupt`, `respond`, `result`, `list`, `kill`, and `drain` are kernel primitives,
+advanced compatibility, and emergency control. An ordinary agent does not compose a workflow from
+them. Accepted commits are provisionally pinned before task cleanup; adoption is a durable human
+selection, not integration or publication. Semantic review is a separate evidence gate, and local
+integration is a separately authorized effect. `run.stop` is Run-scoped; `application.shutdown` is host-only and fleet-wide. Web/MCP expose
+the former and never expose the latter as a Run command.
 
 ### 3.2 The main loop (plain pseudocode)
 
@@ -86,7 +99,7 @@ Deeper spec: [`spec/supervisor-state-machine.md`](spec/supervisor-state-machine.
 ## 4. The four core capabilities (your named features)
 
 ### 4.1 Directing workers, each in its own git worktree
-The orchestrator decides via the eight commands; the coordinator's dispatch step executes. Reaching a worker is done through a per-vendor adapter (§6).
+The orchestrator directs a Run through the application; the scheduler lowers approved Plan nodes to coordinator dispatch. Reaching a worker is done through a per-vendor adapter (§6).
 
 **Every worker runs in its own git worktree** — its own working directory on its own branch, sharing one copy of the repo's history underneath (cheap). This is load-bearing plumbing, not a detail, because it does three jobs at once: (1) **isolation** — workers edit and test in parallel without clobbering each other, enforced by git itself (it won't check out the same branch twice); (2) **it's what the trust gate checks against** — re-verification runs in a *fresh* worktree at the worker's committed result, never the worker's own directory, so a doctored test or uncommitted junk can't fool it; (3) **it defines merging** — each result is a branch, so integrating accepted work is a clean branch merge, and collisions between workers are visible, not silent.
 
@@ -156,7 +169,7 @@ The craft of *what each worker and the orchestrator actually see*, so nobody dro
 
 ## 6. Reaching the real tools (the adapters)
 
-One adapter per vendor, each translating the eight commands into that tool's real controls. Grounded in the actual installed CLIs (verified). Full map: [`spec/adapter-contract.md`](spec/adapter-contract.md).
+One adapter per vendor, each implementing worker lifecycle, messaging, steering, observation, and reap primitives for the Coordinator. Grounded in the actual installed CLIs (verified). Full map: [`spec/adapter-contract.md`](spec/adapter-contract.md).
 
 - **Codex** — the richest controls: a background "app-server" you talk to over a local socket, with native redirect-a-running-turn, goal-pinning, and cancel. Best raw target. (Its experimental WebSocket transport is *not* production — use the local socket.)
 - **Claude Code** — headless mode (`claude -p`) or the Agent SDK; native interrupt and per-tool approval hooks; steering is emulated (interrupt + re-prompt) and flagged as such.
@@ -171,7 +184,7 @@ Each adapter publishes a **card** saying which controls it supports natively vs.
 ## 7. How it's built
 
 - **Language** (`docs/17`): the coordinator's job — managing many crash-prone workers, restarting them, keeping commands ordered — is exactly what **Elixir/OTP** was built for, and you already run it; **Go** is the simpler alternative. The current **prototype is TypeScript** (fast to move; keep for the MVP). Heavy code-analysis tools, when added, are best in **Rust** (where those tools already live). Python for any eval/stats.
-- **Protocols:** up to the orchestrator, the coordinator exposes its eight commands as tools the AI can call (MCP). The human user also gets an authenticated HTTPS command surface plus resumable WebSocket/event delivery over the *same* coordinator authority: harness and exact model selection, steer/turn, approval/question response, interrupt/kill, goals/tasks, budgets, narrative, and emergency stop all retain the ordinary fence, idempotency, audit, sandbox, and trust gates. Down to workers, Baton uses each vendor's real interface (subprocess or Codex's app-server), with the ACP standard as a fallback. No new southbound protocol is invented — Baton is a compatibility layer over what already exists. The secure human↔orchestrator contract is `spec/phase12/authenticated-web-northbound.md`.
+- **Protocols:** Run commands are the ordinary embedded, authenticated Web, browser, and MCP surface. Low-level fleet commands remain an explicitly advanced compatibility and emergency surface over the same coordinator authority. Harness, exact model, effort, approval, attention, budgets, narrative, fences, idempotency, audit, sandbox, and trust gates retain one authority path. `application.shutdown` is host-only; remote `fleet_drain` can reap workers but retains transport and writer authority. Down to workers, Baton uses each vendor's real interface (subprocess or Codex's app-server), with the ACP standard as a fallback. The secure human↔orchestrator contract is `spec/phase12/authenticated-web-northbound.md`.
 - **Deployment:** start on one machine (coordinator + workers together). Later, the coordinator can live on a bigger box you reach over SSH/Tailscale, with your orchestrator attaching remotely. Multi-machine meshing is deferred until one box actually hurts.
 
 ---
@@ -259,7 +272,7 @@ Every feature the exploration produced, with honest status. **Core** = the drive
 | Cairn authenticated contradiction workspace | Memory/Trust/Operate | Phase 53 shipped locally; an audited stable paged view exposes only bounded untrusted snippets and digests, and explicit authenticated prefix-CAS resolution records one schema-versioned event that closes the edge, invalidates only the loser, preserves historical truth, and contaminates every bounded prior ordinary/recall reader. Direct, authenticated HTTPS, and MCP invoke/reverify share transport-derived authority; exact replay/idempotency/race/tamper, every independent ceiling, audit/cancellation/append/preflight gates, and post-append commit-wins semantics are executable. Nine grouped contracts, 65 adjacent Cairn contracts, and 1121/1121 canonical tests are green; recursive project-key GLM fresh-verifies PASS, exact Codex is honestly budget-cancelled, both concurrent Grok routes remain auth-red, and every route/resource exactly closes and reaps. No project-manager or homelab runtime is added. | `spec/phase53/cairn-authenticated-contradiction-ux.md`, `impl/test/phase53-cairn-contradictions.test.mjs` |
 | Atlas lexical-binding-aware CPG | Tools/Trust | Phase 54 shipped locally; one bounded two-pass JS/TS lexical model gives simple parameters, `var`/`let`/`const`, assignment-left definitions, and value references deterministic scope/binding identity, keys reaching definitions by binding rather than spelling, and propagates that truth through delta and taint. Closure capture, destructuring, catch bindings, aliases/heap/interprocedural flow, SSA/full PDG, and proof remain explicit non-goals. Self-consistent malformed/duplicate/substituted artifacts fail closed, the R1–R7 packet attests the new contract, and 1130/1130 canonical tests are green. Recursive exact Codex/GLM/two-Grok routes all start/close/reap, while review conformance remains honestly red at terminal budget bursts and Grok authentication. | `spec/phase54/atlas-cpg-lexical-bindings.md`, `impl/test/phase54-atlas-cpg-lexical-bindings.test.mjs` |
 | Immutable bounded toolchain projection | Core/Trust/Safety | Phase 55 shipped locally; clean exact-SHA targets and dependency sources are distinct immutable inputs, one host-path-free manifest/policy identity is independently byte-materialized into worker/result/base-verifier sandboxes, capture cannot commit the projection, session/replay/structured-merge trust binds it, source drift and unsafe entries/ceilings fail closed, and legacy same-root copying remains compatible. Eleven focused contracts and 1141/1141 canonical tests are green. Recursive Codex/Claude/project-key GLM/two-Grok exact routes used the shipped API with no manual dependency stage; all five process groups closed/reaped, GLM fresh-verified, and only the strict Grok-auth provider matrix remains red. | `spec/phase55/immutable-toolchain-projection.md`, `impl/test/phase55-toolchain-projection.test.mjs` |
-| Public exact fleet drain and driver close | Core/Operate/Safety | Phase 56 shipped; direct, authenticated web, MCP, and host-driver authority share one fenced, replay-validated drain with exact process/worktree/runtime/branch cleanup, supervisor close, coordinator close, writer release, and a digested receipt. | `spec/phase56/public-drain-and-close.md`, `impl/test/phase56-drain-and-close.test.mjs` |
+| Public exact fleet drain and driver close | Core/Operate/Safety | Phase 56 shipped coordinator drain/reap through direct, authenticated Web, and advanced MCP while retaining the controller transport/writer. Only the process-owning host's `drainAndClose` / `application.shutdown` closes supervisors, coordinator, and writer authority and returns the deployment receipt. | `spec/phase56/public-drain-and-close.md`, `impl/test/phase56-drain-and-close.test.mjs` |
 | Route-bound provider governance | Core/Smart/Safety | Phase 57 shipped deterministically; closed strict/observe policy binds the orchestrator-selected harness/model/effort route to token metrics, usage, provider/tool-call counts, admission/release, terminal seals, replay, and post-acceptance revocation without inventing provider telemetry. | `spec/phase57/provider-governance.md`, `impl/test/phase57-provider-governance.test.mjs` |
 | Canonical sparse worker and verifier authority | Core/Trust/Safety | Phase 58 shipped locally; sparse identity survives create/capture/replay/resume/reconcile and result/base verification, hidden/out-of-view diffs and tracked projection targets fail closed, metadata is exact-base/branch bound, and `.baton` ownership roots refuse symlink escape before destructive cleanup. | `spec/phase58/capacity-aware-sparse-workers.md`, `impl/test/phase58-*` |
 | Repo-scoped worktree capacity authority | Core/Operate/Safety | Phase 59 shipped locally; pre-effect byte/inode reservations cover the pinned selected Git tree, attested toolchain, and runtime allowance; HMAC-sealed state, generation locks, exact nonce release, restart adoption, verifier cleanup, active-close refusal, and zero-capacity drain receipts are executable. It is an honest preflight, not a hard filesystem quota or same-UID hostile-worker boundary. | `spec/phase59/worktree-capacity-authority.md`, `impl/test/phase59-worktree-capacity-authority.test.mjs` |

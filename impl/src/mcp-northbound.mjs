@@ -1,6 +1,28 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
+import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs } from './application.mjs';
+import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
+
+const MCP_APPLICATION_ENTRIES = Object.entries(APPLICATION_COMMAND_DEFINITIONS)
+  .filter(([, definition]) => definition.mcp)
+  .map(([name, definition]) => [`fleet_${name.replaceAll('.', '_')}`, name, definition]);
+const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
+  [...MCP_APPLICATION_ENTRIES,
+    ['baton_help', 'application.help'],
+    ['baton_run_start', 'run.start'],
+    ['baton_run_inspect', 'run.inspect'],
+    ['baton_run_act', 'run.act'],
+    ['baton_run_stop', 'run.stop'],
+  ].map(([tool, name]) => [tool, name]),
+));
+const ORDINARY_APPLICATION_ENTRIES = Object.freeze([
+  ['baton_help', 'application.help', APPLICATION_COMMAND_DEFINITIONS['application.help']],
+  ['baton_run_start', 'run.start', APPLICATION_COMMAND_DEFINITIONS['run.start']],
+  ['baton_run_inspect', 'run.inspect', APPLICATION_COMMAND_DEFINITIONS['run.inspect']],
+  ['baton_run_act', 'run.act', APPLICATION_COMMAND_DEFINITIONS['run.act']],
+  ['baton_run_stop', 'run.stop', APPLICATION_COMMAND_DEFINITIONS['run.stop']],
+]);
 
 const PROTOCOL_VERSION = '2025-11-25';
 const CAPABILITY = Object.freeze({
@@ -9,9 +31,15 @@ const CAPABILITY = Object.freeze({
   fleet_provider_status: 'observe',
   fleet_goal_define: 'goal:define', fleet_plan_propose: 'plan:propose', fleet_plan_approve: 'plan:approve', fleet_goal_plan_status: 'goal:observe',
   fleet_capability_invoke: 'control', fleet_reuse_decide: 'control', fleet_reuse_recheck: 'control', fleet_kill: 'emergency_stop', fleet_drain: 'emergency_stop',
+  ...Object.fromEntries(MCP_APPLICATION_ENTRIES.map(([tool, , definition]) => [tool, definition.capabilities])),
+  ...Object.fromEntries(ORDINARY_APPLICATION_ENTRIES.map(([tool, , definition]) => [tool, definition.capabilities])),
 });
-const STATEFUL = new Set(['fleet_spawn', 'fleet_scratch_oracle', 'fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'fleet_send', 'fleet_respond', 'fleet_interrupt', 'fleet_capability_invoke', 'fleet_reuse_decide', 'fleet_reuse_recheck', 'fleet_kill', 'fleet_drain']);
-const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve']);
+const STATEFUL = new Set(['fleet_spawn', 'fleet_scratch_oracle', 'fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'fleet_send', 'fleet_respond', 'fleet_interrupt', 'fleet_capability_invoke', 'fleet_reuse_decide', 'fleet_reuse_recheck', 'fleet_kill', 'fleet_drain',
+  ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful).map(([tool]) => tool)]);
+for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful) STATEFUL.add(tool);
+const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve',
+  ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful && definition.reconcilable).map(([tool]) => tool)]);
+for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful && definition.reconcilable) RECONCILABLE.add(tool);
 const GOAL_PLAN_MUTATIONS = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve']);
 const FENCED = new Set(['fleet_send', 'fleet_interrupt', 'fleet_kill']);
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
@@ -42,6 +70,14 @@ function containsForbidden(value, path = [], opts = {}) {
   });
 }
 function normalized(value) { return value === undefined ? null : clone(value); }
+function applicationPrincipal(value, label) {
+  if (!record(value) || Object.keys(value).sort().join(',') !== 'actor,principalId,sessionId'
+    || !nonempty(value.actor) || value.actor.length > 256
+    || !SAFE_ID.test(value.principalId ?? '') || !SAFE_ID.test(value.sessionId ?? '')) {
+    throw new TypeError(`${label} must be a closed application principal`);
+  }
+  return Object.freeze(clone(value));
+}
 function transportCapability(value) {
   const copy = normalized(value);
   if (record(copy) && Array.isArray(copy.refs)) copy.refs = copy.refs.map(({ path: _path, ...ref }) => ref);
@@ -55,6 +91,10 @@ function toolResult(value, isError = false) {
 function toolError(code) { return toolResult({ ok: false, error: { code } }, true); }
 function stateFailureCode(cause) {
   if (cause?.mcpCode === 'stale_fence') return 'stale_fence';
+  if (cause?.code === 'application_unauthorized') return 'forbidden';
+  if (['application_run_not_found', 'application_interaction_not_found', 'application_profile_not_found', 'application_worker_not_found'].includes(cause?.code)) return 'not_found';
+  if (['application_unavailable', 'application_run_lookup_oversize', 'application_run_view_oversize'].includes(cause?.code)) return 'temporarily_unavailable';
+  if (typeof cause?.code === 'string' && cause.code.startsWith('application_')) return cause.code;
   if (['capability_not_found', 'capability_op_unavailable', 'capability_budget_invalid', 'cancelled',
     'capability_result_invalid', 'capability_result_oversize', 'capability_authority_forbidden', 'capability_args_invalid',
     'capability_resume_invalid', 'capability_reverify_invalid', 'capability_actor_invalid', 'capability_repo_invalid', 'capability_idempotency_invalid',
@@ -104,6 +144,7 @@ const text = { type: 'string', minLength: 1 };
 const textArray = { type: 'array', items: text };
 const runId = { type: 'string', minLength: 1, maxLength: 256, pattern: '^[A-Za-z0-9._:-]+$' };
 const digest = { type: 'string', pattern: '^[a-f0-9]{64}$' };
+const commitSha = { type: 'string', pattern: '^[a-f0-9]{40,64}$' };
 const repo = { repoId: text };
 const idem = { idempotencyKey: { type: 'string', minLength: 1, maxLength: 256, pattern: '^[A-Za-z0-9._:-]+$' } };
 const fence = { expectedFence: { type: 'integer' } };
@@ -143,7 +184,77 @@ const fleetSpawnSchema = {
   ...schema({ ...repo, ...idem, runId, harness: text, model: text, effort: text, modelPolicy: schema({ allow: textArray, deny: textArray, prefer: textArray, allowFamilies: textArray, denyFamilies: textArray, reasoningEffort: text, serviceTier: text }), brief: { type: 'object' }, taskId: text, deps: textArray, taskType: text, session: schema({ mode: { type: 'string', enum: ['new', 'resume', 'fork'] }, id: text, lastTurnId: text, context: schema({ worktree: text, repoRoot: text, baseSha: text, branch: text, ownerTaskId: text }, ['worktree']) }), refines: text, goalPlan: spawnGoalPlanSchema }, ['repoId', 'idempotencyKey', 'harness', 'brief']),
   allOf: [{ if: { required: ['goalPlan'] }, then: { properties: { brief: planBriefSchema } } }],
 };
-const TOOL_DEFINITIONS = Object.freeze([
+const applicationRouteSchema = schema({ harness: text, model: text, effort: text }, ['harness', 'model', 'effort']);
+const applicationIntentSchema = schema({
+  runId,
+  objective: { type: 'string', minLength: 1, maxLength: 4_096 },
+  profile: runId,
+  route: applicationRouteSchema,
+  scope: { type: 'array', minItems: 1, maxItems: 64, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4_096 } },
+}, ['objective', 'profile', 'route']);
+const applicationAnswerSchema = {
+  oneOf: [
+    schema({ text: { type: 'string', minLength: 1, maxLength: 4_096 } }, ['text']),
+    schema({ decision: { type: 'string', enum: ['allow', 'deny', 'cancel'] } }, ['decision']),
+  ],
+};
+const APPLICATION_TOOL_DEFINITIONS = Object.freeze([
+  { name: 'fleet_run_start', description: 'Start one Baton Run from a concise objective, deployment profile, and exact harness/model/effort route; returns a readable Plan awaiting approval.', inputSchema: schema({ ...repo, ...idem, intent: applicationIntentSchema }, ['repoId', 'idempotencyKey', 'intent']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_status', description: 'Read the fresh bounded authoritative RunView for one Run.', inputSchema: schema({ ...repo, runId }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_follow', description: 'Resume one Run-specific bounded at-least-once change page after an acknowledged coordination cursor.', inputSchema: schema({ ...repo, runId, afterCursor: { type: 'integer', minimum: 0 }, timeoutMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId', 'afterCursor', 'timeoutMs']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_recover', description: 'Recover the one server-selected eligible orphan for a Run under its deployment-owned recovery policy and approved Plan authority.', inputSchema: schema({ ...repo, ...idem, runId }, ['repoId', 'idempotencyKey', 'runId']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_approve', description: 'Approve the exact displayed Plan digest and let the resident Baton application dispatch it once.', inputSchema: schema({ ...repo, ...idem, runId, planDigest: digest }, ['repoId', 'idempotencyKey', 'runId', 'planDigest']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_wait', description: 'Wait a bounded deployment-approved interval and return a fresh authoritative RunView.', inputSchema: schema({ ...repo, runId, timeoutMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId', 'timeoutMs']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_answer', description: 'Answer one Run-owned pending question or approval exactly once.', inputSchema: schema({ ...repo, ...idem, runId, requestId: { type: 'string', minLength: 1, maxLength: 4_096 }, answer: applicationAnswerSchema }, ['repoId', 'idempotencyKey', 'runId', 'requestId', 'answer']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_steer', description: 'Steer one current Run-owned worker using its server-resolved fence and an explicit human reason.', inputSchema: schema({ ...repo, ...idem, runId, target: runId, mode: { type: 'string', enum: ['nudge', 'now', 'turn'] }, message: { type: 'string', minLength: 1, maxLength: 4_096 }, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'target', 'mode', 'message', 'reason']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_stop', description: 'Durably close one Run to new effects, then kill and reap only its exact workers and return its stop receipt.', inputSchema: schema({ ...repo, ...idem, runId, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'reason']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_evidence', description: 'Return one bounded content-addressed terminal evidence manifest for a Run.', inputSchema: schema({ ...repo, runId }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_adopt', description: 'Designate one exact preserved and verified Run result without merging, checking out, or publishing it.', inputSchema: schema({ ...repo, ...idem, runId, nodeKey: runId, resultSha: commitSha, evidenceDigest: digest, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'nodeKey', 'resultSha', 'evidenceDigest', 'reason']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_review', description: 'Start one exact independently-routed structured semantic review over the immutable accepted Run result.', inputSchema: schema({ ...repo, ...idem, runId, route: applicationRouteSchema, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'route', 'reason']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_integrate', description: 'Integrate the exact adopted and semantically reviewed result under fresh evidence and deployment policy; never pushes.', inputSchema: schema({ ...repo, ...idem, runId, evidenceDigest: digest, strategy: { type: 'string', enum: ['ff-only', 'structured'] }, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'evidenceDigest', 'strategy', 'reason']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_export', description: 'Materialize the exact evidence-bound accepted Git tree under deployment-owned authority and return its immutable opaque export receipt.', inputSchema: schema({ ...repo, ...idem, runId, evidenceDigest: digest }, ['repoId', 'idempotencyKey', 'runId', 'evidenceDigest']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+].map((tool) => Object.freeze({ ...tool, execution: Object.freeze({ taskSupport: 'forbidden' }) })));
+const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
+  {
+    name: 'baton_help',
+    description: "Read bounded contextual help from Baton's semantic application registry.",
+    inputSchema: schema({ ...repo, topic: runId, depth: { type: 'string', enum: APPLICATION_SEMANTIC_REGISTRY.depths }, runId }, ['repoId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_start',
+    description: 'Start one Run from a concise intent; Baton returns the progressive outline.',
+    inputSchema: schema({ ...repo, ...idem, intent: applicationIntentSchema }, ['repoId', 'idempotencyKey', 'intent']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_inspect',
+    description: 'Inspect one Run at outline, index, section, item, or evidence depth.',
+    inputSchema: schema({
+      ...repo, runId, depth: { type: 'string', enum: APPLICATION_SEMANTIC_REGISTRY.depths },
+      section: runId, item: runId, cursor: { type: 'string', minLength: 1, maxLength: 4_096 },
+      waitMs: { type: 'integer', minimum: 1 },
+    }, ['repoId', 'runId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_act',
+    description: 'Perform one currently offered Run-bound action while Baton derives authoritative coordinates.',
+    inputSchema: schema({ ...repo, ...idem, runId, actionId: runId, inputs: { type: 'object' } }, ['repoId', 'idempotencyKey', 'runId', 'actionId', 'inputs']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_stop',
+    description: 'Immediately stop and reap one exact Run without enumerating workers.',
+    inputSchema: schema({ ...repo, ...idem, runId, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'reason']),
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  },
+].map((tool) => Object.freeze({
+  ...tool,
+  _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
+  execution: Object.freeze({ taskSupport: 'forbidden' }),
+})));
+const ADVANCED_TOOL_DEFINITIONS = Object.freeze([
   { name: 'fleet_spawn', description: 'Spawn one Baton worker with independently selected harness, model, effort, run, and approved Goal/Plan node.', inputSchema: fleetSpawnSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_scratch_oracle', description: 'Spawn an explicitly routed independent oracle over one immutable derived Scratch fact.', inputSchema: schema({ ...repo, ...idem, runId, scratchFactId: text, harness: text, model: text, effort: text, modelPolicy: schema({ allow: textArray, deny: textArray, prefer: textArray, allowFamilies: textArray, denyFamilies: textArray, reasoningEffort: text, serviceTier: text }), verification: { type: 'object' }, budget: { type: 'object' }, constraints: textArray, goal: text, definitionOfDone: text, taskId: text }, ['repoId', 'idempotencyKey', 'scratchFactId', 'harness', 'verification']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_goal_define', description: 'Define one immutable bounded Goal version under the injected repository principal.', inputSchema: schema({
@@ -196,6 +307,7 @@ const TOOL_DEFINITIONS = Object.freeze([
   { name: 'fleet_kill', description: 'Kill and reap one fenced worker.', inputSchema: schema({ ...repo, ...idem, ...fence, workerId: text }, ['repoId', 'idempotencyKey', 'expectedFence', 'workerId']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_drain', description: 'Drain and reap the coordinator-owned local fleet while retaining transport and writer authority.', inputSchema: schema({ ...repo, ...idem }, ['repoId', 'idempotencyKey']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
 ].map((tool) => Object.freeze({ ...tool, execution: Object.freeze({ taskSupport: 'forbidden' }) })));
+const TOOL_DEFINITIONS = Object.freeze([...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS]);
 const TOOL_BY_NAME = new Map(TOOL_DEFINITIONS.map((tool) => [tool.name, tool]));
 
 function closedRecord(value, fields) {
@@ -259,7 +371,19 @@ function validPlanBrief(value) {
     && validTextArray(value.capabilities) && validTextArray(value.effects);
 }
 
-function validateArguments(name, args) {
+function applicationArgs(name, args) {
+  const command = APPLICATION_TOOL[name];
+  if (!command) return null;
+  const fields = APPLICATION_COMMAND_DEFINITIONS[command]?.args ?? [];
+  return Object.fromEntries(fields.map((field) => [field, args[field]]));
+}
+
+function applicationRunId(name, args) {
+  if (!APPLICATION_TOOL[name]) return args.runId ?? null;
+  return ['fleet_run_start', 'baton_run_start'].includes(name) ? args.intent.runId ?? null : args.runId;
+}
+
+function validateArguments(name, args, maxWaitMs = null) {
   if (!record(args)) return 'invalid_arguments';
   const schemaDefinition = TOOL_BY_NAME.get(name).inputSchema;
   if (Object.keys(args).some((key) => !Object.hasOwn(schemaDefinition.properties, key))) return 'unknown_argument_field';
@@ -269,6 +393,16 @@ function validateArguments(name, args) {
   if (!nonempty(args.repoId)) return 'invalid_repo';
   if (STATEFUL.has(name) && !SAFE_ID.test(args.idempotencyKey ?? '')) return 'invalid_idempotency_key';
   if (FENCED.has(name) && !Number.isSafeInteger(args.expectedFence)) return 'expected_fence_required';
+  if (APPLICATION_TOOL[name]) {
+    try {
+      const command = APPLICATION_TOOL[name];
+      const commandArgs = applicationArgs(name, args);
+      validateApplicationCommandArgs(command, commandArgs);
+    }
+    catch { return 'invalid_run_command'; }
+    if (['fleet_run_wait', 'fleet_run_follow'].includes(name)
+      && (!Number.isSafeInteger(maxWaitMs) || args.timeoutMs > maxWaitMs)) return 'invalid_run_wait';
+  }
   if (name === 'fleet_spawn') {
     if (!nonempty(args.harness) || !record(args.brief)) return 'invalid_spawn';
     if (Object.hasOwn(args, 'runId') && !/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId ?? '')) return 'invalid_run_id';
@@ -361,8 +495,36 @@ export class McpFleetServer {
     if (typeof opts.takeToolQuota !== 'function') throw new TypeError('MCP northbound requires an injected tool quota authority');
     this.coordinator = opts.coordinator;
     this.coordination = opts.coordination;
+    this.application = opts.application ?? null;
+    if (this.application !== null && (typeof this.application.command !== 'function'
+      || typeof this.application.card !== 'function' || typeof this.application.authorizeReplay !== 'function')) {
+      throw new TypeError('MCP application facade is invalid');
+    }
+    this.shutdownPrincipal = this.application === null
+      ? null
+      : applicationPrincipal(opts.shutdownPrincipal, 'MCP shutdownPrincipal');
     this.principal = Object.freeze(clone(opts.principal));
+    this.isPrincipalActive = opts.isPrincipalActive ?? null;
+    if (this.isPrincipalActive !== null && typeof this.isPrincipalActive !== 'function') {
+      throw new TypeError('MCP isPrincipalActive authority must be a function');
+    }
     this.repoIds = new Set(opts.repoIds ?? []);
+    this.surface = opts.surface ?? (this.application ? 'application' : 'advanced');
+    if (!['application', 'advanced', 'combined'].includes(this.surface)
+      || (this.surface !== 'advanced' && !this.application)) {
+      throw new TypeError('MCP surface requires an available application or an explicit advanced surface');
+    }
+    if (this.application !== null) {
+      const [servedRepoId] = this.repoIds;
+      const applicationCard = this.application.card();
+      const requiredEntries = this.surface === 'application' ? ORDINARY_APPLICATION_ENTRIES
+        : this.surface === 'combined' ? [...ORDINARY_APPLICATION_ENTRIES, ...MCP_APPLICATION_ENTRIES] : [];
+      if (this.repoIds.size !== 1 || this.application.repoId !== servedRepoId
+        || applicationCard?.repoId !== servedRepoId || !Array.isArray(applicationCard.commands)
+        || requiredEntries.some(([, name]) => !applicationCard.commands.includes(name))) {
+        throw new TypeError('MCP application facade does not match the served repository or command contract');
+      }
+    }
     this.now = opts.now ?? Date.now;
     this.maxWaitMs = opts.maxWaitMs ?? 25_000;
     this.maxMessageBytes = opts.maxMessageBytes;
@@ -370,7 +532,35 @@ export class McpFleetServer {
     if (!Number.isSafeInteger(this.maxWaitMs) || this.maxWaitMs <= 0) throw new TypeError('maxWaitMs must be a positive safe integer');
     if (!Number.isSafeInteger(this.maxMessageBytes) || this.maxMessageBytes <= 0) throw new TypeError('maxMessageBytes must be a deployment-derived positive safe integer');
     this.lifecycle = 'new';
+    const selectedTools = this.surface === 'application' ? ORDINARY_APPLICATION_TOOL_DEFINITIONS
+      : this.surface === 'advanced' ? ADVANCED_TOOL_DEFINITIONS : TOOL_DEFINITIONS;
+    this.toolDefinitions = selectedTools.map((tool) => {
+      const copy = clone(tool);
+      if (['fleet_run_wait', 'fleet_run_follow'].includes(copy.name)) copy.inputSchema.properties.timeoutMs.maximum = this.maxWaitMs;
+      return Object.freeze(copy);
+    });
+    this.toolNames = new Set(this.toolDefinitions.map((tool) => tool.name));
     this._drainDispatches = new Map();
+    this._applicationDispatches = new Map();
+    this._closePromise = null;
+  }
+
+  async close() {
+    if (this._closePromise) return this._closePromise;
+    const closing = Promise.resolve().then(async () => {
+      this.lifecycle = 'closed';
+      if (this.application === null) {
+        return Object.freeze({ schemaVersion: 1, state: 'transport_closed', applicationOwned: false });
+      }
+      return this.application.command('application.shutdown', {}, this.shutdownPrincipal);
+    });
+    this._closePromise = closing;
+    try {
+      return await closing;
+    } catch (cause) {
+      if (this._closePromise === closing) this._closePromise = null;
+      throw cause;
+    }
   }
 
   callScope(tool, args) {
@@ -386,8 +576,11 @@ export class McpFleetServer {
     const p = this.principal;
     const expiresAt = Date.parse(p.expiresAt);
     if (!nonempty(p.userId) || !nonempty(p.sessionId) || p.revoked === true || !Number.isFinite(expiresAt) || expiresAt <= this.now()) return 'unauthenticated';
-    if (!Array.isArray(p.capabilities) || !p.capabilities.includes(CAPABILITY[name])) return 'forbidden';
+    const requiredCapabilities = Array.isArray(CAPABILITY[name]) ? CAPABILITY[name] : [CAPABILITY[name]];
+    if (!Array.isArray(p.capabilities)
+      || !requiredCapabilities.every((capability) => p.capabilities.includes(capability))) return 'forbidden';
     if (!this.repoIds.has(args.repoId) || !Array.isArray(p.repoIds) || !p.repoIds.includes(args.repoId)) return 'forbidden';
+    if (this.isPrincipalActive && !this.isPrincipalActive(p, { tool: name, repoId: args.repoId })) return 'unauthenticated';
     return null;
   }
 
@@ -401,6 +594,7 @@ export class McpFleetServer {
   async handle(message) {
     if (!record(message) || message.jsonrpc !== '2.0' || !nonempty(message.method)) return protocolError(message?.id ?? null, -32600, 'Invalid Request');
     const { id, method, params } = message;
+    if (this.lifecycle === 'closed') return protocolError(id, -32002, 'Server closed');
     if (method === 'initialize') {
       if (this.lifecycle !== 'new') return protocolError(id, -32600, 'Invalid Request');
       if (id === undefined || !record(params) || !nonempty(params.protocolVersion) || !record(params.capabilities)
@@ -415,11 +609,11 @@ export class McpFleetServer {
     }
     if (method === 'ping') return id === undefined ? null : protocolResult(id, {});
     if (this.lifecycle !== 'ready') return protocolError(id, -32002, 'Server not initialized');
-    if (method === 'tools/list') return id === undefined ? null : protocolResult(id, { tools: TOOL_DEFINITIONS.map(clone) });
+    if (method === 'tools/list') return id === undefined ? null : protocolResult(id, { tools: this.toolDefinitions.map(clone) });
     if (method !== 'tools/call') return protocolError(id, -32601, 'Method not found');
-    if (id === undefined || !record(params) || !nonempty(params.name) || !TOOL_BY_NAME.has(params.name)) return protocolError(id, -32602, 'Invalid params');
+    if (id === undefined || !record(params) || !nonempty(params.name) || !this.toolNames.has(params.name)) return protocolError(id, -32602, 'Invalid params');
     const args = params.arguments ?? {};
-    const invalid = validateArguments(params.name, args);
+    const invalid = validateArguments(params.name, args, this.maxWaitMs);
     if (invalid) {
       try { this._audit('tool_invalid', params.name, args, invalid); } catch { return protocolResult(id, toolError('temporarily_unavailable')); }
       return protocolResult(id, toolError(invalid));
@@ -428,6 +622,11 @@ export class McpFleetServer {
     if (refused) {
       try { this._audit('tool_refused', params.name, args, refused); } catch { return protocolResult(id, toolError('temporarily_unavailable')); }
       return protocolResult(id, toolError(refused));
+    }
+    if (APPLICATION_TOOL[params.name] && !this.application) {
+      try { this._audit('application_unavailable', params.name, args); }
+      catch { return protocolResult(id, toolError('temporarily_unavailable')); }
+      return protocolResult(id, toolError('application_unavailable'));
     }
     let quota;
     try { quota = await this.takeToolQuota({ userId: this.principal.userId, sessionId: this.principal.sessionId, tool: params.name, repoId: args.repoId }); }
@@ -442,13 +641,19 @@ export class McpFleetServer {
   async _callTool(name, args) {
     if (!STATEFUL.has(name)) {
       try {
-        const outcome = toolResult(await this._dispatch(name, args));
+        const value = await this._dispatch(name, args);
+        const refused = ['fleet_run_follow', 'fleet_run_wait'].includes(name) ? this._authority(name, args) : null;
+        if (refused) {
+          this._audit('tool_refused_after_wait', name, args, refused);
+          return toolError(refused);
+        }
+        const outcome = toolResult(value);
         this._audit('tool_completed', name, args);
         return outcome;
       } catch (cause) {
         try { this._audit('tool_failed', name, args, 'command_failed'); }
         catch { return toolError('temporarily_unavailable'); }
-        return toolError(name === 'fleet_goal_plan_status' ? stateFailureCode(cause) : 'command_failed');
+        return toolError(name === 'fleet_goal_plan_status' || APPLICATION_TOOL[name] ? stateFailureCode(cause) : 'command_failed');
       }
     }
     const callId = randomUUID();
@@ -456,7 +661,10 @@ export class McpFleetServer {
     const actor = `mcp:${this.principal.userId}:${this.principal.sessionId}`;
     let admission;
     try {
-      admission = this.coordination.admitMcpCall({ callId, scopeKey, requestDigest: this.callDigest(args), tool: name, repoId: args.repoId, userId: this.principal.userId, sessionId: this.principal.sessionId }, { actor, key: `mcp.admit:${scopeKey}` });
+      admission = this.coordination.admitMcpCall({
+        callId, scopeKey, requestDigest: this.callDigest(args), tool: name, repoId: args.repoId,
+        runId: applicationRunId(name, args), userId: this.principal.userId, sessionId: this.principal.sessionId,
+      }, { actor, key: `mcp.admit:${scopeKey}` });
     } catch { return toolError('temporarily_unavailable'); }
     if (!admission.ok) return toolError(admission.result === 'idempotency_conflict' ? 'idempotency_conflict' : 'invalid_call');
     if (admission.result === 'replay') {
@@ -484,20 +692,36 @@ export class McpFleetServer {
           sessionId: admission.call.sessionId ?? this.principal.sessionId,
         };
         let outcome;
-        try { outcome = toolResult(await this._dispatch(name, args, admittedActor, admittedCallId, admittedPrincipal)); }
+        try {
+          outcome = toolResult(await (APPLICATION_TOOL[name]
+            ? this._dispatchApplicationOnce(name, args, admittedActor, admittedCallId, admittedPrincipal)
+            : this._dispatch(name, args, admittedActor, admittedCallId, admittedPrincipal)));
+        }
         catch (cause) {
           outcome = toolError(stateFailureCode(cause));
           try { this.coordination.failMcpCall(admittedCallId, outcome, { actor: admittedActor, key: `mcp.fail:${admittedCallId}` }); }
           catch { return toolError('temporarily_unavailable'); }
+          if (APPLICATION_TOOL[name]) this._applicationDispatches.delete(admittedCallId);
           return outcome;
         }
         try { this.coordination.completeMcpCall(admittedCallId, outcome, { actor: admittedActor, key: `mcp.complete:${admittedCallId}` }); }
-        catch { return toolError('temporarily_unavailable'); }
+        catch {
+          if (APPLICATION_TOOL[name]) this._applicationDispatches.delete(admittedCallId);
+          return toolError('temporarily_unavailable');
+        }
+        if (APPLICATION_TOOL[name]) this._applicationDispatches.delete(admittedCallId);
         return outcome;
       }
       if (admission.call.status === 'admitted') return toolError('call_admitted');
       if (admission.call.status === 'completed' && ['fleet_reuse_decide', 'fleet_reuse_recheck'].includes(name)) {
         try { return toolResult(await this._dispatch(name, args, actor, admission.call.callId)); } catch { return toolError('temporarily_unavailable'); }
+      }
+      if (admission.call.status === 'completed' && APPLICATION_TOOL[name]) {
+        try {
+          await this.application.authorizeReplay(APPLICATION_TOOL[name], applicationArgs(name, args), {
+            actor, principalId: this.principal.userId, sessionId: this.principal.sessionId,
+          });
+        } catch (cause) { return toolError(stateFailureCode(cause)); }
       }
       if (GOAL_PLAN_MUTATIONS.has(name)) {
         const prior = admission.call.outcome;
@@ -507,15 +731,26 @@ export class McpFleetServer {
       return clone(admission.call.outcome);
     }
     let outcome;
-    try { outcome = toolResult(await (name === 'fleet_drain' ? this._dispatchDrain(args, actor, callId) : this._dispatch(name, args, actor, callId))); }
+    try {
+      outcome = toolResult(await (name === 'fleet_drain'
+        ? this._dispatchDrain(args, actor, callId)
+        : APPLICATION_TOOL[name]
+          ? this._dispatchApplicationOnce(name, args, actor, callId, this.principal)
+          : this._dispatch(name, args, actor, callId)));
+    }
     catch (cause) {
       outcome = toolError(stateFailureCode(cause));
       try { this.coordination.failMcpCall(callId, outcome, { actor, key: `mcp.fail:${callId}` }); }
       catch { return toolError('temporarily_unavailable'); }
+      if (APPLICATION_TOOL[name]) this._applicationDispatches.delete(callId);
       return outcome;
     }
     try { this.coordination.completeMcpCall(callId, outcome, { actor, key: `mcp.complete:${callId}` }); }
-    catch { return toolError('temporarily_unavailable'); }
+    catch {
+      if (APPLICATION_TOOL[name]) this._applicationDispatches.delete(callId);
+      return toolError('temporarily_unavailable');
+    }
+    if (APPLICATION_TOOL[name]) this._applicationDispatches.delete(callId);
     return outcome;
   }
 
@@ -531,9 +766,26 @@ export class McpFleetServer {
     return pending;
   }
 
+  _dispatchApplicationOnce(name, args, actor, callId, principal) {
+    const existing = this._applicationDispatches.get(callId);
+    if (existing) return existing;
+    const pending = Promise.resolve().then(() => this._dispatch(name, args, actor, callId, principal));
+    this._applicationDispatches.set(callId, pending);
+    return pending;
+  }
+
   async _dispatch(name, args, actor, callId, principal = this.principal) {
     let value;
-    if (name === 'fleet_spawn') value = await this.coordinator.spawn(args.harness, args.brief, {
+    if (APPLICATION_TOOL[name]) value = await this.application.command(
+      APPLICATION_TOOL[name],
+      applicationArgs(name, args),
+      {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      },
+    );
+    else if (name === 'fleet_spawn') value = await this.coordinator.spawn(args.harness, args.brief, {
       model: args.model, effort: args.effort, modelPolicy: args.modelPolicy, taskId: args.taskId ?? `mcp-${callId}`,
       deps: args.deps, taskType: args.taskType, session: args.session, refines: args.refines,
       runId: args.runId ?? null,
@@ -583,6 +835,9 @@ export class McpFleetServer {
     else if (name === 'fleet_kill') value = await this.coordinator.kill(args.workerId, actor, { expectedFence: args.expectedFence });
     else if (name === 'fleet_drain') value = await this.coordinator.drain({ actor, repoId: args.repoId, idempotencyKey: `mcp.call:${callId}` });
     if (value?.result === 'stale_fence') throw Object.assign(new Error('stale fence'), { mcpCode: 'stale_fence' });
+    if (APPLICATION_TOOL[name] && Buffer.byteLength(JSON.stringify(toolResult(value))) > this.maxMessageBytes) {
+      throw Object.assign(new Error('RunView exceeds the MCP response ceiling'), { code: 'application_run_view_oversize' });
+    }
     return normalized(GOAL_PLAN_MUTATIONS.has(name) ? sanitizeGoalPlanProjection(value) : value);
   }
 
@@ -619,37 +874,41 @@ export async function serveMcpStdio(server, opts = {}) {
     if (Array.isArray(message)) return writeFrame(output, protocolError(null, -32600, 'Invalid Request'));
     return writeFrame(output, await server.handle(message));
   };
-  for await (const chunk of input) {
-    const bytes = Buffer.from(chunk);
-    let offset = 0;
-    while (offset < bytes.length) {
-      const newline = bytes.indexOf(0x0a, offset);
-      if (discardingOversize) {
-        if (newline === -1) break;
-        await processLine(Buffer.alloc(0), true);
-        discardingOversize = false;
+  try {
+    for await (const chunk of input) {
+      const bytes = Buffer.from(chunk);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const newline = bytes.indexOf(0x0a, offset);
+        if (discardingOversize) {
+          if (newline === -1) break;
+          await processLine(Buffer.alloc(0), true);
+          discardingOversize = false;
+          offset = newline + 1;
+          continue;
+        }
+        if (newline === -1) {
+          const tail = bytes.subarray(offset);
+          if (buffered.length + tail.length > maxLineBytes) {
+            buffered = Buffer.alloc(0);
+            discardingOversize = true;
+          } else buffered = Buffer.concat([buffered, tail]);
+          break;
+        }
+        const segment = bytes.subarray(offset, newline);
+        if (buffered.length + segment.length > maxLineBytes) await processLine(Buffer.alloc(0), true);
+        else {
+          let line = buffered.length === 0 ? segment : Buffer.concat([buffered, segment]);
+          if (line.at(-1) === 0x0d) line = line.subarray(0, -1);
+          await processLine(line);
+        }
+        buffered = Buffer.alloc(0);
         offset = newline + 1;
-        continue;
       }
-      if (newline === -1) {
-        const tail = bytes.subarray(offset);
-        if (buffered.length + tail.length > maxLineBytes) {
-          buffered = Buffer.alloc(0);
-          discardingOversize = true;
-        } else buffered = Buffer.concat([buffered, tail]);
-        break;
-      }
-      const segment = bytes.subarray(offset, newline);
-      if (buffered.length + segment.length > maxLineBytes) await processLine(Buffer.alloc(0), true);
-      else {
-        let line = buffered.length === 0 ? segment : Buffer.concat([buffered, segment]);
-        if (line.at(-1) === 0x0d) line = line.subarray(0, -1);
-        await processLine(line);
-      }
-      buffered = Buffer.alloc(0);
-      offset = newline + 1;
     }
+    if (discardingOversize) await processLine(Buffer.alloc(0), true);
+    if (buffered.length > 0) await processLine(buffered);
+  } finally {
+    await server.close();
   }
-  if (discardingOversize) await processLine(Buffer.alloc(0), true);
-  if (buffered.length > 0) await processLine(buffered);
 }

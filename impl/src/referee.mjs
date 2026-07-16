@@ -9,7 +9,37 @@
 // sandbox.dir, which is `SameWorktreeError`).
 
 import { spawn } from 'node:child_process';
-import { resolve, sep } from 'node:path';
+import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { dirname, isAbsolute, resolve, sep } from 'node:path';
+
+const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
+  ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
+
+export function prepareVerificationRuntime(policy) {
+  const fields = ['constants', 'pathEntries', 'schemaVersion'];
+  if (!policy || Object.keys(policy).sort().join(',') !== fields.join(',')
+    || policy.schemaVersion !== 1 || !Array.isArray(policy.pathEntries) || policy.pathEntries.length === 0
+    || policy.pathEntries.some((entry) => typeof entry !== 'string' || !isAbsolute(entry) || entry.includes('\0'))
+    || new Set(policy.pathEntries).size !== policy.pathEntries.length
+    || !policy.constants || typeof policy.constants !== 'object' || Array.isArray(policy.constants)
+    || Object.entries(policy.constants).some(([name, value]) => (
+      !/^[A-Z][A-Z0-9_]*$/u.test(name) || /(?:HOME|TOKEN|KEY|SECRET|CREDENTIAL|AUTH)/u.test(name)
+      || name === 'PATH' || typeof value !== 'string' || value.includes('\0')
+    ))) {
+    throw new TypeError('verification runtime must be a closed deployment policy');
+  }
+  const pathEntries = Object.freeze([...policy.pathEntries]);
+  const constants = Object.freeze({ ...policy.constants });
+  const authority = { schemaVersion: 1, pathEntries, constants };
+  const environment = Object.freeze({ ...constants, PATH: pathEntries.join(':') });
+  return Object.freeze({ authority: Object.freeze(authority), environment, digest: createHash('sha256').update(JSON.stringify(canonical(authority))).digest('hex') });
+}
+
+export function defaultVerificationRuntime() {
+  const candidates = [dirname(process.execPath), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+  return prepareVerificationRuntime({ schemaVersion: 1, pathEntries: candidates.filter((entry) => existsSync(entry)), constants: { LANG: 'C', LC_ALL: 'C', TZ: 'UTC' } });
+}
 
 export class SameWorktreeError extends Error {
   constructor(message) { super(message); this.name = 'SameWorktreeError'; }
@@ -55,14 +85,14 @@ function tokenize(command) {
   return tokens;
 }
 
-function runCommand(command, cwd, timeoutMs) {
+function runCommand(command, cwd, timeoutMs, environment) {
   return new Promise((resolve) => {
     const preferDirect = looksLikeSimpleCommand(command);
     const directArgv = preferDirect ? tokenize(command) : [];
     let usingDirect = preferDirect && directArgv.length > 0;
 
-    const spawnDirect = () => spawn(directArgv[0], directArgv.slice(1), { cwd, detached: true });
-    const spawnShell = () => spawn('sh', ['-c', command], { cwd, detached: true });
+    const spawnDirect = () => spawn(directArgv[0], directArgv.slice(1), { cwd, detached: true, env: environment });
+    const spawnShell = () => spawn('sh', ['-c', command], { cwd, detached: true, env: environment });
 
     let child = usingDirect ? spawnDirect() : spawnShell();
     const chunks = [];
@@ -108,7 +138,7 @@ function runCommand(command, cwd, timeoutMs) {
   });
 }
 
-function runClosedCommand(verification, sandboxDir, timeoutMs) {
+function runClosedCommand(verification, sandboxDir, timeoutMs, runtime) {
   return new Promise((settle) => {
     const root = resolve(sandboxDir);
     const cwd = resolve(root, verification.cwd);
@@ -117,8 +147,8 @@ function runClosedCommand(verification, sandboxDir, timeoutMs) {
       return;
     }
     const env = Object.fromEntries(verification.envAllowlist
-      .filter((name) => Object.hasOwn(process.env, name))
-      .map((name) => [name, process.env[name]]));
+      .filter((name) => Object.hasOwn(runtime.environment, name))
+      .map((name) => [name, runtime.environment[name]]));
     const child = spawn(verification.command, verification.arguments, { cwd, detached: true, env, shell: false });
     const chunks = []; let bytes = 0; let settled = false; let timedOut = false; let outputExceeded = false; let timer;
     const stop = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* noop */ } } };
@@ -142,10 +172,26 @@ function runClosedCommand(verification, sandboxDir, timeoutMs) {
   });
 }
 
-function runPinnedVerification(verification, sandboxDir, timeoutMs) {
-  if (Array.isArray(verification.arguments)) return runClosedCommand(verification, sandboxDir, timeoutMs);
-  return runCommand(verification.command, sandboxDir, timeoutMs);
+function runtimeEnvironmentFor(verification, runtime) {
+  // Structured Plan contracts name their complete allowlist. Legacy string contracts predate that
+  // field; retain only the deployment-owned PATH needed to resolve their command, never ambient
+  // process values.
+  const names = Array.isArray(verification.envAllowlist) ? verification.envAllowlist : ['PATH'];
+  return Object.fromEntries(names
+    .filter((name) => Object.hasOwn(runtime.environment, name))
+    .map((name) => [name, runtime.environment[name]]));
 }
+
+function runPinnedVerification(verification, sandboxDir, timeoutMs, runtime) {
+  if (Array.isArray(verification.arguments)) return runClosedCommand(verification, sandboxDir, timeoutMs, runtime);
+  return runCommand(verification.command, sandboxDir, timeoutMs, runtimeEnvironmentFor(verification, runtime));
+}
+
+const executionOf = (run) => run.outputExceeded
+  ? { state: 'output_exceeded', code: 'verification_output_exceeded' }
+  : run.timedOut ? { state: 'timed_out', code: 'verification_timed_out' }
+    : run.exitCode == null ? { state: 'unavailable', code: 'verification_spawn_unavailable' }
+      : { state: 'completed', code: 'verification_completed' };
 
 /**
  * Re-derive the truth of a worker's result.
@@ -170,9 +216,10 @@ export async function verify(task, result, sandbox, opts = {}) {
   }
 
   const timeoutMs = task.verification.timeoutMs ?? 120000;
+  const runtime = opts.runtime ?? defaultVerificationRuntime();
 
   const start = Date.now();
-  const resultRun = await runPinnedVerification(task.verification, sandbox.dir, timeoutMs);
+  const resultRun = await runPinnedVerification(task.verification, sandbox.dir, timeoutMs, runtime);
   const durationMs = Date.now() - start;
 
   const observedExit = resultRun.timedOut ? null : resultRun.exitCode;
@@ -182,12 +229,15 @@ export async function verify(task, result, sandbox, opts = {}) {
   // diverge from. Only a claim that contradicts the hub's observation is a divergence.
   const hadClaim = claimedExit !== null;
   const matchesClaim = !hadClaim || observedExit === claimedExit;
-  const passed = !resultRun.timedOut && !resultRun.outputExceeded && observedExit === task.verification.expectExit;
+  const execution = executionOf(resultRun);
+  const passed = execution.state === 'completed' && observedExit === task.verification.expectExit;
 
   let redGreen = null;
   let baseExit = null;
-  if (opts.baseSandbox) {
-    const baseRun = await runPinnedVerification(task.verification, opts.baseSandbox.dir, timeoutMs);
+  let baseExecution = null;
+  if (opts.baseSandbox && (passed || opts.classifyFailureOwnership)) {
+    const baseRun = await runPinnedVerification(task.verification, opts.baseSandbox.dir, timeoutMs, runtime);
+    baseExecution = executionOf(baseRun);
     baseExit = baseRun.timedOut ? null : baseRun.exitCode;
     redGreen = passed && baseExit !== task.verification.expectExit;
   }
@@ -197,7 +247,8 @@ export async function verify(task, result, sandbox, opts = {}) {
   let coverageNote = '';
   const hasChangedLines = task.changedLines && Object.keys(task.changedLines).length > 0;
   if (task.verification.coverageCommand && passed && hasChangedLines) {
-    const covRun = await runCommand(task.verification.coverageCommand, sandbox.dir, timeoutMs);
+    const auxiliaryEnvironment = runtimeEnvironmentFor(task.verification, runtime);
+    const covRun = await runCommand(task.verification.coverageCommand, sandbox.dir, timeoutMs, auxiliaryEnvironment);
     try {
       const parsed = JSON.parse(covRun.output);
       const files = parsed.files ?? {};
@@ -221,7 +272,8 @@ export async function verify(task, result, sandbox, opts = {}) {
   let survivedMutants = [];
   let mutationNote = '';
   if (task.verification.mutationCommand && passed) {
-    const mutationRun = await runCommand(task.verification.mutationCommand, sandbox.dir, timeoutMs);
+    const auxiliaryEnvironment = runtimeEnvironmentFor(task.verification, runtime);
+    const mutationRun = await runCommand(task.verification.mutationCommand, sandbox.dir, timeoutMs, auxiliaryEnvironment);
     try {
       const parsed = JSON.parse(mutationRun.output);
       const killed = Number(parsed.killed);
@@ -276,7 +328,15 @@ export async function verify(task, result, sandbox, opts = {}) {
     observedOutputTail: resultRun.output.slice(-4000),
     note,
     durationMs,
+    execution,
+    baseExecution,
+    runtimeDigest: runtime.digest,
   };
+
+  if (execution.state !== 'completed') Object.assign(verdict, { reverified: false, passed: false, outcome: 'inconclusive', failureOwnership: 'verifier' });
+  else if (!passed && opts.classifyFailureOwnership && baseExecution?.state === 'completed' && baseExit === task.verification.expectExit) Object.assign(verdict, { outcome: 'candidate_failed', failureOwnership: 'candidate' });
+  else if (!passed && opts.classifyFailureOwnership) Object.assign(verdict, { outcome: 'inconclusive', failureOwnership: 'baseline_or_environment' });
+  else Object.assign(verdict, { outcome: passed ? 'passed' : 'candidate_failed', failureOwnership: passed ? null : 'candidate' });
 
   if (opts.log) {
     opts.log.append({

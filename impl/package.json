@@ -8,6 +8,7 @@
     "node": ">=20"
   },
   "bin": {
+    "baton": "scripts/baton.mjs",
     "baton-mcp": "scripts/mcp-stdio.mjs"
   },
   "scripts": {

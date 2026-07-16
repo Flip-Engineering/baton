@@ -288,7 +288,7 @@ test('AC5: ff-only integration reaps the worker/worktree/branch and records exac
   assert.equal(coordinator.list().find((worker) => worker.id === handle.id)?.status, 'dead');
   assert.equal(existsSync(taskWorktree), false);
   assert.equal(git(['branch', '--list', 'baton/integrate-me'], root), '');
-  assert.equal(git(['for-each-ref', '--format=%(refname)', `refs/baton/results/${response.integration.resultSha}`], root), '');
+  assert.equal(git(['for-each-ref', '--format=%(refname)', `refs/baton/results/${response.integration.resultSha}`], root), `refs/baton/results/${response.integration.resultSha}`);
   assert.deepEqual((await coordinator.result(handle.id)).integration, response.integration);
   const event = log.read(handle.id).find((entry) => entry.kind === 'integration.completed');
   assert.equal(event.actor, 'test-orchestrator');
@@ -303,6 +303,7 @@ test('AC5: ff-only integration reaps the worker/worktree/branch and records exac
     adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 0 },
   });
   assert.deepEqual((await replay.coordinator.result(handle.id)).integration, response.integration);
+  assert.equal((await replay.coordinator.result(handle.id)).retainedResultRef, `refs/baton/results/${response.integration.resultSha}`);
 });
 
 test('CK9: post-merge authority-batch failure poisons and replay refuses integration success', async () => {

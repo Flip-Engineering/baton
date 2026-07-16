@@ -38,6 +38,15 @@ BU1–BU7 adds an authenticated minimal operator seat over the existing command 
 independent harness/model/effort inputs, fence-preserving controls, sanitized session projection,
 strict CSP, and no parallel fleet truth. Before RC1–RC6, the combined focused Phase 12 suite was
 94/94.
+
+Phase 64 supersedes that worker-first operator UX. The ordinary authenticated command set is now
+`run_start`, `run_status`, `run_approve`, `run_wait`, `run_answer`, and `run_steer`, all mapped through the shared
+`BatonApplication` registry with repository binding, current replay authorization, RunView output,
+and exact harness/model/effort profiles. Direct worker commands remain advanced compatibility and
+emergency control. The browser now starts with objective/profile/route, shows the Plan before
+approval, sends reasoned Run steering without a client-supplied fence, and folds narrative,
+attention, route, budgets, ownership, and verification into one
+RunView; worker kill/drain and raw events live under an explicit Advanced / Emergency disclosure.
 A real local TLS wire run passes OIDC start/provider/callback, session cookies, `/control`, command,
 SSE snapshot, logout/revocation, shutdown, and owned-state cleanup. The required in-app browser
 execution bridge was unavailable, so WN9's real-browser interaction gate remains pending.
@@ -63,11 +72,13 @@ commands; a resumable WebSocket (with an authenticated SSE fallback permitted) d
 attention items, command outcomes, and story updates. Neither transport owns task, worker, goal,
 approval, budget, or fence state.
 
-Every state-changing request maps to one existing coordinator/goal operation. The minimum command
-set covers spawn (independent `harness`, exact `model`, and `modelPolicy`), send/turn/nudge/steer,
-respond to approval/question, interrupt, kill/emergency-stop, result/list/wait, task/goal control,
-budget changes allowed by policy, and publication/integration approvals. Unsupported operations
-fail typed; the web layer never emulates authority by editing projections.
+Every ordinary request maps to the shared Run application bus. Start chooses a deployment profile
+and exact `harness`/`model`/`effort`; status/wait return one bounded RunView; approve, answer,
+server-fenced steer, and Run-scoped stop/reap use distinct application authority and durable Web idempotency. Direct
+spawn/send/respond/list and
+fenced interrupt/kill plus fleet drain remain an explicitly advanced compatibility/emergency set.
+Unsupported operations fail typed; the web layer never emulates authority by editing projections.
+`application.shutdown` is host-only and has no Web command.
 
 ## WN2 — authenticated identity and session lifecycle
 
@@ -191,8 +202,10 @@ permissions and rotation procedures.
 
 Health endpoints reveal no fleet data. Readiness fails when coordination/log integrity,
 authentication verification, revocation state, or command idempotency storage is unavailable.
-Graceful shutdown stops admission, drains responses, closes streams with reconnect metadata, and
-does not claim worker death without the ordinary confirmed-stop lifecycle.
+Web-listener graceful shutdown stops admission, drains responses, and closes streams with reconnect
+metadata; it is transport shutdown only. Remote fleet drain uses confirmed stop/reap but retains
+transport and writer authority. Only the process-owning host's `application.shutdown` closes the
+entire deployment, and no remote endpoint can invoke it.
 
 ## WN9 — zero-quota and adversarial acceptance gate
 

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { compareCanonicalStrings } from './canonical-order.mjs';
 
 const typed = (message, code) => Object.assign(new Error(message), { code });
 const sha = (value) => createHash('sha256').update(value).digest('hex');
@@ -182,7 +183,7 @@ export class PublicSupplyChainOracle {
         id: projectId,
         relationProvenance: typeof sourceProject.relationProvenance === 'string' ? sourceProject.relationProvenance : 'UNKNOWN',
         scorecard: record(scorecard) && Number.isFinite(scorecard.overallScore)
-          ? { overallScore: scorecard.overallScore, date: safeTime(scorecard.date), checks: Array.isArray(scorecard.checks) ? scorecard.checks.filter((item) => typeof item?.name === 'string' && Number.isFinite(item?.score)).slice(0, 64).map((item) => ({ name: item.name, score: item.score })).sort((a, b) => a.name.localeCompare(b.name)) : [] }
+          ? { overallScore: scorecard.overallScore, date: safeTime(scorecard.date), checks: Array.isArray(scorecard.checks) ? scorecard.checks.filter((item) => typeof item?.name === 'string' && Number.isFinite(item?.score)).slice(0, 64).map((item) => ({ name: item.name, score: item.score })).sort((a, b) => compareCanonicalStrings(a.name, b.name)) : [] }
           : null,
       };
     }
@@ -196,7 +197,7 @@ export class PublicSupplyChainOracle {
         licenses: strings(deps.value.licenses, 256),
         providerVerifiedAttestations: attestations.filter((item) => item?.verified === true).length,
       },
-      advisories: vulnerabilities.map((item) => ({ id: item.id, modified: safeTime(item.modified), published: safeTime(item.published), withdrawn: safeTime(item.withdrawn), malicious: /^MAL-/i.test(item.id) || item?.database_specific?.malicious === true })).sort((a, b) => a.id.localeCompare(b.id)),
+      advisories: vulnerabilities.map((item) => ({ id: item.id, modified: safeTime(item.modified), published: safeTime(item.published), withdrawn: safeTime(item.withdrawn), malicious: /^MAL-/i.test(item.id) || item?.database_specific?.malicious === true })).sort((a, b) => compareCanonicalStrings(a.id, b.id)),
       advisoryIds, project,
       sources: [
         { source: 'deps.dev', operation: 'GetVersion', handle: deps.handle, digest: deps.digest, bytes: deps.bytes, mediaType: deps.mediaType },
@@ -218,7 +219,7 @@ export class PublicSupplyChainOracle {
         const normalized = { id: advisory.id, modified: advisory.modified };
         byId.set(normalized.id, normalized);
       }
-      const advisories = [...byId.values()].sort((a, b) => a.id.localeCompare(b.id)); advisoryCount += advisories.length;
+      const advisories = [...byId.values()].sort((a, b) => compareCanonicalStrings(a.id, b.id)); advisoryCount += advisories.length;
       if (advisoryCount > this.maxScanAdvisories) throw typed('scan advisory count exceeded deployment ceiling', 'oracle_response_oversize');
       return { coordinate: coordinates[index], advisories };
     });
@@ -243,7 +244,7 @@ export class PublicSupplyChainOracle {
     if (!Array.isArray(input) || input.length > this.maxScanComponents) throw typed('scan requires a bounded coordinate list', 'invalid_package_identity');
     const unique = new Map();
     for (const item of input) { const coordinate = scanCoordinate(item); unique.set(coordinateKey(coordinate), coordinate); }
-    const coordinates = [...unique.values()].sort((a, b) => coordinateKey(a).localeCompare(coordinateKey(b)));
+    const coordinates = [...unique.values()].sort((a, b) => compareCanonicalStrings(coordinateKey(a), coordinateKey(b)));
     const observedMs = this.now(); if (!Number.isFinite(observedMs)) throw typed('scan clock is invalid', 'oracle_clock_invalid');
     const observedAt = new Date(observedMs).toISOString();
     const scanId = randomUUID(); const coordinatesDigest = sha(stable(coordinates)); const batchCount = Math.ceil(coordinates.length / this.maxBatchSize); const scannerCardDigest = sha(stable(this.card()));
@@ -275,7 +276,7 @@ export class PublicSupplyChainOracle {
       if (!exactKeys(scan, ['schemaVersion', 'scannerId', 'observedAt', 'coordinates', 'results', 'batches', 'sources', 'session']) || scan.schemaVersion !== 1 || scan.scannerId !== this.scannerId || !rfc3339Utc(scan.observedAt)
         || !Array.isArray(scan.coordinates) || scan.coordinates.length > this.maxScanComponents || !Array.isArray(scan.results) || !Array.isArray(scan.batches) || !Array.isArray(scan.sources)) return { ok: false, reason: 'scan_schema_invalid' };
       const coordinates = scan.coordinates.map(scanCoordinate); const keys = coordinates.map(coordinateKey);
-      if (new Set(keys).size !== keys.length || stable(coordinates) !== stable([...coordinates].sort((a, b) => coordinateKey(a).localeCompare(coordinateKey(b))))) return { ok: false, reason: 'scan_coordinate_order' };
+      if (new Set(keys).size !== keys.length || stable(coordinates) !== stable([...coordinates].sort((a, b) => compareCanonicalStrings(coordinateKey(a), coordinateKey(b))))) return { ok: false, reason: 'scan_coordinate_order' };
       if (scan.results.length !== coordinates.length || scan.batches.length !== scan.sources.length || scan.batches.length !== Math.ceil(coordinates.length / this.maxBatchSize)) return { ok: false, reason: 'scan_manifest_invalid' };
       const session = scan.session;
       if (!exactKeys(session, ['source', 'operation', 'handle', 'digest', 'bytes', 'mediaType']) || session.source !== 'baton' || session.operation !== 'ScanSession' || !/^[a-f0-9]{64}$/.test(session.digest ?? '') || session.handle !== `art:sha256:${session.digest}` || session.mediaType !== 'application/vnd.baton.osv-querybatch-session+json' || !Number.isSafeInteger(session.bytes) || session.bytes <= 0) return { ok: false, reason: 'scan_session_invalid' };

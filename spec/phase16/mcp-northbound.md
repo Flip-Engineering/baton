@@ -4,6 +4,11 @@ Status: executable contract, 2026-07-11. The target is the stable MCP `2025-11-2
 revision. This phase exposes Baton's existing coordinator; it does not create a second
 fleet state machine.
 
+Phase 64 supersedes its ordinary northbound UX without deleting the kernel contract. An
+application-backed server now defaults to nine `fleet_run_*` tools generated from the shared Run
+command registry. The Phase 16 fleet vocabulary remains an explicit advanced compatibility and
+emergency surface; `combined` must be requested deliberately.
+
 ## MN1 — Stable protocol surface
 
 The server implements JSON-RPC 2.0 `initialize`, `notifications/initialized`, `ping`,
@@ -27,14 +32,17 @@ MCP stdio receives credentials from its host environment or embedding program, n
 from tool arguments. The embedding host must also inject a quota authority derived from
 its deployment budget; Baton does not invent an arbitrary universal request ceiling.
 
-## MN4 — Closed fleet vocabulary
+## MN4 — Closed surface-selected vocabulary
 
-Phase 16 shipped an eight-tool deterministic inventory: `fleet_spawn`, `fleet_send`, `fleet_wait`,
-`fleet_respond`, `fleet_interrupt`, `fleet_result`, `fleet_list`, and `fleet_kill`.
-Phase 29 extends that same closed inventory to ten with `fleet_capabilities` and
-`fleet_capability_invoke`; it does not create a second server or state machine. Schemas are closed,
-the capability action shapes are mutually exclusive, and credential-shaped fields are recursively
-rejected.
+The ordinary application surface is exactly `fleet_run_start`, `fleet_run_status`,
+`fleet_run_approve`, `fleet_run_wait`, `fleet_run_answer`, `fleet_run_steer`, `fleet_run_stop`,
+`fleet_run_evidence`, and `fleet_run_adopt`. Status, wait, and evidence are fresh reads; start,
+approve, answer, steer, stop, and adopt use the durable MCP call ledger. Steer is admitted
+before delivery and is not redispatched after an ambiguous completion boundary. The advanced surface retains the
+historically accumulated nineteen `fleet_*` kernel tools. Only explicit `combined` mode advertises
+all twenty-eight. Schemas are closed, capability action shapes are mutually exclusive, and
+credential-shaped fields are recursively rejected. `application.shutdown`, `run.close`, and
+fleet-wide drain are never in the nine-tool application surface. Run-scoped stop is.
 
 ## MN5 — Exact route tuple
 
@@ -74,12 +82,16 @@ quota or audit authority fails closed.
 ## MN9 — Restart and transport truth
 
 The MCP call ledger folds from the same append-only coordination stream on restart.
-Stdio EOF drains already accepted messages and returns. Output backpressure is awaited;
+Stdio EOF drains already accepted messages and then invokes host-only `application.shutdown` with an
+injected closed principal. The packaged process maps `SIGINT`/`SIGTERM` to the same memoized,
+retry-visible finalizer; it does not expose shutdown as a tool. Output backpressure is awaited;
 transport failure cannot be reported as a successful tool result.
 
 ## MN10 — Honest boundary
 
-This slice does not claim Streamable HTTP authorization, WebSocket parity, MCP Tasks,
-progress heartbeats, or daemon supervision. Those remain explicit goal scope. The stdio
-surface is nevertheless production-shaped: standard framing, fixed authority, exact
-route selection, durable replay safety, and the real coordinator.
+This slice does not claim Streamable HTTP authorization, WebSocket parity, MCP Tasks, progress
+heartbeats, or a durable Run-scoped stop. The stdio application host must finalize its owned
+deployment on EOF/signals. Advanced `fleet_drain` reaps workers while retaining transport and
+writer authority; it is never presented as host shutdown. The surface remains production-shaped:
+standard framing, fixed authority, exact route selection, durable replay safety, and one real
+application/coordinator authority path.

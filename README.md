@@ -24,7 +24,7 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **1470/1470
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **1540/1540
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
@@ -48,7 +48,8 @@ self-contained project-manager-inspired causal/temporal knowledge graph, is pres
 
 Phase 29 now makes deployment-injected Atlas capabilities real fleet tools through one
 Coordinator-owned registry. The same bounded invoke/resume/reverify path is available through the
-authenticated web command surface and the twelve-tool MCP inventory; deployment-owned multi-root
+authenticated Web command surface and the explicit advanced MCP compatibility inventory; the
+ordinary application-backed MCP surface is the shared Run bus. Deployment-owned multi-root
 contexts cannot override actor, budget, repository root, or cancellation, and capability output
 cannot claim verification or merge authority. Phase 30 also live-proves the credentialed GLM leg:
 exact `glm-4.7` at native `low` effort was provider-observed, freshly verified, normally killed,
@@ -95,7 +96,7 @@ authoring, waiver, clearance, install, project-manager export, or homelab integr
 provider feeds, independently verified provenance, exact `internal` decisions, trusted advisory/
 source identity and true reachability, plan approval, positive clearance, additional ecosystems,
 composite surfaces, and deeper Cairn remain pending. The live policy-cycle proof passes **13/13**;
-the current canonical suite is **1470/1470 green**.
+the current canonical suite is **1540/1540 green**.
 
 Phases 43–50 extend the provider, routing, representation-attestation, and Cairn causal-knowledge
 verticals through durable provider recovery, exact route learning, supervised native-session
@@ -163,7 +164,7 @@ canonical sparse worker/verifier identities with hidden-diff refusal, and a repo
 capacity authority. Exact base/branch binding prevents metadata from erasing the admitted diff,
 ownership roots refuse symlink escape, and legacy close refuses live reservations. Their historical
 phase baselines remain 1179/1179 for Phase 56, 1256/1256 for Phase 57, and 1346/1346 for Phase 59;
-the current canonical result is the 1470/1470 status above. The first exact five-provider
+the current canonical result is the 1540/1540 status above. The first exact five-provider
 sparse+capacity recursive proof admitted all five routes, sampled both Grok groups live
 simultaneously, fresh-verified Codex `gpt-5.6-sol`, project-key GLM `glm-4.7`, and Grok 4.5 reports,
 and exactly closed/reaped all five generations with zero capacity residue. The strict matrix remains
@@ -183,7 +184,7 @@ automatically redelivered. Provider seats stay reserved until exact stop/reap an
 settlement. Closed store APIs reject forged not-sent evidence, generic recovery-task bypasses,
 unverified or cross-worker lineage, context substitution, and newline-complete torn transactions.
 The persistent-session gate is 43/43, the dedicated store/replay gate is 7/7, and the current
-canonical result is the 1470/1470 status above. The first recursive five-route Phase 60 review
+canonical result is the 1540/1540 status above. The first recursive five-route Phase 60 review
 admitted all exact routes, sampled both Groks live concurrently, independently verified Codex
 `gpt-5.6-sol`, project-key GLM `glm-4.7`, and Grok 4.5, and exactly killed/reaped every process and
 ownership surface. Its strict external matrix remains honestly red at Claude login and literal
@@ -211,7 +212,7 @@ authoritative Briefs, exact harness/model/effort constraints, immutable plan-own
 atomic pre-effect `plan.node_dispatched` + `task.created`, current-head enforcement, iterative DAG
 validation, and durable consumed/released/held/overrun settlement now gate mandatory-scope work.
 Direct, authenticated HTTPS/SSE, and MCP use the same authority and lost-response reconciliation;
-unauthorized stream observers do not receive Goal/Plan state. The canonical suite is **1470/1470
+unauthorized stream observers do not receive Goal/Plan state. The canonical suite is **1540/1540
 green**.
 
 The original five-route proof at `45072eb` used one approved five-node plan to admit exact
@@ -226,11 +227,56 @@ pinned tests), mandatory Goal/Plan binding, budget settlement, lifecycle, and cl
 GLM `glm-4.7`/low at `230db8e`. These focused greens do not relabel the original five-provider
 matrix.
 
-**What baton is:** a **fleet driver** — one orchestrator agent that directs full Claude Code / Codex / GLM worker agents across vendors, sending them work, watching them (telemetry), and interrupting and steering them mid-run. That is the product. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)`.
+**What baton is:** a run-centric **fleet application** — one orchestrator agent directs full Claude
+Code / Codex / GLM / Grok workers across vendors while Baton compiles the objective into approved
+work, routes it, watches it, handles attention, verifies it, and closes its resources. The
+Coordinator is the safety kernel beneath that application, not the interface every agent should
+have to assemble manually. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)` remain core uses.
 
 **Everything else supports the driver, and none of it is dropped:** independent verification (re-running a worker's tests so "done" can be trusted), learned routing (which vendor is good at what), a reliable coordination core (so "interrupt worker 3" always lands), telemetry/replay, and worker tools (search, debug, semantic diff). Earlier docs over-billed the *verification* as the product and demoted the *driving* to optional — doc 19 turns that right-side-up.
 
-**Architecture, plainly:** you drive from your CLI agent (Claude Code or Codex is the orchestrator — it decides); underneath, a small reliable program carries out those decisions and does the bookkeeping (dispatch, making interrupts land, re-checking worker claims, the event log). The AI drives; the plumbing makes the driving safe. Southbound, the product tier uses persistent Claude stream-json, Codex app-server, and Grok ACP sessions; one-shot subprocess adapters remain an explicitly limited fire-and-forget tier. Those basic depth gates, audited ACI invocation, Cairn's current causal audit/recall/promotion/correction rungs, Cartographer/Quartermaster's local orientation/reuse, addressed-push, provider and policy-epoch safety rungs, exact provider lifecycle/reap, and initial Goal/Plan authority now ship. Current pursuit retains richer Goal/Plan evidence and amendment policy, authorized continuation/recovery, native session depth, Baton's self-contained project-manager-inspired causal/temporal knowledge graph, authenticated web/runtime depth, Vantage, Evidence Ladder, Scratch Board/Bench, Skill Forge/computer use, registered evaluations, Atlas AST/CST and lexical precision, native SCIP/symbol graphs, deeper CPG/CFG/SSA/PDG and semantic deltas, conditional compiler IR, behavioral fingerprints, true semantic merge, conditional expression/kernel e-graphs, and later Cartographer/Quartermaster and Cairn rungs. Homelab integration is excluded. See [docs/28](docs/28-exhaustive-capability-audit.md).
+**Architecture, plainly:** the ordinary surface is one Run application: concise intent and
+deployment profile, visible Plan approval, exact route, one bounded RunView, attention, evidence,
+and cleanup. Direct embedding, authenticated Web, the `baton` CLI, MCP, and the browser Run desk
+share that command bus. The CLI is a thin authenticated Web client rather than another fleet
+controller; `baton serve` separately owns the Web listener and exact shutdown lifecycle. Underneath,
+the reliable Coordinator kernel makes dispatch, fencing, verification, replay, and reap exact.
+Phase 64 now ships the initial Run bus through direct embedding, authenticated Web, MCP stdio, and
+the authenticated browser desk: start, status, distinct approval, bounded wait, answer, and
+server-fenced steering all return one RunView. Durable `run.stop` fences further Run effects,
+reaps that Run's exact workers, survives restart, and leaves other Runs and the Baton host live.
+Accepted verification now pins its exact commit before disposable branch cleanup. `run.evidence`
+returns a bounded stable manifest, while policy-gated `run.adopt` durably selects that result
+without merging, changing the checkout, or publishing; both are first-class in Web, MCP, and the
+browser Run desk. Adoption deliberately leaves semantic state unverified and cannot relabel the
+Run complete. RunView and the desk also expose one progress board spanning Plan, dispatch,
+provider identity, verification, semantic state, result selection, and cleanup, so ordinary
+operation no longer requires correlating receipts or process tables.
+Phase 65 adds the missing trust-to-effect continuation to that same surface. `run.review` launches
+one deployment-pinned exact independent reviewer, validates a closed JSON report against immutable
+Git source ranges and accepted artifact/Representation evidence, preserves disagreement and
+uncertainty, and reaps the reviewer. `run.integrate` separately requires a fresh displayed evidence
+digest, policy-required result adoption and semantic approval, then delegates one local `ff-only`
+or structured transaction to the Coordinator. Web, MCP, CLI, and the browser Run desk expose the
+same commands; none push, publish, or deploy. Restart reconstruction, report forgery/scope
+smuggling, review/stop races, stale evidence, dirty checkout, and non-fast-forward refusal are
+covered by executable contracts. A clean credential-filtered dogfood Run used the real GLM
+`glm-4.7`/low route as the independent reviewer, reached `completed` only after adoption and
+fast-forward integration, and had already reaped both Run workers before host shutdown; the
+provider observed `glm-4.7` but did not expose effort, which remains honestly `null`.
+MCP EOF/signals separately invoke the host-only exact deployment shutdown path. The `baton` CLI
+ships `doctor`, start, status/wait, approve, answer, steer, stop, evidence, and evidence-bound
+adopt, semantic review, and evidence-bound integration using `BATON_URL`, `BATON_ORIGIN`,
+`BATON_REPO_ID`, and `BATON_TOKEN`; credentials are never
+command arguments. `baton serve CONFIG_MODULE` owns Web admission and closes it before exact
+application shutdown on listener failure or process signals. See [impl/CLI.md](impl/CLI.md).
+Cursor follow, materialized result export, recovery, and multi-node
+scheduling remain active work. Southbound, the product tier
+uses persistent Claude stream-json, Codex app-server, and Grok ACP sessions; one-shot subprocess
+adapters remain an explicitly limited fire-and-forget tier. All retained Goal/Plan, causal graph,
+Vantage, Evidence Ladder, Scratch, Skill Forge, Atlas AST/CST/SCIP/CPG/IR, semantic merge,
+behavioral fingerprint, evaluation, and later capability scope remains in [docs/28](docs/28-exhaustive-capability-audit.md).
+Homelab integration is excluded.
 
 **Design docs** (`docs/`):
 

@@ -13,7 +13,7 @@ import { Log } from './log.mjs';
 import { FenceTable } from './fence.mjs';
 import { Coordinator } from './coordinator.mjs';
 import * as worktreeMod from './worktree.mjs';
-import { verify, accept } from './referee.mjs';
+import { verify, accept, defaultVerificationRuntime, prepareVerificationRuntime } from './referee.mjs';
 import { AdaptiveRouter } from './router.mjs';
 import { StoryCompiler } from './story.mjs';
 import { RuntimeIsolation } from './runtime-isolation.mjs';
@@ -29,6 +29,7 @@ import { inspectToolchainProjection, prepareToolchainProjection, ToolchainProjec
 import { normalizeProviderGovernancePolicy } from './provider-governance.mjs';
 import { loadOrCreateWorktreeCapacityIntegrityKey, normalizeWorktreeCapacityPolicy, WorktreeCapacityAuthority } from './worktree-capacity.mjs';
 import { normalizeGoalPlanPolicy } from './goal-plan.mjs';
+import { normalizeCanonicalOrderPolicy } from './canonical-order.mjs';
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const canonicalDigest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
@@ -59,13 +60,14 @@ export { ClaudeSessionCli, GlmSessionCli } from './claude-session.mjs';
 export { CodexAppServerCli } from './codex-appserver.mjs';
 export { GrokAcpCli } from './grok-acp.mjs';
 export { createBrief } from './messages.mjs';
-export { verify, accept } from './referee.mjs';
+export { verify, accept, defaultVerificationRuntime, prepareVerificationRuntime } from './referee.mjs';
 export { AdaptiveRouter } from './router.mjs';
 export { routeTupleKey, resolveEffort } from './route-tuple.mjs';
 export { RuntimeIsolation, isSecretEnvName } from './runtime-isolation.mjs';
-export { CoordinationStore, CoordinationIntegrityError, CoordinationRefusal, coordinationForLog } from './coordination-store.mjs';
+export { CoordinationStore, CoordinationIntegrityError, CoordinationRefusal, coordinationForLog, migrateCanonicalOrderLedger } from './coordination-store.mjs';
 export { WebNorthbound, createAuthenticatedWebServer, validateWebCommandEnvelope } from './web-northbound.mjs';
 export { WebEventStream } from './web-stream.mjs';
+export { WebResultExportDelivery } from './web-result-export-delivery.mjs';
 export { WebEdgePolicy, WebReadinessAuthority, FixedWindowQuota, ConcurrentQuota, resolveEdgeRequest } from './web-edge.mjs';
 export { WebSessionStore, WebSessionIntegrityError, WEB_SESSION_COOKIE_NAME } from './web-auth.mjs';
 export { OidcBrowserFlow, OidcFlowError, OIDC_FLOW_COOKIE_NAME, WEB_CSRF_COOKIE_NAME, csrfCookie } from './web-oidc.mjs';
@@ -92,6 +94,15 @@ export { AdvisoryFeedRegistry } from './advisory-feed-registry.mjs';
 export { ProviderPollSupervisor } from './provider-poll-supervisor.mjs';
 export { SessionRecoverySupervisor } from './session-recovery-supervisor.mjs';
 export { ProviderProcessingSupervisor } from './provider-processing-supervisor.mjs';
+export {
+  BatonApplication, APPLICATION_COMMAND_DEFINITIONS, APPLICATION_SEMANTIC_REGISTRY,
+  validateApplicationCommandArgs,
+} from './application.mjs';
+export {
+  BATON_CLI_HELP, BatonWebClient, batonCliHelp, discoverBatonConnection, parseBatonCli, runBatonCli,
+} from './application-cli.mjs';
+export { BatonClient, BatonRun, BatonRuns, bindBaton } from './application-client.mjs';
+export { BatonWebHost, SignalLifecycleOwner } from './application-host.mjs';
 export { HttpsHmacAdvisoryFeedSource, signHmacAdvisoryPollPageForTest } from './https-hmac-advisory-feed.mjs';
 export { Ed25519AdvisoryWebhookSource, HmacAdvisoryWebhookSource, signEd25519AdvisoryWebhookForTest, signHmacAdvisoryWebhookForTest } from './hmac-advisory-webhook.mjs';
 
@@ -101,6 +112,12 @@ function localGitEnv() {
 }
 
 function localGit(args, cwd, opts = {}) { return execFileSync('git', args, { ...opts, cwd, env: localGitEnv() }); }
+
+function boundedRepoPath(value) {
+  return typeof value === 'string' && value.length > 0 && Buffer.byteLength(value) <= 4_096
+    && !value.includes('\0') && !value.includes('\\') && !value.startsWith('/')
+    && !value.split('/').some((part) => part.length === 0 || part === '.' || part === '..');
+}
 
 function capacityReservationIdentity(row) {
   if (!row) return null;
@@ -217,6 +234,39 @@ function worktreeManager(repoRoot, opts = {}) {
     async changedLines(baseSha, resultSha) {
       return worktreeMod.changedLines(repoRoot, baseSha, resultSha);
     },
+    readCommitFile(sha, path, maxBytes) {
+      if (!/^[a-f0-9]{40}$/u.test(sha ?? '') || !boundedRepoPath(path)
+        || !Number.isSafeInteger(maxBytes) || maxBytes <= 0 || maxBytes > 16 * 1024 * 1024) {
+        throw Object.assign(new Error('captured file request is invalid'), { code: 'captured_file_invalid' });
+      }
+      localGit(['cat-file', '-e', `${sha}^{commit}`], repoRoot, { stdio: 'ignore' });
+      const tree = localGit(['ls-tree', '-z', sha, '--', path], repoRoot);
+      const rows = tree.toString('utf8').split('\0').filter(Boolean);
+      if (rows.length !== 1) throw Object.assign(new Error('captured file is unavailable'), { code: 'captured_file_unavailable' });
+      const match = /^(100644|100755) blob [a-f0-9]{40}\t([\s\S]+)$/u.exec(rows[0]);
+      if (!match || match[2] !== path) throw Object.assign(new Error('captured file is not one regular exact tree entry'), { code: 'captured_file_unsafe' });
+      const size = Number(localGit(['cat-file', '-s', `${sha}:${path}`], repoRoot, { encoding: 'utf8' }).trim());
+      if (!Number.isSafeInteger(size) || size < 0 || size > maxBytes) {
+        throw Object.assign(new Error('captured file exceeds its byte ceiling'), { code: 'captured_file_oversize' });
+      }
+      const bytes = localGit(['cat-file', 'blob', `${sha}:${path}`], repoRoot, { maxBuffer: maxBytes + 1 });
+      if (bytes.length !== size || bytes.length > maxBytes) throw Object.assign(new Error('captured file size changed during read'), { code: 'captured_file_unavailable' });
+      const text = bytes.toString('utf8');
+      if (!Buffer.from(text, 'utf8').equals(bytes)) throw Object.assign(new Error('captured file is not valid UTF-8'), { code: 'captured_file_encoding_invalid' });
+      return Object.freeze({ path, sha, bytes: size, text });
+    },
+    changedPathsAtCommit(baseSha, resultSha, maxPaths = 1_024) {
+      if (!/^[a-f0-9]{40}$/u.test(baseSha ?? '') || !/^[a-f0-9]{40}$/u.test(resultSha ?? '')
+        || !Number.isSafeInteger(maxPaths) || maxPaths <= 0 || maxPaths > 100_000) {
+        throw Object.assign(new Error('captured change request is invalid'), { code: 'captured_change_invalid' });
+      }
+      const output = localGit(['diff', '--name-only', '-z', baseSha, resultSha, '--'], repoRoot, { maxBuffer: 16 * 1024 * 1024 });
+      const paths = output.toString('utf8').split('\0').filter(Boolean);
+      if (paths.length > maxPaths || paths.some((path) => !boundedRepoPath(path)) || new Set(paths).size !== paths.length) {
+        throw Object.assign(new Error('captured change set is invalid or oversized'), { code: 'captured_change_oversize' });
+      }
+      return Object.freeze([...paths].sort());
+    },
     async integrate(sha, opts = {}) {
       const strategy = opts.strategy ?? 'ff-only';
       if (strategy !== 'ff-only') throw new Error(`unsupported integration strategy: ${strategy}`);
@@ -237,6 +287,28 @@ function worktreeManager(repoRoot, opts = {}) {
       const ref = `refs/baton/results/${sha}`;
       localGit(['update-ref', ref, sha], repoRoot, { stdio: 'ignore' });
       return ref;
+    },
+    async resolveResult(ref) {
+      if (typeof ref !== 'string' || !/^refs\/baton\/results\/[a-f0-9]{40,64}$/u.test(ref)) {
+        throw Object.assign(new Error('result ref is outside Baton ownership'), { code: 'result_ref_invalid' });
+      }
+      try { return localGit(['rev-parse', '--verify', `${ref}^{commit}`], repoRoot, { encoding: 'utf8' }).trim(); }
+      catch { return null; }
+    },
+    async retainCheckpoint(sha) {
+      const ref = `refs/baton/checkpoints/${sha}`;
+      localGit(['update-ref', ref, sha], repoRoot, { stdio: 'ignore' });
+      if (localGit(['rev-parse', '--verify', `${ref}^{commit}`], repoRoot, { encoding: 'utf8' }).trim() !== sha) {
+        throw Object.assign(new Error('checkpoint postcheck failed'), { code: 'checkpoint_failed' });
+      }
+      return ref;
+    },
+    async resolveCheckpoint(ref) {
+      if (typeof ref !== 'string' || !/^refs\/baton\/checkpoints\/[a-f0-9]{40,64}$/u.test(ref)) {
+        throw Object.assign(new Error('checkpoint ref is outside Baton ownership'), { code: 'checkpoint_ref_invalid' });
+      }
+      try { return localGit(['rev-parse', '--verify', `${ref}^{commit}`], repoRoot, { encoding: 'utf8' }).trim(); }
+      catch { return null; }
     },
     async releaseResult(ref) {
       localGit(['update-ref', '-d', ref], repoRoot, { stdio: 'ignore' });
@@ -338,10 +410,12 @@ function worktreeManager(repoRoot, opts = {}) {
 }
 
 /** The real hardened referee in the coordinator's fn contract (maps task.worktree -> workerWorktreeDir, string sandbox -> {dir}). */
-function refereeFn(task, result, opts) {
+function refereeFn(runtime, task, result, opts) {
   const mapped = { ...task, workerWorktreeDir: task.worktree, verification: opts.pinnedVerification };
   return verify(mapped, result, { dir: opts.sandbox }, {
     ...(opts.baseSandbox ? { baseSandbox: { dir: opts.baseSandbox } } : {}),
+    runtime,
+    classifyFailureOwnership: Boolean(opts.baseSandbox),
   });
 }
 
@@ -360,6 +434,7 @@ function refereeFn(task, result, opts) {
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
  *          representationProduction?:{policy:object,artifactRoot:string,authorize:Function,resolveEnvironment:Function},
  *          goalPlanAuthority?:{policy:object,authorize:Function},
+ *          canonicalOrderPolicy?:{maxLedgerBytes:number,maxEventBytes:number,maxEvents:number,maxReceiptBytes:number},
  *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
  *          providerGovernance?:object,
@@ -371,6 +446,9 @@ export function createDriver(opts) {
   // DC1: validate before log/store construction or writer admission so malformed shutdown
   // authority can never be masked by an existing lease or leave filesystem side effects.
   const drainPolicy = normalizeDrainPolicy(opts.drainPolicy);
+  const verificationRuntime = opts.verificationRuntime === undefined
+    ? defaultVerificationRuntime()
+    : prepareVerificationRuntime(opts.verificationRuntime);
   const providerGovernance = opts.providerGovernance === undefined
     ? null
     : normalizeProviderGovernancePolicy(opts.providerGovernance, Object.keys(opts.adapters ?? {}));
@@ -391,6 +469,8 @@ export function createDriver(opts) {
       goalPlanAuthority = Object.freeze({ policy, authorize: opts.goalPlanAuthority.authorize });
     } catch (error) { throw new TypeError(error?.message ?? 'goalPlanAuthority policy is invalid'); }
   }
+  const canonicalOrderPolicy = opts.canonicalOrderPolicy === undefined
+    ? null : normalizeCanonicalOrderPolicy(opts.canonicalOrderPolicy);
   const worktreeCapacityPolicy = opts.worktreeCapacity === undefined ? null : normalizeWorktreeCapacityPolicy(opts.worktreeCapacity);
   if (opts.worktreeCapacityObserve !== undefined && typeof opts.worktreeCapacityObserve !== 'function') throw new TypeError('worktreeCapacityObserve must be a function');
   if (opts.worktreeCapacityEstimate !== undefined && typeof opts.worktreeCapacityEstimate !== 'function') throw new TypeError('worktreeCapacityEstimate must be a function');
@@ -462,6 +542,7 @@ export function createDriver(opts) {
     ...(routeLearningPolicy ? { routePolicy: routeLearningPolicy } : {}),
     ...(representationProduction ? { representationPolicy: representationProduction.policy } : {}),
     ...(goalPlanAuthority ? { goalPlanPolicy: goalPlanAuthority.policy } : {}),
+    ...(canonicalOrderPolicy ? { canonicalOrderPolicy } : {}),
   });
   if (opts.coordination && advisoryFeedCards.length > 0) {
     if (typeof coordination.advisoryFeedCards !== 'function' || canonicalDigest(coordination.advisoryFeedCards()) !== canonicalDigest(advisoryFeedCards)) throw new TypeError('custom coordination store disagrees with deployment advisory feed cards');
@@ -470,6 +551,7 @@ export function createDriver(opts) {
   if (opts.coordination && routeLearningPolicy && (typeof coordination.routePolicy !== 'function' || typeof coordination.routeObservations !== 'function' || canonicalDigest(coordination.routePolicy()) !== canonicalDigest(routeLearningPolicy))) throw new TypeError('custom coordination store disagrees with deployment route learning policy');
   if (opts.coordination && representationProduction && (typeof coordination.representationPolicy !== 'function' || canonicalDigest(coordination.representationPolicy()) !== canonicalDigest(representationProduction.policy))) throw new TypeError('custom coordination store disagrees with deployment representation policy');
   if (opts.coordination && goalPlanAuthority && (typeof coordination.goalPlanPolicy !== 'function' || canonicalDigest(coordination.goalPlanPolicy()) !== canonicalDigest(goalPlanAuthority.policy))) throw new TypeError('custom coordination store disagrees with deployment goal/plan policy');
+  if (opts.coordination && canonicalOrderPolicy && (typeof coordination.canonicalOrderPolicy !== 'function' || typeof coordination.canonicalOrderReceipt !== 'function' || canonicalDigest(coordination.canonicalOrderPolicy()) !== canonicalDigest(canonicalOrderPolicy))) throw new TypeError('custom coordination store disagrees with deployment canonical-order policy');
   let writerLease = null;
   try {
   writerLease = coordination.claimWriterLease();
@@ -613,7 +695,7 @@ export function createDriver(opts) {
       if (dirty) throw Object.assign(new Error('reuse decisions require a clean effective tree'), { code: 'reuse_tree_dirty' });
       return { repoId: opts.repoId, treeSha: localGit(['rev-parse', 'HEAD'], opts.repoRoot, { encoding: 'utf8' }).trim(), indexEpoch, overlayDigest: overlayDigest ?? null, lockfileDigest };
     },
-    referee: refereeFn,
+    referee: refereeFn.bind(null, verificationRuntime),
     route,
     accept: (verdict, acceptOpts) => accept(verdict, acceptOpts),
     acceptOpts: {

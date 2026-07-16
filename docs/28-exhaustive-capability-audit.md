@@ -247,10 +247,12 @@ evidence and disagreement are retained in
    process groups closed/reaped, both Grok process intervals overlapped, and GLM fresh-verified under
    the same projection identity. Projection and lifecycle gates pass; provider matrix remains
    honestly red because Grok reports unauthenticated.
-29. **Public exact fleet drain and driver close:** Phase 56 gives direct, authenticated HTTPS, MCP,
-   and the host driver one fenced, replay-validated drain authority. It records every target
-   disposition, closes exact process generations, reconciles process/worktree/runtime/branch and
-   projection residue, then closes coordinator and writer authority under one deadline. The owned
+29. **Public exact fleet drain and driver close:** Phase 56 gives direct, authenticated HTTPS, and
+   MCP a fenced replay-validated coordinator drain, and gives the process-owning host a stronger
+   driver close. Drain records every target disposition, closes exact process generations, and
+   reconciles process/worktree/runtime/branch and projection residue while retaining transport and
+   writer authority. Host close performs that drain and then closes coordinator and writer authority
+   under one deadline. The owned
    evidence wrapper also confines and reaps its full process group and temporary root. Thirty-seven
    focused contracts and the historical 1179/1179 canonical suite are green. The five-route run
    proves drain/lifecycle truth, not provider/report success; literal Grok Build remained
@@ -297,7 +299,7 @@ evidence and disagreement are retained in
    closed authoritative Briefs, current-head dispatch, atomic pre-effect dispatch/task batches,
    and durable consumed/released/held/overrun settlement are executable. Generic task creation
    cannot bypass a mandatory scope; direct, authenticated HTTPS/SSE, and MCP share the same typed
-   authority. The canonical suite is 1470/1470. The original mandatory five-node proof at
+   authority. The canonical suite is 1540/1540. The original mandatory five-node proof at
    `45072eb` admitted exact low-effort Codex `gpt-5.6-sol`, Claude Opus, project-key GLM `glm-4.7`,
    Grok 4.5, and literal Grok Build; both Groks overlapped and all ownership state reaped exactly.
    Its strict matrix remains honestly red at Claude login, absent Codex report, the concurrent GLM
@@ -330,9 +332,11 @@ evidence and disagreement are retained in
   risk/multi-principal policy remain open.
 - Full Claude/Codex sandbox denial parity, contamination UX, operator
   pin/exclude/prefer controls, and account quota-window/fleet-seat scheduling.
-- Cross-vendor review is wired, but continuous semantic review automation and structured reject
-  postmortems are not. Current recursive report verification proves artifact shape and pinned tests,
-  not claim-to-source semantic accuracy; the dogfood-exposed oracle gap is tracked in
+- Exact cross-vendor semantic review is wired into the Run application, and a real independent GLM
+  review has passed immutable-target, report, evidence, adoption, integration, and cleanup gates.
+  Continuous semantic review automation, structured reject postmortems, and broad semantic-oracle
+  accuracy are not proven; one successful report is route evidence rather than universal semantic
+  correctness. The remaining oracle gap is tracked in
   [GitHub #6](https://github.com/wahargis/baton/issues/6).
 - Recursive execution now has Phase 55's immutable dual-root projection, Phase 56's public exact
   drain/close plus owned evidence wrapper, Phase 57's truthful route-bound usage/call governance,
@@ -379,6 +383,23 @@ evidence and disagreement are retained in
 
 ## What remains pending
 
+- The primary product gap is completing the integrated Run application over the already-strong
+  fleet kernel. Phase 64 now has concise intent/profile → Goal/Plan → distinct approval → exact
+  dispatch → bounded RunView → answer/steer → durable Run-scoped stop/reap → host deployment shutdown, plus restart scheduling
+  across the approval/dispatch boundary. Direct, authenticated Web/browser, and default MCP are thin
+  projections of the shared registry; MCP EOF/signals use an injected host shutdown authority. A safe
+  one-shot `baton` client now submits the same bearer-authenticated Web commands without owning
+  fleet lifecycle. `baton serve` separately owns listener admission and exact application shutdown.
+  Cursor follow, recovery, materialized result export, and multi-node scheduling remain red.
+  Phase 65 now ships exact independent structured semantic review and separately authorized,
+  fresh-evidence-bound local integration across direct/Web/MCP/CLI/browser surfaces. Terminal evidence manifests and
+  non-merging result adoption now ship, and one bounded progress board consolidates the normal
+  Plan/dispatch/provider/verification/semantic/result/cleanup state. Run stop now closes dispatch in the coordination ledger,
+  snapshots exact targets, resumes before startup scheduling, and reaps without disturbing other Runs. Fleet-wide shutdown is named
+  `application.shutdown` and must not masquerade as `run.close`. The credential-filtered Phase 65
+  recursive proof ran the same application registry from intent through exact independent real-GLM
+  review, adoption, fast-forward integration, completion, and pre-shutdown reap; it is evidence for
+  that exercised route, not a claim of universal provider or semantic correctness.
 - Trust ramp policy, richer Goal/Plan verification/evidence and amendment authority,
   impact-selected reruns, structured reject postmortems, and higher
   Evidence Ladder rungs (property/fuzz/BMC/SMT/proof) under honest language/tool ceilings.
@@ -472,8 +493,11 @@ evidence and disagreement are retained in
    catalogued later rungs, then demand-earned remaining Cairn Rung 2 depth and Rungs 3–4, Vantage,
    Evidence Ladder, and Skill Forge/computer use behind stronger containment. Phase 61 now closes
    the first graph-backed R1–R3 producer vertical without deleting any deeper rung.
-5. **Complete northbound/runtime depth:** MCP HTTP/Tasks/daemon, WebSocket, operator takeover,
-   OpenTelemetry, and only then a production-core port.
+5. **Complete the integrated application and northbound/runtime depth:** extend the shipped Phase 64-65 Run
+   registry/View/scheduler/accepted-result-retention/adoption/evidence vertical with materialized
+   export, recovery, and multi-node composition; keep
+   authenticated Web and MCP thin; replace phase-specific dogfood runners; then MCP HTTP/Tasks/daemon, WebSocket,
+   operator takeover, OpenTelemetry, and only then a production-core port.
 6. **Pursue representation/trust research only through its Decisions:** higher CPG/IR/semantic
    merge/e-graph gates, with measured incremental value and no proof-language inflation. Phase 54's
    lexical binding increment is shipped; closure/destructuring/catch bindings, SSA/PDG/path solving,

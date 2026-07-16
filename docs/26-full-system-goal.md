@@ -26,6 +26,15 @@ knowledge, and give workers the complete capability and representation planes be
 must be reachable through the public assembly, test-locked, adversarially reviewed, and live-proven
 where a real harness or operating-system boundary is involved.
 
+Completion also requires one integrated, run-centric application. A caller supplies a concise
+objective plus a deployment-owned profile and route choice; Baton owns Goal/Plan compilation,
+approval presentation, dependency scheduling, fences, Brief derivation, attention, recovery,
+verification, semantic state, evidence, and cleanup. Direct embedding, the `baton` CLI,
+authenticated Web, and MCP must call one command registry and return one bounded `RunView`.
+Low-level Coordinator verbs and raw receipts remain an advanced kernel/debugging surface, not the
+normal agent control surface. A phase-specific runner that manually recreates this choreography is
+evidence that the application is incomplete, not an acceptable product interface.
+
 The implementation loop for every increment is:
 
 1. verify current reality;
@@ -48,7 +57,9 @@ result but may not bypass Baton's normal fresh-verification and integration auth
 
 ### A. Fleet control and reliability
 
-- Eight public commands: spawn, send, wait, respond, interrupt, result, list, kill.
+- One primary Run command bus: start, status/watch, approve, answer, steer, durable stop/reap,
+  recover, and evidence. The original spawn, send, wait, respond, interrupt, result, list, and kill verbs
+  remain the advanced kernel and emergency-control surface beneath it.
 - Ordered delivery, human-over-policy fencing, single-consumer interactions, two-phase stop,
   terminal monotonicity, bounded setup/turn/stop operations, and process/worktree reap.
 - Persistent multi-turn workers; interrupt-follow-up; resume, fork, rejoin, checkpoint, rewind, and
@@ -879,7 +890,7 @@ complete closed Brief comparison, current-head enforcement, and atomic pre-effec
 `plan.node_dispatched` + `task.created` batches now fail closed across direct, authenticated
 HTTPS/SSE, and the four companion MCP tools. Terminal plan work durably settles exact or
 lower-bound consumed, released, held, and overrun dimensions from operational evidence. The
-canonical suite is 1470/1470.
+canonical suite is 1540/1540.
 
 The original recursive five-route proof at `45072eb` used one mandatory approved five-node plan
 for exact low-effort Codex `gpt-5.6-sol`, Claude Opus, project-key GLM `glm-4.7`, Grok 4.5, and
@@ -892,6 +903,48 @@ observation, mechanical report verification (required shape plus pinned tests), 
 budget settlement, lifecycle, and cleanup for
 Codex `gpt-5.6-sol`/low at `9ce83e9` and project-key GLM `glm-4.7`/low at `230db8e`. These focused
 greens do not relabel the original five-provider matrix.
+
+Phase 64 is now the product-integration priority exposed by recursive use. The initial Run
+vertical compiles a concise intent and immutable deployment profile into Goal/Plan authority,
+stops at a readable distinct-principal approval, dispatches the exact approved harness/model/effort
+once, reconstructs approval-pending and approved-undispatched runs across process restart, folds a
+bounded credential-filtered `RunView`, routes answers and server-fenced steering through the Run,
+and exactly shuts down the deployment. Direct embedding, authenticated Web, the browser Run desk,
+the authenticated one-shot `baton` Web client, and the default MCP stdio surface now use the shared registry; the stdio host invokes the same
+host-only shutdown on EOF/signals. Durable `run.stop` atomically fences later Run effects, snapshots
+and reaps its exact worker set, records a restart-recoverable receipt, and leaves the host and other
+Runs live. Fleet-wide host authority remains separately named `application.shutdown`. The remaining
+completion gate is cursor-based follow; materialized result
+export; recovery; multi-node scheduling; and replacement of phase-specific recursive runners with declarative
+application use.
+
+Accepted verification now provisionally pins the exact commit before disposable branch cleanup.
+`run.evidence` projects one bounded content-addressed terminal manifest, and policy-gated
+`run.adopt` records an exact restart-safe result selection without merging, checking out, changing
+the working tree, or publishing. It does not advance a semantically unverified Run to `completed`.
+Direct, authenticated Web/browser, and MCP share those commands.
+Phase 65 continues the same registry with `run.review` and `run.integrate`. Review policy pins an
+exact independent harness/model/effort allowlist and a closed report contract; Baton verifies the
+report from immutable Git objects, validates Unicode-scalar source anchors and active evidence
+references, derives conservative semantic state, and reaps the reviewer. Integration has distinct
+authority and requires fresh evidence plus configured adoption/semantic gates before calling the
+existing local Coordinator transaction. Web, MCP, CLI, and the browser desk remain thin; neither
+command pushes or deploys. Restart, forgery, extra-edit, stale-evidence, stop-race, dirty-checkout,
+and non-fast-forward contracts are executable in `impl/test/phase65-run-semantic-review-integration.test.mjs`.
+The 2026-07-14 recursive Phase 65 proof exercised the application rather than assembling kernel
+features: one Mock implementer produced a confined accepted result, real project-key GLM
+`glm-4.7`/low independently reviewed only the exact changed-path projection, Baton adopted that
+result by a fresh evidence digest, fast-forward integrated it, and reached `completed`. The report,
+route receipt, process generations, pre-shutdown handles, and clean target are preserved under
+`docs/reference/evidence/phase65-semantic-review-integration-dogfood-2026-07-14/`. The reviewer
+reported its model but not effort; Baton preserves that absence rather than inferring the request.
+The 2026-07-13 recursive application proof used that path rather than copying a disposable
+worktree: project-key GLM produced a freshly verified commit, Baton pinned and adopted it by the
+displayed evidence digest, and the runner exported only the adopted commit. Codex and Claude
+failed honestly; both Grok processes were simultaneously live and then independently stopped with
+one confirmed kill and zero remaining targets each. All five process generations closed with no
+unreaped or ambiguous process. Exact provider-observed effort and the full review matrix remain
+red; result retention/adoption and Run-scoped stop/reap are live-proven.
 
 These operational phases do not narrow the retained system. Baton's deployment-neutral
 causal/temporal knowledge graph remains self-contained and inspired by repository-local
@@ -951,5 +1004,15 @@ is explicitly out of scope.
    direct/web/MCP authority. WebSocket parity, richer Goal/Plan verification/evidence, authorized
    continuation/recovery, amendments, publication/operator depth, the production runtime, and
    registered evaluations remain.**
+
+10. Finish the integrated Run application before treating further leaf capability expansion as a
+    usable product: one command registry and `RunView` across direct/CLI/Web/MCP, durable scheduling
+    and attention, honest semantic state, run-scoped evidence/close, then recursive multi-harness
+    dogfood through that surface. **Direct, authenticated Web/browser, and default MCP now share
+    exact-route start/approval/restart/answer/steer/stop/RunView behavior. Run stop is durable and
+    scoped; the MCP host separately closes through exact deployment shutdown. The one-shot
+    authenticated `baton` client now uses the Web command bus and owns no fleet authority;
+    `baton serve` separately owns Web admission plus exact host shutdown. Cursor follow,
+    materialized export, recovery, and semantic depth remain red.**
 
 No later step is permission to erase it from the goal.

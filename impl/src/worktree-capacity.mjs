@@ -9,6 +9,7 @@ import {
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { compareCanonicalStrings } from './canonical-order.mjs';
 
 export class WorktreeCapacityError extends Error {
   constructor(message, code = 'worktree_capacity_exceeded') { super(message); this.name = 'WorktreeCapacityError'; this.code = code; }
@@ -134,7 +135,7 @@ function projectionTargetParents(toolchainProjection, parents) {
     }
     unique.add(parent);
   }
-  const ordered = [...unique].sort((a, b) => a.localeCompare(b));
+  const ordered = [...unique].sort(compareCanonicalStrings);
   if (unique.size !== parents.length || digest(ordered) !== toolchainProjection.targetParentDirectoryDigest) {
     throw typed('toolchain projection capacity identity is unavailable', 'worktree_capacity_unavailable');
   }

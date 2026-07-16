@@ -7,6 +7,7 @@ import {
   readFileSync, readdirSync, realpathSync, rmSync, rmdirSync, writeFileSync,
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { compareCanonicalStrings, foldCanonicalCase } from './canonical-order.mjs';
 
 export class ToolchainProjectionError extends Error {
   constructor(message, code = 'toolchain_projection_invalid') {
@@ -44,7 +45,7 @@ function safeRelative(value, label) {
 }
 
 function overlaps(a, b) {
-  const left = a.toLocaleLowerCase('en-US'); const right = b.toLocaleLowerCase('en-US');
+  const left = foldCanonicalCase(a); const right = foldCanonicalCase(b);
   return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
 }
 
@@ -54,11 +55,11 @@ function targetParentPaths(mappings) {
     const parts = mapping.targetPath.split('/');
     for (let index = 1; index < parts.length; index += 1) {
       const path = parts.slice(0, index).join('/');
-      const key = path.toLocaleLowerCase('en-US');
+      const key = foldCanonicalCase(path);
       if (!parents.has(key)) parents.set(key, path);
     }
   }
-  return Object.freeze([...parents.values()].sort((a, b) => a.localeCompare(b)));
+  return Object.freeze([...parents.values()].sort(compareCanonicalStrings));
 }
 
 function validateConfig(config, withExpected) {
@@ -79,13 +80,13 @@ function validateConfig(config, withExpected) {
     exactKeys(mapping, MAPPING_FIELDS, 'toolchain mapping is invalid');
     const sourcePath = safeRelative(mapping.sourcePath, 'toolchain source path');
     const targetPath = safeRelative(mapping.targetPath, 'toolchain target path');
-    const sourceFirst = sourcePath.split('/')[0].toLocaleLowerCase('en-US');
-    const first = targetPath.split('/')[0].toLocaleLowerCase('en-US');
+    const sourceFirst = foldCanonicalCase(sourcePath.split('/')[0]);
+    const first = foldCanonicalCase(targetPath.split('/')[0]);
     if (sourceFirst === '.git' || sourceFirst === '.baton' || first === '.git' || first === '.baton') throw typed('toolchain mapping uses a reserved path');
     const source = resolve(sourceRoot, sourcePath); const within = relative(sourceRoot, source);
     if (within === '' || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) throw typed('toolchain source path is invalid');
     return Object.freeze({ sourcePath, targetPath });
-  }).sort((a, b) => a.sourcePath.localeCompare(b.sourcePath) || a.targetPath.localeCompare(b.targetPath));
+  }).sort((a, b) => compareCanonicalStrings(a.sourcePath, b.sourcePath) || compareCanonicalStrings(a.targetPath, b.targetPath));
   for (let i = 0; i < mappings.length; i += 1) for (let j = i + 1; j < mappings.length; j += 1) {
     if (overlaps(mappings[i].sourcePath, mappings[j].sourcePath) || overlaps(mappings[i].targetPath, mappings[j].targetPath)) throw typed('toolchain mappings overlap');
   }
@@ -123,7 +124,7 @@ function scanProjection(config, actualRoot, sourceSide, retainBytes = false) {
     try { before = lstatSync(absolutePath); } catch { if (sourceSide) changed(); else invalid(); }
     if (before.isSymbolicLink() || (!before.isDirectory() && !before.isFile())) invalid();
     if (Buffer.byteLength(logicalPath) > config.limits.maxPathBytes || depth > config.limits.maxDepth) exceed();
-    const key = logicalPath.normalize('NFC').toLocaleLowerCase('en-US');
+    const key = foldCanonicalCase(logicalPath.normalize('NFC'));
     if (pathKeys.has(key)) invalid(); pathKeys.add(key);
     if (before.isFile()) {
       counters.files += 1; counters.bytes += before.size;
@@ -142,11 +143,11 @@ function scanProjection(config, actualRoot, sourceSide, retainBytes = false) {
     }
     counters.directories += 1; if (counters.directories > config.limits.maxDirectories) exceed();
     let names;
-    try { names = readdirSync(absolutePath).sort((a, b) => a.localeCompare(b)); } catch { if (sourceSide) changed(); else invalid(); }
+    try { names = readdirSync(absolutePath).sort(compareCanonicalStrings); } catch { if (sourceSide) changed(); else invalid(); }
     if (!names.every(safeEntryName)) invalid();
     const children = names.map((name) => walk(join(absolutePath, name), `${logicalPath}/${name}`, depth + 1));
     let after; let afterNames;
-    try { after = lstatSync(absolutePath); afterNames = readdirSync(absolutePath).sort((a, b) => a.localeCompare(b)); } catch { if (sourceSide) changed(); else invalid(); }
+    try { after = lstatSync(absolutePath); afterNames = readdirSync(absolutePath).sort(compareCanonicalStrings); } catch { if (sourceSide) changed(); else invalid(); }
     if (!after.isDirectory() || statSignature(before) !== statSignature(after) || JSON.stringify(names) !== JSON.stringify(afterNames)) {
       if (sourceSide) changed(); else invalid();
     }

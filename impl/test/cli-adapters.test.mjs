@@ -163,7 +163,7 @@ test('cards report the right harness identity and concurrency; GLM/Z-Code is pin
   assert.deepEqual(new PiCli().card().governance.usage, { tokens: 'unavailable', usd: 'unavailable', tokenMetric: null, terminalSeal: 'native' });
   assert.deepEqual(new CodexCli({ model: 'gpt-5.6-sol' }).card().modelSelection.configuredDefault, 'gpt-5.6-sol');
   assert.deepEqual(new ClaudeCli({ model: 'opus' }).card().modelSelection.reasoningEffort, ['low', 'medium', 'high', 'xhigh', 'max']);
-  assert.equal(new ZCodeCli({ model: 'glm-4.7' }).card().modelSelection.family, 'glm');
+  assert.equal(new ZCodeCli({ model: 'glm-5.2' }).card().modelSelection.family, 'glm');
 });
 
 test('Z-Code injects the Z.ai Anthropic-compatible endpoint into the child env', () => {
@@ -185,8 +185,8 @@ test('one-shot argv binds each coordinator-selected model and effort instead of 
   assert.deepEqual(codex.slice(codex.indexOf('-m')), ['-m', 'gpt-5.6-sol', '-c', 'model_reasoning_effort="low"']);
   const claude = new ClaudeCli({ model: 'constructor-model' })._cfg.args({}, { model: 'claude-opus-4-6', reasoningEffort: 'low' });
   assert.deepEqual(claude.slice(claude.indexOf('--model')), ['--model', 'claude-opus-4-6', '--effort', 'low']);
-  const glm = new ZCodeCli({ model: 'constructor-model' })._cfg.args({}, { model: 'glm-4.7', reasoningEffort: 'low' });
-  assert.deepEqual(glm.slice(glm.indexOf('--model')), ['--model', 'glm-4.7', '--effort', 'low']);
+  const glm = new ZCodeCli({ model: 'constructor-model' })._cfg.args({}, { model: 'glm-5.2', reasoningEffort: 'low' });
+  assert.deepEqual(glm.slice(glm.indexOf('--model')), ['--model', 'glm-5.2', '--effort', 'low']);
 });
 
 // ---------- the live guard + Pi placeholder ----------

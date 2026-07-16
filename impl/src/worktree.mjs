@@ -21,6 +21,7 @@ import {
 } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { ToolchainProjectionError } from './toolchain-projection.mjs';
+import { foldCanonicalCase } from './canonical-order.mjs';
 
 // ---------------------------------------------------------------------------
 // Errors (W7 — typed, never a bare Error wrapping raw stderr)
@@ -234,22 +235,22 @@ function canonicalDigest(value) {
 }
 
 export function normalizePhysicalOwnerId(value, label = 'worktree owner') {
-  const folded = typeof value === 'string' ? value.toLocaleLowerCase('en-US') : '';
+  const folded = typeof value === 'string' ? foldCanonicalCase(value) : '';
   if (typeof value !== 'string' || value.length === 0 || Buffer.byteLength(value) > 128
     || value.normalize('NFC') !== value || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value)
-    || value.endsWith('.') || value.includes('..') || value.toLocaleLowerCase('en-US') === '.git'
-    || value.toLocaleLowerCase('en-US') === '.baton' || ['.lock', '.meta.json', '.projection.exclude'].some((suffix) => folded.endsWith(suffix))) throw new TypeError(`${label} must be one bounded path and ref component`);
+    || value.endsWith('.') || value.includes('..') || foldCanonicalCase(value) === '.git'
+    || foldCanonicalCase(value) === '.baton' || ['.lock', '.meta.json', '.projection.exclude'].some((suffix) => folded.endsWith(suffix))) throw new TypeError(`${label} must be one bounded path and ref component`);
   return value;
 }
 
 function assertNoPhysicalOwnerCollision(repoRoot, taskId) {
   const root = authorityRoot(repoRoot, 'wt', { create: false });
   if (!root) return;
-  const requested = taskId.toLocaleLowerCase('en-US');
+  const requested = foldCanonicalCase(taskId);
   for (const entry of readdirSync(root)) {
     const candidate = entry.endsWith('.meta.json') ? entry.slice(0, -'.meta.json'.length)
       : entry.endsWith('.projection.exclude') ? entry.slice(0, -'.projection.exclude'.length) : entry;
-    if (candidate !== taskId && candidate.toLocaleLowerCase('en-US') === requested) {
+    if (candidate !== taskId && foldCanonicalCase(candidate) === requested) {
       throw new WorktreeAlreadyExistsError(`createFromBase: worktree owner collides with existing owner "${candidate}"`);
     }
   }
@@ -265,14 +266,14 @@ export function normalizeSparsePaths(paths = []) {
       || isAbsolute(path) || !/^[A-Za-z0-9._/-]+$/u.test(path)) throw new TypeError('sparse checkout path must be a safe relative literal');
     const parts = path.split('/');
     if (parts.length > SPARSE_MAX_DEPTH || parts.some((part) => part === '' || part === '.' || part === '..')
-      || ['.git', '.baton'].includes(parts[0].toLocaleLowerCase('en-US'))) throw new TypeError('sparse checkout path escapes repository');
+      || ['.git', '.baton'].includes(foldCanonicalCase(parts[0]))) throw new TypeError('sparse checkout path escapes repository');
     return path;
   }).sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
   if (totalBytes > SPARSE_MAX_TOTAL_PATH_BYTES) throw new TypeError('sparse checkout paths exceed the aggregate byte ceiling');
   for (let index = 0; index < normalized.length; index += 1) {
-    const left = normalized[index].toLocaleLowerCase('en-US');
+    const left = foldCanonicalCase(normalized[index]);
     for (let other = index + 1; other < normalized.length; other += 1) {
-      const right = normalized[other].toLocaleLowerCase('en-US');
+      const right = foldCanonicalCase(normalized[other]);
       if (left === right || right.startsWith(`${left}/`) || left.startsWith(`${right}/`)) {
         throw new TypeError('sparse checkout paths must be unique and non-overlapping');
       }

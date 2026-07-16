@@ -16,6 +16,7 @@ import { normalizeProviderGovernancePolicy, providerGovernanceRoute, validatePro
 import { normalizePhysicalOwnerId, normalizeSparseCheckoutIdentity, normalizeSparsePaths, sparseCheckoutIdentity } from './worktree.mjs';
 import { GoalPlanValidationError, goalPlanDigest, normalizeGoalPlanContext, planBriefMatches } from './goal-plan.mjs';
 import { addUsd, subtractUsdFloor, usdFromNanos, usdToNanos } from './usd.mjs';
+import { materializeResultTree } from './result-export.mjs';
 
 const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
 const WORKTREE_FAILURE = Symbol('worktree-failure');
@@ -155,7 +156,8 @@ function canonicalActionPath(path) {
 const TERMINAL_TASK_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 const COORDINATION_MUTATORS = new Set([
   'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent',
-  'createAndClaimRecoveryRefinement', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch',
+  'createAndClaimRecoveryRefinement', 'createAndClaimPlanRecoveryRefinement', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch',
+  'admitRunResultExport', 'completeRunResultExport',
   'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
   'readScratch', 'expireScratchClaim', 'expireScratchFact', 'addKnowledgeNode', 'promoteKnowledgeNode',
   'addKnowledgeEdge', 'readKnowledge', 'invalidateKnowledge', 'recordContamination', 'recordReuseDecision',
@@ -226,6 +228,10 @@ function providerProcessingFailureCode(error) {
   if (['provider_index_changed', 'reuse_policy_reconciliation_required', 'reuse_evidence_diverged'].includes(error?.code)) return error.code;
   if (typeof error?.code === 'string' && error.code.startsWith('capability_')) return 'capability_refused';
   return 'provider_processing_failed';
+}
+function typedTerminalCode(value, fallback) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 256
+    && /^[a-z0-9][a-z0-9._-]*$/i.test(value) ? value : fallback;
 }
 function throwIfProviderCancelled(signal) {
   if (signal?.aborted) throw Object.assign(new Error('provider processing cancelled'), { code: 'cancelled' });
@@ -482,6 +488,8 @@ export class Coordinator {
     this._drainHistoricalReconcilePromise = null;
     this._authorityOps = 0;
     this._authorityTokens = new Set();
+    this._derivedReviewPlanToken = Object.freeze({});
+    this._planRecoveryAuthority = Object.freeze({});
     // Keep coordinator-local health/attribution wrappers on a facade. Reusing one Log across a
     // restart must not stack controller closures on the shared writer and let the prior
     // controller overwrite the fresh controller's task/run attribution.
@@ -598,7 +606,7 @@ export class Coordinator {
         || canonicalDigest(opts.coordination.goalPlanPolicy()) !== canonicalDigest(authority.policy)) {
         throw new TypeError('Goal/Plan authority requires exact deployment policy and authorizer');
       }
-      for (const method of ['defineGoal', 'proposePlan', 'approvePlan', 'goalPlanStatus', 'previewPlanDispatch', 'createPlanGatedTask', 'reconcilePlanGatedTask']) {
+      for (const method of ['defineGoal', 'proposePlan', 'approvePlan', 'goalPlanStatus', 'previewPlanDispatch', 'createPlanGatedTask', 'reconcilePlanGatedTask', 'createAndClaimPlanRecoveryRefinement']) {
         if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
       }
       this._goalPlanAuthority = Object.freeze({ policy: Object.freeze({ ...authority.policy }), authorize: authority.authorize });
@@ -1084,6 +1092,101 @@ export class Coordinator {
   _drainFailure(error) {
     if (['coordinator_closed', 'coordinator_drain_capacity', 'coordinator_drain_invalid', 'coordinator_drain_unavailable'].includes(error?.code)) return error;
     return Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+  }
+
+  /** Stop and reap one durable Run target set without fencing or closing unrelated Runs. The
+   * coordination store admits the Run stop before this method is called, so late dispatch/claim
+   * cannot enter the target set while physical ownership converges here. */
+  async stopRunTargets(targetWorkerIds, actor = 'orchestrator') {
+    if (!Array.isArray(targetWorkerIds) || targetWorkerIds.length > this._drainPolicy.maxWorkers
+      || targetWorkerIds.some((id) => typeof id !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(id))
+      || new Set(targetWorkerIds).size !== targetWorkerIds.length
+      || JSON.stringify([...targetWorkerIds].sort()) !== JSON.stringify(targetWorkerIds)
+      || typeof actor !== 'string' || actor.length === 0 || actor.length > 256) {
+      throw Object.assign(new TypeError('Run stop target authority is invalid'), { code: 'coordinator_run_stop_invalid' });
+    }
+    if (this._closed || this._drainState !== 'open') {
+      throw Object.assign(new Error('coordinator authority is not open'), { code: 'coordinator_closed' });
+    }
+    await Promise.all(this._startupCleanupPromises);
+    if (this._startupCleanupError) throw Object.assign(new Error('Run stop startup reconciliation is incomplete'), { code: 'coordinator_run_stop_incomplete' });
+    const deadline = Date.now() + this._drainPolicy.timeoutMs;
+    const dispositions = new Map();
+
+    const cancelTask = async (handle, task, kind) => {
+      const cancelled = this._log.append({
+        worker: handle.id, harness: handle.vendor ? this._harnessOf(handle.vendor) : '', turnEpoch: this._safeTurnEpoch(handle),
+        kind, actor, ...this._routeAttribution(handle, task), payload: {},
+      });
+      const evidence = this._coordMapEvent(cancelled);
+      if (task && !TERMINAL_TASK_STATUSES.has(task.status)) {
+        this._coordTransition(task, 'cancelled', `task.cancelled:${task.id}:${cancelled.seq}`, evidence);
+        task.status = 'cancelled';
+      }
+      handle.status = 'dead';
+      const runtimeRemoved = this._removeRuntimeScope(handle);
+      await this._removeOwnedTaskWorktree(handle, task);
+      if (!runtimeRemoved) throw Object.assign(new Error('Run stop runtime cleanup failed'), { code: 'coordinator_run_stop_incomplete' });
+      if (!handle.processRef || handle.processRef.state === 'closed') handle.localAuthority = false;
+    };
+
+    const attempt = async (workerId) => {
+      if (dispositions.has(workerId)) return;
+      const handle = this._workers.get(workerId);
+      if (!handle) {
+        const durable = this._coordination.snapshot().tasks.find((task) => (task.reservedWorkerId ?? task.assignee) === workerId);
+        if (!durable || TERMINAL_TASK_STATUSES.has(durable.status)) dispositions.set(workerId, 'alreadyTerminal');
+        return;
+      }
+      const task = this._tasks.get(handle.taskId);
+      for (const requestId of [handle.pendingApprovalId, handle.pendingQuestionId].filter(Boolean)) {
+        try { await this._resolveRecord(requestId, { decision: 'cancel' }, actor); } catch { /* kill retries the same authority */ }
+      }
+      if (task?.status === 'pending' || handle.status === 'pending') {
+        await cancelTask(handle, task, 'control.run_stop_cancelled');
+        dispositions.set(workerId, 'pendingCancelled');
+        return;
+      }
+      if (!this._ownsLocalResources(handle) && (!handle.processRef || handle.processRef.state === 'closed')) {
+        if (task && !TERMINAL_TASK_STATUSES.has(task.status)) await cancelTask(handle, task, 'control.run_stop_cancelled');
+        dispositions.set(workerId, 'alreadyTerminal');
+        return;
+      }
+      try {
+        const result = await this.kill(workerId, actor);
+        if (result?.ok && result.result === 'confirmed') dispositions.set(workerId, 'killConfirmed');
+        else if (result?.ok && ['already_dead', 'already_stopped'].includes(result.result)
+          && !this._ownsLocalResources(handle) && (!handle.processRef || handle.processRef.state === 'closed')) {
+          dispositions.set(workerId, 'alreadyTerminal');
+        }
+      } catch { /* bounded convergence below retries exact physical state */ }
+    };
+
+    while (Date.now() <= deadline) {
+      await Promise.all(targetWorkerIds.map(attempt));
+      const targets = targetWorkerIds.map((id) => this._workers.get(id)).filter(Boolean);
+      const resourcesReleased = targets.every((handle) => !this._ownsLocalResources(handle)
+        && (!handle.processRef || handle.processRef.state === 'closed'));
+      const interactionsResolved = targets.every((handle) => !handle.pendingApprovalId && !handle.pendingQuestionId);
+      if (dispositions.size === targetWorkerIds.length && resourcesReleased && interactionsResolved) {
+        const processesObserved = targets.filter((handle) => handle.processRef !== null).length;
+        const processesClosed = targets.filter((handle) => handle.processRef?.state === 'closed').length;
+        if (processesObserved !== processesClosed) break;
+        return Object.freeze({
+          targetCount: targetWorkerIds.length,
+          counts: Object.freeze({
+            pendingCancelled: [...dispositions.values()].filter((value) => value === 'pendingCancelled').length,
+            killConfirmed: [...dispositions.values()].filter((value) => value === 'killConfirmed').length,
+            alreadyTerminal: [...dispositions.values()].filter((value) => value === 'alreadyTerminal').length,
+            processesObserved,
+            processesClosed,
+          }),
+          checks: Object.freeze({ interactionsResolved: true, runAuthorityReleased: true }),
+        });
+      }
+      await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - Date.now())));
+    }
+    throw Object.assign(new Error('Run stop did not converge before its deadline'), { code: 'coordinator_run_stop_incomplete' });
   }
 
   _ownsLocalResources(handle) {
@@ -1874,7 +1977,9 @@ export class Coordinator {
     }
 
     const planMandatory = this._goalPlanAuthority?.policy?.mandatory === true;
-    if (planMandatory && !opts.goalPlan) throw Object.assign(new Error('an approved goal/plan node is required'), { code: 'goal_plan_required' });
+    const derivedReviewAuthorized = opts.derivedReviewPlanToken === this._derivedReviewPlanToken
+      && opts.review?.parentTaskId && opts.taskType === 'review';
+    if (planMandatory && !opts.goalPlan && !derivedReviewAuthorized) throw Object.assign(new Error('an approved goal/plan node is required'), { code: 'goal_plan_required' });
     if (opts.goalPlan && !this._goalPlanAuthority) throw Object.assign(new Error('goal/plan authority is not configured'), { code: 'goal_plan_unavailable' });
     if (opts.goalPlan && vendor === 'auto') throw Object.assign(new Error('plan-gated dispatch requires an exact harness'), { code: 'plan_route_mismatch' });
     let planAuth = null; let planState = null;
@@ -2003,6 +2108,7 @@ export class Coordinator {
       budgetUsed: { tokens: 0, usd: 0 },
       budgetThresholdsFired: new Set(),
       budgetHardExceeded: false,
+      terminalCause: null,
       usageCumulative: new Map(),
       budgetStopTimer: null,
       turnTerminalObserved: false,
@@ -2075,6 +2181,7 @@ export class Coordinator {
         status: durable.status === 'pending' ? 'pending' : (TERMINAL_TASK_STATUSES.has(durable.status) ? 'idle' : 'orphaned'), pendingApprovalId: null,
         pendingQuestionId: null, budgetUsed: { tokens: 0, usd: 0 }, budgetThresholdsFired: new Set(),
         budgetHardExceeded: false,
+        terminalCause: null,
         usageCumulative: new Map(), budgetStopTimer: null, turnTerminalObserved: false,
         providerGovernance: null, providerPolicyDigest: null, providerTurn: null, providerPolicyHardExceeded: false,
         providerTelemetryFailed: false, providerTerminalSeal: null,
@@ -2116,6 +2223,27 @@ export class Coordinator {
     const independent = parentHandle.vendor !== vendor && parentFamily !== reviewerFamily;
     const kind = opts.kind ?? 'oracle';
     if (!['oracle', 'review'].includes(kind)) throw new ReviewSelectionError(`unknown review kind "${kind}"`, 'invalid_review_kind');
+    let structured = null;
+    if (opts.structured !== undefined) {
+      const candidate = opts.structured;
+      const fields = ['maxReportBytes', 'purpose', 'reportPath', 'schemaVersion', 'target', 'targetDigest'];
+      const safePath = typeof candidate?.reportPath === 'string' && candidate.reportPath.length > 0
+        && Buffer.byteLength(candidate.reportPath) <= 4_096 && !candidate.reportPath.includes('\0')
+        && !candidate.reportPath.includes('\\') && !candidate.reportPath.startsWith('/')
+        && !candidate.reportPath.split('/').some((part) => part.length === 0 || part === '.' || part === '..');
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)
+        || Object.keys(candidate).sort().join(',') !== fields.sort().join(',')
+        || candidate.schemaVersion !== 1 || candidate.purpose !== 'run_semantic_review'
+        || !safePath || !candidate.target || typeof candidate.target !== 'object' || Array.isArray(candidate.target)
+        || !/^[a-f0-9]{64}$/u.test(candidate.targetDigest ?? '')
+        || candidate.targetDigest !== canonicalDigest(candidate.target)
+        || !Number.isSafeInteger(candidate.maxReportBytes) || candidate.maxReportBytes <= 0
+        || candidate.maxReportBytes > 16 * 1024 * 1024
+        || Buffer.byteLength(JSON.stringify(candidate.target)) > 128 * 1024) {
+        throw new ReviewSelectionError('structured review contract is invalid', 'structured_review_invalid');
+      }
+      structured = Object.freeze(JSON.parse(JSON.stringify(candidate)));
+    }
     const review = Object.freeze({
       kind,
       parentTaskId: parent.id,
@@ -2127,6 +2255,7 @@ export class Coordinator {
       independent,
       baseSha: parent.sessionContext?.baseSha ?? null,
       resultSha: parent.capturedSha,
+      ...(structured ? { structured } : {}),
     });
     const reviewBrief = {
       goal: opts.goal ?? `Independently ${kind === 'oracle' ? 'test' : 'review'} captured result ${parent.capturedSha} against its immutable specification`,
@@ -2138,6 +2267,7 @@ export class Coordinator {
       definitionOfDone: opts.definitionOfDone ?? `Independent ${kind} verification is re-run by Baton`,
       verification: opts.verification,
       budget: opts.budget ?? parent.brief.budget,
+      outputFormat: opts.outputFormat ?? '',
       reviewTarget: {
         spec: parent.brief,
         parentTaskId: parent.id,
@@ -2145,6 +2275,7 @@ export class Coordinator {
         resultSha: review.resultSha,
         diffRange: review.baseSha ? `${review.baseSha}..${review.resultSha}` : null,
       },
+      ...(structured ? { semanticReviewTarget: { ...structured.target, targetDigest: structured.targetDigest } } : {}),
     };
     const child = await this.spawn(vendor, reviewBrief, {
       taskId: opts.taskId,
@@ -2155,6 +2286,7 @@ export class Coordinator {
       refines: parent.id,
       runId: parent.runId ?? null,
       review,
+      derivedReviewPlanToken: this._derivedReviewPlanToken,
     });
     this._log.append({
       worker: workerId, harness: this._harnessOf(parentHandle.vendor), turnEpoch: this._safeTurnEpoch(parentHandle),
@@ -2165,6 +2297,99 @@ export class Coordinator {
       },
     });
     return child;
+  }
+
+  /** Inspect one accepted structured review report from immutable Git objects. This is a read
+   * authority only: it does not parse semantics, mutate the checkout, or bless reviewer prose. */
+  inspectStructuredReview(workerId, expectedTargetDigest) {
+    this._assertReadable();
+    if (!/^[a-f0-9]{64}$/u.test(expectedTargetDigest ?? '')) {
+      throw new ReviewSelectionError('structured review target is invalid', 'structured_review_invalid');
+    }
+    const handle = this._getWorker(workerId);
+    const task = this._tasks.get(handle.taskId);
+    const structured = task?.review?.structured;
+    if (!task || task.taskType !== 'review' || task.status !== 'completed' || !task.capturedSha
+      || !structured || structured.purpose !== 'run_semantic_review'
+      || structured.targetDigest !== expectedTargetDigest || task.review.independent !== true) {
+      throw new ReviewSelectionError('accepted independent structured review is unavailable', 'structured_review_unavailable');
+    }
+    const parentHandle = this._workers.get(task.review.parentWorkerId);
+    const parent = parentHandle ? this._tasks.get(parentHandle.taskId) : null;
+    if (!parent || parent.id !== task.review.parentTaskId || parent.capturedSha !== task.review.resultSha
+      || structured.target?.resultSha !== parent.capturedSha) {
+      throw new ReviewSelectionError('structured review parent binding diverged', 'structured_review_target_mismatch');
+    }
+    if (!this._worktrees || typeof this._worktrees.readCommitFile !== 'function'
+      || typeof this._worktrees.changedPathsAtCommit !== 'function') {
+      throw new ReviewSelectionError('structured review object inspection is unavailable', 'structured_review_unavailable');
+    }
+    const baseSha = task.sessionContext?.baseSha;
+    if (!/^[a-f0-9]{40}$/u.test(baseSha ?? '')) {
+      throw new ReviewSelectionError('structured review base is unavailable', 'structured_review_unavailable');
+    }
+    const changedPaths = this._worktrees.changedPathsAtCommit(baseSha, task.capturedSha, 2);
+    if (changedPaths.length !== 1 || changedPaths[0] !== structured.reportPath) {
+      throw new ReviewSelectionError('structured reviewer changed files outside its report contract', 'structured_review_scope_violation');
+    }
+    const report = this._worktrees.readCommitFile(task.capturedSha, structured.reportPath, structured.maxReportBytes);
+    return Object.freeze({
+      schemaVersion: 1,
+      workerId: handle.id,
+      taskId: task.id,
+      parentWorkerId: task.review.parentWorkerId,
+      parentTaskId: task.review.parentTaskId,
+      resultSha: task.review.resultSha,
+      reportSha: task.capturedSha,
+      reportPath: structured.reportPath,
+      targetDigest: structured.targetDigest,
+      independent: true,
+      implementer: Object.freeze({ harness: parentHandle.vendor, family: task.review.implementerFamily }),
+      reviewer: Object.freeze({
+        harness: handle.vendor,
+        family: task.review.reviewerFamily,
+        modelRequested: handle.modelRequested,
+        modelResolved: handle.modelResolved,
+        modelObserved: handle.modelObserved,
+        effortRequested: handle.effortRequested,
+        effortResolved: handle.effortResolved,
+        effortObserved: handle.effortObserved,
+      }),
+      report,
+    });
+  }
+
+  /** Read one bounded regular UTF-8 file from an accepted captured result by exact SHA. */
+  inspectCapturedFile(workerId, expectedSha, path, maxBytes = 4 * 1024 * 1024) {
+    this._assertReadable();
+    const handle = this._getWorker(workerId);
+    const task = this._tasks.get(handle.taskId);
+    if (!task || task.status !== 'completed' || task.capturedSha !== expectedSha) {
+      throw new ReviewSelectionError('captured source target is unavailable', 'structured_review_target_mismatch');
+    }
+    if (!this._worktrees || typeof this._worktrees.readCommitFile !== 'function') {
+      throw new ReviewSelectionError('captured source inspection is unavailable', 'structured_review_unavailable');
+    }
+    return this._worktrees.readCommitFile(expectedSha, path, maxBytes);
+  }
+
+  /** Project the exact bounded changed-path set for one accepted captured result. */
+  inspectCapturedChanges(workerId, expectedSha, maxPaths = 1_024) {
+    this._assertReadable();
+    if (!Number.isSafeInteger(maxPaths) || maxPaths <= 0 || maxPaths > 16_384) {
+      throw new ReviewSelectionError('captured change ceiling is invalid', 'structured_review_invalid');
+    }
+    const handle = this._getWorker(workerId);
+    const task = this._tasks.get(handle.taskId);
+    const baseSha = task?.sessionContext?.baseSha;
+    if (!task || task.status !== 'completed' || task.capturedSha !== expectedSha
+      || !/^[a-f0-9]{40}$/u.test(baseSha ?? '')) {
+      throw new ReviewSelectionError('captured change target is unavailable', 'structured_review_target_mismatch');
+    }
+    if (!this._worktrees || typeof this._worktrees.changedPathsAtCommit !== 'function') {
+      throw new ReviewSelectionError('captured change inspection is unavailable', 'structured_review_unavailable');
+    }
+    return Object.freeze([...this._worktrees.changedPathsAtCommit(baseSha, expectedSha, maxPaths)]);
   }
 
   /** Spawn a separately-routed oracle over one immutable derived Scratch assertion. The caller
@@ -2283,20 +2508,137 @@ export class Coordinator {
     return tracked;
   }
 
+  recoverPlanBound(workerId, rawRequest) {
+    const fields = [
+      'actor', 'attempt', 'gate', 'profileDigest', 'recoveryPolicyDigest', 'runId', 'timeoutMs',
+    ];
+    const receivedFields = rawRequest && typeof rawRequest === 'object' && !Array.isArray(rawRequest)
+      ? Object.keys(rawRequest).filter((field) => field !== 'schemaVersion').sort()
+      : [];
+    if (!rawRequest || typeof rawRequest !== 'object' || Array.isArray(rawRequest)
+      || receivedFields.join(',') !== fields.sort().join(',')
+      || (rawRequest.schemaVersion !== undefined && rawRequest.schemaVersion !== 1)
+      || typeof rawRequest.actor !== 'string' || rawRequest.actor.length === 0
+      || Buffer.byteLength(rawRequest.actor) > 256 || rawRequest.actor.includes('\0')
+      || typeof rawRequest.runId !== 'string' || rawRequest.runId.length === 0
+      || !Number.isSafeInteger(rawRequest.attempt) || rawRequest.attempt <= 0
+      || !Number.isSafeInteger(rawRequest.timeoutMs) || rawRequest.timeoutMs <= 0
+      || !/^[a-f0-9]{64}$/u.test(rawRequest.profileDigest ?? '')
+      || !/^[a-f0-9]{64}$/u.test(rawRequest.recoveryPolicyDigest ?? '')
+      || !rawRequest.gate || typeof rawRequest.gate !== 'object' || Array.isArray(rawRequest.gate)) {
+      throw Object.assign(new TypeError('Plan recovery request is invalid'), { code: 'plan_recovery_invalid' });
+    }
+    const request = Object.freeze({
+      actor: rawRequest.actor,
+      attempt: rawRequest.attempt,
+      gate: Object.freeze(JSON.parse(JSON.stringify(rawRequest.gate))),
+      profileDigest: rawRequest.profileDigest,
+      recoveryPolicyDigest: rawRequest.recoveryPolicyDigest,
+      runId: rawRequest.runId,
+      timeoutMs: rawRequest.timeoutMs,
+    });
+    const handle = this._workers.get(workerId);
+    const task = handle ? this._tasks.get(handle.taskId) : null;
+    const identity = canonicalDigest({
+      workerId,
+      taskId: task?.id ?? null,
+      vendor: handle?.vendor ?? null,
+      sessionRef: handle?.sessionRef ?? null,
+      context: handle?.sessionContext ?? null,
+      model: handle?.modelResolved ?? null,
+      effort: handle?.effortResolved ?? null,
+      request,
+    });
+    const existing = this._recoveryAttempts.get(workerId);
+    if (existing) {
+      if (existing.identity === identity) return existing.promise;
+      return Promise.resolve({ ok: false, result: 'recovery_conflict' });
+    }
+    const operation = this._withAuthorityOp(async () => {
+      const current = this._workers.get(workerId);
+      if (current) current.recoveryPending = true;
+      try {
+        const outcome = await this._recover(workerId, {
+          actor: request.actor,
+          timeoutMs: request.timeoutMs,
+          planRecovery: { authority: this._planRecoveryAuthority, request },
+        });
+        if (outcome?.ok !== true) return outcome;
+        const recovered = this._workers.get(workerId);
+        const dispatch = this._coordination.recoveryDispatchState?.(workerId) ?? null;
+        return {
+          ...outcome,
+          workerId,
+          taskId: recovered?.taskId ?? outcome.handle?.taskId ?? null,
+          attempt: request.attempt,
+          dispatchDisposition: dispatch?.status ?? null,
+          processGeneration: recovered?.processGeneration ?? null,
+          route: {
+            requested: {
+              harness: recovered?.vendor ?? null,
+              model: recovered?.modelRequested ?? null,
+              effort: recovered?.effortRequested ?? null,
+            },
+            resolved: {
+              harness: recovered?.vendor ? this._harnessOf(recovered.vendor) : null,
+              model: recovered?.modelResolved ?? null,
+              effort: recovered?.effortResolved ?? null,
+            },
+            observed: {
+              harness: recovered?.vendor ? this._harnessOf(recovered.vendor) : null,
+              model: recovered?.modelObserved ?? null,
+              effort: recovered?.effortObserved ?? null,
+            },
+          },
+          cleanup: { state: recovered?.localAuthority === true ? 'owned' : 'unavailable' },
+        };
+      } finally {
+        if (current) current.recoveryPending = false;
+      }
+    });
+    let tracked;
+    tracked = operation.finally(() => {
+      if (this._recoveryAttempts.get(workerId)?.promise === tracked) this._recoveryAttempts.delete(workerId);
+    });
+    this._recoveryAttempts.set(workerId, { identity, promise: tracked });
+    return tracked;
+  }
+
   async _recover(workerId, opts = {}) {
     const startup = opts.startupAuthority === this._startupRecoveryAuthority && this._startupRecoveryState === 'pending';
     if (!startup) this.tick();
     else { if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' }); if (this._fatalError) throw this._fatalError; }
     const handle = this._getWorker(workerId);
     const task = this._tasks.get(handle.taskId);
+    const planRecovery = opts.planRecovery?.authority === this._planRecoveryAuthority
+      ? opts.planRecovery.request : null;
     const priorDispatchRefusal = this._recoveryDispatchRefusal(handle, task);
     if (priorDispatchRefusal !== null) return { ok: false, result: priorDispatchRefusal };
     if (handle.status !== 'orphaned') return { ok: false, result: 'worker_not_orphaned' };
     if (!task || !handle.sessionRef || handle.sessionRef.persistence !== 'native') {
       return { ok: false, result: 'session_not_resumable' };
     }
-    if (task.brief?.goalPlan) {
+    if (task.brief?.goalPlan && !planRecovery) {
       return { ok: false, result: 'goal_plan_continuation_not_authorized' };
+    }
+    let planRecoveryState = null;
+    if (planRecovery) {
+      if (!task.brief?.goalPlan || task.runId !== planRecovery.runId || handle.runId !== planRecovery.runId) {
+        return { ok: false, result: 'plan_recovery_lineage_mismatch' };
+      }
+      const route = {
+        vendor: handle.vendor,
+        model: handle.modelResolved ?? null,
+        effort: handle.effortResolved ?? null,
+      };
+      const preview = this._coordination.previewPlanDispatch(planRecovery.gate, route);
+      if (preview.goal.runId !== planRecovery.runId
+        || !preview.node.capabilities.includes('native_session_recovery')
+        || !preview.node.effects.includes('provider_call')
+        || !preview.resolvedDeps.includes(task.id)) {
+        return { ok: false, result: 'plan_recovery_not_authorized' };
+      }
+      planRecoveryState = { request: planRecovery, preview, route };
     }
     if (task.runId && this._coordination.run?.(task.runId)?.status === 'sealed') throw Object.assign(new Error(`run ${task.runId} is sealed`), { name: 'CoordinationRefusal', code: 'run_sealed' });
     const adapter = this._adapters[handle.vendor];
@@ -2355,7 +2697,8 @@ export class Coordinator {
     const recoverySpawnAbort = new AbortController();
     handle.recoverySpawnAbort = recoverySpawnAbort;
     handle.recoverySpawnPending = true;
-    const attempt = Promise.resolve().then(() => adapter.spawn(workerId, task.brief, {
+    const attachBrief = planRecoveryState?.preview.brief ?? task.brief;
+    const attempt = Promise.resolve().then(() => adapter.spawn(workerId, attachBrief, {
       worktree: context.worktree,
       timeoutMs: task.brief?.budget?.wallMin ? task.brief.budget.wallMin * 60000 : undefined,
       model: handle.modelResolved ?? undefined,
@@ -2435,7 +2778,9 @@ export class Coordinator {
       // first-turn request. No provider prompt has crossed the attach-only boundary yet.
       handle.sessionRequest = session;
       handle.sessionContext = context;
-      activeTask = this._createCoordinationRecoveryRefinement(handle, task);
+      activeTask = planRecoveryState
+        ? this._createCoordinationPlanRecoveryRefinement(handle, task, planRecoveryState)
+        : this._createCoordinationRecoveryRefinement(handle, task);
     } catch (err) {
       if (handle.turnAdmission === admission) handle.turnAdmission = null;
       this._log.append({
@@ -2465,12 +2810,13 @@ export class Coordinator {
     }
 
     const adapterCardDigest = canonicalDigest(adapter.card());
+    const durableActiveTask = this._coordination.task(activeTask.id);
     const route = {
-      harness: handle.vendor,
-      model: handle.modelResolved ?? null,
-      effort: handle.effortResolved ?? null,
-      serviceTier: handle.modelPolicy?.serviceTier ?? null,
-      routeKey: handle.routeKey ?? null,
+      harness: durableActiveTask?.harnessResolved ?? handle.vendor,
+      model: durableActiveTask?.modelResolved ?? handle.modelResolved ?? null,
+      effort: durableActiveTask?.effortResolved ?? handle.effortResolved ?? null,
+      serviceTier: durableActiveTask?.modelPolicy?.serviceTier ?? handle.modelPolicy?.serviceTier ?? null,
+      routeKey: durableActiveTask?.routeKey ?? handle.routeKey ?? null,
       adapterCardDigest,
     };
     const continuation = {
@@ -2480,7 +2826,7 @@ export class Coordinator {
       workerId,
       sessionId: expectedId,
       processGeneration: handle.processGeneration,
-      briefDigest: canonicalDigest(task.brief),
+      briefDigest: canonicalDigest(activeTask.brief),
       contextDigest: canonicalDigest(context),
       routeDigest: canonicalDigest(route),
       adapterCardDigest,
@@ -2513,8 +2859,8 @@ export class Coordinator {
     let dispatchError = null;
     let dispatchTimer;
     const promptAttempt = Promise.resolve().then(() => (typeof adapter.promptBrief === 'function'
-      ? adapter.promptBrief(workerId, task.brief)
-      : adapter.prompt(workerId, task.brief, 'turn'))).then(
+      ? adapter.promptBrief(workerId, activeTask.brief)
+      : adapter.prompt(workerId, activeTask.brief, 'turn'))).then(
       (ack) => ({ ack }),
       (error) => ({ error }),
     );
@@ -2733,7 +3079,8 @@ export class Coordinator {
       task.retainedResultRef = await this._worktrees.retainResult(task.capturedSha);
     }
 
-    if (handle.status === 'idle') {
+    const alreadyReaped = handle.processRef === null && handle.runtimeScope?.active !== true;
+    if (handle.status === 'idle' && !alreadyReaped) {
       const stopped = await this.kill(workerId, opts.actor ?? 'orchestrator');
       if (!['confirmed', 'already_dead', 'already_stopped'].includes(stopped.result)) {
         throw new IntegrationError('worker could not be safely stopped before integration', 'worker_stop_failed');
@@ -2818,10 +3165,10 @@ export class Coordinator {
     }
     if (structuredVerifyPath) await this._worktrees.removeVerifyWorktree(structuredVerifyPath);
     if (structuredStage) await this._worktrees.removeStructuredIntegration(structuredStage);
-    if (task.retainedResultRef && typeof this._worktrees.releaseResult === 'function') {
-      try { await this._worktrees.releaseResult(task.retainedResultRef); } catch { /* merged HEAD now retains the result */ }
-      task.retainedResultRef = null;
-    }
+    // Integration does not end accepted-result ownership. The result pin is shared by SHA and is
+    // also the immutable source for evidence-bound export; releasing it here can break another Run
+    // that accepted the same commit and makes integration-required delivery impossible. A later
+    // durable retention/GC authority may release pins only after every owning Run/export is closed.
     const integration = Object.freeze({ ...integrated, strategy, actor: opts.actor ?? 'orchestrator' });
     const integrationEvent = this._log.append({
       worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
@@ -2849,6 +3196,89 @@ export class Coordinator {
     }
     task.integration = integration;
     return { ok: true, result: 'integrated', integration };
+  }
+
+  /** Preserve an accepted result under Baton's protected result-ref namespace without merging it. */
+  preserveResult(workerId, expectedSha) {
+    return this._withAuthorityOp(() => this._preserveResult(workerId, expectedSha));
+  }
+
+  async _preserveResult(workerId, expectedSha) {
+    this.tick();
+    const handle = this._getWorker(workerId);
+    const task = this._tasks.get(handle.taskId);
+    if (!task || task.status !== 'completed' || !task.capturedSha) {
+      throw new IntegrationError('result preservation requires an accepted captured task result', 'result_not_accepted');
+    }
+    if (expectedSha !== task.capturedSha) {
+      throw new IntegrationError('result preservation SHA differs from the accepted result', 'result_sha_mismatch');
+    }
+    return this._pinAcceptedResult(task, expectedSha);
+  }
+
+  async _pinAcceptedResult(task, expectedSha) {
+    if (!this._worktrees || typeof this._worktrees.retainResult !== 'function'
+      || typeof this._worktrees.resolveResult !== 'function') {
+      throw new IntegrationError('worktree manager does not implement accepted-result preservation', 'result_retention_unavailable');
+    }
+    const ref = await this._worktrees.retainResult(expectedSha);
+    const resolved = await this._worktrees.resolveResult(ref);
+    if (resolved !== expectedSha) {
+      throw new IntegrationError('protected result ref does not resolve to the accepted commit', 'result_ref_mismatch');
+    }
+    task.retainedResultRef = ref;
+    return Object.freeze({ sha: expectedSha, ref, state: 'pinned' });
+  }
+
+  /** Reverify the physical protected ref for an accepted result without creating or changing it. */
+  async inspectPreservedResult(workerId, expectedSha) {
+    this._assertReadable();
+    const handle = this._getWorker(workerId);
+    const task = this._tasks.get(handle.taskId);
+    if (!task || task.status !== 'completed' || task.capturedSha !== expectedSha || !task.retainedResultRef) {
+      return Object.freeze({ sha: expectedSha, ref: task?.retainedResultRef ?? null, state: 'unavailable' });
+    }
+    if (!this._worktrees || typeof this._worktrees.resolveResult !== 'function') {
+      return Object.freeze({ sha: expectedSha, ref: task.retainedResultRef, state: 'unverifiable' });
+    }
+    const resolved = await this._worktrees.resolveResult(task.retainedResultRef);
+    return Object.freeze({
+      sha: expectedSha,
+      ref: task.retainedResultRef,
+      state: resolved === expectedSha ? 'pinned' : resolved === null ? 'missing' : 'mismatch',
+      resolved,
+    });
+  }
+
+  /** Materialize one exact accepted, still-protected Git result under deployment-owned authority. */
+  materializeAcceptedResult(workerId, expectedSha, request) {
+    return this._withAuthorityOp(() => this._materializeAcceptedResult(workerId, expectedSha, request));
+  }
+
+  async _materializeAcceptedResult(workerId, expectedSha, request) {
+    this.tick();
+    const handle = this._getWorker(workerId);
+    const task = this._tasks.get(handle.taskId);
+    if (!task || task.status !== 'completed' || task.acceptanceRevocation || task.capturedSha !== expectedSha
+      || !task.retainedResultRef) {
+      throw Object.assign(new Error('result export requires an active accepted protected result'), { code: 'result_export_source_unavailable' });
+    }
+    if (!this._repoRoot || !this._worktrees || typeof this._worktrees.resolveResult !== 'function') {
+      throw Object.assign(new Error('result export Git authority is unavailable'), { code: 'result_export_unavailable' });
+    }
+    const resolved = await this._worktrees.resolveResult(task.retainedResultRef);
+    if (resolved !== expectedSha) {
+      throw Object.assign(new Error('result export protected ref is missing or mismatched'), { code: 'result_export_source_unavailable' });
+    }
+    return materializeResultTree({
+      repoRoot: this._repoRoot,
+      exportRoot: request.exportRoot,
+      exportId: request.exportId,
+      stagingNonce: request.stagingNonce,
+      resultSha: expectedSha,
+      manifestCore: request.manifestCore,
+      policy: request.policy,
+    });
   }
 
   /** AC6: create an approval-gated exact-SHA publication request. No side effect occurs here. */
@@ -3295,8 +3725,14 @@ export class Coordinator {
       const check = this._fences.check(workerId, { fence: opts.expectedFence });
       if (!check.ok) return { ok: false, result: 'stale_fence', current: check.current };
     }
-    if (handle.status === 'dead' && (handle.localAuthority !== true
-      || (handle.processRef?.state === 'closed' && handle.cleanupPending !== true))) {
+    if (handle.status === 'dead' && (!handle.processRef || handle.processRef.state === 'closed')) {
+      if (!this._ownsLocalResources(handle) && handle.cleanupPending !== true) {
+        return { ok: true, result: 'already_dead' };
+      }
+      const runtimeRemoved = this._removeRuntimeScope(handle);
+      await this._removeOwnedTaskWorktree(handle, this._tasks.get(handle.taskId));
+      if (!runtimeRemoved) return { ok: false, result: 'cleanup_failed' };
+      handle.localAuthority = false;
       return { ok: true, result: 'already_dead' };
     }
     if (handle.status === 'orphaned' && !(handle.localAuthority === true
@@ -3667,6 +4103,85 @@ export class Coordinator {
     this._taskOrder.push(id);
     handle.taskId = id;
     handle.runId = next.runId ?? null;
+    return next;
+  }
+
+  _createCoordinationPlanRecoveryRefinement(handle, prior, state) {
+    const { request, preview, route } = state;
+    const id = `recovery:${canonicalDigest({
+      priorTaskId: prior.id,
+      workerId: handle.id,
+      sessionId: handle.sessionRequest?.id ?? handle.sessionRef?.id ?? null,
+      processGeneration: handle.processGeneration,
+      gate: request.gate,
+      profileDigest: request.profileDigest,
+      recoveryPolicyDigest: request.recoveryPolicyDigest,
+      attempt: request.attempt,
+    })}`;
+    const result = this._coordination.createAndClaimPlanRecoveryRefinement({
+      id,
+      brief: preview.brief,
+      deps: preview.resolvedDeps,
+      refines: prior.id,
+      taskType: prior.taskType ?? 'general',
+      runId: request.runId,
+      reservedWorkerId: handle.id,
+      vendorRequested: route.vendor,
+      modelRequested: route.model,
+      modelPolicy: handle.modelPolicy ?? null,
+      effortRequested: route.effort,
+      sessionRequest: handle.sessionRequest,
+      relation: 'recovery',
+    }, request.gate, route, {
+      harnessRequested: route.vendor,
+      harnessResolved: this._harnessOf(route.vendor),
+      modelRequested: route.model,
+      modelResolved: handle.modelResolved ?? null,
+      modelObserved: handle.modelObserved ?? null,
+      effortRequested: route.effort,
+      effortResolved: handle.effortResolved ?? null,
+      effortObserved: handle.effortObserved ?? null,
+      routeKey: handle.routeKey ?? null,
+    }, {
+      actor: request.actor,
+      principalId: 'baton-plan-recovery',
+      repoId: this._repoId,
+      runId: request.runId,
+      key: `plan.recovery:${canonicalDigest({
+        runId: request.runId,
+        gate: request.gate,
+        workerId: handle.id,
+        attempt: request.attempt,
+        profileDigest: request.profileDigest,
+        recoveryPolicyDigest: request.recoveryPolicyDigest,
+      })}`,
+    });
+    const next = {
+      ...prior,
+      id,
+      brief: preview.brief,
+      deps: [...preview.resolvedDeps],
+      refines: prior.id,
+      relation: 'recovery',
+      status: 'working',
+      result: null,
+      verdict: null,
+      capturedSha: null,
+      integration: null,
+      retainedResultRef: null,
+      publication: null,
+      review: null,
+      coordinationVersion: result.task.version,
+      vendorRequested: route.vendor,
+      modelRequested: route.model,
+      effortRequested: route.effort,
+      sessionRequest: handle.sessionRequest,
+      sessionContext: handle.sessionContext,
+    };
+    this._tasks.set(id, next);
+    this._taskOrder.push(id);
+    handle.taskId = id;
+    handle.runId = request.runId;
     return next;
   }
 
@@ -4132,6 +4647,15 @@ export class Coordinator {
           dimensions: { tokens: tokenRatio, usd: usdRatio },
         },
       });
+      if (hardStop) {
+        const dimension = tokenRatio >= usdRatio ? 'tokens' : 'usd';
+        handle.terminalCause ??= deepFreeze({
+          kind: 'budget_exceeded', code: 'budget_hard_limit_exceeded', dimension,
+          used: dimension === 'tokens' ? handle.budgetUsed.tokens : handle.budgetUsed.usd,
+          limit: dimension === 'tokens' ? tokenLimit : usdLimit,
+          ratio: dimension === 'tokens' ? tokenRatio : usdRatio,
+        });
+      }
     }
     if (hard) handle.budgetHardExceeded = true;
     if (hard) this._scheduleProviderStop(handle, 'kill');
@@ -4542,6 +5066,24 @@ export class Coordinator {
     return this._resolveRecord(requestId, answer, actor);
   }
 
+  /** Bounded ownership projection used by run-centric application answer routing. */
+  interactionStatus(requestId) {
+    this._assertReadable();
+    if (typeof requestId !== 'string' || requestId.length === 0 || Buffer.byteLength(requestId) > 4_096) return null;
+    const record = this._pending.get(requestId);
+    if (!record) return null;
+    const handle = this._workers.get(record.worker);
+    const task = handle ? this._tasks.get(handle.taskId) : null;
+    return Object.freeze({
+      requestId,
+      kind: record.kind,
+      state: record.state,
+      workerId: record.worker,
+      taskId: task?.id ?? null,
+      runId: task?.runId ?? null,
+    });
+  }
+
   async _resolveRecord(requestId, answer, actor) {
     const record = this._pending.get(requestId);
     if (!record) return { ok: false, result: 'not_found' };
@@ -4808,6 +5350,7 @@ export class Coordinator {
       effortObserved: handle.effortObserved ?? null,
       effortMismatch: handle.effortMismatch ?? null,
       routeKey: handle.routeKey ?? task?.routeKey ?? null,
+      checkpoint: task?.checkpoint ?? null,
       sessionRequest: handle.sessionRequest ?? { mode: 'new' },
       sessionRef: handle.sessionRef ?? null,
       sessionContext: handle.sessionContext ?? null,
@@ -4815,9 +5358,11 @@ export class Coordinator {
       review: task?.review ?? null,
       integration: task?.integration ?? null,
       publication: task?.publication ?? null,
+      capturedSha: task?.capturedSha ?? null,
       retainedResultRef: task?.retainedResultRef ?? null,
       providerGovernance,
       observationOnly: providerGovernance?.observationOnly === true,
+      terminalCause: handle.terminalCause ?? null,
     };
     if (handle.recoveryPending === true) return { ready: false, status: 'orphaned', ...attribution };
     if (!task) return { ready: false, status: handle.status, ...attribution };
@@ -4829,6 +5374,15 @@ export class Coordinator {
   capabilityCards() {
     this._assertReadable();
     return this._capabilities ? this._capabilities.cards() : [];
+  }
+
+  /** Deployment adapter inventory for application-owned exact route selectors. Cards contain
+   * capability metadata only; credential values and adapter/session objects are never exposed. */
+  routeCards() {
+    this._assertReadable();
+    return deepFreeze(Object.entries(this._adapters)
+      .map(([name, adapter]) => ({ name, card: JSON.parse(JSON.stringify(adapter.card())) }))
+      .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
   }
 
   /** Return deployment-pinned machine-ingress cards. This inventory is separate from ACI and
@@ -5610,6 +6164,9 @@ export class Coordinator {
           worker: workerId, harness, turnEpoch, kind, actor,
           payload: sealVerdict.seal ? { ...payload, usageSeal: sealVerdict.seal } : payload,
         });
+        handle.terminalCause ??= deepFreeze({
+          kind: 'provider_failure', code: typedTerminalCode(payload?.code, 'provider_crashed'),
+        });
         if (!sealVerdict.ok) this._failTerminalProviderGovernance(handle, terminalEvent, sealVerdict.code);
         if (sealVerdict.seal) {
           handle.providerTerminalSeal = sealVerdict.seal;
@@ -5807,7 +6364,7 @@ export class Coordinator {
         && (!workerToolchainProjection || !verifierToolchainProjection || canonicalDigest(workerToolchainProjection) !== canonicalDigest(verifierToolchainProjection))) throw Object.assign(new Error('verification toolchain projection mismatch'), { code: 'verification_environment_mismatch' });
 
       const baseSha = task.sessionContext?.baseSha ?? null;
-      if (this._acceptOpts.requireRedGreen && baseSha && typeof this._worktrees.createBaseVerifyWorktree === 'function') {
+      if (baseSha && typeof this._worktrees.createBaseVerifyWorktree === 'function') {
         const baseCreated = await this._worktrees.createBaseVerifyWorktree(task.id, baseSha);
         baseVerifyPath = baseCreated?.path ?? null;
         baseVerifierToolchainProjection = baseCreated?.toolchainProjection ?? null;
@@ -5835,6 +6392,23 @@ export class Coordinator {
         && handle.budgetHardExceeded !== true
         && handle.providerPolicyHardExceeded !== true
         && handle.providerTelemetryFailed !== true;
+      const inconclusive = verdict.outcome === 'inconclusive';
+      // An accepted commit must remain reachable independently of its disposable task branch.
+      // Standard Baton deployments provide this authority; legacy injected worktree fixtures may
+      // omit it and therefore remain unable to expose Run-level adoption.
+      let retainedResultRef = null;
+      let checkpoint = null;
+      if (accept && captured?.sha && typeof this._worktrees?.retainResult === 'function'
+        && typeof this._worktrees?.resolveResult === 'function') {
+        retainedResultRef = (await this._pinAcceptedResult(task, captured.sha)).ref;
+      }
+      if (inconclusive && captured?.sha && typeof this._worktrees?.retainCheckpoint === 'function'
+        && typeof this._worktrees?.resolveCheckpoint === 'function') {
+        const ref = await this._worktrees.retainCheckpoint(captured.sha);
+        const resolved = await this._worktrees.resolveCheckpoint(ref);
+        if (resolved !== captured.sha) throw Object.assign(new Error('candidate checkpoint postcheck failed'), { code: 'checkpoint_failed' });
+        checkpoint = Object.freeze({ state: 'pinned', sha: captured.sha, ref });
+      }
       const verifyEvent = this._log.append({
         worker: handle.id,
         harness,
@@ -5870,6 +6444,8 @@ export class Coordinator {
           },
           capture: {
             sha: captured && captured.sha, snapshotted: captured && captured.snapshotted,
+            retainedResultRef,
+            checkpoint,
             baseSha: task.sessionContext?.baseSha ?? null,
             vendor: handle.vendor ?? null, model: handle.modelObserved ?? handle.modelResolved ?? null,
             effort: handle.effortObserved ?? handle.effortResolved ?? null,
@@ -5888,7 +6464,10 @@ export class Coordinator {
       const manifests = [];
       if (captured?.sha) {
         manifests.push({
-          taskId: task.id, kind: 'commit', refs: { sha: captured.sha }, mediaType: 'application/vnd.git.commit',
+          taskId: task.id, kind: 'commit', refs: {
+            sha: captured.sha,
+            ...(retainedResultRef ? { retainedResultRef } : {}),
+          }, mediaType: 'application/vnd.git.commit',
           accepted: accept, provenance: [evidence],
         });
         if (task.review) {
@@ -5915,7 +6494,7 @@ export class Coordinator {
       }
       const terminalStatus = accept ? 'completed' : 'failed';
       const routeCard = this._adapters[handle.vendor]?.card(); const routeAttribution = this._routeAttribution(handle, task);
-      const routeObservation = this._routeLearningPolicy ? {
+      const routeObservation = this._routeLearningPolicy && !inconclusive ? {
         taskType: task.taskType ?? 'general', runId: task.runId ?? null,
         routeKey: task.routeKey ?? routeTupleKey(routeCard, handle.modelResolved, handle.effortResolved, task.taskType),
         modelFamily: routeCard?.modelSelection?.family ?? 'default',
@@ -5927,6 +6506,16 @@ export class Coordinator {
         verifiedWin: accept, verificationEvidence: evidence,
       } : null;
       trustPhase = 'terminal_batch';
+      // A Run-scoped stop can cancel this task while its already-admitted verifier is still
+      // running. The stop's terminal transition remains authoritative; a late verification may
+      // be retained as evidence, but it must neither reopen the task nor poison coordination as
+      // though the expected cancellation were an integrity failure.
+      const durableBeforeTerminal = this._coordination.task(task.id);
+      if (durableBeforeTerminal && TERMINAL_TASK_STATUSES.has(durableBeforeTerminal.status)) {
+        task.status = durableBeforeTerminal.status;
+        task.coordinationVersion = durableBeforeTerminal.version;
+        return;
+      }
       const terminal = this._coordination.transitionTaskWithArtifacts(
         task.id, terminalStatus, task.coordinationVersion,
         routeObservation ? { manifests, routeObservation } : manifests, { actor: 'policy', key: `task.${terminalStatus}:${task.id}:${verifyEvent.seq}` }, evidence,
@@ -5940,13 +6529,15 @@ export class Coordinator {
       this._coordination.promoteKnowledgeNode({
         id: `outcome:${task.id}:${verifyEvent.seq}`,
         taskId: task.id,
-        type: accept ? 'Finding' : 'Counterexample',
-        body: accept ? `Task ${task.id} passed its hub verification` : `Task ${task.id} failed its hub verification`,
-        grounding: 'verified', evidence: [{ coordinationSeq: evidence.coordinationSeq }, ...artifactEvidence],
-      }, { kind: accept ? 'Finding' : 'Counterexample', trigger: 'verified_task_outcome' }, { actor: 'policy', key: `knowledge.outcome:${task.id}:${verifyEvent.seq}` });
+        type: accept ? 'Finding' : inconclusive ? 'Question' : 'Counterexample',
+        body: accept ? `Task ${task.id} passed its hub verification` : inconclusive ? `Task ${task.id} needs another verification attempt` : `Task ${task.id} failed its hub verification`,
+        grounding: inconclusive ? 'observed' : 'verified', evidence: [{ coordinationSeq: evidence.coordinationSeq }, ...artifactEvidence],
+      }, { kind: accept ? 'Finding' : inconclusive ? 'Question' : 'Counterexample', trigger: 'verified_task_outcome' }, { actor: 'policy', key: `knowledge.outcome:${task.id}:${verifyEvent.seq}` });
       trustPhase = 'complete';
       task.status = accept ? 'completed' : 'failed';
       task.capturedSha = captured?.sha ?? null;
+      task.retainedResultRef = retainedResultRef;
+      task.checkpoint = checkpoint;
 
       if (task.review?.parentWorkerId) {
         const parentHandle = this._workers.get(task.review.parentWorkerId);
@@ -5971,7 +6562,7 @@ export class Coordinator {
         }
       }
 
-      if (!this._routeLearningPolicy && this._route && typeof this._route.record === 'function') {
+      if (!inconclusive && !this._routeLearningPolicy && this._route && typeof this._route.record === 'function') {
         const card = this._adapters[handle.vendor]?.card();
         try {
           this._route.record(task.routeKey ?? routeTupleKey(card, handle.modelResolved, handle.effortResolved, task.taskType), task.taskType ?? 'general', accept);
@@ -6077,11 +6668,13 @@ export class Coordinator {
       let capturedSha = null;
       let integration = null;
       let retainedResultRef = null;
+      let checkpoint = null;
       let publication = null;
       let review = null;
       let runId = null;
       const budgetUsed = { tokens: 0, usd: 0 };
       let budgetHardExceeded = false;
+      let terminalCause = null;
       const budgetThresholdsFired = new Set();
       const usageCumulative = new Map();
       let providerGovernance = null;
@@ -6327,7 +6920,17 @@ export class Coordinator {
           case 'resource.budget_threshold':
             if (e.actor !== 'policy') break;
             if (typeof e.payload?.threshold === 'number') budgetThresholdsFired.add(e.payload.threshold);
-            if (e.payload?.hardStop === true) budgetHardExceeded = true;
+            if (e.payload?.hardStop === true) {
+              budgetHardExceeded = true;
+              const dimensions = e.payload?.dimensions ?? {};
+              const dimension = Number(dimensions.tokens ?? 0) >= Number(dimensions.usd ?? 0) ? 'tokens' : 'usd';
+              terminalCause ??= deepFreeze({
+                kind: 'budget_exceeded', code: 'budget_hard_limit_exceeded', dimension,
+                used: Number(e.payload?.used?.[dimension] ?? 0),
+                limit: Number(e.payload?.limits?.[dimension] ?? 0),
+                ratio: Number(dimensions[dimension] ?? e.payload?.ratio ?? 0),
+              });
+            }
             break;
           case 'control.recovery_attached':
             terminalStatus = 'working';
@@ -6354,12 +6957,13 @@ export class Coordinator {
               verdict = e.payload?.verdict ?? null;
               terminalStatus = e.payload?.accept ? 'completed' : 'failed';
               capturedSha = e.payload?.capture?.sha ?? capturedSha;
+              retainedResultRef = e.payload?.capture?.retainedResultRef ?? retainedResultRef;
+              checkpoint = e.payload?.capture?.checkpoint ?? checkpoint;
             }
             break;
           case 'integration.completed':
             if (this._coordination?.integrationAuthority(taskId, e)) {
               integration = e.payload ?? integration;
-              retainedResultRef = null;
             }
             break;
           case 'integration.refused':
@@ -6376,6 +6980,9 @@ export class Coordinator {
             providerTerminalSeal = e.payload?.usageSeal ?? providerTerminalSeal;
             if (providerTurn && providerTerminalSeal) providerTurn.sealed = true;
             if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) terminalStatus = 'failed';
+            terminalCause ??= deepFreeze({
+              kind: 'provider_failure', code: typedTerminalCode(e.payload?.code, 'provider_crashed'),
+            });
             break;
           case 'control.forced_stop':
           case 'control.recovery_terminalized':
@@ -6498,6 +7105,7 @@ export class Coordinator {
           capturedSha,
           integration,
           retainedResultRef,
+          checkpoint,
           publication,
           review,
         };
@@ -6516,6 +7124,7 @@ export class Coordinator {
         task.capturedSha = capturedSha;
         task.integration = integration;
         task.retainedResultRef = retainedResultRef;
+        task.checkpoint = checkpoint;
         task.publication = publication;
         task.review = review;
         task.worktree = sessionContext?.worktree ?? task.worktree;
@@ -6552,6 +7161,7 @@ export class Coordinator {
         budgetUsed,
         budgetThresholdsFired,
         budgetHardExceeded,
+        terminalCause,
         usageCumulative,
         budgetStopTimer: null,
         turnTerminalObserved: false,

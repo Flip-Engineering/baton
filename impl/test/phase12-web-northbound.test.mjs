@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 
-import { CoordinationStore, MockAdapter, WebNorthbound, createAuthenticatedWebServer, createDriver } from '../src/index.mjs';
+import { APPLICATION_COMMAND_DEFINITIONS, CoordinationStore, MockAdapter, WebNorthbound, createAuthenticatedWebServer, createDriver } from '../src/index.mjs';
 
 const root = () => mkdtempSync(join(tmpdir(), 'baton-web-'));
 const envelope = (overrides = {}) => ({
@@ -28,12 +28,17 @@ const envelope = (overrides = {}) => ({
 const principal = (overrides = {}) => ({
   userId: 'user-1', sessionId: 'session-1', credentialId: 'cred-1', authMethod: 'cookie',
   csrfToken: 'csrf-1', expiresAt: '2099-01-01T00:00:00.000Z', revoked: false,
-  capabilities: ['observe', 'control', 'approve', 'emergency_stop'], repoIds: ['repo-a'],
+  capabilities: ['observe', 'control', 'approve', 'emergency_stop', 'adopt_result', 'review', 'integrate_result'], repoIds: ['repo-a'],
   ...overrides,
 });
 const context = (overrides = {}) => ({
   principal: principal(), origin: 'https://control.example.test', csrfToken: 'csrf-1',
   remoteAddress: '127.0.0.1', transport: 'https', ...overrides,
+});
+const runApplicationCard = () => ({
+  schemaVersion: 1,
+  repoId: 'repo-a',
+  commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS),
 });
 
 function fixture(overrides = {}) {
@@ -60,6 +65,7 @@ function fixture(overrides = {}) {
   const web = new WebNorthbound({
     coordinator, coordination, repoIds: ['repo-a'], allowedOrigins: ['https://control.example.test'],
     now: () => Date.parse('2026-07-11T12:00:00.000Z'),
+    application: overrides.application,
     ...(overrides.edgePolicy ? { edgePolicy: overrides.edgePolicy } : {}),
   });
   return { web, coordination, calls };
@@ -99,6 +105,240 @@ test('WN1/WN4: spawn forwards harness and exact model independently and derives 
   assert.equal(admitted.actor, 'web:user-1:session-1');
   assert.equal(admitted.payload.credentialId, 'cred-1');
   assert.equal(JSON.stringify(admitted).includes('csrf-1'), false);
+});
+
+test('UA5/WN: authenticated Run commands are thin mappings to one application command bus', async () => {
+  const applicationCalls = [];
+  const application = {
+    repoId: 'repo-a',
+    card: runApplicationCard,
+    async authorizeReplay() { return true; },
+    async command(name, args, appPrincipal) {
+      applicationCalls.push({ name, args, principal: appPrincipal });
+      return { schemaVersion: 1, runId: args.runId ?? args.intent?.runId, phase: 'running' };
+    },
+  };
+  const { web, coordination } = fixture({ application });
+  const commands = [
+    ['run_start', { intent: { runId: 'run-web-a', objective: 'Ship the integrated Run application', profile: 'standard', route: { harness: 'grok', model: 'grok-4-code', effort: 'high' }, scope: ['impl/**'] } }, 'run.start'],
+    ['run_status', { runId: 'run-web-a' }, 'run.status'],
+    ['run_follow', { runId: 'run-web-a', afterCursor: 3, timeoutMs: 30_000 }, 'run.follow'],
+    ['run_approve', { runId: 'run-web-a', planDigest: 'a'.repeat(64) }, 'run.approve'],
+    ['run_wait', { runId: 'run-web-a', timeoutMs: 30_000 }, 'run.wait'],
+    ['run_answer', { runId: 'run-web-a', requestId: 'question-1', answer: { decision: 'allow' } }, 'run.answer'],
+    ['run_steer', { runId: 'run-web-a', target: 'worker-a', mode: 'now', message: 'Recheck the boundary.', reason: 'Operator correction.' }, 'run.steer'],
+    ['run_stop', { runId: 'run-web-a', reason: 'Operator cancelled this Run.' }, 'run.stop'],
+    ['run_evidence', { runId: 'run-web-a' }, 'run.evidence'],
+    ['run_adopt', { runId: 'run-web-a', nodeKey: 'work', resultSha: 'b'.repeat(40), evidenceDigest: 'c'.repeat(64), reason: 'Select the verified result.' }, 'run.adopt'],
+    ['run_review', { runId: 'run-web-a', route: { harness: 'reviewer', model: 'review-model', effort: 'low' }, reason: 'Independent semantic review.' }, 'run.review'],
+    ['run_integrate', { runId: 'run-web-a', evidenceDigest: 'd'.repeat(64), strategy: 'ff-only', reason: 'Integrate the reviewed result.' }, 'run.integrate'],
+  ];
+  for (const [index, [command, args, expectedName]] of commands.entries()) {
+    const response = await web.execute(context(), envelope({
+      commandId: `run-command-${index}`, idempotencyKey: `run-command-${index}`, command, args,
+    }));
+    assert.equal(response.status, 200);
+    assert.equal(applicationCalls.at(-1).name, expectedName);
+  }
+  assert.deepEqual(applicationCalls.map((call) => call.principal), Array(12).fill({
+    actor: 'web:user-1:session-1', principalId: 'user-1', sessionId: 'session-1',
+  }));
+  assert.equal(applicationCalls[2].args.timeoutMs, 30_000, 'Web forwards the exact journaled follow timeout');
+  assert.equal(applicationCalls[4].args.timeoutMs, 30_000, 'Web forwards the exact journaled wait timeout');
+  assert.deepEqual(coordination.events().filter((event) => event.kind === 'web.command_admitted')
+    .map((event) => [event.payload.command, event.payload.runId]), commands.map(([command]) => [command, 'run-web-a']));
+});
+
+test('CE5/WN: a Run follow cannot return after its live Web principal is revoked', async () => {
+  let active = true;
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  let entered;
+  const dispatched = new Promise((resolve) => { entered = resolve; });
+  const application = {
+    repoId: 'repo-a', card: runApplicationCard, async authorizeReplay() { return true; },
+    async command() { entered(); await blocked; return { schemaVersion: 1, runId: 'run-web-a', phase: 'running', follow: { throughCursor: 3 } }; },
+  };
+  const { web, coordination } = fixture({ application });
+  web.isPrincipalActive = () => active;
+  const pending = web.execute(context(), envelope({
+    commandId: 'run-follow-revoked', idempotencyKey: 'run-follow-revoked', command: 'run_follow',
+    args: { runId: 'run-web-a', afterCursor: 2, timeoutMs: 30_000 },
+  }));
+  await dispatched;
+  active = false;
+  release();
+  const response = await pending;
+  assert.equal(response.status, 401);
+  assert.equal(response.body.error.code, 'unauthenticated');
+  assert.equal(coordination.webCommand('run-follow-revoked').status, 'failed');
+});
+
+test('UA5/WN: malformed Run intent, inconsistent Run identity, and capability refusal occur before application admission', async () => {
+  const applicationCalls = [];
+  const application = {
+    repoId: 'repo-a',
+    card: runApplicationCard,
+    async authorizeReplay() { return true; },
+    async command(...args) { applicationCalls.push(args); return {}; },
+  };
+  const { web, coordination } = fixture({ application });
+  const malformed = await web.execute(context(), envelope({
+    commandId: 'run-malformed', idempotencyKey: 'run-malformed', command: 'run_start',
+    args: { intent: { runId: 'run-web-a', objective: 'work', profile: 'standard', route: { harness: 'grok', model: 'grok-4-code' } } },
+  }));
+  assert.equal(malformed.status, 400);
+  assert.equal(malformed.body.error.code, 'invalid_command');
+
+  const mismatched = await web.execute(context(), envelope({
+    commandId: 'run-mismatch', idempotencyKey: 'run-mismatch', command: 'run_status',
+    runId: 'run-web-a', args: { runId: 'run-other' },
+  }));
+  assert.equal(mismatched.status, 400);
+
+  const forbidden = await web.execute(context({ principal: principal({ capabilities: ['observe'] }) }), envelope({
+    commandId: 'run-forbidden', idempotencyKey: 'run-forbidden', command: 'run_start',
+    args: { intent: { runId: 'run-web-a', objective: 'work', profile: 'standard', route: { harness: 'grok', model: 'grok-4-code', effort: 'high' } } },
+  }));
+  assert.equal(forbidden.status, 403);
+  const observeMissing = await web.execute(context({ principal: principal({ capabilities: ['control'] }) }), envelope({
+    commandId: 'run-no-observe', idempotencyKey: 'run-no-observe', command: 'run_start',
+    args: { intent: { runId: 'run-web-a', objective: 'work', profile: 'standard', route: { harness: 'grok', model: 'grok-4-code', effort: 'high' } } },
+  }));
+  assert.equal(observeMissing.status, 403);
+  assert.deepEqual(applicationCalls, []);
+  assert.equal(coordination.events().some((event) => event.kind === 'web.command_admitted'), false);
+});
+
+test('UA5/WN: Web-specific wait and fence semantics are exact and refuse before admission', async () => {
+  const application = {
+    repoId: 'repo-a', card: runApplicationCard,
+    async authorizeReplay() { return true; },
+    async command() { throw new Error('must not dispatch'); },
+  };
+  const { web, coordination } = fixture({ application });
+  const tooLong = await web.execute(context(), envelope({
+    commandId: 'run-wait-long', idempotencyKey: 'run-wait-long', command: 'run_wait',
+    args: { runId: 'run-web-a', timeoutMs: 30_001 },
+  }));
+  assert.equal(tooLong.status, 400);
+  const fenced = await web.execute(context(), envelope({
+    commandId: 'run-status-fenced', idempotencyKey: 'run-status-fenced', command: 'run_status',
+    expectedFence: 1, args: { runId: 'run-web-a' },
+  }));
+  assert.equal(fenced.status, 400);
+  assert.equal(coordination.events().some((event) => event.kind === 'web.command_admitted'), false);
+});
+
+test('UA5/WN: application repository or command-card miswiring fails at construction', () => {
+  const make = (application) => () => new WebNorthbound({
+    coordinator: {}, coordination: new CoordinationStore(root()), application,
+    repoIds: ['repo-a'], allowedOrigins: ['https://control.example.test'],
+  });
+  assert.throws(make({
+    repoId: 'repo-b', card: () => ({ ...runApplicationCard(), repoId: 'repo-b' }),
+    async authorizeReplay() { return true; }, async command() {},
+  }), /does not match/);
+  assert.throws(make({
+    repoId: 'repo-a', card: () => ({ ...runApplicationCard(), commands: ['run.start'] }),
+    async authorizeReplay() { return true; }, async command() {},
+  }), /does not match/);
+});
+
+test('UA5/WN: missing Run application refuses without journaling a command', async () => {
+  const { web, coordination } = fixture();
+  const response = await web.execute(context(), envelope({
+    commandId: 'run-no-app', idempotencyKey: 'run-no-app', command: 'run_status', args: { runId: 'run-web-a' },
+  }));
+  assert.equal(response.status, 503);
+  assert.equal(response.body.error.code, 'application_unavailable');
+  assert.equal(coordination.events().some((event) => event.kind === 'web.command_admitted'), false);
+});
+
+test('UA5/WN: concurrent exact Run retries singleflight application dispatch', async () => {
+  let dispatches = 0;
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  const application = {
+    repoId: 'repo-a', card: runApplicationCard,
+    async authorizeReplay() { return true; },
+    async command() { dispatches += 1; await blocked; return { schemaVersion: 1, runId: 'run-web-a', phase: 'running' }; },
+  };
+  const { web } = fixture({ application });
+  const request = envelope({ commandId: 'run-singleflight-a', idempotencyKey: 'run-singleflight', command: 'run_status', args: { runId: 'run-web-a' } });
+  const first = web.execute(context(), request);
+  const second = web.execute(context(), { ...request, commandId: 'run-singleflight-b' });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(dispatches, 1);
+  release();
+  const responses = await Promise.all([first, second]);
+  assert.deepEqual(responses.map((response) => response.status), [200, 200]);
+  assert.equal(dispatches, 1);
+});
+
+test('UA5/WN: completed Run replay rechecks current application policy before returning its RunView', async () => {
+  let allowed = true;
+  let dispatches = 0;
+  const application = {
+    repoId: 'repo-a', card: runApplicationCard,
+    async authorizeReplay() {
+      if (!allowed) throw Object.assign(new Error('private replay policy'), { code: 'application_unauthorized' });
+      return true;
+    },
+    async command() { dispatches += 1; return { schemaVersion: 1, runId: 'run-web-a', phase: 'running' }; },
+  };
+  const { web } = fixture({ application });
+  const request = envelope({ commandId: 'run-replay-a', idempotencyKey: 'run-replay', command: 'run_status', args: { runId: 'run-web-a' } });
+  assert.equal((await web.execute(context(), request)).status, 200);
+  allowed = false;
+  const replay = await web.execute(context(), { ...request, commandId: 'run-replay-b' });
+  assert.equal(replay.status, 403);
+  assert.equal(JSON.stringify(replay).includes('private replay policy'), false);
+  assert.equal(dispatches, 1);
+});
+
+test('UA5/WN: an admitted Run read reconstructs after completion journaling failure instead of sticking at 202', async () => {
+  let appends = 0;
+  const coordination = new CoordinationStore(root(), {
+    appendFile: (...args) => {
+      appends += 1;
+      if (appends === 2) throw new Error('completion disk unavailable');
+      appendFileSync(args[0], args[1], 'utf8');
+    },
+  });
+  let dispatches = 0;
+  const application = {
+    repoId: 'repo-a', card: runApplicationCard,
+    async authorizeReplay() { return true; },
+    async command() { dispatches += 1; return { schemaVersion: 1, runId: 'run-web-a', phase: 'running' }; },
+  };
+  const web = new WebNorthbound({
+    coordinator: {}, coordination, application, repoIds: ['repo-a'],
+    allowedOrigins: ['https://control.example.test'], now: () => Date.parse('2026-07-11T12:00:00.000Z'),
+  });
+  const request = envelope({ commandId: 'run-reconcile-a', idempotencyKey: 'run-reconcile', command: 'run_status', args: { runId: 'run-web-a' } });
+  assert.equal((await web.execute(context(), request)).status, 503);
+  const retry = await web.execute(context(), { ...request, commandId: 'run-reconcile-b' });
+  assert.equal(retry.status, 200);
+  assert.equal(retry.body.replayed, true);
+  assert.equal(dispatches, 2, 'read is safely reconstructed after the failed completion append');
+});
+
+test('UA5/WN: application authorization refusal is typed, non-leaking, and durably failed', async () => {
+  const application = {
+    repoId: 'repo-a',
+    card: runApplicationCard,
+    async authorizeReplay() { return true; },
+    async command() { throw Object.assign(new Error('private deployment policy detail'), { code: 'application_unauthorized' }); },
+  };
+  const { web, coordination } = fixture({ application });
+  const response = await web.execute(context(), envelope({
+    commandId: 'run-app-denied', idempotencyKey: 'run-app-denied', command: 'run_status', args: { runId: 'run-web-a' },
+  }));
+  assert.equal(response.status, 403);
+  assert.equal(response.body.error.code, 'application_unauthorized');
+  assert.equal(JSON.stringify(response).includes('private deployment policy detail'), false);
+  assert.equal(coordination.webCommand('run-app-denied').status, 'failed');
 });
 
 test('RD10: authenticated web reuse decision preserves principal actor, repo, budget, and durable idempotency', async () => {

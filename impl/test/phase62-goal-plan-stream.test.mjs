@@ -124,6 +124,14 @@ function assertPrivateAuthorityAbsent(output) {
     assert.equal(output.includes(`"${field}"`), false, `stream retained ${field}`);
   }
 }
+async function until(predicate, label, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`timed out waiting for ${label}`);
+}
 
 test('GP6/GP7: generic observe receives neither Goal/Plan snapshot state, events, nor task bindings', async () => {
   const { stream } = fixture({ maxEventsPerPump: 2 });
@@ -138,7 +146,7 @@ test('GP6/GP7: generic observe receives neither Goal/Plan snapshot state, events
   snapshot.emit('close');
 
   const replay = open(stream, candidate, 0);
-  await new Promise((resolve) => setTimeout(resolve, 35));
+  await until(() => replay.output.includes('ordinary-visible-event'), 'visible replay after hidden Goal/Plan prefix');
   assert.match(replay.output, /ordinary-visible-event/);
   assert.doesNotMatch(replay.output, /goal\.version_defined|plan\.version_proposed|plan\.approval_decided|plan\.node_dispatched|task\.created|goal_define|fleet_plan_propose/);
   assert.equal(replay.output.includes(GOAL_ID), false);
@@ -175,7 +183,8 @@ test('GP6/GP7: goal:observe receives sanitized Goal/Plan content and exact task 
 test('GP6/GP8: hidden events advance the internal replay cursor and are never reread in a polling loop', async () => {
   const { coordination, stream } = fixture({ maxEventsPerPump: 2 });
   const output = open(stream, principal(false), 0);
-  await new Promise((resolve) => setTimeout(resolve, 35));
+  await until(() => coordination.reads.some((value) => value > 10)
+    && output.output.includes('ordinary-visible-event'), 'monotonic cursor advancement through hidden prefix');
   assert.equal(coordination.reads[0], 1);
   assert.deepEqual(coordination.reads, [...coordination.reads].sort((a, b) => a - b));
   assert.equal(new Set(coordination.reads).size, coordination.reads.length, `cursor was reread: ${coordination.reads.join(',')}`);

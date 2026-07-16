@@ -2,19 +2,27 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer as createHttpsServer } from 'node:https';
 import { createServer as createHttpServer } from 'node:http';
 import { WebEventStream } from './web-stream.mjs';
+import { WebResultExportDelivery } from './web-result-export-delivery.mjs';
 import { WebEdgePolicy, WebReadinessAuthority } from './web-edge.mjs';
 import { OidcBrowserFlow, csrfCookie } from './web-oidc.mjs';
 import { operatorAsset } from './web-operator.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
+import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs } from './application.mjs';
+
+const WEB_APPLICATION_ENTRIES = Object.entries(APPLICATION_COMMAND_DEFINITIONS)
+  .filter(([, definition]) => definition.web)
+  .map(([name, definition]) => [name.replaceAll('.', '_'), name, definition]);
 
 const COMMAND_CAPABILITY = Object.freeze({
   spawn: 'control', scratch_oracle: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', drain: 'emergency_stop', respond: 'approve',
   list: 'observe', result: 'observe', wait: 'observe', capabilities: 'observe', provider_status: 'observe', capability_invoke: 'control', reuse_decide: 'control', reuse_recheck: 'control',
   goal_define: 'goal:define', plan_propose: 'plan:propose', plan_approve: 'plan:approve', goal_plan_status: 'goal:observe',
+  ...Object.fromEntries(WEB_APPLICATION_ENTRIES.map(([transport, , definition]) => [transport, definition.capabilities])),
 });
 const FENCE_REQUIRED = new Set(['send', 'interrupt', 'kill']);
-const RECONCILABLE = new Set(['goal_define', 'plan_propose', 'plan_approve']);
+const RECONCILABLE = new Set(['goal_define', 'plan_propose', 'plan_approve',
+  ...WEB_APPLICATION_ENTRIES.filter(([, , definition]) => definition.reconcilable).map(([transport]) => transport)]);
 const GOAL_PLAN_MUTATIONS = new Set(['goal_define', 'plan_propose', 'plan_approve']);
 const TOP_LEVEL = new Set(['schemaVersion', 'commandId', 'idempotencyKey', 'command', 'args', 'repoId', 'runId', 'expectedFence', 'origin', 'clientObservedCursor']);
 const ARG_FIELDS = Object.freeze({
@@ -37,7 +45,11 @@ const ARG_FIELDS = Object.freeze({
   plan_propose: new Set(['goal', 'predecessor', 'nodes']),
   plan_approve: new Set(['goal', 'plan', 'expectedDisposition', 'disposition']),
   goal_plan_status: new Set(['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'throughSeq']),
+  ...Object.fromEntries(WEB_APPLICATION_ENTRIES.map(([transport, , definition]) => [transport, new Set(definition.args)])),
 });
+const APPLICATION_COMMAND = Object.freeze(Object.fromEntries(
+  WEB_APPLICATION_ENTRIES.map(([transport, name]) => [transport, name]),
+));
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
 const VERIFICATION_FIELDS = new Set(['command', 'expectExit', 'timeoutMs', 'coverageCommand', 'mutationCommand']);
@@ -71,6 +83,15 @@ function result(status, body) { return Object.freeze({ status, body: Object.free
 function error(status, code, message = code) { return result(status, { ok: false, error: { code, message } }); }
 function dispatchFailure(cause) {
   const goalPlanCode = cause?.code;
+  if (goalPlanCode === 'application_unauthorized') return { httpStatus: 403, body: { ok: false, error: { code: goalPlanCode, message: 'application command forbidden' } } };
+  if (goalPlanCode === 'application_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: goalPlanCode, message: 'run application unavailable' } } };
+  if (['application_run_lookup_oversize', 'application_run_view_oversize'].includes(goalPlanCode)) return { httpStatus: 503, body: { ok: false, error: { code: 'temporarily_unavailable', message: 'run application projection unavailable' } } };
+  if (['application_run_not_found', 'application_interaction_not_found', 'application_profile_not_found', 'application_worker_not_found'].includes(goalPlanCode)) return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'application resource not found' } } };
+  if (typeof goalPlanCode === 'string' && goalPlanCode.startsWith('application_')) {
+    const conflict = ['application_plan_stale', 'application_plan_denied', 'application_run_conflict', 'application_run_incomplete', 'application_profile_stale',
+      'application_closed', 'application_detached'].includes(goalPlanCode);
+    return { httpStatus: conflict ? 409 : 400, body: { ok: false, error: { code: goalPlanCode, message: conflict ? 'application state conflict' : 'application precondition failed' } } };
+  }
   if (goalPlanCode === 'goal_plan_unauthorized') return { httpStatus: 403, body: { ok: false, error: { code: goalPlanCode, message: 'goal/plan authority forbidden' } } };
   if (goalPlanCode === 'goal_plan_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: goalPlanCode, message: 'goal/plan authority unavailable' } } };
   if (goalPlanCode === 'not_found' || goalPlanCode === 'plan_node_not_found') return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'resource not found' } } };
@@ -219,6 +240,18 @@ function validateEnvelope(envelope) {
   const unknownArg = Object.keys(envelope.args).find((key) => !allowed.has(key));
   if (unknownArg) return 'unknown_argument_field';
   if (containsForbiddenKey(envelope.args)) return 'credential-bearing command fields are forbidden';
+  if (APPLICATION_COMMAND[envelope.command]) {
+    try { validateApplicationCommandArgs(APPLICATION_COMMAND[envelope.command], envelope.args); }
+    catch { return 'application_command_arguments_invalid'; }
+    if (envelope.command === 'run_wait' && envelope.args.timeoutMs > 30_000) return 'application_wait_timeout_exceeds_web_ceiling';
+    if (Object.hasOwn(envelope, 'expectedFence')) return 'application_command_does_not_accept_fence';
+    const applicationRunId = envelope.command === 'run_start'
+      ? envelope.args.intent.runId ?? null
+      : envelope.args.runId;
+    if (Object.hasOwn(envelope, 'runId') && envelope.runId !== applicationRunId) {
+      return 'application_run_id_mismatch';
+    }
+  }
   if (FENCE_REQUIRED.has(envelope.command) && !Number.isInteger(envelope.expectedFence)) return `${envelope.command} requires expectedFence`;
   if (envelope.command === 'spawn') {
     if (!string(envelope.args.harness) || !isRecord(envelope.args.brief)) return 'spawn requires harness and brief';
@@ -315,6 +348,12 @@ function canonicalRequest(envelope) {
   return semantic;
 }
 
+function admittedRunId(envelope) {
+  if (!APPLICATION_COMMAND[envelope.command]) return envelope.runId ?? null;
+  if (envelope.command === 'run_start') return envelope.args.intent.runId ?? null;
+  return envelope.args.runId;
+}
+
 export class WebNorthbound {
   constructor(opts) {
     if (!opts?.coordinator || !opts?.coordination) throw new TypeError('web northbound requires coordinator and coordination authority');
@@ -323,9 +362,23 @@ export class WebNorthbound {
     }
     this.coordinator = opts.coordinator;
     this.coordination = opts.coordination;
+    this.application = opts.application ?? null;
+    if (this.application !== null && (typeof this.application.command !== 'function' || typeof this.application.card !== 'function'
+      || typeof this.application.authorizeReplay !== 'function')) {
+      throw new TypeError('web application facade is invalid');
+    }
     this.allowedOrigins = new Set(opts.allowedOrigins ?? []);
     this.repoIds = new Set(opts.repoIds ?? []);
     if (this.repoIds.size > 1) throw new TypeError('one web northbound authority may serve at most one repository');
+    if (this.application !== null) {
+      const [servedRepoId] = this.repoIds;
+      const applicationCard = this.application.card();
+      if (this.repoIds.size !== 1 || this.application.repoId !== servedRepoId
+        || applicationCard?.repoId !== servedRepoId || !Array.isArray(applicationCard.commands)
+        || WEB_APPLICATION_ENTRIES.some(([, name]) => !applicationCard.commands.includes(name))) {
+        throw new TypeError('web application facade does not match the served repository or command contract');
+      }
+    }
     this.now = opts.now ?? Date.now;
     this.authenticate = opts.authenticate ?? null;
     this.sessions = opts.sessions ?? opts.sessionStore ?? null;
@@ -338,8 +391,28 @@ export class WebNorthbound {
     }
     if (!this.authenticate && this.sessions) this.authenticate = this.sessions.authenticator();
     this.isPrincipalActive = opts.isPrincipalActive ?? this.authenticate?.isPrincipalActive ?? null;
+    this.exportDelivery = opts.exportDelivery ?? (this.application?.exportRoot ? new WebResultExportDelivery({
+      coordination: this.coordination,
+      allowedOrigins: [...this.allowedOrigins],
+      repoIds: [...this.repoIds],
+      now: this.now,
+      ticketTtlMs: opts.exportTicketTtlMs,
+      maxTickets: opts.maxExportTickets,
+      isPrincipalActive: this.isPrincipalActive ?? (() => true),
+      authorizeExport: (candidate, coordinates) => this.application.authorizeResultExportDelivery(coordinates, {
+        actor: actor(candidate), principalId: candidate.userId, sessionId: candidate.sessionId,
+      }),
+      resolveCompletedExport: (coordinates) => this.application.resolveCompletedResultExport(coordinates),
+      openArchive: (coordinates) => this.application.openResultExportArchive(coordinates),
+      registerDelivery: (registration) => this.application.registerResultExportDelivery(registration),
+    }) : null);
+    if (this.exportDelivery !== null && (typeof this.exportDelivery.authorizeIssue !== 'function'
+      || typeof this.exportDelivery.issue !== 'function' || typeof this.exportDelivery.open !== 'function')) {
+      throw new TypeError('web result export delivery authority is invalid');
+    }
     this.maxBodyBytes = opts.maxBodyBytes ?? 64 * 1024;
     this._drainDispatches = new Map();
+    this._applicationDispatches = new Map();
     this.edge = opts.edge ?? (opts.edgePolicy ? new WebEdgePolicy(opts.edgePolicy) : null);
     this.admitting = true;
     this.readinessChecks = opts.readinessChecks ?? [];
@@ -406,8 +479,18 @@ export class WebNorthbound {
       if (!csrfValid) return error(403, 'forbidden');
     }
     if (!this.repoIds.has(envelope.repoId) || !Array.isArray(principal.repoIds) || !principal.repoIds.includes(envelope.repoId)) return error(403, 'forbidden');
-    if (!Array.isArray(principal.capabilities) || !principal.capabilities.includes(COMMAND_CAPABILITY[envelope.command])) return error(403, 'forbidden');
+    if (this.isPrincipalActive && !this.isPrincipalActive(principal, { repoId: envelope.repoId })) return error(401, 'unauthenticated');
+    const requiredCapabilities = Array.isArray(COMMAND_CAPABILITY[envelope.command])
+      ? COMMAND_CAPABILITY[envelope.command]
+      : [COMMAND_CAPABILITY[envelope.command]];
+    if (!Array.isArray(principal.capabilities)
+      || !requiredCapabilities.every((capability) => principal.capabilities.includes(capability))) return error(403, 'forbidden');
     return null;
+  }
+
+  _postWaitAuthorization(ctx, envelope) {
+    if (!['run_follow', 'run_wait'].includes(envelope.command)) return null;
+    return this._authenticate(ctx) ?? this._authorize(ctx, envelope);
   }
 
   async execute(ctx, envelope) {
@@ -427,6 +510,11 @@ export class WebNorthbound {
       try { this._audit('authorization_refused', ctx, { command: envelope.command, repoId: envelope.repoId }); } catch { return error(503, 'temporarily_unavailable'); }
       return authorizationFailure;
     }
+    if (APPLICATION_COMMAND[envelope.command] && !this.application) {
+      try { this._audit('application_unavailable', ctx, { command: envelope.command, repoId: envelope.repoId }); }
+      catch { return error(503, 'temporarily_unavailable'); }
+      return error(503, 'application_unavailable', 'run application unavailable');
+    }
     if (this.edge) {
       const key = ctx.principal.credentialId;
       const commandCost = envelope.command === 'reuse_recheck' ? (envelope.args.trigger === 'advisory_refresh' ? 20 : 2)
@@ -445,7 +533,7 @@ export class WebNorthbound {
     try {
       admission = this.coordination.admitWebCommand({
         commandId: envelope.commandId, scopeKey, requestDigest, command: envelope.command,
-        repoId: envelope.repoId, runId: envelope.runId ?? null,
+        repoId: envelope.repoId, runId: admittedRunId(envelope),
         userId: ctx.principal.userId, sessionId: ctx.principal.sessionId, credentialId: ctx.principal.credentialId,
         origin: envelope.origin, expectedFence: envelope.expectedFence ?? null,
       }, { actor: webActor, key: `web.admit:${scopeKey}` });
@@ -467,11 +555,16 @@ export class WebNorthbound {
         } catch (cause) {
           const failure = dispatchFailure(cause);
           try { this.coordination.failWebCommand(commandId, failure, { actor: admittedActor, key: `web.fail:${commandId}` }); } catch { /* no success is returned */ }
+          if (APPLICATION_COMMAND[envelope.command]) this._applicationDispatches.delete(commandId);
           return result(failure.httpStatus, { ...failure.body, replayed: true });
         }
         const outcome = { httpStatus: replayed.status, body: replayed.body };
         try { this.coordination.completeWebCommand(commandId, outcome, { actor: admittedActor, key: `web.complete:${commandId}` }); }
-        catch { return error(503, 'temporarily_unavailable'); }
+        catch {
+          if (APPLICATION_COMMAND[envelope.command]) this._applicationDispatches.delete(commandId);
+          return error(503, 'temporarily_unavailable');
+        }
+        if (APPLICATION_COMMAND[envelope.command]) this._applicationDispatches.delete(commandId);
         return { ...replayed, body: { ...replayed.body, replayed: true } };
       }
       if (admission.command.status === 'admitted' && (RECONCILABLE.has(envelope.command)
@@ -482,20 +575,45 @@ export class WebNorthbound {
         const admittedEnvelope = commandId === envelope.commandId ? envelope : { ...envelope, commandId };
         let replayed;
         try {
-          replayed = await this._dispatch(admittedEnvelope, admittedActor, admittedPrincipal);
+          replayed = APPLICATION_COMMAND[envelope.command]
+            ? await this._dispatchApplicationOnce(admittedEnvelope, admittedActor, commandId, admittedPrincipal)
+            : await this._dispatch(admittedEnvelope, admittedActor, admittedPrincipal);
         } catch (cause) {
           const failure = dispatchFailure(cause);
           try { this.coordination.failWebCommand(commandId, failure, { actor: admittedActor, key: `web.fail:${commandId}` }); } catch { /* no success is returned */ }
+          if (APPLICATION_COMMAND[envelope.command]) this._applicationDispatches.delete(commandId);
           return result(failure.httpStatus, { ...failure.body, replayed: true });
+        }
+        const postAuthorizationFailure = this._postWaitAuthorization(ctx, envelope);
+        if (postAuthorizationFailure) {
+          const outcome = { httpStatus: postAuthorizationFailure.status, body: postAuthorizationFailure.body };
+          try { this.coordination.failWebCommand(commandId, outcome, { actor: admittedActor, key: `web.fail:${commandId}` }); }
+          catch { return error(503, 'temporarily_unavailable'); }
+          if (APPLICATION_COMMAND[envelope.command]) this._applicationDispatches.delete(commandId);
+          return postAuthorizationFailure;
         }
         const outcome = { httpStatus: replayed.status, body: replayed.body };
         try { this.coordination.completeWebCommand(commandId, outcome, { actor: admittedActor, key: `web.complete:${commandId}` }); }
-        catch { return error(503, 'temporarily_unavailable'); }
+        catch {
+          if (APPLICATION_COMMAND[envelope.command]) this._applicationDispatches.delete(commandId);
+          return error(503, 'temporarily_unavailable');
+        }
+        if (APPLICATION_COMMAND[envelope.command]) this._applicationDispatches.delete(commandId);
         return { ...replayed, body: { ...replayed.body, replayed: true } };
       }
       if (admission.command.status === 'admitted') return result(202, { ok: true, commandId: admission.command.commandId, status: 'admitted', replayed: true });
       if (admission.command.status === 'completed' && ['reuse_decide', 'reuse_recheck'].includes(envelope.command)) {
         try { const refreshed = await this._dispatch(envelope, webActor, ctx.principal); return { ...refreshed, body: { ...refreshed.body, replayed: true } }; } catch { return error(503, 'temporarily_unavailable'); }
+      }
+      if (admission.command.status === 'completed' && APPLICATION_COMMAND[envelope.command]) {
+        try {
+          await this.application.authorizeReplay(APPLICATION_COMMAND[envelope.command], envelope.args, {
+            actor: webActor, principalId: ctx.principal.userId, sessionId: ctx.principal.sessionId,
+          });
+        } catch (cause) {
+          const failure = dispatchFailure(cause);
+          return result(failure.httpStatus, failure.body);
+        }
       }
       const replayBody = GOAL_PLAN_MUTATIONS.has(envelope.command)
         ? sanitizeGoalPlanProjection(admission.command.outcome.body)
@@ -507,20 +625,34 @@ export class WebNorthbound {
     try {
       response = envelope.command === 'drain'
         ? await this._dispatchDrain(envelope, webActor, envelope.commandId, ctx.principal)
-        : await this._dispatch(envelope, webActor, ctx.principal);
+        : APPLICATION_COMMAND[envelope.command]
+          ? await this._dispatchApplicationOnce(envelope, webActor, envelope.commandId, ctx.principal)
+          : await this._dispatch(envelope, webActor, ctx.principal);
     } catch (cause) {
       const failure = dispatchFailure(cause);
       try { this.coordination.failWebCommand(envelope.commandId, failure, { actor: webActor, key: `web.fail:${envelope.commandId}` }); } catch { /* no success is returned */ }
+      if (APPLICATION_COMMAND[envelope.command]) this._applicationDispatches.delete(envelope.commandId);
       void cause;
       return result(failure.httpStatus, failure.body);
+    }
+
+    const postAuthorizationFailure = this._postWaitAuthorization(ctx, envelope);
+    if (postAuthorizationFailure) {
+      const outcome = { httpStatus: postAuthorizationFailure.status, body: postAuthorizationFailure.body };
+      try { this.coordination.failWebCommand(envelope.commandId, outcome, { actor: webActor, key: `web.fail:${envelope.commandId}` }); }
+      catch { return error(503, 'temporarily_unavailable'); }
+      if (APPLICATION_COMMAND[envelope.command]) this._applicationDispatches.delete(envelope.commandId);
+      return postAuthorizationFailure;
     }
 
     const outcome = { httpStatus: response.status, body: response.body };
     try {
       this.coordination.completeWebCommand(envelope.commandId, outcome, { actor: webActor, key: `web.complete:${envelope.commandId}` });
     } catch {
+      if (APPLICATION_COMMAND[envelope.command]) this._applicationDispatches.delete(envelope.commandId);
       return error(503, 'temporarily_unavailable');
     }
+    if (APPLICATION_COMMAND[envelope.command]) this._applicationDispatches.delete(envelope.commandId);
     return response;
   }
 
@@ -537,6 +669,15 @@ export class WebNorthbound {
     return pending;
   }
 
+  _dispatchApplicationOnce(envelope, webActor, commandId, principal) {
+    const existing = this._applicationDispatches.get(commandId);
+    if (existing) return existing;
+    const admittedEnvelope = commandId === envelope.commandId ? envelope : { ...envelope, commandId };
+    const pending = Promise.resolve().then(() => this._dispatch(admittedEnvelope, webActor, principal));
+    this._applicationDispatches.set(commandId, pending);
+    return pending;
+  }
+
   async _dispatch(envelope, webActor, principal) {
     const a = envelope.args;
     const needsGoalPlanPrincipal = ['goal_define', 'plan_propose', 'plan_approve', 'goal_plan_status'].includes(envelope.command)
@@ -548,7 +689,14 @@ export class WebNorthbound {
       idempotencyKey: `web.command:${envelope.commandId}`,
     } : null;
     let value;
-    if (envelope.command === 'spawn') {
+    if (APPLICATION_COMMAND[envelope.command]) {
+      if (!this.application) throw Object.assign(new Error('Run application is unavailable'), { code: 'application_unavailable' });
+      value = await this.application.command(APPLICATION_COMMAND[envelope.command], a, {
+        actor: webActor,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      });
+    } else if (envelope.command === 'spawn') {
       const goalPlan = a.goalPlan ? json(a.goalPlan) : undefined;
       value = await this.coordinator.spawn(a.harness, a.brief, {
         model: a.model, effort: a.effort, modelPolicy: a.modelPolicy, taskId: a.taskId ?? `web-${envelope.commandId}`,
@@ -675,7 +823,7 @@ export class WebNorthbound {
     if (req.method === 'GET' && url.pathname === OIDC_CALLBACK_PATH) {
       return this._handleOidcCallback(req, res, url, origin);
     }
-    if (req.method === 'GET' && (url.pathname === '/v1/session' || operatorAsset(url.pathname))) {
+    if (req.method === 'GET' && (['/v1/session', '/v1/application-card'].includes(url.pathname) || operatorAsset(url.pathname))) {
       return this._handleOperatorRead(req, res, url.pathname, origin);
     }
     if (req.method === 'GET' && url.pathname.startsWith('/v1/commands/')) {
@@ -683,6 +831,76 @@ export class WebNorthbound {
     }
     if (req.method === 'POST' && AUTH_PATHS.has(url.pathname)) {
       return this._handleLifecycle(req, res, url.pathname, origin);
+    }
+    const exportArchivePreflight = /^\/v1\/exports\/[a-f0-9]{64}\/archive$/u.test(url.pathname);
+    if (req.method === 'OPTIONS' && !url.search
+      && (url.pathname === '/v1/export-downloads' || exportArchivePreflight)) {
+      if (!this.allowedOrigins.has(origin)) return this._write(res, error(403, 'forbidden'));
+      const archive = exportArchivePreflight;
+      res.writeHead(204, {
+        'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true',
+        'access-control-allow-methods': archive ? 'GET' : 'POST',
+        'access-control-allow-headers': archive ? 'x-baton-export-ticket' : 'content-type,x-baton-csrf',
+        'access-control-max-age': '300', vary: 'Origin', 'cache-control': 'no-store',
+      });
+      res.end();
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/export-downloads') {
+      if (url.search || req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
+        return this._write(res, error(400, 'invalid_request'), origin);
+      }
+      let principal;
+      try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
+      const ctx = {
+        principal, origin, csrfToken: req.headers['x-baton-csrf'] ?? null,
+        transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http'),
+      };
+      const authFailure = this._authenticate(ctx);
+      if (authFailure) return this._write(res, authFailure, origin);
+      if (!this.exportDelivery || !this.allowedOrigins.has(origin)
+        || !Array.isArray(principal.repoIds) || !Array.isArray(principal.capabilities)
+        || !principal.capabilities.includes('observe') || !principal.capabilities.includes('export_result')) {
+        return this._write(res, error(403, 'forbidden'), origin);
+      }
+      if (principal.authMethod === 'cookie') {
+        const csrfValid = string(ctx.csrfToken) && (principal.csrfTokenDigest
+          ? equalDigest(tokenHash(ctx.csrfToken), principal.csrfTokenDigest)
+          : ctx.csrfToken === principal.csrfToken);
+        if (!csrfValid) return this._write(res, error(403, 'forbidden'), origin);
+      }
+      let body;
+      try { body = await this._readBody(req); } catch { return this._write(res, error(400, 'invalid_request'), origin); }
+      const coordinates = body && typeof body === 'object' && !Array.isArray(body)
+        && Object.keys(body).sort().join(',') === ['exportId', 'repoId', 'runId'].join(',')
+        && /^[a-f0-9]{64}$/u.test(body.exportId ?? '') && string(body.repoId) && string(body.runId)
+        ? body : null;
+      if (!coordinates || !this.repoIds.has(coordinates.repoId) || !principal.repoIds.includes(coordinates.repoId)
+        || !await this.exportDelivery.authorizeIssue(principal, origin, coordinates)) {
+        return this._write(res, error(coordinates ? 403 : 400, coordinates ? 'forbidden' : 'invalid_request'), origin);
+      }
+      return this._write(res, await this.exportDelivery.issue(principal, origin, coordinates), origin);
+    }
+    const archiveMatch = /^\/v1\/exports\/([a-f0-9]{64})\/archive$/u.exec(url.pathname);
+    if (req.method === 'GET' && archiveMatch) {
+      if (url.search || req.headers.range != null || req.headers['x-baton-filename'] != null
+        || !string(req.headers['x-baton-export-ticket'])) {
+        return this._write(res, error(400, 'invalid_request'), origin);
+      }
+      let principal;
+      try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
+      const authFailure = this._authenticate({
+        principal, origin,
+        transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http'),
+      });
+      if (authFailure) return this._write(res, authFailure, origin);
+      if (!this.exportDelivery || !this.allowedOrigins.has(origin)) return this._write(res, error(403, 'forbidden'), origin);
+      const opened = await this.exportDelivery.open({
+        ticket: req.headers['x-baton-export-ticket'], principal, origin,
+        requestHeaders: req.headers, exportId: archiveMatch[1],
+      }, res);
+      if (opened) return this._write(res, opened, origin);
+      return;
     }
     if (req.method === 'OPTIONS' && (['/v1/commands', '/v1/stream-tickets'].includes(url.pathname) || AUTH_PATHS.has(url.pathname))) {
       if (!this.allowedOrigins.has(origin)) return this._write(res, error(403, 'forbidden'));
@@ -800,13 +1018,25 @@ export class WebNorthbound {
       catch { return this._write(res, error(503, 'temporarily_unavailable')); }
       return this._write(res, error(403, 'forbidden'));
     }
-    try { this._audit('operator_read_authorized', { ...ctx, principal }, { resourceClass: pathname === '/v1/session' ? 'session' : 'asset' }); }
+    try {
+      this._audit('operator_read_authorized', { ...ctx, principal }, {
+        resourceClass: pathname === '/v1/session' ? 'session' : pathname === '/v1/application-card' ? 'application_card' : 'asset',
+      });
+    }
     catch { return this._write(res, error(503, 'temporarily_unavailable')); }
     if (pathname === '/v1/session') {
       return this._write(res, result(200, {
         ok: true,
         identity: { userId: principal.userId, capabilities: [...principal.capabilities], repoIds: [...principal.repoIds] },
         expiresAt: principal.expiresAt,
+      }));
+    }
+    if (pathname === '/v1/application-card') {
+      if (!this.application) return this._write(res, error(503, 'application_unavailable', 'run application unavailable'));
+      const card = this.application.card();
+      return this._write(res, result(200, {
+        ok: true,
+        application: { ...card, commands: WEB_APPLICATION_ENTRIES.map(([, name]) => name) },
       }));
     }
     const asset = operatorAsset(pathname);
@@ -1106,6 +1336,8 @@ export class WebNorthbound {
       try { this._audit('shutdown_started', {}); } catch { auditOk = false; }
       let streamOk = true;
       try { this.stream.shutdown?.(); } catch { streamOk = false; }
+      let exportDeliveryOk = true;
+      try { this.exportDelivery?.shutdown?.(); } catch { exportDeliveryOk = false; }
       let closed = !server?.close;
       const closePromise = new Promise((resolve) => {
         if (!server?.close) return resolve(true);
@@ -1118,11 +1350,10 @@ export class WebNorthbound {
         await Promise.race([closePromise, new Promise((resolve) => setTimeout(resolve, Math.min(1_000, drainMs)))]);
       }
       const outcome = closed ? 'shutdown_completed' : 'shutdown_timed_out';
-      try { this._audit(outcome, {}, { streamShutdownOk: streamOk }); } catch { auditOk = false; }
+      try { this._audit(outcome, {}, { streamShutdownOk: streamOk, exportDeliveryShutdownOk: exportDeliveryOk }); } catch { auditOk = false; }
       return {
-        ok: closed && auditOk && streamOk,
-        result: !closed ? 'timed_out' : !auditOk && !streamOk ? 'closed_degraded'
-          : !auditOk ? 'closed_audit_unavailable' : !streamOk ? 'closed_stream_unavailable' : 'closed',
+        ok: closed && auditOk && streamOk && exportDeliveryOk,
+        result: !closed ? 'timed_out' : !auditOk || !streamOk || !exportDeliveryOk ? 'closed_degraded' : 'closed',
       };
     })();
     return this._shutdown;

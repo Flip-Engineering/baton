@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { Lang, parse } from '@ast-grep/napi';
+import { compareCanonicalStrings } from './canonical-order.mjs';
 
 const require = createRequire(import.meta.url);
 const VERSION = require('@ast-grep/napi/package.json').version;
@@ -283,8 +284,8 @@ export class AtlasCpgSlice {
     }
 
     const cloneState = (state) => new Map([...state].map(([bindingId, defs]) => [bindingId, new Set(defs)]));
-    const stateKey = (state) => [...state].sort(([a], [b]) => a.localeCompare(b)).map(([bindingId, defs]) => `${bindingId}:${[...defs].sort().join(',')}`).join('|');
-    let reachDefPairs = 0; occurrences.sort((a, b) => a.fn.localeCompare(b.fn) || a.start - b.start);
+    const stateKey = (state) => [...state].sort(([a], [b]) => compareCanonicalStrings(a, b)).map(([bindingId, defs]) => `${bindingId}:${[...defs].sort().join(',')}`).join('|');
+    let reachDefPairs = 0; occurrences.sort((a, b) => compareCanonicalStrings(a.fn, b.fn) || a.start - b.start);
     for (const fn of functions) {
       const reachable = reachableByFunction.get(fn.id); const fnOccurrences = occurrences.filter((item) => item.fn === fn.id); const gen = new Map();
       for (const item of fnOccurrences.filter((candidate) => candidate.role === 'definition')) {
@@ -312,7 +313,7 @@ export class AtlasCpgSlice {
     for (const pending of pendingAssignments) edge('ASSIGNED_FROM', nodeId(pending.value.kind() === 'call_expression' ? 'call' : 'identifier', pending.value), nodeId('identifier', pending.target));
     for (const pending of pendingArguments) { const type = pending.value.kind() === 'call_expression' ? 'call' : 'identifier'; const valueId = nodeId(type, pending.value); if (nodeById.has(valueId)) edge('ARGUMENT_TO', valueId, nodeId('call', pending.call)); }
     for (const call of calls) { const candidates = byName.get(call.name) ?? []; const target = nodeById.get(call.id); target.candidates = [...candidates]; target.resolved = candidates.length === 1 ? candidates[0] : null; if (target.resolved) edge('CALLS', call.fn, target.resolved); }
-    nodes.sort((a, b) => a.id.localeCompare(b.id)); edges.sort((a, b) => a.type.localeCompare(b.type) || a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
+    nodes.sort((a, b) => compareCanonicalStrings(a.id, b.id)); edges.sort((a, b) => compareCanonicalStrings(a.type, b.type) || compareCanonicalStrings(a.from, b.from) || compareCanonicalStrings(a.to, b.to));
     const resolvedOccurrences = bindingCandidates.filter((item) => item.graphNode.bindingResolution === 'resolved');
     const unresolvedOccurrences = bindingCandidates.filter((item) => item.graphNode.bindingResolution === 'unresolved');
     const unsupportedOccurrences = bindingCandidates.filter((item) => item.graphNode.bindingResolution === 'unsupported');

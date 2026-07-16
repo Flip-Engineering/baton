@@ -315,8 +315,8 @@ test('EP7: shutdown audit failure produces one bounded degraded result while sti
   const s = system(); let closed = 0; let streamClosed = 0; s.web.stream.shutdown = () => { streamClosed += 1; };
   s.coordination.recordWebAudit = () => { throw new Error('audit unavailable'); };
   const first = s.web.shutdown({ server: { close(cb) { closed += 1; cb(); } }, drainMs: 10 });
-  assert.deepEqual(await first, { ok: false, result: 'closed_audit_unavailable' });
-  assert.deepEqual(await s.web.shutdown(), { ok: false, result: 'closed_audit_unavailable' });
+  assert.deepEqual(await first, { ok: false, result: 'closed_degraded' });
+  assert.deepEqual(await s.web.shutdown(), { ok: false, result: 'closed_degraded' });
   assert.equal(closed, 1); assert.equal(streamClosed, 1); assert.deepEqual(s.fleetCalls, []);
 });
 
@@ -327,10 +327,14 @@ test('EP6/EP7: throwing stream shutdown still closes the listener and memoizes a
   const first = s.web.shutdown({ server, drainMs: 10 });
   const second = s.web.shutdown({ server, drainMs: 10 });
   assert.equal(first, second);
-  assert.deepEqual(await first, { ok: false, result: 'closed_stream_unavailable' });
+  assert.deepEqual(await first, { ok: false, result: 'closed_degraded' });
   assert.equal(streamCalls, 1); assert.equal(listenerCalls, 1); assert.deepEqual(s.fleetCalls, []);
   assert.equal(s.web.admitting, false); assert.equal(s.web.edge.admitting, false);
-  assert.equal(s.coordination.events().filter((event) => event.payload?.kind === 'shutdown_completed').length, 1);
+  const completed = s.coordination.events().filter((event) => event.payload?.kind === 'shutdown_completed');
+  assert.equal(completed.length, 1);
+  assert.equal(completed[0].payload.streamShutdownOk, false);
+  assert.equal(completed[0].payload.exportDeliveryShutdownOk, true);
+  assert.equal(JSON.stringify(completed).includes('stream cleanup failed'), false);
 });
 
 test('EP4/EP5: health has an independent quota and never consumes the ordinary address bucket', async () => {
@@ -363,7 +367,8 @@ test('EP2/EP6: per-credential connection leases are fair, preserve refused ticke
 
 test('EP7: authenticated quota audits digest rather than persist raw credential identifiers', async () => {
   const s = system({ edgePolicy: edge({ limits: { principal: 1 } }) });
-  const principal = { userId: 'u', sessionId: 's', credentialId: 'distinctive-credential-id', authMethod: 'bearer', expiresAt: '2099-01-01T00:00:00.000Z', capabilities: ['observe'], repoIds: ['repo-a'] };
+  const issued = s.sessions.issue({ userId: 'u', authMethod: 'bearer', capabilities: ['observe'], repoIds: ['repo-a'], ttlMs: 60_000 }, { actor: 'provider' });
+  const principal = s.sessions.authenticate({ headers: { authorization: `Bearer ${issued.token}` } });
   const envelope = (id) => ({ schemaVersion: 1, commandId: id, idempotencyKey: id, command: 'list', args: {}, repoId: 'repo-a', origin: ORIGIN });
   const ctx = { principal, origin: ORIGIN, transport: 'https' };
   assert.equal((await s.web.execute(ctx, envelope('audit-one'))).status, 200);

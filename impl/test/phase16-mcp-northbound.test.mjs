@@ -11,8 +11,13 @@ import { CoordinationStore, McpFleetServer, serveMcpStdio } from '../src/index.m
 const NOW = Date.parse('2026-07-11T21:00:00.000Z');
 const root = () => mkdtempSync(join(tmpdir(), 'baton-mcp-'));
 const principal = (overrides = {}) => ({
-  userId: 'operator-a', sessionId: 'stdio-a', capabilities: ['control', 'observe', 'approve', 'emergency_stop'],
+  userId: 'operator-a', sessionId: 'stdio-a', capabilities: ['control', 'observe', 'approve', 'emergency_stop', 'adopt_result', 'review', 'integrate_result'],
   repoIds: ['repo-a'], expiresAt: new Date(NOW + 60_000).toISOString(), revoked: false, ...overrides,
+});
+const runApplicationCard = () => ({
+  schemaVersion: 1,
+  repoId: 'repo-a',
+  commands: ['application.help', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.review', 'run.integrate', 'run.export', 'application.shutdown'],
 });
 function setup(overrides = {}) {
   const calls = [];
@@ -36,7 +41,17 @@ function setup(overrides = {}) {
   };
   const directory = overrides.directory ?? root();
   const coordination = new CoordinationStore(join(directory, 'coordination'), { clock: () => new Date(NOW).toISOString() });
-  const server = new McpFleetServer({ coordinator, coordination, principal: overrides.principal ?? principal(), repoIds: ['repo-a'], now: () => NOW, maxWaitMs: 25_000, maxMessageBytes: 64 * 1024, takeToolQuota: overrides.takeToolQuota ?? (() => ({ ok: true })) });
+  const server = new McpFleetServer({
+    coordinator, coordination, application: overrides.application,
+    surface: overrides.surface ?? (overrides.application ? 'combined' : undefined),
+    shutdownPrincipal: overrides.application ? (overrides.shutdownPrincipal ?? {
+      actor: 'mcp-host:test', principalId: 'mcp-host', sessionId: 'mcp-host-session',
+    }) : undefined,
+    isPrincipalActive: overrides.isPrincipalActive,
+    principal: overrides.principal ?? principal(), repoIds: ['repo-a'], now: () => NOW,
+    maxWaitMs: 25_000, maxMessageBytes: 64 * 1024,
+    takeToolQuota: overrides.takeToolQuota ?? (() => ({ ok: true })),
+  });
   return { calls, coordinator, coordination, directory, server };
 }
 const request = (server, id, method, params) => server.handle({ jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) });
@@ -60,6 +75,164 @@ test('MN1/MN4/CI6/PF7: handshake and deterministic closed nineteen-tool inventor
   assert.deepEqual(capabilitySchema.oneOf.map((branch) => branch.properties.action.const), ['invoke', 'resume', 'reverify', 'push']);
   const duplicate = await request(server, 3, 'initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
   assert.equal(duplicate.error.code, -32600);
+});
+
+test('UA5/MN1: an application-backed MCP server exposes the five-operation ordinary surface and keeps compatibility explicit', async () => {
+  const application = {
+    repoId: 'repo-a', card: runApplicationCard,
+    async authorizeReplay() { return true; }, async command() { return {}; },
+  };
+  const { server } = setup({ application, surface: 'application' }); await initialized(server);
+  const response = await request(server, 2, 'tools/list', {});
+  assert.deepEqual(response.result.tools.map((tool) => tool.name), [
+    'baton_help', 'baton_run_start', 'baton_run_inspect', 'baton_run_act', 'baton_run_stop',
+  ]);
+  assert.equal(response.result.tools.some((tool) => /shutdown|close|drain/.test(tool.name)), false);
+  const advanced = setup({ application, surface: 'combined' }); await initialized(advanced.server);
+  const combined = await request(advanced.server, 3, 'tools/list', {});
+  assert.equal(combined.result.tools.length, 38);
+  assert.deepEqual(combined.result.tools.slice(0, 5).map((tool) => tool.name), response.result.tools.map((tool) => tool.name));
+});
+
+test('UA5/MN: Run tools map exactly to the application bus and keep status/wait fresh', async () => {
+  const applicationCalls = [];
+  const application = {
+    repoId: 'repo-a', card: runApplicationCard,
+    async authorizeReplay() { return true; },
+    async command(name, args, appPrincipal) {
+      applicationCalls.push({ name, args, principal: appPrincipal });
+      return { schemaVersion: 1, runId: args.runId ?? args.intent?.runId, phase: 'running' };
+    },
+  };
+  const { server, coordination } = setup({ application }); await initialized(server);
+  const calls = [
+    ['fleet_run_start', { repoId: 'repo-a', idempotencyKey: 'run-start', intent: { runId: 'run-mcp-a', objective: 'Ship integrated MCP', profile: 'standard', route: { harness: 'grok', model: 'grok-4-code', effort: 'high' }, scope: ['impl/**'] } }, 'run.start'],
+    ['fleet_run_status', { repoId: 'repo-a', runId: 'run-mcp-a' }, 'run.status'],
+    ['fleet_run_follow', { repoId: 'repo-a', runId: 'run-mcp-a', afterCursor: 3, timeoutMs: 25_000 }, 'run.follow'],
+    ['fleet_run_approve', { repoId: 'repo-a', idempotencyKey: 'run-approve', runId: 'run-mcp-a', planDigest: 'a'.repeat(64) }, 'run.approve'],
+    ['fleet_run_wait', { repoId: 'repo-a', runId: 'run-mcp-a', timeoutMs: 25_000 }, 'run.wait'],
+    ['fleet_run_answer', { repoId: 'repo-a', idempotencyKey: 'run-answer', runId: 'run-mcp-a', requestId: 'question-1', answer: { decision: 'allow' } }, 'run.answer'],
+    ['fleet_run_steer', { repoId: 'repo-a', idempotencyKey: 'run-steer', runId: 'run-mcp-a', target: 'worker-a', mode: 'nudge', message: 'Keep going.', reason: 'Operator guidance.' }, 'run.steer'],
+    ['fleet_run_stop', { repoId: 'repo-a', idempotencyKey: 'run-stop', runId: 'run-mcp-a', reason: 'Operator cancelled this Run.' }, 'run.stop'],
+    ['fleet_run_evidence', { repoId: 'repo-a', runId: 'run-mcp-a' }, 'run.evidence'],
+    ['fleet_run_adopt', { repoId: 'repo-a', idempotencyKey: 'run-adopt', runId: 'run-mcp-a', nodeKey: 'work', resultSha: 'b'.repeat(40), evidenceDigest: 'c'.repeat(64), reason: 'Select the verified result.' }, 'run.adopt'],
+    ['fleet_run_review', { repoId: 'repo-a', idempotencyKey: 'run-review', runId: 'run-mcp-a', route: { harness: 'reviewer', model: 'review-model', effort: 'low' }, reason: 'Independent semantic review.' }, 'run.review'],
+    ['fleet_run_integrate', { repoId: 'repo-a', idempotencyKey: 'run-integrate', runId: 'run-mcp-a', evidenceDigest: 'd'.repeat(64), strategy: 'ff-only', reason: 'Integrate the reviewed result.' }, 'run.integrate'],
+  ];
+  for (const [index, [name, args, expected]] of calls.entries()) {
+    const response = await request(server, 10 + index, 'tools/call', { name, arguments: args });
+    assert.equal(response.result.isError, false);
+    assert.equal(applicationCalls.at(-1).name, expected);
+  }
+  assert.deepEqual(applicationCalls.map((call) => call.principal), Array(12).fill({
+    actor: 'mcp:operator-a:stdio-a', principalId: 'operator-a', sessionId: 'stdio-a',
+  }));
+  assert.equal(applicationCalls.some((call) => Object.hasOwn(call.args, 'repoId') || Object.hasOwn(call.args, 'idempotencyKey')), false);
+  assert.deepEqual(coordination.events().filter((event) => event.kind === 'mcp.call_admitted')
+    .map((event) => [event.payload.tool, event.payload.runId]), [
+      ['fleet_run_start', 'run-mcp-a'], ['fleet_run_approve', 'run-mcp-a'], ['fleet_run_answer', 'run-mcp-a'], ['fleet_run_steer', 'run-mcp-a'], ['fleet_run_stop', 'run-mcp-a'], ['fleet_run_adopt', 'run-mcp-a'], ['fleet_run_review', 'run-mcp-a'], ['fleet_run_integrate', 'run-mcp-a'],
+    ]);
+  await request(server, 20, 'tools/call', { name: 'fleet_run_status', arguments: { repoId: 'repo-a', runId: 'run-mcp-a' } });
+  assert.equal(applicationCalls.filter((call) => call.name === 'run.status').length, 2, 'read-only status is fresh rather than a cached call replay');
+});
+
+test('CE5/MN: a Run follow cannot return after its injected MCP principal authority is revoked', async () => {
+  let active = true;
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  let entered;
+  const dispatched = new Promise((resolve) => { entered = resolve; });
+  const application = {
+    repoId: 'repo-a', card: runApplicationCard, async authorizeReplay() { return true; },
+    async command() { entered(); await blocked; return { schemaVersion: 1, runId: 'run-mcp-a', phase: 'running', follow: { throughCursor: 3 } }; },
+  };
+  const s = setup({ application, isPrincipalActive: () => active });
+  await initialized(s.server);
+  const pending = request(s.server, 3, 'tools/call', { name: 'fleet_run_follow', arguments: {
+    repoId: 'repo-a', runId: 'run-mcp-a', afterCursor: 2, timeoutMs: 25_000,
+  } });
+  await dispatched;
+  active = false;
+  release();
+  const response = await pending;
+  assert.equal(response.result.isError, true);
+  assert.match(response.result.content[0].text, /unauthenticated/);
+});
+
+test('UA5/MN: malformed Run calls and missing observe authority refuse before application dispatch', async () => {
+  const applicationCalls = [];
+  const application = {
+    repoId: 'repo-a', card: runApplicationCard,
+    async authorizeReplay() { return true; },
+    async command(...args) { applicationCalls.push(args); return {}; },
+  };
+  const malformed = setup({ application }); await initialized(malformed.server);
+  const bad = await request(malformed.server, 2, 'tools/call', { name: 'fleet_run_start', arguments: {
+    repoId: 'repo-a', idempotencyKey: 'bad-run',
+    intent: { runId: 'run-mcp-a', objective: 'work', profile: 'standard', route: { harness: 'grok', model: 'grok-4-code' } },
+  } });
+  assert.equal(bad.result.isError, true);
+  assert.match(bad.result.content[0].text, /invalid_run_command/);
+  assert.equal(malformed.coordination.events().some((event) => event.kind === 'mcp.call_admitted'), false);
+
+  const forbidden = setup({ application, principal: principal({ capabilities: ['control'] }) }); await initialized(forbidden.server);
+  const denied = await request(forbidden.server, 3, 'tools/call', { name: 'fleet_run_start', arguments: {
+    repoId: 'repo-a', idempotencyKey: 'forbidden-run',
+    intent: { runId: 'run-mcp-a', objective: 'work', profile: 'standard', route: { harness: 'grok', model: 'grok-4-code', effort: 'high' } },
+  } });
+  assert.equal(denied.result.isError, true);
+  assert.match(denied.result.content[0].text, /forbidden/);
+  assert.deepEqual(applicationCalls, []);
+});
+
+test('UA5/MN: application/card repository drift fails construction and remote shutdown tools stay invalid', async () => {
+  assert.throws(() => setup({ application: {
+    repoId: 'repo-b', card: () => ({ ...runApplicationCard(), repoId: 'repo-b' }),
+    async authorizeReplay() { return true; }, async command() {},
+  } }), /does not match/);
+  const application = {
+    repoId: 'repo-a', card: runApplicationCard,
+    async authorizeReplay() { return true; }, async command() {},
+  };
+  const { server } = setup({ application, surface: 'application' }); await initialized(server);
+  for (const name of ['application_shutdown', 'run_close', 'fleet_drain']) {
+    const response = await request(server, 10, 'tools/call', { name, arguments: { repoId: 'repo-a' } });
+    assert.equal(response.error.code, -32602);
+  }
+  assert.throws(() => setup({ application, shutdownPrincipal: { actor: 'missing identity' } }), /shutdownPrincipal/);
+});
+
+test('UA5/MN: concurrent mutation retries singleflight and completed replay reauthorizes without redispatch', async () => {
+  let dispatches = 0;
+  let replayAllowed = true;
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  const application = {
+    repoId: 'repo-a', card: runApplicationCard,
+    async authorizeReplay() {
+      if (!replayAllowed) throw Object.assign(new Error('private replay policy'), { code: 'application_unauthorized' });
+      return true;
+    },
+    async command() { dispatches += 1; await blocked; return { schemaVersion: 1, runId: 'run-mcp-a', phase: 'awaiting_plan_approval' }; },
+  };
+  const { server } = setup({ application }); await initialized(server);
+  const args = {
+    repoId: 'repo-a', idempotencyKey: 'run-singleflight',
+    intent: { runId: 'run-mcp-a', objective: 'work', profile: 'standard', route: { harness: 'grok', model: 'grok-4-code', effort: 'high' } },
+  };
+  const first = request(server, 2, 'tools/call', { name: 'fleet_run_start', arguments: args });
+  const second = request(server, 3, 'tools/call', { name: 'fleet_run_start', arguments: args });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(dispatches, 1);
+  release();
+  const results = await Promise.all([first, second]);
+  assert.equal(results.every((response) => response.result.isError === false), true);
+  assert.equal(dispatches, 1);
+  replayAllowed = false;
+  const denied = await request(server, 4, 'tools/call', { name: 'fleet_run_start', arguments: args });
+  assert.equal(denied.result.isError, true);
+  assert.match(denied.result.content[0].text, /forbidden/);
+  assert.equal(dispatches, 1);
 });
 
 test('CI6: capability cards are observed and invoke, resume, and reverify preserve actor and budget', async () => {
@@ -267,6 +440,50 @@ test('MN2: stdio is newline JSON-RPC, ordered, drains on EOF, and rejects malfor
   const frames = wire.trim().split('\n').map(JSON.parse);
   assert.equal(frames[0].id, 1); assert.deepEqual(frames.slice(1).map((frame) => frame.error.code), [-32700, -32700]);
   assert.equal(s.calls.length, 0); assert.equal(error.read()?.toString() ?? '', '');
+});
+
+test('UA6/MN2: application-backed stdio EOF invokes host-only deployment shutdown exactly once', async () => {
+  const applicationCalls = [];
+  const application = {
+    repoId: 'repo-a', card: runApplicationCard,
+    async authorizeReplay() { return true; },
+    async command(name, args, appPrincipal) {
+      applicationCalls.push({ name, args, principal: appPrincipal });
+      return { schemaVersion: 1, state: 'closed', ownership: { workers: 0, workerIds: [], closed: true } };
+    },
+  };
+  const s = setup({ application });
+  const input = new PassThrough(); const output = new PassThrough();
+  const serving = serveMcpStdio(s.server, { input, output });
+  input.end();
+  const receipt = await serving;
+  assert.equal(receipt, undefined);
+  assert.deepEqual(applicationCalls, [{
+    name: 'application.shutdown', args: {},
+    principal: { actor: 'mcp-host:test', principalId: 'mcp-host', sessionId: 'mcp-host-session' },
+  }]);
+  await s.server.close();
+  assert.equal(applicationCalls.length, 1, 'transport and host finalizers share one shutdown promise');
+  const afterClose = await request(s.server, 2, 'ping');
+  assert.equal(afterClose.error.code, -32002);
+});
+
+test('UA6/MN2: failed host shutdown is visible and retryable without exposing a remote tool', async () => {
+  let attempts = 0;
+  const application = {
+    repoId: 'repo-a', card: runApplicationCard,
+    async authorizeReplay() { return true; },
+    async command(name) {
+      assert.equal(name, 'application.shutdown');
+      attempts += 1;
+      if (attempts === 1) throw new Error('close refused');
+      return { state: 'closed' };
+    },
+  };
+  const s = setup({ application });
+  await assert.rejects(s.server.close(), /close refused/);
+  assert.deepEqual(await s.server.close(), { state: 'closed' });
+  assert.equal(attempts, 2);
 });
 
 test('MN2: an oversize frame split across chunks is discarded without losing the following frame', async () => {
