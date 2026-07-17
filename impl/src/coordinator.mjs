@@ -692,6 +692,9 @@ export class Coordinator {
     // C1: the sole done-gate, and the driver-level policy passed to every accept() call.
     this._accept = opts.accept ?? defaultAccept;
     this._acceptOpts = opts.acceptOpts ?? {};
+    // VR6: the immutable deployment verifier-runtime identity, used to conflict a retry whose
+    // admission was recorded under a different runtime policy than the one now bound.
+    this._verificationRuntimeDigest = opts.verificationRuntimeDigest ?? null;
     this._requireIndependentOracle = opts.requireIndependentOracle ?? false;
     this._publisher = opts.publisher ?? null;
     // C4: injectable timer primitives for a real, unref'd stop-deadline timer.
@@ -3248,6 +3251,271 @@ export class Coordinator {
       state: resolved === expectedSha ? 'pinned' : resolved === null ? 'missing' : 'mismatch',
       resolved,
     });
+  }
+
+  /** VR6: the deployment verifier-runtime identity this coordinator was constructed with. */
+  verificationRuntimeDigest() {
+    this._assertReadable();
+    return this._verificationRuntimeDigest;
+  }
+
+  /** VR6: reverify the physical non-adoptable checkpoint ref for a worker's inconclusive result. */
+  async inspectCheckpoint(workerId) {
+    this._assertReadable();
+    const handle = this._getWorker(workerId);
+    const task = this._tasks.get(handle.taskId);
+    if (!task?.checkpoint || task.checkpoint.state !== 'pinned') {
+      return Object.freeze({ sha: task?.checkpoint?.sha ?? null, state: 'unavailable' });
+    }
+    if (!this._worktrees || typeof this._worktrees.resolveCheckpoint !== 'function') {
+      return Object.freeze({ sha: task.checkpoint.sha, state: 'unverifiable' });
+    }
+    const resolved = await this._worktrees.resolveCheckpoint(task.checkpoint.ref);
+    return Object.freeze({
+      sha: task.checkpoint.sha,
+      state: resolved === task.checkpoint.sha ? 'pinned' : resolved === null ? 'missing' : 'mismatch',
+    });
+  }
+
+  /**
+   * VR6: replay the already-approved trust gate against the exact pinned checkpoint. This is
+   * application authority, not provider work — it never launches or resumes an agent harness,
+   * consumes no provider turn, and records no route observation. The durable admission must
+   * already exist (admitRunVerificationRetry); this method executes and completes that one
+   * attempt exactly once, response-loss safe.
+   */
+  retryVerification(workerId, opts) {
+    return this._withAuthorityOp(() => this._retryVerification(workerId, opts));
+  }
+
+  async _retryVerification(workerId, opts = {}) {
+    this.tick();
+    const refuse = (message, code) => { throw Object.assign(new Error(message), { code }); };
+    const { runId, nodeKey, attempt, signal = null } = opts;
+    const handle = this._getWorker(workerId);
+    const task = this._tasks.get(handle.taskId);
+    const admission = this._coordination?.runVerificationRetry?.(runId, nodeKey);
+    if (!task || !admission || admission.status !== 'pending' || admission.attempt !== attempt
+      || admission.taskId !== task.id || task.status !== 'failed') {
+      refuse('verification retry requires one pending admission for the exact failed task', 'verification_retry_unavailable');
+    }
+    if (this._verificationRuntimeDigest !== null && admission.runtimePolicyDigest !== this._verificationRuntimeDigest) {
+      refuse('verification retry was admitted under a different deployment verifier runtime', 'verification_retry_conflict');
+    }
+    const completionAuth = {
+      actor: admission.actor,
+      key: `run.verification_retry.complete:${runId}:${nodeKey}:${attempt}`,
+    };
+    const completeCancelled = () => this._completeRetryCancelled(admission, completionAuth);
+    const harness = this._harnessOf(handle.vendor);
+    const priorAttempts = this._log.read(workerId).filter((event) => event.kind === 'verify.reverified');
+    // Crash between the operational attempt event and its durable completion: the attempt
+    // already exists — complete from it, never execute a second verification for this attempt.
+    let verifyEvent = priorAttempts.find((event) => event.payload?.retry?.attempt === attempt) ?? null;
+    let verifyPath = null;
+    let baseVerifyPath = null;
+    try {
+      if (!verifyEvent) {
+        if (signal?.aborted || this._coordination.runStop?.(runId)) {
+          const receipt = completeCancelled();
+          refuse('verification retry was cancelled by stop authority', 'verification_retry_cancelled');
+          return receipt;
+        }
+        // Conflict-before-execute (VR6): changed Plan command, runtime, or candidate refuses.
+        if (!task.checkpoint || task.checkpoint.state !== 'pinned' || task.checkpoint.sha !== admission.checkpointSha) {
+          refuse('verification retry checkpoint authority is unavailable', 'verification_retry_unavailable');
+        }
+        if (canonicalDigest(task.brief.verification) !== admission.verificationDigest) {
+          refuse('verification retry pinned command changed after admission', 'verification_retry_conflict');
+        }
+        const resolvedCheckpoint = await this._worktrees.resolveCheckpoint(task.checkpoint.ref);
+        if (resolvedCheckpoint !== admission.checkpointSha) {
+          refuse('verification retry checkpoint no longer resolves to the admitted candidate', 'verification_retry_conflict');
+        }
+        const priorCapture = priorAttempts.at(-1)?.payload?.capture ?? {};
+        const baseSha = priorCapture.baseSha ?? task.sessionContext?.baseSha ?? null;
+        const created = await this._worktrees.createVerifyWorktree(
+          `${task.id}-retry-${attempt}`, admission.checkpointSha, { requiredPaths: priorCapture.changedPaths ?? [] },
+        );
+        verifyPath = created?.path ?? null;
+        const workerToolchainProjection = task.sessionContext?.toolchainProjection ?? null;
+        const verifierToolchainProjection = created?.toolchainProjection ?? null;
+        if ((workerToolchainProjection || verifierToolchainProjection)
+          && (!workerToolchainProjection || !verifierToolchainProjection
+            || canonicalDigest(workerToolchainProjection) !== canonicalDigest(verifierToolchainProjection))) {
+          refuse('verification retry toolchain projection mismatch', 'verification_environment_mismatch');
+        }
+        if (baseSha && typeof this._worktrees.createBaseVerifyWorktree === 'function') {
+          const baseCreated = await this._worktrees.createBaseVerifyWorktree(`${task.id}-retry-${attempt}`, baseSha);
+          baseVerifyPath = baseCreated?.path ?? null;
+          const baseVerifierToolchainProjection = baseCreated?.toolchainProjection ?? null;
+          if ((workerToolchainProjection || baseVerifierToolchainProjection)
+            && (!workerToolchainProjection || !baseVerifierToolchainProjection
+              || canonicalDigest(workerToolchainProjection) !== canonicalDigest(baseVerifierToolchainProjection))) {
+            refuse('verification retry base toolchain projection mismatch', 'verification_environment_mismatch');
+          }
+        }
+        let verdict;
+        try {
+          verdict = await this._referee(task, { verification: { claimedExit: null } }, {
+            pinnedVerification: task.brief.verification,
+            sandbox: verifyPath,
+            baseSandbox: baseVerifyPath,
+            signal,
+          });
+        } catch (error) {
+          if (error?.code === 'verification_aborted') {
+            completeCancelled();
+            refuse('verification retry was cancelled by stop authority', 'verification_retry_cancelled');
+          }
+          throw error;
+        }
+        const accept = this._accept(verdict, { ...this._acceptOpts, expectExit: task.brief.verification.expectExit });
+        // A run-scoped stop that landed while the verifier ran keeps its authority: suppress
+        // the attempt's effects exactly and settle the admission as cancelled.
+        if (signal?.aborted || this._coordination.runStop?.(runId)) {
+          completeCancelled();
+          refuse('verification retry was cancelled by stop authority', 'verification_retry_cancelled');
+        }
+        let retainedResultRef = null;
+        if (accept) retainedResultRef = (await this._pinAcceptedResult(task, admission.checkpointSha)).ref;
+        const priorLast = priorAttempts.at(-1) ?? null;
+        verifyEvent = this._log.append({
+          worker: workerId,
+          harness,
+          turnEpoch: this._safeTurnEpoch(handle),
+          kind: 'verify.reverified',
+          actor: 'policy',
+          ...this._routeAttribution(handle, task),
+          payload: {
+            verdict,
+            accept,
+            retry: {
+              attempt,
+              admissionDigest: admission.admissionDigest,
+              priorAttempt: priorLast ? { worker: workerId, workerSeq: priorLast.seq } : null,
+            },
+            capture: {
+              sha: admission.checkpointSha,
+              snapshotted: false,
+              retainedResultRef,
+              checkpoint: task.checkpoint,
+              baseSha,
+              vendor: handle.vendor ?? null,
+              model: handle.modelObserved ?? handle.modelResolved ?? null,
+              effort: handle.effortObserved ?? handle.effortResolved ?? null,
+              routeKey: handle.routeKey ?? null,
+              changedPaths: priorCapture.changedPaths ?? [],
+            },
+          },
+        });
+        if (!verifyEvent) throw new Error('operational retry verification event was not durably appended');
+      }
+      const verdict = verifyEvent.payload.verdict;
+      const accept = verifyEvent.payload.accept === true;
+      const capture = verifyEvent.payload.capture;
+      const evidence = this._coordMapEvent(verifyEvent);
+      const state = accept ? 'accepted' : verdict?.outcome === 'candidate_failed' ? 'candidate_failed' : 'inconclusive';
+      const manifests = [];
+      if (accept) {
+        manifests.push({
+          taskId: task.id, kind: 'commit',
+          refs: { sha: capture.sha, retainedResultRef: capture.retainedResultRef },
+          mediaType: 'application/vnd.git.commit', accepted: true, provenance: [evidence],
+        });
+      }
+      manifests.push({
+        taskId: task.id, kind: 'verification', refs: { worker: workerId, workerSeq: verifyEvent.seq },
+        mediaType: 'application/vnd.baton.verdict+json', accepted: accept, provenance: [evidence], verdict,
+      });
+      const receiptCore = {
+        schemaVersion: 1,
+        scope: 'run-verification-retry',
+        state,
+        repoId: admission.repoId,
+        runId,
+        nodeKey,
+        taskId: task.id,
+        attempt,
+        admissionDigest: admission.admissionDigest,
+        outcome: {
+          disposition: {
+            candidate: verdict?.execution?.state ?? null,
+            base: verdict?.baseExecution?.state ?? null,
+          },
+          runtimeDigest: verdict?.runtimeDigest ?? null,
+          verdictDigest: canonicalDigest(verdict ?? null),
+        },
+        evidence: {
+          worker: evidence.worker, workerSeq: evidence.workerSeq,
+          digest: evidence.digest, coordinationSeq: evidence.coordinationSeq,
+        },
+        result: accept ? { sha: capture.sha, ref: capture.retainedResultRef } : null,
+        checkpoint: accept ? null : { state: 'pinned', sha: admission.checkpointSha },
+      };
+      const receipt = { ...receiptCore, receiptDigest: canonicalDigest(receiptCore) };
+      let completed;
+      try {
+        completed = this._coordination.completeRunVerificationRetry({
+          schemaVersion: 1, runId, nodeKey, attempt, receipt, manifests,
+        }, completionAuth);
+      } catch (coordinationError) {
+        this._poisonCoordination(coordinationError);
+        throw coordinationError;
+      }
+      if (accept) {
+        task.status = 'completed';
+        task.coordinationVersion = completed.task.version;
+        task.capturedSha = capture.sha;
+        task.retainedResultRef = capture.retainedResultRef;
+      }
+      task.verdict = verdict;
+      this._coordination.promoteKnowledgeNode({
+        id: `outcome:${task.id}:${verifyEvent.seq}`,
+        taskId: task.id,
+        type: accept ? 'Finding' : state === 'candidate_failed' ? 'Counterexample' : 'Question',
+        body: accept ? `Task ${task.id} passed its hub verification on retry`
+          : state === 'candidate_failed' ? `Task ${task.id} failed its hub verification on retry`
+            : `Task ${task.id} still needs another verification attempt`,
+        grounding: state === 'inconclusive' ? 'observed' : 'verified',
+        evidence: [{ coordinationSeq: evidence.coordinationSeq }],
+      }, {
+        kind: accept ? 'Finding' : state === 'candidate_failed' ? 'Counterexample' : 'Question',
+        trigger: 'verified_task_outcome',
+      }, { actor: 'policy', key: `knowledge.outcome:${task.id}:${verifyEvent.seq}` });
+      return completed.retry.receipt;
+    } finally {
+      const cleanupTargets = [verifyPath, baseVerifyPath].filter((path) => path != null);
+      await Promise.allSettled(cleanupTargets.map((path) => this._worktrees.removeVerifyWorktree(path)));
+    }
+  }
+
+  _completeRetryCancelled(admission, completionAuth) {
+    const receiptCore = {
+      schemaVersion: 1,
+      scope: 'run-verification-retry',
+      state: 'cancelled',
+      repoId: admission.repoId,
+      runId: admission.runId,
+      nodeKey: admission.nodeKey,
+      taskId: admission.taskId,
+      attempt: admission.attempt,
+      admissionDigest: admission.admissionDigest,
+      outcome: { disposition: { candidate: null, base: null }, runtimeDigest: null, verdictDigest: null },
+      evidence: null,
+      result: null,
+      checkpoint: { state: 'pinned', sha: admission.checkpointSha },
+    };
+    const receipt = { ...receiptCore, receiptDigest: canonicalDigest(receiptCore) };
+    try {
+      return this._coordination.completeRunVerificationRetry({
+        schemaVersion: 1, runId: admission.runId, nodeKey: admission.nodeKey,
+        attempt: admission.attempt, receipt, manifests: [],
+      }, completionAuth).retry.receipt;
+    } catch (coordinationError) {
+      this._poisonCoordination(coordinationError);
+      throw coordinationError;
+    }
   }
 
   /** Materialize one exact accepted, still-protected Git result under deployment-owned authority. */
@@ -6956,6 +7224,15 @@ export class Coordinator {
             if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) {
               verdict = e.payload?.verdict ?? null;
               terminalStatus = e.payload?.accept ? 'completed' : 'failed';
+              capturedSha = e.payload?.capture?.sha ?? capturedSha;
+              retainedResultRef = e.payload?.capture?.retainedResultRef ?? retainedResultRef;
+              checkpoint = e.payload?.capture?.checkpoint ?? checkpoint;
+            } else if (e.actor === 'policy' && e.payload?.retry) {
+              // VR6/VR8: a policy-authored retry attempt legitimately follows the terminal
+              // inconclusive attempt. It refreshes the verdict/result identity, but durable
+              // coordination status (set by the retry completion transaction) stays authoritative;
+              // a worker event can still never reopen a terminal task (SC13/SC14).
+              verdict = e.payload?.verdict ?? verdict;
               capturedSha = e.payload?.capture?.sha ?? capturedSha;
               retainedResultRef = e.payload?.capture?.retainedResultRef ?? retainedResultRef;
               checkpoint = e.payload?.capture?.checkpoint ?? checkpoint;

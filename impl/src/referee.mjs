@@ -85,7 +85,7 @@ function tokenize(command) {
   return tokens;
 }
 
-function runCommand(command, cwd, timeoutMs, environment) {
+function runCommand(command, cwd, timeoutMs, environment, signal = null) {
   return new Promise((resolve) => {
     const preferDirect = looksLikeSimpleCommand(command);
     const directArgv = preferDirect ? tokenize(command) : [];
@@ -98,13 +98,24 @@ function runCommand(command, cwd, timeoutMs, environment) {
     const chunks = [];
     let settled = false;
     let timedOut = false;
+    let aborted = false;
     let timer;
+
+    const onAbort = () => {
+      aborted = true;
+      try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* noop */ } }
+    };
+    if (signal) {
+      if (signal.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+    }
 
     const finish = (exitCode) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ exitCode: timedOut ? null : exitCode, output: Buffer.concat(chunks).toString('utf8'), timedOut, outputExceeded: false });
+      signal?.removeEventListener('abort', onAbort);
+      resolve({ exitCode: timedOut || aborted ? null : exitCode, output: Buffer.concat(chunks).toString('utf8'), timedOut, outputExceeded: false, aborted });
     };
 
     const armTimer = () => {
@@ -138,7 +149,7 @@ function runCommand(command, cwd, timeoutMs, environment) {
   });
 }
 
-function runClosedCommand(verification, sandboxDir, timeoutMs, runtime) {
+function runClosedCommand(verification, sandboxDir, timeoutMs, runtime, signal = null) {
   return new Promise((settle) => {
     const root = resolve(sandboxDir);
     const cwd = resolve(root, verification.cwd);
@@ -150,12 +161,18 @@ function runClosedCommand(verification, sandboxDir, timeoutMs, runtime) {
       .filter((name) => Object.hasOwn(runtime.environment, name))
       .map((name) => [name, runtime.environment[name]]));
     const child = spawn(verification.command, verification.arguments, { cwd, detached: true, env, shell: false });
-    const chunks = []; let bytes = 0; let settled = false; let timedOut = false; let outputExceeded = false; let timer;
+    const chunks = []; let bytes = 0; let settled = false; let timedOut = false; let outputExceeded = false; let aborted = false; let timer;
     const stop = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* noop */ } } };
+    const onAbort = () => { aborted = true; stop(); };
+    if (signal) {
+      if (signal.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+    }
     const finish = (exitCode) => {
       if (settled) return;
       settled = true; clearTimeout(timer);
-      settle({ exitCode: timedOut || outputExceeded ? null : exitCode, output: Buffer.concat(chunks).toString('utf8'), timedOut, outputExceeded });
+      signal?.removeEventListener('abort', onAbort);
+      settle({ exitCode: timedOut || outputExceeded || aborted ? null : exitCode, output: Buffer.concat(chunks).toString('utf8'), timedOut, outputExceeded, aborted });
     };
     const capture = (chunk) => {
       if (outputExceeded) return;
@@ -182,9 +199,9 @@ function runtimeEnvironmentFor(verification, runtime) {
     .map((name) => [name, runtime.environment[name]]));
 }
 
-function runPinnedVerification(verification, sandboxDir, timeoutMs, runtime) {
-  if (Array.isArray(verification.arguments)) return runClosedCommand(verification, sandboxDir, timeoutMs, runtime);
-  return runCommand(verification.command, sandboxDir, timeoutMs, runtimeEnvironmentFor(verification, runtime));
+function runPinnedVerification(verification, sandboxDir, timeoutMs, runtime, signal = null) {
+  if (Array.isArray(verification.arguments)) return runClosedCommand(verification, sandboxDir, timeoutMs, runtime, signal);
+  return runCommand(verification.command, sandboxDir, timeoutMs, runtimeEnvironmentFor(verification, runtime), signal);
 }
 
 const executionOf = (run) => run.outputExceeded
@@ -217,10 +234,15 @@ export async function verify(task, result, sandbox, opts = {}) {
 
   const timeoutMs = task.verification.timeoutMs ?? 120000;
   const runtime = opts.runtime ?? defaultVerificationRuntime();
+  const abortError = () => Object.assign(new Error('verification was cancelled by its caller before completing'), { code: 'verification_aborted' });
+  if (opts.signal?.aborted) throw abortError();
 
   const start = Date.now();
-  const resultRun = await runPinnedVerification(task.verification, sandbox.dir, timeoutMs, runtime);
+  const resultRun = await runPinnedVerification(task.verification, sandbox.dir, timeoutMs, runtime, opts.signal ?? null);
   const durationMs = Date.now() - start;
+  // Caller cancellation is not a verifier truth state: no verdict may be derived from a
+  // run whose process group was killed by external authority rather than its own contract.
+  if (opts.signal?.aborted || resultRun.aborted) throw abortError();
 
   const observedExit = resultRun.timedOut ? null : resultRun.exitCode;
   const claimedExit = result?.verification?.claimedExit ?? null;
@@ -236,7 +258,8 @@ export async function verify(task, result, sandbox, opts = {}) {
   let baseExit = null;
   let baseExecution = null;
   if (opts.baseSandbox && (passed || opts.classifyFailureOwnership)) {
-    const baseRun = await runPinnedVerification(task.verification, opts.baseSandbox.dir, timeoutMs, runtime);
+    const baseRun = await runPinnedVerification(task.verification, opts.baseSandbox.dir, timeoutMs, runtime, opts.signal ?? null);
+    if (opts.signal?.aborted || baseRun.aborted) throw abortError();
     baseExecution = executionOf(baseRun);
     baseExit = baseRun.timedOut ? null : baseRun.exitCode;
     redGreen = passed && baseExit !== task.verification.expectExit;

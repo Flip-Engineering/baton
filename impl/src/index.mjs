@@ -414,6 +414,7 @@ function refereeFn(runtime, task, result, opts) {
   const mapped = { ...task, workerWorktreeDir: task.worktree, verification: opts.pinnedVerification };
   return verify(mapped, result, { dir: opts.sandbox }, {
     ...(opts.baseSandbox ? { baseSandbox: { dir: opts.baseSandbox } } : {}),
+    ...(opts.signal ? { signal: opts.signal } : {}),
     runtime,
     classifyFailureOwnership: Boolean(opts.baseSandbox),
   });
@@ -696,6 +697,7 @@ export function createDriver(opts) {
       return { repoId: opts.repoId, treeSha: localGit(['rev-parse', 'HEAD'], opts.repoRoot, { encoding: 'utf8' }).trim(), indexEpoch, overlayDigest: overlayDigest ?? null, lockfileDigest };
     },
     referee: refereeFn.bind(null, verificationRuntime),
+    verificationRuntimeDigest: verificationRuntime.digest,
     route,
     accept: (verdict, acceptOpts) => accept(verdict, acceptOpts),
     acceptOpts: {

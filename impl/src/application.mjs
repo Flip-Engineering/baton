@@ -38,6 +38,7 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'run.stop': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['emergency_stop', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.evidence': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.adopt': Object.freeze({ args: Object.freeze(['runId', 'nodeKey', 'resultSha', 'evidenceDigest', 'reason']), capabilities: Object.freeze(['adopt_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
+  'run.retry_verification': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['retry_verification', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.review': Object.freeze({ args: Object.freeze(['runId', 'route', 'reason']), capabilities: Object.freeze(['review', 'control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.integrate': Object.freeze({ args: Object.freeze(['runId', 'evidenceDigest', 'strategy', 'reason']), capabilities: Object.freeze(['integrate_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.export': Object.freeze({ args: Object.freeze(['runId', 'evidenceDigest']), capabilities: Object.freeze(['export_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
@@ -158,6 +159,15 @@ function normalizeAdopt(value) {
     throw applicationError('Run adoption request is invalid', 'application_adopt_invalid');
   }
   return deepFreeze({ ...clone(value), reason: value.reason.normalize('NFKC').trim() });
+}
+
+function normalizeRetryVerification(value) {
+  exactObject(value, ['runId', 'reason'], 'application_retry_invalid', 'Run verification retry');
+  if (!validId(value.runId) || !validText(value.reason, 1_024)
+    || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.reason))) {
+    throw applicationError('Run verification retry request is invalid', 'application_retry_invalid');
+  }
+  return deepFreeze({ runId: value.runId, reason: value.reason.normalize('NFKC').trim() });
 }
 
 function normalizeReviewRequest(value) {
@@ -520,6 +530,7 @@ export function validateApplicationCommandArgs(name, args) {
     throw applicationError('Run evidence target is invalid', 'application_evidence_invalid');
   }
   if (name === 'run.adopt') normalizeAdopt(args);
+  if (name === 'run.retry_verification') normalizeRetryVerification(args);
   if (name === 'run.review') normalizeReviewRequest(args);
   if (name === 'run.integrate') normalizeIntegrationRequest(args);
   if (name === 'run.export' && (!validId(args.runId) || !/^[a-f0-9]{64}$/u.test(args.evidenceDigest ?? ''))) {
@@ -683,9 +694,11 @@ function runProgress({ phase, approval, node, route, verification, reviewPolicyM
       : route?.resolved ? 'Route resolved; provider identity pending'
         : node?.taskId ? 'Provider startup pending' : 'Provider not started'),
     stage('verification', 'Fresh verification', verification?.state === 'mechanically_verified' ? 'complete'
-      : verification?.state === 'failed' ? 'failed' : 'pending',
+      : verification?.state === 'inconclusive' ? 'blocked'
+        : verification?.state === 'failed' ? 'failed' : 'pending',
     verification?.state === 'mechanically_verified' ? 'Pinned verification accepted'
-      : verification?.state === 'failed' ? 'Pinned verification failed' : 'No accepted verification yet'),
+      : verification?.state === 'inconclusive' ? 'Verification needs another attempt; the exact candidate is preserved.'
+        : verification?.state === 'failed' ? 'Pinned verification failed' : 'No accepted verification yet'),
     stage('semantic_review', 'Independent semantic review', reviewPolicyMode === 'none' ? 'complete'
       : semanticReview?.state === 'semantic_reviewed' ? 'complete'
       : semanticReview?.state === 'revision_required' ? 'blocked'
@@ -870,6 +883,8 @@ export class BatonApplication {
     this._runStopPromises = new Map();
     this._runAdoptionPromises = new Map();
     this._runExportPromises = new Map();
+    this._runRetryPromises = new Map();
+    this._runRetryControllers = new Map();
     this._runEffectChains = new Map();
     this._runDeliveryRegistrations = new Map();
     this._semanticReviewPromises = new Map();
@@ -877,6 +892,7 @@ export class BatonApplication {
     this.ready = Promise.resolve().then(() => this._reconcileRunStops())
       .then(() => this._reconcileResultExportLifecycle())
       .then(() => this._reconcileResultAdoptions())
+      .then(() => this._reconcileRunVerificationRetries())
       .then(() => this._reconcileResultExports()).then(() => this._reconcileApprovedRuns())
       .then(() => this._reconcileSemanticReviews())
       .catch(async (cause) => {
@@ -995,6 +1011,11 @@ export class BatonApplication {
         nodeKey: request.nodeKey, resultSha: request.resultSha,
         evidenceDigest: request.evidenceDigest, reasonDigest: digest(request.reason),
       });
+      return true;
+    }
+    if (name === 'run.retry_verification') {
+      const request = normalizeRetryVerification(args);
+      await this._authorize(name, principal, request.runId, { reasonDigest: digest(request.reason) });
       return true;
     }
     if (name === 'run.review') {
@@ -1591,6 +1612,19 @@ export class BatonApplication {
       if (!current) throw applicationError('Run stop admission is unavailable', 'application_run_stop_incomplete');
       if (current.status === 'stopped') return current.receipt;
       await this._abortResultExportDeliveries(stop.runId);
+      // VR6: stop cancels an in-flight verifier retry exactly and settles its durable admission.
+      for (const controller of this._runRetryControllers.get(stop.runId) ?? []) controller.abort();
+      if (typeof this.driver.coordination.pendingRunVerificationRetries === 'function') {
+        for (const pending of this.driver.coordination.pendingRunVerificationRetries()
+          .filter((row) => row.runId === stop.runId)) {
+          try { this._cancelRunVerificationRetry(pending); }
+          catch (error) {
+            // The in-flight performer may have settled the same admission concurrently; a
+            // deterministic identical cancellation replays, anything else already completed it.
+            if (error?.code !== 'run_verification_retry_conflict') throw error;
+          }
+        }
+      }
       const outcome = await this.driver.coordinator.stopRunTargets(current.targetWorkerIds, current.actor);
       if (outcome.targetCount !== current.targetWorkerIds.length
         || outcome.counts.pendingCancelled + outcome.counts.killConfirmed + outcome.counts.alreadyTerminal !== outcome.targetCount
@@ -2086,6 +2120,153 @@ export class BatonApplication {
     });
   }
 
+  _performRunVerificationRetry(admission) {
+    const key = `${admission.runId}\0${admission.nodeKey}\0${admission.attempt}`;
+    const existing = this._runRetryPromises.get(key);
+    if (existing) return existing;
+    const controller = new AbortController();
+    const controllers = this._runRetryControllers.get(admission.runId) ?? new Set();
+    controllers.add(controller);
+    this._runRetryControllers.set(admission.runId, controllers);
+    const operation = (async () => {
+      const current = this.driver.coordination.runVerificationRetry(admission.runId, admission.nodeKey);
+      if (!current || current.attempt !== admission.attempt) {
+        throw applicationError('Run verification retry admission is unavailable', 'application_retry_incomplete');
+      }
+      if (current.status !== 'pending') return current.receipt;
+      const task = this.driver.coordination.task(current.taskId);
+      if (!task?.assignee) throw applicationError('Run verification retry worker authority is unavailable', 'application_retry_incomplete');
+      try {
+        return await this.driver.coordinator.retryVerification(task.assignee, {
+          runId: current.runId, nodeKey: current.nodeKey, attempt: current.attempt, signal: controller.signal,
+        });
+      } catch (error) {
+        if (error?.code === 'verification_retry_cancelled') {
+          throw applicationError('Run verification retry was cancelled by stop authority', 'application_retry_cancelled');
+        }
+        throw error;
+      }
+    })();
+    this._runRetryPromises.set(key, operation);
+    operation.finally(() => {
+      if (this._runRetryPromises.get(key) === operation) this._runRetryPromises.delete(key);
+      controllers.delete(controller);
+      if (controllers.size === 0 && this._runRetryControllers.get(admission.runId) === controllers) {
+        this._runRetryControllers.delete(admission.runId);
+      }
+    }).catch(() => {});
+    return operation;
+  }
+
+  _cancelRunVerificationRetry(pending) {
+    const receiptCore = {
+      schemaVersion: 1,
+      scope: 'run-verification-retry',
+      state: 'cancelled',
+      repoId: pending.repoId,
+      runId: pending.runId,
+      nodeKey: pending.nodeKey,
+      taskId: pending.taskId,
+      attempt: pending.attempt,
+      admissionDigest: pending.admissionDigest,
+      outcome: { disposition: { candidate: null, base: null }, runtimeDigest: null, verdictDigest: null },
+      evidence: null,
+      result: null,
+      checkpoint: { state: 'pinned', sha: pending.checkpointSha },
+    };
+    const receipt = { ...receiptCore, receiptDigest: digest(receiptCore) };
+    return this.driver.coordination.completeRunVerificationRetry({
+      schemaVersion: 1, runId: pending.runId, nodeKey: pending.nodeKey, attempt: pending.attempt, receipt, manifests: [],
+    }, { actor: pending.actor, key: `run.verification_retry.complete:${pending.runId}:${pending.nodeKey}:${pending.attempt}` });
+  }
+
+  async _reconcileRunVerificationRetries() {
+    this._assertOpen();
+    if (typeof this.driver.coordination.pendingRunVerificationRetries !== 'function'
+      || typeof this.driver.coordinator.retryVerification !== 'function') return;
+    for (const pending of this.driver.coordination.pendingRunVerificationRetries()) {
+      if (this.driver.coordination.runStop?.(pending.runId)) {
+        this._cancelRunVerificationRetry(pending);
+        continue;
+      }
+      try {
+        await this._performRunVerificationRetry(pending);
+      } catch (error) {
+        if (['verification_retry_conflict', 'verification_retry_unavailable', 'application_retry_cancelled'].includes(error?.code)) {
+          // The admission no longer matches current deployment authority (e.g. a corrected
+          // verifier runtime after restart). Settle it as cancelled so the Run stays actionable
+          // through a fresh admission instead of blocking readiness.
+          if (this.driver.coordination.runVerificationRetry(pending.runId, pending.nodeKey)?.status === 'pending') {
+            this._cancelRunVerificationRetry(pending);
+          }
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+
+  async retryVerification(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const request = normalizeRetryVerification(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'verification retry principal');
+    await this._authorize('run.retry_verification', principal, request.runId, { reasonDigest: digest(request.reason) });
+    this._assertRunMutable(request.runId);
+    const current = this._findRun(request.runId);
+    if (!current.plan || current.plan.nodes.length !== 1 || current.approval?.disposition !== 'approved') {
+      throw applicationError('Run verification retry requires one approved Plan node', 'application_retry_unavailable');
+    }
+    const nodeKey = current.plan.nodes[0].key;
+    const existing = this.driver.coordination.runVerificationRetry?.(request.runId, nodeKey) ?? null;
+    if (existing?.status === 'pending') {
+      const receipt = await this._performRunVerificationRetry(existing);
+      return this._buildView(current, this.principals.observer, {
+        action: { command: 'run.retry_verification', result: receipt.state, receiptDigest: receipt.receiptDigest },
+      });
+    }
+    const view = await this._buildView(current, this.principals.observer);
+    const retry = view.verification?.retry;
+    if (!retry) throw applicationError('Run has no retryable verification', 'application_retry_unavailable');
+    if (!retry.available || !retry.candidatePreserved) {
+      throw applicationError('Run verification retry authority is stale or unavailable', 'application_retry_stale');
+    }
+    const node = view.nodes[0];
+    const task = node?.taskId ? this.driver.coordination.task(node.taskId) : null;
+    if (!task?.assignee) throw applicationError('Run verification retry worker authority is unavailable', 'application_retry_unavailable');
+    const artifacts = (task.artifactIds ?? []).map((id) => this.driver.coordination.artifact(id)).filter(Boolean);
+    const priorSeq = artifacts.filter((artifact) => artifact.kind === 'verification').at(-1)
+      ?.provenance?.find((ref) => Number.isSafeInteger(ref?.coordinationSeq))?.coordinationSeq;
+    if (!Number.isSafeInteger(priorSeq)) {
+      throw applicationError('Run verification retry evidence is unavailable', 'application_retry_unavailable');
+    }
+    const runtimePolicyDigest = this.driver.coordinator.verificationRuntimeDigest?.();
+    if (!/^[a-f0-9]{64}$/u.test(runtimePolicyDigest ?? '')) {
+      throw applicationError('Run verification retry requires a deployment verifier runtime identity', 'application_retry_unavailable');
+    }
+    const requestCore = {
+      attempt: retry.attempt,
+      checkpointSha: retry.checkpointSha,
+      nodeKey,
+      planDigest: current.plan.digest,
+      priorEvidence: { coordinationSeq: priorSeq },
+      reasonDigest: digest(request.reason),
+      repoId: this.repoId,
+      runId: request.runId,
+      runtimePolicyDigest,
+      schemaVersion: 1,
+      taskId: task.id,
+      verificationDigest: digest(current.plan.nodes[0].verification),
+    };
+    const admitted = this.driver.coordination.admitRunVerificationRetry({
+      ...requestCore, requestDigest: digest(requestCore),
+    }, { actor: principal.actor, key: `run.verification_retry:${request.runId}:${nodeKey}:${retry.attempt}` });
+    const receipt = await this._performRunVerificationRetry(admitted.retry);
+    return this._buildView(current, this.principals.observer, {
+      action: { command: 'run.retry_verification', result: receipt.state, receiptDigest: receipt.receiptDigest },
+    });
+  }
+
   async review(rawRequest, rawPrincipal) {
     this._assertOpen();
     await this.ready;
@@ -2428,6 +2609,29 @@ export class BatonApplication {
     const runStop = this.driver.coordination.runStop?.(runId) ?? null;
     if (runStop?.status === 'stopped') phase = 'stopped';
     else if (runStop) phase = 'stopping';
+
+    // VR6/VR7: an inconclusive verifier outcome is distinguished from a candidate-owned loss
+    // and, while its exact checkpoint and approved Plan remain current, offers one retry.
+    const verdictOutcome = result?.verdict?.outcome ?? null;
+    const durableRetry = this.driver.coordination.runVerificationRetry?.(runId, node.key) ?? null;
+    let retryProjection = null;
+    if (verdictOutcome === 'inconclusive' && result?.checkpoint?.state === 'pinned') {
+      let candidatePreserved = false;
+      if (workerId && typeof this.driver.coordinator.inspectCheckpoint === 'function') {
+        candidatePreserved = (await this.driver.coordinator.inspectCheckpoint(workerId)).state === 'pinned';
+      }
+      const attempt = durableRetry
+        ? (durableRetry.status === 'pending' ? durableRetry.attempt : durableRetry.attempt + 1)
+        : 1;
+      const available = candidatePreserved && !runStop
+        && projection.approval?.disposition === 'approved'
+        && typeof this.driver.coordinator.retryVerification === 'function'
+        && typeof this.driver.coordination.admitRunVerificationRetry === 'function'
+        && (!durableRetry || ['pending', 'inconclusive', 'cancelled'].includes(durableRetry.status));
+      retryProjection = {
+        available, attempt, checkpointSha: result.checkpoint.sha, candidatePreserved,
+      };
+    }
     const terminalCause = projectTypedTerminalCause({ terminalResult: result, runStop });
 
     const workers = this.driver.coordinator.list()
@@ -2562,12 +2766,14 @@ export class BatonApplication {
             { kind: 'evidence' },
             ...(canAdopt ? [{ kind: 'adopt_result', nodeKey: node.key, resultSha }] : []),
           ]
-            : APPLICATION_RUN_TERMINAL_PHASES.has(phase) ? [{ kind: 'evidence' },
+            : APPLICATION_RUN_TERMINAL_PHASES.has(phase) ? [
+              ...(retryProjection?.available ? [{ kind: 'retry_verification' }] : []),
+              { kind: 'evidence' },
               ...exportActions,
               ...(canAdopt ? [{ kind: 'adopt_result', nodeKey: node.key, resultSha }] : [])]
               : [{ kind: 'status' }];
     const verificationState = ['work_completed', 'reviewing', 'completed'].includes(phase) ? 'mechanically_verified'
-      : phase === 'failed' ? 'failed' : 'pending';
+      : phase === 'failed' ? (retryProjection ? 'inconclusive' : 'failed') : 'pending';
     const resourcesSettled = workers.every((handle) => handle.worktree === null
       && handle.runtimeScope === null && (!handle.processRef || handle.processRef.state === 'closed'));
     const progress = runProgress({
@@ -2608,6 +2814,15 @@ export class BatonApplication {
       verification: {
         state: verificationState,
         verdict: result?.verdict ? { accepted: ['work_completed', 'reviewing', 'completed'].includes(phase), digest: digest(result.verdict) } : null,
+        ...(retryProjection ? {
+          retry: retryProjection,
+          checkpoint: { sha: retryProjection.checkpointSha },
+          dispositions: {
+            candidate: result?.verdict?.execution?.state ?? null,
+            base: result?.verdict?.baseExecution?.state ?? null,
+          },
+          runtimeDigest: result?.verdict?.runtimeDigest ?? null,
+        } : {}),
       },
       semanticReview,
       progress,
@@ -2815,7 +3030,7 @@ export class BatonApplication {
     const kinds = [];
     if (view.phase === 'awaiting_plan_approval') kinds.push('approve_plan');
     for (const candidate of view.nextActions ?? []) {
-      if (['adopt_result', 'semantic_review', 'integrate', 'export_result'].includes(candidate.kind)
+      if (['adopt_result', 'semantic_review', 'integrate', 'export_result', 'retry_verification'].includes(candidate.kind)
         && !kinds.includes(candidate.kind)) kinds.push(candidate.kind);
     }
     if (!['stopped', 'closed'].includes(view.phase)) kinds.push('stop');
@@ -3139,6 +3354,11 @@ export class BatonApplication {
         evidenceDigest: evidence.manifestDigest,
         reason: request.inputs.reason,
       }, principal);
+    } else if (action.kind === 'retry_verification') {
+      if (!validText(request.inputs.reason, 1_024)) {
+        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
+      }
+      await this.retryVerification({ runId: request.runId, reason: request.inputs.reason }, principal);
     } else if (action.kind === 'semantic_review') {
       if (!Number.isSafeInteger(request.inputs.routeIndex) || request.inputs.routeIndex < 0
         || !validText(request.inputs.reason, 1_024)) {
@@ -3241,6 +3461,9 @@ export class BatonApplication {
     }
     if (name === 'run.adopt') {
       return this.adopt(args, principal);
+    }
+    if (name === 'run.retry_verification') {
+      return this.retryVerification(args, principal);
     }
     if (name === 'run.review') {
       return this.review(args, principal);

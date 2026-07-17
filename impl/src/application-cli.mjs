@@ -9,7 +9,7 @@ import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 import { foldCanonicalCase } from './canonical-order.mjs';
 import { publishResultExportNoReplace } from './result-export.mjs';
 
-const COMMANDS = new Set(['run.start', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.review', 'run.integrate', 'run.export']);
+const COMMANDS = new Set(['run.start', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.review', 'run.integrate', 'run.export']);
 const TERMINAL_RUN_PHASES = new Set(['work_completed', 'completed', 'failed', 'cancelled', 'denied', 'stopped', 'closed']);
 const CONNECTION_ENV = Object.freeze(['BATON_URL', 'BATON_ORIGIN', 'BATON_REPO_ID', 'BATON_TOKEN']);
 
@@ -507,7 +507,7 @@ export function parseBatonCli(rawArgs) {
     return parseStart(args, args.shift(), idempotencyKey);
   }
   const lifecycleActions = new Set(['show', 'do', 'recover', 'status', 'approve', 'answer', 'steer',
-    'stop', 'evidence', 'adopt', 'review', 'integrate', 'export']);
+    'stop', 'evidence', 'adopt', 'retry', 'review', 'integrate', 'export']);
   if (!lifecycleActions.has(action)) return parseStart(args, action, idempotencyKey);
   const runId = id(args.shift(), 'Run ID');
   if (action === 'show') {
@@ -566,6 +566,10 @@ export function parseBatonCli(rawArgs) {
   if (action === 'adopt') {
     const reason = take(args, '--reason', { required: true }); noRemainder(args);
     return { kind: 'adopt', runId, reason, idempotencyKey };
+  }
+  if (action === 'retry') {
+    const reason = take(args, '--reason', { required: true }); noRemainder(args);
+    return { kind: 'command', name: 'run.retry_verification', args: { runId, reason }, idempotencyKey };
   }
   if (action === 'review') {
     const exact = route(take(args, '--exact', { required: true }));

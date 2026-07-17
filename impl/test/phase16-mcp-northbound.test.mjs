@@ -17,7 +17,7 @@ const principal = (overrides = {}) => ({
 const runApplicationCard = () => ({
   schemaVersion: 1,
   repoId: 'repo-a',
-  commands: ['application.help', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.review', 'run.integrate', 'run.export', 'application.shutdown'],
+  commands: ['application.help', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.review', 'run.integrate', 'run.export', 'application.shutdown'],
 });
 function setup(overrides = {}) {
   const calls = [];

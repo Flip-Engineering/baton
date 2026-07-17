@@ -456,6 +456,7 @@ export class CoordinationStore {
     this._knowledgeNodes = new Map(); this._knowledgeEdges = new Map(); this._knowledgeNodeHistory = new Map(); this._knowledgeEdgeHistory = new Map(); this._knowledgeReads = []; this._knowledgeRecallAssessments = new Map(); this._contamination = [];
     this._webCommands = new Map(); this._webCommandScopes = new Map(); this._mcpCalls = new Map(); this._mcpCallScopes = new Map();
     this._fleetDrains = new Map(); this._runStops = new Map(); this._runResultAdoptions = new Map(); this._runResultExports = new Map();
+    this._runVerificationRetries = new Map();
     this._recoveryDispatches = new Map();
     this._providerReceipts = new Map(); this._providerDeliveryIds = new Map(); this._providerProcessing = new Map(); this._providerPending = new Map();
     this._providerSequences = new Map(); this._providerSourceHealth = new Map();
@@ -3454,6 +3455,17 @@ export class CoordinationStore {
       this._runResultAdoptions.set(this._runResultAdoptionKey(p.runId, p.nodeKey), freeze({
         ...clone(old), status: 'adopted', receipt: clone(p.receipt), completedEvent: event.seq, completedAt: event.ts,
       }));
+    } else if (event.kind === 'run.verification_retry_admitted') {
+      this._validateRunVerificationRetryAdmission(p, event, true);
+      this._runVerificationRetries.set(this._runVerificationRetryKey(p.runId, p.nodeKey), freeze({
+        ...clone(p), actor: event.actor, status: 'pending', admittedEvent: event.seq, admittedAt: event.ts,
+        receipt: null, completedEvent: null, completedAt: null,
+      }));
+    } else if (event.kind === 'run.verification_retry_completed') {
+      const old = this._validateRunVerificationRetryCompletion(p, event, true);
+      this._runVerificationRetries.set(this._runVerificationRetryKey(p.runId, p.nodeKey), freeze({
+        ...clone(old), status: p.receipt.state, receipt: clone(p.receipt), completedEvent: event.seq, completedAt: event.ts,
+      }));
     } else if (event.kind === 'run.result_export_admitted') {
       this._validateRunResultExportAdmission(p, event, true);
       this._runResultExports.set(p.exportId, freeze({
@@ -4152,6 +4164,237 @@ export class CoordinationStore {
     if (this._byKey.has(auth.key)) throw new CoordinationRefusal('run result adoption completion idempotency conflict', 'run_result_adoption_conflict');
     const event = this._append('run.result_adoption_completed', payload, auth);
     return freeze({ ok: true, result: 'completed', event: clone(event), adoption: this.runResultAdoption(fields.runId, fields.nodeKey) });
+  }
+
+  // ==========================================================================
+  // Phase 69 VR6 — durable verifier retry cascade (two-phase, response-loss safe)
+  // ==========================================================================
+
+  _runVerificationRetryKey(runId, nodeKey) { return `${runId}\0${nodeKey}`; }
+
+  _runVerificationRetryFailure(message, code = 'run_verification_retry_integrity', integrity = false) {
+    throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code);
+  }
+
+  runVerificationRetry(runId, nodeKey) {
+    if (!validRunId(runId) || !boundedText(nodeKey, 256)) throw new TypeError('run verification retry coordinates are invalid');
+    return clone(this._runVerificationRetries.get(this._runVerificationRetryKey(runId, nodeKey)) ?? null);
+  }
+
+  pendingRunVerificationRetries(limit = 1_000) {
+    if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) throw new TypeError('run verification retry scan limit is invalid');
+    return [...this._runVerificationRetries.values()].filter((retry) => retry.status === 'pending')
+      .sort((a, b) => a.admittedEvent - b.admittedEvent).slice(0, limit).map(clone);
+  }
+
+  _readRetryVerificationEvidence(reference, integrity) {
+    const fail = (message, code = 'run_verification_retry_unavailable') => this._runVerificationRetryFailure(message, code, integrity);
+    if (!reference || typeof reference !== 'object' || Array.isArray(reference)
+      || !Number.isSafeInteger(reference.coordinationSeq)) fail('run verification retry evidence reference is invalid', 'run_verification_retry_invalid');
+    const mapped = this._events[reference.coordinationSeq - 1];
+    const source = mapped?.kind === 'evidence.mapped'
+      ? this._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq) : null;
+    if (!mapped || mapped.payload?.kind !== 'verify.reverified' || source?.kind !== 'verify.reverified'
+      || source.actor !== 'policy' || digest(source) !== mapped.payload.digest) {
+      fail('run verification retry evidence is not a mapped hub verification');
+    }
+    return { mapped, source };
+  }
+
+  _normalizeRunVerificationRetryRequest(fields, event, integrity = false) {
+    const fail = (message, code = 'run_verification_retry_invalid') => this._runVerificationRetryFailure(message, code, integrity);
+    const expected = ['attempt', 'checkpointSha', 'nodeKey', 'planDigest', 'priorEvidence', 'reasonDigest',
+      'repoId', 'requestDigest', 'runId', 'runtimePolicyDigest', 'schemaVersion', 'taskId', 'verificationDigest'];
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+      || Object.keys(fields).sort().join(',') !== expected.join(',') || fields.schemaVersion !== 1
+      || !validRunId(fields.repoId) || !validRunId(fields.runId) || !boundedText(fields.nodeKey, 256)
+      || !boundedText(fields.taskId, 4_096) || !Number.isSafeInteger(fields.attempt) || fields.attempt < 1
+      || !validResultSha(fields.checkpointSha)
+      || !fields.priorEvidence || typeof fields.priorEvidence !== 'object' || Array.isArray(fields.priorEvidence)
+      || Object.keys(fields.priorEvidence).join(',') !== 'coordinationSeq'
+      || !Number.isSafeInteger(fields.priorEvidence.coordinationSeq)
+      || !/^[a-f0-9]{64}$/.test(fields.planDigest ?? '') || !/^[a-f0-9]{64}$/.test(fields.verificationDigest ?? '')
+      || !/^[a-f0-9]{64}$/.test(fields.runtimePolicyDigest ?? '') || !/^[a-f0-9]{64}$/.test(fields.reasonDigest ?? '')
+      || !/^[a-f0-9]{64}$/.test(fields.requestDigest ?? '')) fail('run verification retry request is invalid');
+    const requestCore = Object.fromEntries(expected.filter((key) => key !== 'requestDigest')
+      .map((key) => [key, clone(fields[key])]));
+    if (fields.requestDigest !== canonicalDigest(requestCore)) fail('run verification retry request digest is invalid');
+    const expectedKey = `run.verification_retry:${fields.runId}:${fields.nodeKey}:${fields.attempt}`;
+    if (event?.idempotencyKey !== expectedKey || !boundedText(event?.actor, 256)) fail('run verification retry authority is invalid');
+    return freeze({ ...clone(requestCore), requestDigest: fields.requestDigest });
+  }
+
+  _validateRunVerificationRetryAdmission(p, event, integrity = false) {
+    const fail = (message, code = 'run_verification_retry_unavailable') => this._runVerificationRetryFailure(message, code, integrity);
+    const request = this._normalizeRunVerificationRetryRequest(
+      Object.fromEntries(Object.entries(p ?? {}).filter(([key]) => key !== 'admissionDigest')), event, integrity,
+    );
+    if (!/^[a-f0-9]{64}$/.test(p?.admissionDigest ?? '')
+      || p.admissionDigest !== canonicalDigest(Object.fromEntries(Object.entries(p).filter(([key]) => key !== 'admissionDigest')))) {
+      this._runVerificationRetryFailure('run verification retry admission digest is invalid', 'run_verification_retry_integrity', integrity);
+    }
+    const task = this._tasks.get(request.taskId);
+    const dispatch = this._planTaskLinks.get(request.taskId);
+    const goalPlan = task?.brief?.goalPlan;
+    if (!task || task.runId !== request.runId || task.status !== 'failed' || task.acceptanceRevocation
+      || !dispatch || !goalPlan || dispatch.taskId !== task.id || dispatch.binding?.nodeKey !== request.nodeKey
+      || canonicalDigest(dispatch.binding) !== canonicalDigest(goalPlan)) {
+      fail('run verification retry requires the exact failed approved Plan task');
+    }
+    const plan = this._plans.get(this._planVersionKey(goalPlan.planId, goalPlan.planVersion));
+    const approval = this._planApprovals.get(this._planVersionKey(goalPlan.planId, goalPlan.planVersion));
+    const node = plan?.nodes?.find((row) => row.key === request.nodeKey);
+    if (!plan || !approval || approval.disposition !== 'approved' || !node
+      || plan.repoId !== request.repoId || plan.runId !== request.runId
+      || plan.digest !== request.planDigest || plan.digest !== goalPlan.planDigest
+      || canonicalDigest(node.verification) !== request.verificationDigest) {
+      fail('run verification retry Plan authority is unavailable or changed');
+    }
+    const { source } = this._readRetryVerificationEvidence(request.priorEvidence, integrity);
+    if (source.worker !== task.assignee || source.payload?.accept === true
+      || source.payload?.verdict?.outcome !== 'inconclusive'
+      || source.payload?.capture?.checkpoint?.sha !== request.checkpointSha
+      || source.payload?.capture?.checkpoint?.state !== 'pinned') {
+      fail('run verification retry evidence is not the inconclusive checkpointed attempt');
+    }
+    const existing = this._runVerificationRetries.get(this._runVerificationRetryKey(request.runId, request.nodeKey));
+    if (existing?.status === 'pending') fail('run verification retry admission is already pending', 'run_verification_retry_conflict');
+    if (existing && !['inconclusive', 'cancelled'].includes(existing.status)) {
+      fail('run verification retry identity is already settled', 'run_verification_retry_conflict');
+    }
+    const expectedAttempt = existing ? existing.attempt + 1 : 1;
+    if (request.attempt !== expectedAttempt) fail('run verification retry attempt sequence is invalid', 'run_verification_retry_conflict');
+    return request;
+  }
+
+  _validateRunVerificationRetryCompletion(p, event, integrity = false) {
+    const fail = (message, code = 'run_verification_retry_integrity') => this._runVerificationRetryFailure(message, code, integrity);
+    if (!p || typeof p !== 'object' || Array.isArray(p)
+      || Object.keys(p).sort().join(',') !== ['attempt', 'nodeKey', 'receipt', 'runId', 'schemaVersion'].join(',')
+      || p.schemaVersion !== 1 || !validRunId(p.runId) || !boundedText(p.nodeKey, 256)
+      || !Number.isSafeInteger(p.attempt) || p.attempt < 1) {
+      fail('run verification retry completion is malformed');
+    }
+    const retry = this._runVerificationRetries.get(this._runVerificationRetryKey(p.runId, p.nodeKey));
+    if (!retry || retry.status !== 'pending' || retry.attempt !== p.attempt || retry.receipt !== null) {
+      fail('run verification retry completion has no pending admission');
+    }
+    if (event?.idempotencyKey !== `run.verification_retry.complete:${p.runId}:${p.nodeKey}:${p.attempt}`
+      || event.actor !== retry.actor) {
+      fail('run verification retry completion authority is invalid');
+    }
+    const receipt = p.receipt;
+    const receiptFields = ['attempt', 'admissionDigest', 'checkpoint', 'evidence', 'nodeKey', 'outcome',
+      'receiptDigest', 'repoId', 'result', 'runId', 'schemaVersion', 'scope', 'state', 'taskId'];
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
+      || Object.keys(receipt).sort().join(',') !== [...receiptFields].sort().join(',') || receipt.schemaVersion !== 1
+      || receipt.scope !== 'run-verification-retry'
+      || !['accepted', 'candidate_failed', 'inconclusive', 'cancelled'].includes(receipt.state)
+      || receipt.repoId !== retry.repoId || receipt.runId !== retry.runId || receipt.nodeKey !== retry.nodeKey
+      || receipt.taskId !== retry.taskId || receipt.attempt !== retry.attempt
+      || receipt.admissionDigest !== retry.admissionDigest
+      || !/^[a-f0-9]{64}$/.test(receipt.receiptDigest ?? '')) fail('run verification retry receipt is invalid');
+    const { receiptDigest, ...receiptCore } = receipt;
+    if (receiptDigest !== canonicalDigest(receiptCore)) fail('run verification retry receipt digest is invalid');
+    const task = this._tasks.get(retry.taskId);
+    if (!task || task.status !== 'failed') fail('run verification retry completion requires the admitted failed task');
+    if (receipt.state === 'cancelled') {
+      if (receipt.evidence !== null || receipt.result !== null) fail('a cancelled retry carries no verification evidence or result');
+      return retry;
+    }
+    const { mapped, source } = this._readRetryVerificationEvidence(receipt.evidence, integrity);
+    if (receipt.evidence.worker !== mapped.payload.worker || receipt.evidence.workerSeq !== mapped.payload.workerSeq
+      || receipt.evidence.digest !== mapped.payload.digest
+      || source.worker !== task.assignee || source.payload?.retry?.attempt !== retry.attempt) {
+      fail('run verification retry completion evidence is not this attempt');
+    }
+    const outcome = source.payload?.verdict?.outcome;
+    if (receipt.state === 'accepted') {
+      if (source.payload?.accept !== true || outcome !== 'passed'
+        || source.payload?.capture?.sha !== retry.checkpointSha
+        || !receipt.result || Object.keys(receipt.result).sort().join(',') !== ['ref', 'sha'].join(',')
+        || receipt.result.sha !== retry.checkpointSha
+        || receipt.result.ref !== retainedResultRef(retry.checkpointSha)) {
+        fail('an accepted retry requires the hub-accepted verification of the exact checkpointed commit');
+      }
+    } else if (source.payload?.accept === true
+      || (receipt.state === 'candidate_failed' && outcome !== 'candidate_failed')
+      || (receipt.state === 'inconclusive' && outcome !== 'inconclusive')) {
+      fail('run verification retry completion state contradicts its verification evidence');
+    }
+    if (receipt.state !== 'accepted' && receipt.result !== null) fail('only an accepted retry carries a result');
+    if (['inconclusive', 'cancelled'].includes(receipt.state)
+      && (receipt.checkpoint?.state !== 'pinned' || receipt.checkpoint?.sha !== retry.checkpointSha)) {
+      fail('an unresolved retry must retain the exact original checkpoint');
+    }
+    return retry;
+  }
+
+  admitRunVerificationRetry(fields, auth) {
+    const preview = { actor: auth?.actor, idempotencyKey: auth?.key };
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'run.verification_retry_admitted' || prior.actor !== auth.actor
+        || prior.payload?.requestDigest !== fields?.requestDigest) {
+        throw new CoordinationRefusal('run verification retry idempotency conflict', 'run_verification_retry_conflict');
+      }
+      return freeze({ ok: true, result: 'replay', event: clone(prior), retry: this.runVerificationRetry(fields.runId, fields.nodeKey) });
+    }
+    const request = this._normalizeRunVerificationRetryRequest(fields, preview, false);
+    const payload = { ...clone(request), admissionDigest: canonicalDigest(clone(request)) };
+    this._validateRunVerificationRetryAdmission(payload, { ...preview, payload }, false);
+    const event = this._append('run.verification_retry_admitted', payload, auth);
+    return freeze({ ok: true, result: 'admitted', event: clone(event), retry: this.runVerificationRetry(request.runId, request.nodeKey) });
+  }
+
+  completeRunVerificationRetry(fields, auth) {
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+      || Object.keys(fields).sort().join(',') !== ['attempt', 'manifests', 'nodeKey', 'receipt', 'runId', 'schemaVersion'].join(',')
+      || !Array.isArray(fields.manifests)) {
+      throw new CoordinationRefusal('run verification retry completion is invalid', 'run_verification_retry_invalid');
+    }
+    const { manifests, ...payload } = clone(fields);
+    const current = this._runVerificationRetries.get(this._runVerificationRetryKey(fields.runId, fields.nodeKey));
+    if (current && current.status !== 'pending' && current.attempt === fields.attempt) {
+      const prior = this._byKey.get(auth?.key);
+      if (!prior || prior.kind !== 'run.verification_retry_completed' || prior.actor !== auth?.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
+        throw new CoordinationRefusal('run verification retry completion conflict', 'run_verification_retry_conflict');
+      }
+      return freeze({ ok: true, result: 'replay', event: clone(prior), retry: this.runVerificationRetry(fields.runId, fields.nodeKey) });
+    }
+    const preview = { actor: auth?.actor, idempotencyKey: auth?.key, payload };
+    const retry = this._validateRunVerificationRetryCompletion(payload, preview, false);
+    if (this._byKey.has(auth.key)) throw new CoordinationRefusal('run verification retry completion idempotency conflict', 'run_verification_retry_conflict');
+    const accepted = payload.receipt.state === 'accepted';
+    if (accepted && manifests.length === 0) {
+      throw new CoordinationRefusal('an accepted retry must register its commit and verification artifacts', 'run_verification_retry_invalid');
+    }
+    if (!accepted && manifests.some((manifest) => manifest?.accepted === true)) {
+      throw new CoordinationRefusal('only an accepted retry may register accepted artifacts', 'run_verification_retry_invalid');
+    }
+    const task = this._tasks.get(retry.taskId);
+    const prepared = manifests.map((manifest) => this._prepareArtifact(manifest, accepted ? 'completed' : task.status));
+    const batchTs = this._clock();
+    const entries = [{ kind: 'run.verification_retry_completed', payload, auth, fixedTs: batchTs }];
+    if (accepted) {
+      entries.push({
+        kind: 'task.transitioned',
+        payload: { id: task.id, from: 'failed', to: 'completed', expectedVersion: task.version, newVersion: task.version + 1, evidence: clone(payload.receipt.evidence) },
+        auth: { actor: auth.actor, key: `${auth.key}:transition` }, fixedTs: batchTs,
+      });
+    }
+    entries.push(...prepared.map((manifest) => ({
+      kind: 'artifact.registered', payload: manifest,
+      auth: { actor: auth.actor, key: `${auth.key}:artifact:${manifest.id}` }, fixedTs: batchTs,
+    })));
+    const events = this._appendBatch(entries);
+    return freeze({
+      ok: true, result: 'completed', event: clone(events[0]),
+      retry: this.runVerificationRetry(fields.runId, fields.nodeKey),
+      task: this.task(retry.taskId),
+      artifacts: prepared.map((manifest) => this.artifact(manifest.id)),
+    });
   }
 
   runResultExport(runId, nodeKey) {
