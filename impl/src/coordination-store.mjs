@@ -781,6 +781,22 @@ export class CoordinationStore {
     return state;
   }
 
+  // PS5: a preserved-resume attestation is the exact, immutable coordinate set that authorizes one
+  // re-dispatch of an already-cancelled node: the prior task id, the pinned checkpoint SHA, and the
+  // immutable checkpoint ref. It is carried inside the dispatch payload so both prospective and
+  // integrity validation read the same attestation without a side channel. Returns a frozen
+  // normalized attestation or null when none/invalid.
+  _validPreservedResumeAttestation(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const names = ['priorTaskId', 'checkpointSha', 'checkpointRef'];
+    if (Object.keys(value).sort().join(',') !== names.sort().join(',')) return null;
+    const { priorTaskId, checkpointSha, checkpointRef } = value;
+    if (!boundedText(priorTaskId, 4_096) || !/^[a-f0-9]{40,64}$/u.test(checkpointSha ?? '')
+      || typeof checkpointRef !== 'string'
+      || !/^refs\/baton\/checkpoints\/[a-f0-9]{40,64}$/u.test(checkpointRef)) return null;
+    return freeze({ priorTaskId, checkpointSha, checkpointRef });
+  }
+
   _validateGoalPlanDispatchPair(dispatchEvent, taskEvent, integrity = false, recoveryClaimEvent = null) {
     const fail = (message) => this._goalPlanFailure(
       message,
@@ -828,9 +844,27 @@ export class CoordinationStore {
       || canonicalDigest(node.budget) !== canonicalDigest(p.nodeBudget)
       || canonicalDigest(node.capabilities) !== canonicalDigest(p.capabilities)
       || canonicalDigest(node.effects) !== canonicalDigest(p.effects)) fail('goal/plan dispatch node authority changed');
-    if (prefix.some((event) => event.kind === 'plan.node_dispatched'
+    // PS5: a preserved-resume re-dispatch is the one sanctioned exception to "one dispatch per
+    // node". It is permitted only when a prior dispatch exists, the latest task is durably
+    // terminal-cancelled, and the caller attested the exact preserved checkpoint lineage. The
+    // coordination store records the attestation; the physical checkpoint ref is postchecked by
+    // the Coordinator before this admission, so re-dispatch can never manufacture a fresh
+    // identity for work that was not actually preserved.
+    const priorDispatches = prefix.filter((event) => event.kind === 'plan.node_dispatched'
       && event.payload.binding.planId === plan.planId && event.payload.binding.planVersion === plan.version
-      && event.payload.binding.nodeKey === node.key)) fail('goal/plan node was dispatched more than once');
+      && event.payload.binding.nodeKey === node.key);
+    const preservedResume = this._validPreservedResumeAttestation(p.preservedResume);
+    if (preservedResume) {
+      if (priorDispatches.length === 0) fail('preserved resume requires a prior node dispatch');
+      // Recursive resource stops form a linear same-node recovery chain. Only the latest dispatch
+      // is eligible, so an older cancelled checkpoint can never fork the current node authority.
+      const priorTaskId = priorDispatches.at(-1).payload.taskId;
+      const priorState = this._historicalTaskState(priorTaskId, dispatchEvent.seq - 1);
+      if (!priorState || priorState.status !== 'cancelled') fail('preserved resume prior task was not cancelled');
+      if (priorTaskId !== preservedResume.priorTaskId) fail('preserved resume prior task lineage changed');
+    } else if (priorDispatches.length > 0) {
+      fail('goal/plan node was dispatched more than once');
+    }
 
     if (!p.route || Object.keys(p.route).sort().join(',') !== ['effort', 'model', 'vendor'].sort().join(',')
       || (node.routes.harnesses.length > 0 && !node.routes.harnesses.includes(p.route.vendor))
@@ -856,10 +890,16 @@ export class CoordinationStore {
     };
     if (canonicalDigest(expectedBinding) !== canonicalDigest(p.binding)) fail('goal/plan dispatch binding changed');
     const expectedBrief = buildAuthoritativeBrief(goal, plan, node, expectedBinding);
+    const resumeAttestation = this._validPreservedResumeAttestation(p.preservedResume);
     const expectedTaskFields = planRecovery
       ? ['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'sessionRequest', 'relation', 'worktreeBaseSha', 'review']
-      : ['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'effortResolved', 'effortObserved', 'routeKey', 'sessionRequest'];
+      : resumeAttestation
+        ? ['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'effortResolved', 'effortObserved', 'routeKey', 'sessionRequest', 'worktreeBaseSha']
+        : ['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'effortResolved', 'effortObserved', 'routeKey', 'sessionRequest'];
     if (Object.keys(task).sort().join(',') !== expectedTaskFields.sort().join(',')) fail('goal/plan task field set changed');
+    if (resumeAttestation && (!/^[a-f0-9]{40}$/.test(task.worktreeBaseSha ?? '') || task.refines !== resumeAttestation.priorTaskId)) {
+      fail('preserved resume task base or lineage does not match its attestation');
+    }
     if (task.id !== p.taskId || !boundedText(task.reservedWorkerId, 4_096)) fail('goal/plan task physical identity changed');
     if (canonicalDigest(task.brief) !== canonicalDigest(expectedBrief)) fail('goal/plan authoritative Brief changed');
     if (canonicalDigest(task.deps) !== canonicalDigest(resolvedDeps)) fail('goal/plan task dependencies changed');
@@ -887,6 +927,17 @@ export class CoordinationStore {
         || canonicalDigest(task.review ?? null) !== canonicalDigest(priorTask.review ?? null)) {
         this._recoveryFailure('plan recovery changes immutable prior-task lineage', 'recovery_refinement_conflict', integrity);
       }
+    } else if (resumeAttestation) {
+      // PS5: a preserved-resume task re-dispatches the same node from its pinned checkpoint. Its
+      // lineage is the cancelled prior task; its route, session, and resolved fields stay exact.
+      if (task.refines !== resumeAttestation.priorTaskId || task.runId !== goal.runId || task.taskType !== 'general') {
+        fail('preserved resume task lineage, run, or type changed');
+      }
+      if (task.vendorRequested !== p.route.vendor || task.modelRequested !== p.route.model || task.modelPolicy !== null
+        || task.effortRequested !== p.route.effort || task.effortResolved !== null || task.effortObserved !== null || task.routeKey !== null) {
+        fail('preserved resume task route fields changed');
+      }
+      if (canonicalDigest(task.sessionRequest) !== canonicalDigest({ mode: 'new' })) fail('preserved resume task session fields changed');
     } else {
       if (task.refines !== null || task.runId !== goal.runId || task.taskType !== 'general') fail('goal/plan task lineage, run, or type changed');
       if (task.vendorRequested !== p.route.vendor || task.modelRequested !== p.route.model || task.modelPolicy !== null
@@ -906,6 +957,7 @@ export class CoordinationStore {
     const expectedRequestDigest = goalPlanDigest({
       principalId: p.authority.principalId, gate, route: p.route, task: requestTask,
       ...(planRecovery ? { attribution: this._recoveryAttributionFromClaim(recoveryClaimEvent.payload) } : {}),
+      ...(resumeAttestation ? { preservedResume: resumeAttestation } : {}),
     });
     if (p.requestDigest !== expectedRequestDigest) fail('goal/plan dispatch request digest changed');
     return true;
@@ -2938,6 +2990,7 @@ export class CoordinationStore {
       } else if (event.kind === 'plan.node_dispatched') {
         const dispatchFields = ['authority', 'binding', 'capabilities', 'effects', 'expectedDispatchVersion', 'newDispatchVersion', 'nodeBudget', 'requestDigest', 'resolvedDeps', 'route', 'schemaVersion', 'taskId', 'taskPayloadDigest'];
         if (event.batch?.kind === 'goal_plan_recovery_dispatch') dispatchFields.push('claimPayloadDigest');
+        if (this._validPreservedResumeAttestation(p.preservedResume)) dispatchFields.push('preservedResume');
         if (Object.keys(p).sort().join(',') !== dispatchFields.sort().join(',')
           || p.schemaVersion !== 1 || p.expectedDispatchVersion !== 0 || p.newDispatchVersion !== 1 || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.taskPayloadDigest ?? '')) malformed();
         if (event.batch?.kind === 'goal_plan_recovery_dispatch' && !/^[a-f0-9]{64}$/.test(p.claimPayloadDigest ?? '')) malformed();
@@ -2948,7 +3001,19 @@ export class CoordinationStore {
           || canonicalDigest(node.budget) !== canonicalDigest(p.nodeBudget)
           || canonicalDigest(node.capabilities) !== canonicalDigest(p.capabilities)
           || canonicalDigest(node.effects) !== canonicalDigest(p.effects)) malformed();
-        const key = this._planNodeKey(plan.planId, plan.version, node.key); if (this._planDispatches.has(key) || this._planTaskLinks.has(p.taskId)) malformed();
+        const key = this._planNodeKey(plan.planId, plan.version, node.key);
+        const resumeAttestation = this._validPreservedResumeAttestation(p.preservedResume);
+        if (this._planTaskLinks.has(p.taskId)) malformed();
+        if (resumeAttestation) {
+          // PS5: a preserved resume supersedes the prior (cancelled) dispatch of this node. The
+          // plan projection is last-wins over events, so the resumed task becomes the node's
+          // current dispatch; the prior cancelled task keeps its own budget link.
+          const prior = this._planDispatches.get(key);
+          const priorTask = prior ? this._tasks.get(prior.taskId) : null;
+          if (!prior || !priorTask || priorTask.status !== 'cancelled' || prior.taskId !== resumeAttestation.priorTaskId) {
+            malformed('preserved resume prior dispatch is not the cancelled preserved task');
+          }
+        } else if (this._planDispatches.has(key)) malformed();
         const record = freeze({ ...clone(p), eventSeq: event.seq, dispatchedAt: event.ts, state: 'dispatched' }); this._planDispatches.set(key, record); this._planTaskLinks.set(p.taskId, record);
       } else if (event.kind === 'plan.node_budget_settled') {
         this._validatePlanBudgetSettlement(p, event, true);
@@ -3655,7 +3720,7 @@ export class CoordinationStore {
     return freeze({ ok: true, result: 'decided', event: clone(event), approval: clone(approval) });
   }
 
-  _planDispatchState(gate, route) {
+  _planDispatchState(gate, route, preservedResumeClaim = null) {
     const fields = ['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'expectedDispatchVersion', 'capabilities', 'effects'];
     if (!gate || typeof gate !== 'object' || Array.isArray(gate) || Object.keys(gate).sort().join(',') !== fields.sort().join(',')
       || gate.expectedDispatchVersion !== 0 || !Array.isArray(gate.capabilities) || !Array.isArray(gate.effects)
@@ -3671,7 +3736,17 @@ export class CoordinationStore {
     if (Date.parse(this._clock()) - Date.parse(approval.decidedAt) > this._goalPlanPolicy.approvalTtlMs) throw new CoordinationRefusal('plan approval expired', 'plan_approval_expired');
     const node = plan.nodes.find((row) => row.key === gate.nodeKey); if (!node) throw new CoordinationRefusal('plan node is unavailable', 'plan_node_not_found');
     const dispatchKey = this._planNodeKey(plan.planId, plan.version, node.key);
-    if (this._planDispatches.has(dispatchKey)) throw new CoordinationRefusal('plan node dispatch version is stale', 'plan_dispatch_stale');
+    if (preservedResumeClaim) {
+      // PS5: one sanctioned re-dispatch of an already-cancelled node from a pinned checkpoint.
+      const attestation = this._validPreservedResumeAttestation(preservedResumeClaim);
+      if (!attestation) throw new CoordinationRefusal('preserved resume attestation is invalid', 'preserved_resume_invalid');
+      const prior = this._planDispatches.get(dispatchKey);
+      if (!prior) throw new CoordinationRefusal('preserved resume has no prior node dispatch', 'plan_dispatch_stale');
+      const priorTask = this._tasks.get(prior.taskId);
+      if (!priorTask || priorTask.status !== 'cancelled' || priorTask.id !== attestation.priorTaskId) {
+        throw new CoordinationRefusal('preserved resume prior task is not the cancelled preserved task', 'plan_dispatch_stale');
+      }
+    } else if (this._planDispatches.has(dispatchKey)) throw new CoordinationRefusal('plan node dispatch version is stale', 'plan_dispatch_stale');
     const capabilities = [...gate.capabilities].sort(); const effects = [...gate.effects].sort();
     if (canonicalDigest(capabilities) !== canonicalDigest(node.capabilities) || canonicalDigest(effects) !== canonicalDigest(node.effects)) throw new CoordinationRefusal('plan node capabilities/effects changed', 'plan_effect_mismatch');
     if ((node.routes.harnesses.length > 0 && !node.routes.harnesses.includes(route.vendor))
@@ -3691,7 +3766,7 @@ export class CoordinationStore {
     return freeze({ goal: clone(goal), plan: clone(plan), node: clone(node), approval: clone(approval), binding, resolvedDeps: resolvedDeps.sort(), brief: buildAuthoritativeBrief(goal, plan, node, binding) });
   }
 
-  previewPlanDispatch(gate, route) { return this._planDispatchState(gate, route); }
+  previewPlanDispatch(gate, route, preservedResumeClaim = null) { return this._planDispatchState(gate, route, preservedResumeClaim); }
 
   reconcilePlanGatedTask(taskId, gate, route, auth) {
     if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
@@ -3743,6 +3818,61 @@ export class CoordinationStore {
       taskPayloadDigest: canonicalDigest(taskPayload), expectedDispatchVersion: 0, newDispatchVersion: 1,
       resolvedDeps: clone(state.resolvedDeps), nodeBudget: clone(state.node.budget),
       route: clone(route), capabilities: clone(state.node.capabilities), effects: clone(state.node.effects),
+    };
+    const fixedTs = this._clock();
+    const prospectiveDispatch = { seq: this._events.length + 1, ts: fixedTs, payload: dispatchPayload };
+    const prospectiveTask = { seq: this._events.length + 2, ts: fixedTs, payload: taskPayload };
+    this._validateGoalPlanDispatchPair(prospectiveDispatch, prospectiveTask, false);
+    const [dispatchEvent, taskEvent] = this._appendBatch([
+      { kind: 'plan.node_dispatched', payload: dispatchPayload, auth: { actor: auth.actor, key: auth.key }, fixedTs },
+      { kind: 'task.created', payload: taskPayload, auth: { actor: auth.actor, key: `${auth.key}:task` }, fixedTs },
+    ], 'goal_plan_node_dispatch');
+    return freeze({ ok: true, result: 'created', dispatchEvent: clone(dispatchEvent), taskEvent: clone(taskEvent), task: this.task(taskPayload.id), dispatch: clone(dispatchPayload) });
+  }
+
+  // PS5: re-dispatch one approved Plan node from a preserved progress checkpoint. The caller
+  // (Coordinator) has already postchecked the immutable checkpoint ref; this admission only
+  // records the attestation and validates that the prior dispatch's task is durably terminal-
+  // cancelled, so a fresh owned task may continue the same Plan node at the preserved commit.
+  // Reuses the ordinary two-event goal_plan_node_dispatch batch so the integrity walker and the
+  // last-wins plan projection pick up the resumed task as the node's current dispatch.
+  createAndClaimPreservedResumeRefinement(fields, gate, route, preservedResume, auth) {
+    if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
+    const attestation = this._validPreservedResumeAttestation(preservedResume);
+    if (!attestation) throw new CoordinationRefusal('preserved resume attestation is invalid', 'preserved_resume_invalid');
+    if (!gate || !route || !auth || typeof auth !== 'object') throw new CoordinationRefusal('preserved resume request is invalid', 'preserved_resume_invalid');
+    const requestDigest = goalPlanDigest({ principalId: auth.principalId, gate, route, task: fields, preservedResume: attestation });
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      const second = this._events[prior.seq];
+      if (prior.kind !== 'plan.node_dispatched' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest
+        || second?.kind !== 'task.created' || second.batch?.id !== prior.batch?.id
+        || !this._validPreservedResumeAttestation(prior.payload?.preservedResume)) {
+        throw new CoordinationRefusal('preserved resume idempotency key is bound differently', 'preserved_resume_conflict');
+      }
+      return freeze({ ok: true, result: 'idempotent', dispatchEvent: clone(prior), taskEvent: clone(second), task: this.task(second.payload.id), dispatch: clone(prior.payload) });
+    }
+    const state = this._planDispatchState(gate, route, attestation);
+    if (this._tasks.has(fields?.id)) throw new CoordinationRefusal('plan task id already exists', 'duplicate_task');
+    if (!planBriefMatches(fields?.brief, state.brief, { goalPlanCoordinates: true })
+      || canonicalDigest(fields?.brief?.goalPlan) !== canonicalDigest(state.binding)
+      || canonicalDigest(fields?.brief?.capabilities) !== canonicalDigest(state.node.capabilities)
+      || canonicalDigest(fields?.brief?.effects) !== canonicalDigest(state.node.effects)
+      || fields?.brief?.providerTurns !== state.node.budget.providerTurns) throw new CoordinationRefusal('task Brief differs from the approved authoritative Brief', 'plan_brief_mismatch');
+    if (canonicalDigest(fields?.deps ?? []) !== canonicalDigest(state.resolvedDeps)) throw new CoordinationRefusal('task dependencies differ from the plan DAG', 'plan_dependency_mismatch');
+    if (fields?.runId !== state.goal.runId || fields?.vendorRequested !== route.vendor || (fields?.modelRequested ?? null) !== route.model || (fields?.effortRequested ?? null) !== route.effort) throw new CoordinationRefusal('task route differs from the plan dispatch', 'plan_route_mismatch');
+    // The resumed task carries the preserved lineage explicitly; it is not constrained to the
+    // node's DAG dependencies because it re-dispatches the same node, not a successor.
+    if (fields?.refines !== attestation.priorTaskId) throw new CoordinationRefusal('preserved resume lineage does not match the attested prior task', 'preserved_resume_lineage_mismatch');
+    const taskPayload = clone(fields);
+    const dispatchPayload = {
+      schemaVersion: 1, requestDigest,
+      authority: { principalId: auth.principalId, repoId: auth.repoId, runId: auth.runId ?? null },
+      binding: clone(state.binding), taskId: taskPayload.id,
+      taskPayloadDigest: canonicalDigest(taskPayload), expectedDispatchVersion: 0, newDispatchVersion: 1,
+      resolvedDeps: clone(state.resolvedDeps), nodeBudget: clone(state.node.budget),
+      route: clone(route), capabilities: clone(state.node.capabilities), effects: clone(state.node.effects),
+      preservedResume: clone(attestation),
     };
     const fixedTs = this._clock();
     const prospectiveDispatch = { seq: this._events.length + 1, ts: fixedTs, payload: dispatchPayload };

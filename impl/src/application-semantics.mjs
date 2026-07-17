@@ -113,6 +113,13 @@ const actions = {
     destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
     helpTopic: 'run.act.retry_verification', expectedDepth: 'outline',
   },
+  resume_work: {
+    label: 'Resume preserved work', summary: 'Restore preserved progress in a fresh task using an orchestrator-selected harness, model, and effort.',
+    inputSchema: objectSchema({ reason: { type: 'string', minLength: 1, maxLength: 1024 } }, ['reason']),
+    serverDerived: ['checkpoint', 'planNode', 'routePolicy', 'recoveryLineage'], effect: 'provider_call',
+    destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
+    helpTopic: 'run.act.resume_work', expectedDepth: 'outline',
+  },
   stop: {
     label: 'Stop and reap Run', summary: 'Close this Run dispatch authority and reap its exact owned resources.',
     inputSchema: objectSchema({ reason: { type: 'string', minLength: 1, maxLength: 1024 } }, ['reason']),
@@ -136,6 +143,7 @@ const cliCommands = [
   ['run.evidence', null, null, 'baton run evidence RUN_ID'],
   ['run.adopt', null, 'adopt_result', 'baton run adopt RUN_ID --reason REASON'],
   ['run.retry', null, 'retry_verification', 'baton run retry RUN_ID --reason REASON'],
+  ['run.resume', null, 'resume_work', 'baton run resume RUN_ID --reason REASON'],
   ['run.review', null, 'semantic_review', 'baton run review RUN_ID --exact HARNESS/MODEL@EFFORT --reason REASON'],
   ['run.integrate', null, 'integrate', 'baton run integrate RUN_ID --strategy ff-only|structured --reason REASON'],
   ['run.export', null, 'export_result', 'baton run export RUN_ID DIR'],
@@ -169,7 +177,7 @@ const cli = {
     run: {
       commandIds: ['run.objective', 'run.show', 'run.do', 'run.stop', 'run.status', 'run.recover',
         'run.approve', 'run.answer', 'run.steer', 'run.evidence', 'run.adopt', 'run.retry',
-        'run.review', 'run.integrate', 'run.export'],
+        'run.resume', 'run.review', 'run.integrate', 'run.export'],
       selectorRule: 'manualRoute',
       paragraphs: ['Use baton help routing for exact and deployment-profile routing.'],
     },
@@ -178,6 +186,13 @@ const cli = {
       paragraphs: [
         'Retry is safe because Baton replays only the already-approved trust gate: it re-resolves the exact preserved candidate checkpoint, rebuilds fresh candidate and base sandboxes, and re-runs the pinned Plan command under the current deployment verifier runtime. It never launches or resumes an agent harness and consumes no provider turn.',
         'Baton did not blame the agent route because the verifier itself could not complete (its command could not start, timed out, exceeded its output boundary, or the baseline also failed), so no candidate defect was proven; inconclusive verification never updates route statistics.',
+      ],
+    },
+    'run.act.resume_work': {
+      commandIds: ['run.resume'],
+      paragraphs: [
+        'Baton restores the server-derived preserved checkpoint into a fresh owned task and lets the orchestrator select harness, model, and per-task effort from the approved route policy. The caller supplies only a reason; no Git coordinate, worktree path, provider credential, budget, or storage ceiling is accepted.',
+        'Preserved work is untrusted progress. It must pass the ordinary fresh verifier and every configured review, adoption, integration, and delivery gate before it can become a result.',
       ],
     },
     'run.start': { aliasFor: 'run' },

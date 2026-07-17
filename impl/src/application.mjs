@@ -39,6 +39,7 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'run.evidence': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.adopt': Object.freeze({ args: Object.freeze(['runId', 'nodeKey', 'resultSha', 'evidenceDigest', 'reason']), capabilities: Object.freeze(['adopt_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.retry_verification': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['retry_verification', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
+  'run.resume_work': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['resume_work', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.review': Object.freeze({ args: Object.freeze(['runId', 'route', 'reason']), capabilities: Object.freeze(['review', 'control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.integrate': Object.freeze({ args: Object.freeze(['runId', 'evidenceDigest', 'strategy', 'reason']), capabilities: Object.freeze(['integrate_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.export': Object.freeze({ args: Object.freeze(['runId', 'evidenceDigest']), capabilities: Object.freeze(['export_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
@@ -166,6 +167,17 @@ function normalizeRetryVerification(value) {
   if (!validId(value.runId) || !validText(value.reason, 1_024)
     || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.reason))) {
     throw applicationError('Run verification retry request is invalid', 'application_retry_invalid');
+  }
+  return deepFreeze({ runId: value.runId, reason: value.reason.normalize('NFKC').trim() });
+}
+
+// PS5: resume_work is coordinate-free. The caller supplies only a bounded audit reason — never a
+// Git ref, SHA, worktree path, harness command, provider credential, budget, or storage ceiling.
+function normalizeResumeWork(value) {
+  exactObject(value, ['runId', 'reason'], 'application_resume_invalid', 'Run resume');
+  if (!validId(value.runId) || !validText(value.reason, 1_024)
+    || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.reason))) {
+    throw applicationError('Run resume request is invalid', 'application_resume_invalid');
   }
   return deepFreeze({ runId: value.runId, reason: value.reason.normalize('NFKC').trim() });
 }
@@ -531,6 +543,7 @@ export function validateApplicationCommandArgs(name, args) {
   }
   if (name === 'run.adopt') normalizeAdopt(args);
   if (name === 'run.retry_verification') normalizeRetryVerification(args);
+  if (name === 'run.resume_work') normalizeResumeWork(args);
   if (name === 'run.review') normalizeReviewRequest(args);
   if (name === 'run.integrate') normalizeIntegrationRequest(args);
   if (name === 'run.export' && (!validId(args.runId) || !/^[a-f0-9]{64}$/u.test(args.evidenceDigest ?? ''))) {
@@ -1015,6 +1028,11 @@ export class BatonApplication {
     }
     if (name === 'run.retry_verification') {
       const request = normalizeRetryVerification(args);
+      await this._authorize(name, principal, request.runId, { reasonDigest: digest(request.reason) });
+      return true;
+    }
+    if (name === 'run.resume_work') {
+      const request = normalizeResumeWork(args);
       await this._authorize(name, principal, request.runId, { reasonDigest: digest(request.reason) });
       return true;
     }
@@ -2267,6 +2285,90 @@ export class BatonApplication {
     });
   }
 
+  // PS5: the preserved-work branch of the recovery cascade. Where run.recover reattaches an
+  // attachable native session, resume_work restores a terminal preserved checkpoint into a fresh
+  // owned task. The caller supplies only a bounded reason; every coordinate is server-derived
+  // from the approved Plan, the pinned checkpoint, and the orchestrator-selected route policy.
+  async resumeWork(rawRequest, rawPrincipal, internal = {}) {
+    this._assertOpen();
+    await this.ready;
+    const request = normalizeResumeWork(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'resume principal');
+    await this._authorize('run.resume_work', principal, request.runId, { reasonDigest: digest(request.reason) });
+    this._assertRunMutable(request.runId);
+    const current = this._findRun(request.runId);
+    if (!current.plan || current.approval?.disposition !== 'approved') {
+      throw applicationError('Run resume requires an approved current Plan', 'application_resume_unavailable');
+    }
+    const view = await this._buildView(current, this.principals.observer);
+    if (view.phase !== 'cancelled') {
+      throw applicationError('Run resume requires a cancelled Run with preserved progress', 'application_resume_unavailable');
+    }
+    const node = view.nodes[0];
+    const task = node?.taskId ? this.driver.coordination.task(node.taskId) : null;
+    if (!task?.assignee) {
+      throw applicationError('Run resume preserved worker is unavailable', 'application_resume_unavailable');
+    }
+    const workerId = task.assignee;
+    let preservedResult;
+    try { preservedResult = await this.driver.coordinator.result(workerId); }
+    catch (error) { if (error?.code !== 'not_found') throw error; }
+    const checkpoint = preservedResult?.checkpoint?.state === 'pinned' ? preservedResult.checkpoint : null;
+    if (!checkpoint || !/^[a-f0-9]{40,64}$/u.test(checkpoint.sha ?? '') || typeof checkpoint.ref !== 'string') {
+      throw applicationError('Run resume preserved checkpoint is unavailable', 'application_resume_unavailable');
+    }
+    if (typeof this.driver.coordinator.resumePreservedWork !== 'function') {
+      throw applicationError('application driver lacks preserved resume authority', 'application_resume_unavailable');
+    }
+    // Orchestrator-selected route: the approved Plan node's first route. The Coordinator refuses
+    // anything but a harness/model/effort triple selected together and never a silent low default.
+    const planNode = current.plan.nodes[0];
+    const route = {
+      vendor: planNode.routes.harnesses[0],
+      model: planNode.routes.models[0],
+      effort: planNode.routes.efforts[0],
+    };
+    const gate = {
+      goalId: current.goal.goalId, goalVersion: current.goal.version, goalDigest: current.goal.digest,
+      planId: current.plan.planId, planVersion: current.plan.version, planDigest: current.plan.digest,
+      nodeKey: planNode.key, expectedDispatchVersion: 0,
+      capabilities: clone(planNode.capabilities), effects: clone(planNode.effects),
+    };
+    const resumeTaskId = `baton-${digest({
+      repoId: this.repoId, runId: request.runId, planDigest: current.plan.digest,
+      nodeKey: planNode.key, checkpointSha: checkpoint.sha, resume: true,
+    }).slice(0, 24)}-resume`;
+    const outcome = await this.driver.coordinator.resumePreservedWork(workerId, {
+      actor: this.principals.dispatcher.actor,
+      principalId: this.principals.dispatcher.principalId,
+      sessionId: this.principals.dispatcher.sessionId,
+      powers: ['plan:dispatch'],
+      runId: request.runId,
+      taskId: resumeTaskId,
+      idempotencyKey: `application:${request.runId}:resume:${planNode.key}:${checkpoint.sha}`,
+      reasonDigest: digest(request.reason),
+      gate, route,
+      checkpointSha: checkpoint.sha,
+      checkpointRef: checkpoint.ref,
+      semanticActionId: internal.actionId,
+      semanticPrincipalScopeDigest: internal.principalScopeDigest,
+    });
+    const resume = outcome?.ok === true ? {
+      state: 'working',
+      preservedTaskId: outcome.preservedTaskId ?? null,
+      target: { workerId: outcome.workerId ?? null, taskId: outcome.taskId ?? null },
+      checkpoint: { state: 'pinned', sha: checkpoint.sha },
+      route: clone(outcome.route ?? null),
+      cleanup: clone(outcome.cleanup ?? { state: 'owned' }),
+    } : {
+      state: 'failed', reason: outcome?.result ?? 'resume_failed', target: null,
+    };
+    return this._buildView(current, this.principals.observer, {
+      action: { command: 'run.resume_work', result: outcome?.ok === true ? 'resumed' : (outcome?.result ?? 'resume_failed') },
+      resume,
+    });
+  }
+
   async review(rawRequest, rawPrincipal) {
     this._assertOpen();
     await this.ready;
@@ -2632,6 +2734,23 @@ export class BatonApplication {
         available, attempt, checkpointSha: result.checkpoint.sha, candidatePreserved,
       };
     }
+    // PS5: while a cancelled Run's pinned checkpoint and approved Plan remain current, offer one
+    // coordinate-free resume_work action. Preservation is not acceptance: the projection only
+    // advertises the resume, never an adopted result.
+    let resumeProjection = null;
+    if (phase === 'cancelled' && result?.checkpoint?.state === 'pinned' && !runStop
+      && projection.approval?.disposition === 'approved'
+      && typeof this.driver.coordinator.resumePreservedWork === 'function') {
+      let candidatePreserved = false;
+      if (workerId && typeof this.driver.coordinator.inspectCheckpoint === 'function') {
+        candidatePreserved = (await this.driver.coordinator.inspectCheckpoint(workerId)).state === 'pinned';
+      }
+      resumeProjection = {
+        available: candidatePreserved && !!node.taskId,
+        checkpointSha: result.checkpoint.sha,
+        candidatePreserved,
+      };
+    }
     const terminalCause = projectTypedTerminalCause({ terminalResult: result, runStop });
 
     const workers = this.driver.coordinator.list()
@@ -2768,6 +2887,7 @@ export class BatonApplication {
           ]
             : APPLICATION_RUN_TERMINAL_PHASES.has(phase) ? [
               ...(retryProjection?.available ? [{ kind: 'retry_verification' }] : []),
+              ...(resumeProjection?.available ? [{ kind: 'resume_work' }] : []),
               { kind: 'evidence' },
               ...exportActions,
               ...(canAdopt ? [{ kind: 'adopt_result', nodeKey: node.key, resultSha }] : [])]
@@ -2837,6 +2957,10 @@ export class BatonApplication {
           : runNarrative(story.workers, runWorkerIds)),
       lastAction: options.action ? clone(options.action) : null,
       recovery: options.recovery ? clone(options.recovery) : null,
+      preservation: resumeProjection ? {
+        state: 'pinned', available: resumeProjection.available, checkpointSha: resumeProjection.checkpointSha,
+      } : (result?.checkpoint?.state === 'pinned' ? { state: 'pinned', available: false, checkpointSha: result.checkpoint.sha } : { state: 'unavailable', available: false, checkpointSha: null }),
+      resume: options.resume ? clone(options.resume) : null,
       terminalCause,
       stop: runStop ? {
         state: runStop.status, admittedAt: runStop.admittedAt, completedAt: runStop.completedAt,
@@ -3026,11 +3150,32 @@ export class BatonApplication {
     });
   }
 
+  _replaySemanticResumeAction(current, request, principal) {
+    if (!request.inputs || Object.keys(request.inputs).sort().join(',') !== 'reason'
+      || !validText(request.inputs.reason, 1_024)) return null;
+    const principalScopeDigest = digest({ principalId: principal.principalId, sessionId: principal.sessionId });
+    const reasonDigest = digest(request.inputs.reason);
+    const workers = this.driver.coordinator.list().filter((handle) => handle.runId === request.runId);
+    for (const handle of workers) {
+      const replay = this.driver.log.read(handle.id).findLast?.((event) => event.kind === 'work.resumed'
+        && event.payload?.runId === request.runId
+        && event.payload?.semanticActionId === request.actionId
+        && event.payload?.semanticPrincipalScopeDigest === principalScopeDigest
+        && event.payload?.reasonDigest === reasonDigest);
+      if (!replay) continue;
+      const resumedTask = this.driver.coordination.task(replay.payload.resumedTaskId);
+      if (resumedTask?.runId === request.runId && resumedTask.refines === replay.payload.preservedTaskId) {
+        return replay.payload;
+      }
+    }
+    return null;
+  }
+
   _semanticActions(current, view, principal) {
     const kinds = [];
     if (view.phase === 'awaiting_plan_approval') kinds.push('approve_plan');
     for (const candidate of view.nextActions ?? []) {
-      if (['adopt_result', 'semantic_review', 'integrate', 'export_result', 'retry_verification'].includes(candidate.kind)
+      if (['adopt_result', 'semantic_review', 'integrate', 'export_result', 'retry_verification', 'resume_work'].includes(candidate.kind)
         && !kinds.includes(candidate.kind)) kinds.push(candidate.kind);
     }
     if (!['stopped', 'closed'].includes(view.phase)) kinds.push('stop');
@@ -3135,6 +3280,7 @@ export class BatonApplication {
       cleanup: {
         state: view.stop?.state ?? (view.progress?.resources?.state ?? 'pending'),
         terminalCause: view.terminalCause ?? null,
+        preservation: view.preservation ?? null,
       },
     }[sectionId];
     return single == null ? [] : [{
@@ -3233,6 +3379,14 @@ export class BatonApplication {
           ownedCount: view.ownership?.workers ?? 0,
           cleanupState: view.stop?.state ?? (view.progress?.resources?.state ?? 'pending'),
           terminalCause: clone(view.terminalCause ?? null),
+        },
+        // PS3/PS7: outline depth says plainly whether work was preserved, the stop reason, the
+        // cleanup state, and the next semantic action — never the checkpoint ref/SHA or a path.
+        preservation: {
+          state: view.preservation?.state ?? 'unavailable',
+          resumeAvailable: view.preservation?.available === true,
+          summary: view.preservation?.state === 'pinned' ? 'Work preserved; resume available after fresh verification.'
+            : 'No preserved work is advertised.',
         },
         actions: this._semanticActions(current, view, principal),
       };
@@ -3333,7 +3487,13 @@ export class BatonApplication {
     const view = await this._buildView(current, this.principals.observer);
     const action = this._semanticActions(current, view, principal)
       .find((candidate) => candidate.actionId === request.actionId);
-    if (!action) throw applicationError('Run action is outside the current authority scope', 'application_action_scope_mismatch');
+    if (!action) {
+      const replay = this._replaySemanticResumeAction(current, request, principal);
+      if (replay) {
+        return this.inspect({ runId: request.runId, depth: 'outline' }, principal);
+      }
+      throw applicationError('Run action is outside the current authority scope', 'application_action_scope_mismatch');
+    }
     const supplied = Object.keys(request.inputs).sort();
     const allowed = Object.keys(action.inputSchema.properties).sort();
     const required = [...(action.inputSchema.required ?? [])].sort();
@@ -3359,6 +3519,18 @@ export class BatonApplication {
         throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
       }
       await this.retryVerification({ runId: request.runId, reason: request.inputs.reason }, principal);
+    } else if (action.kind === 'resume_work') {
+      if (!validText(request.inputs.reason, 1_024)) {
+        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
+      }
+      await this.resumeWork(
+        { runId: request.runId, reason: request.inputs.reason },
+        principal,
+        {
+          actionId: action.actionId,
+          principalScopeDigest: digest({ principalId: principal.principalId, sessionId: principal.sessionId }),
+        },
+      );
     } else if (action.kind === 'semantic_review') {
       if (!Number.isSafeInteger(request.inputs.routeIndex) || request.inputs.routeIndex < 0
         || !validText(request.inputs.reason, 1_024)) {
@@ -3464,6 +3636,9 @@ export class BatonApplication {
     }
     if (name === 'run.retry_verification') {
       return this.retryVerification(args, principal);
+    }
+    if (name === 'run.resume_work') {
+      return this.resumeWork(args, principal);
     }
     if (name === 'run.review') {
       return this.review(args, principal);
