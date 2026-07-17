@@ -56,9 +56,11 @@ export { inspectToolchainProjection, prepareToolchainProjection, ToolchainProjec
 export { normalizeProviderGovernancePolicy, providerGovernanceRoute } from './provider-governance.mjs';
 export { loadOrCreateWorktreeCapacityIntegrityKey, normalizeWorktreeCapacityPolicy, WorktreeCapacityAuthority, WorktreeCapacityError } from './worktree-capacity.mjs';
 // SC2: the session tier IS the product surface — constructible from the entry point.
-export { ClaudeSessionCli, GlmSessionCli } from './claude-session.mjs';
+export { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from './claude-session.mjs';
 export { CodexAppServerCli } from './codex-appserver.mjs';
 export { GrokAcpCli } from './grok-acp.mjs';
+export { KimiAcpCli } from './kimi-acp.mjs';
+export { AcpJsonRpcProcess, AcpProtocolError, AcpSetupTimeoutError } from './acp-json-rpc-process.mjs';
 export { createBrief } from './messages.mjs';
 export { verify, accept, defaultVerificationRuntime, prepareVerificationRuntime } from './referee.mjs';
 export { AdaptiveRouter } from './router.mjs';

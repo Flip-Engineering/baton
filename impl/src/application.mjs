@@ -39,6 +39,7 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'run.evidence': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.adopt': Object.freeze({ args: Object.freeze(['runId', 'nodeKey', 'resultSha', 'evidenceDigest', 'reason']), capabilities: Object.freeze(['adopt_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.retry_verification': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['retry_verification', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
+  'run.resume_work': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['resume_work', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.review': Object.freeze({ args: Object.freeze(['runId', 'route', 'reason']), capabilities: Object.freeze(['review', 'control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.integrate': Object.freeze({ args: Object.freeze(['runId', 'evidenceDigest', 'strategy', 'reason']), capabilities: Object.freeze(['integrate_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.export': Object.freeze({ args: Object.freeze(['runId', 'evidenceDigest']), capabilities: Object.freeze(['export_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
@@ -166,6 +167,17 @@ function normalizeRetryVerification(value) {
   if (!validId(value.runId) || !validText(value.reason, 1_024)
     || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.reason))) {
     throw applicationError('Run verification retry request is invalid', 'application_retry_invalid');
+  }
+  return deepFreeze({ runId: value.runId, reason: value.reason.normalize('NFKC').trim() });
+}
+
+// PS5: resume_work is coordinate-free. The caller supplies only a bounded audit reason — never a
+// Git ref, SHA, worktree path, harness command, provider credential, budget, or storage ceiling.
+function normalizeResumeWork(value) {
+  exactObject(value, ['runId', 'reason'], 'application_resume_invalid', 'Run resume');
+  if (!validId(value.runId) || !validText(value.reason, 1_024)
+    || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.reason))) {
+    throw applicationError('Run resume request is invalid', 'application_resume_invalid');
   }
   return deepFreeze({ runId: value.runId, reason: value.reason.normalize('NFKC').trim() });
 }
@@ -320,7 +332,10 @@ function normalizeExportPolicy(value) {
 
 function normalizeFollowPolicy(value) {
   if (value === undefined) return deepFreeze({
-    mode: 'none', maxWaitMs: 0, maxChanges: 0, maxResponseBytes: 0, maxScanEvents: 0,
+    // Disabled change waiting still permits one bounded semantic inspection. Zero response/item
+    // bounds made the unified Run surface unusable for otherwise valid deployment profiles.
+    mode: 'none', maxWaitMs: 0, maxChanges: MAX_ATTENTION,
+    maxResponseBytes: MAX_RUN_VIEW_BYTES, maxScanEvents: 0,
   });
   exactObject(value, ['mode', 'maxWaitMs', 'maxChanges', 'maxResponseBytes', 'maxScanEvents'],
     'application_profile_invalid', 'profile followPolicy');
@@ -360,7 +375,7 @@ function normalizeProfile(name, value, repoId) {
     'schemaVersion', 'repoId', 'definitionOfDone', 'constraints', 'risk', 'goalBudget',
     'nodeBudget', 'pathScope', 'verification', 'routes', 'capabilities', 'effects', 'resultPolicy',
   ];
-  const allowedFields = new Set([...requiredFields, 'reviewPolicy', 'integrationPolicy', 'followPolicy', 'exportPolicy', 'recoveryPolicy']);
+  const allowedFields = new Set([...requiredFields, 'requiredEffects', 'reviewPolicy', 'integrationPolicy', 'followPolicy', 'exportPolicy', 'recoveryPolicy']);
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || requiredFields.some((field) => !Object.hasOwn(value, field))
     || Object.keys(value).some((field) => !allowedFields.has(field))) {
@@ -393,6 +408,9 @@ function normalizeProfile(name, value, repoId) {
     }),
     capabilities: normalizeStringSet(value.capabilities, 'profile capabilities', { empty: true, maxBytes: 128 }),
     effects: normalizeStringSet(value.effects, 'profile effects', { empty: true, maxBytes: 128 }),
+    ...(Object.hasOwn(value, 'requiredEffects') ? {
+      requiredEffects: normalizeStringSet(value.requiredEffects, 'profile requiredEffects', { empty: true, maxBytes: 128 }),
+    } : {}),
     resultPolicy: normalizeResultPolicy(value.resultPolicy),
     reviewPolicy,
     integrationPolicy: normalizeIntegrationPolicy(value.integrationPolicy),
@@ -402,6 +420,9 @@ function normalizeProfile(name, value, repoId) {
   };
   if (normalized.pathScope.some((entry) => !safeScopePath(entry))) {
     throw applicationError(`profile ${name} path scope is invalid`, 'application_profile_invalid');
+  }
+  if ((normalized.requiredEffects ?? []).some((effect) => effect !== 'repository_edit' || !normalized.effects.includes(effect))) {
+    throw applicationError(`profile ${name} required effects exceed authorized effects`, 'application_profile_invalid');
   }
   if (reviewPolicy.mode === 'required'
     && !normalized.pathScope.some((entry) => scopeEntryWithin(reviewPolicy.reportPath, entry))) {
@@ -455,6 +476,19 @@ function applicationDefaults(rawDefaults, profiles) {
     profile: rawDefaults.profile,
     route: rawDefaults.route === null ? null : clone(normalizeRoute(rawDefaults.route)),
   });
+}
+
+function selectExactRouteCard(routeCards, route) {
+  const matches = [...routeCards.entries()].filter(([name, card]) => {
+    if (name !== route.harness && card?.harness !== route.harness) return false;
+    const selection = card?.modelSelection;
+    const modelAvailable = selection?.mode === 'exact'
+      && (!Array.isArray(selection.available) || selection.available.includes(route.model));
+    const effortAvailable = Array.isArray(selection?.reasoningEffort)
+      && selection.reasoningEffort.includes(route.effort);
+    return modelAvailable && effortAvailable;
+  });
+  return matches.length === 1 ? { name: matches[0][0], card: matches[0][1] } : null;
 }
 
 export function validateApplicationCommandArgs(name, args) {
@@ -531,6 +565,7 @@ export function validateApplicationCommandArgs(name, args) {
   }
   if (name === 'run.adopt') normalizeAdopt(args);
   if (name === 'run.retry_verification') normalizeRetryVerification(args);
+  if (name === 'run.resume_work') normalizeResumeWork(args);
   if (name === 'run.review') normalizeReviewRequest(args);
   if (name === 'run.integrate') normalizeIntegrationRequest(args);
   if (name === 'run.export' && (!validId(args.runId) || !/^[a-f0-9]{64}$/u.test(args.evidenceDigest ?? ''))) {
@@ -667,6 +702,7 @@ function terminalCauseNarrative(cause) {
     return `Run terminated: ${cause.code} (${cause.dimension} ${cause.used}/${cause.limit}, ratio ${cause.ratio}).`;
   }
   if (cause?.kind === 'provider_failure') return `Run terminated: ${cause.code}.`;
+  if (cause?.kind === 'policy_failure') return `Run terminated: ${cause.code}.`;
   if (cause?.kind === 'operator_stop') return 'Run terminated: operator_stop.';
   return null;
 }
@@ -866,13 +902,7 @@ export class BatonApplication {
     this._routeCards = routeCards;
     for (const [profileName, profile] of this.profiles) {
       for (const route of [...profile.routes, ...profile.reviewPolicy.routes]) {
-        const card = routeCards.get(route.harness);
-        const selection = card?.modelSelection;
-        const modelAvailable = selection?.mode === 'exact'
-          && (!Array.isArray(selection.available) || selection.available.includes(route.model));
-        const effortAvailable = Array.isArray(selection?.reasoningEffort)
-          && selection.reasoningEffort.includes(route.effort);
-        if (!card || !modelAvailable || !effortAvailable) {
+        if (!selectExactRouteCard(routeCards, route)) {
           throw applicationError(`profile ${profileName} contains an unavailable exact route`, 'application_profile_route_unavailable');
         }
       }
@@ -1015,6 +1045,11 @@ export class BatonApplication {
     }
     if (name === 'run.retry_verification') {
       const request = normalizeRetryVerification(args);
+      await this._authorize(name, principal, request.runId, { reasonDigest: digest(request.reason) });
+      return true;
+    }
+    if (name === 'run.resume_work') {
+      const request = normalizeResumeWork(args);
       await this._authorize(name, principal, request.runId, { reasonDigest: digest(request.reason) });
       return true;
     }
@@ -1701,6 +1736,7 @@ export class BatonApplication {
       expectedDispatchVersion: 0,
       capabilities: clone(node.capabilities),
       effects: clone(node.effects),
+      ...(Object.hasOwn(node, 'requiredEffects') ? { requiredEffects: clone(node.requiredEffects) } : {}),
     };
     const route = {
       vendor: node.routes.harnesses[0],
@@ -1780,6 +1816,7 @@ export class BatonApplication {
       routes: { harnesses: [intent.route.harness], models: [intent.route.model], efforts: [intent.route.effort] },
       capabilities: clone(profile.capabilities),
       effects: clone(profile.effects),
+      ...(Object.hasOwn(profile, 'requiredEffects') ? { requiredEffects: clone(profile.requiredEffects) } : {}),
     };
     const goalPlanPolicy = this.driver.coordination.goalPlanPolicy();
     const normalizedGoal = normalizeGoalRequest(goalFields, goalPlanPolicy);
@@ -1938,6 +1975,7 @@ export class BatonApplication {
       expectedDispatchVersion: 0,
       capabilities: clone(recoveryNode.capabilities),
       effects: clone(recoveryNode.effects),
+      ...(Object.hasOwn(recoveryNode, 'requiredEffects') ? { requiredEffects: clone(recoveryNode.requiredEffects) } : {}),
     };
     if (typeof this.driver.coordinator.recoverPlanBound !== 'function') {
       throw applicationError('application driver lacks Plan recovery authority', 'application_recovery_unavailable');
@@ -2267,6 +2305,91 @@ export class BatonApplication {
     });
   }
 
+  // PS5: the preserved-work branch of the recovery cascade. Where run.recover reattaches an
+  // attachable native session, resume_work restores a terminal preserved checkpoint into a fresh
+  // owned task. The caller supplies only a bounded reason; every coordinate is server-derived
+  // from the approved Plan, the pinned checkpoint, and the orchestrator-selected route policy.
+  async resumeWork(rawRequest, rawPrincipal, internal = {}) {
+    this._assertOpen();
+    await this.ready;
+    const request = normalizeResumeWork(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'resume principal');
+    await this._authorize('run.resume_work', principal, request.runId, { reasonDigest: digest(request.reason) });
+    this._assertRunMutable(request.runId);
+    const current = this._findRun(request.runId);
+    if (!current.plan || current.approval?.disposition !== 'approved') {
+      throw applicationError('Run resume requires an approved current Plan', 'application_resume_unavailable');
+    }
+    const view = await this._buildView(current, this.principals.observer);
+    if (view.phase !== 'cancelled') {
+      throw applicationError('Run resume requires a cancelled Run with preserved progress', 'application_resume_unavailable');
+    }
+    const node = view.nodes[0];
+    const task = node?.taskId ? this.driver.coordination.task(node.taskId) : null;
+    if (!task?.assignee) {
+      throw applicationError('Run resume preserved worker is unavailable', 'application_resume_unavailable');
+    }
+    const workerId = task.assignee;
+    let preservedResult;
+    try { preservedResult = await this.driver.coordinator.result(workerId); }
+    catch (error) { if (error?.code !== 'not_found') throw error; }
+    const checkpoint = preservedResult?.checkpoint?.state === 'pinned' ? preservedResult.checkpoint : null;
+    if (!checkpoint || !/^[a-f0-9]{40,64}$/u.test(checkpoint.sha ?? '') || typeof checkpoint.ref !== 'string') {
+      throw applicationError('Run resume preserved checkpoint is unavailable', 'application_resume_unavailable');
+    }
+    if (typeof this.driver.coordinator.resumePreservedWork !== 'function') {
+      throw applicationError('application driver lacks preserved resume authority', 'application_resume_unavailable');
+    }
+    // Orchestrator-selected route: the approved Plan node's first route. The Coordinator refuses
+    // anything but a harness/model/effort triple selected together and never a silent low default.
+    const planNode = current.plan.nodes[0];
+    const route = {
+      vendor: planNode.routes.harnesses[0],
+      model: planNode.routes.models[0],
+      effort: planNode.routes.efforts[0],
+    };
+    const gate = {
+      goalId: current.goal.goalId, goalVersion: current.goal.version, goalDigest: current.goal.digest,
+      planId: current.plan.planId, planVersion: current.plan.version, planDigest: current.plan.digest,
+      nodeKey: planNode.key, expectedDispatchVersion: 0,
+      capabilities: clone(planNode.capabilities), effects: clone(planNode.effects),
+      ...(Object.hasOwn(planNode, 'requiredEffects') ? { requiredEffects: clone(planNode.requiredEffects) } : {}),
+    };
+    const resumeTaskId = `baton-${digest({
+      repoId: this.repoId, runId: request.runId, planDigest: current.plan.digest,
+      nodeKey: planNode.key, checkpointSha: checkpoint.sha, resume: true,
+    }).slice(0, 24)}-resume`;
+    const outcome = await this.driver.coordinator.resumePreservedWork(workerId, {
+      actor: this.principals.dispatcher.actor,
+      principalId: this.principals.dispatcher.principalId,
+      sessionId: this.principals.dispatcher.sessionId,
+      powers: ['plan:dispatch'],
+      runId: request.runId,
+      taskId: resumeTaskId,
+      idempotencyKey: `application:${request.runId}:resume:${planNode.key}:${checkpoint.sha}`,
+      reasonDigest: digest(request.reason),
+      gate, route,
+      checkpointSha: checkpoint.sha,
+      checkpointRef: checkpoint.ref,
+      semanticActionId: internal.actionId,
+      semanticPrincipalScopeDigest: internal.principalScopeDigest,
+    });
+    const resume = outcome?.ok === true ? {
+      state: 'working',
+      preservedTaskId: outcome.preservedTaskId ?? null,
+      target: { workerId: outcome.workerId ?? null, taskId: outcome.taskId ?? null },
+      checkpoint: { state: 'pinned', sha: checkpoint.sha },
+      route: clone(outcome.route ?? null),
+      cleanup: clone(outcome.cleanup ?? { state: 'owned' }),
+    } : {
+      state: 'failed', reason: outcome?.result ?? 'resume_failed', target: null,
+    };
+    return this._buildView(current, this.principals.observer, {
+      action: { command: 'run.resume_work', result: outcome?.ok === true ? 'resumed' : (outcome?.result ?? 'resume_failed') },
+      resume,
+    });
+  }
+
   async review(rawRequest, rawPrincipal) {
     this._assertOpen();
     await this.ready;
@@ -2287,10 +2410,10 @@ export class BatonApplication {
     if (!['work_completed', 'reviewing'].includes(view.phase) || !view.result?.sha) {
       throw applicationError('Run has no reviewable accepted result', 'application_review_unavailable');
     }
-    const implementerCard = this._routeCards.get(view.route.requested.harness);
-    const reviewerCard = this._routeCards.get(request.route.harness);
-    if (!implementerCard || !reviewerCard || view.route.requested.harness === request.route.harness
-      || implementerCard.modelSelection?.family === reviewerCard.modelSelection?.family) {
+    const implementerRoute = selectExactRouteCard(this._routeCards, view.route.requested);
+    const reviewerRoute = selectExactRouteCard(this._routeCards, request.route);
+    if (!implementerRoute || !reviewerRoute || implementerRoute.name === reviewerRoute.name
+      || implementerRoute.card.modelSelection?.family === reviewerRoute.card.modelSelection?.family) {
       throw applicationError('semantic review route is not independent from the implementer', 'application_review_not_independent');
     }
     const target = this._semanticTarget(current, view);
@@ -2632,6 +2755,23 @@ export class BatonApplication {
         available, attempt, checkpointSha: result.checkpoint.sha, candidatePreserved,
       };
     }
+    // PS5: while a cancelled Run's pinned checkpoint and approved Plan remain current, offer one
+    // coordinate-free resume_work action. Preservation is not acceptance: the projection only
+    // advertises the resume, never an adopted result.
+    let resumeProjection = null;
+    if (phase === 'cancelled' && result?.checkpoint?.state === 'pinned' && !runStop
+      && projection.approval?.disposition === 'approved'
+      && typeof this.driver.coordinator.resumePreservedWork === 'function') {
+      let candidatePreserved = false;
+      if (workerId && typeof this.driver.coordinator.inspectCheckpoint === 'function') {
+        candidatePreserved = (await this.driver.coordinator.inspectCheckpoint(workerId)).state === 'pinned';
+      }
+      resumeProjection = {
+        available: candidatePreserved && !!node.taskId,
+        checkpointSha: result.checkpoint.sha,
+        candidatePreserved,
+      };
+    }
     const terminalCause = projectTypedTerminalCause({ terminalResult: result, runStop });
 
     const workers = this.driver.coordinator.list()
@@ -2681,6 +2821,7 @@ export class BatonApplication {
         route: requested,
         capabilities: clone(planNode.capabilities),
         effects: clone(planNode.effects),
+        ...(Object.hasOwn(planNode, 'requiredEffects') ? { requiredEffects: clone(planNode.requiredEffects) } : {}),
       },
       profileDigest: current.profile.digest,
       planDigest: current.plan.digest,
@@ -2768,6 +2909,7 @@ export class BatonApplication {
           ]
             : APPLICATION_RUN_TERMINAL_PHASES.has(phase) ? [
               ...(retryProjection?.available ? [{ kind: 'retry_verification' }] : []),
+              ...(resumeProjection?.available ? [{ kind: 'resume_work' }] : []),
               { kind: 'evidence' },
               ...exportActions,
               ...(canAdopt ? [{ kind: 'adopt_result', nodeKey: node.key, resultSha }] : [])]
@@ -2837,6 +2979,10 @@ export class BatonApplication {
           : runNarrative(story.workers, runWorkerIds)),
       lastAction: options.action ? clone(options.action) : null,
       recovery: options.recovery ? clone(options.recovery) : null,
+      preservation: resumeProjection ? {
+        state: 'pinned', available: resumeProjection.available, checkpointSha: resumeProjection.checkpointSha,
+      } : (result?.checkpoint?.state === 'pinned' ? { state: 'pinned', available: false, checkpointSha: result.checkpoint.sha } : { state: 'unavailable', available: false, checkpointSha: null }),
+      resume: options.resume ? clone(options.resume) : null,
       terminalCause,
       stop: runStop ? {
         state: runStop.status, admittedAt: runStop.admittedAt, completedAt: runStop.completedAt,
@@ -3012,7 +3158,7 @@ export class BatonApplication {
     }
   }
 
-  _semanticActionId(current, view, principal, kind) {
+  _semanticActionId(current, view, principal, kind, target = null) {
     return digest({
       schemaVersion: 1,
       registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
@@ -3023,27 +3169,63 @@ export class BatonApplication {
       planDigest: current.plan?.digest ?? null,
       viewDigest: digest(view),
       kind,
+      target,
     });
   }
 
-  _semanticActions(current, view, principal) {
-    const kinds = [];
-    if (view.phase === 'awaiting_plan_approval') kinds.push('approve_plan');
-    for (const candidate of view.nextActions ?? []) {
-      if (['adopt_result', 'semantic_review', 'integrate', 'export_result', 'retry_verification'].includes(candidate.kind)
-        && !kinds.includes(candidate.kind)) kinds.push(candidate.kind);
+  _replaySemanticResumeAction(current, request, principal) {
+    if (!request.inputs || Object.keys(request.inputs).sort().join(',') !== 'reason'
+      || !validText(request.inputs.reason, 1_024)) return null;
+    const principalScopeDigest = digest({ principalId: principal.principalId, sessionId: principal.sessionId });
+    const reasonDigest = digest(request.inputs.reason);
+    const workers = this.driver.coordinator.list().filter((handle) => handle.runId === request.runId);
+    for (const handle of workers) {
+      const replay = this.driver.log.read(handle.id).findLast?.((event) => event.kind === 'work.resumed'
+        && event.payload?.runId === request.runId
+        && event.payload?.semanticActionId === request.actionId
+        && event.payload?.semanticPrincipalScopeDigest === principalScopeDigest
+        && event.payload?.reasonDigest === reasonDigest);
+      if (!replay) continue;
+      const resumedTask = this.driver.coordination.task(replay.payload.resumedTaskId);
+      if (resumedTask?.runId === request.runId && resumedTask.refines === replay.payload.preservedTaskId) {
+        return replay.payload;
+      }
     }
-    if (!['stopped', 'closed'].includes(view.phase)) kinds.push('stop');
-    return kinds.map((kind) => {
+    return null;
+  }
+
+  _semanticActions(current, view, principal) {
+    const candidates = [];
+    if (view.phase === 'awaiting_plan_approval') candidates.push({ kind: 'approve_plan', source: null, target: null });
+    for (const candidate of view.nextActions ?? []) {
+      if (['adopt_result', 'semantic_review', 'integrate', 'export_result', 'retry_verification', 'resume_work'].includes(candidate.kind)
+        && !candidates.some((entry) => entry.kind === candidate.kind)) {
+        candidates.push({ kind: candidate.kind, source: candidate, target: null });
+      }
+    }
+    for (const attention of view.attention ?? []) {
+      if (!['answer_approval', 'answer_question'].includes(attention.kind)
+        || !validText(attention.requestId, 4_096)) continue;
+      const target = {
+        kind: attention.kind,
+        workerId: attention.workerId ?? null,
+        requestId: attention.requestId,
+        ...(attention.kind === 'answer_approval'
+          ? { approvalKind: attention.approvalKind ?? null }
+          : { question: attention.question ?? null }),
+      };
+      candidates.push({ kind: attention.kind, source: attention, target });
+    }
+    if (!['stopped', 'closed'].includes(view.phase)) candidates.push({ kind: 'stop', source: null, target: null });
+    return candidates.map(({ kind, source, target }) => {
       const definition = APPLICATION_SEMANTIC_REGISTRY.actions[kind];
       const viewDigest = digest(view);
       const inputSchema = clone(definition.inputSchema);
-      const source = (view.nextActions ?? []).find((candidate) => candidate.kind === kind) ?? null;
       if (kind === 'integrate' && source?.strategies) {
         inputSchema.properties.strategy.enum = clone(source.strategies);
       }
       return deepFreeze({
-        actionId: this._semanticActionId(current, view, principal, kind),
+        actionId: this._semanticActionId(current, view, principal, kind, target),
         kind,
         label: definition.label,
         summary: definition.summary,
@@ -3056,6 +3238,7 @@ export class BatonApplication {
         priority: definition.priority,
         choices: kind === 'semantic_review' ? clone(source?.routes ?? [])
           : kind === 'integrate' ? clone(source?.strategies ?? []) : [],
+        ...(target ? { target: clone(target) } : {}),
         freshness: {
           registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
           viewDigest,
@@ -3085,6 +3268,7 @@ export class BatonApplication {
     }
     continuationArguments[metadata.cursorArgument] = view.cursor;
     continuationArguments[metadata.waitArgument] = current.profile.followPolicy.maxWaitMs;
+    const changeAware = current.profile.followPolicy.mode === 'enabled';
     return {
       schemaVersion: 1,
       runId: current.goal.runId,
@@ -3098,7 +3282,8 @@ export class BatonApplication {
       bounds: this._semanticBounds(current),
       truncated: false,
       help: [{ topic: depth === 'outline' ? 'run.inspect' : `run.inspect.${depth}`, depth: 'outline' }],
-      ...(terminal ? {} : { continuation: { operation: metadata.operation, arguments: continuationArguments } }),
+      ...(terminal || !changeAware
+        ? {} : { continuation: { operation: metadata.operation, arguments: continuationArguments } }),
     };
   }
 
@@ -3121,7 +3306,8 @@ export class BatonApplication {
     if (sectionId === 'attention') {
       return (view.attention ?? []).map((entry, index) => ({
         id: `attention:${index + 1}:c${view.cursor}`, section: 'attention', state: entry.state,
-        summary: entry.prompt || entry.kind || 'Run attention is required.',
+        summary: entry.question || entry.approvalKind || entry.kind || 'Run attention is required.',
+        value: clone(entry),
       }));
     }
     const single = {
@@ -3135,6 +3321,7 @@ export class BatonApplication {
       cleanup: {
         state: view.stop?.state ?? (view.progress?.resources?.state ?? 'pending'),
         terminalCause: view.terminalCause ?? null,
+        preservation: view.preservation ?? null,
       },
     }[sectionId];
     return single == null ? [] : [{
@@ -3233,6 +3420,14 @@ export class BatonApplication {
           ownedCount: view.ownership?.workers ?? 0,
           cleanupState: view.stop?.state ?? (view.progress?.resources?.state ?? 'pending'),
           terminalCause: clone(view.terminalCause ?? null),
+        },
+        // PS3/PS7: outline depth says plainly whether work was preserved, the stop reason, the
+        // cleanup state, and the next semantic action — never the checkpoint ref/SHA or a path.
+        preservation: {
+          state: view.preservation?.state ?? 'unavailable',
+          resumeAvailable: view.preservation?.available === true,
+          summary: view.preservation?.state === 'pinned' ? 'Work preserved; resume available after fresh verification.'
+            : 'No preserved work is advertised.',
         },
         actions: this._semanticActions(current, view, principal),
       };
@@ -3333,7 +3528,13 @@ export class BatonApplication {
     const view = await this._buildView(current, this.principals.observer);
     const action = this._semanticActions(current, view, principal)
       .find((candidate) => candidate.actionId === request.actionId);
-    if (!action) throw applicationError('Run action is outside the current authority scope', 'application_action_scope_mismatch');
+    if (!action) {
+      const replay = this._replaySemanticResumeAction(current, request, principal);
+      if (replay) {
+        return this.inspect({ runId: request.runId, depth: 'outline' }, principal);
+      }
+      throw applicationError('Run action is outside the current authority scope', 'application_action_scope_mismatch');
+    }
     const supplied = Object.keys(request.inputs).sort();
     const allowed = Object.keys(action.inputSchema.properties).sort();
     const required = [...(action.inputSchema.required ?? [])].sort();
@@ -3342,6 +3543,19 @@ export class BatonApplication {
     }
     if (action.kind === 'approve_plan') {
       await this.approve(request.runId, current.plan.digest, principal);
+    } else if (action.kind === 'answer_approval') {
+      if (!['allow', 'deny', 'cancel'].includes(request.inputs.decision)
+        || !validText(action.target?.requestId, 4_096)) {
+        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
+      }
+      await this.answer(request.runId, action.target.requestId, { decision: request.inputs.decision }, principal);
+    } else if (action.kind === 'answer_question') {
+      if (!validText(request.inputs.text, MAX_ATTENTION_TEXT_BYTES)
+        || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(request.inputs.text))
+        || !validText(action.target?.requestId, 4_096)) {
+        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
+      }
+      await this.answer(request.runId, action.target.requestId, { text: request.inputs.text }, principal);
     } else if (action.kind === 'adopt_result') {
       if (!validText(request.inputs.reason, 1_024)) {
         throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
@@ -3359,6 +3573,18 @@ export class BatonApplication {
         throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
       }
       await this.retryVerification({ runId: request.runId, reason: request.inputs.reason }, principal);
+    } else if (action.kind === 'resume_work') {
+      if (!validText(request.inputs.reason, 1_024)) {
+        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
+      }
+      await this.resumeWork(
+        { runId: request.runId, reason: request.inputs.reason },
+        principal,
+        {
+          actionId: action.actionId,
+          principalScopeDigest: digest({ principalId: principal.principalId, sessionId: principal.sessionId }),
+        },
+      );
     } else if (action.kind === 'semantic_review') {
       if (!Number.isSafeInteger(request.inputs.routeIndex) || request.inputs.routeIndex < 0
         || !validText(request.inputs.reason, 1_024)) {
@@ -3464,6 +3690,9 @@ export class BatonApplication {
     }
     if (name === 'run.retry_verification') {
       return this.retryVerification(args, principal);
+    }
+    if (name === 'run.resume_work') {
+      return this.resumeWork(args, principal);
     }
     if (name === 'run.review') {
       return this.review(args, principal);

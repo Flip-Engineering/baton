@@ -167,18 +167,18 @@ const planBriefSchema = schema({
   goal: text, constraints: textArray, pathScope: textArray, tools: textArray,
   outputFormat: { type: 'string' }, definitionOfDone: { type: 'string' },
   verification: goalPlanVerificationSchema, budget: planBriefBudgetSchema,
-  providerTurns: { type: 'integer', minimum: 1 }, capabilities: textArray, effects: textArray,
+  providerTurns: { type: 'integer', minimum: 1 }, capabilities: textArray, effects: textArray, requiredEffects: textArray,
 }, PLAN_BRIEF_FIELDS);
 const goalPlanRoutesSchema = schema({ harnesses: textArray, models: textArray, efforts: textArray }, ['harnesses', 'models', 'efforts']);
 const goalPlanNodeSchema = schema({
   key: text, objective: text, definitionOfDone: textArray, deps: textArray, pathScope: textArray, risk: text,
   budget: goalPlanBudgetSchema, verification: goalPlanVerificationSchema, routes: goalPlanRoutesSchema,
-  capabilities: textArray, effects: textArray,
+  capabilities: textArray, effects: textArray, requiredEffects: textArray,
 }, ['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects']);
 const spawnGoalPlanSchema = schema({
   goalId: { type: 'string', pattern: '^goal:[a-f0-9]{64}$' }, goalVersion: { type: 'integer', minimum: 1 }, goalDigest: digest,
   planId: { type: 'string', pattern: '^plan:[a-f0-9]{64}$' }, planVersion: { type: 'integer', minimum: 1 }, planDigest: digest,
-  nodeKey: text, expectedDispatchVersion: { const: 0 }, capabilities: textArray, effects: textArray,
+  nodeKey: text, expectedDispatchVersion: { const: 0 }, capabilities: textArray, effects: textArray, requiredEffects: textArray,
 }, ['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'expectedDispatchVersion', 'capabilities', 'effects']);
 const fleetSpawnSchema = {
   ...schema({ ...repo, ...idem, runId, harness: text, model: text, effort: text, modelPolicy: schema({ allow: textArray, deny: textArray, prefer: textArray, allowFamilies: textArray, denyFamilies: textArray, reasoningEffort: text, serviceTier: text }), brief: { type: 'object' }, taskId: text, deps: textArray, taskType: text, session: schema({ mode: { type: 'string', enum: ['new', 'resume', 'fork'] }, id: text, lastTurnId: text, context: schema({ worktree: text, repoRoot: text, baseSha: text, branch: text, ownerTaskId: text }, ['worktree']) }), refines: text, goalPlan: spawnGoalPlanSchema }, ['repoId', 'idempotencyKey', 'harness', 'brief']),
@@ -345,22 +345,25 @@ function validGoalPlanRoutes(value) {
     && validTextArray(value.efforts, { empty: false });
 }
 function validGoalPlanNode(value) {
-  return closedRecord(value, ['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects'])
+  return closedRecord(value, ['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects', ...(Object.hasOwn(value ?? {}, 'requiredEffects') ? ['requiredEffects'] : [])])
     && nonempty(value.key) && nonempty(value.objective) && validTextArray(value.definitionOfDone) && validTextArray(value.deps)
     && validTextArray(value.pathScope, { empty: false }) && nonempty(value.risk) && validGoalPlanBudget(value.budget)
     && validGoalPlanVerification(value.verification) && validGoalPlanRoutes(value.routes)
-    && validTextArray(value.capabilities) && validTextArray(value.effects);
+    && validTextArray(value.capabilities) && validTextArray(value.effects)
+    && (!Object.hasOwn(value, 'requiredEffects') || validTextArray(value.requiredEffects));
 }
 function validSpawnGoalPlan(value) {
-  return closedRecord(value, ['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'expectedDispatchVersion', 'capabilities', 'effects'])
+  return closedRecord(value, ['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'expectedDispatchVersion', 'capabilities', 'effects', ...(Object.hasOwn(value ?? {}, 'requiredEffects') ? ['requiredEffects'] : [])])
     && /^goal:[a-f0-9]{64}$/.test(value.goalId ?? '') && Number.isSafeInteger(value.goalVersion) && value.goalVersion > 0
     && /^[a-f0-9]{64}$/.test(value.goalDigest ?? '') && /^plan:[a-f0-9]{64}$/.test(value.planId ?? '')
     && Number.isSafeInteger(value.planVersion) && value.planVersion > 0 && /^[a-f0-9]{64}$/.test(value.planDigest ?? '')
     && nonempty(value.nodeKey) && value.expectedDispatchVersion === 0
-    && validTextArray(value.capabilities) && validTextArray(value.effects);
+    && validTextArray(value.capabilities) && validTextArray(value.effects)
+    && (!Object.hasOwn(value, 'requiredEffects') || validTextArray(value.requiredEffects));
 }
 function validPlanBrief(value) {
-  return closedRecord(value, PLAN_BRIEF_FIELDS) && nonempty(value.goal)
+  const fields = [...PLAN_BRIEF_FIELDS, ...(Object.hasOwn(value ?? {}, 'requiredEffects') ? ['requiredEffects'] : [])];
+  return closedRecord(value, fields) && nonempty(value.goal)
     && validTextArray(value.constraints) && validTextArray(value.pathScope) && validTextArray(value.tools)
     && typeof value.outputFormat === 'string' && typeof value.definitionOfDone === 'string'
     && validGoalPlanVerification(value.verification) && closedRecord(value.budget, BUDGET_FIELDS)
@@ -368,7 +371,8 @@ function validPlanBrief(value) {
     && Number.isFinite(value.budget.usd) && value.budget.usd >= 0
     && Number.isSafeInteger(value.budget.wallMin) && value.budget.wallMin > 0
     && Number.isSafeInteger(value.providerTurns) && value.providerTurns > 0
-    && validTextArray(value.capabilities) && validTextArray(value.effects);
+    && validTextArray(value.capabilities) && validTextArray(value.effects)
+    && (!Object.hasOwn(value, 'requiredEffects') || validTextArray(value.requiredEffects));
 }
 
 function applicationArgs(name, args) {

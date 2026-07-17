@@ -89,7 +89,7 @@ export function assertIsAdapter(obj) {
 
 /**
  * @param {object} brief
- * @param {'codex-v2'|'claude'|'grok-acp'} dialect
+ * @param {'codex-v2'|'claude'|'grok-acp'|'kimi-acp'} dialect
  * @returns {string}
  */
 export function renderBrief(brief, dialect) {

@@ -180,7 +180,8 @@ function normalizeRoutes(value, policy) {
   };
 }
 function normalizeNode(value, policy, goal) {
-  exactObject(value, ['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects']);
+  const hasRequiredEffects = Object.hasOwn(value ?? {}, 'requiredEffects');
+  exactObject(value, ['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects', ...(hasRequiredEffects ? ['requiredEffects'] : [])]);
   const key = normalizedText(value.key, 256, 'node.key');
   if (!/^[A-Za-z0-9._:-]+$/.test(key)) fail('plan node key is invalid', 'plan_node_invalid');
   const deps = normalizedSet(value.deps, policy.limits.maxDepsPerNode, 256, 'node.deps');
@@ -196,10 +197,17 @@ function normalizeNode(value, policy, goal) {
     routes: normalizeRoutes(value.routes, policy),
     capabilities: normalizedSet(value.capabilities, policy.limits.maxItems, 128, 'node.capabilities'),
     effects: normalizedSet(value.effects, policy.limits.maxItems, 128, 'node.effects'),
+    ...(hasRequiredEffects ? {
+      requiredEffects: normalizedSet(value.requiredEffects, policy.limits.maxItems, 128, 'node.requiredEffects'),
+    } : {}),
   };
   if (riskIndex(policy, result.risk) < riskIndex(policy, goal.risk)) fail('plan node risk weakens the goal execution-control tier', 'plan_risk_mismatch');
   if (result.definitionOfDone.some((item) => !goal.definitionOfDone.includes(item))) fail('plan node assigns an unknown definition-of-done item', 'plan_goal_mismatch');
   if (result.capabilities.some((item) => !policy.capabilityClasses.includes(item)) || result.effects.some((item) => !policy.effectClasses.includes(item))) fail('plan node exceeds deployment capability/effect policy', 'plan_effect_invalid');
+  if (hasRequiredEffects && (result.requiredEffects.some((item) => !result.effects.includes(item))
+    || result.requiredEffects.some((item) => item !== 'repository_edit'))) {
+    fail('plan node required effects exceed authorized or supported effects', 'plan_required_effect_invalid');
+  }
   return result;
 }
 function assertDag(nodes) {
@@ -266,6 +274,7 @@ export function buildAuthoritativeBrief(goal, plan, node, binding) {
     providerTurns: node.budget.providerTurns,
     capabilities: clone(node.capabilities),
     effects: clone(node.effects),
+    ...(Object.hasOwn(node, 'requiredEffects') ? { requiredEffects: clone(node.requiredEffects) } : {}),
     goalPlan: clone(binding),
   };
 }
@@ -277,14 +286,19 @@ export const PLAN_BRIEF_FIELDS = Object.freeze([
 
 export function semanticBriefCore(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
-  return Object.fromEntries(PLAN_BRIEF_FIELDS
+  const fields = [...PLAN_BRIEF_FIELDS, ...(Object.hasOwn(value, 'requiredEffects') ? ['requiredEffects'] : [])];
+  return Object.fromEntries(fields
     .filter((key) => Object.hasOwn(value, key)).map((key) => [key, clone(value[key])]));
 }
 
 export function planBriefMatches(value, authoritative, { goalPlanCoordinates = false } = {}) {
   const supplied = semanticBriefCore(value);
   const expected = semanticBriefCore(authoritative);
-  const fields = goalPlanCoordinates ? [...PLAN_BRIEF_FIELDS, 'goalPlan'] : PLAN_BRIEF_FIELDS;
+  const fields = [
+    ...PLAN_BRIEF_FIELDS,
+    ...(Object.hasOwn(authoritative ?? {}, 'requiredEffects') ? ['requiredEffects'] : []),
+    ...(goalPlanCoordinates ? ['goalPlan'] : []),
+  ];
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     && Object.keys(value).sort().join('\0') === [...fields].sort().join('\0')
     && goalPlanDigest(supplied) === goalPlanDigest(expected);

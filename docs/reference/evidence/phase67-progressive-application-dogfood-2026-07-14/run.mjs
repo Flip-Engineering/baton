@@ -4,10 +4,10 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 
 import {
-  BatonApplication, CodexAppServerCli, GlmSessionCli, GrokAcpCli,
+  BatonApplication, CodexAppServerCli, GlmSessionCli, GrokAcpCli, KimiAcpCli, KimiSessionCli,
   SignalLifecycleOwner, bindBaton, createDriver,
 } from '../../../../impl/src/index.mjs';
 
@@ -39,9 +39,16 @@ if (rawArgs.length !== 1 || rawArgs[0].startsWith('--')) {
 }
 const TASK_OBJECTIVE = rawArgs[0];
 
+function inside(root, candidate) {
+  const rel = relative(resolve(root), resolve(candidate));
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
 function inferHarness(model) {
   if (model.startsWith('glm-')) return 'glm';
   if (model.startsWith('grok-')) return 'grok';
+  if (model === 'kimi-k3[1m]') return 'claude-code';
+  if (model.startsWith('kimi-code/')) return 'kimi-code';
   if (/^(?:gpt-|codex-|o[134])/u.test(model)) return 'codex';
   throw new Error('PENDING-LIVE-dogfood-model-family-ambiguous');
 }
@@ -94,8 +101,14 @@ const OUTPUT = process.env.BATON_EVIDENCE_DIR
   ? resolve(process.env.BATON_EVIDENCE_DIR)
   : mkdtempSync(resolve(OWNER_ROOT, 'evidence-'));
 const GLM_AUTH = resolve(process.env.BATON_GLM_AUTH_FILE ?? resolve(SOURCE_REPO, 'glm_key.json'));
-const TOKEN_BUDGET = integer('BATON_DOGFOOD_TOKEN_BUDGET', 1_500_000);
-const USD_BUDGET = number('BATON_DOGFOOD_USD_BUDGET', 25);
+const KIMI_AUTH = resolve(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'baton', 'credentials', 'kimi.json');
+const KIMI_CODE_HOME = resolve(process.env.BATON_KIMI_CODE_SOURCE_HOME ?? join(homedir(), '.kimi-code'));
+const KIMI_CODE_FILES = Object.freeze(['config.toml', 'device_id', 'credentials/kimi-code.json', 'oauth/kimi-code']);
+// Internal deployment headroom, not an ordinary agent-facing control. Provider telemetry may
+// include cached/reasoning context several times larger than visible output; a cramped default
+// turns useful work into artificial budget choreography and was live-caught during Phase 72.
+const TOKEN_BUDGET = integer('BATON_DOGFOOD_TOKEN_BUDGET', 10_000_000);
+const USD_BUDGET = number('BATON_DOGFOOD_USD_BUDGET', 100);
 const WALL_MINUTES = integer('BATON_DOGFOOD_WALL_MINUTES', 30);
 const PROVIDER_TURNS = integer('BATON_DOGFOOD_PROVIDER_TURNS', 64);
 const treePolicy = trackedTreePolicy(TARGET_REPO);
@@ -106,6 +119,9 @@ const EFFORT = process.env.BATON_DOGFOOD_EFFORT ?? requestedEffort;
 if (!MODEL || !EFFORT) throw new Error('usage: run.mjs OBJECTIVE --model MODEL --effort EFFORT [--harness HARNESS]');
 const HARNESS = process.env.BATON_DOGFOOD_HARNESS ?? requestedHarness ?? inferHarness(MODEL);
 const CODEX_CMD = HARNESS === 'codex' ? discoverCodexCommand() : null;
+const KIMI_CODE_CMD = HARNESS === 'kimi-code'
+  ? realpathSync(resolve(process.env.BATON_KIMI_CODE_CMD ?? join(KIMI_CODE_HOME, 'bin', 'kimi')))
+  : null;
 const REPO_ID = 'baton-recursive-dogfood';
 const RUN_ID = `recursive-${createHash('sha256').update(JSON.stringify({ TASK_OBJECTIVE, MODEL, EFFORT }))
   .digest('hex').slice(0, 32)}`;
@@ -134,10 +150,22 @@ const APPLICATION_ACCEPTANCE_TESTS = Object.freeze([
   'impl/test/phase67-signal-reap.test.mjs',
   'impl/test/phase67-terminal-cause.test.mjs',
   'impl/test/phase68-unified-agent-entrypoint.test.mjs',
+  'impl/test/acp-json-rpc-process.test.mjs',
+  'impl/test/credential-projection.test.mjs',
+  'impl/test/kimi-acp.test.mjs',
+  'impl/test/phase72-native-kimi-integration.test.mjs',
+  'impl/test/phase71-kimi-session.test.mjs',
+  'impl/test/phase73-required-effects.test.mjs',
+  'impl/test/runtime-isolation.test.mjs',
+  'impl/test/phase14-route-tuple.test.mjs',
 ]);
 
-if (!['glm', 'grok', 'codex'].includes(HARNESS)) throw new Error('PENDING-LIVE-dogfood-harness-unsupported');
+if (!['glm', 'grok', 'codex', 'claude-code', 'kimi-code'].includes(HARNESS)) throw new Error('PENDING-LIVE-dogfood-harness-unsupported');
 if (HARNESS === 'glm' && !existsSync(GLM_AUTH)) throw new Error('PENDING-LIVE-project-glm-key-absent');
+if (HARNESS === 'claude-code' && MODEL === 'kimi-k3[1m]' && !existsSync(KIMI_AUTH)) throw new Error('PENDING-LIVE-baton-kimi-key-absent');
+if (HARNESS === 'claude-code' && MODEL === 'kimi-k3[1m]' && inside(TARGET_REPO, KIMI_AUTH)) throw new Error('PENDING-LIVE-baton-kimi-key-must-be-outside-repository');
+if (HARNESS === 'kimi-code' && KIMI_CODE_FILES.some((file) => !existsSync(join(KIMI_CODE_HOME, file)))) throw new Error('PENDING-LIVE-kimi-code-subscription-state-absent');
+if (HARNESS === 'kimi-code' && inside(TARGET_REPO, KIMI_CODE_HOME)) throw new Error('PENDING-LIVE-kimi-code-state-must-be-outside-repository');
 if (execFileSync('git', ['status', '--porcelain'], { cwd: TARGET_REPO, encoding: 'utf8' }).trim()) {
   throw new Error('PENDING-LIVE-dogfood-target-must-be-clean');
 }
@@ -181,7 +209,7 @@ const profile = Object.freeze({
     cwd: '.', envAllowlist: ['PATH'], expectExit: 0, expectResult: 'exit_code',
     timeoutMs: WALL_MINUTES * 60 * 1_000, maxOutputBytes: 256 * 1_024, requiredPredecessorEvidence: [],
   },
-  routes: [route], capabilities: ['code', 'test'], effects: ['repository_edit', 'provider_call'],
+  routes: [route], capabilities: ['code', 'test'], effects: ['repository_edit', 'provider_call'], requiredEffects: ['repository_edit'],
   resultPolicy: { mode: 'manual', maxAdoptedResults: 1, locator: 'git_ref' },
   followPolicy: {
     mode: 'enabled', maxWaitMs: 30_000, maxChanges: 64,
@@ -197,12 +225,23 @@ const credentialFiles = {
   ...(existsSync(join(homedir(), '.codex', 'auth.json')) ? { codex: [join(homedir(), '.codex', 'auth.json')] } : {}),
   ...(existsSync(join(homedir(), '.grok', 'auth.json')) ? { grok: [join(homedir(), '.grok', 'auth.json')] } : {}),
 };
+const credentialTrees = HARNESS === 'kimi-code' ? {
+  'kimi-code': [{ sourceRoot: KIMI_CODE_HOME, relativeFiles: KIMI_CODE_FILES }],
+} : {};
 const adapter = HARNESS === 'glm' ? new GlmSessionCli({
   authTokenFile: GLM_AUTH,
   authTokenJsonPointer: process.env.BATON_GLM_AUTH_JSON_POINTER ?? '/glm_key',
   model: route.model, approvals: false, permissionMode: 'acceptEdits',
   args: ['--safe-mode', '--no-session-persistence', '--max-budget-usd', USD_BUDGET.toFixed(2)], ceiling: 1,
 }) : HARNESS === 'grok' ? new GrokAcpCli({ requestTimeoutMs: 45_000, ceiling: 1 })
+  : HARNESS === 'kimi-code' ? new KimiAcpCli({
+    cmd: KIMI_CODE_CMD, requestTimeoutMs: 45_000, ceiling: 1,
+    model: route.model, modelCatalog: { 'kimi-code/k3': ['low', 'high', 'max'] },
+  })
+  : HARNESS === 'claude-code' ? new KimiSessionCli({
+    authTokenFile: KIMI_AUTH, repoRoot: TARGET_REPO,
+    model: route.model, approvals: false, permissionMode: 'acceptEdits', ceiling: 1,
+  })
   : new CodexAppServerCli({
     cmd: CODEX_CMD, requestTimeoutMs: 45_000, model: route.model, ceiling: 1,
   });
@@ -210,8 +249,8 @@ const driver = createDriver({
   repoRoot: TARGET_REPO, repoId: REPO_ID, logDir: LOG_DIR,
   workerDependencyDirs: ['impl/node_modules'],
   verifyDependencyDirs: ['impl/node_modules'],
-  adapters: { [HARNESS]: adapter },
-  runtimeIsolation: { credentialFiles },
+  adapters: { [`${HARNESS}:dogfood`]: adapter },
+  runtimeIsolation: { credentialFiles, credentialTrees },
   goalPlanAuthority: { policy, authorize: async () => true },
   approvalTimeoutMs: Math.min(60_000, WALL_MINUTES * 60 * 1_000),
   stopDeadlineMs: 15_000,
@@ -279,12 +318,31 @@ async function dogfood({ signal }) {
 
   let adopt = null;
   ordinaryCalls.push('run.changes:outline:result');
-  for await (const changed of run.changes({ signal })) {
-    outline = changed;
-    lastOutline = changed;
-    emitProgress(changed);
-    adopt = outline.outline.actions.find((action) => action.kind === 'adopt_result');
-    if (adopt || terminalWithoutAdoption.has(outline.outline.phase)) break;
+  for (;;) {
+    let attention = null;
+    for await (const changed of run.changes({ signal })) {
+      outline = changed;
+      lastOutline = changed;
+      emitProgress(changed);
+      adopt = outline.outline.actions.find((action) => action.kind === 'adopt_result');
+      attention = outline.outline.actions.find((action) => ['answer_approval', 'answer_question'].includes(action.kind));
+      if (adopt || attention || terminalWithoutAdoption.has(outline.outline.phase)) break;
+    }
+    if (attention?.kind === 'answer_approval') {
+      // This deployment deliberately gives the contained worker full tool permission. If a
+      // provider still requests approval, answer it through the same advertised Run action.
+      ordinaryCalls.push('run.act:answer_approval');
+      outline = await run.act(attention.actionId, { decision: 'allow' });
+      lastOutline = outline;
+      emitProgress(outline);
+      continue;
+    }
+    if (attention?.kind === 'answer_question') {
+      throw Object.assign(new Error('progressive-question-attention-required'), {
+        code: 'progressive_question_attention_required',
+      });
+    }
+    break;
   }
   if (outline?.outline?.phase !== 'work_completed') throw new Error(`progressive-worker-${outline?.outline?.phase ?? 'unobserved'}`);
   if (!adopt) throw new Error('progressive-adopt-action-absent');

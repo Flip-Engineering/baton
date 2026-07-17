@@ -160,6 +160,9 @@ function exactRecord(value, fields) {
   return isRecord(value) && Object.keys(value).length === fields.size
     && Object.keys(value).every((key) => fields.has(key));
 }
+function requiredEffectFields(fields, value) {
+  return Object.hasOwn(value ?? {}, 'requiredEffects') ? new Set([...fields, 'requiredEffects']) : fields;
+}
 function stringList(value) {
   return Array.isArray(value) && value.every(string) && new Set(value).size === value.length;
 }
@@ -186,26 +189,28 @@ function planVerification(value) {
     && stringList(value.requiredPredecessorEvidence);
 }
 function planNode(value) {
-  return exactRecord(value, PLAN_NODE_FIELDS) && string(value.key) && string(value.objective)
+  return exactRecord(value, requiredEffectFields(PLAN_NODE_FIELDS, value)) && string(value.key) && string(value.objective)
     && stringList(value.definitionOfDone) && stringList(value.deps) && stringList(value.pathScope)
     && string(value.risk) && goalPlanBudget(value.budget) && planVerification(value.verification)
     && value.pathScope.length > 0
     && exactRecord(value.routes, PLAN_ROUTE_FIELDS) && stringList(value.routes.harnesses) && value.routes.harnesses.length > 0
     && stringList(value.routes.models) && value.routes.models.length > 0
     && stringList(value.routes.efforts) && value.routes.efforts.length > 0
-    && stringList(value.capabilities) && stringList(value.effects);
+    && stringList(value.capabilities) && stringList(value.effects)
+    && (!Object.hasOwn(value, 'requiredEffects') || stringList(value.requiredEffects));
 }
 function planGate(value) {
-  return exactRecord(value, PLAN_GATE_FIELDS)
+  return exactRecord(value, requiredEffectFields(PLAN_GATE_FIELDS, value))
     && /^goal:[a-f0-9]{64}$/.test(value.goalId ?? '') && Number.isSafeInteger(value.goalVersion) && value.goalVersion > 0
     && /^[a-f0-9]{64}$/.test(value.goalDigest ?? '')
     && /^plan:[a-f0-9]{64}$/.test(value.planId ?? '') && Number.isSafeInteger(value.planVersion) && value.planVersion > 0
     && /^[a-f0-9]{64}$/.test(value.planDigest ?? '') && string(value.nodeKey)
     && value.expectedDispatchVersion === 0
-    && stringList(value.capabilities) && stringList(value.effects);
+    && stringList(value.capabilities) && stringList(value.effects)
+    && (!Object.hasOwn(value, 'requiredEffects') || stringList(value.requiredEffects));
 }
 function planBrief(value) {
-  return exactRecord(value, PLAN_BRIEF_FIELDS) && string(value.goal)
+  return exactRecord(value, requiredEffectFields(PLAN_BRIEF_FIELDS, value)) && string(value.goal)
     && stringList(value.constraints) && stringList(value.pathScope) && stringList(value.tools)
     && typeof value.outputFormat === 'string' && typeof value.definitionOfDone === 'string'
     && planVerification(value.verification) && exactRecord(value.budget, BUDGET_FIELDS)
@@ -213,7 +218,8 @@ function planBrief(value) {
     && Number.isFinite(value.budget.usd) && value.budget.usd >= 0
     && Number.isSafeInteger(value.budget.wallMin) && value.budget.wallMin > 0
     && Number.isSafeInteger(value.providerTurns) && value.providerTurns > 0
-    && stringList(value.capabilities) && stringList(value.effects);
+    && stringList(value.capabilities) && stringList(value.effects)
+    && (!Object.hasOwn(value, 'requiredEffects') || stringList(value.requiredEffects));
 }
 function validProviderClaims(value) {
   if (!isRecord(value)) return false;

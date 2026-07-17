@@ -148,6 +148,30 @@ export class BatonRun {
   review(inputs) { return this.act('semantic_review', inputs); }
   integrate(inputs) { return this.act('integrate', inputs); }
 
+  async answer(requestId, answer) {
+    if (!nonempty(requestId) || !answer || typeof answer !== 'object' || Array.isArray(answer)) {
+      throw clientError('Run answer is invalid');
+    }
+    this.#last = await this.#application.command('run.answer', {
+      runId: this.id, requestId, answer,
+    }, this.#principal);
+    return this.#last;
+  }
+
+  async steer(target, message, options = {}) {
+    if (!nonempty(target) || !nonempty(message)) throw clientError('Run steer is invalid');
+    exactOptions(options, new Set(['mode', 'reason']), 'steer');
+    const mode = options.mode ?? 'nudge';
+    const reason = options.reason ?? 'Orchestrator steered the active worker.';
+    if (!['nudge', 'now', 'turn'].includes(mode) || !nonempty(reason)) {
+      throw clientError('Run steer is invalid');
+    }
+    this.#last = await this.#application.command('run.steer', {
+      runId: this.id, target, mode, message, reason,
+    }, this.#principal);
+    return this.#last;
+  }
+
   async stop(reason = 'Operator requested Run stop.') {
     if (!nonempty(reason)) throw clientError('Run stop reason is invalid');
     this.#last = await this.#application.command('run.stop', { runId: this.id, reason }, this.#principal);

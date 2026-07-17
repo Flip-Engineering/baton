@@ -38,6 +38,7 @@
 //                                     effect-level proof of which directory the child actually runs in.
 //   "REPORT_ENV:<VAR>"             -> completes with result text `env:<VAR>=<value-or-<unset>>` — phase10
 //                                     SC6's effect-level proof of env threading (tests use fake values only).
+//   "REPORT_ARGV"                  -> completes with the JSON encoded child argv.
 //   anything else                  -> emits an assistant text event ("Echo: <text>") then a success
 //                                     result.
 //
@@ -203,9 +204,29 @@ function startNonApprovalTurn(text) {
     process.exit(1);
   }
 
+  if (text.includes('TRIGGER_AUTH_REFUSAL')) {
+    emitResult({ text: 'authentication_error', isError: true });
+    currentTurn = null;
+    drainQueue();
+    return;
+  }
+
+  if (text.includes('REPORT_SECRET_STDERR')) {
+    process.stderr.write(process.env.ANTHROPIC_AUTH_TOKEN ?? '');
+    return; // adapter must detect and kill; never provide a competing terminal result
+  }
+
   if (text.includes('REPORT_CWD')) {
     emitAssistantText(`cwd is ${process.cwd()}`);
     emitResult({ text: `cwd:${process.cwd()}` });
+    currentTurn = null;
+    drainQueue();
+    return;
+  }
+
+  if (text.includes('REPORT_ARGV')) {
+    emitAssistantText('argv probe');
+    emitResult({ text: `argv:${JSON.stringify(process.argv.slice(2))}` });
     currentTurn = null;
     drainQueue();
     return;
@@ -240,6 +261,16 @@ function startNonApprovalTurn(text) {
     return;
   }
 
+  const envPresenceMatch = text.match(/REPORT_ENV_PRESENT:([A-Z0-9_]+)/);
+  if (envPresenceMatch) {
+    const name = envPresenceMatch[1];
+    emitAssistantText(`env presence probe ${name}`);
+    emitResult({ text: `env-present:${name}=${process.env[name] === undefined ? 'false' : 'true'}` });
+    currentTurn = null;
+    drainQueue();
+    return;
+  }
+
   emitAssistantText(`Echo: ${text}`);
   emitResult({ text });
   currentTurn = null;
@@ -262,7 +293,7 @@ send({
   session_id: sessionId,
   cwd: process.cwd(),
   tools: [],
-  model: args.model ?? 'claude-sonnet-5-fake',
+  model: process.env.FAKE_CLAUDE_REPORTED_MODEL ?? args.model ?? 'claude-sonnet-5-fake',
   permissionMode: 'acceptEdits',
   apiKeySource: 'user',
   claude_code_version: '2.1.206-fake',

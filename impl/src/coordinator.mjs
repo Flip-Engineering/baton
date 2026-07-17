@@ -489,6 +489,7 @@ export class Coordinator {
     this._authorityOps = 0;
     this._authorityTokens = new Set();
     this._derivedReviewPlanToken = Object.freeze({});
+    this._derivedResumePlanToken = Object.freeze({});
     this._planRecoveryAuthority = Object.freeze({});
     // Keep coordinator-local health/attribution wrappers on a facade. Reusing one Log across a
     // restart must not stack controller closures on the shared writer and let the prior
@@ -1426,11 +1427,11 @@ export class Coordinator {
 
   _resolveVendor(task) {
     if (task.vendorRequested !== 'auto') {
-      const vendor = task.vendorRequested;
-      if (!cardSupportsSession(this._adapters[vendor]?.card(), task.sessionRequest)) return null;
-      const resolved = resolveCardModel(this._adapters[vendor]?.card(), task.modelRequested, task.modelPolicy, { explicit: true });
-      const effort = resolveEffort(this._adapters[vendor]?.card(), task.effortRequested);
-      return resolved.ok && effort.ok ? { vendor, model: resolved.model, effort: effort.effort } : null;
+      const selected = this._resolveExplicitRoute(task.vendorRequested, {
+        sessionRequest: task.sessionRequest, model: task.modelRequested,
+        modelPolicy: task.modelPolicy, effort: task.effortRequested,
+      });
+      return selected.ok ? selected.selection : null;
     }
     const cards = {};
     const resolvedModels = {};
@@ -1453,6 +1454,30 @@ export class Coordinator {
     const chosen = this._route(task, cards, inFlight);
     if (!chosen || !this._adapters[chosen] || !Object.hasOwn(resolvedModels, chosen)) return null;
     return { vendor: chosen, model: resolvedModels[chosen], effort: cards[chosen]._resolvedEffort ?? null };
+  }
+
+  _resolveExplicitRoute(requestedHarness, options = {}) {
+    const candidates = Object.entries(this._adapters)
+      .filter(([name, adapter]) => name === requestedHarness || adapter.card()?.harness === requestedHarness);
+    if (candidates.length === 0) return { ok: false, reason: 'unknown_harness' };
+    const sessionCandidates = candidates.filter(([, adapter]) => cardSupportsSession(adapter.card(), options.sessionRequest));
+    if (sessionCandidates.length === 0) return { ok: false, reason: 'session_unavailable' };
+    const modelCandidates = sessionCandidates.map(([vendor, adapter]) => ({
+      vendor, adapter,
+      model: resolveCardModel(adapter.card(), options.model, options.modelPolicy, { explicit: true }),
+    })).filter((candidate) => candidate.model.ok);
+    if (modelCandidates.length === 0) return { ok: false, reason: 'model_unavailable' };
+    const capable = modelCandidates.map((candidate) => ({
+      ...candidate,
+      effort: resolveEffort(candidate.adapter.card(), options.effort),
+    })).filter((candidate) => candidate.effort.ok);
+    if (capable.length === 0) return { ok: false, reason: 'effort_unavailable' };
+    if (capable.length > 1) return { ok: false, reason: 'route_ambiguous' };
+    const selected = capable[0];
+    return {
+      ok: true,
+      selection: { vendor: selected.vendor, model: selected.model.model, effort: selected.effort.effort },
+    };
   }
 
   _inFlightCount(vendor) {
@@ -1805,6 +1830,7 @@ export class Coordinator {
         session: task.sessionRequest?.mode === 'new' ? undefined : task.sessionRequest,
         env: runtime?.env,
         replaceEnv: runtime?.replaceEnv === true,
+        redactProviderFrame: runtime?.redactProviderFrame,
         processGeneration: handle.processGeneration,
         processReapTimeoutMs: Math.max(1, Math.floor(this._stopDeadlineMs * 0.8)),
       });
@@ -1933,20 +1959,33 @@ export class Coordinator {
     normalizePhysicalOwnerId(taskId, 'taskId');
     const reconcileExistingPlanTask = this._tasks.has(taskId) && Boolean(opts.goalPlan);
     if (this._tasks.has(taskId) && !reconcileExistingPlanTask) throw new DuplicateTaskIdError(`duplicate taskId "${taskId}"`);
-    if (opts.goalPlan && (opts.refines != null || (opts.taskType != null && opts.taskType !== 'general')
+    // PS5: a preserved-resume re-dispatch is the orchestrator-owned continuation of one approved
+    // Plan node from its pinned checkpoint. It is the one sanctioned pairing of plan-gated
+    // authority with a refinement lineage and a fresh worktree base, gated by a private token so
+    // an external caller can never combine these fields by raw spawn.
+    const derivedResumeAuthorized = opts.derivedResumePlanToken === this._derivedResumePlanToken
+      && opts.preservedResume != null && worktreeBaseSha !== null;
+    if (opts.goalPlan && !derivedResumeAuthorized && (opts.refines != null || (opts.taskType != null && opts.taskType !== 'general')
       || opts.review != null || worktreeBaseSha !== null || sessionRequest.mode !== 'new' || modelPolicy !== null)) {
       throw Object.assign(new Error('plan-gated execution fields require explicit plan authority'), { code: 'plan_execution_mismatch' });
     }
-    if (vendor !== 'auto' && !this._adapters[vendor]) throw new UnknownVendorError(`unknown vendor "${vendor}"`);
-    if (vendor !== 'auto' && !cardSupportsSession(this._adapters[vendor].card(), sessionRequest)) {
-      throw new SessionSelectionError(`harness "${vendor}" does not support session mode "${sessionRequest.mode}"`);
+    if (opts.goalPlan && derivedResumeAuthorized && ((opts.taskType != null && opts.taskType !== 'general')
+      || opts.review != null || modelPolicy !== null || sessionRequest.mode !== 'new')) {
+      throw Object.assign(new Error('preserved resume re-dispatch carries unapproved execution fields'), { code: 'plan_execution_mismatch' });
     }
     if (vendor !== 'auto') {
-      const effort = resolveEffort(this._adapters[vendor].card(), effortRequested);
-      if (!effort.ok) throw new ModelSelectionError(`harness "${vendor}" cannot honor effort "${effortRequested}"`, effort.reason);
-      const resolved = resolveCardModel(this._adapters[vendor].card(), opts.model, modelPolicy, { explicit: true });
-      if (!resolved.ok) {
-        throw new ModelSelectionError(`harness "${vendor}" cannot honor model "${opts.model ?? '(policy)'}"`, resolved.reason);
+      const explicit = this._resolveExplicitRoute(vendor, {
+        sessionRequest, model: opts.model, modelPolicy, effort: effortRequested,
+      });
+      if (!explicit.ok && explicit.reason === 'unknown_harness') throw new UnknownVendorError(`unknown harness "${vendor}"`);
+      if (!explicit.ok && explicit.reason === 'session_unavailable') {
+        throw new SessionSelectionError(`harness "${vendor}" does not support session mode "${sessionRequest.mode}"`);
+      }
+      if (!explicit.ok) {
+        throw new ModelSelectionError(
+          `harness "${vendor}" cannot select one exact route for model "${opts.model ?? '(policy)'}" and effort "${effortRequested ?? '(required)'}"`,
+          explicit.reason,
+        );
       }
     } else if (opts.model !== undefined || modelPolicy || effortRequested) {
       const modelCapable = Object.values(this._adapters).filter((ad) => resolveCardModel(ad.card(), opts.model, modelPolicy, { explicit: false }).ok);
@@ -2002,7 +2041,7 @@ export class Coordinator {
         if (!handle) throw this._poisonCoordination(Object.assign(new Error('reconciled plan task lacks its reserved handle'), { code: 'goal_plan_integrity' }));
         return this._publicHandle(handle);
       }
-      planState = this._coordination.previewPlanDispatch(opts.goalPlan, routeBinding);
+      planState = this._coordination.previewPlanDispatch(opts.goalPlan, routeBinding, derivedResumeAuthorized ? opts.preservedResume : null);
       if (!planBriefMatches(brief, planState.brief)) throw Object.assign(new Error('caller Brief differs from the approved plan'), { code: 'plan_brief_mismatch' });
       admittedBrief = createBrief(planState.brief);
     } else {
@@ -2023,7 +2062,22 @@ export class Coordinator {
       sessionRequest, ...(worktreeBaseSha ? { worktreeBaseSha } : {}), ...(opts.review ? { review: Object.freeze({ ...opts.review }) } : {}),
     });
     let coordinationVersion = null;
-    if (planState) {
+    if (planState && derivedResumeAuthorized) {
+      if (!this._coordination.createAndClaimPreservedResumeRefinement) {
+        throw Object.assign(new Error('coordinator coordination store cannot admit a preserved resume'), { code: 'resume_unavailable' });
+      }
+      const attestation = opts.preservedResume;
+      if (attestation.priorTaskId !== opts.refines || attestation.checkpointSha !== worktreeBaseSha
+        || !/^[a-f0-9]{40,64}$/u.test(attestation.checkpointSha ?? '') || typeof attestation.checkpointRef !== 'string') {
+        throw Object.assign(new Error('preserved resume attestation does not match its lineage and base'), { code: 'plan_execution_mismatch' });
+      }
+      const created = this._coordination.createAndClaimPreservedResumeRefinement(
+        taskFields(), opts.goalPlan, routeBinding,
+        { priorTaskId: attestation.priorTaskId, checkpointSha: attestation.checkpointSha, checkpointRef: attestation.checkpointRef },
+        planAuth,
+      );
+      coordinationVersion = created.task.version;
+    } else if (planState) {
       const created = this._coordination.createPlanGatedTask(taskFields(), opts.goalPlan, routeBinding, planAuth);
       coordinationVersion = created.task.version;
     }
@@ -2712,6 +2766,7 @@ export class Coordinator {
       signal: recoverySpawnAbort.signal,
       env: runtime?.env,
       replaceEnv: runtime?.replaceEnv === true,
+      redactProviderFrame: runtime?.redactProviderFrame,
       processGeneration: handle.processGeneration,
       processReapTimeoutMs: Math.max(1, Math.floor(this._stopDeadlineMs * 0.8)),
     })).then((ack) => ({ ack }), (error) => ({ error }));
@@ -3274,6 +3329,195 @@ export class Coordinator {
     return Object.freeze({
       sha: task.checkpoint.sha,
       state: resolved === task.checkpoint.sha ? 'pinned' : resolved === null ? 'missing' : 'mismatch',
+    });
+  }
+
+  /**
+   * PS5: resume preserved work. Restores the exact pinned progress checkpoint into a fresh owned
+   * task that re-dispatches the same approved Plan node, under an orchestrator-selected harness,
+   * model, and per-task effort selected together (never a silent `low` default). The caller
+   * supplies only the server-derived Plan gate, route policy, and recovery lineage; the
+   * Coordinator postchecks the immutable checkpoint ref before re-dispatch. A resumed candidate is
+   * untrusted progress: it must pass the ordinary fresh verifier and every downstream gate before
+   * acceptance. Response-loss safe: the deterministic task id and idempotency key make replay
+   * return the same resumed task without a second dispatch.
+   */
+  resumePreservedWork(workerId, opts) {
+    return this._withAuthorityOp(() => this._resumePreservedWork(workerId, opts));
+  }
+
+  async _resumePreservedWork(workerId, opts = {}) {
+    this.tick();
+    const refuse = (message, code) => { throw Object.assign(new Error(message), { code }); };
+    const request = this._normalizeResumeRequest(opts);
+    const handle = this._getWorker(workerId);
+    const task = this._tasks.get(handle.taskId);
+    if (!task || task.status !== 'cancelled' || !task.checkpoint || task.checkpoint.state !== 'pinned') {
+      refuse('resume requires one cancelled task with a pinned progress checkpoint', 'resume_unavailable');
+    }
+    if (task.runId !== request.runId || handle.runId !== request.runId) {
+      refuse('resume lineage does not match the requested Run', 'resume_conflict');
+    }
+    if (task.checkpoint.sha !== request.checkpointSha || task.checkpoint.ref !== request.checkpointRef) {
+      refuse('resume checkpoint attestation does not match the pinned progress', 'resume_checkpoint_stale');
+    }
+    if (!this._worktrees || typeof this._worktrees.resolveCheckpoint !== 'function'
+      || typeof this._worktrees.capture !== 'function' || typeof this._worktrees.create !== 'function') {
+      refuse('resume requires the full preservation worktree authority', 'resume_unavailable');
+    }
+    // PS5/PS6: prove the immutable checkpoint still resolves to the exact preserved commit before
+    // any re-dispatch. A missing or substituted ref refuses closed and retains the preserved task.
+    const resolved = await this._worktrees.resolveCheckpoint(task.checkpoint.ref);
+    if (resolved !== task.checkpoint.sha) {
+      refuse('resume checkpoint no longer resolves to the preserved commit', 'resume_checkpoint_stale');
+    }
+    const route = request.route;
+    // PS6: the orchestrator selects harness, model, AND effort together. Effort is never defaulted
+    // to `low`: it is the explicit per-task value pinned to the approved route, and a resumed task
+    // may not inherit a silent global fallback.
+    if (!route.vendor || !route.model || !route.effort) {
+      refuse('resume route must select harness, model, and effort together', 'resume_route_invalid');
+    }
+    if (!this._adapters[route.vendor]) refuse('resume route harness is not registered', 'resume_route_invalid');
+    const card = this._adapters[route.vendor].card();
+    const inventory = card?.modelSelection?.reasoningEffort;
+    if (!Array.isArray(inventory) || !inventory.includes(route.effort)) {
+      refuse('resume route effort is outside the harness inventory', 'resume_route_invalid');
+    }
+    if (route.effort === 'low' && !inventory.includes('low')) {
+      refuse('resume route effort defaulted to low', 'resume_route_invalid');
+    }
+    if (typeof this._coordination?.createAndClaimPreservedResumeRefinement !== 'function') {
+      refuse('coordinator coordination store cannot admit a preserved resume', 'resume_unavailable');
+    }
+    const attestation = {
+      priorTaskId: task.id,
+      checkpointSha: task.checkpoint.sha,
+      checkpointRef: task.checkpoint.ref,
+    };
+    const planState = this._coordination.previewPlanDispatch(request.gate, route, attestation);
+    if (!planState?.brief) refuse('resume gate does not match an approved Plan node', 'resume_unavailable');
+    // The authoritative Brief carries goal/plan coordinates that only the plan-gated admission may
+    // pin (CI1/plan_brief_mismatch). Strip them and let _spawn rebuild the admitted Brief, mirroring
+    // the ordinary dispatch path.
+    const { goalPlan: _ignoredGoalPlan, ...briefCore } = planState.brief;
+    const brief = createBrief(briefCore);
+    const resumed = await this._spawn(route.vendor, brief, {
+      taskId: request.taskId,
+      runId: task.runId,
+      model: route.model,
+      effort: route.effort,
+      goalPlan: request.gate,
+      refines: task.id,
+      worktreeBaseSha: task.checkpoint.sha,
+      preservedResume: attestation,
+      derivedResumePlanToken: this._derivedResumePlanToken,
+      actor: request.actor,
+      principalId: request.principalId,
+      sessionId: request.sessionId,
+      powers: request.powers,
+      idempotencyKey: request.idempotencyKey,
+    });
+    const resumedHandle = this._workers.get(resumed.id);
+    const resumedTask = this._tasks.get(resumed.taskId);
+    const resumedEvent = this._log.append({
+      worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+      kind: 'work.resumed', actor: 'policy', ...this._routeAttribution(handle, task),
+      payload: {
+        runId: task.runId,
+        resumedWorkerId: resumed.id, resumedTaskId: resumed.taskId,
+        preservedTaskId: task.id, checkpoint: task.checkpoint,
+        route: {
+          requested: { harness: this._harnessOf(route.vendor), model: route.model, effort: route.effort },
+          resolved: {
+            harness: this._harnessOf(resumedHandle?.vendor ?? route.vendor),
+            model: resumedHandle?.modelResolved ?? route.model,
+            effort: resumedHandle?.effortResolved ?? route.effort,
+          },
+        },
+        reasonDigest: request.reasonDigest,
+        ...(request.semanticActionId ? {
+          semanticActionId: request.semanticActionId,
+          semanticPrincipalScopeDigest: request.semanticPrincipalScopeDigest,
+        } : {}),
+      },
+    });
+    this._coordMapEvent?.(resumedEvent);
+    return Object.freeze({
+      ok: true,
+      result: 'resumed',
+      workerId: resumed.id,
+      taskId: resumed.taskId,
+      preservedTaskId: task.id,
+      checkpoint: task.checkpoint,
+      route: {
+        requested: { harness: this._harnessOf(route.vendor), model: route.model, effort: route.effort },
+        resolved: {
+          harness: this._harnessOf(resumedHandle?.vendor ?? route.vendor),
+          model: resumedHandle?.modelResolved ?? route.model,
+          effort: resumedHandle?.effortResolved ?? route.effort,
+        },
+        observed: {
+          harness: this._harnessOf(resumedHandle?.vendor ?? route.vendor),
+          model: resumedHandle?.modelObserved ?? resumedHandle?.modelResolved ?? route.model,
+          effort: resumedHandle?.effortObserved ?? resumedHandle?.effortResolved ?? route.effort,
+        },
+      },
+      cleanup: { state: resumedTask?.status === 'cancelled' ? 'unavailable' : 'owned' },
+    });
+  }
+
+  _normalizeResumeRequest(opts) {
+    if (!opts || typeof opts !== 'object' || Array.isArray(opts)) {
+      throw Object.assign(new TypeError('preserved resume request is invalid'), { code: 'resume_invalid' });
+    }
+    const stringField = (value, label, max = 256) => {
+      if (typeof value !== 'string' || value.length === 0 || Buffer.byteLength(value) > max || value.includes('\0')) {
+        throw Object.assign(new TypeError(`preserved resume ${label} is invalid`), { code: 'resume_invalid' });
+      }
+      return value;
+    };
+    const actor = stringField(opts.actor, 'actor');
+    const principalId = stringField(opts.principalId, 'principalId');
+    const sessionId = stringField(opts.sessionId, 'sessionId');
+    const runId = stringField(opts.runId, 'runId');
+    const taskId = stringField(opts.taskId, 'taskId', 4_096);
+    const idempotencyKey = stringField(opts.idempotencyKey, 'idempotencyKey', 4_096);
+    const reasonDigest = stringField(opts.reasonDigest, 'reasonDigest', 64);
+    if (!/^[a-f0-9]{64}$/u.test(reasonDigest)) {
+      throw Object.assign(new TypeError('preserved resume reason digest is invalid'), { code: 'resume_invalid' });
+    }
+    if (!Array.isArray(opts.powers) || opts.powers.length === 0 || opts.powers.some((p) => typeof p !== 'string' || p.length === 0)) {
+      throw Object.assign(new TypeError('preserved resume powers are invalid'), { code: 'resume_invalid' });
+    }
+    if (!opts.gate || typeof opts.gate !== 'object' || Array.isArray(opts.gate)) {
+      throw Object.assign(new TypeError('preserved resume gate is invalid'), { code: 'resume_invalid' });
+    }
+    if (!opts.route || typeof opts.route !== 'object' || Array.isArray(opts.route)
+      || Object.keys(opts.route).sort().join(',') !== ['effort', 'model', 'vendor'].sort().join(',')) {
+      throw Object.assign(new TypeError('preserved resume route is invalid'), { code: 'resume_invalid' });
+    }
+    const checkpointSha = stringField(opts.checkpointSha, 'checkpointSha', 64);
+    const checkpointRef = stringField(opts.checkpointRef, 'checkpointRef', 256);
+    if (!/^[a-f0-9]{40,64}$/u.test(checkpointSha) || !/^refs\/baton\/checkpoints\/[a-f0-9]{40,64}$/u.test(checkpointRef)) {
+      throw Object.assign(new TypeError('preserved resume checkpoint attestation is invalid'), { code: 'resume_invalid' });
+    }
+    let semanticActionId;
+    let semanticPrincipalScopeDigest;
+    if (opts.semanticActionId !== undefined || opts.semanticPrincipalScopeDigest !== undefined) {
+      semanticActionId = stringField(opts.semanticActionId, 'semanticActionId', 64);
+      semanticPrincipalScopeDigest = stringField(opts.semanticPrincipalScopeDigest, 'semanticPrincipalScopeDigest', 64);
+      if (!/^[a-f0-9]{64}$/u.test(semanticActionId) || !/^[a-f0-9]{64}$/u.test(semanticPrincipalScopeDigest)) {
+        throw Object.assign(new TypeError('preserved resume semantic action identity is invalid'), { code: 'resume_invalid' });
+      }
+    }
+    return Object.freeze({
+      actor, principalId, sessionId, runId, taskId, idempotencyKey, reasonDigest,
+      powers: Object.freeze([...opts.powers]),
+      gate: Object.freeze(JSON.parse(JSON.stringify(opts.gate))),
+      route: Object.freeze({ ...opts.route }),
+      checkpointSha, checkpointRef,
+      ...(semanticActionId ? { semanticActionId, semanticPrincipalScopeDigest } : {}),
     });
   }
 
@@ -4469,11 +4713,92 @@ export class Coordinator {
     await Promise.resolve(this._worktrees.remove(ownerTaskId));
   }
 
+  async _preserveProgressBeforeReap(handle, task, stopEvent, enabled = true) {
+    if (!enabled || !handle?.worktree || !task) return Object.freeze({ state: 'not_applicable' });
+    const manager = this._worktrees;
+    // Direct Coordinator fixtures and legacy embedders may provide only create/remove. The real
+    // createDriver worktree authority always exposes the complete preservation contract.
+    if (!manager || typeof manager.capture !== 'function' || typeof manager.retainCheckpoint !== 'function'
+      || typeof manager.resolveCheckpoint !== 'function') return Object.freeze({ state: 'unsupported' });
+    handle.cleanupPending = true;
+    try {
+      if (task.progressPreservation?.state === 'no_progress') return task.progressPreservation;
+      if (task.checkpoint?.state === 'pinned') {
+        const resolved = await manager.resolveCheckpoint(task.checkpoint.ref);
+        if (resolved !== task.checkpoint.sha) throw Object.assign(new Error('existing progress checkpoint postcheck failed'), { code: 'checkpoint_failed' });
+        return task.checkpoint;
+      }
+      const captured = await manager.capture(handle.worktree ?? task.worktree, {
+        vendor: handle.vendor,
+        model: handle.modelObserved ?? handle.modelResolved,
+        ...((handle.effortObserved ?? handle.effortResolved) ? { effort: handle.effortObserved ?? handle.effortResolved } : {}),
+        ownerTaskId: task.sessionContext?.ownerTaskId ?? task.id,
+        ...(task.sessionContext?.baseSha ? { expectedBaseSha: task.sessionContext.baseSha } : {}),
+        ...(task.sessionContext?.branch ? { expectedBranch: task.sessionContext.branch } : {}),
+        ...(task.sessionContext?.sparseCheckoutIdentity ? { workerSparseCheckoutIdentity: task.sessionContext.sparseCheckoutIdentity } : {}),
+      });
+      const sha = captured?.sha;
+      if (!/^[a-f0-9]{40,64}$/u.test(sha ?? '')) {
+        throw Object.assign(new Error('progress capture did not produce an exact commit'), { code: 'capture_failed' });
+      }
+      if (sha === task.sessionContext?.baseSha) {
+        const unchanged = this._log.append({
+          worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+          kind: 'worktree.progress_unchanged', actor: 'policy', ...this._routeAttribution(handle, task),
+          payload: { state: 'no_progress', stopSeq: stopEvent?.seq ?? null },
+        });
+        this._coordMapEvent(unchanged);
+        task.progressPreservation = Object.freeze({ state: 'no_progress', eventSeq: unchanged.seq });
+        return task.progressPreservation;
+      }
+      const ref = await manager.retainCheckpoint(sha);
+      const resolved = await manager.resolveCheckpoint(ref);
+      if (resolved !== sha) throw Object.assign(new Error('progress checkpoint postcheck failed'), { code: 'checkpoint_failed' });
+      const checkpoint = Object.freeze({ state: 'pinned', sha, ref });
+      const event = this._log.append({
+        worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'worktree.progress_checkpointed', actor: 'policy', ...this._routeAttribution(handle, task),
+        payload: {
+          checkpoint, stopSeq: stopEvent?.seq ?? null, snapshotted: captured?.snapshotted === true,
+          changedPaths: Array.isArray(captured?.changedPaths) ? captured.changedPaths : [],
+        },
+      });
+      this._coordMapEvent(event);
+      task.checkpoint = checkpoint;
+      task.progressPreservation = Object.freeze({ state: 'pinned', eventSeq: event.seq });
+      return checkpoint;
+    } catch (error) {
+      const sourceCode = typeof error?.code === 'string' && /^[a-z0-9_]{1,64}$/u.test(error.code)
+        ? error.code : 'progress_preservation_failed';
+      try {
+        const failed = this._log.append({
+          worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+          kind: 'worktree.progress_preservation_failed', actor: 'policy', ...this._routeAttribution(handle, task),
+          payload: { code: sourceCode, stopSeq: stopEvent?.seq ?? null, action: 'retain_worktree' },
+        });
+        this._coordMapEvent(failed);
+      } catch { /* Retaining the worktree remains the fail-safe when evidence is unavailable. */ }
+      handle.cleanupPending = true;
+      handle.cleanupError = 'progress_preservation_failed';
+      throw Object.assign(new Error('progress preservation failed before worktree reap', { cause: error }), { code: 'progress_preservation_failed' });
+    }
+  }
+
   _removeOwnedTaskWorktree(handle, task) {
     if (!handle) return this._removeTaskWorktree(task);
     if (handle.cleanupPromise) return handle.cleanupPromise;
     handle.cleanupPending = true;
-    const cleanup = this._removeTaskWorktree(task).then(() => {
+    // Every exact-close cleanup path funnels through this fail-safe. A restart, already-dead kill,
+    // fatal/emergency close, or coordination-error fallback may reach reap after terminalizing the
+    // task but before the ordinary stop chain recorded preservation. Such unaccepted work must be
+    // captured (or retained on failure) before the checkout can be removed.
+    const preserveUnaccepted = Boolean(handle.worktree && task
+      && ['dead', 'exited'].includes(handle.status)
+      && !['completed', 'verifying'].includes(task.status)
+      && task.checkpoint?.state !== 'pinned'
+      && task.progressPreservation?.state !== 'no_progress');
+    const cleanup = this._preserveProgressBeforeReap(handle, task, null, preserveUnaccepted)
+      .then(() => this._removeTaskWorktree(task)).then(() => {
       handle.worktree = null;
       handle.ownedWorktreeAuthority = false;
       // Preserve the historical worker path on the task: the mandatory trust/freshness guard
@@ -4482,7 +4807,8 @@ export class Coordinator {
       if (!handle.cleanupPending) handle.cleanupError = null;
     }, (error) => {
       handle.cleanupPending = true;
-      handle.cleanupError = 'worktree_cleanup_failed';
+      handle.cleanupError = error?.code === 'progress_preservation_failed'
+        ? 'progress_preservation_failed' : 'worktree_cleanup_failed';
       throw error;
     }).finally(() => {
       if (handle.cleanupPromise === cleanup) handle.cleanupPromise = null;
@@ -4491,13 +4817,21 @@ export class Coordinator {
     return cleanup;
   }
 
-  async _cleanupClosedTransport(handle, task) {
-    const runtimeRemoved = this._removeRuntimeScope(handle);
+  async _cleanupClosedTransport(handle, task, stopEvent = null) {
     if (task?.status === 'verifying') {
+      const runtimeRemoved = this._removeRuntimeScope(handle);
       handle.cleanupAfterVerification = true;
       if (!runtimeRemoved) throw Object.assign(new Error('runtime cleanup failed'), { code: 'runtime_cleanup_failed' });
       return;
     }
+    // PS1-PS4: exact process close is permission to snapshot, not permission to discard. Provider
+    // crashes, natural exits after a policy stop, host-signal drain, and restart cleanup all reach
+    // this path without an explicit kill waiter. Preserve their unaccepted checkout before either
+    // runtime or worktree authority is destroyed; a capture/ref/evidence failure retains both.
+    const preserveProgress = Boolean(handle?.ownedWorktreeAuthority && handle?.worktree && task
+      && !task.capturedSha && !task.retainedResultRef);
+    await this._preserveProgressBeforeReap(handle, task, stopEvent, preserveProgress);
+    const runtimeRemoved = this._removeRuntimeScope(handle);
     await this._removeOwnedTaskWorktree(handle, task);
     if (!runtimeRemoved) throw Object.assign(new Error('runtime cleanup failed'), { code: 'runtime_cleanup_failed' });
     handle.localAuthority = false;
@@ -4506,7 +4840,9 @@ export class Coordinator {
   _ensureRuntimeScope(handle) {
     if (!this._runtimeScopes || typeof this._runtimeScopes.create !== 'function') return null;
     if (handle.runtimeLease) return handle.runtimeLease;
-    const lease = this._runtimeScopes.create(handle.id, handle.vendor);
+    const adapterCard = this._adapters[handle.vendor]?.card?.();
+    if (!adapterCard) throw Object.assign(new Error('selected adapter card unavailable for runtime isolation'), { code: 'runtime_card_unavailable' });
+    const lease = this._runtimeScopes.create(handle.id, { card: adapterCard });
     handle.runtimeLease = lease;
     handle.runtimeScope = { ...lease.posture, active: true };
     this._log.append({
@@ -5203,6 +5539,7 @@ export class Coordinator {
       if (handle) {
         const task = this._tasks.get(handle.taskId);
         if (waiter.mode === 'kill') {
+          const preserveProgress = Boolean(task && !TERMINAL_TASK_STATUSES.has(task.status));
           if (task && !TERMINAL_TASK_STATUSES.has(task.status)) {
             const evidence = this._coordMapEvent(stopEvent);
             this._coordTransition(task, 'cancelled', `task.cancelled:${task.id}:${stopEvent.seq}`, evidence);
@@ -5210,7 +5547,8 @@ export class Coordinator {
           handle.status = 'dead';
           const runtimeRemoved = this._removeRuntimeScope(handle);
           if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'cancelled';
-          waiter.cleanupPromise = this._removeOwnedTaskWorktree(handle, task).then(() => {
+          waiter.cleanupPromise = this._preserveProgressBeforeReap(handle, task, stopEvent, preserveProgress)
+            .then(() => this._removeOwnedTaskWorktree(handle, task)).then(() => {
             if (!runtimeRemoved) throw Object.assign(new Error('runtime cleanup failed'), { code: 'runtime_cleanup_failed' });
           });
         } else {
@@ -5264,8 +5602,9 @@ export class Coordinator {
       for (const resolve of waiter.resolvers) resolve(result);
       this._stopWaiters.delete(workerId);
       this._dispatchPass();
-    }, () => {
-      for (const resolve of waiter.resolvers) resolve({ ok: false, result: 'cleanup_failed' });
+    }, (error) => {
+      const preservationFailed = error?.code === 'progress_preservation_failed';
+      for (const resolve of waiter.resolvers) resolve({ ok: false, result: preservationFailed ? 'preservation_failed' : 'cleanup_failed' });
       this._stopWaiters.delete(workerId);
     });
   }
@@ -6376,12 +6715,12 @@ export class Coordinator {
         if (stopWaiter?.mode === 'kill') this._maybeFinalizeStop(handle.id, stopWaiter);
         if (!stopWaiter && handle.status === 'dead' && handle.cleanupPending !== true) handle.localAuthority = false;
         if (!stopWaiter && handle.status === 'dead' && handle.cleanupPending === true && !handle.untrustedTransportReap) {
-          this._cleanupClosedTransport(handle, this._tasks.get(handle.taskId)).catch(noop);
+          this._cleanupClosedTransport(handle, this._tasks.get(handle.taskId), closed).catch(noop);
         }
         if (!stopWaiter && !handle.untrustedTransportReap && turnWasTerminal
           && !['dead', 'stopping', 'orphaned'].includes(handle.status)) {
           handle.status = 'exited';
-          this._cleanupClosedTransport(handle, this._tasks.get(handle.taskId)).catch(noop);
+          this._cleanupClosedTransport(handle, this._tasks.get(handle.taskId), closed).catch(noop);
         }
         break;
       }
@@ -6420,6 +6759,13 @@ export class Coordinator {
           handle.providerTerminalSeal = sealVerdict.seal;
           if (handle.providerTurn) handle.providerTurn.sealed = true;
         }
+        // A provider-native failed/blocked result is terminal evidence, never a claim eligible
+        // for repository capture and hub verification. Verification proves the candidate tree;
+        // it cannot transmute a failed provider turn (or an unchanged passing base) into success.
+        if (wr?.status !== 'completed') {
+          this._failProviderResult(handle, terminalEvent, wr);
+          break;
+        }
         if (this._drainState === 'open' && handle.status !== 'stopping' && handle.status !== 'dead') {
           const releaseAuthority = this._acquireAuthorityOp();
           this._runTrustGate(handle, wr).catch(noop).finally(releaseAuthority);
@@ -6454,7 +6800,7 @@ export class Coordinator {
         // stop waiter for a child that can no longer emit kill.confirmed.
         if (handle.processRef?.state === 'closed' && !this._stopWaiters.has(handle.id)) {
           handle.status = 'exited';
-          this._cleanupClosedTransport(handle, task).catch(noop);
+          this._cleanupClosedTransport(handle, task, terminalEvent).catch(noop);
         } else if (handle.status !== 'dead' && handle.status !== 'stopping') {
           this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
         }
@@ -6476,7 +6822,7 @@ export class Coordinator {
           if (!['dead', 'stopping'].includes(handle.status)) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
         } else if (!this._stopWaiters.has(handle.id)) {
           if (handle.status !== 'dead') handle.status = 'exited';
-          this._cleanupClosedTransport(handle, task).catch(noop);
+          this._cleanupClosedTransport(handle, task, terminalEvent).catch(noop);
         }
         break;
       }
@@ -6588,6 +6934,28 @@ export class Coordinator {
   // Trust gate (D4/§3.6)
   // =========================================================================
 
+  _failProviderResult(handle, terminalEvent, workerResult) {
+    const task = this._tasks.get(handle.taskId);
+    const code = typedTerminalCode(workerResult?.failure?.code ?? workerResult?.code, 'provider_turn_failed');
+    handle.terminalCause ??= deepFreeze({ kind: 'provider_failure', code });
+    if (task && !TERMINAL_TASK_STATUSES.has(task.status)) {
+      const evidence = this._coordMapEvent(terminalEvent);
+      if (evidence) this._coordTransition(task, 'failed', `task.failed:${task.id}:provider_result:${evidence.coordinationSeq}`, evidence);
+      task.status = 'failed';
+      task.result = null;
+      task.verdict = null;
+      this._expireScratchClaims(handle, task, 'provider_turn_failed');
+    }
+    this._clearWatchdog(handle);
+    if (handle.processRef?.state === 'closed' && !this._stopWaiters.has(handle.id)) {
+      handle.status = 'exited';
+      this._cleanupClosedTransport(handle, task, terminalEvent).catch(noop);
+    } else if (handle.status !== 'dead' && handle.status !== 'stopping') {
+      // The ordinary two-phase stop invokes Phase 70 preservation before runtime/worktree reap.
+      this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+    }
+  }
+
   async _runTrustGate(handle, workerResult) {
     const task = this._tasks.get(handle.taskId);
     if (!task) return;
@@ -6618,6 +6986,27 @@ export class Coordinator {
         ...(task.sessionContext?.sparseCheckoutIdentity ? { workerSparseCheckoutIdentity: task.sessionContext.sparseCheckoutIdentity } : {}),
       });
       const sha = captured && captured.sha;
+      if (task.brief?.requiredEffects?.includes('repository_edit')) {
+        const baseSha = task.sessionContext?.baseSha ?? captured?.baseSha ?? null;
+        const changedPaths = Array.isArray(captured?.changedPaths) ? captured.changedPaths : [];
+        const inScope = changedPaths.filter((path) => pathInScope(task.brief.pathScope, path));
+        if (!sha || !baseSha || sha === baseSha || changedPaths.length === 0 || inScope.length === 0) {
+          trustPhase = 'required_effect';
+          throw Object.assign(
+            new Error('approved Plan required a repository edit but capture proved no in-scope diff from its base'),
+            {
+              code: 'required_effect_absent',
+              requiredEffectEvidence: {
+                requiredEffect: 'repository_edit', baseSha, sha: sha ?? null,
+                changedPathCount: changedPaths.length,
+                changedPathsDigest: canonicalDigest(changedPaths),
+                inScopeChangedPathCount: inScope.length,
+                inScopeChangedPathsDigest: canonicalDigest(inScope),
+              },
+            },
+          );
+        }
+      }
       const created = await this._worktrees.createVerifyWorktree(task.id, sha, { requiredPaths: captured?.changedPaths ?? [] });
       verifyPath = created && created.path;
       verifierToolchainProjection = created?.toolchainProjection ?? null;
@@ -6710,6 +7099,19 @@ export class Coordinator {
             requireCoverage: this._acceptOpts.requireCoverage ?? false,
             requireMutation: this._acceptOpts.requireMutation ?? false,
           },
+          requiredEffects: [...(task.brief.requiredEffects ?? [])],
+          ...(task.brief.requiredEffects?.includes('repository_edit') ? {
+            requiredEffectEvidence: {
+              repositoryEdit: {
+                baseSha: task.sessionContext?.baseSha ?? captured?.baseSha ?? null,
+                sha: captured?.sha ?? null,
+                changedPathCount: (captured?.changedPaths ?? []).length,
+                changedPathsDigest: canonicalDigest(captured?.changedPaths ?? []),
+                inScopeChangedPathCount: (captured?.changedPaths ?? []).filter((path) => pathInScope(task.brief.pathScope, path)).length,
+                inScopeChangedPathsDigest: canonicalDigest((captured?.changedPaths ?? []).filter((path) => pathInScope(task.brief.pathScope, path))),
+              },
+            },
+          } : {}),
           capture: {
             sha: captured && captured.sha, snapshotted: captured && captured.snapshotted,
             retainedResultRef,
@@ -6848,7 +7250,10 @@ export class Coordinator {
         turnEpoch: this._safeTurnEpoch(handle),
         kind: 'error',
         actor: 'policy',
-        payload: { message: String((err && err.message) || err), code, phase: 'trust_gate', trustPhase },
+        payload: {
+          message: String((err && err.message) || err), code, phase: 'trust_gate', trustPhase,
+          ...(err?.requiredEffectEvidence ? { requiredEffectEvidence: err.requiredEffectEvidence } : {}),
+        },
       });
       let durable = this._coordination.task(task.id);
       if (durable && !TERMINAL_TASK_STATUSES.has(durable.status)) {
@@ -6867,6 +7272,17 @@ export class Coordinator {
       if (['evidence_mapping', 'terminal_batch', 'promotion'].includes(trustPhase)) this._poisonCoordination(err);
       task.status = durable?.status ?? 'failed';
       if (task.status !== 'completed') task.verdict = null;
+      if (code === 'required_effect_absent') {
+        handle.terminalCause ??= deepFreeze({ kind: 'policy_failure', code });
+        task.result = null;
+        this._expireScratchClaims(handle, task, code);
+        if (handle.processRef?.state === 'closed' && !this._stopWaiters.has(handle.id)) {
+          handle.status = 'exited';
+          this._cleanupClosedTransport(handle, task, errorEvent).catch(noop);
+        } else if (handle.status !== 'dead' && handle.status !== 'stopping') {
+          this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+        }
+      }
     } finally {
       const cleanupTargets = [verifyPath, baseVerifyPath].filter((path) => path != null);
       const cleanupResults = await Promise.allSettled(cleanupTargets.map((path) => this._worktrees.removeVerifyWorktree(path)));
@@ -6892,7 +7308,9 @@ export class Coordinator {
         handle.cleanupPending = true;
       }
     }
-    handle.status = handle.processRef?.state === 'closed' ? 'exited' : 'idle';
+    if (!['stopping', 'dead'].includes(handle.status)) {
+      handle.status = handle.processRef?.state === 'closed' ? 'exited' : 'idle';
+    }
     this._dispatchPass();
     if (verificationCleanupError) throw verificationCleanupError;
   }
@@ -6937,6 +7355,7 @@ export class Coordinator {
       let integration = null;
       let retainedResultRef = null;
       let checkpoint = null;
+      let progressPreservation = null;
       let publication = null;
       let review = null;
       let runId = null;
@@ -7217,7 +7636,14 @@ export class Coordinator {
               lastResult = e.payload;
               providerTerminalSeal = e.payload?.usageSeal ?? providerTerminalSeal;
               if (providerTurn && providerTerminalSeal) providerTurn.sealed = true;
-              terminalStatus = 'verifying';
+              if (e.payload?.status === 'completed') terminalStatus = 'verifying';
+              else {
+                terminalStatus = 'failed';
+                terminalCause ??= deepFreeze({
+                  kind: 'provider_failure',
+                  code: typedTerminalCode(e.payload?.failure?.code ?? e.payload?.code, 'provider_turn_failed'),
+                });
+              }
             }
             break;
           case 'verify.reverified':
@@ -7236,6 +7662,17 @@ export class Coordinator {
               capturedSha = e.payload?.capture?.sha ?? capturedSha;
               retainedResultRef = e.payload?.capture?.retainedResultRef ?? retainedResultRef;
               checkpoint = e.payload?.capture?.checkpoint ?? checkpoint;
+            }
+            break;
+          case 'worktree.progress_checkpointed':
+            if (e.actor === 'policy' && e.payload?.checkpoint?.state === 'pinned') {
+              checkpoint = e.payload.checkpoint;
+              progressPreservation = Object.freeze({ state: 'pinned', eventSeq: e.seq });
+            }
+            break;
+          case 'worktree.progress_unchanged':
+            if (e.actor === 'policy' && e.payload?.state === 'no_progress') {
+              progressPreservation = Object.freeze({ state: 'no_progress', eventSeq: e.seq });
             }
             break;
           case 'integration.completed':
@@ -7260,6 +7697,15 @@ export class Coordinator {
             terminalCause ??= deepFreeze({
               kind: 'provider_failure', code: typedTerminalCode(e.payload?.code, 'provider_crashed'),
             });
+            break;
+          case 'error':
+            if (e.actor === 'policy' && e.payload?.phase === 'trust_gate'
+              && e.payload?.code === 'required_effect_absent') {
+              terminalStatus = 'failed';
+              lastResult = null;
+              verdict = null;
+              terminalCause ??= deepFreeze({ kind: 'policy_failure', code: 'required_effect_absent' });
+            }
             break;
           case 'control.forced_stop':
           case 'control.recovery_terminalized':
@@ -7402,6 +7848,7 @@ export class Coordinator {
         task.integration = integration;
         task.retainedResultRef = retainedResultRef;
         task.checkpoint = checkpoint;
+        task.progressPreservation = progressPreservation;
         task.publication = publication;
         task.review = review;
         task.worktree = sessionContext?.worktree ?? task.worktree;

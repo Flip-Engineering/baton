@@ -72,6 +72,20 @@ const actions = {
     destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
     helpTopic: 'run.act.approve_plan', expectedDepth: 'outline',
   },
+  answer_approval: {
+    label: 'Answer worker approval', summary: 'Allow, deny, or cancel the exact pending worker tool request advertised by this Run.',
+    inputSchema: objectSchema({ decision: { type: 'string', enum: ['allow', 'deny', 'cancel'] } }, ['decision']),
+    serverDerived: ['requestId', 'workerId'], effect: 'worker_tool_authorization',
+    destructive: true, irreversible: false, idempotent: true, priority: 'required',
+    helpTopic: 'run.act.answer_approval', expectedDepth: 'outline',
+  },
+  answer_question: {
+    label: 'Answer worker question', summary: 'Send bounded text to the exact pending worker question advertised by this Run.',
+    inputSchema: objectSchema({ text: { type: 'string', minLength: 1, maxLength: 4096 } }, ['text']),
+    serverDerived: ['requestId', 'workerId'], effect: 'provider_control',
+    destructive: false, irreversible: false, idempotent: true, priority: 'required',
+    helpTopic: 'run.act.answer_question', expectedDepth: 'outline',
+  },
   adopt_result: {
     label: 'Adopt verified result', summary: 'Reverify and adopt the current accepted result without requiring caller-supplied result coordinates.',
     inputSchema: objectSchema({ reason: { type: 'string', minLength: 1, maxLength: 1024 } }, ['reason']),
@@ -113,6 +127,13 @@ const actions = {
     destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
     helpTopic: 'run.act.retry_verification', expectedDepth: 'outline',
   },
+  resume_work: {
+    label: 'Resume preserved work', summary: 'Restore preserved progress in a fresh task using an orchestrator-selected harness, model, and effort.',
+    inputSchema: objectSchema({ reason: { type: 'string', minLength: 1, maxLength: 1024 } }, ['reason']),
+    serverDerived: ['checkpoint', 'planNode', 'routePolicy', 'recoveryLineage'], effect: 'provider_call',
+    destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
+    helpTopic: 'run.act.resume_work', expectedDepth: 'outline',
+  },
   stop: {
     label: 'Stop and reap Run', summary: 'Close this Run dispatch authority and reap its exact owned resources.',
     inputSchema: objectSchema({ reason: { type: 'string', minLength: 1, maxLength: 1024 } }, ['reason']),
@@ -132,10 +153,13 @@ const cliCommands = [
   ['run.recover', null, null, 'baton run recover RUN_ID'],
   ['run.approve', null, 'approve_plan', 'baton run approve RUN_ID --plan DIGEST'],
   ['run.answer', null, null, 'baton run answer RUN_ID REQUEST_ID (--allow | --deny | --cancel | --text TEXT)'],
+  ['run.answer.approval', null, 'answer_approval', 'baton run answer RUN_ID REQUEST_ID (--allow | --deny | --cancel)'],
+  ['run.answer.question', null, 'answer_question', 'baton run answer RUN_ID REQUEST_ID --text TEXT'],
   ['run.steer', null, null, 'baton run steer RUN_ID TARGET (--nudge | --now | --turn) TEXT --reason REASON'],
   ['run.evidence', null, null, 'baton run evidence RUN_ID'],
   ['run.adopt', null, 'adopt_result', 'baton run adopt RUN_ID --reason REASON'],
   ['run.retry', null, 'retry_verification', 'baton run retry RUN_ID --reason REASON'],
+  ['run.resume', null, 'resume_work', 'baton run resume RUN_ID --reason REASON'],
   ['run.review', null, 'semantic_review', 'baton run review RUN_ID --exact HARNESS/MODEL@EFFORT --reason REASON'],
   ['run.integrate', null, 'integrate', 'baton run integrate RUN_ID --strategy ff-only|structured --reason REASON'],
   ['run.export', null, 'export_result', 'baton run export RUN_ID DIR'],
@@ -169,7 +193,7 @@ const cli = {
     run: {
       commandIds: ['run.objective', 'run.show', 'run.do', 'run.stop', 'run.status', 'run.recover',
         'run.approve', 'run.answer', 'run.steer', 'run.evidence', 'run.adopt', 'run.retry',
-        'run.review', 'run.integrate', 'run.export'],
+        'run.resume', 'run.review', 'run.integrate', 'run.export'],
       selectorRule: 'manualRoute',
       paragraphs: ['Use baton help routing for exact and deployment-profile routing.'],
     },
@@ -178,6 +202,13 @@ const cli = {
       paragraphs: [
         'Retry is safe because Baton replays only the already-approved trust gate: it re-resolves the exact preserved candidate checkpoint, rebuilds fresh candidate and base sandboxes, and re-runs the pinned Plan command under the current deployment verifier runtime. It never launches or resumes an agent harness and consumes no provider turn.',
         'Baton did not blame the agent route because the verifier itself could not complete (its command could not start, timed out, exceeded its output boundary, or the baseline also failed), so no candidate defect was proven; inconclusive verification never updates route statistics.',
+      ],
+    },
+    'run.act.resume_work': {
+      commandIds: ['run.resume'],
+      paragraphs: [
+        'Baton restores the server-derived preserved checkpoint into a fresh owned task and lets the orchestrator select harness, model, and per-task effort from the approved route policy. The caller supplies only a reason; no Git coordinate, worktree path, provider credential, budget, or storage ceiling is accepted.',
+        'Preserved work is untrusted progress. It must pass the ordinary fresh verifier and every configured review, adoption, integration, and delivery gate before it can become a result.',
       ],
     },
     'run.start': { aliasFor: 'run' },
@@ -236,8 +267,9 @@ export const APPLICATION_SEMANTIC_REGISTRY = freeze({
 
 export function projectTypedTerminalCause({ terminalResult = null, runStop = null } = {}) {
   const cause = terminalResult?.terminalCause;
-  if (cause && ['budget_exceeded', 'provider_failure'].includes(cause.kind)) {
+  if (cause && ['budget_exceeded', 'provider_failure', 'policy_failure'].includes(cause.kind)) {
     if (cause.kind === 'provider_failure') return freeze({ kind: cause.kind, code: cause.code });
+    if (cause.kind === 'policy_failure') return freeze({ kind: cause.kind, code: cause.code });
     return freeze({
       kind: cause.kind, code: cause.code, dimension: cause.dimension,
       used: cause.used, limit: cause.limit, ratio: cause.ratio,
