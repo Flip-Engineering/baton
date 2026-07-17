@@ -79,6 +79,10 @@ test('RT11.2: exact effort validation rejects empty inventories and unsupported 
   assert.deepEqual(resolveEffort(card(), 'high'), { ok: true, effort: 'high' });
   assert.equal(resolveEffort(card([]), 'high').ok, false);
   assert.equal(resolveEffort({ ...card(), modelSelection: { reasoningEffort: null } }, 'high').ok, false);
+  assert.deepEqual(
+    resolveEffort({ ...card(), modelSelection: { reasoningEffort: ['max'], effortRequired: true } }),
+    { ok: false, reason: 'reasoning_effort_required' },
+  );
 });
 
 test('RT11.3/4: stable tuple learning identity separates resolved low and high buckets', () => {

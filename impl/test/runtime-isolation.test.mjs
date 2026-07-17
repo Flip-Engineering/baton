@@ -85,3 +85,13 @@ test('GV6: secret-name classifier covers provider credentials but not ordinary s
   assert.equal(isSecretEnvName('DATABASE_PASSWORD'), true);
   assert.equal(isSecretEnvName('PATH'), false);
 });
+
+test('KK4: Kimi receives its own private Claude-compatible runtime scope', () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'baton-runtime-kimi-'));
+  const isolation = new RuntimeIsolation({ repoRoot, baseEnv: { PATH: '/bin' }, credentialEnv: { kimi: { ANTHROPIC_AUTH_TOKEN: 'fixture-only' } } });
+  const scope = isolation.create('w-kimi', 'kimi');
+  assert.equal(scope.posture.family, 'kimi');
+  assert.equal(scope.paths.config.endsWith('/config/kimi'), true);
+  assert.equal(scope.env.CLAUDE_CONFIG_DIR, scope.paths.config);
+  assert.deepEqual(scope.posture.credential, { mechanism: 'environment', state: 'materialized', count: 1 });
+});

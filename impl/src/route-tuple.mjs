@@ -5,6 +5,9 @@ export function routeTupleKey(card, model, effort, taskType = 'general') {
 
 export function resolveEffort(card, requested) {
   const inventory = card?.modelSelection?.reasoningEffort;
+  if ((requested === undefined || requested === null || requested === '') && card?.modelSelection?.effortRequired === true) {
+    return { ok: false, reason: 'reasoning_effort_required' };
+  }
   if (requested != null && (!Array.isArray(inventory) || !inventory.includes(requested))) return { ok: false, reason: 'reasoning_effort_unsupported' };
   return { ok: true, effort: requested ?? card?.modelSelection?.configuredEffort ?? null };
 }

@@ -12,6 +12,7 @@ function vendorFamily(vendor) {
   if (vendor === 'codex') return 'codex';
   if (vendor === 'grok') return 'grok';
   if (vendor === 'glm' || vendor === 'z-code') return 'glm';
+  if (vendor === 'kimi') return 'kimi';
   return 'claude';
 }
 
@@ -57,7 +58,7 @@ export class RuntimeIsolation {
     else if (family === 'grok') env.GROK_HOME = config;
     else env.CLAUDE_CONFIG_DIR = config;
 
-    if (family === 'claude' || family === 'glm') {
+    if (family === 'claude' || family === 'glm' || family === 'kimi') {
       const settingsPath = join(config, 'settings.json');
       writeFileSync(settingsPath, JSON.stringify({
         sandbox: {

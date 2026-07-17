@@ -165,6 +165,24 @@ test('UA3/UA6: approval return and dispatch use service authorities, not acciden
   await application.shutdown(principal('shutdown-admin'));
 });
 
+test('UA3/UA4: a structured provider failure exposes no adoptable or exportable result', async () => {
+  const { application, driver } = fixture('provider-failure', {
+    scenario: { outcome: 'failed', delayMs: 10, summary: 'provider rejected the turn', files: {} },
+  });
+  const proposed = await application.start(intent({ runId: 'run-provider-failure' }), principal('failure-owner'));
+  await application.approve('run-provider-failure', proposed.plan.digest, principal('failure-approver'));
+  const failed = await application.wait('run-provider-failure', principal('failure-owner'), { timeoutMs: 5_000 });
+  assert.equal(failed.phase, 'failed');
+  assert.equal(failed.result, null);
+  assert.equal(failed.nodes[0].state, 'failed');
+  assert.equal(failed.nextActions.some((action) => ['adopt_result', 'export_result'].includes(action.kind)), false);
+  const task = driver.coordination.snapshot().tasks.find((row) => row.runId === 'run-provider-failure');
+  assert.equal(task.status, 'failed');
+  assert.equal(driver.coordination.snapshot().artifacts.filter((artifact) => artifact.taskId === task.id)
+    .some((artifact) => artifact.accepted === true), false);
+  await application.shutdown(principal('shutdown-admin'));
+});
+
 test('UA2/UA6: a durable Goal-only planning failure remains a readable retryable RunView', async () => {
   const goalPlanAuthorize = async ({ power, principalId }) => !(principalId === 'application-planner' && power === 'plan:propose');
   const { application, driver } = fixture('planning-failure', { goalPlanAuthorize });
@@ -319,7 +337,7 @@ test('UA5: the shared command bus exposes the same run flow and a deployment-der
   const spawn = adapter.spawn.bind(adapter);
   adapter.spawn = (...args) => { spawnCalls += 1; return spawn(...args); };
   const card = application.card();
-  assert.deepEqual(card.commands, ['application.help', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.approve', 'run.wait', 'run.answer', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.review', 'run.integrate', 'run.export', 'run.recover', 'application.shutdown']);
+  assert.deepEqual(card.commands, ['application.help', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.approve', 'run.wait', 'run.answer', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'run.recover', 'application.shutdown']);
   assert.deepEqual(card.profiles[0].routes, [{ harness: 'mock', model: 'model-a', effort: 'low' }]);
 
   const proposed = await application.command('run.start', { intent: intent({ runId: 'run-command-bus' }) }, principal('command-owner'));

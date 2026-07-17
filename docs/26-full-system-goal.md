@@ -91,10 +91,13 @@ Harness/CLI, exact model, and model effort are independent axes. The orchestrato
 Selection must map to real controls: Claude/GLM `--model`, Codex thread/turn model overrides, Grok
 `--model`/ACP model state, and future adapters’ native mechanism.
 
-The current recursive-dogfood route is `CodexAppServerCli` + exact `gpt-5.6-sol` + `low` effort for
-efficient implementation work. `gpt-5.6` is not an alias and was correctly rejected by the live
-ChatGPT transport; Baton may not silently substitute it or any older default. Once isolated Grok
-authentication is available, Grok 4.5 through Grok Build is the intended cross-family,
+Recursive dogfood uses orchestrator-selected routes per task. Exact `gpt-5.6-sol` may use lower
+effort for bounded implementation or higher effort for architectural/adversarial work; there is no
+global `low` default. GLM work uses exact `glm-5.2` with explicit task effort (including `xhigh`
+where warranted), never the obsolete GLM examples retained in historical evidence. Kimi adds two
+separate planned routes: K3 through the `claude-code` harness and native Kimi Code through its own
+ACP harness. Baton may not silently substitute a model, harness, or effort. Once isolated Grok
+authentication is available, Grok 4.5 through Grok Build remains the intended cross-family,
 Opus-class review/implementation stand-in. These are operator policy inputs backed by live cards,
 not timeless model folklore. GitHub issue
 [#2](https://github.com/wahargis/baton/issues/2) records the completed deterministic and recursive
@@ -1014,5 +1017,39 @@ is explicitly out of scope.
     authenticated `baton` client now uses the Web command bus and owns no fleet authority;
     `baton serve` separately owns Web admission plus exact host shutdown. Cursor follow,
     materialized export, recovery, and semantic depth remain red.**
+
+## 2026-07-17 continuation ledger
+
+This ledger is the current execution tracker layered over the retained catalog above:
+
+- **Phase 69 — green/shipped:** application-owned verifier retry cascade and regression evidence.
+- **Phase 70 — local green, live safety proof obtained:** exact stop checkpoints unaccepted work
+  before reap; `resume_work` restores a pinned checkpoint without caller coordinates; repeated
+  same-node resumes form one linear lineage. Focused and affected validation is 207/207 green. A
+  live resource stop preserved a reviewer's dirty tree under an immutable checkpoint and reaped its
+  process/worktree.
+- **Provider-result honesty — red/P1:** GLM 5.2/xhigh returned a provider 429 as nominal completed
+  content; Baton accepted the unchanged base because baseline verification passed. Provider API
+  errors and unauthorized no-op candidates must refuse before adoption. GLM is rate-limited until
+  the recorded reset at 2026-07-18 09:32:19 and is not retried before then.
+- **Phase 71 — implementation in progress:** isolated Kimi K3 routing through the existing Claude
+  Code harness, exact `kimi-k3[1m]`, provider-required `max` effort, private owner-only API key,
+  per-dispatch environment, and no global Claude mutation. The Kimi API key is not requested until
+  the credential-free KK8 gate passes.
+- **Phase 72 — specified/acceptance-red:** native Kimi Code 0.27.0 ACP worker support plus a
+  separately authenticated Kimi orchestrator client over Baton's MCP/application semantics. The
+  installed subscription login permits later live proof without a new API key, but only after
+  private projection and global-state immutability tests pass.
+- **Parallel host ownership — red/AX:** separate Baton application hosts cannot reconcile one shared
+  target `.baton/wt` namespace concurrently. Current parallel dogfood uses one exact snapshot clone
+  per host; future deployment assembly needs explicit namespace/lease authority rather than racing
+  startup cleanup.
+- **Harness matrix — red where measured:** Grok currently reports unauthenticated in this shell;
+  literal concurrent Grok start/kill/reap is rerun only after authentication is observed. Claude,
+  native Kimi, Kimi-through-Claude, Codex, GLM, and Grok receipts remain separate gates.
+- **Retained next systems:** adapter identity/capability metadata, authenticated bidirectional Kimi
+  control, AST/CST/SCIP/CPG and semantic-delta precision, shared causal knowledge graph, Web control
+  depth, Vantage/Evidence/Scratch/Skill Forge, evaluations, and the rest of this catalog remain
+  tracked. No homelab integration is included.
 
 No later step is permission to erase it from the goal.
