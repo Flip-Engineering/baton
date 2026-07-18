@@ -298,6 +298,21 @@ function coordinatorFixture(adapter, log = new Log(mkdtempSync(join(tmpdir(), 'p
   return { coordinator: make(), make, log, coordination };
 }
 
+async function establishVerifiedRecoveryPrior(coordinator, adapter, handle) {
+  adapter.emit('lifecycle.turn_completed', handle.id, {
+    status: 'completed',
+    summary: 'hub-verified recovery prior',
+    artifacts: { commits: [], files: [] },
+    verification: { command: 'true', claimedExit: 0 },
+    openQuestions: [],
+    budgetUsed: { tokens: 1, usd: 0 },
+  });
+  await until(async () => {
+    const result = await coordinator.result(handle.id);
+    return result.ready && result.status === 'completed';
+  }, 'durable hub-verified recovery prior');
+}
+
 test('PL7/PL10: process-group reap is bounded and never fabricates exact close on non-convergence', async () => {
   let now = 0; let signals = 0; let probes = 0;
   const result = await reapOwnedProcessGroup(4242, {
@@ -559,7 +574,9 @@ test('PL3/PL8: rejected recovery identity persists only sanitized readiness and 
   const handle = await coordinator.spawn('stub', brief(), { taskId: 'phase51-recovery-identity', model: 'stub-model', effort: 'low' });
   await until(() => coordinator.list()[0]?.processRef, 'recovery identity seed process');
   adapter.emit('lifecycle.spawned', handle.id, { sessionId: 'expected-native', pid: 4242, processGeneration: 1 });
+  await establishVerifiedRecoveryPrior(coordinator, adapter, handle);
   adapter.emit('lifecycle.process_closed', handle.id, { schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, code: 0, signal: null, ready: true });
+  await until(() => coordinator._workers.get(handle.id).localAuthority === false, 'verified identity seed cleanup');
   const internal = coordinator._workers.get(handle.id); const task = coordinator._tasks.get(handle.taskId);
   internal.status = 'orphaned'; internal.localAuthority = false; internal.sessionContext = { worktree: tmpdir(), ownerTaskId: task.id }; task.sessionContext = internal.sessionContext;
   adapter.spawn = async (worker, _brief, opts) => {
@@ -584,7 +601,9 @@ test('PL7/PL8: recovery refuses a matching provider session that closes before a
   const handle = await coordinator.spawn('stub', brief(), { taskId: 'phase51-recovery-fast-close', model: 'stub-model', effort: 'low' });
   await until(() => coordinator.list()[0]?.processRef, 'fast-close recovery seed');
   adapter.emit('lifecycle.spawned', handle.id, { sessionId: 'fast-close-native', pid: 4242, processGeneration: 1 });
+  await establishVerifiedRecoveryPrior(coordinator, adapter, handle);
   adapter.emit('lifecycle.process_closed', handle.id, { schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, code: 0, signal: null, ready: true });
+  await until(() => coordinator._workers.get(handle.id).localAuthority === false, 'verified fast-close seed cleanup');
   const internal = coordinator._workers.get(handle.id); const task = coordinator._tasks.get(handle.taskId); const worktree = mkdtempSync(join(tmpdir(), 'phase51-fast-close-recovery-wt-'));
   internal.status = 'orphaned'; internal.localAuthority = false; internal.sessionContext = { worktree, ownerTaskId: task.id }; task.sessionContext = internal.sessionContext;
   adapter.spawn = async (worker, _brief, opts) => {
@@ -686,7 +705,10 @@ test('PL7/PL8: failed native recovery retains writer authority and runtime owner
   const worktree = mkdtempSync(join(tmpdir(), 'phase51-recovery-wt-'));
   const handle = await coordinator.spawn('stub', brief('FAKE:STAY_OPEN'), { taskId: 'phase51-recovery-reap', model: 'stub-model', effort: 'low' });
   await until(() => coordinator.list()[0]?.processRef, 'seed process start');
-  seed.emit('lifecycle.process_closed', handle.id, { schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, code: 0, signal: null, ready: false });
+  seed.emit('lifecycle.spawned', handle.id, { sessionId: 'phase51-native-recovery', pid: 4242, processGeneration: 1 });
+  await establishVerifiedRecoveryPrior(coordinator, seed, handle);
+  seed.emit('lifecycle.process_closed', handle.id, { schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, code: 0, signal: null, ready: true });
+  await until(() => coordinator._workers.get(handle.id).localAuthority === false, 'verified recovery seed cleanup');
 
   const internal = coordinator._workers.get(handle.id); const task = coordinator._tasks.get(handle.taskId);
   internal.status = 'orphaned'; internal.localAuthority = false;
