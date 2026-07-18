@@ -1,0 +1,351 @@
+{
+  "record": {
+    "schemaVersion": 1,
+    "runId": "run-b3a62176928463b88bf7f4fbc1c3a545",
+    "outcome": "context_map_failed",
+    "error": {
+      "name": "WorktreeCapacityError",
+      "code": "worktree_capacity_exceeded",
+      "message": "worktree capacity is unavailable for this reservation wave"
+    },
+    "callId": "context-call:8966cc27c79707a51dd00b2f9488fcb52bfac0c76315267c6077d4a43bae8b32",
+    "phase": "approved",
+    "attempts": [
+      {
+        "role": "ax-adversary:0001",
+        "nodeKey": "attempt:ax-adversary:0001",
+        "taskId": null,
+        "state": "ready",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "xhigh"
+          },
+          "resolved": null,
+          "observed": null,
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": null,
+              "state": "pending"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": null,
+              "state": "pending"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": null,
+              "state": "pending"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "pending"
+            },
+            "model": {
+              "observed": null,
+              "state": "pending"
+            },
+            "effort": {
+              "observed": null,
+              "state": "pending"
+            }
+          }
+        },
+        "candidateId": null,
+        "terminalCause": null
+      },
+      {
+        "role": "ax-adversary:0002",
+        "nodeKey": "attempt:ax-adversary:0002",
+        "taskId": null,
+        "state": "ready",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "xhigh"
+          },
+          "resolved": null,
+          "observed": null,
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": null,
+              "state": "pending"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": null,
+              "state": "pending"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": null,
+              "state": "pending"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "pending"
+            },
+            "model": {
+              "observed": null,
+              "state": "pending"
+            },
+            "effort": {
+              "observed": null,
+              "state": "pending"
+            }
+          }
+        },
+        "candidateId": null,
+        "terminalCause": null
+      }
+    ],
+    "nodes": [
+      {
+        "key": "attempt:ax-adversary:0001",
+        "deps": [],
+        "state": "ready",
+        "dispatchVersion": 0,
+        "taskId": null,
+        "terminalEvent": null,
+        "terminalOutcome": null,
+        "budget": {
+          "status": "unreserved",
+          "initial": {
+            "tokens": 6250000,
+            "usd": 62.5,
+            "wallMin": 30,
+            "providerTurns": 128
+          },
+          "reserved": {
+            "tokens": 0,
+            "usd": 0,
+            "wallMin": 0,
+            "providerTurns": 0
+          },
+          "consumed": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "released": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "held": {
+            "tokens": 0,
+            "usd": 0,
+            "wallMin": 0,
+            "providerTurns": 0
+          },
+          "overrun": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "availability": {
+            "tokens": "unavailable",
+            "usd": "unavailable",
+            "wallMin": "unavailable",
+            "providerTurns": "unavailable"
+          },
+          "settledEvent": null
+        }
+      },
+      {
+        "key": "attempt:ax-adversary:0002",
+        "deps": [],
+        "state": "ready",
+        "dispatchVersion": 0,
+        "taskId": null,
+        "terminalEvent": null,
+        "terminalOutcome": null,
+        "budget": {
+          "status": "unreserved",
+          "initial": {
+            "tokens": 6250000,
+            "usd": 62.5,
+            "wallMin": 30,
+            "providerTurns": 128
+          },
+          "reserved": {
+            "tokens": 0,
+            "usd": 0,
+            "wallMin": 0,
+            "providerTurns": 0
+          },
+          "consumed": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "released": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "held": {
+            "tokens": 0,
+            "usd": 0,
+            "wallMin": 0,
+            "providerTurns": 0
+          },
+          "overrun": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "availability": {
+            "tokens": "unavailable",
+            "usd": "unavailable",
+            "wallMin": "unavailable",
+            "providerTurns": "unavailable"
+          },
+          "settledEvent": null
+        }
+      }
+    ],
+    "verification": {
+      "state": "pending",
+      "verdict": null
+    },
+    "attention": [],
+    "progress": {
+      "current": "cleanup",
+      "summary": "Owned-resource cleanup: Owned resources remain active.",
+      "stages": [
+        {
+          "key": "intent",
+          "label": "Workflow intent",
+          "state": "complete",
+          "detail": "Workflow definition bound to exact Goal and Plan."
+        },
+        {
+          "key": "plan",
+          "label": "Workflow Plan",
+          "state": "complete",
+          "detail": "2 attributable isolated Attempts."
+        },
+        {
+          "key": "wave",
+          "label": "Parallel Wave",
+          "state": "pending",
+          "detail": "0/2 settled."
+        },
+        {
+          "key": "selection",
+          "label": "Candidate selection",
+          "state": "pending",
+          "detail": "Awaiting verified Candidates."
+        },
+        {
+          "key": "cleanup",
+          "label": "Owned-resource cleanup",
+          "state": "active",
+          "detail": "Owned resources remain active."
+        }
+      ]
+    },
+    "context": {
+      "state": "working",
+      "sessionCount": 1,
+      "currentSessionCount": 0,
+      "branchCount": 1,
+      "cellCount": 1,
+      "callCount": 1,
+      "completedCellCount": 1,
+      "pendingCellCount": 0,
+      "stoppedCellCount": 0,
+      "providerEffects": 0,
+      "sourceCoverage": {
+        "state": "filtered",
+        "includedFiles": 867,
+        "includedItems": 1612,
+        "excludedEntries": 198
+      },
+      "lastCell": {
+        "id": "cell:be424cb39eff68ad9f578558c3917b8bc5dad7ddbc3ee9005f54d5c89dafefc5",
+        "ordinal": 1,
+        "state": "completed",
+        "operation": "search"
+      },
+      "lastCall": {
+        "id": "context-call:8966cc27c79707a51dd00b2f9488fcb52bfac0c76315267c6077d4a43bae8b32",
+        "state": "approved",
+        "operation": "map",
+        "partitionCount": 2
+      },
+      "summary": "Provider-backed Context is compiled through a separately approved successor Plan."
+    },
+    "coordinationDiagnostics": []
+  },
+  "cleanup": {
+    "stopped": {
+      "state": "stopped",
+      "receipt": {
+        "schemaVersion": 3,
+        "state": "stopped",
+        "scope": "run_subtree",
+        "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+        "runId": "run-b3a62176928463b88bf7f4fbc1c3a545",
+        "targetCount": 2,
+        "remainingCount": 0,
+        "targetDigest": "d49f3927e02393b92528b51640ad167a98757629546d0e917aa77edb399d466b",
+        "counts": {
+          "pendingCancelled": 0,
+          "killConfirmed": 1,
+          "alreadyTerminal": 1,
+          "processesObserved": 2,
+          "processesClosed": 2
+        },
+        "checks": {
+          "dispatchClosed": true,
+          "interactionsResolved": true,
+          "runAuthorityReleased": true
+        },
+        "effects": {
+          "coordinatorClosed": false,
+          "writerReleased": false,
+          "transportsClosed": false
+        },
+        "context": {
+          "targetSessionCount": 1,
+          "targetCellCount": 0,
+          "targetCallCount": 1,
+          "remainingSessionCount": 0,
+          "remainingCellCount": 0,
+          "remainingCallCount": 0
+        },
+        "receiptDigest": "bd70d30466625b97e73d18c5ced7ed28905285a805a832721646d773311bb861"
+      },
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      }
+    },
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    },
+    "generatedReports": [],
+    "callerStatusUnchanged": true,
+    "callerIndexUnchanged": true
+  }
+}

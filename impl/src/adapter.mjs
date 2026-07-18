@@ -89,7 +89,7 @@ export function assertIsAdapter(obj) {
 
 /**
  * @param {object} brief
- * @param {'codex-v2'|'claude'|'grok-acp'} dialect
+ * @param {'codex-v2'|'claude'|'grok-acp'|'kimi-acp'} dialect
  * @returns {string}
  */
 export function renderBrief(brief, dialect) {
@@ -113,6 +113,13 @@ export function renderBrief(brief, dialect) {
   if (brief.outputFormat) {
     lines.push('## Output format');
     lines.push(brief.outputFormat);
+  }
+  if (brief.contextInput) {
+    lines.push('## Immutable Context partition');
+    lines.push(`Call: ${brief.contextInput.callId}`);
+    lines.push(`Partition: ${brief.contextInput.partitionId}`);
+    lines.push('Use only the following source partition for this mapped instruction:');
+    lines.push(JSON.stringify(brief.contextInput.value, null, 2));
   }
   return lines.join('\n');
 }
@@ -642,6 +649,7 @@ export class CodexAdapter extends SubprocessAdapterBase {
       authPosture: 'subscription',
       concurrencyCeiling: 4,
       maxContext: 200000,
+      permissions: { mode: 'never', sandbox: 'danger-full-access', boundary: 'Unattended full host permissions by default; containment is a separate deployment boundary' },
       // SC8 honesty: SubprocessAdapterBase implements ONLY spawn — prompt/interrupt/approve/
       // answer/kill are not-implemented stubs, and the card may not claim otherwise.
       verbs: { spawn: 'native', prompt: 'unsupported', steer: 'unsupported', interrupt: 'unsupported', approve: 'unsupported', answer: 'unsupported', kill: 'unsupported', pause: 'unsupported' },
@@ -650,7 +658,7 @@ export class CodexAdapter extends SubprocessAdapterBase {
 
   argv(brief, opts) {
     void opts;
-    return { cmd: 'codex', args: ['exec', '--json', '--skip-git-repo-check', renderBrief(brief, 'codex-v2')] };
+    return { cmd: 'codex', args: ['--ask-for-approval', 'never', '--sandbox', 'danger-full-access', 'exec', '--json', '--skip-git-repo-check', renderBrief(brief, 'codex-v2')] };
   }
 }
 
@@ -662,13 +670,14 @@ export class ClaudeAdapter extends SubprocessAdapterBase {
       authPosture: 'subscription',
       concurrencyCeiling: 4,
       maxContext: 200000,
+      permissions: { mode: 'bypassPermissions', sandbox: 'unverified', boundary: 'Approval autonomy only; host filesystem and network containment are unverified' },
       // SC8 honesty: only spawn is implemented on this legacy subprocess tier (see base stubs).
       verbs: { spawn: 'native', prompt: 'unsupported', steer: 'unsupported', interrupt: 'unsupported', approve: 'unsupported', answer: 'unsupported', kill: 'unsupported', pause: 'unsupported' },
     };
   }
 
   argv(brief, opts) {
-    const args = ['-p', renderBrief(brief, 'claude'), '--permission-mode', 'acceptEdits'];
+    const args = ['-p', renderBrief(brief, 'claude'), '--permission-mode', opts.permissionMode ?? 'bypassPermissions'];
     if (opts.model) args.push('--model', opts.model);
     return { cmd: 'claude', args };
   }

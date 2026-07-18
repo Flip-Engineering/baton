@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import { BatonWebClient, BatonWebHost, SignalLifecycleOwner, parseBatonCli, runBatonCli } from '../src/index.mjs';
+import * as applicationCli from '../src/application-cli.mjs';
 
 const D = 'a'.repeat(64);
 
@@ -138,6 +142,9 @@ test('UC4: packaged baton entry has pure help output and never requires credenti
   const output = execFileSync(process.execPath, ['scripts/baton.mjs', '--help'], { cwd: new URL('..', import.meta.url), encoding: 'utf8', env: {} });
   assert.match(output, /^usage:/);
   assert.match(output, /BATON_TOKEN/);
+  assert.match(output, /baton setup(?:\s|$)/u);
+  assert.match(output, /baton doctor .*--depth/u);
+  assert.match(output, /--check/u);
   assert.equal(output.includes('--follow'), false);
   const runHelp = execFileSync(process.execPath, ['scripts/baton.mjs', 'help', 'run'], {
     cwd: new URL('..', import.meta.url), encoding: 'utf8', env: {},
@@ -152,10 +159,105 @@ test('UC4: packaged baton entry has pure help output and never requires credenti
   assert.equal(contextual.status, 0);
   assert.match(contextual.stdout, /baton run show RUN_ID/u);
   assert.equal(`${contextual.stdout}${contextual.stderr}`.includes(secret), false);
-  const refused = spawnSync(process.execPath, ['scripts/baton.mjs', 'doctor'], { cwd: new URL('..', import.meta.url), encoding: 'utf8', env: {} });
-  assert.equal(refused.status, 2);
-  assert.match(refused.stderr, /cli_config_invalid/);
-  assert.equal(refused.stdout, '');
+  const diagnosed = spawnSync(process.execPath, ['scripts/baton.mjs', 'doctor'], { cwd: new URL('..', import.meta.url), encoding: 'utf8', env: {} });
+  assert.equal(diagnosed.status, 0);
+  assert.equal(diagnosed.stderr, '');
+  const diagnosis = JSON.parse(diagnosed.stdout);
+  assert.equal(diagnosis.state, 'needs_setup');
+  assert.equal(diagnosis.outline.repository, 'ready');
+  assert.equal(diagnosis.outline.connection, 'missing');
+  assert.equal(JSON.stringify(diagnosis).includes('BATON_TOKEN'), false);
+  const checked = spawnSync(process.execPath, ['scripts/baton.mjs', 'doctor', '--check'], { cwd: new URL('..', import.meta.url), encoding: 'utf8', env: {} });
+  assert.equal(checked.status, 1);
+  assert.equal(JSON.parse(checked.stdout).state, 'needs_setup');
+});
+
+function setupFixture(t) {
+  const root = mkdtempSync(join(tmpdir(), 'baton-cli-setup-'));
+  const repositoryRoot = join(root, 'repo');
+  const configRoot = join(root, 'config');
+  const profilesRoot = join(configRoot, 'baton', 'connections');
+  mkdirSync(join(repositoryRoot, '.git'), { recursive: true });
+  mkdirSync(profilesRoot, { recursive: true });
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  return {
+    root, repositoryRoot, configRoot, profilesRoot,
+    selectorPath: join(repositoryRoot, '.git', 'baton', 'connection.json'),
+    options: { cwd: repositoryRoot, env: { XDG_CONFIG_HOME: configRoot }, home: root },
+  };
+}
+
+function writeSetupProfile(fixture, name, token) {
+  const tokenPath = join(fixture.profilesRoot, `${name}.token`);
+  writeFileSync(tokenPath, `${token}\n`, { mode: 0o600 });
+  writeFileSync(join(fixture.profilesRoot, `${name}.json`), JSON.stringify({
+    schemaVersion: 1,
+    url: `https://${name}.baton.test`,
+    origin: 'https://control.baton.test',
+    tokenFile: `${name}.token`,
+  }), { mode: 0o600 });
+}
+
+test('UC4b: setup with no connection profiles is typed, non-mutating, and points to the missing user input', async (t) => {
+  assert.equal(typeof applicationCli.setupBatonConnection, 'function');
+  const fixture = setupFixture(t);
+  const result = await applicationCli.setupBatonConnection({
+    ...fixture.options,
+    fetchImpl: async () => { throw new Error('setup must not contact a remote without a selected profile'); },
+  });
+  assert.equal(result.schemaVersion, 1);
+  assert.equal(result.state, 'needs_user_input');
+  assert.equal(existsSync(fixture.selectorPath), false);
+  assert.equal(JSON.stringify(result).includes('token'), false);
+  assert.deepEqual(parseBatonCli(['setup']), { kind: 'setup', profile: null });
+});
+
+test('UC4c: setup refuses ambiguous profiles until the caller selects one explicitly', async (t) => {
+  const fixture = setupFixture(t);
+  writeSetupProfile(fixture, 'alpha', 'alpha-private-token');
+  writeSetupProfile(fixture, 'beta', 'beta-private-token');
+  const result = await applicationCli.setupBatonConnection({
+    ...fixture.options,
+    fetchImpl: async () => { throw new Error('ambiguous setup must not contact a remote'); },
+  });
+  assert.equal(result.state, 'needs_user_input');
+  assert.deepEqual(result.profiles, ['alpha', 'beta']);
+  assert.equal(result.next.some(({ command }) => command.includes('baton setup --profile')), true);
+  assert.equal(existsSync(fixture.selectorPath), false);
+  assert.deepEqual(parseBatonCli(['setup', '--profile', 'beta']), { kind: 'setup', profile: 'beta' });
+});
+
+test('UC4d: selected setup authenticates both remote authorities before atomically publishing an owner-only selector', async (t) => {
+  const fixture = setupFixture(t);
+  const token = 'distinctive-setup-secret';
+  writeSetupProfile(fixture, 'alpha', token);
+  const requests = [];
+  const responses = new Map([
+    ['/v1/application-card', { ok: true, application: { schemaVersion: 1, repoId: 'repo-a' } }],
+    ['/v1/session', { ok: true, identity: { userId: 'operator', capabilities: ['observe'], repoIds: ['repo-a'] }, expiresAt: '2026-07-18T00:00:00.000Z' }],
+  ]);
+  const result = await applicationCli.setupBatonConnection({
+    ...fixture.options,
+    profile: 'alpha',
+    fetchImpl: async (url, options) => {
+      const pathname = new URL(url).pathname;
+      requests.push({ pathname, options });
+      const body = responses.get(pathname);
+      assert.ok(body, `unexpected setup request ${pathname}`);
+      return { ok: true, async json() { return body; } };
+    },
+  });
+  assert.equal(result.state, 'configured');
+  assert.deepEqual(requests.map(({ pathname }) => pathname), ['/v1/application-card', '/v1/session']);
+  for (const request of requests) {
+    assert.equal(request.options.headers.authorization, `Bearer ${token}`);
+    assert.equal(JSON.stringify({ pathname: request.pathname, body: request.options.body ?? null }).includes(token), false);
+  }
+  const selectorSource = readFileSync(fixture.selectorPath, 'utf8');
+  assert.deepEqual(JSON.parse(selectorSource), { schemaVersion: 1, profile: 'alpha', repoId: 'repo-a' });
+  assert.equal(statSync(fixture.selectorPath).mode & 0o077, 0);
+  assert.equal(JSON.stringify(result).includes(token), false);
+  assert.equal(selectorSource.includes(token), false);
 });
 
 test('UC5: deployment-owning Web host closes admission then exact application authority on signals', async () => {

@@ -36,6 +36,11 @@
 //                                           shortly after, proving the steer took effect)
 //       FAKE:REPORT_CWD                  -> completes with an agentMessage `cwd:<thread/start cwd>`
 //                                           (phase10 SC1: proves which cwd the thread was pinned to)
+//       FAKE:OVERSIZE_ITEM               -> emits one method-first oversized item/completed
+//                                           command notification, then completes normally
+//       FAKE:OVERSIZE_AMBIGUOUS          -> starts like a known notification, then appends a
+//                                           top-level RPC id after the oversized payload
+//       FAKE:OVERSIZE_RESPONSE           -> answers turn/start with an oversized RPC response
 //       (none of the above)              -> completes normally ~10ms later, status "completed"
 
 import readline from 'node:readline';
@@ -53,6 +58,7 @@ const BUSY = process.env.FAKE_CODEX_BUSY === '1';
 const TURN_START_FAIL = process.env.FAKE_CODEX_TURN_START_FAIL === '1';
 const HANG = process.env.FAKE_CODEX_HANG === '1';
 const MALFORMED = process.env.FAKE_CODEX_MALFORMED === '1';
+const OVERSIZE_BYTES = Number.parseInt(process.env.FAKE_CODEX_OVERSIZE_BYTES ?? '8192', 10);
 
 let busyConsumed = false;
 let threadSeq = 0;
@@ -127,6 +133,23 @@ function runTurn(turnId, input) {
   }
 
   itemCompleted(turnId, { id: `${turnId}-ack`, type: 'agentMessage', text: `received: ${text}`.slice(0, 200) });
+
+  if (text.includes('FAKE:OVERSIZE_ITEM')) {
+    itemCompleted(turnId, {
+      id: `${turnId}-huge-tool`, type: 'commandExecution', command: 'fixture-large-output',
+      aggregatedOutput: 'fixture-output-secret-must-not-echo-'.repeat(OVERSIZE_BYTES),
+      exitCode: 0, status: 'completed',
+    });
+    scheduleNaturalCompletion(turnId, 'after-oversized-item');
+    return;
+  }
+
+  if (text.includes('FAKE:OVERSIZE_AMBIGUOUS')) {
+    // Valid JSON and method-first, but the late id makes it an RPC request. The client must
+    // retain structural ambiguity state while discarding payload bytes and terminate at newline.
+    send({ method: 'item/completed', params: { blob: 'ambiguous-frame-'.repeat(OVERSIZE_BYTES) }, id: 9999 });
+    return;
+  }
 
   if (text.includes('FAKE:CRASH')) {
     setTimeout(() => finishTurn(turnId, { status: 'failed', error: { message: 'boom (scripted)' } }), 10);
@@ -330,6 +353,10 @@ rl.on('line', (line) => {
       turnSeq += 1;
       const turnId = `turn-${turnSeq}`;
       activeTurn = { id: turnId, timer: null };
+      if (textOf(obj.params.input).includes('FAKE:OVERSIZE_RESPONSE')) {
+        send({ id: obj.id, result: { padding: 'oversized-response-'.repeat(OVERSIZE_BYTES), turn: { id: turnId, status: 'inProgress' } } });
+        break;
+      }
       send({ id: obj.id, result: { turn: { id: turnId, status: 'inProgress', items: [], itemsView: 'full', startedAt: Date.now() } } });
       setImmediate(() => runTurn(turnId, obj.params.input));
       break;
