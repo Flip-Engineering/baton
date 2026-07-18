@@ -952,10 +952,11 @@ test('argv() produces the documented cmd/args for each SubprocessAdapter subclas
 
   const codex = new CodexAdapter().argv(brief, opts);
   assert.equal(codex.cmd, 'codex');
-  assert.deepEqual(codex.args.slice(0, 3), ['exec', '--json', '--skip-git-repo-check']);
-  assert.equal(codex.args.length, 4, 'exactly one trailing positional: the rendered brief');
-  assert.equal(codex.args[3], renderBrief(brief, 'codex-v2'), 'the 4th arg IS the rendered brief, not merely "contains something"');
-  assert.ok(codex.args[3].includes(brief.verification.command));
+  assert.deepEqual(codex.args.slice(0, 5), ['--ask-for-approval', 'never', '--sandbox', 'danger-full-access', 'exec']);
+  assert.deepEqual(codex.args.slice(5, 7), ['--json', '--skip-git-repo-check']);
+  assert.equal(codex.args.length, 8, 'exactly one trailing positional follows the explicit autonomy policy');
+  assert.equal(codex.args[7], renderBrief(brief, 'codex-v2'));
+  assert.ok(codex.args[7].includes(brief.verification.command));
 
   const claude = new ClaudeAdapter().argv(brief, opts);
   assert.equal(claude.cmd, 'claude');
@@ -963,7 +964,7 @@ test('argv() produces the documented cmd/args for each SubprocessAdapter subclas
   assert.equal(claude.args[1], renderBrief(brief, 'claude'), 'the rendered brief is the positional arg right after -p');
   assert.ok(claude.args[1].includes(brief.verification.command));
   assert.ok(claude.args.includes('--permission-mode'));
-  assert.ok(claude.args.includes('acceptEdits'));
+  assert.ok(claude.args.includes('bypassPermissions'));
 
   const glm = new GlmAdapter().argv(brief, opts);
   assert.equal(glm.cmd, 'claude');
@@ -971,7 +972,9 @@ test('argv() produces the documented cmd/args for each SubprocessAdapter subclas
   assert.equal(glm.args[1], renderBrief(brief, 'claude'));
   assert.ok(glm.args[1].includes(brief.verification.command));
   assert.ok(glm.args.includes('--permission-mode'));
-  assert.ok(glm.args.includes('acceptEdits'));
+  assert.ok(glm.args.includes('bypassPermissions'));
+
+  assert.equal(new ClaudeAdapter().argv(brief, { ...opts, permissionMode: 'acceptEdits' }).args.at(-1), 'acceptEdits');
 });
 
 test('GlmAdapter.card() reports harness "glm-via-claude" and concurrencyCeiling 1 despite extending ClaudeAdapter', () => {

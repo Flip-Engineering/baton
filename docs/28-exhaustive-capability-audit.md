@@ -383,14 +383,22 @@ evidence and disagreement are retained in
 
 ## What remains pending
 
-- The primary product gap is completing the integrated Run application over the already-strong
+- The integrated Run application now ships cursor follow, recovery, materialized result export,
+  atomic multi-node parallel Workflow admission, typed feedback, Candidate selection, selective
+  member/whole-Run reap, and one approval-gated exact-Candidate-base revision round across the
+  shared command registry. The remaining application gap is not those foundations: it is the
+  adverse active-revision restart/stop matrix, policy-admitted Plan v3, acceptance-level recursive
+  action parity across direct/CLI/Web/browser/MCP, and compilation of review, debate, synthesis,
+  partition, leased-lineage, and composed-overlay strategies.
+- The primary historical product gap was completing the integrated Run application over the already-strong
   fleet kernel. Phase 64 now has concise intent/profile → Goal/Plan → distinct approval → exact
   dispatch → bounded RunView → answer/steer → durable Run-scoped stop/reap → host deployment shutdown, plus restart scheduling
   across the approval/dispatch boundary. Direct, authenticated Web/browser, and default MCP are thin
   projections of the shared registry; MCP EOF/signals use an injected host shutdown authority. A safe
   one-shot `baton` client now submits the same bearer-authenticated Web commands without owning
   fleet lifecycle. `baton serve` separately owns listener admission and exact application shutdown.
-  Cursor follow, recovery, materialized result export, and multi-node scheduling remain red.
+  That historical cursor/recovery/export/multi-node statement is superseded by the checkpoint
+  above; it is retained here only as the sequence that led to the current application.
   Phase 65 now ships exact independent structured semantic review and separately authorized,
   fresh-evidence-bound local integration across direct/Web/MCP/CLI/browser surfaces. Terminal evidence manifests and
   non-merging result adoption now ship, and one bounded progress board consolidates the normal
@@ -493,9 +501,9 @@ evidence and disagreement are retained in
    catalogued later rungs, then demand-earned remaining Cairn Rung 2 depth and Rungs 3–4, Vantage,
    Evidence Ladder, and Skill Forge/computer use behind stronger containment. Phase 61 now closes
    the first graph-backed R1–R3 producer vertical without deleting any deeper rung.
-5. **Complete the integrated application and northbound/runtime depth:** extend the shipped Phase 64-65 Run
-   registry/View/scheduler/accepted-result-retention/adoption/evidence vertical with materialized
-   export, recovery, and multi-node composition; keep
+5. **Complete the remaining application and northbound/runtime depth:** extend the shipped Run,
+   export, recovery, parallel Workflow, and bounded revision vertical with multi-round eligibility,
+   the remaining canonical strategies, and recursive action parity; keep
    authenticated Web and MCP thin; replace phase-specific dogfood runners; then MCP HTTP/Tasks/daemon, WebSocket,
    operator takeover, OpenTelemetry, and only then a production-core port.
 6. **Pursue representation/trust research only through its Decisions:** higher CPG/IR/semantic
