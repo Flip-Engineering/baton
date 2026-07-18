@@ -91,6 +91,46 @@ const closeForReplay = async (coordinator, coordination) => {
   coordinator.closeAuthority(); coordination.releaseWriterLease();
 };
 
+test('AC0: a provider-native failed result bypasses capture/referee and preserves progress without an adoptable result', async () => {
+  const root = repo();
+  commitBase(root);
+  const adapter = new MockAdapter({ scenario: {
+    outcome: 'failed', summary: 'structured provider failure',
+    edits: [{ path: 'src/partial.txt', content: 'recoverable progress\n' }],
+  } });
+  const driver = createDriver({
+    repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac0-log-')), adapters: { mock: adapter },
+    watchdog: { stallMs: 0 },
+  });
+  let captureCalls = 0;
+  let refereeCalls = 0;
+  const capture = driver.coordinator._worktrees.capture.bind(driver.coordinator._worktrees);
+  driver.coordinator._worktrees.capture = async (...args) => { captureCalls += 1; return capture(...args); };
+  const referee = driver.coordinator._referee;
+  driver.coordinator._referee = async (...args) => { refereeCalls += 1; return referee(...args); };
+
+  const handle = await driver.coordinator.spawn('mock', brief({ command: 'true', expectExit: 0 }), { taskId: 'provider-failed' });
+  const result = await until(async () => {
+    const value = await driver.coordinator.result(handle.id);
+    return value.ready ? value : null;
+  });
+  assert.equal(result.status, 'failed');
+  assert.deepEqual(result.terminalCause, { kind: 'provider_failure', code: 'provider_turn_failed' });
+  assert.equal(result.verdict, null);
+  assert.equal(result.capturedSha, null);
+  assert.equal(result.retainedResultRef, null);
+  // The only capture is Phase 70's non-adoptable progress checkpoint; the trust gate never runs.
+  assert.equal(captureCalls, 1);
+  assert.equal(refereeCalls, 0);
+  assert.equal(driver.log.read(handle.id).some((event) => event.kind === 'verify.reverified'), false);
+
+  await until(() => driver.log.read(handle.id).some((event) => event.kind === 'worktree.progress_checkpointed'));
+  const stopped = await driver.coordinator.result(handle.id);
+  assert.equal(stopped.status, 'failed');
+  assert.equal(stopped.checkpoint?.state, 'pinned');
+  assert.equal(stopped.retainedResultRef, null);
+});
+
 test('AC1: createDriver requireRedGreen proves base red and result green', async () => {
   const root = repo();
   commitBase(root);

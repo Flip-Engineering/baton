@@ -122,6 +122,9 @@ test('XA14/XA15: card() reports harness codex, the injected version, and the nat
     toolCalls: { observation: 'native', enforcement: 'unavailable' },
     maxWireFrameBytes: 1024 * 1024,
   });
+  assert.deepEqual(card.permissions, {
+    mode: 'never', sandbox: 'danger-full-access', boundary: 'Unattended full host permissions by default; containment is a separate deployment boundary',
+  });
 });
 
 test('XA15: the default version probe describes the injected executable, not a different bare codex on PATH', () => {

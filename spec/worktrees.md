@@ -13,7 +13,8 @@
 The worker (Codex/Claude/GLM) just sees **a normal repo in a normal directory** and works as usual. All the worktree bookkeeping is the coordinator's job — the worker doesn't need to know it's in a worktree. The coordinator:
 
 - creates the worktree before spawning the worker and points the worker's working directory at it,
-- confines the worker to that directory (the OS sandbox boundary — the worker cannot escape its worktree),
+- gives the worker that directory as its repository/collision boundary and working directory;
+  containment is a separate harness or external-OS policy and is never inferred from Git,
 - tracks every worktree in its registry (rebuilt from the log, so it survives a coordinator restart),
 - cleans up when the task is done or the worker dies.
 

@@ -78,6 +78,8 @@ test('SC6: GlmSessionCli exists, satisfies the adapter surface, and carries hone
   assert.equal(card.harness, 'glm-via-claude-session');
   assert.equal(card.version, 'claude-code-2.1.206+zai-anthropic');
   assert.equal(card.authPosture, 'api_key');
+  assert.equal(card.permissions.mode, 'bypassPermissions', 'GLM inherits the unattended Claude-family default');
+  assert.equal(cli._cfg.permissionMode, 'bypassPermissions');
   assert.equal(card.concurrencyCeiling, 1, 'derived limit: Z.ai Pro ≈ one in-flight session (same derivation as ZCodeCli, cli-adapters.mjs:255) — configurable, never arbitrary');
   assert.deepEqual(card.nonRefuserFor, ['ml-ai-inference-training', 'cybersecurity'], 'the explicit classifier tag the fleet routes on (SC7) — never operator folklore');
   assert.deepEqual(

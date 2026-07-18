@@ -166,6 +166,38 @@ test('AX1: one closed semantic registry defines the compact ordinary vocabulary,
   assert.equal(JSON.stringify(value).toLowerCase().includes('homelab'), false);
 });
 
+test('AX1b RED: orchestration is one discoverable semantic section and remains empty when recursive Run authority is unconfigured', async (t) => {
+  const f = fixture('legacy-orchestration');
+  cleanup(t, f.application);
+  const runId = 'run-phase67-legacy-orchestration';
+  await f.application.command('run.start', { intent: intent(runId) }, principal('owner'));
+
+  const definition = registry().sections.find((section) => section.id === 'orchestration');
+  assert.ok(definition, 'agents discover recursive topology and authority through the ordinary cascade');
+  assert.match(definition.summary, /authority|topology|child|descendant/iu);
+
+  const outline = await f.application.command(
+    'run.inspect', { runId, depth: 'outline' }, principal('owner'),
+  );
+  assert.equal(Object.hasOwn(outline.outline, 'orchestration'), false,
+    'a legacy deployment does not invent recursive authority state in its compact outline');
+
+  const index = await f.application.command(
+    'run.inspect', { runId, depth: 'index' }, principal('owner'),
+  );
+  const orchestration = index.sections.find((section) => section.id === 'orchestration');
+  assert.deepEqual({ state: orchestration?.state, itemCount: orchestration?.itemCount }, {
+    state: 'empty', itemCount: 0,
+  });
+
+  const section = await f.application.command(
+    'run.inspect', { runId, depth: 'section', section: 'orchestration' }, principal('owner'),
+  );
+  assert.equal(section.section.state, 'empty');
+  assert.equal(section.section.itemCount, 0);
+  assert.deepEqual(section.section.items, []);
+});
+
 test('AX2: inspect cascades from compact outline to index, section, item, and explicit evidence without raw default leakage', async (t) => {
   const f = fixture('cascade');
   cleanup(t, f.application);
@@ -268,6 +300,19 @@ test('AX4/AX8: actions are closed and self-describing, bind to one live Run, rea
   assert.equal(approve.inputSchema.additionalProperties, false);
   assert.deepEqual(approve.serverDerived.sort(), ['planDigest']);
   assert.equal(Object.hasOwn(approve.inputSchema.properties, 'planDigest'), false);
+
+  f.driver.coordination.recordWebAudit({
+    kind: 'operator_read_authorized', resourceClass: 'application_card',
+  }, { actor: 'web:transport-noise', key: 'phase67:transport-noise' });
+  const afterTransportNoise = await f.application.command(
+    'run.inspect', { runId, depth: 'outline' }, principal('owner'),
+  );
+  assert.ok(afterTransportNoise.cursor > outline.cursor);
+  assert.equal(afterTransportNoise.viewDigest, outline.viewDigest);
+  assert.equal(
+    afterTransportNoise.outline.actions.find((action) => action.kind === 'approve_plan').actionId,
+    approve.actionId,
+  );
 
   await assert.rejects(f.application.command('run.act', {
     runId, actionId: approve.actionId, inputs: { planDigest: 'a'.repeat(64) },

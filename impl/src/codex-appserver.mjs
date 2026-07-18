@@ -13,6 +13,7 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { renderBrief } from './adapter.mjs';
 import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
+import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const CODEX_TOKEN_METRIC = 'codex_thread_total_tokens';
@@ -104,6 +105,8 @@ export class CodexAppServerCli {
     this._ceiling = opts.ceiling ?? 4;
     this._maxContext = opts.maxContext ?? 200000;
     this._model = opts.model;
+    this._sandbox = opts.sandbox ?? 'danger-full-access';
+    this._approvalPolicy = opts.approvalPolicy ?? 'never';
     this._maxWireFrameBytes = opts.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
     if (!Number.isSafeInteger(this._maxWireFrameBytes) || this._maxWireFrameBytes <= 0) throw new TypeError('maxWireFrameBytes must be a positive safe integer');
 
@@ -128,6 +131,7 @@ export class CodexAppServerCli {
   // -------------------------------------------------------------------------
 
   card() {
+    const autonomy = this._approvalPolicy === 'never' ? 'unattended' : 'interactive';
     return {
       harness: 'codex',
       version: this._version,
@@ -148,8 +152,30 @@ export class CodexAppServerCli {
       },
       sessions: { multiTurn: 'native', resume: 'native', fork: 'native', rejoin: 'native' },
       isolation: {
-        configHome: 'driver-scoped', environment: 'driver-scoped', filesystem: 'workspace-write',
-        osSandbox: 'harness-native', network: 'harness-policy', credentialProjection: 'explicit',
+        configHome: 'driver-scoped', environment: 'driver-scoped', filesystem: 'unverified',
+        osSandbox: 'unverified', network: 'uncontrolled', credentialProjection: 'explicit',
+      },
+      permissions: {
+        mode: this._approvalPolicy, sandbox: this._sandbox,
+        boundary: this._sandbox === 'danger-full-access'
+          ? 'Unattended full host permissions by default; containment is a separate deployment boundary'
+          : 'Harness sandbox requested; its containment remains separately attested',
+      },
+      workerPolicy: {
+        schemaVersion: 1,
+        autonomy: {
+          supported: [autonomy], default: autonomy, perTask: false,
+          observation: 'launch', mechanisms: [`approval-policy-${this._approvalPolicy}`],
+        },
+        access: {
+          supported: [this._sandbox === 'danger-full-access' ? 'full' : 'workspace'],
+          default: this._sandbox === 'danger-full-access' ? 'full' : 'workspace', perTask: false,
+          observation: 'launch', mechanisms: [`codex-sandbox-${this._sandbox}`],
+        },
+        containment: {
+          hostProcess: 'same_uid', guarantees: ['private_runtime'],
+          configuredPreferences: [], observation: 'unavailable',
+        },
       },
       verbs: {
         spawn: 'native',
@@ -570,10 +596,12 @@ export class CodexAppServerCli {
       modelObserved: null,
       reasoningEffort: opts.reasoningEffort ?? null,
       serviceTier: opts.serviceTier ?? null,
-      sandboxPolicy: opts.sandboxPolicy ?? {
-        type: 'workspaceWrite', writableRoots: [cwd], networkAccess: false,
-        excludeSlashTmp: false, excludeTmpdirEnvVar: false,
-      },
+      sandboxPolicy: opts.sandboxPolicy ?? (this._sandbox === 'danger-full-access'
+        ? { type: 'dangerFullAccess' }
+        : {
+            type: 'workspaceWrite', writableRoots: [cwd], networkAccess: false,
+            excludeSlashTmp: false, excludeTmpdirEnvVar: false,
+          }),
     };
     this._sessions.set(worker, session);
     this._attachChild(session);
@@ -603,8 +631,8 @@ export class CodexAppServerCli {
         cwd,
         model: session.modelRequested ?? undefined,
         effort: session.reasoningEffort ?? undefined,
-        sandbox: opts.sandbox ?? 'workspace-write',
-        approvalPolicy: opts.approvalPolicy ?? 'never',
+        sandbox: opts.sandbox ?? this._sandbox,
+        approvalPolicy: opts.approvalPolicy ?? this._approvalPolicy,
         serviceTier: session.serviceTier ?? undefined,
         ...(threadMethod !== 'thread/resume' ? { ephemeral: true } : {}),
         ...(threadMethod !== 'thread/start' ? { threadId: sessionRequest.id } : {}),
@@ -629,6 +657,28 @@ export class CodexAppServerCli {
       };
     }
     session.modelObserved = threadResult.model ?? session.modelRequested;
+    let workerPolicyObserved = null;
+    if (opts.workerPolicy) {
+      try {
+        workerPolicyObserved = attestWorkerPolicyObservation(opts.workerPolicy, {
+          autonomy: (opts.approvalPolicy ?? this._approvalPolicy) === 'never' ? 'unattended' : 'interactive',
+          access: (opts.sandbox ?? this._sandbox) === 'danger-full-access' ? 'full' : 'workspace',
+        });
+      } catch (error) {
+        session.setupFailed = true;
+        this._killChild(session);
+        return { ok: false, code: error?.code, reason: String(error?.message ?? error) };
+      }
+    }
+    if (workerPolicyObserved) {
+      this._emit(session, 'worker_policy.observed', {
+        processGeneration: session.processGeneration, pid: child.pid, processGroupId: child.pid,
+        workerPolicyObserved,
+      });
+      if (session.killing || session.terminal) {
+        return { ok: false, code: 'provider_ready_refused', reason: 'launch worker policy was rejected by coordinator policy' };
+      }
+    }
     session.providerReady = true;
     // R6.1: parity with the Claude session adapter's lifecycle.spawned — the wire's own
     // testimony to its session identifier, additive alongside the coordinator's own record.
@@ -637,7 +687,12 @@ export class CodexAppServerCli {
       processGeneration: session.processGeneration,
       modelRequested: session.modelRequested, modelObserved: session.modelObserved,
       effortObserved: threadResult.effort ?? null, serviceTier: session.serviceTier,
+      ...(workerPolicyObserved ? { workerPolicyObserved } : {}),
     });
+
+    if (session.killing || session.terminal) {
+      return { ok: false, code: 'provider_ready_refused', reason: 'provider readiness was rejected by coordinator policy' };
+    }
 
     // Recovery attaches and proves identity before a durable refinement is allowed to dispatch.
     if (opts.attachOnly === true) return { ok: true, attached: true };

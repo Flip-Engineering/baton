@@ -4,6 +4,12 @@
 > is not part of Baton's current goal. Baton remains deployment-neutral and single-project; adding
 > homelab integration would be a detriment. The line is retained only as exploration history.
 
+> **Current implementation continuation (2026-07-17):** Phases 70–73 added preserved-stop/resume,
+> required-effects authority, native Kimi worker support, and authenticated Kimi orchestration.
+> Phase 74 is now binding default unattended autonomy, explicit full harness access, and independent containment evidence into one
+> durable worker-policy contract. The milestone prose below is historical sequencing, not a claim
+> that a Git worktree or private HOME is an OS sandbox.
+
 *Build sequence for the Option-A hub (doc 04). Milestones are cut so each one is independently useful and **falsifies something measurable**. Rewritten after review round 1 (doc 09 §F): the single strongest convergent signal from the Codex external review, the product judge, the ambition judge, and the time-scale judge was **"you are spending before you prove value, and the proof is cheap."** So eval and the differentiating demo move to the front, and the honest MVP is cut hard.*
 
 ## Guiding re-estimate (time-scale judge + Codex review)
@@ -15,8 +21,8 @@ The old "M1 in 1–2 weeks" was fiction. The supervisor invariants alone (`spec/
 Goal: prove the load-bearing bridge works in *both* orchestrator directions, and establish the number every later milestone is judged against.
 
 - Hub skeleton: single process, in-memory registry + JSONL event log. No policy engine, no budgets.
-- `codex-adapter`: persistent `codex app-server` (stdio child), `thread/start`→`turn/start`→stream→`turn/interrupt`. Sandbox/approval via `thread/start`/`turn/start` params (**not** a `--sandbox` CLI flag — app-server has none; ref `docs/reference/codex-app-server.md`), workspace-write confined to the worktree.
-- `claude-adapter`: child `claude -p --input-format stream-json --output-format stream-json --permission-mode acceptEdits`, one process per worker, **adapter-owned outbox** (nudges never hit stdin mid-turn).
+- `codex-adapter`: persistent `codex app-server` (stdio child), `thread/start`→`turn/start`→stream→`turn/interrupt`. Sandbox/approval travel through `thread/start`/`turn/start` params (**not** an app-server CLI flag); Phase 74 defaults to `danger-full-access` plus `never`, with narrower profiles explicit.
+- `claude-adapter`: child `claude -p --input-format stream-json --output-format stream-json --permission-mode bypassPermissions`, one process per worker, with Baton's private Claude settings defaulting to unsandboxed command execution. Approval-enabled profiles resolve to `acceptEdits`; the callback is never combined with bypass mode. **Adapter-owned outbox** (nudges never hit stdin mid-turn).
 - Northbound MCP tools (minimal): `fleet_spawn`, `fleet_send`, `fleet_wait`, `fleet_result`, `fleet_interrupt`, `fleet_list`.
 - **Empirical experiments (this is the point of M0), each a recorded number:**
   1. `fleet_wait` under real host timeouts — set `tool_timeout_sec` (Codex `~/.codex/config.toml`) and `MCP_TOOL_TIMEOUT`/`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` (Claude); confirm the bounded-poll-under-timeout (`HOST_SAFE_MS`) loop + progress heartbeats survive, both directions (Claude-orchestrator and Codex-as-orchestrator via `codex mcp`).

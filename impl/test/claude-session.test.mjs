@@ -72,6 +72,8 @@ test('CS1: buildClaudeSessionArgs always includes the stream-json trio; adds per
   const idx = withApprovals.indexOf('--permission-prompt-tool');
   assert.ok(idx !== -1);
   assert.equal(withApprovals[idx + 1], 'stdio', 'the magic value confirmed from the Agent SDK source, not an arbitrary tool name');
+  assert.equal(withApprovals[withApprovals.indexOf('--permission-mode') + 1], 'acceptEdits',
+    'an approval callback requires an ask-capable mode');
 
   const withResume = buildClaudeSessionArgs({ sessionId: 'sess-123' });
   const ridx = withResume.indexOf('--resume');
@@ -79,21 +81,27 @@ test('CS1: buildClaudeSessionArgs always includes the stream-json trio; adds per
   assert.equal(withResume[ridx + 1], 'sess-123');
 });
 
-test('CS1 erratum E1: a permission mode is ALWAYS rendered by default (acceptEdits, one-shot parity) — without one a live worker cannot edit files at all (proven live 2026-07-10: Write denied, probe.txt never created)', () => {
+test('CS1: unattended sessions default to bypassPermissions and honestly disclose unverified containment', () => {
   const base = buildClaudeSessionArgs({});
   const pidx = base.indexOf('--permission-mode');
-  assert.ok(pidx !== -1, 'default argv must carry --permission-mode; its absence was a live-breaking gap');
-  assert.equal(base[pidx + 1], 'acceptEdits', 'parity with the proven one-shot ClaudeCli argv');
+  assert.ok(pidx !== -1, 'default argv must carry an explicit permission mode');
+  assert.equal(base[pidx + 1], 'bypassPermissions');
 
-  const custom = buildClaudeSessionArgs({ permissionMode: 'bypassPermissions' });
-  assert.equal(custom[custom.indexOf('--permission-mode') + 1], 'bypassPermissions');
+  const narrower = buildClaudeSessionArgs({ permissionMode: 'acceptEdits' });
+  assert.equal(narrower[narrower.indexOf('--permission-mode') + 1], 'acceptEdits');
 
   const none = buildClaudeSessionArgs({ permissionMode: null });
   assert.ok(!none.includes('--permission-mode'), 'explicit null opts out (caller supplies its own policy flags)');
 
-  const both = buildClaudeSessionArgs({ approvals: true });
-  assert.ok(both.includes('--permission-mode') && both.includes('--permission-prompt-tool'),
-    'approvals and permission mode compose: acceptEdits auto-allows worktree edits, everything else routes to approve()');
+  assert.throws(
+    () => buildClaudeSessionArgs({ approvals: true, permissionMode: 'bypassPermissions' }),
+    /cannot be combined/,
+    'Claude never invokes the callback under bypassPermissions, so the adapter must refuse a lying combination',
+  );
+  assert.throws(
+    () => makeCli({ approvals: true, permissionMode: 'bypassPermissions' }),
+    /cannot use bypassPermissions/,
+  );
 });
 
 test('conforms to the D1 8-verb session-shaped Adapter contract', () => {
@@ -116,9 +124,14 @@ test('CS18: card().verbs.approve/answer are unsupported by default and native on
   const noApprovals = makeCli().card();
   assert.equal(noApprovals.verbs.approve, 'unsupported');
   assert.equal(noApprovals.verbs.answer, 'unsupported');
+  assert.deepEqual(noApprovals.permissions, {
+    mode: 'bypassPermissions', sandbox: 'unverified',
+    boundary: 'Full same-UID host access by default; filesystem and network containment are unverified',
+  });
   const withApprovals = makeCli({ approvals: true }).card();
   assert.equal(withApprovals.verbs.approve, 'native');
   assert.equal(withApprovals.verbs.answer, 'native');
+  assert.equal(withApprovals.permissions.mode, 'acceptEdits');
 });
 
 test('card declares steer as NATIVE (erratum E2: mid-turn stream-json injection is real) and everything else native too', () => {

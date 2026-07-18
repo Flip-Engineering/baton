@@ -68,7 +68,7 @@ The Adapter interface was **designed session-shaped** (8 verbs: card/spawn/promp
 ### What one-shot genuinely cannot do
 - **Graceful interrupt** — only SIGINT-kills; in-progress work is lost, a full respawn is required.
 - **Mid-run steering / context injection** — stdin closed → `steer()`/`prompt()` structurally impossible.
-- **Interactive approvals** — `approve()`/`answer()` return `ok:false`; approvals are *avoided* via sandbox (`workspace-write` / `acceptEdits`), never *answered* by hub policy.
+- **Interactive approvals** — `approve()`/`answer()` return `ok:false`; routine prompts are avoided with approval-free modes and Phase 74's explicit full-access defaults (Codex `never`, Claude `bypassPermissions`, Grok `--always-approve`), never answered by the one-shot tier's hub policy. Explicit narrower/session approval paths remain separate.
 - **Multi-turn** — single prompt then EOF; no follow-up.
 - **Session resume / fork / reattach** — no control-session id tracked.
 

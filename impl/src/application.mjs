@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { normalizeGoalRequest, normalizePlanRequest } from './goal-plan.mjs';
+import { normalizeWorkerPolicyRequest } from './worker-policy.mjs';
 import {
   identifyResultExportRoot, ResultExportLifecycle,
 } from './result-export.mjs';
@@ -39,6 +40,7 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'run.evidence': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.adopt': Object.freeze({ args: Object.freeze(['runId', 'nodeKey', 'resultSha', 'evidenceDigest', 'reason']), capabilities: Object.freeze(['adopt_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.retry_verification': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['retry_verification', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
+  'run.resume_work': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['resume_work', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.review': Object.freeze({ args: Object.freeze(['runId', 'route', 'reason']), capabilities: Object.freeze(['review', 'control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.integrate': Object.freeze({ args: Object.freeze(['runId', 'evidenceDigest', 'strategy', 'reason']), capabilities: Object.freeze(['integrate_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.export': Object.freeze({ args: Object.freeze(['runId', 'evidenceDigest']), capabilities: Object.freeze(['export_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
@@ -58,6 +60,14 @@ function canonical(value) {
 
 function digest(value) {
   return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
+}
+
+// Transport admission, audit, and completion events advance the global cursor without changing
+// a Run's semantic authority. Keep those events observable through `cursor`, but never let them
+// invalidate an action Baton just offered to an authenticated caller.
+function semanticViewDigest(view) {
+  const { cursor: _transportCursor, ...semanticView } = view;
+  return digest(semanticView);
 }
 
 function uuidFromDigest(hex) {
@@ -170,6 +180,17 @@ function normalizeRetryVerification(value) {
   return deepFreeze({ runId: value.runId, reason: value.reason.normalize('NFKC').trim() });
 }
 
+// PS5: resume_work is coordinate-free. The caller supplies only a bounded audit reason — never a
+// Git ref, SHA, worktree path, harness command, provider credential, budget, or storage ceiling.
+function normalizeResumeWork(value) {
+  exactObject(value, ['runId', 'reason'], 'application_resume_invalid', 'Run resume');
+  if (!validId(value.runId) || !validText(value.reason, 1_024)
+    || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(value.reason))) {
+    throw applicationError('Run resume request is invalid', 'application_resume_invalid');
+  }
+  return deepFreeze({ runId: value.runId, reason: value.reason.normalize('NFKC').trim() });
+}
+
 function normalizeReviewRequest(value) {
   exactObject(value, ['runId', 'route', 'reason'], 'application_review_invalid', 'Run review');
   if (!validId(value.runId) || !validText(value.reason, 1_024)
@@ -197,6 +218,30 @@ function normalizePrincipal(value, label) {
   exactObject(value, ['actor', 'principalId', 'sessionId'], 'application_authority_invalid', label);
   if (!validText(value.actor, 256) || !validId(value.principalId) || !validId(value.sessionId)) {
     throw applicationError(`${label} is invalid`, 'application_authority_invalid');
+  }
+  return deepFreeze(clone(value));
+}
+
+function normalizeCommandContext(value) {
+  if (value === undefined || value === null) return null;
+  const fields = ['idempotencyKey', 'requestId', 'transport'];
+  if (Object.hasOwn(value ?? {}, 'sessionAuthority')) fields.push('sessionAuthority');
+  exactObject(value, fields, 'application_context_invalid', 'application command context');
+  if (!['direct', 'mcp', 'web'].includes(value.transport)
+    || !validText(value.requestId, 256) || !validText(value.idempotencyKey, 512)) {
+    throw applicationError('application command context is invalid', 'application_context_invalid');
+  }
+  if (value.sessionAuthority !== undefined) {
+    exactObject(value.sessionAuthority,
+      ['schemaVersion', 'authorityDigest', 'expiresAt', 'orchestratorLeaseId'],
+      'application_context_invalid', 'application session authority');
+    if (value.sessionAuthority.schemaVersion !== 1
+      || !/^[a-f0-9]{64}$/u.test(value.sessionAuthority.authorityDigest ?? '')
+      || !validText(value.sessionAuthority.orchestratorLeaseId, 512)
+      || !Number.isFinite(Date.parse(value.sessionAuthority.expiresAt ?? ''))
+      || new Date(Date.parse(value.sessionAuthority.expiresAt)).toISOString() !== value.sessionAuthority.expiresAt) {
+      throw applicationError('application session authority is invalid', 'application_context_invalid');
+    }
   }
   return deepFreeze(clone(value));
 }
@@ -320,7 +365,10 @@ function normalizeExportPolicy(value) {
 
 function normalizeFollowPolicy(value) {
   if (value === undefined) return deepFreeze({
-    mode: 'none', maxWaitMs: 0, maxChanges: 0, maxResponseBytes: 0, maxScanEvents: 0,
+    // Disabled change waiting still permits one bounded semantic inspection. Zero response/item
+    // bounds made the unified Run surface unusable for otherwise valid deployment profiles.
+    mode: 'none', maxWaitMs: 0, maxChanges: MAX_ATTENTION,
+    maxResponseBytes: MAX_RUN_VIEW_BYTES, maxScanEvents: 0,
   });
   exactObject(value, ['mode', 'maxWaitMs', 'maxChanges', 'maxResponseBytes', 'maxScanEvents'],
     'application_profile_invalid', 'profile followPolicy');
@@ -356,17 +404,19 @@ function normalizeRecoveryPolicy(value) {
 }
 
 function normalizeProfile(name, value, repoId) {
+  const profileVersion = value?.schemaVersion;
   const requiredFields = [
     'schemaVersion', 'repoId', 'definitionOfDone', 'constraints', 'risk', 'goalBudget',
     'nodeBudget', 'pathScope', 'verification', 'routes', 'capabilities', 'effects', 'resultPolicy',
   ];
-  const allowedFields = new Set([...requiredFields, 'reviewPolicy', 'integrationPolicy', 'followPolicy', 'exportPolicy', 'recoveryPolicy']);
+  if (profileVersion === 2) requiredFields.push('workerPolicy');
+  const allowedFields = new Set([...requiredFields, 'requiredEffects', 'reviewPolicy', 'integrationPolicy', 'followPolicy', 'exportPolicy', 'recoveryPolicy']);
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || requiredFields.some((field) => !Object.hasOwn(value, field))
     || Object.keys(value).some((field) => !allowedFields.has(field))) {
     throw applicationError(`profile ${name} has unknown or missing fields`, 'application_profile_invalid');
   }
-  if (!validId(name) || value.schemaVersion !== 1 || value.repoId !== repoId || !validText(value.risk, 64)) {
+  if (!validId(name) || ![1, 2].includes(value.schemaVersion) || value.repoId !== repoId || !validText(value.risk, 64)) {
     throw applicationError(`profile ${name} is invalid`, 'application_profile_invalid');
   }
   if (!Array.isArray(value.routes) || value.routes.length === 0 || value.routes.length > 64) {
@@ -378,7 +428,7 @@ function normalizeProfile(name, value, repoId) {
   }
   const reviewPolicy = normalizeReviewPolicy(value.reviewPolicy);
   const normalized = {
-    schemaVersion: 1,
+    schemaVersion: value.schemaVersion,
     repoId,
     definitionOfDone: normalizeStringSet(value.definitionOfDone, 'profile definitionOfDone'),
     constraints: normalizeStringSet(value.constraints, 'profile constraints', { empty: true }),
@@ -393,6 +443,10 @@ function normalizeProfile(name, value, repoId) {
     }),
     capabilities: normalizeStringSet(value.capabilities, 'profile capabilities', { empty: true, maxBytes: 128 }),
     effects: normalizeStringSet(value.effects, 'profile effects', { empty: true, maxBytes: 128 }),
+    ...(value.schemaVersion === 2 ? { workerPolicy: normalizeWorkerPolicyRequest(value.workerPolicy) } : {}),
+    ...(Object.hasOwn(value, 'requiredEffects') ? {
+      requiredEffects: normalizeStringSet(value.requiredEffects, 'profile requiredEffects', { empty: true, maxBytes: 128 }),
+    } : {}),
     resultPolicy: normalizeResultPolicy(value.resultPolicy),
     reviewPolicy,
     integrationPolicy: normalizeIntegrationPolicy(value.integrationPolicy),
@@ -402,6 +456,9 @@ function normalizeProfile(name, value, repoId) {
   };
   if (normalized.pathScope.some((entry) => !safeScopePath(entry))) {
     throw applicationError(`profile ${name} path scope is invalid`, 'application_profile_invalid');
+  }
+  if ((normalized.requiredEffects ?? []).some((effect) => effect !== 'repository_edit' || !normalized.effects.includes(effect))) {
+    throw applicationError(`profile ${name} required effects exceed authorized effects`, 'application_profile_invalid');
   }
   if (reviewPolicy.mode === 'required'
     && !normalized.pathScope.some((entry) => scopeEntryWithin(reviewPolicy.reportPath, entry))) {
@@ -455,6 +512,23 @@ function applicationDefaults(rawDefaults, profiles) {
     profile: rawDefaults.profile,
     route: rawDefaults.route === null ? null : clone(normalizeRoute(rawDefaults.route)),
   });
+}
+
+function selectExactRouteCard(routeCards, route) {
+  const matches = [...routeCards.entries()].filter(([name, card]) => {
+    if (name !== route.harness && card?.harness !== route.harness) return false;
+    const selection = card?.modelSelection;
+    const modelAvailable = selection?.mode === 'exact'
+      && (Array.isArray(selection.available)
+        ? selection.available.includes(route.model)
+        : selection.configuredDefault === route.model
+          || selection.acceptedAliases?.includes(route.model) === true
+          || selection.acceptedPrefixes?.some((prefix) => route.model.startsWith(prefix)) === true);
+    const effortAvailable = Array.isArray(selection?.reasoningEffort)
+      && selection.reasoningEffort.includes(route.effort);
+    return modelAvailable && effortAvailable;
+  });
+  return matches.length === 1 ? { name: matches[0][0], card: matches[0][1] } : null;
 }
 
 export function validateApplicationCommandArgs(name, args) {
@@ -531,6 +605,7 @@ export function validateApplicationCommandArgs(name, args) {
   }
   if (name === 'run.adopt') normalizeAdopt(args);
   if (name === 'run.retry_verification') normalizeRetryVerification(args);
+  if (name === 'run.resume_work') normalizeResumeWork(args);
   if (name === 'run.review') normalizeReviewRequest(args);
   if (name === 'run.integrate') normalizeIntegrationRequest(args);
   if (name === 'run.export' && (!validId(args.runId) || !/^[a-f0-9]{64}$/u.test(args.evidenceDigest ?? ''))) {
@@ -610,7 +685,9 @@ function explicitRouteEvidence(source, { live = false } = {}) {
   } : null;
   return {
     resolved,
-    resolvedHarnessVendor: live ? source.vendor ?? null : source.harnessVendor ?? source.vendor ?? null,
+    resolvedHarnessVendor: live
+      ? source.harnessRequested ?? source.vendor ?? null
+      : source.harnessVendor ?? source.harnessRequested ?? source.vendor ?? null,
     observed,
   };
 }
@@ -635,6 +712,7 @@ function safeScopePath(value) {
 
 function scopeEntryWithin(requested, allowed) {
   if (!safeScopePath(requested) || !safeScopePath(allowed)) return false;
+  if (allowed === '**') return true;
   if (requested === allowed) return true;
   if (!allowed.endsWith('/**')) return false;
   const prefix = allowed.slice(0, -2);
@@ -667,6 +745,7 @@ function terminalCauseNarrative(cause) {
     return `Run terminated: ${cause.code} (${cause.dimension} ${cause.used}/${cause.limit}, ratio ${cause.ratio}).`;
   }
   if (cause?.kind === 'provider_failure') return `Run terminated: ${cause.code}.`;
+  if (cause?.kind === 'policy_failure') return `Run terminated: ${cause.code}.`;
   if (cause?.kind === 'operator_stop') return 'Run terminated: operator_stop.';
   return null;
 }
@@ -866,13 +945,7 @@ export class BatonApplication {
     this._routeCards = routeCards;
     for (const [profileName, profile] of this.profiles) {
       for (const route of [...profile.routes, ...profile.reviewPolicy.routes]) {
-        const card = routeCards.get(route.harness);
-        const selection = card?.modelSelection;
-        const modelAvailable = selection?.mode === 'exact'
-          && (!Array.isArray(selection.available) || selection.available.includes(route.model));
-        const effortAvailable = Array.isArray(selection?.reasoningEffort)
-          && selection.reasoningEffort.includes(route.effort);
-        if (!card || !modelAvailable || !effortAvailable) {
+        if (!selectExactRouteCard(routeCards, route)) {
           throw applicationError(`profile ${profileName} contains an unavailable exact route`, 'application_profile_route_unavailable');
         }
       }
@@ -961,10 +1034,16 @@ export class BatonApplication {
     if (allowed !== true) throw applicationError('application command is not authorized', 'application_unauthorized');
   }
 
-  async authorizeReplay(name, args, rawPrincipal) {
+  async authorizeReplay(name, args, rawPrincipal, rawContext = null) {
     this._assertOpen();
     validateApplicationCommandArgs(name, args);
     const principal = normalizePrincipal(rawPrincipal, 'replay principal');
+    const context = normalizeCommandContext(rawContext);
+    if (context?.sessionAuthority && name !== 'run.start' && name !== 'application.help') {
+      const recursiveCommand = ['run.status', 'run.inspect', 'run.wait', 'run.follow'].includes(name)
+        ? 'run.status' : name;
+      this._authorizeRecursiveCommand(recursiveCommand, args.runId, principal, context);
+    }
     if (name === 'run.start') {
       const intent = this._resolveIntent(args.intent);
       const profile = this._profile(intent.profile);
@@ -979,6 +1058,7 @@ export class BatonApplication {
       await this._authorize(name, principal, runId, {
         objectiveDigest: digest(intent.objective), profile: intent.profile, route: intent.route, scope,
       });
+      this._authorizeRecursiveCommand('run.start', runId, principal, context);
       return true;
     }
     if (name === 'run.approve') {
@@ -1015,6 +1095,11 @@ export class BatonApplication {
     }
     if (name === 'run.retry_verification') {
       const request = normalizeRetryVerification(args);
+      await this._authorize(name, principal, request.runId, { reasonDigest: digest(request.reason) });
+      return true;
+    }
+    if (name === 'run.resume_work') {
+      const request = normalizeResumeWork(args);
       await this._authorize(name, principal, request.runId, { reasonDigest: digest(request.reason) });
       return true;
     }
@@ -1611,12 +1696,15 @@ export class BatonApplication {
       const current = this.driver.coordination.runStop(stop.runId);
       if (!current) throw applicationError('Run stop admission is unavailable', 'application_run_stop_incomplete');
       if (current.status === 'stopped') return current.receipt;
-      await this._abortResultExportDeliveries(stop.runId);
+      const targetRunIds = current.targetRunIds ?? [stop.runId];
+      for (const targetRunId of targetRunIds) await this._abortResultExportDeliveries(targetRunId);
       // VR6: stop cancels an in-flight verifier retry exactly and settles its durable admission.
-      for (const controller of this._runRetryControllers.get(stop.runId) ?? []) controller.abort();
+      for (const targetRunId of targetRunIds) {
+        for (const controller of this._runRetryControllers.get(targetRunId) ?? []) controller.abort();
+      }
       if (typeof this.driver.coordination.pendingRunVerificationRetries === 'function') {
         for (const pending of this.driver.coordination.pendingRunVerificationRetries()
-          .filter((row) => row.runId === stop.runId)) {
+          .filter((row) => targetRunIds.includes(row.runId))) {
           try { this._cancelRunVerificationRetry(pending); }
           catch (error) {
             // The in-flight performer may have settled the same admission concurrently; a
@@ -1627,14 +1715,16 @@ export class BatonApplication {
       }
       const outcome = await this.driver.coordinator.stopRunTargets(current.targetWorkerIds, current.actor);
       if (outcome.targetCount !== current.targetWorkerIds.length
+        || outcome.remainingCount !== 0
         || outcome.counts.pendingCancelled + outcome.counts.killConfirmed + outcome.counts.alreadyTerminal !== outcome.targetCount
+        || outcome.counts.processesObserved !== outcome.counts.processesClosed
         || outcome.checks.interactionsResolved !== true || outcome.checks.runAuthorityReleased !== true) {
         throw applicationError('Run stop/reap result is incomplete', 'application_run_stop_incomplete');
       }
       const core = {
         schemaVersion: 1,
         state: 'stopped',
-        scope: 'run',
+        scope: current.scope ?? 'run',
         repoId: current.repoId,
         runId: current.runId,
         targetCount: outcome.targetCount,
@@ -1701,6 +1791,7 @@ export class BatonApplication {
       expectedDispatchVersion: 0,
       capabilities: clone(node.capabilities),
       effects: clone(node.effects),
+      ...(Object.hasOwn(node, 'requiredEffects') ? { requiredEffects: clone(node.requiredEffects) } : {}),
     };
     const route = {
       vendor: node.routes.harnesses[0],
@@ -1732,9 +1823,71 @@ export class BatonApplication {
     return this._findRun(refreshed.goal.runId).dispatch;
   }
 
-  async start(rawIntent, rawOwner) {
+  _recursiveLease(principal, context) {
+    const sessionAuthority = context?.sessionAuthority ?? null;
+    if (!sessionAuthority) return null;
+    const coordination = this.driver.coordination;
+    if (typeof coordination.runOrchestratorLease !== 'function'
+      || typeof coordination.authorizeRunOrchestratorCommand !== 'function') {
+      throw applicationError('recursive Run authority is unavailable', 'run_orchestrator_lease_not_found');
+    }
+    const lease = coordination.runOrchestratorLease(sessionAuthority.orchestratorLeaseId);
+    if (!lease) throw applicationError('recursive Run lease is unavailable', 'run_orchestrator_lease_not_found');
+    if (lease.repoId !== this.repoId || lease.session.principalId !== principal.principalId
+      || lease.session.sessionId !== principal.sessionId
+      || lease.session.authorityDigest !== sessionAuthority.authorityDigest
+      || lease.session.expiresAt !== sessionAuthority.expiresAt) {
+      throw applicationError('recursive Run session does not match its lease', 'run_orchestrator_session_mismatch');
+    }
+    return lease;
+  }
+
+  _recursiveAuth(principal, context, key) {
+    const lease = this._recursiveLease(principal, context);
+    if (!lease) return null;
+    return {
+      actor: principal.actor,
+      key,
+      principalId: principal.principalId,
+      sessionId: principal.sessionId,
+      sessionAuthorityDigest: context.sessionAuthority.authorityDigest,
+      orchestratorLeaseId: lease.leaseId,
+    };
+  }
+
+  _authorizeRecursiveCommand(command, runId, principal, context) {
+    const auth = this._recursiveAuth(
+      principal, context, `run.orchestrator.authorize:${context?.idempotencyKey ?? runId}:${command}`,
+    );
+    if (!auth) return null;
+    return this.driver.coordination.authorizeRunOrchestratorCommand({
+      schemaVersion: 1, command, repoId: this.repoId, runId,
+    }, auth);
+  }
+
+  _admitRecursiveRun(intent, principal, context) {
+    const auth = this._recursiveAuth(principal, context, `run.lineage:${intent.runId}`);
+    if (!auth) return null;
+    if (typeof this.driver.coordination.admitRunLineage !== 'function') {
+      throw applicationError('recursive Run lineage authority is unavailable', 'run_orchestrator_lease_not_found');
+    }
+    const admitted = this.driver.coordination.admitRunLineage({
+      schemaVersion: 1,
+      repoId: this.repoId,
+      childRunId: intent.runId,
+      intentDigest: digest({
+        objective: intent.objective, profile: intent.profile,
+        route: intent.route, scope: intent.scope, runId: intent.runId,
+      }),
+    }, auth);
+    this._authorizeRecursiveCommand('run.start', intent.runId, principal, context);
+    return admitted;
+  }
+
+  async start(rawIntent, rawOwner, rawContext = null) {
     this._assertOpen();
     await this.ready;
+    const context = normalizeCommandContext(rawContext);
     const requestedIntent = this._resolveIntent(rawIntent);
     const owner = normalizePrincipal(rawOwner, 'goal owner');
     const profile = this._profile(requestedIntent.profile);
@@ -1759,6 +1912,7 @@ export class BatonApplication {
     if (!profile.routes.some((route) => routeEqual(route, intent.route))) {
       throw applicationError('requested route is outside the deployment profile', 'application_route_not_allowed');
     }
+    this._admitRecursiveRun(intent, owner, context);
     const constraint = profileConstraint(intent.profile, profile);
     const goalFields = {
       objective: intent.objective,
@@ -1780,6 +1934,8 @@ export class BatonApplication {
       routes: { harnesses: [intent.route.harness], models: [intent.route.model], efforts: [intent.route.effort] },
       capabilities: clone(profile.capabilities),
       effects: clone(profile.effects),
+      ...(profile.workerPolicy ? { workerPolicy: clone(profile.workerPolicy) } : {}),
+      ...(Object.hasOwn(profile, 'requiredEffects') ? { requiredEffects: clone(profile.requiredEffects) } : {}),
     };
     const goalPlanPolicy = this.driver.coordination.goalPlanPolicy();
     const normalizedGoal = normalizeGoalRequest(goalFields, goalPlanPolicy);
@@ -1843,12 +1999,14 @@ export class BatonApplication {
     );
   }
 
-  async status(runId, rawObserver, options = {}) {
+  async status(runId, rawObserver, options = {}, rawContext = null) {
     this._assertOpen();
     await this.ready;
+    const context = normalizeCommandContext(rawContext);
     if (!validId(runId)) throw applicationError('run id is invalid', 'application_run_invalid');
     const observer = normalizePrincipal(rawObserver, 'run observer');
     const current = this._findRun(runId);
+    this._authorizeRecursiveCommand('run.status', runId, observer, context);
     await this._authorize('run.status', observer, runId, {});
     return this._buildView(current, observer, options);
   }
@@ -1903,7 +2061,6 @@ export class BatonApplication {
       && recoveryNode.routes.models.includes(handle.modelResolved)
       && recoveryNode.routes.efforts.includes(handle.effortResolved)
     )) : [];
-    const attempt = recoveryNode ? 1 : 0;
     if (handles.length === 0) {
       return this._buildView(current, this.principals.observer, {
         action: { command: 'run.recover', result: 'unavailable' },
@@ -1917,16 +2074,13 @@ export class BatonApplication {
       return this._buildView(current, this.principals.observer, {
         action: { command: 'run.recover', result: 'operator_required' },
         recovery: {
-          state: 'operator_required', reason: 'multiple_eligible_targets', attempt,
+          state: 'operator_required', reason: 'multiple_eligible_targets', attempt: 0,
           targetCount: handles.length, target: null, dispatchDisposition: null,
         },
       });
     }
-    if (attempt > policy.maxAttempts) {
-      throw applicationError('Run recovery attempt ceiling is exhausted', 'application_recovery_exhausted');
-    }
-
     const selected = handles[0];
+
     const gate = {
       goalId: current.goal.goalId,
       goalVersion: current.goal.version,
@@ -1938,14 +2092,15 @@ export class BatonApplication {
       expectedDispatchVersion: 0,
       capabilities: clone(recoveryNode.capabilities),
       effects: clone(recoveryNode.effects),
+      ...(Object.hasOwn(recoveryNode, 'requiredEffects') ? { requiredEffects: clone(recoveryNode.requiredEffects) } : {}),
     };
     if (typeof this.driver.coordinator.recoverPlanBound !== 'function') {
       throw applicationError('application driver lacks Plan recovery authority', 'application_recovery_unavailable');
     }
     const outcome = await this.driver.coordinator.recoverPlanBound(selected.id, {
       actor: principal.actor,
-      attempt,
       gate,
+      maxAttempts: policy.maxAttempts,
       profileDigest: current.profile.digest,
       recoveryPolicyDigest: digest(policy),
       runId,
@@ -1973,7 +2128,7 @@ export class BatonApplication {
     };
     const recovery = outcome?.ok === true ? {
       state: 'working',
-      attempt: outcome.attempt ?? attempt,
+      attempt: outcome.attempt ?? 0,
       target: { workerId: selected.id, taskId: outcome.taskId ?? recoveredHandle?.taskId ?? null },
       dispatchDisposition: outcome.dispatchDisposition
         ?? this.driver.coordination.recoveryDispatchState?.(selected.id)?.status ?? null,
@@ -1983,7 +2138,7 @@ export class BatonApplication {
     } : {
       state: result === 'dispatch_unknown' ? 'operator_required' : 'failed',
       reason: result,
-      attempt,
+      attempt: outcome?.attempt ?? 0,
       targetCount: 1,
       target: null,
       dispatchDisposition: result === 'dispatch_unknown' ? 'dispatch_unknown' : null,
@@ -2030,6 +2185,7 @@ export class BatonApplication {
       observedThroughSeq: relevantSeqs.length > 0 ? Math.max(...relevantSeqs) : 0,
       bindings: {
         profileDigest: view.profile.digest,
+        workerPolicy: clone(view.workerPolicy),
         goal: clone(view.goal),
         plan: view.plan ? {
           id: view.plan.id, version: view.plan.version, digest: view.plan.digest,
@@ -2267,6 +2423,91 @@ export class BatonApplication {
     });
   }
 
+  // PS5: the preserved-work branch of the recovery cascade. Where run.recover reattaches an
+  // attachable native session, resume_work restores a terminal preserved checkpoint into a fresh
+  // owned task. The caller supplies only a bounded reason; every coordinate is server-derived
+  // from the approved Plan, the pinned checkpoint, and the orchestrator-selected route policy.
+  async resumeWork(rawRequest, rawPrincipal, internal = {}) {
+    this._assertOpen();
+    await this.ready;
+    const request = normalizeResumeWork(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'resume principal');
+    await this._authorize('run.resume_work', principal, request.runId, { reasonDigest: digest(request.reason) });
+    this._assertRunMutable(request.runId);
+    const current = this._findRun(request.runId);
+    if (!current.plan || current.approval?.disposition !== 'approved') {
+      throw applicationError('Run resume requires an approved current Plan', 'application_resume_unavailable');
+    }
+    const view = await this._buildView(current, this.principals.observer);
+    if (view.phase !== 'cancelled') {
+      throw applicationError('Run resume requires a cancelled Run with preserved progress', 'application_resume_unavailable');
+    }
+    const node = view.nodes[0];
+    const task = node?.taskId ? this.driver.coordination.task(node.taskId) : null;
+    if (!task?.assignee) {
+      throw applicationError('Run resume preserved worker is unavailable', 'application_resume_unavailable');
+    }
+    const workerId = task.assignee;
+    let preservedResult;
+    try { preservedResult = await this.driver.coordinator.result(workerId); }
+    catch (error) { if (error?.code !== 'not_found') throw error; }
+    const checkpoint = preservedResult?.checkpoint?.state === 'pinned' ? preservedResult.checkpoint : null;
+    if (!checkpoint || !/^[a-f0-9]{40,64}$/u.test(checkpoint.sha ?? '') || typeof checkpoint.ref !== 'string') {
+      throw applicationError('Run resume preserved checkpoint is unavailable', 'application_resume_unavailable');
+    }
+    if (typeof this.driver.coordinator.resumePreservedWork !== 'function') {
+      throw applicationError('application driver lacks preserved resume authority', 'application_resume_unavailable');
+    }
+    // Orchestrator-selected route: the approved Plan node's first route. The Coordinator refuses
+    // anything but a harness/model/effort triple selected together and never a silent low default.
+    const planNode = current.plan.nodes[0];
+    const route = {
+      vendor: planNode.routes.harnesses[0],
+      model: planNode.routes.models[0],
+      effort: planNode.routes.efforts[0],
+    };
+    const gate = {
+      goalId: current.goal.goalId, goalVersion: current.goal.version, goalDigest: current.goal.digest,
+      planId: current.plan.planId, planVersion: current.plan.version, planDigest: current.plan.digest,
+      nodeKey: planNode.key, expectedDispatchVersion: 0,
+      capabilities: clone(planNode.capabilities), effects: clone(planNode.effects),
+      ...(Object.hasOwn(planNode, 'requiredEffects') ? { requiredEffects: clone(planNode.requiredEffects) } : {}),
+    };
+    const resumeTaskId = `baton-${digest({
+      repoId: this.repoId, runId: request.runId, planDigest: current.plan.digest,
+      nodeKey: planNode.key, checkpointSha: checkpoint.sha, resume: true,
+    }).slice(0, 24)}-resume`;
+    const outcome = await this.driver.coordinator.resumePreservedWork(workerId, {
+      actor: this.principals.dispatcher.actor,
+      principalId: this.principals.dispatcher.principalId,
+      sessionId: this.principals.dispatcher.sessionId,
+      powers: ['plan:dispatch'],
+      runId: request.runId,
+      taskId: resumeTaskId,
+      idempotencyKey: `application:${request.runId}:resume:${planNode.key}:${checkpoint.sha}`,
+      reasonDigest: digest(request.reason),
+      gate, route,
+      checkpointSha: checkpoint.sha,
+      checkpointRef: checkpoint.ref,
+      semanticActionId: internal.actionId,
+      semanticPrincipalScopeDigest: internal.principalScopeDigest,
+    });
+    const resume = outcome?.ok === true ? {
+      state: 'working',
+      preservedTaskId: outcome.preservedTaskId ?? null,
+      target: { workerId: outcome.workerId ?? null, taskId: outcome.taskId ?? null },
+      checkpoint: { state: 'pinned', sha: checkpoint.sha },
+      route: clone(outcome.route ?? null),
+      cleanup: clone(outcome.cleanup ?? { state: 'owned' }),
+    } : {
+      state: 'failed', reason: outcome?.result ?? 'resume_failed', target: null,
+    };
+    return this._buildView(current, this.principals.observer, {
+      action: { command: 'run.resume_work', result: outcome?.ok === true ? 'resumed' : (outcome?.result ?? 'resume_failed') },
+      resume,
+    });
+  }
+
   async review(rawRequest, rawPrincipal) {
     this._assertOpen();
     await this.ready;
@@ -2287,10 +2528,10 @@ export class BatonApplication {
     if (!['work_completed', 'reviewing'].includes(view.phase) || !view.result?.sha) {
       throw applicationError('Run has no reviewable accepted result', 'application_review_unavailable');
     }
-    const implementerCard = this._routeCards.get(view.route.requested.harness);
-    const reviewerCard = this._routeCards.get(request.route.harness);
-    if (!implementerCard || !reviewerCard || view.route.requested.harness === request.route.harness
-      || implementerCard.modelSelection?.family === reviewerCard.modelSelection?.family) {
+    const implementerRoute = selectExactRouteCard(this._routeCards, view.route.requested);
+    const reviewerRoute = selectExactRouteCard(this._routeCards, request.route);
+    if (!implementerRoute || !reviewerRoute || implementerRoute.name === reviewerRoute.name
+      || implementerRoute.card.modelSelection?.family === reviewerRoute.card.modelSelection?.family) {
       throw applicationError('semantic review route is not independent from the implementer', 'application_review_not_independent');
     }
     const target = this._semanticTarget(current, view);
@@ -2632,6 +2873,23 @@ export class BatonApplication {
         available, attempt, checkpointSha: result.checkpoint.sha, candidatePreserved,
       };
     }
+    // PS5: while a cancelled Run's pinned checkpoint and approved Plan remain current, offer one
+    // coordinate-free resume_work action. Preservation is not acceptance: the projection only
+    // advertises the resume, never an adopted result.
+    let resumeProjection = null;
+    if (phase === 'cancelled' && result?.checkpoint?.state === 'pinned' && !runStop
+      && projection.approval?.disposition === 'approved'
+      && typeof this.driver.coordinator.resumePreservedWork === 'function') {
+      let candidatePreserved = false;
+      if (workerId && typeof this.driver.coordinator.inspectCheckpoint === 'function') {
+        candidatePreserved = (await this.driver.coordinator.inspectCheckpoint(workerId)).state === 'pinned';
+      }
+      resumeProjection = {
+        available: candidatePreserved && !!node.taskId,
+        checkpointSha: result.checkpoint.sha,
+        candidatePreserved,
+      };
+    }
     const terminalCause = projectTypedTerminalCause({ terminalResult: result, runStop });
 
     const workers = this.driver.coordinator.list()
@@ -2644,6 +2902,10 @@ export class BatonApplication {
     };
     const route = projectRunRouteEvidence({ requested, liveHandle: ownedWorker, terminalResult: result, phase });
     const { resolved, observed, launchEnforcement, providerAttestation } = route;
+    const workerPolicy = ownedWorker?.workerPolicy
+      ?? (current.plan.nodes[0].workerPolicy
+        ? { state: 'requested', request: clone(current.plan.nodes[0].workerPolicy) }
+        : { state: 'legacy_unattested' });
     const story = this.driver.story.snapshot();
     const handlesById = new Map(workers.map((handle) => [handle.id, handle]));
     const runWorkerIds = new Set(workers.map((handle) => handle.id));
@@ -2681,6 +2943,7 @@ export class BatonApplication {
         route: requested,
         capabilities: clone(planNode.capabilities),
         effects: clone(planNode.effects),
+        ...(Object.hasOwn(planNode, 'requiredEffects') ? { requiredEffects: clone(planNode.requiredEffects) } : {}),
       },
       profileDigest: current.profile.digest,
       planDigest: current.plan.digest,
@@ -2768,6 +3031,7 @@ export class BatonApplication {
           ]
             : APPLICATION_RUN_TERMINAL_PHASES.has(phase) ? [
               ...(retryProjection?.available ? [{ kind: 'retry_verification' }] : []),
+              ...(resumeProjection?.available ? [{ kind: 'resume_work' }] : []),
               { kind: 'evidence' },
               ...exportActions,
               ...(canAdopt ? [{ kind: 'adopt_result', nodeKey: node.key, resultSha }] : [])]
@@ -2808,6 +3072,7 @@ export class BatonApplication {
           providerAttestation: 'provider-native observation only',
         },
       },
+      workerPolicy: clone(workerPolicy),
       budget: { allocated: clone(current.goal.budget), node: clone(node.budget), termination: terminalCause },
       attention,
       attentionTruncated,
@@ -2837,6 +3102,10 @@ export class BatonApplication {
           : runNarrative(story.workers, runWorkerIds)),
       lastAction: options.action ? clone(options.action) : null,
       recovery: options.recovery ? clone(options.recovery) : null,
+      preservation: resumeProjection ? {
+        state: 'pinned', available: resumeProjection.available, checkpointSha: resumeProjection.checkpointSha,
+      } : (result?.checkpoint?.state === 'pinned' ? { state: 'pinned', available: false, checkpointSha: result.checkpoint.sha } : { state: 'unavailable', available: false, checkpointSha: null }),
+      resume: options.resume ? clone(options.resume) : null,
       terminalCause,
       stop: runStop ? {
         state: runStop.status, admittedAt: runStop.admittedAt, completedAt: runStop.completedAt,
@@ -2850,18 +3119,19 @@ export class BatonApplication {
     return deepFreeze(view);
   }
 
-  async wait(runId, rawObserver, options = {}) {
+  async wait(runId, rawObserver, options = {}, rawContext = null) {
     this._assertOpen();
+    const context = normalizeCommandContext(rawContext);
     exactObject(options, ['timeoutMs'], 'application_wait_invalid', 'wait options');
     if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0 || options.timeoutMs > 24 * 60 * 60 * 1000) {
       throw applicationError('wait timeout is invalid', 'application_wait_invalid');
     }
     const observer = normalizePrincipal(rawObserver, 'run observer');
     const deadline = Date.now() + options.timeoutMs;
-    let view = await this.status(runId, observer);
+    let view = await this.status(runId, observer, {}, context);
     while (!PROVIDER_EXECUTION_SETTLED_PHASES.has(view.phase) && Date.now() < deadline) {
       await this.driver.coordinator.wait(Math.min(100, Math.max(1, deadline - Date.now())));
-      view = await this.status(runId, observer);
+      view = await this.status(runId, observer, {}, context);
     }
     return view;
   }
@@ -2870,6 +3140,7 @@ export class BatonApplication {
     if (['goal.version_defined', 'plan.version_proposed', 'plan.approval_decided',
       'plan.node_dispatched', 'plan.node_budget_settled'].includes(event.kind)) return 'plan';
     if (['task.created', 'task.claimed', 'task.transitioned', 'task.acceptance_revoked'].includes(event.kind)) return 'execution';
+    if (event.kind.startsWith('run.orchestrator_lease_') || event.kind.startsWith('run.lineage_')) return 'orchestration';
     if (['artifact.registered', 'artifact.superseded', 'evidence.mapped'].includes(event.kind)) return 'evidence';
     if (event.kind.startsWith('run.result_')) return 'result';
     if (event.kind.startsWith('run.stop_')) return 'cleanup';
@@ -2887,6 +3158,14 @@ export class BatonApplication {
   _eventBelongsToRun(event, current) {
     const payload = event.payload ?? {};
     const runId = current.goal.runId;
+    if (event.kind.startsWith('run.orchestrator_lease_')) return payload.parent?.runId === runId;
+    if (event.kind.startsWith('run.lineage_')) {
+      return payload.childRunId === runId || payload.parentRunId === runId
+        || payload.rootRunId === runId || payload.ancestors?.includes(runId) === true;
+    }
+    if (event.kind.startsWith('run.stop_')) {
+      return payload.runId === runId || payload.targetRunIds?.includes(runId) === true;
+    }
     const explicit = [payload.runId, payload.goal?.runId, payload.plan?.runId,
       payload.authority?.runId, payload.binding?.runId].filter((value) => value !== undefined && value !== null);
     if (explicit.some((value) => value !== runId)) return false;
@@ -2907,6 +3186,7 @@ export class BatonApplication {
     const summaries = {
       plan: 'Run Plan authority changed.',
       execution: 'Run execution state changed.',
+      orchestration: 'Run orchestration authority or topology changed.',
       verification: 'Run verification state changed.',
       evidence: 'Run evidence changed.',
       result: 'Run result selection changed.',
@@ -2944,9 +3224,10 @@ export class BatonApplication {
     };
   }
 
-  async follow(runId, rawObserver, options = {}) {
+  async follow(runId, rawObserver, options = {}, rawContext = null) {
     this._assertOpen();
     await this.ready;
+    const context = normalizeCommandContext(rawContext);
     exactObject(options, ['afterCursor', 'timeoutMs'], 'application_follow_invalid', 'follow options');
     const observer = normalizePrincipal(rawObserver, 'run observer');
     const current = this._findRun(runId);
@@ -2959,6 +3240,7 @@ export class BatonApplication {
       || options.timeoutMs > policy.maxWaitMs) {
       throw applicationError('Run follow request exceeds deployment policy', 'application_follow_invalid');
     }
+    this._authorizeRecursiveCommand('run.status', runId, observer, context);
     await this._authorize('run.follow', observer, runId, { afterCursor: options.afterCursor });
     const deadline = Date.now() + options.timeoutMs;
     const controller = new AbortController();
@@ -2989,6 +3271,7 @@ export class BatonApplication {
           if (controller.signal.aborted) {
             throw applicationError('Run follow was cancelled', 'application_follow_cancelled');
           }
+          this._authorizeRecursiveCommand('run.status', runId, observer, context);
           await this._authorize('run.follow', observer, runId, { afterCursor: options.afterCursor });
           const result = deepFreeze({ ...clone(view), follow });
           if (Buffer.byteLength(JSON.stringify(result)) > policy.maxResponseBytes) {
@@ -3012,7 +3295,7 @@ export class BatonApplication {
     }
   }
 
-  _semanticActionId(current, view, principal, kind) {
+  _semanticActionId(current, view, principal, kind, target = null) {
     return digest({
       schemaVersion: 1,
       registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
@@ -3021,29 +3304,65 @@ export class BatonApplication {
       principalScopeDigest: digest({ principalId: principal.principalId, sessionId: principal.sessionId }),
       profileDigest: current.profile.digest,
       planDigest: current.plan?.digest ?? null,
-      viewDigest: digest(view),
+      viewDigest: semanticViewDigest(view),
       kind,
+      target,
     });
   }
 
-  _semanticActions(current, view, principal) {
-    const kinds = [];
-    if (view.phase === 'awaiting_plan_approval') kinds.push('approve_plan');
-    for (const candidate of view.nextActions ?? []) {
-      if (['adopt_result', 'semantic_review', 'integrate', 'export_result', 'retry_verification'].includes(candidate.kind)
-        && !kinds.includes(candidate.kind)) kinds.push(candidate.kind);
+  _replaySemanticResumeAction(current, request, principal) {
+    if (!request.inputs || Object.keys(request.inputs).sort().join(',') !== 'reason'
+      || !validText(request.inputs.reason, 1_024)) return null;
+    const principalScopeDigest = digest({ principalId: principal.principalId, sessionId: principal.sessionId });
+    const reasonDigest = digest(request.inputs.reason);
+    const workers = this.driver.coordinator.list().filter((handle) => handle.runId === request.runId);
+    for (const handle of workers) {
+      const replay = this.driver.log.read(handle.id).findLast?.((event) => event.kind === 'work.resumed'
+        && event.payload?.runId === request.runId
+        && event.payload?.semanticActionId === request.actionId
+        && event.payload?.semanticPrincipalScopeDigest === principalScopeDigest
+        && event.payload?.reasonDigest === reasonDigest);
+      if (!replay) continue;
+      const resumedTask = this.driver.coordination.task(replay.payload.resumedTaskId);
+      if (resumedTask?.runId === request.runId && resumedTask.refines === replay.payload.preservedTaskId) {
+        return replay.payload;
+      }
     }
-    if (!['stopped', 'closed'].includes(view.phase)) kinds.push('stop');
-    return kinds.map((kind) => {
+    return null;
+  }
+
+  _semanticActions(current, view, principal) {
+    const candidates = [];
+    if (view.phase === 'awaiting_plan_approval') candidates.push({ kind: 'approve_plan', source: null, target: null });
+    for (const candidate of view.nextActions ?? []) {
+      if (['adopt_result', 'semantic_review', 'integrate', 'export_result', 'retry_verification', 'resume_work'].includes(candidate.kind)
+        && !candidates.some((entry) => entry.kind === candidate.kind)) {
+        candidates.push({ kind: candidate.kind, source: candidate, target: null });
+      }
+    }
+    for (const attention of view.attention ?? []) {
+      if (!['answer_approval', 'answer_question'].includes(attention.kind)
+        || !validText(attention.requestId, 4_096)) continue;
+      const target = {
+        kind: attention.kind,
+        workerId: attention.workerId ?? null,
+        requestId: attention.requestId,
+        ...(attention.kind === 'answer_approval'
+          ? { approvalKind: attention.approvalKind ?? null }
+          : { question: attention.question ?? null }),
+      };
+      candidates.push({ kind: attention.kind, source: attention, target });
+    }
+    if (!['stopped', 'closed'].includes(view.phase)) candidates.push({ kind: 'stop', source: null, target: null });
+    return candidates.map(({ kind, source, target }) => {
       const definition = APPLICATION_SEMANTIC_REGISTRY.actions[kind];
-      const viewDigest = digest(view);
+      const viewDigest = semanticViewDigest(view);
       const inputSchema = clone(definition.inputSchema);
-      const source = (view.nextActions ?? []).find((candidate) => candidate.kind === kind) ?? null;
       if (kind === 'integrate' && source?.strategies) {
         inputSchema.properties.strategy.enum = clone(source.strategies);
       }
       return deepFreeze({
-        actionId: this._semanticActionId(current, view, principal, kind),
+        actionId: this._semanticActionId(current, view, principal, kind, target),
         kind,
         label: definition.label,
         summary: definition.summary,
@@ -3056,6 +3375,7 @@ export class BatonApplication {
         priority: definition.priority,
         choices: kind === 'semantic_review' ? clone(source?.routes ?? [])
           : kind === 'integrate' ? clone(source?.strategies ?? []) : [],
+        ...(target ? { target: clone(target) } : {}),
         freshness: {
           registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
           viewDigest,
@@ -3085,12 +3405,13 @@ export class BatonApplication {
     }
     continuationArguments[metadata.cursorArgument] = view.cursor;
     continuationArguments[metadata.waitArgument] = current.profile.followPolicy.maxWaitMs;
+    const changeAware = current.profile.followPolicy.mode === 'enabled';
     return {
       schemaVersion: 1,
       runId: current.goal.runId,
       depth,
       registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
-      viewDigest: digest(view),
+      viewDigest: semanticViewDigest(view),
       cursor: view.cursor,
       changed: change.changed ?? false,
       timedOut: change.timedOut ?? false,
@@ -3098,7 +3419,8 @@ export class BatonApplication {
       bounds: this._semanticBounds(current),
       truncated: false,
       help: [{ topic: depth === 'outline' ? 'run.inspect' : `run.inspect.${depth}`, depth: 'outline' }],
-      ...(terminal ? {} : { continuation: { operation: metadata.operation, arguments: continuationArguments } }),
+      ...(terminal || !changeAware
+        ? {} : { continuation: { operation: metadata.operation, arguments: continuationArguments } }),
     };
   }
 
@@ -3121,11 +3443,13 @@ export class BatonApplication {
     if (sectionId === 'attention') {
       return (view.attention ?? []).map((entry, index) => ({
         id: `attention:${index + 1}:c${view.cursor}`, section: 'attention', state: entry.state,
-        summary: entry.prompt || entry.kind || 'Run attention is required.',
+        summary: entry.question || entry.approvalKind || entry.kind || 'Run attention is required.',
+        value: clone(entry),
       }));
     }
     const single = {
       execution: { state: view.phase, terminalCause: view.terminalCause ?? null },
+      orchestration: this.driver.coordination.runOrchestrationView?.(current.goal.runId) ?? null,
       route: view.route,
       budget: view.budget,
       verification: view.verification,
@@ -3135,6 +3459,7 @@ export class BatonApplication {
       cleanup: {
         state: view.stop?.state ?? (view.progress?.resources?.state ?? 'pending'),
         terminalCause: view.terminalCause ?? null,
+        preservation: view.preservation ?? null,
       },
     }[sectionId];
     return single == null ? [] : [{
@@ -3144,15 +3469,17 @@ export class BatonApplication {
     }];
   }
 
-  async inspect(rawRequest, rawPrincipal) {
+  async inspect(rawRequest, rawPrincipal, rawContext = null) {
     this._assertOpen();
     await this.ready;
+    const context = normalizeCommandContext(rawContext);
     validateApplicationCommandArgs('run.inspect', rawRequest);
     const request = deepFreeze({ depth: 'outline', ...clone(rawRequest) });
     const principal = normalizePrincipal(rawPrincipal, 'inspection principal');
     const authorizationSubject = {
       depth: request.depth, section: request.section ?? null, item: request.item ?? null,
     };
+    this._authorizeRecursiveCommand('run.status', request.runId, principal, context);
     await this._authorize('run.status', principal, request.runId, authorizationSubject);
     const current = this._findRun(request.runId);
     const policy = current.profile.followPolicy;
@@ -3192,6 +3519,7 @@ export class BatonApplication {
           if (controller.signal.aborted) {
             throw applicationError('Run inspection was cancelled', 'application_inspect_cancelled');
           }
+          this._authorizeRecursiveCommand('run.status', request.runId, principal, context);
           view = await this._buildView(current, this.principals.observer);
           await this._authorize('run.status', principal, request.runId, authorizationSubject);
           if (notification?.advanced === false && !APPLICATION_RUN_TERMINAL_PHASES.has(view.phase)) {
@@ -3208,6 +3536,7 @@ export class BatonApplication {
         this._followControllers.delete(controller);
       }
     }
+    this._authorizeRecursiveCommand('run.status', request.runId, principal, context);
     const changed = request.cursor !== undefined && relevantChange;
     const base = this._semanticEnvelope(current, view, request, {
       changed,
@@ -3215,6 +3544,7 @@ export class BatonApplication {
     });
     if (request.depth === 'outline') {
       const attention = view.attention ?? [];
+      const orchestration = this.driver.coordination.runOrchestrationView?.(current.goal.runId) ?? null;
       const outline = {
         phase: view.phase,
         narrative: view.narrative,
@@ -3226,6 +3556,7 @@ export class BatonApplication {
           summary: attention.length > 0 ? 'Run attention is required; expand the attention section.' : 'No operator attention is pending.',
         },
         route: clone(view.route),
+        workerPolicy: clone(view.workerPolicy),
         terminalCause: clone(view.terminalCause ?? null),
         budget: clone(view.budget),
         resources: {
@@ -3233,6 +3564,15 @@ export class BatonApplication {
           ownedCount: view.ownership?.workers ?? 0,
           cleanupState: view.stop?.state ?? (view.progress?.resources?.state ?? 'pending'),
           terminalCause: clone(view.terminalCause ?? null),
+        },
+        ...(orchestration ? { orchestration: clone(orchestration) } : {}),
+        // PS3/PS7: outline depth says plainly whether work was preserved, the stop reason, the
+        // cleanup state, and the next semantic action — never the checkpoint ref/SHA or a path.
+        preservation: {
+          state: view.preservation?.state ?? 'unavailable',
+          resumeAvailable: view.preservation?.available === true,
+          summary: view.preservation?.state === 'pinned' ? 'Work preserved; resume available after fresh verification.'
+            : 'No preserved work is advertised.',
         },
         actions: this._semanticActions(current, view, principal),
       };
@@ -3304,19 +3644,25 @@ export class BatonApplication {
     });
     if (request.runId !== undefined) this._findRun(request.runId);
     const section = APPLICATION_SEMANTIC_REGISTRY.sections.find((entry) => request.topic.endsWith(`.${entry.id}`));
+    const workerPolicyTopic = request.topic === 'worker-policy' || request.topic.endsWith('.worker-policy');
     return deepFreeze({
       schemaVersion: 1,
       topic: request.topic,
       depth: request.depth,
       registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
-      title: section ? `${section.id.replaceAll('_', ' ')} inspection` : request.topic,
-      summary: section?.summary ?? 'Start or open a Run, inspect only the depth needed, then perform a currently offered action. For a nonterminal response, call its continuation descriptor to wait for the next relevant change; this is the preferred change-aware workflow.',
-      examples: section && request.runId
+      title: workerPolicyTopic ? 'worker permission policy' : section ? `${section.id.replaceAll('_', ' ')} inspection` : request.topic,
+      summary: workerPolicyTopic
+        ? 'Worker policy separates approval autonomy, full-versus-workspace harness access, and independently attested containment. The default is unattended full access; a worktree and private runtime do not prove host containment.'
+        : section?.summary ?? 'Start or open a Run, inspect only the depth needed, then perform a currently offered action. For a nonterminal response, call its continuation descriptor to wait for the next relevant change; this is the preferred change-aware workflow.',
+      examples: workerPolicyTopic && request.runId
+        ? [{ operation: 'run.inspect', arguments: { runId: request.runId, depth: 'outline' }, resultField: 'outline.workerPolicy' }]
+        : section && request.runId
         ? [{ operation: 'run.inspect', arguments: { runId: request.runId, depth: 'section', section: section.id } }]
         : [{ operation: 'run.inspect', arguments: { runId: 'RUN_ID', depth: 'outline' } }],
       links: [
         { topic: 'run.inspect', depth: 'outline' },
         { topic: 'run.act', depth: 'outline' },
+        { topic: 'worker-policy', depth: 'outline' },
         { topic: 'advanced', depth: 'outline' },
       ],
     });
@@ -3333,7 +3679,13 @@ export class BatonApplication {
     const view = await this._buildView(current, this.principals.observer);
     const action = this._semanticActions(current, view, principal)
       .find((candidate) => candidate.actionId === request.actionId);
-    if (!action) throw applicationError('Run action is outside the current authority scope', 'application_action_scope_mismatch');
+    if (!action) {
+      const replay = this._replaySemanticResumeAction(current, request, principal);
+      if (replay) {
+        return this.inspect({ runId: request.runId, depth: 'outline' }, principal);
+      }
+      throw applicationError('Run action is outside the current authority scope', 'application_action_scope_mismatch');
+    }
     const supplied = Object.keys(request.inputs).sort();
     const allowed = Object.keys(action.inputSchema.properties).sort();
     const required = [...(action.inputSchema.required ?? [])].sort();
@@ -3342,6 +3694,19 @@ export class BatonApplication {
     }
     if (action.kind === 'approve_plan') {
       await this.approve(request.runId, current.plan.digest, principal);
+    } else if (action.kind === 'answer_approval') {
+      if (!['allow', 'deny', 'cancel'].includes(request.inputs.decision)
+        || !validText(action.target?.requestId, 4_096)) {
+        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
+      }
+      await this.answer(request.runId, action.target.requestId, { decision: request.inputs.decision }, principal);
+    } else if (action.kind === 'answer_question') {
+      if (!validText(request.inputs.text, MAX_ATTENTION_TEXT_BYTES)
+        || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(request.inputs.text))
+        || !validText(action.target?.requestId, 4_096)) {
+        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
+      }
+      await this.answer(request.runId, action.target.requestId, { text: request.inputs.text }, principal);
     } else if (action.kind === 'adopt_result') {
       if (!validText(request.inputs.reason, 1_024)) {
         throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
@@ -3359,6 +3724,18 @@ export class BatonApplication {
         throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
       }
       await this.retryVerification({ runId: request.runId, reason: request.inputs.reason }, principal);
+    } else if (action.kind === 'resume_work') {
+      if (!validText(request.inputs.reason, 1_024)) {
+        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
+      }
+      await this.resumeWork(
+        { runId: request.runId, reason: request.inputs.reason },
+        principal,
+        {
+          actionId: action.actionId,
+          principalScopeDigest: digest({ principalId: principal.principalId, sessionId: principal.sessionId }),
+        },
+      );
     } else if (action.kind === 'semantic_review') {
       if (!Number.isSafeInteger(request.inputs.routeIndex) || request.inputs.routeIndex < 0
         || !validText(request.inputs.reason, 1_024)) {
@@ -3415,37 +3792,46 @@ export class BatonApplication {
         followPolicy: clone(profile.followPolicy),
         exportPolicy: clone(profile.exportPolicy),
         recoveryPolicy: clone(profile.recoveryPolicy),
+        workerPolicy: profile.workerPolicy ? clone(profile.workerPolicy) : null,
       })).sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0),
     });
   }
 
-  async command(name, args, rawPrincipal) {
+  async command(name, args, rawPrincipal, rawContext = null) {
     if (!validText(name, 64)) throw applicationError('application command is invalid', 'application_command_invalid');
     const principal = normalizePrincipal(rawPrincipal, 'command principal');
+    const context = normalizeCommandContext(rawContext);
     validateApplicationCommandArgs(name, args);
+    const recursiveReadCommands = new Set(['application.help', 'run.inspect', 'run.status', 'run.follow', 'run.wait']);
+    const recursiveEffectCommands = new Set(['run.start', 'run.stop']);
+    if (context?.sessionAuthority && !recursiveReadCommands.has(name) && !recursiveEffectCommands.has(name)) {
+      const runId = args?.runId ?? args?.intent?.runId ?? null;
+      if (validId(runId)) this._authorizeRecursiveCommand(name, runId, principal, context);
+      throw applicationError('recursive Run command is forbidden', 'run_orchestrator_command_forbidden');
+    }
     if (name === 'application.help') {
       return this.help(args, principal);
     }
     if (name === 'run.start') {
-      return this.start(args.intent, principal);
+      return this.start(args.intent, principal, context);
     }
     if (name === 'run.inspect') {
-      return this.inspect(args, principal);
+      return this.inspect(args, principal, context);
     }
     if (name === 'run.act') {
       return this.act(args, principal);
     }
     if (name === 'run.status') {
-      return this.status(args.runId, principal);
+      return this.status(args.runId, principal, {}, context);
     }
     if (name === 'run.follow') {
-      return this.follow(args.runId, principal, { afterCursor: args.afterCursor, timeoutMs: args.timeoutMs });
+      return this.follow(args.runId, principal, { afterCursor: args.afterCursor, timeoutMs: args.timeoutMs }, context);
     }
     if (name === 'run.approve') {
       return this.approve(args.runId, args.planDigest, principal);
     }
     if (name === 'run.wait') {
-      return this.wait(args.runId, principal, { timeoutMs: args.timeoutMs });
+      return this.wait(args.runId, principal, { timeoutMs: args.timeoutMs }, context);
     }
     if (name === 'run.answer') {
       return this.answer(args.runId, args.requestId, args.answer, principal);
@@ -3454,7 +3840,7 @@ export class BatonApplication {
       return this.steer(args, principal);
     }
     if (name === 'run.stop') {
-      return this.stop(args.runId, args.reason, principal);
+      return this.stop(args.runId, args.reason, principal, context);
     }
     if (name === 'run.evidence') {
       return this.evidence(args.runId, principal);
@@ -3464,6 +3850,9 @@ export class BatonApplication {
     }
     if (name === 'run.retry_verification') {
       return this.retryVerification(args, principal);
+    }
+    if (name === 'run.resume_work') {
+      return this.resumeWork(args, principal);
     }
     if (name === 'run.review') {
       return this.review(args, principal);
@@ -3535,15 +3924,17 @@ export class BatonApplication {
     });
   }
 
-  async stop(runId, rawReason, rawPrincipal) {
+  async stop(runId, rawReason, rawPrincipal, rawContext = null) {
     this._assertOpen();
     await this.ready;
+    const context = normalizeCommandContext(rawContext);
     const request = normalizeStop({ runId, reason: rawReason });
     const principal = normalizePrincipal(rawPrincipal, 'stop principal');
-    return this._withRunEffect(request.runId, () => this._stop(request, principal));
+    return this._withRunEffect(request.runId, () => this._stop(request, principal, context));
   }
 
-  async _stop(request, principal) {
+  async _stop(request, principal, context = null) {
+    this._authorizeRecursiveCommand('run.stop', request.runId, principal, context);
     await this._authorize('run.stop', principal, request.runId, { reasonDigest: digest(request.reason) });
     const current = this._findRun(request.runId);
     let stop = this.driver.coordination.runStop(request.runId);
