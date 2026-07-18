@@ -9,6 +9,7 @@ const ARTIFACT_MEDIA = Object.freeze({
   context_value: 'application/vnd.baton.context-value+json',
   context_evidence: 'application/vnd.baton.context-cell-evidence+json',
   context_call_evidence: 'application/vnd.baton.context-call-evidence+json',
+  context_provider_result: 'application/vnd.baton.context-provider-result+json',
 });
 const AUTHORITY_FIELDS = Object.freeze(['actor', 'principalId', 'repoId', 'runId']);
 

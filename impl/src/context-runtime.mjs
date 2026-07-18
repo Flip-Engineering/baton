@@ -11,7 +11,11 @@ import {
   contextValueDigest, normalizeContextManifest, normalizeContextProgramPolicy,
 } from './context-program.mjs';
 import { normalizeContextMapCall } from './context-map.mjs';
-import { pathInScopes } from './path-scope.mjs';
+import {
+  contextProviderResultCapsule, contextRetainedCommitProjection,
+  validateContextProviderResultCapsule,
+} from './context-result.mjs';
+import { pathInScopes, pathScopeRegex } from './path-scope.mjs';
 
 const WORKFLOW_DEFINITION = 'application.workflow_definition_bound';
 const TEXT_EXTENSIONS = new Set([
@@ -186,6 +190,126 @@ function verifiedRepositoryEntries(repoRoot, gitAuthority, commitSha, policy) {
   };
 }
 
+function retainedCommitIsDescendant(repoRoot, gitAuthority, baseSha, resultSha, policy) {
+  const pending = [resultSha];
+  const visited = new Set();
+  while (pending.length > 0) {
+    const commitSha = pending.pop();
+    if (commitSha === baseSha) return true;
+    if (visited.has(commitSha)) continue;
+    visited.add(commitSha);
+    if (visited.size > policy.maxEvidenceCoordinates) {
+      throw runtimeError('Retained result ancestry exceeds Context authority',
+        'context_result_ancestry_invalid');
+    }
+    const commit = gitObject(repoRoot, gitAuthority, 'commit', commitSha,
+      Math.min(policy.maxArtifactBytes, 1024 * 1024));
+    const parents = [...commit.toString('utf8').matchAll(/^parent ([a-f0-9]{40})$/gmu)]
+      .map((match) => match[1]);
+    pending.push(...parents);
+  }
+  return false;
+}
+
+function retainedResultSource(repoRoot, gitAuthority, entries, changedPaths, policy) {
+  const byPath = new Map(entries.map((entry) => [entry.path, entry]));
+  const items = [];
+  let artifactBytes = 0;
+  const chunkBytes = Math.min(12 * 1024, policy.maxTextBytes);
+  for (const path of changedPaths) {
+    const entry = byPath.get(path);
+    if (!entry || !['100644', '100755'].includes(entry.mode)
+      || EXCLUDED_PATH.test(path) || !TEXT_EXTENSIONS.has(extname(path).toLowerCase())) {
+      throw runtimeError('Retained result contains an unsupported changed path',
+        'context_result_content_invalid');
+    }
+    const content = gitObject(repoRoot, gitAuthority, 'blob', entry.oid, policy.maxArtifactBytes);
+    if (content.byteLength === 0
+      || content.byteLength > Math.min(policy.maxArtifactBytes, 2 * 1024 * 1024)
+      || content.includes(0)) {
+      throw runtimeError('Retained result contains unsupported regular-file content',
+        'context_result_content_invalid');
+    }
+    const text = content.toString('utf8');
+    if (Buffer.from(text).compare(content) !== 0
+      || SECRET_SHAPED.some((pattern) => pattern.test(text))) {
+      throw runtimeError('Retained result contains sensitive or invalid text',
+        'context_result_content_invalid');
+    }
+    const contentDigest = contextValueDigest(text);
+    const firstItem = items.length;
+    for (let offset = 0, byteOffset = 0, chunk = 0; offset < text.length; chunk += 1) {
+      let end = Math.min(text.length, offset + chunkBytes);
+      while (end > offset && Buffer.byteLength(text.slice(offset, end)) > chunkBytes) end -= 1;
+      if (end < text.length && end > offset
+        && /[\uD800-\uDBFF]/u.test(text[end - 1]) && /[\uDC00-\uDFFF]/u.test(text[end])) end -= 1;
+      if (end <= offset) {
+        throw runtimeError('Retained result text cannot be projected safely',
+          'context_result_content_invalid');
+      }
+      const selected = text.slice(offset, end);
+      offset = end;
+      const selectedBytes = Buffer.byteLength(selected);
+      const item = {
+        path, chunk, gitMode: entry.mode, gitBlobOid: entry.oid,
+        blobBytes: content.byteLength, byteStart: byteOffset,
+        byteEnd: byteOffset + selectedBytes, contentDigest, text: selected,
+        language: extname(path).slice(1).toLowerCase() || 'text',
+      };
+      byteOffset += selectedBytes;
+      const itemBytes = Buffer.byteLength(JSON.stringify(item));
+      if (artifactBytes + itemBytes > policy.maxArtifactBytes
+        || items.length >= policy.maxResultItems) {
+        throw runtimeError('Retained result projection exceeds Context authority',
+          'context_result_content_invalid');
+      }
+      artifactBytes += itemBytes;
+      items.push(item);
+    }
+    if (items.length === firstItem) {
+      throw runtimeError('Retained result changed content produced no source item',
+        'context_result_content_invalid');
+    }
+  }
+  return items;
+}
+
+function validateRetainedResultRequest(value) {
+  const fields = [
+    'artifactDigest', 'baseSha', 'callId', 'cleanupDigest', 'pathScope', 'resultSha',
+    'retainedResultRef', 'route', 'taskId', 'taskVersion', 'terminalEvent', 'unitId',
+  ];
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).sort().join(',') !== fields.sort().join(',')
+    || !/^context-call:[a-f0-9]{64}$/u.test(value.callId ?? '')
+    || !/^context-partition:[a-f0-9]{64}$/u.test(value.unitId ?? '')
+    || !/^[A-Za-z0-9._:-]{1,512}$/u.test(value.taskId ?? '')
+    || !Number.isSafeInteger(value.taskVersion) || value.taskVersion <= 0
+    || !Number.isSafeInteger(value.terminalEvent) || value.terminalEvent <= 0
+    || !/^[a-f0-9]{64}$/u.test(value.artifactDigest ?? '')
+    || !/^[a-f0-9]{64}$/u.test(value.cleanupDigest ?? '')
+    || !/^[a-f0-9]{40}$/u.test(value.baseSha ?? '')
+    || !/^[a-f0-9]{40}$/u.test(value.resultSha ?? '')
+    || !value.route || typeof value.route !== 'object' || Array.isArray(value.route)
+    || Object.keys(value.route).sort().join(',') !== 'effort,harness,model'
+    || ['effort', 'harness', 'model'].some((field) => (
+      typeof value.route[field] !== 'string' || value.route[field].length === 0
+      || value.route[field].includes('\0') || Buffer.byteLength(value.route[field]) > 256
+    ))
+    || !Array.isArray(value.pathScope) || value.pathScope.length === 0
+    || value.pathScope.length > 1_024 || new Set(value.pathScope).size !== value.pathScope.length) {
+    throw runtimeError('Retained result projection request is invalid',
+      'context_result_integrity');
+  }
+  try {
+    for (const scope of value.pathScope) pathScopeRegex(scope);
+  } catch (cause) {
+    throw Object.assign(runtimeError('Retained result path scope is invalid',
+      'context_result_scope_invalid'), { cause });
+  }
+  return value;
+}
+
 export function produceRepositoryContextSource(repoRoot, treeSha, scopes, policy,
   gitAuthority = resolveGitExecutable()) {
   const verifiedGit = verifyGitExecutableAuthority(gitAuthority);
@@ -321,6 +445,109 @@ export class RepositoryContextRuntime {
     chmodSync(this.contextHome, 0o700);
     this.executions = new Set();
     this.#sourceAttestations = new Map();
+  }
+
+  projectRetainedCommitResult(value) {
+    const request = validateRetainedResultRequest(value);
+    if (request.retainedResultRef !== `refs/baton/results/${request.resultSha}`) {
+      throw runtimeError('Retained result ref does not name the exact result commit',
+        'context_result_ref_invalid');
+    }
+    let retainedSha;
+    try {
+      retainedSha = immutableGit(this.repoRoot, this.gitAuthority,
+        ['show-ref', '--verify', '--hash', request.retainedResultRef], {
+          encoding: 'utf8', maxBuffer: 4_096,
+        }).trim();
+    } catch (cause) {
+      throw Object.assign(runtimeError('Retained result ref is unavailable',
+        'context_result_ref_invalid'), { cause });
+    }
+    if (retainedSha !== request.resultSha) {
+      throw runtimeError('Retained result ref changed target', 'context_result_ref_invalid');
+    }
+    if (request.baseSha !== this.treeSha) {
+      throw runtimeError('Retained result base differs from runtime tree authority',
+        'context_result_ancestry_invalid');
+    }
+
+    let baseTree;
+    let resultTree;
+    try {
+      baseTree = verifiedRepositoryEntries(
+        this.repoRoot, this.gitAuthority, request.baseSha, this.policy,
+      );
+    } catch (cause) {
+      throw Object.assign(runtimeError('Retained result base commit is invalid',
+        'context_result_ancestry_invalid'), { cause });
+    }
+    try {
+      resultTree = verifiedRepositoryEntries(
+        this.repoRoot, this.gitAuthority, request.resultSha, this.policy,
+      );
+    } catch (cause) {
+      throw Object.assign(runtimeError('Retained result ref is not a supported commit',
+        'context_result_ref_invalid'), { cause });
+    }
+    if (!retainedCommitIsDescendant(
+      this.repoRoot, this.gitAuthority, request.baseSha, request.resultSha, this.policy,
+    )) {
+      throw runtimeError('Retained result commit does not descend from its base',
+        'context_result_ancestry_invalid');
+    }
+
+    const baseEntries = new Map(baseTree.entries.map((entry) => [entry.path, entry]));
+    const resultEntries = new Map(resultTree.entries.map((entry) => [entry.path, entry]));
+    const changedPaths = [...new Set([...baseEntries.keys(), ...resultEntries.keys()])]
+      .filter((path) => {
+        const before = baseEntries.get(path);
+        const after = resultEntries.get(path);
+        return !before || !after || before.mode !== after.mode || before.oid !== after.oid;
+      }).sort();
+    if (changedPaths.length === 0 || changedPaths.length > this.policy.maxEvidenceCoordinates) {
+      throw runtimeError('Retained result changed path set is invalid',
+        'context_result_content_invalid');
+    }
+    if (changedPaths.some((path) => !pathInScopes(path, request.pathScope))) {
+      throw runtimeError('Retained result changed path escapes its path scope',
+        'context_result_scope_invalid');
+    }
+
+    const source = retainedResultSource(
+      this.repoRoot, this.gitAuthority, resultTree.entries, changedPaths, this.policy,
+    );
+    const resultSourceDigest = contextValueDigest(source);
+    const expectedSourceRef = Object.freeze({
+      kind: 'context_source', ref: `ctx:sha256:${resultSourceDigest}`,
+      digest: resultSourceDigest, mediaType: 'application/json', itemCount: source.length,
+    });
+    const result = contextRetainedCommitProjection({
+      baseSha: request.baseSha,
+      resultSha: request.resultSha,
+      retainedResultRef: request.retainedResultRef,
+      changedPaths,
+      sourceRef: expectedSourceRef,
+    });
+    const capsule = validateContextProviderResultCapsule(contextProviderResultCapsule({
+      callId: request.callId,
+      unitId: request.unitId,
+      taskId: request.taskId,
+      taskVersion: request.taskVersion,
+      terminalEvent: request.terminalEvent,
+      route: request.route,
+      artifactDigest: request.artifactDigest,
+      cleanupDigest: request.cleanupDigest,
+      result,
+      sourceRef: expectedSourceRef,
+    }));
+
+    const sourceRef = this.bench.admitSource(source);
+    if (contextValueDigest(sourceRef) !== contextValueDigest(expectedSourceRef)) {
+      throw runtimeError('Retained result source admission changed identity',
+        'context_result_integrity');
+    }
+    const capsuleRef = this.bench.admitProviderResult(capsule);
+    return Object.freeze({ capsule, capsuleRef });
   }
 
   _executeOwned(operation, payload, signal = null) {

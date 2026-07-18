@@ -9,6 +9,7 @@ import {
   DEFAULT_CONTEXT_PROGRAM_POLICY, normalizeContextProgramPolicy,
 } from './context-program-policy.mjs';
 import { buildPureContextOutputLineage } from './context-lineage.mjs';
+import { validateContextProviderResultCapsule } from './context-result.mjs';
 
 export { DEFAULT_CONTEXT_PROGRAM_POLICY, normalizeContextProgramPolicy };
 
@@ -610,6 +611,16 @@ export class StatelessContextBench {
     });
   }
 
+  admitProviderResult(value) {
+    const capsule = validateContextProviderResultCapsule(value);
+    this.readReference(capsule.sourceRef);
+    return this._writeArtifact(
+      capsule,
+      'context_provider_result',
+      'application/vnd.baton.context-provider-result+json',
+    );
+  }
+
   _readSource(digest) {
     const ref = `ctx:sha256:${digest}`;
     if (this.sources.has(ref)) return clone(this.sources.get(ref), 'context_source_integrity');
@@ -994,6 +1005,17 @@ export class StatelessContextBench {
     );
   }
 
+  readProviderResult(ref) {
+    const value = this._readArtifact(
+      ref,
+      'context_provider_result',
+      'application/vnd.baton.context-provider-result+json',
+    );
+    const capsule = validateContextProviderResultCapsule(value);
+    this.readReference(capsule.sourceRef);
+    return capsule;
+  }
+
   readArtifact(ref) {
     if (ref?.kind === 'context_value') return this.readOutput(ref);
     if (ref?.kind === 'context_evidence') return this.readEvidence(ref);
@@ -1002,6 +1024,7 @@ export class StatelessContextBench {
         ref, 'context_call_evidence', 'application/vnd.baton.context-call-evidence+json',
       );
     }
+    if (ref?.kind === 'context_provider_result') return this.readProviderResult(ref);
     throw typed('Context artifact ref kind is invalid', 'context_artifact_integrity');
   }
 
