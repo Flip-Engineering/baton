@@ -1522,6 +1522,8 @@ test('construction replay (D10): a normally-constructed Coordinator rebuilds tas
       'unknown_worker',
       `${workerId} must be register()-ed by replay, not left unknown_worker`
     );
+    assert.deepEqual(coordinator.localResourceOwnership(workerId), { owned: false },
+      `${workerId} durable replay evidence must not fabricate current-process resource authority`);
   }
 
   // list()/result() must also work for a worker that was NEVER spawn()-ed on this instance.
@@ -1565,6 +1567,8 @@ test('list() reports pending and working workers with correct status/budgetUsed/
 
   const p = table.find((x) => x.id === pendingHandle.id);
   assert.equal(p.status, 'pending');
+  assert.deepEqual(coordinator.localResourceOwnership(working.id), { owned: true });
+  assert.deepEqual(coordinator.localResourceOwnership(pendingHandle.id), { owned: false });
 });
 
 test('list() reflects a worker transitioning stopping -> dead', async () => {

@@ -297,6 +297,8 @@ test('bound Pythonic facade cascades start, inspect, semantic action, continuati
         continuation: { operation: 'run.inspect', arguments: { runId: 'run-bound', depth: 'outline', cursor: 4, waitMs: 100 } },
       };
       if (name === 'run.act') return { runId: 'run-bound', outline: { actions: [] }, action: 'approved' };
+      if (name === 'run.answer') return { runId: 'run-bound', attention: [] };
+      if (name === 'run.steer') return { runId: 'run-bound', steered: true };
       if (name === 'run.stop') return { runId: 'run-bound', terminal: true };
       throw new Error(`unexpected ${name}`);
     },
@@ -307,15 +309,25 @@ test('bound Pythonic facade cascades start, inspect, semantic action, continuati
   await run.inspect();
   await run.wait();
   await run.approve();
+  await run.answer('request-one', { decision: 'allow' });
+  await run.steer('worker-one', 'Continue with the focused implementation.');
   await run.stop();
   assert.deepEqual(calls.map(({ name }) => name), [
-    'run.start', 'run.inspect', 'run.inspect', 'run.act', 'run.stop',
+    'run.start', 'run.inspect', 'run.inspect', 'run.act', 'run.answer', 'run.steer', 'run.stop',
   ]);
   assert.deepEqual(calls[0].args, {
     intent: { objective: 'Improve Baton', route: { model: 'gpt-5.6-sol', effort: 'high' } },
   });
   assert.deepEqual(calls[3].args, {
     runId: 'run-bound', actionId: 'action-approve', inputs: {},
+  });
+  assert.deepEqual(calls[4].args, {
+    runId: 'run-bound', requestId: 'request-one', answer: { decision: 'allow' },
+  });
+  assert.deepEqual(calls[5].args, {
+    runId: 'run-bound', target: 'worker-one', mode: 'nudge',
+    message: 'Continue with the focused implementation.',
+    reason: 'Orchestrator steered the active worker.',
   });
   assert.ok(calls.every(({ caller }) => caller === principal));
 });
@@ -382,7 +394,9 @@ test('recursive runner keeps following work_completed until result adoption is o
     import.meta.url,
   ), 'utf8');
   assert.match(source, /terminalWithoutAdoption = new Set\(\['completed', 'failed', 'cancelled', 'denied', 'stopped'\]\)/u);
-  assert.match(source, /if \(adopt \|\| terminalWithoutAdoption\.has\(outline\.outline\.phase\)\) break;/u);
+  assert.match(source, /if \(adopt \|\| attention \|\| terminalWithoutAdoption\.has\(outline\.outline\.phase\)\) break;/u);
+  assert.match(source, /run\.act\(attention\.actionId, \{ decision: 'allow' \}\)/u);
+  assert.match(source, /progressive_question_attention_required/u);
 });
 
 test('bound Run changes cancellation ends only observation and accepts no other option', async () => {
