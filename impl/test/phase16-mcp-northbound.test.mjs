@@ -17,7 +17,7 @@ const principal = (overrides = {}) => ({
 const runApplicationCard = () => ({
   schemaVersion: 1,
   repoId: 'repo-a',
-  commands: ['application.help', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.review', 'run.integrate', 'run.export', 'application.shutdown'],
+  commands: ['application.help', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'application.shutdown'],
 });
 function setup(overrides = {}) {
   const calls = [];
@@ -43,6 +43,7 @@ function setup(overrides = {}) {
   const coordination = new CoordinationStore(join(directory, 'coordination'), { clock: () => new Date(NOW).toISOString() });
   const server = new McpFleetServer({
     coordinator, coordination, application: overrides.application,
+    applicationOwned: overrides.applicationOwned,
     surface: overrides.surface ?? (overrides.application ? 'combined' : undefined),
     shutdownPrincipal: overrides.application ? (overrides.shutdownPrincipal ?? {
       actor: 'mcp-host:test', principalId: 'mcp-host', sessionId: 'mcp-host-session',
@@ -92,6 +93,23 @@ test('UA5/MN1: an application-backed MCP server exposes the five-operation ordin
   const combined = await request(advanced.server, 3, 'tools/list', {});
   assert.equal(combined.result.tools.length, 38);
   assert.deepEqual(combined.result.tools.slice(0, 5).map((tool) => tool.name), response.result.tools.map((tool) => tool.name));
+});
+
+test('KC6/KC7: a remote application facade is transport-owned and MCP close cannot shut Baton down', async () => {
+  const calls = [];
+  const application = {
+    repoId: 'repo-a', card: runApplicationCard,
+    async authorizeReplay() { return true; },
+    async command(name) { calls.push(name); return {}; },
+  };
+  const { server } = setup({
+    application, surface: 'application',
+    applicationOwned: false, shutdownPrincipal: undefined,
+  });
+  assert.deepEqual(await server.close(), {
+    schemaVersion: 1, state: 'transport_closed', applicationOwned: false,
+  });
+  assert.deepEqual(calls, []);
 });
 
 test('UA5/MN: Run tools map exactly to the application bus and keep status/wait fresh', async () => {

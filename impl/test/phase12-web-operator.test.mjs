@@ -35,7 +35,7 @@ function system(claims = {}) {
     card() {
       return {
         schemaVersion: 1, repoId: 'repo-a',
-        commands: ['application.help', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.review', 'run.integrate', 'run.export', 'application.shutdown'],
+        commands: ['application.help', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'application.shutdown'],
         profiles: [{
           name: 'standard', digest: 'a'.repeat(64), routes: [{ harness: 'grok', model: 'grok-4-code', effort: 'high' }], pathScope: ['impl/**'],
           reviewPolicy: { mode: 'required', routes: [{ harness: 'reviewer', model: 'review-model', effort: 'low' }], reportPath: '.baton/review.json', maxFindings: 20, maxReportBytes: 65_536 },
@@ -89,10 +89,13 @@ test('BU1/BU2: HTML and session projection are CSP-bound and sanitized', async (
   const session = await get(s.web, '/v1/session', headers);
   assert.deepEqual(session.body, {
     ok: true,
-    identity: { userId: 'operator', capabilities: ['observe', 'control', 'approve', 'emergency_stop'], repoIds: ['repo-a'] },
+    identity: {
+      userId: 'operator', sessionId: s.issued.sessionId,
+      capabilities: ['observe', 'control', 'approve', 'emergency_stop'], repoIds: ['repo-a'],
+    },
     expiresAt: new Date(NOW + 60_000).toISOString(),
   });
-  for (const forbidden of ['sessionId', 'credentialId', 'csrfTokenDigest', s.issued.token]) {
+  for (const forbidden of ['credentialId', 'csrfTokenDigest', s.issued.token]) {
     assert.equal(session.rawBody.includes(forbidden), false);
   }
   const card = await get(s.web, '/v1/application-card', headers);

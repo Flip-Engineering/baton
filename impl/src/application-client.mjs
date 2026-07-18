@@ -17,6 +17,22 @@ function outlineActions(view) {
   return Array.isArray(view?.outline?.actions) ? view.outline.actions : [];
 }
 
+function automaticActionInputs(action) {
+  if (!action || action.priority !== 'recommended' || action.destructive === true
+    || action.irreversible === true || action.kind?.startsWith('answer_')) return null;
+  const schema = action.inputSchema;
+  if (!schema || schema.type !== 'object' || !schema.properties
+    || typeof schema.properties !== 'object' || Array.isArray(schema.properties)) return null;
+  const required = Array.isArray(schema.required) ? schema.required : [];
+  const inputs = {};
+  for (const field of required) {
+    const property = schema.properties[field];
+    if (!property || !Object.hasOwn(property, 'default')) return null;
+    inputs[field] = property.default;
+  }
+  return inputs;
+}
+
 function abortSignal(value) {
   return value !== undefined && !(value instanceof AbortSignal);
 }
@@ -124,6 +140,55 @@ export class BatonRun {
     return outlineActions(this.#last);
   }
 
+  async drive(options = {}) {
+    exactOptions(options, new Set(['signal']), 'drive');
+    if (abortSignal(options.signal)) throw clientError('drive signal is invalid');
+    if (!this.#last?.outline) await this.inspect();
+    const current = this.#last;
+    if (options.signal?.aborted || current?.terminal) return current;
+
+    const actions = outlineActions(current);
+    if (current?.outline?.attention?.state === 'required'
+      || actions.some((action) => action.kind?.startsWith('answer_'))) return current;
+    for (const action of actions) {
+      const inputs = automaticActionInputs(action);
+      if (inputs !== null) return this.act(action.actionId, inputs);
+    }
+    // An advertised action that is not safe to invoke automatically is an intentional pause,
+    // even when the Run also offers a change-aware continuation. Do not long-poll past an
+    // explicit repository edit, operator choice, or emergency-only action.
+    if (actions.some((action) => action.priority !== 'emergency')) return current;
+    if (!current?.continuation) return current;
+    if (!options.signal) return this.wait();
+    const observed = await observeUntilAbort(
+      Promise.resolve().then(() => this.wait()).then((next) => ({ aborted: false, next })),
+      options.signal,
+    );
+    return observed.aborted ? current : observed.next;
+  }
+
+  async complete(options = {}) {
+    exactOptions(options, new Set(['signal']), 'complete');
+    if (abortSignal(options.signal)) throw clientError('complete signal is invalid');
+    for (;;) {
+      if (!this.#last?.outline) await this.inspect();
+      const before = this.#last;
+      if (options.signal?.aborted || before?.terminal
+        || before?.outline?.attention?.state === 'required'
+        || outlineActions(before).some((action) => action.kind?.startsWith('answer_'))) return before;
+      const hadAction = outlineActions(before)
+        .some((action) => automaticActionInputs(action) !== null);
+      const next = await this.drive(options);
+      if (options.signal?.aborted || next?.terminal
+        || next?.outline?.attention?.state === 'required'
+        || outlineActions(next).some((action) => action.kind?.startsWith('answer_'))) return next;
+      if (next?.viewDigest === before?.viewDigest
+        && !(before?.continuation && next?.timedOut === true && !hadAction)) return next;
+      if (!next?.continuation && !outlineActions(next)
+        .some((action) => automaticActionInputs(action) !== null)) return next;
+    }
+  }
+
   async act(action, inputs = {}) {
     if (!nonempty(action) || !inputs || typeof inputs !== 'object' || Array.isArray(inputs)) {
       throw clientError('Run action is invalid');
@@ -148,9 +213,58 @@ export class BatonRun {
   review(inputs) { return this.act('semantic_review', inputs); }
   integrate(inputs) { return this.act('integrate', inputs); }
 
+  async apply(options = {}) {
+    exactOptions(options, new Set(['strategy', 'reason']), 'apply');
+    let descriptor = outlineActions(this.#last).find((action) => action.kind === 'integrate');
+    if (!descriptor) {
+      await this.inspect();
+      descriptor = outlineActions(this.#last).find((action) => action.kind === 'integrate');
+    }
+    if (!descriptor) {
+      throw clientError('Run has no adopted result available to apply', 'application_action_unavailable');
+    }
+    const advertised = Array.isArray(descriptor.choices) ? descriptor.choices : [];
+    const strategy = options.strategy
+      ?? descriptor.inputSchema?.properties?.strategy?.default
+      ?? (advertised.includes('ff-only') ? 'ff-only' : advertised[0]);
+    const reason = options.reason
+      ?? descriptor.inputSchema?.properties?.reason?.default
+      ?? 'Apply the adopted verified result.';
+    if (!advertised.includes(strategy) || !nonempty(reason)) {
+      throw clientError('Run apply options are outside the advertised integration authority',
+        'application_action_input_invalid');
+    }
+    return this.act(descriptor.actionId, { strategy, reason });
+  }
+
+  async answer(requestId, answer) {
+    if (!nonempty(requestId) || !answer || typeof answer !== 'object' || Array.isArray(answer)) {
+      throw clientError('Run answer is invalid');
+    }
+    this.#last = await this.#application.command('run.answer', {
+      runId: this.id, requestId, answer,
+    }, this.#principal);
+    return this.#last;
+  }
+
+  async steer(target, message, options = {}) {
+    if (!nonempty(target) || !nonempty(message)) throw clientError('Run steer is invalid');
+    exactOptions(options, new Set(['mode', 'reason']), 'steer');
+    const mode = options.mode ?? 'nudge';
+    const reason = options.reason ?? 'Orchestrator steered the active worker.';
+    if (!['nudge', 'now', 'turn'].includes(mode) || !nonempty(reason)) {
+      throw clientError('Run steer is invalid');
+    }
+    this.#last = await this.#application.command('run.steer', {
+      runId: this.id, target, mode, message, reason,
+    }, this.#principal);
+    return this.#last;
+  }
+
   async stop(reason = 'Operator requested Run stop.') {
     if (!nonempty(reason)) throw clientError('Run stop reason is invalid');
     this.#last = await this.#application.command('run.stop', { runId: this.id, reason }, this.#principal);
+    if (!this.#last?.outline && this.#last?.terminal !== true) await this.inspect();
     return this.#last;
   }
 }
@@ -195,6 +309,91 @@ export class BatonRuns {
     const initial = await this.#application.command('run.start', { intent }, this.#principal);
     const runId = initial?.runId ?? initial?.outline?.runId ?? intent.runId;
     return new BatonRun(this.#application, this.#principal, runId, initial);
+  }
+
+  async startMany(requests) {
+    if (!Array.isArray(requests) || requests.length === 0 || requests.length > 64) {
+      throw clientError('startMany requires one bounded non-empty request array');
+    }
+    const allowed = new Set([
+      'objective', 'runId', 'profile', 'scope', 'model', 'harness', 'effort', 'exact',
+    ]);
+    const normalized = requests.map((request) => {
+      if (!request || typeof request !== 'object' || Array.isArray(request)) {
+        throw clientError('startMany request is invalid');
+      }
+      const unsupported = Object.keys(request).find((field) => !allowed.has(field));
+      if (unsupported) throw clientError(`startMany request contains unsupported field ${unsupported}`);
+      const { objective, ...options } = request;
+      return { objective, options };
+    });
+    const settled = await Promise.allSettled(normalized.map(({ objective, options }) => (
+      this.start(objective, options)
+    )));
+    const admitted = settled.filter((result) => result.status === 'fulfilled')
+      .map((result) => result.value);
+    const failed = settled.find((result) => result.status === 'rejected');
+    if (failed) {
+      const cleanup = await Promise.allSettled(admitted.map((run) => (
+        run.stop('Parallel Run admission failed; stop and reap the admitted sibling.')
+      )));
+      const cleanupFailures = cleanup.filter((result) => result.status === 'rejected');
+      if (cleanupFailures.length > 0 && failed.reason && typeof failed.reason === 'object') {
+        Object.defineProperty(failed.reason, 'cleanupFailures', {
+          configurable: true, enumerable: false, value: cleanupFailures.length,
+        });
+      }
+      throw failed.reason;
+    }
+    return new BatonRunGroup(admitted);
+  }
+}
+
+export class BatonRunGroup {
+  constructor(runs) {
+    if (!Array.isArray(runs) || runs.length === 0
+      || runs.some((run) => !(run instanceof BatonRun))
+      || new Set(runs.map((run) => run.id)).size !== runs.length) {
+      throw clientError('Run group authority is invalid');
+    }
+    this.runs = Object.freeze([...runs]);
+    this.ids = Object.freeze(runs.map((run) => run.id));
+    Object.freeze(this);
+  }
+
+  async inspect(options = {}) {
+    return Promise.all(this.runs.map(async (run) => ({
+      runId: run.id, view: await run.inspect(options),
+    })));
+  }
+
+  async *changes(options = {}) {
+    const iterators = this.runs.map((run) => run.changes(options)[Symbol.asyncIterator]());
+    const pending = new Map();
+    const schedule = (index) => {
+      pending.set(index, iterators[index].next().then(
+        (result) => ({ index, result }),
+        (error) => Promise.reject(Object.assign(error, { runId: this.runs[index].id })),
+      ));
+    };
+    for (let index = 0; index < iterators.length; index += 1) schedule(index);
+    try {
+      while (pending.size > 0) {
+        const { index, result } = await Promise.race(pending.values());
+        if (result.done) pending.delete(index);
+        else {
+          yield { runId: this.runs[index].id, view: result.value };
+          schedule(index);
+        }
+      }
+    } finally {
+      await Promise.allSettled(iterators.map((iterator) => iterator.return?.()));
+    }
+  }
+
+  async stop(reason = 'Operator requested Run-group stop.') {
+    const views = await Promise.all(this.runs.map((run) => run.stop(reason)));
+    return views.map((view, index) => ({ runId: this.runs[index].id, view }));
   }
 }
 
