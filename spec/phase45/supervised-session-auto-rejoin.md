@@ -3,7 +3,7 @@
 ## SR1 — explicit deployment authority
 
 Automatic rejoin exists only when `createDriver({sessionRecoveryPolicy})` supplies exactly positive
-bounded `maxSessions`, `maxStateRows`, and per-session `timeoutMs`. There is no web, MCP, worker, or
+bounded `maxAttempts`, `maxSessions`, `maxStateRows`, and per-session `timeoutMs`. There is no web, MCP, worker, or
 environment switch. Manual `recover()` remains available under its existing authority.
 
 ## SR2 — readiness barrier
