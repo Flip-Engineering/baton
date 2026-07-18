@@ -1,0 +1,57 @@
+{
+  "record": null,
+  "cleanup": {
+    "stopped": {
+      "state": "stopped",
+      "receipt": {
+        "schemaVersion": 3,
+        "state": "stopped",
+        "scope": "run_subtree",
+        "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+        "runId": "run-fa9f85adf6956231586a259d82189f8e",
+        "targetCount": 8,
+        "remainingCount": 0,
+        "targetDigest": "b0cb20f3222a81dc88db8d058f50b4556614540eae3831ee52261608e8afd545",
+        "counts": {
+          "pendingCancelled": 0,
+          "killConfirmed": 8,
+          "alreadyTerminal": 0,
+          "processesObserved": 8,
+          "processesClosed": 8
+        },
+        "checks": {
+          "dispatchClosed": true,
+          "interactionsResolved": true,
+          "runAuthorityReleased": true
+        },
+        "effects": {
+          "coordinatorClosed": false,
+          "writerReleased": false,
+          "transportsClosed": false
+        },
+        "context": {
+          "targetSessionCount": 1,
+          "targetCellCount": 0,
+          "targetCallCount": 1,
+          "remainingSessionCount": 0,
+          "remainingCellCount": 0,
+          "remainingCallCount": 0
+        },
+        "receiptDigest": "274e1699a16b0c2b0552493f9de9f4b64366a5f213c5e4498fb0ebe41da5e2d0"
+      },
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      }
+    },
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    },
+    "generatedReports": [],
+    "callerStatusUnchanged": false,
+    "callerIndexUnchanged": true
+  }
+}
