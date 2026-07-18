@@ -94,23 +94,101 @@ export function identifyResultExportRoot(rawRoot) {
   });
 }
 
-/** Hold one fail-closed deployment lease for the private export root. Crash residue is not guessed
- * stale: a replacement deployment must explicitly reconcile ownership before removing it. */
+function processLiveness(pid) {
+  try { process.kill(pid, 0); return 'alive'; }
+  catch (cause) {
+    if (cause?.code === 'ESRCH') return 'dead';
+    if (cause?.code === 'EPERM') return 'alive';
+    return 'unknown';
+  }
+}
+
+function processStartIdentity(pid) {
+  try {
+    const output = execFileSync('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], {
+      encoding: 'utf8', maxBuffer: 4_096, stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return output && Buffer.byteLength(output) <= 256 ? output : undefined;
+  } catch { return undefined; }
+}
+
+function parsedLeaseOwner(bytes, rootIdentityDigest) {
+  let owner;
+  try { owner = JSON.parse(bytes.toString('utf8')); } catch { return null; }
+  const versionOne = exactObject(owner, ['schemaVersion', 'pid', 'nonce', 'rootIdentityDigest'])
+    && owner.schemaVersion === 1;
+  const versionTwo = exactObject(owner, ['schemaVersion', 'pid', 'pidStart', 'nonce', 'rootIdentityDigest'])
+    && owner.schemaVersion === 2 && typeof owner.pidStart === 'string'
+    && owner.pidStart.length > 0 && Buffer.byteLength(owner.pidStart) <= 256;
+  if ((!versionOne && !versionTwo)
+    || !Number.isSafeInteger(owner.pid) || owner.pid <= 0
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(owner.nonce ?? '')
+    || owner.rootIdentityDigest !== rootIdentityDigest) return null;
+  return owner;
+}
+
+/** Reclaim only one structurally exact lease whose process owner is proved gone. Unknown or
+ * malformed residue remains a busy root: recovery never turns ambiguity into deletion authority. */
+function reapDeadResultExportRootLease({ root, rootIdentity, lease, rootIdentityDigest }) {
+  try {
+    assertRootIdentity(root, rootIdentity);
+    const leaseIdentity = ownedPrivateDirectory(lease);
+    if (!leaseIdentity || bytewiseNames(lease).join('\0') !== 'owner.json') return false;
+    const ownerStat = lstatSync(join(lease, 'owner.json'));
+    if (!ownerStat.isFile() || ownerStat.isSymbolicLink() || ownerStat.nlink !== 1
+      || (ownerStat.mode & 0o777) !== 0o600 || ownerStat.size <= 0 || ownerStat.size > 16_384) return false;
+    const ownerBytes = readExactRegular(join(lease, 'owner.json'), { mode: 0o600, size: ownerStat.size });
+    const owner = parsedLeaseOwner(ownerBytes, rootIdentityDigest);
+    if (!owner) return false;
+
+    const liveness = processLiveness(owner.pid);
+    if (liveness === 'unknown') return false;
+    if (liveness === 'alive') {
+      if (owner.schemaVersion === 1) return false;
+      const observedStart = processStartIdentity(owner.pid);
+      if (observedStart === undefined || observedStart === owner.pidStart) return false;
+    }
+
+    // Revalidate the exact directory and bytes immediately before removal. A concurrent claimant
+    // that changes either identity wins the race and leaves this deployment fail-closed.
+    assertRootIdentity(root, rootIdentity);
+    const observedLease = ownedPrivateDirectory(lease);
+    if (!observedLease || observedLease.dev !== leaseIdentity.dev || observedLease.ino !== leaseIdentity.ino
+      || bytewiseNames(lease).join('\0') !== 'owner.json') return false;
+    const observedOwner = readExactRegular(join(lease, 'owner.json'), { mode: 0o600, size: ownerBytes.length });
+    if (!observedOwner.equals(ownerBytes)) return false;
+    rmSync(lease, { recursive: true, force: false });
+    fsyncDirectory(root);
+    return true;
+  } catch { return false; }
+}
+
+/** Hold one fail-closed deployment lease for the private export root. A replacement deployment
+ * may reconcile one exact dead-process owner; live, malformed, or ambiguous ownership stays busy. */
 export function acquireResultExportRootLease(rawRoot) {
   const root = validateResultExportRoot(rawRoot);
   const rootIdentity = lstatSync(root);
+  const rootIdentityDigest = sha256(canonicalJson({
+    dev: rootIdentity.dev, ino: rootIdentity.ino, uid: rootIdentity.uid, mode: rootIdentity.mode & 0o777,
+  }));
   const lease = confinedChild(root, '.baton-export-root-lease');
-  try { mkdirSync(lease, { mode: 0o700 }); }
-  catch (cause) {
-    throw exportError('result export root is already leased', cause?.code === 'EEXIST' ? 'result_export_root_busy' : 'result_export_root_invalid');
+  let reclaimed = false;
+  while (true) {
+    try { mkdirSync(lease, { mode: 0o700 }); break; }
+    catch (cause) {
+      if (cause?.code === 'EEXIST' && !reclaimed
+        && reapDeadResultExportRootLease({ root, rootIdentity, lease, rootIdentityDigest })) {
+        reclaimed = true;
+        continue;
+      }
+      throw exportError('result export root is already leased', cause?.code === 'EEXIST' ? 'result_export_root_busy' : 'result_export_root_invalid');
+    }
   }
   const leaseIdentity = lstatSync(lease);
-  const owner = Buffer.from(canonicalJson({
-    schemaVersion: 1, pid: process.pid, nonce: randomUUID(),
-    rootIdentityDigest: sha256(canonicalJson({
-      dev: rootIdentity.dev, ino: rootIdentity.ino, uid: rootIdentity.uid, mode: rootIdentity.mode & 0o777,
-    })),
-  }));
+  const pidStart = processStartIdentity(process.pid);
+  const owner = Buffer.from(canonicalJson(pidStart === undefined
+    ? { schemaVersion: 1, pid: process.pid, nonce: randomUUID(), rootIdentityDigest }
+    : { schemaVersion: 2, pid: process.pid, pidStart, nonce: randomUUID(), rootIdentityDigest }));
   try {
     writeExactFile(join(lease, 'owner.json'), owner, 0o600);
     fsyncDirectory(lease);

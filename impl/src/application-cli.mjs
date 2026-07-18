@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  closeSync, constants, existsSync, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync,
-  openSync, readFileSync, realpathSync, readdirSync, rmSync, writeFileSync,
+  chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, fsyncSync, linkSync, lstatSync,
+  mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, readdirSync, rmSync, unlinkSync,
+  writeFileSync,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { TextDecoder } from 'node:util';
@@ -9,7 +10,13 @@ import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 import { foldCanonicalCase } from './canonical-order.mjs';
 import { publishResultExportNoReplace } from './result-export.mjs';
 
-const COMMANDS = new Set(['run.start', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.review', 'run.integrate', 'run.export']);
+const COMMANDS = new Set([
+  'application.help',
+  'run.start', 'run.inspect', 'run.act',
+  'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer',
+  'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification',
+  'run.resume_work', 'run.review', 'run.integrate', 'run.export',
+]);
 const TERMINAL_RUN_PHASES = new Set(['work_completed', 'completed', 'failed', 'cancelled', 'denied', 'stopped', 'closed']);
 const CONNECTION_ENV = Object.freeze(['BATON_URL', 'BATON_ORIGIN', 'BATON_REPO_ID', 'BATON_TOKEN']);
 
@@ -186,6 +193,281 @@ export function discoverBatonConnection({
   return Object.freeze({
     baseUrl: profile.url, origin: profile.origin, repoId: repository.repoId, token,
     authority: 'repository-user-profile', repositoryRoot, profile: repository.profile,
+  });
+}
+
+function connectionConfigRoot(env, home) {
+  if (nonempty(env.XDG_CONFIG_HOME) && !isAbsolute(env.XDG_CONFIG_HOME)) {
+    throw cliError('XDG_CONFIG_HOME must be absolute', 'cli_config_invalid');
+  }
+  const root = nonempty(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME
+    : nonempty(home) && isAbsolute(home) ? join(home, '.config') : null;
+  if (!root) throw cliError('user configuration home is unavailable', 'cli_config_invalid');
+  return root;
+}
+
+function setupProfileNames(configRoot) {
+  const directory = join(configRoot, 'baton', 'connections');
+  if (!existsSync(directory)) return [];
+  let stat;
+  try { stat = lstatSync(directory); }
+  catch { throw cliError('Baton connection profile directory is unavailable', 'cli_config_invalid'); }
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw cliError('Baton connection profile directory is unsafe', 'cli_config_invalid');
+  }
+  return readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && !entry.isSymbolicLink() && entry.name.endsWith('.json'))
+    .map((entry) => entry.name.slice(0, -5))
+    .filter((name) => {
+      try { id(name, 'connection profile'); return true; } catch { return false; }
+    })
+    .sort();
+}
+
+function readSetupProfile(configRoot, profileName, ownerUid) {
+  const profilePath = join(configRoot, 'baton', 'connections', `${profileName}.json`);
+  const profile = readConnectionJson(profilePath, 'user connection profile', { ownerOnly: true, ownerUid });
+  exactKeys(profile, ['schemaVersion', 'url', 'origin', 'tokenFile'], 'user connection profile');
+  if (profile.schemaVersion !== 1 || !nonempty(profile.url) || !nonempty(profile.origin) || !nonempty(profile.tokenFile)) {
+    throw cliError('user connection profile is invalid', 'cli_config_invalid');
+  }
+  let base;
+  let origin;
+  try { base = new URL(profile.url); origin = new URL(profile.origin); }
+  catch { throw cliError('user connection profile URL is invalid', 'cli_config_invalid'); }
+  if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash
+    || origin.protocol !== 'https:' || origin.username || origin.password
+    || origin.pathname !== '/' || origin.search || origin.hash) {
+    throw cliError('user connection profile requires secure URL and origin', 'cli_config_invalid');
+  }
+  const tokenPath = isAbsolute(profile.tokenFile) ? profile.tokenFile : resolve(dirname(profilePath), profile.tokenFile);
+  const token = readBoundedFile(tokenPath, 'private Baton token file', { ownerOnly: true, ownerUid }).trim();
+  if (!nonempty(token) || token.includes('\0') || token.includes('\n') || token.includes('\r')) {
+    throw cliError('private Baton token file content is invalid', 'cli_config_invalid');
+  }
+  return Object.freeze({
+    baseUrl: base.href.replace(/\/$/u, ''), origin: origin.origin, token, profilePath,
+  });
+}
+
+async function setupRemoteRead(fetchImpl, connection, path) {
+  let response;
+  try {
+    response = await fetchImpl(`${connection.baseUrl}${path}`, {
+      method: 'GET', redirect: 'error',
+      headers: {
+        authorization: `Bearer ${connection.token}`,
+        origin: connection.origin,
+        'sec-fetch-site': 'none',
+      },
+    });
+  } catch { throw cliError('Baton setup could not authenticate the remote application', 'cli_setup_remote_unavailable'); }
+  let body;
+  try { body = await response.json(); }
+  catch { throw cliError('Baton setup received an invalid remote response', 'cli_setup_remote_invalid'); }
+  if (!response.ok || body?.ok !== true) {
+    throw cliError('Baton setup authentication or repository authorization was refused', 'cli_setup_remote_refused');
+  }
+  return body;
+}
+
+function readInstalledSelector(path) {
+  const installed = readConnectionJson(path, 'repository connection configuration');
+  exactKeys(installed, ['schemaVersion', 'profile', 'repoId'], 'repository connection configuration');
+  if (installed.schemaVersion !== 1) throw cliError('repository connection schema is unsupported', 'cli_config_invalid');
+  id(installed.profile, 'connection profile');
+  id(installed.repoId, 'repository ID');
+  return installed;
+}
+
+function installRepositorySelector(commonDir, selector, ownerUid) {
+  const directory = join(commonDir, 'baton');
+  const target = join(directory, 'connection.json');
+  if (existsSync(target)) {
+    const installed = readInstalledSelector(target);
+    if (installed.profile === selector.profile && installed.repoId === selector.repoId) return 'already_configured';
+    throw cliError('repository connection already selects a different authenticated authority', 'cli_setup_conflict');
+  }
+  try { mkdirSync(directory, { mode: 0o700 }); }
+  catch (cause) { if (cause?.code !== 'EEXIST') throw cause; }
+  let directoryStat;
+  try { directoryStat = lstatSync(directory); }
+  catch { throw cliError('repository Baton metadata directory is unavailable', 'cli_setup_failed'); }
+  if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()
+    || (ownerUid !== null && Number.isInteger(directoryStat.uid) && directoryStat.uid !== ownerUid)) {
+    throw cliError('repository Baton metadata directory is unsafe', 'cli_setup_failed');
+  }
+  if ((directoryStat.mode & 0o077) !== 0) chmodSync(directory, 0o700);
+  const temporary = join(directory, `.connection-${randomUUID()}.tmp`);
+  let descriptor;
+  try {
+    descriptor = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
+    fchmodSync(descriptor, 0o600);
+    writeFileSync(descriptor, `${JSON.stringify({ schemaVersion: 1, profile: selector.profile, repoId: selector.repoId })}\n`, 'utf8');
+    fsyncSync(descriptor);
+  } catch (cause) {
+    if (descriptor !== undefined) closeSync(descriptor);
+    rmSync(temporary, { force: true });
+    throw Object.assign(cliError('repository connection could not be installed', 'cli_setup_failed'), { cause });
+  }
+  closeSync(descriptor);
+  try {
+    linkSync(temporary, target);
+    unlinkSync(temporary);
+    let directoryDescriptor;
+    try {
+      directoryDescriptor = openSync(directory, constants.O_RDONLY);
+      fsyncSync(directoryDescriptor);
+    } catch { /* The selector itself is already durable on filesystems that reject directory fsync. */ }
+    finally { if (directoryDescriptor !== undefined) closeSync(directoryDescriptor); }
+    return 'configured';
+  } catch (cause) {
+    rmSync(temporary, { force: true });
+    if (cause?.code === 'EEXIST') {
+      const installed = readInstalledSelector(target);
+      if (installed.profile === selector.profile && installed.repoId === selector.repoId) return 'already_configured';
+      throw cliError('repository connection already selects a different authenticated authority', 'cli_setup_conflict');
+    }
+    throw Object.assign(cliError('repository connection could not be installed', 'cli_setup_failed'), { cause });
+  }
+}
+
+/** Authenticate one user profile, bind it to the remote served repository, then install only the
+ * non-secret repository selector. No bearer value is accepted on argv or returned to the caller. */
+export async function setupBatonConnection({
+  cwd = process.cwd(), env = process.env, home = env.HOME,
+  ownerUid = typeof process.getuid === 'function' ? process.getuid() : null,
+  profile = null, fetchImpl = globalThis.fetch,
+} = {}) {
+  const present = CONNECTION_ENV.filter((name) => nonempty(env[name]));
+  if (present.length > 0) {
+    if (present.length !== CONNECTION_ENV.length) {
+      throw cliError(`incomplete connection environment override: ${CONNECTION_ENV.filter((name) => !present.includes(name)).join(', ')}`, 'cli_config_invalid');
+    }
+    if (profile !== null) throw cliError('--profile cannot be combined with a connection environment override');
+    return Object.freeze({
+      schemaVersion: 1, state: 'configured', authority: 'environment-compatibility',
+      next: Object.freeze([{ action: 'check', command: 'baton doctor --check' }]),
+    });
+  }
+  if (typeof fetchImpl !== 'function') throw cliError('Baton setup transport is unavailable', 'cli_setup_remote_unavailable');
+  const { commonDir } = findRepositoryMetadata(cwd);
+  const configRoot = connectionConfigRoot(env, home);
+  const profiles = setupProfileNames(configRoot);
+  if (profile !== null) id(profile, 'connection profile');
+  if (profile === null && profiles.length !== 1) {
+    return Object.freeze({
+      schemaVersion: 1, state: 'needs_user_input',
+      outline: Object.freeze({ repository: 'ready', profiles: profiles.length === 0 ? 'missing' : 'selection_required', connection: 'not_written' }),
+      profiles: Object.freeze(profiles),
+      next: Object.freeze(profiles.length === 0
+        ? [{ action: 'create_profile', command: 'baton help connection' }]
+        : [{ action: 'select_profile', command: 'baton setup --profile PROFILE' }]),
+    });
+  }
+  const selected = profile ?? profiles[0];
+  if (!profiles.includes(selected)) throw cliError('selected Baton connection profile is unavailable', 'cli_config_invalid');
+  const connection = readSetupProfile(configRoot, selected, ownerUid);
+  const card = await setupRemoteRead(fetchImpl, connection, '/v1/application-card');
+  const session = await setupRemoteRead(fetchImpl, connection, '/v1/session');
+  const repoId = card?.application?.repoId;
+  if (card?.application?.schemaVersion !== 1 || !record(card.application) || !id(repoId, 'repository ID')
+    || !record(session.identity) || !Array.isArray(session.identity.repoIds) || !session.identity.repoIds.includes(repoId)
+    || !Array.isArray(session.identity.capabilities) || !session.identity.capabilities.includes('observe')) {
+    throw cliError('Baton setup could not prove one authenticated repository authority', 'cli_setup_remote_invalid');
+  }
+  const installState = installRepositorySelector(commonDir, { profile: selected, repoId }, ownerUid);
+  return Object.freeze({
+    schemaVersion: 1, state: installState, authority: 'repository-user-profile',
+    connection: Object.freeze({ profile: selected, repoId }),
+    next: Object.freeze([{ action: 'check', command: 'baton doctor --check' }]),
+  });
+}
+
+/** Read-only local diagnosis. It deliberately never opens the bearer-token file or contacts the
+ * remote application; `doctor --check` performs those explicit deeper checks separately. */
+export function inspectBatonConnection({
+  cwd = process.cwd(), env = process.env, home = env.HOME,
+  ownerUid = typeof process.getuid === 'function' ? process.getuid() : null,
+  depth = 'outline',
+} = {}) {
+  if (!['outline', 'connection', 'profile', 'evidence'].includes(depth)) {
+    throw cliError('doctor depth is invalid');
+  }
+  const present = CONNECTION_ENV.filter((name) => nonempty(env[name]));
+  if (present.length > 0) {
+    const complete = present.length === CONNECTION_ENV.length;
+    return Object.freeze({
+      schemaVersion: 1, state: complete ? 'configured' : 'needs_setup', depth,
+      outline: Object.freeze({
+        repository: 'environment_override', connection: complete ? 'ready' : 'incomplete',
+        profile: 'not_applicable', credential: 'not_read', remote: 'not_checked',
+      }),
+      ...(complete ? {} : { missing: Object.freeze(CONNECTION_ENV.filter((name) => !present.includes(name))) }),
+      next: Object.freeze(complete
+        ? [{ action: 'check', command: 'baton doctor --check' }]
+        : [{ action: 'complete_or_clear_environment', command: 'baton help connection' }]),
+    });
+  }
+  let metadata;
+  try { metadata = findRepositoryMetadata(cwd); } catch {
+    return Object.freeze({
+      schemaVersion: 1, state: 'needs_setup', depth,
+      outline: Object.freeze({ repository: 'missing', connection: 'not_checked', profile: 'not_checked', credential: 'not_read', remote: 'not_checked' }),
+      next: Object.freeze([{ action: 'enter_repository', command: 'cd REPOSITORY' }]),
+    });
+  }
+  const repositoryPath = join(metadata.commonDir, 'baton', 'connection.json');
+  if (!existsSync(repositoryPath)) {
+    return Object.freeze({
+      schemaVersion: 1, state: 'needs_setup', depth,
+      outline: Object.freeze({ repository: 'ready', connection: 'missing', profile: 'not_checked', credential: 'not_read', remote: 'not_checked' }),
+      next: Object.freeze([{ action: 'setup', command: 'baton setup' }]),
+      ...(depth === 'evidence' ? { evidence: Object.freeze({ selector: 'absent', gitCommonDirectory: 'resolved' }) } : {}),
+    });
+  }
+  let repository;
+  try {
+    repository = readConnectionJson(repositoryPath, 'repository connection configuration');
+    exactKeys(repository, ['schemaVersion', 'profile', 'repoId'], 'repository connection configuration');
+    if (repository.schemaVersion !== 1) throw cliError('repository connection schema is unsupported', 'cli_config_invalid');
+    id(repository.profile, 'connection profile'); id(repository.repoId, 'repository ID');
+  } catch {
+    return Object.freeze({
+      schemaVersion: 1, state: 'needs_setup', depth,
+      outline: Object.freeze({ repository: 'ready', connection: 'invalid', profile: 'not_checked', credential: 'not_read', remote: 'not_checked' }),
+      next: Object.freeze([{ action: 'repair_setup', command: 'baton setup' }]),
+    });
+  }
+  const configRoot = nonempty(env.XDG_CONFIG_HOME) && isAbsolute(env.XDG_CONFIG_HOME)
+    ? env.XDG_CONFIG_HOME : nonempty(home) && isAbsolute(home) ? join(home, '.config') : null;
+  if (!configRoot) {
+    return Object.freeze({
+      schemaVersion: 1, state: 'needs_setup', depth,
+      outline: Object.freeze({ repository: 'ready', connection: 'ready', profile: 'unavailable', credential: 'not_read', remote: 'not_checked' }),
+      next: Object.freeze([{ action: 'configure_home', command: 'baton help connection' }]),
+    });
+  }
+  const profilePath = join(configRoot, 'baton', 'connections', `${repository.profile}.json`);
+  let profile;
+  try {
+    profile = readConnectionJson(profilePath, 'user connection profile', { ownerOnly: true, ownerUid });
+    exactKeys(profile, ['schemaVersion', 'url', 'origin', 'tokenFile'], 'user connection profile');
+    if (profile.schemaVersion !== 1 || !nonempty(profile.url) || !nonempty(profile.origin) || !nonempty(profile.tokenFile)) throw cliError('user connection profile is invalid', 'cli_config_invalid');
+  } catch {
+    return Object.freeze({
+      schemaVersion: 1, state: 'needs_setup', depth,
+      outline: Object.freeze({ repository: 'ready', connection: 'ready', profile: existsSync(profilePath) ? 'invalid' : 'missing', credential: 'not_read', remote: 'not_checked' }),
+      next: Object.freeze([{ action: 'setup', command: 'baton setup' }]),
+      ...(depth === 'connection' || depth === 'profile' ? { connection: Object.freeze({ profile: repository.profile, repoId: repository.repoId }) } : {}),
+    });
+  }
+  return Object.freeze({
+    schemaVersion: 1, state: 'configured', depth,
+    outline: Object.freeze({ repository: 'ready', connection: 'ready', profile: 'ready', credential: 'not_read', remote: 'not_checked' }),
+    ...(depth === 'connection' || depth === 'profile' ? { connection: Object.freeze({ profile: repository.profile, repoId: repository.repoId, origin: profile.origin }) } : {}),
+    ...(depth === 'evidence' ? { evidence: Object.freeze({ selector: 'valid', profile: 'valid', credential: 'not_opened', remote: 'not_contacted' }) } : {}),
+    next: Object.freeze([{ action: 'check', command: 'baton doctor --check' }]),
   });
 }
 
@@ -469,6 +751,28 @@ export function parseBatonCli(rawArgs) {
     return { kind: 'help', topic: 'application' };
   }
   const idempotencyKey = take(args, '--idempotency-key') ?? randomUUID();
+  if (args[0] === 'credentials') {
+    args.shift();
+    const longHelp = flag(args, '--help');
+    const shortHelp = flag(args, '-h');
+    if (longHelp || shortHelp) {
+      if (args.length !== 0 && !(args.length === 2 && args[0] === 'install' && args[1] === 'kimi')) {
+        throw cliError('expected credentials install kimi');
+      }
+      return { kind: 'credential-help' };
+    }
+    if (args.length === 0) return { kind: 'credential-help' };
+    if (args.shift() !== 'install' || args.shift() !== 'kimi') {
+      throw cliError('expected credentials install kimi');
+    }
+    noRemainder(args);
+    return { kind: 'credential-install', provider: 'kimi' };
+  }
+  if (args[0] === 'help' && args[1] === 'credentials') {
+    args.splice(0, 2);
+    noRemainder(args);
+    return { kind: 'credential-help' };
+  }
   if (args.includes('--help') || args.includes('-h')) {
     flag(args, '--help'); flag(args, '-h');
     let topic = 'application';
@@ -490,7 +794,20 @@ export function parseBatonCli(rawArgs) {
     noRemainder(args);
     return { kind: 'command', name: 'application.help', args: { topic, depth: 'outline' }, idempotencyKey };
   }
-  if (args[0] === 'doctor') { args.shift(); noRemainder(args); return { kind: 'doctor' }; }
+  if (args[0] === 'doctor') {
+    args.shift();
+    const depth = take(args, '--depth') ?? 'outline';
+    const check = flag(args, '--check');
+    noRemainder(args);
+    if (!['outline', 'connection', 'profile', 'evidence'].includes(depth)) throw cliError('doctor depth is invalid');
+    return { kind: 'doctor', depth, check };
+  }
+  if (args[0] === 'setup') {
+    args.shift();
+    const profile = take(args, '--profile');
+    noRemainder(args);
+    return { kind: 'setup', profile: profile === null ? null : id(profile, 'connection profile') };
+  }
   if (args[0] === 'serve') {
     args.shift();
     const configPath = args.shift();
@@ -498,7 +815,7 @@ export function parseBatonCli(rawArgs) {
     noRemainder(args);
     return { kind: 'serve', configPath };
   }
-  if (args.shift() !== 'run') throw cliError('expected doctor or run');
+  if (args.shift() !== 'run') throw cliError('expected credentials, setup, doctor, or run');
   const action = args.shift();
   if (action === 'follow') {
     throw cliError(`${action} is not shipped by the Run application`, 'cli_command_unavailable');
@@ -507,7 +824,8 @@ export function parseBatonCli(rawArgs) {
     return parseStart(args, args.shift(), idempotencyKey);
   }
   const lifecycleActions = new Set(['show', 'do', 'recover', 'status', 'approve', 'answer', 'steer',
-    'stop', 'evidence', 'adopt', 'retry', 'review', 'integrate', 'export']);
+    'stop', 'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member',
+    'retry', 'review', 'integrate', 'export']);
   if (!lifecycleActions.has(action)) return parseStart(args, action, idempotencyKey);
   const runId = id(args.shift(), 'Run ID');
   if (action === 'show') {
@@ -567,9 +885,44 @@ export function parseBatonCli(rawArgs) {
     const reason = take(args, '--reason', { required: true }); noRemainder(args);
     return { kind: 'adopt', runId, reason, idempotencyKey };
   }
+  if (action === 'select') {
+    const role = id(args.shift(), 'Workflow role');
+    const reason = take(args, '--reason', { required: true }); noRemainder(args);
+    return {
+      kind: 'semantic-action', actionKind: 'select_candidate', runId,
+      inputs: { role, reason }, idempotencyKey,
+    };
+  }
+  if (action === 'feedback') {
+    const role = id(args.shift(), 'Workflow role');
+    const feedback = take(args, '--text', { required: true }); noRemainder(args);
+    return {
+      kind: 'semantic-action', actionKind: 'send_feedback', runId,
+      inputs: { role, feedback }, idempotencyKey,
+    };
+  }
+  if (action === 'revise') {
+    const reason = take(args, '--reason', { required: true }); noRemainder(args);
+    return {
+      kind: 'semantic-action', actionKind: 'revise_candidate', runId,
+      inputs: { reason }, idempotencyKey,
+    };
+  }
+  if (action === 'stop-member') {
+    const role = id(args.shift(), 'Workflow role');
+    const reason = take(args, '--reason', { required: true }); noRemainder(args);
+    return {
+      kind: 'semantic-action', actionKind: 'stop_member', runId,
+      inputs: { role, reason }, idempotencyKey,
+    };
+  }
   if (action === 'retry') {
     const reason = take(args, '--reason', { required: true }); noRemainder(args);
     return { kind: 'command', name: 'run.retry_verification', args: { runId, reason }, idempotencyKey };
+  }
+  if (action === 'resume') {
+    const reason = take(args, '--reason', { required: true }); noRemainder(args);
+    return { kind: 'command', name: 'run.resume_work', args: { runId, reason }, idempotencyKey };
   }
   if (action === 'review') {
     const exact = route(take(args, '--exact', { required: true }));
@@ -592,6 +945,8 @@ export function parseBatonCli(rawArgs) {
 }
 
 export class BatonWebClient {
+  #token;
+
   constructor(options) {
     exactKeys(options, ['baseUrl', 'origin', 'repoId', 'token', 'commandTimeoutMs', 'pollMs', 'fetchImpl', 'clock', 'sleep'], 'Web client configuration');
     const base = new URL(options.baseUrl);
@@ -606,7 +961,7 @@ export class BatonWebClient {
     this.baseUrl = base.href.replace(/\/$/u, '');
     this.origin = origin.origin;
     this.repoId = options.repoId;
-    this.token = options.token;
+    this.#token = options.token;
     this.commandTimeoutMs = options.commandTimeoutMs;
     this.pollMs = options.pollMs;
     this.fetch = options.fetchImpl;
@@ -615,7 +970,7 @@ export class BatonWebClient {
   }
 
   _headers(json = false) {
-    return { authorization: `Bearer ${this.token}`, origin: this.origin, ...(json ? { 'content-type': 'application/json' } : {}) };
+    return { authorization: `Bearer ${this.#token}`, origin: this.origin, ...(json ? { 'content-type': 'application/json' } : {}) };
   }
 
   async _json(path, options = {}) {
@@ -624,7 +979,12 @@ export class BatonWebClient {
     catch { throw cliError('Baton Web connection failed', 'cli_transport_failed'); }
     let body;
     try { body = await response.json(); } catch { throw cliError('Baton Web returned invalid JSON', 'cli_protocol_failed'); }
-    if (!response.ok) throw cliError(body?.error?.code ?? 'Baton Web command failed', body?.error?.code ?? 'cli_command_failed');
+    if (!response.ok) {
+      const receivedCode = body?.error?.code;
+      const code = typeof receivedCode === 'string' && /^[a-z][a-z0-9_]{0,63}$/u.test(receivedCode)
+        ? receivedCode : 'cli_command_failed';
+      throw cliError('Baton Web request was refused', code);
+    }
     return body;
   }
 
@@ -632,6 +992,38 @@ export class BatonWebClient {
     const readiness = await this._json('/readyz', { headers: { origin: this.origin } });
     const card = await this._json('/v1/application-card', { headers: { ...this._headers(), 'sec-fetch-site': 'none' } });
     return { schemaVersion: 1, ready: readiness.ready === true, application: card.application };
+  }
+
+  async session() {
+    const body = await this._json('/v1/session', { headers: { ...this._headers(), 'sec-fetch-site': 'none' } });
+    const identity = body?.identity;
+    const expiresAt = Date.parse(body?.expiresAt);
+    const identityFields = ['capabilities', 'repoIds', 'sessionId', 'userId'];
+    if (!record(body) || Object.keys(body).sort().join(',') !== ['expiresAt', 'identity', 'ok'].join(',')
+      || body.ok !== true || !record(identity)
+      || Object.keys(identity).sort().join(',') !== identityFields.sort().join(',')
+      || !/^[A-Za-z0-9._:-]{1,256}$/u.test(identity.userId ?? '')
+      || !/^[A-Za-z0-9._:-]{1,256}$/u.test(identity.sessionId ?? '')
+      || !Array.isArray(identity.capabilities) || identity.capabilities.length === 0
+      || identity.capabilities.length > 256
+      || identity.capabilities.some((value) => !/^[A-Za-z0-9._:-]{1,256}$/u.test(value ?? ''))
+      || new Set(identity.capabilities).size !== identity.capabilities.length
+      || !Array.isArray(identity.repoIds) || identity.repoIds.length === 0 || identity.repoIds.length > 256
+      || identity.repoIds.some((value) => !/^[A-Za-z0-9._:-]{1,256}$/u.test(value ?? ''))
+      || new Set(identity.repoIds).size !== identity.repoIds.length
+      || !identity.capabilities.includes('observe') || !identity.repoIds.includes(this.repoId)
+      || !Number.isFinite(expiresAt) || expiresAt <= this.clock()) {
+      throw cliError('Baton Web returned an invalid authenticated session', 'cli_protocol_failed');
+    }
+    return Object.freeze({
+      schemaVersion: 1,
+      identity: Object.freeze({
+        userId: identity.userId, sessionId: identity.sessionId,
+        capabilities: Object.freeze([...identity.capabilities]),
+        repoIds: Object.freeze([...identity.repoIds]),
+      }),
+      expiresAt: new Date(expiresAt).toISOString(),
+    });
   }
 
   async command(name, args, idempotencyKey = randomUUID()) {
@@ -751,6 +1143,18 @@ export async function runBatonCli(parsed, client, options = {}) {
       runId: parsed.runId, nodeKey: evidence.result.nodeKey, resultSha: evidence.result.sha,
       evidenceDigest: evidence.manifestDigest, reason: parsed.reason,
     }, `${parsed.idempotencyKey}:adopt`);
+  }
+  if (parsed.kind === 'semantic-action') {
+    const view = await client.command('run.inspect', {
+      runId: parsed.runId, depth: 'outline',
+    }, `${parsed.idempotencyKey}:inspect`);
+    const matching = (view?.outline?.actions ?? []).filter((action) => action?.kind === parsed.actionKind);
+    if (matching.length !== 1 || !nonempty(matching[0]?.actionId)) {
+      throw cliError(`Run does not currently advertise ${parsed.actionKind}`, 'application_action_unavailable');
+    }
+    return client.command('run.act', {
+      runId: parsed.runId, actionId: matching[0].actionId, inputs: parsed.inputs,
+    }, `${parsed.idempotencyKey}:act`);
   }
   if (parsed.kind === 'integrate') {
     const evidence = await client.command('run.evidence', { runId: parsed.runId }, `${parsed.idempotencyKey}:evidence`);
