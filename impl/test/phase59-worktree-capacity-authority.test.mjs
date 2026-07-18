@@ -198,7 +198,14 @@ test('WC2: default pinned sparse tree estimate composes projection identity and 
   const snapshot = driver.worktreeCapacity.snapshot();
   assert.equal(snapshot.totals.bytes, totalBytes);
   assert.equal(snapshot.totals.inodes, totalInodes);
+  assert.deepEqual(snapshot.outstanding, {
+    bytes: policy.runtimeReserveBytes,
+    inodes: policy.runtimeReserveInodes,
+  });
   assert.equal(snapshot.reservations.length, 1);
+  assert.equal(typeof snapshot.reservations[0].materializedAt, 'string');
+  assert.equal(snapshot.reservations[0].outstandingBytes, policy.runtimeReserveBytes);
+  assert.equal(snapshot.reservations[0].outstandingInodes, policy.runtimeReserveInodes);
   assert.deepEqual(
     {
       id: snapshot.reservations[0].id,
@@ -421,6 +428,66 @@ test('WC4: concurrent admission atomically reserves one worker and refuses the c
   driver = null;
 });
 
+test('WC4a: aggregate reservation admits or refuses the whole wave with one observation and one state transition', (t) => {
+  const f = fixture('aggregate-wave');
+  t.after(() => rmSync(f.world, { recursive: true, force: true }));
+  const injected = injectedCapacity({ treeBytes: 40, treeInodes: 3 });
+  const request = {
+    baseSha: f.sha,
+    sparsePaths: [],
+    sparseCheckoutIdentity: sparseCheckoutIdentity([]),
+    toolchainProjection: null,
+    toolchainProjectionTargetParents: [],
+  };
+  const authority = new WorktreeCapacityAuthority({
+    repoRoot: f.repo,
+    policy: { ...validPolicy, maxReservedBytes: 119, maxReservedInodes: 10 },
+    integrityKey: loadOrCreateWorktreeCapacityIntegrityKey(f.repo),
+    estimate: injected.worktreeCapacityEstimate,
+    observe: injected.worktreeCapacityObserve,
+  });
+
+  assert.throws(() => authority.reserveMany([
+    { id: 'worker:aggregate-a', request },
+    { id: 'worker:aggregate-b', request },
+  ]), (error) => error?.code === 'worktree_capacity_exceeded');
+  assert.equal(injected.estimates.length, 2);
+  assert.equal(injected.observations.length, 1);
+  assert.deepEqual(authority.snapshot().reservations, []);
+});
+
+test('WC4b: aggregate reservation and release publish one exact all-member state each', (t) => {
+  const f = fixture('aggregate-release');
+  t.after(() => rmSync(f.world, { recursive: true, force: true }));
+  const injected = injectedCapacity({ treeBytes: 40, treeInodes: 3 });
+  const request = {
+    baseSha: f.sha,
+    sparsePaths: [],
+    sparseCheckoutIdentity: sparseCheckoutIdentity([]),
+    toolchainProjection: null,
+    toolchainProjectionTargetParents: [],
+  };
+  const authority = new WorktreeCapacityAuthority({
+    repoRoot: f.repo,
+    policy: { ...validPolicy, maxReservedBytes: 120, maxReservedInodes: 10 },
+    integrityKey: loadOrCreateWorktreeCapacityIntegrityKey(f.repo),
+    estimate: injected.worktreeCapacityEstimate,
+    observe: injected.worktreeCapacityObserve,
+  });
+
+  const reservations = authority.reserveMany([
+    { id: 'worker:aggregate-release-a', request },
+    { id: 'worker:aggregate-release-b', request },
+  ]);
+  assert.equal(reservations.length, 2);
+  assert.equal(new Set(reservations.map(({ createdAt }) => createdAt)).size, 1);
+  assert.deepEqual(authority.snapshot().reservations.map(({ id }) => id), [
+    'worker:aggregate-release-a', 'worker:aggregate-release-b',
+  ]);
+  assert.deepEqual(authority.releaseMany(reservations), [true, true]);
+  assert.deepEqual(authority.snapshot().reservations, []);
+});
+
 test('WC5: kill/reap releases exactly, capacity can be reused, and final drain releases the replacement', async (t) => {
   const f = fixture('release-reuse');
   const { adapter } = countedBlockingAdapter();
@@ -574,7 +641,13 @@ test('WC10: worker and verifier reservations release only after their exact owne
   const worker = await driver.coordinator._worktrees.create('capacity-verifier-owner', f.sha);
   assert.equal(driver.worktreeCapacity.snapshot().reservations.length, 1);
   const verifier = await driver.coordinator._worktrees.createVerifyWorktree('capacity-verifier', f.sha);
-  assert.equal(driver.worktreeCapacity.snapshot().reservations.length, 2);
+  const active = driver.worktreeCapacity.snapshot();
+  assert.equal(active.reservations.length, 2);
+  assert.deepEqual(active.outstanding, {
+    bytes: validPolicy.runtimeReserveBytes * 2,
+    inodes: validPolicy.runtimeReserveInodes * 2,
+  });
+  assert.equal(active.reservations.every((row) => typeof row.materializedAt === 'string'), true);
   await driver.coordinator._worktrees.removeVerifyWorktree(verifier.path);
   assert.deepEqual(driver.worktreeCapacity.snapshot().reservations.map((row) => row.id), ['worker:capacity-verifier-owner']);
   await driver.coordinator._worktrees.remove('capacity-verifier-owner');
@@ -730,7 +803,7 @@ test('WC19: refused supervised closeAsync leaves recovery authority running for 
   driver = createDriver({
     repoRoot: f.repo, logDir: f.logDir, adapters: { mock: adapter }, worktreeCapacity: validPolicy,
     worktreeCapacityEstimate: injected.worktreeCapacityEstimate, worktreeCapacityObserve: injected.worktreeCapacityObserve,
-    sessionRecoveryPolicy: { maxSessions: 2, maxStateRows: 8, timeoutMs: 100 },
+    sessionRecoveryPolicy: { maxAttempts: 3, maxSessions: 2, maxStateRows: 8, timeoutMs: 100 },
   });
   await driver.ready;
   const handle = await driver.coordinator.spawn('mock', brief(), { taskId: 'capacity-supervised-close' });
@@ -859,4 +932,63 @@ test('WC23: reconciliation releases dead foreign owners without stealing live fo
   assert.equal(restarted.snapshot().totals.bytes, 120, 'released dead capacity must be immediately reusable');
   assert.equal(restarted.release(replacement), true);
   assert.equal(foreign.release(liveForeign), true);
+});
+
+test('WC24: materialized allocations retain growth headroom without double-counting their tree bytes', (t) => {
+  const f = fixture('materialized-outstanding-capacity');
+  t.after(() => rmSync(f.world, { recursive: true, force: true }));
+  const policy = {
+    ...validPolicy,
+    maxReservedBytes: 120,
+    maxReservedInodes: 10,
+    minFreeBytes: 100,
+    minFreeInodes: 10,
+  };
+  let freeBytes = 220;
+  let freeInodes = 30;
+  const authority = new WorktreeCapacityAuthority({
+    repoRoot: f.repo,
+    policy,
+    integrityKey: loadOrCreateWorktreeCapacityIntegrityKey(f.repo),
+    estimate: () => ({ bytes: 60, inodes: 5 }),
+    observe: () => ({ freeBytes, freeInodes }),
+  });
+  const request = {
+    baseSha: f.sha,
+    sparsePaths: [],
+    sparseCheckoutIdentity: sparseCheckoutIdentity([]),
+    toolchainProjection: null,
+    toolchainProjectionTargetParents: [],
+  };
+
+  const first = authority.reserve('worker:materialized-first', request);
+  assert.throws(
+    () => authority.materialize(first, join(f.repo, '.baton', 'wt', 'missing')),
+    (error) => error?.code === 'worktree_capacity_unavailable',
+  );
+  const foreignPath = join(f.world, 'foreign-materialization');
+  mkdirSync(foreignPath);
+  assert.throws(
+    () => authority.materialize(first, foreignPath),
+    (error) => error?.code === 'worktree_capacity_unavailable',
+  );
+  const materializedPath = join(f.repo, '.baton', 'wt', 'materialized-first');
+  mkdirSync(materializedPath, { recursive: true });
+  freeBytes = 180;
+  freeInodes = 27;
+  const materialized = authority.materialize(first, materializedPath);
+  assert.equal(typeof materialized.materializedAt, 'string');
+  assert.equal(materialized.outstandingBytes, policy.runtimeReserveBytes);
+  assert.equal(materialized.outstandingInodes, policy.runtimeReserveInodes);
+  assert.deepEqual(authority.materialize(first, materializedPath), materialized,
+    'response-loss replay returns the original materialization coordinate');
+
+  const second = authority.reserve('worker:materialized-second', request);
+  const snapshot = authority.snapshot();
+  assert.deepEqual(snapshot.totals, { bytes: 120, inodes: 10 });
+  assert.deepEqual(snapshot.outstanding, { bytes: 80, inodes: 7 });
+  assert.equal(snapshot.reservations.find((row) => row.id === first.id).materializedAt,
+    materialized.materializedAt);
+  assert.equal(snapshot.reservations.find((row) => row.id === second.id).materializedAt, null);
+  assert.deepEqual(authority.releaseMany([materialized, second]), [true, true]);
 });
