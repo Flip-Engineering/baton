@@ -1,0 +1,820 @@
+{
+  "record": {
+    "schemaVersion": 1,
+    "runId": "run-ca35affcbe6ffb56761505a5f5e39742",
+    "outcome": "context_map_completed",
+    "readiness": [
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "state": "ready",
+        "code": null
+      },
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+        "state": "ready",
+        "code": null
+      },
+      {
+        "harness": "kimi-code",
+        "model": "kimi-code/k3",
+        "effort": "max",
+        "state": "blocked",
+        "code": "authentication_metadata_invalid"
+      }
+    ],
+    "selectedTeam": [
+      {
+        "role": "lifecycle-auditor",
+        "exact": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        }
+      },
+      {
+        "role": "ax-adversary",
+        "exact": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "xhigh"
+        }
+      }
+    ],
+    "source": {
+      "cellId": "cell:22219c59f3a7564a5c3cd03b624bdd41b89eaddcaafd1451bdaac389610d317e",
+      "partitions": 2
+    },
+    "predecessorMemberStops": {
+      "members": [
+        {
+          "role": "lifecycle-auditor",
+          "member": {
+            "kind": "application.workflow_member_stop_admitted",
+            "schemaVersion": 1,
+            "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+            "runId": "run-ca35affcbe6ffb56761505a5f5e39742",
+            "goalDigest": "c9eff220401a3d106133dab9559637607c71bb2c47fcb4b86786e4714e408513",
+            "planDigest": "3c69f35e811faefce9f3268d4a0d4172150b596ef1028f73c5f600c7fa82aeaa",
+            "definitionDigest": "16997411d902118251c99868d0e856e50ffa983fb29a89814340db584c34d378",
+            "role": "lifecycle-auditor",
+            "nodeKey": "attempt:lifecycle-auditor",
+            "taskId": "baton-a7d6f196b2e75f9236bee879-attempt-lifecycle-auditor",
+            "workerId": "w-wave-b97c80717b377a20aeec09fd",
+            "targetDigest": "51e022354c82fb918fe6f3ad8d6b5eadc8b69e6b711b68e87b63f3a22703a2d9",
+            "reasonDigest": "fdf97907e03b86f5d8c9b4b75a28a87b3d61d6a142d021fc5d8ff2faf0be442c",
+            "source": {
+              "actor": "deployment:repo-76d484205f22eed0163d8f21b8287740",
+              "principalId": "local-owner",
+              "sessionId": "local-owner-session"
+            },
+            "prefix": {
+              "throughSeq": 18,
+              "goalDigest": "c9eff220401a3d106133dab9559637607c71bb2c47fcb4b86786e4714e408513",
+              "planDigest": "3c69f35e811faefce9f3268d4a0d4172150b596ef1028f73c5f600c7fa82aeaa",
+              "definitionDigest": "16997411d902118251c99868d0e856e50ffa983fb29a89814340db584c34d378"
+            },
+            "admissionDigest": "1ed9f3db53fff6b75c6b1cbccc403de70de4a6d76f0d22e03955ebe10a02fc02",
+            "status": "stopped",
+            "admittedEvent": 19,
+            "completedEvent": 26,
+            "receipt": {
+              "kind": "application.workflow_member_stop_completed",
+              "schemaVersion": 1,
+              "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+              "runId": "run-ca35affcbe6ffb56761505a5f5e39742",
+              "planDigest": "3c69f35e811faefce9f3268d4a0d4172150b596ef1028f73c5f600c7fa82aeaa",
+              "definitionDigest": "16997411d902118251c99868d0e856e50ffa983fb29a89814340db584c34d378",
+              "role": "lifecycle-auditor",
+              "nodeKey": "attempt:lifecycle-auditor",
+              "taskId": "baton-a7d6f196b2e75f9236bee879-attempt-lifecycle-auditor",
+              "workerId": "w-wave-b97c80717b377a20aeec09fd",
+              "targetDigest": "51e022354c82fb918fe6f3ad8d6b5eadc8b69e6b711b68e87b63f3a22703a2d9",
+              "admissionDigest": "1ed9f3db53fff6b75c6b1cbccc403de70de4a6d76f0d22e03955ebe10a02fc02",
+              "state": "stopped",
+              "outcome": {
+                "targetCount": 1,
+                "remainingCount": 0,
+                "counts": {
+                  "pendingCancelled": 0,
+                  "killConfirmed": 1,
+                  "alreadyTerminal": 0,
+                  "processesObserved": 1,
+                  "processesClosed": 1
+                },
+                "checks": {
+                  "interactionsResolved": true,
+                  "runAuthorityReleased": true
+                }
+              },
+              "completionDigest": "239dcd36182490dd8ea8d427395631b16f335f79f648d792366d53298a40a1b4"
+            }
+          },
+          "attempt": {
+            "role": "lifecycle-auditor",
+            "nodeKey": "attempt:lifecycle-auditor",
+            "taskId": "baton-a7d6f196b2e75f9236bee879-attempt-lifecycle-auditor",
+            "state": "cancelled",
+            "route": {
+              "requested": {
+                "harness": "codex",
+                "model": "gpt-5.6-sol",
+                "effort": "high"
+              },
+              "resolved": {
+                "harness": "codex@codex-cli 0.144.6",
+                "model": "gpt-5.6-sol",
+                "effort": "high"
+              },
+              "observed": {
+                "harness": null,
+                "model": "gpt-5.6-sol",
+                "effort": null
+              },
+              "launchEnforcement": {
+                "harness": {
+                  "requested": "codex",
+                  "resolved": "codex@codex-cli 0.144.6",
+                  "state": "matched"
+                },
+                "model": {
+                  "requested": "gpt-5.6-sol",
+                  "resolved": "gpt-5.6-sol",
+                  "state": "matched"
+                },
+                "effort": {
+                  "requested": "high",
+                  "resolved": "high",
+                  "state": "matched"
+                }
+              },
+              "providerAttestation": {
+                "harness": {
+                  "observed": null,
+                  "state": "not_observed_before_stop"
+                },
+                "model": {
+                  "observed": "gpt-5.6-sol",
+                  "state": "matched"
+                },
+                "effort": {
+                  "observed": null,
+                  "state": "not_observed_before_stop"
+                }
+              }
+            },
+            "candidateId": null,
+            "memberStop": {
+              "state": "stopped",
+              "targetDigest": "51e022354c82fb918fe6f3ad8d6b5eadc8b69e6b711b68e87b63f3a22703a2d9",
+              "admittedEvent": 19,
+              "completedEvent": 26,
+              "receiptDigest": "239dcd36182490dd8ea8d427395631b16f335f79f648d792366d53298a40a1b4"
+            },
+            "activity": {
+              "state": "exited",
+              "lastEventAt": "2026-07-18T18:05:57.588Z",
+              "lastEventSeq": 14,
+              "turnCount": 1,
+              "usage": {
+                "tokens": 0,
+                "usd": 0
+              },
+              "editedPaths": [],
+              "warnings": []
+            },
+            "verification": "pending",
+            "terminalCause": null
+          }
+        },
+        {
+          "role": "ax-adversary",
+          "member": {
+            "kind": "application.workflow_member_stop_admitted",
+            "schemaVersion": 1,
+            "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+            "runId": "run-ca35affcbe6ffb56761505a5f5e39742",
+            "goalDigest": "c9eff220401a3d106133dab9559637607c71bb2c47fcb4b86786e4714e408513",
+            "planDigest": "3c69f35e811faefce9f3268d4a0d4172150b596ef1028f73c5f600c7fa82aeaa",
+            "definitionDigest": "16997411d902118251c99868d0e856e50ffa983fb29a89814340db584c34d378",
+            "role": "ax-adversary",
+            "nodeKey": "attempt:ax-adversary",
+            "taskId": "baton-a530070da06ef1323a53b0e2-attempt-ax-adversary",
+            "workerId": "w-wave-204def4809e65842b9d0a4e4",
+            "targetDigest": "dfa2ce65c6c332b52cc6fa6e101e915ce96f0881d1b6def3e3f4778710f6aebe",
+            "reasonDigest": "fdf97907e03b86f5d8c9b4b75a28a87b3d61d6a142d021fc5d8ff2faf0be442c",
+            "source": {
+              "actor": "deployment:repo-76d484205f22eed0163d8f21b8287740",
+              "principalId": "local-owner",
+              "sessionId": "local-owner-session"
+            },
+            "prefix": {
+              "throughSeq": 26,
+              "goalDigest": "c9eff220401a3d106133dab9559637607c71bb2c47fcb4b86786e4714e408513",
+              "planDigest": "3c69f35e811faefce9f3268d4a0d4172150b596ef1028f73c5f600c7fa82aeaa",
+              "definitionDigest": "16997411d902118251c99868d0e856e50ffa983fb29a89814340db584c34d378"
+            },
+            "admissionDigest": "2c1da7d98d3ed19beb1609df3bcbe717f08d3f68c7097bf1c83d52cdfed608d1",
+            "status": "stopped",
+            "admittedEvent": 27,
+            "completedEvent": 34,
+            "receipt": {
+              "kind": "application.workflow_member_stop_completed",
+              "schemaVersion": 1,
+              "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+              "runId": "run-ca35affcbe6ffb56761505a5f5e39742",
+              "planDigest": "3c69f35e811faefce9f3268d4a0d4172150b596ef1028f73c5f600c7fa82aeaa",
+              "definitionDigest": "16997411d902118251c99868d0e856e50ffa983fb29a89814340db584c34d378",
+              "role": "ax-adversary",
+              "nodeKey": "attempt:ax-adversary",
+              "taskId": "baton-a530070da06ef1323a53b0e2-attempt-ax-adversary",
+              "workerId": "w-wave-204def4809e65842b9d0a4e4",
+              "targetDigest": "dfa2ce65c6c332b52cc6fa6e101e915ce96f0881d1b6def3e3f4778710f6aebe",
+              "admissionDigest": "2c1da7d98d3ed19beb1609df3bcbe717f08d3f68c7097bf1c83d52cdfed608d1",
+              "state": "stopped",
+              "outcome": {
+                "targetCount": 1,
+                "remainingCount": 0,
+                "counts": {
+                  "pendingCancelled": 0,
+                  "killConfirmed": 1,
+                  "alreadyTerminal": 0,
+                  "processesObserved": 1,
+                  "processesClosed": 1
+                },
+                "checks": {
+                  "interactionsResolved": true,
+                  "runAuthorityReleased": true
+                }
+              },
+              "completionDigest": "26ae39bd3ea1c89ebb9ffa18deec23ac429bbfcd5f8b78cd616c41604fe9cac0"
+            }
+          },
+          "attempt": {
+            "role": "ax-adversary",
+            "nodeKey": "attempt:ax-adversary",
+            "taskId": "baton-a530070da06ef1323a53b0e2-attempt-ax-adversary",
+            "state": "cancelled",
+            "route": {
+              "requested": {
+                "harness": "codex",
+                "model": "gpt-5.6-sol",
+                "effort": "xhigh"
+              },
+              "resolved": {
+                "harness": "codex@codex-cli 0.144.6",
+                "model": "gpt-5.6-sol",
+                "effort": "xhigh"
+              },
+              "observed": {
+                "harness": null,
+                "model": "gpt-5.6-sol",
+                "effort": null
+              },
+              "launchEnforcement": {
+                "harness": {
+                  "requested": "codex",
+                  "resolved": "codex@codex-cli 0.144.6",
+                  "state": "matched"
+                },
+                "model": {
+                  "requested": "gpt-5.6-sol",
+                  "resolved": "gpt-5.6-sol",
+                  "state": "matched"
+                },
+                "effort": {
+                  "requested": "xhigh",
+                  "resolved": "xhigh",
+                  "state": "matched"
+                }
+              },
+              "providerAttestation": {
+                "harness": {
+                  "observed": null,
+                  "state": "not_observed_before_stop"
+                },
+                "model": {
+                  "observed": "gpt-5.6-sol",
+                  "state": "matched"
+                },
+                "effort": {
+                  "observed": null,
+                  "state": "not_observed_before_stop"
+                }
+              }
+            },
+            "candidateId": null,
+            "memberStop": {
+              "state": "stopped",
+              "targetDigest": "dfa2ce65c6c332b52cc6fa6e101e915ce96f0881d1b6def3e3f4778710f6aebe",
+              "admittedEvent": 27,
+              "completedEvent": 34,
+              "receiptDigest": "26ae39bd3ea1c89ebb9ffa18deec23ac429bbfcd5f8b78cd616c41604fe9cac0"
+            },
+            "activity": {
+              "state": "exited",
+              "lastEventAt": "2026-07-18T18:05:57.869Z",
+              "lastEventSeq": 17,
+              "turnCount": 1,
+              "usage": {
+                "tokens": 12780,
+                "usd": 0
+              },
+              "editedPaths": [],
+              "warnings": []
+            },
+            "verification": "pending",
+            "terminalCause": null
+          }
+        }
+      ],
+      "ownershipAfterStop": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      }
+    },
+    "call": {
+      "callId": "context-call:9e96bece20dbed958b5f9b599aff2720a4899a28db5b16aa2086c5a999fbe512",
+      "state": "completed",
+      "admittedEvent": 36,
+      "settledEvent": 69,
+      "providerEffects": 2,
+      "resultChildren": 2,
+      "cleanup": {
+        "cleanupDigest": "10ad2f6c7165674cb25d2db708501f485b8124d37c0fa841537434369a5f9e88",
+        "targetDigest": "8341b11073ebd99369378988d15d05f7202bfb028dbb06897ebd6c2c42ae910a",
+        "targetCount": 2,
+        "remainingCount": 0,
+        "releaseEvents": [
+          {
+            "partitionId": "context-partition:54ccf2cc9210e9786339043e3172346e5a77a6f0e35cff900b55e18001f3c4d8",
+            "taskId": "baton-bd2cfb679f8dfed26a1815c1-attempt-ax-adversary-0001",
+            "workerId": "w-wave-3150a4f60c34f0a8579f2f80",
+            "releaseEvent": 66,
+            "releaseDigest": "df9ff80aab6ede8b6cf4eafbde90d5f4b8c82d1c1de9b7aea59a4ee47228dcfa"
+          },
+          {
+            "partitionId": "context-partition:3228e3ffcf8f0f080a1dabb39c9886ed04528c0272bc4f0615bf1c59f9257433",
+            "taskId": "baton-826deb9f14471f877ae544fb-attempt-ax-adversary-0002",
+            "workerId": "w-wave-07c978953f80a4eb4f7d1a08",
+            "releaseEvent": 68,
+            "releaseDigest": "e43bc287b9169a9002d2407a04af565a8d8865d7d31b945dcb383d34aa3b88df"
+          }
+        ]
+      },
+      "wave": {
+        "batchId": "d5a9688405d468b87fe8898a492f0fbab2885ec05c9613a233636697a15ff15f",
+        "waveDigest": "b6104ffb4dda5b31c7d24e7b7f0915f47381524b570fc0be8c2ea197c390c67f",
+        "timestamp": "2026-07-18T18:05:58.610Z",
+        "dispatches": [
+          {
+            "seq": 39,
+            "batchIndex": 0,
+            "waveIndex": 0,
+            "taskId": "baton-bd2cfb679f8dfed26a1815c1-attempt-ax-adversary-0001"
+          },
+          {
+            "seq": 41,
+            "batchIndex": 2,
+            "waveIndex": 1,
+            "taskId": "baton-826deb9f14471f877ae544fb-attempt-ax-adversary-0002"
+          }
+        ]
+      }
+    },
+    "attempts": [
+      {
+        "role": "ax-adversary:0001",
+        "nodeKey": "attempt:ax-adversary:0001",
+        "taskId": "baton-bd2cfb679f8dfed26a1815c1-attempt-ax-adversary-0001",
+        "state": "accepted",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "xhigh"
+          },
+          "resolved": {
+            "harness": "codex@codex-cli 0.144.6",
+            "model": "gpt-5.6-sol",
+            "effort": "xhigh"
+          },
+          "observed": {
+            "harness": null,
+            "model": "gpt-5.6-sol",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": "codex@codex-cli 0.144.6",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": "xhigh",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          }
+        },
+        "candidateId": "candidate:7d3ad49c3235ab1d7fff3f2916f2e7d6f2973146f28757f2c24e6b5acf70034e"
+      },
+      {
+        "role": "ax-adversary:0002",
+        "nodeKey": "attempt:ax-adversary:0002",
+        "taskId": "baton-826deb9f14471f877ae544fb-attempt-ax-adversary-0002",
+        "state": "accepted",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "xhigh"
+          },
+          "resolved": {
+            "harness": "codex@codex-cli 0.144.6",
+            "model": "gpt-5.6-sol",
+            "effort": "xhigh"
+          },
+          "observed": {
+            "harness": null,
+            "model": "gpt-5.6-sol",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": "codex@codex-cli 0.144.6",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": "xhigh",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          }
+        },
+        "candidateId": "candidate:b1af2579edc5dc033c611a8c96e53f1464e28c7a7a5ec051b7b7edfe3d453cb7"
+      }
+    ],
+    "resourceReleases": [
+      {
+        "event": {
+          "schemaVersion": 1,
+          "seq": 66,
+          "ts": "2026-07-18T18:09:43.478Z",
+          "kind": "task.resources_released",
+          "actor": "policy",
+          "idempotencyKey": "task.resources_released:baton-bd2cfb679f8dfed26a1815c1-attempt-ax-adversary-0001:50",
+          "payload": {
+            "taskId": "baton-bd2cfb679f8dfed26a1815c1-attempt-ax-adversary-0001",
+            "taskVersion": 3,
+            "terminalEvent": 50,
+            "workerId": "w-wave-3150a4f60c34f0a8579f2f80",
+            "releaseDigest": "df9ff80aab6ede8b6cf4eafbde90d5f4b8c82d1c1de9b7aea59a4ee47228dcfa",
+            "evidence": {
+              "worker": "w-wave-3150a4f60c34f0a8579f2f80",
+              "workerSeq": 46,
+              "digest": "4537fc1c6a6bf336365871eff608b529f73eac88b944238c03eca5cbf00fa9dc",
+              "kind": "resource.worker_cleanup_attested",
+              "ts": "2026-07-18T18:09:43.476Z",
+              "coordinationSeq": 65
+            }
+          }
+        },
+        "mappedEvidence": {
+          "schemaVersion": 1,
+          "seq": 65,
+          "ts": "2026-07-18T18:09:43.477Z",
+          "kind": "evidence.mapped",
+          "actor": "policy",
+          "idempotencyKey": "evidence:w-wave-3150a4f60c34f0a8579f2f80:46",
+          "payload": {
+            "worker": "w-wave-3150a4f60c34f0a8579f2f80",
+            "workerSeq": 46,
+            "digest": "4537fc1c6a6bf336365871eff608b529f73eac88b944238c03eca5cbf00fa9dc",
+            "kind": "resource.worker_cleanup_attested",
+            "ts": "2026-07-18T18:09:43.476Z"
+          }
+        },
+        "operationalAttestation": {
+          "worker": "w-wave-3150a4f60c34f0a8579f2f80",
+          "harness": "codex@codex-cli 0.144.6",
+          "turnEpoch": 2,
+          "kind": "resource.worker_cleanup_attested",
+          "actor": "policy",
+          "taskId": "baton-bd2cfb679f8dfed26a1815c1-attempt-ax-adversary-0001",
+          "runId": "run-ca35affcbe6ffb56761505a5f5e39742",
+          "harnessRequested": "codex",
+          "harnessResolved": "codex@codex-cli 0.144.6",
+          "modelRequested": "gpt-5.6-sol",
+          "modelResolved": "gpt-5.6-sol",
+          "modelObserved": "gpt-5.6-sol",
+          "effortRequested": "xhigh",
+          "effortResolved": "xhigh",
+          "effortObserved": null,
+          "workerPolicyRequestDigest": "754c3f5f9ceb530a6cf3e0322ce3cd0684e0911f9f1da174cfedf419d7bcb2e8",
+          "workerPolicyResolutionDigest": "6da2899ba9c356201f141f72d03a7d9e3516ad1ee5bff814517b2644347e882d",
+          "workerPolicyObservationDigest": "81512daa7fee9c08a607de697d93b07d8c2fba787636782d8ef56b58e6e9d08d",
+          "routeKey": "[\"codex\",\"codex-cli 0.144.6\",\"gpt-5.6-sol\",\"xhigh\",\"openai\",\"general\",\"6da2899ba9c356201f141f72d03a7d9e3516ad1ee5bff814517b2644347e882d\"]",
+          "payload": {
+            "schemaVersion": 1,
+            "taskId": "baton-bd2cfb679f8dfed26a1815c1-attempt-ax-adversary-0001",
+            "taskVersion": 3,
+            "taskTerminalEvent": 50,
+            "workerId": "w-wave-3150a4f60c34f0a8579f2f80",
+            "runId": "run-ca35affcbe6ffb56761505a5f5e39742",
+            "process": {
+              "state": "closed",
+              "generation": 1,
+              "pid": 20502,
+              "processGroupId": 20502,
+              "terminalKind": "lifecycle.process_closed",
+              "terminalSeq": 44
+            },
+            "session": {
+              "state": "historical_only",
+              "refDigest": "6c4d6480b2434728ab50b4460d5f52d75b1094720867f5b8d3a4eca9ec18dd0a",
+              "recoveryClosed": true
+            },
+            "worktree": {
+              "state": "absent",
+              "ownerTaskId": "baton-bd2cfb679f8dfed26a1815c1-attempt-ax-adversary-0001"
+            },
+            "runtime": {
+              "state": "absent",
+              "identityDigest": "0453ae6a1d262385ea400ff396c8ffba0c33bb1844a8024e3de2ee5187c5b5dd"
+            },
+            "checks": {
+              "processClosed": true,
+              "sessionDetached": true,
+              "worktreeAbsent": true,
+              "runtimeAbsent": true,
+              "interactionsResolved": true,
+              "localAuthorityReleased": true
+            },
+            "releaseDigest": "df9ff80aab6ede8b6cf4eafbde90d5f4b8c82d1c1de9b7aea59a4ee47228dcfa"
+          },
+          "seq": 46,
+          "ts": "2026-07-18T18:09:43.476Z"
+        }
+      },
+      {
+        "event": {
+          "schemaVersion": 1,
+          "seq": 68,
+          "ts": "2026-07-18T18:09:43.713Z",
+          "kind": "task.resources_released",
+          "actor": "policy",
+          "idempotencyKey": "task.resources_released:baton-826deb9f14471f877ae544fb-attempt-ax-adversary-0002:56",
+          "payload": {
+            "taskId": "baton-826deb9f14471f877ae544fb-attempt-ax-adversary-0002",
+            "taskVersion": 3,
+            "terminalEvent": 56,
+            "workerId": "w-wave-07c978953f80a4eb4f7d1a08",
+            "releaseDigest": "e43bc287b9169a9002d2407a04af565a8d8865d7d31b945dcb383d34aa3b88df",
+            "evidence": {
+              "worker": "w-wave-07c978953f80a4eb4f7d1a08",
+              "workerSeq": 45,
+              "digest": "d4e36cc858258ffed7ecb9b7c828bab32a4196926285e5acc1150e051c7d1954",
+              "kind": "resource.worker_cleanup_attested",
+              "ts": "2026-07-18T18:09:43.712Z",
+              "coordinationSeq": 67
+            }
+          }
+        },
+        "mappedEvidence": {
+          "schemaVersion": 1,
+          "seq": 67,
+          "ts": "2026-07-18T18:09:43.712Z",
+          "kind": "evidence.mapped",
+          "actor": "policy",
+          "idempotencyKey": "evidence:w-wave-07c978953f80a4eb4f7d1a08:45",
+          "payload": {
+            "worker": "w-wave-07c978953f80a4eb4f7d1a08",
+            "workerSeq": 45,
+            "digest": "d4e36cc858258ffed7ecb9b7c828bab32a4196926285e5acc1150e051c7d1954",
+            "kind": "resource.worker_cleanup_attested",
+            "ts": "2026-07-18T18:09:43.712Z"
+          }
+        },
+        "operationalAttestation": {
+          "worker": "w-wave-07c978953f80a4eb4f7d1a08",
+          "harness": "codex@codex-cli 0.144.6",
+          "turnEpoch": 2,
+          "kind": "resource.worker_cleanup_attested",
+          "actor": "policy",
+          "taskId": "baton-826deb9f14471f877ae544fb-attempt-ax-adversary-0002",
+          "runId": "run-ca35affcbe6ffb56761505a5f5e39742",
+          "harnessRequested": "codex",
+          "harnessResolved": "codex@codex-cli 0.144.6",
+          "modelRequested": "gpt-5.6-sol",
+          "modelResolved": "gpt-5.6-sol",
+          "modelObserved": "gpt-5.6-sol",
+          "effortRequested": "xhigh",
+          "effortResolved": "xhigh",
+          "effortObserved": null,
+          "workerPolicyRequestDigest": "754c3f5f9ceb530a6cf3e0322ce3cd0684e0911f9f1da174cfedf419d7bcb2e8",
+          "workerPolicyResolutionDigest": "6da2899ba9c356201f141f72d03a7d9e3516ad1ee5bff814517b2644347e882d",
+          "workerPolicyObservationDigest": "81512daa7fee9c08a607de697d93b07d8c2fba787636782d8ef56b58e6e9d08d",
+          "routeKey": "[\"codex\",\"codex-cli 0.144.6\",\"gpt-5.6-sol\",\"xhigh\",\"openai\",\"general\",\"6da2899ba9c356201f141f72d03a7d9e3516ad1ee5bff814517b2644347e882d\"]",
+          "payload": {
+            "schemaVersion": 1,
+            "taskId": "baton-826deb9f14471f877ae544fb-attempt-ax-adversary-0002",
+            "taskVersion": 3,
+            "taskTerminalEvent": 56,
+            "workerId": "w-wave-07c978953f80a4eb4f7d1a08",
+            "runId": "run-ca35affcbe6ffb56761505a5f5e39742",
+            "process": {
+              "state": "closed",
+              "generation": 1,
+              "pid": 20503,
+              "processGroupId": 20503,
+              "terminalKind": "lifecycle.process_closed",
+              "terminalSeq": 43
+            },
+            "session": {
+              "state": "historical_only",
+              "refDigest": "df53921ae348ad4edcf22a82cfddfcf7323ffb83acaf2b6cbb9aba9af4a35f95",
+              "recoveryClosed": true
+            },
+            "worktree": {
+              "state": "absent",
+              "ownerTaskId": "baton-826deb9f14471f877ae544fb-attempt-ax-adversary-0002"
+            },
+            "runtime": {
+              "state": "absent",
+              "identityDigest": "0453ae6a1d262385ea400ff396c8ffba0c33bb1844a8024e3de2ee5187c5b5dd"
+            },
+            "checks": {
+              "processClosed": true,
+              "sessionDetached": true,
+              "worktreeAbsent": true,
+              "runtimeAbsent": true,
+              "interactionsResolved": true,
+              "localAuthorityReleased": true
+            },
+            "releaseDigest": "e43bc287b9169a9002d2407a04af565a8d8865d7d31b945dcb383d34aa3b88df"
+          },
+          "seq": 45,
+          "ts": "2026-07-18T18:09:43.712Z"
+        }
+      }
+    ],
+    "contextOutline": {
+      "state": "historical",
+      "sessionCount": 1,
+      "currentSessionCount": 0,
+      "branchCount": 1,
+      "cellCount": 1,
+      "callCount": 1,
+      "completedCellCount": 1,
+      "pendingCellCount": 0,
+      "stoppedCellCount": 0,
+      "providerEffects": 2,
+      "sourceCoverage": {
+        "state": "filtered",
+        "includedFiles": 868,
+        "includedItems": 1619,
+        "excludedEntries": 198
+      },
+      "lastCell": {
+        "id": "cell:22219c59f3a7564a5c3cd03b624bdd41b89eaddcaafd1451bdaac389610d317e",
+        "ordinal": 1,
+        "state": "completed",
+        "operation": "search"
+      },
+      "lastCall": {
+        "id": "context-call:9e96bece20dbed958b5f9b599aff2720a4899a28db5b16aa2086c5a999fbe512",
+        "state": "completed",
+        "operation": "map",
+        "partitionCount": 2
+      },
+      "summary": "Provider-backed Context is compiled through a separately approved successor Plan."
+    },
+    "manifestDigest": "cd0f1704a65b059785c17b8db4b1cab3a9520e488a2978ab2a62f5e89cd5151e",
+    "checks": {
+      "terminalPlanState": true,
+      "candidatesMechanicallyVerified": true,
+      "candidatesRetained": true,
+      "selectedResultRefReverified": true,
+      "feedbackTargetsBound": true,
+      "selectionBound": true,
+      "sharedMultiwriterAbsent": true,
+      "roundLineageComplete": true,
+      "allRoundCandidatesRetained": true,
+      "revisionBasesBound": false,
+      "providerExecutionSettled": true,
+      "applicationTerminal": false,
+      "integrationAuthoritative": true
+    }
+  },
+  "cleanup": {
+    "stopped": {
+      "state": "stopped",
+      "receipt": {
+        "schemaVersion": 3,
+        "state": "stopped",
+        "scope": "run_subtree",
+        "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+        "runId": "run-ca35affcbe6ffb56761505a5f5e39742",
+        "targetCount": 4,
+        "remainingCount": 0,
+        "targetDigest": "907a26778d4d46f0703042179db1438c69245cdf437f1d59a7efb8e92e7ac25f",
+        "counts": {
+          "pendingCancelled": 0,
+          "killConfirmed": 0,
+          "alreadyTerminal": 4,
+          "processesObserved": 4,
+          "processesClosed": 4
+        },
+        "checks": {
+          "dispatchClosed": true,
+          "interactionsResolved": true,
+          "runAuthorityReleased": true
+        },
+        "effects": {
+          "coordinatorClosed": false,
+          "writerReleased": false,
+          "transportsClosed": false
+        },
+        "context": {
+          "targetSessionCount": 1,
+          "targetCellCount": 0,
+          "targetCallCount": 1,
+          "remainingSessionCount": 0,
+          "remainingCellCount": 0,
+          "remainingCallCount": 0
+        },
+        "receiptDigest": "5568a9d672d76c21432013731f3aa8380d1da6c2527d394293008d2a718d8504"
+      },
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      }
+    },
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    },
+    "generatedReports": [
+      {
+        "name": "partition-0000.md",
+        "resultSha": "fb8b625c5b3c2539300eaff5a8747d63f42c7409",
+        "digest": "8e8c25335628ad3a4ac770310378afd067c4a0bb55405f3aeb37886e9b42fb0e",
+        "bytes": 1488
+      },
+      {
+        "name": "partition-0001.md",
+        "resultSha": "bd1e7d2de1c6480cc5b6bd47515da3af483fe427",
+        "digest": "d48a69be441b00163ba325b5f45181665f6a6d8bef025adaceb70134a9aff89d",
+        "bytes": 1586
+      }
+    ],
+    "callerStatusUnchanged": true,
+    "callerIndexUnchanged": true
+  }
+}

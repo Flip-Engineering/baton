@@ -9,7 +9,8 @@
   },
   "bin": {
     "baton": "scripts/baton.mjs",
-    "baton-mcp": "scripts/mcp-stdio.mjs"
+    "baton-mcp": "scripts/mcp-stdio.mjs",
+    "baton-mcp-web": "scripts/mcp-web.mjs"
   },
   "scripts": {
     "test": "node scripts/run-suite.mjs",
