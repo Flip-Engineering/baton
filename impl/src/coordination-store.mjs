@@ -3506,7 +3506,7 @@ export class CoordinationStore {
       const remainingSessionCount = sessionStates.filter((state) => state !== 'stopped').length;
       const remainingCellCount = cellStates.filter((state) => state !== 'stopped').length;
       const remainingCallCount = callStates.filter((state) => (
-        state !== 'completed' && state !== 'stopped'
+        !['completed', 'failed', 'stopped'].includes(state)
       )).length;
       if (!context || Object.keys(context).sort().join(',') !== contextFields.sort().join(',')
         || context.targetSessionCount !== stop.targetContextSessionIds.length
@@ -4598,6 +4598,51 @@ export class CoordinationStore {
     if (!plan || approval?.disposition !== 'approved') {
       return failChild('Context map settlement requires its exact approved successor Plan');
     }
+    const terminalCause = (task) => {
+      const terminal = Number.isSafeInteger(task.terminalEvent)
+        ? this._events[task.terminalEvent - 1] : null;
+      const transitioned = terminal?.kind === 'task.transitioned'
+        && terminal.payload?.id === task.id && terminal.payload?.to === task.status;
+      const revoked = terminal?.kind === 'task.acceptance_revoked'
+        && terminal.payload?.taskId === task.id && task.status === 'failed';
+      if (!transitioned && !revoked) {
+        return failChild('Context map child terminal identity is invalid',
+          'context_map_child_terminal_invalid');
+      }
+      const coordinate = terminal.payload?.evidence;
+      let source = null;
+      if (coordinate !== null && coordinate !== undefined) {
+        const mapped = Number.isSafeInteger(coordinate?.coordinationSeq)
+          ? this._events[coordinate.coordinationSeq - 1] : null;
+        source = mapped?.kind === 'evidence.mapped'
+          ? this._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq) : null;
+        if (!mapped || mapped.seq >= terminal.seq || mapped.payload.worker !== task.assignee
+          || canonicalDigest({ ...mapped.payload, coordinationSeq: mapped.seq })
+            !== canonicalDigest(coordinate)
+          || !source || source.worker !== task.assignee || source.taskId !== task.id
+          || source.runId !== task.runId || source.kind !== mapped.payload.kind
+          || digest(source) !== mapped.payload.digest) {
+          return failChild('Context map child terminal evidence is invalid',
+            'context_map_child_terminal_invalid');
+        }
+      }
+      const defaultCode = task.status === 'cancelled'
+        ? 'context_child_cancelled'
+        : revoked ? 'task_acceptance_revoked'
+          : source?.kind === 'lifecycle.crashed' ? 'provider_crashed'
+            : source?.kind === 'lifecycle.exited' ? 'provider_exited'
+              : source?.kind === 'verify.reverified' ? 'verification_failed'
+                : 'provider_turn_failed';
+      const candidateCode = source?.payload?.failure?.code ?? source?.payload?.code ?? defaultCode;
+      const code = /^[a-z0-9_:-]{1,128}$/u.test(candidateCode ?? '')
+        ? candidateCode : defaultCode;
+      const defaultSummary = task.status === 'cancelled'
+        ? 'Context map child was cancelled before acceptance.'
+        : 'Context map child failed before acceptance.';
+      const summary = boundedText(source?.payload?.summary, 1_024)
+        ? source.payload.summary : defaultSummary;
+      return freeze({ code, retryable: true, summary });
+    };
     const rows = [];
     for (const partition of call.partitions) {
       const node = plan.nodes.find((candidate) => (
@@ -4612,10 +4657,6 @@ export class CoordinationStore {
         || dispatch.binding?.nodeKey !== node.key) {
         return failChild('Context map settlement has a missing or nonterminal child');
       }
-      if (task.status !== 'completed') {
-        return failChild('Context map settlement cannot overclaim a failed or cancelled child',
-          'context_map_child_failed');
-      }
       const activeArtifacts = (task.artifactIds ?? []).map((artifactId) => (
         this._artifacts.get(artifactId)
       )).filter((artifact) => artifact?.accepted === true && artifact.supersededBy === null
@@ -4623,8 +4664,12 @@ export class CoordinationStore {
         .sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
       const commit = activeArtifacts.find((artifact) => artifact.kind === 'commit') ?? null;
       const verification = activeArtifacts.find((artifact) => artifact.kind === 'verification') ?? null;
-      if (!commit?.refs?.sha || !verification) {
+      if (task.status === 'completed' && (!commit?.refs?.sha || !verification)) {
         return failChild('Completed Context map child lacks exact gate artifacts',
+          'context_map_child_artifact_invalid');
+      }
+      if (task.status !== 'completed' && activeArtifacts.length > 0) {
+        return failChild('Unaccepted Context map child retains accepted gate artifacts',
           'context_map_child_artifact_invalid');
       }
       // A Plan node carries the authorized route sets; the dispatch records the route that was
@@ -4647,7 +4692,7 @@ export class CoordinationStore {
         taskId: task.id,
         taskVersion: task.version,
         workerId: task.assignee ?? null,
-        state: 'accepted',
+        state: task.status === 'completed' ? 'accepted' : task.status,
         terminalEvent: task.terminalEvent,
         route,
         resultSha: commit?.refs?.sha ?? null,
@@ -4659,6 +4704,7 @@ export class CoordinationStore {
           id: artifact.id, kind: artifact.kind, digest: artifact.digest,
           refs: clone(artifact.refs),
         })),
+        ...(task.status === 'completed' ? {} : { termination: terminalCause(task) }),
         ...(release === null ? {} : {
           cleanupDigest: cleanup.cleanupDigest,
           resourceRelease: clone(release),
@@ -4945,29 +4991,48 @@ export class CoordinationStore {
         integrity ? 'context_map_call_settlement_integrity'
           : 'context_map_call_settlement_stale', integrity);
     }
-    const resultFields = [
+    const completedResultFields = [
       'childDigest', 'children', 'cleanup', 'evidenceRef', 'outputRef', 'providerEffects', 'state',
     ];
-    let outputRef; let evidenceRef; let children; let cleanup;
+    const failedResultFields = [...completedResultFields, 'termination'];
+    let outputRef; let evidenceRef; let children; let cleanup; let state; let termination;
     try {
-      if (Object.keys(payload.result).sort().join(',') !== resultFields.sort().join(',')
-        || payload.result.state !== 'completed'
+      if (!['completed', 'failed'].includes(payload.result.state)
+        || Object.keys(payload.result).sort().join(',') !== (payload.result.state === 'failed'
+          ? failedResultFields : completedResultFields).sort().join(',')
         || !Array.isArray(payload.result.children)
         || payload.result.providerEffects !== call.partitions.length) {
-        throw new TypeError('Context map completion result is invalid');
+        throw new TypeError('Context map terminal result is invalid');
       }
       const baseChildren = this._contextMapSettlementChildren(call, integrity);
       cleanup = this._normalizeContextMapCleanupReceipt(
         call, baseChildren, payload.result.cleanup, integrity,
       );
       children = this._contextMapSettlementChildren(call, integrity, cleanup);
+      state = children.every((child) => child.state === 'accepted') ? 'completed' : 'failed';
       if (canonicalDigest(payload.result.children) !== canonicalDigest(children)
-        || payload.result.childDigest !== canonicalDigest(children)) {
+        || payload.result.childDigest !== canonicalDigest(children)
+        || payload.result.state !== state) {
         throw new TypeError('Context map terminal child identities changed');
       }
-      outputRef = normalizeContextArtifactRef(
-        payload.result.outputRef, 'context_value', this._contextProgramPolicy,
-      );
+      if (state === 'completed') {
+        outputRef = normalizeContextArtifactRef(
+          payload.result.outputRef, 'context_value', this._contextProgramPolicy,
+        );
+      } else {
+        termination = payload.result.termination;
+        if (payload.result.outputRef !== null || !termination
+          || typeof termination !== 'object' || Array.isArray(termination)
+          || Object.keys(termination).sort().join(',')
+            !== ['code', 'retryable', 'summary'].sort().join(',')
+          || termination.code !== 'context_child_failed' || termination.retryable !== true
+          || termination.summary
+            !== 'One or more Context map children failed before acceptance.') {
+          throw new TypeError('Context map failure termination is invalid');
+        }
+        outputRef = null;
+        termination = clone(termination);
+      }
       evidenceRef = normalizeContextArtifactRef(
         payload.result.evidenceRef, 'context_call_evidence', this._contextProgramPolicy,
       );
@@ -4977,24 +5042,31 @@ export class CoordinationStore {
           : 'context_map_call_settlement_invalid', integrity);
     }
     const result = freeze({
-      state: 'completed', providerEffects: call.partitions.length,
+      state, providerEffects: call.partitions.length,
       children, childDigest: canonicalDigest(children), cleanup, outputRef, evidenceRef,
+      ...(state === 'failed' ? { termination } : {}),
     });
     if (!integrity) {
       let output; let evidence;
       try {
-        output = this._contextReferenceRead(outputRef);
+        output = outputRef === null ? null : this._contextReferenceRead(outputRef);
         evidence = this._contextReferenceRead(evidenceRef);
       } catch (error) {
         this._contextFailure(error?.message ?? 'Context map settlement artifact is unavailable',
           error?.code ?? 'context_map_call_settlement_invalid', false);
       }
-      if (!output || output.schemaVersion !== 1 || output.kind !== 'baton.context_value'
-        || canonicalDigest(output.items) !== canonicalDigest(children)
-        || output.sourceItems !== children.length
-        || output.selectedSourceItems !== children.length
-        || output.chunks !== children.length
-        || !evidence || evidence.schemaVersion !== 1
+      const outputValid = state === 'failed' ? output === null
+        : output?.schemaVersion === 1 && output.kind === 'baton.context_value'
+          && canonicalDigest(output.items) === canonicalDigest(children)
+          && output.sourceItems === children.length
+          && output.selectedSourceItems === children.length
+          && output.chunks === children.length;
+      const failureEvidenceValid = state === 'completed' || (
+        evidence?.state === 'failed' && evidence.outputRef === null
+        && canonicalDigest(evidence.cleanup) === canonicalDigest(cleanup)
+        && canonicalDigest(evidence.termination) === canonicalDigest(termination)
+      );
+      if (!outputValid || !evidence || evidence.schemaVersion !== 1
         || evidence.kind !== 'baton.context_call_evidence'
         || evidence.callId !== call.callId || evidence.callDigest !== call.callDigest
         || evidence.programDigest !== call.programDigest || evidence.generation !== call.generation
@@ -5004,7 +5076,8 @@ export class CoordinationStore {
         || canonicalDigest(evidence.source) !== canonicalDigest(call.source)
         || canonicalDigest(evidence.partitions) !== canonicalDigest(call.partitions)
         || canonicalDigest(evidence.children) !== canonicalDigest(children)
-        || canonicalDigest(evidence.outputRef) !== canonicalDigest(outputRef)) {
+        || canonicalDigest(evidence.outputRef) !== canonicalDigest(outputRef)
+        || !failureEvidenceValid) {
         this._contextFailure('Context map settlement artifacts changed',
           'context_map_call_settlement_invalid', false);
       }
@@ -5524,7 +5597,7 @@ export class CoordinationStore {
       const artifactRows = [
         ['context-value', validated.result.outputRef],
         ['context-call-evidence', validated.result.evidenceRef],
-      ];
+      ].filter(([, ref]) => ref !== null);
       for (const [prefix, ref] of artifactRows) {
         const id = `${prefix}:${ref.digest}`;
         const artifact = freeze({
@@ -5544,7 +5617,7 @@ export class CoordinationStore {
         this._contextArtifacts.set(ref.handle, id);
       }
       this._contextCalls.set(validated.call.callId, freeze({
-        ...clone(validated.call), state: 'completed', version: p.newVersion,
+        ...clone(validated.call), state: validated.result.state, version: p.newVersion,
         result: clone(validated.result), settlementDigest: p.settlementDigest,
         settledEvent: event.seq, settledAt: event.ts,
       }));
@@ -6015,7 +6088,7 @@ export class CoordinationStore {
               'run stop Context call target changed before application', 'run_stop_integrity',
             );
           }
-          if (call.state === 'completed') continue;
+          if (['completed', 'failed'].includes(call.state)) continue;
           this._contextCalls.set(callId, freeze({
             ...clone(call), state: 'stopped', version: call.version + 1,
             stoppedEvent: event.seq, stoppedAt: event.ts, stopReasonDigest: p.reasonDigest,
@@ -6180,7 +6253,7 @@ export class CoordinationStore {
       || this._runStops.has(admitted.source.runId)
       || this._contextSessions.get(admitted.source.sessionId)?.state === 'stopped'
       || this._contextCells.get(admitted.source.cellId)?.state === 'stopped';
-    const state = admitted.state === 'completed' ? 'completed'
+    const state = ['completed', 'failed'].includes(admitted.state) ? admitted.state
       : admitted.state === 'stopped' ? 'stopped'
       : stopped ? 'stopped'
       : !plan ? 'plan_pending'
@@ -6188,9 +6261,7 @@ export class CoordinationStore {
           : approval.disposition === 'rejected' ? 'denied'
             : children.length === 0 ? 'approved'
               : children.every((child) => TERMINAL.has(child.state))
-                ? children.every((child) => child.state === 'completed')
-                  ? 'settlement_ready' : 'failed'
-                : 'running';
+                ? 'settlement_ready' : 'running';
     return clone({
       ...admitted, state,
       plan: plan ? {
@@ -6226,20 +6297,26 @@ export class CoordinationStore {
     const call = this._contextCalls.get(callId);
     if (!call) throw new CoordinationRefusal('Context map call is unavailable',
       'context_map_call_not_found');
-    if (call.state !== 'completed' || !call.result) {
-      throw new CoordinationRefusal('Context map call has no completed artifacts',
+    if (!['completed', 'failed'].includes(call.state) || !call.result) {
+      throw new CoordinationRefusal('Context map call has no terminal artifacts',
         'context_map_call_not_completed');
     }
     let output; let evidence;
     try {
-      output = this._contextReferenceRead(call.result.outputRef);
+      output = call.result.outputRef === null
+        ? null : this._contextReferenceRead(call.result.outputRef);
       evidence = this._contextReferenceRead(call.result.evidenceRef);
     } catch (error) {
       if (error?.code === 'context_artifact_unavailable') throw error;
       throw new CoordinationIntegrityError(error?.message ?? 'Context call artifact reverify failed',
         'context_map_call_settlement_integrity');
     }
-    if (canonicalDigest(output?.items) !== canonicalDigest(call.result.children)
+    const outputValid = call.state === 'failed'
+      ? output === null && evidence?.state === 'failed' && evidence.outputRef === null
+        && canonicalDigest(evidence?.cleanup) === canonicalDigest(call.result.cleanup)
+        && canonicalDigest(evidence?.termination) === canonicalDigest(call.result.termination)
+      : canonicalDigest(output?.items) === canonicalDigest(call.result.children);
+    if (!outputValid
       || evidence?.callId !== call.callId || evidence?.callDigest !== call.callDigest
       || evidence?.childDigest !== call.result.childDigest
       || canonicalDigest(evidence?.children) !== canonicalDigest(call.result.children)
@@ -6778,12 +6855,14 @@ export class CoordinationStore {
       call, baseChildren, fields?.cleanup, false,
     );
     const children = this._contextMapSettlementChildren(call, false, cleanup);
+    const state = children.every((child) => child.state === 'accepted') ? 'completed' : 'failed';
     const result = {
-      state: 'completed', providerEffects: children.length,
+      state, providerEffects: children.length,
       children, childDigest: canonicalDigest(children),
       cleanup,
       outputRef: clone(fields?.result?.outputRef),
       evidenceRef: clone(fields?.result?.evidenceRef),
+      ...(state === 'failed' ? { termination: clone(fields?.result?.termination) } : {}),
     };
     const settlementCore = {
       authority, callId: call.callId, admissionDigest: call.admissionDigest,

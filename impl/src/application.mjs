@@ -2209,7 +2209,7 @@ export class BatonApplication {
             )).length,
             ...(current.schemaVersion >= 3 ? {
               remainingCallCount: current.targetContextCallIds.filter((callId) => (
-                !['completed', 'stopped'].includes(
+                !['completed', 'failed', 'stopped'].includes(
                   this.driver.coordination.contextCall(callId)?.state,
                 )
               )).length,
@@ -5743,15 +5743,9 @@ export class BatonApplication {
     }];
     const call = state.calls.find((candidate) => candidate.callId === selected.id);
     if (call) {
-      const settlementEvidence = call.state === 'completed'
+      const settlementEvidence = ['completed', 'failed'].includes(call.state)
         ? this.driver.coordination.contextCallArtifacts(call.callId).evidence : null;
-      const failureEvidence = call.state === 'failed' ? call.children.map((child) => ({
-        partitionId: child.partitionId, partitionDigest: child.partitionDigest, index: child.index,
-        nodeKey: child.nodeKey, nodeDigest: child.nodeDigest,
-        taskId: child.taskId, taskVersion: child.taskVersion,
-        workerId: child.workerId, state: child.state, terminalEvent: child.terminalEvent,
-        route: clone(child.route),
-      })) : null;
+      const failureEvidence = call.state === 'failed' ? settlementEvidence : null;
       return [
       {
         kind: 'context_call_admission', digest: call.admissionDigest,
@@ -5769,13 +5763,13 @@ export class BatonApplication {
         kind: 'context_successor_plan', digest: call.plan.digest,
         provenance: 'ordinary append-only Goal/Plan authority', value: clone(call.plan),
       }] : []),
-      ...(call.state === 'completed' && call.result?.cleanup ? [{
+      ...(['completed', 'failed'].includes(call.state) && call.result?.cleanup ? [{
         kind: 'context_call_cleanup', digest: call.result.cleanup.cleanupDigest,
         provenance: 'restart-aware descendant stop and zero-ownership receipt',
         value: clone(call.result.cleanup),
       }] : []),
       ...(failureEvidence ? [{
-        kind: 'context_call_failure', digest: digest(failureEvidence),
+        kind: 'context_call_failure', digest: call.result.evidenceRef.digest,
         provenance: 'terminal failed or cancelled child Attempts', value: failureEvidence,
       }] : []),
       ...(settlementEvidence ? [{
@@ -5887,15 +5881,26 @@ export class BatonApplication {
       const settledChildren = this.driver.coordination.contextCallSettlementChildren(
         call.callId, cleanup,
       );
-      const materialized = this.context.materializeCallResult({
-        call: this._contextMapCallCore(call), children: settledChildren,
-      });
+      const failed = settledChildren.some((child) => child.state !== 'accepted');
+      const termination = failed ? {
+        code: 'context_child_failed', retryable: true,
+        summary: 'One or more Context map children failed before acceptance.',
+      } : null;
+      const materialized = failed
+        ? this.context.materializeCallResult({
+          call: this._contextMapCallCore(call), children: settledChildren,
+          cleanup, termination,
+        })
+        : this.context.materializeCallResult({
+          call: this._contextMapCallCore(call), children: settledChildren,
+        });
       const principal = this.context.principal;
       this.driver.coordination.settleContextMapCall({
         callId: call.callId, expectedVersion: call.version,
         cleanup,
         result: {
           outputRef: materialized.outputRef, evidenceRef: materialized.evidenceRef,
+          ...(termination ? { termination } : {}),
         },
       }, {
         actor: principal.actor, principalId: principal.principalId,

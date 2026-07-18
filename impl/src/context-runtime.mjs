@@ -484,6 +484,9 @@ export class RepositoryContextRuntime {
   }
 
   materializeCallResult(request) {
+    if (Object.hasOwn(request ?? {}, 'termination')) {
+      return this.materializeCallFailure(request);
+    }
     exact(request, ['call', 'children'], 'Context call materialization request');
     const call = normalizeContextMapCall(request.call);
     if (!Array.isArray(request.children) || request.children.length !== call.partitions.length) {
@@ -530,6 +533,51 @@ export class RepositoryContextRuntime {
     );
     return Object.freeze({
       outputRef, evidenceRef, childDigest, childCount: children.length,
+      providerEffects: children.length,
+    });
+  }
+
+  materializeCallFailure(request) {
+    exact(request, ['call', 'children', 'cleanup', 'termination'],
+      'Context call failure materialization request');
+    const call = normalizeContextMapCall(request.call);
+    if (!Array.isArray(request.children) || request.children.length !== call.partitions.length) {
+      throw runtimeError('Context call terminal children are incomplete',
+        'context_call_settlement_invalid');
+    }
+    let children; let cleanup; let termination;
+    try {
+      children = JSON.parse(JSON.stringify(request.children));
+      cleanup = JSON.parse(JSON.stringify(request.cleanup));
+      termination = JSON.parse(JSON.stringify(request.termination));
+    } catch {
+      throw runtimeError('Context call failure evidence is not a JSON value',
+        'context_call_settlement_invalid');
+    }
+    if (children.some((child, index) => (
+      !child || typeof child !== 'object' || Array.isArray(child)
+      || child.partitionId !== call.partitions[index].partitionId
+      || child.partitionDigest !== call.partitions[index].partitionDigest
+    )) || children.every((child) => child.state === 'accepted')) {
+      throw runtimeError('Context call failed child order differs from its partitions',
+        'context_call_settlement_invalid');
+    }
+    const childDigest = contextValueDigest(children);
+    const evidence = {
+      schemaVersion: 1, kind: 'baton.context_call_evidence',
+      callId: call.callId, callDigest: call.callDigest,
+      programDigest: call.programDigest, generation: call.generation,
+      source: call.source, partitions: call.partitions, children, childDigest,
+      providerEffects: children.length,
+      coordinateDigest: call.source.coordinateDigest,
+      state: 'failed', cleanup, termination, outputRef: null,
+    };
+    const evidenceRef = this.bench._writeArtifact(
+      evidence, 'context_call_evidence',
+      'application/vnd.baton.context-call-evidence+json',
+    );
+    return Object.freeze({
+      outputRef: null, evidenceRef, childDigest, childCount: children.length,
       providerEffects: children.length,
     });
   }
