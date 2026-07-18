@@ -44,7 +44,10 @@ test('Codex app-server NDJSON buffer is bounded, cleared, killed, and records on
   cli._attachChild(session);
   child.stdout.emit('data', `{"secret":"${'o'.repeat(64)}"}\n`);
   assert.equal(session.buf, '');
-  assert.deepEqual(session.processFailure, expectedFailure);
+  assert.deepEqual(session.processFailure, {
+    ...expectedFailure,
+    remediation: 'The frame could affect RPC correlation, so Baton terminated and reaped this Codex session. Retry with an updated Codex app-server.',
+  });
   assert.equal(child.killCount, 1);
   assert.doesNotMatch(JSON.stringify(session.processFailure), /oooooooo/);
 });
