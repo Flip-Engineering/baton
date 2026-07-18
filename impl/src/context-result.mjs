@@ -8,6 +8,7 @@ const CALL_ID = /^context-call:[a-f0-9]{64}$/u;
 const UNIT_ID = /^context-(?:partition|unit):[a-f0-9]{64}$/u;
 const SOURCE_REF = /^ctx:sha256:([a-f0-9]{64})$/u;
 const CAPSULE_ID = /^context-result:([a-f0-9]{64})$/u;
+const ARTIFACT_HANDLE = /^art:sha256:([a-f0-9]{64})$/u;
 const CAPSULE_FIELDS = Object.freeze([
   'artifactDigest', 'callId', 'capsuleDigest', 'capsuleId', 'childDigest', 'cleanupDigest',
   'kind', 'result', 'resultSourceDigest', 'route', 'routeDigest', 'schemaVersion',
@@ -22,6 +23,10 @@ const RESULT_FIELDS = Object.freeze([
   'resultSha', 'retainedResultRef', 'sourcePolicyDigest',
 ]);
 const SOURCE_FIELDS = Object.freeze(['digest', 'itemCount', 'kind', 'mediaType', 'ref']);
+const PROVIDER_RESULT_REF_FIELDS = Object.freeze([
+  'callId', 'capsuleId', 'capsuleRef', 'childDigest', 'kind', 'resultRefDigest',
+  'schemaVersion', 'unitId',
+]);
 
 function resultError(message) {
   return Object.assign(new TypeError(message), { code: 'context_result_integrity' });
@@ -231,6 +236,55 @@ export function validateContextProviderResultCapsule(value) {
     || value.capsuleDigest !== rebuilt.capsuleDigest || value.capsuleId !== rebuilt.capsuleId
     || digest(value) !== digest(rebuilt)) {
     throw resultError('Context provider result capsule identity changed');
+  }
+  return rebuilt;
+}
+
+function normalizeCapsuleRef(value) {
+  exact(value, ['bytes', 'digest', 'handle', 'kind', 'mediaType'],
+    'Context provider result artifact ref');
+  const match = ARTIFACT_HANDLE.exec(value.handle ?? '');
+  if (value.kind !== 'context_provider_result'
+    || value.mediaType !== 'application/vnd.baton.context-provider-result+json'
+    || !DIGEST.test(value.digest ?? '') || !match || match[1] !== value.digest
+    || !Number.isSafeInteger(value.bytes) || value.bytes <= 0) {
+    throw resultError('Context provider result artifact ref is invalid');
+  }
+  return { ...value };
+}
+
+function providerResultRefCore(value) {
+  if (!CALL_ID.test(value.callId ?? '') || !UNIT_ID.test(value.unitId ?? '')
+    || !DIGEST.test(value.childDigest ?? '') || !CAPSULE_ID.test(value.capsuleId ?? '')) {
+    throw resultError('Context provider result ref authority is invalid');
+  }
+  return {
+    schemaVersion: 1, kind: 'baton.context_provider_result_ref', callId: value.callId,
+    unitId: value.unitId, childDigest: value.childDigest, capsuleId: value.capsuleId,
+    capsuleRef: normalizeCapsuleRef(value.capsuleRef),
+  };
+}
+
+export function contextProviderResultRef(value) {
+  exact(value, ['callId', 'capsuleId', 'capsuleRef', 'childDigest', 'unitId'],
+    'Context provider result ref input');
+  const core = providerResultRefCore(value);
+  return deepFreeze({ ...core, resultRefDigest: digest(core) });
+}
+
+export function validateContextProviderResultRef(value) {
+  exact(value, PROVIDER_RESULT_REF_FIELDS, 'Context provider result ref');
+  if (value.schemaVersion !== 1 || value.kind !== 'baton.context_provider_result_ref'
+    || !DIGEST.test(value.resultRefDigest ?? '')) {
+    throw resultError('Context provider result ref header is invalid');
+  }
+  const rebuilt = contextProviderResultRef({
+    callId: value.callId, unitId: value.unitId, childDigest: value.childDigest,
+    capsuleId: value.capsuleId, capsuleRef: value.capsuleRef,
+  });
+  if (value.resultRefDigest !== rebuilt.resultRefDigest
+    || digest(value) !== digest(rebuilt)) {
+    throw resultError('Context provider result ref identity changed');
   }
   return rebuilt;
 }

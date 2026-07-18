@@ -5829,6 +5829,47 @@ export class BatonApplication {
     };
   }
 
+  _contextMapProviderResultRequests(call, children, cleanup) {
+    const plan = call.plan ? this.driver.coordination.planVersion(
+      call.plan.planId, call.plan.version,
+    ) : null;
+    if (!plan || plan.digest !== call.expectedPlanDigest) {
+      throw applicationError('Context result projection lost its exact successor Plan',
+        'application_context_map_integrity');
+    }
+    return children.filter((child) => child.state === 'accepted').map((child) => {
+      const node = plan.nodes.find((candidate) => (
+        candidate.key === child.nodeKey
+          && candidate.contextCall?.callId === call.callId
+          && candidate.contextCall?.partition?.partitionId === child.partitionId
+      ));
+      const commits = child.artifacts.filter((artifact) => artifact.kind === 'commit');
+      const commit = commits.length === 1 ? commits[0] : null;
+      if (!node || digest(node) !== child.nodeDigest || !commit
+        || commit.refs?.sha !== child.resultSha
+        || commit.refs?.retainedResultRef !== `refs/baton/results/${child.resultSha}`
+        || child.cleanupDigest !== cleanup.cleanupDigest
+        || child.resourceRelease?.releaseDigest !== cleanup.targets.find((target) => (
+          target.partitionId === child.partitionId
+        ))?.releaseDigest) {
+        throw applicationError(
+          'Context result projection lacks one canonical accepted child authority',
+          'application_context_map_integrity',
+        );
+      }
+      return {
+        callId: call.callId, unitId: child.partitionId,
+        taskId: child.taskId, taskVersion: child.taskVersion,
+        terminalEvent: child.terminalEvent, childDigest: child.childDigest,
+        route: clone(child.route), artifactDigest: child.artifactDigest,
+        cleanupDigest: cleanup.cleanupDigest,
+        baseSha: call.source.treeSha, resultSha: child.resultSha,
+        retainedResultRef: commit.refs.retainedResultRef,
+        pathScope: clone(node.pathScope),
+      };
+    });
+  }
+
   async _reconcileContextMapCalls(current) {
     if (!this.context || this._closing) return;
     const calls = this.driver.coordination.contextCalls?.({ runId: current.goal.runId }) ?? [];
@@ -5881,6 +5922,9 @@ export class BatonApplication {
       const settledChildren = this.driver.coordination.contextCallSettlementChildren(
         call.callId, cleanup,
       );
+      const providerResultRequests = this._contextMapProviderResultRequests(
+        call, settledChildren, cleanup,
+      );
       const failed = settledChildren.some((child) => child.state !== 'accepted');
       const termination = failed ? {
         code: 'context_child_failed', retryable: true,
@@ -5889,10 +5933,11 @@ export class BatonApplication {
       const materialized = failed
         ? this.context.materializeCallResult({
           call: this._contextMapCallCore(call), children: settledChildren,
-          cleanup, termination,
+          cleanup, providerResultRequests, termination,
         })
         : this.context.materializeCallResult({
           call: this._contextMapCallCore(call), children: settledChildren,
+          cleanup, providerResultRequests,
         });
       const principal = this.context.principal;
       this.driver.coordination.settleContextMapCall({
@@ -5900,6 +5945,7 @@ export class BatonApplication {
         cleanup,
         result: {
           outputRef: materialized.outputRef, evidenceRef: materialized.evidenceRef,
+          providerResults: materialized.providerResults,
           ...(termination ? { termination } : {}),
         },
       }, {

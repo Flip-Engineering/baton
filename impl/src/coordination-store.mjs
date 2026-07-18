@@ -33,6 +33,9 @@ import { validatePureContextOutputLineage } from './context-lineage.mjs';
 import {
   contextMapCallIdentity, contextMapNodeBinding, normalizeContextMapCall,
 } from './context-map.mjs';
+import {
+  validateContextProviderResultCapsule, validateContextProviderResultRef,
+} from './context-result.mjs';
 import { pathInScopes } from './path-scope.mjs';
 import {
   validProcessClosedPayload, validProcessStartedPayload, validRecoveryProcessAbsentPayload,
@@ -4913,6 +4916,72 @@ export class CoordinationStore {
     return freeze({ ...core, cleanupDigest: value.cleanupDigest });
   }
 
+  _normalizeContextMapProviderResults(call, children, cleanup, value, integrity = false) {
+    const fail = (message) => this._contextFailure(message,
+      integrity ? 'context_map_call_settlement_integrity'
+        : 'context_map_call_settlement_invalid', integrity);
+    const accepted = children.filter((child) => child.state === 'accepted');
+    if (!Array.isArray(value) || value.length !== accepted.length) {
+      return fail('Context provider result ref set does not match accepted children');
+    }
+    const plan = [...this._plans.values()].find((candidate) => (
+      candidate.digest === call.expectedPlanDigest
+    ));
+    if (!plan) return fail('Context provider result ref set lost its successor Plan');
+    const normalized = [];
+    for (let index = 0; index < value.length; index += 1) {
+      const child = accepted[index];
+      const node = plan.nodes.find((candidate) => (
+        candidate.key === child.nodeKey
+          && candidate.contextCall?.callId === call.callId
+          && candidate.contextCall?.partition?.partitionId === child.partitionId
+      ));
+      const commits = child.artifacts.filter((artifact) => artifact.kind === 'commit');
+      const commit = commits.length === 1 ? commits[0] : null;
+      let providerResult; let capsuleRef; let capsule; let source;
+      try {
+        providerResult = validateContextProviderResultRef(value[index]);
+        capsuleRef = normalizeContextArtifactRef(
+          providerResult.capsuleRef, 'context_provider_result', this._contextProgramPolicy,
+        );
+        capsule = validateContextProviderResultCapsule(
+          this._contextReferenceRead(capsuleRef),
+        );
+        source = this._contextReferenceRead(capsule.sourceRef);
+      } catch (error) {
+        return fail(error?.message ?? 'Context provider result CAS is unavailable');
+      }
+      const sourceItems = Array.isArray(source) ? source : [source];
+      if (!node || canonicalDigest(node) !== child.nodeDigest || !commit
+        || providerResult.callId !== call.callId
+        || providerResult.unitId !== child.partitionId
+        || providerResult.childDigest !== child.childDigest
+        || providerResult.capsuleId !== capsule.capsuleId
+        || canonicalDigest(providerResult.capsuleRef) !== canonicalDigest(capsuleRef)
+        || contextValueDigest(capsule) !== capsuleRef.digest
+        || contextValueDigest(source) !== capsule.sourceRef.digest
+        || sourceItems.length !== capsule.sourceRef.itemCount
+        || capsule.callId !== call.callId || capsule.unitId !== child.partitionId
+        || capsule.taskId !== child.taskId || capsule.taskVersion !== child.taskVersion
+        || capsule.terminalEvent !== child.terminalEvent
+        || capsule.childDigest !== child.childDigest
+        || capsule.artifactDigest !== child.artifactDigest
+        || capsule.cleanupDigest !== cleanup.cleanupDigest
+        || child.cleanupDigest !== cleanup.cleanupDigest
+        || canonicalDigest(capsule.route) !== canonicalDigest(child.route)
+        || capsule.result.baseSha !== call.source.treeSha
+        || capsule.result.resultSha !== child.resultSha
+        || commit.refs?.sha !== child.resultSha
+        || commit.refs?.retainedResultRef !== `refs/baton/results/${child.resultSha}`
+        || capsule.result.retainedResultRef !== commit.refs.retainedResultRef
+        || canonicalDigest(capsule.result.pathScope) !== canonicalDigest(node.pathScope)) {
+        return fail('Context provider result authority changed');
+      }
+      normalized.push(providerResult);
+    }
+    return freeze(normalized);
+  }
+
   _validateContextMapPlanProposal(plan, integrity = false) {
     const bindings = plan?.nodes?.map((node) => node.contextCall).filter(Boolean) ?? [];
     if (bindings.length === 0) return null;
@@ -4992,10 +5061,12 @@ export class CoordinationStore {
           : 'context_map_call_settlement_stale', integrity);
     }
     const completedResultFields = [
-      'childDigest', 'children', 'cleanup', 'evidenceRef', 'outputRef', 'providerEffects', 'state',
+      'childDigest', 'children', 'cleanup', 'evidenceRef', 'outputRef', 'providerEffects',
+      'providerResultDigest', 'providerResults', 'state',
     ];
     const failedResultFields = [...completedResultFields, 'termination'];
-    let outputRef; let evidenceRef; let children; let cleanup; let state; let termination;
+    let outputRef; let evidenceRef; let children; let cleanup; let providerResults;
+    let state; let termination;
     try {
       if (!['completed', 'failed'].includes(payload.result.state)
         || Object.keys(payload.result).sort().join(',') !== (payload.result.state === 'failed'
@@ -5014,6 +5085,12 @@ export class CoordinationStore {
         || payload.result.childDigest !== canonicalDigest(children)
         || payload.result.state !== state) {
         throw new TypeError('Context map terminal child identities changed');
+      }
+      providerResults = this._normalizeContextMapProviderResults(
+        call, children, cleanup, payload.result.providerResults, integrity,
+      );
+      if (payload.result.providerResultDigest !== canonicalDigest(providerResults)) {
+        throw new TypeError('Context provider result ref set identity changed');
       }
       if (state === 'completed') {
         outputRef = normalizeContextArtifactRef(
@@ -5043,7 +5120,9 @@ export class CoordinationStore {
     }
     const result = freeze({
       state, providerEffects: call.partitions.length,
-      children, childDigest: canonicalDigest(children), cleanup, outputRef, evidenceRef,
+      children, childDigest: canonicalDigest(children),
+      providerResults, providerResultDigest: canonicalDigest(providerResults),
+      cleanup, outputRef, evidenceRef,
       ...(state === 'failed' ? { termination } : {}),
     });
     if (!integrity) {
@@ -5057,16 +5136,18 @@ export class CoordinationStore {
       }
       const outputValid = state === 'failed' ? output === null
         : output?.schemaVersion === 1 && output.kind === 'baton.context_value'
-          && canonicalDigest(output.items) === canonicalDigest(children)
-          && output.sourceItems === children.length
-          && output.selectedSourceItems === children.length
-          && output.chunks === children.length;
+          && canonicalDigest(output.items) === canonicalDigest(providerResults)
+          && canonicalDigest(output.sourceBranches) === canonicalDigest([
+            'context_provider_results',
+          ])
+          && output.sourceItems === providerResults.length
+          && output.selectedSourceItems === providerResults.length
+          && output.chunks === providerResults.length;
       const failureEvidenceValid = state === 'completed' || (
         evidence?.state === 'failed' && evidence.outputRef === null
-        && canonicalDigest(evidence.cleanup) === canonicalDigest(cleanup)
         && canonicalDigest(evidence.termination) === canonicalDigest(termination)
       );
-      if (!outputValid || !evidence || evidence.schemaVersion !== 1
+      if (!outputValid || !evidence || evidence.schemaVersion !== 2
         || evidence.kind !== 'baton.context_call_evidence'
         || evidence.callId !== call.callId || evidence.callDigest !== call.callDigest
         || evidence.programDigest !== call.programDigest || evidence.generation !== call.generation
@@ -5076,6 +5157,9 @@ export class CoordinationStore {
         || canonicalDigest(evidence.source) !== canonicalDigest(call.source)
         || canonicalDigest(evidence.partitions) !== canonicalDigest(call.partitions)
         || canonicalDigest(evidence.children) !== canonicalDigest(children)
+        || evidence.providerResultDigest !== result.providerResultDigest
+        || canonicalDigest(evidence.providerResults) !== canonicalDigest(providerResults)
+        || canonicalDigest(evidence.cleanup) !== canonicalDigest(cleanup)
         || canonicalDigest(evidence.outputRef) !== canonicalDigest(outputRef)
         || !failureEvidenceValid) {
         this._contextFailure('Context map settlement artifacts changed',
@@ -5597,6 +5681,9 @@ export class CoordinationStore {
       const artifactRows = [
         ['context-value', validated.result.outputRef],
         ['context-call-evidence', validated.result.evidenceRef],
+        ...validated.result.providerResults.map((providerResult) => (
+          ['context-provider-result', providerResult.capsuleRef]
+        )),
       ].filter(([, ref]) => ref !== null);
       for (const [prefix, ref] of artifactRows) {
         const id = `${prefix}:${ref.digest}`;
@@ -6301,6 +6388,9 @@ export class CoordinationStore {
       throw new CoordinationRefusal('Context map call has no terminal artifacts',
         'context_map_call_not_completed');
     }
+    const providerResults = this._normalizeContextMapProviderResults(
+      call, call.result.children, call.result.cleanup, call.result.providerResults, true,
+    );
     let output; let evidence;
     try {
       output = call.result.outputRef === null
@@ -6315,11 +6405,15 @@ export class CoordinationStore {
       ? output === null && evidence?.state === 'failed' && evidence.outputRef === null
         && canonicalDigest(evidence?.cleanup) === canonicalDigest(call.result.cleanup)
         && canonicalDigest(evidence?.termination) === canonicalDigest(call.result.termination)
-      : canonicalDigest(output?.items) === canonicalDigest(call.result.children);
+      : canonicalDigest(output?.items) === canonicalDigest(providerResults);
     if (!outputValid
       || evidence?.callId !== call.callId || evidence?.callDigest !== call.callDigest
       || evidence?.childDigest !== call.result.childDigest
+      || call.result.providerResultDigest !== canonicalDigest(providerResults)
+      || evidence?.providerResultDigest !== call.result.providerResultDigest
+      || canonicalDigest(evidence?.providerResults) !== canonicalDigest(providerResults)
       || canonicalDigest(evidence?.children) !== canonicalDigest(call.result.children)
+      || canonicalDigest(evidence?.cleanup) !== canonicalDigest(call.result.cleanup)
       || canonicalDigest(evidence?.outputRef) !== canonicalDigest(call.result.outputRef)) {
       throw new CoordinationIntegrityError('Context call artifacts changed',
         'context_map_call_settlement_integrity');
@@ -6856,9 +6950,15 @@ export class CoordinationStore {
     );
     const children = this._contextMapSettlementChildren(call, false, cleanup);
     const state = children.every((child) => child.state === 'accepted') ? 'completed' : 'failed';
+    const prior = this._byKey.get(auth?.key);
+    const suppliedProviderResults = fields?.result?.providerResults
+      ?? (prior ? call.result?.providerResults : undefined);
+    const providerResults = suppliedProviderResults === undefined
+      ? null : clone(suppliedProviderResults);
     const result = {
       state, providerEffects: children.length,
       children, childDigest: canonicalDigest(children),
+      providerResults, providerResultDigest: canonicalDigest(providerResults),
       cleanup,
       outputRef: clone(fields?.result?.outputRef),
       evidenceRef: clone(fields?.result?.evidenceRef),
@@ -6874,7 +6974,6 @@ export class CoordinationStore {
       expectedVersion: fields?.expectedVersion, newVersion: fields?.expectedVersion + 1,
       result, settlementDigest: canonicalDigest(settlementCore),
     };
-    const prior = this._byKey.get(auth?.key);
     if (prior) {
       if (prior.kind !== 'context.call_settled' || prior.actor !== auth.actor
         || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {

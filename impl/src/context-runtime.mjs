@@ -12,8 +12,9 @@ import {
 } from './context-program.mjs';
 import { normalizeContextMapCall } from './context-map.mjs';
 import {
-  contextProviderResultCapsule, contextRetainedCommitProjection,
+  contextProviderResultCapsule, contextProviderResultRef, contextRetainedCommitProjection,
   normalizeContextResultPathScope, validateContextProviderResultCapsule,
+  validateContextProviderResultRef,
 } from './context-result.mjs';
 import { pathInScopes } from './path-scope.mjs';
 
@@ -309,6 +310,48 @@ function validateRetainedResultRequest(value) {
   return Object.freeze({ ...value, route: Object.freeze({ ...value.route }), pathScope });
 }
 
+function normalizeCallProviderResults(bench, call, children, cleanup, value) {
+  if (!cleanup || typeof cleanup !== 'object' || Array.isArray(cleanup)
+    || cleanup.callId !== call.callId || !/^[a-f0-9]{64}$/u.test(cleanup.cleanupDigest ?? '')) {
+    throw runtimeError('Context call cleanup authority is invalid',
+      'context_call_settlement_invalid');
+  }
+  const accepted = children.filter((child) => child.state === 'accepted');
+  if (!Array.isArray(value) || value.length !== accepted.length) {
+    throw runtimeError('Context provider result ref set is incomplete',
+      'context_call_settlement_invalid');
+  }
+  return value.map((candidate, index) => {
+    let providerResult; let capsule;
+    try {
+      providerResult = validateContextProviderResultRef(candidate);
+      capsule = bench.readProviderResult(providerResult.capsuleRef);
+    } catch (cause) {
+      throw Object.assign(runtimeError('Context provider result CAS is invalid',
+        'context_call_settlement_invalid'), { cause });
+    }
+    const child = accepted[index];
+    if (providerResult.callId !== call.callId
+      || providerResult.unitId !== child.partitionId
+      || providerResult.childDigest !== child.childDigest
+      || providerResult.capsuleId !== capsule.capsuleId
+      || capsule.callId !== call.callId || capsule.unitId !== child.partitionId
+      || capsule.taskId !== child.taskId || capsule.taskVersion !== child.taskVersion
+      || capsule.terminalEvent !== child.terminalEvent
+      || capsule.childDigest !== child.childDigest
+      || capsule.artifactDigest !== child.artifactDigest
+      || capsule.cleanupDigest !== cleanup.cleanupDigest
+      || child.cleanupDigest !== cleanup.cleanupDigest
+      || contextValueDigest(capsule.route) !== contextValueDigest(child.route)
+      || capsule.result.baseSha !== call.source.treeSha
+      || capsule.result.resultSha !== child.resultSha) {
+      throw runtimeError('Context provider result authority changed',
+        'context_call_settlement_invalid');
+    }
+    return providerResult;
+  });
+}
+
 export function produceRepositoryContextSource(repoRoot, treeSha, scopes, policy,
   gitAuthority = resolveGitExecutable()) {
   const verifiedGit = verifyGitExecutableAuthority(gitAuthority);
@@ -549,7 +592,11 @@ export class RepositoryContextRuntime {
         'context_result_integrity');
     }
     const capsuleRef = this.bench.admitProviderResult(capsule);
-    return Object.freeze({ capsule, capsuleRef });
+    const providerResult = validateContextProviderResultRef(contextProviderResultRef({
+      callId: capsule.callId, unitId: capsule.unitId, childDigest: capsule.childDigest,
+      capsuleId: capsule.capsuleId, capsuleRef,
+    }));
+    return Object.freeze({ capsule, capsuleRef, providerResult });
   }
 
   _executeOwned(operation, payload, signal = null) {
@@ -707,7 +754,26 @@ export class RepositoryContextRuntime {
       environmentDigest: this.environmentDigest,
       policy: this.policy,
       referenceIdentity: this.referenceIdentity,
-      referenceRead: (reference) => this.bench.readReference(reference),
+      referenceRead: (reference) => {
+        const value = this.bench.readReference(reference);
+        if (reference?.kind !== 'context_provider_result') return value;
+        const reprojected = this.projectRetainedCommitResult({
+          callId: value.callId, unitId: value.unitId,
+          taskId: value.taskId, taskVersion: value.taskVersion,
+          terminalEvent: value.terminalEvent, childDigest: value.childDigest,
+          route: value.route, artifactDigest: value.artifactDigest,
+          cleanupDigest: value.cleanupDigest,
+          baseSha: value.result.baseSha, resultSha: value.result.resultSha,
+          retainedResultRef: value.result.retainedResultRef,
+          pathScope: value.result.pathScope,
+        });
+        if (contextValueDigest(reprojected.capsule) !== contextValueDigest(value)
+          || contextValueDigest(reprojected.capsuleRef) !== contextValueDigest(reference)) {
+          throw runtimeError('Context provider result differs from its retained commit',
+            'context_result_integrity');
+        }
+        return value;
+      },
       sourceAttest: (request) => this.attestSource(request),
     });
   }
@@ -716,7 +782,8 @@ export class RepositoryContextRuntime {
     if (Object.hasOwn(request ?? {}, 'termination')) {
       return this.materializeCallFailure(request);
     }
-    exact(request, ['call', 'children'], 'Context call materialization request');
+    exact(request, ['call', 'children', 'cleanup', 'providerResultRequests'],
+      'Context call materialization request');
     const call = normalizeContextMapCall(request.call);
     if (!Array.isArray(request.children) || request.children.length !== call.partitions.length) {
       throw runtimeError('Context call terminal children are incomplete',
@@ -736,10 +803,19 @@ export class RepositoryContextRuntime {
       throw runtimeError('Context call terminal child order differs from its partitions',
         'context_call_settlement_invalid');
     }
+    if (!Array.isArray(request.providerResultRequests)) {
+      throw runtimeError('Context provider result projection set is invalid',
+        'context_call_settlement_invalid');
+    }
+    const providerResults = normalizeCallProviderResults(this.bench, call, children,
+      request.cleanup, request.providerResultRequests.map((projection) => (
+        this.projectRetainedCommitResult(projection).providerResult
+      )));
     const childDigest = contextValueDigest(children);
+    const providerResultDigest = contextValueDigest(providerResults);
     const output = {
-      schemaVersion: 1, kind: 'baton.context_value', items: children,
-      sourceBranches: ['context_map_children'],
+      schemaVersion: 1, kind: 'baton.context_value', items: providerResults,
+      sourceBranches: ['context_provider_results'],
       sourceItems: call.partitions.length,
       selectedSourceItems: call.partitions.length,
       chunks: call.partitions.length,
@@ -748,10 +824,11 @@ export class RepositoryContextRuntime {
       output, 'context_value', 'application/vnd.baton.context-value+json',
     );
     const evidence = {
-      schemaVersion: 1, kind: 'baton.context_call_evidence',
+      schemaVersion: 2, kind: 'baton.context_call_evidence',
       callId: call.callId, callDigest: call.callDigest,
       programDigest: call.programDigest, generation: call.generation,
       source: call.source, partitions: call.partitions, children, childDigest,
+      providerResults, providerResultDigest, cleanup: request.cleanup,
       providerEffects: children.length,
       coordinateDigest: call.source.coordinateDigest,
       outputRef,
@@ -761,13 +838,14 @@ export class RepositoryContextRuntime {
       'application/vnd.baton.context-call-evidence+json',
     );
     return Object.freeze({
-      outputRef, evidenceRef, childDigest, childCount: children.length,
+      outputRef, evidenceRef, childDigest, providerResults, providerResultDigest,
+      childCount: children.length,
       providerEffects: children.length,
     });
   }
 
   materializeCallFailure(request) {
-    exact(request, ['call', 'children', 'cleanup', 'termination'],
+    exact(request, ['call', 'children', 'cleanup', 'providerResultRequests', 'termination'],
       'Context call failure materialization request');
     const call = normalizeContextMapCall(request.call);
     if (!Array.isArray(request.children) || request.children.length !== call.partitions.length) {
@@ -791,12 +869,22 @@ export class RepositoryContextRuntime {
       throw runtimeError('Context call failed child order differs from its partitions',
         'context_call_settlement_invalid');
     }
+    if (!Array.isArray(request.providerResultRequests)) {
+      throw runtimeError('Context provider result projection set is invalid',
+        'context_call_settlement_invalid');
+    }
+    const providerResults = normalizeCallProviderResults(this.bench, call, children, cleanup,
+      request.providerResultRequests.map((projection) => (
+        this.projectRetainedCommitResult(projection).providerResult
+      )));
     const childDigest = contextValueDigest(children);
+    const providerResultDigest = contextValueDigest(providerResults);
     const evidence = {
-      schemaVersion: 1, kind: 'baton.context_call_evidence',
+      schemaVersion: 2, kind: 'baton.context_call_evidence',
       callId: call.callId, callDigest: call.callDigest,
       programDigest: call.programDigest, generation: call.generation,
       source: call.source, partitions: call.partitions, children, childDigest,
+      providerResults, providerResultDigest,
       providerEffects: children.length,
       coordinateDigest: call.source.coordinateDigest,
       state: 'failed', cleanup, termination, outputRef: null,
@@ -806,7 +894,8 @@ export class RepositoryContextRuntime {
       'application/vnd.baton.context-call-evidence+json',
     );
     return Object.freeze({
-      outputRef: null, evidenceRef, childDigest, childCount: children.length,
+      outputRef: null, evidenceRef, childDigest, providerResults, providerResultDigest,
+      childCount: children.length,
       providerEffects: children.length,
     });
   }
