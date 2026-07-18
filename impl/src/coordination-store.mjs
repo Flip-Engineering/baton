@@ -34,6 +34,7 @@ import {
 } from './context-authority.mjs';
 import { contextValueDigest, normalizeContextManifest, normalizeContextProgram } from './context-program.mjs';
 import { validatePureContextOutputLineage } from './context-lineage.mjs';
+import { validateContextMapResultLineage } from './context-result-lineage.mjs';
 import {
   contextMapCallIdentity, contextMapNodeBinding, normalizeContextMapCall,
 } from './context-map.mjs';
@@ -5289,10 +5290,13 @@ export class CoordinationStore {
       'chunks', 'items', 'kind', 'schemaVersion', 'selectedSourceItems', 'sourceBranches',
       'sourceItems',
     ];
+    const lineageEvidence = state === 'completed' && evidence?.schemaVersion === 3;
     const evidenceFields = [
       'callDigest', 'callId', 'childDigest', 'children', 'cleanup', 'coordinateDigest',
       'generation', 'kind', 'outputRef', 'partitions', 'programDigest', 'providerEffects',
       'providerResultDigest', 'providerResults', 'schemaVersion', 'source',
+      ...(lineageEvidence
+        ? ['outputLineageDigest', 'outputLineages', 'sourceCoordinates'] : []),
       ...(state === 'failed' ? ['state', 'termination'] : []),
     ];
     const outputValid = state === 'failed' ? output === null
@@ -5309,7 +5313,12 @@ export class CoordinationStore {
       evidence?.state === 'failed' && evidence.outputRef === null
       && canonicalDigest(evidence.termination) === canonicalDigest(termination)
     );
-    if (!outputValid || !evidence || evidence.schemaVersion !== 2
+    const evidenceVersionValid = state === 'failed'
+      ? evidence?.schemaVersion === 2
+      : integrity
+        ? [2, 3].includes(evidence?.schemaVersion)
+        : evidence?.schemaVersion === 3;
+    if (!outputValid || !evidence || !evidenceVersionValid
       || evidence.kind !== 'baton.context_call_evidence'
       || Object.keys(evidence).sort().join(',') !== evidenceFields.sort().join(',')
       || evidence.callId !== call.callId || evidence.callDigest !== call.callDigest
@@ -5328,6 +5337,33 @@ export class CoordinationStore {
       this._contextFailure('Context map settlement artifacts changed',
         integrity ? 'context_map_call_settlement_integrity'
           : 'context_map_call_settlement_invalid', integrity);
+    }
+    if (state === 'completed' && evidence.schemaVersion === 3) {
+      try {
+        const sourceOutput = this._contextReferenceRead(call.source.outputRef);
+        const sourceEvidence = this._contextReferenceRead(call.source.evidenceRef);
+        const capsules = providerResults.map((providerResult) => (
+          this._contextReferenceRead(providerResult.capsuleRef)
+        ));
+        validateContextMapResultLineage({
+          call: {
+            schemaVersion: call.schemaVersion, kind: call.kind, generation: call.generation,
+            source: clone(call.source), role: call.role, instruction: call.instruction,
+            partitions: clone(call.partitions), programDigest: call.programDigest,
+            callId: call.callId, callDigest: call.callDigest,
+          },
+          children, providerResults, capsules, sourceOutput, sourceEvidence,
+          planDigest: call.expectedPlanDigest, cleanupDigest: cleanup.cleanupDigest,
+          outputLineages: evidence.outputLineages,
+          outputLineageDigest: evidence.outputLineageDigest,
+          sourceCoordinates: evidence.sourceCoordinates,
+          coordinateDigest: evidence.coordinateDigest,
+        });
+      } catch (error) {
+        this._contextFailure(error?.message ?? 'Context map result lineage changed',
+          integrity ? 'context_map_call_settlement_integrity'
+            : 'context_map_call_settlement_invalid', integrity);
+      }
     }
     const settlementCore = {
       authority, callId: call.callId, admissionDigest: call.admissionDigest,

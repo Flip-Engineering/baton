@@ -95,6 +95,9 @@ export {
   normalizeContextManifest, normalizeContextProgram, normalizeContextProgramPolicy,
 } from './context-program.mjs';
 export {
+  buildContextMapResultLineage, validateContextMapResultLineage,
+} from './context-result-lineage.mjs';
+export {
   contextCellIdentity, contextProgramInputRefs, contextProgramIsPure, contextSessionIdentity,
   normalizeContextArtifactRef,
 } from './context-authority.mjs';

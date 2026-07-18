@@ -6098,7 +6098,7 @@ export class BatonApplication {
         })
         : this.context.materializeCallResult({
           call: this._contextMapCallCore(call), children: settledChildren,
-          cleanup, providerResultRequests,
+          cleanup, planDigest: call.expectedPlanDigest, providerResultRequests,
         });
       const principal = this.context.principal;
       this.driver.coordination.settleContextMapCall({

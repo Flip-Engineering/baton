@@ -16,6 +16,7 @@ import {
   normalizeContextResultPathScope, validateContextProviderResultCapsule,
   validateContextProviderResultReference,
 } from './context-result.mjs';
+import { buildContextMapResultLineage } from './context-result-lineage.mjs';
 import { pathInScopes } from './path-scope.mjs';
 import {
   validateWorkflowDefinitionLegacy, validateWorkflowDefinitionV3,
@@ -789,16 +790,20 @@ export class RepositoryContextRuntime {
     const providerResults = requests.map((projection) => (
       this.projectRetainedCommitResult(projection).providerResult
     ));
-    return Object.freeze(normalizeCallProviderResults(
+    const normalized = normalizeCallProviderResults(
       this.bench, call, children, cleanup, providerResults,
+    );
+    const capsules = normalized.map((providerResult) => (
+      this.bench.readProviderResult(providerResult.capsuleRef)
     ));
+    return Object.freeze({ providerResults: Object.freeze(normalized), capsules: Object.freeze(capsules) });
   }
 
   materializeCallResult(request) {
     if (Object.hasOwn(request ?? {}, 'termination')) {
       return this.materializeCallFailure(request);
     }
-    exact(request, ['call', 'children', 'cleanup', 'providerResultRequests'],
+    exact(request, ['call', 'children', 'cleanup', 'planDigest', 'providerResultRequests'],
       'Context call materialization request');
     const call = normalizeContextMapCall(request.call);
     if (!Array.isArray(request.children) || request.children.length !== call.partitions.length) {
@@ -819,7 +824,11 @@ export class RepositoryContextRuntime {
       throw runtimeError('Context call terminal child order differs from its partitions',
         'context_call_settlement_invalid');
     }
-    const providerResults = this._projectCallProviderResults(
+    if (!/^[a-f0-9]{64}$/u.test(request.planDigest ?? '')) {
+      throw runtimeError('Context call successor Plan identity is invalid',
+        'context_call_settlement_invalid');
+    }
+    const { providerResults, capsules } = this._projectCallProviderResults(
       call, children, request.cleanup, request.providerResultRequests,
     );
     const childDigest = contextValueDigest(children);
@@ -834,14 +843,29 @@ export class RepositoryContextRuntime {
     const outputRef = this.bench._writeArtifact(
       output, 'context_value', 'application/vnd.baton.context-value+json',
     );
+    let sourceOutput; let sourceEvidence; let lineage;
+    try {
+      sourceOutput = this.bench.readReference(call.source.outputRef);
+      sourceEvidence = this.bench.readReference(call.source.evidenceRef);
+      lineage = buildContextMapResultLineage({
+        call, children, providerResults, capsules, sourceOutput, sourceEvidence,
+        planDigest: request.planDigest, cleanupDigest: request.cleanup.cleanupDigest,
+      });
+    } catch (cause) {
+      throw Object.assign(runtimeError('Context call output lineage is invalid',
+        'context_call_settlement_invalid'), { cause });
+    }
     const evidence = {
-      schemaVersion: 2, kind: 'baton.context_call_evidence',
+      schemaVersion: 3, kind: 'baton.context_call_evidence',
       callId: call.callId, callDigest: call.callDigest,
       programDigest: call.programDigest, generation: call.generation,
       source: call.source, partitions: call.partitions, children, childDigest,
       providerResults, providerResultDigest, cleanup: request.cleanup,
       providerEffects: children.length,
-      coordinateDigest: call.source.coordinateDigest,
+      sourceCoordinates: lineage.sourceCoordinates,
+      coordinateDigest: lineage.coordinateDigest,
+      outputLineages: lineage.outputLineages,
+      outputLineageDigest: lineage.outputLineageDigest,
       outputRef,
     };
     const evidenceRef = this.bench._writeArtifact(
@@ -880,7 +904,7 @@ export class RepositoryContextRuntime {
       throw runtimeError('Context call failed child order differs from its partitions',
         'context_call_settlement_invalid');
     }
-    const providerResults = this._projectCallProviderResults(
+    const { providerResults } = this._projectCallProviderResults(
       call, children, cleanup, request.providerResultRequests,
     );
     const childDigest = contextValueDigest(children);
