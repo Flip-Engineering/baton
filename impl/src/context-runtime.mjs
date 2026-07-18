@@ -17,6 +17,9 @@ import {
   validateContextProviderResultReference,
 } from './context-result.mjs';
 import { pathInScopes } from './path-scope.mjs';
+import {
+  normalizeWorkflowDefinition, workflowRoleCatalogFromLegacy,
+} from './workflow-definition.mjs';
 
 const WORKFLOW_DEFINITION = 'application.workflow_definition_bound';
 const TEXT_EXTENSIONS = new Set([
@@ -42,6 +45,61 @@ function exact(value, fields, label) {
     || Object.keys(value).sort().join(',') !== [...fields].sort().join(',')) {
     throw runtimeError(`${label} is invalid`);
   }
+}
+
+function normalizeRuntimeWorkflowDefinition(coordination, event, plan, seen = new Set()) {
+  const payload = event?.payload;
+  if (!payload || !plan || event.actor !== 'application:workflow-registry'
+    || event.idempotencyKey
+      !== `application.workflow_definition_bound:${plan.runId}:${plan.digest}`
+    || payload.repoId !== plan.repoId || payload.runId !== plan.runId
+    || payload.planDigest !== plan.digest) {
+    throw runtimeError('Repository Context Workflow definition binding is invalid',
+      'context_session_stale');
+  }
+  const core = Object.fromEntries(Object.entries(payload)
+    .filter(([key]) => !['definitionDigest', 'kind'].includes(key)));
+  if (payload.definitionDigest !== contextValueDigest(core)
+    || seen.has(payload.definitionDigest)) {
+    throw runtimeError('Repository Context Workflow definition ancestry changed',
+      'context_session_stale');
+  }
+  if (payload.schemaVersion !== 3) return payload;
+  seen.add(payload.definitionDigest);
+  let parentDefinition = null;
+  let legacyParentRoleCatalog = null;
+  if (payload.lineage?.generation > 1) {
+    const predecessor = plan.predecessor
+      ? coordination.planVersion(plan.predecessor.planId, plan.predecessor.version) : null;
+    const parents = predecessor ? coordination.events().filter((candidate) => (
+      candidate.kind === 'driver.recorded' && candidate.payload?.kind === WORKFLOW_DEFINITION
+        && candidate.payload?.repoId === plan.repoId && candidate.payload?.runId === plan.runId
+        && candidate.payload?.planDigest === predecessor.digest
+        && candidate.payload?.definitionDigest === payload.lineage.parentDefinitionDigest
+        && candidate.seq < event.seq
+    )) : [];
+    if (!predecessor || predecessor.digest !== plan.predecessor.digest || parents.length !== 1) {
+      throw runtimeError('Repository Context Workflow definition parent is unavailable',
+        'context_session_stale');
+    }
+    parentDefinition = normalizeRuntimeWorkflowDefinition(
+      coordination, parents[0], predecessor, seen,
+    );
+    if (parentDefinition.schemaVersion !== 3) {
+      legacyParentRoleCatalog = workflowRoleCatalogFromLegacy(parentDefinition, predecessor);
+    }
+  }
+  let normalized;
+  try {
+    normalized = normalizeWorkflowDefinition(payload, {
+      plan, parentDefinition, legacyParentRoleCatalog,
+    });
+  } catch (cause) {
+    throw Object.assign(runtimeError('Repository Context Workflow definition is invalid',
+      'context_session_stale'), { cause });
+  }
+  seen.delete(payload.definitionDigest);
+  return normalized;
 }
 
 const CONTEXT_EXECUTION_PROGRAM = fileURLToPath(
@@ -934,6 +992,9 @@ export class RepositoryContextRuntime {
       && event.payload?.runId === current?.goal?.runId
       && event.payload?.planDigest === current?.plan?.digest
     ));
+    if (definition && current?.plan) {
+      normalizeRuntimeWorkflowDefinition(this.coordination, definition, current.plan);
+    }
     if (!node || !task || task.status !== 'working' || !definition
       || current.goal.repoId !== this.repoId || current.plan.repoId !== this.repoId) {
       throw runtimeError('Repository Context session has no current Plan-gated Attempt',

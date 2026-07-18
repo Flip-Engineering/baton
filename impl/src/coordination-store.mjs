@@ -23,6 +23,9 @@ import {
   RUN_ORCHESTRATOR_REVOCATION_REASONS,
 } from './run-lineage.mjs';
 import { normalizeWorkflowPolicy } from './workflow-policy.mjs';
+import {
+  normalizeWorkflowDefinition, workflowDefinitionRole, workflowRoleCatalogFromLegacy,
+} from './workflow-definition.mjs';
 import { normalizeContextProgramPolicy } from './context-program-policy.mjs';
 import {
   contextCellIdentity, contextProgramIsPure, contextSessionIdentity, normalizeContextArtifactRef,
@@ -3845,7 +3848,81 @@ export class CoordinationStore {
       this._contextFailure('Context Workflow definition failed integrity validation',
         'context_session_invalid', integrity);
     }
+    if (core.schemaVersion === 3) {
+      const plan = this._plans.get(this._planVersionKey(
+        manifest.workflow.plan.planId, manifest.workflow.plan.version,
+      ));
+      try { this._normalizeContextWorkflowDefinition(event, plan, integrity); }
+      catch (error) {
+        if (error instanceof CoordinationIntegrityError || error instanceof CoordinationRefusal) {
+          throw error;
+        }
+        this._contextFailure(error.message, 'context_session_invalid', integrity);
+      }
+    }
     return event;
+  }
+
+  _normalizeContextWorkflowDefinition(event, plan, integrity = false, seen = new Set()) {
+    const payload = event?.payload;
+    if (!payload || !plan || payload.planDigest !== plan.digest
+      || payload.repoId !== plan.repoId || payload.runId !== plan.runId
+      || event.actor !== 'application:workflow-registry'
+      || event.idempotencyKey
+        !== `application.workflow_definition_bound:${plan.runId}:${plan.digest}`) {
+      this._contextFailure('Context Workflow definition Plan binding changed',
+        'context_session_invalid', integrity);
+    }
+    const { kind, definitionDigest, ...core } = payload;
+    void kind;
+    if (definitionDigest !== canonicalDigest(core) || seen.has(definitionDigest)) {
+      this._contextFailure('Context Workflow definition ancestry is cyclic or changed',
+        'context_session_invalid', integrity);
+    }
+    if (payload.schemaVersion !== 3) return payload;
+    seen.add(definitionDigest);
+    let parentDefinition = null;
+    let legacyParentRoleCatalog = null;
+    if (payload.lineage?.generation > 1) {
+      const predecessor = plan.predecessor ? this._plans.get(this._planVersionKey(
+        plan.predecessor.planId, plan.predecessor.version,
+      )) : null;
+      const parents = predecessor ? this._events.filter((candidate) => (
+        candidate.kind === 'driver.recorded'
+          && candidate.payload?.kind === 'application.workflow_definition_bound'
+          && candidate.payload?.repoId === plan.repoId
+          && candidate.payload?.runId === plan.runId
+          && candidate.payload?.planDigest === predecessor.digest
+          && candidate.payload?.definitionDigest === payload.lineage.parentDefinitionDigest
+          && candidate.seq < event.seq
+      )) : [];
+      if (!predecessor || predecessor.digest !== plan.predecessor.digest || parents.length !== 1) {
+        this._contextFailure('Context Workflow definition parent is absent or ambiguous',
+          'context_session_invalid', integrity);
+      }
+      parentDefinition = this._normalizeContextWorkflowDefinition(
+        parents[0], predecessor, integrity, seen,
+      );
+      if (parentDefinition.schemaVersion !== 3) {
+        try {
+          legacyParentRoleCatalog = workflowRoleCatalogFromLegacy(
+            parentDefinition, predecessor,
+          );
+        } catch (error) {
+          this._contextFailure(error.message, 'context_session_invalid', integrity);
+        }
+      }
+    }
+    let normalized;
+    try {
+      normalized = normalizeWorkflowDefinition(payload, {
+        plan, parentDefinition, legacyParentRoleCatalog,
+      });
+    } catch (error) {
+      this._contextFailure(error.message, 'context_session_invalid', integrity);
+    }
+    seen.delete(definitionDigest);
+    return normalized;
   }
 
   _currentContextDeployment() {
@@ -4509,10 +4586,43 @@ export class CoordinationStore {
       this._contextFailure('Context map Workflow definition binding is absent or ambiguous',
         integrity ? 'context_map_call_integrity' : 'context_map_definition_invalid', integrity);
     }
-    const sourceDefinition = sourceDefinitions[0].payload;
-    const successorDefinition = successorDefinitions[0].payload;
-    const sourceAttempt = sourceDefinition.attempts?.find((attempt) => attempt.role === call.role);
-    if (!sourceAttempt || sourceDefinition.profileDigest !== source.profileDigest
+    let sourceDefinition;
+    let successorDefinition;
+    let sourceRole;
+    try {
+      sourceDefinition = this._normalizeContextWorkflowDefinition(
+        sourceDefinitions[0], predecessor, integrity,
+      );
+      const legacyParentRoleCatalog = sourceDefinition.schemaVersion === 3 ? null
+        : workflowRoleCatalogFromLegacy(sourceDefinition, predecessor);
+      const successorPayload = successorDefinitions[0].payload;
+      if (successorPayload.schemaVersion === 3) {
+        successorDefinition = normalizeWorkflowDefinition(successorPayload, {
+          plan: { ...normalizedPlan, digest: expectedPlanDigest },
+          parentDefinition: sourceDefinition, legacyParentRoleCatalog,
+        });
+      } else {
+        if (![1, 2].includes(successorPayload.schemaVersion)) {
+          throw new TypeError('Historical Context map Workflow definition schema is unsupported');
+        }
+        const { kind: ignoredKind, definitionDigest: historicalDigest, ...historicalCore }
+          = successorPayload;
+        void ignoredKind;
+        if (historicalDigest !== canonicalDigest(historicalCore)) {
+          throw new TypeError('Historical Context map Workflow definition digest changed');
+        }
+        successorDefinition = successorPayload;
+      }
+      sourceRole = workflowDefinitionRole(sourceDefinition, call.role, { plan: predecessor });
+    } catch (error) {
+      this._contextFailure(error.message,
+        integrity ? 'context_map_call_integrity' : 'context_map_definition_invalid', integrity);
+    }
+    const successorEvent = successorDefinitions[0];
+    if (successorEvent.actor !== 'application:workflow-registry'
+      || successorEvent.idempotencyKey
+        !== `application.workflow_definition_bound:${source.runId}:${expectedPlanDigest}`
+      || sourceDefinition.profileDigest !== source.profileDigest
       || successorDefinition.profileDigest !== source.profileDigest
       || !Array.isArray(successorDefinition.attempts)
       || successorDefinition.attempts.length !== normalizedPlan.nodes.length) {
@@ -4527,8 +4637,11 @@ export class CoordinationStore {
         effort: node.routes.efforts[0],
       } : null;
       if (!node || !attempt.role.startsWith(`${call.role}:`)
+        || (successorDefinition.schemaVersion === 3
+          && (attempt.logicalRole !== call.role
+            || attempt.nodeTemplateDigest !== sourceRole.nodeTemplateDigest))
         || canonicalDigest(attempt.route) !== canonicalDigest(route)
-        || canonicalDigest(attempt.route) !== canonicalDigest(sourceAttempt.route)) {
+        || canonicalDigest(attempt.route) !== canonicalDigest(sourceRole.route)) {
         this._contextFailure('Context map route differs from the approved logical role',
           integrity ? 'context_map_call_integrity' : 'context_map_route_invalid', integrity);
       }

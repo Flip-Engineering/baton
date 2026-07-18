@@ -4,6 +4,11 @@ import { contextMapCallIdentity, contextMapNodeBinding } from './context-map.mjs
 import { normalizeWorkerPolicyRequest } from './worker-policy.mjs';
 import { normalizeWorkflowRevision } from './workflow-revision.mjs';
 import {
+  createWorkflowDefinition, createWorkflowRoleCatalog, instantiateWorkflowRoleNode,
+  nextWorkflowDefinitionLineage, normalizeWorkflowDefinition, workflowDefinitionRole,
+  workflowRoleCatalogFromLegacy,
+} from './workflow-definition.mjs';
+import {
   LEGACY_WORKFLOW_POLICY, normalizeWorkflowPolicy,
 } from './workflow-policy.mjs';
 import {
@@ -2571,8 +2576,12 @@ export class BatonApplication {
     // Commit Workflow meaning before its Plan can exist. A crash can leave a harmless prebinding
     // without a Plan, but never an approvable multi-node Plan whose strategy or roles are absent.
     if (intent.composition) {
-      const core = {
-        schemaVersion: 2, repoId: this.repoId, runId: intent.runId,
+      const nodes = new Map(normalizedPlan.nodes.map((node) => [node.key, node]));
+      const roleCatalog = createWorkflowRoleCatalog(intent.composition.team.map((member) => ({
+        role: member.role, route: member.route, node: nodes.get(`attempt:${member.role}`),
+      })));
+      const definition = createWorkflowDefinition({
+        schemaVersion: 3, repoId: this.repoId, runId: intent.runId,
         goalDigest: goal.digest, planDigest: expectedPlanDigest, profileDigest: profile.digest,
         workflowPolicy: clone(workflowPolicy),
         workflowPolicyDigest: workflowPolicy.policyDigest,
@@ -2582,16 +2591,25 @@ export class BatonApplication {
           objective: goal.objective,
           definitionOfDone: clone(goal.definitionOfDone),
         },
-        attempts: intent.composition.team.map((member) => ({
-          role: member.role, nodeKey: `attempt:${member.role}`, route: clone(member.route),
+        roleCatalog: clone(roleCatalog),
+        lineage: {
+          generation: 1, rootDefinitionDigest: null, parentDefinitionDigest: null,
+        },
+        attempts: roleCatalog.roles.map((role) => ({
+          role: role.role, logicalRole: role.role, nodeKey: `attempt:${role.role}`,
+          nodeTemplateDigest: role.nodeTemplateDigest, route: clone(role.route),
         })),
-      };
-      this.driver.coordination.recordDriver(APPLICATION_WORKFLOW_RECORD_KIND, {
-        ...core, definitionDigest: digest(core),
-      }, {
+      }, { plan: normalizedPlan });
+      const recorded = this.driver.coordination.recordDriver(APPLICATION_WORKFLOW_RECORD_KIND,
+        definition, {
         actor: APPLICATION_WORKFLOW_RECORD_ACTOR,
         key: `${APPLICATION_WORKFLOW_RECORD_KIND}:${intent.runId}:${expectedPlanDigest}`,
       });
+      try { normalizeWorkflowDefinition(recorded.event.payload, { plan: normalizedPlan }); }
+      catch (cause) {
+        throw Object.assign(applicationError('Workflow root definition binding failed integrity validation',
+          'application_workflow_integrity'), { cause });
+      }
     }
     let proposed;
     try {
@@ -3735,6 +3753,55 @@ export class BatonApplication {
     const event = records[0];
     const { kind, definitionDigest, ...core } = event.payload;
     void kind;
+    if (core.schemaVersion === 3) {
+      if (event.actor !== APPLICATION_WORKFLOW_RECORD_ACTOR
+        || event.idempotencyKey
+          !== `${APPLICATION_WORKFLOW_RECORD_KIND}:${current.goal.runId}:${current.plan.digest}`) {
+        throw applicationError('workflow definition binding failed integrity validation',
+          'application_workflow_integrity');
+      }
+      let parentDefinition = null;
+      let legacyParentRoleCatalog = null;
+      if (core.lineage?.generation > 1) {
+        const history = this._workflowPlanHistory(current);
+        if (history.length < 2 || history.at(-1).plan.digest !== current.plan.digest) {
+          throw applicationError('workflow definition ancestry is incomplete',
+            'application_workflow_integrity');
+        }
+        const predecessor = history.at(-2);
+        parentDefinition = this._workflowDefinition(predecessor);
+        if (parentDefinition.schemaVersion !== 3) {
+          try {
+            legacyParentRoleCatalog = workflowRoleCatalogFromLegacy(
+              parentDefinition, predecessor.plan,
+            );
+          } catch (cause) {
+            throw Object.assign(applicationError('legacy Workflow role authority cannot be upgraded',
+              'application_workflow_integrity'), { cause });
+          }
+        }
+      }
+      let normalized;
+      try {
+        normalized = normalizeWorkflowDefinition(event.payload, {
+          plan: current.plan, parentDefinition, legacyParentRoleCatalog,
+        });
+      } catch (cause) {
+        throw Object.assign(applicationError('workflow definition binding failed integrity validation',
+          'application_workflow_integrity'), { cause });
+      }
+      if (definitionDigest !== normalized.definitionDigest
+        || normalized.repoId !== this.repoId || normalized.runId !== current.goal.runId
+        || normalized.goalDigest !== current.goal.digest
+        || normalized.profileDigest !== current.profile.digest
+        || normalized.planDigest !== current.plan.digest
+        || normalized.workItem.objective !== current.goal.objective
+        || digest(normalized.workItem.definitionOfDone) !== digest(current.goal.definitionOfDone)) {
+        throw applicationError('workflow definition binding failed integrity validation',
+          'application_workflow_integrity');
+      }
+      return deepFreeze(clone(normalized));
+    }
     const attempts = core.attempts;
     const legacyFields = [
       'attempts', 'goalDigest', 'join', 'planDigest', 'profileDigest', 'repoId', 'runId',
@@ -3794,7 +3861,8 @@ export class BatonApplication {
   }
 
   _workflowSuccessorDefinitionCore({
-    current, planDigest, node, predecessorDefinition, revision, policy, legacy = false,
+    current, planDigest, node, predecessorDefinition, predecessorPlan, revision, policy,
+    legacy = false, schemaVersion = null,
   }) {
     const priorAttempt = predecessorDefinition.attempts.find((attempt) => (
       attempt.role === revision.parent.role
@@ -3809,8 +3877,48 @@ export class BatonApplication {
       throw applicationError('Workflow revision Plan differs from its predecessor route or round',
         'application_workflow_integrity');
     }
+    const selectedSchema = schemaVersion ?? (legacy ? 1
+      : predecessorDefinition.schemaVersion === 3 ? 3 : 2);
+    if (selectedSchema === 3) {
+      let roleCatalog;
+      try {
+        roleCatalog = predecessorDefinition.schemaVersion === 3
+          ? predecessorDefinition.roleCatalog
+          : workflowRoleCatalogFromLegacy(predecessorDefinition, predecessorPlan);
+      } catch (cause) {
+        throw Object.assign(applicationError('Workflow revision lacks direct semantic role authority',
+          'application_workflow_integrity'), { cause });
+      }
+      const logicalRole = priorAttempt.logicalRole ?? priorAttempt.role;
+      const semanticRole = roleCatalog.roles.find((entry) => entry.role === logicalRole);
+      if (!semanticRole || !routeEqual(route, semanticRole.route)) {
+        throw applicationError('Workflow revision route differs from its semantic role',
+          'application_workflow_integrity');
+      }
+      return {
+        schemaVersion: 3,
+        repoId: this.repoId, runId: current.goal.runId,
+        goalDigest: current.goal.digest, planDigest,
+        profileDigest: current.profile.digest,
+        workflowPolicy: clone(policy), workflowPolicyDigest: policy.policyDigest,
+        strategy: 'candidate_feedback_revision', workspace: 'isolated',
+        join: 'operator_selected', round: revision.round,
+        predecessorDefinitionDigest: predecessorDefinition.definitionDigest,
+        revisionDigest: revision.revisionDigest,
+        workItem: {
+          objective: current.goal.objective,
+          definitionOfDone: clone(current.goal.definitionOfDone),
+        },
+        roleCatalog: clone(roleCatalog),
+        lineage: clone(nextWorkflowDefinitionLineage(predecessorDefinition)),
+        attempts: [{
+          role: revision.parent.role, logicalRole, nodeKey: node.key,
+          nodeTemplateDigest: semanticRole.nodeTemplateDigest, route,
+        }],
+      };
+    }
     return {
-      schemaVersion: legacy ? 1 : 2,
+      schemaVersion: selectedSchema,
       repoId: this.repoId, runId: current.goal.runId,
       goalDigest: current.goal.digest, planDigest,
       profileDigest: current.profile.digest,
@@ -3858,7 +3966,8 @@ export class BatonApplication {
     }
     const core = this._workflowSuccessorDefinitionCore({
       current, planDigest: current.plan.digest, node, predecessorDefinition,
-      revision, policy, legacy,
+      predecessorPlan: predecessor.plan, revision, policy, legacy,
+      schemaVersion: record?.payload?.schemaVersion ?? null,
     });
     if (record === null) {
       return deepFreeze({
@@ -3868,6 +3977,28 @@ export class BatonApplication {
     }
     const { kind, definitionDigest, ...boundCore } = record.payload;
     void kind;
+    if (record.payload.schemaVersion === 3) {
+      let normalized;
+      try {
+        normalized = normalizeWorkflowDefinition(record.payload, {
+          plan: current.plan, parentDefinition: predecessorDefinition,
+          legacyParentRoleCatalog: predecessorDefinition.schemaVersion === 3 ? null
+            : workflowRoleCatalogFromLegacy(predecessorDefinition, predecessor.plan),
+        });
+      } catch (cause) {
+        throw Object.assign(applicationError('Workflow successor definition binding failed integrity validation',
+          'application_workflow_integrity'), { cause });
+      }
+      if (record.actor !== APPLICATION_WORKFLOW_RECORD_ACTOR
+        || record.idempotencyKey
+          !== `${APPLICATION_WORKFLOW_RECORD_KIND}:${current.goal.runId}:${current.plan.digest}`
+        || normalized.definitionDigest !== definitionDigest
+        || digest(boundCore) !== digest(core)) {
+        throw applicationError('Workflow successor definition binding failed integrity validation',
+          'application_workflow_integrity');
+      }
+      return deepFreeze(clone(normalized));
+    }
     if (record.actor !== APPLICATION_WORKFLOW_RECORD_ACTOR
       || record.idempotencyKey !== `${APPLICATION_WORKFLOW_RECORD_KIND}:${current.goal.runId}:${current.plan.digest}`
       || digest(boundCore) !== definitionDigest || digest(boundCore) !== digest(core)) {
@@ -4648,14 +4779,29 @@ export class BatonApplication {
     });
     const successorCore = this._workflowSuccessorDefinitionCore({
       current, planDigest: expectedPlanDigest, node,
-      predecessorDefinition: definition, revision, policy,
+      predecessorDefinition: definition, predecessorPlan: current.plan,
+      revision, policy, schemaVersion: 3,
     });
-    this.driver.coordination.recordDriver(APPLICATION_WORKFLOW_RECORD_KIND, {
-      ...successorCore, definitionDigest: digest(successorCore),
-    }, {
+    const successorDefinition = createWorkflowDefinition(successorCore, {
+      plan: normalized, parentDefinition: definition,
+      legacyParentRoleCatalog: definition.schemaVersion === 3 ? null
+        : workflowRoleCatalogFromLegacy(definition, current.plan),
+    });
+    const recorded = this.driver.coordination.recordDriver(APPLICATION_WORKFLOW_RECORD_KIND,
+      successorDefinition, {
       actor: APPLICATION_WORKFLOW_RECORD_ACTOR,
       key: `${APPLICATION_WORKFLOW_RECORD_KIND}:${current.goal.runId}:${expectedPlanDigest}`,
     });
+    try {
+      normalizeWorkflowDefinition(recorded.event.payload, {
+        plan: normalized, parentDefinition: definition,
+        legacyParentRoleCatalog: definition.schemaVersion === 3 ? null
+          : workflowRoleCatalogFromLegacy(definition, current.plan),
+      });
+    } catch (cause) {
+      throw Object.assign(applicationError('Workflow revision definition changed before Plan proposal',
+        'application_workflow_integrity'), { cause });
+    }
     const proposed = await this.driver.coordinator.proposePlan(request,
       authority(this.principals.planner, this.repoId, current.goal.runId, 'plan:propose',
         `application:${current.goal.runId}:revision-plan:${revision.revisionDigest}`));
@@ -6004,10 +6150,19 @@ export class BatonApplication {
         'application_context_map_capacity');
     }
     const definition = this._workflowDefinition(current);
-    const roleAttempt = definition.attempts.find((attempt) => attempt.role === inputs.role);
-    const sourceNode = roleAttempt
-      ? current.plan.nodes.find((node) => node.key === roleAttempt.nodeKey) : null;
-    if (!roleAttempt || !sourceNode) {
+    let roleCatalog;
+    let semanticRole;
+    try {
+      roleCatalog = definition.schemaVersion === 3
+        ? definition.roleCatalog : workflowRoleCatalogFromLegacy(definition, current.plan);
+      semanticRole = workflowDefinitionRole(definition, inputs.role, { plan: current.plan });
+    } catch (cause) {
+      throw Object.assign(applicationError(
+        'Context map role is outside the approved Workflow definition',
+        'application_context_map_role_invalid',
+      ), { cause });
+    }
+    if (!semanticRole) {
       throw applicationError('Context map role is outside the approved Workflow definition',
         'application_context_map_role_invalid');
     }
@@ -6054,14 +6209,14 @@ export class BatonApplication {
     });
     const nodes = call.partitions.map((partition, index) => {
       const memberRole = `${call.role}:${String(index + 1).padStart(4, '0')}`;
-      return {
-        ...clone(sourceNode),
+      return instantiateWorkflowRoleNode(semanticRole, {
         key: `attempt:${memberRole}`,
         objective: `${call.role} Context map partition ${index + 1}/${call.partitions.length}: ${call.instruction}\nImmutable partition: ${partition.partitionId}`,
         deps: [],
         budget: clone(nodeBudget),
         contextCall: contextMapNodeBinding(call, partition),
-      };
+        revision: null,
+      });
     });
     const planRequest = {
       goal: {
@@ -6079,8 +6234,8 @@ export class BatonApplication {
       nodes: normalizedPlan.nodes, totals: normalizedPlan.totals,
       policyDigest: goalPlanPolicy.policyDigest,
     });
-    const successorDefinitionCore = {
-      schemaVersion: 2, repoId: this.repoId, runId: current.goal.runId,
+    const successorDefinition = createWorkflowDefinition({
+      schemaVersion: 3, repoId: this.repoId, runId: current.goal.runId,
       goalDigest: current.goal.digest, planDigest: expectedPlanDigest,
       profileDigest: current.profile.digest,
       workflowPolicy: clone(workflowPolicy), workflowPolicyDigest: workflowPolicy.policyDigest,
@@ -6089,18 +6244,33 @@ export class BatonApplication {
         objective: current.goal.objective,
         definitionOfDone: clone(current.goal.definitionOfDone),
       },
+      roleCatalog: clone(roleCatalog),
+      lineage: clone(nextWorkflowDefinitionLineage(definition)),
       attempts: call.partitions.map((partition, index) => ({
         role: `${call.role}:${String(index + 1).padStart(4, '0')}`,
+        logicalRole: call.role,
         nodeKey: nodes[index].key,
-        route: clone(roleAttempt.route),
+        nodeTemplateDigest: semanticRole.nodeTemplateDigest,
+        route: clone(semanticRole.route),
       })),
-    };
-    this.driver.coordination.recordDriver(APPLICATION_WORKFLOW_RECORD_KIND, {
-      ...successorDefinitionCore, definitionDigest: digest(successorDefinitionCore),
     }, {
+      plan: normalizedPlan, parentDefinition: definition,
+      legacyParentRoleCatalog: definition.schemaVersion === 3 ? null : roleCatalog,
+    });
+    const recorded = this.driver.coordination.recordDriver(APPLICATION_WORKFLOW_RECORD_KIND,
+      successorDefinition, {
       actor: APPLICATION_WORKFLOW_RECORD_ACTOR,
       key: `${APPLICATION_WORKFLOW_RECORD_KIND}:${current.goal.runId}:${expectedPlanDigest}`,
     });
+    try {
+      normalizeWorkflowDefinition(recorded.event.payload, {
+        plan: normalizedPlan, parentDefinition: definition,
+        legacyParentRoleCatalog: definition.schemaVersion === 3 ? null : roleCatalog,
+      });
+    } catch (cause) {
+      throw Object.assign(applicationError('Context map Workflow definition changed before Plan proposal',
+        'application_context_map_integrity'), { cause });
+    }
     const contextPrincipal = this.context.principal;
     const admitted = this.driver.coordination.admitContextMapCall({
       call, planRequest, expectedPlanDigest,
@@ -6128,7 +6298,9 @@ export class BatonApplication {
     }
     if (action.kind === 'context_map') {
       const definition = this._workflowDefinition(current);
-      const roles = [...new Set(definition.attempts.map((attempt) => attempt.role))];
+      const roles = definition.schemaVersion === 3
+        ? definition.roleCatalog.roles.map((entry) => entry.role)
+        : [...new Set(definition.attempts.map((attempt) => attempt.role))];
       const selectedRole = inputs.role ?? (roles.length === 1 ? roles[0] : null);
       if (!selectedRole || !roles.includes(selectedRole)) {
         throw applicationError('Context map requires one eligible approved Workflow role',
@@ -6212,7 +6384,9 @@ export class BatonApplication {
     }
     if (this._contextState(current).currentCells.some((cell) => cell.state === 'completed')) {
       const definition = this._workflowDefinition(current);
-      const roles = definition.attempts.map((attempt) => attempt.role);
+      const roles = definition.schemaVersion === 3
+        ? definition.roleCatalog.roles.map((entry) => entry.role)
+        : definition.attempts.map((attempt) => attempt.role);
       if (roles.length > 0) {
         candidates.push({ kind: 'context_map', source: { roles }, target: { roles } });
       }
