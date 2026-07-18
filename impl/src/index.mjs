@@ -80,6 +80,12 @@ export {
   WORKFLOW_STOP_CONDITIONS, normalizeWorkflowPolicy,
 } from './workflow-policy.mjs';
 export {
+  buildWorkflowRoleCatalog, createWorkflowDefinitionV3, normalizeWorkflowDefinition,
+  normalizeWorkflowDefinitionV3, normalizeWorkflowRoleCatalog, validateWorkflowDefinitionV3,
+  workflowAttempt, workflowAttemptLogicalRole, workflowAttemptRoute, workflowCatalogRole,
+  workflowDefinitionDigest, workflowNodeTemplate, workflowNodeTemplateDigest,
+} from './workflow-definition.mjs';
+export {
   DEFAULT_CONTEXT_PROGRAM_POLICY, contextValueDigest,
   normalizeContextManifest, normalizeContextProgram, normalizeContextProgramPolicy,
 } from './context-program.mjs';

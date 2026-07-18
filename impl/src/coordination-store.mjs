@@ -23,6 +23,9 @@ import {
   RUN_ORCHESTRATOR_REVOCATION_REASONS,
 } from './run-lineage.mjs';
 import { normalizeWorkflowPolicy } from './workflow-policy.mjs';
+import {
+  validateWorkflowDefinitionV3, workflowAttemptLogicalRole, workflowAttemptRoute,
+} from './workflow-definition.mjs';
 import { normalizeContextProgramPolicy } from './context-program-policy.mjs';
 import {
   contextCellIdentity, contextProgramIsPure, contextSessionIdentity, normalizeContextArtifactRef,
@@ -4511,9 +4514,50 @@ export class CoordinationStore {
     }
     const sourceDefinition = sourceDefinitions[0].payload;
     const successorDefinition = successorDefinitions[0].payload;
+    if (sourceDefinition.schemaVersion !== 3 || successorDefinition.schemaVersion !== 3) {
+      this._contextFailure(
+        'Context map successors require an admitted semantic role catalog',
+        integrity ? 'context_map_call_integrity' : 'context_map_role_invalid', integrity,
+      );
+    }
+    const ancestry = prefix.filter((candidate) => (
+      candidate.kind === 'driver.recorded'
+        && candidate.payload?.kind === 'application.workflow_definition_bound'
+        && candidate.payload?.repoId === this._repoId
+        && candidate.payload?.runId === source.runId
+        && candidate.payload?.schemaVersion === 3
+    )).map((candidate) => candidate.payload);
+    try {
+      validateWorkflowDefinitionV3(sourceDefinition, {
+        nodes: predecessor.nodes,
+        ancestors: ancestry.filter((candidate) => (
+          candidate.definitionDigest !== sourceDefinition.definitionDigest
+        )),
+      });
+      validateWorkflowDefinitionV3(successorDefinition, {
+        nodes: normalizedPlan.nodes,
+        ancestors: ancestry.filter((candidate) => (
+          candidate.definitionDigest !== successorDefinition.definitionDigest
+        )),
+      });
+    } catch (error) {
+      this._contextFailure(error.message,
+        integrity ? 'context_map_call_integrity' : (error.code ?? 'context_map_definition_invalid'),
+        integrity);
+    }
     const sourceAttempt = sourceDefinition.attempts?.find((attempt) => attempt.role === call.role);
+    const sourceLogicalRole = workflowAttemptLogicalRole(sourceDefinition, sourceAttempt);
+    const sourceRoute = workflowAttemptRoute(sourceDefinition, sourceAttempt);
     if (!sourceAttempt || sourceDefinition.profileDigest !== source.profileDigest
       || successorDefinition.profileDigest !== source.profileDigest
+      || canonicalDigest(successorDefinition.roleCatalog)
+        !== canonicalDigest(sourceDefinition.roleCatalog)
+      || successorDefinition.lineage.generation !== sourceDefinition.lineage.generation + 1
+      || successorDefinition.lineage.parentDefinitionDigest !== sourceDefinition.definitionDigest
+      || successorDefinition.lineage.rootDefinitionDigest !== (
+        sourceDefinition.lineage.generation === 1
+          ? sourceDefinition.definitionDigest : sourceDefinition.lineage.rootDefinitionDigest
+      )
       || !Array.isArray(successorDefinition.attempts)
       || successorDefinition.attempts.length !== normalizedPlan.nodes.length) {
       this._contextFailure('Context map logical role is outside Workflow authority',
@@ -4527,8 +4571,10 @@ export class CoordinationStore {
         effort: node.routes.efforts[0],
       } : null;
       if (!node || !attempt.role.startsWith(`${call.role}:`)
-        || canonicalDigest(attempt.route) !== canonicalDigest(route)
-        || canonicalDigest(attempt.route) !== canonicalDigest(sourceAttempt.route)) {
+        || attempt.logicalRole !== sourceLogicalRole
+        || canonicalDigest(workflowAttemptRoute(successorDefinition, attempt))
+          !== canonicalDigest(route)
+        || canonicalDigest(route) !== canonicalDigest(sourceRoute)) {
         this._contextFailure('Context map route differs from the approved logical role',
           integrity ? 'context_map_call_integrity' : 'context_map_route_invalid', integrity);
       }

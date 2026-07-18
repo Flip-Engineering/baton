@@ -17,6 +17,7 @@ import {
   validateContextProviderResultReference,
 } from './context-result.mjs';
 import { pathInScopes } from './path-scope.mjs';
+import { validateWorkflowDefinitionV3 } from './workflow-definition.mjs';
 
 const WORKFLOW_DEFINITION = 'application.workflow_definition_bound';
 const TEXT_EXTENSIONS = new Set([
@@ -938,6 +939,20 @@ export class RepositoryContextRuntime {
       || current.goal.repoId !== this.repoId || current.plan.repoId !== this.repoId) {
       throw runtimeError('Repository Context session has no current Plan-gated Attempt',
         'context_session_stale');
+    }
+    if (definition.payload.schemaVersion === 3) {
+      try {
+        validateWorkflowDefinitionV3(definition.payload, { nodes: current.plan.nodes });
+      } catch (error) {
+        throw runtimeError(error.message, 'context_session_integrity');
+      }
+      const attempt = definition.payload.attempts.find((candidate) => (
+        candidate.nodeKey === node.key && candidate.role === authority.role
+      ));
+      if (!attempt) {
+        throw runtimeError('Repository Context session Attempt is outside its role catalog',
+          'context_session_integrity');
+      }
     }
     const existing = (this.coordination.snapshot().context?.sessions ?? []).find((session) => (
       session.state === 'active'
