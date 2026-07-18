@@ -638,6 +638,18 @@ attempted provider-effect count. This is acceptance authority for the attached m
 reduce remains closed until it consumes the reverified private source content rather than terminal
 task metadata.
 
+The narrow backward-compatible integration is one evidence revision, not another settlement path.
+A newly completed call writes `baton.context_call_evidence` schema version 3 with the ordered
+`outputLineages`, `outputLineageDigest`, canonical `sourceCoordinates`, and their existing aggregate
+`coordinateDigest` beside the safe provider-result output. Historical completed schema-version-2
+evidence remains closed-shape and replay-readable, but is permanently ineligible as a reduce source;
+the runtime never reconstructs item lineage from its aggregate coordinate digest. Failed
+schema-version-2 evidence remains the current lineage-free failure shape with `outputRef: null` and
+does not acquire synthetic output lineage. `context.call_settled` remains the only settlement
+authority and continues to bind the content-addressed `outputRef` and `evidenceRef`; it does not
+duplicate any lineage fields into the settlement event. This slice defines that upgrade boundary
+without admitting reduce.
+
 A retry is the next generation of the same logical request, not a mutable retry ledger:
 
 ```json
