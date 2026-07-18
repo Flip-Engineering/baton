@@ -13,6 +13,16 @@ import {
   CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings,
   normalizeCanonicalOrderMigration, normalizeCanonicalOrderPolicy,
 } from './canonical-order.mjs';
+import { parseRouteTupleKey } from './route-tuple.mjs';
+import { inferTaskTopologyRelation, normalizeTaskTopologyPolicy } from './task-topology.mjs';
+import {
+  normalizeRecoveryAttemptAdmission, normalizeRecoveryAttemptCompletion,
+} from './recovery-attempt.mjs';
+import {
+  normalizeRunLineagePolicy, RUN_ORCHESTRATOR_CAPABILITIES,
+  RUN_ORCHESTRATOR_REVOCATION_REASONS,
+} from './run-lineage.mjs';
+import { normalizeWorkflowPolicy } from './workflow-policy.mjs';
 
 const CANONICAL_ORDER_MIGRATION = Symbol('canonical-order-migration');
 const CANONICAL_ORDER_RECEIPT = 'canonical-order-receipt.json';
@@ -235,6 +245,24 @@ export class CoordinationStore {
       try { this._goalPlanPolicy = freeze(clone(normalizeGoalPlanPolicy(opts.goalPlanPolicy))); }
       catch (error) { throw new TypeError(error?.message ?? 'goal/plan policy is invalid'); }
     }
+    try { this._workflowPolicy = normalizeWorkflowPolicy(opts.workflowPolicy); }
+    catch (error) { throw new TypeError(error?.message ?? 'Workflow policy is invalid'); }
+    this._repoId = opts.repoId ?? this._goalPlanPolicy?.repoId ?? null;
+    if (this._repoId !== null && !validRunId(this._repoId)) {
+      throw new TypeError('coordination repository identity is invalid');
+    }
+    if (this._goalPlanPolicy && this._repoId !== this._goalPlanPolicy.repoId) {
+      throw new TypeError('coordination repository identity differs from goal/plan authority');
+    }
+    this._taskTopologyPolicy = opts.taskTopologyPolicy === undefined
+      ? null : normalizeTaskTopologyPolicy(opts.taskTopologyPolicy);
+    this._runLineagePolicy = opts.runLineagePolicy === undefined
+      ? null : normalizeRunLineagePolicy(opts.runLineagePolicy);
+    if (this._runLineagePolicy && this._repoId === null) {
+      throw Object.assign(new TypeError('run lineage authority requires one deployment repository'), {
+        code: 'run_lineage_policy_invalid',
+      });
+    }
     this._resetProjection();
     if (opts.operationalRangeRead !== undefined && typeof opts.operationalRangeRead !== 'function') throw new TypeError('operationalRangeRead must be a function');
     this._operationalRead = opts.operationalRead ?? null;
@@ -455,9 +483,11 @@ export class CoordinationStore {
     this._evidence = new Map(); this._scratchFacts = new Map(); this._scratchClaims = new Map(); this._scratchReads = [];
     this._knowledgeNodes = new Map(); this._knowledgeEdges = new Map(); this._knowledgeNodeHistory = new Map(); this._knowledgeEdgeHistory = new Map(); this._knowledgeReads = []; this._knowledgeRecallAssessments = new Map(); this._contamination = [];
     this._webCommands = new Map(); this._webCommandScopes = new Map(); this._mcpCalls = new Map(); this._mcpCallScopes = new Map();
-    this._fleetDrains = new Map(); this._runStops = new Map(); this._runResultAdoptions = new Map(); this._runResultExports = new Map();
+    this._fleetDrains = new Map(); this._runStops = new Map(); this._runStopByTarget = new Map(); this._runResultAdoptions = new Map(); this._runResultExports = new Map();
     this._runVerificationRetries = new Map();
-    this._recoveryDispatches = new Map();
+    this._runOrchestratorLeases = new Map(); this._runLineages = new Map(); this._runLineageEventSeqs = new Map(); this._runChildrenByParent = new Map();
+    this._recoveryDispatches = new Map(); this._taskTopologies = new Map();
+    this._recoveryAttemptsById = new Map(); this._recoveryAttemptHeads = new Map();
     this._providerReceipts = new Map(); this._providerDeliveryIds = new Map(); this._providerProcessing = new Map(); this._providerPending = new Map();
     this._providerSequences = new Map(); this._providerSourceHealth = new Map();
   }
@@ -576,6 +606,7 @@ export class CoordinationStore {
     if (typeof key !== 'string' || key.length === 0) throw new TypeError('coordination idempotency key required');
     const prior = this._byKey.get(key);
     if (prior) return prior;
+    if (kind === 'task.created') this._validateTaskTopology(payload, null, false);
     const event = freeze({ schemaVersion: 1, seq: this._events.length + 1, ts: fixedTs ?? this._clock(), kind, actor, idempotencyKey: key, payload: freeze(clone(payload)) });
     if (beforeWrite !== null) {
       if (typeof beforeWrite !== 'function') throw new TypeError('coordination before-write gate must be a function');
@@ -595,7 +626,7 @@ export class CoordinationStore {
     if (!Array.isArray(entries) || entries.length === 0) throw new TypeError('coordination batch requires entries');
     if (batchKind !== null && ![
       'recovery_refinement_create_claim', 'recovery_dispatch_refusal',
-      'goal_plan_node_dispatch', 'goal_plan_recovery_dispatch',
+      'goal_plan_node_dispatch', 'goal_plan_wave_dispatch', 'goal_plan_recovery_dispatch',
     ].includes(batchKind)) {
       throw new TypeError('coordination batch kind is invalid');
     }
@@ -605,6 +636,17 @@ export class CoordinationStore {
       if (typeof entry.auth?.key !== 'string' || entry.auth.key.length === 0) throw new TypeError('coordination idempotency key required');
       if (keys.has(entry.auth.key) || this._byKey.has(entry.auth.key)) throw new CoordinationRefusal(`duplicate batch key ${entry.auth.key}`, 'duplicate_key');
       keys.add(entry.auth.key);
+    }
+    const createdEntries = entries.filter((entry) => entry.kind === 'task.created');
+    for (const created of createdEntries) {
+      const index = entries.indexOf(created);
+      const dispatch = index > 0 && entries[index - 1]?.kind === 'plan.node_dispatched'
+        ? entries[index - 1] : null;
+      const hint = batchKind === 'recovery_refinement_create_claim' || batchKind === 'goal_plan_recovery_dispatch'
+        ? 'recovery'
+        : dispatch?.payload?.preservedResume ? 'preserved_resume'
+          : dispatch?.payload?.revision ? 'revision' : null;
+      this._validateTaskTopology(created.payload, hint, false);
     }
     const start = this._events.length;
     const batchId = batchKind === null ? null : canonicalDigest({
@@ -636,6 +678,493 @@ export class CoordinationStore {
     for (const waiter of [...this._appendWaiters]) {
       if (this._events.length > waiter.afterSeq) waiter.finish(true);
     }
+  }
+
+  _taskTopologyHint(event) {
+    if (event.batch?.kind === 'recovery_refinement_create_claim'
+      || event.batch?.kind === 'goal_plan_recovery_dispatch') return 'recovery';
+    if (event.batch?.kind === 'goal_plan_node_dispatch') {
+      const dispatch = this._events[event.seq - 2];
+      if (dispatch?.kind === 'plan.node_dispatched' && dispatch.payload?.preservedResume) return 'preserved_resume';
+      if (dispatch?.kind === 'plan.node_dispatched' && dispatch.payload?.revision) return 'revision';
+    }
+    return null;
+  }
+
+  _taskTopologyFailure(message, code, integrity) {
+    throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code);
+  }
+
+  _validateTaskTopology(fields, hint = null, integrity = false) {
+    if (!this._taskTopologyPolicy) return null;
+    const fail = (message, code) => this._taskTopologyFailure(message, code, integrity);
+    const relation = inferTaskTopologyRelation(fields, hint);
+    if (!relation) fail('task refinement relation is missing or unsupported', 'task_topology_relation_invalid');
+    const taskId = fields?.id;
+    const runId = fields?.runId ?? null;
+    if (typeof taskId !== 'string' || taskId.length === 0) fail('task topology identity is invalid', 'task_topology_invalid');
+    if (this._taskTopologies.has(taskId)) fail('task topology identity already exists', 'duplicate_task');
+    const sameRun = [...this._taskTopologies.values()].filter((node) => node.runId === runId);
+    if (sameRun.length >= this._taskTopologyPolicy.maxTasksPerRun) {
+      fail('task topology reached the deployment Run task ceiling', 'task_topology_run_limit');
+    }
+    if (relation === 'root') {
+      if (fields.refines != null) fail('root task cannot refine another task', 'task_topology_relation_invalid');
+      return freeze({ schemaVersion: 1, taskId, runId, relation, parentTaskId: null, depth: 0, ancestors: [] });
+    }
+    const parentTaskId = fields.refines;
+    if (parentTaskId === taskId) {
+      fail('task cannot refine itself', 'task_topology_self_refinement');
+    }
+    const parent = this._tasks.get(parentTaskId);
+    const parentTopology = this._taskTopologies.get(parentTaskId);
+    if (!parent || !parentTopology) fail('task refinement parent is unavailable', 'task_topology_parent_missing');
+    if (parentTopology.ancestors.includes(taskId)) {
+      fail('task refinement would create a lineage cycle', 'task_topology_cycle');
+    }
+    if ((parent.runId ?? null) !== runId || parentTopology.runId !== runId) {
+      fail('task refinement parent belongs to a different Run', 'task_topology_run_mismatch');
+    }
+    const children = [...this._taskTopologies.values()].filter((node) => node.parentTaskId === parentTaskId);
+    if (children.length >= this._taskTopologyPolicy.maxChildrenPerTask) {
+      fail('task refinement reached the deployment parent fanout ceiling', 'task_topology_fanout_limit');
+    }
+    if (children.filter((node) => node.relation === relation).length
+      >= this._taskTopologyPolicy.maxChildrenByRelation[relation]) {
+      fail('task refinement reached its deployment relation fanout ceiling', 'task_topology_relation_limit');
+    }
+    const depth = parentTopology.depth + 1;
+    if (depth > this._taskTopologyPolicy.maxDepth) {
+      fail('task refinement reached the deployment lineage depth ceiling', 'task_topology_depth_limit');
+    }
+    return freeze({
+      schemaVersion: 1, taskId, runId, relation, parentTaskId, depth,
+      ancestors: [...parentTopology.ancestors, parentTaskId],
+    });
+  }
+
+  previewTaskTopology(fields, hint = null) {
+    const node = this._validateTaskTopology(fields, hint, false);
+    return node === null ? null : clone(node);
+  }
+
+  taskTopologyPolicy() { return clone(this._taskTopologyPolicy); }
+
+  repositoryId() { return this._repoId; }
+
+  runLineagePolicy() { return clone(this._runLineagePolicy); }
+
+  runLineagePolicyDigest() {
+    return this._runLineagePolicy ? canonicalDigest(this._runLineagePolicy) : null;
+  }
+
+  _runLineageFailure(message, code, integrity = false) {
+    if (integrity) {
+      const replayCode = code.startsWith('run_orchestrator_')
+        ? 'run_orchestrator_lease_integrity' : 'run_lineage_integrity';
+      throw new CoordinationIntegrityError(message, replayCode);
+    }
+    throw new CoordinationRefusal(message, code);
+  }
+
+  _normalizeRunOrchestratorLeaseRequest(fields, integrity = false) {
+    const fail = (message) => this._runLineageFailure(message, 'run_orchestrator_lease_invalid', integrity);
+    const expected = ['parentTask', 'repoId', 'schemaVersion', 'session'];
+    const parentFields = ['id', 'version'];
+    const sessionFields = ['authorityDigest', 'expiresAt', 'principalId', 'sessionId'];
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+      || Object.keys(fields).sort().join(',') !== expected.join(',') || fields.schemaVersion !== 1
+      || !validRunId(fields.repoId) || !fields.parentTask || Array.isArray(fields.parentTask)
+      || Object.keys(fields.parentTask).sort().join(',') !== parentFields.join(',')
+      || !boundedText(fields.parentTask.id, 4_096)
+      || !Number.isSafeInteger(fields.parentTask.version) || fields.parentTask.version <= 0
+      || !fields.session || Array.isArray(fields.session)
+      || Object.keys(fields.session).sort().join(',') !== sessionFields.join(',')
+      || !validRunId(fields.session.principalId) || !validRunId(fields.session.sessionId)
+      || !/^[a-f0-9]{64}$/.test(fields.session.authorityDigest ?? '')
+      || !Number.isFinite(Date.parse(fields.session.expiresAt ?? ''))
+      || new Date(Date.parse(fields.session.expiresAt)).toISOString() !== fields.session.expiresAt) {
+      fail('run orchestrator lease request is invalid');
+    }
+    return freeze(clone(fields));
+  }
+
+  _deriveRunOrchestratorLeasePayload(request, event, integrity = false) {
+    const fail = (message, code = 'run_orchestrator_lease_invalid') => this._runLineageFailure(message, code, integrity);
+    if (!this._runLineagePolicy) fail('run lineage authority is not configured', 'run_lineage_policy_invalid');
+    if (request.repoId !== this._repoId) {
+      fail('run orchestrator repository differs from deployment authority', 'run_orchestrator_repository_mismatch');
+    }
+    const task = this._tasks.get(request.parentTask.id);
+    if (!task || task.version !== request.parentTask.version) fail('run orchestrator parent task is stale', 'run_orchestrator_parent_stale');
+    if (task.status !== 'working' || !validRunId(task.assignee) || !validRunId(task.runId)) {
+      fail('run orchestrator parent task is inactive', 'run_orchestrator_parent_inactive');
+    }
+    if (!Array.isArray(task.brief?.capabilities) || !task.brief.capabilities.includes('baton_orchestrator')) {
+      fail('run orchestrator capability is required', 'run_orchestrator_capability_required');
+    }
+    this._assertRunAdmissionOpen(task.runId, integrity);
+    const issuedAt = event.ts;
+    if (!Number.isFinite(Date.parse(issuedAt ?? ''))
+      || new Date(Date.parse(issuedAt)).toISOString() !== issuedAt
+      || Date.parse(request.session.expiresAt) <= Date.parse(issuedAt)) {
+      fail('run orchestrator lease timestamp is invalid');
+    }
+    const identity = {
+      repoId: request.repoId,
+      parentRunId: task.runId,
+      parentTaskId: request.parentTask.id,
+      parentTaskVersion: request.parentTask.version,
+      workerId: task.assignee,
+      principalId: request.session.principalId,
+      sessionId: request.session.sessionId,
+      sessionAuthorityDigest: request.session.authorityDigest,
+    };
+    const leaseId = `run-orchestrator-lease:${canonicalDigest(identity)}`;
+    const expiresAt = new Date(Math.min(
+      Date.parse(request.session.expiresAt),
+      Date.parse(issuedAt) + this._runLineagePolicy.leaseTtlMs,
+    )).toISOString();
+    const core = {
+      schemaVersion: 1,
+      scope: 'application_run_subtree',
+      repoId: request.repoId,
+      leaseId,
+      parent: {
+        runId: task.runId, taskId: task.id, taskVersion: task.version, workerId: task.assignee,
+      },
+      session: clone(request.session),
+      capabilities: [...RUN_ORCHESTRATOR_CAPABILITIES],
+      issuedAt,
+      expiresAt,
+      policyDigest: canonicalDigest(this._runLineagePolicy),
+      requestDigest: canonicalDigest(request),
+    };
+    return freeze({ ...core, leaseDigest: canonicalDigest(core) });
+  }
+
+  _validateRunOrchestratorLeaseIssued(payload, event, integrity = false) {
+    const fail = (message, code = 'run_orchestrator_lease_invalid') => this._runLineageFailure(message, code, integrity);
+    const fields = [
+      'capabilities', 'expiresAt', 'issuedAt', 'leaseDigest', 'leaseId', 'parent', 'policyDigest',
+      'repoId', 'requestDigest', 'schemaVersion', 'scope', 'session',
+    ];
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || Object.keys(payload).sort().join(',') !== fields.sort().join(',')
+      || payload.schemaVersion !== 1 || payload.scope !== 'application_run_subtree') {
+      fail('run orchestrator lease payload is invalid');
+    }
+    const request = this._normalizeRunOrchestratorLeaseRequest({
+      schemaVersion: 1,
+      repoId: payload.repoId,
+      parentTask: { id: payload.parent?.taskId, version: payload.parent?.taskVersion },
+      session: payload.session,
+    }, integrity);
+    const expected = this._deriveRunOrchestratorLeasePayload(request, event, integrity);
+    if (canonicalDigest(payload) !== canonicalDigest(expected)
+      || event.idempotencyKey !== `run.orchestrator_lease:${expected.leaseId}`
+      || !boundedText(event.actor, 256)) fail('run orchestrator lease binding is invalid');
+    return expected;
+  }
+
+  _validateRunOrchestratorLeaseRevoked(payload, event, integrity = false) {
+    const fail = (message, code = 'run_orchestrator_lease_invalid') => this._runLineageFailure(message, code, integrity);
+    const fields = ['leaseDigest', 'leaseId', 'reason', 'revocationDigest', 'schemaVersion'];
+    if (!payload || Object.keys(payload).sort().join(',') !== fields.sort().join(',')
+      || payload.schemaVersion !== 1 || !RUN_ORCHESTRATOR_REVOCATION_REASONS.includes(payload.reason)
+      || !/^[a-f0-9]{64}$/.test(payload.leaseDigest ?? '')
+      || !/^[a-f0-9]{64}$/.test(payload.revocationDigest ?? '')) fail('run orchestrator lease revocation is invalid');
+    const lease = this._runOrchestratorLeases.get(payload.leaseId);
+    if (!lease || lease.status !== 'active' || lease.leaseDigest !== payload.leaseDigest) {
+      fail('run orchestrator lease revocation has no active authority', 'run_orchestrator_lease_not_found');
+    }
+    const { revocationDigest, ...core } = payload;
+    if (revocationDigest !== canonicalDigest(core)
+      || event.idempotencyKey !== `run.orchestrator_lease.revoke:${payload.leaseId}`
+      || !boundedText(event.actor, 256)) fail('run orchestrator lease revocation binding is invalid');
+    return lease;
+  }
+
+  _activeRunOrchestratorLease(auth, now = this._clock()) {
+    const lease = this._runOrchestratorLeases.get(auth?.orchestratorLeaseId);
+    if (!lease) this._runLineageFailure('run orchestrator lease was not found', 'run_orchestrator_lease_not_found');
+    if (lease.status === 'revoked') this._runLineageFailure('run orchestrator lease is revoked', 'run_orchestrator_lease_revoked');
+    if (Date.parse(now) >= Date.parse(lease.expiresAt)) this._runLineageFailure('run orchestrator lease is expired', 'run_orchestrator_lease_expired');
+    if (auth?.principalId !== lease.session.principalId || auth?.sessionId !== lease.session.sessionId
+      || auth?.sessionAuthorityDigest !== lease.session.authorityDigest) {
+      this._runLineageFailure('run orchestrator session does not match the lease', 'run_orchestrator_session_mismatch');
+    }
+    const task = this._tasks.get(lease.parent.taskId);
+    if (task && task.status !== 'working') this._runLineageFailure('run orchestrator parent task is inactive', 'run_orchestrator_parent_inactive');
+    if (!task || task.version !== lease.parent.taskVersion || task.assignee !== lease.parent.workerId) {
+      this._runLineageFailure('run orchestrator parent task is stale', 'run_orchestrator_parent_stale');
+    }
+    this._assertRunAdmissionOpen(lease.parent.runId);
+    return lease;
+  }
+
+  _runIdentityHasEffects(runId, ignoredSeq = null) {
+    if (this._runLineages.has(runId) || this._runs.has(runId) || this._runStopByTarget.has(runId)
+      || [...this._tasks.values()].some((task) => task.runId === runId)
+      || [...this._goals.values()].some((goal) => goal.runId === runId)
+      || [...this._plans.values()].some((plan) => plan.runId === runId)
+      || [...this._runResultAdoptions.values()].some((row) => row.runId === runId)
+      || [...this._runResultExports.values()].some((row) => row.runId === runId)
+      || [...this._runVerificationRetries.values()].some((row) => row.runId === runId)
+      || [...this._recoveryAttemptsById.values()].some((row) => row.runId === runId)) return true;
+    return this._events.some((row) => row.seq !== ignoredSeq && (
+      row.payload?.runId === runId || row.payload?.childRunId === runId
+      || row.payload?.goal?.runId === runId || row.payload?.plan?.runId === runId
+    ));
+  }
+
+  _deriveRunLineagePayload(request, lease, ignoredSeq = null, integrity = false) {
+    const fail = (message, code = 'run_lineage_invalid') => this._runLineageFailure(message, code, integrity);
+    if (request.repoId !== lease.repoId) fail('run lineage repository differs from its lease', 'run_lineage_invalid');
+    if (this._runIdentityHasEffects(request.childRunId, ignoredSeq)) fail('child Run identity already has effects', 'run_lineage_conflict');
+    const parentLineage = this._runLineages.get(lease.parent.runId) ?? null;
+    const rootRunId = parentLineage?.rootRunId ?? lease.parent.runId;
+    const depth = (parentLineage?.depth ?? 0) + 1;
+    const ancestors = parentLineage
+      ? [...parentLineage.ancestors, lease.parent.runId] : [lease.parent.runId];
+    if (ancestors.includes(request.childRunId)) fail('run lineage would create a cycle', 'run_lineage_cycle');
+    if (depth > this._runLineagePolicy.maxDepth) fail('run lineage depth ceiling reached', 'run_lineage_depth');
+    if (this.runChildren(lease.parent.runId).length >= this._runLineagePolicy.maxChildrenPerRun) {
+      fail('run lineage child ceiling reached', 'run_lineage_children');
+    }
+    if (this.runDescendants(rootRunId).length >= this._runLineagePolicy.maxDescendantsPerRoot) {
+      fail('run lineage descendant ceiling reached', 'run_lineage_descendants');
+    }
+    const core = {
+      schemaVersion: 1,
+      scope: 'application_run_child',
+      repoId: request.repoId,
+      rootRunId,
+      parentRunId: lease.parent.runId,
+      childRunId: request.childRunId,
+      depth,
+      ancestors,
+      parent: {
+        taskId: lease.parent.taskId,
+        taskVersion: lease.parent.taskVersion,
+        workerId: lease.parent.workerId,
+      },
+      parentLineageEvent: parentLineage
+        ? this._runLineageEventSeqs.get(parentLineage.childRunId) : null,
+      lease: { id: lease.leaseId, digest: lease.leaseDigest, issuedEvent: lease.issuedEvent },
+      intentDigest: request.intentDigest,
+      policyDigest: canonicalDigest(this._runLineagePolicy),
+      requestDigest: canonicalDigest({ ...request, orchestratorLeaseId: lease.leaseId }),
+    };
+    return freeze({ ...core, admissionDigest: canonicalDigest(core) });
+  }
+
+  _validateRunLineageAdmission(payload, event, integrity = false) {
+    const fail = (message, code = 'run_lineage_invalid') => this._runLineageFailure(message, code, integrity);
+    const fields = [
+      'admissionDigest', 'ancestors', 'childRunId', 'depth', 'intentDigest', 'lease',
+      'parent', 'parentLineageEvent', 'parentRunId', 'policyDigest', 'repoId', 'requestDigest',
+      'rootRunId', 'schemaVersion', 'scope',
+    ];
+    if (!payload || Object.keys(payload).sort().join(',') !== fields.sort().join(',')
+      || payload.schemaVersion !== 1 || payload.scope !== 'application_run_child'
+      || !validRunId(payload.childRunId) || !/^[a-f0-9]{64}$/.test(payload.intentDigest ?? '')) {
+      fail('run lineage admission is invalid');
+    }
+    const lease = this._runOrchestratorLeases.get(payload.lease?.id);
+    if (!lease || lease.status !== 'active' || lease.leaseDigest !== payload.lease?.digest
+      || lease.issuedEvent !== payload.lease?.issuedEvent) fail('run lineage lease binding is invalid', 'run_orchestrator_lease_not_found');
+    const request = freeze({
+      schemaVersion: 1, repoId: payload.repoId,
+      childRunId: payload.childRunId, intentDigest: payload.intentDigest,
+    });
+    const expected = this._deriveRunLineagePayload(request, lease, event.seq, integrity);
+    if (canonicalDigest(payload) !== canonicalDigest(expected)
+      || event.idempotencyKey !== `run.lineage:${payload.childRunId}`
+      || !boundedText(event.actor, 256)) fail('run lineage admission binding is invalid');
+    return expected;
+  }
+
+  issueRunOrchestratorLease(fields, auth) {
+    const request = this._normalizeRunOrchestratorLeaseRequest(fields);
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'run.orchestrator_lease_issued' || prior.actor !== auth?.actor
+        || prior.payload?.requestDigest !== canonicalDigest(request)) {
+        this._runLineageFailure('run orchestrator lease idempotency conflict', 'run_orchestrator_lease_conflict');
+      }
+      return freeze({
+        ok: true, result: 'replay', event: clone(prior),
+        lease: this.runOrchestratorLease(prior.payload.leaseId),
+      });
+    }
+    if (!boundedText(auth?.actor, 256)) {
+      this._runLineageFailure('run orchestrator lease actor is invalid', 'run_orchestrator_lease_invalid');
+    }
+    const issuedAt = this._clock();
+    const preview = { ts: issuedAt, actor: auth.actor, idempotencyKey: auth?.key };
+    const payload = this._deriveRunOrchestratorLeasePayload(request, preview);
+    if (auth?.key !== `run.orchestrator_lease:${payload.leaseId}`) {
+      this._runLineageFailure('run orchestrator lease authority is invalid', 'run_orchestrator_lease_invalid');
+    }
+    if (this._runOrchestratorLeases.has(payload.leaseId)) {
+      this._runLineageFailure('run orchestrator lease identity conflict', 'run_orchestrator_lease_conflict');
+    }
+    const event = this._append('run.orchestrator_lease_issued', payload, auth, issuedAt);
+    return freeze({ ok: true, result: 'issued', event: clone(event), lease: this.runOrchestratorLease(payload.leaseId) });
+  }
+
+  revokeRunOrchestratorLease(fields, auth) {
+    const expected = ['leaseDigest', 'leaseId', 'reason', 'schemaVersion'];
+    if (!fields || Object.keys(fields).sort().join(',') !== expected.sort().join(',')
+      || fields.schemaVersion !== 1 || !boundedText(fields.leaseId, 512)
+      || !/^[a-f0-9]{64}$/.test(fields.leaseDigest ?? '')
+      || !RUN_ORCHESTRATOR_REVOCATION_REASONS.includes(fields.reason)
+      || auth?.key !== `run.orchestrator_lease.revoke:${fields.leaseId}`
+      || !boundedText(auth?.actor, 256)) {
+      this._runLineageFailure('run orchestrator lease revocation request is invalid', 'run_orchestrator_lease_invalid');
+    }
+    const core = clone(fields);
+    const payload = freeze({ ...core, revocationDigest: canonicalDigest(core) });
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      if (prior.kind !== 'run.orchestrator_lease_revoked' || prior.actor !== auth.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
+        this._runLineageFailure('run orchestrator lease revocation conflict', 'run_orchestrator_lease_conflict');
+      }
+      return freeze({ ok: true, result: 'replay', event: clone(prior), lease: this.runOrchestratorLease(fields.leaseId) });
+    }
+    const preview = { seq: this._events.length + 1, actor: auth.actor, idempotencyKey: auth.key, payload };
+    this._validateRunOrchestratorLeaseRevoked(payload, preview);
+    const event = this._append('run.orchestrator_lease_revoked', payload, auth);
+    return freeze({ ok: true, result: 'revoked', event: clone(event), lease: this.runOrchestratorLease(fields.leaseId) });
+  }
+
+  runOrchestratorLease(leaseId) {
+    return clone(this._runOrchestratorLeases.get(leaseId) ?? null);
+  }
+
+  activeRunOrchestratorLeaseForSession(fields) {
+    const expected = ['expiresAt', 'principalId', 'repoId', 'sessionId'];
+    if (!fields || Object.keys(fields).sort().join(',') !== expected.sort().join(',')
+      || !validRunId(fields.repoId) || !validRunId(fields.principalId) || !validRunId(fields.sessionId)
+      || !Number.isFinite(Date.parse(fields.expiresAt ?? ''))
+      || new Date(Date.parse(fields.expiresAt)).toISOString() !== fields.expiresAt) {
+      this._runLineageFailure('run orchestrator session lookup is invalid', 'run_orchestrator_lease_invalid');
+    }
+    const matches = [...this._runOrchestratorLeases.values()].filter((lease) => {
+      if (lease.repoId !== fields.repoId
+        || lease.session.principalId !== fields.principalId || lease.session.sessionId !== fields.sessionId
+        || lease.session.expiresAt !== fields.expiresAt) return false;
+      return true;
+    });
+    if (matches.length > 1) {
+      this._runLineageFailure('run orchestrator session resolves ambiguously', 'run_orchestrator_lease_conflict');
+    }
+    if (matches.length === 0) return null;
+    const lease = matches[0];
+    return clone(this._activeRunOrchestratorLease({
+      orchestratorLeaseId: lease.leaseId,
+      principalId: fields.principalId,
+      sessionId: fields.sessionId,
+      sessionAuthorityDigest: lease.session.authorityDigest,
+    }));
+  }
+
+  admitRunLineage(fields, auth) {
+    const expected = ['childRunId', 'intentDigest', 'repoId', 'schemaVersion'];
+    if (!fields || Object.keys(fields).sort().join(',') !== expected.sort().join(',')
+      || fields.schemaVersion !== 1 || !validRunId(fields.repoId) || !validRunId(fields.childRunId)
+      || !/^[a-f0-9]{64}$/.test(fields.intentDigest ?? '') || !boundedText(auth?.actor, 256)
+      || !boundedText(auth?.key, 512) || !boundedText(auth?.orchestratorLeaseId, 512)) {
+      this._runLineageFailure('run lineage request is invalid', 'run_lineage_invalid');
+    }
+    const request = freeze(clone(fields));
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      const lease = this._runOrchestratorLeases.get(auth.orchestratorLeaseId);
+      const sameSession = lease && auth.principalId === lease.session.principalId
+        && auth.sessionId === lease.session.sessionId
+        && auth.sessionAuthorityDigest === lease.session.authorityDigest;
+      if (prior.kind !== 'run.lineage_admitted' || prior.actor !== auth.actor || !sameSession
+        || prior.payload?.requestDigest !== canonicalDigest({ ...request, orchestratorLeaseId: auth.orchestratorLeaseId })) {
+        this._runLineageFailure('run lineage idempotency conflict', 'run_lineage_conflict');
+      }
+      return freeze({ ok: true, result: 'replay', event: clone(prior), lineage: this.runLineage(prior.payload.childRunId) });
+    }
+    if (auth.key !== `run.lineage:${request.childRunId}`) {
+      this._runLineageFailure('run lineage authority is invalid', 'run_lineage_invalid');
+    }
+    const lease = this._activeRunOrchestratorLease(auth);
+    const payload = this._deriveRunLineagePayload(request, lease);
+    const event = this._append('run.lineage_admitted', payload, auth);
+    return freeze({ ok: true, result: 'admitted', event: clone(event), lineage: this.runLineage(request.childRunId) });
+  }
+
+  runLineage(runId) { return clone(this._runLineages.get(runId) ?? null); }
+
+  runChildren(runId) {
+    return [...(this._runChildrenByParent.get(runId) ?? [])]
+      .map((childRunId) => clone(this._runLineages.get(childRunId)))
+      .filter(Boolean);
+  }
+
+  runDescendants(runId) {
+    return [...this._runLineages.values()]
+      .filter((lineage) => lineage.ancestors.includes(runId))
+      .map(clone);
+  }
+
+  authorizeRunOrchestratorCommand(fields, auth) {
+    const expected = ['command', 'repoId', 'runId', 'schemaVersion'];
+    if (!fields || Object.keys(fields).sort().join(',') !== expected.sort().join(',')
+      || fields.schemaVersion !== 1 || !validRunId(fields.repoId) || !validRunId(fields.runId)
+      || !boundedText(fields.command, 256)) {
+      this._runLineageFailure('run orchestrator command is invalid', 'run_orchestrator_command_forbidden');
+    }
+    const lease = this._activeRunOrchestratorLease(auth);
+    if (!RUN_ORCHESTRATOR_CAPABILITIES.includes(fields.command)) {
+      this._runLineageFailure('run orchestrator command is forbidden', 'run_orchestrator_command_forbidden');
+    }
+    const target = this._runLineages.get(fields.runId);
+    const ancestorIndex = target?.ancestors.indexOf(lease.parent.runId) ?? -1;
+    const firstChildRunId = ancestorIndex < 0 ? null
+      : (ancestorIndex + 1 < target.ancestors.length
+        ? target.ancestors[ancestorIndex + 1] : target.childRunId);
+    const firstLineage = firstChildRunId ? this._runLineages.get(firstChildRunId) : null;
+    if (fields.repoId !== lease.repoId || !target || !firstLineage
+      || firstLineage.parentRunId !== lease.parent.runId || firstLineage.lease.id !== lease.leaseId) {
+      this._runLineageFailure('run orchestrator command is outside the lease subtree', 'run_orchestrator_scope_forbidden');
+    }
+    return freeze({
+      ok: true, leaseId: lease.leaseId, command: fields.command,
+      repoId: fields.repoId, runId: fields.runId,
+    });
+  }
+
+  taskTopologyNode(taskId) {
+    const node = this._taskTopologies.get(taskId);
+    if (!node) return null;
+    const children = [...this._taskTopologies.values()].filter((candidate) => candidate.parentTaskId === taskId);
+    return freeze({
+      ...clone(node), childCount: children.length,
+      childrenByRelation: Object.fromEntries(
+        ['follow_up', 'oracle', 'preserved_resume', 'recovery', 'review', 'revision']
+          .map((relation) => [relation, children.filter((child) => child.relation === relation).length]),
+      ),
+    });
+  }
+
+  taskTopology(runId = null) {
+    const tasks = [...this._taskTopologies.values()]
+      .filter((node) => node.runId === runId)
+      .map((node) => this.taskTopologyNode(node.taskId))
+      .sort((left, right) => left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : 0);
+    return freeze({
+      schemaVersion: 1, runId,
+      policyDigest: this._taskTopologyPolicy ? canonicalDigest(this._taskTopologyPolicy) : null,
+      tasks,
+    });
   }
 
   _recoveryBatchIdentity(kind, events) {
@@ -719,10 +1248,66 @@ export class CoordinationStore {
     for (let index = 0; index < this._events.length; index += 1) {
       const first = this._events[index];
       const isPlanRecovery = first.batch?.kind === 'goal_plan_recovery_dispatch';
+      const isPlanWave = first.batch?.kind === 'goal_plan_wave_dispatch';
       const isDispatch = first.kind === 'plan.node_dispatched'
-        || ['goal_plan_node_dispatch', 'goal_plan_recovery_dispatch'].includes(first.batch?.kind);
+        || ['goal_plan_node_dispatch', 'goal_plan_wave_dispatch', 'goal_plan_recovery_dispatch'].includes(first.batch?.kind);
       const isBoundTask = first.kind === 'task.created' && first.payload?.brief?.goalPlan;
       if (!isDispatch && !isBoundTask) continue;
+      if (isPlanWave) {
+        const count = first.batch?.count;
+        const events = Number.isSafeInteger(count) && count >= 4 && count % 2 === 0
+          ? this._events.slice(index, index + count) : [];
+        const exactBatch = events.length === count
+          && first.kind === 'plan.node_dispatched' && first.batch.index === 0
+          && /^[a-f0-9]{64}$/.test(first.batch.id ?? '')
+          && this._recoveryBatchIdentity('goal_plan_wave_dispatch', events) === first.batch.id
+          && events.every((event, offset) => event.seq === first.seq + offset
+            && event.ts === first.ts && event.actor === first.actor
+            && event.batch?.schemaVersion === 1 && event.batch.kind === 'goal_plan_wave_dispatch'
+            && event.batch.id === first.batch.id && event.batch.index === offset
+            && event.batch.count === count)
+          && events.every((event, offset) => offset % 2 === 0
+            ? event.kind === 'plan.node_dispatched'
+              && event.payload?.wave?.index === offset / 2
+              && event.payload?.wave?.count === count / 2
+            : event.kind === 'task.created'
+              && event.idempotencyKey === `${events[offset - 1].idempotencyKey}:task`
+              && events[offset - 1].payload?.taskId === event.payload?.id
+              && events[offset - 1].payload?.taskPayloadDigest === canonicalDigest(event.payload)
+              && canonicalDigest(events[offset - 1].payload?.binding) === canonicalDigest(event.payload?.brief?.goalPlan));
+        const waveDigests = new Set(events.filter((_, offset) => offset % 2 === 0)
+          .map((event) => event.payload?.wave?.digest));
+        const reconstructedEntries = events.filter((_, offset) => offset % 2 === 0)
+          .map((dispatch, memberIndex) => {
+            const p = dispatch.payload; const binding = p?.binding;
+            return {
+              fields: events[memberIndex * 2 + 1]?.payload,
+              gate: {
+                goalId: binding?.goalId, goalVersion: binding?.goalVersion,
+                goalDigest: binding?.goalDigest, planId: binding?.planId,
+                planVersion: binding?.planVersion, planDigest: binding?.planDigest,
+                nodeKey: binding?.nodeKey, expectedDispatchVersion: 0,
+                capabilities: p?.capabilities, effects: p?.effects,
+                ...(Object.hasOwn(p ?? {}, 'requiredEffects')
+                  ? { requiredEffects: p.requiredEffects } : {}),
+              },
+              route: p?.route,
+            };
+          });
+        const expectedWaveDigest = goalPlanDigest({
+          authority: first.payload?.authority,
+          entries: reconstructedEntries,
+        });
+        if (!exactBatch || waveDigests.size !== 1
+          || [...waveDigests][0] !== expectedWaveDigest) {
+          fail(`goal/plan wave dispatch at seq ${first.seq} is torn or mismatched`);
+        }
+        for (let offset = 0; offset < count; offset += 2) {
+          this._validateGoalPlanDispatchPair(events[offset], events[offset + 1], true);
+        }
+        index += count - 1;
+        continue;
+      }
       if (isPlanRecovery) {
         const second = this._events[index + 1]; const third = this._events[index + 2];
         const batchFields = ['count', 'id', 'index', 'kind', 'schemaVersion'].sort().join(',');
@@ -781,6 +1366,211 @@ export class CoordinationStore {
     return state;
   }
 
+  // PS5: a preserved-resume attestation is the exact, immutable coordinate set that authorizes one
+  // re-dispatch of an already-cancelled node: the prior task id, the pinned checkpoint SHA, and the
+  // immutable checkpoint ref. It is carried inside the dispatch payload so both prospective and
+  // integrity validation read the same attestation without a side channel. Returns a frozen
+  // normalized attestation or null when none/invalid.
+  _validPreservedResumeAttestation(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const names = ['priorTaskId', 'checkpointSha', 'checkpointRef'];
+    if (Object.keys(value).sort().join(',') !== names.sort().join(',')) return null;
+    const { priorTaskId, checkpointSha, checkpointRef } = value;
+    if (!boundedText(priorTaskId, 4_096) || !/^[a-f0-9]{40,64}$/u.test(checkpointSha ?? '')
+      || typeof checkpointRef !== 'string'
+      || !/^refs\/baton\/checkpoints\/[a-f0-9]{40,64}$/u.test(checkpointRef)) return null;
+    return freeze({ priorTaskId, checkpointSha, checkpointRef });
+  }
+
+  _workflowRevisionAuthority(plan, node, throughSeq = this._events.length, integrity = false) {
+    const fail = (message) => this._goalPlanFailure(message,
+      integrity ? 'workflow_revision_integrity' : 'workflow_revision_invalid', integrity);
+    const revision = node?.revision;
+    if (!revision) fail('Plan node has no workflow revision authority');
+    const predecessor = plan?.predecessor;
+    if (!predecessor || canonicalDigest(predecessor) !== canonicalDigest(revision.predecessorPlan)
+      || plan.version !== predecessor.version + 1 || node.deps.length !== 0
+      || plan.nodes.filter((candidate) => Object.hasOwn(candidate, 'revision')).length !== 1) {
+      fail('workflow revision is not a root node of the immediate successor Plan');
+    }
+    const sourcePlan = this._plans.get(this._planVersionKey(
+      revision.predecessorPlan.planId, revision.predecessorPlan.version,
+    ));
+    if (!sourcePlan || sourcePlan.digest !== revision.predecessorPlan.digest
+      || sourcePlan.repoId !== plan.repoId || sourcePlan.runId !== plan.runId
+      || canonicalDigest(sourcePlan.goal) !== canonicalDigest(plan.goal)) {
+      fail('workflow revision predecessor Plan is unavailable');
+    }
+    const goal = this._goals.get(this._goalVersionKey(plan.goal.goalId, plan.goal.version));
+    const lineage = [];
+    const seenPlans = new Set();
+    let cursor = plan;
+    while (cursor) {
+      const key = this._planVersionKey(cursor.planId, cursor.version);
+      if (seenPlans.has(key) || lineage.length >= this._goalPlanPolicy.limits.maxPlanVersions) {
+        fail('workflow revision Plan ancestry is cyclic or exceeds structural authority');
+      }
+      seenPlans.add(key);
+      lineage.push(cursor);
+      if (cursor.predecessor === null) break;
+      const prior = this._plans.get(this._planVersionKey(
+        cursor.predecessor.planId, cursor.predecessor.version,
+      ));
+      if (!prior || prior.digest !== cursor.predecessor.digest
+        || prior.repoId !== plan.repoId || prior.runId !== plan.runId
+        || canonicalDigest(prior.goal) !== canonicalDigest(plan.goal)) {
+        fail('workflow revision Plan ancestry is incomplete or changed');
+      }
+      cursor = prior;
+    }
+    const cumulative = lineage.reduce((sum, ancestor) => ({
+      tokens: sum.tokens + ancestor.totals.tokens,
+      usd: sum.usd + usdToNanos(ancestor.totals.usd),
+      wallMin: sum.wallMin + ancestor.totals.wallMin,
+      providerTurns: sum.providerTurns + ancestor.totals.providerTurns,
+    }), { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 });
+    if (!goal || goal.digest !== plan.goal.digest
+      || cumulative.tokens > goal.budget.tokens
+      || cumulative.usd > usdToNanos(goal.budget.usd)
+      || cumulative.wallMin > goal.budget.wallMin
+      || cumulative.providerTurns > goal.budget.providerTurns) {
+      fail('workflow revision cumulative Plan authority exceeds its Goal budget');
+    }
+    const prefix = this._events.filter((event) => event.seq <= throughSeq);
+    const definition = prefix.find((event) => event.kind === 'driver.recorded'
+      && event.payload?.kind === 'application.workflow_definition_bound'
+      && event.payload?.repoId === plan.repoId && event.payload?.runId === plan.runId
+      && event.payload?.planDigest === sourcePlan.digest
+      && event.payload?.definitionDigest === revision.workflow.definitionDigest);
+    const definitionCore = definition ? Object.fromEntries(Object.entries(definition.payload)
+      .filter(([key]) => !['kind', 'definitionDigest'].includes(key))) : null;
+    if (!definition || definition.actor !== 'application:workflow-registry'
+      || definition.idempotencyKey !== `application.workflow_definition_bound:${plan.runId}:${sourcePlan.digest}`
+      || definition.payload.definitionDigest !== canonicalDigest(definitionCore)) {
+      fail('workflow revision definition authority is unavailable');
+    }
+
+    const selection = prefix.find((event) => event.kind === 'driver.recorded'
+      && event.payload?.kind === 'application.workflow_candidate_selected'
+      && event.payload?.repoId === plan.repoId && event.payload?.runId === plan.runId
+      && event.payload?.planDigest === sourcePlan.digest
+      && event.payload?.definitionDigest === revision.workflow.definitionDigest
+      && event.payload?.candidate?.id === revision.parent.candidateId
+      && event.payload?.candidate?.digest === revision.parent.candidateDigest);
+    const selected = selection?.payload?.candidate;
+    if (!selection || selection.seq >= plan.proposedEvent
+      || selection.actor !== selection.payload?.selectedBy?.actor
+      || selection.idempotencyKey !== `application.workflow_candidate_selected:${plan.runId}:${sourcePlan.digest}`
+      || selection.payload?.selectionDigest !== canonicalDigest(Object.fromEntries(
+        Object.entries(selection.payload).filter(([key]) => !['kind', 'selectionDigest'].includes(key)),
+      ))
+      || selected.role !== revision.parent.role || selected.nodeKey !== revision.parent.nodeKey
+      || selected.taskId !== revision.parent.taskId || selected.resultSha !== revision.parent.resultSha
+      || selected.retainedResultRef !== revision.parent.retainedResultRef
+      || selected.evidenceDigest !== revision.parent.evidenceDigest) {
+      fail('workflow revision Candidate selection is unavailable or changed');
+    }
+    const parent = this._tasks.get(revision.parent.taskId);
+    if (!parent || parent.runId !== plan.runId || parent.status !== 'completed'
+      || parent.acceptanceRevocation) fail('workflow revision parent task is not durably accepted');
+    const artifacts = (parent.artifactIds ?? []).map((id) => this._artifacts.get(id)).filter(Boolean);
+    const active = (artifact) => artifact.accepted === true && artifact.supersededBy === null
+      && !Object.hasOwn(artifact, 'acceptanceInvalidation');
+    const commit = artifacts.find((artifact) => artifact.id === revision.parent.commitArtifact.id);
+    const verification = artifacts.find((artifact) => artifact.id === revision.parent.verificationArtifact.id);
+    const operational = verification?.refs?.worker && Number.isSafeInteger(verification?.refs?.workerSeq)
+      ? this._operationalRead?.(verification.refs.worker, verification.refs.workerSeq) : null;
+    const changedPaths = Array.isArray(operational?.payload?.capture?.changedPaths)
+      ? [...operational.payload.capture.changedPaths].sort() : null;
+    const evidence = changedPaths ? {
+      commitArtifact: { id: commit?.id, digest: commit?.digest },
+      verificationArtifact: { id: verification?.id, digest: verification?.digest },
+      verification: {
+        worker: verification.refs.worker, workerSeq: verification.refs.workerSeq,
+        verdictDigest: canonicalDigest(operational.payload.verdict),
+        changedPathsDigest: canonicalDigest(changedPaths),
+      },
+    } : null;
+    const evidenceDigest = evidence ? canonicalDigest(evidence) : null;
+    const candidateCore = evidence ? {
+      schemaVersion: 1, repoId: plan.repoId, runId: plan.runId,
+      planDigest: sourcePlan.digest, definitionDigest: revision.workflow.definitionDigest,
+      role: revision.parent.role, nodeKey: revision.parent.nodeKey,
+      taskId: revision.parent.taskId, resultSha: revision.parent.resultSha,
+      changedPaths, evidence, evidenceDigest,
+    } : null;
+    const candidateDigest = candidateCore ? canonicalDigest(candidateCore) : null;
+    if (!commit || !active(commit) || commit.kind !== 'commit'
+      || commit.digest !== revision.parent.commitArtifact.digest
+      || commit.refs?.sha !== revision.parent.resultSha
+      || commit.refs?.retainedResultRef !== revision.parent.retainedResultRef
+      || !verification || !active(verification) || verification.kind !== 'verification'
+      || verification.digest !== revision.parent.verificationArtifact.digest
+      || operational?.kind !== 'verify.reverified' || operational.payload?.accept !== true
+      || operational.payload?.capture?.sha !== revision.parent.resultSha
+      || operational.payload?.capture?.retainedResultRef !== revision.parent.retainedResultRef
+      || canonicalDigest(changedPaths) !== canonicalDigest(revision.parent.changedPaths)
+      || evidenceDigest !== revision.parent.evidenceDigest
+      || revision.parent.candidateId !== `candidate:${candidateDigest}`
+      || revision.parent.candidateDigest !== candidateDigest
+      || revision.parent.treeIdentityDigest !== canonicalDigest({
+        resultSha: revision.parent.resultSha,
+        retainedResultRef: revision.parent.retainedResultRef,
+      })) fail('workflow revision Candidate artifacts are unavailable or changed');
+
+    const feedbackEvents = prefix.filter((event) => event.kind === 'driver.recorded'
+      && event.seq < plan.proposedEvent
+      && event.payload?.kind === 'application.workflow_feedback_recorded'
+      && event.payload?.repoId === plan.repoId && event.payload?.runId === plan.runId
+      && event.payload?.planDigest === sourcePlan.digest
+      && event.payload?.definitionDigest === revision.workflow.definitionDigest
+      && event.payload?.target?.candidateId === revision.parent.candidateId);
+    if (feedbackEvents.length !== revision.feedback.length) {
+      fail('workflow revision feedback set omits or adds durable feedback');
+    }
+    const feedbackById = new Map(feedbackEvents.map((event) => [event.payload.feedbackId, event]));
+    for (const packet of revision.feedback) {
+      const event = feedbackById.get(packet.feedbackId);
+      const payload = event?.payload;
+      const feedbackCore = payload ? Object.fromEntries(Object.entries(payload)
+        .filter(([key]) => !['kind', 'feedbackDigest'].includes(key))) : null;
+      const expectedFeedbackId = payload ? `feedback:${canonicalDigest({
+        repoId: payload.repoId, runId: payload.runId, planDigest: payload.planDigest,
+        definitionDigest: payload.definitionDigest, source: payload.source,
+        target: payload.target, feedback: payload.feedback,
+      })}` : null;
+      if (!event || event.seq !== packet.eventSeq || payload.feedbackDigest !== packet.feedbackDigest
+        || payload.feedbackDigest !== canonicalDigest(feedbackCore)
+        || packet.feedbackId !== expectedFeedbackId
+        || event.actor !== payload.source?.actor
+        || event.idempotencyKey !== `application.workflow_feedback_recorded:${packet.feedbackId}`
+        || payload.prefix?.goalDigest !== plan.goal.digest
+        || payload.prefix?.planDigest !== sourcePlan.digest
+        || payload.prefix?.definitionDigest !== revision.workflow.definitionDigest
+        || !Number.isSafeInteger(payload.prefix?.throughSeq)
+        || payload.prefix.throughSeq <= 0 || payload.prefix.throughSeq >= event.seq
+        || canonicalDigest(payload.feedback) !== canonicalDigest(packet.feedback)
+        || payload.target?.candidateDigest !== revision.parent.candidateDigest
+        || payload.target?.taskId !== revision.parent.taskId
+        || payload.target?.resultSha !== revision.parent.resultSha
+        || payload.target?.retainedResultRef !== revision.parent.retainedResultRef
+        || canonicalDigest(payload.target?.changedPaths) !== canonicalDigest(revision.parent.changedPaths)
+        || payload.target?.changedPathsDigest !== revision.parent.changedPathsDigest) {
+        fail('workflow revision feedback authority is unavailable or changed');
+      }
+    }
+    for (const sourceNode of sourcePlan.nodes) {
+      const dispatch = this._planDispatches.get(this._planNodeKey(
+        sourcePlan.planId, sourcePlan.version, sourceNode.key,
+      ));
+      const task = dispatch ? this._tasks.get(dispatch.taskId) : null;
+      if (!task || !['completed', 'failed', 'cancelled'].includes(task.status)) {
+        fail('workflow revision predecessor Plan is not provider-settled');
+      }
+    }
+    return freeze({ sourcePlan: clone(sourcePlan), parent: clone(parent), revision: clone(revision) });
+  }
+
   _validateGoalPlanDispatchPair(dispatchEvent, taskEvent, integrity = false, recoveryClaimEvent = null) {
     const fail = (message) => this._goalPlanFailure(
       message,
@@ -823,14 +1613,38 @@ export class CoordinationStore {
       || Date.parse(dispatchEvent.ts) - Date.parse(approval.decidedAt) > this._goalPlanPolicy.approvalTtlMs) fail('goal/plan dispatch lacks current approval authority');
 
     const node = plan.nodes.find((row) => row.key === p.binding.nodeKey);
+    const planRevision = Object.hasOwn(node ?? {}, 'revision');
     if (!node || p.binding.schemaVersion !== 1 || p.binding.dispatchVersion !== 1
       || p.expectedDispatchVersion !== 0 || p.newDispatchVersion !== 1
       || canonicalDigest(node.budget) !== canonicalDigest(p.nodeBudget)
       || canonicalDigest(node.capabilities) !== canonicalDigest(p.capabilities)
-      || canonicalDigest(node.effects) !== canonicalDigest(p.effects)) fail('goal/plan dispatch node authority changed');
-    if (prefix.some((event) => event.kind === 'plan.node_dispatched'
+      || canonicalDigest(node.effects) !== canonicalDigest(p.effects)
+      || Object.hasOwn(node, 'requiredEffects') !== Object.hasOwn(p, 'requiredEffects')
+      || canonicalDigest(node.requiredEffects ?? []) !== canonicalDigest(p.requiredEffects ?? [])
+      || planRevision !== Object.hasOwn(p, 'revision')
+      || (planRevision && canonicalDigest(node.revision) !== canonicalDigest(p.revision))) fail('goal/plan dispatch node authority changed');
+    if (planRevision) this._workflowRevisionAuthority(plan, node, dispatchEvent.seq - 1, integrity);
+    // PS5: a preserved-resume re-dispatch is the one sanctioned exception to "one dispatch per
+    // node". It is permitted only when a prior dispatch exists, the latest task is durably
+    // terminal-cancelled, and the caller attested the exact preserved checkpoint lineage. The
+    // coordination store records the attestation; the physical checkpoint ref is postchecked by
+    // the Coordinator before this admission, so re-dispatch can never manufacture a fresh
+    // identity for work that was not actually preserved.
+    const priorDispatches = prefix.filter((event) => event.kind === 'plan.node_dispatched'
       && event.payload.binding.planId === plan.planId && event.payload.binding.planVersion === plan.version
-      && event.payload.binding.nodeKey === node.key)) fail('goal/plan node was dispatched more than once');
+      && event.payload.binding.nodeKey === node.key);
+    const preservedResume = this._validPreservedResumeAttestation(p.preservedResume);
+    if (preservedResume) {
+      if (priorDispatches.length === 0) fail('preserved resume requires a prior node dispatch');
+      // Recursive resource stops form a linear same-node recovery chain. Only the latest dispatch
+      // is eligible, so an older cancelled checkpoint can never fork the current node authority.
+      const priorTaskId = priorDispatches.at(-1).payload.taskId;
+      const priorState = this._historicalTaskState(priorTaskId, dispatchEvent.seq - 1);
+      if (!priorState || priorState.status !== 'cancelled') fail('preserved resume prior task was not cancelled');
+      if (priorTaskId !== preservedResume.priorTaskId) fail('preserved resume prior task lineage changed');
+    } else if (priorDispatches.length > 0) {
+      fail('goal/plan node was dispatched more than once');
+    }
 
     if (!p.route || Object.keys(p.route).sort().join(',') !== ['effort', 'model', 'vendor'].sort().join(',')
       || (node.routes.harnesses.length > 0 && !node.routes.harnesses.includes(p.route.vendor))
@@ -856,10 +1670,18 @@ export class CoordinationStore {
     };
     if (canonicalDigest(expectedBinding) !== canonicalDigest(p.binding)) fail('goal/plan dispatch binding changed');
     const expectedBrief = buildAuthoritativeBrief(goal, plan, node, expectedBinding);
+    const resumeAttestation = this._validPreservedResumeAttestation(p.preservedResume);
     const expectedTaskFields = planRecovery
       ? ['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'sessionRequest', 'relation', 'worktreeBaseSha', 'review']
-      : ['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'effortResolved', 'effortObserved', 'routeKey', 'sessionRequest'];
+      : resumeAttestation
+        ? ['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'effortResolved', 'effortObserved', 'routeKey', 'sessionRequest', 'relation', 'worktreeBaseSha']
+        : planRevision
+          ? ['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'effortResolved', 'effortObserved', 'routeKey', 'sessionRequest', 'relation', 'worktreeBaseSha']
+        : ['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'effortResolved', 'effortObserved', 'routeKey', 'sessionRequest'];
     if (Object.keys(task).sort().join(',') !== expectedTaskFields.sort().join(',')) fail('goal/plan task field set changed');
+    if (resumeAttestation && (!/^[a-f0-9]{40}$/.test(task.worktreeBaseSha ?? '') || task.refines !== resumeAttestation.priorTaskId)) {
+      fail('preserved resume task base or lineage does not match its attestation');
+    }
     if (task.id !== p.taskId || !boundedText(task.reservedWorkerId, 4_096)) fail('goal/plan task physical identity changed');
     if (canonicalDigest(task.brief) !== canonicalDigest(expectedBrief)) fail('goal/plan authoritative Brief changed');
     if (canonicalDigest(task.deps) !== canonicalDigest(resolvedDeps)) fail('goal/plan task dependencies changed');
@@ -887,6 +1709,30 @@ export class CoordinationStore {
         || canonicalDigest(task.review ?? null) !== canonicalDigest(priorTask.review ?? null)) {
         this._recoveryFailure('plan recovery changes immutable prior-task lineage', 'recovery_refinement_conflict', integrity);
       }
+    } else if (resumeAttestation) {
+      // PS5: a preserved-resume task re-dispatches the same node from its pinned checkpoint. Its
+      // lineage is the cancelled prior task; its route, session, and resolved fields stay exact.
+      if (task.refines !== resumeAttestation.priorTaskId || task.runId !== goal.runId
+        || task.taskType !== 'general' || task.relation !== 'preserved_resume') {
+        fail('preserved resume task lineage, run, or type changed');
+      }
+      if (task.vendorRequested !== p.route.vendor || task.modelRequested !== p.route.model || task.modelPolicy !== null
+        || task.effortRequested !== p.route.effort || task.effortResolved !== null || task.effortObserved !== null || task.routeKey !== null) {
+        fail('preserved resume task route fields changed');
+      }
+      if (canonicalDigest(task.sessionRequest) !== canonicalDigest({ mode: 'new' })) fail('preserved resume task session fields changed');
+    } else if (planRevision) {
+      if (task.refines !== node.revision.parent.taskId || task.runId !== goal.runId
+        || task.taskType !== 'general' || task.relation !== 'revision'
+        || task.worktreeBaseSha !== node.revision.parent.resultSha) {
+        fail('workflow revision task lineage, run, or base changed');
+      }
+      if (task.vendorRequested !== p.route.vendor || task.modelRequested !== p.route.model
+        || task.modelPolicy !== null || task.effortRequested !== p.route.effort
+        || task.effortResolved !== null || task.effortObserved !== null || task.routeKey !== null
+        || canonicalDigest(task.sessionRequest) !== canonicalDigest({ mode: 'new' })) {
+        fail('workflow revision task route or session fields changed');
+      }
     } else {
       if (task.refines !== null || task.runId !== goal.runId || task.taskType !== 'general') fail('goal/plan task lineage, run, or type changed');
       if (task.vendorRequested !== p.route.vendor || task.modelRequested !== p.route.model || task.modelPolicy !== null
@@ -901,11 +1747,13 @@ export class CoordinationStore {
       planId: plan.planId, planVersion: plan.version, planDigest: plan.digest,
       nodeKey: node.key, expectedDispatchVersion: 0,
       capabilities: clone(node.capabilities), effects: clone(node.effects),
+      ...(Object.hasOwn(node, 'requiredEffects') ? { requiredEffects: clone(node.requiredEffects) } : {}),
     };
     const requestTask = planRecovery ? this._planRecoveryRequestFields(task) : task;
     const expectedRequestDigest = goalPlanDigest({
       principalId: p.authority.principalId, gate, route: p.route, task: requestTask,
       ...(planRecovery ? { attribution: this._recoveryAttributionFromClaim(recoveryClaimEvent.payload) } : {}),
+      ...(resumeAttestation ? { preservedResume: resumeAttestation } : {}),
     });
     if (p.requestDigest !== expectedRequestDigest) fail('goal/plan dispatch request digest changed');
     return true;
@@ -1005,6 +1853,121 @@ export class CoordinationStore {
       fail('recovery refinement requires the exact completed hub-verified prior task');
     }
     return { terminal, mapped, source };
+  }
+
+  _recoveryAttemptFailure(message, code, integrity = false) {
+    throw integrity
+      ? new CoordinationIntegrityError(message, 'recovery_attempt_integrity')
+      : new CoordinationRefusal(message, code);
+  }
+
+  _normalizeRecoveryAttemptAdmission(payload, integrity = false) {
+    try { return normalizeRecoveryAttemptAdmission(payload); }
+    catch (error) {
+      this._recoveryAttemptFailure(
+        error?.message ?? 'recovery attempt admission is invalid',
+        'recovery_attempt_invalid', integrity,
+      );
+    }
+  }
+
+  _normalizeRecoveryAttemptCompletion(payload, integrity = false) {
+    try { return normalizeRecoveryAttemptCompletion(payload); }
+    catch (error) {
+      this._recoveryAttemptFailure(
+        error?.message ?? 'recovery attempt completion is invalid',
+        'recovery_attempt_completion_invalid', integrity,
+      );
+    }
+  }
+
+  _validateRecoveryAttemptAdmissionPayload(payload, event, integrity = false) {
+    const p = this._normalizeRecoveryAttemptAdmission(payload, integrity);
+    const fail = (message, code) => this._recoveryAttemptFailure(message, code, integrity);
+    const task = this._tasks.get(p.priorTask.id);
+    if (!task || (task.runId ?? null) !== p.runId) {
+      fail('recovery attempt belongs to a different or unavailable Run', 'recovery_attempt_run_mismatch');
+    }
+    if (this._runStops.has(p.runId)) fail(`run ${p.runId} is stopping`, 'run_stopping');
+    if (task.version !== p.priorTask.version || task.terminalEvent !== p.priorTask.terminalEvent
+      || task.status !== 'completed' || task.acceptanceRevocation) {
+      fail('recovery attempt prior task binding is stale', 'recovery_attempt_stale');
+    }
+    if (task.assignee !== p.verifiedOwner.workerId) {
+      fail('recovery attempt worker is not the prior task owner', 'recovery_attempt_owner_mismatch');
+    }
+    let verified;
+    try { verified = this._verifiedRecoveryPrior(task, integrity); }
+    catch {
+      fail('recovery attempt owner lacks exact hub verification', 'recovery_attempt_owner_unverified');
+    }
+    if (verified.mapped.seq !== p.verifiedOwner.evidence.coordinationSeq) {
+      fail('recovery attempt owner verification evidence differs', 'recovery_attempt_owner_unverified');
+    }
+    if (task.routeKey !== p.route.tupleKey) {
+      fail('recovery attempt route differs from the verified prior task', 'recovery_attempt_invalid');
+    }
+    if (this._taskTopologyPolicy) {
+      this._validateTaskTopology({
+        id: p.recoveryTaskId, runId: p.runId, refines: p.priorTask.id,
+        taskType: task.taskType ?? 'general', relation: 'recovery',
+      }, 'recovery', integrity);
+    }
+
+    const headId = this._recoveryAttemptHeads.get(p.seriesId);
+    const head = headId ? this._recoveryAttemptsById.get(headId) : null;
+    if (head) {
+      if (head.state === 'pending') fail('recovery attempt has an unresolved admitted effect', 'recovery_attempt_unresolved');
+      if (['attached', 'unknown'].includes(head.state)) {
+        fail('recovery attempt outcome forbids automatic continuation', 'recovery_attempt_continuation_forbidden');
+      }
+      if (head.maxAttempts !== p.maxAttempts
+        || canonicalDigest(head.authority) !== canonicalDigest(p.authority)
+        || canonicalDigest(head.route) !== canonicalDigest(p.route)
+        || canonicalDigest(head.workerPolicy) !== canonicalDigest(p.workerPolicy)
+        || head.session.idDigest !== p.session.idDigest
+        || head.session.contextDigest !== p.session.contextDigest) {
+        fail('recovery attempt series authority changed', 'recovery_attempt_authority_changed');
+      }
+      if (head.attempt >= head.maxAttempts || p.attempt > p.maxAttempts) {
+        fail('recovery attempt ceiling is exhausted', 'recovery_attempt_exhausted');
+      }
+      if (p.attempt !== head.attempt + 1) {
+        fail('recovery attempt sequence is not contiguous', 'recovery_attempt_sequence');
+      }
+      if (p.expectedAttemptHeadEvent !== head.completedEvent) {
+        fail('recovery attempt head compare-and-set is stale', 'recovery_attempt_stale');
+      }
+    } else {
+      const unresolved = [...this._recoveryAttemptsById.values()].find((attempt) => (
+        attempt.priorTask.id === p.priorTask.id
+        && attempt.verifiedOwner.workerId === p.verifiedOwner.workerId
+        && ['pending', 'attached', 'unknown'].includes(attempt.state)
+      ));
+      if (unresolved) fail('recovery prior owner already has an unresolved effect', 'recovery_attempt_unresolved');
+      if (p.attempt !== 1) fail('recovery attempt series must begin at one', 'recovery_attempt_sequence');
+      if (p.expectedAttemptHeadEvent !== null) {
+        fail('new recovery attempt series has a stale head', 'recovery_attempt_stale');
+      }
+    }
+    if (this._recoveryAttemptsById.has(p.attemptId)) {
+      fail('recovery attempt identity already exists', 'recovery_attempt_conflict');
+    }
+    if (!boundedText(event?.actor, 4_096)) fail('recovery attempt actor is invalid', 'recovery_attempt_invalid');
+    return p;
+  }
+
+  _validateRecoveryAttemptCompletionPayload(payload, event, integrity = false) {
+    const p = this._normalizeRecoveryAttemptCompletion(payload, integrity);
+    const fail = (message, code) => this._recoveryAttemptFailure(message, code, integrity);
+    const attempt = this._recoveryAttemptsById.get(p.attemptId);
+    if (!attempt || attempt.admissionDigest !== p.admissionDigest || attempt.state !== 'pending') {
+      fail('recovery attempt completion does not bind one pending admission', 'recovery_attempt_completion_invalid');
+    }
+    if (event?.actor !== attempt.actor) {
+      fail('recovery attempt completion actor differs from admission', 'recovery_attempt_conflict');
+    }
+    return { payload: p, attempt };
   }
 
   _normalizedRecoveryCreatedPayload(fields, priorTask) {
@@ -1599,9 +2562,9 @@ export class CoordinationStore {
       || !p.route || Object.keys(p.route).sort().join(',') !== routeFields.sort().join(',') || !['completed', 'failed'].includes(p.terminalStatus) || p.verifiedWin !== (p.terminalStatus === 'completed')
       || !Number.isSafeInteger(p.expectedTaskVersion) || !Number.isFinite(Date.parse(p.observedAt)) || new Date(Date.parse(p.observedAt)).toISOString() !== p.observedAt || p.observedAt !== event.ts
       || !/^[a-f0-9]{64}$/.test(p.observationDigest ?? '') || event.actor !== 'policy') fail('route observation shape is invalid');
-    let tuple; try { tuple = JSON.parse(p.routeKey); } catch { fail('route observation key is invalid'); }
-    if (!Array.isArray(tuple) || tuple.length !== 6 || tuple[4] !== p.modelFamily || tuple[5] !== p.taskType || `${tuple[0]}@${tuple[1]}` !== p.route.harnessResolved
-      || tuple[2] !== (p.route.modelResolved ?? 'default') || tuple[3] !== (p.route.effortResolved ?? 'default')) fail('route observation tuple is invalid');
+    let tuple; try { tuple = parseRouteTupleKey(p.routeKey); } catch { fail('route observation key is invalid'); }
+    if (tuple.modelFamily !== p.modelFamily || tuple.taskType !== p.taskType || `${tuple.harness}@${tuple.version}` !== p.route.harnessResolved
+      || tuple.model !== (p.route.modelResolved ?? 'default') || tuple.effort !== (p.route.effortResolved ?? 'default')) fail('route observation tuple is invalid');
     const task = this._tasks.get(p.taskId); if (!task || task.taskType !== p.taskType || (task.runId ?? null) !== p.runId) fail('route observation task is invalid', 'route_observation_stale');
     if (integrity) {
       if (task.status !== p.terminalStatus || task.version !== p.expectedTaskVersion + 1) fail('route observation terminal task diverged', 'route_observation_stale');
@@ -2296,12 +3259,22 @@ export class CoordinationStore {
     return drain;
   }
 
-  _runStopTargets(runId) {
-    const tasks = [...this._tasks.values()].filter((task) => task.runId === runId).sort((a, b) => compareCanonicalStrings(a.id, b.id));
+  _runStopTargets(runId, throughSeq = this._events.length) {
+    const targetRunIds = this._runLineagePolicy
+      ? [...new Set([runId, ...this.runDescendants(runId).map((row) => row.childRunId)])].sort(compareCanonicalStrings)
+      : [runId];
+    const targetRunSet = new Set(targetRunIds);
+    const tasks = [...this._tasks.values()].filter((task) => targetRunSet.has(task.runId)).sort((a, b) => compareCanonicalStrings(a.id, b.id));
     if (tasks.length > 100_000) throw new CoordinationRefusal('run stop target set exceeds capacity', 'run_stop_capacity');
     const targetTaskIds = tasks.map((task) => task.id);
     const targetWorkerIds = [...new Set(tasks.map((task) => task.reservedWorkerId ?? task.assignee).filter(Boolean))]
       .sort(compareCanonicalStrings);
+    if (this._runLineagePolicy) {
+      return {
+        scope: 'run_subtree', throughSeq, targetRunIds, targetTaskIds, targetWorkerIds,
+        targetDigest: canonicalDigest({ throughSeq, targetRunIds, targetTaskIds, targetWorkerIds }),
+      };
+    }
     return { targetTaskIds, targetWorkerIds, targetDigest: canonicalDigest({ targetTaskIds, targetWorkerIds }) };
   }
 
@@ -2309,27 +3282,42 @@ export class CoordinationStore {
     const fail = (message, code = 'run_stop_integrity') => {
       throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code);
     };
-    const fields = ['schemaVersion', 'repoId', 'runId', 'reasonDigest', 'requestDigest', 'targetTaskIds', 'targetWorkerIds', 'targetDigest'];
+    const fields = this._runLineagePolicy
+      ? ['schemaVersion', 'scope', 'repoId', 'runId', 'reasonDigest', 'requestDigest', 'throughSeq', 'targetRunIds', 'targetTaskIds', 'targetWorkerIds', 'targetDigest']
+      : ['schemaVersion', 'repoId', 'runId', 'reasonDigest', 'requestDigest', 'targetTaskIds', 'targetWorkerIds', 'targetDigest'];
     if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || p.schemaVersion !== 1
       || !validRunId(p.repoId) || !validRunId(p.runId) || !/^[a-f0-9]{64}$/.test(p.reasonDigest ?? '')
       || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.targetDigest ?? '')
       || !Array.isArray(p.targetTaskIds) || !Array.isArray(p.targetWorkerIds)
       || p.targetTaskIds.length > 100_000 || p.targetWorkerIds.length > 100_000
-      || p.targetTaskIds.some((id) => !boundedText(id, 4_096)) || p.targetWorkerIds.some((id) => !validRunId(id))) {
+      || p.targetTaskIds.some((id) => !boundedText(id, 4_096)) || p.targetWorkerIds.some((id) => !validRunId(id))
+      || (this._runLineagePolicy && (p.scope !== 'run_subtree'
+        || !Number.isSafeInteger(p.throughSeq) || p.throughSeq !== event.seq - 1
+        || !Array.isArray(p.targetRunIds) || p.targetRunIds.length === 0 || p.targetRunIds.length > 1_000_000
+        || p.targetRunIds.some((id) => !validRunId(id))))) {
       fail('run stop admission is invalid');
     }
     if (new Set(p.targetTaskIds).size !== p.targetTaskIds.length || new Set(p.targetWorkerIds).size !== p.targetWorkerIds.length
       || JSON.stringify([...p.targetTaskIds].sort(compareCanonicalStrings)) !== JSON.stringify(p.targetTaskIds)
       || JSON.stringify([...p.targetWorkerIds].sort(compareCanonicalStrings)) !== JSON.stringify(p.targetWorkerIds)
       || p.requestDigest !== canonicalDigest({ repoId: p.repoId, runId: p.runId, reasonDigest: p.reasonDigest })
-      || p.targetDigest !== canonicalDigest({ targetTaskIds: p.targetTaskIds, targetWorkerIds: p.targetWorkerIds })) {
+      || (this._runLineagePolicy
+        ? (new Set(p.targetRunIds).size !== p.targetRunIds.length
+          || JSON.stringify([...p.targetRunIds].sort(compareCanonicalStrings)) !== JSON.stringify(p.targetRunIds)
+          || p.targetDigest !== canonicalDigest({
+            throughSeq: p.throughSeq, targetRunIds: p.targetRunIds,
+            targetTaskIds: p.targetTaskIds, targetWorkerIds: p.targetWorkerIds,
+          }))
+        : p.targetDigest !== canonicalDigest({ targetTaskIds: p.targetTaskIds, targetWorkerIds: p.targetWorkerIds }))) {
       fail('run stop admission binding is invalid');
     }
     if (event.idempotencyKey !== `run.stop:${p.runId}` || !boundedText(event.actor, 256)) fail('run stop authority is invalid');
-    const targets = this._runStopTargets(p.runId);
-    if (canonicalDigest(targets) !== canonicalDigest({
+    const targets = this._runStopTargets(p.runId, this._runLineagePolicy ? p.throughSeq : undefined);
+    const observed = this._runLineagePolicy ? {
+      scope: p.scope, throughSeq: p.throughSeq, targetRunIds: p.targetRunIds,
       targetTaskIds: p.targetTaskIds, targetWorkerIds: p.targetWorkerIds, targetDigest: p.targetDigest,
-    })) fail('run stop target snapshot diverged');
+    } : { targetTaskIds: p.targetTaskIds, targetWorkerIds: p.targetWorkerIds, targetDigest: p.targetDigest };
+    if (canonicalDigest(targets) !== canonicalDigest(observed)) fail('run stop target snapshot diverged');
     return targets;
   }
 
@@ -2348,7 +3336,7 @@ export class CoordinationStore {
     const checkFields = ['dispatchClosed', 'interactionsResolved', 'runAuthorityReleased'];
     const effectFields = ['coordinatorClosed', 'writerReleased', 'transportsClosed'];
     if (!receipt || Object.keys(receipt).sort().join(',') !== receiptFields.sort().join(',') || receipt.schemaVersion !== 1
-      || receipt.state !== 'stopped' || receipt.scope !== 'run' || receipt.repoId !== stop.repoId || receipt.runId !== stop.runId
+      || receipt.state !== 'stopped' || receipt.scope !== (stop.scope ?? 'run') || receipt.repoId !== stop.repoId || receipt.runId !== stop.runId
       || receipt.targetCount !== stop.targetWorkerIds.length || receipt.remainingCount !== 0 || receipt.targetDigest !== stop.targetDigest
       || !receipt.counts || Object.keys(receipt.counts).sort().join(',') !== countFields.sort().join(',')
       || countFields.some((field) => !Number.isSafeInteger(receipt.counts[field]) || receipt.counts[field] < 0 || receipt.counts[field] > receipt.targetCount)
@@ -2654,8 +3642,9 @@ export class CoordinationStore {
     return state;
   }
 
-  _assertRunAdmissionOpen(runId) {
-    if (runId != null && this._runStops.has(runId)) {
+  _assertRunAdmissionOpen(runId, integrity = false) {
+    if (runId != null && (this._runStopByTarget.has(runId) || this._runStops.has(runId))) {
+      if (integrity) throw new CoordinationIntegrityError(`run ${runId} is stopping`, 'run_stopping');
       throw new CoordinationRefusal(`run ${runId} is stopping`, 'run_stopping');
     }
   }
@@ -2937,18 +3926,44 @@ export class CoordinationStore {
         const key = this._planVersionKey(plan.planId, plan.version); if (this._planApprovals.has(key)) malformed(); this._planApprovals.set(key, freeze(clone(approval)));
       } else if (event.kind === 'plan.node_dispatched') {
         const dispatchFields = ['authority', 'binding', 'capabilities', 'effects', 'expectedDispatchVersion', 'newDispatchVersion', 'nodeBudget', 'requestDigest', 'resolvedDeps', 'route', 'schemaVersion', 'taskId', 'taskPayloadDigest'];
+        if (Object.hasOwn(p, 'requiredEffects')) dispatchFields.push('requiredEffects');
         if (event.batch?.kind === 'goal_plan_recovery_dispatch') dispatchFields.push('claimPayloadDigest');
+        if (event.batch?.kind === 'goal_plan_wave_dispatch') dispatchFields.push('wave');
+        if (this._validPreservedResumeAttestation(p.preservedResume)) dispatchFields.push('preservedResume');
+        if (Object.hasOwn(p, 'revision')) dispatchFields.push('revision');
         if (Object.keys(p).sort().join(',') !== dispatchFields.sort().join(',')
           || p.schemaVersion !== 1 || p.expectedDispatchVersion !== 0 || p.newDispatchVersion !== 1 || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.taskPayloadDigest ?? '')) malformed();
         if (event.batch?.kind === 'goal_plan_recovery_dispatch' && !/^[a-f0-9]{64}$/.test(p.claimPayloadDigest ?? '')) malformed();
+        if (event.batch?.kind === 'goal_plan_wave_dispatch'
+          && (!p.wave || Object.keys(p.wave).sort().join(',') !== ['count', 'digest', 'index', 'schemaVersion'].sort().join(',')
+            || p.wave.schemaVersion !== 1 || !/^[a-f0-9]{64}$/.test(p.wave.digest ?? '')
+            || !Number.isSafeInteger(p.wave.index) || p.wave.index < 0
+            || !Number.isSafeInteger(p.wave.count) || p.wave.count < 2
+            || p.wave.index >= p.wave.count)) malformed();
         const binding = p.binding; const plan = this._plans.get(this._planVersionKey(binding?.planId, binding?.planVersion));
         const goal = this._goals.get(this._goalVersionKey(binding?.goalId, binding?.goalVersion));
         const node = plan?.nodes.find((row) => row.key === binding?.nodeKey);
         if (!plan || !goal || !node || plan.digest !== binding.planDigest || goal.digest !== binding.goalDigest
           || canonicalDigest(node.budget) !== canonicalDigest(p.nodeBudget)
           || canonicalDigest(node.capabilities) !== canonicalDigest(p.capabilities)
-          || canonicalDigest(node.effects) !== canonicalDigest(p.effects)) malformed();
-        const key = this._planNodeKey(plan.planId, plan.version, node.key); if (this._planDispatches.has(key) || this._planTaskLinks.has(p.taskId)) malformed();
+          || canonicalDigest(node.effects) !== canonicalDigest(p.effects)
+          || Object.hasOwn(node, 'requiredEffects') !== Object.hasOwn(p, 'requiredEffects')
+          || canonicalDigest(node.requiredEffects ?? []) !== canonicalDigest(p.requiredEffects ?? [])
+          || Object.hasOwn(node, 'revision') !== Object.hasOwn(p, 'revision')
+          || canonicalDigest(node.revision ?? null) !== canonicalDigest(p.revision ?? null)) malformed();
+        const key = this._planNodeKey(plan.planId, plan.version, node.key);
+        const resumeAttestation = this._validPreservedResumeAttestation(p.preservedResume);
+        if (this._planTaskLinks.has(p.taskId)) malformed();
+        if (resumeAttestation) {
+          // PS5: a preserved resume supersedes the prior (cancelled) dispatch of this node. The
+          // plan projection is last-wins over events, so the resumed task becomes the node's
+          // current dispatch; the prior cancelled task keeps its own budget link.
+          const prior = this._planDispatches.get(key);
+          const priorTask = prior ? this._tasks.get(prior.taskId) : null;
+          if (!prior || !priorTask || priorTask.status !== 'cancelled' || prior.taskId !== resumeAttestation.priorTaskId) {
+            malformed('preserved resume prior dispatch is not the cancelled preserved task');
+          }
+        } else if (this._planDispatches.has(key)) malformed();
         const record = freeze({ ...clone(p), eventSeq: event.seq, dispatchedAt: event.ts, state: 'dispatched' }); this._planDispatches.set(key, record); this._planTaskLinks.set(p.taskId, record);
       } else if (event.kind === 'plan.node_budget_settled') {
         this._validatePlanBudgetSettlement(p, event, true);
@@ -2972,7 +3987,7 @@ export class CoordinationStore {
       admittedRunId = this._plans.get(this._planVersionKey(p?.binding?.planId, p?.binding?.planVersion))?.runId ?? null;
     } else if (event.kind === 'task.created') admittedRunId = p?.runId ?? null;
     else if (event.kind === 'task.claimed') admittedRunId = this._tasks.get(p?.id)?.runId ?? null;
-    if (admittedRunId !== null && this._runStops.has(admittedRunId)) {
+    if (admittedRunId !== null && (this._runStopByTarget.has(admittedRunId) || this._runStops.has(admittedRunId))) {
       throw new CoordinationIntegrityError(`effect ${event.kind} was admitted after run ${admittedRunId} began stopping`, 'run_stopping');
     }
     if (['goal.version_defined', 'plan.version_proposed', 'plan.approval_decided', 'plan.node_dispatched', 'plan.node_budget_settled'].includes(event.kind)) {
@@ -3036,10 +4051,46 @@ export class CoordinationStore {
       }
       const nodeId = receipt.nodeId;
       this._setKnowledgeNode(event, nodeId, freeze({ id: nodeId, type: 'Source', grounding: 'observed', body: `Authenticated ${p.receipt.providerId} delivery ${p.receipt.deliveryId}`, evidence: [{ coordinationSeq: event.seq }], promotion: { kind: 'ProviderDelivery', trigger: 'provider.delivery' }, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: event.seq, eventTime: p.receipt.occurredAt, validFrom: event.ts, validTo: null, validityVersion: 1, repoId: p.repoId, providerId: p.receipt.providerId, sourceEpoch: p.receipt.sourceEpoch, receiptDigest: p.receiptDigest, processingId: p.processingId }));
+    } else if (event.kind === 'run.orchestrator_lease_issued') {
+      const lease = this._validateRunOrchestratorLeaseIssued(p, event, true);
+      this._runOrchestratorLeases.set(lease.leaseId, freeze({
+        ...clone(lease), status: 'active', issuedEvent: event.seq, revokedEvent: null,
+      }));
+    } else if (event.kind === 'run.orchestrator_lease_revoked') {
+      const lease = this._validateRunOrchestratorLeaseRevoked(p, event, true);
+      this._runOrchestratorLeases.set(lease.leaseId, freeze({
+        ...clone(lease), status: 'revoked', revokedEvent: event.seq,
+      }));
+    } else if (event.kind === 'run.lineage_admitted') {
+      const lineage = this._validateRunLineageAdmission(p, event, true);
+      this._runLineages.set(lineage.childRunId, freeze(clone(lineage)));
+      this._runLineageEventSeqs.set(lineage.childRunId, event.seq);
+      const children = [...(this._runChildrenByParent.get(lineage.parentRunId) ?? [])];
+      children.push(lineage.childRunId);
+      this._runChildrenByParent.set(lineage.parentRunId, freeze(children));
+    } else if (event.kind === 'recovery.attempt_admitted') {
+      const admission = this._validateRecoveryAttemptAdmissionPayload(p, event, true);
+      const attempt = freeze({
+        ...clone(admission), actor: event.actor, state: 'pending', admittedEvent: event.seq,
+        completedEvent: null, receipt: null, receiptDigest: null,
+      });
+      this._recoveryAttemptsById.set(admission.attemptId, attempt);
+      this._recoveryAttemptHeads.set(admission.seriesId, admission.attemptId);
+    } else if (event.kind === 'recovery.attempt_completed') {
+      const completion = this._validateRecoveryAttemptCompletionPayload(p, event, true);
+      const attempt = freeze({
+        ...clone(completion.attempt), state: completion.payload.state,
+        completedEvent: event.seq, receipt: clone(completion.payload.receipt),
+        receiptDigest: completion.payload.receiptDigest,
+      });
+      this._recoveryAttemptsById.set(attempt.attemptId, attempt);
+      this._recoveryAttemptHeads.set(attempt.seriesId, attempt.attemptId);
     } else if (event.kind === 'task.created') {
       if (p.runId != null && this._runs.get(p.runId)?.status === 'sealed') {
         throw new CoordinationIntegrityError(`task ${p.id} was admitted to sealed run ${p.runId}`, 'run_sealed');
       }
+      const topology = this._validateTaskTopology(p, this._taskTopologyHint(event), this._loading);
+      if (topology) this._taskTopologies.set(p.id, topology);
       this._tasks.set(p.id, freeze({ ...clone(p), status: 'pending', assignee: null, version: 1, createdEvent: event.seq, claimedEvent: null, terminalEvent: null, artifactIds: [] }));
       this._setKnowledgeNode(event, `task:${p.id}`, freeze({ id: `task:${p.id}`, type: 'Task', grounding: 'observed', body: `Task ${p.id}`, evidence: [{ coordinationSeq: event.seq }], observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: event.seq, eventTime: event.ts, validFrom: event.ts, validTo: null, validityVersion: 1 }));
     } else if (event.kind === 'task.claimed') {
@@ -3421,8 +4472,10 @@ export class CoordinationStore {
         ...clone(p), actor: event.actor, status: 'stopping', admittedEvent: event.seq, admittedAt: event.ts,
         receipt: null, completedEvent: null, completedAt: null,
       }));
+      for (const targetRunId of p.targetRunIds ?? [p.runId]) this._runStopByTarget.set(targetRunId, p.runId);
+      const stoppedRunIds = new Set(p.targetRunIds ?? [p.runId]);
       for (const [exportId, state] of this._runResultExports) {
-        if (state.runId !== p.runId || state.status !== 'pending') continue;
+        if (!stoppedRunIds.has(state.runId) || state.status !== 'pending') continue;
         const cancellationCore = {
           schemaVersion: 1,
           kind: 'run_stop',
@@ -3547,6 +4600,7 @@ export class CoordinationStore {
   routePolicy() { return clone(this._routePolicy); }
   representationPolicy() { return clone(this._representationPolicy); }
   goalPlanPolicy() { return clone(this._goalPlanPolicy); }
+  workflowPolicy() { return clone(this._workflowPolicy); }
   canonicalOrderPolicy() { return clone(this._canonicalOrderPolicy); }
   goalVersion(goalId, version) { return clone(this._goals.get(this._goalVersionKey(goalId, version)) ?? null); }
   planVersion(planId, version) { return clone(this._plans.get(this._planVersionKey(planId, version)) ?? null); }
@@ -3655,10 +4709,12 @@ export class CoordinationStore {
     return freeze({ ok: true, result: 'decided', event: clone(event), approval: clone(approval) });
   }
 
-  _planDispatchState(gate, route) {
+  _planDispatchState(gate, route, preservedResumeClaim = null, options = {}) {
     const fields = ['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'expectedDispatchVersion', 'capabilities', 'effects'];
+    if (Object.hasOwn(gate ?? {}, 'requiredEffects')) fields.push('requiredEffects');
     if (!gate || typeof gate !== 'object' || Array.isArray(gate) || Object.keys(gate).sort().join(',') !== fields.sort().join(',')
       || gate.expectedDispatchVersion !== 0 || !Array.isArray(gate.capabilities) || !Array.isArray(gate.effects)
+      || (Object.hasOwn(gate, 'requiredEffects') && !Array.isArray(gate.requiredEffects))
       || !route || Object.keys(route).sort().join(',') !== ['effort', 'model', 'vendor'].sort().join(',')) throw new CoordinationRefusal('plan dispatch coordinates are invalid', 'plan_dispatch_invalid');
     const goal = this._goals.get(this._goalVersionKey(gate.goalId, gate.goalVersion)); const plan = this._plans.get(this._planVersionKey(gate.planId, gate.planVersion));
     if (!goal || !plan || goal.digest !== gate.goalDigest || plan.digest !== gate.planDigest || plan.goal.goalId !== goal.goalId || plan.goal.version !== goal.version || plan.goal.digest !== goal.digest) throw new CoordinationRefusal('plan dispatch coordinates are stale', 'plan_stale');
@@ -3670,10 +4726,28 @@ export class CoordinationStore {
     if (!approval || approval.disposition !== 'approved' || approval.policyDigest !== this._goalPlanPolicy.policyDigest) throw new CoordinationRefusal('plan is not currently approved', 'plan_not_approved');
     if (Date.parse(this._clock()) - Date.parse(approval.decidedAt) > this._goalPlanPolicy.approvalTtlMs) throw new CoordinationRefusal('plan approval expired', 'plan_approval_expired');
     const node = plan.nodes.find((row) => row.key === gate.nodeKey); if (!node) throw new CoordinationRefusal('plan node is unavailable', 'plan_node_not_found');
+    if (Object.hasOwn(node, 'revision') && options.allowRevision !== true) {
+      throw new CoordinationRefusal('workflow revision requires its dedicated Plan admission',
+        'plan_revision_api_required');
+    }
     const dispatchKey = this._planNodeKey(plan.planId, plan.version, node.key);
-    if (this._planDispatches.has(dispatchKey)) throw new CoordinationRefusal('plan node dispatch version is stale', 'plan_dispatch_stale');
+    if (preservedResumeClaim) {
+      // PS5: one sanctioned re-dispatch of an already-cancelled node from a pinned checkpoint.
+      const attestation = this._validPreservedResumeAttestation(preservedResumeClaim);
+      if (!attestation) throw new CoordinationRefusal('preserved resume attestation is invalid', 'preserved_resume_invalid');
+      const prior = this._planDispatches.get(dispatchKey);
+      if (!prior) throw new CoordinationRefusal('preserved resume has no prior node dispatch', 'plan_dispatch_stale');
+      const priorTask = this._tasks.get(prior.taskId);
+      if (!priorTask || priorTask.status !== 'cancelled' || priorTask.id !== attestation.priorTaskId) {
+        throw new CoordinationRefusal('preserved resume prior task is not the cancelled preserved task', 'plan_dispatch_stale');
+      }
+    } else if (this._planDispatches.has(dispatchKey)) throw new CoordinationRefusal('plan node dispatch version is stale', 'plan_dispatch_stale');
     const capabilities = [...gate.capabilities].sort(); const effects = [...gate.effects].sort();
-    if (canonicalDigest(capabilities) !== canonicalDigest(node.capabilities) || canonicalDigest(effects) !== canonicalDigest(node.effects)) throw new CoordinationRefusal('plan node capabilities/effects changed', 'plan_effect_mismatch');
+    const requiredEffects = Array.isArray(gate.requiredEffects) ? [...gate.requiredEffects].sort() : [];
+    if (canonicalDigest(capabilities) !== canonicalDigest(node.capabilities)
+      || canonicalDigest(effects) !== canonicalDigest(node.effects)
+      || Object.hasOwn(gate, 'requiredEffects') !== Object.hasOwn(node, 'requiredEffects')
+      || canonicalDigest(requiredEffects) !== canonicalDigest(node.requiredEffects ?? [])) throw new CoordinationRefusal('plan node capabilities/effects changed', 'plan_effect_mismatch');
     if ((node.routes.harnesses.length > 0 && !node.routes.harnesses.includes(route.vendor))
       || (node.routes.models.length > 0 && !node.routes.models.includes(route.model))
       || (node.routes.efforts.length > 0 && !node.routes.efforts.includes(route.effort))) throw new CoordinationRefusal('requested route is outside the approved plan node', 'plan_route_mismatch');
@@ -3691,7 +4765,13 @@ export class CoordinationStore {
     return freeze({ goal: clone(goal), plan: clone(plan), node: clone(node), approval: clone(approval), binding, resolvedDeps: resolvedDeps.sort(), brief: buildAuthoritativeBrief(goal, plan, node, binding) });
   }
 
-  previewPlanDispatch(gate, route) { return this._planDispatchState(gate, route); }
+  previewPlanDispatch(gate, route, preservedResumeClaim = null) { return this._planDispatchState(gate, route, preservedResumeClaim); }
+
+  previewPlanRevision(gate, route) {
+    const state = this._planDispatchState(gate, route, null, { allowRevision: true });
+    this._workflowRevisionAuthority(state.plan, state.node);
+    return state;
+  }
 
   reconcilePlanGatedTask(taskId, gate, route, auth) {
     if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
@@ -3712,10 +4792,105 @@ export class CoordinationStore {
       || canonicalDigest(expectedBinding) !== canonicalDigest(observedBinding)
       || canonicalDigest(gate?.capabilities) !== canonicalDigest(prior.payload?.capabilities)
       || canonicalDigest(gate?.effects) !== canonicalDigest(prior.payload?.effects)
+      || Object.hasOwn(gate ?? {}, 'requiredEffects') !== Object.hasOwn(prior.payload ?? {}, 'requiredEffects')
+      || canonicalDigest(gate?.requiredEffects ?? []) !== canonicalDigest(prior.payload?.requiredEffects ?? [])
       || canonicalDigest(route) !== canonicalDigest(prior.payload?.route)) {
       throw new CoordinationRefusal('plan dispatch replay differs from the admitted transaction', 'plan_dispatch_conflict');
     }
     return freeze({ ok: true, result: 'reconciled', dispatchEvent: clone(prior), taskEvent: clone(taskEvent), task: this.task(taskId), dispatch: clone(prior.payload) });
+  }
+
+  reconcilePlanRevisionTask(taskId, gate, route, auth) {
+    const prior = this._byKey.get(auth?.key); const taskEvent = prior ? this._events[prior.seq] : null;
+    const binding = prior?.payload?.binding;
+    const expected = gate && typeof gate === 'object' ? {
+      goalId: gate.goalId, goalVersion: gate.goalVersion, goalDigest: gate.goalDigest,
+      planId: gate.planId, planVersion: gate.planVersion, planDigest: gate.planDigest,
+      nodeKey: gate.nodeKey,
+    } : null;
+    const observed = binding ? {
+      goalId: binding.goalId, goalVersion: binding.goalVersion, goalDigest: binding.goalDigest,
+      planId: binding.planId, planVersion: binding.planVersion, planDigest: binding.planDigest,
+      nodeKey: binding.nodeKey,
+    } : null;
+    const plan = binding ? this._plans.get(this._planVersionKey(binding.planId, binding.planVersion)) : null;
+    const node = plan?.nodes.find((row) => row.key === binding?.nodeKey);
+    if (!prior || prior.kind !== 'plan.node_dispatched' || prior.actor !== auth?.actor
+      || prior.payload?.taskId !== taskId || taskEvent?.kind !== 'task.created'
+      || taskEvent.batch?.id !== prior.batch?.id || gate?.expectedDispatchVersion !== 0
+      || canonicalDigest(expected) !== canonicalDigest(observed)
+      || canonicalDigest(gate?.capabilities) !== canonicalDigest(prior.payload?.capabilities)
+      || canonicalDigest(gate?.effects) !== canonicalDigest(prior.payload?.effects)
+      || canonicalDigest(route) !== canonicalDigest(prior.payload?.route)
+      || !node?.revision || canonicalDigest(node.revision) !== canonicalDigest(prior.payload?.revision)) {
+      throw new CoordinationRefusal('Plan revision replay differs from the admitted transaction',
+        'plan_revision_conflict');
+    }
+    return freeze({ ok: true, result: 'reconciled', dispatchEvent: clone(prior),
+      taskEvent: clone(taskEvent), task: this.task(taskId), dispatch: clone(prior.payload) });
+  }
+
+  createPlanRevisionTask(fields, gate, route, auth) {
+    if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
+    const requestDigest = goalPlanDigest({ principalId: auth.principalId, gate, route,
+      task: fields });
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      const second = this._events[prior.seq];
+      if (prior.kind !== 'plan.node_dispatched' || prior.actor !== auth.actor
+        || prior.payload?.requestDigest !== requestDigest
+        || !prior.payload?.revision
+        || second?.kind !== 'task.created' || second.batch?.id !== prior.batch?.id) {
+        throw new CoordinationRefusal('Plan revision idempotency key is bound differently',
+          'plan_revision_conflict');
+      }
+      return freeze({ ok: true, result: 'idempotent', dispatchEvent: clone(prior),
+        taskEvent: clone(second), task: this.task(second.payload.id), dispatch: clone(prior.payload) });
+    }
+    const state = this._planDispatchState(gate, route, null, { allowRevision: true });
+    if (!state.node.revision) throw new CoordinationRefusal('Plan node has no workflow revision authority', 'plan_revision_invalid');
+    this._workflowRevisionAuthority(state.plan, state.node);
+    if (this._tasks.has(fields?.id)) throw new CoordinationRefusal('Plan revision task id already exists', 'duplicate_task');
+    if (!planBriefMatches(fields?.brief, state.brief, { goalPlanCoordinates: true })
+      || canonicalDigest(fields?.brief?.goalPlan) !== canonicalDigest(state.binding)
+      || canonicalDigest(fields?.brief?.revisionContext) !== canonicalDigest(state.node.revision)
+      || canonicalDigest(fields?.deps ?? []) !== canonicalDigest(state.resolvedDeps)
+      || fields?.refines !== state.node.revision.parent.taskId || fields?.relation !== 'revision'
+      || fields?.worktreeBaseSha !== state.node.revision.parent.resultSha
+      || fields?.runId !== state.goal.runId || fields?.taskType !== 'general'
+      || fields?.vendorRequested !== route.vendor || fields?.modelRequested !== route.model
+      || fields?.modelPolicy !== null || fields?.effortRequested !== route.effort
+      || fields?.effortResolved !== null || fields?.effortObserved !== null
+      || fields?.routeKey !== null
+      || canonicalDigest(fields?.sessionRequest) !== canonicalDigest({ mode: 'new' })) {
+      throw new CoordinationRefusal('Plan revision task differs from approved authority',
+        'plan_revision_invalid');
+    }
+    const taskPayload = clone(fields);
+    const dispatchPayload = {
+      schemaVersion: 1, requestDigest,
+      authority: { principalId: auth.principalId, repoId: auth.repoId, runId: auth.runId ?? null },
+      binding: clone(state.binding), taskId: taskPayload.id,
+      taskPayloadDigest: canonicalDigest(taskPayload), expectedDispatchVersion: 0,
+      newDispatchVersion: 1, resolvedDeps: clone(state.resolvedDeps),
+      nodeBudget: clone(state.node.budget), route: clone(route),
+      capabilities: clone(state.node.capabilities), effects: clone(state.node.effects),
+      ...(Object.hasOwn(state.node, 'requiredEffects')
+        ? { requiredEffects: clone(state.node.requiredEffects) } : {}),
+      revision: clone(state.node.revision),
+    };
+    const fixedTs = this._clock();
+    const prospectiveDispatch = { seq: this._events.length + 1, ts: fixedTs, payload: dispatchPayload };
+    const prospectiveTask = { seq: this._events.length + 2, ts: fixedTs, payload: taskPayload };
+    this._validateGoalPlanDispatchPair(prospectiveDispatch, prospectiveTask, false);
+    const [dispatchEvent, taskEvent] = this._appendBatch([
+      { kind: 'plan.node_dispatched', payload: dispatchPayload,
+        auth: { actor: auth.actor, key: auth.key }, fixedTs },
+      { kind: 'task.created', payload: taskPayload,
+        auth: { actor: auth.actor, key: `${auth.key}:task` }, fixedTs },
+    ], 'goal_plan_node_dispatch');
+    return freeze({ ok: true, result: 'created', dispatchEvent: clone(dispatchEvent),
+      taskEvent: clone(taskEvent), task: this.task(taskPayload.id), dispatch: clone(dispatchPayload) });
   }
 
   createPlanGatedTask(fields, gate, route, auth) {
@@ -3733,6 +4908,7 @@ export class CoordinationStore {
       || canonicalDigest(fields?.brief?.goalPlan) !== canonicalDigest(state.binding)
       || canonicalDigest(fields?.brief?.capabilities) !== canonicalDigest(state.node.capabilities)
       || canonicalDigest(fields?.brief?.effects) !== canonicalDigest(state.node.effects)
+      || canonicalDigest(fields?.brief?.requiredEffects ?? []) !== canonicalDigest(state.node.requiredEffects ?? [])
       || fields?.brief?.providerTurns !== state.node.budget.providerTurns) throw new CoordinationRefusal('task Brief differs from the approved authoritative Brief', 'plan_brief_mismatch');
     if (canonicalDigest(fields?.deps ?? []) !== canonicalDigest(state.resolvedDeps)) throw new CoordinationRefusal('task dependencies differ from the plan DAG', 'plan_dependency_mismatch');
     if (fields?.runId !== state.goal.runId || fields?.vendorRequested !== route.vendor || (fields?.modelRequested ?? null) !== route.model || (fields?.effortRequested ?? null) !== route.effort) throw new CoordinationRefusal('task route differs from the plan dispatch', 'plan_route_mismatch');
@@ -3743,6 +4919,178 @@ export class CoordinationStore {
       taskPayloadDigest: canonicalDigest(taskPayload), expectedDispatchVersion: 0, newDispatchVersion: 1,
       resolvedDeps: clone(state.resolvedDeps), nodeBudget: clone(state.node.budget),
       route: clone(route), capabilities: clone(state.node.capabilities), effects: clone(state.node.effects),
+      ...(Object.hasOwn(state.node, 'requiredEffects') ? { requiredEffects: clone(state.node.requiredEffects) } : {}),
+    };
+    const fixedTs = this._clock();
+    const prospectiveDispatch = { seq: this._events.length + 1, ts: fixedTs, payload: dispatchPayload };
+    const prospectiveTask = { seq: this._events.length + 2, ts: fixedTs, payload: taskPayload };
+    this._validateGoalPlanDispatchPair(prospectiveDispatch, prospectiveTask, false);
+    const [dispatchEvent, taskEvent] = this._appendBatch([
+      { kind: 'plan.node_dispatched', payload: dispatchPayload, auth: { actor: auth.actor, key: auth.key }, fixedTs },
+      { kind: 'task.created', payload: taskPayload, auth: { actor: auth.actor, key: `${auth.key}:task` }, fixedTs },
+    ], 'goal_plan_node_dispatch');
+    return freeze({ ok: true, result: 'created', dispatchEvent: clone(dispatchEvent), taskEvent: clone(taskEvent), task: this.task(taskPayload.id), dispatch: clone(dispatchPayload) });
+  }
+
+  createPlanGatedWave(rawEntries, auth) {
+    if (!this._goalPlanPolicy) {
+      throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
+    }
+    if (!Array.isArray(rawEntries) || rawEntries.length < 2
+      || rawEntries.length > this._goalPlanPolicy.limits.maxNodes
+      || !auth || typeof auth !== 'object' || Array.isArray(auth)) {
+      throw new CoordinationRefusal('plan wave dispatch is invalid', 'plan_wave_invalid');
+    }
+    const entries = [...rawEntries].sort((left, right) => {
+      const a = left?.gate?.nodeKey ?? ''; const b = right?.gate?.nodeKey ?? '';
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
+    const nodeKeys = entries.map((entry) => entry?.gate?.nodeKey);
+    const taskIds = entries.map((entry) => entry?.fields?.id);
+    if (new Set(nodeKeys).size !== entries.length || new Set(taskIds).size !== entries.length) {
+      throw new CoordinationRefusal('plan wave contains duplicate node or task identity', 'plan_wave_invalid');
+    }
+    const waveDigest = goalPlanDigest({
+      authority: { principalId: auth.principalId, repoId: auth.repoId, runId: auth.runId ?? null },
+      entries: entries.map(({ fields, gate, route }) => ({ fields, gate, route })),
+    });
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      const count = entries.length * 2;
+      const events = this._events.slice(prior.seq - 1, prior.seq - 1 + count);
+      if (prior.kind !== 'plan.node_dispatched' || prior.actor !== auth.actor
+        || prior.batch?.kind !== 'goal_plan_wave_dispatch' || prior.batch.index !== 0
+        || prior.batch.count !== count || events.length !== count
+        || events.some((event, index) => event.batch?.id !== prior.batch.id || event.batch?.index !== index)
+        || events.filter((_, index) => index % 2 === 0)
+          .some((event) => event.payload?.wave?.digest !== waveDigest)) {
+        throw new CoordinationRefusal('plan wave idempotency key is bound differently', 'plan_wave_conflict');
+      }
+      return freeze({
+        ok: true, result: 'idempotent', waveDigest,
+        tasks: entries.map((entry) => this.task(entry.fields.id)),
+        events: events.map(clone),
+      });
+    }
+
+    const states = entries.map(({ gate, route }) => this._planDispatchState(gate, route));
+    const planIdentity = states.map((state) => `${state.plan.planId}\0${state.plan.version}\0${state.plan.digest}`);
+    if (new Set(planIdentity).size !== 1 || states.some((state) => state.node.deps.length !== 0)) {
+      throw new CoordinationRefusal('initial plan wave must contain root nodes from one approved Plan',
+        'plan_wave_invalid');
+    }
+    if (taskIds.some((taskId) => this._tasks.has(taskId))) {
+      throw new CoordinationRefusal('plan wave task identity already exists', 'duplicate_task');
+    }
+    if (this._taskTopologyPolicy) {
+      const runId = states[0].goal.runId;
+      const sameRun = [...this._taskTopologies.values()].filter((node) => node.runId === runId).length;
+      if (sameRun + entries.length > this._taskTopologyPolicy.maxTasksPerRun) {
+        throw new CoordinationRefusal('plan wave exceeds the deployment Run task ceiling',
+          'task_topology_run_limit');
+      }
+    }
+    // Capacity preflight may await at the Coordinator boundary. A stop can be admitted after the
+    // preview but before this synchronous transaction, so fence again at the last pre-write point.
+    this._assertRunAdmissionOpen(states[0].goal.runId);
+
+    const fixedTs = this._clock();
+    const batchEntries = [];
+    for (let index = 0; index < entries.length; index += 1) {
+      const { fields, gate, route } = entries[index];
+      const state = states[index];
+      if (!planBriefMatches(fields?.brief, state.brief, { goalPlanCoordinates: true })
+        || canonicalDigest(fields?.brief?.goalPlan) !== canonicalDigest(state.binding)
+        || canonicalDigest(fields?.brief?.capabilities) !== canonicalDigest(state.node.capabilities)
+        || canonicalDigest(fields?.brief?.effects) !== canonicalDigest(state.node.effects)
+        || canonicalDigest(fields?.brief?.requiredEffects ?? []) !== canonicalDigest(state.node.requiredEffects ?? [])
+        || fields?.brief?.providerTurns !== state.node.budget.providerTurns
+        || canonicalDigest(fields?.deps ?? []) !== canonicalDigest(state.resolvedDeps)
+        || fields?.runId !== state.goal.runId || fields?.vendorRequested !== route.vendor
+        || (fields?.modelRequested ?? null) !== route.model
+        || (fields?.effortRequested ?? null) !== route.effort) {
+        throw new CoordinationRefusal('plan wave task differs from approved authority',
+          'plan_wave_invalid');
+      }
+      const taskPayload = clone(fields);
+      const requestDigest = goalPlanDigest({ principalId: auth.principalId, gate, route, task: fields });
+      const dispatchPayload = {
+        schemaVersion: 1, requestDigest,
+        authority: { principalId: auth.principalId, repoId: auth.repoId, runId: auth.runId ?? null },
+        binding: clone(state.binding), taskId: taskPayload.id,
+        taskPayloadDigest: canonicalDigest(taskPayload), expectedDispatchVersion: 0,
+        newDispatchVersion: 1, resolvedDeps: clone(state.resolvedDeps),
+        nodeBudget: clone(state.node.budget), route: clone(route),
+        capabilities: clone(state.node.capabilities), effects: clone(state.node.effects),
+        ...(Object.hasOwn(state.node, 'requiredEffects')
+          ? { requiredEffects: clone(state.node.requiredEffects) } : {}),
+        wave: { schemaVersion: 1, digest: waveDigest, index, count: entries.length },
+      };
+      const dispatchKey = index === 0 ? auth.key : `${auth.key}:${state.node.key}`;
+      const prospectiveDispatch = {
+        seq: this._events.length + batchEntries.length + 1, ts: fixedTs, payload: dispatchPayload,
+      };
+      const prospectiveTask = {
+        seq: prospectiveDispatch.seq + 1, ts: fixedTs, payload: taskPayload,
+      };
+      this._validateGoalPlanDispatchPair(prospectiveDispatch, prospectiveTask, false);
+      batchEntries.push(
+        { kind: 'plan.node_dispatched', payload: dispatchPayload, auth: { actor: auth.actor, key: dispatchKey }, fixedTs },
+        { kind: 'task.created', payload: taskPayload, auth: { actor: auth.actor, key: `${dispatchKey}:task` }, fixedTs },
+      );
+    }
+    const events = this._appendBatch(batchEntries, 'goal_plan_wave_dispatch');
+    return freeze({
+      ok: true, result: 'created', waveDigest,
+      tasks: entries.map((entry) => this.task(entry.fields.id)), events: events.map(clone),
+    });
+  }
+
+  // PS5: re-dispatch one approved Plan node from a preserved progress checkpoint. The caller
+  // (Coordinator) has already postchecked the immutable checkpoint ref; this admission only
+  // records the attestation and validates that the prior dispatch's task is durably terminal-
+  // cancelled, so a fresh owned task may continue the same Plan node at the preserved commit.
+  // Reuses the ordinary two-event goal_plan_node_dispatch batch so the integrity walker and the
+  // last-wins plan projection pick up the resumed task as the node's current dispatch.
+  createAndClaimPreservedResumeRefinement(fields, gate, route, preservedResume, auth) {
+    if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
+    const attestation = this._validPreservedResumeAttestation(preservedResume);
+    if (!attestation) throw new CoordinationRefusal('preserved resume attestation is invalid', 'preserved_resume_invalid');
+    if (!gate || !route || !auth || typeof auth !== 'object') throw new CoordinationRefusal('preserved resume request is invalid', 'preserved_resume_invalid');
+    const requestDigest = goalPlanDigest({ principalId: auth.principalId, gate, route, task: fields, preservedResume: attestation });
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      const second = this._events[prior.seq];
+      if (prior.kind !== 'plan.node_dispatched' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest
+        || second?.kind !== 'task.created' || second.batch?.id !== prior.batch?.id
+        || !this._validPreservedResumeAttestation(prior.payload?.preservedResume)) {
+        throw new CoordinationRefusal('preserved resume idempotency key is bound differently', 'preserved_resume_conflict');
+      }
+      return freeze({ ok: true, result: 'idempotent', dispatchEvent: clone(prior), taskEvent: clone(second), task: this.task(second.payload.id), dispatch: clone(prior.payload) });
+    }
+    const state = this._planDispatchState(gate, route, attestation);
+    if (this._tasks.has(fields?.id)) throw new CoordinationRefusal('plan task id already exists', 'duplicate_task');
+    if (!planBriefMatches(fields?.brief, state.brief, { goalPlanCoordinates: true })
+      || canonicalDigest(fields?.brief?.goalPlan) !== canonicalDigest(state.binding)
+      || canonicalDigest(fields?.brief?.capabilities) !== canonicalDigest(state.node.capabilities)
+      || canonicalDigest(fields?.brief?.effects) !== canonicalDigest(state.node.effects)
+      || canonicalDigest(fields?.brief?.requiredEffects ?? []) !== canonicalDigest(state.node.requiredEffects ?? [])
+      || fields?.brief?.providerTurns !== state.node.budget.providerTurns) throw new CoordinationRefusal('task Brief differs from the approved authoritative Brief', 'plan_brief_mismatch');
+    if (canonicalDigest(fields?.deps ?? []) !== canonicalDigest(state.resolvedDeps)) throw new CoordinationRefusal('task dependencies differ from the plan DAG', 'plan_dependency_mismatch');
+    if (fields?.runId !== state.goal.runId || fields?.vendorRequested !== route.vendor || (fields?.modelRequested ?? null) !== route.model || (fields?.effortRequested ?? null) !== route.effort) throw new CoordinationRefusal('task route differs from the plan dispatch', 'plan_route_mismatch');
+    // The resumed task carries the preserved lineage explicitly; it is not constrained to the
+    // node's DAG dependencies because it re-dispatches the same node, not a successor.
+    if (fields?.refines !== attestation.priorTaskId) throw new CoordinationRefusal('preserved resume lineage does not match the attested prior task', 'preserved_resume_lineage_mismatch');
+    const taskPayload = clone(fields);
+    const dispatchPayload = {
+      schemaVersion: 1, requestDigest,
+      authority: { principalId: auth.principalId, repoId: auth.repoId, runId: auth.runId ?? null },
+      binding: clone(state.binding), taskId: taskPayload.id,
+      taskPayloadDigest: canonicalDigest(taskPayload), expectedDispatchVersion: 0, newDispatchVersion: 1,
+      resolvedDeps: clone(state.resolvedDeps), nodeBudget: clone(state.node.budget),
+      route: clone(route), capabilities: clone(state.node.capabilities), effects: clone(state.node.effects),
+      ...(Object.hasOwn(state.node, 'requiredEffects') ? { requiredEffects: clone(state.node.requiredEffects) } : {}),
+      preservedResume: clone(attestation),
     };
     const fixedTs = this._clock();
     const prospectiveDispatch = { seq: this._events.length + 1, ts: fixedTs, payload: dispatchPayload };
@@ -3811,6 +5159,7 @@ export class CoordinationStore {
       || canonicalDigest(fields.brief?.goalPlan) !== canonicalDigest(state.binding)
       || canonicalDigest(fields.brief?.capabilities) !== canonicalDigest(state.node.capabilities)
       || canonicalDigest(fields.brief?.effects) !== canonicalDigest(state.node.effects)
+      || canonicalDigest(fields.brief?.requiredEffects ?? []) !== canonicalDigest(state.node.requiredEffects ?? [])
       || fields.brief?.providerTurns !== state.node.budget.providerTurns) {
       throw new CoordinationRefusal('task Brief differs from the approved recovery node', 'plan_brief_mismatch');
     }
@@ -3850,6 +5199,7 @@ export class CoordinationStore {
       expectedDispatchVersion: 0, newDispatchVersion: 1,
       resolvedDeps: clone(state.resolvedDeps), nodeBudget: clone(state.node.budget),
       route: clone(route), capabilities: clone(state.node.capabilities), effects: clone(state.node.effects),
+      ...(Object.hasOwn(state.node, 'requiredEffects') ? { requiredEffects: clone(state.node.requiredEffects) } : {}),
     };
     const fixedTs = this._clock();
     const prospectiveDispatch = { seq: this._events.length + 1, ts: fixedTs, payload: dispatchPayload };
@@ -4098,7 +5448,85 @@ export class CoordinationStore {
     }
     return freeze({ ok: true, projection: clone(representation), grounding: 'derived' });
   }
-  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), ...(this._runStops.size > 0 ? { runStops: [...this._runStops.values()].map(clone) } : {}), ...(this._runResultAdoptions.size > 0 ? { runResultAdoptions: [...this._runResultAdoptions.values()].map(clone) } : {}), ...(this._runResultExports.size > 0 ? { runResultExports: [...this._runResultExports.values()].map(clone) } : {}), artifacts: [...this._artifacts.values()].map(clone), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._goalPlanPolicy || this._goals.size > 0 ? { goalPlan: { goals: [...this._goals.values()].map(clone), plans: [...this._plans.values()].map(clone), approvals: [...this._planApprovals.values()].map(clone), dispatches: [...this._planDispatches.values()].map(clone), budgetSettlements: [...this._planBudgetSettlements.values()].map(clone) } } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
+
+  _effectiveRunOrchestratorLeaseState(lease, now = this._clock()) {
+    if (lease.status === 'revoked') return freeze({ state: 'revoked', reason: lease.revocation?.reason ?? 'session_revoked' });
+    if (Date.parse(now) >= Date.parse(lease.expiresAt)) return freeze({ state: 'expired', reason: 'expired' });
+    const task = this._tasks.get(lease.parent.taskId);
+    if (!task || task.version !== lease.parent.taskVersion || task.assignee !== lease.parent.workerId) {
+      return freeze({ state: 'inactive', reason: 'parent_stale' });
+    }
+    if (task.status !== 'working') return freeze({ state: 'inactive', reason: 'parent_terminal' });
+    if (this.runStop(lease.parent.runId)) return freeze({ state: 'inactive', reason: 'parent_run_stopping' });
+    return freeze({ state: 'active', reason: null });
+  }
+
+  runAuthoritySnapshot() {
+    if (!this._runLineagePolicy) return null;
+    const leases = [...this._runOrchestratorLeases.values()];
+    const roots = new Set([...this._runLineages.values()].map((lineage) => lineage.rootRunId));
+    for (const lease of leases) {
+      roots.add(this._runLineages.get(lease.parent.runId)?.rootRunId ?? lease.parent.runId);
+    }
+    return freeze({
+      schemaVersion: 1,
+      policy: clone(this._runLineagePolicy),
+      policyDigest: canonicalDigest(this._runLineagePolicy),
+      counts: {
+        leases: leases.length,
+        activeLeases: leases.filter((lease) => this._effectiveRunOrchestratorLeaseState(lease).state === 'active').length,
+        lineages: this._runLineages.size,
+        roots: roots.size,
+      },
+    });
+  }
+
+  runOrchestrationView(runId) {
+    if (!this._runLineagePolicy) return null;
+    if (!validRunId(runId)) {
+      this._runLineageFailure('run orchestration view request is invalid', 'run_lineage_invalid');
+    }
+    const lineage = this._runLineages.get(runId) ?? null;
+    const children = this.runChildren(runId);
+    const descendants = this.runDescendants(runId);
+    const leaseStates = { active: 0, expired: 0, revoked: 0, inactive: 0 };
+    const leases = [...this._runOrchestratorLeases.values()]
+      .filter((lease) => lease.parent.runId === runId);
+    for (const lease of leases) {
+      leaseStates[this._effectiveRunOrchestratorLeaseState(lease).state] += 1;
+    }
+    const stopOwnerRunId = this._runStopByTarget.get(runId) ?? null;
+    const stop = stopOwnerRunId ? this._runStops.get(stopOwnerRunId) ?? null : null;
+    const stopOwnedHere = stopOwnerRunId === runId;
+    return freeze({
+      schemaVersion: 1,
+      role: lineage ? 'descendant' : 'root',
+      depth: lineage?.depth ?? 0,
+      topology: {
+        hasParent: lineage !== null,
+        directChildren: children.length,
+        descendants: descendants.length,
+      },
+      recipientAuthority: {
+        state: leaseStates.active > 0 ? 'active' : leases.length === 0 ? 'unavailable' : 'inactive',
+        counts: { total: leases.length, ...leaseStates },
+      },
+      subtreeStop: stop ? {
+        state: stop.status,
+        inherited: !stopOwnedHere,
+        targets: stopOwnedHere ? {
+          runs: stop.targetRunIds?.length ?? 1,
+          tasks: stop.targetTaskIds.length,
+          workers: stop.targetWorkerIds.length,
+          remainingWorkers: stop.receipt?.remainingCount ?? stop.targetWorkerIds.length,
+        } : null,
+      } : {
+        state: 'open', inherited: false, targets: null,
+      },
+    });
+  }
+
+  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), ...(this._runStops.size > 0 ? { runStops: [...this._runStops.values()].map(clone) } : {}), ...(this._runLineagePolicy ? { runAuthority: this.runAuthoritySnapshot() } : {}), ...(this._runResultAdoptions.size > 0 ? { runResultAdoptions: [...this._runResultAdoptions.values()].map(clone) } : {}), ...(this._runResultExports.size > 0 ? { runResultExports: [...this._runResultExports.values()].map(clone) } : {}), artifacts: [...this._artifacts.values()].map(clone), ...(this._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...this._recoveryAttemptsById.values()].map(clone) } : {}), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._goalPlanPolicy || this._goals.size > 0 ? { goalPlan: { goals: [...this._goals.values()].map(clone), plans: [...this._plans.values()].map(clone), approvals: [...this._planApprovals.values()].map(clone), dispatches: [...this._planDispatches.values()].map(clone), budgetSettlements: [...this._planBudgetSettlements.values()].map(clone) } } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
   healthCheck() { try { if (!existsSync(this.file)) return this._events.length === 0; const raw = readFileSync(this.file, 'utf8'); return raw.length === 0 || raw.endsWith('\n'); } catch { return false; } }
   readyTasks() {
     return [...this._tasks.values()].filter((task) => task.status === 'pending' && task.assignee == null
@@ -4107,7 +5535,10 @@ export class CoordinationStore {
 
   fleetDrain(id) { return clone(this._fleetDrains.get(id) ?? null); }
 
-  runStop(runId) { return clone(this._runStops.get(runId) ?? null); }
+  runStop(runId) {
+    const authorityRunId = this._runStopByTarget.get(runId) ?? runId;
+    return clone(this._runStops.get(authorityRunId) ?? null);
+  }
 
   runResultAdoption(runId, nodeKey) {
     if (!validRunId(runId) || !boundedText(nodeKey, 256)) throw new TypeError('run result adoption coordinates are invalid');
@@ -4477,13 +5908,19 @@ export class CoordinationStore {
       }
       return freeze({ ok: true, result: 'replay', event: clone(prior), stop: this.runStop(fields.runId) });
     }
-    if (this._runStops.has(fields.runId)) throw new CoordinationRefusal('run stop identity conflict', 'run_stop_conflict');
+    if (this.runStop(fields.runId)) throw new CoordinationRefusal('run stop identity conflict', 'run_stop_conflict');
+    const lineage = this._runLineages.get(fields.runId) ?? null;
+    if (this._runLineagePolicy && (fields.repoId !== this._repoId
+      || (lineage && lineage.repoId !== fields.repoId))) {
+      throw new CoordinationRefusal('run stop repository differs from Run authority', 'run_stop_repository_mismatch');
+    }
     const known = this._goalHeads.has(this._goalScopeKey(fields.repoId, fields.runId))
+      || lineage?.repoId === fields.repoId
       || [...this._tasks.values()].some((task) => task.runId === fields.runId);
     if (!known) throw new CoordinationRefusal(`unknown run ${fields.runId}`, 'not_found');
     const targets = this._runStopTargets(fields.runId);
     const payload = { ...clone(fields), ...targets };
-    const preview = { actor: auth.actor, idempotencyKey: auth.key, payload };
+    const preview = { seq: this._events.length + 1, actor: auth.actor, idempotencyKey: auth.key, payload };
     this._validateRunStopAdmission(payload, preview);
     const event = this._append('run.stop_admitted', payload, auth);
     return freeze({ ok: true, result: 'admitted', event: clone(event), stop: this.runStop(fields.runId) });
@@ -4652,8 +6089,9 @@ export class CoordinationStore {
   }
 
   createTask(fields, auth) {
-    if (fields?.relation === 'recovery') {
-      throw new CoordinationRefusal('recovery relation requires the dedicated atomic refinement API', 'recovery_refinement_api_required');
+    if (['recovery', 'revision'].includes(fields?.relation)) {
+      throw new CoordinationRefusal(`${fields.relation} relation requires its dedicated atomic refinement API`,
+        fields.relation === 'revision' ? 'plan_revision_api_required' : 'recovery_refinement_api_required');
     }
     if (fields?.brief?.goalPlan) {
       throw new CoordinationRefusal('plan-bound tasks require the dedicated atomic dispatch API', 'goal_plan_dispatch_api_required');
@@ -5214,6 +6652,85 @@ export class CoordinationStore {
     return { ok: true, result: 'superseded', event: clone(event), artifact: this.artifact(oldId) };
   }
 
+  admitRecoveryAttempt(fields, auth) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      this._normalizeRecoveryAttemptAdmission(fields, false);
+      if (prior.kind !== 'recovery.attempt_admitted' || prior.actor !== auth?.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(fields)) {
+        throw new CoordinationRefusal('recovery attempt admission idempotency conflict', 'recovery_attempt_conflict');
+      }
+      const attempt = this.recoveryAttempt(prior.payload.attemptId);
+      if (!attempt || attempt.admittedEvent !== prior.seq) {
+        throw new CoordinationIntegrityError('recovery attempt projection is absent', 'recovery_attempt_integrity');
+      }
+      return freeze({ ok: true, result: 'replay', event: clone(prior), attempt });
+    }
+    const prospective = {
+      schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(),
+      kind: 'recovery.attempt_admitted', actor: auth?.actor,
+      idempotencyKey: auth?.key, payload: clone(fields),
+    };
+    const admission = this._validateRecoveryAttemptAdmissionPayload(fields, prospective, false);
+    if (auth?.key !== `recovery.attempt:${admission.attemptId}`) {
+      throw new CoordinationRefusal('recovery attempt idempotency key is invalid', 'recovery_attempt_invalid');
+    }
+    const event = this._append('recovery.attempt_admitted', clone(admission), auth, prospective.ts);
+    const attempt = this.recoveryAttempt(admission.attemptId);
+    if (!attempt || attempt.state !== 'pending' || attempt.admittedEvent !== event.seq) {
+      throw new CoordinationIntegrityError('recovery attempt admission did not materialize', 'recovery_attempt_integrity');
+    }
+    return freeze({ ok: true, result: 'admitted', event: clone(event), attempt });
+  }
+
+  completeRecoveryAttempt(fields, auth) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'recovery.attempt_completed' || prior.actor !== auth?.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(fields)) {
+        throw new CoordinationRefusal('recovery attempt completion idempotency conflict', 'recovery_attempt_conflict');
+      }
+      const attempt = this.recoveryAttempt(prior.payload.attemptId);
+      if (!attempt || attempt.completedEvent !== prior.seq) {
+        throw new CoordinationIntegrityError('recovery attempt completion projection is absent', 'recovery_attempt_integrity');
+      }
+      return freeze({ ok: true, result: 'replay', event: clone(prior), attempt });
+    }
+    const prospective = {
+      schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(),
+      kind: 'recovery.attempt_completed', actor: auth?.actor,
+      idempotencyKey: auth?.key, payload: clone(fields),
+    };
+    const completion = this._validateRecoveryAttemptCompletionPayload(fields, prospective, false);
+    if (auth?.key !== `recovery.attempt.complete:${completion.payload.attemptId}`) {
+      throw new CoordinationRefusal('recovery attempt completion key is invalid', 'recovery_attempt_completion_invalid');
+    }
+    const event = this._append('recovery.attempt_completed', clone(completion.payload), auth, prospective.ts);
+    const attempt = this.recoveryAttempt(completion.payload.attemptId);
+    if (!attempt || attempt.state !== completion.payload.state || attempt.completedEvent !== event.seq) {
+      throw new CoordinationIntegrityError('recovery attempt completion did not materialize', 'recovery_attempt_integrity');
+    }
+    return freeze({ ok: true, result: 'completed', event: clone(event), attempt });
+  }
+
+  recoveryAttempt(attemptId) {
+    return clone(this._recoveryAttemptsById.get(attemptId) ?? null);
+  }
+
+  recoveryAttemptHead(seriesId) {
+    const attemptId = this._recoveryAttemptHeads.get(seriesId);
+    return attemptId ? this.recoveryAttempt(attemptId) : null;
+  }
+
+  pendingRecoveryAttempts(limit = 1_000) {
+    if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
+      throw new TypeError('recovery attempt scan limit is invalid');
+    }
+    return [...this._recoveryAttemptsById.values()].filter((attempt) => attempt.state === 'pending')
+      .sort((left, right) => left.admittedEvent - right.admittedEvent)
+      .slice(0, limit).map(clone);
+  }
+
   recordDriver(kind, payload, auth) {
     if (['recovery.continuation_intent', 'recovery.dispatch_accepted', 'recovery.dispatch_refused'].includes(kind)) {
       throw new CoordinationRefusal('recovery dispatch state requires its dedicated atomic API', 'recovery_dispatch_api_required');
@@ -5717,20 +7234,21 @@ export class CoordinationStore {
     if (!factRow?.active || fact?.grounding !== 'derived' || fact?.envRef?.repoId !== repoId || typeof fact.ownerTask !== 'string' || !task || task.status !== 'completed' || !task.terminalEvent || !nodeMap.has(`task:${oracleTaskId}`)) return null;
     if (!/^scratch-fact:[a-f0-9]{64}$/.test(fact.id)) return null;
     const producer = state.tasks.get(fact.ownerTask); let producerRoute; let reviewerRoute;
-    try { producerRoute = JSON.parse(producer?.routeKey); reviewerRoute = JSON.parse(task.routeKey); } catch { return null; }
-    if (![producerRoute, reviewerRoute].every((tuple) => Array.isArray(tuple) && tuple.length === 6 && tuple.every((value) => typeof value === 'string')) || producerRoute[0] === reviewerRoute[0] || producerRoute[4] === reviewerRoute[4]) return null;
+    try { producerRoute = parseRouteTupleKey(producer?.routeKey); reviewerRoute = parseRouteTupleKey(task.routeKey); } catch { return null; }
+    const producerTuple = producerRoute.fields; const reviewerTuple = reviewerRoute.fields;
+    if (producerTuple[0] === reviewerTuple[0] || producerTuple[4] === reviewerTuple[4]) return null;
     const routeMatchesTask = (row, tuple) => row?.claimed?.payload?.routeKey === row.routeKey && row.claimed.payload.harnessResolved === `${tuple[0]}@${tuple[1]}`
       && (row.claimed.payload.modelResolved ?? 'default') === tuple[2] && (row.claimed.payload.effortResolved ?? 'default') === tuple[3] && row.payload.taskType === tuple[5];
-    if (!routeMatchesTask(producer, producerRoute) || !routeMatchesTask(task, reviewerRoute)) return null;
-    const commitment = { schemaVersion: 1, kind: 'scratch.fact', scratchFactId: fact.id, scratchFactDigest: canonicalDigest(fact), sourceEventSeq: factRow.event.seq, sourceEventDigest: canonicalDigest(factRow.event), repoId, envRefDigest: canonicalDigest(fact.envRef), producerTaskId: fact.ownerTask, producerHarness: producerRoute[0], producerFamily: producerRoute[4], reviewerHarness: reviewerRoute[0], reviewerFamily: reviewerRoute[4] };
+    if (!routeMatchesTask(producer, producerTuple) || !routeMatchesTask(task, reviewerTuple)) return null;
+    const commitment = { schemaVersion: 1, kind: 'scratch.fact', scratchFactId: fact.id, scratchFactDigest: canonicalDigest(fact), sourceEventSeq: factRow.event.seq, sourceEventDigest: canonicalDigest(factRow.event), repoId, envRefDigest: canonicalDigest(fact.envRef), producerTaskId: fact.ownerTask, producerHarness: producerTuple[0], producerFamily: producerTuple[4], reviewerHarness: reviewerTuple[0], reviewerFamily: reviewerTuple[4] };
     const review = task.payload.review;
     if (!review || review.kind !== 'oracle' || review.independent !== true || review.parentTaskId !== fact.ownerTask || review.baseSha !== fact.envRef.treeSha || task.payload.worktreeBaseSha !== fact.envRef.treeSha || canonicalDigest(review.knowledgeTarget) !== canonicalDigest(commitment)) return null;
     const acceptedByOracle = (artifact) => (artifact.provenance ?? []).some((ref) => {
         const mapped = Number.isSafeInteger(ref?.coordinationSeq) ? state.prefix[ref.coordinationSeq - 1] : null; if (mapped?.kind !== 'evidence.mapped' || mapped.payload?.kind !== 'verify.reverified') return false;
         if (mapped.payload.worker !== task.claimed?.payload?.worker || mapped.payload.worker !== task.payload.reservedWorkerId) return false;
         const source = this._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq); return source?.kind === 'verify.reverified' && source?.taskId === oracleTaskId && source?.runId === task.payload.runId && source?.payload?.accept === true && source?.routeKey === task.routeKey
-          && source?.harness === `${reviewerRoute[0]}@${reviewerRoute[1]}` && source?.modelResolved === reviewerRoute[2] && source?.effortResolved === reviewerRoute[3]
-          && source?.payload?.capture?.sha === artifact.refs?.sha && source?.payload?.capture?.baseSha === fact.envRef.treeSha && source?.payload?.capture?.model === reviewerRoute[2] && source?.payload?.capture?.effort === reviewerRoute[3] && source?.payload?.capture?.routeKey === task.routeKey;
+          && source?.harness === `${reviewerTuple[0]}@${reviewerTuple[1]}` && source?.modelResolved === reviewerTuple[2] && source?.effortResolved === reviewerTuple[3]
+          && source?.payload?.capture?.sha === artifact.refs?.sha && source?.payload?.capture?.baseSha === fact.envRef.treeSha && source?.payload?.capture?.model === reviewerTuple[2] && source?.payload?.capture?.effort === reviewerTuple[3] && source?.payload?.capture?.routeKey === task.routeKey;
       });
     const eligible = state.artifacts.filter((event) => {
       const artifact = event.payload; if (artifact.taskId !== oracleTaskId || artifact.kind !== 'review' || artifact.mediaType !== 'application/vnd.baton.review+json' || artifact.accepted !== true || canonicalDigest(artifact.review) !== canonicalDigest(review) || !nodeMap.has(`artifact:${artifact.id}`)) return false;
@@ -5741,7 +7259,7 @@ export class CoordinationStore {
     }).sort((a, b) => a.seq - b.seq);
     if (eligible.length !== 1) return null;
     const artifactEvent = eligible[0]; const mappedSeqs = artifactEvent.payload.provenance.map((ref) => ref.coordinationSeq).filter(Number.isSafeInteger).sort((a, b) => a - b);
-    return { taskId: oracleTaskId, taskNodeId: `task:${oracleTaskId}`, artifactId: artifactEvent.payload.id, artifactNodeId: `artifact:${artifactEvent.payload.id}`, artifactEventSeq: artifactEvent.seq, terminalEventSeq: task.terminalEvent.seq, evidenceSeqs: [...new Set([factRow.event.seq, task.terminalEvent.seq, artifactEvent.seq, ...mappedSeqs])].sort((a, b) => a - b), producerRoute, reviewerRoute, producerRouteDigest: canonicalDigest(producerRoute), reviewerRouteDigest: canonicalDigest(reviewerRoute) };
+    return { taskId: oracleTaskId, taskNodeId: `task:${oracleTaskId}`, artifactId: artifactEvent.payload.id, artifactNodeId: `artifact:${artifactEvent.payload.id}`, artifactEventSeq: artifactEvent.seq, terminalEventSeq: task.terminalEvent.seq, evidenceSeqs: [...new Set([factRow.event.seq, task.terminalEvent.seq, artifactEvent.seq, ...mappedSeqs])].sort((a, b) => a - b), producerRoute: producerTuple, reviewerRoute: reviewerTuple, producerRouteDigest: canonicalDigest(producerTuple), reviewerRouteDigest: canonicalDigest(reviewerTuple) };
   }
 
   _deriveScratchCorrection(repoId, observedSeq, policy, rawRequest, beforeEventSeq = this._events.length + 1) {

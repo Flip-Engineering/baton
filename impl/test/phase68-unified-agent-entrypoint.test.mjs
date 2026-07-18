@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { BatonApplication } from '../src/application.mjs';
-import { BATON_CLI_HELP, batonCliHelp, discoverBatonConnection, parseBatonCli } from '../src/application-cli.mjs';
+import {
+  BATON_CLI_HELP, batonCliHelp, discoverBatonConnection, parseBatonCli, runBatonCli,
+} from '../src/application-cli.mjs';
 import { bindBaton } from '../src/application-client.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
 
@@ -70,6 +72,7 @@ test('application resolves omitted profile and route from deployment authority',
   const application = resolver();
   assert.deepEqual(application._resolveIntent({ objective: 'Improve Baton' }), {
     runId: null, objective: 'Improve Baton', profile: 'progressive', route, scope: null,
+    composition: null,
   });
   assert.deepEqual(application._resolveIntent({
     objective: 'Improve Baton', route: { model: 'gpt-5.6-sol', effort: 'low' },
@@ -243,6 +246,42 @@ test('contextual CLI help preserves semantic application.help while the package 
   assert.equal(parseBatonCli(['run', 'stop', '--help']).args.topic, 'run.stop');
 });
 
+test('Workflow CLI verbs resolve the current advertised action instead of exposing action IDs', async () => {
+  const parsed = parseBatonCli([
+    'run', 'revise', 'run-workflow', '--reason', 'Apply the accepted review.',
+    '--idempotency-key', 'revision-a',
+  ]);
+  assert.deepEqual(parsed, {
+    kind: 'semantic-action', actionKind: 'revise_candidate', runId: 'run-workflow',
+    inputs: { reason: 'Apply the accepted review.' }, idempotencyKey: 'revision-a',
+  });
+  const calls = [];
+  const client = {
+    async command(name, args, key) {
+      calls.push({ name, args, key });
+      if (name === 'run.inspect') return {
+        outline: { actions: [{ kind: 'revise_candidate', actionId: 'action-server-bound' }] },
+      };
+      return { revised: true };
+    },
+  };
+  assert.deepEqual(await runBatonCli(parsed, client), { revised: true });
+  assert.deepEqual(calls, [
+    {
+      name: 'run.inspect', args: { runId: 'run-workflow', depth: 'outline' },
+      key: 'revision-a:inspect',
+    },
+    {
+      name: 'run.act',
+      args: {
+        runId: 'run-workflow', actionId: 'action-server-bound',
+        inputs: { reason: 'Apply the accepted review.' },
+      },
+      key: 'revision-a:act',
+    },
+  ]);
+});
+
 test('local CLI help topics, default operations, actions, and selectors cannot drift from the semantic registry', () => {
   const registry = APPLICATION_SEMANTIC_REGISTRY;
   const commandIds = new Set(registry.cli.commands.map((command) => command.id));
@@ -297,6 +336,8 @@ test('bound Pythonic facade cascades start, inspect, semantic action, continuati
         continuation: { operation: 'run.inspect', arguments: { runId: 'run-bound', depth: 'outline', cursor: 4, waitMs: 100 } },
       };
       if (name === 'run.act') return { runId: 'run-bound', outline: { actions: [] }, action: 'approved' };
+      if (name === 'run.answer') return { runId: 'run-bound', attention: [] };
+      if (name === 'run.steer') return { runId: 'run-bound', steered: true };
       if (name === 'run.stop') return { runId: 'run-bound', terminal: true };
       throw new Error(`unexpected ${name}`);
     },
@@ -307,15 +348,25 @@ test('bound Pythonic facade cascades start, inspect, semantic action, continuati
   await run.inspect();
   await run.wait();
   await run.approve();
+  await run.answer('request-one', { decision: 'allow' });
+  await run.steer('worker-one', 'Continue with the focused implementation.');
   await run.stop();
   assert.deepEqual(calls.map(({ name }) => name), [
-    'run.start', 'run.inspect', 'run.inspect', 'run.act', 'run.stop',
+    'run.start', 'run.inspect', 'run.inspect', 'run.act', 'run.answer', 'run.steer', 'run.stop',
   ]);
   assert.deepEqual(calls[0].args, {
     intent: { objective: 'Improve Baton', route: { model: 'gpt-5.6-sol', effort: 'high' } },
   });
   assert.deepEqual(calls[3].args, {
     runId: 'run-bound', actionId: 'action-approve', inputs: {},
+  });
+  assert.deepEqual(calls[4].args, {
+    runId: 'run-bound', requestId: 'request-one', answer: { decision: 'allow' },
+  });
+  assert.deepEqual(calls[5].args, {
+    runId: 'run-bound', target: 'worker-one', mode: 'nudge',
+    message: 'Continue with the focused implementation.',
+    reason: 'Orchestrator steered the active worker.',
   });
   assert.ok(calls.every(({ caller }) => caller === principal));
 });
@@ -382,7 +433,9 @@ test('recursive runner keeps following work_completed until result adoption is o
     import.meta.url,
   ), 'utf8');
   assert.match(source, /terminalWithoutAdoption = new Set\(\['completed', 'failed', 'cancelled', 'denied', 'stopped'\]\)/u);
-  assert.match(source, /if \(adopt \|\| terminalWithoutAdoption\.has\(outline\.outline\.phase\)\) break;/u);
+  assert.match(source, /if \(adopt \|\| attention \|\| terminalWithoutAdoption\.has\(outline\.outline\.phase\)\) break;/u);
+  assert.match(source, /run\.act\(attention\.actionId, \{ decision: 'allow' \}\)/u);
+  assert.match(source, /progressive_question_attention_required/u);
 });
 
 test('bound Run changes cancellation ends only observation and accepts no other option', async () => {

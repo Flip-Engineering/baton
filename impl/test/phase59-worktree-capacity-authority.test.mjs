@@ -421,6 +421,66 @@ test('WC4: concurrent admission atomically reserves one worker and refuses the c
   driver = null;
 });
 
+test('WC4a: aggregate reservation admits or refuses the whole wave with one observation and one state transition', (t) => {
+  const f = fixture('aggregate-wave');
+  t.after(() => rmSync(f.world, { recursive: true, force: true }));
+  const injected = injectedCapacity({ treeBytes: 40, treeInodes: 3 });
+  const request = {
+    baseSha: f.sha,
+    sparsePaths: [],
+    sparseCheckoutIdentity: sparseCheckoutIdentity([]),
+    toolchainProjection: null,
+    toolchainProjectionTargetParents: [],
+  };
+  const authority = new WorktreeCapacityAuthority({
+    repoRoot: f.repo,
+    policy: { ...validPolicy, maxReservedBytes: 119, maxReservedInodes: 10 },
+    integrityKey: loadOrCreateWorktreeCapacityIntegrityKey(f.repo),
+    estimate: injected.worktreeCapacityEstimate,
+    observe: injected.worktreeCapacityObserve,
+  });
+
+  assert.throws(() => authority.reserveMany([
+    { id: 'worker:aggregate-a', request },
+    { id: 'worker:aggregate-b', request },
+  ]), (error) => error?.code === 'worktree_capacity_exceeded');
+  assert.equal(injected.estimates.length, 2);
+  assert.equal(injected.observations.length, 1);
+  assert.deepEqual(authority.snapshot().reservations, []);
+});
+
+test('WC4b: aggregate reservation and release publish one exact all-member state each', (t) => {
+  const f = fixture('aggregate-release');
+  t.after(() => rmSync(f.world, { recursive: true, force: true }));
+  const injected = injectedCapacity({ treeBytes: 40, treeInodes: 3 });
+  const request = {
+    baseSha: f.sha,
+    sparsePaths: [],
+    sparseCheckoutIdentity: sparseCheckoutIdentity([]),
+    toolchainProjection: null,
+    toolchainProjectionTargetParents: [],
+  };
+  const authority = new WorktreeCapacityAuthority({
+    repoRoot: f.repo,
+    policy: { ...validPolicy, maxReservedBytes: 120, maxReservedInodes: 10 },
+    integrityKey: loadOrCreateWorktreeCapacityIntegrityKey(f.repo),
+    estimate: injected.worktreeCapacityEstimate,
+    observe: injected.worktreeCapacityObserve,
+  });
+
+  const reservations = authority.reserveMany([
+    { id: 'worker:aggregate-release-a', request },
+    { id: 'worker:aggregate-release-b', request },
+  ]);
+  assert.equal(reservations.length, 2);
+  assert.equal(new Set(reservations.map(({ createdAt }) => createdAt)).size, 1);
+  assert.deepEqual(authority.snapshot().reservations.map(({ id }) => id), [
+    'worker:aggregate-release-a', 'worker:aggregate-release-b',
+  ]);
+  assert.deepEqual(authority.releaseMany(reservations), [true, true]);
+  assert.deepEqual(authority.snapshot().reservations, []);
+});
+
 test('WC5: kill/reap releases exactly, capacity can be reused, and final drain releases the replacement', async (t) => {
   const f = fixture('release-reuse');
   const { adapter } = countedBlockingAdapter();
@@ -730,7 +790,7 @@ test('WC19: refused supervised closeAsync leaves recovery authority running for 
   driver = createDriver({
     repoRoot: f.repo, logDir: f.logDir, adapters: { mock: adapter }, worktreeCapacity: validPolicy,
     worktreeCapacityEstimate: injected.worktreeCapacityEstimate, worktreeCapacityObserve: injected.worktreeCapacityObserve,
-    sessionRecoveryPolicy: { maxSessions: 2, maxStateRows: 8, timeoutMs: 100 },
+    sessionRecoveryPolicy: { maxAttempts: 3, maxSessions: 2, maxStateRows: 8, timeoutMs: 100 },
   });
   await driver.ready;
   const handle = await driver.coordinator.spawn('mock', brief(), { taskId: 'capacity-supervised-close' });
