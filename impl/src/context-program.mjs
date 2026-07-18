@@ -1089,7 +1089,10 @@ export class ContextSession {
     const cell = this.cell(cellId);
     if (!cell) return null;
     return deepFreeze({
-      schemaVersion: 2,
+      // Preserve the compact Phase 81 facade projection. The addressed v2 record is the
+      // immutable evidence artifact reached through evidenceRef/readEvidence; changing this
+      // summary would make an otherwise replay-readable v1 client depend on the new schema.
+      schemaVersion: 1,
       kind: 'baton.context_cell_evidence',
       cellId: cell.cellId,
       manifestDigest: cell.manifestDigest,
@@ -1103,8 +1106,6 @@ export class ContextSession {
       evidenceRef: cell.evidenceRef,
       sourceCoordinateCount: cell.sourceCoordinateCount,
       coordinateDigest: cell.coordinateDigest,
-      outputLineages: cell.outputLineages,
-      outputLineageDigest: cell.outputLineageDigest,
       providerEffects: cell.providerEffects,
     });
   }
