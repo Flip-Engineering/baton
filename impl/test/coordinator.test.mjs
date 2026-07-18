@@ -1522,6 +1522,8 @@ test('construction replay (D10): a normally-constructed Coordinator rebuilds tas
       'unknown_worker',
       `${workerId} must be register()-ed by replay, not left unknown_worker`
     );
+    assert.deepEqual(coordinator.localResourceOwnership(workerId), { owned: false },
+      `${workerId} durable replay evidence must not fabricate current-process resource authority`);
   }
 
   // list()/result() must also work for a worker that was NEVER spawn()-ed on this instance.
@@ -1565,6 +1567,8 @@ test('list() reports pending and working workers with correct status/budgetUsed/
 
   const p = table.find((x) => x.id === pendingHandle.id);
   assert.equal(p.status, 'pending');
+  assert.deepEqual(coordinator.localResourceOwnership(working.id), { owned: true });
+  assert.deepEqual(coordinator.localResourceOwnership(pendingHandle.id), { owned: false });
 });
 
 test('list() reflects a worker transitioning stopping -> dead', async () => {
@@ -1722,6 +1726,90 @@ test('at-least-once wait() (D11): a digest not yet followed by a subsequent wait
     1,
     'CI6 adds one durable fact explaining why the unattached session is no longer controllable'
   );
+});
+
+test('replayed Run stop durably closes an absent historical process group without signaling a reusable PID', async () => {
+  const dir = tmpDir();
+  const logDir = join(dir, 'log');
+  const log1 = new Log(logDir);
+  const coordination1 = coordinationForLog(log1);
+  const worktrees1 = new SpyWorktreeManager();
+  const coordinator1 = new Coordinator({
+    log: log1,
+    coordination: coordination1,
+    fences: new FenceTable(),
+    adapters: { mock: new ScriptableAdapter() },
+    worktrees: worktrees1,
+    referee: passingReferee(),
+    route: fixedRoute('mock'),
+    now: () => 0,
+  });
+  const handle = await coordinator1.spawn('mock', makeBrief(), { runId: 'run-replay-stop' });
+  const absentPid = 2_000_000_000;
+  log1.append({
+    worker: handle.id, harness: 'mock', turnEpoch: 1,
+    kind: 'lifecycle.process_started', actor: 'worker',
+    payload: {
+      schemaVersion: 1, generation: 1, pid: absentPid,
+      processGroupId: absentPid, phase: 'initializing',
+    },
+  });
+  log1.append({
+    worker: handle.id, harness: 'mock', turnEpoch: 1,
+    kind: 'lifecycle.process_ready', actor: 'worker',
+    payload: { schemaVersion: 1, generation: 1, pid: absentPid, processGroupId: absentPid },
+  });
+  coordination1.releaseWriterLease();
+
+  const log2 = new Log(logDir);
+  const coordination2 = coordinationForLog(log2);
+  const worktrees2 = new SpyWorktreeManager();
+  const coordinator2 = new Coordinator({
+    log: log2,
+    coordination: coordination2,
+    fences: new FenceTable(),
+    adapters: { mock: new ScriptableAdapter() },
+    worktrees: worktrees2,
+    referee: passingReferee(),
+    route: fixedRoute('mock'),
+    now: () => 0,
+    stopDeadlineMs: 100,
+  });
+  await coordinator2.startupReady();
+  const receipt = await coordinator2.stopRunTargets([handle.id], 'operator:replay-stop');
+  assert.equal(receipt.remainingCount, 0);
+  assert.equal(receipt.counts.alreadyTerminal, 1);
+  assert.equal(receipt.counts.processesObserved, 1);
+  assert.equal(receipt.counts.processesClosed, 1);
+  const absent = log2.read(handle.id).filter((event) => event.kind === 'control.recovery_process_absent');
+  assert.equal(absent.length, 1);
+  assert.equal(worktrees2.calls.capture.length, 0,
+    'startup-reconciled historical worktree paths must not be checkpointed again');
+  assert.deepEqual(absent[0].payload, {
+    schemaVersion: 1, generation: 1, pid: absentPid,
+    processGroupId: absentPid, reason: 'process_group_absent',
+  });
+
+  coordination2.releaseWriterLease();
+  const log3 = new Log(logDir);
+  const worktrees3 = new SpyWorktreeManager();
+  const coordinator3 = new Coordinator({
+    log: log3,
+    coordination: coordinationForLog(log3),
+    fences: new FenceTable(),
+    adapters: { mock: new ScriptableAdapter() },
+    worktrees: worktrees3,
+    referee: passingReferee(),
+    route: fixedRoute('mock'),
+    now: () => 0,
+    stopDeadlineMs: 100,
+  });
+  await coordinator3.startupReady();
+  const replayReceipt = await coordinator3.stopRunTargets([handle.id], 'operator:replay-stop-again');
+  assert.equal(replayReceipt.remainingCount, 0);
+  assert.equal(log3.read(handle.id).filter((event) => event.kind === 'control.recovery_process_absent').length, 1,
+    'the durable absence observation must replay without another host-process probe event');
+  assert.equal(worktrees3.calls.capture.length, 0);
 });
 
 // ============================================================
