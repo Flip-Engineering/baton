@@ -183,7 +183,7 @@ test('MS2/MS4: reasoning controls map to native Claude and Grok argv', () => {
   );
   assert.deepEqual(
     withGrokModelArgs(['agent', 'stdio'], { model: 'grok-x', reasoningEffort: 'high' }),
-    ['agent', '--model', 'grok-x', '--reasoning-effort', 'high', 'stdio'],
+    ['agent', '--always-approve', '--model', 'grok-x', '--reasoning-effort', 'high', 'stdio'],
   );
 });
 

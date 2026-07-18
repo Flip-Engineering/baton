@@ -1,0 +1,19 @@
+{
+  "record": {
+    "schemaVersion": 1,
+    "deploymentRoot": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-phase85-failed-settlement-ARj3xO",
+    "runId": null,
+    "outcome": "failed",
+    "error": {
+      "name": "TypeError",
+      "code": "deployment_config_invalid",
+      "message": "unsupported built-in route glm-via-claude"
+    }
+  },
+  "cleanup": {
+    "stopped": null,
+    "closed": null,
+    "callerStatusUnchanged": true,
+    "callerIndexUnchanged": true
+  }
+}
