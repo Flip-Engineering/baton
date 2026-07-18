@@ -1,0 +1,30 @@
+{
+  "record": null,
+  "cleanup": {
+    "stopped": {
+      "state": "stopped",
+      "schemaVersion": null,
+      "context": {
+        "targetSessionCount": 1,
+        "targetCellCount": 0,
+        "targetCallCount": 1,
+        "remainingSessionCount": 0,
+        "remainingCellCount": 0,
+        "remainingCallCount": 0
+      },
+      "receiptDigest": "ea414b3a729df5bb1b727b500c3a70b0bbb9e57d358d26cbaa2019b76da29d72",
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      }
+    },
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    },
+    "callerStatusUnchanged": true,
+    "callerIndexUnchanged": true
+  }
+}
