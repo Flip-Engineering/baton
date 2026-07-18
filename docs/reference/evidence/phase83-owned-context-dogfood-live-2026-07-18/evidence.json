@@ -1,0 +1,13 @@
+{
+  "record": null,
+  "cleanup": {
+    "stopped": null,
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    },
+    "callerStatusUnchanged": true,
+    "callerIndexUnchanged": true
+  }
+}

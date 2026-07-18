@@ -10,8 +10,9 @@ function codeOf(error) {
 /** One deployment-owned startup scan. It has no adapter handle and uses only Coordinator authority. */
 export class SessionRecoverySupervisor {
   constructor({ coordinator, authority, policy, onEvent = () => {} }) {
-    const fields = ['maxSessions', 'maxStateRows', 'timeoutMs'];
+    const fields = ['maxAttempts', 'maxSessions', 'maxStateRows', 'timeoutMs'];
     if (!coordinator || !authority || !policy || Object.keys(policy).sort().join(',') !== fields.sort().join(',')
+      || !Number.isSafeInteger(policy.maxAttempts) || policy.maxAttempts <= 0 || policy.maxAttempts > 1_000_000
       || !Number.isSafeInteger(policy.maxSessions) || policy.maxSessions <= 0 || policy.maxSessions > HARD_MAX_SESSIONS
       || !Number.isSafeInteger(policy.maxStateRows) || policy.maxStateRows < policy.maxSessions || policy.maxStateRows > HARD_MAX_STATE_ROWS
       || !Number.isSafeInteger(policy.timeoutMs) || policy.timeoutMs <= 0 || policy.timeoutMs > HARD_MAX_TIMEOUT_MS
