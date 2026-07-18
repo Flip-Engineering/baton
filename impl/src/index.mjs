@@ -93,6 +93,10 @@ export {
   contextCellIdentity, contextProgramInputRefs, contextProgramIsPure, contextSessionIdentity,
   normalizeContextArtifactRef,
 } from './context-authority.mjs';
+export {
+  CONTEXT_CALL_LIMITS, contextEffectCallIdentity, contextMapCallToEffectCall,
+  normalizeContextEffectCall,
+} from './context-call.mjs';
 export { loadOrCreateWorktreeCapacityIntegrityKey, normalizeWorktreeCapacityPolicy, WorktreeCapacityAuthority, WorktreeCapacityError } from './worktree-capacity.mjs';
 // SC2: the session tier IS the product surface — constructible from the entry point.
 export { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from './claude-session.mjs';
