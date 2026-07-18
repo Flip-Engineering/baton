@@ -5882,6 +5882,13 @@ export class BatonApplication {
         call.callId, cleanup,
       );
       const failed = settledChildren.some((child) => child.state !== 'accepted');
+      const settlementNodes = settledChildren.map((child) => (
+        current.plan?.nodes?.find((node) => node.key === child.nodeKey) ?? null
+      ));
+      if (settlementNodes.some((node) => node === null)) {
+        throw applicationError('Context map settlement lost its exact successor node scope',
+          'application_context_map_integrity');
+      }
       const termination = failed ? {
         code: 'context_child_failed', retryable: true,
         summary: 'One or more Context map children failed before acceptance.',
@@ -5889,10 +5896,11 @@ export class BatonApplication {
       const materialized = failed
         ? this.context.materializeCallResult({
           call: this._contextMapCallCore(call), children: settledChildren,
-          cleanup, termination,
+          cleanup, nodes: settlementNodes, termination,
         })
         : this.context.materializeCallResult({
           call: this._contextMapCallCore(call), children: settledChildren,
+          cleanup, nodes: settlementNodes,
         });
       const principal = this.context.principal;
       this.driver.coordination.settleContextMapCall({
@@ -5900,6 +5908,8 @@ export class BatonApplication {
         cleanup,
         result: {
           outputRef: materialized.outputRef, evidenceRef: materialized.evidenceRef,
+          providerResults: materialized.providerResults,
+          providerResultDigest: materialized.providerResultDigest,
           ...(termination ? { termination } : {}),
         },
       }, {
