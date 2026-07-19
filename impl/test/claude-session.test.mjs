@@ -72,6 +72,8 @@ test('CS1: buildClaudeSessionArgs always includes the stream-json trio; adds per
   const idx = withApprovals.indexOf('--permission-prompt-tool');
   assert.ok(idx !== -1);
   assert.equal(withApprovals[idx + 1], 'stdio', 'the magic value confirmed from the Agent SDK source, not an arbitrary tool name');
+  assert.equal(withApprovals[withApprovals.indexOf('--permission-mode') + 1], 'acceptEdits',
+    'an approval callback requires an ask-capable mode');
 
   const withResume = buildClaudeSessionArgs({ sessionId: 'sess-123' });
   const ridx = withResume.indexOf('--resume');
@@ -79,21 +81,27 @@ test('CS1: buildClaudeSessionArgs always includes the stream-json trio; adds per
   assert.equal(withResume[ridx + 1], 'sess-123');
 });
 
-test('CS1 erratum E1: a permission mode is ALWAYS rendered by default (acceptEdits, one-shot parity) — without one a live worker cannot edit files at all (proven live 2026-07-10: Write denied, probe.txt never created)', () => {
+test('CS1: unattended sessions default to bypassPermissions and honestly disclose unverified containment', () => {
   const base = buildClaudeSessionArgs({});
   const pidx = base.indexOf('--permission-mode');
-  assert.ok(pidx !== -1, 'default argv must carry --permission-mode; its absence was a live-breaking gap');
-  assert.equal(base[pidx + 1], 'acceptEdits', 'parity with the proven one-shot ClaudeCli argv');
+  assert.ok(pidx !== -1, 'default argv must carry an explicit permission mode');
+  assert.equal(base[pidx + 1], 'bypassPermissions');
 
-  const custom = buildClaudeSessionArgs({ permissionMode: 'bypassPermissions' });
-  assert.equal(custom[custom.indexOf('--permission-mode') + 1], 'bypassPermissions');
+  const narrower = buildClaudeSessionArgs({ permissionMode: 'acceptEdits' });
+  assert.equal(narrower[narrower.indexOf('--permission-mode') + 1], 'acceptEdits');
 
   const none = buildClaudeSessionArgs({ permissionMode: null });
   assert.ok(!none.includes('--permission-mode'), 'explicit null opts out (caller supplies its own policy flags)');
 
-  const both = buildClaudeSessionArgs({ approvals: true });
-  assert.ok(both.includes('--permission-mode') && both.includes('--permission-prompt-tool'),
-    'approvals and permission mode compose: acceptEdits auto-allows worktree edits, everything else routes to approve()');
+  assert.throws(
+    () => buildClaudeSessionArgs({ approvals: true, permissionMode: 'bypassPermissions' }),
+    /cannot be combined/,
+    'Claude never invokes the callback under bypassPermissions, so the adapter must refuse a lying combination',
+  );
+  assert.throws(
+    () => makeCli({ approvals: true, permissionMode: 'bypassPermissions' }),
+    /cannot use bypassPermissions/,
+  );
 });
 
 test('conforms to the D1 8-verb session-shaped Adapter contract', () => {
@@ -108,6 +116,30 @@ test('constructor is testability-injectable: cmd/args/env override the real "cla
   assert.deepEqual(fake._cfg.args, [FAKE_CLAUDE]);
 });
 
+test('configured Claude executable version is probed safely and unavailable is preserved', () => {
+  const calls = [];
+  const observed = new ClaudeSessionCli({
+    cmd: '/fixture/claude',
+    versionProbe: (command, args, options) => {
+      calls.push({ command, args, options });
+      return 'Claude Code v9.8.7 (fixture)';
+    },
+  });
+  assert.equal(observed.card().version, '9.8.7');
+  assert.deepEqual(calls[0].command, '/fixture/claude');
+  assert.deepEqual(calls[0].args, ['--version']);
+  assert.equal(calls[0].options.timeout, 5_000);
+  assert.equal(calls[0].options.maxBuffer, 64 * 1024);
+
+  const unavailable = new ClaudeSessionCli({
+    cmd: '/fixture/missing-claude', versionProbe: () => { throw new Error('absent'); },
+  });
+  assert.equal(unavailable.card().version, 'unavailable');
+  assert.equal(new ClaudeSessionCli({
+    cmd: '/fixture/not-claude', versionProbe: () => 'not a version',
+  }).card().version, 'unavailable');
+});
+
 // ---------------------------------------------------------------------------
 // CS18/CS19 — card() capability negotiation, no silent emulation
 // ---------------------------------------------------------------------------
@@ -116,9 +148,14 @@ test('CS18: card().verbs.approve/answer are unsupported by default and native on
   const noApprovals = makeCli().card();
   assert.equal(noApprovals.verbs.approve, 'unsupported');
   assert.equal(noApprovals.verbs.answer, 'unsupported');
+  assert.deepEqual(noApprovals.permissions, {
+    mode: 'bypassPermissions', sandbox: 'unverified',
+    boundary: 'Full same-UID host access by default; filesystem and network containment are unverified',
+  });
   const withApprovals = makeCli({ approvals: true }).card();
   assert.equal(withApprovals.verbs.approve, 'native');
   assert.equal(withApprovals.verbs.answer, 'native');
+  assert.equal(withApprovals.permissions.mode, 'acceptEdits');
 });
 
 test('card declares steer as NATIVE (erratum E2: mid-turn stream-json injection is real) and everything else native too', () => {
@@ -135,6 +172,41 @@ test('card declares steer as NATIVE (erratum E2: mid-turn stream-json injection 
     toolCalls: { observation: 'native', enforcement: 'unavailable' },
     maxWireFrameBytes: 1024 * 1024,
   });
+});
+
+test('Claude authentication readiness parses only bounded projected-runtime status', () => {
+  const calls = [];
+  const ready = makeCli({
+    authenticationProbe: (command, args, options) => {
+      calls.push({ command, args, options });
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          loggedIn: true, email: 'must-not-project@example.invalid', orgId: 'must-not-project',
+        }),
+      };
+    },
+  }).authenticationReadiness({ env: { HOME: '/private/projected-home', PATH: '/usr/bin' } });
+  assert.deepEqual(ready, {
+    state: 'ready', credentialState: 'verified',
+    summary: 'Projected Claude authentication was verified in the private worker runtime.',
+  });
+  assert.deepEqual(calls[0].args, ['auth', 'status', '--json']);
+  assert.equal(calls[0].options.env.HOME, '/private/projected-home');
+  assert.equal(JSON.stringify(ready).includes('must-not-project'), false);
+
+  const blocked = makeCli({
+    authenticationProbe: () => ({ status: 1, stdout: JSON.stringify({ loggedIn: false, email: 'hidden' }) }),
+  }).authenticationReadiness({ env: { HOME: '/private/projected-home' } });
+  assert.equal(blocked.state, 'blocked');
+  assert.equal(blocked.code, 'authentication_refresh_required');
+  assert.equal(blocked.credentialState, 'refresh_required');
+  assert.equal(JSON.stringify(blocked).includes('hidden'), false);
+
+  const malformed = makeCli({
+    authenticationProbe: () => ({ status: 0, stdout: 'x'.repeat((64 * 1024) + 1) }),
+  }).authenticationReadiness({ env: { HOME: '/private/projected-home' } });
+  assert.equal(malformed.code, 'authentication_probe_invalid');
 });
 
 // ---------------------------------------------------------------------------
@@ -169,6 +241,54 @@ test('CS2/CS3: spawn delivers the Brief as the first turn; lifecycle.spawned car
 
   await cli.kill(w);
   await waitForKind('kill.confirmed');
+});
+
+test('provider-auth result failures are typed and sanitized without classifying successful prose', async () => {
+  const refused = harness();
+  assert.equal((await refused.cli.spawn('auth-refused', brief('TRIGGER_AUTH_REFUSAL'), {
+    worktree: process.cwd(),
+  })).ok, true);
+  const failed = await refused.waitForKind('lifecycle.turn_completed');
+  assert.equal(failed.payload.result.status, 'failed');
+  assert.deepEqual(failed.payload.result.failure, { code: 'authentication_refresh_required' });
+  assert.equal(failed.payload.result.summary, 'Provider authentication requires refresh.');
+  await refused.cli.kill('auth-refused');
+  await refused.waitForKind('kill.confirmed');
+
+  const successful = harness();
+  const narrative = 'A successful report may quote Not logged in · Please run /login as evidence.';
+  assert.equal((await successful.cli.spawn('auth-prose', brief(narrative), {
+    worktree: process.cwd(),
+  })).ok, true);
+  const completed = await successful.waitForKind('lifecycle.turn_completed');
+  assert.equal(completed.payload.result.status, 'completed');
+  assert.equal(Object.hasOwn(completed.payload.result, 'failure'), false);
+  await successful.cli.kill('auth-prose');
+  await successful.waitForKind('kill.confirmed');
+});
+
+test('CS2/CS3: input-gated Claude Code boot receives one Brief before init without exposing results before readiness', async () => {
+  const { cli, events, waitForKind } = harness({
+    env: { FAKE_CLAUDE_INIT_AFTER_INPUT: '1' },
+  });
+  const worker = 'input-gated-init';
+  try {
+    assert.equal((await cli.spawn(worker, brief('BOOT_AFTER_INPUT exactly once'), {
+      worktree: process.cwd(),
+    })).ok, true);
+    const spawned = await waitForKind('lifecycle.spawned');
+    const started = await waitForKind('lifecycle.turn_started');
+    const message = await waitForKind('content.message');
+    const completed = await waitForKind('lifecycle.turn_completed');
+    assert.match(message.payload.text, /BOOT_AFTER_INPUT exactly once/u);
+    assert.equal(events.filter((event) => event.kind === 'lifecycle.turn_started').length, 1);
+    assert.ok(events.indexOf(spawned) < events.indexOf(started));
+    assert.ok(events.indexOf(started) < events.indexOf(message));
+    assert.ok(events.indexOf(message) < events.indexOf(completed));
+  } finally {
+    await cli.kill(worker);
+    await waitForKind('kill.confirmed');
+  }
 });
 
 test('provider cost outside exact nano-USD authority holds only USD while preserving exact token evidence', async () => {
@@ -362,6 +482,9 @@ test('CS9/CS10: interrupt() Acks immediately (native, not a signal); confirmed s
 
   const confirmed = await waitForKind('control.interrupt_confirmed');
   assert.equal(confirmed.worker, w);
+  assert.equal(confirmed.payload.sessionId, spawned.payload.sessionId,
+    'interrupt confirmation binds the exact still-attached native session');
+  assert.equal(confirmed.payload.transportOpen, true);
   assert.equal(confirmed.payload.usageSeal.tokens, 'reported', 'the interrupted result is accounted before confirmation');
   assert.equal(confirmed.payload.usageSeal.usd, 'reported');
   const usage = events.find((event) => event.kind === 'resource.tokens');

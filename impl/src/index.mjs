@@ -7,11 +7,12 @@
 import { join, basename, sep, resolve, relative, isAbsolute } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync, rmSync } from 'node:fs';
 
 import { Log } from './log.mjs';
 import { FenceTable } from './fence.mjs';
 import { Coordinator } from './coordinator.mjs';
+export { WorkerPolicySelectionError } from './coordinator.mjs';
 import * as worktreeMod from './worktree.mjs';
 import { verify, accept, defaultVerificationRuntime, prepareVerificationRuntime } from './referee.mjs';
 import { AdaptiveRouter } from './router.mjs';
@@ -30,6 +31,22 @@ import { normalizeProviderGovernancePolicy } from './provider-governance.mjs';
 import { loadOrCreateWorktreeCapacityIntegrityKey, normalizeWorktreeCapacityPolicy, WorktreeCapacityAuthority } from './worktree-capacity.mjs';
 import { normalizeGoalPlanPolicy } from './goal-plan.mjs';
 import { normalizeCanonicalOrderPolicy } from './canonical-order.mjs';
+import { normalizeTaskTopologyPolicy } from './task-topology.mjs';
+import { normalizeRunLineagePolicy } from './run-lineage.mjs';
+import { normalizeWorkflowPolicy } from './workflow-policy.mjs';
+import { normalizeContextProgramPolicy } from './context-program-policy.mjs';
+import { materializeContextCallBrief } from './context-call.mjs';
+import { openBatonDeployment } from './application-deployment.mjs';
+
+export { DEFAULT_BATON_DEPLOYMENT_ROUTES } from './application-deployment.mjs';
+
+/**
+ * Open one repository-bound Baton application with deployment-owned runtime,
+ * authority, route, evidence, and shutdown policy.
+ */
+export function openBaton(options = {}) {
+  return openBatonDeployment(options, createDriver);
+}
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const canonicalDigest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
@@ -54,18 +71,67 @@ export { Coordinator, ModelSelectionError, SessionSelectionError, IntegrationErr
 export { MockAdapter, CodexAdapter, ClaudeAdapter, GlmAdapter } from './adapter.mjs';
 export { inspectToolchainProjection, prepareToolchainProjection, ToolchainProjectionError } from './toolchain-projection.mjs';
 export { normalizeProviderGovernancePolicy, providerGovernanceRoute } from './provider-governance.mjs';
+export {
+  DEFAULT_TASK_TOPOLOGY_POLICY, TASK_TOPOLOGY_RELATIONS, inferTaskTopologyRelation,
+  normalizeTaskTopologyPolicy,
+} from './task-topology.mjs';
+export {
+  DEFAULT_WORKFLOW_POLICY, LEGACY_WORKFLOW_POLICY, MAX_WORKFLOW_ROUNDS,
+  WORKFLOW_STOP_CONDITIONS, normalizeWorkflowPolicy,
+} from './workflow-policy.mjs';
+export {
+  buildWorkflowRoleCatalog, normalizeWorkflowDefinition, normalizeWorkflowRoleCatalog,
+  validateWorkflowDefinitionLegacy, validateWorkflowDefinitionV3,
+  workflowAttempt, workflowAttemptLogicalRole,
+  workflowAttemptRoute, workflowCatalogRole, workflowDefinitionDigest,
+  workflowNodeTemplate, workflowNodeTemplateDigest,
+} from './workflow-definition.mjs';
+export {
+  contextEffectCallIdentity, contextEffectNodeBinding, contextEffectRetryCallIdentity,
+  contextEffectUnitIdentity,
+  contextMapCallToEffectCall, materializeContextCallBrief,
+  normalizeContextEffectCall, normalizeContextEffectNodeBinding,
+  normalizeContextEffectSource,
+} from './context-call.mjs';
+export {
+  buildContextMapResultLineage, validateContextMapResultLineage,
+} from './context-result-lineage.mjs';
+export {
+  buildContextEffectResultLineage, validateContextEffectResultLineage,
+} from './context-effect-result-lineage.mjs';
+export {
+  DEFAULT_CONTEXT_PROGRAM_POLICY, contextValueDigest,
+  normalizeContextManifest, normalizeContextProgram, normalizeContextProgramPolicy,
+} from './context-program.mjs';
+export {
+  contextCellIdentity, contextProgramInputRefs, contextProgramIsPure, contextSessionIdentity,
+  normalizeContextArtifactRef,
+} from './context-authority.mjs';
 export { loadOrCreateWorktreeCapacityIntegrityKey, normalizeWorktreeCapacityPolicy, WorktreeCapacityAuthority, WorktreeCapacityError } from './worktree-capacity.mjs';
 // SC2: the session tier IS the product surface — constructible from the entry point.
-export { ClaudeSessionCli, GlmSessionCli } from './claude-session.mjs';
+export { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from './claude-session.mjs';
 export { CodexAppServerCli } from './codex-appserver.mjs';
 export { GrokAcpCli } from './grok-acp.mjs';
+export { KimiAcpCli } from './kimi-acp.mjs';
+export { AcpJsonRpcProcess, AcpProtocolError, AcpSetupTimeoutError } from './acp-json-rpc-process.mjs';
 export { createBrief } from './messages.mjs';
 export { verify, accept, defaultVerificationRuntime, prepareVerificationRuntime } from './referee.mjs';
 export { AdaptiveRouter } from './router.mjs';
-export { routeTupleKey, resolveEffort } from './route-tuple.mjs';
+export { parseRouteTupleKey, routeTupleKey, resolveEffort } from './route-tuple.mjs';
+export {
+  DEFAULT_WORKER_POLICY_REQUEST, attestWorkerPolicyObservation, compareWorkerPolicyObservation,
+  createWorkerPolicyObservation,
+  normalizeWorkerPolicyCard, normalizeWorkerPolicyObservation, normalizeWorkerPolicyRequest,
+  normalizeWorkerPolicyResolution, resolveWorkerPolicy, workerPolicyObservationRequired,
+  workerPolicyRequestDigest,
+} from './worker-policy.mjs';
 export { RuntimeIsolation, isSecretEnvName } from './runtime-isolation.mjs';
 export { CoordinationStore, CoordinationIntegrityError, CoordinationRefusal, coordinationForLog, migrateCanonicalOrderLedger } from './coordination-store.mjs';
-export { WebNorthbound, createAuthenticatedWebServer, validateWebCommandEnvelope } from './web-northbound.mjs';
+export { projectRunTimelinePage, RunTimelineError } from './run-timeline.mjs';
+export { renderVerificationExecution } from './verification-presentation.mjs';
+export { DEFAULT_RUN_LINEAGE_POLICY, normalizeRunLineagePolicy, RUN_ORCHESTRATOR_CAPABILITIES, RUN_ORCHESTRATOR_REVOCATION_REASONS } from './run-lineage.mjs';
+export { WebNorthbound, createAuthenticatedWebServer, createLocalAuthenticatedWebServer, validateWebCommandEnvelope } from './web-northbound.mjs';
+export { createLocalSocketFetch } from './local-web-transport.mjs';
 export { WebEventStream } from './web-stream.mjs';
 export { WebResultExportDelivery } from './web-result-export-delivery.mjs';
 export { WebEdgePolicy, WebReadinessAuthority, FixedWindowQuota, ConcurrentQuota, resolveEdgeRequest } from './web-edge.mjs';
@@ -73,6 +139,10 @@ export { WebSessionStore, WebSessionIntegrityError, WEB_SESSION_COOKIE_NAME } fr
 export { OidcBrowserFlow, OidcFlowError, OIDC_FLOW_COOKIE_NAME, WEB_CSRF_COOKIE_NAME, csrfCookie } from './web-oidc.mjs';
 export { operatorAsset } from './web-operator.mjs';
 export { McpFleetServer, serveMcpStdio } from './mcp-northbound.mjs';
+export {
+  BatonWebApplicationFacade, connectBatonWebApplication, createBatonWebMcpServer,
+  kimiBatonAcpMcpServer, kimiBatonMcpEntry,
+} from './mcp-web-bridge.mjs';
 export { AtlasStructuralDelta } from './atlas-structural.mjs';
 export { AtlasStructuralRewrite } from './atlas-rewrite.mjs';
 export { AtlasCpgSlice } from './atlas-cpg.mjs';
@@ -99,9 +169,18 @@ export {
   validateApplicationCommandArgs,
 } from './application.mjs';
 export {
-  BATON_CLI_HELP, BatonWebClient, batonCliHelp, discoverBatonConnection, parseBatonCli, runBatonCli,
+  BATON_CLI_HELP, BatonWebClient, batonCliHelp, discoverBatonConnection, inspectBatonConnection,
+  setupBatonConnection, connectBaton,
+  parseBatonCli, projectBatonCliResult, runBatonCli,
 } from './application-cli.mjs';
-export { BatonClient, BatonRun, BatonRuns, bindBaton } from './application-client.mjs';
+export {
+  formatKimiCredentialInstallResult, installKimiCredential, kimiCredentialPath,
+  KIMI_CREDENTIAL_HELP, promptAndInstallKimiCredential, readHiddenKimiCredential,
+} from './kimi-credential-setup.mjs';
+export {
+  BatonClient, BatonContextCall, BatonContextCell, BatonContextExpression, BatonRun,
+  BatonRunContext, BatonRunGroup, BatonRuns, bindBaton, bindBatonPort,
+} from './application-client.mjs';
 export { BatonWebHost, SignalLifecycleOwner } from './application-host.mjs';
 export { HttpsHmacAdvisoryFeedSource, signHmacAdvisoryPollPageForTest } from './https-hmac-advisory-feed.mjs';
 export { Ed25519AdvisoryWebhookSource, HmacAdvisoryWebhookSource, signEd25519AdvisoryWebhookForTest, signHmacAdvisoryWebhookForTest } from './hmac-advisory-webhook.mjs';
@@ -123,8 +202,10 @@ function capacityReservationIdentity(row) {
   if (!row) return null;
   return Object.freeze({
     id: row.id, kind: row.kind, resourceId: row.resourceId, bytes: row.bytes, inodes: row.inodes,
+    outstandingBytes: row.outstandingBytes, outstandingInodes: row.outstandingInodes,
     baseSha: row.baseSha, sparseDigest: row.sparseDigest,
     toolchainProjectionDigest: row.toolchainProjectionDigest ?? null, createdAt: row.createdAt,
+    materializedAt: row.materializedAt,
   });
 }
 
@@ -145,15 +226,53 @@ function worktreeManager(repoRoot, opts = {}) {
     reserveCapacity(taskId, requestedBaseSha = null) {
       if (!opts.worktreeCapacity) return null;
       worktreeMod.normalizePhysicalOwnerId(taskId, 'taskId');
-      const selected = requestedBaseSha ?? localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
+      const selected = requestedBaseSha ?? opts.deploymentBaseSha
+        ?? localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
       if (!/^[a-f0-9]{40}$/u.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
       localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
+      const existing = pendingWorkerReservations.get(taskId);
+      if (existing) {
+        if (existing.selected !== selected) {
+          throw Object.assign(new Error('pending capacity reservation is bound to another base'), {
+            code: 'worktree_capacity_reservation_conflict',
+          });
+        }
+        return Object.freeze({ baseSha: selected, reservation: existing.reservation });
+      }
       const reservation = opts.worktreeCapacity.reserve(
         `worker:${taskId}`,
         capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
       );
       pendingWorkerReservations.set(taskId, { selected, reservation });
       return Object.freeze({ baseSha: selected, reservation });
+    },
+    reserveCapacityMany(entries) {
+      if (!Array.isArray(entries) || entries.length === 0) throw new TypeError('capacity wave must contain at least one task');
+      const prepared = entries.map((entry) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)
+          || Object.keys(entry).sort().join(',') !== ['requestedBaseSha', 'taskId'].sort().join(',')) {
+          throw new TypeError('capacity wave entry is invalid');
+        }
+        const { taskId, requestedBaseSha } = entry;
+        worktreeMod.normalizePhysicalOwnerId(taskId, 'taskId');
+        const selected = requestedBaseSha ?? opts.deploymentBaseSha
+          ?? localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
+        if (!/^[a-f0-9]{40}$/u.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
+        localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
+        return { taskId, selected };
+      });
+      if (new Set(prepared.map(({ taskId }) => taskId)).size !== prepared.length) throw new TypeError('capacity wave contains duplicate tasks');
+      if (!opts.worktreeCapacity) return Object.freeze(prepared.map(() => null));
+      const reservations = opts.worktreeCapacity.reserveMany(prepared.map(({ taskId, selected }) => ({
+        id: `worker:${taskId}`,
+        request: capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
+      })));
+      const results = prepared.map(({ taskId, selected }, index) => {
+        const reservation = reservations[index];
+        pendingWorkerReservations.set(taskId, { selected, reservation });
+        return Object.freeze({ baseSha: selected, reservation });
+      });
+      return Object.freeze(results);
     },
     releaseCapacity(taskId) {
       const pending = pendingWorkerReservations.get(taskId);
@@ -162,9 +281,42 @@ function worktreeManager(repoRoot, opts = {}) {
       if (released) pendingWorkerReservations.delete(taskId);
       return released;
     },
+    releaseCapacityMany(taskIds) {
+      if (!Array.isArray(taskIds) || taskIds.length === 0 || new Set(taskIds).size !== taskIds.length) {
+        throw new TypeError('capacity release wave requires unique task ids');
+      }
+      const entries = taskIds.map((taskId) => ({ taskId, pending: pendingWorkerReservations.get(taskId) }));
+      const owned = entries.filter(({ pending }) => pending);
+      if (!opts.worktreeCapacity) return Object.freeze(taskIds.map(() => true));
+      if (owned.length === 0) return Object.freeze(taskIds.map(() => false));
+      const outcomes = opts.worktreeCapacity.releaseMany(owned.map(({ pending }) => pending.reservation));
+      owned.forEach(({ taskId }, index) => { if (outcomes[index]) pendingWorkerReservations.delete(taskId); });
+      const byTask = new Map(owned.map(({ taskId }, index) => [taskId, outcomes[index]]));
+      return Object.freeze(taskIds.map((taskId) => byTask.get(taskId) ?? false));
+    },
+    settleCapacityMany(taskIds) {
+      if (!Array.isArray(taskIds) || taskIds.length === 0 || new Set(taskIds).size !== taskIds.length) {
+        throw new TypeError('capacity settlement wave requires unique task ids');
+      }
+      const owned = taskIds.map((taskId) => ({ taskId, pending: pendingWorkerReservations.get(taskId) }))
+        .filter(({ pending }) => pending);
+      if (!opts.worktreeCapacity || owned.length === 0) return Object.freeze(taskIds.map(() => true));
+      const outcomes = opts.worktreeCapacity.releaseMany(owned.map(({ pending }) => pending.reservation));
+      if (!Array.isArray(outcomes) || outcomes.length !== owned.length
+        || outcomes.some((released) => released !== true)) {
+        throw Object.assign(new Error('capacity settlement wave is incomplete'), {
+          code: 'worktree_capacity_release_failed',
+        });
+      }
+      owned.forEach(({ taskId }) => pendingWorkerReservations.delete(taskId));
+      return Object.freeze(taskIds.map(() => true));
+    },
     async create(taskId, requestedBaseSha = null) {
-      const base = await worktreeMod.pinBaseSha(repoRoot, {});
-      const selected = requestedBaseSha ?? base.sha;
+      let selected = requestedBaseSha ?? opts.deploymentBaseSha ?? null;
+      if (selected === null) {
+        const base = await worktreeMod.pinBaseSha(repoRoot, {});
+        selected = base.sha;
+      }
       if (!/^[a-f0-9]{40}$/.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
       localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
       const pending = pendingWorkerReservations.get(taskId);
@@ -179,14 +331,42 @@ function worktreeManager(repoRoot, opts = {}) {
         `worker:${taskId}`,
         capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
       );
+      let r = null;
       try {
-        const r = await worktreeMod.createFromBase(repoRoot, taskId, selected, { dependencyDirs: opts.workerDependencyDirs ?? [], sparsePaths: opts.workerSparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
-        if (capacityReservation) workerReservations.set(taskId, capacityReservation);
+        r = await worktreeMod.createFromBase(repoRoot, taskId, selected, { dependencyDirs: opts.workerDependencyDirs ?? [], sparsePaths: opts.workerSparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
+        if (capacityReservation) {
+          capacityReservation = opts.worktreeCapacity.materialize(capacityReservation, r.dir);
+          workerReservations.set(taskId, capacityReservation);
+        }
         return { path: r.dir, branch: r.branch, baseSha: r.baseSha, sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity, ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}), ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
       } catch (error) {
+        let cleanupError = null;
+        if (r) {
+          try { await worktreeMod.reap(repoRoot, taskId, { force: true, deleteBranch: true }); }
+          catch (cause) { cleanupError = cause; }
+        }
         if (capacityReservation) opts.worktreeCapacity.release(capacityReservation);
+        if (cleanupError) {
+          throw Object.assign(new Error('worktree capacity materialization cleanup failed', {
+            cause: cleanupError,
+          }), { code: 'worktree_cleanup_failed', admissionError: error?.code ?? null });
+        }
         throw error;
       }
+    },
+    worktreeAvailable(taskId, context) {
+      try {
+        worktreeMod.normalizePhysicalOwnerId(taskId, 'taskId');
+        if (!context || context.ownerTaskId !== taskId || typeof context.worktree !== 'string') {
+          return false;
+        }
+        const expected = resolve(realpathSync(repoRoot), '.baton', 'wt', taskId);
+        if (!existsSync(context.worktree) || realpathSync(context.worktree) !== expected
+          || !existsSync(expected) || !existsSync(`${expected}.meta.json`)) return false;
+        const stat = lstatSync(expected);
+        return stat.isDirectory() && !stat.isSymbolicLink()
+          && realpathSync(expected) === expected;
+      } catch { return false; }
     },
     async capture(worktreePath, captureOpts = {}) {
       if (typeof captureOpts.ownerTaskId !== 'string') throw new TypeError('capture requires an explicit physical worktree owner');
@@ -206,11 +386,16 @@ function worktreeManager(repoRoot, opts = {}) {
         reservationId,
         capacityRequest(sha, opts.verifySparsePaths ?? [], opts.verifySparseCheckoutIdentity),
       );
+      let r = null;
       try {
-        const r = await worktreeMod.freshVerifySandbox(repoRoot, taskId, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], requiredPaths: verifyOpts.requiredPaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
-        if (capacityReservation) verifyReservations.set(resolve(r.dir ?? r.path), capacityReservation);
+        r = await worktreeMod.freshVerifySandbox(repoRoot, taskId, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], requiredPaths: verifyOpts.requiredPaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
+        if (capacityReservation) {
+          capacityReservation = opts.worktreeCapacity.materialize(capacityReservation, r.dir ?? r.path);
+          verifyReservations.set(resolve(r.dir ?? r.path), capacityReservation);
+        }
         return { path: r.dir ?? r.path, sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity, ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}), ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
       } catch (error) {
+        if (r?.cleanup) await r.cleanup();
         if (capacityReservation) opts.worktreeCapacity.release(capacityReservation);
         throw error;
       }
@@ -222,11 +407,16 @@ function worktreeManager(repoRoot, opts = {}) {
         reservationId,
         capacityRequest(sha, opts.verifySparsePaths ?? [], opts.verifySparseCheckoutIdentity),
       );
+      let r = null;
       try {
-        const r = await worktreeMod.freshVerifySandbox(repoRoot, label, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
-        if (capacityReservation) verifyReservations.set(resolve(r.dir ?? r.path), capacityReservation);
+        r = await worktreeMod.freshVerifySandbox(repoRoot, label, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
+        if (capacityReservation) {
+          capacityReservation = opts.worktreeCapacity.materialize(capacityReservation, r.dir ?? r.path);
+          verifyReservations.set(resolve(r.dir ?? r.path), capacityReservation);
+        }
         return { path: r.dir ?? r.path, sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity, ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}), ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
       } catch (error) {
+        if (r?.cleanup) await r.cleanup();
         if (capacityReservation) opts.worktreeCapacity.release(capacityReservation);
         throw error;
       }
@@ -271,10 +461,47 @@ function worktreeManager(repoRoot, opts = {}) {
       const strategy = opts.strategy ?? 'ff-only';
       if (strategy !== 'ff-only') throw new Error(`unsupported integration strategy: ${strategy}`);
       const dirty = localGit(['status', '--porcelain'], repoRoot, { encoding: 'utf8' }).trim();
-      if (dirty) throw new Error('main checkout is dirty');
+      if (dirty) {
+        throw Object.assign(new Error('main checkout is dirty'), { code: 'ff_only_main_dirty' });
+      }
       const beforeSha = localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
-      localGit(['merge', '--ff-only', sha], repoRoot, { stdio: 'pipe' });
-      const afterSha = localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
+      const postEffectError = (message, cause = null) => {
+        let afterSha = null;
+        let status = null;
+        try { afterSha = localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim(); } catch {}
+        try { status = localGit(['status', '--porcelain'], repoRoot, { encoding: 'utf8' }).trim(); } catch {}
+        return Object.assign(new Error(message, cause ? { cause } : undefined), {
+          code: 'ff_only_post_effect_inconsistent', postEffect: true,
+          beforeSha, afterSha, resultSha: sha, statusClean: status === '',
+        });
+      };
+      try {
+        localGit([
+          '-c', 'core.hooksPath=/dev/null', 'merge', '--no-verify', '--ff-only', sha,
+        ], repoRoot, { stdio: 'pipe' });
+      } catch (cause) {
+        let afterSha = null;
+        let status = null;
+        try { afterSha = localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim(); } catch {}
+        try { status = localGit(['status', '--porcelain'], repoRoot, { encoding: 'utf8' }).trim(); } catch {}
+        if (afterSha !== beforeSha || status !== '') {
+          throw postEffectError('ff-only integration crossed its Git effect boundary before failing', cause);
+        }
+        throw Object.assign(new Error('main could not fast-forward to the accepted result', { cause }), {
+          code: 'ff_only_refused', beforeSha, afterSha, resultSha: sha,
+        });
+      }
+      let afterSha;
+      let status;
+      try {
+        afterSha = localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
+        status = localGit(['status', '--porcelain'], repoRoot, { encoding: 'utf8' }).trim();
+      } catch (cause) {
+        throw postEffectError('ff-only integration post-effect state is unreadable', cause);
+      }
+      if (afterSha !== sha || status !== '') {
+        throw postEffectError('ff-only integration post-effect validation failed');
+      }
       return { beforeSha, resultSha: sha, afterSha };
     },
     async stageStructuredIntegration(taskId, sha) {
@@ -431,13 +658,14 @@ function refereeFn(runtime, task, result, opts) {
  *          providerProcessingSchedule?:{intervalMs:number,maxBatch:number,maxAttempts:number,initialBackoffMs:number,maxBackoffMs:number,maxStateRows:number},
  *          providerRead?:{maxProviders:number,maxProcessing:number,maxStateRows:number,maxBytes:number},
  *          routeLearningPolicy?:{mode:'round-robin'|'adaptive'|'auto',halfLifeMs:number,explorationConstant:number,seedDiscount:number,minSamplesForAdaptive:number,defaultPriorSuccessRate:number},
- *          sessionRecoveryPolicy?:{maxSessions:number,maxStateRows:number,timeoutMs:number},
+ *          sessionRecoveryPolicy?:{maxAttempts:number,maxSessions:number,maxStateRows:number,timeoutMs:number},
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
  *          representationProduction?:{policy:object,artifactRoot:string,authorize:Function,resolveEnvironment:Function},
  *          goalPlanAuthority?:{policy:object,authorize:Function},
  *          canonicalOrderPolicy?:{maxLedgerBytes:number,maxEventBytes:number,maxEvents:number,maxReceiptBytes:number},
- *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
+ *          repoId?:string, deploymentBaseSha?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
+ *          runLineagePolicy?:object, taskTopologyPolicy?:object,
  *          providerGovernance?:object,
  *          workerDependencyDirs?:string[], workerSparsePaths?:string[], verifyDependencyDirs?:string[], verifySparsePaths?:string[], toolchainProjection?:object,
  *          worktreeCapacity?:object, worktreeCapacityObserve?:Function, worktreeCapacityEstimate?:Function}} opts
@@ -454,6 +682,23 @@ export function createDriver(opts) {
     ? null
     : normalizeProviderGovernancePolicy(opts.providerGovernance, Object.keys(opts.adapters ?? {}));
   const deploymentRepoId = opts.repoId ?? 'local';
+  if (opts.deploymentBaseSha !== undefined) {
+    if (!/^[a-f0-9]{40}$/u.test(opts.deploymentBaseSha)) {
+      throw new TypeError('deployment base SHA must be an exact commit ID');
+    }
+    try {
+      localGit(['cat-file', '-e', `${opts.deploymentBaseSha}^{commit}`], opts.repoRoot, {
+        stdio: 'ignore',
+      });
+    } catch {
+      throw new TypeError('deployment base SHA is unavailable');
+    }
+  }
+  const taskTopologyPolicy = opts.taskTopologyPolicy === undefined
+    ? (opts.coordination ? null : normalizeTaskTopologyPolicy())
+    : normalizeTaskTopologyPolicy(opts.taskTopologyPolicy);
+  const runLineagePolicy = opts.runLineagePolicy === undefined
+    ? null : normalizeRunLineagePolicy(opts.runLineagePolicy);
   const representationProduction = opts.representationProduction;
   if (representationProduction !== undefined
     && (!representationProduction || Object.keys(representationProduction).sort().join(',') !== ['artifactRoot', 'authorize', 'policy', 'resolveEnvironment'].sort().join(',')
@@ -506,8 +751,10 @@ export function createDriver(opts) {
   }
   let sessionRecoveryPolicy;
   if (opts.sessionRecoveryPolicy !== undefined) {
-    const policy = opts.sessionRecoveryPolicy; const fields = ['maxSessions', 'maxStateRows', 'timeoutMs'];
-    if (!policy || Object.keys(policy).sort().join(',') !== fields.sort().join(',') || !Number.isSafeInteger(policy.maxSessions) || policy.maxSessions <= 0 || policy.maxSessions > 1_000
+    const policy = opts.sessionRecoveryPolicy; const fields = ['maxAttempts', 'maxSessions', 'maxStateRows', 'timeoutMs'];
+    if (!policy || Object.keys(policy).sort().join(',') !== fields.sort().join(',')
+      || !Number.isSafeInteger(policy.maxAttempts) || policy.maxAttempts <= 0 || policy.maxAttempts > 1_000_000
+      || !Number.isSafeInteger(policy.maxSessions) || policy.maxSessions <= 0 || policy.maxSessions > 1_000
       || !Number.isSafeInteger(policy.maxStateRows) || policy.maxStateRows < policy.maxSessions || policy.maxStateRows > 100_000
       || !Number.isSafeInteger(policy.timeoutMs) || policy.timeoutMs <= 0 || policy.timeoutMs > 5 * 60_000) throw new TypeError('session recovery policy is invalid');
     sessionRecoveryPolicy = Object.freeze({ ...policy });
@@ -517,6 +764,9 @@ export function createDriver(opts) {
   const fences = new FenceTable();
   const router = new AdaptiveRouter({ ...(routeLearningPolicy ?? { mode: 'adaptive' }), now });
   const story = new StoryCompiler({ now });
+  for (const workerId of log.workers()) {
+    for (const event of log.read(workerId)) story.ingest(event);
+  }
   const runtimeScopes = opts.runtimeScopes ?? new RuntimeIsolation({
     repoRoot: opts.repoRoot,
     ...(opts.runtimeIsolation ?? {}),
@@ -532,7 +782,30 @@ export function createDriver(opts) {
       || policy.maxBatch > 10_000 || policy.maxBatch > policy.maxStateRows || policy.maxAttempts > 1_000_000 || policy.maxBackoffMs > 24 * 60 * 60 * 1_000 || policy.maxStateRows > 1_000_000) throw new TypeError('providerProcessingSchedule requires exact bounded deployment retry and reconciliation authority');
     providerProcessingPolicy = Object.freeze({ ...policy });
   }
+  const workflowPolicy = normalizeWorkflowPolicy(opts.workflowPolicy);
+  let contextProgram = null;
+  if (opts.contextProgram !== undefined) {
+    if (!opts.contextProgram || typeof opts.contextProgram !== 'object'
+      || Array.isArray(opts.contextProgram)
+      || Object.keys(opts.contextProgram).sort().join(',')
+        !== ['environmentDigest', 'policy', 'referenceIdentity', 'referenceRead', 'sourceAttest'].sort().join(',')
+      || typeof opts.contextProgram.referenceRead !== 'function'
+      || typeof opts.contextProgram.sourceAttest !== 'function'
+      || !/^[a-f0-9]{64}$/u.test(opts.contextProgram.environmentDigest ?? '')
+      || !/^[a-f0-9]{64}$/u.test(opts.contextProgram.referenceIdentity ?? '')
+      || !/^[a-f0-9]{40}$/u.test(opts.deploymentBaseSha ?? '')) {
+      throw new TypeError('Context Program requires one closed deployment tree, environment, policy, and reference resolver identity');
+    }
+    contextProgram = Object.freeze({
+      environmentDigest: opts.contextProgram.environmentDigest,
+      policy: normalizeContextProgramPolicy(opts.contextProgram.policy),
+      referenceIdentity: opts.contextProgram.referenceIdentity,
+      referenceRead: opts.contextProgram.referenceRead,
+      sourceAttest: opts.contextProgram.sourceAttest,
+    });
+  }
   const coordination = opts.coordination ?? new CoordinationStore(join(opts.logDir, 'coordination'), {
+    repoId: deploymentRepoId,
     operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
     operationalRangeRead: (worker, throughSeq) => log.read(worker).filter((event) => event.seq <= throughSeq),
     clock: () => new Date(now()).toISOString(),
@@ -544,6 +817,17 @@ export function createDriver(opts) {
     ...(representationProduction ? { representationPolicy: representationProduction.policy } : {}),
     ...(goalPlanAuthority ? { goalPlanPolicy: goalPlanAuthority.policy } : {}),
     ...(canonicalOrderPolicy ? { canonicalOrderPolicy } : {}),
+    ...(taskTopologyPolicy ? { taskTopologyPolicy } : {}),
+    ...(runLineagePolicy ? { runLineagePolicy } : {}),
+    ...(contextProgram ? {
+      deploymentBaseSha: opts.deploymentBaseSha,
+      contextEnvironmentDigest: contextProgram.environmentDigest,
+      contextProgramPolicy: contextProgram.policy,
+      contextReferenceIdentity: contextProgram.referenceIdentity,
+      contextReferenceRead: contextProgram.referenceRead,
+      contextSourceAttest: contextProgram.sourceAttest,
+    } : {}),
+    workflowPolicy,
   });
   if (opts.coordination && advisoryFeedCards.length > 0) {
     if (typeof coordination.advisoryFeedCards !== 'function' || canonicalDigest(coordination.advisoryFeedCards()) !== canonicalDigest(advisoryFeedCards)) throw new TypeError('custom coordination store disagrees with deployment advisory feed cards');
@@ -553,6 +837,25 @@ export function createDriver(opts) {
   if (opts.coordination && representationProduction && (typeof coordination.representationPolicy !== 'function' || canonicalDigest(coordination.representationPolicy()) !== canonicalDigest(representationProduction.policy))) throw new TypeError('custom coordination store disagrees with deployment representation policy');
   if (opts.coordination && goalPlanAuthority && (typeof coordination.goalPlanPolicy !== 'function' || canonicalDigest(coordination.goalPlanPolicy()) !== canonicalDigest(goalPlanAuthority.policy))) throw new TypeError('custom coordination store disagrees with deployment goal/plan policy');
   if (opts.coordination && canonicalOrderPolicy && (typeof coordination.canonicalOrderPolicy !== 'function' || typeof coordination.canonicalOrderReceipt !== 'function' || canonicalDigest(coordination.canonicalOrderPolicy()) !== canonicalDigest(canonicalOrderPolicy))) throw new TypeError('custom coordination store disagrees with deployment canonical-order policy');
+  if (opts.coordination && taskTopologyPolicy && (typeof coordination.taskTopologyPolicy !== 'function' || canonicalDigest(coordination.taskTopologyPolicy()) !== canonicalDigest(taskTopologyPolicy))) throw new TypeError('custom coordination store disagrees with deployment task topology policy');
+  if (opts.coordination && runLineagePolicy && (typeof coordination.runLineagePolicy !== 'function' || canonicalDigest(coordination.runLineagePolicy()) !== canonicalDigest(runLineagePolicy))) throw new TypeError('custom coordination store disagrees with deployment run lineage policy');
+  if (opts.coordination && opts.workflowPolicy !== undefined && (typeof coordination.workflowPolicy !== 'function' || canonicalDigest(coordination.workflowPolicy()) !== canonicalDigest(workflowPolicy))) throw new TypeError('custom coordination store disagrees with deployment Workflow policy');
+  if (opts.coordination && contextProgram) {
+    const expectedContextAuthority = {
+      schemaVersion: 1,
+      deploymentBaseSha: opts.deploymentBaseSha,
+      environmentDigest: contextProgram.environmentDigest,
+      policyDigest: contextProgram.policy.policyDigest,
+      referenceIdentity: contextProgram.referenceIdentity,
+    };
+    if (typeof coordination.contextProgramPolicy !== 'function'
+      || typeof coordination.contextProgramAuthority !== 'function'
+      || canonicalDigest(coordination.contextProgramPolicy()) !== canonicalDigest(contextProgram.policy)
+      || canonicalDigest(coordination.contextProgramAuthority())
+        !== canonicalDigest(expectedContextAuthority)) {
+      throw new TypeError('custom coordination store disagrees with deployment Context Program authority');
+    }
+  }
   let writerLease = null;
   try {
   writerLease = coordination.claimWriterLease();
@@ -668,6 +971,7 @@ export function createDriver(opts) {
     log, fences,
     adapters: opts.adapters,
     worktrees: worktreeManager(opts.repoRoot, {
+      deploymentBaseSha: opts.deploymentBaseSha,
       workerDependencyDirs: opts.workerDependencyDirs,
       workerSparsePaths,
       workerSparseCheckoutIdentity,
@@ -685,6 +989,8 @@ export function createDriver(opts) {
     providerProcessingSchedule: providerProcessingPolicy ? { repoId: opts.repoId, ...providerProcessingPolicy } : undefined,
     providerRead,
     routeLearningPolicy,
+    ...(taskTopologyPolicy ? { taskTopologyPolicy } : {}),
+    ...(runLineagePolicy ? { runLineagePolicy } : {}),
     coordination,
     repoRoot: opts.repoRoot,
     repoId: deploymentRepoId,
@@ -712,12 +1018,20 @@ export function createDriver(opts) {
     approvalTimeoutMs: opts.approvalTimeoutMs ?? 60000,
     stopDeadlineMs: opts.stopDeadlineMs ?? 15000,
     recoveryTimeoutMs: opts.recoveryTimeoutMs ?? 15000,
+    recoveryMaxAttempts: sessionRecoveryPolicy?.maxAttempts ?? opts.recoveryMaxAttempts ?? 3,
     startupRecoveryAuthority,
     budgetPolicy: opts.budgetPolicy,
     ...(providerGovernance ? { providerGovernance: providerGovernance.projection } : {}),
     watchdog: opts.watchdog,
     drainPolicy,
     ...(goalPlanAuthority ? { goalPlanAuthority } : {}),
+    ...(contextProgram ? {
+      contextBriefMaterializer: (brief) => materializeContextCallBrief(
+        brief,
+        contextProgram.referenceRead,
+        Math.min(contextProgram.policy.maxArtifactBytes, contextProgram.policy.maxTextBytes * 2),
+      ),
+    } : {}),
   });
 
   let providerPoller = null;

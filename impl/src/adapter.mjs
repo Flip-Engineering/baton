@@ -16,6 +16,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { renderVerificationExecution } from './verification-presentation.mjs';
 
 const STOP_SETTLE_MS = 8;
 const MOCK_TOKEN_METRIC = 'mock_scenario_tokens';
@@ -89,14 +90,34 @@ export function assertIsAdapter(obj) {
 
 /**
  * @param {object} brief
- * @param {'codex-v2'|'claude'|'grok-acp'} dialect
+ * @param {'codex-v2'|'claude'|'grok-acp'|'kimi-acp'} dialect
  * @returns {string}
  */
 export function renderBrief(brief, dialect) {
   const lines = [];
+  const advertisesBatonTool = (brief.tools ?? []).some((tool) => (
+    /baton/iu.test(typeof tool === 'string' ? tool : JSON.stringify(tool))
+  ));
   lines.push(`[baton brief:${dialect}]`);
   lines.push('## Goal');
   lines.push(brief.goal ?? '');
+  lines.push('## Dispatch');
+  if (brief.contextInput) {
+    lines.push(advertisesBatonTool
+      ? 'This task is already dispatched by Baton. The attached immutable Context is the complete task input; do not inspect repository files, prior Run artifacts, receipts, or ledgers to reconstruct or broaden it. Writing a named output path does not authorize reading its preexisting contents. Orchestration actions may use only the Baton control surface explicitly listed in this Brief.'
+      : 'This task is already dispatched and supervised by Baton. The attached immutable Context is the complete task input; do not inspect repository files, prior Run artifacts, receipts, or ledgers to reconstruct or broaden it. Writing a named output path does not authorize reading its preexisting contents. Do not search for or launch another Baton CLI, MCP server, or Run; use one only when this Brief explicitly advertises it.');
+    lines.push('## Immutable Context');
+    lines.push(`Call: ${brief.contextInput.callId}`);
+    lines.push(brief.contextInput.unitId
+      ? `Unit: ${brief.contextInput.unitId}`
+      : `Partition: ${brief.contextInput.partitionId}`);
+    lines.push('Use the attached value directly; do not replace it with a broader repository review:');
+    lines.push(JSON.stringify(brief.contextInput.value, null, 2));
+  } else {
+    lines.push('This task is already dispatched by Baton. Perform the assigned work in this worktree and use only tools explicitly advertised in this Brief.');
+  }
+  lines.push('## Write authority');
+  lines.push('Harness permissions are execution capability, not write authority. Write only inside the assigned Baton worktree and only at the Path scope below. Never modify, move, chmod, delete, replace, or repair anything outside that authority, including the home directory, credentials, toolchains, shims, global configuration, or caches. Report an environmental blocker instead of repairing the host.');
   if (brief.constraints?.length) {
     lines.push('## Constraints');
     for (const c of brief.constraints) lines.push(`- ${c}`);
@@ -107,9 +128,8 @@ export function renderBrief(brief, dialect) {
   }
   lines.push('## Definition of done');
   lines.push(brief.definitionOfDone ?? '');
-  lines.push('## Verification (the ONLY definition of done — run exactly this command)');
-  lines.push(`Command: ${brief.verification.command}`);
-  lines.push(`Expected exit code: ${brief.verification.expectExit}`);
+  lines.push('## Verification (the ONLY definition of done — preserve this exact execution contract)');
+  lines.push(renderVerificationExecution(brief.verification));
   if (brief.outputFormat) {
     lines.push('## Output format');
     lines.push(brief.outputFormat);
@@ -143,16 +163,16 @@ function haltableDelay(ms, signal) {
   });
 }
 
-function haltableAskWait(session) {
+function haltableAskWait(session, haltSignal = session.haltSignal) {
   return new Promise((resolve) => {
     const cleanup = () => {
-      session.haltSignal.removeEventListener('abort', onAbort);
+      haltSignal.removeEventListener('abort', onAbort);
       session.askResolve = null;
     };
     const onAbort = () => { cleanup(); resolve({ aborted: true }); };
     session.askResolve = (outcome) => { cleanup(); resolve(outcome); };
-    if (session.haltSignal.aborted) { onAbort(); return; }
-    session.haltSignal.addEventListener('abort', onAbort, { once: true });
+    if (haltSignal.aborted) { onAbort(); return; }
+    haltSignal.addEventListener('abort', onAbort, { once: true });
   });
 }
 
@@ -260,6 +280,7 @@ export class MockAdapter {
       worker, brief, scenario, opts,
       attachedOnly: opts.attachOnly === true,
       runStarted: false,
+      turnGeneration: 0,
       haltController, haltSignal: haltController.signal,
       stopKind: null, terminal: false, crashed: false,
       wait: null, askHandled: false, askResolve: null,
@@ -288,7 +309,13 @@ export class MockAdapter {
   _startSession(session) {
     if (session.runStarted || session.terminal) return;
     session.runStarted = true;
-    this._runSession(session).catch((err) => {
+    session.turnGeneration += 1;
+    const turnGeneration = session.turnGeneration;
+    const haltSignal = session.haltSignal;
+    this._runSession(session, { turnGeneration, haltSignal }).catch((err) => {
+      // A preserved successor owns a new signal generation. An older coroutine can neither
+      // crash nor terminalize that shared native session after its own signal was aborted.
+      if (session.turnGeneration !== turnGeneration) return;
       // WF2/WF3: the Coordinator owns readiness failure and already emitted its sole typed,
       // non-leaking terminal fact. Mock must not duplicate it as a worker crash after performing
       // no worker effect. Direct test callers likewise receive no fabricated native lifecycle.
@@ -523,8 +550,10 @@ export class MockAdapter {
     this._emit(session, 'content.file_edit', { path: edit.path, sha });
   }
 
-  async _runSession(session) {
+  async _runSession(session, turn = {}) {
     const { scenario } = session;
+    const haltSignal = turn.haltSignal ?? session.haltSignal;
+    const turnGeneration = turn.turnGeneration ?? session.turnGeneration;
     const totalEdits = scenario.edits?.length ?? 0;
     session.totalEdits = totalEdits;
 
@@ -536,7 +565,8 @@ export class MockAdapter {
       const res = await session.opts.worktreeReady;
       if (res && res.path && !session.opts.worktree) session.opts.worktree = res.path;
     }
-    if (session.terminal || session.haltSignal.aborted) return;
+    if (session.terminal || haltSignal.aborted
+      || session.turnGeneration !== turnGeneration) return;
     if (!session.opts.worktree) throw new Error('worktree unavailable');
     this._emit(session, 'lifecycle.turn_started', {});
 
@@ -555,34 +585,34 @@ export class MockAdapter {
           { question: ask.question, requestId, blocking: ask.blocking !== false },
         );
         if (ask.blocking !== false) {
-          const outcome = await haltableAskWait(session);
+          const outcome = await haltableAskWait(session, haltSignal);
           session.wait = null;
           if (session.terminal) return;
-          if (session.haltSignal.aborted) break;
+          if (haltSignal.aborted || session.turnGeneration !== turnGeneration) break;
           if (outcome.denied) { session.deniedApproval = true; break; }
           for (const e of (ask.onAnswerEdits ?? [])) {
-            if (session.haltSignal.aborted) break;
-            if (e.delayMs) await haltableDelay(e.delayMs, session.haltSignal);
-            if (session.haltSignal.aborted) break;
+            if (haltSignal.aborted || session.turnGeneration !== turnGeneration) break;
+            if (e.delayMs) await haltableDelay(e.delayMs, haltSignal);
+            if (haltSignal.aborted || session.turnGeneration !== turnGeneration) break;
             await this._applyEdit(session, e);
           }
         }
       }
 
       if (session.terminal) return;
-      if (session.haltSignal.aborted) break;
+      if (haltSignal.aborted || session.turnGeneration !== turnGeneration) break;
       if (i === totalEdits) break;
 
       const edit = scenario.edits[i];
       if (edit.delayMs) {
-        await haltableDelay(edit.delayMs, session.haltSignal);
-        if (session.haltSignal.aborted) break;
+        await haltableDelay(edit.delayMs, haltSignal);
+        if (haltSignal.aborted || session.turnGeneration !== turnGeneration) break;
       }
       await this._applyEdit(session, edit);
     }
 
     if (session.terminal) return;
-    if (session.haltSignal.aborted) return; // the stop-settle timer finalizes
+    if (haltSignal.aborted || session.turnGeneration !== turnGeneration) return;
     this._finalizeNatural(session);
   }
 }
@@ -642,6 +672,7 @@ export class CodexAdapter extends SubprocessAdapterBase {
       authPosture: 'subscription',
       concurrencyCeiling: 4,
       maxContext: 200000,
+      permissions: { mode: 'never', sandbox: 'danger-full-access', boundary: 'Unattended full host permissions by default; containment is a separate deployment boundary' },
       // SC8 honesty: SubprocessAdapterBase implements ONLY spawn — prompt/interrupt/approve/
       // answer/kill are not-implemented stubs, and the card may not claim otherwise.
       verbs: { spawn: 'native', prompt: 'unsupported', steer: 'unsupported', interrupt: 'unsupported', approve: 'unsupported', answer: 'unsupported', kill: 'unsupported', pause: 'unsupported' },
@@ -650,7 +681,7 @@ export class CodexAdapter extends SubprocessAdapterBase {
 
   argv(brief, opts) {
     void opts;
-    return { cmd: 'codex', args: ['exec', '--json', '--skip-git-repo-check', renderBrief(brief, 'codex-v2')] };
+    return { cmd: 'codex', args: ['--ask-for-approval', 'never', '--sandbox', 'danger-full-access', 'exec', '--json', '--skip-git-repo-check', renderBrief(brief, 'codex-v2')] };
   }
 }
 
@@ -662,13 +693,14 @@ export class ClaudeAdapter extends SubprocessAdapterBase {
       authPosture: 'subscription',
       concurrencyCeiling: 4,
       maxContext: 200000,
+      permissions: { mode: 'bypassPermissions', sandbox: 'unverified', boundary: 'Approval autonomy only; host filesystem and network containment are unverified' },
       // SC8 honesty: only spawn is implemented on this legacy subprocess tier (see base stubs).
       verbs: { spawn: 'native', prompt: 'unsupported', steer: 'unsupported', interrupt: 'unsupported', approve: 'unsupported', answer: 'unsupported', kill: 'unsupported', pause: 'unsupported' },
     };
   }
 
   argv(brief, opts) {
-    const args = ['-p', renderBrief(brief, 'claude'), '--permission-mode', 'acceptEdits'];
+    const args = ['-p', renderBrief(brief, 'claude'), '--permission-mode', opts.permissionMode ?? 'bypassPermissions'];
     if (opts.model) args.push('--model', opts.model);
     return { cmd: 'claude', args };
   }
