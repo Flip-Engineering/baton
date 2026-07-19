@@ -351,18 +351,103 @@ evidence and disagreement are retained in
   restart hydration, bounded advice, causal integrity, contradiction resolution, and attested
   audit/trace, bounded recall, and the first closed selective-promotion batch now ship locally;
   derived-Scratch independent-oracle release/correction and verified recall-outcome attribution now
-  also ship, together with the authenticated contradiction workspace. Scratch REPL/Bench, a later
-  versioned recall-learning policy, Playbook/Skill promotion,
+  also ship, together with the authenticated contradiction workspace. Phase 81/83 ships the closed
+  stateless Context Program plus its durable pure-cell application vertical locally: immutable
+  tree-bound manifests, canonical Context Program ASTs (not Atlas repository AST/CST),
+  content-addressed source/output/evidence,
+  append-only session/cell/settlement authority, restart replay, Context-aware stop receipts, exact
+  Git/tree/blob/range provenance, owned process-group reap, credential-minimal execution, and a
+  compact ContextSession facade.
+  Phase 84 now also ships the first provider-backed Context effect vertical: one completed immutable
+  cell maps to content-addressed partitions, one separately approved successor Plan, one atomic
+  parallel Wave, exact per-child harness/model/effort and Plan binding, private partition Brief
+  materialization, canonical terminal attachment, CAS output/evidence, and one replay-verified
+  `task.resources_released` coordinate per child before aggregate settlement. Completed, failed,
+  and cancelled children now retain the same exact resource-release evidence. A failed map
+  generation also settles once, after cleanup, with the complete ordered accepted/failed/cancelled
+  child set, typed retryable termination, immutable private evidence, and `outputRef: null`;
+  idempotency mutation and replay duplication fail closed. Failed children cannot be overclaimed, recovery
+  converges across admission/Plan/Wave/result/CAS/settlement boundaries,
+  Run stop targets every owned Context call, including completed call history, and proves zero
+  remaining Context ownership, while direct,
+  generic CLI, authenticated Web, and MCP use the same application action and inspection cascade.
+  The focused Phase 84 matrix, affected lifecycle/transport matrices, and the current 2,081-test complete
+  implementation suite are green. Live Baton-on-Baton evidence completed two exact
+  `gpt-5.6-sol`/`xhigh` partitions, recorded the atomic Wave and per-task process/session/worktree/
+  runtime releases, and ended with zero owned resources; native Kimi was attempted first and was
+  honestly blocked by an exact revoked OAuth tombstone (`authentication_refresh_required`) rather
+  than bypassed. Recursive review also tightened the reap-to-settlement crash proof so recovery now
+  preserves exact partition order, selected route, result, descendant task/worker/Run identity,
+  cleanup target set, authority, and receipt digests without repeating provider or cleanup effects.
+  Phase 84 does not ship reduce, semantic review, deterministic verify, recursive retry,
+  Atlas/Scratch/knowledge-graph effect branches, or a general programmable orchestration loop.
+  Phase 85's first slice now ships immutable Context-cell evidence v2, exact closed lineage for
+  every pure operator output, dual-read historical v1 replay, refusal to launch new provider effects
+  from aggregate-only v1 evidence, and Context-map v2 partition/Brief projection of one exact item
+  lineage rather than an aggregate union. Durable evidence-only failed-call settlement above now
+  also ships and is preserved across restart and Run stop. The provider-result capsule core
+  now also projects an exact retained commit into private source CAS and a closed capsule, binding
+  the canonical retained ref, base ancestry, complete changed-path set, scope, extractor policy,
+  child, route, artifact, cleanup, and full source-ref identity; unsupported, partial-sensitive, or
+  substituted results fail before usable projection. Durable accepted-child attachment now also
+  ships: immutable child rows remain acyclic while an ordered sibling ref set is attached in the
+  same settlement event; the application rederives exact historical Plan scope, coordination
+  rereads/reprojects capsule and source CAS at settlement and replay, completed output contains only
+  safe refs, and failed aggregates retain refs only for accepted children with null output. Closed
+  output/evidence schemas prevent raw report smuggling. Workflow definition v3 now additionally
+  ships one complete root semantic role catalog with closed node templates, exact independent
+  harness/model/effort routes, physical/logical Attempt separation, canonical partition identity,
+  and contiguous root/parent/generation ancestry across map and revision successors. Historical
+  v1/v2 replay remains schema-stable while new successors upgrade once without inferring a logical
+  role from a synthetic legacy name; mixed v2→v3 map admission survives restart. The focused
+  role/revision/map authority matrix is 26/26. The pure CLR3 generation-1 `map | reduce`
+  request/call/unit identity core now also ships with hub-derived requester authorization,
+  deterministic selected-output lineage, and a one-way map-v2 projection that does not dual-write
+  authority. Successful map settlement now emits call-evidence v3 whose ordered safe result refs
+  each bind one exact source-cell output parent and one direct provider derivation through Plan,
+  node, task, terminal event, route, artifact, capsule/source, cleanup, and child identity.
+  Coordination rebuilds it on append, replay, and artifact reads while the settlement event keeps
+  only content-addressed refs. Historical completed v2 replay remains supported but typed-ineligible
+  as a reduce source; failed v2 remains lineage-free. The distinct real call-evidence source contract
+  survives cleanup-gap recovery and repeated restart. Durable generic admission now also ships in
+  the same event and projection: map schema-v1 history remains stable while effect-call schema v2
+  closes service/requester, source, unit, Plan, definition/catalog/template, and exact route
+  authority. Completed-cell map and completed-call reduce sources are reverified before append;
+  admission is idempotent, replay-checked, included in Run-stop, excluded from map reconciliation,
+  and deliberately performs no provider effect. Workflow status now also rebuilds worker Story from
+  durable operational logs after restart, recognizes batched repository-relative file edits and
+  recovery/process terminal events, and falls back to the Plan's durable terminal outcome when a
+  live worker result is unavailable. An exact recovered Run that previously projected zero activity
+  now reports one Codex turn, 3,326,408 tokens, exited activity, and typed
+  `recovery_terminalized` for both Codex and GLM while still closing with zero workers. Public
+  generic reduce proposal/recovery/approval/dispatch now consumes reverified private source content
+  through one physical Brief, reopens without redispatch, and stops/reaps the generic worker. The
+  latest counted complete suite is green at 2,110/2,110. Baton dogfood retained exact Codex high/xhigh Candidates and reaped both process
+  groups; native Kimi K3/max was preflight-refused on expired cached authentication and closed with
+  zero workers. A subsequent exact high/xhigh generic-admission attempt was operator-interrupted
+  before Candidate retention; durable recovery terminalized both Attempts without inventing success,
+  observed/closed both process records, and left zero workers. A fresh exact high/xhigh review then
+  retained two accepted Candidates, independently passed 16/16 focused tests, and reaped both
+  observed processes. Phase 85 retains the remaining load-bearing order: add generic settlement,
+  projection-failure terminalization, workerless non-admission and
+  selective retry generations, consolidate pure evaluation behind
+  one immutable expression builder and `context_eval`, then live-prove map → reduce → retry → replay
+  → stop/reap. Later versioned recall-learning policy, Playbook/Skill promotion,
   retention/compaction, and optional deployment-neutral export remain partial or pending.
+  The dispatch dogfood additionally leaves `complete()` live progress/member-stop control and
+  zero-Candidate cause presentation open. GLM-5.2 xhigh launch resolved exactly but stalled before
+  any provider/tool event; Codex completed focused tests but did not return its final provider frame.
+  Neither failed Attempt is represented as a Candidate.
 - Phase 29 closes the former Atlas wiring gap: deployments inject a closed set of real Atlas
   instances, bounds, artifact roots, and optional trusted multi-root contexts into `createDriver()`;
   Coordinator owns the sole registry handle, and authenticated web/MCP reuse that invoke/resume/
   reverify path. Atlas is not auto-registered, so an empty deployment remains honestly empty.
 - OIDC has a real TLS socket proof, not an in-app browser interaction; the production provider
   adapter, WebSocket parity, deep operator takeover, and some edge-policy review depth remain.
-- Phase 30 closes the GLM credential-backed live gate: exact `glm-4.7` at native `low` effort was
-  provider-observed, freshly verified, killed, and fully reaped through the public driver. Concurrent
-  GLM-seat and automatic quota discovery remain unproven.
+- Phase 30's historical `glm-4.7`/low receipt is retained only as lifecycle history and is not a
+  currently admissible route or model-quality claim. Current GLM authority permits only `glm-5.2`
+  at orchestrator-selected effort, including `xhigh` when warranted. Concurrent GLM-seat and
+  automatic quota discovery remain unproven.
 - Phase 32 closes the local orientation/reuse wiring gap, Phase 33 closes addressed downward
   worker push, Phase 34 closes bounded mechanical scope-drift refresh, and Phase 36 closes the
   exact-npm external evidence/freshness floor. Phase 37 adds the actual npm lockfile SBOM floor,
@@ -383,14 +468,66 @@ evidence and disagreement are retained in
 
 ## What remains pending
 
-- The primary product gap is completing the integrated Run application over the already-strong
+- The integrated Run application now ships cursor follow, recovery, materialized result export,
+  atomic multi-node parallel Workflow admission, typed feedback, Candidate selection, selective
+  member/whole-Run reap, and one approval-gated exact-Candidate-base revision round across the
+  shared command registry. The remaining application gap is not those foundations: it is the
+  adverse active-revision restart/stop matrix, policy-admitted Plan v3, acceptance-level recursive
+  action parity across direct/CLI/Web/browser/MCP, and compilation of review, debate, synthesis,
+  partition, leased-lineage, and composed-overlay strategies.
+- Slate's thread-weaving/episodic-memory proposal is useful architectural input, not evidence that
+  Baton has already shipped the same product. Baton still needs one first-class addressed Episode
+  projection that losslessly binds a bounded action to its exact Plan/Task/Attempt, requested/
+  resolved/observed harness-model-effort route, immutable inputs, hub-computed facts,
+  content-addressed result/evidence refs, separately fenced untrusted worker narrative, and exact
+  lifecycle/release state. It must be a projection over existing authority rather than a second
+  receipt ledger or orchestration engine, and it must appear as one compact Run change/card with
+  outline → item → evidence expansion instead of adding another flat command family.
+- On top of addressed Episodes, Baton still needs reusable one-action workstreams: `act()` performs
+  one bounded tactic, commits one Episode, and pauses; `steer()` affects the current in-flight
+  action; `queue()` appends a successor action against the exact Episode head; `interrupt()` stops
+  the current action without fabricating workstream completion; and `stop()` fences and reaps the
+  complete owned stream. Same-route continuation may resume a provider-native session, while a
+  harness/model/effort change creates explicit cross-model lineage from immutable Episode refs.
+  Paused must never mean an uncounted live process: it either has a replay-verifiable closed-process
+  checkpoint/session state or remains visible in Run ownership. All methods must derive internal
+  Plan/task/worker/session/worktree coordinates server-side and retain direct/CLI/authenticated-Web/
+  MCP parity.
+- A closed, versioned Program IR for orchestration remains a later gate, after Phase 85 lineage and
+  Episode/workstream semantics. It may express bounded pure selection plus authorized dispatch,
+  parallel, await, collect, retry, and selection operations, but must compile every provider effect
+  through ordinary Goal/Plan authority; no ambient Python/JavaScript evaluator, arbitrary shell,
+  hidden route override, or persistent agent-authored loop becomes authority. Revisioned shared
+  state is likewise pending: immutable snapshots and append-only/CAS revisions may be shared by
+  handle, with one generation-fenced writer where mutation is necessary, but concurrent
+  full-permission multi-writer POSIX state remains unsupported. These gates complement rather than
+  replace Atlas AST/CST/symbol/SCIP/CPG representations, Scratch, Cairn's causal graph, exact
+  stop/reap, and authenticated user-to-orchestrator control.
+- Native Kimi Code and the non-disruptive Claude-Code/Kimi compatibility route remain first-class
+  harness targets, not one-off dogfood conveniences. Baton must preserve their separate credential
+  overlays and existing Claude installation, exact harness/model/effort selection, and eligibility
+  both to originate orchestration and to receive routed work. The same reciprocal contract applies
+  to Codex, Claude, Grok, and GLM where their native surfaces permit it; unsupported verbs remain
+  explicit rather than emulated invisibly.
+- Unattended full-permission launch remains the default harness preference, with exact per-harness
+  requested/resolved/observed attestation and honest containment gaps. It grants the child its
+  native tool mode, not ambient Baton authority to widen repository scope, routes, credentials,
+  approval, integration, publication, or stop ownership.
+- The initial common RLM/REPL substrate is the immutable Context expression builder followed by the
+  closed Program IR and durable effect-boundary runtime. It may feel Pythonic at the authoring
+  surface while compiling to one canonical schema. A general persistent Python/JavaScript/custom
+  kernel, ambient imports, or hidden mutable interpreter state remains deferred until replay,
+  authority, cancellation, and resource-reap semantics are independently proved; a custom language
+  should be earned by measured orchestration benefit rather than novelty.
+- The primary historical product gap was completing the integrated Run application over the already-strong
   fleet kernel. Phase 64 now has concise intent/profile → Goal/Plan → distinct approval → exact
   dispatch → bounded RunView → answer/steer → durable Run-scoped stop/reap → host deployment shutdown, plus restart scheduling
   across the approval/dispatch boundary. Direct, authenticated Web/browser, and default MCP are thin
   projections of the shared registry; MCP EOF/signals use an injected host shutdown authority. A safe
   one-shot `baton` client now submits the same bearer-authenticated Web commands without owning
   fleet lifecycle. `baton serve` separately owns listener admission and exact application shutdown.
-  Cursor follow, recovery, materialized result export, and multi-node scheduling remain red.
+  That historical cursor/recovery/export/multi-node statement is superseded by the checkpoint
+  above; it is retained here only as the sequence that led to the current application.
   Phase 65 now ships exact independent structured semantic review and separately authorized,
   fresh-evidence-bound local integration across direct/Web/MCP/CLI/browser surfaces. Terminal evidence manifests and
   non-merging result adoption now ship, and one bounded progress board consolidates the normal
@@ -437,6 +574,13 @@ evidence and disagreement are retained in
 - True semantic merge, multi-machine/A2A, extra vendors, and remote mesh stay visible and
   conditional. They cannot weaken the single-box authority model or be silently removed.
 - Homelab integration is not a capability gap for this project; adding it would violate scope.
+- RLM-style recursive evaluation is adopted first through closed Context expressions and the later
+  durable Program IR; a general persistent REPL kernel remains explicitly deferred.
+- Slate-style Episodes, workstreams, and Program composition are adopted only as independently
+  verified design inputs. Baton retains exact pre-effect authority, provenance, route attestation,
+  independent verification, scoped authenticated northbound control, and complete kill/reap rather
+  than copying opaque summary trust, globally blocking forks, implicit shared-write authority, or a
+  nested harness whose descendants cannot be observed and reaped.
 
 ## Dependency-ordered pursuit
 
@@ -493,17 +637,37 @@ evidence and disagreement are retained in
    catalogued later rungs, then demand-earned remaining Cairn Rung 2 depth and Rungs 3–4, Vantage,
    Evidence Ladder, and Skill Forge/computer use behind stronger containment. Phase 61 now closes
    the first graph-backed R1–R3 producer vertical without deleting any deeper rung.
-5. **Complete the integrated application and northbound/runtime depth:** extend the shipped Phase 64-65 Run
-   registry/View/scheduler/accepted-result-retention/adoption/evidence vertical with materialized
-   export, recovery, and multi-node composition; keep
-   authenticated Web and MCP thin; replace phase-specific dogfood runners; then MCP HTTP/Tasks/daemon, WebSocket,
-   operator takeover, OpenTelemetry, and only then a production-core port.
-6. **Pursue representation/trust research only through its Decisions:** higher CPG/IR/semantic
+5. **Complete recursive Context and adaptive workstream composition without a second engine:**
+   Phase 84's separately approved content-addressed map/Wave/settlement/reap vertical is shipped.
+   Phase 85's exact per-output pure lineage, map-v2 projection, all-terminal resource release,
+   evidence-only failed-generation settlement, private retained-commit capsule core, and atomic
+   accepted-child capsule attachment, durable root semantic role catalog, and pure generic
+   generation-1 `map | reduce` identity core plus exact successful result-output lineage and a
+   v3-only derived call source are shipped. Sole-authority generic admission, public reduce Plan
+   proposal/restart recovery, separately approved exact-route dispatch, reverified private-source
+   Brief materialization, reopen idempotency, and generic stop/reap are also shipped. Continue its
+   fixed dependency order—generic success/failure settlement, projection-failure terminalization, workerless
+   non-admission plus selective retry, unified `context_eval`, then live
+   recursive proof. Next add the zero-effect addressed Episode projection, then one-action resumable
+   workstreams with exact per-action harness/model/effort, steer/queue/interrupt/stop semantics,
+   branch-scoped user attention, atomic parallel dispatch, and no uncounted paused process. Only
+   after those contracts are replay- and reap-safe should a closed Program IR and revisioned shared
+   state expose bounded adaptive composition; retain immutable shared snapshots, single-writer
+   generations, and hub-owned verification rather than concurrent shared mutable sandboxes.
+6. **Complete the remaining application and northbound/runtime depth:** extend the shipped Run,
+   export, recovery, parallel Workflow, and bounded revision vertical with multi-round eligibility,
+   the remaining canonical strategies, and recursive action parity; keep authenticated Web and MCP
+   thin and make Episode/workstream control use the same scoped registry; replace phase-specific
+   dogfood runners; then MCP HTTP/Tasks/daemon, WebSocket, operator takeover, OpenTelemetry, and only
+   then a production-core port.
+7. **Pursue representation/trust research only through its Decisions:** higher CPG/IR/semantic
    merge/e-graph gates, with measured incremental value and no proof-language inflation. Phase 54's
    lexical binding increment is shipped; closure/destructuring/catch bindings, SSA/PDG/path solving,
    aliases/heap/interprocedural flow, semantic merge, and conditional expression/kernel e-graphs
    remain explicitly catalogued.
-7. **Productize evals and conditional federation last:** M0/M1/E2, then multi-machine/A2A/extra
+8. **Productize evals and conditional federation last:** M0/M1/E2, including whole-task Attempt
+   versus bounded-Episode workstream measurements for latency, context growth, rework, verification,
+   operator intervention, route handoff, and kill/reap leakage; then multi-machine/A2A/extra
    vendors only if demand earns them.
 
 Each item retains the earned loop: current verification → numbered contract → red tests →
