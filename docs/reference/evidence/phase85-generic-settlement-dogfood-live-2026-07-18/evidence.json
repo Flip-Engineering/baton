@@ -1,0 +1,18 @@
+{
+  "record": {
+    "schemaVersion": 1,
+    "deploymentRoot": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-phase85-generic-settlement-CpdAAj",
+    "runId": null,
+    "progress": null,
+    "error": {
+      "name": "Error",
+      "code": "application_profile_route_unavailable",
+      "message": "profile default contains an unavailable exact route"
+    }
+  },
+  "lifecycle": null,
+  "cleanup": {
+    "stopped": null,
+    "closed": null
+  }
+}

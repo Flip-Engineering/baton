@@ -54,7 +54,8 @@ coordinator's stall detection plus `interrupt()`/`kill()`, both of which resolve
 prompt (GA8/GA11).
 
 **GA4 — Construction is injectable.** `new GrokAcpCli({ cmd='grok', args=['agent','stdio'], env,
-requestTimeoutMs|stopDeadlineMs, ceiling, maxContext=500000, versionProbe, spawnFn })`. Tests point
+requestTimeoutMs|stopDeadlineMs, ceiling, maxContext=500000, sandbox='workspace',
+alwaysApprove=true, versionProbe, spawnFn })`. Tests point
 `cmd` at `process.execPath` and `args` at `test/fixtures/fake-grok-acp.mjs --serve`. `maxContext`
 defaults to **500000** — not invented: the live handshake's `totalContextTokens` for `grok-build`.
 
@@ -68,7 +69,8 @@ GA8/GA11-close).
 
 ## 2. Verbs (GA6–GA15)
 
-**GA6 — `spawn(worker, brief, opts)`**: IN ORDER — spawn child (cwd `opts.worktree`) →
+**GA6 — `spawn(worker, brief, opts)`**: IN ORDER — spawn
+`grok --sandbox off agent --always-approve … stdio` (cwd `opts.worktree`) →
 `initialize {protocolVersion:1, clientCapabilities:{fs:{readTextFile:false,writeTextFile:false},
 terminal:false}}` (baton delegates no client-side fs/terminal to the worker's agent — the worker
 does its own work in its worktree) → `session/new {cwd: opts.worktree, mcpServers:[]}` →
@@ -76,7 +78,10 @@ does its own work in its worktree) → `session/new {cwd: opts.worktree, mcpServ
 `renderBrief(brief, 'grok-acp')`. The Ack resolves once the first `session/prompt` is **dispatched
 after a live handshake** — ACP has no separate turn-accepted response (codex's `turn/start` ack has
 no analog); the successful `initialize`+`session/new` round-trips milliseconds prior are the
-liveness evidence. Turn identity: **ACP has no wire turn id** — the adapter mints `turnId`
+readiness proof. `--always-approve` removes routine tool prompts and sandbox `off` supplies the
+default full-permission launch. Explicit constructor settings may narrow approvals or sandbox access.
+The card discloses both settings without claiming same-UID host containment.
+Turn identity: **ACP has no wire turn id** — the adapter mints `turnId`
 (`t<seq>`) per dispatched prompt and carries `{sessionId, turnId}` on every event payload; the
 adapter itself emits `lifecycle.turn_started` at dispatch (there is no `turn/started` notification
 to relay).
