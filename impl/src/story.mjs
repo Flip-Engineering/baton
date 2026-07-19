@@ -94,6 +94,9 @@ export const KIND = Object.freeze({
   FILE_EDIT: 'content.file_edit',
   COMMAND_EXEC: 'content.tool_call',
   KILL_CONFIRMED: 'kill.confirmed', // SC5a (phase10)
+  PROCESS_CLOSED: 'lifecycle.process_closed',
+  RECOVERY_TERMINALIZED: 'control.recovery_terminalized',
+  RECOVERY_PROCESS_ABSENT: 'control.recovery_process_absent',
   REVERIFIED: 'verify.reverified', // SC5c (phase10) — the one kind the coordinator itself emits
   ERROR: 'error',
 });
@@ -402,6 +405,12 @@ function handleKnownKind(w, kind, payload, event) {
       w.status = 'exited';
       break;
     }
+    case KIND.PROCESS_CLOSED:
+    case KIND.RECOVERY_TERMINALIZED:
+    case KIND.RECOVERY_PROCESS_ABSENT: {
+      w.status = 'exited';
+      break;
+    }
     case KIND.REVERIFIED: {
       // SC5c: the trust gate's verdict becomes story-visible. No status change — the worker is
       // already idle and may be redispatched; the narrative reads it (SC5d).
@@ -443,8 +452,13 @@ function handleKnownKind(w, kind, payload, event) {
       break;
     }
     case KIND.FILE_EDIT: {
-      const path = payload.path;
-      if (path) {
+      const values = [payload.path, ...(Array.isArray(payload.paths) ? payload.paths : [])]
+        .filter((path) => typeof path === 'string' && path.length > 0);
+      for (const value of values) {
+        const marker = `/.baton/wt/${w.workerId}/`;
+        const path = value.includes(marker) ? value.slice(value.indexOf(marker) + marker.length)
+          : value.startsWith('/') ? null : value;
+        if (!path) continue;
         w.editedPaths.add(path);
         if (w.brief && Array.isArray(w.brief.pathScope) && w.brief.pathScope.length > 0 && !isInScope(w.brief.pathScope, path)) {
           w.outOfScopePaths.add(path);
@@ -453,8 +467,12 @@ function handleKnownKind(w, kind, payload, event) {
       break;
     }
     case KIND.COMMAND_EXEC: {
-      const sig = `${payload.cmd ?? ''}::${payload.exitCode ?? 0}`;
-      const failed = (payload.exitCode ?? 0) !== 0;
+      const status = payload.status ?? payload.item?.status ?? null;
+      if (status !== null && status !== 'completed') break;
+      const command = payload.command ?? payload.cmd ?? payload.item?.command ?? '';
+      const exitCode = payload.exitCode ?? payload.item?.exitCode ?? 0;
+      const sig = `${command}::${exitCode}`;
+      const failed = exitCode !== 0;
       w.recentActionSignatures.push(sig);
       if (w.recentActionSignatures.length > MAX_ACTION_SIGNATURE_WINDOW) {
         w.recentActionSignatures = w.recentActionSignatures.slice(-MAX_ACTION_SIGNATURE_WINDOW);

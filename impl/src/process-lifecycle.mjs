@@ -98,6 +98,25 @@ export function processReadyPayload(generation, pid) {
   return { schemaVersion: 1, generation: normalizeProcessGeneration(generation), pid, processGroupId: pid };
 }
 
+export function recoveryProcessAbsentPayload(processRef) {
+  return {
+    schemaVersion: 1,
+    generation: processRef?.generation,
+    pid: processRef?.pid,
+    processGroupId: processRef?.processGroupId,
+    reason: 'process_group_absent',
+  };
+}
+
+export function validRecoveryProcessAbsentPayload(payload) {
+  return exactKeys(payload, ['generation', 'pid', 'processGroupId', 'reason', 'schemaVersion'])
+    && payload.schemaVersion === 1
+    && positiveSafe(payload.generation)
+    && positiveSafe(payload.pid)
+    && payload.processGroupId === payload.pid
+    && payload.reason === 'process_group_absent';
+}
+
 export function validProcessStartedPayload(payload) {
   return exactKeys(payload, START_KEYS)
     && payload.schemaVersion === 1

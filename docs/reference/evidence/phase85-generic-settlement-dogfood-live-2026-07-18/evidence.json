@@ -1,0 +1,277 @@
+{
+  "record": {
+    "schemaVersion": 1,
+    "deploymentRoot": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-phase85-generic-settlement-C0ENUk",
+    "runId": "run-f1a1a7f2ff7d648aad153d39139cadfe",
+    "recovered": true,
+    "phase": "stopped",
+    "ownership": {
+      "state": "stopped",
+      "ownedCount": 0,
+      "cleanupState": "stopped",
+      "terminalCause": {
+        "kind": "provider_failure",
+        "code": "cancelled",
+        "category": "provider_failure",
+        "summary": "The provider route failed.",
+        "remediation": "Inspect the Run's bounded evidence and provider readiness, then retry or select another exact route.",
+        "retryable": true
+      }
+    },
+    "interrupted": {
+      "schemaVersion": 1,
+      "state": "running",
+      "deploymentRoot": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-phase85-generic-settlement-C0ENUk",
+      "runId": "run-f1a1a7f2ff7d648aad153d39139cadfe",
+      "progress": {
+        "stage": "map_approved",
+        "sourceItems": 5,
+        "selectedTeam": [
+          {
+            "role": "settlement-adversary",
+            "exact": {
+              "harness": "glm",
+              "model": "glm-5.2",
+              "effort": "xhigh"
+            }
+          },
+          {
+            "role": "settlement-synthesizer",
+            "exact": {
+              "harness": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": "xhigh"
+            }
+          }
+        ],
+        "readiness": [
+          {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "xhigh",
+            "state": "ready",
+            "code": null,
+            "summary": "The exact route passed static deployment readiness."
+          },
+          {
+            "harness": "glm",
+            "model": "glm-5.2",
+            "effort": "xhigh",
+            "state": "ready",
+            "code": null,
+            "summary": "The exact route passed static deployment readiness."
+          },
+          {
+            "harness": "kimi-code",
+            "model": "kimi-code/k3",
+            "effort": "max",
+            "state": "blocked",
+            "code": "authentication_refresh_required",
+            "summary": "Kimi authentication has expired. Run the ordinary `kimi` login flow to refresh authentication, then reopen Baton."
+          }
+        ],
+        "callId": "context-call:c02cebf803c91121b93e63e6ad49827bfdd613f999225d6082d553a1d76763a9"
+      }
+    }
+  },
+  "lifecycle": {
+    "schemaVersion": 1,
+    "trigger": {
+      "kind": "operation_completed",
+      "detail": null
+    },
+    "signalCount": 0,
+    "operation": {
+      "status": "fulfilled",
+      "value": {
+        "schemaVersion": 1,
+        "deploymentRoot": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-phase85-generic-settlement-C0ENUk",
+        "runId": "run-f1a1a7f2ff7d648aad153d39139cadfe",
+        "recovered": true,
+        "phase": "stopped",
+        "ownership": {
+          "state": "stopped",
+          "ownedCount": 0,
+          "cleanupState": "stopped",
+          "terminalCause": {
+            "kind": "provider_failure",
+            "code": "cancelled",
+            "category": "provider_failure",
+            "summary": "The provider route failed.",
+            "remediation": "Inspect the Run's bounded evidence and provider readiness, then retry or select another exact route.",
+            "retryable": true
+          }
+        },
+        "interrupted": {
+          "schemaVersion": 1,
+          "state": "running",
+          "deploymentRoot": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-phase85-generic-settlement-C0ENUk",
+          "runId": "run-f1a1a7f2ff7d648aad153d39139cadfe",
+          "progress": {
+            "stage": "map_approved",
+            "sourceItems": 5,
+            "selectedTeam": [
+              {
+                "role": "settlement-adversary",
+                "exact": {
+                  "harness": "glm",
+                  "model": "glm-5.2",
+                  "effort": "xhigh"
+                }
+              },
+              {
+                "role": "settlement-synthesizer",
+                "exact": {
+                  "harness": "codex",
+                  "model": "gpt-5.6-sol",
+                  "effort": "xhigh"
+                }
+              }
+            ],
+            "readiness": [
+              {
+                "harness": "codex",
+                "model": "gpt-5.6-sol",
+                "effort": "xhigh",
+                "state": "ready",
+                "code": null,
+                "summary": "The exact route passed static deployment readiness."
+              },
+              {
+                "harness": "glm",
+                "model": "glm-5.2",
+                "effort": "xhigh",
+                "state": "ready",
+                "code": null,
+                "summary": "The exact route passed static deployment readiness."
+              },
+              {
+                "harness": "kimi-code",
+                "model": "kimi-code/k3",
+                "effort": "max",
+                "state": "blocked",
+                "code": "authentication_refresh_required",
+                "summary": "Kimi authentication has expired. Run the ordinary `kimi` login flow to refresh authentication, then reopen Baton."
+              }
+            ],
+            "callId": "context-call:c02cebf803c91121b93e63e6ad49827bfdd613f999225d6082d553a1d76763a9"
+          }
+        }
+      }
+    },
+    "closed": {
+      "stopped": {
+        "stop": {
+          "state": "stopped",
+          "admittedAt": "2026-07-19T03:51:58.691Z",
+          "completedAt": "2026-07-19T03:52:05.484Z",
+          "targetCount": 7,
+          "targetDigest": "6af361ffc846ee211d635d465f92b7371a5f74441e08a73c79336175c1dbe552",
+          "receipt": {
+            "schemaVersion": 3,
+            "state": "stopped",
+            "scope": "run_subtree",
+            "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+            "runId": "run-f1a1a7f2ff7d648aad153d39139cadfe",
+            "targetCount": 7,
+            "remainingCount": 0,
+            "targetDigest": "6af361ffc846ee211d635d465f92b7371a5f74441e08a73c79336175c1dbe552",
+            "counts": {
+              "pendingCancelled": 0,
+              "killConfirmed": 0,
+              "alreadyTerminal": 7,
+              "processesObserved": 4,
+              "processesClosed": 4
+            },
+            "checks": {
+              "dispatchClosed": true,
+              "interactionsResolved": true,
+              "runAuthorityReleased": true
+            },
+            "effects": {
+              "coordinatorClosed": false,
+              "writerReleased": false,
+              "transportsClosed": false
+            },
+            "context": {
+              "targetSessionCount": 1,
+              "targetCellCount": 0,
+              "targetCallCount": 1,
+              "remainingSessionCount": 0,
+              "remainingCellCount": 0,
+              "remainingCallCount": 0
+            },
+            "receiptDigest": "d71ce666d5efc54dae0b256a59f7a3a8051514c694ea64c7daffc1a5c8a2e7b6"
+          }
+        },
+        "ownership": {
+          "workers": 0,
+          "workerIds": [],
+          "closed": false
+        }
+      },
+      "closed": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": true
+      }
+    }
+  },
+  "cleanup": {
+    "stopped": {
+      "stop": {
+        "state": "stopped",
+        "admittedAt": "2026-07-19T03:51:58.691Z",
+        "completedAt": "2026-07-19T03:52:05.484Z",
+        "targetCount": 7,
+        "targetDigest": "6af361ffc846ee211d635d465f92b7371a5f74441e08a73c79336175c1dbe552",
+        "receipt": {
+          "schemaVersion": 3,
+          "state": "stopped",
+          "scope": "run_subtree",
+          "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+          "runId": "run-f1a1a7f2ff7d648aad153d39139cadfe",
+          "targetCount": 7,
+          "remainingCount": 0,
+          "targetDigest": "6af361ffc846ee211d635d465f92b7371a5f74441e08a73c79336175c1dbe552",
+          "counts": {
+            "pendingCancelled": 0,
+            "killConfirmed": 0,
+            "alreadyTerminal": 7,
+            "processesObserved": 4,
+            "processesClosed": 4
+          },
+          "checks": {
+            "dispatchClosed": true,
+            "interactionsResolved": true,
+            "runAuthorityReleased": true
+          },
+          "effects": {
+            "coordinatorClosed": false,
+            "writerReleased": false,
+            "transportsClosed": false
+          },
+          "context": {
+            "targetSessionCount": 1,
+            "targetCellCount": 0,
+            "targetCallCount": 1,
+            "remainingSessionCount": 0,
+            "remainingCellCount": 0,
+            "remainingCallCount": 0
+          },
+          "receiptDigest": "d71ce666d5efc54dae0b256a59f7a3a8051514c694ea64c7daffc1a5c8a2e7b6"
+        }
+      },
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      }
+    },
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    }
+  }
+}
