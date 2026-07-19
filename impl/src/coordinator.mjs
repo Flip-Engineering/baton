@@ -41,7 +41,10 @@ const LOGICAL_CALL_PHASES = new Set(['requested', 'progress', 'completed', 'fail
 const RUN_TIMELINE_OPERATIONAL_KINDS = new Set([
   'content.file_edit', 'content.message', 'content.tool_call',
   'control.delivery_amended', 'control.delivery_refused', 'control.delivery_requested',
-  'control.follow_up_requested', 'control.stale_rejected',
+  'control.follow_up_requested', 'control.interrupt_confirmed',
+  'control.interaction_superseded', 'control.interrupt_requested',
+  'control.session_preservation_reattached',
+  'control.stale_rejected',
   'kill.confirmed', 'kill.requested',
   'lifecycle.crashed', 'lifecycle.process_closed', 'lifecycle.process_ready',
   'lifecycle.process_reap_unconfirmed', 'lifecycle.process_started', 'lifecycle.spawned',
@@ -994,13 +997,28 @@ export class Coordinator {
       });
     }
 
-    // Ordinary startup retains D10's reconcile-before-replay posture. Opt-in automatic native
-    // recovery must first identify the exact replayed session owners; otherwise an empty expected
-    // set would delete the very worktrees whose ownership the fresh handshake must validate.
-    if (!this._startupRecoveryAuthority && this._worktrees && typeof this._worktrees.reconcile === 'function') this._trackStartupCleanup(() => this._worktrees.reconcile());
-    if (!this._startupRecoveryAuthority && this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') this._trackStartupCleanup(() => this._runtimeScopes.reconcile([]));
     this._replay();
-    if (this._startupRecoveryAuthority) {
+    if (!this._startupRecoveryAuthority) {
+      // Phase 91: replay must identify closed preservation receipts before worktree
+      // reconciliation. An empty expected set would destroy the exact checkout bound by the
+      // receipt and make attach-only recovery impossible. Retain only nonterminal owners whose
+      // operational fold closed on a preserved interrupt; every ordinary replayed checkout is
+      // still reconciled away. Runtime scopes are never trusted across controller incarnation.
+      const preservedOwners = [...this._workers.values()].filter((handle) => {
+        const task = this._tasks.get(handle.taskId);
+        return handle.status === 'orphaned'
+          && handle.sessionPreservation?.state === 'preserved'
+          && handle.sessionPreservation?.transport === 'attached'
+          && handle.sessionContext?.ownerTaskId
+          && task && !TERMINAL_TASK_STATUSES.has(task.status);
+      }).map((handle) => handle.sessionContext.ownerTaskId);
+      if (this._worktrees && typeof this._worktrees.reconcile === 'function') {
+        this._trackStartupCleanup(() => this._worktrees.reconcile(preservedOwners));
+      }
+      if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') {
+        this._trackStartupCleanup(() => this._runtimeScopes.reconcile([]));
+      }
+    } else {
       const eligible = [...this._workers.values()].filter((handle) => {
         const adapter = this._adapters[handle.vendor];
         const task = this._tasks.get(handle.taskId);
@@ -1848,6 +1866,59 @@ export class Coordinator {
       workerPolicyObservationDigest: handle.workerPolicyObserved?.observationDigest ?? null,
       routeKey: handle.routeKey ?? task?.routeKey ?? null,
     };
+  }
+
+  _semanticControlBinding(handle, task = this._tasks.get(handle.taskId)) {
+    return {
+      sessionDigest: handle.sessionRef ? canonicalDigest(handle.sessionRef) : null,
+      processGeneration: handle.processGeneration ?? 0,
+      worktreeDigest: canonicalDigest({
+        taskId: task?.id ?? handle.taskId,
+        worktree: handle.worktree,
+        sessionContext: handle.sessionContext ?? null,
+      }),
+      routeDigest: canonicalDigest(this._routeAttribution(handle, task)),
+      planBindingDigest: canonicalDigest({
+        runId: task?.runId ?? handle.runId ?? null,
+        taskId: task?.id ?? handle.taskId,
+        goalPlan: task?.brief?.goalPlan ?? null,
+        routeKey: task?.routeKey ?? handle.routeKey ?? null,
+      }),
+      runAuthorityDigest: canonicalDigest({
+        runId: task?.runId ?? handle.runId ?? null,
+        taskId: task?.id ?? handle.taskId,
+        workerId: handle.id,
+        taskVersion: this._coordination.task?.(task?.id ?? handle.taskId)?.version ?? null,
+        dispatchClosed: task?.runId ? Boolean(this._coordination.runStop?.(task.runId)) : false,
+      }),
+    };
+  }
+
+  _semanticTargetMatches(handle, expected, expectedDigest) {
+    if (!handle || !expected || typeof expected !== 'object'
+      || canonicalDigest(expected) !== expectedDigest) return false;
+    const task = this._tasks.get(handle.taskId);
+    const activeCount = [...this._workers.values()].filter((candidate) => {
+      if (!['working', 'blocked', 'interrupted'].includes(candidate.status)) return false;
+      const candidateTask = this._tasks.get(candidate.taskId);
+      return (candidateTask?.runId ?? candidate.runId ?? null)
+        === (task?.runId ?? handle.runId ?? null);
+    }).length;
+    const actual = {
+      workerId: handle.id,
+      taskId: task?.id ?? handle.taskId,
+      fence: this._fences.current(handle.id).fence,
+      // Role is immutable Plan metadata resolved by the Application before effect start. The
+      // Plan-binding digest below prevents a changed Plan/node from retaining this value.
+      role: expected.role,
+      activeCount,
+      turnEpoch: this._safeTurnEpoch(handle),
+      turnState: handle.status,
+      preservationReceiptDigest: handle.status === 'interrupted'
+        ? handle.sessionPreservation?.receiptDigest ?? null : null,
+      ...this._semanticControlBinding(handle, task),
+    };
+    return canonicalDigest(actual) === expectedDigest;
   }
 
   _failWorkerPolicyObservation(handle, turnEpoch, mismatches, observation = null) {
@@ -3008,6 +3079,8 @@ export class Coordinator {
       providerPolicyHardExceeded: false,
       providerTelemetryFailed: false,
       providerTerminalSeal: null,
+      sessionPreservation: null,
+      preservedTurnEpoch: null,
       watchdogActions: new Set(),
       recentFailedActions: [],
       watchdogGeneration: 0,
@@ -3079,6 +3152,7 @@ export class Coordinator {
         usageCumulative: new Map(), budgetStopTimer: null, turnTerminalObserved: false,
         providerGovernance: null, providerPolicyDigest: null, providerTurn: null, providerPolicyHardExceeded: false,
         providerTelemetryFailed: false, providerTerminalSeal: null,
+        sessionPreservation: null, preservedTurnEpoch: null,
         watchdogActions: new Set(), recentFailedActions: [],
         watchdogGeneration: 0, watchdogTimer: null, runtimeScope: null, runtimeLease: null,
         spawnAbort: null, recoverySpawnAbort: null, recoverySpawnPending: false, recoverySpawnPromise: null, recoveryStopReason: null,
@@ -3608,6 +3682,9 @@ export class Coordinator {
     if (!task || !handle.sessionRef || handle.sessionRef.persistence !== 'native') {
       return { ok: false, result: 'session_not_resumable' };
     }
+    if (handle.sessionPreservation?.state === 'preserved') {
+      return this._reattachPreservedSession(handle, task, opts);
+    }
     if (task.brief?.goalPlan && !planRecovery) {
       return { ok: false, result: 'goal_plan_continuation_not_authorized' };
     }
@@ -4104,6 +4181,155 @@ export class Coordinator {
       if (!recoveryAttemptSettled) settleRecoveryAttempt(recoveryEffectStarted ? 'unknown' : 'not_started');
       throw error;
     }
+  }
+
+  async _reattachPreservedSession(handle, task, opts = {}) {
+    const workerId = handle.id;
+    const adapter = this._adapters[handle.vendor];
+    if (!adapter || !cardSupportsSession(adapter.card(), { mode: 'resume' })) {
+      return { ok: false, result: 'session_not_resumable' };
+    }
+    if (task.runId && (this._coordination.runStop?.(task.runId)
+      || this._coordination.run?.(task.runId)?.status === 'sealed')) {
+      return { ok: false, result: 'run_stopping' };
+    }
+    const rawContext = opts.context ?? handle.sessionContext;
+    const context = rawContext
+      ? normalizeSessionRequest({ mode: 'resume', id: handle.sessionRef.id, context: rawContext }).context
+      : null;
+    if (!context) return { ok: false, result: 'session_context_required' };
+    try { await this._validateSessionContext(context); }
+    catch (error) {
+      return { ok: false, result: error.code ?? 'session_context_mismatch', reason: error.message };
+    }
+
+    const session = normalizeSessionRequest({ mode: 'resume', id: handle.sessionRef.id, context });
+    const admission = { events: [] };
+    admission.spawned = new Promise((resolve) => { admission.resolveSpawned = resolve; });
+    handle.turnAdmission = admission;
+    const requested = this._log.append({
+      worker: workerId, harness: this._harnessOf(handle.vendor),
+      turnEpoch: this._safeTurnEpoch(handle), kind: 'control.recovery_requested',
+      actor: opts.actor ?? 'orchestrator', ...this._routeAttribution(handle, task),
+      payload: { sessionRef: handle.sessionRef, context, preservationOnly: true },
+    });
+    this._coordRecord('recovery.requested', {
+      taskId: task.id, workerId, sessionId: handle.sessionRef.id, context,
+      runId: task.runId ?? handle.runId ?? null, preservationOnly: true,
+      evidence: this._coordMapEvent(requested),
+    }, `driver.recovery.requested:${task.id}:${requested.seq}`, opts.actor ?? 'orchestrator');
+    const runtime = this._ensureRuntimeScope(handle);
+    handle.currentIncarnation = true;
+    handle.localAuthority = true;
+    handle.processGeneration = (handle.processGeneration ?? 0) + 1;
+    handle.workerPolicyObserved = null;
+    handle.workerPolicyMismatch = null;
+    const abort = new AbortController();
+    handle.recoverySpawnAbort = abort;
+    handle.recoverySpawnPending = true;
+    const timeoutMs = opts.timeoutMs ?? this._recoveryTimeoutMs;
+    let timer;
+    const timeout = new Promise((resolve) => {
+      timer = this._setTimeout(() => resolve({ timeout: true }), timeoutMs);
+      if (timer && typeof timer.unref === 'function') timer.unref();
+    });
+    const spawned = Promise.resolve().then(() => adapter.spawn(workerId, task.brief, {
+      worktree: context.worktree,
+      timeoutMs: task.brief?.budget?.wallMin ? task.brief.budget.wallMin * 60_000 : undefined,
+      model: handle.modelResolved ?? undefined,
+      reasoningEffort: handle.effortResolved ?? undefined,
+      workerPolicy: handle.workerPolicyResolution ?? undefined,
+      serviceTier: handle.modelPolicy?.serviceTier,
+      session,
+      attachOnly: true,
+      signal: abort.signal,
+      env: runtime?.env,
+      replaceEnv: runtime?.replaceEnv === true,
+      redactProviderFrame: runtime?.redactProviderFrame,
+      processGeneration: handle.processGeneration,
+      processReapTimeoutMs: Math.max(1, Math.floor(this._stopDeadlineMs * 0.8)),
+    })).then((ack) => ({ ack }), (error) => ({ error }));
+    let outcome = await Promise.race([spawned, timeout]);
+    if (outcome?.ack?.ok === true && !outcome.timeout) {
+      outcome = await Promise.race([
+        admission.spawned.then((event) => ({ ...outcome, spawned: event })), timeout,
+      ]);
+    }
+    if (timer != null) this._clearTimeout(timer);
+    handle.recoverySpawnPending = false;
+    handle.recoverySpawnAbort = null;
+
+    const observed = outcome?.spawned?.payload?.threadId ?? outcome?.spawned?.payload?.sessionId;
+    const unexpected = admission.events.filter((event) => event.kind !== 'lifecycle.spawned');
+    const failed = outcome?.timeout ? 'recovery_timeout'
+      : outcome?.error ? 'recovery_exception'
+        : outcome?.ack?.ok !== true ? 'recovery_refused'
+          : observed !== handle.sessionRef.id ? 'session_identity_mismatch'
+            : admission.events.filter((event) => event.kind === 'lifecycle.spawned').length !== 1
+              || unexpected.length > 0 ? 'recovery_protocol_violation'
+                : handle.processRef?.state === 'closed' ? 'recovery_transport_closed' : null;
+    if (failed) {
+      if (handle.turnAdmission === admission) handle.turnAdmission = null;
+      if (outcome?.timeout && !abort.signal.aborted) {
+        abort.abort({ reason: 'preserved_session_reattachment_timeout' });
+      }
+      return this._failPreservedReattachment(handle, task, failed);
+    }
+
+    handle.sessionRequest = session;
+    handle.sessionContext = context;
+    handle.turnAdmission = null;
+    for (const event of admission.events) {
+      this._handleEvent(event, handle.vendor, { admittedReady: event.kind === 'lifecycle.spawned' });
+    }
+    if (handle.modelMismatch || handle.effortMismatch || handle.workerPolicyMismatch
+      || handle.processRef?.state === 'closed') {
+      return this._failPreservedReattachment(handle, task, 'recovery_route_mismatch');
+    }
+    const binding = this._semanticControlBinding(handle, task);
+    const core = {
+      schemaVersion: 1, state: 'preserved', transport: 'attached',
+      reattachment: 'confirmed', ...binding,
+      turnEpoch: this._safeTurnEpoch(handle), fence: this._fences.current(workerId).fence,
+    };
+    const preservation = deepFreeze({ ...core, receiptDigest: canonicalDigest(core) });
+    handle.status = 'interrupted';
+    handle.sessionPreservation = preservation;
+    handle.preservedTurnEpoch = preservation.turnEpoch;
+    const attached = this._log.append({
+      worker: workerId, harness: this._harnessOf(handle.vendor),
+      turnEpoch: this._safeTurnEpoch(handle), kind: 'control.session_preservation_reattached',
+      actor: 'policy', ...this._routeAttribution(handle, task), payload: { preservation },
+    });
+    this._coordMapEvent(attached);
+    return { ok: true, result: 'attached_preserved', preservation,
+      handle: this._publicHandle(handle, { exposeRecovery: true }) };
+  }
+
+  async _failPreservedReattachment(handle, task, result) {
+    handle.status = 'orphaned';
+    handle.sessionPreservation = null;
+    handle.preservedTurnEpoch = null;
+    const failed = this._log.append({
+      worker: handle.id, harness: this._harnessOf(handle.vendor),
+      turnEpoch: this._safeTurnEpoch(handle), kind: 'control.recovery_failed',
+      actor: 'policy', ...this._routeAttribution(handle, task),
+      payload: { result, preservationOnly: true, action: 'kill_untrusted_transport' },
+    });
+    if (task && !TERMINAL_TASK_STATUSES.has(task.status)) {
+      const evidence = this._coordMapEvent(failed);
+      this._coordTransition(task, 'failed',
+        `task.failed:${task.id}:preserved_reattachment:${failed.seq}`, evidence);
+      task.status = 'failed';
+    }
+    const reap = await this._beginStop(handle, 'kill', undefined, 'policy');
+    const reapConfirmed = reap?.ok === true
+      && ['confirmed', 'already_dead', 'already_stopped'].includes(reap.result);
+    return {
+      ok: false, result,
+      reap: reapConfirmed ? 'confirmed' : 'unconfirmed',
+      reapResult: reap?.result ?? 'unknown',
+    };
   }
 
   /** AC5: explicitly integrate an accepted captured commit. This never pushes. */
@@ -4991,6 +5217,17 @@ export class Coordinator {
         violation: handle.providerTurn.violation,
         sealed: handle.providerTurn.sealed,
       } : null,
+      activeProviderTurns: handle.status === 'working' || handle.status === 'blocked' ? 1 : 0,
+      controllableAttached: handle.status === 'interrupted'
+        && handle.sessionPreservation?.state === 'preserved',
+      terminalCause: handle.terminalCause ? { ...handle.terminalCause } : null,
+      sessionPreservationCapable: Boolean(handle.sessionRef)
+        && ['native', 'emulated'].includes(
+          this._adapters[handle.vendor]?.card()?.sessions?.multiTurn,
+        ),
+      sessionPreservation: handle.sessionPreservation
+        ? { ...handle.sessionPreservation } : null,
+      semanticControlBinding: this._semanticControlBinding(handle),
       providerTerminalSeal: handle.providerTerminalSeal ?? null,
       providerPolicyHardExceeded: handle.providerPolicyHardExceeded === true,
       providerTelemetryFailed: handle.providerTelemetryFailed === true,
@@ -5083,9 +5320,32 @@ export class Coordinator {
   async _deliver(handle, message, mode, opts) {
     const workerId = handle.id;
     const task = this._tasks.get(handle.taskId);
+    if (opts.semanticTarget && !this._semanticTargetMatches(
+      handle, opts.semanticTarget, opts.semanticTargetDigest,
+    )) {
+      this._log.append({
+        worker: workerId, harness: this._harnessOf(handle.vendor),
+        turnEpoch: this._safeTurnEpoch(handle), kind: 'control.stale_rejected',
+        actor: opts.actor ?? 'orchestrator',
+        payload: {
+          op: 'send', phase: 'semantic_binding', result: 'semantic_target_drift',
+          ...(opts.controlId ? { controlId: opts.controlId } : {}),
+        },
+      });
+      return { ok: false, result: 'semantic_target_drift' };
+    }
     // SC14: delivery-slot acquisition is the authority boundary. A queued continuation cannot
     // cross a finalized stop, and a terminal task cannot be resurrected by a surviving session.
     if (handle.status === 'stopping') return { ok: false, result: 'worker_stopping' };
+    const preservedSuccessor = opts.resumePreservedTurn === true
+      && handle.status === 'interrupted'
+      && handle.sessionPreservation?.state === 'preserved';
+    if (opts.resumePreservedTurn === true && !opts.controlId) {
+      throw new TypeError('preserved-turn successor requires semantic control identity');
+    }
+    if (preservedSuccessor) {
+      return this._deliverPreservedSuccessor(handle, task, message, opts);
+    }
     if (opts.internalKindToken === ORIENTATION_DELIVERY && !['working', 'blocked'].includes(handle.status)) return { ok: false, result: 'worker_not_active' };
     const card = this._adapters[handle.vendor]?.card();
     const reusableFollowUp = mode === 'turn'
@@ -5099,7 +5359,8 @@ export class Coordinator {
       throw Object.assign(new Error(`run ${task.runId} is sealed`), { name: 'CoordinationRefusal', code: 'run_sealed' });
     }
     if (handle.status === 'idle' && !reusableFollowUp) return { ok: false, result: 'worker_not_active' };
-    if (handle.status === 'dead' || handle.status === 'exited' || handle.status === 'orphaned' || handle.status === 'pending') {
+    if (handle.status === 'dead' || handle.status === 'exited' || handle.status === 'orphaned'
+      || handle.status === 'interrupted' || handle.status === 'pending') {
       return { ok: false, result: 'worker_not_active' };
     }
     if (!task || (TERMINAL_TASK_STATUSES.has(task.status) && !reusableFollowUp)) return { ok: false, result: 'task_terminal' };
@@ -5196,6 +5457,122 @@ export class Coordinator {
     if (ack && ack.emulated === true) ev.emulated = true;
     this._log.append(ev);
     return { ok: true, result: 'ok', emulated: ack && ack.emulated === true };
+  }
+
+  async _deliverPreservedSuccessor(handle, task, message, opts) {
+    const workerId = handle.id;
+    if (!task || TERMINAL_TASK_STATUSES.has(task.status)) {
+      return { ok: false, result: 'task_terminal' };
+    }
+    if (task.runId && this._coordination.runStop?.(task.runId)) {
+      return { ok: false, result: 'run_stopping' };
+    }
+    if (!this._worktreeAuthorityAvailable(handle)
+      || handle.processRef?.state === 'closed'
+      || handle.processRef?.state === 'unconfirmed_after_restart'
+      || handle.sessionPreservation?.transport !== 'attached') {
+      handle.status = 'orphaned';
+      return { ok: false, result: 'preserved_session_not_attached' };
+    }
+    if (opts.expectedFence !== undefined) {
+      const preCheck = this._fences.check(workerId, { fence: opts.expectedFence });
+      if (!preCheck.ok) return { ok: false, result: 'stale_fence', current: preCheck.current };
+    }
+
+    const providerAdmission = this._admitProviderTurn(handle, task, 'semantic_continuation');
+    if (!providerAdmission.ok) {
+      return { ok: false, result: 'provider_turn_refused', reason: providerAdmission.code };
+    }
+    const requestedEvent = this._log.append({
+      worker: workerId, harness: this._harnessOf(handle.vendor),
+      turnEpoch: this._safeTurnEpoch(handle), kind: 'control.follow_up_requested',
+      actor: opts.actor ?? 'orchestrator', ...this._routeAttribution(handle, task),
+      payload: {
+        message, expectedFence: opts.expectedFence ?? null, controlId: opts.controlId,
+        preservedTurn: true,
+      },
+    });
+    const requestedEvidence = this._coordMapEvent(requestedEvent);
+    this._coordRecord('follow_up.requested', {
+      taskId: task.id, workerId, expectedFence: opts.expectedFence ?? null,
+      preservedTurn: true, evidence: requestedEvidence,
+    }, `driver.follow_up.requested:${task.id}:${requestedEvent.seq}`, opts.actor ?? 'orchestrator');
+
+    const admission = { events: [] };
+    handle.turnAdmission = admission;
+    let ack;
+    try {
+      ack = await this._adapters[handle.vendor].prompt(workerId, message, 'turn');
+    } catch (error) {
+      if (handle.turnAdmission === admission) handle.turnAdmission = null;
+      if (admission.events.length > 0) this._rejectContradictoryAdmission(handle, admission, error);
+      else this._releaseProviderTurnAdmission(handle, 'semantic_continuation_exception');
+      return { ok: false, result: 'delivery_exception', reason: String(error?.message ?? error) };
+    }
+    if (!ack || ack.ok !== true) {
+      if (handle.turnAdmission === admission) handle.turnAdmission = null;
+      if (admission.events.length > 0) this._rejectContradictoryAdmission(handle, admission, ack?.reason);
+      else this._releaseProviderTurnAdmission(handle, 'semantic_continuation_refused');
+      return { ok: false, result: ack?.reason ?? 'delivery_refused', reason: ack?.reason };
+    }
+    const stopWon = this._stopWaiters.has(workerId) || handle.status !== 'interrupted'
+      || (task.runId && this._coordination.runStop?.(task.runId));
+    if (stopWon) {
+      if (handle.turnAdmission === admission) handle.turnAdmission = null;
+      // The provider accepted the prompt before stop won. Its effect is ambiguous and must not
+      // be rolled back to a pre-effect refusal or automatically redelivered after replay.
+      this._log.append({
+        worker: workerId, harness: this._harnessOf(handle.vendor),
+        turnEpoch: this._safeTurnEpoch(handle), kind: 'control.delivery_amended', actor: 'policy',
+        ...this._routeAttribution(handle, task),
+        payload: {
+          op: 'send', mode: 'turn', deliveredDespiteStale: true,
+          reason: 'run_stop_after_provider_acceptance', controlId: opts.controlId,
+        },
+      });
+      return {
+        ok: false, result: 'run_stopping', deliveredDespiteStale: true,
+        actualDelivery: 'turn',
+      };
+    }
+    const stamp = this._fences.bumpTurn(workerId);
+    const continuationCore = {
+      schemaVersion: 1,
+      state: 'admitted',
+      preservationReceiptDigest: handle.sessionPreservation.receiptDigest,
+      sessionDigest: handle.sessionPreservation.sessionDigest,
+      taskBindingDigest: handle.sessionPreservation.planBindingDigest,
+      routeDigest: handle.sessionPreservation.routeDigest,
+      providerAdmissionSeq: providerAdmission.event?.seq ?? null,
+      turnEpoch: stamp.turnEpoch,
+    };
+    const continuation = deepFreeze({
+      ...continuationCore, receiptDigest: canonicalDigest(continuationCore),
+    });
+    handle.status = 'working';
+    handle.turnTerminalObserved = false;
+    handle.sessionPreservation = deepFreeze({
+      ...handle.sessionPreservation, state: 'consumed',
+      successorReceiptDigest: continuation.receiptDigest,
+    });
+    handle.preservedTurnEpoch = null;
+    this._clearBudgetStop(handle);
+    handle.turnAdmission = null;
+    this._resetWatchdogTurn(handle);
+    this._log.append({
+      worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: stamp.turnEpoch,
+      kind: 'lifecycle.turn_started', actor: 'orchestrator',
+      ...this._routeAttribution(handle, task),
+      payload: {
+        followUp: true, afterInterrupt: true, preservedSession: true,
+        controlId: opts.controlId, continuation,
+      },
+    });
+    for (const event of admission.events) this._handleEvent(event, handle.vendor);
+    return {
+      ok: true, result: 'ok', actualDelivery: 'turn', continuation,
+      emulated: ack.emulated === true,
+    };
   }
 
   async _deliverFollowUp(handle, task, message, opts) {
@@ -5313,6 +5690,47 @@ export class Coordinator {
   // Command: interrupt() / kill() — two-phase stop (D9)
   // =========================================================================
 
+  prepareSemanticInterrupt(workerId, actor = 'orchestrator') {
+    return this._withAuthorityOp(() => this._prepareSemanticInterrupt(workerId, actor));
+  }
+
+  async _prepareSemanticInterrupt(workerId, actor) {
+    this.tick();
+    const handle = this._getWorker(workerId);
+    if (handle.status !== 'blocked') return { ok: true, result: 'not_blocked' };
+    const requestId = handle.pendingApprovalId ?? handle.pendingQuestionId;
+    const record = requestId ? this._pending.get(requestId) : null;
+    if (!record || record.state !== 'pending' || record.worker !== workerId) {
+      return { ok: false, result: 'interaction_resolution_unavailable' };
+    }
+    const task = this._tasks.get(handle.taskId);
+    const superseded = this._log.append({
+      worker: workerId, harness: this._harnessOf(handle.vendor),
+      turnEpoch: this._safeTurnEpoch(handle), kind: 'control.interaction_superseded', actor,
+      ...this._routeAttribution(handle, task),
+      payload: { requestId, interactionKind: record.kind, disposition: 'semantic_interrupt' },
+    });
+    const evidence = this._coordMapEvent(superseded);
+    if (task && this._coordination?.task(task.id)?.status === 'input_required') {
+      this._coordTransition(task, 'working',
+        `task.working:${task.id}:semantic_interrupt:${superseded.seq}`, {
+          ...evidence,
+          interaction: { requestId, disposition: 'semantic_interrupt_superseded' },
+        }, actor);
+      task.status = 'working';
+    }
+    this._resolveInteractionAuthority(requestId, record);
+    record.consumer = actor;
+    record.resolution = { decision: 'cancel', reason: 'semantic_interrupt' };
+    if (handle.pendingApprovalId === requestId) handle.pendingApprovalId = null;
+    if (handle.pendingQuestionId === requestId) handle.pendingQuestionId = null;
+    handle.status = 'working';
+    return {
+      ok: true, result: 'interaction_superseded',
+      evidence: { coordinationSeq: evidence.coordinationSeq, workerSeq: superseded.seq },
+    };
+  }
+
   async interrupt(workerId, then, actor = 'orchestrator', opts = {}) {
     if (this._startupCleanupPending > 0) await this.startupReady();
     this.tick();
@@ -5332,8 +5750,41 @@ export class Coordinator {
       && !/^control:[a-f0-9]{64}$/u.test(opts.controlId)) {
       throw new TypeError('interrupt control identity is invalid');
     }
-    return this._beginStop(handle, 'interrupt', then, actor,
-      opts.controlId ? { controlId: opts.controlId } : undefined);
+    if (opts.preserveTurn === true && !opts.controlId) {
+      throw new TypeError('preserved-turn interrupt requires semantic control identity');
+    }
+    if (opts.preserveTurn === true && (!handle.sessionRef
+      || !['native', 'emulated'].includes(
+        this._adapters[handle.vendor]?.card()?.sessions?.multiTurn,
+      ))) {
+      return { ok: false, result: 'session_preservation_unsupported' };
+    }
+    const begin = () => {
+      if (opts.semanticTarget && !this._semanticTargetMatches(
+        handle, opts.semanticTarget, opts.semanticTargetDigest,
+      )) {
+        this._log.append({
+          worker: handle.id, harness: this._harnessOf(handle.vendor),
+          turnEpoch: this._safeTurnEpoch(handle), kind: 'control.stale_rejected', actor,
+          payload: {
+            op: 'interrupt', phase: 'semantic_binding', result: 'semantic_target_drift',
+            ...(opts.controlId ? { controlId: opts.controlId } : {}),
+          },
+        });
+        return { ok: false, result: 'semantic_target_drift' };
+      }
+      if (opts.preserveTurn === true && !['working', 'blocked'].includes(handle.status)) {
+        return { ok: false, result: 'worker_not_active' };
+      }
+      return this._beginStop(handle, 'interrupt', then, actor,
+        opts.controlId ? { controlId: opts.controlId, preserveTurn: opts.preserveTurn === true } : undefined);
+    };
+    if (opts.preserveTurn !== true) return begin();
+    // Semantic interrupt shares the per-worker delivery slot with sends. Its complete v2
+    // target binding is re-evaluated only after every earlier delivery has settled.
+    const slot = (handle.sendChain ?? Promise.resolve()).then(begin);
+    handle.sendChain = slot.then(noop, noop);
+    return slot;
   }
 
   async _interruptThenGoverned(handle, then, actor) {
@@ -5375,13 +5826,21 @@ export class Coordinator {
       handle.localAuthority = false;
       return { ok: true, result: 'already_dead' };
     }
-    if (handle.status === 'orphaned' && !(handle.localAuthority === true
-      && ['initializing', 'ready', 'unconfirmed_after_restart'].includes(handle.processRef?.state))) {
+    if (handle.status === 'orphaned' && handle.localAuthority !== true) {
       return { ok: false, result: 'session_not_attached', reason: 'restart replay found no controllable adapter session' };
     }
     // CI3: a crashed/exited child cannot emit another kill.confirmed. Treat its authoritative
     // terminal event as the confirmation, finish cleanup now, and never arm an unfulfillable wait.
     if (handle.status === 'exited') {
+      // A preservation receipt is a stronger, contradictory transport fact: until an exact
+      // process close or adapter kill proves otherwise, the reusable session may still be live.
+      // Quarantined Application state therefore offers stop only, and stop must actually signal
+      // and confirm that locally owned transport before releasing its worktree/runtime authority.
+      if (handle.localAuthority === true
+        && handle.sessionPreservation?.state === 'preserved'
+        && handle.sessionPreservation?.transport === 'attached') {
+        return this._beginStop(handle, 'kill', undefined, actor);
+      }
       handle.status = 'dead';
       const runtimeRemoved = this._removeRuntimeScope(handle);
       await this._removeOwnedTaskWorktree(handle, this._tasks.get(handle.taskId));
@@ -5531,12 +5990,31 @@ export class Coordinator {
         const evidence = this._coordMapEvent(requested);
         this._coordRecord('control.stop_requested', { taskId: handle.taskId, workerId: handle.id, mode: 'kill', escalation: true, evidence }, `driver.stop_requested:${handle.taskId}:${requested.seq}`, actor);
         existing.mode = 'kill';
+        // The physical waiter now belongs to kill. Original interrupt callers retain their
+        // requested disposition in typed request entries and settle separately below.
+        existing.preserveTurn = false;
+        existing.controlId = null;
+        existing.then = undefined;
+        existing.confirmationPayload = null;
+        existing.providerSealVerdict = null;
+        existing.operationGeneration += 1;
         existing.ackReady = false;
         existing.confirmReceived = false;
+        if (existing.timerHandle != null) this._clearTimeout(existing.timerHandle);
+        existing.deadlineAt = this._now() + this._stopDeadlineMs;
+        existing.timerHandle = this._setTimeout(
+          () => this._forceStop(handle.id, existing), this._stopDeadlineMs,
+        );
+        if (existing.timerHandle && typeof existing.timerHandle.unref === 'function') {
+          existing.timerHandle.unref();
+        }
         const call = Promise.resolve(this._adapters[handle.vendor].kill(handle.id));
-        this._wireAck(existing, call);
+        this._wireAck(existing, call, existing.operationGeneration, 'kill');
       }
-      return new Promise((resolve) => existing.resolvers.push(resolve));
+      return new Promise((resolve) => existing.requests.push({
+        resolve, requestedMode: mode, preserveTurn: context?.preserveTurn === true,
+        controlId: context?.controlId ?? null,
+      }));
     }
 
     this._fences.bumpHuman(handle.id);
@@ -5550,18 +6028,32 @@ export class Coordinator {
     const evidence = this._coordMapEvent(requested);
     this._coordRecord('control.stop_requested', { taskId: handle.taskId, workerId: handle.id, mode, then: then ?? null, evidence }, `driver.stop_requested:${handle.taskId}:${requested.seq}`, actor);
 
+    let interactionResolution = Promise.resolve({ ok: true, result: 'not_blocked' });
     if (handle.status === 'blocked') {
       if (handle.pendingApprovalId) {
-        this._trackAuthorityPromise(() => this._resolveRecord(handle.pendingApprovalId, { decision: 'cancel' }, actor), this._drainState === 'draining').catch(noop);
+        interactionResolution = this._trackAuthorityPromise(
+          () => this._resolveRecord(handle.pendingApprovalId, { decision: 'cancel' }, actor),
+          this._drainState === 'draining',
+        );
       } else if (handle.pendingQuestionId) {
-        this._trackAuthorityPromise(() => this._resolveRecord(handle.pendingQuestionId, { decision: 'cancel' }, actor), this._drainState === 'draining').catch(noop);
+        interactionResolution = this._trackAuthorityPromise(
+          () => this._resolveRecord(handle.pendingQuestionId, { decision: 'cancel' }, actor),
+          this._drainState === 'draining',
+        );
       }
     }
-    if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) {
+    // A preserved-turn interrupt is an in-session control operation. Aborting the spawn
+    // authority signal first can make an adapter emit an older, unqualified interrupt
+    // confirmation before the explicit preserve-aware request reaches it. Reserve the abort
+    // channel for cancellation/kill and let the adapter's interrupt Ack own this exact turn.
+    if (context?.preserveTurn !== true && handle.spawnAbort && !handle.spawnAbort.signal.aborted) {
       handle.spawnAbort.abort({ mode, actor });
     }
-    if (handle.recoverySpawnPending === true) handle.recoveryProviderReleaseDeferred = true;
-    if (handle.recoverySpawnAbort && !handle.recoverySpawnAbort.signal.aborted) {
+    if (context?.preserveTurn !== true && handle.recoverySpawnPending === true) {
+      handle.recoveryProviderReleaseDeferred = true;
+    }
+    if (context?.preserveTurn !== true && handle.recoverySpawnAbort
+      && !handle.recoverySpawnAbort.signal.aborted) {
       handle.recoverySpawnAbort.abort({ mode, actor });
     }
     handle.status = 'stopping';
@@ -5572,7 +6064,7 @@ export class Coordinator {
       mode,
       workerId: handle.id,
       emulated: false,
-      resolvers: [],
+      requests: [],
       deadlineAt: this._now() + this._stopDeadlineMs,
       ackReady: false,
       confirmReceived: false,
@@ -5580,8 +6072,23 @@ export class Coordinator {
       timerHandle: null,
       then: mode === 'interrupt' ? then : undefined,
       controlId: context?.controlId ?? null,
+      preserveTurn: context?.preserveTurn === true,
+      confirmationPayload: null,
+      interactionReady: false,
+      interactionResolutionOk: false,
+      operationGeneration: 1,
     };
     this._stopWaiters.set(handle.id, waiter);
+
+    Promise.resolve(interactionResolution).then((result) => {
+      waiter.interactionReady = true;
+      waiter.interactionResolutionOk = result?.ok === true;
+      this._maybeFinalizeStop(handle.id, waiter);
+    }, () => {
+      waiter.interactionReady = true;
+      waiter.interactionResolutionOk = false;
+      this._maybeFinalizeStop(handle.id, waiter);
+    });
 
     // C4: a real, injectable, unref'd deadline timer — independent of tick()'s sweep,
     // which remains as a redundant, harmless backup path.
@@ -5591,10 +6098,30 @@ export class Coordinator {
     const call =
       mode === 'kill'
         ? Promise.resolve(this._adapters[handle.vendor].kill(handle.id))
-        : Promise.resolve(this._adapters[handle.vendor].interrupt(handle.id, then));
-    this._wireAck(waiter, call);
+        : Promise.resolve(this._adapters[handle.vendor].interrupt(handle.id, then, {
+          preserveTurn: context?.preserveTurn === true,
+          controlId: context?.controlId ?? null,
+        }));
+    this._wireAck(waiter, call, waiter.operationGeneration, mode);
 
-    return new Promise((resolve) => waiter.resolvers.push(resolve));
+    return new Promise((resolve) => waiter.requests.push({
+      resolve, requestedMode: mode, preserveTurn: context?.preserveTurn === true,
+      controlId: context?.controlId ?? null,
+    }));
+  }
+
+  _resolveStopRequests(waiter, physicalResult) {
+    for (const request of waiter.requests) {
+      if (waiter.mode === 'kill' && request.requestedMode === 'interrupt'
+        && request.preserveTurn === true) {
+        request.resolve({
+          ok: false, result: 'superseded_by_stop',
+          escalation: physicalResult?.result ?? 'unknown',
+        });
+      } else {
+        request.resolve(physicalResult);
+      }
+    }
   }
 
   _safeTurnEpoch(handle) {
@@ -6609,22 +7136,26 @@ export class Coordinator {
     }
   }
 
-  _wireAck(waiter, call) {
+  _wireAck(waiter, call, operationGeneration, operationMode) {
     call
       .then((ack) => {
+        if (waiter.finalized || waiter.operationGeneration !== operationGeneration
+          || waiter.mode !== operationMode) return;
         waiter.emulated = !!(ack && ack.emulated === true);
         waiter.ackReady = true;
         if (ack?.ok === true && ack?.terminal === true) waiter.confirmReceived = true;
         this._maybeFinalizeStop(waiter.workerId, waiter);
       })
       .catch(() => {
+        if (waiter.finalized || waiter.operationGeneration !== operationGeneration
+          || waiter.mode !== operationMode) return;
         waiter.ackReady = true;
         this._maybeFinalizeStop(waiter.workerId, waiter);
       });
   }
 
   _maybeFinalizeStop(workerId, waiter) {
-    if (!waiter.ackReady || !waiter.confirmReceived) return;
+    if (!waiter.ackReady || !waiter.confirmReceived || !waiter.interactionReady) return;
     const handle = this._workers.get(workerId);
     if (waiter.mode === 'kill' && handle?.processRef && handle.processRef.state !== 'closed') return;
     this._finalizeStop(workerId, waiter);
@@ -6644,8 +7175,47 @@ export class Coordinator {
         handle.providerTurn.sealed = true;
       }
     }
+    waiter.confirmationPayload = payload && typeof payload === 'object' ? { ...payload } : {};
     waiter.confirmReceived = true;
     this._maybeFinalizeStop(handle.id, waiter);
+  }
+
+  _sessionPreservationReceipt(handle, waiter) {
+    if (!handle || waiter.preserveTurn !== true || waiter.mode !== 'interrupt') return null;
+    const task = this._tasks.get(handle.taskId);
+    const card = this._adapters[handle.vendor]?.card();
+    const payload = waiter.confirmationPayload ?? {};
+    const observedSessionId = payload.threadId ?? payload.sessionId ?? null;
+    // Preservation is a positive claim: an absent transport observation is uncertainty,
+    // never evidence that a provider session survived the interrupted turn.
+    const transportOpen = payload.transportOpen === true
+      && handle.processRef?.state !== 'closed'
+      && handle.processRef?.state !== 'unconfirmed_after_restart';
+    const attached = handle.sessionRef
+      && typeof observedSessionId === 'string'
+      && observedSessionId === handle.sessionRef.id
+      && ['native', 'emulated'].includes(card?.sessions?.multiTurn)
+      && transportOpen
+      && waiter.interactionResolutionOk === true
+      && (!handle.providerGovernance || (waiter.providerSealVerdict?.ok === true
+        && handle.providerTurn?.sealed === true
+        && handle.providerTelemetryFailed !== true
+        && handle.providerPolicyHardExceeded !== true))
+      && handle.localAuthority === true
+      && this._worktreeAuthorityAvailable(handle)
+      && !(task?.runId && this._coordination.runStop?.(task.runId));
+    if (!attached) return null;
+    const binding = this._semanticControlBinding(handle, task);
+    const core = {
+      schemaVersion: 1,
+      state: 'preserved',
+      transport: 'attached',
+      reattachment: 'not_required',
+      ...binding,
+      turnEpoch: this._safeTurnEpoch(handle),
+      fence: this._fences.current(handle.id).fence,
+    };
+    return deepFreeze({ ...core, receiptDigest: canonicalDigest(core) });
   }
 
   _finalizeStop(workerId, waiter) {
@@ -6664,7 +7234,13 @@ export class Coordinator {
       ...(handle ? this._routeAttribution(handle) : {}),
     };
     if (waiter.emulated) ev.emulated = true;
+    const preservation = this._sessionPreservationReceipt(handle, waiter);
+    if (waiter.preserveTurn === true) {
+      ev.payload.preservation = preservation;
+      ev.payload.preservationRequested = true;
+    }
     const stopEvent = this._log.append(ev);
+    if (waiter.preserveTurn === true) this._coordMapEvent(stopEvent);
     if (handle && waiter.providerSealVerdict && !waiter.providerSealVerdict.ok) {
       this._failTerminalProviderGovernance(handle, stopEvent, waiter.providerSealVerdict.code, false);
     }
@@ -6679,12 +7255,38 @@ export class Coordinator {
             this._coordTransition(task, 'cancelled', `task.cancelled:${task.id}:${stopEvent.seq}`, evidence);
           }
           handle.status = 'dead';
+          handle.sessionPreservation = null;
+          handle.preservedTurnEpoch = null;
           const runtimeRemoved = this._removeRuntimeScope(handle);
           if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'cancelled';
           waiter.cleanupPromise = this._preserveProgressBeforeReap(handle, task, stopEvent, preserveProgress)
             .then(() => this._removeOwnedTaskWorktree(handle, task)).then(() => {
             if (!runtimeRemoved) throw Object.assign(new Error('runtime cleanup failed'), { code: 'runtime_cleanup_failed' });
           });
+        } else if (waiter.preserveTurn === true) {
+          // Phase 91: the semantic interrupt ends one exact provider turn. It does not
+          // terminalize the Plan task or release any Run/worktree/session authority.
+          handle.turnTerminalObserved = true;
+          if (preservation) {
+            handle.status = 'interrupted';
+            handle.sessionPreservation = preservation;
+            handle.preservedTurnEpoch = preservation.turnEpoch;
+          } else {
+            // Confirmation without exact attached-session proof is uncertainty, never a false
+            // preservation claim. If this controller still owns the transport, fail the Plan
+            // task and reap it below; a replay-only controller instead leaves a quarantined,
+            // stop-only member because it has no safe signaling authority.
+            handle.status = 'orphaned';
+            handle.sessionPreservation = null;
+            handle.preservedTurnEpoch = null;
+            if (handle.localAuthority === true && task
+              && !TERMINAL_TASK_STATUSES.has(task.status)) {
+              const evidence = this._coordMapEvent(stopEvent);
+              this._coordTransition(task, 'failed',
+                `task.failed:${task.id}:preservation_unproven:${stopEvent.seq}`, evidence);
+              task.status = 'failed';
+            }
+          }
         } else {
           if (waiter.then !== undefined) {
             const stamp = this._fences.bumpTurn(handle.id);
@@ -6724,21 +7326,49 @@ export class Coordinator {
       Promise.resolve(waiter.cleanupPromise).then(() => {
         if (handle && (!handle.processRef || handle.processRef.state === 'closed') && handle.cleanupPending !== true) handle.localAuthority = false;
       }, noop).finally(() => {
-        for (const resolve of waiter.resolvers) resolve({ ok: false, result: 'coordination_unavailable' });
+        this._resolveStopRequests(waiter, { ok: false, result: 'coordination_unavailable' });
         this._stopWaiters.delete(workerId);
       });
       return;
     }
 
-    const result = { ok: true, result: 'confirmed', emulated: waiter.emulated === true };
+    const governanceInvalid = waiter.preserveTurn === true
+      && waiter.providerSealVerdict && waiter.providerSealVerdict.ok !== true;
+    const result = governanceInvalid
+      ? {
+        ok: false, result: 'provider_governance_invalid',
+        reason: waiter.providerSealVerdict.code, emulated: waiter.emulated === true,
+      }
+      : waiter.preserveTurn === true && !preservation
+        ? { ok: false, result: 'preservation_unproven', emulated: waiter.emulated === true }
+      : {
+        ok: true, result: 'confirmed', emulated: waiter.emulated === true,
+        ...(preservation ? { preservation } : {}),
+      };
     Promise.resolve(waiter.cleanupPromise).then(() => {
       if (handle && waiter.mode === 'kill') handle.localAuthority = false;
-      for (const resolve of waiter.resolvers) resolve(result);
       this._stopWaiters.delete(workerId);
+      const preservationReapRequired = waiter.preserveTurn === true && !preservation
+        && handle?.localAuthority === true;
+      if ((governanceInvalid || preservationReapRequired) && handle) {
+        // The interrupt confirmation settles the semantic operation as failed. Transport reap
+        // is a distinct kill transaction with its own request/confirmation and cleanup proof.
+        this._beginStop(handle, 'kill', undefined, 'policy').then((killResult) => {
+          this._resolveStopRequests(waiter, {
+            ...result, escalation: killResult?.result ?? 'unknown',
+          });
+        }, () => {
+          this._resolveStopRequests(waiter, { ...result, escalation: 'unknown' });
+        });
+      } else {
+        this._resolveStopRequests(waiter, result);
+      }
       this._dispatchPass();
     }, (error) => {
       const preservationFailed = error?.code === 'progress_preservation_failed';
-      for (const resolve of waiter.resolvers) resolve({ ok: false, result: preservationFailed ? 'preservation_failed' : 'cleanup_failed' });
+      this._resolveStopRequests(waiter, {
+        ok: false, result: preservationFailed ? 'preservation_failed' : 'cleanup_failed',
+      });
       this._stopWaiters.delete(workerId);
     });
   }
@@ -6754,8 +7384,40 @@ export class Coordinator {
       forcedEvent = this._log.append({ worker: workerId, harness, turnEpoch: handle ? this._safeTurnEpoch(handle) : 0, kind: 'control.forced_stop', actor: 'policy', payload: {} });
     } catch {
       if (handle) this._emergencyKillUnlogged(handle).catch(noop);
-      for (const resolve of waiter.resolvers) resolve({ ok: false, result: 'coordination_unavailable' });
+      this._resolveStopRequests(waiter, { ok: false, result: 'coordination_unavailable' });
       this._stopWaiters.delete(workerId);
+      return;
+    }
+
+    if (handle && waiter.preserveTurn === true) {
+      const task = this._tasks.get(handle.taskId);
+      try {
+        if (task && !TERMINAL_TASK_STATUSES.has(task.status)) {
+          const evidence = this._coordMapEvent(forcedEvent);
+          this._coordTransition(task, 'failed', `task.failed:${task.id}:${forcedEvent.seq}`, evidence);
+          task.status = 'failed';
+        }
+      } catch {
+        this._stopWaiters.delete(workerId);
+        this._emergencyKillUnlogged(handle).catch(noop);
+        this._resolveStopRequests(waiter, { ok: false, result: 'coordination_unavailable' });
+        return;
+      }
+      handle.sessionPreservation = null;
+      handle.preservedTurnEpoch = null;
+      handle.status = 'stopping';
+      this._stopWaiters.delete(workerId);
+      // Preservation timed out before a qualifying interrupt confirmation. Fail the Plan task,
+      // then start a separate confirmed kill transaction; only that transaction may claim reap.
+      Promise.resolve(this._beginStop(handle, 'kill', undefined, 'policy')).then((killResult) => {
+        this._resolveStopRequests(waiter, {
+          ok: false, result: 'preservation_timeout', escalation: killResult?.result ?? 'unknown',
+        });
+      }, () => {
+        this._resolveStopRequests(waiter, {
+          ok: false, result: 'preservation_timeout', escalation: 'unknown',
+        });
+      });
       return;
     }
 
@@ -6786,11 +7448,13 @@ export class Coordinator {
       handle.cleanupPending = true;
       handle.cleanupError = 'stop_unconfirmed';
       const task = this._tasks.get(handle.taskId);
-      if (!coordinationFailure && task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'failed';
+      if (!coordinationFailure && task && !TERMINAL_TASK_STATUSES.has(task.status)) {
+        task.status = 'failed';
+      }
     }
 
     const result = coordinationFailure ? { ok: false, result: 'coordination_unavailable' } : { ok: true, result: 'forced' };
-    for (const resolve of waiter.resolvers) resolve(result);
+    this._resolveStopRequests(waiter, result);
     this._stopWaiters.delete(workerId);
   }
 
@@ -7729,15 +8393,28 @@ export class Coordinator {
       return;
     }
 
-    if (actor === 'worker' && ['lifecycle.turn_completed', 'question.asked', 'approval.requested'].includes(kind)) {
+    if (actor === 'worker' && [
+      'lifecycle.turn_completed', 'lifecycle.crashed', 'lifecycle.exited',
+      'question.asked', 'approval.requested',
+    ].includes(kind)) {
       const currentEpoch = this._safeTurnEpoch(handle);
       if (handle.wireEpochOffset == null && typeof turnEpoch === 'number') handle.wireEpochOffset = currentEpoch - turnEpoch;
       const normalizedEpoch = typeof turnEpoch === 'number' ? turnEpoch + (handle.wireEpochOffset ?? 0) : currentEpoch;
-      if (normalizedEpoch < currentEpoch) {
+      const preservedEpochSealed = handle.sessionPreservation?.state === 'preserved'
+        && Number.isSafeInteger(handle.preservedTurnEpoch)
+        && normalizedEpoch <= handle.preservedTurnEpoch;
+      if (normalizedEpoch < currentEpoch || preservedEpochSealed) {
         this._log.append({
           worker: workerId, harness, turnEpoch: currentEpoch, kind: 'control.stale_rejected', actor: 'policy',
           modelRequested: handle.modelRequested ?? null, modelResolved: handle.modelResolved ?? null, modelObserved: handle.modelObserved ?? null,
-          payload: { op: kind === 'lifecycle.turn_completed' ? 'terminal' : kind, attemptedTurnEpoch: normalizedEpoch, currentTurnEpoch: currentEpoch },
+          payload: {
+            op: ['lifecycle.turn_completed', 'lifecycle.crashed', 'lifecycle.exited'].includes(kind)
+              ? 'terminal' : kind,
+            attemptedTurnEpoch: normalizedEpoch, currentTurnEpoch: currentEpoch,
+            ...(preservedEpochSealed ? {
+              reason: 'preserved_turn_epoch_sealed', preservedTurnEpoch: handle.preservedTurnEpoch,
+            } : {}),
+          },
         });
         return;
       }
@@ -7935,7 +8612,23 @@ export class Coordinator {
           break;
         }
         const closed = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        const preservationLost = handle.sessionPreservation?.state === 'preserved';
         handle.processRef = { ...current, state: 'closed', ready: payload.ready, closedSeq: closed.seq };
+        if (preservationLost) {
+          const task = this._tasks.get(handle.taskId);
+          handle.sessionPreservation = null;
+          handle.preservedTurnEpoch = null;
+          handle.status = 'exited';
+          handle.terminalCause ??= deepFreeze({
+            kind: 'provider_failure', code: 'transport_closed_after_preservation',
+          });
+          if (task && !TERMINAL_TASK_STATUSES.has(task.status)) {
+            const evidence = this._coordMapEvent(closed);
+            this._coordTransition(task, 'failed',
+              `task.failed:${task.id}:transport_closed_after_preservation:${closed.seq}`, evidence);
+            task.status = 'failed';
+          }
+        }
         this._finishUntrustedTransportReap(handle, handle.processRef);
         const stopWaiter = this._stopWaiters.get(handle.id);
         if (stopWaiter?.mode === 'kill') this._maybeFinalizeStop(handle.id, stopWaiter);
@@ -7943,7 +8636,9 @@ export class Coordinator {
         if (!stopWaiter && handle.status === 'dead' && handle.cleanupPending === true && !handle.untrustedTransportReap) {
           this._cleanupClosedTransport(handle, this._tasks.get(handle.taskId), closed).catch(noop);
         }
-        if (!stopWaiter && !handle.untrustedTransportReap && turnWasTerminal
+        if (!stopWaiter && !handle.untrustedTransportReap && preservationLost) {
+          this._cleanupClosedTransport(handle, this._tasks.get(handle.taskId), closed).catch(noop);
+        } else if (!stopWaiter && !handle.untrustedTransportReap && turnWasTerminal
           && !['dead', 'stopping', 'orphaned'].includes(handle.status)) {
           handle.status = 'exited';
           this._cleanupClosedTransport(handle, this._tasks.get(handle.taskId), closed).catch(noop);
@@ -8621,6 +9316,8 @@ export class Coordinator {
       let providerPolicyHardExceeded = false;
       let providerTelemetryFailed = false;
       let providerTerminalSeal = null;
+      let replayPreservation = null;
+      let preservedTurnEpoch = null;
 
       for (const e of events) {
         runId = e.runId ?? runId;
@@ -8655,6 +9352,14 @@ export class Coordinator {
               && e.payload.processGroupId === processRef.processGroupId
               && e.payload.ready === processRef.ready) {
               processRef = { ...processRef, state: 'closed', ready: e.payload.ready, closedSeq: e.seq };
+              if (terminalStatus === 'interrupted') {
+                terminalStatus = 'failed';
+                replayPreservation = null;
+                preservedTurnEpoch = null;
+                terminalCause ??= deepFreeze({
+                  kind: 'provider_failure', code: 'transport_closed_after_preservation',
+                });
+              }
             }
             break;
           case 'control.recovery_process_absent':
@@ -8913,10 +9618,30 @@ export class Coordinator {
               ? { mode: 'resume', id: sessionRef.id, ...(sessionContext ? { context: sessionContext } : {}) }
               : sessionRequest;
             break;
-          case 'lifecycle.turn_started':
+          case 'control.session_preservation_reattached':
+            if (e.actor === 'policy' && e.payload?.preservation?.state === 'preserved') {
+              replayPreservation = e.payload.preservation;
+              preservedTurnEpoch = e.payload.preservation.turnEpoch;
+              processGeneration = Math.max(processGeneration,
+                e.payload.preservation.processGeneration ?? 0);
+              terminalStatus = 'interrupted';
+            }
+            break;
+          case 'lifecycle.turn_started': {
+            if (preservedTurnEpoch !== null) {
+              const exactSuccessor = e.actor === 'orchestrator'
+                && e.payload?.preservedSession === true
+                && Number.isSafeInteger(e.turnEpoch)
+                && e.turnEpoch > preservedTurnEpoch;
+              if (!exactSuccessor) break;
+              preservedTurnEpoch = null;
+              replayPreservation = null;
+            }
             if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) terminalStatus = 'working';
             break;
+          }
           case 'lifecycle.turn_completed':
+            if (preservedTurnEpoch !== null) break;
             if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) {
               lastResult = e.payload;
               providerTerminalSeal = e.payload?.usageSeal ?? providerTerminalSeal;
@@ -8977,6 +9702,7 @@ export class Coordinator {
             if (this._coordination?.publicationAuthority(taskId, e)) publication = e.payload ?? publication;
             break;
           case 'lifecycle.crashed':
+            if (preservedTurnEpoch !== null) break;
             providerTerminalSeal = e.payload?.usageSeal ?? providerTerminalSeal;
             if (providerTurn && providerTerminalSeal) providerTurn.sealed = true;
             if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) terminalStatus = 'failed';
@@ -9007,7 +9733,18 @@ export class Coordinator {
               providerTerminalSeal = e.payload?.usageSeal ?? providerTerminalSeal;
               if (providerTurn && providerTerminalSeal) providerTurn.sealed = true;
             }
-            if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) terminalStatus = 'cancelled';
+            if (e.kind === 'control.interrupt_confirmed'
+              && e.payload?.preservation?.state === 'preserved') {
+              replayPreservation = e.payload.preservation;
+              preservedTurnEpoch = e.payload.preservation.turnEpoch;
+              processGeneration = Math.max(processGeneration,
+                e.payload.preservation.processGeneration ?? 0);
+              terminalStatus = 'interrupted';
+            } else {
+              replayPreservation = null;
+              preservedTurnEpoch = null;
+              if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) terminalStatus = 'cancelled';
+            }
             break;
           case 'question.asked':
           case 'approval.requested':
@@ -9016,6 +9753,15 @@ export class Coordinator {
           case 'question.answered':
           case 'approval.resolved':
             if (terminalStatus === 'input_required') terminalStatus = 'working';
+            break;
+          case 'control.interaction_superseded':
+            // Semantic interrupt preparation durably consumes the blocked interaction before
+            // admitting its v2 control target. If the controller crashes in that gap, replay
+            // must never resurrect the prompt or silently redeliver it. The generic unattached
+            // nonterminal rule below then fails the task safe unless the preserved-interrupt
+            // receipt was subsequently closed.
+            if (e.payload?.disposition === 'semantic_interrupt'
+              && terminalStatus === 'input_required') terminalStatus = 'working';
             break;
           default:
             break;
@@ -9060,7 +9806,9 @@ export class Coordinator {
       // CI6: replay cannot resurrect an adapter session. Ordinary nonterminal reconstructed tasks
       // are durably failed. Exact Candidate-base revisions are the deliberate exception: their
       // external effect may be live, so they remain uncontrollable/unknown and never redeliver.
-      if (!revisionRecoveryUnknown && !TERMINAL_TASK_STATUSES.has(terminalStatus)) {
+      const preservedInterrupt = terminalStatus === 'interrupted';
+      if (!revisionRecoveryUnknown && !preservedInterrupt
+        && !TERMINAL_TASK_STATUSES.has(terminalStatus)) {
         recoveryTerminalized = true;
         terminalStatus = 'failed';
         const recoveryEvent = this._log.append({
@@ -9184,7 +9932,8 @@ export class Coordinator {
         worktree: sessionContext?.worktree ?? null,
         // A durable native reference is not a live transport. Even a terminal task that was
         // reusable before restart must remain uncontrollable until PS7 proves reattachment.
-        status: (recoveryTerminalized || refinementAborted || sessionRef) ? 'orphaned' : this._deriveWorkerStatus(terminalStatus),
+        status: (recoveryTerminalized || refinementAborted || sessionRef)
+          ? 'orphaned' : this._deriveWorkerStatus(terminalStatus),
         pendingApprovalId: null,
         pendingQuestionId: null,
         budgetUsed,
@@ -9200,6 +9949,8 @@ export class Coordinator {
         providerPolicyHardExceeded,
         providerTelemetryFailed,
         providerTerminalSeal,
+        sessionPreservation: preservedInterrupt ? replayPreservation : null,
+        preservedTurnEpoch: preservedInterrupt ? preservedTurnEpoch : null,
         watchdogActions: new Set(),
         recentFailedActions: [],
         watchdogGeneration: 0,

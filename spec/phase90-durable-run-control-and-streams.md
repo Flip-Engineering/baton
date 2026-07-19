@@ -123,12 +123,19 @@ exception settles explicit `outcome_unknown`.
 11. Interrupt racing stop cannot enqueue a successor turn.
 12. An already-terminal, absent, orphaned, or replaced target is not reported as newly interrupted.
 
-Known open defect, deliberately outside the Web-stream increment: semantic interrupt can still race
-the provider/session lifecycle so that a successor provider session is admitted for the interrupted
-member. Confirmation of the predecessor interrupt does not yet constitute a durable no-successor
-session gate. That defect means invariant 11 is not fully discharged; it requires a later
-coordination/session-generation change. Run streaming must expose the resulting durable truth and
-must not hide it, synthesize a cleaner terminal state, or attempt to control the provider.
+Phase 91 closes the semantic-interrupt defect that remained at this checkpoint. Ordinary interrupt
+now requests `preserve_turn`, binds the exact task/session/process/worktree/route/Plan/Run generation
+through schema-v2 admission and settlement, and serializes both its effect and any successor send
+through the member delivery slot. A successor consumes one closed preservation receipt; Run stop
+admitted first forbids it, while stop after provider prompt acceptance records explicit
+`outcome_unknown` and continues exact reap. Direct low-level coordinator interrupt remains
+cancel-by-default for compatibility and is not the ordinary semantic contract. See
+`phase91-semantic-interrupt-preservation.md`.
+
+Evidence note: Phase90's historical authenticated live interrupt exercised the pre-Phase91
+semantic interrupt surface. It is not evidence that a live persistent provider preserved its exact
+native session, completed attach-only restart recovery, or resumed on a Phase91 receipt. Those are
+separate Phase91 live gates.
 
 ## 5. Progressive Run timeline
 

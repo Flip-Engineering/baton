@@ -448,6 +448,8 @@ test('GA8: interrupt() acks immediately; control.interrupt_confirmed arrives via
 
     const confirmed = await until(events, (e) => e.kind === 'control.interrupt_confirmed');
     assert.equal(confirmed.worker, worker);
+    assert.equal(typeof confirmed.payload.sessionId, 'string');
+    assert.equal(confirmed.payload.transportOpen, true);
     assert.equal(confirmed.payload.result.status, 'cancelled');
     assert.equal(confirmed.payload.usageSeal.tokens, 'reported');
     assert.equal(confirmed.payload.usageSeal.usd, 'unavailable');

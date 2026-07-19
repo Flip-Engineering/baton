@@ -163,16 +163,16 @@ function haltableDelay(ms, signal) {
   });
 }
 
-function haltableAskWait(session) {
+function haltableAskWait(session, haltSignal = session.haltSignal) {
   return new Promise((resolve) => {
     const cleanup = () => {
-      session.haltSignal.removeEventListener('abort', onAbort);
+      haltSignal.removeEventListener('abort', onAbort);
       session.askResolve = null;
     };
     const onAbort = () => { cleanup(); resolve({ aborted: true }); };
     session.askResolve = (outcome) => { cleanup(); resolve(outcome); };
-    if (session.haltSignal.aborted) { onAbort(); return; }
-    session.haltSignal.addEventListener('abort', onAbort, { once: true });
+    if (haltSignal.aborted) { onAbort(); return; }
+    haltSignal.addEventListener('abort', onAbort, { once: true });
   });
 }
 
@@ -280,6 +280,7 @@ export class MockAdapter {
       worker, brief, scenario, opts,
       attachedOnly: opts.attachOnly === true,
       runStarted: false,
+      turnGeneration: 0,
       haltController, haltSignal: haltController.signal,
       stopKind: null, terminal: false, crashed: false,
       wait: null, askHandled: false, askResolve: null,
@@ -308,7 +309,13 @@ export class MockAdapter {
   _startSession(session) {
     if (session.runStarted || session.terminal) return;
     session.runStarted = true;
-    this._runSession(session).catch((err) => {
+    session.turnGeneration += 1;
+    const turnGeneration = session.turnGeneration;
+    const haltSignal = session.haltSignal;
+    this._runSession(session, { turnGeneration, haltSignal }).catch((err) => {
+      // A preserved successor owns a new signal generation. An older coroutine can neither
+      // crash nor terminalize that shared native session after its own signal was aborted.
+      if (session.turnGeneration !== turnGeneration) return;
       // WF2/WF3: the Coordinator owns readiness failure and already emitted its sole typed,
       // non-leaking terminal fact. Mock must not duplicate it as a worker crash after performing
       // no worker effect. Direct test callers likewise receive no fabricated native lifecycle.
@@ -543,8 +550,10 @@ export class MockAdapter {
     this._emit(session, 'content.file_edit', { path: edit.path, sha });
   }
 
-  async _runSession(session) {
+  async _runSession(session, turn = {}) {
     const { scenario } = session;
+    const haltSignal = turn.haltSignal ?? session.haltSignal;
+    const turnGeneration = turn.turnGeneration ?? session.turnGeneration;
     const totalEdits = scenario.edits?.length ?? 0;
     session.totalEdits = totalEdits;
 
@@ -556,7 +565,8 @@ export class MockAdapter {
       const res = await session.opts.worktreeReady;
       if (res && res.path && !session.opts.worktree) session.opts.worktree = res.path;
     }
-    if (session.terminal || session.haltSignal.aborted) return;
+    if (session.terminal || haltSignal.aborted
+      || session.turnGeneration !== turnGeneration) return;
     if (!session.opts.worktree) throw new Error('worktree unavailable');
     this._emit(session, 'lifecycle.turn_started', {});
 
@@ -575,34 +585,34 @@ export class MockAdapter {
           { question: ask.question, requestId, blocking: ask.blocking !== false },
         );
         if (ask.blocking !== false) {
-          const outcome = await haltableAskWait(session);
+          const outcome = await haltableAskWait(session, haltSignal);
           session.wait = null;
           if (session.terminal) return;
-          if (session.haltSignal.aborted) break;
+          if (haltSignal.aborted || session.turnGeneration !== turnGeneration) break;
           if (outcome.denied) { session.deniedApproval = true; break; }
           for (const e of (ask.onAnswerEdits ?? [])) {
-            if (session.haltSignal.aborted) break;
-            if (e.delayMs) await haltableDelay(e.delayMs, session.haltSignal);
-            if (session.haltSignal.aborted) break;
+            if (haltSignal.aborted || session.turnGeneration !== turnGeneration) break;
+            if (e.delayMs) await haltableDelay(e.delayMs, haltSignal);
+            if (haltSignal.aborted || session.turnGeneration !== turnGeneration) break;
             await this._applyEdit(session, e);
           }
         }
       }
 
       if (session.terminal) return;
-      if (session.haltSignal.aborted) break;
+      if (haltSignal.aborted || session.turnGeneration !== turnGeneration) break;
       if (i === totalEdits) break;
 
       const edit = scenario.edits[i];
       if (edit.delayMs) {
-        await haltableDelay(edit.delayMs, session.haltSignal);
-        if (session.haltSignal.aborted) break;
+        await haltableDelay(edit.delayMs, haltSignal);
+        if (haltSignal.aborted || session.turnGeneration !== turnGeneration) break;
       }
       await this._applyEdit(session, edit);
     }
 
     if (session.terminal) return;
-    if (session.haltSignal.aborted) return; // the stop-settle timer finalizes
+    if (haltSignal.aborted || session.turnGeneration !== turnGeneration) return;
     this._finalizeNatural(session);
   }
 }

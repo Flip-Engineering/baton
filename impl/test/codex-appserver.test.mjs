@@ -329,6 +329,8 @@ test('XA8: interrupt() ends the turn as interrupted via onEvent (control.interru
 
     const confirmed = await until(events, (e) => e.kind === 'control.interrupt_confirmed');
     assert.equal(confirmed.worker, worker);
+    assert.equal(typeof confirmed.payload.threadId, 'string');
+    assert.equal(confirmed.payload.transportOpen, true);
     assert.deepEqual(confirmed.payload.usageSeal, { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null });
     // D9: interrupt/kill confirmation is ALWAYS an event, never smuggled onto the Ack return.
     assert.equal(ack.emulated, undefined, 'a native protocol interrupt is not an emulated signal-kill');

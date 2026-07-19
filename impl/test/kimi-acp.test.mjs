@@ -172,7 +172,11 @@ test('native Kimi interrupt and process-group kill have distinct confirmed termi
   assert.equal((await interrupted.spawn()).ok, true);
   await waitFor(interrupted.events, (event) => event.kind === 'lifecycle.turn_started');
   assert.equal((await interrupted.adapter.interrupt('w')).ok, true);
-  await waitFor(interrupted.events, (event) => event.kind === 'control.interrupt_confirmed');
+  const interruptConfirmed = await waitFor(
+    interrupted.events, (event) => event.kind === 'control.interrupt_confirmed',
+  );
+  assert.equal(typeof interruptConfirmed.payload.sessionId, 'string');
+  assert.equal(interruptConfirmed.payload.transportOpen, true);
   await interrupted.adapter.kill('w');
   await waitFor(interrupted.events, (event) => event.kind === 'kill.confirmed');
 

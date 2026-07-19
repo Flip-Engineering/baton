@@ -425,7 +425,7 @@ export class KimiAcpCli {
     if (stopReason === 'cancelled' && session.pendingInterrupt?.turnId === turnId) {
       session.pendingInterrupt = null;
       this._emit(session, 'control.interrupt_confirmed', {
-        sessionId: session.sessionId, turnId,
+        sessionId: session.sessionId, turnId, transportOpen: true,
         result: makeResult('cancelled', 'interrupted'), usageSeal: unavailableUsageSeal(),
       });
       return;

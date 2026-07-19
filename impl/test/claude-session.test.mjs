@@ -482,6 +482,9 @@ test('CS9/CS10: interrupt() Acks immediately (native, not a signal); confirmed s
 
   const confirmed = await waitForKind('control.interrupt_confirmed');
   assert.equal(confirmed.worker, w);
+  assert.equal(confirmed.payload.sessionId, spawned.payload.sessionId,
+    'interrupt confirmation binds the exact still-attached native session');
+  assert.equal(confirmed.payload.transportOpen, true);
   assert.equal(confirmed.payload.usageSeal.tokens, 'reported', 'the interrupted result is accounted before confirmation');
   assert.equal(confirmed.payload.usageSeal.usd, 'reported');
   const usage = events.find((event) => event.kind === 'resource.tokens');

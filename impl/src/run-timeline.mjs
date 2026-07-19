@@ -19,7 +19,10 @@ const SAFE_COORDINATION_KINDS = new Set([
 const SAFE_OPERATIONAL_KINDS = new Set([
   'content.file_edit', 'content.message', 'content.tool_call',
   'control.delivery_amended', 'control.delivery_refused', 'control.delivery_requested',
-  'control.follow_up_requested', 'control.stale_rejected',
+  'control.follow_up_requested', 'control.interrupt_confirmed',
+  'control.interaction_superseded', 'control.interrupt_requested',
+  'control.session_preservation_reattached',
+  'control.stale_rejected',
   'kill.confirmed', 'kill.requested',
   'lifecycle.crashed', 'lifecycle.process_closed', 'lifecycle.process_ready',
   'lifecycle.process_reap_unconfirmed', 'lifecycle.process_started', 'lifecycle.spawned',
@@ -50,6 +53,10 @@ const SUMMARIES = Object.freeze({
   'run.control_effect_started': 'Run control crossed its provider-effect boundary.',
   'run.control_provider_acked': 'The provider acknowledged Run control.',
   'run.control_settled': 'Run control settled.',
+  'control.interrupt_requested': 'One exact provider turn interruption was requested.',
+  'control.interaction_superseded': 'A blocked interaction was durably superseded for semantic interrupt.',
+  'control.interrupt_confirmed': 'One exact provider turn interruption was confirmed.',
+  'control.session_preservation_reattached': 'The exact preserved provider session was reattached.',
   'run.result_adoption_admitted': 'Run result adoption was durably admitted.',
   'run.result_adoption_completed': 'Run result adoption completed.',
   'run.result_export_admitted': 'Run result export was durably admitted.',
@@ -115,6 +122,17 @@ function safeFacts(payload) {
     for (const key of ['state', 'status', 'outcome']) {
       if (safeScalar(source.result[key])) facts[`result${key[0].toUpperCase()}${key.slice(1)}`] = source.result[key];
     }
+  }
+  const outcome = source.outcome && typeof source.outcome === 'object'
+    && !Array.isArray(source.outcome) ? source.outcome : {};
+  const preservation = source.preservation && typeof source.preservation === 'object'
+    && !Array.isArray(source.preservation) ? source.preservation
+    : outcome.preservation && typeof outcome.preservation === 'object'
+      && !Array.isArray(outcome.preservation) ? outcome.preservation : null;
+  if (preservation) {
+    if (safeScalar(preservation.state)) facts.preservationState = preservation.state;
+    if (safeScalar(preservation.transport)) facts.preservationTransport = preservation.transport;
+    if (safeScalar(preservation.reattachment)) facts.reattachment = preservation.reattachment;
   }
   const totalTokens = source.totalTokens ?? source.payload?.totalTokens;
   if (Number.isSafeInteger(totalTokens) && totalTokens >= 0) {

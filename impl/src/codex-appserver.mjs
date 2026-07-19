@@ -699,7 +699,10 @@ export class CodexAppServerCli {
           // coordinator awaits; the thread survives (activeTurn cleared above, session stays).
           const result = makeResult('cancelled', 'interrupted', session.lastTokenUsage);
           if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
-          this._emit(session, 'control.interrupt_confirmed', { threadId: params.threadId, turnId, result, usageSeal: tokenUsageSeal(session, turnId) });
+          this._emit(session, 'control.interrupt_confirmed', {
+            threadId: params.threadId, turnId, result, transportOpen: true,
+            usageSeal: tokenUsageSeal(session, turnId),
+          });
           this._maybeIssueFollowUp(session, turnId);
           return;
         }

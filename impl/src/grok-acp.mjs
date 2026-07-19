@@ -611,7 +611,10 @@ export class GrokAcpCli {
       }
       const res = makeResult('cancelled', 'interrupted', tokens);
       if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
-      this._emit(session, 'control.interrupt_confirmed', { sessionId: session.sessionId, turnId, result: res, usageSeal: usage.seal });
+      this._emit(session, 'control.interrupt_confirmed', {
+        sessionId: session.sessionId, turnId, result: res, transportOpen: true,
+        usageSeal: usage.seal,
+      });
       this._maybeIssueFollowUp(session, turnId);
       return;
     }

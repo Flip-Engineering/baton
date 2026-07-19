@@ -1139,8 +1139,9 @@ function runNarrative(storyWorkers, runWorkerIds) {
   const rows = Object.entries(storyWorkers).filter(([id]) => runWorkerIds.has(id));
   if (rows.length === 0) return 'No workers active for this Run.';
   const active = rows.filter(([, worker]) => ['working', 'stopping', 'blocked', 'input_required'].includes(worker.status)).length;
+  const interrupted = rows.filter(([, worker]) => worker.status === 'interrupted').length;
   const done = rows.filter(([, worker]) => worker.lastVerdict?.accept === true || (worker.status === 'exited' && worker.crashed !== true)).length;
-  return `${active} worker(s) active${done > 0 ? `, ${done} done` : ''}.`;
+  return `${active} worker(s) active${interrupted > 0 ? `, ${interrupted} interrupted and controllable` : ''}${done > 0 ? `, ${done} done` : ''}.`;
 }
 
 function terminalCauseNarrative(cause) {
@@ -1168,11 +1169,15 @@ function runProgress({ phase, approval, node, route, verification, reviewPolicyM
       : node?.taskId ? 'complete' : approval?.disposition === 'approved' ? 'active' : 'pending',
     node?.taskId ? 'Plan node claimed exactly once' : stopped ? 'Dispatch authority closed' : 'No worker admitted'),
     stage('provider', 'Provider turn', stopped ? 'stopped'
+      : ['interrupted', 'interruption_uncertain'].includes(phase) ? 'blocked'
       : node?.state === 'accepted' ? 'complete'
         : node?.state === 'failed' ? 'failed'
           : node?.state === 'cancelled' ? 'stopped'
             : node?.taskId ? 'active' : 'pending',
-    route?.observed ? 'Provider identity observed'
+    phase === 'interrupted' ? 'No provider turn is active; the exact session remains attached and controllable'
+      : phase === 'interruption_uncertain'
+        ? 'No provider turn is active, but reusable-session attachment is unproven; only whole-Run stop is safe'
+      : route?.observed ? 'Provider identity observed'
       : route?.resolved ? 'Route resolved; provider identity pending'
         : node?.taskId ? 'Provider startup pending' : 'Provider not started'),
     stage('verification', 'Fresh verification', ['mechanically_verified', 'mechanically_verified_unstable'].includes(verification?.state) ? 'complete'
@@ -1254,6 +1259,13 @@ function runWorkerOwnership(driver, runId) {
     return ownership.owned;
   });
   return { workers, ownedWorkers };
+}
+
+function sessionAttachmentUnproven(handle) {
+  return Boolean(handle?.sessionRef)
+    && handle.controllableAttached !== true
+    && ['orphaned', 'exited', 'dead'].includes(handle.status)
+    && (handle.status === 'orphaned' || handle.sessionPreservation?.state === 'preserved');
 }
 
 function publicArtifact(artifact) {
@@ -1497,7 +1509,7 @@ export class BatonApplication {
     const rows = this.driver.coordinator.list().filter((worker) => (
       worker.runId === current.goal.runId
       && Number.isSafeInteger(worker.fence)
-      && ['working', 'blocked'].includes(worker.status)
+      && ['working', 'blocked', 'interrupted'].includes(worker.status)
     )).map((worker) => {
       const task = this.driver.coordination.task(worker.taskId);
       const dispatch = dispatches.find((candidate) => candidate.taskId === worker.taskId);
@@ -1505,23 +1517,40 @@ export class BatonApplication {
       const role = definition?.attempts.find((attempt) => attempt.nodeKey === nodeKey)?.role ?? null;
       return { worker, task, nodeKey, role };
     }).filter((row) => row.task?.runId === current.goal.runId);
-    const recipients = [...new Set(rows.map((row) => row.role).filter(Boolean))].sort();
-    const work = rows.find((row) => row.role === 'work') ?? (rows.length === 1 ? rows[0] : null);
-    if (work && !recipients.includes('work')) recipients.unshift('work');
-    return { rows, recipients, work };
+    const recipientsFor = (eligible) => {
+      const recipients = [...new Set(eligible.map((row) => row.role).filter(Boolean))].sort();
+      const work = eligible.find((row) => row.role === 'work')
+        ?? (eligible.length === 1 ? eligible[0] : null);
+      if (work && !recipients.includes('work')) recipients.unshift('work');
+      return { recipients, work };
+    };
+    const send = recipientsFor(rows);
+    const interrupt = recipientsFor(rows.filter((row) => (
+      ['working', 'blocked'].includes(row.worker.status)
+      && row.worker.sessionPreservationCapable === true
+    )));
+    return {
+      rows, recipients: send.recipients, work: send.work,
+      sendRecipients: send.recipients, sendWork: send.work,
+      interruptRecipients: interrupt.recipients, interruptWork: interrupt.work,
+    };
   }
 
-  _resolveSemanticControlTarget(current, recipient) {
+  _resolveSemanticControlTarget(current, recipient, operation) {
     const targets = this._semanticControlTargets(current);
+    const eligible = operation === 'interrupt'
+      ? targets.rows.filter((row) => ['working', 'blocked'].includes(row.worker.status)
+        && row.worker.sessionPreservationCapable === true)
+      : targets.rows;
     const row = recipient === 'work'
-      ? targets.work
-      : targets.rows.find((candidate) => candidate.role === recipient);
+      ? (operation === 'interrupt' ? targets.interruptWork : targets.sendWork)
+      : eligible.find((candidate) => candidate.role === recipient);
     if (!row) {
       throw applicationError(
-        recipient === 'work' && targets.rows.length > 1
+        recipient === 'work' && eligible.length > 1
           ? 'Run work recipient is ambiguous; select an advertised workflow role'
           : 'Run control recipient is unavailable',
-        recipient === 'work' && targets.rows.length > 1
+        recipient === 'work' && eligible.length > 1
           ? 'application_control_recipient_ambiguous'
           : 'application_control_recipient_unavailable',
       );
@@ -1532,6 +1561,16 @@ export class BatonApplication {
       fence: row.worker.fence,
       role: row.role,
       activeCount: targets.rows.length,
+      turnEpoch: row.worker.turnEpoch,
+      turnState: row.worker.status,
+      sessionDigest: row.worker.semanticControlBinding?.sessionDigest ?? null,
+      preservationReceiptDigest: row.worker.status === 'interrupted'
+        ? row.worker.sessionPreservation?.receiptDigest ?? null : null,
+      processGeneration: row.worker.semanticControlBinding?.processGeneration ?? 0,
+      worktreeDigest: row.worker.semanticControlBinding?.worktreeDigest ?? digest(null),
+      routeDigest: row.worker.semanticControlBinding?.routeDigest ?? digest(null),
+      planBindingDigest: row.worker.semanticControlBinding?.planBindingDigest ?? digest(null),
+      runAuthorityDigest: row.worker.semanticControlBinding?.runAuthorityDigest ?? digest(null),
     };
   }
 
@@ -1541,14 +1580,44 @@ export class BatonApplication {
   }
 
   _controlOperationalState(control) {
-    const events = this.driver.log.read(control.target.workerId)
-      .filter((event) => event.payload?.controlId === control.controlId);
+    const workerEvents = this.driver.log.read(control.target.workerId);
+    const events = workerEvents.filter((event) => event.payload?.controlId === control.controlId);
     const confirmed = control.operation === 'send'
       ? events.find((event) => ['control.nudge', 'control.steer', 'control.send']
         .includes(event.kind)
         || (event.kind === 'lifecycle.turn_started' && event.payload?.followUp === true))
       : events.find((event) => event.kind === 'control.interrupt_confirmed');
-    if (confirmed) return { state: 'confirmed', result: 'confirmed', code: null };
+    if (confirmed) {
+      if (control.operation === 'interrupt' && control.turnDisposition === 'preserve_turn') {
+        const preservation = confirmed.payload?.preservation ?? null;
+        const handle = this.driver.coordinator.list().find((candidate) => (
+          candidate.id === control.target.workerId
+          && candidate.taskId === control.target.taskId
+          && candidate.controllableAttached === true
+          && candidate.sessionPreservation?.receiptDigest === preservation?.receiptDigest
+        ));
+        const closedAfter = workerEvents.some((event) => (
+          event.seq > confirmed.seq && event.kind === 'lifecycle.process_closed'
+        ));
+        if (!preservation || !handle || closedAfter) {
+          return {
+            state: 'outcome_unknown', result: 'session_preservation_unproven',
+            code: closedAfter ? 'transport_closed_after_interrupt'
+              : 'session_reattachment_unproven',
+          };
+        }
+        return {
+          state: 'confirmed', result: 'confirmed', code: null,
+          preservation,
+        };
+      }
+      return {
+        state: 'confirmed', result: 'confirmed', code: null,
+        actualDelivery: control.operation === 'send'
+          ? confirmed.payload?.continuation ? 'turn' : control.delivery : null,
+        continuation: confirmed.payload?.continuation ?? null,
+      };
+    }
     const refused = events.find((event) => event.kind === 'control.delivery_refused'
       || (event.kind === 'control.stale_rejected' && event.payload?.phase === 'pre_delivery'));
     if (refused) {
@@ -1574,12 +1643,20 @@ export class BatonApplication {
       : null;
   }
 
-  _normalizeRunControlOutcome(outcome) {
-    return {
+  _normalizeRunControlOutcome(outcome, schemaVersion = 2) {
+    const base = {
       result: validText(outcome?.result, 256) ? outcome.result : 'provider_outcome_unknown',
       code: validText(outcome?.code, 256) ? outcome.code : null,
       emulated: outcome?.emulated === true,
       deliveredDespiteStale: outcome?.deliveredDespiteStale === true,
+    };
+    if (schemaVersion < 2) return base;
+    return {
+      ...base,
+      actualDelivery: ['nudge', 'now', 'turn'].includes(outcome?.actualDelivery)
+        ? outcome.actualDelivery : null,
+      preservation: outcome?.preservation ? clone(outcome.preservation) : null,
+      continuation: outcome?.continuation ? clone(outcome.continuation) : null,
     };
   }
 
@@ -1590,10 +1667,11 @@ export class BatonApplication {
       admittedEvent: control.admittedEvent,
     })}`;
     const core = {
-      schemaVersion: 1, controlId: control.controlId,
+      schemaVersion: control.schemaVersion, controlId: control.controlId,
       admissionDigest: control.admissionDigest,
       targetDigest: control.targetDigest,
       providerRequestId,
+      ...(control.schemaVersion >= 2 ? { turnDisposition: control.turnDisposition } : {}),
     };
     return this.driver.coordination.beginRunControlEffect({
       ...core, effectDigest: digest(core),
@@ -1604,9 +1682,9 @@ export class BatonApplication {
   }
 
   _acknowledgeRunControl(control, state, outcome) {
-    const normalized = this._normalizeRunControlOutcome(outcome);
+    const normalized = this._normalizeRunControlOutcome(outcome, control.schemaVersion);
     const core = {
-      schemaVersion: 1, controlId: control.controlId,
+      schemaVersion: control.schemaVersion, controlId: control.controlId,
       effectDigest: control.effect.effectDigest,
       providerRequestId: control.effect.providerRequestId,
       state, outcome: normalized,
@@ -1623,9 +1701,9 @@ export class BatonApplication {
     const existing = this._runControls(control.runId)
       .find((candidate) => candidate.controlId === control.controlId);
     if (!['admitted', 'provider_acked'].includes(existing?.status)) return existing;
-    const normalized = this._normalizeRunControlOutcome(outcome);
+    const normalized = this._normalizeRunControlOutcome(outcome, control.schemaVersion);
     const core = {
-      schemaVersion: 1, repoId: control.repoId, runId: control.runId,
+      schemaVersion: control.schemaVersion, repoId: control.repoId, runId: control.runId,
       controlId: control.controlId, operation: control.operation,
       admissionDigest: control.admissionDigest, state, outcome: normalized,
     };
@@ -1663,6 +1741,21 @@ export class BatonApplication {
         result: 'run_stopping', code: 'run_stopping',
       });
     }
+    if (current.schemaVersion >= 2) {
+      let liveTarget = null;
+      try {
+        liveTarget = this._resolveSemanticControlTarget(
+          this._findRun(current.runId, { allowUnavailableProfile: true }),
+          current.recipient, current.operation,
+        );
+      } catch { /* a disappeared recipient is target drift */ }
+      if (!liveTarget || digest(liveTarget) !== current.targetDigest
+        || digest(liveTarget) !== digest(current.target)) {
+        return this._settleRunControl(current, 'refused', {
+          result: 'semantic_target_drift', code: 'application_control_target_drift',
+        });
+      }
+    }
     const handle = this.driver.coordinator.list().find((candidate) => (
       candidate.id === current.target.workerId && candidate.runId === current.runId
       && candidate.taskId === current.target.taskId && candidate.fence === current.target.fence
@@ -1694,11 +1787,19 @@ export class BatonApplication {
             expectedFence: current.target.fence,
             actor: current.source.actor,
             controlId: current.controlId,
+            resumePreservedTurn: current.target.turnState === 'interrupted',
+            semanticTarget: current.schemaVersion >= 2 ? current.target : undefined,
+            semanticTargetDigest: current.schemaVersion >= 2 ? current.targetDigest : undefined,
           },
         )
         : await this.driver.coordinator.interrupt(
           current.target.workerId, undefined, current.source.actor,
-          { expectedFence: current.target.fence, controlId: current.controlId },
+          {
+            expectedFence: current.target.fence, controlId: current.controlId,
+            preserveTurn: current.turnDisposition === 'preserve_turn',
+            semanticTarget: current.schemaVersion >= 2 ? current.target : undefined,
+            semanticTargetDigest: current.schemaVersion >= 2 ? current.targetDigest : undefined,
+          },
         );
     } catch (error) {
       const after = this._controlOperationalState(current);
@@ -1720,6 +1821,10 @@ export class BatonApplication {
       code: result?.reason ?? null,
       emulated: result?.emulated === true,
       deliveredDespiteStale: result?.deliveredDespiteStale === true,
+      actualDelivery: result?.actualDelivery
+        ?? (current.operation === 'send' ? current.delivery : null),
+      preservation: result?.preservation ?? null,
+      continuation: result?.continuation ?? null,
     });
     return this._settleRunControl(
       current, current.providerAck.state, current.providerAck.outcome,
@@ -1776,9 +1881,11 @@ export class BatonApplication {
         state: settled.status,
         emulated: settled.settlement.outcome.emulated,
         deliveredDespiteStale: settled.settlement.outcome.deliveredDespiteStale,
+        actualDelivery: settled.settlement.outcome.actualDelivery,
+        sessionPreserved: settled.settlement.outcome.preservation?.state === 'preserved',
+        continuation: settled.settlement.outcome.continuation?.state ?? null,
         onlyActiveMember: settled.target.activeCount === 1,
-        needsAttention: settled.operation === 'interrupt'
-          && settled.target.activeCount === 1,
+        needsAttention: false,
       },
     });
   }
@@ -1840,7 +1947,20 @@ export class BatonApplication {
       throw applicationError('Run control inputs are invalid', 'application_action_input_invalid');
     }
     this._assertRunMutable(current.goal.runId);
-    const target = this._resolveSemanticControlTarget(current, recipient);
+    let target = this._resolveSemanticControlTarget(current, recipient, operation);
+    if (operation === 'interrupt' && target.turnState === 'blocked') {
+      const prepared = await this.driver.coordinator.prepareSemanticInterrupt(
+        target.workerId, principal.actor,
+      );
+      if (prepared?.ok !== true) {
+        throw applicationError('Blocked Run interaction could not be superseded for interrupt',
+          'application_control_interaction_resolution_failed');
+      }
+      // Resolve the interaction first, then bind the semantic admission to the resulting exact
+      // durable task generation. No provider interrupt effect has crossed yet.
+      current = this._findRun(current.goal.runId, { allowUnavailableProfile: true });
+      target = this._resolveSemanticControlTarget(current, recipient, operation);
+    }
     const seed = context?.idempotencyKey
       ? { kind: 'request', value: context.idempotencyKey }
       : { kind: 'direct', value: randomUUID() };
@@ -1851,13 +1971,15 @@ export class BatonApplication {
       actor: principal.actor, principalId: principal.principalId, sessionId: principal.sessionId,
     };
     const core = {
-      schemaVersion: 1, repoId: this.repoId, runId: current.goal.runId,
+      schemaVersion: 2, repoId: this.repoId, runId: current.goal.runId,
       controlId, actionId: action.actionId, operation, recipient, delivery, message,
+      turnDisposition: operation === 'interrupt' ? 'preserve_turn' : null,
       messageDigest: message === null ? null : digest(message), reasonDigest: digest(reason),
       registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest, source, target,
       targetDigest: digest(target),
       requestDigest: digest({
         actionId: action.actionId, operation, recipient, delivery, message,
+        turnDisposition: operation === 'interrupt' ? 'preserve_turn' : null,
         reasonDigest: digest(reason), source, target,
         registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
       }),
@@ -3342,12 +3464,56 @@ export class BatonApplication {
     await this._authorize('run.recover', principal, runId, {});
     const current = this._findRun(runId);
     this._assertRunMutable(runId);
-    const policy = current.profile.recoveryPolicy;
-    if (policy.mode !== 'manual' || !policy.eligibleSessionModes.includes('resume')) {
-      throw applicationError('Run recovery is unavailable for this deployment profile', 'application_recovery_unavailable');
-    }
     if (!current.plan || current.approval?.disposition !== 'approved') {
       throw applicationError('Run recovery requires an approved current Plan', 'application_recovery_unavailable');
+    }
+    const policy = current.profile.recoveryPolicy;
+
+    // A closed preservation receipt is already bound to the approved Plan task, exact route,
+    // worktree, native session, and Run generation. Restart recovery therefore discovers its
+    // target from durable Run state; accepting any of those coordinates from the caller would
+    // weaken the receipt. Reattachment is attach-only and does not admit a provider turn.
+    const preservedHandles = this.driver.coordinator.list().filter((handle) => (
+      handle.runId === runId
+      && handle.status === 'orphaned'
+      && handle.sessionPreservation?.state === 'preserved'
+      && handle.sessionPreservation?.transport === 'attached'
+      && handle.sessionRef?.persistence === 'native'
+      && validText(handle.sessionRef?.id, 4_096)
+      && handle.sessionContext && typeof handle.sessionContext === 'object'
+    ));
+    if (preservedHandles.length > 1) {
+      return this._buildView(current, this.principals.observer, {
+        action: { command: 'run.recover', result: 'operator_required' },
+        recovery: {
+          state: 'operator_required', reason: 'multiple_preserved_members', attempt: 0,
+          targetCount: preservedHandles.length, target: null, dispatchDisposition: null,
+        },
+      });
+    }
+    if (preservedHandles.length === 1) {
+      const outcome = await this.driver.coordinator.recover(preservedHandles[0].id, {
+        actor: principal.actor,
+        ...(Number.isSafeInteger(policy.timeoutMs) && policy.timeoutMs > 0
+          ? { timeoutMs: policy.timeoutMs } : {}),
+      });
+      const result = outcome?.result ?? 'recovery_failed';
+      const recovery = outcome?.ok === true ? {
+        state: 'interrupted', reattachment: 'confirmed', attempt: 1,
+        targetCount: 1, target: null, dispatchDisposition: 'attach_only',
+        cleanup: { state: 'owned' },
+      } : {
+        state: outcome?.reap === 'unconfirmed' ? 'attention' : 'failed',
+        reason: result, attempt: 1, targetCount: 1, target: null,
+        dispatchDisposition: 'attach_only', reap: outcome?.reap ?? 'unconfirmed',
+      };
+      return this._buildView(this._findRun(runId), this.principals.observer, {
+        action: { command: 'run.recover', result }, recovery,
+      });
+    }
+
+    if (policy.mode !== 'manual' || !policy.eligibleSessionModes.includes('resume')) {
+      throw applicationError('Run recovery is unavailable for this deployment profile', 'application_recovery_unavailable');
     }
 
     const projection = await this._goalPlanStatus(current, this.principals.observer);
@@ -4321,6 +4487,11 @@ export class BatonApplication {
     else if (runStop) phase = 'stopping';
     const { workers, ownedWorkers } = runWorkerOwnership(this.driver, runId);
     const ownedWorker = workerId ? workers.find((handle) => handle.id === workerId) ?? null : null;
+    if (!runStop && phase === 'running' && ownedWorker?.status === 'interrupted'
+      && ownedWorker.controllableAttached === true) phase = 'interrupted';
+    else if (!runStop && phase === 'running' && sessionAttachmentUnproven(ownedWorker)) {
+      phase = 'interruption_uncertain';
+    }
     const requested = current.plan
       ? requestedPlanNodeRoute(current.plan.nodes[0], current.dispatch, 'Historical Plan node')
       : null;
@@ -4389,7 +4560,11 @@ export class BatonApplication {
         ? { state: 'requested', request: clone(planNode.workerPolicy) }
         : { state: 'legacy_unattested' },
       budget: { allocated: clone(current.goal.budget), node: clone(node?.budget ?? null), termination: terminalCause },
-      attention: [], attentionTruncated: false,
+      attention: phase === 'interruption_uncertain' ? [{
+        kind: 'session_preservation', state: 'quarantined',
+        reason: 'session_attachment_unproven',
+        summary: 'Reusable provider-session attachment is unproven; whole-Run stop is the only safe action.',
+      }] : [], attentionTruncated: false,
       verification: { state: verificationState, verdict: null },
       semanticReview,
       progress,
@@ -4398,7 +4573,9 @@ export class BatonApplication {
         : { workers: ownedWorkers.length, workerIds: ownedWorkers.map((handle) => handle.id).sort(), closed: false },
       evidence: [],
       narrative: terminalCauseNarrative(terminalCause)
-        ?? 'Historical Run remains observable, but its exact pre-registry deployment policy is unavailable; current policy was not substituted.',
+        ?? (phase === 'interruption_uncertain'
+          ? 'Provider-session attachment is unproven and quarantined; stop is the only safe action.'
+          : 'Historical Run remains observable, but its exact pre-registry deployment policy is unavailable; current policy was not substituted.'),
       lastError: { code: 'application_profile_stale' }, lastAction: options.action ? clone(options.action) : null,
       recovery: null, preservation: { state: 'unavailable', available: false, checkpointSha: null },
       resume: null, terminalCause, stop, close: null,
@@ -5613,7 +5790,10 @@ export class BatonApplication {
       });
       attempts.push({
         role: binding.role, nodeKey: binding.nodeKey, taskId: node?.taskId ?? null,
-        state: node?.state ?? 'blocked', route,
+        state: handle?.status === 'interrupted' && handle.controllableAttached === true
+          ? 'interrupted'
+          : sessionAttachmentUnproven(handle)
+            ? 'interruption_uncertain' : node?.state ?? 'blocked', route,
         candidateId: candidates.find((candidate) => candidate.role === binding.role)?.candidateId ?? null,
         memberStop: (() => {
           const stop = memberStops.find((candidate) => candidate.role === binding.role);
@@ -5676,6 +5856,12 @@ export class BatonApplication {
             : anyDispatched ? 'running' : 'approved';
     if (runStop?.status === 'stopped') phase = 'stopped';
     else if (runStop) phase = 'stopping';
+    else if (phase === 'running'
+      && attempts.some((attempt) => attempt.state === 'interrupted')
+      && workers.every((handle) => handle.activeProviderTurns === 0)) phase = 'interrupted';
+    else if (phase === 'running'
+      && attempts.some((attempt) => attempt.state === 'interruption_uncertain')
+      && workers.every((handle) => handle.activeProviderTurns === 0)) phase = 'interruption_uncertain';
     const currentRevision = current.plan.nodes[0]?.revision
       ? normalizeWorkflowRevision(current.plan.nodes[0].revision) : null;
     const currentRevisionAttempt = currentRevision
@@ -5734,8 +5920,14 @@ export class BatonApplication {
       kind: 'workflow_recovery', state: recovery.state, reason: recovery.reason,
       summary: 'Revision provider ownership is unconfirmed after restart; redelivery is forbidden.',
     }] : [];
+    const preservationAttention = phase === 'interruption_uncertain' ? [{
+      kind: 'session_preservation', state: 'quarantined',
+      reason: 'session_attachment_unproven',
+      summary: 'Reusable provider-session attachment is unproven; whole-Run stop is the only safe action.',
+    }] : [];
     const attention = [
       ...workerAttention, ...selectionAttention, ...revisionAttention, ...recoveryAttention,
+      ...preservationAttention,
     ].slice(0, MAX_ATTENTION);
     const terminalCause = attempts.find((attempt) => attempt.terminalCause)?.terminalCause ?? null;
     const verificationState = allAccepted ? 'mechanically_verified'
@@ -5773,6 +5965,12 @@ export class BatonApplication {
             { kind: 'send_feedback', roles: candidates.map((candidate) => candidate.role) },
             { kind: 'select_candidate', roles: candidates.map((candidate) => candidate.role) },
           ]
+        : phase === 'interruption_uncertain' ? [{ kind: 'stop' }]
+        : phase === 'interrupted' ? [
+          { kind: 'send', roles: attempts.filter((attempt) => attempt.state === 'interrupted')
+            .map((attempt) => attempt.role) },
+          { kind: 'stop' }, { kind: 'wait' },
+        ]
         : phase === 'running' ? [
           ...(stoppableRoles.length > 0 ? [{ kind: 'stop_member', roles: stoppableRoles }] : []),
           { kind: 'stop' }, { kind: 'wait' },
@@ -5815,7 +6013,8 @@ export class BatonApplication {
       workerPolicy: { state: 'multiple', attempts: attempts.map(({ role }) => ({ role, request: clone(current.profile.workerPolicy) })) },
       budget: { allocated: clone(current.goal.budget), node: null, termination: terminalCause },
       attention, attentionTruncated: workerAttention.length + selectionAttention.length
-        + revisionAttention.length + recoveryAttention.length > attention.length,
+        + revisionAttention.length + recoveryAttention.length + preservationAttention.length
+        > attention.length,
       verification: {
         state: verificationState,
         verdict: candidates.length > 0 ? {
@@ -5853,10 +6052,18 @@ export class BatonApplication {
       export: null,
       ownership: phase === 'stopped' ? { workers: 0, workerIds: [], closed: false }
         : { workers: ownedWorkers.length, workerIds: ownedWorkers.map((handle) => handle.id).sort(), closed: false },
+      execution: {
+        state: phase,
+        activeProviderTurns: workers.filter((handle) => handle.activeProviderTurns === 1).length,
+        controllableAttachedMembers: workers.filter((handle) => handle.controllableAttached === true).length,
+        dispatchClosed: Boolean(runStop),
+      },
       evidence: [],
       narrative: terminalCauseNarrative(terminalCause)
         ?? (phase === 'selection_required'
           ? `${candidates.length} mechanically verified Candidates await explicit selection.`
+          : phase === 'interruption_uncertain'
+            ? 'Provider-session attachment is unproven and quarantined; stop is the only safe action.'
           : selection ? `${selection.candidate.role} is the explicitly selected verified Candidate.`
           : `${attempts.filter((attempt) => attempt.state === 'accepted').length}/${attempts.length} Attempts verified.`),
       lastAction: options.action ? clone(options.action) : null,
@@ -5969,6 +6176,11 @@ export class BatonApplication {
 
     const { workers, ownedWorkers } = runWorkerOwnership(this.driver, runId);
     const ownedWorker = workerId ? workers.find((handle) => handle.id === workerId) ?? null : null;
+    if (!runStop && phase === 'running' && ownedWorker?.status === 'interrupted'
+      && ownedWorker.controllableAttached === true) phase = 'interrupted';
+    else if (!runStop && phase === 'running' && sessionAttachmentUnproven(ownedWorker)) {
+      phase = 'interruption_uncertain';
+    }
     const requested = requestedPlanNodeRoute(
       current.plan.nodes[0], current.dispatch, 'Run Plan node',
     );
@@ -5993,6 +6205,13 @@ export class BatonApplication {
           approvalKind: request.kind,
         })),
       ]);
+    if (phase === 'interruption_uncertain') {
+      allAttention.push({
+        kind: 'session_preservation', state: 'quarantined',
+        reason: 'session_attachment_unproven',
+        summary: 'Reusable provider-session attachment is unproven; whole-Run stop is the only safe action.',
+      });
+    }
     const attention = allAttention.slice(0, MAX_ATTENTION);
     const attentionTruncated = allAttention.length > attention.length;
     const planNode = current.plan.nodes[0];
@@ -6095,6 +6314,9 @@ export class BatonApplication {
     const nextActions = phase === 'stopping' ? [{ kind: 'wait' }, { kind: 'status' }]
       : phase === 'awaiting_plan_approval'
         ? [{ kind: 'approve_plan', planDigest: current.plan.digest }]
+        : phase === 'interrupted'
+          ? [{ kind: 'send' }, { kind: 'stop' }, { kind: 'wait' }]
+        : phase === 'interruption_uncertain' ? [{ kind: 'stop' }]
         : ['running', 'reviewing'].includes(phase) ? [{ kind: 'steer' }, { kind: 'stop' }, { kind: 'wait' }, ...attention]
           : phase === 'work_completed' ? [
             ...(canReview ? [{ kind: 'semantic_review', routes: clone(current.profile.reviewPolicy.routes) }] : []),
@@ -6171,10 +6393,20 @@ export class BatonApplication {
       export: exportResult,
       ownership: phase === 'stopped' ? { workers: 0, workerIds: [], closed: false }
         : { workers: ownedWorkers.length, workerIds: ownedWorkers.map((handle) => handle.id).sort(), closed: false },
+      execution: {
+        state: phase,
+        activeProviderTurns: workers.filter((handle) => handle.activeProviderTurns === 1).length,
+        controllableAttachedMembers: workers.filter((handle) => handle.controllableAttached === true).length,
+        dispatchClosed: Boolean(runStop),
+      },
       evidence: artifacts.map(publicArtifact),
       narrative: terminalCauseNarrative(terminalCause) ?? (phase === 'stopped' ? 'Run stopped; its dispatch authority is closed and its exact stop receipt is attached.'
         : phase === 'stopping' ? 'Run stop is durably admitted and physical ownership is converging.'
-          : runNarrative(story.workers, runWorkerIds)),
+          : phase === 'interrupted'
+            ? 'Provider turn interrupted; the exact Plan member and native session remain attached for send or stop.'
+            : phase === 'interruption_uncertain'
+              ? 'Provider-session attachment is unproven and quarantined; stop is the only safe action.'
+            : runNarrative(story.workers, runWorkerIds)),
       lastAction: options.action ? clone(options.action) : null,
       recovery: options.recovery ? clone(options.recovery) : null,
       preservation: resumeProjection ? {
@@ -7665,20 +7897,26 @@ export class BatonApplication {
     }
     if (!this.driver.coordination.runStop?.(current.goal.runId)) {
       const controls = this._semanticControlTargets(current);
-      if (controls.recipients.length > 0) {
+      for (const kind of ['send', 'interrupt']) {
+        const recipients = kind === 'send'
+          ? controls.sendRecipients : controls.interruptRecipients;
+        if (recipients.length === 0) continue;
         const authorityTarget = {
-          recipients: controls.recipients,
-          generationDigest: digest(controls.rows.map((row) => ({
+          recipients,
+          generationDigest: digest(controls.rows.filter((row) => (
+            kind === 'send' || (['working', 'blocked'].includes(row.worker.status)
+              && row.worker.sessionPreservationCapable === true)
+          )).map((row) => ({
             workerId: row.worker.id, taskId: row.task.id, fence: row.worker.fence,
-            role: row.role,
+            turnEpoch: row.worker.turnEpoch, turnState: row.worker.status, role: row.role,
+            preservationReceiptDigest: row.worker.sessionPreservation?.receiptDigest ?? null,
+            binding: row.worker.semanticControlBinding,
           }))),
         };
-        for (const kind of ['send', 'interrupt']) {
-          candidates.push({
-            kind, source: { recipients: controls.recipients },
-            target: { recipients: controls.recipients }, authorityTarget,
-          });
-        }
+        candidates.push({
+          kind, source: { recipients },
+          target: { recipients }, authorityTarget,
+        });
       }
     }
     const contextTargets = this._contextTargets(current, view);

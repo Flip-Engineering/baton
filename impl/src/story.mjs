@@ -34,7 +34,7 @@ import { pathMatchesScope } from './path-scope.mjs';
  */
 
 /**
- * @typedef {"idle"|"working"|"stopping"|"blocked"|"input_required"|"orphaned"|"exited"} WorkerStatus
+ * @typedef {"idle"|"working"|"stopping"|"interrupted"|"blocked"|"input_required"|"orphaned"|"exited"} WorkerStatus
  */
 
 /**
@@ -110,7 +110,7 @@ export const MAX_ACTION_SIGNATURE_WINDOW = 10;
 
 // States in which "stalled" must never fire — the worker is legitimately
 // waiting on someone else, not silently stuck.
-const NEVER_STALLED_STATUSES = new Set(['blocked', 'input_required', 'stopping', 'exited', 'orphaned']);
+const NEVER_STALLED_STATUSES = new Set(['blocked', 'input_required', 'stopping', 'interrupted', 'exited', 'orphaned']);
 
 // ---------------------------------------------------------------------------
 // State construction helpers
@@ -220,7 +220,7 @@ function pathScopesOverlap(scopeA, scopeB) {
 
 const LEGAL_TRANSITIONS = {
   [KIND.SPAWNED]: { from: null, to: 'idle' },
-  [KIND.TURN_STARTED]: { from: ['idle', 'working'], to: 'working' },
+  [KIND.TURN_STARTED]: { from: ['idle', 'working', 'interrupted'], to: 'working' },
   [KIND.TURN_COMPLETED]: { from: ['working'], to: 'idle' }, // SC5b; other statuses: no-op, never a warning
   [KIND.KILL_CONFIRMED]: { from: null, to: 'exited' }, // SC5a: terminal, mirrors coordinator replay
   [KIND.INTERRUPT_REQUESTED]: { from: ['working', 'blocked', 'idle'], to: 'stopping' },
@@ -370,7 +370,8 @@ function handleKnownKind(w, kind, payload, event) {
       break;
     }
     case KIND.INTERRUPT_CONFIRMED: {
-      transitionStatus(w, kind, 'idle');
+      transitionStatus(w, kind, event.payload?.preservation?.state === 'preserved'
+        ? 'interrupted' : 'idle');
       break;
     }
     case KIND.KILL_CONFIRMED: {
@@ -589,6 +590,7 @@ function pathInAnyScope(scope, path) {
 const STATUS_PHRASE = {
   idle: () => 'idle',
   stopping: () => 'stopping (interrupt pending)',
+  interrupted: () => 'interrupted — session attached and controllable',
   blocked: () => 'blocked — waiting on approval',
   orphaned: () => 'orphaned',
   exited: () => 'done',

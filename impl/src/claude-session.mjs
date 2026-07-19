@@ -882,7 +882,11 @@ export class ClaudeSessionCli {
     if (!pending || pending.emitted || !pending.wireConfirmed || !pending.resultSeen || session.terminal) return;
     pending.emitted = true;
     if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
-    this._emit(session, 'control.interrupt_confirmed', { usageSeal: pending.usageSeal });
+    this._emit(session, 'control.interrupt_confirmed', {
+      sessionId: session.sessionIdWire,
+      transportOpen: true,
+      usageSeal: pending.usageSeal,
+    });
     session.pendingInterrupt = null;
   }
 

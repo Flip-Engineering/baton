@@ -69,6 +69,54 @@ function configuredAdapter(scenario) {
   return adapter;
 }
 
+function enablePreservedMockSession(adapter) {
+  const baseCard = adapter.card.bind(adapter);
+  adapter.card = () => ({
+    ...baseCard(), sessions: { multiTurn: 'native', resume: 'native', fork: 'unsupported' },
+  });
+  const spawn = adapter.spawn.bind(adapter);
+  adapter.spawn = async (worker, brief, opts) => {
+    const ack = await spawn(worker, brief, opts);
+    const session = adapter._sessions.get(worker);
+    if (ack.ok && session) queueMicrotask(() => adapter._emit(session, 'lifecycle.spawned', {
+      sessionId: `mock-native-${worker}`, modelObserved: opts.model ?? null,
+    }));
+    return ack;
+  };
+  const prompt = adapter.prompt.bind(adapter);
+  adapter.prompt = async (worker, content, mode = 'turn') => {
+    const session = adapter._sessions.get(worker);
+    if (mode === 'turn' && session && !session.runStarted && !session.terminal) {
+      if (session.haltSignal.aborted) {
+        const controller = new AbortController();
+        session.haltController = controller;
+        session.haltSignal = controller.signal;
+      }
+      // MockAdapter's reusable test session keeps its wire epoch in spawn options. Initial
+      // Application dispatch is epoch 2; the preserved successor is the next exact epoch.
+      session.opts.turnEpoch = (session.opts.turnEpoch ?? 2) + 1;
+      adapter._emit(session, 'control.send', { content, mode });
+      adapter._startSession(session);
+      return { ok: true };
+    }
+    return prompt(worker, content, mode);
+  };
+  adapter.interrupt = async (worker, _then, options = {}) => {
+    const session = adapter._sessions.get(worker);
+    if (!session || session.terminal) return { ok: true, terminal: true };
+    session.haltController.abort();
+    session.runStarted = false;
+    session.stopKind = null;
+    queueMicrotask(() => adapter._emit(session, 'control.interrupt_confirmed', {
+      sessionId: `mock-native-${worker}`, transportOpen: true,
+      preservationRequested: options.preserveTurn === true,
+      usageSeal: { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null },
+    }));
+    return { ok: true };
+  };
+  return adapter;
+}
+
 function fixture(name, {
   delayMs = 20,
   goalPlanAuthorize = async () => true,
@@ -609,7 +657,7 @@ test('UA5/UA6: Run steering resolves ownership and the current fence inside the 
   await application.shutdown(principal('shutdown-admin'));
 });
 
-test('RC1: Pythonic send and interrupt resolve one semantic recipient and settle durably', async () => {
+test('RC1/P91: Pythonic send settles durably and interrupt is not advertised without reusable-session proof', async () => {
   const { application, driver } = fixture('semantic-control', { delayMs: 1_500 });
   const proposed = await application.start(
     intent({ runId: 'run-semantic-control' }), principal('control-owner'),
@@ -625,19 +673,15 @@ test('RC1: Pythonic send and interrupt resolve one semantic recipient and settle
   assert.deepEqual(sendAction.choices, ['work']);
   assert.deepEqual(sendAction.target, { recipients: ['work'] });
   assert.equal(JSON.stringify(sendAction).includes(workerId), false);
-  assert.deepEqual(interruptAction.choices, ['work']);
+  assert.equal(interruptAction, undefined);
 
   const sent = await run.send('Keep the verification boundary explicit.');
   assert.deepEqual(sent.lastAction, {
     command: 'run.send', recipient: 'work', delivery: 'nudge', result: 'ok',
     state: 'confirmed', emulated: false, deliveredDespiteStale: false,
+    actualDelivery: 'nudge', sessionPreserved: false, continuation: null,
     onlyActiveMember: true, needsAttention: false,
   });
-  const interrupted = await run.interrupt({ reason: 'Pause this work turn for review.' });
-  assert.equal(interrupted.lastAction.command, 'run.interrupt');
-  assert.equal(interrupted.lastAction.state, 'confirmed');
-  assert.equal(interrupted.lastAction.onlyActiveMember, true);
-  assert.equal(interrupted.lastAction.needsAttention, true);
   const records = driver.coordination.events().filter((event) => (
     ['run.control_admitted', 'run.control_effect_started',
       'run.control_provider_acked', 'run.control_settled'].includes(event.kind)
@@ -645,14 +689,462 @@ test('RC1: Pythonic send and interrupt resolve one semantic recipient and settle
   assert.deepEqual(records.map((event) => event.kind), [
     'run.control_admitted', 'run.control_effect_started',
     'run.control_provider_acked', 'run.control_settled',
-    'run.control_admitted', 'run.control_effect_started',
-    'run.control_provider_acked', 'run.control_settled',
   ]);
   assert.equal(records.every((event) => /^control:[a-f0-9]{64}$/u.test(event.payload.controlId)), true);
   assert.equal(driver.log.read(workerId).some((event) => event.kind === 'control.delivery_requested'
     && /^control:[a-f0-9]{64}$/u.test(event.payload.controlId)), true);
-  assert.equal(driver.log.read(workerId).some((event) => event.kind === 'control.interrupt_confirmed'
-    && /^control:[a-f0-9]{64}$/u.test(event.payload.controlId)), true);
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('P91 application: interrupt projects one paused attached member, then send resumes the same Plan task and completes normally', async () => {
+  const { application, adapter, driver } = fixture('semantic-preserved-session', {
+    scenario: {
+      outcome: 'completed', summary: 'preserved session completed',
+      edits: [{ path: 'impl/phase91.txt', content: 'same session\n', delayMs: 1_200 }],
+    },
+  });
+  enablePreservedMockSession(adapter);
+  let spawnCalls = 0;
+  const spawn = adapter.spawn.bind(adapter);
+  adapter.spawn = (...args) => { spawnCalls += 1; return spawn(...args); };
+  const proposed = await application.start(
+    intent({ runId: 'run-semantic-preserved-session' }), principal('control-owner'),
+  );
+  const running = await application.approve(
+    proposed.runId, proposed.plan.digest, principal('control-approver'),
+  );
+  const workerId = running.ownership.workerIds[0];
+  await new Promise((resolve) => setImmediate(resolve));
+  const before = driver.coordinator.list().find((worker) => worker.id === workerId);
+  const taskCount = driver.coordination.snapshot().tasks.length;
+  const run = bindBaton(application, principal('control-owner')).runs.open(proposed.runId);
+  const initial = await run.inspect();
+  assert.ok(initial.outline.actions.some((action) => action.kind === 'interrupt'));
+
+  const interrupted = await run.interrupt({ reason: 'Pause only this provider turn.' });
+  assert.deepEqual({
+    phase: interrupted.phase,
+    state: interrupted.lastAction.state,
+    preserved: interrupted.lastAction.sessionPreserved,
+    activeProviderTurns: interrupted.execution.activeProviderTurns,
+    controllableAttachedMembers: interrupted.execution.controllableAttachedMembers,
+  }, {
+    phase: 'interrupted', state: 'confirmed', preserved: true,
+    activeProviderTurns: 0, controllableAttachedMembers: 1,
+  });
+  assert.equal(driver.coordination.task(before.taskId).status, 'working');
+  assert.equal(driver.coordination.runStop(proposed.runId), null);
+  const interruptControl = driver.coordination.runControls(proposed.runId)[0];
+  assert.equal(interruptControl.schemaVersion, 2);
+  assert.equal(interruptControl.turnDisposition, 'preserve_turn');
+  assert.equal(interruptControl.target.turnState, 'working');
+  assert.equal(interruptControl.target.preservationReceiptDigest, null);
+  assert.equal(interruptControl.target.sessionDigest, before.semanticControlBinding.sessionDigest);
+  assert.equal(interruptControl.providerAck.outcome.preservation.state, 'preserved');
+  assert.equal(driver.coordination.events().some((event) => event.kind === 'evidence.mapped'
+    && event.payload.kind === 'control.interrupt_confirmed'), true);
+  const paused = await run.inspect();
+  assert.deepEqual(paused.outline.actions.map((action) => action.kind)
+    .filter((kind) => ['send', 'interrupt', 'stop'].includes(kind)), ['send', 'stop']);
+
+  const sent = await run.send('Continue and finish the same exact approved task.');
+  assert.equal(sent.lastAction.actualDelivery, 'turn');
+  assert.equal(sent.lastAction.continuation, 'admitted');
+  assert.equal(spawnCalls, 1);
+  assert.equal(driver.coordinator.list()[0].taskId, before.taskId);
+  assert.deepEqual(driver.coordinator.list()[0].sessionRef, before.sessionRef);
+  assert.equal(driver.coordinator.list()[0].worktree, before.worktree);
+  assert.equal(driver.coordinator.list()[0].routeKey, before.routeKey);
+  assert.equal(driver.coordination.snapshot().tasks.length, taskCount);
+  const sendControl = driver.coordination.runControls(proposed.runId)[1];
+  assert.equal(sendControl.schemaVersion, 2);
+  assert.equal(sendControl.target.turnState, 'interrupted');
+  assert.equal(sendControl.target.preservationReceiptDigest,
+    interruptControl.providerAck.outcome.preservation.receiptDigest);
+  assert.equal(sendControl.providerAck.outcome.actualDelivery, 'turn');
+  assert.equal(sendControl.providerAck.outcome.continuation.state, 'admitted');
+
+  const completed = await application.command(
+    'run.wait', { runId: proposed.runId, timeoutMs: 5_000 }, principal('control-owner'),
+  );
+  assert.equal(completed.phase, 'work_completed');
+  assert.equal(completed.nodes[0].state, 'accepted');
+  assert.equal(completed.verification.state, 'mechanically_verified');
+  assert.equal(completed.result.state, 'accepted');
+  assert.equal(completed.evidence.some((artifact) => (
+    artifact.kind === 'verification' && artifact.accepted === true
+  )), true, 'the hub freshly verifies the resumed exact task before acceptance');
+  assert.equal(driver.coordination.snapshot().tasks.length, taskCount);
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('P91 application restart: coordinate-free recovery attach-only reuses the preserved member without a prompt', async () => {
+  const first = fixture('phase91-application-restart', {
+    scenario: {
+      outcome: 'completed', summary: 'preserved restart completes',
+      edits: [{ path: 'impl/restarted.txt', content: 'same native session\n', delayMs: 1_200 }],
+    },
+  });
+  enablePreservedMockSession(first.adapter);
+  const proposed = await first.application.start(
+    intent({ runId: 'run-phase91-application-restart' }), principal('restart-owner'),
+  );
+  const running = await first.application.approve(
+    proposed.runId, proposed.plan.digest, principal('restart-approver'),
+  );
+  const workerId = running.ownership.workerIds[0];
+  const run = bindBaton(first.application, principal('restart-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  await run.interrupt({ reason: 'Preserve for controller restart.' });
+  const taskId = first.driver.coordinator.list()[0].taskId;
+  const taskCount = first.driver.coordination.snapshot().tasks.length;
+  first.driver.coordination.releaseWriterLease({ requireOwned: true });
+
+  const resumedAdapter = configuredAdapter({
+    outcome: 'completed', summary: 'preserved restart completes',
+    edits: [{ path: 'impl/restarted.txt', content: 'same native session\n', delayMs: 1 }],
+  });
+  enablePreservedMockSession(resumedAdapter);
+  const spawnOptions = [];
+  let promptCalls = 0;
+  const spawnResumed = resumedAdapter.spawn.bind(resumedAdapter);
+  resumedAdapter.spawn = (worker, brief, opts) => {
+    spawnOptions.push(opts);
+    return spawnResumed(worker, brief, opts);
+  };
+  const promptResumed = resumedAdapter.prompt.bind(resumedAdapter);
+  resumedAdapter.prompt = (...args) => {
+    promptCalls += 1;
+    return promptResumed(...args);
+  };
+  const resumedDriver = createDriver({
+    repoRoot: first.repo,
+    repoId: 'repo-phase64',
+    logDir: first.logDir,
+    adapters: { mock: resumedAdapter },
+    goalPlanAuthority: { policy, authorize: async () => true },
+    stopDeadlineMs: 2_000,
+  });
+  const restarted = reopenApplication(resumedDriver);
+  await restarted.ready;
+  const beforeRecovery = await restarted.status(proposed.runId, principal('restart-owner'));
+  const contextVerdict = await resumedDriver.coordinator._worktrees.validateSessionContext(
+    resumedDriver.coordinator.list()[0].sessionContext,
+  );
+  assert.equal(beforeRecovery.phase, 'interruption_uncertain', JSON.stringify({
+    task: resumedDriver.coordination.task(taskId),
+    handles: resumedDriver.coordinator.list(),
+    attention: beforeRecovery.attention, contextVerdict,
+  }));
+  assert.deepEqual(contextVerdict, { ok: true });
+  assert.deepEqual(beforeRecovery.nextActions, [{ kind: 'stop' }]);
+
+  const recovered = await restarted.recover(proposed.runId, principal('restart-owner'));
+  assert.equal(recovered.phase, 'interrupted', JSON.stringify({
+    action: recovered.lastAction, recovery: recovered.recovery,
+    handle: resumedDriver.coordinator.list()[0],
+    task: resumedDriver.coordination.task(taskId),
+  }));
+  assert.deepEqual(recovered.lastAction, {
+    command: 'run.recover', result: 'attached_preserved',
+  });
+  assert.deepEqual(recovered.recovery, {
+    state: 'interrupted', reattachment: 'confirmed', attempt: 1,
+    targetCount: 1, target: null, dispatchDisposition: 'attach_only',
+    cleanup: { state: 'owned' },
+  });
+  assert.equal(spawnOptions.length, 1);
+  assert.equal(spawnOptions[0].attachOnly, true);
+  assert.equal(spawnOptions[0].session.mode, 'resume');
+  assert.equal(spawnOptions[0].session.id, `mock-native-${workerId}`);
+  assert.equal(promptCalls, 0, 'reattachment cannot admit a successor prompt');
+  assert.equal(resumedDriver.coordinator.list()[0].taskId, taskId);
+  assert.equal(resumedDriver.coordination.snapshot().tasks.length, taskCount);
+
+  const resumedRun = bindBaton(restarted, principal('restart-owner')).runs.open(proposed.runId);
+  const sent = await resumedRun.send('Continue the same Plan-bound task after restart.');
+  assert.equal(sent.lastAction.actualDelivery, 'turn');
+  assert.equal(promptCalls, 1);
+  assert.equal(spawnOptions.length, 1);
+  assert.equal(resumedDriver.coordinator.list()[0].taskId, taskId);
+  assert.equal(resumedDriver.coordination.snapshot().tasks.length, taskCount);
+  await restarted.shutdown(principal('shutdown-admin'));
+
+  // The first controller is intentionally crash-simulated, so detach its in-memory mock wire
+  // from durable authority and clear its long budget timer without emitting stale evidence.
+  first.adapter.onEvent(() => {});
+  await first.adapter.kill(workerId);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+});
+
+test('P91 application: process-close attachment uncertainty is quarantined with stop as the only safe action', async () => {
+  const { application, adapter, driver } = fixture('phase91-unproven-attachment', {
+    scenario: {
+      outcome: 'completed', summary: 'attachment becomes unproven',
+      edits: [{ path: 'impl/unproven.txt', content: 'unproven\n', delayMs: 1_200 }],
+    },
+  });
+  enablePreservedMockSession(adapter);
+  const proposed = await application.start(
+    intent({ runId: 'run-phase91-unproven-attachment' }), principal('unproven-owner'),
+  );
+  await application.approve(
+    proposed.runId, proposed.plan.digest, principal('unproven-approver'),
+  );
+  const run = bindBaton(application, principal('unproven-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  await run.interrupt({ reason: 'Establish the preserved-session boundary.' });
+  const internal = driver.coordinator._workers.get(driver.coordinator.list()[0].id);
+  internal.status = 'exited';
+
+  const quarantined = await application.status(proposed.runId, principal('unproven-owner'));
+  assert.equal(quarantined.phase, 'interruption_uncertain');
+  assert.deepEqual(quarantined.nextActions, [{ kind: 'stop' }]);
+  assert.equal(quarantined.execution.activeProviderTurns, 0);
+  assert.equal(quarantined.execution.controllableAttachedMembers, 0);
+  assert.deepEqual(quarantined.attention.find((item) => item.kind === 'session_preservation'), {
+    kind: 'session_preservation', state: 'quarantined',
+    reason: 'session_attachment_unproven',
+    summary: 'Reusable provider-session attachment is unproven; whole-Run stop is the only safe action.',
+  });
+  const stopped = await application.stop(
+    proposed.runId, 'Reap the quarantined provider session.', principal('unproven-stopper'),
+  );
+  assert.equal(stopped.stop.receipt.remainingCount, 0);
+  assert.equal(driver.coordinator.list()[0].status, 'dead');
+  assert.equal(adapter._sessions.get(driver.coordinator.list()[0].id).terminal, true,
+    'stop confirms the quarantined preserved transport is physically terminal');
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('P91 application: a stop admitted after successor prompt acceptance maps to outcome_unknown and exactly reaps', async () => {
+  const { application, adapter, driver } = fixture('phase91-post-prompt-stop', {
+    scenario: {
+      outcome: 'completed', summary: 'successor raced stop',
+      edits: [{ path: 'impl/post-prompt-stop.txt', content: 'raced\n', delayMs: 1_200 }],
+    },
+  });
+  enablePreservedMockSession(adapter);
+  const proposed = await application.start(
+    intent({ runId: 'run-phase91-post-prompt-stop' }), principal('race-owner'),
+  );
+  await application.approve(proposed.runId, proposed.plan.digest, principal('race-approver'));
+  const run = bindBaton(application, principal('race-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  await run.interrupt({ reason: 'Pause before the successor race.' });
+
+  let promptObserved;
+  let releasePrompt;
+  const observed = new Promise((resolve) => { promptObserved = resolve; });
+  const gate = new Promise((resolve) => { releasePrompt = resolve; });
+  const prompt = adapter.prompt.bind(adapter);
+  adapter.prompt = async (...args) => {
+    const accepted = await prompt(...args);
+    promptObserved();
+    await gate;
+    return accepted;
+  };
+  const sendPromise = run.send('This prompt is accepted before stop admission.');
+  await observed;
+  const stopPromise = application.stop(
+    proposed.runId, 'Stop after prompt acceptance.', principal('race-stopper'),
+  );
+  for (let attempt = 0; attempt < 200
+    && !driver.coordination.runStop(proposed.runId); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.ok(driver.coordination.runStop(proposed.runId), 'stop must be admitted before prompt return');
+  releasePrompt();
+  const [sent, stopped] = await Promise.all([sendPromise, stopPromise]);
+
+  assert.equal(sent.lastAction.state, 'outcome_unknown');
+  assert.equal(sent.lastAction.deliveredDespiteStale, true);
+  assert.equal(sent.lastAction.actualDelivery, 'turn');
+  assert.equal(stopped.phase, 'stopped');
+  assert.equal(stopped.stop.receipt.remainingCount, 0);
+  assert.equal(driver.coordination.runControls(proposed.runId).at(-1).status, 'outcome_unknown');
+  assert.equal(driver.coordinator.list()[0].status, 'dead');
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('P91 blocked Application: interaction resolution precedes admission and binds the resulting task generation', async () => {
+  const { application, adapter, driver } = fixture('phase91-blocked-admission', {
+    scenario: {
+      outcome: 'completed', summary: 'blocked turn',
+      ask: { kind: 'approval', question: 'May the provider continue?', afterEditIndex: 0 },
+    },
+  });
+  enablePreservedMockSession(adapter);
+  let approvalDeliveries = 0;
+  const approve = adapter.approve.bind(adapter);
+  adapter.approve = (...args) => { approvalDeliveries += 1; return approve(...args); };
+  const proposed = await application.start(
+    intent({ runId: 'run-phase91-blocked-admission' }), principal('blocked-owner'),
+  );
+  const running = await application.approve(
+    proposed.runId, proposed.plan.digest, principal('blocked-approver'),
+  );
+  const workerId = running.ownership.workerIds[0];
+  for (let attempt = 0; attempt < 200
+    && driver.coordinator.list()[0]?.status !== 'blocked'; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(driver.coordinator.list()[0].status, 'blocked');
+  const versionBefore = driver.coordination.task(driver.coordinator.list()[0].taskId).version;
+  const run = bindBaton(application, principal('blocked-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  const interrupted = await run.interrupt({ reason: 'End only the blocked provider turn.' });
+  assert.equal(interrupted.phase, 'interrupted');
+  assert.equal(approvalDeliveries, 0, 'supersession is local authority; the interrupt ends the wire turn');
+
+  const events = driver.coordination.events();
+  const resolution = events.find((event) => event.kind === 'evidence.mapped'
+    && event.payload.kind === 'control.interaction_superseded');
+  const admission = events.find((event) => event.kind === 'run.control_admitted');
+  assert.ok(resolution && admission && resolution.seq < admission.seq);
+  const task = driver.coordination.task(driver.coordinator.list()[0].taskId);
+  assert.ok(task.version > versionBefore);
+  const control = driver.coordination.runControls(proposed.runId)[0];
+  assert.equal(control.target.runAuthorityDigest,
+    driver.coordinator.list()[0].sessionPreservation.runAuthorityDigest);
+  assert.equal(task.status, 'working');
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('P91 binding: task-version-only drift before effect settles refused without a provider call', async () => {
+  const { application, adapter, driver } = fixture('phase91-pre-effect-drift', {
+    scenario: {
+      outcome: 'completed', summary: 'drift target',
+      edits: [{ path: 'impl/drift.txt', content: 'drift\n', delayMs: 1_000 }],
+    },
+  });
+  const proposed = await application.start(
+    intent({ runId: 'run-phase91-pre-effect-drift' }), principal('drift-owner'),
+  );
+  const running = await application.approve(
+    proposed.runId, proposed.plan.digest, principal('drift-approver'),
+  );
+  const workerId = running.ownership.workerIds[0];
+  let promptCalls = 0;
+  const prompt = adapter.prompt.bind(adapter);
+  adapter.prompt = (...args) => { promptCalls += 1; return prompt(...args); };
+  const admit = driver.coordination.admitRunControl.bind(driver.coordination);
+  driver.coordination.admitRunControl = (...args) => {
+    const admitted = admit(...args);
+    const task = driver.coordinator._tasks.get(driver.coordinator.list()[0].taskId);
+    driver.coordinator._coordTransition(
+      task, 'input_required', `phase91.version-drift.blocked:${task.id}`,
+    );
+    task.status = 'input_required';
+    driver.coordinator._coordTransition(
+      task, 'working', `phase91.version-drift.working:${task.id}`,
+    );
+    task.status = 'working';
+    return admitted;
+  };
+  const run = bindBaton(application, principal('drift-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  const result = await run.send('This must not cross a drifted target.');
+  assert.equal(result.lastAction.state, 'refused');
+  assert.equal(result.lastAction.result, 'semantic_target_drift');
+  assert.equal(promptCalls, 0);
+  assert.equal(driver.coordination.events()
+    .some((event) => event.kind === 'run.control_effect_started'), false);
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('P91 binding: non-fence drift after effect start is refused again in the serialized delivery slot', async () => {
+  const { application, adapter, driver } = fixture('phase91-delivery-slot-drift', {
+    scenario: {
+      outcome: 'completed', summary: 'slot drift target',
+      edits: [{ path: 'impl/slot-drift.txt', content: 'drift\n', delayMs: 1_000 }],
+    },
+  });
+  const proposed = await application.start(
+    intent({ runId: 'run-phase91-delivery-slot-drift' }), principal('slot-owner'),
+  );
+  const running = await application.approve(
+    proposed.runId, proposed.plan.digest, principal('slot-approver'),
+  );
+  const workerId = running.ownership.workerIds[0];
+  let promptCalls = 0;
+  const prompt = adapter.prompt.bind(adapter);
+  adapter.prompt = (...args) => { promptCalls += 1; return prompt(...args); };
+  const begin = driver.coordination.beginRunControlEffect.bind(driver.coordination);
+  driver.coordination.beginRunControlEffect = (...args) => {
+    const started = begin(...args);
+    driver.coordinator._workers.get(workerId).processGeneration += 1;
+    return started;
+  };
+  const run = bindBaton(application, principal('slot-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  const result = await run.send('The slot must recheck every v2 binding field.');
+  assert.equal(result.lastAction.state, 'refused');
+  assert.equal(result.lastAction.result, 'semantic_target_drift');
+  assert.equal(promptCalls, 0);
+  assert.equal(driver.coordination.events()
+    .filter((event) => event.kind === 'run.control_effect_started').length, 1);
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('P91 response loss: preserved interrupt and successor replay from evidence without redelivery', async () => {
+  const { application, adapter, driver } = fixture('phase91-preserved-response-loss', {
+    scenario: {
+      outcome: 'completed', summary: 'response-loss continuation completed',
+      edits: [{ path: 'impl/response-loss.txt', content: 'done\n', delayMs: 1_000 }],
+    },
+  });
+  enablePreservedMockSession(adapter);
+  let interruptCalls = 0;
+  const interrupt = adapter.interrupt.bind(adapter);
+  adapter.interrupt = (...args) => { interruptCalls += 1; return interrupt(...args); };
+  let promptCalls = 0;
+  const prompt = adapter.prompt.bind(adapter);
+  adapter.prompt = (...args) => { promptCalls += 1; return prompt(...args); };
+  const proposed = await application.start(
+    intent({ runId: 'run-phase91-preserved-response-loss' }), principal('loss-owner'),
+  );
+  await application.approve(proposed.runId, proposed.plan.digest, principal('loss-approver'));
+  const run = bindBaton(application, principal('loss-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  const acknowledge = driver.coordination.acknowledgeRunControl.bind(driver.coordination);
+  driver.coordination.acknowledgeRunControl = () => {
+    throw Object.assign(new Error('response lost after interrupt confirmation'), { code: 'response_lost' });
+  };
+  await assert.rejects(run.interrupt({ reason: 'Preserve despite response loss.' }),
+    (error) => error.code === 'response_lost');
+  driver.coordination.acknowledgeRunControl = acknowledge;
+  const afterInterruptRestart = reopenApplication(driver);
+  await afterInterruptRestart.ready;
+  assert.equal(interruptCalls, 1);
+  assert.equal(driver.coordination.runControls(proposed.runId)[0].status, 'confirmed');
+
+  const resumedRun = bindBaton(afterInterruptRestart, principal('loss-owner'))
+    .runs.open(proposed.runId);
+  const paused = await resumedRun.inspect();
+  assert.equal(paused.outline.phase, 'interrupted');
+  driver.coordination.acknowledgeRunControl = () => {
+    throw Object.assign(new Error('response lost after successor acceptance'), { code: 'response_lost' });
+  };
+  await assert.rejects(resumedRun.send('Resume exactly once after response loss.'),
+    (error) => error.code === 'response_lost');
+  driver.coordination.acknowledgeRunControl = acknowledge;
+  const afterSendRestart = reopenApplication(driver);
+  await afterSendRestart.ready;
+  assert.equal(promptCalls, 1);
+  assert.deepEqual(driver.coordination.runControls(proposed.runId)
+    .map((control) => control.status), ['confirmed', 'confirmed']);
+  await afterSendRestart.shutdown(principal('shutdown-admin'));
+});
+
+test('P91 compatibility: schema-v1 outcomes retain the Phase90 replay shape', async () => {
+  const { application } = fixture('phase91-v1-outcome-shape');
+  assert.deepEqual(application._normalizeRunControlOutcome({
+    result: 'ok', code: null, emulated: false, deliveredDespiteStale: false,
+    actualDelivery: 'turn', preservation: { state: 'preserved' },
+  }, 1), {
+    result: 'ok', code: null, emulated: false, deliveredDespiteStale: false,
+  });
   await application.shutdown(principal('shutdown-admin'));
 });
 

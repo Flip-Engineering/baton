@@ -3451,26 +3451,74 @@ export class CoordinationStore {
     return { ...core, targetDigest: canonicalDigest(core) };
   }
 
+  _validSessionPreservationReceipt(receipt) {
+    if (receipt === null) return true;
+    const fields = [
+      'fence', 'planBindingDigest', 'processGeneration', 'reattachment', 'receiptDigest',
+      'routeDigest', 'runAuthorityDigest', 'schemaVersion', 'sessionDigest', 'state',
+      'transport', 'turnEpoch', 'worktreeDigest',
+    ];
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
+      || Object.keys(receipt).sort().join(',') !== fields.sort().join(',')
+      || receipt.schemaVersion !== 1 || receipt.state !== 'preserved'
+      || receipt.transport !== 'attached'
+      || !['not_required', 'confirmed'].includes(receipt.reattachment)
+      || !Number.isSafeInteger(receipt.processGeneration) || receipt.processGeneration < 0
+      || !Number.isSafeInteger(receipt.turnEpoch) || receipt.turnEpoch < 0
+      || !Number.isSafeInteger(receipt.fence) || receipt.fence < 0
+      || ['sessionDigest', 'worktreeDigest', 'routeDigest', 'planBindingDigest',
+        'runAuthorityDigest', 'receiptDigest']
+        .some((field) => !/^[a-f0-9]{64}$/u.test(receipt[field] ?? ''))) return false;
+    const core = clone(receipt); delete core.receiptDigest;
+    return receipt.receiptDigest === canonicalDigest(core);
+  }
+
+  _validPreservedContinuationReceipt(receipt) {
+    if (receipt === null) return true;
+    const fields = [
+      'preservationReceiptDigest', 'providerAdmissionSeq', 'receiptDigest', 'routeDigest',
+      'schemaVersion', 'sessionDigest', 'state', 'taskBindingDigest', 'turnEpoch',
+    ];
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
+      || Object.keys(receipt).sort().join(',') !== fields.sort().join(',')
+      || receipt.schemaVersion !== 1 || receipt.state !== 'admitted'
+      || (receipt.providerAdmissionSeq !== null
+        && (!Number.isSafeInteger(receipt.providerAdmissionSeq) || receipt.providerAdmissionSeq <= 0))
+      || !Number.isSafeInteger(receipt.turnEpoch) || receipt.turnEpoch <= 0
+      || ['preservationReceiptDigest', 'sessionDigest', 'taskBindingDigest', 'routeDigest',
+        'receiptDigest'].some((field) => !/^[a-f0-9]{64}$/u.test(receipt[field] ?? ''))) return false;
+    const core = clone(receipt); delete core.receiptDigest;
+    return receipt.receiptDigest === canonicalDigest(core);
+  }
+
   _validateRunControlAdmission(p, event, integrity = false) {
     const fail = (message, code = 'run_control_integrity') => {
       throw integrity ? new CoordinationIntegrityError(message, code)
         : new CoordinationRefusal(message, code);
     };
+    const version = p?.schemaVersion;
     const fields = [
       'actionId', 'admissionDigest', 'controlId', 'delivery', 'message', 'messageDigest',
       'operation', 'reasonDigest', 'recipient', 'registryDigest', 'repoId', 'requestDigest',
       'runId', 'schemaVersion', 'source', 'target', 'targetDigest',
+      ...(version >= 2 ? ['turnDisposition'] : []),
     ];
     const sourceFields = ['actor', 'principalId', 'sessionId'];
-    const targetFields = ['activeCount', 'fence', 'role', 'taskId', 'workerId'];
+    const targetFields = ['activeCount', 'fence', 'role', 'taskId', 'workerId',
+      ...(version >= 2 ? [
+        'planBindingDigest', 'processGeneration', 'routeDigest', 'runAuthorityDigest',
+        'sessionDigest', 'preservationReceiptDigest', 'turnEpoch', 'turnState',
+        'worktreeDigest',
+      ] : [])];
     if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',')
-      || p.schemaVersion !== 1 || !validRunId(p.repoId) || !validRunId(p.runId)
+      || ![1, 2].includes(version) || !validRunId(p.repoId) || !validRunId(p.runId)
       || !/^control:[a-f0-9]{64}$/u.test(p.controlId ?? '')
       || !/^[a-f0-9]{64}$/u.test(p.actionId ?? '')
       || !['send', 'interrupt'].includes(p.operation) || !boundedText(p.recipient, 256)
       || (p.operation === 'send' && (!boundedText(p.message, 16_384)
         || !['nudge', 'now', 'turn'].includes(p.delivery)))
       || (p.operation === 'interrupt' && (p.message !== null || p.delivery !== null))
+      || (version >= 2 && p.turnDisposition !== (p.operation === 'interrupt' ? 'preserve_turn' : null))
       || p.messageDigest !== (p.message === null ? null : canonicalDigest(p.message))
       || !/^[a-f0-9]{64}$/u.test(p.reasonDigest ?? '')
       || !/^[a-f0-9]{64}$/u.test(p.registryDigest ?? '')
@@ -3485,6 +3533,18 @@ export class CoordinationStore {
       || !Number.isSafeInteger(p.target.fence) || p.target.fence < 0
       || (p.target.role !== null && !boundedText(p.target.role, 256))
       || !Number.isSafeInteger(p.target.activeCount) || p.target.activeCount <= 0
+      || (version >= 2 && (
+        !Number.isSafeInteger(p.target.turnEpoch) || p.target.turnEpoch < 0
+        || !['working', 'blocked', 'interrupted'].includes(p.target.turnState)
+        || (p.target.sessionDigest !== null && !/^[a-f0-9]{64}$/u.test(p.target.sessionDigest ?? ''))
+        || (p.target.preservationReceiptDigest !== null
+          && !/^[a-f0-9]{64}$/u.test(p.target.preservationReceiptDigest ?? ''))
+        || (p.target.turnState === 'interrupted')
+          !== (p.target.preservationReceiptDigest !== null)
+        || !Number.isSafeInteger(p.target.processGeneration) || p.target.processGeneration < 0
+        || ['worktreeDigest', 'routeDigest', 'planBindingDigest', 'runAuthorityDigest']
+          .some((field) => !/^[a-f0-9]{64}$/u.test(p.target[field] ?? ''))
+      ))
       || event.idempotencyKey !== `run.control.admit:${p.controlId}`) {
       fail('run control admission is invalid');
     }
@@ -3493,6 +3553,7 @@ export class CoordinationStore {
       actionId: p.actionId, operation: p.operation, recipient: p.recipient,
       delivery: p.delivery, message: p.message, reasonDigest: p.reasonDigest,
       source: p.source, target: p.target, registryDigest: p.registryDigest,
+      ...(version >= 2 ? { turnDisposition: p.turnDisposition } : {}),
     };
     if (p.targetDigest !== canonicalDigest(p.target)
       || p.requestDigest !== canonicalDigest(request)
@@ -3511,12 +3572,14 @@ export class CoordinationStore {
     const fields = [
       'admissionDigest', 'controlId', 'effectDigest', 'providerRequestId',
       'schemaVersion', 'targetDigest',
+      ...(p?.schemaVersion >= 2 ? ['turnDisposition'] : []),
     ];
     const control = this._runControls.get(p?.controlId);
     if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',')
-      || p.schemaVersion !== 1 || !control || control.status !== 'admitted'
+      || p.schemaVersion !== control?.schemaVersion || !control || control.status !== 'admitted'
       || p.admissionDigest !== control.admissionDigest
       || p.targetDigest !== control.targetDigest
+      || (p.schemaVersion >= 2 && p.turnDisposition !== control.turnDisposition)
       || !/^provider-control:[a-f0-9]{64}$/u.test(p.providerRequestId ?? '')
       || event.actor !== control.source.actor
       || event.idempotencyKey !== `run.control.begin:${p.controlId}`) {
@@ -3543,10 +3606,11 @@ export class CoordinationStore {
       'ackDigest', 'controlId', 'effectDigest', 'outcome', 'providerRequestId',
       'schemaVersion', 'state',
     ];
-    const outcomeFields = ['code', 'deliveredDespiteStale', 'emulated', 'result'];
+    const outcomeFields = ['code', 'deliveredDespiteStale', 'emulated', 'result',
+      ...(p?.schemaVersion >= 2 ? ['actualDelivery', 'continuation', 'preservation'] : [])];
     const control = this._runControls.get(p?.controlId);
     if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',')
-      || p.schemaVersion !== 1 || !control || control.status !== 'effect_started'
+      || p.schemaVersion !== control?.schemaVersion || !control || control.status !== 'effect_started'
       || p.effectDigest !== control.effect?.effectDigest
       || p.providerRequestId !== control.effect?.providerRequestId
       || !['confirmed', 'refused', 'outcome_unknown'].includes(p.state)
@@ -3555,6 +3619,40 @@ export class CoordinationStore {
       || (p.outcome.code !== null && !boundedText(p.outcome.code, 256))
       || typeof p.outcome.emulated !== 'boolean'
       || typeof p.outcome.deliveredDespiteStale !== 'boolean'
+      || (p.schemaVersion >= 2 && (
+        (p.outcome.actualDelivery !== null
+          && !['nudge', 'now', 'turn'].includes(p.outcome.actualDelivery))
+        || !this._validSessionPreservationReceipt(p.outcome.preservation)
+        || !this._validPreservedContinuationReceipt(p.outcome.continuation)
+        || (control.operation === 'interrupt'
+          && (p.outcome.actualDelivery !== null || p.outcome.continuation !== null))
+        || (control.operation === 'interrupt' && p.state !== 'confirmed'
+          && p.outcome.preservation !== null)
+        || (control.operation === 'interrupt' && p.state === 'confirmed'
+          && p.outcome.preservation?.state !== 'preserved')
+        || (control.operation === 'interrupt' && p.state === 'confirmed' && (
+          p.outcome.preservation.sessionDigest !== control.target.sessionDigest
+          || p.outcome.preservation.processGeneration !== control.target.processGeneration
+          || p.outcome.preservation.worktreeDigest !== control.target.worktreeDigest
+          || p.outcome.preservation.routeDigest !== control.target.routeDigest
+          || p.outcome.preservation.planBindingDigest !== control.target.planBindingDigest
+          || p.outcome.preservation.runAuthorityDigest !== control.target.runAuthorityDigest
+        ))
+        || (control.operation === 'send' && control.target.turnState === 'interrupted'
+          && p.state === 'confirmed' && (
+            p.outcome.actualDelivery !== 'turn'
+            || p.outcome.continuation?.state !== 'admitted'
+            || p.outcome.continuation.preservationReceiptDigest
+              !== control.target.preservationReceiptDigest
+            || p.outcome.continuation.sessionDigest !== control.target.sessionDigest
+            || p.outcome.continuation.taskBindingDigest !== control.target.planBindingDigest
+            || p.outcome.continuation.routeDigest !== control.target.routeDigest
+          ))
+        || (control.operation === 'send' && (p.state !== 'confirmed'
+          || control.target.turnState !== 'interrupted')
+          && p.outcome.continuation !== null)
+        || (control.operation !== 'interrupt' && p.outcome.preservation !== null)
+      ))
       || event.actor !== control.source.actor
       || event.idempotencyKey !== `run.control.ack:${p.controlId}`) {
       fail('run control provider acknowledgement is invalid');
@@ -3575,10 +3673,11 @@ export class CoordinationStore {
       'admissionDigest', 'controlId', 'operation', 'outcome', 'repoId', 'runId',
       'schemaVersion', 'settlementDigest', 'state',
     ];
-    const outcomeFields = ['code', 'deliveredDespiteStale', 'emulated', 'result'];
+    const outcomeFields = ['code', 'deliveredDespiteStale', 'emulated', 'result',
+      ...(p?.schemaVersion >= 2 ? ['actualDelivery', 'continuation', 'preservation'] : [])];
     const control = this._runControls.get(p?.controlId);
     if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',')
-      || p.schemaVersion !== 1 || !control
+      || p.schemaVersion !== control?.schemaVersion || !control
       || !['admitted', 'provider_acked'].includes(control.status)
       || p.repoId !== control.repoId || p.runId !== control.runId
       || p.operation !== control.operation || p.admissionDigest !== control.admissionDigest
@@ -3588,6 +3687,40 @@ export class CoordinationStore {
       || (p.outcome.code !== null && !boundedText(p.outcome.code, 256))
       || typeof p.outcome.emulated !== 'boolean'
       || typeof p.outcome.deliveredDespiteStale !== 'boolean'
+      || (p.schemaVersion >= 2 && (
+        (p.outcome.actualDelivery !== null
+          && !['nudge', 'now', 'turn'].includes(p.outcome.actualDelivery))
+        || !this._validSessionPreservationReceipt(p.outcome.preservation)
+        || !this._validPreservedContinuationReceipt(p.outcome.continuation)
+        || (control.operation === 'interrupt'
+          && (p.outcome.actualDelivery !== null || p.outcome.continuation !== null))
+        || (control.operation === 'interrupt' && p.state !== 'confirmed'
+          && p.outcome.preservation !== null)
+        || (control.operation === 'interrupt' && p.state === 'confirmed'
+          && p.outcome.preservation?.state !== 'preserved')
+        || (control.operation === 'interrupt' && p.state === 'confirmed' && (
+          p.outcome.preservation.sessionDigest !== control.target.sessionDigest
+          || p.outcome.preservation.processGeneration !== control.target.processGeneration
+          || p.outcome.preservation.worktreeDigest !== control.target.worktreeDigest
+          || p.outcome.preservation.routeDigest !== control.target.routeDigest
+          || p.outcome.preservation.planBindingDigest !== control.target.planBindingDigest
+          || p.outcome.preservation.runAuthorityDigest !== control.target.runAuthorityDigest
+        ))
+        || (control.operation === 'send' && control.target.turnState === 'interrupted'
+          && p.state === 'confirmed' && (
+            p.outcome.actualDelivery !== 'turn'
+            || p.outcome.continuation?.state !== 'admitted'
+            || p.outcome.continuation.preservationReceiptDigest
+              !== control.target.preservationReceiptDigest
+            || p.outcome.continuation.sessionDigest !== control.target.sessionDigest
+            || p.outcome.continuation.taskBindingDigest !== control.target.planBindingDigest
+            || p.outcome.continuation.routeDigest !== control.target.routeDigest
+          ))
+        || (control.operation === 'send' && (p.state !== 'confirmed'
+          || control.target.turnState !== 'interrupted')
+          && p.outcome.continuation !== null)
+        || (control.operation !== 'interrupt' && p.outcome.preservation !== null)
+      ))
       || event.actor !== control.source.actor
       || event.idempotencyKey !== `run.control.settle:${p.controlId}`) {
       fail('run control settlement is invalid');
