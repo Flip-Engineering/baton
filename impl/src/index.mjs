@@ -398,6 +398,7 @@ function worktreeManager(repoRoot, opts = {}) {
         return {
           path: r.dir, branch: r.branch, baseSha: r.baseSha,
           ownerTaskId: ownerReceipt.physicalOwnerId,
+          logicalTaskId: ownerReceipt.logicalTaskId,
           ownerReceiptDigest: ownerReceipt.receiptDigest,
           ownerReceipt,
           sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity,
@@ -427,6 +428,11 @@ function worktreeManager(repoRoot, opts = {}) {
         }
         const physicalOwnerId = worktreeMod.normalizePhysicalOwnerId(context.ownerTaskId, 'physical workspace owner');
         const receipt = worktreeMod.physicalWorkspaceOwnerReceipt(repoRoot, physicalOwnerId);
+        if (/^ws-[a-f0-9]{32}$/u.test(physicalOwnerId)
+          && (!receipt || receipt.logicalTaskId !== taskId || receipt.state !== 'ready'
+            || context.ownerReceiptDigest !== receipt.receiptDigest
+            || context.branch !== receipt.branch || context.baseSha !== receipt.baseSha
+            || resolve(context.worktree) !== receipt.worktree)) return false;
         if (receipt && receipt.logicalTaskId !== taskId) return false;
         const expected = resolve(realpathSync(repoRoot), '.baton', 'wt', physicalOwnerId);
         if (!existsSync(context.worktree) || realpathSync(context.worktree) !== expected
@@ -652,6 +658,16 @@ function worktreeManager(repoRoot, opts = {}) {
         if (context.repoRoot && realpathSync(context.repoRoot) !== root) return { ok: false, reason: 'session repository identity mismatch' };
         if (worktree !== managedRoot && !worktree.startsWith(`${managedRoot}${sep}`)) return { ok: false, reason: 'session worktree is outside Baton ownership' };
         if (context.ownerTaskId && basename(worktree) !== context.ownerTaskId) return { ok: false, reason: 'session worktree owner mismatch' };
+        if (/^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')) {
+          const receipt = worktreeMod.physicalWorkspaceOwnerReceipt(repoRoot, context.ownerTaskId);
+          if (!receipt || receipt.state !== 'ready'
+            || context.ownerReceiptDigest !== receipt.receiptDigest
+            || context.logicalTaskId !== receipt.logicalTaskId
+            || context.branch !== receipt.branch || context.baseSha !== receipt.baseSha
+            || worktree !== receipt.worktree) {
+            return { ok: false, reason: 'session physical workspace owner receipt mismatch' };
+          }
+        }
         const top = localGit(['rev-parse', '--show-toplevel'], worktree, { encoding: 'utf8' }).trim();
         if (realpathSync(top) !== worktree) return { ok: false, reason: 'session path is not the recorded git worktree root' };
         if (context.branch) {
@@ -935,9 +951,10 @@ export function createDriver(opts) {
   let writerLease = null;
   try {
   writerLease = coordination.claimWriterLease();
+  const workspaceDeploymentId = canonicalDigest({ repoId: deploymentRepoId, logDir: realpathSync(opts.logDir) });
   const workspaceOwnerAuthority = Object.freeze({
-    deploymentId: canonicalDigest({ repoId: deploymentRepoId, logDir: realpathSync(opts.logDir) }),
-    controllerId: canonicalDigest({ deploymentId: deploymentRepoId, writerLeaseToken: writerLease.token }),
+    deploymentId: workspaceDeploymentId,
+    controllerId: canonicalDigest({ deploymentId: workspaceDeploymentId, writerLeaseToken: writerLease.token }),
     pid: writerLease.pid,
     pidStart: writerLease.pidStart,
   });

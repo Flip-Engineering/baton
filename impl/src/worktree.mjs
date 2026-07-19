@@ -190,6 +190,8 @@ function writePrivateJson(f, value, { exclusive = false } = {}) {
     const fd = openSync(f, 'wx', 0o600);
     try { writeFileSync(fd, `${JSON.stringify(value, null, 2)}\n`, 'utf8'); fsyncSync(fd); }
     finally { closeSync(fd); }
+    try { const parent = openSync(dirname(f), 'r'); try { fsyncSync(parent); } finally { closeSync(parent); } }
+    catch { /* directory fsync is unavailable on some filesystems */ }
     return;
   }
   const temp = `${f}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`;
@@ -200,6 +202,8 @@ function writePrivateJson(f, value, { exclusive = false } = {}) {
     fsyncSync(fd);
     closeSync(fd); fd = undefined;
     renameSync(temp, f);
+    try { const parent = openSync(dirname(f), 'r'); try { fsyncSync(parent); } finally { closeSync(parent); } }
+    catch { /* directory fsync is unavailable on some filesystems */ }
   } catch (error) {
     if (fd !== undefined) try { closeSync(fd); } catch { /* no-op */ }
     rmSync(temp, { force: true });
@@ -210,9 +214,28 @@ function writePrivateJson(f, value, { exclusive = false } = {}) {
 function workspaceOwnerRoot(repoRoot, create = false) {
   const raw = sh('git', ['rev-parse', '--git-common-dir'], repoRoot);
   const common = isAbsolute(raw) ? raw : pathResolve(repoRoot, raw);
-  const root = join(realpathSync(common), 'baton', 'workspace-owners');
-  if (create) {
-    mkdirSync(root, { recursive: true, mode: 0o700 });
+  const commonReal = realpathSync(common);
+  const batonRoot = join(commonReal, 'baton');
+  const root = join(batonRoot, 'workspace-owners');
+  if (create && !existsSync(batonRoot)) {
+    try { mkdirSync(batonRoot, { mode: 0o700 }); }
+    catch (error) { if (error?.code !== 'EEXIST') throw error; }
+  }
+  if (existsSync(batonRoot)) {
+    const stat = lstatSync(batonRoot);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync(batonRoot) !== batonRoot) {
+      throw new WorkspaceOwnerDiagnostic('physical workspace owner parent is unsafe', 'workspace_owner_root_invalid');
+    }
+  }
+  if (create && !existsSync(root)) {
+    try { mkdirSync(root, { mode: 0o700 }); }
+    catch (error) { if (error?.code !== 'EEXIST') throw error; }
+  }
+  if (existsSync(root)) {
+    const stat = lstatSync(root);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync(root) !== root) {
+      throw new WorkspaceOwnerDiagnostic('physical workspace owner root is unsafe', 'workspace_owner_root_invalid');
+    }
     chmodSync(root, 0o700);
   }
   return root;
@@ -308,7 +331,7 @@ function workspaceOwnerAuthorityState(receipt, authority) {
 }
 
 /** Allocate an opaque physical workspace owner before any branch/worktree effect. */
-export function allocatePhysicalWorkspaceOwner(repoRoot, binding, authority, opts = {}) {
+export function allocatePhysicalWorkspaceOwner(repoRoot, binding, authority) {
   const bindingFields = ['attemptId', 'baseSha', 'logicalTaskId', 'processGeneration', 'runId'];
   const authorityFields = ['controllerId', 'deploymentId', 'pid', 'pidStart'];
   if (!binding || typeof binding !== 'object' || Array.isArray(binding)
@@ -324,9 +347,11 @@ export function allocatePhysicalWorkspaceOwner(repoRoot, binding, authority, opt
     || !validOwnerText(authority.pidStart, 256)) {
     throw new TypeError('physical workspace owner binding is invalid');
   }
+  try { gitFile(['cat-file', '-e', `${binding.baseSha}^{commit}`], repoRoot, { stdio: 'ignore' }); }
+  catch { throw new InvalidShaError('physical workspace owner base SHA is not an exact commit'); }
   const root = workspaceOwnerRoot(repoRoot, true);
   for (let attempt = 0; attempt < 8; attempt += 1) {
-    const physicalOwnerId = opts.physicalOwnerId ?? `ws-${randomBytes(16).toString('hex')}`;
+    const physicalOwnerId = `ws-${randomBytes(16).toString('hex')}`;
     normalizePhysicalOwnerId(physicalOwnerId, 'physical workspace owner');
     const core = {
       schemaVersion: 1,
@@ -349,7 +374,7 @@ export function allocatePhysicalWorkspaceOwner(repoRoot, binding, authority, opt
       writePrivateJson(join(root, `${physicalOwnerId}.json`), receipt, { exclusive: true });
       return validateWorkspaceOwnerReceipt(receipt, repoRoot, physicalOwnerId);
     } catch (error) {
-      if (error?.code !== 'EEXIST' || opts.physicalOwnerId) throw error;
+      if (error?.code !== 'EEXIST') throw error;
     }
   }
   throw new WorktreeAlreadyExistsError('could not allocate a collision-free physical workspace owner');
@@ -377,6 +402,8 @@ export function releasePhysicalWorkspaceOwner(repoRoot, physicalOwnerId, opts = 
   try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/${receipt.branch}`], repoRoot); branchPresent = true; } catch { /* absent */ }
   if (existsSync(receipt.worktree) || registered || branchPresent) return false;
   rmSync(workspaceOwnerReceiptPath(repoRoot, physicalOwnerId), { force: true });
+  try { const parent = openSync(workspaceOwnerRoot(repoRoot, false), 'r'); try { fsyncSync(parent); } finally { closeSync(parent); } }
+  catch { /* directory fsync is unavailable on some filesystems */ }
   return true;
 }
 
@@ -1215,22 +1242,26 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         }));
         continue;
       }
+      // An expected-owner list is liveness input, not a transferable cleanup capability. A
+      // foreign receipt remains authoritative even if a caller names its opaque owner or its
+      // local metadata fails this deployment's sparse-policy validation.
+      if (ownerReceipt && ['live_foreign', 'ambiguous_foreign', 'dead_foreign'].includes(ownerState)) {
+        report.diagnostics.push(Object.freeze({
+          code: ownerState === 'live_foreign' ? 'workspace_owner_live_foreign'
+            : ownerState === 'dead_foreign' ? 'workspace_owner_dead_foreign_checkout'
+              : 'workspace_owner_ambiguous_foreign',
+          physicalOwnerId: normalizedTaskId, deploymentId: ownerReceipt.deploymentId,
+          logicalTaskId: ownerReceipt.logicalTaskId, authority: ownerState, retained: true,
+        }));
+        continue;
+      }
       if (expected.has(taskId) && existsSync(fullDir)) {
         try {
           validateOwnedWorktree(repoRoot, taskId, {
             ...(opts.sparseCheckoutIdentity ? { sparseCheckoutIdentity: opts.sparseCheckoutIdentity } : {}),
           });
           continue;
-        } catch { /* invalid expected authority is quarantined below */ }
-      }
-      if (!expected.has(taskId) && ownerReceipt
-        && ['live_foreign', 'ambiguous_foreign'].includes(ownerState)) {
-        report.diagnostics.push(Object.freeze({
-          code: ownerState === 'live_foreign' ? 'workspace_owner_live_foreign' : 'workspace_owner_ambiguous_foreign',
-          physicalOwnerId: normalizedTaskId, deploymentId: ownerReceipt.deploymentId,
-          logicalTaskId: ownerReceipt.logicalTaskId, authority: ownerState, retained: true,
-        }));
-        continue;
+        } catch { /* invalid expected local authority is quarantined below */ }
       }
       try {
         const hadDir = existsSync(fullDir); const hadResidue = hadDir || existsSync(metaFile) || existsSync(projectionExclude);
@@ -1295,8 +1326,16 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         }));
         continue;
       }
-      let branchPresent = false;
-      try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/${receipt.branch}`], repoRoot); branchPresent = true; } catch { /* absent */ }
+      let branchPresent = false; let branchSha = null;
+      try { branchSha = sh('git', ['rev-parse', '--verify', `refs/heads/${receipt.branch}^{commit}`], repoRoot); branchPresent = true; } catch { /* absent */ }
+      if (branchPresent && branchSha !== receipt.baseSha) {
+        report.diagnostics.push(Object.freeze({
+          code: 'workspace_owner_branch_mismatch', physicalOwnerId,
+          deploymentId: receipt.deploymentId, logicalTaskId: receipt.logicalTaskId,
+          authority, retained: true,
+        }));
+        continue;
+      }
       try {
         if (branchPresent) sh('git', ['branch', '-D', receipt.branch], repoRoot);
         if (!releasePhysicalWorkspaceOwner(repoRoot, physicalOwnerId, { requireAllocated: true })) {

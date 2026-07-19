@@ -529,10 +529,18 @@ function normalizeSessionRequest(request) {
     if (typeof request.context.worktree !== 'string' || request.context.worktree.length === 0) {
       throw new SessionSelectionError('session.context.worktree must be a non-empty path', 'invalid_session_request');
     }
-    for (const key of ['repoRoot', 'baseSha', 'branch', 'ownerTaskId']) {
+    for (const key of ['repoRoot', 'baseSha', 'branch', 'ownerTaskId', 'logicalTaskId', 'ownerReceiptDigest']) {
       if (request.context[key] !== undefined && (typeof request.context[key] !== 'string' || request.context[key].length === 0)) {
         throw new SessionSelectionError(`session.context.${key} must be a non-empty string`, 'invalid_session_request');
       }
+    }
+    if (request.context.ownerReceiptDigest !== undefined
+      && !/^[a-f0-9]{64}$/u.test(request.context.ownerReceiptDigest)) {
+      throw new SessionSelectionError('session.context.ownerReceiptDigest must be an exact digest', 'invalid_session_request');
+    }
+    if (/^ws-[a-f0-9]{32}$/u.test(request.context.ownerTaskId ?? '')
+      && (request.context.logicalTaskId === undefined || request.context.ownerReceiptDigest === undefined)) {
+      throw new SessionSelectionError('physical session context requires its logical binding and receipt digest', 'invalid_session_request');
     }
     let sparsePaths;
     if (request.context.sparsePaths !== undefined) {
@@ -575,6 +583,8 @@ function normalizeSessionRequest(request) {
       ...(request.context.baseSha ? { baseSha: request.context.baseSha } : {}),
       ...(request.context.branch ? { branch: request.context.branch } : {}),
       ...(request.context.ownerTaskId ? { ownerTaskId: request.context.ownerTaskId } : {}),
+      ...(request.context.logicalTaskId ? { logicalTaskId: request.context.logicalTaskId } : {}),
+      ...(request.context.ownerReceiptDigest ? { ownerReceiptDigest: request.context.ownerReceiptDigest } : {}),
       ...(sparsePaths ? { sparsePaths } : {}),
       ...(sparseIdentity ? { sparseCheckoutIdentity: sparseIdentity } : {}),
       ...(toolchainProjection ? { toolchainProjection } : {}),
@@ -2369,6 +2379,8 @@ export class Coordinator {
           branch: task.sessionContext.branch,
           baseSha: task.sessionContext.baseSha,
           ownerTaskId: task.sessionContext.ownerTaskId,
+          ...(task.sessionContext.logicalTaskId ? { logicalTaskId: task.sessionContext.logicalTaskId } : {}),
+          ...(task.sessionContext.ownerReceiptDigest ? { ownerReceiptDigest: task.sessionContext.ownerReceiptDigest } : {}),
           ...(task.sessionContext.sparsePaths ? { sparsePaths: task.sessionContext.sparsePaths } : {}),
           ...(task.sessionContext.sparseCheckoutIdentity ? { sparseCheckoutIdentity: task.sessionContext.sparseCheckoutIdentity } : {}),
           ...(task.sessionContext.toolchainProjection ? { toolchainProjection: task.sessionContext.toolchainProjection } : {}),
@@ -2400,6 +2412,10 @@ export class Coordinator {
             ...(res.sparseCheckoutIdentity !== undefined ? { sparseCheckoutIdentity: normalizeSparseCheckoutIdentity(res.sparseCheckoutIdentity) } : {}),
             ...(res.capacityReservation ? { capacityReservation: Object.freeze({ ...res.capacityReservation }) } : {}),
             ownerTaskId: res.ownerTaskId ?? task.sessionContext?.ownerTaskId ?? task.id,
+            ...(res.logicalTaskId || task.sessionContext?.logicalTaskId
+              ? { logicalTaskId: res.logicalTaskId ?? task.sessionContext.logicalTaskId } : {}),
+            ...(res.ownerReceiptDigest || task.sessionContext?.ownerReceiptDigest
+              ? { ownerReceiptDigest: res.ownerReceiptDigest ?? task.sessionContext.ownerReceiptDigest } : {}),
           });
           task.sessionContext = sessionContext;
           handle.sessionContext = sessionContext;
@@ -2457,6 +2473,7 @@ export class Coordinator {
       if (!terminalized && task.sessionRequest?.mode === 'new') this._removeOwnedTaskWorktree(handle, task).catch(noop);
       throw failure;
     }).finally(() => { handle.worktreeCreationPending = false; });
+    handle.worktreeReady = worktreeReady;
     // Some test/dummy adapters do not consume readiness. The prerequisite still owns failure,
     // while this observer prevents an otherwise-unhandled rejected promise.
     worktreeReady.catch(noop);
@@ -8907,7 +8924,11 @@ export class Coordinator {
         }
         if (this._drainState === 'open' && handle.status !== 'stopping' && handle.status !== 'dead') {
           const releaseAuthority = this._acquireAuthorityOp();
-          this._runTrustGate(handle, wr).catch(noop).finally(releaseAuthority);
+          // Adapters are required to consume worktreeReady, but terminal authority must remain
+          // correct even for a native/test adapter that emits completion before that promise's
+          // bookkeeping callback runs. Never capture through the logical placeholder path.
+          Promise.resolve(handle.worktreeReady).then(() => this._runTrustGate(handle, wr))
+            .catch(noop).finally(releaseAuthority);
         }
         break;
       }
