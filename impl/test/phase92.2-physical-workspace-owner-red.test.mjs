@@ -8,7 +8,8 @@ import test from 'node:test';
 
 import { MockAdapter, createBrief, createDriver } from '../src/index.mjs';
 import {
-  allocatePhysicalWorkspaceOwner, physicalWorkspaceOwnerReceipt, reconcile,
+  allocatePhysicalWorkspaceOwner, createFromBase, physicalWorkspaceOwnerReceipt, reap,
+  reconcile, releasePhysicalWorkspaceOwner,
 } from '../src/worktree.mjs';
 
 const git = (cwd, args) => execFileSync('git', args, {
@@ -89,9 +90,12 @@ test('P92.2-PO1/PO2: concurrent controllers keep one logical task but allocate d
   });
   first = createDriver({ repoRoot: f.repo, repoId: 'repo-phase92-2', logDir: join(f.world, 'deployment-a'), adapters: { mock: blockingAdapter() } });
   second = createDriver({ repoRoot: f.repo, repoId: 'repo-phase92-2', logDir: join(f.world, 'deployment-b'), adapters: { mock: blockingAdapter() } });
+  const callerNominatedOwner = 'caller-chosen-owner';
 
   const [a, b] = await Promise.all([
-    first.coordinator.spawn('mock', brief(), { taskId: 'same-logical-task', runId: 'same-logical-run' }),
+    first.coordinator.spawn('mock', brief(), {
+      taskId: 'same-logical-task', runId: 'same-logical-run', physicalOwnerId: callerNominatedOwner,
+    }),
     second.coordinator.spawn('mock', brief(), { taskId: 'same-logical-task', runId: 'same-logical-run' }),
   ]);
   const [liveA, liveB] = await Promise.all([
@@ -102,6 +106,7 @@ test('P92.2-PO1/PO2: concurrent controllers keep one logical task but allocate d
   assert.notEqual(liveA.ownerTaskId, liveB.ownerTaskId);
   assert.match(liveA.ownerTaskId, /^ws-[a-f0-9]{32}$/u);
   assert.match(liveB.ownerTaskId, /^ws-[a-f0-9]{32}$/u);
+  assert.notEqual(liveA.ownerTaskId, callerNominatedOwner);
   assert.notEqual(liveA.branch, liveB.branch);
   assert.equal(first.coordinator.list()[0].taskId, 'same-logical-task');
   assert.equal(second.coordinator.list()[0].taskId, 'same-logical-task');
@@ -163,6 +168,61 @@ test('P92.2-RC1/RC2: branch-only response loss is reaped once after exact local-
   const replay = reconcile(f.repo, [], { ownerAuthority: restarted, log: { append: (event) => events.push(event) } });
   assert.deepEqual(replay.errors, []);
   assert.deepEqual(events.filter((event) => event.kind === 'worktree.branch_residue_reconciled').length, 1);
+});
+
+test('P92.2-RC1: pre-branch intent and registered response loss are reconciled only by the restarted deployment', async (t) => {
+  const f = fixture('effect-boundaries');
+  t.after(() => rmSync(f.world, { recursive: true, force: true }));
+  const beforeCrash = authority('deployment-stable', 'controller-before-crash');
+  const intent = allocatePhysicalWorkspaceOwner(f.repo, binding(f.baseSha), beforeCrash);
+  const registered = allocatePhysicalWorkspaceOwner(f.repo, {
+    ...binding(f.baseSha), attemptId: 'attempt-registration-boundary', processGeneration: 2,
+  }, beforeCrash);
+  const created = await createFromBase(f.repo, registered.physicalOwnerId, f.baseSha, { ownerReceipt: registered });
+  assert.equal(existsSync(intent.worktree), false);
+  assert.equal(existsSync(created.dir), true);
+
+  const restarted = authority('deployment-stable', 'controller-after-restart');
+  const report = reconcile(f.repo, [], { ownerAuthority: restarted });
+  assert.deepEqual(report.errors, []);
+  assert.equal(physicalWorkspaceOwnerReceipt(f.repo, intent.physicalOwnerId), null);
+  assert.equal(physicalWorkspaceOwnerReceipt(f.repo, registered.physicalOwnerId), null);
+  assert.equal(existsSync(created.dir), false);
+  assert.equal(git(f.repo, ['branch', '--list', created.branch]), '');
+});
+
+test('P92.2-RC2: dead foreign registered authority and a mismatched local branch are retained diagnostically', async (t) => {
+  const f = fixture('retention-edges');
+  t.after(async () => {
+    for (const receipt of [foreign, mismatched]) {
+      try { await reap(f.repo, receipt.physicalOwnerId, { force: true, deleteBranch: true }); } catch { /* fixture removal remains */ }
+      try { releasePhysicalWorkspaceOwner(f.repo, receipt.physicalOwnerId); } catch { /* fixture removal remains */ }
+    }
+    rmSync(f.world, { recursive: true, force: true });
+  });
+  const deadForeignAuthority = {
+    deploymentId: digest('foreign-deployment'), controllerId: digest('foreign-dead-controller'),
+    pid: 2_147_483_647, pidStart: 'definitely-not-a-live-process',
+  };
+  const foreign = allocatePhysicalWorkspaceOwner(f.repo, binding(f.baseSha), deadForeignAuthority);
+  await createFromBase(f.repo, foreign.physicalOwnerId, f.baseSha, { ownerReceipt: foreign });
+
+  const localBefore = authority('local-deployment', 'local-before-crash');
+  const mismatched = allocatePhysicalWorkspaceOwner(f.repo, {
+    ...binding(f.baseSha), attemptId: 'attempt-mismatched-branch', processGeneration: 3,
+  }, localBefore);
+  git(f.repo, ['commit', '--allow-empty', '-qm', 'different branch target']);
+  git(f.repo, ['branch', mismatched.branch, 'HEAD']);
+  const localAfter = authority('local-deployment', 'local-after-restart');
+
+  const report = reconcile(f.repo, [], { ownerAuthority: localAfter });
+  assert.deepEqual(report.errors, []);
+  assert.ok(report.diagnostics.some((row) => row.code === 'workspace_owner_dead_foreign_checkout'
+    && row.physicalOwnerId === foreign.physicalOwnerId && row.retained === true));
+  assert.ok(report.diagnostics.some((row) => row.code === 'workspace_owner_branch_mismatch'
+    && row.physicalOwnerId === mismatched.physicalOwnerId && row.retained === true));
+  assert.equal(existsSync(foreign.worktree), true);
+  assert.equal(git(f.repo, ['branch', '--list', mismatched.branch]), mismatched.branch);
 });
 
 test('P92.2-RC3: live and malformed foreign branch authority is retained with typed diagnostics', (t) => {

@@ -69,6 +69,9 @@ An unreadable, malformed, PID-observation-ambiguous, or otherwise unproven forei
 retained. Reconciliation returns a typed bounded diagnostic identifying the opaque owner,
 authority class, and retention decision; it does not turn ambiguity into startup-wide speculative
 cleanup. Bare `baton/*` branches without a valid matching receipt remain unowned and untouched.
+Naming a foreign opaque owner in the expected-active set grants no cleanup authority. A locally
+dead branch-only owner is likewise retained if the branch no longer resolves to the receipt's
+bound base SHA.
 
 A dead foreign registered checkout is still retained for its deployment's restart adoption; this
 phase permits exact cleanup only for locally proven branch-only/pre-branch residue. It does not
