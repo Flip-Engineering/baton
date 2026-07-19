@@ -2,14 +2,16 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  chmodSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
+  chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
   realpathSync, renameSync, rmSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 
-import { materializeResultTree, validateResultExportRoot } from '../src/result-export.mjs';
+import {
+  materializeResultTree, publishResultExportNoReplace, validateResultExportRoot,
+} from '../src/result-export.mjs';
 
 const POLICY = Object.freeze({ format: 'directory-v1', maxFiles: 128, maxBytes: 1024 * 1024 });
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
@@ -114,6 +116,47 @@ function writeBlob(repo, content) {
 function commitTree(repo, tree, message) {
   return git(repo, ['commit-tree', tree, '-m', message]);
 }
+
+test('atomic publication ignores ambient PATH and Python import-hook authority', { concurrency: false }, (t) => {
+  const root = temporary(t, 'trusted-no-replace-helper');
+  chmodSync(root, 0o700);
+  const poisoned = temporary(t, 'poisoned-python');
+  const pathSentinel = join(root, 'path-sentinel');
+  const importSentinel = join(root, 'import-sentinel');
+  writeFileSync(join(poisoned, 'python3'), `#!/bin/sh\ntouch '${pathSentinel}'\nexit 99\n`);
+  chmodSync(join(poisoned, 'python3'), 0o755);
+  writeFileSync(join(poisoned, 'sitecustomize.py'), `open(${JSON.stringify(importSentinel)}, 'w').close()\n`);
+  const temporaryEntry = join(root, 'temporary-entry');
+  const final = join(root, 'final-entry');
+  mkdirSync(temporaryEntry, { mode: 0o700 });
+  writeFileSync(join(temporaryEntry, 'value'), 'winner\n');
+
+  const prior = { PATH: process.env.PATH, PYTHONPATH: process.env.PYTHONPATH };
+  try {
+    process.env.PATH = poisoned;
+    process.env.PYTHONPATH = poisoned;
+    publishResultExportNoReplace({ root, temporary: temporaryEntry, final });
+  } finally {
+    if (prior.PATH === undefined) delete process.env.PATH;
+    else process.env.PATH = prior.PATH;
+    if (prior.PYTHONPATH === undefined) delete process.env.PYTHONPATH;
+    else process.env.PYTHONPATH = prior.PYTHONPATH;
+  }
+  assert.equal(existsSync(pathSentinel), false, 'PATH-resolved helper executed');
+  assert.equal(existsSync(importSentinel), false, 'Python import hook executed');
+  assert.equal(existsSync(temporaryEntry), false);
+  assert.equal(readFileSync(join(final, 'value'), 'utf8'), 'winner\n');
+
+  const loser = join(root, 'loser-entry');
+  mkdirSync(loser, { mode: 0o700 });
+  writeFileSync(join(loser, 'value'), 'loser\n');
+  assertCode(
+    () => publishResultExportNoReplace({ root, temporary: loser, final }),
+    'EEXIST',
+  );
+  assert.equal(readFileSync(join(final, 'value'), 'utf8'), 'winner\n');
+  assert.equal(readFileSync(join(loser, 'value'), 'utf8'), 'loser\n');
+});
 
 test('physical export ignores Git replace refs', (t) => {
   const repo = repository(t, 'replace-ref');

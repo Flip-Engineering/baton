@@ -169,7 +169,9 @@ class SpyWorktreeManager {
       removeVerifyWorktree: [],
       remove: [],
       reconcile: [],
+      worktreeAvailable: [],
     };
+    this.available = true;
   }
   async create(taskId, baseRef) {
     this.calls.create.push({ taskId, baseRef });
@@ -191,6 +193,10 @@ class SpyWorktreeManager {
   }
   async reconcile() {
     this.calls.reconcile.push({});
+  }
+  worktreeAvailable(taskId, context) {
+    this.calls.worktreeAvailable.push({ taskId, context });
+    return this.available;
   }
 }
 
@@ -327,6 +333,62 @@ test('spawn() under headroom creates the worktree, calls adapter.spawn, logs spa
   const startedIdx = kinds.indexOf('lifecycle.turn_started');
   assert.ok(spawnedIdx !== -1 && startedIdx !== -1);
   assert.ok(spawnedIdx < startedIdx, 'lifecycle.spawned must precede lifecycle.turn_started');
+});
+
+test('active worktree authority loss fails and kills before accepting more worker output', async () => {
+  const { coordinator, adapters, worktrees, log } = setup();
+  const handle = await coordinator.spawn('mock', makeBrief());
+  worktrees.available = false;
+  coordinator.tick();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  adapters.mock.emit({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1,
+    kind: 'content.message', actor: 'worker', payload: { text: 'fallback checkout output' },
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  const events = log.read(handle.id);
+  const lost = events.filter((event) => event.kind === 'worktree.authority_lost');
+  assert.equal(lost.length, 1);
+  assert.deepEqual(lost[0].payload, {
+    code: 'worker_worktree_authority_lost', action: 'fail_and_kill',
+  });
+  assert.equal(events.some((event) => event.kind === 'content.message'), false);
+  assert.equal(adapters.mock.calls.kill.length, 1);
+  assert.equal(coordinator.list().find((worker) => worker.id === handle.id).status, 'stopping');
+
+  coordinator.tick();
+  await Promise.resolve();
+  assert.equal(log.read(handle.id).filter((event) => event.kind === 'worktree.authority_lost').length, 1);
+  assert.equal(adapters.mock.calls.kill.length, 1);
+});
+
+test('active worktree authority loss escalates an in-flight soft interrupt to one exact kill', async () => {
+  const { coordinator, adapters, worktrees, log } = setup({ stopDeadlineMs: 15000 });
+  const handle = await coordinator.spawn('mock', makeBrief());
+  adapters.mock.gates.interrupt = new Promise(() => {});
+  const interrupting = coordinator.interrupt(handle.id);
+  assert.equal(coordinator.list().find((worker) => worker.id === handle.id).status, 'stopping');
+
+  worktrees.available = false;
+  coordinator.tick();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(log.read(handle.id).filter((event) => event.kind === 'worktree.authority_lost').length, 1);
+  assert.equal(adapters.mock.calls.kill.length, 1);
+
+  adapters.mock.emit({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1,
+    kind: 'kill.confirmed', actor: 'worker', payload: {},
+  });
+  const result = await interrupting;
+  assert.ok(['confirmed', 'forced'].includes(result.result));
+  assert.equal(coordinator.list().find((worker) => worker.id === handle.id).status, 'dead');
 });
 
 test('spawn() at the vendor concurrency ceiling queues as pending (GLM=1 case); promotes once a slot frees', async () => {
@@ -1522,6 +1584,8 @@ test('construction replay (D10): a normally-constructed Coordinator rebuilds tas
       'unknown_worker',
       `${workerId} must be register()-ed by replay, not left unknown_worker`
     );
+    assert.deepEqual(coordinator.localResourceOwnership(workerId), { owned: false },
+      `${workerId} durable replay evidence must not fabricate current-process resource authority`);
   }
 
   // list()/result() must also work for a worker that was NEVER spawn()-ed on this instance.
@@ -1565,6 +1629,8 @@ test('list() reports pending and working workers with correct status/budgetUsed/
 
   const p = table.find((x) => x.id === pendingHandle.id);
   assert.equal(p.status, 'pending');
+  assert.deepEqual(coordinator.localResourceOwnership(working.id), { owned: true });
+  assert.deepEqual(coordinator.localResourceOwnership(pendingHandle.id), { owned: false });
 });
 
 test('list() reflects a worker transitioning stopping -> dead', async () => {
@@ -1722,6 +1788,113 @@ test('at-least-once wait() (D11): a digest not yet followed by a subsequent wait
     1,
     'CI6 adds one durable fact explaining why the unattached session is no longer controllable'
   );
+});
+
+test('replayed Run stop durably closes an absent historical process group without signaling a reusable PID', async () => {
+  const dir = tmpDir();
+  const logDir = join(dir, 'log');
+  const log1 = new Log(logDir);
+  const coordination1 = coordinationForLog(log1);
+  const worktrees1 = new SpyWorktreeManager();
+  const coordinator1 = new Coordinator({
+    log: log1,
+    coordination: coordination1,
+    fences: new FenceTable(),
+    adapters: { mock: new ScriptableAdapter() },
+    worktrees: worktrees1,
+    referee: passingReferee(),
+    route: fixedRoute('mock'),
+    now: () => 0,
+  });
+  const handle = await coordinator1.spawn('mock', makeBrief(), { runId: 'run-replay-stop' });
+  const absentPid = 2_000_000_000;
+  log1.append({
+    worker: handle.id, harness: 'mock', turnEpoch: 1,
+    kind: 'lifecycle.process_started', actor: 'worker',
+    payload: {
+      schemaVersion: 1, generation: 1, pid: absentPid,
+      processGroupId: absentPid, phase: 'initializing',
+    },
+  });
+  log1.append({
+    worker: handle.id, harness: 'mock', turnEpoch: 1,
+    kind: 'lifecycle.process_ready', actor: 'worker',
+    payload: { schemaVersion: 1, generation: 1, pid: absentPid, processGroupId: absentPid },
+  });
+  coordination1.releaseWriterLease();
+
+  const log2 = new Log(logDir);
+  const coordination2 = coordinationForLog(log2);
+  const worktrees2 = new SpyWorktreeManager();
+  const coordinator2 = new Coordinator({
+    log: log2,
+    coordination: coordination2,
+    fences: new FenceTable(),
+    adapters: { mock: new ScriptableAdapter() },
+    worktrees: worktrees2,
+    referee: passingReferee(),
+    route: fixedRoute('mock'),
+    now: () => 0,
+    stopDeadlineMs: 100,
+  });
+  await coordinator2.startupReady();
+  assert.equal(log2.read(handle.id).filter((event) => event.kind === 'control.recovery_terminalized').length, 1,
+    'the first restart terminalizes the unattached provider session');
+
+  // Simulate the exact Phase 86 crash gap: the first restarted controller terminalized the task,
+  // but exited before it could prove the historical process group absent and close its coordinate.
+  coordination2.releaseWriterLease();
+  const log3 = new Log(logDir);
+  const coordination3 = coordinationForLog(log3);
+  const worktrees3 = new SpyWorktreeManager();
+  const coordinator3 = new Coordinator({
+    log: log3,
+    coordination: coordination3,
+    fences: new FenceTable(),
+    adapters: { mock: new ScriptableAdapter() },
+    worktrees: worktrees3,
+    referee: passingReferee(),
+    route: fixedRoute('mock'),
+    now: () => 0,
+    stopDeadlineMs: 100,
+  });
+  await coordinator3.startupReady();
+  assert.equal(coordinator3.list().find((row) => row.id === handle.id).status, 'orphaned',
+    'a replayed recovery terminalization remains an unattached provider session');
+  const receipt = await coordinator3.stopRunTargets([handle.id], 'operator:replay-stop');
+  assert.equal(receipt.remainingCount, 0);
+  assert.equal(receipt.counts.alreadyTerminal, 1);
+  assert.equal(receipt.counts.processesObserved, 1);
+  assert.equal(receipt.counts.processesClosed, 1);
+  const absent = log3.read(handle.id).filter((event) => event.kind === 'control.recovery_process_absent');
+  assert.equal(absent.length, 1);
+  assert.equal(worktrees3.calls.capture.length, 0,
+    'startup-reconciled historical worktree paths must not be checkpointed again');
+  assert.deepEqual(absent[0].payload, {
+    schemaVersion: 1, generation: 1, pid: absentPid,
+    processGroupId: absentPid, reason: 'process_group_absent',
+  });
+
+  coordination3.releaseWriterLease();
+  const log4 = new Log(logDir);
+  const worktrees4 = new SpyWorktreeManager();
+  const coordinator4 = new Coordinator({
+    log: log4,
+    coordination: coordinationForLog(log4),
+    fences: new FenceTable(),
+    adapters: { mock: new ScriptableAdapter() },
+    worktrees: worktrees3,
+    referee: passingReferee(),
+    route: fixedRoute('mock'),
+    now: () => 0,
+    stopDeadlineMs: 100,
+  });
+  await coordinator4.startupReady();
+  const replayReceipt = await coordinator4.stopRunTargets([handle.id], 'operator:replay-stop-again');
+  assert.equal(replayReceipt.remainingCount, 0);
+  assert.equal(log4.read(handle.id).filter((event) => event.kind === 'control.recovery_process_absent').length, 1,
+    'the durable absence observation must replay without another host-process probe event');
+  assert.equal(worktrees4.calls.capture.length, 0);
 });
 
 // ============================================================

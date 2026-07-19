@@ -83,6 +83,18 @@ function result(status, body) { return Object.freeze({ status, body: Object.free
 function error(status, code, message = code) { return result(status, { ok: false, error: { code, message } }); }
 function dispatchFailure(cause) {
   const goalPlanCode = cause?.code;
+  if (typeof goalPlanCode === 'string' && goalPlanCode.startsWith('worker_policy_')) {
+    const invalid = ['worker_policy_invalid', 'worker_policy_observation_invalid'].includes(goalPlanCode);
+    return { httpStatus: invalid ? 400 : 409, body: { ok: false, error: {
+      code: goalPlanCode, message: invalid ? 'worker policy precondition failed' : 'worker policy unavailable or conflicted',
+    } } };
+  }
+  if ((typeof goalPlanCode === 'string' && goalPlanCode.startsWith('run_orchestrator_'))
+    || goalPlanCode === 'run_stopping') {
+    return { httpStatus: 409, body: { ok: false, error: {
+      code: goalPlanCode, message: 'recursive Run authority is no longer active',
+    } } };
+  }
   if (goalPlanCode === 'application_unauthorized') return { httpStatus: 403, body: { ok: false, error: { code: goalPlanCode, message: 'application command forbidden' } } };
   if (goalPlanCode === 'application_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: goalPlanCode, message: 'run application unavailable' } } };
   if (['application_run_lookup_oversize', 'application_run_view_oversize'].includes(goalPlanCode)) return { httpStatus: 503, body: { ok: false, error: { code: 'temporarily_unavailable', message: 'run application projection unavailable' } } };
@@ -160,6 +172,9 @@ function exactRecord(value, fields) {
   return isRecord(value) && Object.keys(value).length === fields.size
     && Object.keys(value).every((key) => fields.has(key));
 }
+function requiredEffectFields(fields, value) {
+  return Object.hasOwn(value ?? {}, 'requiredEffects') ? new Set([...fields, 'requiredEffects']) : fields;
+}
 function stringList(value) {
   return Array.isArray(value) && value.every(string) && new Set(value).size === value.length;
 }
@@ -186,26 +201,28 @@ function planVerification(value) {
     && stringList(value.requiredPredecessorEvidence);
 }
 function planNode(value) {
-  return exactRecord(value, PLAN_NODE_FIELDS) && string(value.key) && string(value.objective)
+  return exactRecord(value, requiredEffectFields(PLAN_NODE_FIELDS, value)) && string(value.key) && string(value.objective)
     && stringList(value.definitionOfDone) && stringList(value.deps) && stringList(value.pathScope)
     && string(value.risk) && goalPlanBudget(value.budget) && planVerification(value.verification)
     && value.pathScope.length > 0
     && exactRecord(value.routes, PLAN_ROUTE_FIELDS) && stringList(value.routes.harnesses) && value.routes.harnesses.length > 0
     && stringList(value.routes.models) && value.routes.models.length > 0
     && stringList(value.routes.efforts) && value.routes.efforts.length > 0
-    && stringList(value.capabilities) && stringList(value.effects);
+    && stringList(value.capabilities) && stringList(value.effects)
+    && (!Object.hasOwn(value, 'requiredEffects') || stringList(value.requiredEffects));
 }
 function planGate(value) {
-  return exactRecord(value, PLAN_GATE_FIELDS)
+  return exactRecord(value, requiredEffectFields(PLAN_GATE_FIELDS, value))
     && /^goal:[a-f0-9]{64}$/.test(value.goalId ?? '') && Number.isSafeInteger(value.goalVersion) && value.goalVersion > 0
     && /^[a-f0-9]{64}$/.test(value.goalDigest ?? '')
     && /^plan:[a-f0-9]{64}$/.test(value.planId ?? '') && Number.isSafeInteger(value.planVersion) && value.planVersion > 0
     && /^[a-f0-9]{64}$/.test(value.planDigest ?? '') && string(value.nodeKey)
     && value.expectedDispatchVersion === 0
-    && stringList(value.capabilities) && stringList(value.effects);
+    && stringList(value.capabilities) && stringList(value.effects)
+    && (!Object.hasOwn(value, 'requiredEffects') || stringList(value.requiredEffects));
 }
 function planBrief(value) {
-  return exactRecord(value, PLAN_BRIEF_FIELDS) && string(value.goal)
+  return exactRecord(value, requiredEffectFields(PLAN_BRIEF_FIELDS, value)) && string(value.goal)
     && stringList(value.constraints) && stringList(value.pathScope) && stringList(value.tools)
     && typeof value.outputFormat === 'string' && typeof value.definitionOfDone === 'string'
     && planVerification(value.verification) && exactRecord(value.budget, BUDGET_FIELDS)
@@ -213,7 +230,8 @@ function planBrief(value) {
     && Number.isFinite(value.budget.usd) && value.budget.usd >= 0
     && Number.isSafeInteger(value.budget.wallMin) && value.budget.wallMin > 0
     && Number.isSafeInteger(value.providerTurns) && value.providerTurns > 0
-    && stringList(value.capabilities) && stringList(value.effects);
+    && stringList(value.capabilities) && stringList(value.effects)
+    && (!Object.hasOwn(value, 'requiredEffects') || stringList(value.requiredEffects));
 }
 function validProviderClaims(value) {
   if (!isRecord(value)) return false;
@@ -515,6 +533,37 @@ export class WebNorthbound {
       catch { return error(503, 'temporarily_unavailable'); }
       return error(503, 'application_unavailable', 'run application unavailable');
     }
+    const webActor = actor(ctx.principal);
+    const scopeKey = hash({ userId: ctx.principal.userId, command: envelope.command, repoId: envelope.repoId, idempotencyKey: envelope.idempotencyKey });
+    const requestDigest = hash(canonicalRequest(envelope));
+    let semanticAuthority = null;
+    if (envelope.command === 'run_act') {
+      const prior = this.coordination.webCommandByScope?.(scopeKey) ?? null;
+      if (prior && prior.requestDigest !== requestDigest) {
+        try { this._audit('idempotency_refused', ctx, { command: envelope.command, repoId: envelope.repoId, reason: 'idempotency_conflict' }); }
+        catch { return error(503, 'temporarily_unavailable'); }
+        return error(409, 'idempotency_conflict');
+      }
+      try {
+        semanticAuthority = prior?.semanticAuthority ?? await this.application.actionAuthority(
+          envelope.args,
+          { actor: webActor, principalId: ctx.principal.userId, sessionId: ctx.principal.sessionId },
+        );
+      } catch (cause) {
+        const failure = dispatchFailure(cause);
+        try { this._audit('authorization_refused', ctx, { command: envelope.command, repoId: envelope.repoId }); }
+        catch { return error(503, 'temporarily_unavailable'); }
+        return result(failure.httpStatus, failure.body);
+      }
+      if (!Array.isArray(semanticAuthority?.requiredCapabilities)
+        || !semanticAuthority.requiredCapabilities.every(
+          (capability) => ctx.principal.capabilities.includes(capability),
+        )) {
+        try { this._audit('authorization_refused', ctx, { command: envelope.command, repoId: envelope.repoId }); }
+        catch { return error(503, 'temporarily_unavailable'); }
+        return error(403, 'forbidden');
+      }
+    }
     if (this.edge) {
       const key = ctx.principal.credentialId;
       const commandCost = envelope.command === 'reuse_recheck' ? (envelope.args.trigger === 'advisory_refresh' ? 20 : 2)
@@ -526,9 +575,6 @@ export class WebNorthbound {
       }
     }
 
-    const webActor = actor(ctx.principal);
-    const scopeKey = hash({ userId: ctx.principal.userId, command: envelope.command, repoId: envelope.repoId, idempotencyKey: envelope.idempotencyKey });
-    const requestDigest = hash(canonicalRequest(envelope));
     let admission;
     try {
       admission = this.coordination.admitWebCommand({
@@ -536,6 +582,7 @@ export class WebNorthbound {
         repoId: envelope.repoId, runId: admittedRunId(envelope),
         userId: ctx.principal.userId, sessionId: ctx.principal.sessionId, credentialId: ctx.principal.credentialId,
         origin: envelope.origin, expectedFence: envelope.expectedFence ?? null,
+        ...(semanticAuthority ? { semanticAuthority } : {}),
       }, { actor: webActor, key: `web.admit:${scopeKey}` });
     } catch {
       return error(503, 'temporarily_unavailable');
@@ -543,6 +590,12 @@ export class WebNorthbound {
     if (!admission.ok) {
       try { this._audit('idempotency_refused', ctx, { command: envelope.command, repoId: envelope.repoId, reason: admission.result }); } catch { return error(503, 'temporarily_unavailable'); }
       return error(409, admission.result === 'idempotency_conflict' ? 'idempotency_conflict' : 'invalid_command');
+    }
+    if (envelope.command === 'run_act'
+      && admission.command.semanticAuthority?.authorityDigest !== semanticAuthority?.authorityDigest) {
+      try { this._audit('authorization_refused', ctx, { command: envelope.command, repoId: envelope.repoId }); }
+      catch { return error(503, 'temporarily_unavailable'); }
+      return error(409, 'application_action_authority_invalid');
     }
     if (admission.result === 'replay') {
       try { this._audit('command_replayed', ctx, { command: envelope.command, repoId: envelope.repoId, commandId: admission.command.commandId }); } catch { return error(503, 'temporarily_unavailable'); }
@@ -569,6 +622,10 @@ export class WebNorthbound {
       }
       if (admission.command.status === 'admitted' && (RECONCILABLE.has(envelope.command)
         || (envelope.command === 'spawn' && envelope.args.goalPlan))) {
+        if (envelope.command === 'run_act'
+          && admission.command.sessionId !== ctx.principal.sessionId) {
+          return error(403, 'forbidden');
+        }
         const commandId = admission.command.commandId;
         const admittedActor = actor({ userId: admission.command.userId, sessionId: admission.command.sessionId });
         const admittedPrincipal = { ...ctx.principal, userId: admission.command.userId, sessionId: admission.command.sessionId };
@@ -576,7 +633,10 @@ export class WebNorthbound {
         let replayed;
         try {
           replayed = APPLICATION_COMMAND[envelope.command]
-            ? await this._dispatchApplicationOnce(admittedEnvelope, admittedActor, commandId, admittedPrincipal)
+            ? await this._dispatchApplicationOnce(
+              admittedEnvelope, admittedActor, commandId, admittedPrincipal,
+              admission.command.semanticAuthority ?? null,
+            )
             : await this._dispatch(admittedEnvelope, admittedActor, admittedPrincipal);
         } catch (cause) {
           const failure = dispatchFailure(cause);
@@ -607,8 +667,29 @@ export class WebNorthbound {
       }
       if (admission.command.status === 'completed' && APPLICATION_COMMAND[envelope.command]) {
         try {
+          const lease = typeof this.coordination.activeRunOrchestratorLeaseForSession === 'function'
+            ? this.coordination.activeRunOrchestratorLeaseForSession({
+              repoId: envelope.repoId,
+              principalId: ctx.principal.userId,
+              sessionId: ctx.principal.sessionId,
+              expiresAt: ctx.principal.expiresAt,
+            }) : null;
           await this.application.authorizeReplay(APPLICATION_COMMAND[envelope.command], envelope.args, {
             actor: webActor, principalId: ctx.principal.userId, sessionId: ctx.principal.sessionId,
+          }, {
+            transport: 'web', requestId: String(envelope.commandId),
+            idempotencyKey: `web.command:${envelope.commandId}`,
+            ...(envelope.command === 'run_act' ? {
+              capabilityAuthority: northboundCapabilityToken('web'),
+              capabilities: [...ctx.principal.capabilities],
+              semanticAuthority: admission.command.semanticAuthority,
+            } : {}),
+            ...(lease ? { sessionAuthority: {
+              schemaVersion: 1,
+              authorityDigest: lease.session.authorityDigest,
+              expiresAt: lease.session.expiresAt,
+              orchestratorLeaseId: lease.leaseId,
+            } } : {}),
           });
         } catch (cause) {
           const failure = dispatchFailure(cause);
@@ -626,7 +707,10 @@ export class WebNorthbound {
       response = envelope.command === 'drain'
         ? await this._dispatchDrain(envelope, webActor, envelope.commandId, ctx.principal)
         : APPLICATION_COMMAND[envelope.command]
-          ? await this._dispatchApplicationOnce(envelope, webActor, envelope.commandId, ctx.principal)
+          ? await this._dispatchApplicationOnce(
+            envelope, webActor, envelope.commandId, ctx.principal,
+            admission.command.semanticAuthority ?? null,
+          )
           : await this._dispatch(envelope, webActor, ctx.principal);
     } catch (cause) {
       const failure = dispatchFailure(cause);
@@ -669,16 +753,18 @@ export class WebNorthbound {
     return pending;
   }
 
-  _dispatchApplicationOnce(envelope, webActor, commandId, principal) {
+  _dispatchApplicationOnce(envelope, webActor, commandId, principal, semanticAuthority = null) {
     const existing = this._applicationDispatches.get(commandId);
     if (existing) return existing;
     const admittedEnvelope = commandId === envelope.commandId ? envelope : { ...envelope, commandId };
-    const pending = Promise.resolve().then(() => this._dispatch(admittedEnvelope, webActor, principal));
+    const pending = Promise.resolve().then(
+      () => this._dispatch(admittedEnvelope, webActor, principal, semanticAuthority),
+    );
     this._applicationDispatches.set(commandId, pending);
     return pending;
   }
 
-  async _dispatch(envelope, webActor, principal) {
+  async _dispatch(envelope, webActor, principal, semanticAuthority = null) {
     const a = envelope.args;
     const needsGoalPlanPrincipal = ['goal_define', 'plan_propose', 'plan_approve', 'goal_plan_status'].includes(envelope.command)
       || (envelope.command === 'spawn' && Boolean(a.goalPlan));
@@ -691,10 +777,31 @@ export class WebNorthbound {
     let value;
     if (APPLICATION_COMMAND[envelope.command]) {
       if (!this.application) throw Object.assign(new Error('Run application is unavailable'), { code: 'application_unavailable' });
+      const lease = typeof this.coordination.activeRunOrchestratorLeaseForSession === 'function'
+        ? this.coordination.activeRunOrchestratorLeaseForSession({
+          repoId: envelope.repoId,
+          principalId: principal.userId,
+          sessionId: principal.sessionId,
+          expiresAt: principal.expiresAt,
+        }) : null;
       value = await this.application.command(APPLICATION_COMMAND[envelope.command], a, {
         actor: webActor,
         principalId: principal.userId,
         sessionId: principal.sessionId,
+      }, {
+        transport: 'web', requestId: String(envelope.commandId),
+        idempotencyKey: `web.command:${envelope.commandId}`,
+        ...(envelope.command === 'run_act' ? {
+          capabilityAuthority: northboundCapabilityToken('web'),
+          capabilities: [...principal.capabilities],
+          semanticAuthority,
+        } : {}),
+        ...(lease ? { sessionAuthority: {
+          schemaVersion: 1,
+          authorityDigest: lease.session.authorityDigest,
+          expiresAt: lease.session.expiresAt,
+          orchestratorLeaseId: lease.leaseId,
+        } } : {}),
       });
     } else if (envelope.command === 'spawn') {
       const goalPlan = a.goalPlan ? json(a.goalPlan) : undefined;
@@ -721,7 +828,7 @@ export class WebNorthbound {
       value = await this.coordinator.spawnScratchOracle(a.scratchFactId, a.harness, {
         model: a.model, effort: a.effort, modelPolicy: a.modelPolicy, verification: a.verification,
         budget: a.budget, constraints: a.constraints, goal: a.goal, definitionOfDone: a.definitionOfDone,
-        taskId: a.taskId ?? `web-${envelope.commandId}`, runId: envelope.runId ?? null,
+        taskId: a.taskId ?? `web-${envelope.commandId}`,
         actor: `operator:${webActor}`, idempotencyKey: `web.command:${envelope.commandId}`,
       });
     } else if (envelope.command === 'send') {
@@ -902,7 +1009,7 @@ export class WebNorthbound {
       if (opened) return this._write(res, opened, origin);
       return;
     }
-    if (req.method === 'OPTIONS' && (['/v1/commands', '/v1/stream-tickets'].includes(url.pathname) || AUTH_PATHS.has(url.pathname))) {
+    if (req.method === 'OPTIONS' && (['/v1/commands', '/v1/stream-tickets', '/v1/action-authority'].includes(url.pathname) || AUTH_PATHS.has(url.pathname))) {
       if (!this.allowedOrigins.has(origin)) return this._write(res, error(403, 'forbidden'));
       res.writeHead(204, {
         'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true',
@@ -960,6 +1067,74 @@ export class WebNorthbound {
         return;
       }
       return this._write(res, this.stream.issue(principal, origin, body?.repoId), origin);
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/action-authority') {
+      if (url.search || req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
+        return this._write(res, error(400, 'invalid_command'), origin);
+      }
+      let principal;
+      try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
+      let body;
+      try { body = await this._readBody(req); }
+      catch { return this._write(res, error(400, 'invalid_command'), origin); }
+      const ctx = {
+        principal, origin, csrfToken: req.headers['x-baton-csrf'] ?? null,
+        remoteAddress: req.edgeAddressDigest ? 'canonical' : (req.socket?.remoteAddress ?? null),
+        addressDigest: req.edgeAddressDigest ?? null,
+        transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http'),
+      };
+      const authFailure = this._authenticate(ctx);
+      if (authFailure) return this._write(res, authFailure, origin);
+      if (!isRecord(body)
+        || Object.keys(body).sort().join(',') !== ['args', 'idempotencyKey', 'repoId', 'schemaVersion'].join(',')
+        || body.schemaVersion !== 1) {
+        return this._write(res, error(400, 'invalid_command'), origin);
+      }
+      const envelope = {
+        schemaVersion: 1,
+        commandId: 'action-authority-preflight',
+        idempotencyKey: body.idempotencyKey,
+        command: 'run_act',
+        args: body.args,
+        repoId: body.repoId,
+        runId: body.args?.runId,
+        origin,
+      };
+      if (validateEnvelope(envelope)
+        || !Array.isArray(principal.capabilities) || !principal.capabilities.includes('observe')) {
+        return this._write(res, error(403, 'forbidden'), origin);
+      }
+      const authorizationFailure = this._authorize(ctx, envelope);
+      if (authorizationFailure) return this._write(res, authorizationFailure, origin);
+      if (!this.application) return this._write(res, error(503, 'application_unavailable'), origin);
+      const scopeKey = hash({
+        userId: principal.userId, command: envelope.command,
+        repoId: envelope.repoId, idempotencyKey: envelope.idempotencyKey,
+      });
+      const requestDigest = hash(canonicalRequest(envelope));
+      const prior = this.coordination.webCommandByScope?.(scopeKey) ?? null;
+      if (prior && prior.requestDigest !== requestDigest) {
+        return this._write(res, error(409, 'idempotency_conflict'), origin);
+      }
+      let semanticAuthority;
+      try {
+        semanticAuthority = prior?.semanticAuthority ?? await this.application.actionAuthority(
+          envelope.args,
+          {
+            actor: actor(principal), principalId: principal.userId,
+            sessionId: principal.sessionId,
+          },
+        );
+      } catch (cause) {
+        const failure = dispatchFailure(cause);
+        return this._write(res, result(failure.httpStatus, failure.body), origin);
+      }
+      if (!Array.isArray(semanticAuthority?.requiredCapabilities)) {
+        return this._write(res, error(409, 'application_action_authority_invalid'), origin);
+      }
+      try { this._audit('action_authority_read', ctx, { repoId: envelope.repoId }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+      return this._write(res, result(200, { ok: true, semanticAuthority }), origin);
     }
     if (req.method === 'GET' && url.pathname === '/v1/events') {
       let principal;
@@ -1027,7 +1202,10 @@ export class WebNorthbound {
     if (pathname === '/v1/session') {
       return this._write(res, result(200, {
         ok: true,
-        identity: { userId: principal.userId, capabilities: [...principal.capabilities], repoIds: [...principal.repoIds] },
+        identity: {
+          userId: principal.userId, sessionId: principal.sessionId,
+          capabilities: [...principal.capabilities], repoIds: [...principal.repoIds],
+        },
         expiresAt: principal.expiresAt,
       }));
     }
