@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -40,6 +40,69 @@ const child = spawn(process.execPath, ['--test', ...process.argv.slice(2)], {
 let requestedSignal = null;
 let forceTimer = null;
 let finished = false;
+let stopCaptureFailed = false;
+const trackedGroup = new Map();
+
+function processTable() {
+  if (!detached) return new Map();
+  try {
+    const output = execFileSync('/bin/ps', ['-axo', 'pid=,pgid=,lstart='], {
+      encoding: 'utf8',
+      timeout: 1000,
+      maxBuffer: 8 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const table = new Map();
+    for (const line of output.split('\n')) {
+      const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
+      if (!match) continue;
+      table.set(Number(match[1]), { group: Number(match[2]), started: match[3] });
+    }
+    return table;
+  } catch {
+    return null;
+  }
+}
+
+function captureProcessGroup(table = processTable()) {
+  if (!detached) return true;
+  if (table === null) return false;
+  for (const [pid, identity] of table) {
+    if (identity.group === child.pid && !trackedGroup.has(pid)) {
+      trackedGroup.set(pid, identity.started);
+    }
+  }
+  return true;
+}
+
+function trackedGroupAlive(table) {
+  for (const [pid, started] of trackedGroup) {
+    const current = table.get(pid);
+    if (current?.started === started) return true;
+    if (current) continue;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      if (error?.code !== 'ESRCH') return true;
+    }
+  }
+  return false;
+}
+
+async function waitForTrackedGroup(deadline) {
+  if (!detached) return true;
+  while (Date.now() < deadline) {
+    const table = processTable();
+    if (table !== null) {
+      captureProcessGroup(table);
+      if (!trackedGroupAlive(table)) return true;
+    }
+    await sleep(10);
+  }
+  const table = processTable();
+  return table !== null && captureProcessGroup(table) && !trackedGroupAlive(table);
+}
 
 function signalChild(signal) {
   if (child.exitCode !== null || child.signalCode !== null) return;
@@ -69,20 +132,32 @@ function groupAlive() {
 
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 async function reapProcessGroup() {
-  if (!groupAlive()) return true;
-  signalGroup('SIGTERM');
-  const termDeadline = Date.now() + 5000;
-  while (groupAlive() && Date.now() < termDeadline) await sleep(25);
-  if (!groupAlive()) return true;
-  signalGroup('SIGKILL');
-  const killDeadline = Date.now() + 1000;
-  while (groupAlive() && Date.now() < killDeadline) await sleep(25);
-  return !groupAlive();
+  const captured = captureProcessGroup();
+  if (groupAlive()) {
+    signalGroup('SIGTERM');
+    const termDeadline = Date.now() + 5000;
+    while (groupAlive() && Date.now() < termDeadline) {
+      captureProcessGroup();
+      await sleep(25);
+    }
+  }
+  if (groupAlive()) {
+    signalGroup('SIGKILL');
+    const killDeadline = Date.now() + 1000;
+    while (groupAlive() && Date.now() < killDeadline) {
+      captureProcessGroup();
+      await sleep(25);
+    }
+  }
+  const groupReaped = !groupAlive();
+  const identitiesReaped = await waitForTrackedGroup(Date.now() + 1000);
+  return captured && !stopCaptureFailed && groupReaped && identitiesReaped;
 }
 
 function requestStop(signal) {
   if (requestedSignal) return;
   requestedSignal = signal;
+  if (!captureProcessGroup()) stopCaptureFailed = true;
   signalChild(signal);
   forceTimer = setTimeout(() => signalGroup('SIGKILL'), 5000);
   forceTimer.unref();

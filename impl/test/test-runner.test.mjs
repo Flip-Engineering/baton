@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -57,6 +57,12 @@ function pidAlive(pid) {
   } catch {
     return false;
   }
+}
+
+function processStatus(pid) {
+  return spawnSync('ps', ['-o', 'pid=,ppid=,pgid=,state=,command=', '-p', String(pid)], {
+    encoding: 'utf8',
+  }).stdout.trim();
 }
 
 test('TF1/TF2/TF3: a passing nested suite reaps only its owned fixture root', async () => {
@@ -124,8 +130,12 @@ test('TF2/TF3: SIGTERM stops a hanging nested suite and reaps its fixture root',
       child.once('error', rejectRun);
       child.once('close', (code, signal) => resolveRun({ code, signal }));
     });
-    assert.ok(result.code !== 0 || result.signal !== null);
-    assert.equal(pidAlive(descendantPid), false);
+    assert.deepEqual(result, { code: 143, signal: null });
+    assert.equal(
+      pidAlive(descendantPid),
+      false,
+      processStatus(descendantPid) || `PID ${descendantPid} remained alive after runner close`,
+    );
     assert.deepEqual(suiteRoots(parent), []);
   } finally {
     rmSync(parent, { recursive: true, force: true });
