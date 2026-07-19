@@ -67,6 +67,20 @@ test('ordinary running projection uses independent evidence from its live owned 
   assert.equal(Object.hasOwn(route, 'workerId'), false);
 });
 
+test('public harness attestation does not confuse a private adapter key with the requested harness', () => {
+  const route = projectRunRouteEvidence({
+    requested: { harness: 'kimi-code', model: 'kimi-code/k3', effort: 'max' },
+    liveHandle: {
+      vendor: 'kimi-code:dogfood', harnessRequested: 'kimi-code',
+      harnessResolved: 'kimi-code@0.27.0', modelResolved: 'kimi-code/k3', effortResolved: 'max',
+      harnessObserved: null, modelObserved: null, effortObserved: null,
+    },
+    phase: 'running',
+  });
+  assert.equal(route.resolved.harness, 'kimi-code@0.27.0');
+  assert.equal(route.launchEnforcement.harness.state, 'matched');
+});
+
 test('ordinary terminal projection prefers terminal result evidence over the live handle', () => {
   const route = projectRunRouteEvidence({
     requested,

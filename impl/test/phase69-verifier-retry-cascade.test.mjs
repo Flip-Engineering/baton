@@ -354,7 +354,9 @@ test('VR8.8: restart and response-loss replay preserve one retry attempt and one
   const acted = await actByKind(applicationB, runId, 'retry_verification', { reason: 'accept after runtime correction' });
   assert.equal(acted.outline.phase, 'work_completed');
   const statusB = await applicationB.command('run.status', { runId }, principal('owner'));
-  const workerId = statusB.ownership.workerIds[0];
+  assert.deepEqual(statusB.ownership, { workers: 0, workerIds: [], closed: false },
+    'durable replay coordinates are not current-process resource ownership');
+  const workerId = driverB.coordination.task(statusB.nodes[0].taskId).assignee;
   const attemptEvents = driverB.log.read(workerId).filter((event) => event.kind === 'verify.reverified');
   assert.equal(attemptEvents.length, 2, 'one original attempt plus exactly one retry attempt');
   await applicationB.shutdown(principal('restart-2'));

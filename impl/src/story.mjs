@@ -14,6 +14,8 @@
  * spec/IMPLEMENTATION.md Cluster 3 §2 for the full contract this implements.
  */
 
+import { pathMatchesScope } from './path-scope.mjs';
+
 // ---------------------------------------------------------------------------
 // Typedefs (JSDoc only — see spec for full definitions)
 // ---------------------------------------------------------------------------
@@ -94,6 +96,9 @@ export const KIND = Object.freeze({
   FILE_EDIT: 'content.file_edit',
   COMMAND_EXEC: 'content.tool_call',
   KILL_CONFIRMED: 'kill.confirmed', // SC5a (phase10)
+  PROCESS_CLOSED: 'lifecycle.process_closed',
+  RECOVERY_TERMINALIZED: 'control.recovery_terminalized',
+  RECOVERY_PROCESS_ABSENT: 'control.recovery_process_absent',
   REVERIFIED: 'verify.reverified', // SC5c (phase10) — the one kind the coordinator itself emits
   ERROR: 'error',
 });
@@ -176,42 +181,13 @@ function cloneState(state) {
 }
 
 // ---------------------------------------------------------------------------
-// Path-scope glob matching — minimal, dependency-free `**`/`*` matcher over
-// repo-relative POSIX paths, sufficient for pathScope globs like 'src/auth/**'.
+// Path-scope matching shares the canonical implementation used by capture and
+// context enforcement so the narrative cannot disagree with policy.
 // ---------------------------------------------------------------------------
-
-function globToRegExp(glob) {
-  let re = '^';
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob[i];
-    if (c === '*') {
-      if (glob[i + 1] === '*') {
-        re += '.*';
-        i++;
-        // swallow an immediately-following slash so 'a/**' matches 'a' itself too
-        if (glob[i + 1] === '/') i++;
-      } else {
-        re += '[^/]*';
-      }
-    } else if (c === '?') {
-      re += '[^/]';
-    } else if ('.+^${}()|[]\\'.includes(c)) {
-      re += '\\' + c;
-    } else {
-      re += c;
-    }
-  }
-  re += '$';
-  return new RegExp(re);
-}
-
-function globMatches(glob, path) {
-  return globToRegExp(glob).test(path);
-}
 
 function isInScope(pathScope, path) {
   if (!Array.isArray(pathScope) || pathScope.length === 0) return true; // unscoped
-  return pathScope.some((glob) => globMatches(glob, path));
+  return pathScope.some((glob) => pathMatchesScope(path, glob));
 }
 
 // Very small heuristic overlap check between two glob lists: two globs
@@ -402,6 +378,12 @@ function handleKnownKind(w, kind, payload, event) {
       w.status = 'exited';
       break;
     }
+    case KIND.PROCESS_CLOSED:
+    case KIND.RECOVERY_TERMINALIZED:
+    case KIND.RECOVERY_PROCESS_ABSENT: {
+      w.status = 'exited';
+      break;
+    }
     case KIND.REVERIFIED: {
       // SC5c: the trust gate's verdict becomes story-visible. No status change — the worker is
       // already idle and may be redispatched; the narrative reads it (SC5d).
@@ -443,8 +425,13 @@ function handleKnownKind(w, kind, payload, event) {
       break;
     }
     case KIND.FILE_EDIT: {
-      const path = payload.path;
-      if (path) {
+      const values = [payload.path, ...(Array.isArray(payload.paths) ? payload.paths : [])]
+        .filter((path) => typeof path === 'string' && path.length > 0);
+      for (const value of values) {
+        const marker = `/.baton/wt/${w.workerId}/`;
+        const path = value.includes(marker) ? value.slice(value.indexOf(marker) + marker.length)
+          : value.startsWith('/') ? null : value;
+        if (!path) continue;
         w.editedPaths.add(path);
         if (w.brief && Array.isArray(w.brief.pathScope) && w.brief.pathScope.length > 0 && !isInScope(w.brief.pathScope, path)) {
           w.outOfScopePaths.add(path);
@@ -453,8 +440,12 @@ function handleKnownKind(w, kind, payload, event) {
       break;
     }
     case KIND.COMMAND_EXEC: {
-      const sig = `${payload.cmd ?? ''}::${payload.exitCode ?? 0}`;
-      const failed = (payload.exitCode ?? 0) !== 0;
+      const status = payload.status ?? payload.item?.status ?? null;
+      if (status !== null && status !== 'completed') break;
+      const command = payload.command ?? payload.cmd ?? payload.item?.command ?? '';
+      const exitCode = payload.exitCode ?? payload.item?.exitCode ?? 0;
+      const sig = `${command}::${exitCode}`;
+      const failed = exitCode !== 0;
       w.recentActionSignatures.push(sig);
       if (w.recentActionSignatures.length > MAX_ACTION_SIGNATURE_WINDOW) {
         w.recentActionSignatures = w.recentActionSignatures.slice(-MAX_ACTION_SIGNATURE_WINDOW);
