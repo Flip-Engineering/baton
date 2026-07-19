@@ -12,9 +12,11 @@ import { createBrief, createDigest, wrapFact, wrapProse } from './messages.mjs';
 import { parseRouteTupleKey, resolveEffort, routeTupleKey } from './route-tuple.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import {
-  processGroupAlive, processReadyPayload, recoveryProcessAbsentPayload,
+  processAuthorityPayload, processAuthorityState, processGroupAlive, processReadyPayload,
+  reapRecoveredProcessGroup, recoveryProcessAbsentPayload, recoveryProcessReapedPayload,
   validProcessClosedPayload, validProcessReadyPayload, validProcessReapUnconfirmedPayload,
-  validProcessStartedPayload, validRecoveryProcessAbsentPayload,
+  validProcessStartedPayload, validProcessAuthorityPayload, validRecoveryProcessAbsentPayload,
+  validRecoveryProcessReapedPayload,
 } from './process-lifecycle.mjs';
 import { normalizeProviderGovernancePolicy, providerGovernanceRoute, validateProviderGovernanceCard } from './provider-governance.mjs';
 import { normalizePhysicalOwnerId, normalizeSparseCheckoutIdentity, normalizeSparsePaths, sparseCheckoutIdentity } from './worktree.mjs';
@@ -1019,6 +1021,17 @@ export class Coordinator {
     }
 
     this._replay();
+    // A controller-local transport does not survive restart, but a kernel-start-bound process
+    // generation can. Keep every checkout/runtime/capacity lease that generation still owns;
+    // Run stop will close the exact group before these resources become reapable.
+    const recoveredProcessHandles = [...this._workers.values()].filter((handle) => (
+      handle.recoveredProcessAuthority === true
+      && handle.processRef?.state === 'unconfirmed_after_restart'
+      && handle.sessionContext?.ownerTaskId
+    ));
+    const recoveredProcessOwners = recoveredProcessHandles
+      .map((handle) => handle.sessionContext.ownerTaskId);
+    const recoveredProcessWorkers = recoveredProcessHandles.map((handle) => handle.id);
     if (!this._startupRecoveryAuthority) {
       // Phase 91: replay must identify closed preservation receipts before worktree
       // reconciliation. An empty expected set would destroy the exact checkout bound by the
@@ -1033,11 +1046,12 @@ export class Coordinator {
           && handle.sessionContext?.ownerTaskId
           && task && !TERMINAL_TASK_STATUSES.has(task.status);
       }).map((handle) => handle.sessionContext.ownerTaskId);
+      const expectedOwners = [...new Set([...preservedOwners, ...recoveredProcessOwners])];
       if (this._worktrees && typeof this._worktrees.reconcile === 'function') {
-        this._trackStartupCleanup(() => this._worktrees.reconcile(preservedOwners));
+        this._trackStartupCleanup(() => this._worktrees.reconcile(expectedOwners));
       }
       if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') {
-        this._trackStartupCleanup(() => this._runtimeScopes.reconcile([]));
+        this._trackStartupCleanup(() => this._runtimeScopes.reconcile(recoveredProcessWorkers));
       }
     } else {
       const eligible = [...this._workers.values()].filter((handle) => {
@@ -1047,8 +1061,14 @@ export class Coordinator {
           && handle.sessionContext?.ownerTaskId && adapter && cardSupportsSession(adapter.card(), { mode: 'resume' })
           && this._recoveryDispatchRefusal(handle, task) === null;
       });
-      if (this._worktrees && typeof this._worktrees.reconcile === 'function') this._trackStartupCleanup(() => this._worktrees.reconcile(eligible.map((handle) => handle.sessionContext.ownerTaskId)));
-      if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') this._trackStartupCleanup(() => this._runtimeScopes.reconcile(eligible.map((handle) => handle.id)));
+      const expectedOwners = [...new Set([
+        ...eligible.map((handle) => handle.sessionContext.ownerTaskId), ...recoveredProcessOwners,
+      ])];
+      const expectedWorkers = [...new Set([
+        ...eligible.map((handle) => handle.id), ...recoveredProcessWorkers,
+      ])];
+      if (this._worktrees && typeof this._worktrees.reconcile === 'function') this._trackStartupCleanup(() => this._worktrees.reconcile(expectedOwners));
+      if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') this._trackStartupCleanup(() => this._runtimeScopes.reconcile(expectedWorkers));
     }
     this._terminalizeUnattachedCoordinationTasks();
     this._startupCoordinationSnapshot = null;
@@ -1371,13 +1391,44 @@ export class Coordinator {
         dispositions.set(workerId, 'alreadyTerminal');
         return;
       }
-      // A restarted controller cannot safely signal an old PID/PGID because the numeric identity
-      // may have been reused. It may, however, prove that the exact recorded process group is
-      // absent. Persist that observation before releasing the historical process coordinate so
-      // Run-stop replay converges without inventing an adapter acknowledgement.
-      if (handle.currentIncarnation !== true
-        && handle.processRef?.state === 'unconfirmed_after_restart'
-        && !processGroupAlive(handle.processRef.processGroupId)) {
+      // Replay can signal only a generation carrying a durable kernel-start observation that
+      // still matches the group leader. Legacy generations remain absence-only, preserving their
+      // no-PID-reuse behavior. A successful recovered reap is policy-observed closure rather than
+      // a fabricated acknowledgement from the fresh adapter instance.
+      const replayedProcess = handle.currentIncarnation !== true
+        && handle.processRef?.state === 'unconfirmed_after_restart';
+      const replayedAuthorityState = replayedProcess
+        ? processAuthorityState(handle.processRef, handle.processAuthority) : 'unavailable';
+      if (replayedProcess && handle.recoveredProcessAuthority === true
+        && replayedAuthorityState === 'active') {
+        const reaped = await reapRecoveredProcessGroup(handle.processRef, handle.processAuthority, {
+          timeoutMs: Math.max(1, Math.min(this._stopDeadlineMs, deadline - Date.now())),
+        });
+        if (reaped.confirmed && reaped.signaled) {
+          const closed = this._log.append({
+            worker: handle.id,
+            harness: handle.vendor ? this._harnessOf(handle.vendor) : '',
+            turnEpoch: this._safeTurnEpoch(handle),
+            kind: 'control.recovery_process_reaped',
+            actor: 'policy',
+            ...this._routeAttribution(handle, task),
+            payload: recoveryProcessReapedPayload(handle.processRef, handle.processAuthority),
+          });
+          this._coordMapEvent(closed);
+          handle.processRef = { ...handle.processRef, state: 'closed', closedSeq: closed.seq };
+          handle.recoveredProcessAuthority = false;
+          handle.status = 'dead';
+          const runtimeRemoved = this._removeRuntimeScope(handle);
+          await this._removeOwnedTaskWorktree(handle, task);
+          if (!runtimeRemoved) return;
+          handle.localAuthority = false;
+          dispositions.set(workerId, 'killConfirmed');
+          return;
+        }
+      }
+      if (replayedProcess
+        && (replayedAuthorityState === 'absent'
+          || !processGroupAlive(handle.processRef.processGroupId))) {
         const absent = this._log.append({
           worker: handle.id,
           harness: handle.vendor ? this._harnessOf(handle.vendor) : '',
@@ -1389,6 +1440,7 @@ export class Coordinator {
         });
         this._coordMapEvent(absent);
         handle.processRef = { ...handle.processRef, state: 'closed', closedSeq: absent.seq };
+        handle.recoveredProcessAuthority = false;
         handle.status = 'dead';
         const runtimeRemoved = this._removeRuntimeScope(handle);
         await this._removeOwnedTaskWorktree(handle, task);
@@ -1484,7 +1536,9 @@ export class Coordinator {
       terminalKind: null, terminalSeq: null,
     } : {
       state: processTerminal?.kind === 'control.recovery_process_absent'
-        ? 'absent_after_restart' : 'closed',
+        ? 'absent_after_restart'
+        : processTerminal?.kind === 'control.recovery_process_reaped'
+          ? 'reaped_after_restart' : 'closed',
       generation: handle.processRef.generation,
       pid: handle.processRef.pid,
       processGroupId: handle.processRef.processGroupId,
@@ -1537,7 +1591,9 @@ export class Coordinator {
 
   _ownsLocalResources(handle) {
     if (!handle) return false;
-    const processOwned = handle.currentIncarnation === true && handle.processRef && handle.processRef.state !== 'closed';
+    const processOwned = (handle.currentIncarnation === true
+      || handle.recoveredProcessAuthority === true)
+      && handle.processRef && handle.processRef.state !== 'closed';
     const worktreeOwned = handle.ownedWorktreeAuthority === true && !!handle.worktree;
     return handle.localAuthority === true || processOwned || handle.runtimeScope?.active === true || worktreeOwned
       || handle.worktreeCreationPending === true || handle.nativeSpawnPending === true
@@ -3120,6 +3176,8 @@ export class Coordinator {
       recoveryProviderReleaseDeferred: false,
       processGeneration: 0,
       processRef: null,
+      processAuthority: null,
+      recoveredProcessAuthority: false,
       cleanupPending: false,
       cleanupPromise: null,
       cleanupAfterVerification: false,
@@ -3180,7 +3238,9 @@ export class Coordinator {
         watchdogGeneration: 0, watchdogTimer: null, runtimeScope: null, runtimeLease: null,
         spawnAbort: null, recoverySpawnAbort: null, recoverySpawnPending: false, recoverySpawnPromise: null, recoveryStopReason: null,
         recoveryProviderReleaseDeferred: false,
-        processGeneration: 0, processRef: null, cleanupPending: false, cleanupPromise: null, cleanupAfterVerification: false, createdAt: new Date(0).toISOString(),
+        processGeneration: 0, processRef: null, processAuthority: null,
+        recoveredProcessAuthority: false, cleanupPending: false, cleanupPromise: null,
+        cleanupAfterVerification: false, createdAt: new Date(0).toISOString(),
         currentIncarnation: false, ownedWorktreeAuthority: false, localAuthority: false,
       });
       const match = /^w-(\d+)$/.exec(workerId);
@@ -8372,6 +8432,24 @@ export class Coordinator {
       if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
       return;
     }
+    if (actor === 'worker'
+      && ['lifecycle.turn_completed', 'lifecycle.crashed', 'lifecycle.exited'].includes(kind)
+      && handle.currentIncarnation !== true
+      && ['closed', 'unconfirmed_after_restart'].includes(handle.processRef?.state)) {
+      // Once controller recovery seals a historical process generation, its detached transport
+      // may no longer contribute a terminal result. Exact process close/reap remains admissible,
+      // but late provider completion is fenced before checkout or task state can be consulted.
+      this._log.append({
+        worker: workerId, harness: this._harnessOf(handle.vendor),
+        turnEpoch: this._safeTurnEpoch(handle), kind: 'control.stale_rejected', actor: 'policy',
+        ...this._routeAttribution(handle),
+        payload: {
+          op: 'terminal', reason: 'recovered_process_generation_sealed',
+          processGeneration: handle.processRef.generation,
+        },
+      });
+      return;
+    }
     if (actor === 'worker' && !this._worktreeAuthorityAvailable(handle)) {
       this._failWorktreeAuthority(handle);
       // Process-terminal observations must still close exact process authority. All other
@@ -8623,6 +8701,8 @@ export class Coordinator {
             // that boundary while this controller can still observe it, reacquire exact transport
             // ownership and require another two-phase kill plus correlated process close.
             handle.processRef = { generation: payload.generation, pid: payload.pid, processGroupId: payload.processGroupId, state: 'initializing', ready: false, startedSeq: null, closedSeq: null };
+            handle.processAuthority = null;
+            handle.recoveredProcessAuthority = false;
             handle.localAuthority = true;
             this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
           } else if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
@@ -8630,6 +8710,16 @@ export class Coordinator {
         }
         const started = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
         handle.processRef = { generation: payload.generation, pid: payload.pid, processGroupId: payload.processGroupId, state: 'initializing', ready: false, startedSeq: started.seq, closedSeq: null };
+        handle.processAuthority = null;
+        handle.recoveredProcessAuthority = false;
+        const authorityPayload = processAuthorityPayload(handle.processRef);
+        if (authorityPayload) {
+          appendAttributed({
+            worker: workerId, harness, turnEpoch,
+            kind: 'lifecycle.process_authority', actor: 'policy', payload: authorityPayload,
+          });
+          handle.processAuthority = { ...authorityPayload };
+        }
         break;
       }
       case 'lifecycle.process_closed': {
@@ -8647,6 +8737,7 @@ export class Coordinator {
         const closed = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
         const preservationLost = handle.sessionPreservation?.state === 'preserved';
         handle.processRef = { ...current, state: 'closed', ready: payload.ready, closedSeq: closed.seq };
+        handle.recoveredProcessAuthority = false;
         if (preservationLost) {
           const task = this._tasks.get(handle.taskId);
           handle.sessionPreservation = null;
@@ -9340,6 +9431,7 @@ export class Coordinator {
       let sessionRef = null;
       let processGeneration = 0;
       let processRef = null;
+      let processAuthority = null;
       let sessionContext = null;
       let lineage = null;
       let capturedSha = null;
@@ -9389,6 +9481,16 @@ export class Coordinator {
             if (validProcessStartedPayload(e.payload) && e.payload.generation > processGeneration) {
               processGeneration = e.payload.generation;
               processRef = { generation: e.payload.generation, pid: e.payload.pid, processGroupId: e.payload.processGroupId, state: 'initializing', ready: false, startedSeq: e.seq, closedSeq: null };
+              processAuthority = null;
+            }
+            break;
+          case 'lifecycle.process_authority':
+            if (e.actor === 'policy' && validProcessAuthorityPayload(e.payload)
+              && ['initializing', 'ready'].includes(processRef?.state)
+              && e.payload.generation === processRef.generation
+              && e.payload.pid === processRef.pid
+              && e.payload.processGroupId === processRef.processGroupId) {
+              processAuthority = { ...e.payload };
             }
             break;
           case 'lifecycle.process_closed':
@@ -9413,6 +9515,17 @@ export class Coordinator {
               && e.payload.generation === processRef.generation
               && e.payload.pid === processRef.pid
               && e.payload.processGroupId === processRef.processGroupId) {
+              processRef = { ...processRef, state: 'closed', closedSeq: e.seq };
+            }
+            break;
+          case 'control.recovery_process_reaped':
+            if (e.actor === 'policy' && validRecoveryProcessReapedPayload(e.payload)
+              && validProcessAuthorityPayload(processAuthority)
+              && ['initializing', 'ready', 'unconfirmed_after_restart'].includes(processRef?.state)
+              && e.payload.generation === processRef.generation
+              && e.payload.pid === processRef.pid
+              && e.payload.processGroupId === processRef.processGroupId
+              && e.payload.pidStart === processAuthority.pidStart) {
               processRef = { ...processRef, state: 'closed', closedSeq: e.seq };
             }
             break;
@@ -9949,6 +10062,8 @@ export class Coordinator {
       }
 
       if (processRef && ['initializing', 'ready'].includes(processRef.state)) processRef = { ...processRef, state: 'unconfirmed_after_restart' };
+      const recoveredProcessAuthority = processRef?.state === 'unconfirmed_after_restart'
+        && processAuthorityState(processRef, processAuthority) === 'active';
       this._workers.set(workerId, {
         id: workerId,
         runId: this._coordination?.task(taskId)?.runId ?? runId ?? null,
@@ -10011,11 +10126,14 @@ export class Coordinator {
         recoveryProviderReleaseDeferred: false,
         processGeneration,
         processRef,
+        processAuthority,
+        recoveredProcessAuthority,
         cleanupPending: false,
         cleanupPromise: null,
         cleanupAfterVerification: false,
         currentIncarnation: false,
-        ownedWorktreeAuthority: false,
+        ownedWorktreeAuthority: recoveredProcessAuthority
+          && typeof sessionContext?.worktree === 'string',
         localAuthority: false,
         createdAt: new Date(0).toISOString(),
       });

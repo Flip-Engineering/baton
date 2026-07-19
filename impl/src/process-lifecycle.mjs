@@ -1,7 +1,11 @@
+import { execFileSync } from 'node:child_process';
+
 const START_KEYS = ['generation', 'phase', 'pid', 'processGroupId', 'schemaVersion'];
 const CLOSE_KEYS = ['code', 'generation', 'pid', 'processGroupId', 'ready', 'schemaVersion', 'signal'];
 const READY_KEYS = ['generation', 'pid', 'processGroupId', 'schemaVersion'];
 const REAP_UNCONFIRMED_KEYS = ['generation', 'pid', 'processGroupId', 'reason', 'schemaVersion'];
+const AUTHORITY_KEYS = ['generation', 'pid', 'pidStart', 'processGroupId', 'schemaVersion'];
+const RECOVERY_REAPED_KEYS = ['generation', 'pid', 'pidStart', 'processGroupId', 'reason', 'schemaVersion'];
 
 const exactKeys = (value, expected) => value && typeof value === 'object' && !Array.isArray(value)
   && Object.keys(value).sort().join('\0') === [...expected].sort().join('\0');
@@ -15,6 +19,65 @@ export function processGroupAlive(processGroupId) {
   } catch (error) {
     return error?.code !== 'ESRCH';
   }
+}
+
+/**
+ * Bind a detached group leader to the kernel-observed start of that exact PID. PID/PGID
+ * liveness alone is not restart-safe because the numeric coordinate can be reused. `ps lstart`
+ * is also the writer-lease incarnation primitive used by coordination-store; keeping this
+ * observation here lets every new process generation carry the same cross-controller fence
+ * without exposing it on public worker projections.
+ */
+export function observeProcessGroupIdentity(processGroupId, opts = {}) {
+  if (!positiveSafe(processGroupId)) return null;
+  const execute = opts.execFileSync ?? execFileSync;
+  let value;
+  try {
+    value = execute('/bin/ps', ['-o', 'pid=,pgid=,lstart=', '-p', String(processGroupId)], {
+      encoding: 'utf8', maxBuffer: 4_096, stdio: ['ignore', 'pipe', 'ignore'], timeout: 1_000,
+    }).trim();
+  } catch { return null; }
+  const match = /^(\d+)\s+(\d+)\s+(.+)$/u.exec(value);
+  if (!match || Number(match[1]) !== processGroupId || Number(match[2]) !== processGroupId) return null;
+  const pidStart = match[3].trim();
+  if (!pidStart || Buffer.byteLength(pidStart) > 256 || pidStart.includes('\0')) return null;
+  return Object.freeze({ pid: processGroupId, processGroupId, pidStart });
+}
+
+export function processAuthorityPayload(processRef, opts = {}) {
+  if (!processRef || !positiveSafe(processRef.generation) || !positiveSafe(processRef.pid)
+    || processRef.processGroupId !== processRef.pid) return null;
+  const identity = observeProcessGroupIdentity(processRef.processGroupId, opts);
+  if (!identity) return null;
+  return {
+    schemaVersion: 1,
+    generation: processRef.generation,
+    pid: processRef.pid,
+    processGroupId: processRef.processGroupId,
+    pidStart: identity.pidStart,
+  };
+}
+
+export function validProcessAuthorityPayload(payload) {
+  return exactKeys(payload, AUTHORITY_KEYS)
+    && payload.schemaVersion === 1
+    && positiveSafe(payload.generation)
+    && positiveSafe(payload.pid)
+    && payload.processGroupId === payload.pid
+    && typeof payload.pidStart === 'string'
+    && payload.pidStart.length > 0
+    && Buffer.byteLength(payload.pidStart) <= 256
+    && !payload.pidStart.includes('\0');
+}
+
+export function processAuthorityState(processRef, authority, opts = {}) {
+  if (!processRef || !validProcessAuthorityPayload(authority)
+    || authority.generation !== processRef.generation
+    || authority.pid !== processRef.pid
+    || authority.processGroupId !== processRef.processGroupId) return 'unavailable';
+  const identity = observeProcessGroupIdentity(processRef.processGroupId, opts);
+  if (!identity) return processGroupAlive(processRef.processGroupId) ? 'unknown' : 'absent';
+  return identity.pidStart === authority.pidStart ? 'active' : 'mismatch';
 }
 
 function probeProcessGroup(processGroupId, probe) {
@@ -56,6 +119,19 @@ export async function reapOwnedProcessGroup(processGroupId, opts = {}) {
     await sleep(pollMs);
   }
   return Object.freeze({ confirmed: false, reason: observed.reason === 'probe_error' ? 'probe_error' : 'deadline' });
+}
+
+/** Signal only a replayed group whose kernel start identity still matches durable authority. */
+export async function reapRecoveredProcessGroup(processRef, authority, opts = {}) {
+  const state = processAuthorityState(processRef, authority, opts);
+  if (state === 'absent') {
+    return Object.freeze({ confirmed: true, signaled: false, reason: 'absent' });
+  }
+  if (state !== 'active') {
+    return Object.freeze({ confirmed: false, signaled: false, reason: state });
+  }
+  const reaped = await reapOwnedProcessGroup(processRef.processGroupId, opts);
+  return Object.freeze({ ...reaped, signaled: true });
 }
 
 export function normalizeProcessGeneration(value) {
@@ -108,6 +184,17 @@ export function recoveryProcessAbsentPayload(processRef) {
   };
 }
 
+export function recoveryProcessReapedPayload(processRef, authority) {
+  return {
+    schemaVersion: 1,
+    generation: processRef?.generation,
+    pid: processRef?.pid,
+    processGroupId: processRef?.processGroupId,
+    pidStart: authority?.pidStart,
+    reason: 'process_group_reaped',
+  };
+}
+
 export function validRecoveryProcessAbsentPayload(payload) {
   return exactKeys(payload, ['generation', 'pid', 'processGroupId', 'reason', 'schemaVersion'])
     && payload.schemaVersion === 1
@@ -115,6 +202,19 @@ export function validRecoveryProcessAbsentPayload(payload) {
     && positiveSafe(payload.pid)
     && payload.processGroupId === payload.pid
     && payload.reason === 'process_group_absent';
+}
+
+export function validRecoveryProcessReapedPayload(payload) {
+  return exactKeys(payload, RECOVERY_REAPED_KEYS)
+    && payload.schemaVersion === 1
+    && positiveSafe(payload.generation)
+    && positiveSafe(payload.pid)
+    && payload.processGroupId === payload.pid
+    && typeof payload.pidStart === 'string'
+    && payload.pidStart.length > 0
+    && Buffer.byteLength(payload.pidStart) <= 256
+    && !payload.pidStart.includes('\0')
+    && payload.reason === 'process_group_reaped';
 }
 
 export function validProcessStartedPayload(payload) {

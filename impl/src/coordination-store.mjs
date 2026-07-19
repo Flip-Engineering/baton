@@ -52,6 +52,7 @@ import {
 import { pathInScopes } from './path-scope.mjs';
 import {
   validProcessClosedPayload, validProcessStartedPayload, validRecoveryProcessAbsentPayload,
+  validRecoveryProcessReapedPayload,
 } from './process-lifecycle.mjs';
 
 function writerProcessStartIdentity(pid) {
@@ -6035,18 +6036,21 @@ export class CoordinationStore {
         return fail('task resource-release invented a process-free state');
       }
     } else {
-      if (!['closed', 'absent_after_restart'].includes(release.process.state)
+      if (!['closed', 'absent_after_restart', 'reaped_after_restart'].includes(release.process.state)
         || !Number.isSafeInteger(release.process.generation) || release.process.generation <= 0
         || !Number.isSafeInteger(release.process.pid) || release.process.pid <= 0
         || !Number.isSafeInteger(release.process.processGroupId)
         || release.process.processGroupId !== release.process.pid
         || !Number.isSafeInteger(release.process.terminalSeq)
-        || !['lifecycle.process_closed', 'control.recovery_process_absent']
+        || !['lifecycle.process_closed', 'control.recovery_process_absent',
+          'control.recovery_process_reaped']
           .includes(release.process.terminalKind)
         || (release.process.state === 'closed'
           && release.process.terminalKind !== 'lifecycle.process_closed')
         || (release.process.state === 'absent_after_restart'
-          && release.process.terminalKind !== 'control.recovery_process_absent')) {
+          && release.process.terminalKind !== 'control.recovery_process_absent')
+        || (release.process.state === 'reaped_after_restart'
+          && release.process.terminalKind !== 'control.recovery_process_reaped')) {
         return fail('task resource-release process proof is invalid');
       }
       const terminal = prefix.find((row) => row.seq === release.process.terminalSeq);
@@ -6062,7 +6066,9 @@ export class CoordinationStore {
         ? 'worker' : 'policy';
       const terminalPayloadValid = release.process.terminalKind === 'lifecycle.process_closed'
         ? validProcessClosedPayload(terminal?.payload)
-        : validRecoveryProcessAbsentPayload(terminal?.payload);
+        : release.process.terminalKind === 'control.recovery_process_absent'
+          ? validRecoveryProcessAbsentPayload(terminal?.payload)
+          : validRecoveryProcessReapedPayload(terminal?.payload);
       if (!started || started.actor !== 'worker'
         || started.worker !== payload.workerId
         || started.taskId !== task.id || started.runId !== task.runId

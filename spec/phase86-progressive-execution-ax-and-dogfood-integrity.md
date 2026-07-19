@@ -50,10 +50,13 @@ the numeric guard that rejected it.
 
 ## PX2 — Restart-safe exact Run stop
 
-A process observed before controller restart is not signaled by numeric PID/PGID after restart.
-When the exact historical process group can be proven absent, Baton appends one durable
-`control.recovery_process_absent`, closes the process coordinate, idempotently releases the exact
-owned runtime/worktree, and returns a stop receipt with equal observed/closed process counts.
+A process observed before controller restart is not signaled by numeric PID/PGID alone. When its
+generation carries a durable PID/group plus kernel-start binding and a fresh observation matches,
+one recovered stop may reap that exact group, append `control.recovery_process_reaped`, and only
+then release its runtime/worktree. Without that authority, the compatibility path remains
+absence-only: once the historical group is proven absent Baton appends one durable
+`control.recovery_process_absent` and performs the same ordered release. Both paths return a stop
+receipt with equal observed/closed process counts.
 
 The absence transition depends on `currentIncarnation !== true` and
 `processRef.state === unconfirmed_after_restart`, not on a transient derived worker status. A
@@ -63,7 +66,7 @@ recorded, and restart B performs the stop after the provider exits.
 
 Acceptance evidence must include the original interrupted dogfood Run IDs, `remainingCount: 0`,
 `processesObserved === processesClosed`, zero workers after application close, and no signal sent
-to an unverified reused process identity.
+to an unverified, legacy, or reused process identity.
 
 ## PX3 — Atomic result publication without ambient PATH authority
 

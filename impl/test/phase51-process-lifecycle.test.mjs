@@ -15,7 +15,10 @@ import { FenceTable } from '../src/fence.mjs';
 import { coordinationForLog } from '../src/coordination-store.mjs';
 import { WebNorthbound } from '../src/web-northbound.mjs';
 import { McpFleetServer } from '../src/mcp-northbound.mjs';
-import { reapOwnedProcessGroup } from '../src/process-lifecycle.mjs';
+import {
+  processAuthorityPayload, processAuthorityState, reapOwnedProcessGroup,
+  reapRecoveredProcessGroup,
+} from '../src/process-lifecycle.mjs';
 
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const FAKE_CODEX = fileURLToPath(new URL('./fixtures/fake-codex-appserver.mjs', import.meta.url));
@@ -330,6 +333,36 @@ test('PL7/PL10: process-group reap is bounded and never fabricates exact close o
     signal: () => {},
   });
   assert.deepEqual(denied, { confirmed: false, reason: 'permission_denied' });
+});
+
+test('PL8: recovered signaling requires the exact durable PID-start authority', async () => {
+  const processRef = { generation: 7, pid: 4242, processGroupId: 4242 };
+  const execFileSync = () => '4242 4242 Sun Jul 19 13:53:51 2026\n';
+  const authority = processAuthorityPayload(processRef, { execFileSync });
+  assert.deepEqual(authority, {
+    schemaVersion: 1, generation: 7, pid: 4242, processGroupId: 4242,
+    pidStart: 'Sun Jul 19 13:53:51 2026',
+  });
+  assert.equal(processAuthorityState(processRef, authority, { execFileSync }), 'active');
+
+  let signals = 0;
+  const mismatched = { ...authority, pidStart: 'Sun Jul 19 13:53:52 2026' };
+  assert.deepEqual(await reapRecoveredProcessGroup(processRef, mismatched, {
+    execFileSync, signal: () => { signals += 1; }, probe: () => {},
+  }), { confirmed: false, signaled: false, reason: 'mismatch' });
+  assert.equal(signals, 0, 'a reused or mismatched process coordinate is never signaled');
+
+  let probes = 0;
+  assert.deepEqual(await reapRecoveredProcessGroup(processRef, authority, {
+    execFileSync,
+    signal: (target, signal) => { signals += 1; assert.equal(target, -4242); assert.equal(signal, 'SIGKILL'); },
+    probe: () => {
+      probes += 1;
+      if (probes > 1) { const error = new Error('gone'); error.code = 'ESRCH'; throw error; }
+    },
+    sleep: async () => {},
+  }), { confirmed: true, signaled: true, reason: null });
+  assert.equal(signals, 1);
 });
 
 test('PL2/PL3: provider readiness requires the exact active initializing generation', async () => {

@@ -133,14 +133,18 @@ Replay reconstructs the latest exact process generation and its start/ready/clos
 transactional recovery/follow-up admission, a sanitized policy-origin `lifecycle.process_ready`
 event persists only generation/PID/group readiness; provider session identity stays buffered until
 admission succeeds. A started generation without a durable close becomes
-`unconfirmed_after_restart`, never live merely because its historical PID is present. Its
-historical `ready` bit remains available for exact late-close correlation without claiming a live
-transport. Native reattachment allocates generation+1, must still be open when admission commits,
-and must close independently. Stale close from generation N cannot affect generation N+1, and
-rejected recovery identity cannot pivot the durable session reference.
+`unconfirmed_after_restart`, never live merely because its historical PID is present. A durable
+policy observation binding generation, PID/group, and the kernel process-start identity may retain
+that exact generation's resource ownership while the same group lives. A recovered stop may signal
+only while a fresh kernel observation matches the binding; missing, mismatched, or legacy authority
+remains absence-only. Its historical `ready` bit remains available for exact late-close correlation
+without claiming a live provider transport. Native reattachment allocates generation+1, must still
+be open when admission commits, and must close independently. Stale close from generation N cannot
+affect generation N+1, and rejected recovery identity cannot pivot the durable session reference.
 
 Process events remain operational evidence; they do not invent a live transport after restart.
-The existing native session-recovery handshake remains the only authority to regain control.
+Native session recovery remains the only authority to resume provider interaction; the narrower
+kernel-start binding authorizes only process-group reap and ordered resource cleanup.
 
 ### PL9 — adapter parity and legacy honesty
 
