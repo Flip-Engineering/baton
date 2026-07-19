@@ -58,11 +58,17 @@ absence-only: once the historical group is proven absent Baton appends one durab
 `control.recovery_process_absent` and performs the same ordered release. Both paths return a stop
 receipt with equal observed/closed process counts.
 
+If startup itself proves one or more replayable exact groups absent, the first recovered controller
+must record each absence closure and finish worktree/runtime/capacity reconciliation before the
+application becomes usable. It must not require a second `openBaton` pass merely because the first
+pass also terminalized unattached coordination tasks. The policy-authored absence fact is truthful
+closure evidence; it does not impersonate `lifecycle.process_closed` from a dead transport.
+
 The absence transition depends on `currentIncarnation !== true` and
 `processRef.state === unconfirmed_after_restart`, not on a transient derived worker status. A
-replayed `control.recovery_terminalized` remains an orphaned/unattached session. This must converge
-across the crash gap in which restart A terminalizes the task, exits before process absence can be
-recorded, and restart B performs the stop after the provider exits.
+replayed `control.recovery_terminalized` remains an orphaned/unattached session. A later provider
+exit still converges through Run stop, while a provider already absent at startup converges during
+that same startup pass.
 
 Acceptance evidence must include the original interrupted dogfood Run IDs, `remainingCount: 0`,
 `processesObserved === processesClosed`, zero workers after application close, and no signal sent

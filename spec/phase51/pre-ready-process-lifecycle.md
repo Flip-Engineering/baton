@@ -142,6 +142,13 @@ without claiming a live provider transport. Native reattachment allocates genera
 be open when admission commits, and must close independently. Stale close from generation N cannot
 affect generation N+1, and rejected recovery identity cannot pivot the durable session reference.
 
+When a fresh startup observation proves that a replayable exact authority is already absent,
+startup itself appends `control.recovery_process_absent`, folds the generation closed, and completes
+worktree/runtime/capacity reconciliation before exposing the application. Multiple absent owned
+generations converge in that same bounded pass. Restart absence never fabricates worker-origin
+`lifecycle.process_closed`; an ambiguous, mismatched, permission-blocked, or still-live group keeps
+the existing fail-closed disposition.
+
 Process events remain operational evidence; they do not invent a live transport after restart.
 Native session recovery remains the only authority to resume provider interaction; the narrower
 kernel-start binding authorizes only process-group reap and ordered resource cleanup.
@@ -218,6 +225,9 @@ behavioral fingerprints, or conditional e-graph research. Every item remains in 
    emergency kill can obtain a late exact close and finish cleanup.
 10. Recovery that observes the expected provider identity but closes before commit is refused;
     rejected recovery persists only sanitized readiness and cannot rewrite session identity.
+11. One deployment restart with two already-dead exact generations and two stale worktrees records
+    one truthful absence closure per generation, becomes usable without a retry, and leaves no
+    process/worktree/runtime/capacity/writer residue after Run stop and close.
 
 ## Acceptance gate
 

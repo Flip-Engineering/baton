@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-import { BatonApplication, GlmSessionCli, createDriver } from '../src/index.mjs';
+import { BatonApplication, GlmSessionCli, createDriver, openBaton } from '../src/index.mjs';
 import { processGroupAlive } from '../src/process-lifecycle.mjs';
 
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
@@ -282,4 +284,119 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
   assert.equal(closed.receipt.capacity.ownedReservations, 0);
   assert.equal(recoveredDriver.coordination._writerLease, null);
   assert.equal(existsSync(join(logDir, 'coordination', 'writer.lease')), false);
+});
+
+test('issue 5: one deployment startup terminalizes two already-dead owned generations and reaps all stale resources', async (t) => {
+  const world = mkdtempSync(join(tmpdir(), 'baton-issue5-dead-generations-'));
+  const repo = join(world, 'repo');
+  const deploymentRoot = join(world, 'deployment');
+  mkdirSync(repo);
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'issue5@example.invalid'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Issue 5 Fixture'], { cwd: repo });
+  writeFileSync(join(repo, 'base.txt'), 'base\n');
+  execFileSync('git', ['add', 'base.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+
+  let recovered = null;
+  const ownedPids = [];
+  const deploymentRoute = Object.freeze({
+    harness: 'glm-via-claude-session', model: route.model, effort: route.effort,
+  });
+  t.after(async () => {
+    for (const pid of ownedPids) {
+      if (!processGroupAlive(pid)) continue;
+      try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ }
+    }
+    try { await recovered?.close(); } catch { /* assertions retain the primary failure */ }
+    rmSync(world, { recursive: true, force: true });
+  });
+
+  const moduleUrl = new URL('../src/index.mjs', import.meta.url).href;
+  const seed = [
+    `const { GlmSessionCli, openBaton } = await import(${JSON.stringify(moduleUrl)});`,
+    `const route = ${JSON.stringify(deploymentRoute)};`,
+    `const adapter = new GlmSessionCli({ cmd: process.execPath, args: [${JSON.stringify(FAKE_CLAUDE)}], authToken: 'fixture-only', model: route.model, killGraceMs: 20, versionProbe: () => '1.0.0' });`,
+    `const card = adapter.card.bind(adapter); adapter.card = () => ({ ...card(), concurrencyCeiling: 2 });`,
+    `const deployment = await openBaton({ repo: ${JSON.stringify(repo)}, advanced: { deploymentRoot: ${JSON.stringify(deploymentRoot)}, routes: [route], adapters: { [route.harness]: adapter }, verification: { command: 'true', arguments: [] } } });`,
+    `const group = await deployment.startMany([`,
+    `  { runId: 'run-issue5-dead-a', objective: 'HOLD_UNTIL_INTERRUPT dead generation A', exact: route },`,
+    `  { runId: 'run-issue5-dead-b', objective: 'HOLD_UNTIL_INTERRUPT dead generation B', exact: route },`,
+    `]);`,
+    `await Promise.all(group.runs.map((run) => run.approve()));`,
+    `const deadline = Date.now() + 5000;`,
+    `while ([...adapter._sessions.values()].filter((session) => session.spawnedEmitted && !session.terminal).length !== 2) {`,
+    `  if (Date.now() >= deadline) throw new Error('seed providers did not become ready');`,
+    `  await new Promise((resolve) => setTimeout(resolve, 10));`,
+    `}`,
+    `process.stdout.write(JSON.stringify({ runs: group.runs.map((run) => run.id), sessions: [...adapter._sessions.values()].map((session) => ({ workerId: session.worker, pid: session.pid, generation: session.processGeneration })) }));`,
+    `process.exit(0);`,
+  ].join('\n');
+  const seeded = JSON.parse(execFileSync(process.execPath, [
+    '--input-type=module', '--eval', seed,
+  ], { encoding: 'utf8' }));
+  assert.equal(seeded.sessions.length, 2);
+  assert.deepEqual(seeded.runs, ['run-issue5-dead-a', 'run-issue5-dead-b']);
+  for (const { pid } of seeded.sessions) {
+    ownedPids.push(pid);
+    assert.equal(processGroupAlive(pid), true);
+    process.kill(-pid, 'SIGKILL');
+  }
+  await until(() => seeded.sessions.every(({ pid }) => !processGroupAlive(pid)),
+    'both seeded process groups to be absent');
+
+  const staleWorktrees = readdirSync(join(repo, '.baton', 'wt'))
+    .filter((name) => !name.includes('.'));
+  assert.equal(staleWorktrees.length, 2);
+  assert.equal(readdirSync(join(deploymentRoot, 'runtime')).length, 2);
+
+  const recoveredAdapter = adapter();
+  const recoveredCard = recoveredAdapter.card.bind(recoveredAdapter);
+  recoveredAdapter.card = () => ({ ...recoveredCard(), version: '1.0.0', concurrencyCeiling: 2 });
+  recovered = await openBaton({
+    repo,
+    advanced: {
+      deploymentRoot,
+      routes: [deploymentRoute],
+      adapters: { [deploymentRoute.harness]: recoveredAdapter },
+      verification: { command: 'true', arguments: [] },
+    },
+  });
+
+  const readiness = await recovered.doctor();
+  assert.equal(readiness.routes.find((candidate) => (
+    candidate.harness === deploymentRoute.harness
+  )).state, 'ready', 'the first recovered deployment is immediately usable');
+  assert.deepEqual(readdirSync(join(deploymentRoot, 'runtime')), []);
+  assert.equal(execFileSync('git', ['worktree', 'list', '--porcelain'], {
+    cwd: repo, encoding: 'utf8',
+  }).split('\n').filter((line) => line.startsWith('worktree ')).length, 1);
+  const capacity = JSON.parse(readFileSync(
+    join(repo, '.baton', 'capacity', 'reservations.json'), 'utf8',
+  ));
+  assert.deepEqual(capacity.reservations, []);
+  for (const { workerId, pid, generation } of seeded.sessions) {
+    const events = readFileSync(join(
+      deploymentRoot, 'state', `${workerId}.jsonl`,
+    ), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    assert.equal(events.filter((event) => event.kind === 'control.recovery_terminalized').length, 1);
+    const absent = events.filter((event) => event.kind === 'control.recovery_process_absent');
+    assert.equal(absent.length, 1);
+    assert.deepEqual({
+      generation: absent[0].payload.generation,
+      pid: absent[0].payload.pid,
+      processGroupId: absent[0].payload.processGroupId,
+    }, { generation, pid, processGroupId: pid });
+    assert.equal(events.some((event) => event.kind === 'lifecycle.process_closed'), false,
+      'restart absence is policy-observed closure, never a fabricated worker close');
+  }
+  for (const runId of seeded.runs) {
+    const stopped = await recovered.runs.open(runId).stop('Converge recovered dead ownership.');
+    assert.equal(stopped.outline.phase, 'stopped');
+  }
+
+  const closed = await recovered.close();
+  assert.deepEqual(closed.ownership, { workers: 0, workerIds: [], closed: true });
+  recovered = null;
+  assert.equal(existsSync(join(deploymentRoot, 'state', 'coordination', 'writer.lease')), false);
 });

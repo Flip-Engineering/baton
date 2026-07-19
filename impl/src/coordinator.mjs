@@ -1021,6 +1021,29 @@ export class Coordinator {
     }
 
     this._replay();
+    // An exact durable process authority can also prove that its group is already absent. Close
+    // that generation now, before generic worktree/runtime reconciliation, so this controller's
+    // first usable state agrees with the cleanup it is about to expose. This is policy-observed
+    // restart absence, never a fabricated worker-origin process_closed event.
+    const absentRecoveredProcessHandles = [...this._workers.values()].filter((handle) => (
+      handle.processRef?.state === 'unconfirmed_after_restart'
+      && processAuthorityState(handle.processRef, handle.processAuthority) === 'absent'
+    ));
+    for (const handle of absentRecoveredProcessHandles) {
+      const task = this._tasks.get(handle.taskId);
+      const absent = this._log.append({
+        worker: handle.id,
+        harness: handle.vendor ? this._harnessOf(handle.vendor) : '',
+        turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'control.recovery_process_absent',
+        actor: 'policy',
+        ...this._routeAttribution(handle, task),
+        payload: recoveryProcessAbsentPayload(handle.processRef),
+      });
+      this._coordMapEvent(absent);
+      handle.processRef = { ...handle.processRef, state: 'closed', closedSeq: absent.seq };
+      handle.recoveredProcessAuthority = false;
+    }
     // A controller-local transport does not survive restart, but a kernel-start-bound process
     // generation can. Keep every checkout/runtime/capacity lease that generation still owns;
     // Run stop will close the exact group before these resources become reapable.
@@ -1032,6 +1055,33 @@ export class Coordinator {
     const recoveredProcessOwners = recoveredProcessHandles
       .map((handle) => handle.sessionContext.ownerTaskId);
     const recoveredProcessWorkers = recoveredProcessHandles.map((handle) => handle.id);
+    const reconcileStartupResources = (expectedOwners, expectedWorkers) => {
+      const reconciliations = [];
+      if (this._worktrees && typeof this._worktrees.reconcile === 'function') {
+        reconciliations.push(this._trackStartupCleanup(
+          () => this._worktrees.reconcile(expectedOwners),
+        ));
+      }
+      if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') {
+        reconciliations.push(this._trackStartupCleanup(
+          () => this._runtimeScopes.reconcile(expectedWorkers),
+        ));
+      }
+      if (absentRecoveredProcessHandles.length > 0) {
+        this._trackStartupCleanup(() => Promise.all(reconciliations).then(() => {
+          if (this._startupCleanupError) throw this._startupCleanupError;
+          for (const handle of absentRecoveredProcessHandles) {
+            handle.worktree = null;
+            handle.ownedWorktreeAuthority = false;
+            handle.runtimeLease = null;
+            if (handle.runtimeScope) handle.runtimeScope = { ...handle.runtimeScope, active: false };
+            handle.cleanupPending = false;
+            handle.cleanupError = null;
+            handle.localAuthority = false;
+          }
+        }));
+      }
+    };
     if (!this._startupRecoveryAuthority) {
       // Phase 91: replay must identify closed preservation receipts before worktree
       // reconciliation. An empty expected set would destroy the exact checkout bound by the
@@ -1047,12 +1097,7 @@ export class Coordinator {
           && task && !TERMINAL_TASK_STATUSES.has(task.status);
       }).map((handle) => handle.sessionContext.ownerTaskId);
       const expectedOwners = [...new Set([...preservedOwners, ...recoveredProcessOwners])];
-      if (this._worktrees && typeof this._worktrees.reconcile === 'function') {
-        this._trackStartupCleanup(() => this._worktrees.reconcile(expectedOwners));
-      }
-      if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') {
-        this._trackStartupCleanup(() => this._runtimeScopes.reconcile(recoveredProcessWorkers));
-      }
+      reconcileStartupResources(expectedOwners, recoveredProcessWorkers);
     } else {
       const eligible = [...this._workers.values()].filter((handle) => {
         const adapter = this._adapters[handle.vendor];
@@ -1067,8 +1112,7 @@ export class Coordinator {
       const expectedWorkers = [...new Set([
         ...eligible.map((handle) => handle.id), ...recoveredProcessWorkers,
       ])];
-      if (this._worktrees && typeof this._worktrees.reconcile === 'function') this._trackStartupCleanup(() => this._worktrees.reconcile(expectedOwners));
-      if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') this._trackStartupCleanup(() => this._runtimeScopes.reconcile(expectedWorkers));
+      reconcileStartupResources(expectedOwners, expectedWorkers);
     }
     this._terminalizeUnattachedCoordinationTasks();
     this._startupCoordinationSnapshot = null;
