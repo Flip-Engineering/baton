@@ -15,6 +15,8 @@
 import { spawn } from 'node:child_process';
 import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
 import { usdToNanos } from './usd.mjs';
+import { attestWorkerPolicyObservation } from './worker-policy.mjs';
+import { renderVerificationExecution } from './verification-presentation.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const CODEX_TOKEN_METRIC = 'codex_turn_input_plus_output_tokens';
@@ -74,13 +76,34 @@ function fixedWireFailure(base) {
 // ---------------------------------------------------------------------------
 
 export function renderPrompt(brief) {
+  const advertisesBatonTool = (brief.tools ?? []).some((tool) => (
+    /baton/iu.test(typeof tool === 'string' ? tool : JSON.stringify(tool))
+  ));
+  const attachedContext = brief.contextInput ? [
+    'Attached immutable Context (the authoritative input for this task):',
+    `Call: ${brief.contextInput.callId}`,
+    brief.contextInput.unitId
+      ? `Unit: ${brief.contextInput.unitId}`
+      : `Partition: ${brief.contextInput.partitionId}`,
+    'Use the attached value directly. Do not search the repository for this source or replace it with a broader review.',
+    JSON.stringify(brief.contextInput.value, null, 2),
+  ].join('\n') : '';
+  const dispatchGuidance = brief.contextInput
+    ? (advertisesBatonTool
+      ? 'This task is already dispatched by Baton. The attached immutable Context is the complete task input; do not inspect repository files, prior Run artifacts, receipts, or ledgers to reconstruct or broaden it. Writing a named output path does not authorize reading its preexisting contents. Orchestration actions may use only the Baton control surface explicitly listed in this Brief.'
+      : 'This task is already dispatched and supervised by Baton. The attached immutable Context is the complete task input; do not inspect repository files, prior Run artifacts, receipts, or ledgers to reconstruct or broaden it. Writing a named output path does not authorize reading its preexisting contents. Do not search for or launch another Baton CLI, MCP server, or Run; use one only when this Brief explicitly advertises it.')
+    : 'This task is already dispatched by Baton. Perform the assigned work in this worktree and use only tools explicitly advertised in this Brief.';
   const lines = [
     `Task: ${brief.goal}`,
+    dispatchGuidance,
+    attachedContext,
     brief.constraints?.length ? `Constraints:\n- ${brief.constraints.join('\n- ')}` : '',
     brief.pathScope?.length ? `Work only within: ${brief.pathScope.join(', ')}` : '',
     `Done when: ${brief.definitionOfDone}`,
     `You are in a dedicated git worktree; edit files here directly. Do not push or run destructive commands.`,
-    brief.verification?.command ? `A reviewer will independently run this to check your work: \`${brief.verification.command}\` (must exit ${brief.verification.expectExit}). Make that pass.` : '',
+    brief.verification?.command ? (brief.contextInput
+      ? `A reviewer independently enforces the following exact execution contract. Run it only when the requested work needs code verification; do not substitute it for analyzing the attached Context.\n${renderVerificationExecution(brief.verification)}`
+      : `A reviewer will independently enforce the following exact execution contract. Make it pass without changing its executable, argv, working directory, or expected exit.\n${renderVerificationExecution(brief.verification)}`) : '',
   ];
   return lines.filter(Boolean).join('\n');
 }
@@ -211,6 +234,8 @@ class CliAdapter {
       maxContext: this._cfg.maxContext,
       governance: this._cfg.governance,
       modelSelection: this._cfg.modelSelection,
+      permissions: this._cfg.permissions,
+      workerPolicy: this._cfg.workerPolicy,
       verbs: this._cfg.verbs,
     };
   }
@@ -228,9 +253,24 @@ class CliAdapter {
     const turnEpoch = opts.turnEpoch ?? 1;
     const processGeneration = normalizeProcessGeneration(opts.processGeneration);
     const args = this._cfg.args(brief, { model: opts.model, reasoningEffort: opts.reasoningEffort, serviceTier: opts.serviceTier });
+    let workerPolicyObserved = null;
+    if (opts.workerPolicy) {
+      try {
+        const actual = typeof this._cfg.workerPolicyObservation === 'function'
+          ? this._cfg.workerPolicyObservation(opts) : {};
+        workerPolicyObserved = attestWorkerPolicyObservation(opts.workerPolicy, actual);
+      } catch (error) {
+        return { ok: false, code: error?.code, reason: String(error?.message ?? error) };
+      }
+    }
+    const childEnv = {
+      ...(opts.replaceEnv === true ? {} : process.env),
+      ...(opts.env ?? {}),
+      ...(this._cfg.env ?? {}),
+    };
     const child = spawn(this._cfg.cmd, args, {
       cwd,
-      env: { ...process.env, ...(this._cfg.env ?? {}) },
+      env: childEnv,
       detached: true, // own process group, so interrupt can signal the whole tree
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -239,6 +279,7 @@ class CliAdapter {
       turnEpoch, buf: '', logicalSequence: 0, processGeneration, processClosedEmitted: false,
       processReapTimeoutMs: Number.isSafeInteger(opts.processReapTimeoutMs) && opts.processReapTimeoutMs > 0 ? opts.processReapTimeoutMs : 2000,
       spawnError: null, timeoutFailure: null,
+      workerPolicyObserved,
     };
     this._sessions.set(worker, session);
 
@@ -254,6 +295,18 @@ class CliAdapter {
 
     const processStarted = processStartedPayload(session.processGeneration, child.pid);
     if (processStarted) this._emit({ worker, harness: this._cfg.harness, turnEpoch, actor: 'worker', kind: 'lifecycle.process_started', payload: processStarted });
+    if (session.workerPolicyObserved) {
+      this._emit({
+        worker, harness: this._cfg.harness, turnEpoch, actor: 'worker', kind: 'worker_policy.observed',
+        payload: {
+          processGeneration: session.processGeneration, pid: child.pid, processGroupId: child.pid,
+          workerPolicyObserved: session.workerPolicyObserved,
+        },
+      });
+      if (session.stopping || session.terminal) {
+        return { ok: false, code: 'provider_ready_refused', reason: 'launch worker policy was rejected by coordinator policy' };
+      }
+    }
 
     // The prompt is fed on stdin (both codex exec and claude -p accept piped stdin).
     try { child.stdin.write(renderPrompt(brief) + '\n'); child.stdin.end(); } catch { /* pipe race */ }
@@ -393,6 +446,8 @@ class CliAdapter {
 
 export class CodexCli extends CliAdapter {
   constructor(opts = {}) {
+    const sandbox = opts.sandbox ?? 'danger-full-access';
+    const approvalPolicy = opts.approvalPolicy ?? 'never';
     super({
       harness: 'codex', version: opts.version ?? '0.144.0', ceiling: opts.ceiling ?? 4, maxContext: 272000, live: opts.live,
       maxWireFrameBytes: opts.maxWireFrameBytes,
@@ -408,15 +463,40 @@ export class CodexCli extends CliAdapter {
         reasoningEffort: ['minimal', 'low', 'medium', 'high', 'xhigh'], serviceTier: null,
         provenance: 'adapter-configuration', refreshedAt: null,
       },
+      permissions: {
+        mode: approvalPolicy, sandbox,
+        boundary: sandbox === 'danger-full-access'
+          ? 'Unattended full host permissions by default; containment is a separate deployment boundary'
+          : 'Harness sandbox requested; its containment remains separately attested',
+      },
+      workerPolicy: {
+        schemaVersion: 1,
+        autonomy: {
+          supported: ['unattended'], default: 'unattended', perTask: false,
+          observation: 'launch', mechanisms: ['approval-policy-never'],
+        },
+        access: {
+          supported: [sandbox === 'danger-full-access' ? 'full' : 'workspace'],
+          default: sandbox === 'danger-full-access' ? 'full' : 'workspace', perTask: false,
+          observation: 'launch', mechanisms: [`codex-sandbox-${sandbox}`],
+        },
+        containment: {
+          hostProcess: 'same_uid', guarantees: ['private_runtime'],
+          configuredPreferences: [], observation: 'unavailable',
+        },
+      },
       cmd: 'codex',
-      // exec is one-shot + JSONL; sandbox to workspace writes; skip the git-repo check (we ARE in a worktree).
+      // exec is one-shot + JSONL. Baton defaults to unattended, full-permission harness access;
+      // deployments can still construct a workspace-scoped adapter explicitly.
       args: (_brief, route = {}) => {
         const model = route.model ?? opts.model;
         const effort = route.reasoningEffort;
-        return ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write',
+        return ['--ask-for-approval', approvalPolicy, '--sandbox', sandbox,
+          'exec', '--json', '--skip-git-repo-check',
           ...(model ? ['-m', model] : []),
           ...(effort ? ['-c', `model_reasoning_effort=${JSON.stringify(effort)}`] : [])];
       },
+      workerPolicyObservation: () => ({ autonomy: 'unattended', access: sandbox === 'danger-full-access' ? 'full' : 'workspace' }),
       parse: parseCodexEvent,
       env: opts.env,
       // SC8: canonical 8 keys, honest values — interrupt is a signal (emulated), kill is a real
@@ -428,6 +508,7 @@ export class CodexCli extends CliAdapter {
 
 export class ClaudeCli extends CliAdapter {
   constructor(opts = {}) {
+    const permissionMode = opts.permissionMode === undefined ? 'bypassPermissions' : opts.permissionMode;
     super({
       harness: opts.harness ?? 'claude-code', version: opts.version ?? '2.1.206', ceiling: opts.ceiling ?? 4, maxContext: 200000, live: opts.live,
       maxWireFrameBytes: opts.maxWireFrameBytes,
@@ -445,13 +526,39 @@ export class ClaudeCli extends CliAdapter {
         reasoningEffort: ['low', 'medium', 'high', 'xhigh', 'max'], serviceTier: null,
         provenance: 'adapter-configuration', refreshedAt: null,
       },
+      permissions: {
+        mode: permissionMode ?? 'external', sandbox: 'unverified',
+        boundary: 'Full same-UID host access by default; filesystem and network containment are unverified',
+      },
+      workerPolicy: {
+        schemaVersion: 1,
+        autonomy: {
+          supported: permissionMode === 'bypassPermissions' ? ['unattended'] : ['interactive'],
+          default: permissionMode === 'bypassPermissions' ? 'unattended' : 'interactive',
+          perTask: false, observation: 'launch',
+          mechanisms: permissionMode === 'bypassPermissions'
+            ? ['permission-mode-bypassPermissions'] : ['permission-mode-interactive'],
+        },
+        access: {
+          supported: ['full'], default: 'full', perTask: false,
+          observation: 'launch', mechanisms: ['claude-unsandboxed-permissions'],
+        },
+        containment: {
+          hostProcess: 'same_uid', guarantees: ['private_runtime'],
+          configuredPreferences: [], observation: 'unavailable',
+        },
+      },
       cmd: 'claude',
       args: (_brief, route = {}) => {
         const model = route.model ?? opts.model;
-        return ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits',
+        return ['-p', '--output-format', 'stream-json', '--verbose',
+          ...(permissionMode == null ? [] : ['--permission-mode', permissionMode]),
           ...(model ? ['--model', model] : []),
           ...(route.reasoningEffort ? ['--effort', route.reasoningEffort] : [])];
       },
+      workerPolicyObservation: () => ({
+        autonomy: permissionMode === 'bypassPermissions' ? 'unattended' : 'interactive', access: 'full',
+      }),
       parse: parseClaudeEvent,
       env: opts.env,
       // SC8: steer/pause previously claimed 'emulated' while steer() is an honest ok:false stub
@@ -470,7 +577,8 @@ export class ZCodeCli extends ClaudeCli {
     const token = opts.authToken ?? process.env.Z_AI_API_KEY ?? process.env.ZHIPU_API_KEY;
     super({
       harness: 'glm-via-claude', version: opts.version ?? 'claude-cli+zai-anthropic', ceiling: opts.ceiling ?? 1, // Z.ai Pro ≈ 1 in-flight
-      model: opts.model, maxWireFrameBytes: opts.maxWireFrameBytes, env: {
+      model: opts.model, maxWireFrameBytes: opts.maxWireFrameBytes, live: opts.live,
+      permissionMode: opts.permissionMode, env: {
         ANTHROPIC_BASE_URL: opts.baseUrl ?? 'https://api.z.ai/api/anthropic',
         ANTHROPIC_AUTH_TOKEN: token ?? '',
         ...(opts.model ? { ANTHROPIC_DEFAULT_OPUS_MODEL: opts.model, ANTHROPIC_DEFAULT_SONNET_MODEL: opts.model } : {}),
@@ -500,6 +608,25 @@ export class PiCli extends CliAdapter {
         mode: 'exact', configuredDefault: opts.model ?? null, available: opts.model ? [opts.model] : null,
         family: 'pi', acceptedPrefixes: [], acceptedAliases: [], reasoningEffort: null, serviceTier: null,
         provenance: 'adapter-configuration', refreshedAt: null,
+      },
+      permissions: {
+        mode: 'deployment-defined', sandbox: 'unverified',
+        boundary: 'configured deployment contract',
+      },
+      workerPolicy: {
+        schemaVersion: 1,
+        autonomy: {
+          supported: ['unattended'], default: 'unattended', perTask: false,
+          observation: 'unavailable', mechanisms: [],
+        },
+        access: {
+          supported: ['full'], default: 'full', perTask: false,
+          observation: 'unavailable', mechanisms: [],
+        },
+        containment: {
+          hostProcess: 'same_uid', guarantees: ['private_runtime'], configuredPreferences: [],
+          observation: 'unavailable',
+        },
       },
       cmd: opts.cmd ?? 'pi',
       args: opts.args ?? (() => ['--headless']),

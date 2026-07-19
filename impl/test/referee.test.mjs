@@ -16,6 +16,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -123,7 +124,8 @@ test('divergence: a genuinely failing sandbox but a claim of the passing exit co
 
   assert.equal(verdict.passed, false);
   assert.equal(verdict.matchesClaim, false);
-  assert.match(verdict.note, /diverg|mismatch|claim/i);
+  assert.equal(verdict.diagnosticCode, 'verification_claim_diverged');
+  assert.equal(Object.hasOwn(verdict, 'note'), false);
   assert.equal(accept(verdict), false);
 });
 
@@ -192,7 +194,7 @@ test('a verification command that outlives timeoutMs resolves with observedExit:
 
   assert.equal(verdict.observedExit, null);
   assert.equal(verdict.passed, false);
-  assert.match(verdict.note, /timeout/i);
+  assert.equal(verdict.diagnosticCode, 'verification_timed_out');
 });
 
 // ============================================================
@@ -438,7 +440,8 @@ test('a coverage command producing non-JSON garbage does not crash verify(); cov
   const verdict = await verify(task, workerResult, sandbox);
 
   assert.equal(verdict.coverageOfChange, null);
-  assert.match(verdict.note, /pars/i);
+  assert.equal(verdict.coverageOfChange, null);
+  assert.equal(Object.hasOwn(verdict, 'note'), false);
 });
 
 // ============================================================
@@ -497,10 +500,10 @@ test('verify() appends exactly one verify.reverified event whose payload deep-eq
 });
 
 // ============================================================
-// observedOutputTail truncation — behavior 62
+// closed captured-output receipt — behavior 62 / Phase 90 RV
 // ============================================================
 
-test('observedOutputTail is truncated to exactly the last 4000 chars of combined output', async (t) => {
+test('captured verifier output is represented only by its exact byte count and SHA-256 digest', async (t) => {
   const sandbox = makeSandbox();
   t.after(() => sandbox.cleanup());
 
@@ -509,8 +512,10 @@ test('observedOutputTail is truncated to exactly the last 4000 chars of combined
   const workerResult = makeResult({ verification: { command, claimedExit: 0 } });
   const verdict = await verify(task, workerResult, sandbox);
 
-  assert.equal(verdict.observedOutputTail.length, 4000);
-  assert.equal(verdict.observedOutputTail, 'x'.repeat(4000), 'it is the END of the output, not the start');
+  assert.equal(verdict.capturedOutputBytes, 5000);
+  assert.equal(verdict.capturedOutputDigest, createHash('sha256').update('x'.repeat(5000)).digest('hex'));
+  assert.equal(Object.hasOwn(verdict, 'observedOutputTail'), false);
+  assert.equal(Object.hasOwn(verdict, 'note'), false);
 });
 
 test('closed plan verification executes argv without a shell, strips ambient env, and fails at the output bound', async (t) => {
@@ -532,6 +537,8 @@ test('closed plan verification executes argv without a shell, strips ambient env
   assert.equal(verdict.outputExceeded, true);
   assert.equal(verdict.passed, false);
   assert.equal(verdict.observedExit, null);
-  assert.equal(verdict.observedOutputTail, 'x'.repeat(64));
-  assert.match(verdict.note, /output exceeded 64 bytes/);
+  assert.equal(verdict.capturedOutputBytes, 64);
+  assert.equal(verdict.capturedOutputDigest, createHash('sha256').update('x'.repeat(64)).digest('hex'));
+  assert.equal(verdict.diagnosticCode, 'verification_output_exceeded');
+  assert.equal(Object.hasOwn(verdict, 'observedOutputTail'), false);
 });

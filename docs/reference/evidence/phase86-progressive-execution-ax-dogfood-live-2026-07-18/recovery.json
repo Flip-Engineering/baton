@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "runs": [
+    {
+      "runId": "run-b5ed81890ce645cb5a6cd3773cccf98a",
+      "phase": "stopped",
+      "stop": {
+        "state": "stopped",
+        "admittedAt": "2026-07-19T06:28:57.748Z",
+        "completedAt": "2026-07-19T06:37:58.557Z",
+        "targetCount": 1,
+        "targetDigest": "fedf0009dd02c8f51a55a6a588ca0e7e61ebaa31f83eb5909fa725217ae6d88e",
+        "receipt": {
+          "schemaVersion": 1,
+          "state": "stopped",
+          "scope": "run_subtree",
+          "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+          "runId": "run-b5ed81890ce645cb5a6cd3773cccf98a",
+          "targetCount": 1,
+          "remainingCount": 0,
+          "targetDigest": "fedf0009dd02c8f51a55a6a588ca0e7e61ebaa31f83eb5909fa725217ae6d88e",
+          "counts": {
+            "pendingCancelled": 0,
+            "killConfirmed": 0,
+            "alreadyTerminal": 1,
+            "processesObserved": 1,
+            "processesClosed": 1
+          },
+          "checks": {
+            "dispatchClosed": true,
+            "interactionsResolved": true,
+            "runAuthorityReleased": true
+          },
+          "effects": {
+            "coordinatorClosed": false,
+            "writerReleased": false,
+            "transportsClosed": false
+          },
+          "receiptDigest": "3271e09fbfa2d0162daec72ad50b5b1763e1c4fecefa1733f54c622ddf7fce76"
+        }
+      },
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      }
+    },
+    {
+      "runId": "run-24d140e00afc230d7e8c40e54499133c",
+      "phase": "stopped",
+      "stop": {
+        "state": "stopped",
+        "admittedAt": "2026-07-19T06:37:58.570Z",
+        "completedAt": "2026-07-19T06:37:58.570Z",
+        "targetCount": 1,
+        "targetDigest": "cd9728e6a0ae04c33a213f006f80e9b6c03f55e782c30c25f6bebb2638e2585c",
+        "receipt": {
+          "schemaVersion": 1,
+          "state": "stopped",
+          "scope": "run_subtree",
+          "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+          "runId": "run-24d140e00afc230d7e8c40e54499133c",
+          "targetCount": 1,
+          "remainingCount": 0,
+          "targetDigest": "cd9728e6a0ae04c33a213f006f80e9b6c03f55e782c30c25f6bebb2638e2585c",
+          "counts": {
+            "pendingCancelled": 0,
+            "killConfirmed": 0,
+            "alreadyTerminal": 1,
+            "processesObserved": 1,
+            "processesClosed": 1
+          },
+          "checks": {
+            "dispatchClosed": true,
+            "interactionsResolved": true,
+            "runAuthorityReleased": true
+          },
+          "effects": {
+            "coordinatorClosed": false,
+            "writerReleased": false,
+            "transportsClosed": false
+          },
+          "receiptDigest": "7a81d549671aeb21a1cf1548fd0a3f921007862712fe1f2a01a509f93c647e9a"
+        }
+      },
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      }
+    }
+  ],
+  "closed": {
+    "workers": 0,
+    "workerIds": [],
+    "closed": true
+  }
+}

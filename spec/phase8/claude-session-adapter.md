@@ -68,6 +68,7 @@ new ClaudeSessionCli({
   ceiling = 4,
   maxContext = 200000,
   approvals = false,         // adds --permission-prompt-tool stdio + enables approve()/answer()
+  permissionMode,            // defaults bypassPermissions; approvals:true defaults acceptEdits
   sessionId,                 // if set, adds --resume <sessionId> (CS15)
   killGraceMs = 5000,        // SIGTERM->SIGKILL escalation window (see CS14 derivation)
 })
@@ -90,7 +91,7 @@ constructor-injectable (tests set it to tens of ms) per the house "no arbitrary 
 
 | # | Contract |
 |---|---|
-| CS1 | `buildClaudeSessionArgs()` always includes `--print --input-format stream-json --output-format stream-json --verbose`; adds `--permission-prompt-tool stdio` iff `approvals:true`; adds `--resume <id>` iff `sessionId` given. |
+| CS1 | `buildClaudeSessionArgs()` always includes `--print --input-format stream-json --output-format stream-json --verbose`; unattended sessions default to `--permission-mode bypassPermissions` and Phase 74's private settings disable the command sandbox for full access. `approvals:true` instead defaults to ask-capable `acceptEdits` and adds `--permission-prompt-tool stdio`; an explicit `approvals:true` + `bypassPermissions` combination is refused because Claude never invokes the callback in bypass mode. Adds `--resume <id>` iff `sessionId` given. |
 | CS2 | `spawn(worker, brief, opts)` requires `opts.worktree` (cwd); the Brief (rendered via the existing `renderPrompt()` from `cli-adapters.mjs` — reused, not duplicated) is written as the **first** `user` message frame on stdin; **stdin is left open** (never `.end()`-ed) — this is the entire reason session mode exists. |
 | CS3 | `lifecycle.spawned` is emitted only once per session, when the real `system/init` frame arrives; payload carries the wire's own `session_id` (never a client-generated uuid) and the child's `pid`. |
 | CS4 | `lifecycle.turn_started` is emitted by the ADAPTER (not parsed off the wire) at the moment a `user` message frame is written — stream-json has no CLI-emitted "turn started" marker (unlike Codex's `turn.started`); this is documented here as the honest limit of what the wire gives you. |
@@ -107,7 +108,7 @@ constructor-injectable (tests set it to tens of ms) per the house "no arbitrary 
 | CS15 | `sessionId` in the constructor adds `--resume <sessionId>`; the resumed session's `lifecycle.spawned` reports that SAME `session_id` (round-trip proof, not just an argv-shape check). |
 | CS16 | Once `lifecycle.exited`/`lifecycle.crashed` fires for a worker, no further event is EVER emitted for that worker — a stray trailing line on a closing pipe is silently ignored (mirrors `CliAdapter._onData`'s single-terminal discipline, but at the session level, since a session outlives many turns). |
 | CS17 | Session death mapping: a clean process exit (code 0, not from a `kill()`/`interrupt()` we initiated) → `lifecycle.exited`; a nonzero exit, a spawn `'error'` event, or an unrecoverable stream failure → `lifecycle.crashed`. |
-| CS18 | `approvals:false` (default) ⇒ `card().verbs.approve === 'unsupported'` and `card().verbs.answer === 'unsupported'`; `approve()`/`answer()` reject `{ok:false}` without touching the wire (no `--permission-prompt-tool` flag was even passed, so there is nothing to reply to — a wire `can_use_tool` request in this mode would simply never arrive because the CLI never emits one without the flag). `approvals:true` ⇒ both report `'native'` (the `cancel` decision sub-case notwithstanding, per CS12). |
+| CS18 | `approvals:false` (default) ⇒ `bypassPermissions`, `card().verbs.approve === 'unsupported'`, and `card().verbs.answer === 'unsupported'`; `approve()`/`answer()` reject `{ok:false}` without touching the wire. `approvals:true` ⇒ ask-capable `acceptEdits` and both verbs report `'native'` (the `cancel` decision sub-case notwithstanding, per CS12). Explicit narrower permission modes remain constructor-selectable. |
 | CS19 | Every Ack for a genuinely native verb omits `emulated` (or is `false`); only `steer` and the `cancel` sub-path of `approve` ever carry `emulated:true` — asserted directly, not inferred (D1's "no silent emulation" rule). |
 
 ## 3. Steer semantics — the ONE picked (audit §4 asks for exactly one)
@@ -237,10 +238,12 @@ permission prompt tool, tool calls are auto-DENIED: the live worker's `Write` wa
 `--permission-mode acceptEdits`; the session spec simply dropped it. The fake-binary suite could
 never catch this (the fake enforces no permission policy).
 
-**Amendment:** CS1 now renders `--permission-mode <mode>` with default `'acceptEdits'`
-(one-shot parity: worktree edits auto-allowed, the trust gate re-verifies everything anyway);
-`permissionMode: null` opts out; `approvals:true` composes (whatever the mode does not
-auto-allow routes to `approve()`). Live re-proof: `probe.txt exists = true`.
+**Amendment:** CS1 renders an explicit `--permission-mode <mode>`. The original repair used
+`acceptEdits`; Baton's current unattended-worker default is `bypassPermissions` inside the private
+Claude private runtime with full command access. `permissionMode: null` still opts out. `approvals:true` resolves to
+`acceptEdits`, while an explicit bypass-plus-callback combination is refused because the provider
+would never emit the advertised approval request. The historical live re-proof remains
+`probe.txt exists = true`.
 
 ### E2 — CS7's "honest limit" was false; steer is NATIVE, CS8's emulation is removed
 

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -355,4 +356,479 @@ test('EP6: shutdown control obeys frame/buffer bounds and closes broken streams 
   assert.equal(released, 3);
   assert.equal(stream.activeConnections, 0);
   assert.equal(coordination.events().filter((event) => event.payload.kind === 'stream_shutdown').length, 3);
+});
+
+const runSnapshot = (runId = 'run-a', cursor = 7, terminal = false) => ({
+  schemaVersion: 1, runId, depth: 'outline', cursor, terminal,
+  outline: { objective: `Objective for ${runId}`, phase: terminal ? 'completed' : 'running' },
+});
+
+const timelinePage = ({ runId = 'run-a', channel = 'events', cursor = 'timeline_cursor_a',
+  items = [], terminal = false, recipient = null, hasMore = false, viewCursor = 7 } = {}) => ({
+  schemaVersion: 1, runId, depth: 'content', cursor: viewCursor, terminal,
+  content: {
+    schemaVersion: 1, kind: 'baton.run_timeline.page', runId, channel,
+    ...(recipient === null ? {} : { recipient }), cursor, hasMore,
+    itemCount: items.length, items,
+  },
+});
+
+const progressContent = ({ runId = 'run-a', cursor = 7, terminal = false,
+  summary = 'Current accumulated state.' } = {}) => ({
+  schemaVersion: 1, runId, depth: 'content', cursor, terminal,
+  content: {
+    schemaVersion: 1, kind: 'baton.run_progress', runId,
+    phase: terminal ? 'completed' : 'running', stage: 'work', summary,
+    attention: { state: 'clear', count: 0 }, terminal, terminalCause: null,
+    resources: { state: terminal ? 'complete' : 'owned', ownedCount: terminal ? 0 : 1 },
+    timing: { observedAt: '2026-07-19T00:00:00.000Z', elapsedMs: 10 },
+  },
+});
+
+test('RT5/RT7 red: an undelivered Run page never commits its candidate SSE cursor', async () => {
+  const item = {
+    runId: 'run-a', position: 1, kind: 'task.created', category: 'lifecycle',
+    summary: 'Run work was created.', occurrenceTrust: 'authoritative',
+    occurrenceDigest: 'a'.repeat(64), facts: {},
+  };
+  const application = { async command(_name, args) {
+    return args.depth === 'outline' ? runSnapshot(args.runId)
+      : timelinePage({ cursor: 'candidate_cursor', items: [item] });
+  } };
+  class BackpressureOnPageBody extends Response {
+    write(value) {
+      this.writeCount = (this.writeCount ?? 0) + 1;
+      this.output += value;
+      return this.writeCount !== 2;
+    }
+  }
+  const { stream } = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const output = new BackpressureOnPageBody();
+  await stream.open({ ticket: stream.issue(principal(), 'https://control.test', {
+    repoId: 'repo-a', runId: 'run-a', channel: 'events', snapshot: runSnapshot(),
+  }).body.ticket, principal: principal(), origin: 'https://control.test' }, output);
+  assert.equal(output.ended, true);
+  assert.doesNotMatch(output.output, /^id: candidate_cursor$/m);
+  assert.equal(stream.activeConnections, 0);
+});
+
+test('RT5/RT7 red: lag reports only the last committed durable cursor', async () => {
+  const item = {
+    runId: 'run-a', position: 2, kind: 'task.created', category: 'lifecycle',
+    summary: 'x'.repeat(2_000), occurrenceTrust: 'authoritative',
+    occurrenceDigest: 'b'.repeat(64), facts: {},
+  };
+  const application = { async command(_name, args) {
+    return args.depth === 'outline' ? runSnapshot(args.runId)
+      : timelinePage({ cursor: 'candidate_cursor', items: [item] });
+  } };
+  const { stream } = fixture({
+    application, maxFrameBytes: 1_200, maxControlFrameBytes: 2_000,
+    maxBufferedBytes: 100_000,
+  });
+  const output = new Response();
+  await stream.open({ ticket: stream.issue(principal(), 'https://control.test', {
+    repoId: 'repo-a', runId: 'run-a', channel: 'events', cursor: 'committed_cursor',
+    snapshot: runSnapshot(),
+  }).body.ticket, principal: principal(), origin: 'https://control.test',
+  cursor: 'committed_cursor' }, output);
+  assert.match(output.output, /event: lag/);
+  assert.match(output.output, /^id: committed_cursor$/m);
+  assert.doesNotMatch(output.output, /^id: candidate_cursor$/m);
+  const lag = output.output.split('\n').filter((line) => line.startsWith('data: '))
+    .map((line) => JSON.parse(line.slice(6))).find((frame) => frame.type === 'lag');
+  assert.equal(lag.cursor, 'committed_cursor');
+  assert.equal(lag.provenance.source.channelCursor, 'committed_cursor');
+});
+
+test('RT3/RT5 red: first progress read after a supplied cursor emits accumulated state', async () => {
+  const calls = [];
+  const application = { async command(_name, args) {
+    calls.push(structuredClone(args));
+    return args.depth === 'outline' ? runSnapshot(args.runId, 9)
+      : progressContent({ runId: args.runId, cursor: 9, summary: 'Progress accumulated after cursor 7.' });
+  } };
+  const { stream } = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const output = new Response();
+  await stream.open({ ticket: stream.issue(principal(), 'https://control.test', {
+    repoId: 'repo-a', runId: 'run-a', channel: 'progress', cursor: 7,
+    snapshot: runSnapshot('run-a', 7),
+  }).body.ticket, principal: principal(), origin: 'https://control.test', cursor: 7 }, output);
+  assert.match(output.output, /^id: 9$/m);
+  assert.match(output.output, /Progress accumulated after cursor 7\./);
+  assert.equal(calls.some((call) => call.item === 'execution:progress'), true);
+  output.emit('close');
+});
+
+test('RT1/RT4: Run wire frames are closed recursively and carry verifiable source provenance', async () => {
+  const application = { async command(_name, args) {
+    if (args.depth === 'outline') {
+      const view = runSnapshot(args.runId);
+      Object.assign(view, { credentialId: 'credential-private', unknownTop: 'unknown-private' });
+      Object.assign(view.outline, {
+        sessionId: 'session-private', authority: { token: 'token-private' },
+        progress: { current: 'work', summary: 'safe', credential: 'nested-private' },
+      });
+      return view;
+    }
+    return timelinePage({
+      channel: 'output', recipient: args.recipient ?? null,
+      items: [{
+        runId: 'run-a', position: 1, kind: 'untrusted_output', category: 'output',
+        recipient: 'review', occurrenceTrust: 'authoritative',
+        contentTrust: 'untrusted_provider', occurrenceDigest: 'c'.repeat(64),
+        sessionId: 'item-session-private',
+        output: {
+          text: 'provider words', fragment: 0, fragmentCount: 1,
+          digest: 'd'.repeat(64), credentialId: 'output-credential-private',
+          unknown: 'output-unknown-private',
+        },
+      }],
+    });
+  } };
+  const { stream } = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const output = new Response();
+  await stream.open({ ticket: stream.issue(principal(), 'https://control.test', {
+    repoId: 'repo-a', runId: 'run-a', channel: 'output', recipient: 'review',
+    snapshot: runSnapshot(),
+  }).body.ticket, principal: principal(), origin: 'https://control.test' }, output);
+  for (const absent of [
+    'credential-private', 'unknown-private', 'session-private', 'token-private',
+    'nested-private', 'item-session-private', 'output-credential-private',
+    'output-unknown-private',
+  ]) assert.equal(output.output.includes(absent), false, absent);
+  const frames = output.output.split('\n')
+    .filter((line) => line.startsWith('data: ')).map((line) => JSON.parse(line.slice(6)));
+  assert.equal(frames.length, 2);
+  for (const frame of frames) {
+    assert.deepEqual(Object.keys(frame).sort(), [
+      'contentTrust', 'cursor', 'eventId', 'occurrenceTrust', 'payload',
+      'provenance', 'resource', 'schemaVersion', 'streamId', 'type',
+    ]);
+    assert.deepEqual(Object.keys(frame.provenance).sort(), ['authority', 'digest', 'source']);
+    assert.equal(frame.provenance.authority, 'run-application');
+    assert.equal(frame.provenance.source.operation, 'run.inspect');
+    assert.equal(frame.provenance.source.runId, 'run-a');
+    assert.equal(frame.provenance.source.channel, 'output');
+    assert.equal(frame.provenance.digest,
+      createHash('sha256').update(JSON.stringify(frame.payload)).digest('hex'));
+  }
+  assert.deepEqual(Object.keys(frames[1].payload.items[0].output).sort(),
+    ['digest', 'fragment', 'fragmentCount', 'text']);
+  output.emit('close');
+});
+
+test('RT1/RT4/RT6: Run tickets bind every authority coordinate and start with the exact inspected RunView', async () => {
+  const calls = [];
+  const application = {
+    card: () => ({ resident: { incarnation: 'instance-a' } }),
+    async command(name, args, observer, context) {
+      calls.push({ name, args, observer, context });
+      if (args.depth === 'outline') return runSnapshot(args.runId);
+      return timelinePage({ runId: args.runId, channel: 'output', recipient: args.recipient ?? null });
+    },
+  };
+  const { stream } = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const scope = {
+    repoId: 'repo-a', runId: 'run-a', channel: 'output', recipient: 'review',
+    snapshot: runSnapshot(),
+  };
+  const issued = stream.issue(principal(), 'https://control.test', scope);
+  assert.equal(issued.status, 201);
+  const stored = [...stream.tickets.values()][0];
+  assert.deepEqual({
+    userId: stored.userId, sessionId: stored.sessionId, credentialId: stored.credentialId,
+    origin: stored.origin, repoId: stored.repoId, runId: stored.runId,
+    channel: stored.channel, recipient: stored.recipient, incarnation: stored.incarnation,
+  }, {
+    userId: 'u', sessionId: 's', credentialId: 'c', origin: 'https://control.test',
+    repoId: 'repo-a', runId: 'run-a', channel: 'output', recipient: 'review',
+    incarnation: 'instance-a',
+  });
+  assert.equal(stream.consume(issued.body.ticket, principal({ userId: 'other' }), 'https://control.test'), null);
+  assert.equal(stream.consume(issued.body.ticket, principal({ sessionId: 'other' }), 'https://control.test'), null);
+  assert.equal(stream.consume(issued.body.ticket, principal({ credentialId: 'other' }), 'https://control.test'), null);
+  assert.equal(stream.consume(issued.body.ticket, principal(), 'https://other.test'), null);
+  const responseValue = new Response();
+  assert.equal(await stream.open({ ticket: issued.body.ticket, principal: principal(), origin: 'https://control.test' }, responseValue), null);
+  assert.match(responseValue.output, /event: snapshot/);
+  assert.match(responseValue.output, /"objective":"Objective for run-a"/);
+  assert.match(responseValue.output, /"channel":"output"/);
+  assert.match(responseValue.output, /"recipient":"review"/);
+  responseValue.emit('close');
+  const contentCall = calls.find((call) => call.args.item === 'execution:output');
+  assert.equal(contentCall.name, 'run.inspect');
+  assert.deepEqual(contentCall.args, {
+    runId: 'run-a', depth: 'content', section: 'execution',
+    item: 'execution:output', recipient: 'review',
+  });
+  assert.equal(contentCall.observer.sessionId, 's');
+  assert.equal(contentCall.context.transport, 'web-stream');
+});
+
+test('RT2/RT5: Run events resume with the rebuildable application cursor and reject sibling/channel cursor reuse', async () => {
+  const calls = [];
+  const firstItem = {
+    runId: 'run-a', position: 1, kind: 'task.created', category: 'lifecycle',
+    summary: 'Run work was created.', occurrenceTrust: 'authoritative', occurrenceDigest: 'a'.repeat(64),
+  };
+  const application = {
+    async command(_name, args) {
+      calls.push(structuredClone(args));
+      if (args.depth === 'outline') return runSnapshot(args.runId);
+      if (args.runId !== 'run-a') throw Object.assign(new Error('mismatch'), { code: 'run_timeline_cursor_mismatch' });
+      if (args.pageCursor === 'timeline_cursor_a') {
+        return timelinePage({ cursor: 'timeline_cursor_b', items: [{ ...firstItem, position: 2 }] });
+      }
+      if (args.pageCursor) throw Object.assign(new Error('mismatch'), { code: 'run_timeline_cursor_mismatch' });
+      return timelinePage({ cursor: 'timeline_cursor_a', items: [firstItem] });
+    },
+  };
+  const { stream } = fixture({ application, incarnation: 'instance-a', maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const initialScope = { repoId: 'repo-a', runId: 'run-a', channel: 'events', snapshot: runSnapshot() };
+  const initial = new Response();
+  await stream.open({
+    ticket: stream.issue(principal(), 'https://control.test', initialScope).body.ticket,
+    principal: principal(), origin: 'https://control.test',
+  }, initial);
+  assert.match(initial.output, /^id: timeline_cursor_a$/m);
+  assert.equal(initial.output.includes('run-b'), false);
+  initial.emit('close');
+  const resumeScope = { ...initialScope, cursor: 'timeline_cursor_a' };
+  const resumed = new Response();
+  await stream.open({
+    ticket: stream.issue(principal(), 'https://control.test', resumeScope).body.ticket,
+    principal: principal(), origin: 'https://control.test', cursor: 'timeline_cursor_a',
+  }, resumed);
+  assert.match(resumed.output, /^id: timeline_cursor_b$/m);
+  assert.deepEqual(calls.filter((call) => call.item === 'execution:events').at(-1).pageCursor, 'timeline_cursor_a');
+  assert.equal(Object.hasOwn(stream, 'cursors'), false, 'resume must not depend on an ephemeral cursor registry');
+  resumed.emit('close');
+  const mismatched = await stream.open({
+    ticket: stream.issue(principal(), 'https://control.test', resumeScope).body.ticket,
+    principal: principal(), origin: 'https://control.test', cursor: 'different_cursor',
+  }, new Response());
+  assert.equal(mismatched.status, 409);
+  const siblingCursor = await stream.open({
+    ticket: stream.issue(principal(), 'https://control.test', {
+      ...resumeScope, runId: 'run-b', snapshot: runSnapshot('run-b'),
+    }).body.ticket,
+    principal: principal(), origin: 'https://control.test', cursor: 'timeline_cursor_a',
+  }, new Response());
+  assert.equal(siblingCursor.status, 409);
+  assert.equal(siblingCursor.body.error.code, 'snapshot_required');
+});
+
+test('RT1: initial Run delivery proves one stable outline/page/outline cursor boundary and rejects drift', async () => {
+  for (const drift of ['page', 'outline']) {
+    const calls = [];
+    let outlineReads = 0;
+    const application = {
+      async command(_name, args) {
+        calls.push(args.depth === 'outline' ? 'outline' : 'events');
+        if (args.depth === 'outline') {
+          outlineReads += 1;
+          return runSnapshot(args.runId, drift === 'outline' && outlineReads === 2 ? 8 : 7);
+        }
+        return timelinePage({ viewCursor: drift === 'page' ? 8 : 7 });
+      },
+    };
+    const { stream } = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+    const output = new Response();
+    const refused = await stream.open({ ticket: stream.issue(principal(), 'https://control.test', {
+      repoId: 'repo-a', runId: 'run-a', channel: 'events', snapshot: runSnapshot(),
+    }).body.ticket, principal: principal(), origin: 'https://control.test' }, output);
+    assert.equal(refused.status, 409, drift);
+    assert.equal(refused.body.error.code, 'snapshot_required');
+    assert.deepEqual(calls, ['outline', 'events', 'outline']);
+    assert.equal(output.status, undefined);
+    assert.equal(output.output, '');
+  }
+  const calls = [];
+  const stable = fixture({ application: { async command(_name, args) {
+    calls.push(args.depth === 'outline' ? 'outline' : 'events');
+    return args.depth === 'outline' ? runSnapshot(args.runId) : timelinePage();
+  } }, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const output = new Response();
+  await stable.stream.open({ ticket: stable.stream.issue(principal(), 'https://control.test', {
+    repoId: 'repo-a', runId: 'run-a', channel: 'events', snapshot: runSnapshot(),
+  }).body.ticket, principal: principal(), origin: 'https://control.test' }, output);
+  assert.deepEqual(calls, ['outline', 'events', 'outline']);
+  assert.match(output.output, /event: snapshot/);
+  output.emit('close');
+});
+
+test('RT6: revocation during an awaited read and during snapshot write closes before the next page write', async () => {
+  let active = true;
+  let releaseRead;
+  const pendingRead = new Promise((resolve) => { releaseRead = resolve; });
+  const first = fixture({
+    application: { async command(_name, args) {
+      if (args.depth === 'outline') return runSnapshot(args.runId);
+      await pendingRead;
+      return timelinePage();
+    } },
+    isPrincipalActive: () => active, maxFrameBytes: 100_000, maxBufferedBytes: 100_000,
+  });
+  const beforeHeaders = new Response();
+  const opening = first.stream.open({ ticket: first.stream.issue(principal(), 'https://control.test', {
+    repoId: 'repo-a', runId: 'run-a', channel: 'events', snapshot: runSnapshot(),
+  }).body.ticket, principal: principal(), origin: 'https://control.test' }, beforeHeaders);
+  active = false;
+  releaseRead();
+  const refused = await opening;
+  assert.equal(refused.status, 403);
+  assert.equal(beforeHeaders.status, undefined);
+  assert.equal(beforeHeaders.output, '');
+
+  active = true;
+  const second = fixture({
+    application: { async command(_name, args) {
+      return args.depth === 'outline' ? runSnapshot(args.runId) : timelinePage({
+        items: [{
+          runId: 'run-a', position: 1, kind: 'task.created', category: 'lifecycle',
+          occurrenceTrust: 'authoritative', occurrenceDigest: 'a'.repeat(64),
+          summary: 'must not write', facts: {},
+        }],
+      });
+    } },
+    isPrincipalActive: () => active, maxFrameBytes: 100_000, maxBufferedBytes: 100_000,
+  });
+  class RevokeOnSnapshot extends Response {
+    write(value) {
+      const accepted = super.write(value);
+      if (value.includes('event: snapshot')) active = false;
+      return accepted;
+    }
+  }
+  const betweenWrites = new RevokeOnSnapshot();
+  await second.stream.open({ ticket: second.stream.issue(principal(), 'https://control.test', {
+    repoId: 'repo-a', runId: 'run-a', channel: 'events', snapshot: runSnapshot(),
+  }).body.ticket, principal: principal(), origin: 'https://control.test' }, betweenWrites);
+  assert.match(betweenWrites.output, /event: snapshot/);
+  assert.doesNotMatch(betweenWrites.output, /event: events/);
+  assert.equal(betweenWrites.ended, true);
+  assert.equal(second.coordination.events().some((event) => event.payload.kind === 'stream_authorization_lost'), true);
+
+  active = true;
+  let releaseIncarnationRead;
+  const incarnationRead = new Promise((resolve) => { releaseIncarnationRead = resolve; });
+  const third = fixture({
+    application: { async command(_name, args) {
+      if (args.depth === 'outline') return runSnapshot(args.runId);
+      await incarnationRead;
+      return timelinePage();
+    } },
+    incarnation: 'instance-a', isPrincipalActive: () => active,
+    maxFrameBytes: 100_000, maxBufferedBytes: 100_000,
+  });
+  const changedIncarnation = new Response();
+  const incarnationOpening = third.stream.open({ ticket: third.stream.issue(principal(), 'https://control.test', {
+    repoId: 'repo-a', runId: 'run-a', channel: 'events', snapshot: runSnapshot(),
+  }).body.ticket, principal: principal(), origin: 'https://control.test' }, changedIncarnation);
+  third.stream.incarnation = 'instance-b';
+  releaseIncarnationRead();
+  const incarnationRefusal = await incarnationOpening;
+  assert.equal(incarnationRefusal.status, 409);
+  assert.equal(changedIncarnation.status, undefined);
+  assert.equal(changedIncarnation.output, '');
+});
+
+test('RT1/RT5: malformed hasMore and an empty continuing page fail closed before SSE headers', async () => {
+  for (const hasMore of ['yes', 1, true]) {
+    const application = { async command(_name, args) {
+      if (args.depth === 'outline') return runSnapshot(args.runId);
+      const page = timelinePage();
+      page.content.hasMore = hasMore;
+      return page;
+    } };
+    const { stream } = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+    const output = new Response();
+    const refused = await stream.open({ ticket: stream.issue(principal(), 'https://control.test', {
+      repoId: 'repo-a', runId: 'run-a', channel: 'events', snapshot: runSnapshot(),
+    }).body.ticket, principal: principal(), origin: 'https://control.test' }, output);
+    assert.equal(refused.status, 503, String(hasMore));
+    assert.equal(output.status, undefined);
+    assert.equal(output.output, '');
+  }
+});
+
+test('RT4: safe events never acquire provider content and output is separately opt-in and untrusted', async () => {
+  const application = {
+    async command(_name, args) {
+      if (args.depth === 'outline') return runSnapshot(args.runId);
+      if (args.item === 'execution:events') return timelinePage({
+        items: [{ runId: 'run-a', position: 1, kind: 'content.message', category: 'work',
+          summary: 'Provider work emitted output.', occurrenceTrust: 'authoritative', occurrenceDigest: 'a'.repeat(64) }],
+      });
+      return timelinePage({ channel: 'output', recipient: args.recipient ?? null,
+        items: [{ runId: 'run-a', position: 1, kind: 'untrusted_output', category: 'output',
+          recipient: 'review', occurrenceTrust: 'authoritative', contentTrust: 'untrusted_provider',
+          occurrenceDigest: 'b'.repeat(64), output: { text: 'provider words', fragment: 0, fragmentCount: 1, digest: 'c'.repeat(64) } }],
+      });
+    },
+  };
+  const { stream } = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const events = new Response();
+  await stream.open({ ticket: stream.issue(principal(), 'https://control.test', {
+    repoId: 'repo-a', runId: 'run-a', channel: 'events', snapshot: runSnapshot(),
+  }).body.ticket, principal: principal(), origin: 'https://control.test' }, events);
+  assert.equal(events.output.includes('provider words'), false);
+  assert.match(events.output, /"contentTrust":"excluded"/);
+  events.emit('close');
+  const output = new Response();
+  await stream.open({ ticket: stream.issue(principal(), 'https://control.test', {
+    repoId: 'repo-a', runId: 'run-a', channel: 'output', recipient: 'review', snapshot: runSnapshot(),
+  }).body.ticket, principal: principal(), origin: 'https://control.test' }, output);
+  assert.match(output.output, /provider words/);
+  assert.match(output.output, /"contentTrust":"untrusted_provider"/);
+  output.emit('close');
+});
+
+test('RT6/RT7/RT8: Run streams close on authorization loss, backpressure, shutdown, and terminal truth', async () => {
+  let active = true;
+  let terminal = false;
+  const application = {
+    async command(_name, args) {
+      if (args.depth === 'outline') return runSnapshot(args.runId, terminal ? 8 : 7, terminal);
+      return timelinePage({ terminal, cursor: terminal ? 'timeline_terminal' : 'timeline_current', viewCursor: terminal ? 8 : 7 });
+    },
+  };
+  const scoped = (snapshot = runSnapshot()) => ({
+    repoId: 'repo-a', runId: 'run-a', channel: 'events', snapshot,
+  });
+  const authorized = fixture({ application, isPrincipalActive: () => active, pollMs: 5,
+    maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const revoked = new Response();
+  await authorized.stream.open({ ticket: authorized.stream.issue(principal(), 'https://control.test', scoped()).body.ticket,
+    principal: principal(), origin: 'https://control.test' }, revoked);
+  active = false;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(revoked.ended, true);
+  assert.equal(authorized.coordination.events().some((event) => event.payload.kind === 'stream_authorization_lost'), true);
+
+  active = true;
+  const bounded = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const blocked = new Response(0, false);
+  await bounded.stream.open({ ticket: bounded.stream.issue(principal(), 'https://control.test', scoped()).body.ticket,
+    principal: principal(), origin: 'https://control.test' }, blocked);
+  assert.equal(blocked.ended, true);
+  assert.equal(bounded.stream.activeConnections, 0);
+
+  const stopped = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const shutdown = new Response();
+  await stopped.stream.open({ ticket: stopped.stream.issue(principal(), 'https://control.test', scoped()).body.ticket,
+    principal: principal(), origin: 'https://control.test' }, shutdown);
+  stopped.stream.shutdown();
+  assert.equal(shutdown.ended, true);
+  assert.match(shutdown.output, /event: shutdown/);
+
+  terminal = true;
+  const finished = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const terminalResponse = new Response();
+  await finished.stream.open({ ticket: finished.stream.issue(principal(), 'https://control.test', scoped(runSnapshot('run-a', 8, true))).body.ticket,
+    principal: principal(), origin: 'https://control.test' }, terminalResponse);
+  assert.equal(terminalResponse.ended, true);
+  assert.match(terminalResponse.output, /"terminal":true/);
+  assert.equal(finished.coordination.events().some((event) => event.payload.kind === 'stream_terminal'), true);
 });
