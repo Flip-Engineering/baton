@@ -36,6 +36,7 @@ import { normalizeRunLineagePolicy } from './run-lineage.mjs';
 import { normalizeWorkflowPolicy } from './workflow-policy.mjs';
 import { normalizeContextProgramPolicy } from './context-program-policy.mjs';
 import { materializeContextMapBrief } from './context-map.mjs';
+import { materializeContextEffectBrief } from './context-call.mjs';
 import { openBatonDeployment } from './application-deployment.mjs';
 
 export { DEFAULT_BATON_DEPLOYMENT_ROUTES } from './application-deployment.mjs';
@@ -88,6 +89,7 @@ export {
 } from './workflow-definition.mjs';
 export {
   contextEffectCallIdentity, contextEffectNodeBinding, contextEffectUnitIdentity,
+  materializeContextEffectBrief,
   contextMapCallToEffectCall, normalizeContextEffectCall, normalizeContextEffectNodeBinding,
   normalizeContextEffectSource,
 } from './context-call.mjs';
@@ -1001,10 +1003,24 @@ export function createDriver(opts) {
     drainPolicy,
     ...(goalPlanAuthority ? { goalPlanAuthority } : {}),
     ...(contextProgram ? {
-      contextBriefMaterializer: (brief) => materializeContextMapBrief(
-        brief,
-        contextProgram.referenceRead,
-        Math.min(contextProgram.policy.maxArtifactBytes, contextProgram.policy.maxTextBytes * 2),
+      contextBriefMaterializer: (brief) => (
+        brief?.contextCall?.kind === 'context_effect_child'
+          ? materializeContextEffectBrief(
+            brief,
+            contextProgram.referenceRead,
+            Math.min(
+              contextProgram.policy.maxArtifactBytes,
+              contextProgram.policy.maxTextBytes * 2,
+            ),
+          )
+          : materializeContextMapBrief(
+            brief,
+            contextProgram.referenceRead,
+            Math.min(
+              contextProgram.policy.maxArtifactBytes,
+              contextProgram.policy.maxTextBytes * 2,
+            ),
+          )
       ),
     } : {}),
   });

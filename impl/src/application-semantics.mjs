@@ -17,6 +17,7 @@ const objectSchema = (properties, required = Object.keys(properties)) => ({
 });
 const id = { type: 'string', minLength: 1, maxLength: 256 };
 const depth = { type: 'string', enum: ['outline', 'index', 'section', 'item', 'evidence'] };
+const contextCallId = { type: 'string', pattern: '^context-call:[a-f0-9]{64}$' };
 
 const operations = {
   'application.help': {
@@ -71,6 +72,23 @@ const sections = [
 ].map(([sectionId, summary]) => ({ id: sectionId, summary }));
 
 const actions = {
+  context_reduce: {
+    label: 'Reduce completed Context',
+    summary: 'Propose one separately approved successor Plan over a fully reverified completed Context call.',
+    inputSchema: objectSchema({
+      callId: contextCallId,
+      instruction: { type: 'string', minLength: 1, maxLength: 16384 },
+      role: { type: 'string', minLength: 1, maxLength: 256 },
+    }, ['callId', 'instruction']),
+    serverDerived: [
+      'session', 'manifest', 'sourceCall', 'outputRef', 'evidenceRef', 'capsules',
+      'lineage', 'predecessorPlan', 'successorPlan', 'workflowDefinition', 'route',
+      'workerPolicy', 'budget', 'call', 'unit',
+    ],
+    effect: 'plan_proposal', destructive: false, irreversible: false,
+    idempotent: true, priority: 'optional', helpTopic: 'run.act.context_reduce',
+    expectedDepth: 'outline', genericCli: true,
+  },
   context_map: {
     label: 'Map addressed Context',
     summary: 'Propose one separately approved parallel successor Plan over an immutable completed Context cell.',

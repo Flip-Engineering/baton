@@ -5442,6 +5442,44 @@ export class CoordinationStore {
   _validateContextMapPlanProposal(plan, integrity = false) {
     const bindings = plan?.nodes?.map((node) => node.contextCall).filter(Boolean) ?? [];
     if (bindings.length === 0) return null;
+    if (bindings.some((binding) => binding?.kind === 'context_effect_child')) {
+      const fail = (message) => this._contextFailure(message,
+        'context_call_plan_integrity', integrity);
+      if (bindings.length !== plan.nodes.length
+        || bindings.some((binding) => binding?.kind !== 'context_effect_child')
+        || new Set(bindings.map((binding) => binding.callId)).size !== 1) {
+        return fail('Context effect Plan bindings are incomplete, mixed, or ambiguous');
+      }
+      const call = this._contextCalls.get(bindings[0].callId);
+      const predecessor = call?.authority?.predecessorPlan;
+      if (!call || call.kind !== 'baton.context_effect_call'
+        || call.state !== 'plan_pending'
+        || call.expectedPlanDigest !== plan.digest
+        || this._contextCallRunId(call) !== plan.runId
+        || canonicalDigest(predecessor) !== canonicalDigest(plan.predecessor)
+        || canonicalDigest(call.planRequest) !== canonicalDigest({
+          goal: plan.goal, predecessor: plan.predecessor,
+          nodes: plan.nodes, totals: plan.totals,
+        })) {
+        return fail('Context effect Plan has no exact durable generic-call admission');
+      }
+      const units = new Set();
+      for (const binding of bindings) {
+        const unit = call.units.find((candidate) => candidate.unitId === binding.unit?.unitId);
+        let expected;
+        try { expected = unit ? contextEffectNodeBinding(call, unit) : null; }
+        catch { expected = null; }
+        if (!expected || canonicalDigest(expected) !== canonicalDigest(binding)
+          || units.has(unit.unitId)) {
+          return fail('Context effect Plan substituted or repeated an admitted unit');
+        }
+        units.add(unit.unitId);
+      }
+      if (units.size !== call.units.length) {
+        return fail('Context effect Plan does not cover its admitted unit set');
+      }
+      return call;
+    }
     const fail = (message) => this._contextFailure(message,
       'context_map_plan_integrity', integrity);
     if (bindings.length !== plan.nodes.length

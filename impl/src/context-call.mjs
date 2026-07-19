@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 
 import { normalizeContextMapCall } from './context-map.mjs';
+import { canonicalContextCoordinates } from './context-lineage.mjs';
+import { validateContextProviderResultReference } from './context-result.mjs';
 
 const DIGEST = /^[a-f0-9]{64}$/u;
 const TREE_SHA = /^[a-f0-9]{40}$/u;
@@ -471,4 +473,132 @@ export function contextMapCallToEffectCall(mapValue, authorityValue) {
       coordinateDigest: partition.coordinateDigest,
     })),
   });
+}
+
+export function materializeContextEffectBrief(briefValue, referenceRead, maxBytes) {
+  if (!briefValue || typeof briefValue !== 'object' || Array.isArray(briefValue)
+    || !Object.hasOwn(briefValue, 'contextCall') || Object.hasOwn(briefValue, 'contextInput')
+    || typeof referenceRead !== 'function'
+    || !Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw callError('Context effect physical Brief authority is invalid',
+      'context_call_attachment_invalid');
+  }
+  const binding = normalizeContextEffectNodeBinding(briefValue.contextCall);
+  if (binding.operator !== 'reduce' || binding.source.kind !== 'call') {
+    throw callError('Only an admitted Context reduce can cross this provider-effect edge',
+      'context_call_attachment_invalid');
+  }
+  let output; let evidence;
+  try {
+    output = referenceRead(binding.source.outputRef);
+    evidence = referenceRead(binding.source.evidenceRef);
+  } catch (cause) {
+    throw Object.assign(callError('Context reduce source artifacts are unavailable',
+      'context_call_attachment_unavailable'), { cause });
+  }
+  try {
+    if (!output || typeof output !== 'object' || Array.isArray(output)
+      || output.schemaVersion !== 1 || output.kind !== 'baton.context_value'
+      || !Array.isArray(output.items) || output.items.length !== binding.source.itemCount
+      || !evidence || typeof evidence !== 'object' || Array.isArray(evidence)
+      || evidence.schemaVersion !== 3 || evidence.kind !== 'baton.context_call_evidence'
+      || evidence.callId !== binding.source.id
+      || evidence.callDigest !== binding.source.callDigest
+      || evidence.coordinateDigest !== binding.source.coordinateDigest
+      || evidence.outputLineageDigest !== binding.source.outputLineageDigest
+      || digest(evidence.outputRef) !== digest(binding.source.outputRef)
+      || digest(evidence.providerResults) !== digest(output.items)
+      || !Array.isArray(evidence.outputLineages)
+      || evidence.outputLineages.length !== output.items.length) {
+      throw callError('Context reduce completed-call evidence changed');
+    }
+    const aggregateCoordinates = canonicalContextCoordinates(
+      evidence.outputLineages.flatMap((lineage) => lineage?.sourceCoordinates ?? []),
+    );
+    if (digest(aggregateCoordinates) !== evidence.coordinateDigest
+      || digest(evidence.outputLineages.map((lineage) => ({
+        index: lineage.index, itemDigest: lineage.itemDigest,
+        lineageDigest: lineage.lineageDigest,
+      }))) !== evidence.outputLineageDigest) {
+      throw callError('Context reduce aggregate lineage changed');
+    }
+    const inputs = binding.unit.inputs.map((selected) => {
+      const providerResultValue = output.items[selected.index];
+      const lineageValue = evidence.outputLineages[selected.index];
+      const lineageFields = [
+        'coordinateDigest', 'derivationDigest', 'derivations', 'index', 'itemDigest',
+        'lineageDigest', 'parentDigest', 'parents', 'sourceCoordinates',
+      ];
+      if (!lineageValue || typeof lineageValue !== 'object' || Array.isArray(lineageValue)
+        || Object.keys(lineageValue).sort().join(',') !== lineageFields.sort().join(',')
+        || lineageValue.index !== selected.index
+        || lineageValue.itemDigest !== selected.itemDigest
+        || lineageValue.lineageDigest !== selected.lineageDigest
+        || digest(providerResultValue) !== selected.itemDigest
+        || digest(canonicalContextCoordinates(lineageValue.sourceCoordinates))
+          !== lineageValue.coordinateDigest
+        || digest(lineageValue.parents) !== lineageValue.parentDigest
+        || digest(lineageValue.derivations) !== lineageValue.derivationDigest
+        || digest({
+          schemaVersion: 1, itemDigest: lineageValue.itemDigest,
+          coordinateDigest: lineageValue.coordinateDigest,
+          parentDigest: lineageValue.parentDigest,
+          derivationDigest: lineageValue.derivationDigest,
+        }) !== lineageValue.lineageDigest) {
+        throw callError('Context reduce selected output lineage changed');
+      }
+      let capsule; let providerResult; let value;
+      try {
+        capsule = referenceRead(providerResultValue?.capsuleRef);
+        providerResult = validateContextProviderResultReference(providerResultValue, capsule);
+        value = referenceRead(capsule.sourceRef);
+      } catch (cause) {
+        throw Object.assign(callError('Context reduce provider-result capsule is unavailable',
+          'context_call_attachment_unavailable'), { cause });
+      }
+      const derivation = lineageValue.derivations.find((candidate) => (
+        candidate?.kind === 'provider_attempt'
+          && candidate.resultCapsuleId === capsule.capsuleId
+          && candidate.resultCapsuleDigest === capsule.capsuleDigest
+          && candidate.resultSourceDigest === capsule.resultSourceDigest
+      ));
+      if (!derivation || providerResult.capsuleId !== capsule.capsuleId
+        || providerResult.capsuleDigest !== capsule.capsuleDigest
+        || providerResult.resultSourceDigest !== capsule.resultSourceDigest
+        || digest(capsule.sourceRef) !== capsule.resultSourceDigest) {
+        throw callError('Context reduce capsule lineage changed');
+      }
+      return {
+        index: selected.index, itemDigest: selected.itemDigest,
+        lineageDigest: selected.lineageDigest,
+        providerResult: clone(providerResult), capsuleRef: clone(providerResult.capsuleRef),
+        sourceRef: clone(capsule.sourceRef), lineage: clone(lineageValue), value: clone(value),
+      };
+    });
+    const core = {
+      schemaVersion: 1, kind: 'baton.context_reduce_input',
+      callId: binding.callId, callDigest: binding.callDigest,
+      requestId: binding.requestId, requestDigest: binding.requestDigest,
+      unitId: binding.unit.unitId, unitDigest: binding.unit.unitDigest,
+      inputSetDigest: binding.unit.inputSetDigest,
+      lineageDigest: binding.unit.lineageDigest,
+      coordinateDigest: binding.unit.coordinateDigest,
+      sourceCallId: binding.source.id,
+      sourceCallDigest: binding.source.callDigest,
+      sourceSettlementDigest: binding.source.settlementDigest,
+      sourceOutputLineageDigest: binding.source.outputLineageDigest,
+      inputs,
+    };
+    if (Buffer.byteLength(JSON.stringify(canonical(core))) > maxBytes) {
+      throw callError('Context reduce input exceeds the provider Brief ceiling',
+        'context_call_attachment_oversize');
+    }
+    return freeze({
+      ...clone(briefValue), contextInput: { ...core, attachmentDigest: digest(core) },
+    });
+  } catch (cause) {
+    if (cause?.code?.startsWith('context_call_attachment_')) throw cause;
+    throw Object.assign(callError('Context reduce source artifacts are malformed',
+      'context_call_attachment_integrity'), { cause });
+  }
 }
