@@ -1,0 +1,3 @@
+# Adversarial finding: incomplete stop proof can be erased
+
+The final proof check correctly marks the run failed when `workflow.stop()` did not prove `remainingCount === 0` and zero owned workers. However, the following cleanup gate ignores that result and removes both `deploymentRoot` and `recovery.json` whenever `baton.close()` alone reports `closed === true` and zero workers. Thus, if workflow stop throws or returns an incomplete descendant receipt while Baton close succeeds, the script records a cleanup failure and then destroys the state and run pointer needed to inspect or retry that exact cleanup before throwing. Removal must also require the complete workflow-stop proof (and no stop error), so failed settlement preserves exact recovery and descendant truth.
