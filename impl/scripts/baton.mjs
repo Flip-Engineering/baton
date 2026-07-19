@@ -81,6 +81,8 @@ try {
       const result = {
         schemaVersion: 1, state: remote.ready === true ? 'ready' : 'not_ready',
         depth: parsed.depth, outline: { ...local.outline, credential: 'accepted', remote: remote.ready === true ? 'ready' : 'not_ready' },
+        deployment: remote.deployment,
+        routes: remote.routes,
         application: remote.application,
       };
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

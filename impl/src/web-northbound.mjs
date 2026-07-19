@@ -656,6 +656,12 @@ export class WebNorthbound {
         semanticAuthority = prior?.semanticAuthority ?? await this.application.actionAuthority(
           envelope.args,
           { actor: webActor, principalId: ctx.principal.userId, sessionId: ctx.principal.sessionId },
+          {
+            transport: 'web', requestId: String(envelope.commandId),
+            idempotencyKey: `web.command:${envelope.commandId}`,
+            capabilityAuthority: northboundCapabilityToken('web'),
+            capabilities: [...ctx.principal.capabilities],
+          },
         );
       } catch (cause) {
         const failure = dispatchFailure(cause);
@@ -791,9 +797,9 @@ export class WebNorthbound {
           }, {
             transport: 'web', requestId: String(envelope.commandId),
             idempotencyKey: `web.command:${envelope.commandId}`,
+            capabilityAuthority: northboundCapabilityToken('web'),
+            capabilities: [...ctx.principal.capabilities],
             ...(envelope.command === 'run_act' ? {
-              capabilityAuthority: northboundCapabilityToken('web'),
-              capabilities: [...ctx.principal.capabilities],
               semanticAuthority: admission.command.semanticAuthority,
             } : {}),
             ...(lease ? { sessionAuthority: {
@@ -903,9 +909,9 @@ export class WebNorthbound {
       }, {
         transport: 'web', requestId: String(envelope.commandId),
         idempotencyKey: `web.command:${envelope.commandId}`,
+        capabilityAuthority: northboundCapabilityToken('web'),
+        capabilities: [...principal.capabilities],
         ...(envelope.command === 'run_act' ? {
-          capabilityAuthority: northboundCapabilityToken('web'),
-          capabilities: [...principal.capabilities],
           semanticAuthority,
         } : {}),
         ...(lease ? { sessionAuthority: {
@@ -1273,6 +1279,12 @@ export class WebNorthbound {
           {
             actor: actor(principal), principalId: principal.userId,
             sessionId: principal.sessionId,
+          },
+          {
+            transport: 'web', requestId: String(envelope.commandId),
+            idempotencyKey: `web.command:${envelope.commandId}`,
+            capabilityAuthority: northboundCapabilityToken('web'),
+            capabilities: [...principal.capabilities],
           },
         );
       } catch (cause) {

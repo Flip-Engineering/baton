@@ -61,6 +61,18 @@ function take(args, name, { required = false } = {}) {
   args.splice(index, 2);
   return value;
 }
+function takeAll(args, name) {
+  const values = [];
+  for (;;) {
+    const index = args.indexOf(name);
+    if (index === -1) return values;
+    if (index === args.length - 1 || args[index + 1].startsWith('--')) {
+      throw cliError(`${name} requires a value`);
+    }
+    values.push(args[index + 1]);
+    args.splice(index, 2);
+  }
+}
 function flag(args, name) {
   const index = args.indexOf(name);
   if (index === -1) return false;
@@ -1032,6 +1044,38 @@ function parseStart(args, objective, idempotencyKey) {
   return { kind: 'command', name: 'run.start', args: { intent }, idempotencyKey };
 }
 
+function parseReviewStart(args, objective, idempotencyKey) {
+  if (!nonempty(objective)) throw cliError('review OBJECTIVE is required');
+  const exactRoutes = takeAll(args, '--exact').map(route);
+  const profile = take(args, '--profile');
+  const runId = take(args, '--run-id');
+  const rawScope = take(args, '--scope');
+  noRemainder(args);
+  if (exactRoutes.length !== 2) {
+    throw cliError('review requires exactly two --exact HARNESS/MODEL@EFFORT routes');
+  }
+  const intent = {
+    objective,
+    composition: {
+      strategy: 'parallel_attempts', workspace: 'isolated', join: 'operator_selected',
+      team: [
+        { role: 'reviewer', route: exactRoutes[0] },
+        { role: 'challenger', route: exactRoutes[1] },
+      ],
+    },
+  };
+  if (profile !== null) intent.profile = id(profile, 'profile');
+  if (runId !== null) intent.runId = id(runId, 'Run ID');
+  if (rawScope !== null) {
+    const scope = rawScope.split(',').map((item) => item.trim()).filter(Boolean);
+    if (scope.length === 0 || new Set(scope).size !== scope.length) {
+      throw cliError('scope is invalid');
+    }
+    intent.scope = scope;
+  }
+  return { kind: 'command', name: 'run.start', args: { intent }, idempotencyKey };
+}
+
 export function parseBatonCli(rawArgs) {
   const args = [...rawArgs];
   if (args.length === 0 || (args.length === 1 && ['--help', '-h'].includes(args[0]))) {
@@ -1068,6 +1112,8 @@ export function parseBatonCli(rawArgs) {
         .map((command) => [command.subcommand, command.helpTopic]));
       topic = commandTopics[args[1]]
         ?? (args.length > 1 ? 'run.start' : 'run');
+    } else if (['review', 'workflow'].includes(args[0])) {
+      topic = args[0];
     }
     return {
       kind: 'command', name: 'application.help',
@@ -1101,6 +1147,10 @@ export function parseBatonCli(rawArgs) {
     if (configPath !== null && !nonempty(configPath)) throw cliError('CONFIG_MODULE is invalid');
     noRemainder(args);
     return { kind: 'serve', configPath };
+  }
+  if (args[0] === 'review') {
+    args.shift();
+    return parseReviewStart(args, args.shift(), idempotencyKey);
   }
   if (args.shift() !== 'run') throw cliError('expected credentials, setup, doctor, or run');
   const action = args.shift();
@@ -1468,7 +1518,16 @@ export class BatonWebClient {
   async doctor() {
     const readiness = await this._json('/readyz', { headers: { origin: this.origin } });
     const card = await this._json('/v1/application-card', { headers: { ...this._headers(), 'sec-fetch-site': 'none' } });
-    return { schemaVersion: 1, ready: readiness.ready === true, application: card.application };
+    const deployment = record(card?.application?.readiness)
+      ? card.application.readiness : null;
+    const routes = Array.isArray(deployment?.routes) ? deployment.routes : [];
+    return {
+      schemaVersion: 1,
+      ready: readiness.ready === true && (deployment === null || deployment.ready === true),
+      deployment,
+      routes,
+      application: card.application,
+    };
   }
 
   async session() {
@@ -1693,6 +1752,7 @@ export async function connectBaton({
   }
   return bindBatonPort(Object.freeze({
     command: (name, args) => client.command(name, args),
+    doctor: () => client.doctor(),
   }));
 }
 

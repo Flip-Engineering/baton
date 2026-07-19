@@ -520,6 +520,7 @@ const authorizedActions = Object.fromEntries(Object.entries(actions).map(([kind,
 ]));
 
 const cliCommands = [
+  ['review.objective', 'run.start', null, 'baton review OBJECTIVE --exact HARNESS/MODEL@EFFORT --exact HARNESS/MODEL@EFFORT [--profile PROFILE] [--scope PATHS]'],
   ['run.objective', 'run.start', null, 'baton run OBJECTIVE [--model MODEL --effort EFFORT] [--harness HARNESS]'],
   ['run.objective.manual', 'run.start', null, 'baton run OBJECTIVE --model MODEL --effort EFFORT [--harness HARNESS]'],
   ['run.start.exact', 'run.start', null, 'baton run start OBJECTIVE --exact HARNESS/MODEL@EFFORT [--profile PROFILE] [--scope PATHS]'],
@@ -571,6 +572,7 @@ const cli = {
         'baton setup',
         'baton credentials install kimi',
         'baton doctor [--depth outline|connection|profile|evidence] [--check]',
+        'baton review OBJECTIVE --exact HARNESS/MODEL@EFFORT --exact HARNESS/MODEL@EFFORT',
         'baton help [run|routing|connection|TOPIC]',
       ],
       sections: [
@@ -612,6 +614,24 @@ const cli = {
       ],
     },
     'application.help': { aliasFor: 'application' },
+    review: {
+      commandIds: ['review.objective'],
+      paragraphs: [
+        'Review is the objective-first preset for one durable Workflow: reviewer and challenger run as isolated parallel Attempts, and the operator selects the attributable verified Candidate.',
+        'Each reviewer is bound to one exact harness/model/effort route. Baton derives the Plan, roles, worktrees, tasks, fences, budgets, receipts, and cleanup authority.',
+        'Use workflow help for the advanced team-composition surface when the fixed reviewer/challenger roles do not fit.',
+      ],
+    },
+    workflow: {
+      usage: [
+        'baton.workflow(OBJECTIVE, { team: [{ role, exact: { harness, model, effort } }, ...] })',
+      ],
+      paragraphs: [
+        'Workflow is the advanced inner surface: one durable Run with a caller-named team of two to sixteen role-addressed isolated parallel Attempts and operator-selected join authority.',
+        'Every team member requires one exact harness/model@effort route tuple. Strategy, workspace, and join remain fixed to parallel_attempts, isolated, and operator_selected.',
+        'Use review for the ordinary objective-first reviewer/challenger preset.',
+      ],
+    },
     runs: {
       commandIds: [],
       paragraphs: [

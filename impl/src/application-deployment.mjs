@@ -1055,6 +1055,15 @@ class BatonDeployment {
     return this.#baton.workflow(objective, options);
   }
 
+  async review(objective, options = {}) {
+    if (record(options) && Array.isArray(options.routes)) {
+      for (const exact of options.routes) {
+        if (record(exact)) assertRouteReady({ exact }, this.#readiness);
+      }
+    }
+    return this.#baton.review(objective, options);
+  }
+
   open(runId) { return this.#baton.runs.open(runId); }
 
   async host(options = {}) {

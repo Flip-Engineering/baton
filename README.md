@@ -286,6 +286,10 @@ adopt, semantic review, evidence-bound integration, typed feedback, Candidate se
 approval-gated revision, and role-addressed member stop through repository discovery. The
 `BATON_URL`, `BATON_ORIGIN`, `BATON_REPO_ID`, and `BATON_TOKEN` tuple remains a compatibility
 override; credentials are never command arguments. See [impl/CLI.md](impl/CLI.md).
+The first issue-10 P0 product vertical adds `review(objective, {routes})` and `baton review` as a
+two-exact-route reviewer/challenger preset over the existing Workflow authority. Connected clients
+also expose sanitized deployment doctor and exact-route readiness, while authenticated outline
+and list projections omit actions outside the principal's capabilities before display or drive.
 Cursor follow, materialized result export, exact recovery, and the bounded parallel Workflow plus
 one-round revision vertical now ship; deeper multi-round/strategy composition remains active. Southbound, the product tier
 uses persistent Claude stream-json, Codex app-server, and Grok ACP sessions; one-shot subprocess
@@ -319,6 +323,7 @@ Homelab integration is excluded.
 | [22-completeness-audit](docs/22-completeness-audit.md) | The built-not-wired audit that drove phases 8–10 |
 | [24-goal-system-completion](docs/24-goal-system-completion.md) | Phase-10 whole-system goal and completion record |
 | [25-capability-gap](docs/25-capability-gap.md) | Current researched-versus-shipped inventory and phase-11 boundary |
+| [30-objective-review-and-route-readiness](docs/30-objective-review-and-route-readiness.md) | Issue-10 P0 objective review preset, capability-aware actions, connected doctor, and exact-route readiness |
 
 Capability module designs: [docs/capabilities/](docs/capabilities/). Context/harness angle designs: [docs/reference/context-harness/](docs/reference/context-harness/).
 
