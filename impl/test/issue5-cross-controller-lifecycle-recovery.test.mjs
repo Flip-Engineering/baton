@@ -215,6 +215,7 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
   pid = live.processRef.pid;
   const workerId = live.id;
   const taskId = live.taskId;
+  const physicalOwnerId = live.sessionContext.ownerTaskId;
   const worktree = live.worktree;
   const branch = live.sessionContext.branch;
   const runtime = join(repo, '.baton', 'runtime', workerId);
@@ -262,7 +263,7 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
   assert.equal(existsSync(runtime), true, 'startup replay must retain the live process runtime');
   assert.equal(execFileSync('git', ['branch', '--show-current'], { cwd: worktree, encoding: 'utf8' }).trim(), branch);
   const activeCapacity = recoveredDriver.worktreeCapacity.snapshot();
-  assert.deepEqual(activeCapacity.reservations.map((row) => row.id), [`worker:${taskId}`],
+  assert.deepEqual(activeCapacity.reservations.map((row) => row.id), [`worker:${physicalOwnerId}`],
     diagnostic('replayed live-generation capacity reservations', activeCapacity));
   assert.equal(activeCapacity.reservations[0].ownerId, recoveredDriver.worktreeCapacity.ownerId);
 
