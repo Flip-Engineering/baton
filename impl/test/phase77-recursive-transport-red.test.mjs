@@ -13,6 +13,7 @@ import {
   McpFleetServer,
   WebNorthbound,
 } from '../src/index.mjs';
+import { northboundCapabilityToken } from '../src/northbound-capability-authority.mjs';
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -76,11 +77,17 @@ function applicationRecorder(calls, replays = []) {
       commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS),
     }),
     async authorizeReplay(name, args, principal, context) {
-      replays.push({ name, args: structuredClone(args), principal: structuredClone(principal), context: structuredClone(context) });
+      replays.push({
+        name, args: structuredClone(args), principal: structuredClone(principal),
+        context: { ...structuredClone(context), capabilityAuthority: context.capabilityAuthority },
+      });
       return true;
     },
     async command(name, args, principal, context) {
-      calls.push({ name, args: structuredClone(args), principal: structuredClone(principal), context: structuredClone(context) });
+      calls.push({
+        name, args: structuredClone(args), principal: structuredClone(principal),
+        context: { ...structuredClone(context), capabilityAuthority: context.capabilityAuthority },
+      });
       return { schemaVersion: 1, runId: args.intent?.runId ?? args.runId, phase: 'awaiting_plan_approval' };
     },
   };
@@ -197,10 +204,13 @@ test('RT1 RED: Web derives private recursive context from the authenticated dura
   assert.deepEqual(calls[0].context, {
     transport: 'web', requestId: commandId,
     idempotencyKey: `web.command:${commandId}`,
+    capabilityAuthority: northboundCapabilityToken('web'),
+    capabilities: ['control', 'observe'],
     sessionAuthority: expectedSessionAuthority(parent.lease),
   });
   assert.deepEqual(Object.keys(calls[0].context).sort(), [
-    'idempotencyKey', 'requestId', 'sessionAuthority', 'transport',
+    'capabilities', 'capabilityAuthority', 'idempotencyKey', 'requestId',
+    'sessionAuthority', 'transport',
   ]);
   assert.equal(JSON.stringify(calls[0]).includes('credential-private'), false);
   assert.equal(JSON.stringify(calls[0]).includes('csrf-private'), false);
@@ -275,9 +285,12 @@ test('RT2 RED: MCP derives the same private authority without adding a tool inpu
   assert.equal(calls[0].context.transport, 'mcp');
   assert.match(calls[0].context.requestId, /^[A-Za-z0-9-]{16,}$/u);
   assert.equal(calls[0].context.idempotencyKey, `mcp.call:${calls[0].context.requestId}`);
+  assert.equal(calls[0].context.capabilityAuthority, northboundCapabilityToken('mcp'));
+  assert.deepEqual(calls[0].context.capabilities, ['control', 'observe']);
   assert.deepEqual(calls[0].context.sessionAuthority, expectedSessionAuthority(parent.lease));
   assert.deepEqual(Object.keys(calls[0].context).sort(), [
-    'idempotencyKey', 'requestId', 'sessionAuthority', 'transport',
+    'capabilities', 'capabilityAuthority', 'idempotencyKey', 'requestId',
+    'sessionAuthority', 'transport',
   ]);
   assert.equal(JSON.stringify(calls[0]).includes('token'), false);
   assert.equal(Object.hasOwn(calls[0].args, 'sessionAuthority'), false);

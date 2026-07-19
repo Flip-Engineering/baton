@@ -153,3 +153,33 @@ Phase 93 remains next: closed canonical Program IR; event-driven recursive/paral
 immutable base plus private overlays; one fenced integrator; and live multi-harness gates. Dynamic
 arbitrary recursion, ambient shared mutable checkout writes, and agent-authored program execution
 remain closed until those authorities are implemented and independently verified.
+
+## 8. Issue 10 first-P0 agent-experience vertical
+
+This vertical improves how an orchestrator enters and observes existing authority. It does not add a
+scheduler, Program IR, REPL, replay accelerator, pagination substrate, or another mutable workflow
+truth.
+
+1. **P0.1 — objective-first review preset.** `baton.review(objective, { routes })` and
+   `baton review OBJECTIVE --exact ... --exact ...` require exactly two complete
+   harness/model/effort tuples. They deterministically assign `reviewer` and `challenger` and
+   compile to the existing `parallel_attempts` / `isolated` / `operator_selected` Workflow
+   composition. `baton.workflow()` remains the advanced role/composition surface.
+2. **P0.2 — eligible actions are principal-relative.** Authenticated Web and MCP reads carry their
+   trusted capability projection into Run inspection and listing. A state-eligible semantic action
+   is omitted unless that principal has every registered required capability. Action invocation
+   still resolves fresh semantic authority, authorizes it, and rechecks scope immediately before
+   effect; projection is not execution authority.
+3. **P0.3 — connected deployment truth.** The resident application card exposes the same sanitized,
+   static deployment readiness returned by the deployment doctor. `connectBaton()` exposes
+   `doctor()`, `routes()`, and exact `route({ harness, model, effort })`; `baton route
+   HARNESS/MODEL@EFFORT` selects the identical row. No credential value, runtime path, deployment
+   factory, provider probe, or silent route substitution crosses this surface.
+4. **P0.4 — advertised defaults execute.** High-level Run helpers materialize defaults from the
+   currently advertised action schema. In particular, `run.integrate()` uses both the advertised
+   strategy and reason; it does not maintain a divergent client-only default. The server validates
+   the resulting closed input and retains final reauthorization.
+5. **P0.5 — progressive help closes.** `review` help explains the preset, exact-route requirement,
+   and readiness command. `workflow` help identifies itself as the advanced inner surface and names
+   the one supported strategy/workspace/join authority. Outline and content help link the two
+   surfaces without exposing budgets, ceilings, task IDs, fences, receipts, or export plumbing.

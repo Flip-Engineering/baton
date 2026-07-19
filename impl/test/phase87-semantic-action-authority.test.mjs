@@ -58,7 +58,7 @@ test('SA1/SA3: every semantic action kind has canonical capability authority and
   assert.deepEqual(APPLICATION_COMMAND_DEFINITIONS['run.act'].capabilities, []);
   assert.equal(APPLICATION_COMMAND_DEFINITIONS['run.act'].semanticCapabilities, true);
   assert.equal(APPLICATION_SEMANTIC_REGISTRY.operations['run.act'].destructive, true);
-  assert.equal(APPLICATION_SEMANTIC_REGISTRY.version, '1.2.0');
+  assert.equal(APPLICATION_SEMANTIC_REGISTRY.version, '1.3.0');
 
   for (const [kind, definition] of Object.entries(APPLICATION_SEMANTIC_REGISTRY.actions)) {
     assert.ok(definition.requiredCapabilities.length > 0, `${kind} lacks semantic capabilities`);

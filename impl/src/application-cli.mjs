@@ -1114,6 +1114,8 @@ export function parseBatonCli(rawArgs) {
         ?? (args.length > 1 ? 'run.start' : 'run');
     } else if (['review', 'workflow'].includes(args[0])) {
       topic = args[0];
+    } else if (args[0] === 'route') {
+      topic = 'routing';
     }
     return {
       kind: 'command', name: 'application.help',
@@ -1148,11 +1150,19 @@ export function parseBatonCli(rawArgs) {
     noRemainder(args);
     return { kind: 'serve', configPath };
   }
+  if (args[0] === 'route') {
+    args.shift();
+    const exact = route(args.shift());
+    noRemainder(args);
+    return { kind: 'route', exact };
+  }
   if (args[0] === 'review') {
     args.shift();
     return parseReviewStart(args, args.shift(), idempotencyKey);
   }
-  if (args.shift() !== 'run') throw cliError('expected credentials, setup, doctor, or run');
+  if (args.shift() !== 'run') {
+    throw cliError('expected credentials, setup, doctor, route, review, or run');
+  }
   const action = args.shift();
   if (action === 'follow') {
     throw cliError(`${action} is not shipped by the Run application`, 'cli_command_unavailable');
@@ -1523,7 +1533,7 @@ export class BatonWebClient {
     const routes = Array.isArray(deployment?.routes) ? deployment.routes : [];
     return {
       schemaVersion: 1,
-      ready: readiness.ready === true && (deployment === null || deployment.ready === true),
+      ready: readiness.ready === true,
       deployment,
       routes,
       application: card.application,
@@ -1759,6 +1769,20 @@ export async function connectBaton({
 export async function runBatonCli(parsed, client, options = {}) {
   if (parsed.kind === 'help') return { help: BATON_CLI_HELP };
   if (parsed.kind === 'doctor') return client.doctor();
+  if (parsed.kind === 'route') {
+    const doctor = await client.doctor();
+    const routes = Array.isArray(doctor?.routes)
+      ? doctor.routes : doctor?.application?.readiness?.routes;
+    const matches = routes?.filter((candidate) => (
+      candidate.harness === parsed.exact.harness && candidate.model === parsed.exact.model
+      && candidate.effort === parsed.exact.effort
+    )) ?? [];
+    if (matches.length !== 1) {
+      throw cliError('Exact route is not configured by this deployment',
+        'application_route_unavailable');
+    }
+    return matches[0];
+  }
   if (parsed.kind === 'command') return client.command(parsed.name, parsed.args, parsed.idempotencyKey);
   if (parsed.kind === 'stream') {
     if (!options || typeof options !== 'object' || Array.isArray(options)

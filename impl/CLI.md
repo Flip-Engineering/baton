@@ -84,7 +84,8 @@ accepts budgets, storage ceilings, worker/task/fence coordinates, or receipt pat
 `baton doctor --check` now includes the deployment's sanitized repository, verifier, dependency,
 and per-exact-route readiness. The connected JavaScript client exposes the same data through
 `doctor()`, `routes()`, and `route({harness, model, effort})`, so route selection does not require
-opening the deployment factory.
+opening the deployment factory. `baton route HARNESS/MODEL@EFFORT` selects the identical sanitized
+row for CLI orchestration.
 
 `run adopt` first reads `run.evidence` and binds the exact displayed manifest/result coordinates;
 it does not inspect a disposable worktree, merge, checkout, or publish. Use

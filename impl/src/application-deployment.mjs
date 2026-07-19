@@ -976,10 +976,12 @@ function assertRouteReady(options, readiness) {
   });
 }
 
-function residentApplicationFacade(application, resident) {
+function residentApplicationFacade(application, resident, readiness) {
   return new Proxy(application, {
     get(target, key) {
-      if (key === 'card') return () => Object.freeze({ ...target.card(), resident });
+      if (key === 'card') {
+        return () => Object.freeze({ ...target.card(), resident, readiness });
+      }
       const value = Reflect.get(target, key, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },
@@ -1176,7 +1178,7 @@ class BatonDeployment {
     }, { actor: `deployment:${this.#repository.repoId}:resident` });
     this.#residentSession = Object.freeze({ sessions, sessionId: issued.sessionId });
     const resident = authority.card();
-    const application = residentApplicationFacade(this.#application, resident);
+    const application = residentApplicationFacade(this.#application, resident, this.#readiness);
     const web = new WebNorthbound({
       coordinator: this.#driver.coordinator,
       coordination: this.#driver.coordination,

@@ -521,6 +521,7 @@ const authorizedActions = Object.fromEntries(Object.entries(actions).map(([kind,
 
 const cliCommands = [
   ['review.objective', 'run.start', null, 'baton review OBJECTIVE --exact HARNESS/MODEL@EFFORT --exact HARNESS/MODEL@EFFORT [--profile PROFILE] [--scope PATHS]'],
+  ['route.exact', null, null, 'baton route HARNESS/MODEL@EFFORT'],
   ['run.objective', 'run.start', null, 'baton run OBJECTIVE [--model MODEL --effort EFFORT] [--harness HARNESS]'],
   ['run.objective.manual', 'run.start', null, 'baton run OBJECTIVE --model MODEL --effort EFFORT [--harness HARNESS]'],
   ['run.start.exact', 'run.start', null, 'baton run start OBJECTIVE --exact HARNESS/MODEL@EFFORT [--profile PROFILE] [--scope PATHS]'],
@@ -573,6 +574,7 @@ const cli = {
         'baton credentials install kimi',
         'baton doctor [--depth outline|connection|profile|evidence] [--check]',
         'baton review OBJECTIVE --exact HARNESS/MODEL@EFFORT --exact HARNESS/MODEL@EFFORT',
+        'baton route HARNESS/MODEL@EFFORT',
         'baton help [run|routing|connection|TOPIC]',
       ],
       sections: [
@@ -665,7 +667,7 @@ const cli = {
     },
     'run.start': { aliasFor: 'run' },
     routing: {
-      commandIds: ['run.objective.manual', 'run.start.exact'],
+      commandIds: ['route.exact', 'run.objective.manual', 'run.start.exact'],
       selectorRule: 'routingDetail',
     },
     'run.inspect': {
@@ -729,7 +731,7 @@ const cli = {
 
 const core = {
   schemaVersion: 1,
-  version: '1.2.0',
+  version: '1.3.0',
   depths: ['outline', 'index', 'section', 'item', 'content', 'evidence'],
   sections,
   operations,

@@ -2203,12 +2203,12 @@ export class BatonApplication {
     }), principal, runId);
   }
 
-  async _resolveSemanticAction(request, principal, capabilities = null) {
+  async _resolveSemanticAction(request, principal, context = null) {
     const current = this._findRun(request.runId);
     const view = this._withContextProjection(
       current, await this._buildView(current, this.principals.observer),
     );
-    const action = this._semanticActions(current, view, principal, capabilities)
+    const action = this._semanticActions(current, view, principal, context)
       .find((candidate) => candidate.actionId === request.actionId);
     return { current, view, action: action ?? null };
   }
@@ -2221,9 +2221,7 @@ export class BatonApplication {
     const request = deepFreeze(clone(rawRequest));
     const principal = normalizePrincipal(rawPrincipal, 'action authority principal');
     await this._authorize('run.status', principal, request.runId, { operation: 'action_authority' });
-    const { action } = await this._resolveSemanticAction(
-      request, principal, context?.capabilities ?? null,
-    );
+    const { action } = await this._resolveSemanticAction(request, principal, context);
     if (!action) {
       throw applicationError('Run action is outside the current authority scope',
         'application_action_scope_mismatch');
@@ -8032,7 +8030,7 @@ export class BatonApplication {
     return cell;
   }
 
-  _semanticActions(current, view, principal, capabilities = null) {
+  _semanticActions(current, view, principal, context = null) {
     const candidates = [];
     if (view.phase === 'awaiting_plan_approval') candidates.push({ kind: 'approve_plan', source: null, target: null });
     for (const candidate of view.nextActions ?? []) {
@@ -8122,10 +8120,13 @@ export class BatonApplication {
       && (stopClosesOpenDispatchAuthority || (view.ownership?.workers ?? 0) > 0)) {
       candidates.push({ kind: 'stop', source: null, target: null });
     }
-    const eligible = capabilities === null ? candidates : candidates.filter(({ kind }) => (
-      APPLICATION_SEMANTIC_REGISTRY.actions[kind].requiredCapabilities
-        .every((capability) => capabilities.includes(capability))
-    ));
+    const eligible = context?.capabilityAuthority
+      ? candidates.filter(({ kind }) => (
+        APPLICATION_SEMANTIC_REGISTRY.actions[kind].requiredCapabilities.every(
+          (capability) => context.capabilities.includes(capability),
+        )
+      ))
+      : candidates;
     return eligible.map(({ kind, source, target, authorityTarget = target }) => {
       const definition = APPLICATION_SEMANTIC_REGISTRY.actions[kind];
       const viewDigest = semanticViewDigest(view);
@@ -9199,7 +9200,7 @@ export class BatonApplication {
           summary: view.preservation?.state === 'pinned' ? 'Work preserved; resume available after fresh verification.'
             : 'No preserved work is advertised.',
         },
-        actions: this._semanticActions(current, view, principal, context?.capabilities ?? null),
+        actions: this._semanticActions(current, view, principal, context),
       };
       return this._finalizeSemanticInspection({
         ...base,
@@ -9537,8 +9538,7 @@ export class BatonApplication {
         current, await this._buildView(current, this.principals.observer),
       );
       const actions = current.profile
-        ? this._semanticActions(current, view, principal, context?.capabilities ?? null)
-          .map((action) => action.kind)
+        ? this._semanticActions(current, view, principal, context).map((action) => action.kind)
         : [];
       const attention = view.attention ?? [];
       const timing = this._progressTiming(current, view);
@@ -9613,9 +9613,12 @@ export class BatonApplication {
     )).filter(Boolean);
     const paragraphs = [summary, ...(cli?.paragraphs ?? []).filter((value) => value !== summary)];
     const links = request.topic === 'application' || request.topic === 'application.help'
-      ? ['run', 'run.episode', 'run.workstreams', 'routing', 'connection', 'worker-policy', 'advanced']
-      : request.topic === 'review' ? ['workflow', 'routing', 'run.inspect']
-        : request.topic === 'workflow' ? ['review', 'routing', 'run.workstreams']
+      ? ['run', 'review', 'workflow', 'run.episode', 'run.workstreams', 'routing',
+        'connection', 'worker-policy', 'advanced']
+      : request.topic === 'review'
+        ? ['workflow', 'routing', 'run.inspect', 'run.episode', 'run.workstreams']
+        : request.topic === 'workflow'
+          ? ['review', 'routing', 'run.episode', 'run.workstreams']
       : ['run.episode', 'run.workstreams'].includes(request.topic)
         || ['run.inspect.episode', 'run.inspect.workstreams'].includes(request.topic)
         ? ['run.inspect', request.topic.includes('episode') ? 'run.workstreams' : 'run.episode']

@@ -50,7 +50,8 @@ contain executable paths, credential values, private runtime paths, adapter outp
 tokens.
 
 `baton doctor --check` returns the same deployment and route projection after local connection
-discovery. An orchestrator can therefore select a ready exact route without importing or opening
+discovery. `baton route HARNESS/MODEL@EFFORT` selects one exact row from that same sanitized
+projection. An orchestrator can therefore select a ready exact route without importing or opening
 the deployment-only factory. Route readiness is advisory at selection time; ordinary Run and
 Workflow authority plus execution-time authorization remain authoritative.
 
@@ -60,4 +61,3 @@ Workflow authority plus execution-time authorization remain authoritative.
 explains the advanced team shape, exact route requirement, fixed composition semantics, and the
 ordinary review alternative. Both use the application help outline and content continuation; the
 CLI renders the same registry-owned descriptions.
-

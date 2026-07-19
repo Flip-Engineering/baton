@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  BatonApplication, BatonWebClient, bindBatonPort, batonCliHelp, parseBatonCli,
+  APPLICATION_SEMANTIC_REGISTRY,
+  BatonApplication, BatonWebClient, bindBatonPort, batonCliHelp, parseBatonCli, runBatonCli,
 } from '../src/index.mjs';
+import { northboundCapabilityToken } from '../src/northbound-capability-authority.mjs';
 
 const ROUTE_A = Object.freeze({
   harness: 'codex', model: 'gpt-5.6-sol', effort: 'high',
@@ -135,11 +137,64 @@ test('I10-P0-5: state-eligible semantic actions are filtered by authenticated ca
   const current = { goal: { runId: 'run-a' }, plan: { digest: 'a'.repeat(64) }, profile: { digest: 'b'.repeat(64) } };
   const view = { phase: 'awaiting_plan_approval', nextActions: [], attention: [] };
   const principal = { principalId: 'reader', sessionId: 'reader-session' };
+  const context = (capabilities) => ({
+    transport: 'web', requestId: 'issue10-projection', idempotencyKey: 'issue10-projection',
+    capabilityAuthority: northboundCapabilityToken('web'), capabilities,
+  });
 
-  assert.deepEqual(application._semanticActions(current, view, principal, ['observe']), []);
+  assert.deepEqual(application._semanticActions(current, view, principal, context(['observe'])), []);
   assert.deepEqual(
-    application._semanticActions(current, view, principal, ['approve', 'observe'])
+    application._semanticActions(current, view, principal, context(['approve', 'observe']))
       .map(({ kind }) => kind),
     ['approve_plan'],
   );
+  assert.deepEqual(
+    application._semanticActions(current, view, principal, ['observe']).map(({ kind }) => kind),
+    ['approve_plan', 'stop'],
+    'an untrusted capability array must not narrow the authority projection',
+  );
+});
+
+test('I10-P0-6: exact-route CLI selection uses the connected sanitized readiness projection', async () => {
+  const ready = { ...ROUTE_A, state: 'ready', summary: 'Exact route is ready.' };
+  const blocked = {
+    ...ROUTE_B, state: 'blocked', code: 'authentication_required',
+    summary: 'Provider login is required.',
+  };
+  const parsed = parseBatonCli(['route', 'grok/grok-4.5@medium']);
+  assert.deepEqual(parsed.exact, ROUTE_B);
+  assert.deepEqual(await runBatonCli(parsed, {
+    doctor: async () => ({ routes: [ready, blocked] }),
+  }), blocked);
+  assert.deepEqual(await runBatonCli(parsed, {
+    doctor: async () => ({ application: { readiness: { routes: [ready, blocked] } } }),
+  }), blocked);
+  assert.equal(JSON.stringify(blocked).includes('credential'), false);
+});
+
+test('I10-P0-7: review and Workflow help close the preset-to-advanced navigation', async () => {
+  const application = Object.create(BatonApplication.prototype);
+  application.ready = Promise.resolve();
+  application.repoId = 'repo-help';
+  application._closed = false;
+  application._closing = false;
+  application._detached = false;
+  application.authorize = async () => true;
+  const principal = { actor: 'direct:help', principalId: 'help', sessionId: 'help-session' };
+
+  const applicationOutline = await application.help(
+    { topic: 'application', depth: 'outline' }, principal,
+  );
+  const reviewContent = await application.help({ topic: 'review', depth: 'content' }, principal);
+  const workflowContent = await application.help(
+    { topic: 'workflow', depth: 'content' }, principal,
+  );
+
+  assert.ok(applicationOutline.links.some(({ topic }) => topic === 'review'));
+  assert.ok(applicationOutline.links.some(({ topic }) => topic === 'workflow'));
+  assert.ok(reviewContent.links.some(({ topic }) => topic === 'workflow'));
+  assert.ok(workflowContent.links.some(({ topic }) => topic === 'review'));
+  assert.match(reviewContent.content.paragraphs.join(' '), /objective-first/iu);
+  assert.match(workflowContent.content.paragraphs.join(' '), /advanced/iu);
+  assert.ok(APPLICATION_SEMANTIC_REGISTRY.cli.helpTopics.review);
 });
