@@ -194,6 +194,43 @@ continuing page must contain at least one item.
 - RT6 revocation/downgrade/incarnation change closes before the next frame.
 - RT7 backpressure/disconnect never controls provider work.
 - RT8 interrupt confirmation, stop admission, terminal cause, and zero-reap truth cannot be dropped.
+- RT9 singleton section summary item addresses bind to the authoritative Goal/Plan version
+  (`section-summary:<section>:g<goalVersion>:p<planVersion>`), never to the coordination cursor.
+  They are stable across a coordination-only cursor advance and fail closed after an authoritative
+  Goal/Plan version change. The cursor is response state, not item identity; no cursor-suffix
+  compatibility alias is offered because it could not distinguish old semantic content from a new
+  authority version.
+- RT10 a verification failure projects closed, credential-safe mechanical detail through ordinary
+  inspection and status: outcome and failure ownership reduced to the referee's closed enums,
+  expected/observed exit, candidate and baseline execution state+code selected from closed enums,
+  output-exceeded flag, bounded-tail byte count plus tail digest and a tail-window-saturation flag,
+  bounded duration, validated runtime/verdict digests, and an attempt ordinal. The raw captured
+  output tail and the free-form verifier note are never projected; captured output is represented
+  only by its bounded-tail byte count and digest so a user or agent never needs a private worker log
+  to understand a mechanical failure.
+
+### RV — candidate-confirmation retry (documented remaining invariant)
+
+A candidate_failed checkpoint (for example an isolated descendant-reap timeout whose immediate rerun
+passes cleanly) is not yet retriable through the ordinary Run surface. The intended boundary change is
+a real Phase 69 invariant, not a broadened outcome gate, and is documented here rather than
+approximated:
+
+- pin the non-adoptable exact checkpoint for the initial candidate_failed result;
+- record `originOutcome=candidate_failed` on the durable retry record;
+- admit exactly one operator-authorized confirmation across restart/response loss with the same
+  Plan/command/base/runtime/checkpoint binding and no provider turn;
+- consume the single shot even if the retry lands inconclusive (one retry maximum for a
+  candidate_failed origin, regardless of outcome);
+- retain both attempt records as append-only evidence with the original losing verdict preserved;
+- mark a later pass `passed_after_candidate_failure`/unstable, never laundering it into a clean
+  passed verdict or a route-blamed failure; and
+- never weaken mechanical acceptance or classify a failure as success.
+
+Until the durable state machine that enforces this (origin outcome and one-shot admission in the
+coordination store; verdict relabel in the verifier/coordinator) is implemented, the application
+offers `retry_verification` only for `inconclusive` outcomes, and the closed verification projection
+(RT10) is the ordinary surface for a candidate_failed checkpoint.
 
 ## 7. Ordered implementation
 

@@ -668,3 +668,53 @@ test('AX1/AX6/AX7: cards, CLI, MCP, and browser project one digest; default inve
     assert.equal(browser.includes(advancedControl), false, `ordinary browser exposed ${advancedControl}`);
   }
 });
+
+test('AX2d: singleton section summary addresses bind to authoritative Goal/Plan version, stay stable across a coordination-only cursor advance, and fail closed when stale', async (t) => {
+  const f = fixture('stable-address');
+  cleanup(t, f.application);
+  const runId = 'run-phase67-stable-address';
+  await f.application.command('run.start', { intent: intent(runId) }, principal('owner'));
+
+  const first = await f.application.command('run.inspect', {
+    runId, depth: 'section', section: 'budget',
+  }, principal('owner'));
+  assert.ok(first.section.items.length > 0, 'budget section projects at least one summary item');
+  const firstId = first.section.items[0].id;
+  assert.match(firstId, /^section-summary:budget:g\d+:p\d+$/u,
+    'a singleton summary address binds to the authoritative Goal/Plan version, not the cursor');
+  assert.doesNotMatch(firstId, /:c\d+$/u, 'no cursor suffix leaks into the item address');
+
+  // A coordination-only cursor advance (transport noise) does not change Goal/Plan authority,
+  // so the same summary item keeps the same address.
+  f.driver.coordination.recordWebAudit({
+    kind: 'operator_read_authorized', resourceClass: 'application_card',
+  }, { actor: 'web:stable-address-noise', key: 'phase67:stable-address-noise' });
+  const second = await f.application.command('run.inspect', {
+    runId, depth: 'section', section: 'budget',
+  }, principal('owner'));
+  assert.ok(second.cursor > first.cursor, 'the durable cursor advanced between inspections');
+  assert.equal(second.section.items[0].id, firstId,
+    'the address is stable across a coordination-only cursor advance');
+
+  // An old selector pinned to a different Plan authority version is stale and fails closed;
+  // it is never silently aliased to the current content.
+  const stalePlanId = firstId.replace(/p\d+$/u, 'p9999');
+  await assert.rejects(f.application.command('run.inspect', {
+    runId, depth: 'item', section: 'budget', item: stalePlanId,
+  }, principal('owner')), expectCode('application_inspect_item_invalid'));
+
+  // A legacy cursor-suffixed address is not silently resolved either.
+  await assert.rejects(f.application.command('run.inspect', {
+    runId, depth: 'item', section: 'budget', item: `${firstId}:c${first.cursor}`,
+  }, principal('owner')), expectCode('application_inspect_item_invalid'));
+
+  // Every singleton section shares the same authority-bound helper.
+  for (const sectionId of ['route', 'verification', 'cleanup']) {
+    const expanded = await f.application.command('run.inspect', {
+      runId, depth: 'section', section: sectionId,
+    }, principal('owner'));
+    assert.ok(expanded.section.items.length > 0, `${sectionId} projects a summary item`);
+    assert.match(expanded.section.items[0].id, new RegExp(`^section-summary:${sectionId}:g\\d+:p\\d+$`, 'u'),
+      `${sectionId} summary address is authority-bound through the shared helper`);
+  }
+});

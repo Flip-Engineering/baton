@@ -45,6 +45,27 @@ const MAX_ATTENTION = 64;
 const MAX_ATTENTION_TEXT_BYTES = 4_096;
 const MAX_REVIEW_SOURCE_BYTES = 4 * 1024 * 1024;
 const MAX_WORKFLOW_PLAN_HISTORY = 16;
+// VR9 closed verifier projection bounds. The durable verdict carries only the last
+// VERIFIER_OUTPUT_TAIL_WINDOW characters of captured output, so the projection names its tail
+// fields honestly and never claims a total captured size; a single verifier run is bounded by a
+// generous wall-clock ceiling so a malformed duration is dropped instead of passed through. outcome,
+// failure ownership, and execution state/code are reduced to the referee's closed enums so no
+// arbitrary string is passed through to an ordinary Run surface.
+const VERIFIER_OUTPUT_TAIL_WINDOW = 4_000;
+const VERIFIER_DURATION_BOUND_MS = 7 * 24 * 60 * 60 * 1_000;
+const HEX64 = /^[a-f0-9]{64}$/u;
+const VERIFIER_OUTCOMES = Object.freeze(new Set(['passed', 'candidate_failed', 'inconclusive']));
+const VERIFIER_OWNERSHIPS = Object.freeze(new Set(['candidate', 'verifier', 'baseline_or_environment']));
+const VERIFIER_EXECUTION_STATES = Object.freeze(new Set(['completed', 'timed_out', 'output_exceeded', 'unavailable']));
+const VERIFIER_EXECUTION_CODES = Object.freeze(new Set([
+  'verification_completed', 'verification_timed_out', 'verification_output_exceeded', 'verification_spawn_unavailable',
+]));
+function sanitizeHex64(value) {
+  return typeof value === 'string' && HEX64.test(value) ? value : null;
+}
+function closedEnum(value, allowed) {
+  return typeof value === 'string' && allowed.has(value) ? value : null;
+}
 const SEMANTIC_ACTION_DISPATCH = Object.freeze({});
 // Provider execution can settle while the application Run remains open for
 // result finalization. These closed sets intentionally model separate lifecycles.
@@ -6091,7 +6112,7 @@ export class BatonApplication {
       attentionTruncated,
       verification: {
         state: verificationState,
-        verdict: result?.verdict ? { accepted: ['work_completed', 'reviewing', 'completed'].includes(phase), digest: digest(result.verdict) } : null,
+        verdict: this._closedVerdictProjection(result, planNode, phase, workerId),
         ...(retryProjection ? {
           retry: retryProjection,
           checkpoint: { sha: retryProjection.checkpointSha },
@@ -7770,6 +7791,65 @@ export class BatonApplication {
     };
   }
 
+  // AX2d: a singleton section summary address binds to the authoritative Goal/Plan version,
+  // never to the coordination cursor. It stays stable across a coordination-only cursor advance
+  // (transport noise, audit churn) and becomes stale — failing closed — after an authoritative
+  // Goal/Plan version change. The cursor remains response state, not item identity.
+  _singletonSummaryItemId(sectionId, current) {
+    const goalVersion = current?.goal?.version ?? 0;
+    const planVersion = current?.plan?.version ?? 0;
+    return `section-summary:${sectionId}:g${goalVersion}:p${planVersion}`;
+  }
+
+  // VR9: project only closed, credential-safe verifier mechanics onto ordinary Run surfaces so a
+  // user or agent never has to read a private worker log to understand a mechanical failure. The
+  // raw captured output tail and the free-form verifier note are deliberately excluded — the tail
+  // may persist repository secrets and the note is not a closed enum. Captured output is reduced to
+  // a bounded tail byte count, tail digest, and a truncation flag; every field is selected or
+  // validated rather than passed through. The original verdict object remains the durable authority
+  // behind this projection.
+  _closedVerdictProjection(result, planNode, phase, workerId) {
+    const verdict = result?.verdict ?? null;
+    if (!verdict) return null;
+    const outputTail = typeof verdict.observedOutputTail === 'string' ? verdict.observedOutputTail : '';
+    let verifierAttempts = 0;
+    if (workerId && result?.checkpoint?.sha && typeof this.driver?.log?.read === 'function') {
+      verifierAttempts = this.driver.log.read(workerId).filter((event) => event.kind === 'verify.reverified'
+        && event.payload?.capture?.checkpoint?.sha === result.checkpoint.sha).length;
+    }
+    const projectExecution = (exec) => (exec && typeof exec === 'object' ? {
+      state: closedEnum(exec.state, VERIFIER_EXECUTION_STATES),
+      code: closedEnum(exec.code, VERIFIER_EXECUTION_CODES),
+    } : null);
+    const observedExit = Number.isSafeInteger(verdict.observedExit) ? verdict.observedExit : null;
+    const expectedExit = Number.isSafeInteger(planNode?.verification?.expectExit)
+      ? planNode.verification.expectExit : null;
+    const durationMs = Number.isFinite(verdict.durationMs) && verdict.durationMs >= 0
+      && verdict.durationMs <= VERIFIER_DURATION_BOUND_MS ? Math.trunc(verdict.durationMs) : null;
+    return deepFreeze({
+      accepted: ['work_completed', 'reviewing', 'completed'].includes(phase),
+      digest: sanitizeHex64(digest(verdict)),
+      outcome: closedEnum(verdict.outcome, VERIFIER_OUTCOMES),
+      failureOwnership: verdict.failureOwnership == null
+        ? null : closedEnum(verdict.failureOwnership, VERIFIER_OWNERSHIPS),
+      expectedExit,
+      observedExit,
+      execution: projectExecution(verdict.execution),
+      baseExecution: projectExecution(verdict.baseExecution),
+      outputExceeded: verdict.outputExceeded === true,
+      outputTailBytes: Buffer.byteLength(outputTail),
+      outputTailDigest: sanitizeHex64(digest(outputTail)),
+      // The captured tail is a bounded window (the last VERIFIER_OUTPUT_TAIL_WINDOW characters).
+      // A saturated window means the original output may have been longer; it is not proof of
+      // truncation, since an exactly-window-sized output is indistinguishable. The full captured
+      // size is not represented because the durable verdict does not carry it.
+      tailWindowSaturated: outputTail.length >= VERIFIER_OUTPUT_TAIL_WINDOW,
+      durationMs,
+      runtimeDigest: sanitizeHex64(verdict.runtimeDigest),
+      attemptOrdinal: Math.max(1, verifierAttempts),
+    });
+  }
+
   _semanticSectionItems(current, view, sectionId) {
     if (sectionId === 'context') return this._contextSectionItems(current);
     if (sectionId === 'plan') {
@@ -7792,7 +7872,7 @@ export class BatonApplication {
     }
     if (sectionId === 'attention') {
       return (view.attention ?? []).map((entry, index) => ({
-        id: `attention:${index + 1}:c${view.cursor}`, section: 'attention', state: entry.state,
+        id: `attention:${entry.requestId ?? `slot${index + 1}`}`, section: 'attention', state: entry.state,
         summary: entry.question || entry.approvalKind || entry.kind || 'Run attention is required.',
         value: clone(entry),
       }));
@@ -7842,7 +7922,7 @@ export class BatonApplication {
     }[sectionId];
     if (single == null) return [];
     const summaryItem = {
-      id: `${sectionId}:summary:c${view.cursor}`, section: sectionId,
+      id: this._singletonSummaryItemId(sectionId, current), section: sectionId,
       state: single.state ?? view.phase, summary: `${sectionId.replaceAll('_', ' ')} state for this Run.`,
       value: clone(single),
     };

@@ -121,6 +121,61 @@ still required after the Web-stream increment lands.
 
 The final canonical full-suite count will be recorded here only after the remaining Phase 90 stream work and a fresh complete run.
 
+## Verification agent-experience repair (Run run-0546d3fbf747f2170f13e83915e3094d)
+
+A real candidate_failed checkpoint exposed two agent-experience gaps. The motivating failure (private
+worker log `w-22.jsonl` seq 323) was a single isolated descendant-reap timeout: `observedExit 1`,
+`outputExceeded false`, `outcome candidate_failed`, `failureOwnership candidate`,
+`durationMs 100072`, with an immediate root rerun passing `2225/2225`. An operator or agent should
+never have to read a private worker log to understand that, and a clean rerun must never be
+laundered into a clean pass.
+
+Two coherent increments landed and are covered by focused Phase 67/Phase 69 regressions:
+
+- **Stable, authority-bound section summary addresses.** Singleton section summary item addresses
+  (`section-summary:<section>:g<goalVersion>:p<planVersion>`) are now bound to the authoritative
+  Goal/Plan version instead of the coordination cursor. They stay stable across a coordination-only
+  cursor advance (transport noise, audit churn) and fail closed (`application_inspect_item_invalid`)
+  after an authoritative Goal/Plan version change. The cursor remains response state, not item
+  identity; no cursor-suffix compatibility alias is offered, because it could not distinguish old
+  semantic content from a new authority version. Attention items likewise bind to their stable
+  request identity rather than a cursor-suffixed position. AX2d proves stability across cursor
+  advance and staleness after a Plan version change.
+
+- **Closed, credential-safe verification failure projection.** Ordinary Run inspection and status
+  now project closed verifier mechanics so a mechanical failure is self-explanatory without a
+  private log: `outcome` and `failureOwnership` reduced to the referee's closed enums,
+  `expectedExit`/`observedExit`, candidate and baseline `execution` state+code selected from closed
+  enums, `outputExceeded`, `outputTailBytes`/`outputTailDigest` plus a `tailWindowSaturated` flag,
+  bounded `durationMs`, validated `runtimeDigest`/verdict digest, and an `attemptOrdinal`. The raw
+  `observedOutputTail` and the free-form verifier `note` are deliberately excluded — the tail may
+  persist repository secrets and the note is not a closed enum; captured output is reduced to a
+  bounded-tail byte count and digest. A secret-bearing verifier fixture (VR9) proves the generated
+  secret never reaches outline, section, evidence, status, or the application-projected receipts.
+
+Two related invariants are documented as remaining rather than approximated, because their durable
+state machine lives outside this increment's seven-file scope:
+
+- **Candidate-confirmation retry for an initial `candidate_failed` checkpoint.** The intended
+  boundary change is a real Phase 69 invariant, not a broadened outcome gate: pin the non-adoptable
+  exact checkpoint; record `originOutcome=candidate_failed` on the durable retry record; admit
+  exactly one operator-authorized confirmation across restart/response loss with the same
+  Plan/command/base/runtime/checkpoint binding and no provider turn; consume the single shot even if
+  the retry lands inconclusive; retain both attempt records; and mark a later pass
+  `passed_after_candidate_failure`/unstable, never laundering it into a clean pass. Enforcing this
+  durably requires changes in `coordination-store.mjs` (origin outcome on the durable record plus
+  one-shot admission across the inconclusive-completion corner), `coordinator.mjs`, and `referee.mjs`
+  (verdict relabel), which are outside this scope. The application `retryProjection` therefore still
+  offers retry only for `inconclusive` outcomes; broadening it alone would violate the no-laundering
+  invariant and was intentionally not done.
+
+- **Operational-log raw-output sanitization.** The closed projection guarantees the ordinary
+  application surface never carries the raw captured output tail, but the durable worker log and
+  coordination artifacts still persist the full verdict (including `observedOutputTail`) as written
+  by `referee.mjs`. Replacing that durable storage with captured-output digest and byte metadata, or
+  moving raw diagnostics behind a distinct protected authority, is a `referee.mjs`/`coordinator.mjs`
+  change outside this scope and is tracked here rather than claimed as receipt safety.
+
 ## Honest remaining gaps
 
 - `run.follow` remains an advanced compatibility feed, while the new Run streams are progressive
