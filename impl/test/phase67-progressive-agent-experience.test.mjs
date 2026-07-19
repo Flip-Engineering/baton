@@ -146,13 +146,15 @@ test('AX1: one closed semantic registry defines the compact ordinary vocabulary,
   assert.equal(value.schemaVersion, 1);
   assert.match(value.digest, /^[a-f0-9]{64}$/u);
   assert.deepEqual(Object.keys(value.operations).sort(), [
-    'application.help', 'run.act', 'run.inspect', 'run.start', 'run.stop', 'runs.list',
+    'application.help', 'run.act', 'run.episode', 'run.inspect', 'run.start', 'run.stop',
+    'run.workstream.notify', 'run.workstream.stop', 'run.workstreams', 'runs.list',
   ]);
   assert.deepEqual(value.depths, [
     'outline', 'index', 'section', 'item', 'content', 'evidence',
   ]);
   for (const section of ['plan', 'execution', 'attention', 'route', 'budget', 'verification',
-    'semantic_review', 'result', 'delivery', 'cleanup', 'knowledge', 'capabilities']) {
+    'semantic_review', 'result', 'delivery', 'cleanup', 'knowledge', 'capabilities',
+    'episode', 'workstreams']) {
     assert.ok(value.sections.some((candidate) => candidate.id === section), `missing ${section} section`);
   }
   for (const operation of Object.values(value.operations)) {
@@ -640,7 +642,9 @@ test('AX1/AX6/AX7: cards, CLI, MCP, and browser project one digest; default inve
   };
   const ordinary = new McpFleetServer(common);
   assert.deepEqual(ordinary.toolDefinitions.map((tool) => tool.name), [
-    'baton_help', 'baton_run_start', 'baton_run_inspect', 'baton_run_act', 'baton_run_stop',
+    'baton_help', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
+    'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
+    'baton_run_act', 'baton_run_stop',
   ]);
   assert.equal(ordinary.toolDefinitions.every((tool) => tool.inputSchema.additionalProperties === false), true);
   assert.equal(ordinary.toolDefinitions.every((tool) => tool._meta?.['baton/registryDigest'] === value.digest), true);

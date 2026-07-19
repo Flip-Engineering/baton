@@ -36,6 +36,29 @@ function clientFor(connection) {
   });
 }
 
+async function serveDeployment(deployment) {
+  if (!deployment || typeof deployment.host !== 'function' || typeof deployment.close !== 'function') {
+    throw Object.assign(new Error('serve deployment factory returned an invalid deployment'), {
+      code: 'cli_config_invalid',
+    });
+  }
+  const lifecycle = new SignalLifecycleOwner({
+    signalEmitter: process,
+    shutdown: () => deployment.close(),
+  });
+  const outcome = await lifecycle.run(async ({ signal }) => {
+    const hosted = await deployment.host();
+    process.stderr.write(`baton serve: ${JSON.stringify(hosted)}\n`);
+    await new Promise((resolveSignal) => {
+      if (signal.aborted) resolveSignal();
+      else signal.addEventListener('abort', resolveSignal, { once: true });
+    });
+    return hosted;
+  });
+  process.stderr.write(`baton serve: ${JSON.stringify(outcome.closed)}\n`);
+  if (outcome.closed.state !== 'closed') process.exitCode = 1;
+}
+
 try {
   const parsed = parseBatonCli(process.argv.slice(2));
   if (parsed.kind === 'help' || parsed.name === 'application.help') {
@@ -65,33 +88,22 @@ try {
     }
   } else if (parsed.kind === 'serve') {
     if (parsed.configPath === null) {
-      const deployment = await openBaton({ repo: process.cwd() });
-      const lifecycle = new SignalLifecycleOwner({
-        signalEmitter: process,
-        shutdown: () => deployment.close(),
-      });
-      const outcome = await lifecycle.run(async ({ signal }) => {
-        const hosted = await deployment.host();
-        process.stderr.write(`baton serve: ${JSON.stringify(hosted)}\n`);
-        await new Promise((resolveSignal) => {
-          if (signal.aborted) resolveSignal();
-          else signal.addEventListener('abort', resolveSignal, { once: true });
-        });
-        return hosted;
-      });
-      process.stderr.write(`baton serve: ${JSON.stringify(outcome.closed)}\n`);
-      if (outcome.closed.state !== 'closed') process.exitCode = 1;
+      await serveDeployment(await openBaton({ repo: process.cwd() }));
     } else {
       const module = await import(pathToFileURL(resolve(parsed.configPath)).href);
-      const factory = module.createBatonWebHost ?? module.default;
-      if (typeof factory !== 'function') throw Object.assign(new Error('serve config must export default or createBatonWebHost()'), { code: 'cli_config_invalid' });
+      const factory = module.createBatonDeployment ?? module.createBatonWebHost ?? module.default;
+      if (typeof factory !== 'function') throw Object.assign(new Error('serve config must export default, createBatonDeployment(), or createBatonWebHost()'), { code: 'cli_config_invalid' });
       const configured = await factory();
-      const host = configured instanceof BatonWebHost ? configured : new BatonWebHost(configured);
-      const outcome = await host.serve(process, (listening) => {
-        process.stderr.write(`baton serve: ${JSON.stringify(listening)}\n`);
-      });
-      process.stderr.write(`baton serve: ${JSON.stringify(outcome.closed)}\n`);
-      if (outcome.closed.state !== 'closed') process.exitCode = 1;
+      if (configured && typeof configured.host === 'function' && typeof configured.close === 'function') {
+        await serveDeployment(configured);
+      } else {
+        const host = configured instanceof BatonWebHost ? configured : new BatonWebHost(configured);
+        const outcome = await host.serve(process, (listening) => {
+          process.stderr.write(`baton serve: ${JSON.stringify(listening)}\n`);
+        });
+        process.stderr.write(`baton serve: ${JSON.stringify(outcome.closed)}\n`);
+        if (outcome.closed.state !== 'closed') process.exitCode = 1;
+      }
     }
   } else {
     const connection = discoverBatonConnection();

@@ -6,6 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
+import { deserialize, serialize } from 'node:v8';
 import {
   GoalPlanValidationError, assertGoalSuccessor, buildAuthoritativeBrief, goalPlanCanonical,
   goalPlanDigest, normalizeGoalPlanPolicy, normalizeGoalRequest, normalizePlanRequest,
@@ -82,6 +83,27 @@ function writerOwnerState(owner) {
 const CANONICAL_ORDER_MIGRATION = Symbol('canonical-order-migration');
 const CANONICAL_ORDER_RECEIPT = 'canonical-order-receipt.json';
 const CANONICAL_ORDER_TEMP_PREFIX = '.canonical-order-receipt.';
+const PROJECTION_CHECKPOINT = 'projection.checkpoint';
+const PROJECTION_CHECKPOINT_TEMP_PREFIX = '.projection.checkpoint.';
+const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
+  '_events', '_byKey', '_tasks', '_runs', '_artifacts',
+  '_reuseDecisions', '_reuseSubjects', '_reuseRiskGuards', '_reusePolicyHeads',
+  '_reusePolicyTransitions', '_routeObservations', '_representations',
+  '_representationRequests', '_goals', '_goalHeads', '_plans', '_planHeads',
+  '_planApprovals', '_planDispatches', '_planTaskLinks', '_planBudgetSettlements',
+  '_reuseProviderContributions', '_reuseProviderCoordinateContributions',
+  '_reuseProviderGuards', '_evidence', '_scratchFacts', '_scratchClaims', '_scratchReads',
+  '_knowledgeNodes', '_knowledgeEdges', '_knowledgeNodeHistory', '_knowledgeEdgeHistory',
+  '_knowledgeReads', '_knowledgeRecallAssessments', '_contamination', '_webCommands',
+  '_webCommandScopes', '_mcpCalls', '_mcpCallScopes', '_fleetDrains', '_runStops',
+  '_runStopByTarget', '_runControls', '_runResultAdoptions', '_runResultExports',
+  '_runVerificationRetries', '_runOrchestratorLeases', '_runLineages',
+  '_runLineageEventSeqs', '_runChildrenByParent', '_recoveryDispatches',
+  '_taskTopologies', '_recoveryAttemptsById', '_recoveryAttemptHeads',
+  '_providerReceipts', '_providerDeliveryIds', '_providerProcessing', '_providerPending',
+  '_providerSequences', '_providerSourceHealth', '_contextSessions', '_contextCells',
+  '_contextCalls', '_contextPrograms', '_contextArtifacts', '_taskResourceReleases',
+]);
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 const TRANSITIONS = new Map([
@@ -265,6 +287,18 @@ export class CoordinationStore {
   constructor(root, opts = {}) {
     this.root = root;
     this.file = join(root, 'events.jsonl');
+    this._checkpointFile = join(root, PROJECTION_CHECKPOINT);
+    this._startupProgress = opts.startupProgress ?? null;
+    if (this._startupProgress !== null && typeof this._startupProgress !== 'function') {
+      throw new TypeError('startupProgress must be a function');
+    }
+    this._checkpointInterval = opts.checkpointInterval ?? 256;
+    if (!Number.isSafeInteger(this._checkpointInterval) || this._checkpointInterval < 16
+      || this._checkpointInterval > 100_000) {
+      throw new TypeError('checkpointInterval is invalid');
+    }
+    this._startupState = null;
+    this._checkpointWriteFailure = null;
     this._canonicalOrderReceiptFile = join(root, CANONICAL_ORDER_RECEIPT);
     this._clock = opts.clock ?? (() => new Date().toISOString());
     this._appendFile = opts.appendFile ?? appendFileSync;
@@ -343,6 +377,27 @@ export class CoordinationStore {
         code: 'run_lineage_policy_invalid',
       });
     }
+    this._checkpointAuthorityDigest = canonicalDigest({
+      schemaVersion: 1,
+      repoId: this._repoId,
+      advisoryFeedCards: [...this._advisoryFeedCards.values()]
+        .map(({ card, cardDigest }) => ({ card, cardDigest }))
+        .sort((left, right) => compareCanonicalStrings(left.card.providerId, right.card.providerId)),
+      advisoryReceiptReverify: typeof this._advisoryReceiptReverify === 'function',
+      advisoryPollReverify: typeof this._advisoryPollReverify === 'function',
+      providerAttemptPolicy: this._providerAttemptPolicy,
+      canonicalOrderPolicy: this._canonicalOrderPolicy,
+      routePolicy: this._routePolicy,
+      representationPolicy: this._representationPolicy,
+      goalPlanPolicy: this._goalPlanPolicy,
+      workflowPolicy: this._workflowPolicy,
+      contextProgramPolicy: this._contextProgramPolicy,
+      taskTopologyPolicy: this._taskTopologyPolicy,
+      runLineagePolicy: this._runLineagePolicy,
+      deploymentBaseSha: this._deploymentBaseSha,
+      contextEnvironmentDigest: this._contextEnvironmentDigest,
+      contextReferenceIdentity: this._contextReferenceIdentity,
+    });
     this._resetProjection();
     if (opts.operationalRangeRead !== undefined && typeof opts.operationalRangeRead !== 'function') throw new TypeError('operationalRangeRead must be a function');
     this._operationalRead = opts.operationalRead ?? null;
@@ -552,6 +607,137 @@ export class CoordinationStore {
 
   canonicalOrderReceipt() { return clone(this._canonicalOrderReceipt); }
 
+  _reportStartup(value) {
+    this._startupState = freeze(clone(value));
+    if (this._startupProgress) {
+      try { this._startupProgress(clone(this._startupState)); }
+      catch { /* progress observation never becomes coordination authority */ }
+    }
+  }
+
+  startupStatus() {
+    return clone(this._startupState ?? {
+      schemaVersion: 1, state: 'starting', source: 'ledger', totalEvents: 0,
+      checkpointEvents: 0, replayedEvents: 0, checkpoint: 'unchecked', failure: null,
+    });
+  }
+
+  _projectionCheckpointPayload() {
+    return Object.fromEntries(PROJECTION_CHECKPOINT_FIELDS.map((field) => [field, this[field]]));
+  }
+
+  _writeProjectionCheckpoint() {
+    this._assertWriterLease();
+    if (this._projectionPoison) return false;
+    const raw = existsSync(this.file) ? readFileSync(this.file) : Buffer.alloc(0);
+    if (raw.byteLength > 0 && raw.at(-1) !== 0x0a) {
+      throw new CoordinationIntegrityError('coordination stream has a truncated tail', 'truncated_tail');
+    }
+    if (!this._loadedLedgerIdentity
+      || raw.byteLength !== this._loadedLedgerIdentity.bytes
+      || sha256Bytes(raw) !== this._loadedLedgerIdentity.digest
+      || this._events.length !== this._loadedLedgerIdentity.events) {
+      throw new CoordinationIntegrityError(
+        'coordination checkpoint refused because the ledger diverged from the loaded prefix',
+        'coordination_checkpoint_ledger_drift',
+      );
+    }
+    const projectionBytes = serialize(this._projectionCheckpointPayload());
+    const envelope = {
+      schemaVersion: 1,
+      authorityDigest: this._checkpointAuthorityDigest,
+      throughSeq: this._events.length,
+      prefixBytes: raw.byteLength,
+      prefixDigest: sha256Bytes(raw),
+      projectionDigest: sha256Bytes(projectionBytes),
+      projectionBytes,
+    };
+    const checkpointBytes = serialize(envelope);
+    const temporary = join(this.root, `${PROJECTION_CHECKPOINT_TEMP_PREFIX}${randomUUID()}`);
+    let fd = null;
+    try {
+      fd = openSync(temporary, 'wx', 0o600);
+      writeFileSync(fd, checkpointBytes);
+      fsyncSync(fd);
+      closeSync(fd); fd = null;
+      renameSync(temporary, this._checkpointFile);
+      chmodSync(this._checkpointFile, 0o600);
+      try {
+        const rootFd = openSync(this.root, 'r');
+        try { fsyncSync(rootFd); } finally { closeSync(rootFd); }
+      } catch { /* directory fsync is unavailable on some supported hosts */ }
+      this._checkpointWriteFailure = null;
+      return true;
+    } catch (error) {
+      if (fd !== null) try { closeSync(fd); } catch { /* original write error wins */ }
+      try { unlinkSync(temporary); } catch { /* rename or cleanup already completed */ }
+      this._checkpointWriteFailure = freeze({
+        code: typeof error?.code === 'string' ? error.code : 'checkpoint_write_failed',
+      });
+      throw Object.assign(new CoordinationRefusal(
+        'coordination projection checkpoint could not be persisted',
+        'coordination_checkpoint_write_failed',
+      ), { cause: error });
+    }
+  }
+
+  _restoreProjectionCheckpoint(raw) {
+    if (!existsSync(this._checkpointFile)) return { state: 'absent', throughSeq: 0, prefixBytes: 0 };
+    try {
+      const stat = lstatSync(this._checkpointFile);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0
+        || stat.size > Math.max(16 * 1024 * 1024, raw.byteLength * 16 + 1024 * 1024)) {
+        throw new Error('checkpoint path or size is invalid');
+      }
+      const envelope = deserialize(readFileSync(this._checkpointFile));
+      const keys = ['authorityDigest', 'prefixBytes', 'prefixDigest', 'projectionBytes',
+        'projectionDigest', 'schemaVersion', 'throughSeq'];
+      if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)
+        || Object.keys(envelope).sort().join(',') !== keys.sort().join(',')
+        || envelope.schemaVersion !== 1
+        || envelope.authorityDigest !== this._checkpointAuthorityDigest
+        || !Number.isSafeInteger(envelope.throughSeq) || envelope.throughSeq < 0
+        || !Number.isSafeInteger(envelope.prefixBytes) || envelope.prefixBytes < 0
+        || envelope.prefixBytes > raw.byteLength
+        || !/^[a-f0-9]{64}$/u.test(envelope.prefixDigest ?? '')
+        || !/^[a-f0-9]{64}$/u.test(envelope.projectionDigest ?? '')
+        || !Buffer.isBuffer(envelope.projectionBytes)
+        || sha256Bytes(raw.subarray(0, envelope.prefixBytes)) !== envelope.prefixDigest
+        || sha256Bytes(envelope.projectionBytes) !== envelope.projectionDigest
+        || (envelope.prefixBytes > 0 && raw.at(envelope.prefixBytes - 1) !== 0x0a)) {
+        throw new Error('checkpoint envelope is invalid');
+      }
+      const projection = deserialize(envelope.projectionBytes);
+      if (!projection || typeof projection !== 'object' || Array.isArray(projection)
+        || Object.keys(projection).sort().join(',')
+          !== [...PROJECTION_CHECKPOINT_FIELDS].sort().join(',')
+        || !Array.isArray(projection._events)
+        || projection._events.length !== envelope.throughSeq
+        || !(projection._byKey instanceof Map)
+        || projection._byKey.size !== envelope.throughSeq
+        || (envelope.throughSeq > 0
+          && projection._events.at(-1)?.seq !== envelope.throughSeq)) {
+        throw new Error('checkpoint projection is invalid');
+      }
+      const parsedPrefix = projection._events.map((event) => freeze(event));
+      const parsedBytes = Buffer.from(parsedPrefix.length === 0 ? ''
+        : `${parsedPrefix.map((event) => JSON.stringify(event)).join('\n')}\n`, 'utf8');
+      if (parsedBytes.byteLength !== envelope.prefixBytes
+        || !parsedBytes.equals(raw.subarray(0, envelope.prefixBytes))) {
+        throw new Error('checkpoint parsed events do not match the authoritative ledger prefix');
+      }
+      // A checkpoint is only a parsed-event cache. Every event is still applied below under the
+      // current cards, policies, CAS readers, and receipt/poll reverifiers.
+      return {
+        state: 'valid', throughSeq: envelope.throughSeq, prefixBytes: envelope.prefixBytes,
+        events: parsedPrefix,
+      };
+    } catch {
+      this._resetProjection();
+      return { state: 'corrupt', throughSeq: 0, prefixBytes: 0 };
+    }
+  }
+
   _resetProjection() {
     this._projectionPoison = null;
     this._events = []; this._byKey = new Map(); this._tasks = new Map(); this._runs = new Map(); this._artifacts = new Map();
@@ -588,6 +774,13 @@ export class CoordinationStore {
   }
 
   _reloadProjection() { this._resetProjection(); this._load(); }
+
+  _ledgerMatchesLoadedProjection() {
+    if (!this._loadedLedgerIdentity) return false;
+    const raw = existsSync(this.file) ? readFileSync(this.file) : Buffer.alloc(0);
+    return raw.byteLength === this._loadedLedgerIdentity.bytes
+      && sha256Bytes(raw) === this._loadedLedgerIdentity.digest;
+  }
 
   claimWriterLease() {
     if (this._writerLease) throw new CoordinationRefusal('coordination writer is already active', 'coordination_writer_busy');
@@ -633,7 +826,10 @@ export class CoordinationStore {
     this._writerLease = freeze({ path, token, pid: process.pid, pidStart }); this._writerLeaseRequired = true;
     try {
       if (this._canonicalOrderPolicy) this._ensureCanonicalOrderReceipt();
-      this._reloadProjection();
+      // Construction already folded this exact ledger. Once the exclusive lease is held, a raw
+      // digest equality proves no other writer advanced it in the claim window; parsing and
+      // applying the same history a second time would only amplify startup cost.
+      if (!this._ledgerMatchesLoadedProjection()) this._reloadProjection();
     } catch (error) { this.releaseWriterLease(); throw error; }
     return clone(this._writerLease);
   }
@@ -685,10 +881,18 @@ export class CoordinationStore {
         || (observed.pidStart !== undefined && observed.pidStart !== lease.pidStart)) {
         throw new CoordinationRefusal('coordination writer lease was replaced', 'coordination_writer_lost');
       }
+      if (this._startupState?.state === 'ready' && !this._projectionPoison) {
+        try { this._writeProjectionCheckpoint(); }
+        catch { /* the ledger is authoritative; cache telemetry cannot block exact lease release */ }
+      }
       try { unlinkSync(lease.path); }
       catch { throw new CoordinationRefusal('coordination writer lease could not be released', 'coordination_writer_lost'); }
       if (existsSync(lease.path)) throw new CoordinationRefusal('coordination writer lease release was not exact', 'coordination_writer_lost');
       this._writerLease = null; return true;
+    }
+    if (this._startupState?.state === 'ready' && !this._projectionPoison) {
+      try { this._writeProjectionCheckpoint(); }
+      catch { /* ownership/removal semantics take precedence over a best-effort cache */ }
     }
     try {
       const observed = JSON.parse(readFileSync(lease.path, 'utf8'));
@@ -700,27 +904,85 @@ export class CoordinationStore {
   }
 
   _load() {
-    if (!existsSync(this.file)) return;
-    const raw = readFileSync(this.file, 'utf8');
-    if (raw.length === 0) return;
-    if (!raw.endsWith('\n')) throw new CoordinationIntegrityError('coordination stream has a truncated tail', 'truncated_tail');
-    const lines = raw.slice(0, -1).split('\n');
-    this._loading = true;
-    try { for (let i = 0; i < lines.length; i += 1) {
-      let event;
-      try { event = JSON.parse(lines[i]); } catch { throw new CoordinationIntegrityError(`invalid JSON at coordination line ${i + 1}`, 'invalid_json'); }
-      if (event.schemaVersion !== 1) throw new CoordinationIntegrityError(`unsupported schema version at seq ${event.seq}`, 'schema_version');
-      if (event.seq !== i + 1) throw new CoordinationIntegrityError(`coordination sequence gap at line ${i + 1}`, 'sequence_gap');
-      if (typeof event.idempotencyKey !== 'string' || this._byKey.has(event.idempotencyKey)) {
-        throw new CoordinationIntegrityError(`duplicate/missing idempotency key at seq ${event.seq}`, 'duplicate_key');
+    const raw = existsSync(this.file) ? readFileSync(this.file) : Buffer.alloc(0);
+    this._reportStartup({
+      schemaVersion: 1, state: 'starting', source: 'ledger', totalEvents: 0,
+      checkpointEvents: 0, replayedEvents: 0, checkpoint: 'unchecked', failure: null,
+    });
+    try {
+      if (raw.byteLength > 0 && raw.at(-1) !== 0x0a) {
+        throw new CoordinationIntegrityError('coordination stream has a truncated tail', 'truncated_tail');
       }
-      this._events.push(freeze(event));
-      this._byKey.set(event.idempotencyKey, event);
-      this._apply(event);
+      const checkpoint = this._restoreProjectionCheckpoint(raw);
+      const tail = raw.subarray(checkpoint.prefixBytes);
+      const text = tail.toString('utf8');
+      if (!Buffer.from(text, 'utf8').equals(tail)) {
+        throw new CoordinationIntegrityError('coordination stream is not exact UTF-8', 'invalid_utf8');
+      }
+      const lines = text.length === 0 ? [] : text.slice(0, -1).split('\n');
+      const totalEvents = checkpoint.throughSeq + lines.length;
+      this._reportStartup({
+        schemaVersion: 1, state: 'replaying',
+        source: checkpoint.state === 'valid' ? 'checkpoint_tail'
+          : checkpoint.state === 'corrupt' ? 'ledger_fallback' : 'ledger',
+        totalEvents, checkpointEvents: checkpoint.throughSeq, replayedEvents: 0,
+        checkpoint: checkpoint.state, failure: null,
+      });
+      this._loading = true;
+      try {
+        const applyReplayEvent = (event, index) => {
+          if (event.schemaVersion !== 1) throw new CoordinationIntegrityError(`unsupported schema version at seq ${event.seq}`, 'schema_version');
+          if (event.seq !== index + 1) throw new CoordinationIntegrityError(`coordination sequence gap at line ${index + 1}`, 'sequence_gap');
+          if (typeof event.idempotencyKey !== 'string' || this._byKey.has(event.idempotencyKey)) {
+            throw new CoordinationIntegrityError(`duplicate/missing idempotency key at seq ${event.seq}`, 'duplicate_key');
+          }
+          const frozen = freeze(event);
+          this._events.push(frozen);
+          this._byKey.set(frozen.idempotencyKey, frozen);
+          this._apply(frozen);
+        };
+        for (let index = 0; index < (checkpoint.events ?? []).length; index += 1) {
+          applyReplayEvent(checkpoint.events[index], index);
+        }
+        for (let offset = 0; offset < lines.length; offset += 1) {
+          const index = checkpoint.throughSeq + offset;
+          let event;
+          try { event = JSON.parse(lines[offset]); }
+          catch { throw new CoordinationIntegrityError(`invalid JSON at coordination line ${index + 1}`, 'invalid_json'); }
+          applyReplayEvent(event, index);
+          if ((offset + 1) % 256 === 0) this._reportStartup({
+            schemaVersion: 1, state: 'replaying',
+            source: checkpoint.state === 'valid' ? 'checkpoint_tail'
+              : checkpoint.state === 'corrupt' ? 'ledger_fallback' : 'ledger',
+            totalEvents, checkpointEvents: checkpoint.throughSeq,
+            replayedEvents: offset + 1, checkpoint: checkpoint.state, failure: null,
+          });
+        }
+        this._validateRecoveryReplayTransactions();
+        this._validateGoalPlanReplayTransactions();
+      } finally { this._loading = false; }
+      const source = checkpoint.state === 'valid'
+        ? (lines.length > 0 ? 'checkpoint_tail' : 'checkpoint')
+        : checkpoint.state === 'corrupt' ? 'ledger_fallback'
+          : raw.byteLength === 0 ? 'empty' : 'ledger';
+      this._reportStartup({
+        schemaVersion: 1, state: 'ready', source, totalEvents,
+        checkpointEvents: checkpoint.throughSeq, replayedEvents: lines.length,
+        checkpoint: checkpoint.state, failure: null,
+      });
+      this._loadedLedgerHash = createHash('sha256').update(raw);
+      this._loadedLedgerIdentity = freeze({
+        bytes: raw.byteLength, digest: this._loadedLedgerHash.copy().digest('hex'),
+        events: this._events.length,
+      });
+    } catch (error) {
+      this._reportStartup({
+        schemaVersion: 1, state: 'failed', source: 'ledger', totalEvents: 0,
+        checkpointEvents: 0, replayedEvents: 0, checkpoint: 'unusable',
+        failure: { code: error?.code ?? 'coordination_startup_failed' },
+      });
+      throw error;
     }
-      this._validateRecoveryReplayTransactions();
-      this._validateGoalPlanReplayTransactions();
-    } finally { this._loading = false; }
   }
 
   _append(kind, payload, { actor, key }, fixedTs = null, beforeWrite = null) {
@@ -736,11 +998,21 @@ export class CoordinationStore {
       const before = this._events.length; beforeWrite();
       if (this._events.length !== before) throw new CoordinationRefusal('coordination before-write gate changed state', 'causal_correction_integrity');
     }
-    this._appendFile(this.file, `${JSON.stringify(event)}\n`, 'utf8');
+    const eventBytes = Buffer.from(`${JSON.stringify(event)}\n`, 'utf8');
+    this._appendFile(this.file, eventBytes, undefined);
+    this._loadedLedgerHash.update(eventBytes);
+    this._loadedLedgerIdentity = freeze({
+      bytes: this._loadedLedgerIdentity.bytes + eventBytes.byteLength,
+      digest: this._loadedLedgerHash.copy().digest('hex'), events: event.seq,
+    });
     this._events.push(event);
     this._byKey.set(key, event);
     try { this._apply(event); }
     catch (error) { throw this._poisonProjection(event, error); }
+    if (event.seq % this._checkpointInterval === 0) {
+      try { this._writeProjectionCheckpoint(); }
+      catch { /* the ledger remains authoritative; clean release retries and reports failure */ }
+    }
     this._notifyAppend();
     return event;
   }
@@ -788,7 +1060,13 @@ export class CoordinationStore {
       actor: entry.auth.actor, idempotencyKey: entry.auth.key, payload: freeze(clone(entry.payload)),
       ...(batchKind === null ? {} : { batch: freeze({ schemaVersion: 1, kind: batchKind, id: batchId, index, count: entries.length }) }),
     }));
-    this._appendFile(this.file, `${events.map((event) => JSON.stringify(event)).join('\n')}\n`, 'utf8');
+    const eventBytes = Buffer.from(`${events.map((event) => JSON.stringify(event)).join('\n')}\n`, 'utf8');
+    this._appendFile(this.file, eventBytes, undefined);
+    this._loadedLedgerHash.update(eventBytes);
+    this._loadedLedgerIdentity = freeze({
+      bytes: this._loadedLedgerIdentity.bytes + eventBytes.byteLength,
+      digest: this._loadedLedgerHash.copy().digest('hex'), events: start + events.length,
+    });
     for (const event of events) {
       this._events.push(event);
       this._byKey.set(event.idempotencyKey, event);
@@ -9633,6 +9911,41 @@ export class CoordinationStore {
   }
 
   snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), ...(this._runStops.size > 0 ? { runStops: [...this._runStops.values()].map(clone) } : {}), ...(this._runControls.size > 0 ? { runControls: [...this._runControls.values()].map(clone) } : {}), ...(this._runLineagePolicy ? { runAuthority: this.runAuthoritySnapshot() } : {}), ...(this._runResultAdoptions.size > 0 ? { runResultAdoptions: [...this._runResultAdoptions.values()].map(clone) } : {}), ...(this._runResultExports.size > 0 ? { runResultExports: [...this._runResultExports.values()].map(clone) } : {}), ...(this._contextProgramPolicy ? { context: { policy: clone(this._contextProgramPolicy), sessions: [...this._contextSessions.values()].map(clone), cells: [...this._contextCells.values()].map(clone), calls: this.contextCalls() } } : {}), artifacts: [...this._artifacts.values()].map(clone), ...(this._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...this._recoveryAttemptsById.values()].map(clone) } : {}), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._goalPlanPolicy || this._goals.size > 0 ? { goalPlan: { goals: [...this._goals.values()].map(clone), plans: [...this._plans.values()].map(clone), approvals: [...this._planApprovals.values()].map(clone), dispatches: [...this._planDispatches.values()].map(clone), budgetSettlements: [...this._planBudgetSettlements.values()].map(clone) } } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
+
+  /** Narrow current Goal/Plan index used by resident startup reconciliation. This avoids cloning
+   * unrelated tasks, evidence, knowledge, Web/MCP receipts, or historical Goal/Plan versions. */
+  goalPlanRun(repoId, runId) {
+    if (!boundedText(repoId, 256) || !validRunId(runId)) throw new TypeError('goal/plan Run coordinates are invalid');
+    const goal = this._goalHeads.get(this._goalScopeKey(repoId, runId)) ?? null;
+    if (!goal) return null;
+    const plan = this._planHeads.get(this._planHeadKey(goal)) ?? null;
+    const approval = plan
+      ? this._planApprovals.get(this._planVersionKey(plan.planId, plan.version)) ?? null : null;
+    const dispatches = plan ? plan.nodes.map((node) => this._planDispatches.get(
+      this._planNodeKey(plan.planId, plan.version, node.key),
+    )).filter(Boolean).sort((left, right) => compareCanonicalStrings(
+      left.binding.nodeKey, right.binding.nodeKey,
+    )) : [];
+    return freeze({
+      goal: clone(goal), plan: clone(plan), approval: clone(approval),
+      dispatch: clone(dispatches[0] ?? null), dispatches: dispatches.map(clone),
+    });
+  }
+
+  goalPlanRunIds(repoId, limit = 100_000) {
+    if (!boundedText(repoId, 256) || !Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
+      throw new TypeError('goal/plan Run index request is invalid');
+    }
+    const ids = [];
+    for (const goal of this._goalHeads.values()) {
+      if (goal.repoId !== repoId || goal.runId === null) continue;
+      ids.push(goal.runId);
+      if (ids.length > limit) throw new CoordinationRefusal(
+        'goal/plan Run index exceeds its bounded ceiling', 'goal_plan_status_oversize',
+      );
+    }
+    return freeze([...new Set(ids)].sort(compareCanonicalStrings));
+  }
   healthCheck() { try { if (!existsSync(this.file)) return this._events.length === 0; const raw = readFileSync(this.file, 'utf8'); return raw.length === 0 || raw.endsWith('\n'); } catch { return false; } }
   readyTasks() {
     return [...this._tasks.values()].filter((task) => task.status === 'pending' && task.assignee == null

@@ -266,7 +266,8 @@ function residentFetch(fixture, {
           schemaVersion: 1,
           repoId: cardRepoId,
           commands: [
-            'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.act', 'run.stop',
+            'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode',
+            'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.stop',
           ],
           agentExperience: { registryDigest },
         },

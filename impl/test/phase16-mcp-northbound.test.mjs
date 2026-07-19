@@ -17,7 +17,7 @@ const principal = (overrides = {}) => ({
 const runApplicationCard = () => ({
   schemaVersion: 1,
   repoId: 'repo-a',
-  commands: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'application.shutdown'],
+  commands: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'application.shutdown'],
 });
 function setup(overrides = {}) {
   const calls = [];
@@ -78,7 +78,7 @@ test('MN1/MN4/CI6/PF7: handshake and deterministic closed nineteen-tool inventor
   assert.equal(duplicate.error.code, -32600);
 });
 
-test('UA5/MN1: an application-backed MCP server exposes the five-operation ordinary surface and keeps compatibility explicit', async () => {
+test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary surface and keeps compatibility explicit', async () => {
   const application = {
     repoId: 'repo-a', card: runApplicationCard,
     async authorizeReplay() { return true; }, async command() { return {}; },
@@ -86,13 +86,55 @@ test('UA5/MN1: an application-backed MCP server exposes the five-operation ordin
   const { server } = setup({ application, surface: 'application' }); await initialized(server);
   const response = await request(server, 2, 'tools/list', {});
   assert.deepEqual(response.result.tools.map((tool) => tool.name), [
-    'baton_help', 'baton_run_start', 'baton_run_inspect', 'baton_run_act', 'baton_run_stop',
+    'baton_help', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
+    'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
+    'baton_run_act', 'baton_run_stop',
   ]);
+  const inspectSchema = response.result.tools.find((tool) => tool.name === 'baton_run_inspect').inputSchema;
+  for (const field of ['offset', 'pageCursor', 'recipient']) {
+    assert.equal(Object.hasOwn(inspectSchema.properties, field), true, field);
+  }
   assert.equal(response.result.tools.some((tool) => /shutdown|close|drain/.test(tool.name)), false);
   const advanced = setup({ application, surface: 'combined' }); await initialized(advanced.server);
   const combined = await request(advanced.server, 3, 'tools/list', {});
-  assert.equal(combined.result.tools.length, 39);
-  assert.deepEqual(combined.result.tools.slice(0, 5).map((tool) => tool.name), response.result.tools.map((tool) => tool.name));
+  assert.equal(combined.result.tools.length, 47);
+  assert.deepEqual(combined.result.tools.slice(0, 9).map((tool) => tool.name), response.result.tools.map((tool) => tool.name));
+});
+
+test('P92/MN: Episode continuation and exact workstream generation round-trip through MCP', async () => {
+  const applicationCalls = [];
+  const application = {
+    repoId: 'repo-a', card: runApplicationCard, async authorizeReplay() { return true; },
+    async command(name, args) {
+      applicationCalls.push({ name, args });
+      return { schemaVersion: 1, operation: name, arguments: args, continuation: {
+        operation: name, arguments: { ...args, pageCursor: 'next_page' },
+      } };
+    },
+  };
+  const { server } = setup({ application, surface: 'application' }); await initialized(server);
+  const episodeArgs = {
+    repoId: 'repo-a', runId: 'run-mcp-episode', topic: 'output', detail: 'content',
+    role: 'reviewer', generation: 2, pageCursor: 'page_1', cursor: 9, waitMs: 5,
+  };
+  const episode = await request(server, 2, 'tools/call', {
+    name: 'baton_run_episode', arguments: episodeArgs,
+  });
+  assert.equal(episode.result.isError, false);
+  assert.deepEqual(applicationCalls.at(-1), {
+    name: 'run.episode', args: {
+      runId: 'run-mcp-episode', topic: 'output', detail: 'content', role: 'reviewer',
+      generation: 2, pageCursor: 'page_1', cursor: 9, waitMs: 5,
+    },
+  });
+  assert.equal(episode.result.structuredContent.continuation.arguments.pageCursor, 'next_page');
+  const workstream = await request(server, 3, 'tools/call', {
+    name: 'baton_run_workstreams', arguments: {
+      repoId: 'repo-a', runId: 'run-mcp-episode', role: 'reviewer', generation: 2,
+    },
+  });
+  assert.equal(workstream.result.isError, false);
+  assert.equal(applicationCalls.at(-1).args.generation, 2);
 });
 
 test('KC6/KC7: a remote application facade is transport-owned and MCP close cannot shut Baton down', async () => {
@@ -417,16 +459,18 @@ test('MN3/MN4/MN6: scope, capability, fence, unknown fields, and credential fiel
   assert.deepEqual(forged.calls, []);
 });
 
-test('MN3/MN8: injected quota and durable audit fail closed before dispatch', async () => {
+test('MN3/MN8: injected quota fails closed while successful read observations stay off-ledger', async () => {
   const limited = setup({ takeToolQuota: async () => ({ ok: false }) }); await initialized(limited.server);
   const response = await request(limited.server, 2, 'tools/call', { name: 'fleet_list', arguments: { repoId: 'repo-a' } });
   assert.equal(response.result.isError, true); assert.match(response.result.content[0].text, /rate_limited/);
   assert.equal(limited.coordination.events().at(-1).payload.kind, 'tool_rate_limited');
   assert.deepEqual(limited.calls, []);
   const unavailable = setup(); await initialized(unavailable.server);
+  const before = unavailable.coordination.events().length;
   unavailable.coordination.recordMcpAudit = () => { throw new Error('audit unavailable'); };
-  const failed = await request(unavailable.server, 3, 'tools/call', { name: 'fleet_list', arguments: { repoId: 'repo-a' } });
-  assert.equal(failed.result.isError, true); assert.match(failed.result.content[0].text, /temporarily_unavailable/);
+  const observed = await request(unavailable.server, 3, 'tools/call', { name: 'fleet_list', arguments: { repoId: 'repo-a' } });
+  assert.equal(observed.result.isError, false);
+  assert.equal(unavailable.coordination.events().length, before);
   assert.deepEqual(unavailable.calls, [['list']]);
 });
 

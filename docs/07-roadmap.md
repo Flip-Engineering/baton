@@ -4,7 +4,7 @@
 > is not part of Baton's current goal. Baton remains deployment-neutral and single-project; adding
 > homelab integration would be a detriment. The line is retained only as exploration history.
 
-> **Current implementation continuation (2026-07-18):** Phases 70–77 add preserved-stop/resume,
+> **Current implementation continuation (2026-07-19):** Phases 70–77 add preserved-stop/resume,
 > required-effects authority, native Kimi worker/orchestrator support, authenticated control,
 > explicit full-access policy, bounded topology/recovery, and durable recursive Run authority;
 > Phases 78–88 integrate them behind one deployment-owned, cascading application surface and
@@ -13,10 +13,12 @@
 > validating attach, stable progress timing, repository-bound discovery, hardened Web reads,
 > owner-only HTTP-over-UDS, private bearer publication, stable deployment/fresh incarnation,
 > PID-start writer fencing, authenticated self-challenge, restart rotation, CAS cleanup, and
-> zero-assembly `baton serve`. Phase 90 now lands durable semantic control settlement and the
-> first Run-scoped progress/events/output stream vertical. Run-bound Web/browser streaming,
-> opaque catalog continuation, read-only intent authority, and browser control convergence remain
-> acceptance-red. The
+> zero-assembly `baton serve`. Phases 90–92 now land durable semantic control settlement,
+> Run-scoped streams, semantic Episode/workstream handles across direct/CLI/authenticated
+> Web/MCP/browser, bounded replay, resident stale-authority recovery, verifier/result coherence,
+> and exact route/readiness truth. Phase 93 is next: closed Program IR, event-driven
+> recursive/parallel composition, immutable base plus private overlays, one fenced integrator, and
+> live multi-harness gates. The
 > milestone prose below is historical sequencing, not a claim that a Git worktree or private HOME
 > is an OS sandbox or that the capability and representation planes are complete.
 
@@ -31,6 +33,10 @@
    stable deployment identity, fresh incarnation, PID-start-fenced leases, readiness-before-
    publication, authenticated self-check, restart rotation, and compare-and-swap cleanup. The
    advanced loopback HTTPS assembly seam remains only for explicit integration/network work.
+   Phase 92 adds one progressive Episode/workstream facade across direct, CLI, authenticated Web,
+   MCP, and browser; parsed-event checkpoints with full replay revalidation; append-aware worker
+   indexes; non-amplifying ordinary reads; exact stale resident recovery; and truthful blocked
+   route discovery.
 2. Dogfood Baton on Baton continuously: route multiple workers in parallel, select exact
    harness/model/effort per task, and live-prove selective kill plus zero ownership after close.
    Current route targets are Codex `gpt-5.6-sol`, native Kimi `kimi-code/k3` at
@@ -44,7 +50,8 @@
    freshly verified parallel Phase 81 Candidates, followed by an exact Kimi Candidate-based Plan
    v2 revision and zero-ownership close. Grok remains separately auth-red. No provider-success
    claim is borrowed from readiness alone.
-3. Build durable dynamic workflow composition over the existing Run application: one approved
+3. Build Phase 93 closed Program IR and event-driven dynamic workflow composition over the existing
+   Run/workstream substrate: one approved
    multi-node Goal/Plan, parallel Attempts for shared WorkItems, typed feedback, append-only
    review/revision Plan versions, synthesis, deterministic joins/gates, compact group progress,
    selective stop/reap, and restart recovery. The default shares immutable context and private
@@ -58,7 +65,9 @@
    policy, cumulative Goal headroom, Plan v3 replay, repeated-feedback/no-progress/contradiction
    stops, and ambiguous-worker recovery are now deterministic-green. Remaining hardening is the
    full effect-boundary/selective-stop matrix and explicit multi-round transport parity;
-   arbitrary-depth recursion is not claimed.
+   arbitrary-depth recursion is not claimed. The required write topology remains immutable base
+   plus private overlays and one fenced integrator; ambient shared mutable checkout writes remain
+   refused. Live multi-harness gates are distinct from fixture acceptance.
 4. Build the common Context Program and Scratch Bench as the context-computation layer for dynamic
    workflows. Phase 81 now specifies a Pythonic ContextSession over a closed canonical AST and has
    a first green stateless pure-cell vertical: immutable tree-bound manifests, deterministic
@@ -80,8 +89,9 @@
    whole-Run reap, compact mutation output, and explicit outline/index/section/item/content/evidence
    expansion. The execution chapter now also ships Run-scoped resumable progress/event/output
    streams, safe per-Run positions, opt-in untrusted provider output, Pythonic iterators, and
-   concise CLI facades. Run-bound authenticated Web streaming/browser rendering, read-only intent
-   authority, opaque catalog continuation, and deeper recursive composition remain next, followed by
+   concise CLI facades. Phase 92 closes Run-bound authenticated Web/browser Episode rendering,
+   read-only result policy, progressive continuation, and role/generation attribution. Closed
+   Program IR and event-driven recursive/parallel composition remain next, followed by
    direct-vs-context-vs-RLM evaluation.
 5. Deepen the capability and representation plane from the shipped bounded R1 structural-delta,
    R2 SCIP-snapshot, and R3 CPG seeds: Atlas AST/CST precision, native symbol/SCIP depth,

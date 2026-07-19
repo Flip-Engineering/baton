@@ -69,6 +69,10 @@ const KIMI_TOKEN_WIRE_FIELDS = Object.freeze([
 const KIMI_CREDENTIAL_FILES = Object.freeze([
   'config.toml', 'device_id', 'credentials/kimi-code.json', 'oauth/kimi-code',
 ]);
+const GLM_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
+const glmRoutes = () => GLM_EFFORTS.map((effort) => Object.freeze({
+  harness: 'glm', model: 'glm-5.2', effort,
+}));
 
 const DEFAULT_ROUTES = Object.freeze([
   ...['minimal', 'low', 'medium', 'high', 'xhigh'].map((effort) => Object.freeze({
@@ -396,22 +400,27 @@ function grokAuthenticationState(credentialPath, nowMs = Date.now()) {
     }
 
     const states = entries.map(([scope, entry]) => {
-      if (!record(entry)
-        || typeof entry.key !== 'string' || entry.key.length === 0
-        || entry.key.length > MAX_GROK_CREDENTIAL_METADATA_BYTES) {
-        return 'invalid';
-      }
+      if (!record(entry)) return 'invalid';
+      const accessPresent = typeof entry.key === 'string' && entry.key.length > 0
+        && entry.key.length <= MAX_GROK_CREDENTIAL_METADATA_BYTES;
+      const refreshPresent = typeof entry.refresh_token === 'string'
+        && entry.refresh_token.length > 0
+        && entry.refresh_token.length <= MAX_GROK_CREDENTIAL_METADATA_BYTES;
       // The CLI documents xai::api_key as its non-expiring, locally selected API-key scope.
       // Every cached subscription/OIDC session is time-bound and must carry explicit RFC3339
       // expiry metadata. No token, account identity, issuer, or scope is projected publicly.
-      if (scope === 'xai::api_key') return 'available';
+      if (scope === 'xai::api_key') return accessPresent ? 'available' : 'invalid';
+      if (!accessPresent && !refreshPresent) return 'invalid';
       if (typeof entry.expires_at !== 'string' || entry.expires_at.length > 128
         || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u.test(entry.expires_at)) {
         return 'invalid';
       }
       const expiresAt = Date.parse(entry.expires_at);
       if (!Number.isFinite(expiresAt)) return 'invalid';
-      return expiresAt <= (nowMs + GROK_AUTH_EARLY_INVALIDATION_MS) ? 'expired' : 'available';
+      if (expiresAt <= (nowMs + GROK_AUTH_EARLY_INVALIDATION_MS)) {
+        return refreshPresent ? 'refreshable' : 'expired';
+      }
+      return accessPresent ? 'available' : refreshPresent ? 'refreshable' : 'invalid';
     });
     // Baton cannot safely infer which locally cached scope the CLI will select when more than one
     // credential is present. Refuse that ambiguity instead of guessing a convenient ready entry.
@@ -420,6 +429,9 @@ function grokAuthenticationState(credentialPath, nowMs = Date.now()) {
     }
     if (states[0] === 'available') {
       return Object.freeze({ state: 'ready', credentialState: 'available' });
+    }
+    if (states[0] === 'refreshable') {
+      return Object.freeze({ state: 'ready', credentialState: 'refreshable' });
     }
     if (states[0] === 'expired') {
       const code = 'authentication_refresh_required';
@@ -548,7 +560,7 @@ function locallyReadyRoutes(repoRoot) {
     }));
   }
   if (existingRegular(join(repoRoot, 'glm_key.json'))) {
-    routes.push(Object.freeze({ harness: 'glm', model: 'glm-5.2', effort: 'xhigh' }));
+    routes.push(...glmRoutes());
   }
   return routes;
 }
@@ -560,7 +572,11 @@ function locallyConfiguredRoutes(repoRoot) {
     'kimi-code': KIMI_CREDENTIAL_FILES.every(
       (path) => existingRegular(join(homedir(), '.kimi-code', path)),
     ),
-    'claude-code': existingRegular(join(homedir(), '.claude', '.credentials.json')),
+    // Claude Code may keep subscription authority in the platform credential store rather than
+    // ~/.claude. The executable's bounded `auth status --json` probe below remains the readiness
+    // authority; executable discovery merely keeps the configured route available to that probe.
+    'claude-code': existingRegular(join(homedir(), '.claude', '.credentials.json'))
+      || commandCandidates('claude').some((candidate) => existingExecutable(candidate)),
   };
   const routes = DEFAULT_ROUTES.filter((route) => configured[route.harness] === true);
   if (existingRegular(kimiThroughClaudeCredential())) {
@@ -569,7 +585,7 @@ function locallyConfiguredRoutes(repoRoot) {
     }));
   }
   if (existingRegular(join(repoRoot, 'glm_key.json'))) {
-    routes.push(Object.freeze({ harness: 'glm', model: 'glm-5.2', effort: 'xhigh' }));
+    routes.push(...glmRoutes());
   }
   return routes;
 }
@@ -823,6 +839,7 @@ function deploymentReadiness(
   nativeKimiAuthentication = null,
   nativeGrokAuthentication = null,
   adapterAuthentication = new Map(),
+  additionalRouteStates = [],
 ) {
   const cards = Object.entries(adapters).map(([name, adapter]) => Object.freeze({
     name, card: adapter.card(),
@@ -922,13 +939,14 @@ function deploymentReadiness(
       summary: 'The exact route passed static deployment readiness.', runtime,
     });
   });
+  const allRouteStates = Object.freeze([...routeStates, ...additionalRouteStates]);
   return Object.freeze({
     schemaVersion: 1,
-    ready: routeStates.some((route) => route.state === 'ready'),
+    ready: allRouteStates.some((route) => route.state === 'ready'),
     repository: preflight.repository,
     verification: preflight.verification,
     dependencies: preflight.dependencies,
-    routes: Object.freeze(routeStates),
+    routes: allRouteStates,
   });
 }
 
@@ -1273,11 +1291,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     throw deploymentError('advanced resident configuration is invalid');
   }
   const capacity = normalizeCapacity(advanced.capacity);
-  const discoveredRoutes = advanced.routes === undefined ? locallyReadyRoutes(repository.root) : null;
   const configuredRoutes = advanced.routes === undefined ? locallyConfiguredRoutes(repository.root) : null;
   const routes = normalizeRoutes(advanced.routes
-    ?? (discoveredRoutes.length > 0 ? discoveredRoutes
-      : configuredRoutes.length > 0 ? configuredRoutes : DEFAULT_ROUTES));
+    ?? (configuredRoutes.length > 0 ? configuredRoutes : DEFAULT_ROUTES));
   const publicRoutes = routes.map(publicRoute);
   if (new Set(publicRoutes.map((route) => JSON.stringify(route))).size !== publicRoutes.length) {
     throw deploymentError('advanced routes collapse to a duplicate public exact tuple');
@@ -1314,9 +1330,16 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   const adapterAuthentication = await projectedAdapterAuthentication(
     adapters, repository.root, runtimeRoot, projection,
   );
+  const additionalRouteStates = advanced.routes === undefined
+    && !existingRegular(kimiThroughClaudeCredential())
+    ? [Object.freeze({
+      harness: 'claude-code', model: 'kimi-k3[1m]', effort: 'max',
+      state: 'blocked', code: 'route_unconfigured',
+      summary: "Kimi-through-Claude is not configured; provision Baton's private Kimi credential to enable this exact route.",
+    })] : [];
   const readiness = deploymentReadiness(
     preflight, routes, adapters, nativeKimiAuthentication, nativeGrokAuthentication,
-    adapterAuthentication,
+    adapterAuthentication, additionalRouteStates,
   );
   const policy = goalPlanPolicy(repository.repoId);
   const contextRuntime = new RepositoryContextRuntime({

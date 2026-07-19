@@ -24,6 +24,7 @@ import {
 import { APPLICATION_SEMANTIC_REGISTRY, projectTypedTerminalCause } from './application-semantics.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { projectRunTimelinePage } from './run-timeline.mjs';
+import { compareCanonicalStrings } from './canonical-order.mjs';
 
 export { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 
@@ -69,6 +70,15 @@ function closedEnum(value, allowed) {
   return typeof value === 'string' && allowed.has(value) ? value : null;
 }
 const SEMANTIC_ACTION_DISPATCH = Object.freeze({});
+const READ_ONLY_RESULT_CONSTRAINT = 'Baton objective/result policy read_only_evidence_v1';
+const READ_ONLY_RESULT_DEFINITION = Object.freeze([
+  'A bounded evidence-backed textual/result capsule answers the declared read-only objective.',
+  'Sources, derivations, contradictions, verification, and cleanup remain inspectable.',
+]);
+const EPISODE_TOPICS = Object.freeze([
+  'outline', 'output', 'sources', 'derivations', 'contradictions', 'trace', 'route',
+  'verification', 'result', 'cleanup', 'help',
+]);
 // Provider execution can settle while the application Run remains open for
 // result finalization. These closed sets intentionally model separate lifecycles.
 export const PROVIDER_EXECUTION_SETTLED_PHASES = new Set([
@@ -83,6 +93,10 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'runs.list': Object.freeze({ args: Object.freeze([]), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.start': Object.freeze({ args: Object.freeze(['intent']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.inspect': Object.freeze({ args: Object.freeze(['runId', 'depth', 'section', 'item', 'offset', 'pageCursor', 'recipient', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
+  'run.episode': Object.freeze({ args: Object.freeze(['runId', 'topic', 'detail', 'role', 'generation', 'pageCursor', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
+  'run.workstreams': Object.freeze({ args: Object.freeze(['runId', 'role', 'generation', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
+  'run.workstream.notify': Object.freeze({ args: Object.freeze(['runId', 'role', 'generation', 'message', 'delivery']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
+  'run.workstream.stop': Object.freeze({ args: Object.freeze(['runId', 'role', 'generation', 'reason']), capabilities: Object.freeze(['emergency_stop', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.act': Object.freeze({ args: Object.freeze(['runId', 'actionId', 'inputs']), capabilities: Object.freeze([]), semanticCapabilities: true, web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.status': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.follow': Object.freeze({ args: Object.freeze(['runId', 'afterCursor', 'timeoutMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
@@ -924,6 +938,70 @@ export function validateApplicationCommandArgs(name, args) {
     }
     return true;
   }
+  if (name === 'run.episode') {
+    const allowed = new Set(definition.args);
+    const topic = args?.topic ?? 'outline';
+    const detail = args?.detail ?? (topic === 'output' ? 'content' : 'item');
+    if (!args || typeof args !== 'object' || Array.isArray(args)
+      || Object.keys(args).some((key) => !allowed.has(key)) || !validId(args.runId)
+      || !EPISODE_TOPICS.includes(topic)
+      || !['item', 'content', 'evidence'].includes(detail)
+      || (args.role !== undefined && !validId(args.role))
+      || (args.generation !== undefined
+        && (!Number.isSafeInteger(args.generation) || args.generation < 1))
+      || (args.pageCursor !== undefined && (typeof args.pageCursor !== 'string'
+        || args.pageCursor.length < 1 || args.pageCursor.length > 4_096
+        || !/^[A-Za-z0-9_-]+$/u.test(args.pageCursor)))
+      || (args.cursor !== undefined && (!Number.isSafeInteger(args.cursor) || args.cursor < 0))
+      || (args.waitMs !== undefined && (!Number.isSafeInteger(args.waitMs) || args.waitMs <= 0))
+      || (args.waitMs !== undefined && args.cursor === undefined)
+      || (args.generation !== undefined && args.role === undefined)
+      || (args.pageCursor !== undefined && !(topic === 'output' && detail === 'content'))
+      || (detail === 'content' && !['output', 'help'].includes(topic))) {
+      throw applicationError('Episode request is invalid', 'application_episode_invalid');
+    }
+    return true;
+  }
+  if (name === 'run.workstreams') {
+    const allowed = new Set(definition.args);
+    if (!args || typeof args !== 'object' || Array.isArray(args)
+      || Object.keys(args).some((key) => !allowed.has(key)) || !validId(args.runId)
+      || (args.role !== undefined && !validId(args.role))
+      || (args.generation !== undefined
+        && (!Number.isSafeInteger(args.generation) || args.generation < 1))
+      || (args.generation !== undefined && args.role === undefined)
+      || (args.cursor !== undefined && (!Number.isSafeInteger(args.cursor) || args.cursor < 0))
+      || (args.waitMs !== undefined && (!Number.isSafeInteger(args.waitMs) || args.waitMs <= 0))
+      || (args.waitMs !== undefined && args.cursor === undefined)) {
+      throw applicationError('Workstream request is invalid', 'application_workstream_invalid');
+    }
+    return true;
+  }
+  if (name === 'run.workstream.notify') {
+    const allowed = new Set(definition.args);
+    if (!args || typeof args !== 'object' || Array.isArray(args)
+      || Object.keys(args).some((key) => !allowed.has(key))
+      || !validId(args.runId) || !validId(args.role)
+      || (args.generation !== undefined
+        && (!Number.isSafeInteger(args.generation) || args.generation < 1))
+      || !validText(args.message, 16_384)
+      || (args.delivery !== undefined && !['nudge', 'now', 'turn'].includes(args.delivery))) {
+      throw applicationError('Workstream notification is invalid', 'application_workstream_notify_invalid');
+    }
+    return true;
+  }
+  if (name === 'run.workstream.stop') {
+    const allowed = new Set(definition.args);
+    if (!args || typeof args !== 'object' || Array.isArray(args)
+      || Object.keys(args).some((key) => !allowed.has(key))
+      || !validId(args.runId) || !validId(args.role)
+      || (args.generation !== undefined
+        && (!Number.isSafeInteger(args.generation) || args.generation < 1))
+      || (args.reason !== undefined && !validText(args.reason, 1_024))) {
+      throw applicationError('Workstream stop is invalid', 'application_workstream_stop_invalid');
+    }
+    return true;
+  }
   if (name === 'run.act') {
     exactObject(args, definition.args, 'application_action_invalid', 'Run action');
     if (!validId(args.runId) || !validId(args.actionId) || !args.inputs
@@ -1133,6 +1211,19 @@ function parseProfileConstraint(constraints) {
   const split = value.lastIndexOf('@');
   if (split <= 0) return null;
   return { name: value.slice(0, split), digest: value.slice(split + 1) };
+}
+
+function objectiveResultPolicy(objective, constraints = []) {
+  const declared = constraints.includes(READ_ONLY_RESULT_CONSTRAINT)
+    || (/\bread[ -]?only\b/iu.test(objective ?? '')
+      && /\b(?:review|research|audit|analysis|report)\b/iu.test(objective ?? ''));
+  return deepFreeze(declared ? {
+    mode: 'read_only_evidence', repositoryMutation: 'forbidden',
+    acceptance: 'verified_textual_result_capsule',
+  } : {
+    mode: 'change', repositoryMutation: 'required_when_declared',
+    acceptance: 'verified_effect_result',
+  });
 }
 
 function runNarrative(storyWorkers, runWorkerIds) {
@@ -2160,7 +2251,8 @@ export class BatonApplication {
         'run_orchestrator_command_forbidden');
     }
     if (context?.sessionAuthority && name !== 'run.start' && name !== 'application.help') {
-      const recursiveCommand = ['run.status', 'run.inspect', 'run.wait', 'run.follow'].includes(name)
+      const recursiveCommand = ['run.status', 'run.inspect', 'run.episode', 'run.workstreams',
+        'run.wait', 'run.follow'].includes(name)
         ? 'run.status' : name;
       this._authorizeRecursiveCommand(recursiveCommand, args.runId, principal, context);
     }
@@ -2262,20 +2354,35 @@ export class BatonApplication {
   }
 
   _findRun(runId, { allowUnavailableProfile = false } = {}) {
-    const snapshot = this.driver.coordination.snapshot();
-    const goalPlan = snapshot.goalPlan;
-    if (!goalPlan || goalPlan.goals.length > MAX_RUN_RECORDS || goalPlan.plans.length > MAX_RUN_RECORDS
-      || goalPlan.approvals.length > MAX_RUN_RECORDS || goalPlan.dispatches.length > MAX_RUN_RECORDS) {
-      throw applicationError('application run projection exceeds its bounded lookup ceiling', 'application_run_lookup_oversize');
+    const indexed = typeof this.driver.coordination.goalPlanRun === 'function'
+      ? this.driver.coordination.goalPlanRun(this.repoId, runId) : null;
+    let goal; let plan; let approval; let dispatches; let dispatch;
+    if (indexed) {
+      ({ goal, plan, approval, dispatches, dispatch } = indexed);
+    } else {
+      const snapshot = this.driver.coordination.snapshot();
+      const goalPlan = snapshot.goalPlan;
+      if (!goalPlan || goalPlan.goals.length > MAX_RUN_RECORDS || goalPlan.plans.length > MAX_RUN_RECORDS
+        || goalPlan.approvals.length > MAX_RUN_RECORDS || goalPlan.dispatches.length > MAX_RUN_RECORDS) {
+        throw applicationError('application run projection exceeds its bounded lookup ceiling', 'application_run_lookup_oversize');
+      }
+      const goals = goalPlan.goals.filter((row) => row.repoId === this.repoId && row.runId === runId)
+        .sort((a, b) => b.version - a.version);
+      [goal] = goals;
+      const plans = goal ? goalPlan.plans.filter((row) => row.repoId === this.repoId && row.runId === runId
+        && row.goal.goalId === goal.goalId && row.goal.version === goal.version && row.goal.digest === goal.digest)
+        .sort((a, b) => b.version - a.version) : [];
+      [plan] = plans;
+      plan ??= null;
+      approval = plan ? goalPlan.approvals.find((row) => row.plan.planId === plan.planId
+        && row.plan.version === plan.version && row.plan.digest === plan.digest) ?? null : null;
+      dispatches = plan ? goalPlan.dispatches.filter((row) => row.binding?.planId === plan.planId
+        && row.binding?.planVersion === plan.version && row.binding?.planDigest === plan.digest)
+        .sort((left, right) => (left.binding.nodeKey < right.binding.nodeKey ? -1 : 1)) : [];
+      [dispatch] = dispatches;
+      dispatch ??= null;
     }
-    const goals = goalPlan.goals.filter((goal) => goal.repoId === this.repoId && goal.runId === runId)
-      .sort((a, b) => b.version - a.version);
-    const goal = goals[0];
     if (!goal) throw applicationError(`unknown run ${runId}`, 'application_run_not_found');
-    const plans = goalPlan.plans.filter((plan) => plan.repoId === this.repoId && plan.runId === runId
-      && plan.goal.goalId === goal.goalId && plan.goal.version === goal.version && plan.goal.digest === goal.digest)
-      .sort((a, b) => b.version - a.version);
-    const plan = plans[0] ?? null;
     const profileRef = parseProfileConstraint(goal.constraints);
     const currentProfile = profileRef ? this.profiles.get(profileRef.name) : null;
     const profile = profileRef && currentProfile?.digest === profileRef.digest ? currentProfile
@@ -2284,12 +2391,6 @@ export class BatonApplication {
     if (!profileRef || (!profile && !allowUnavailableProfile)) {
       throw applicationError(`run ${runId} deployment profile is unavailable`, 'application_profile_stale');
     }
-    const approval = plan ? goalPlan.approvals.find((row) => row.plan.planId === plan.planId
-      && row.plan.version === plan.version && row.plan.digest === plan.digest) ?? null : null;
-    const dispatches = plan ? goalPlan.dispatches.filter((row) => row.binding?.planId === plan.planId
-      && row.binding?.planVersion === plan.version && row.binding?.planDigest === plan.digest)
-      .sort((left, right) => (left.binding.nodeKey < right.binding.nodeKey ? -1 : 1)) : [];
-    const dispatch = dispatches[0] ?? null;
     return {
       goal, plan, approval, dispatch, dispatches, profile, profileName: profileRef.name,
       profileDigest: profileRef.digest,
@@ -3016,10 +3117,11 @@ export class BatonApplication {
 
   async _reconcileApprovedRuns() {
     this._assertOpen();
-    const snapshot = this.driver.coordination.snapshot();
-    const runIds = [...new Set((snapshot.goalPlan?.goals ?? [])
-      .filter((goal) => goal.repoId === this.repoId && goal.runId !== null)
-      .map((goal) => goal.runId))].sort();
+    const runIds = typeof this.driver.coordination.goalPlanRunIds === 'function'
+      ? this.driver.coordination.goalPlanRunIds(this.repoId, MAX_RUN_RECORDS)
+      : [...new Set((this.driver.coordination.snapshot().goalPlan?.goals ?? [])
+        .filter((goal) => goal.repoId === this.repoId && goal.runId !== null)
+        .map((goal) => goal.runId))].sort();
     if (runIds.length > MAX_RUN_RECORDS) {
       throw applicationError('application run scheduler exceeds its bounded lookup ceiling', 'application_run_lookup_oversize');
     }
@@ -3283,10 +3385,15 @@ export class BatonApplication {
     const workflowConstraint = intent.composition
       ? `Baton workflow ${intent.composition.strategy}:${intent.composition.workspace}:${intent.composition.join}`
       : null;
+    const objectivePolicy = objectiveResultPolicy(intent.objective);
+    const readOnlyResult = objectivePolicy.mode === 'read_only_evidence';
+    const definitionOfDone = readOnlyResult
+      ? clone(READ_ONLY_RESULT_DEFINITION) : clone(profile.definitionOfDone);
     const goalFields = {
       objective: intent.objective,
-      definitionOfDone: clone(profile.definitionOfDone),
-      constraints: [...profile.constraints, constraint, ...(workflowConstraint ? [workflowConstraint] : [])],
+      definitionOfDone,
+      constraints: [...profile.constraints, constraint, ...(workflowConstraint ? [workflowConstraint] : []),
+        ...(readOnlyResult ? [READ_ONLY_RESULT_CONSTRAINT] : [])],
       risk: profile.risk,
       budget: clone(profile.goalBudget),
       predecessor: null,
@@ -3294,7 +3401,7 @@ export class BatonApplication {
     const singleNode = {
       key: 'work',
       objective: intent.objective,
-      definitionOfDone: clone(profile.definitionOfDone),
+      definitionOfDone,
       deps: [],
       pathScope: clone(intent.scope),
       ...(digest(intent.scope) === digest(profile.pathScope)
@@ -3304,9 +3411,11 @@ export class BatonApplication {
       verification: clone(profile.verification),
       routes: exactPlanRoutes(intent.route),
       capabilities: clone(profile.capabilities),
-      effects: clone(profile.effects),
+      effects: readOnlyResult
+        ? profile.effects.filter((effect) => effect !== 'repository_edit') : clone(profile.effects),
       ...(profile.workerPolicy ? { workerPolicy: clone(profile.workerPolicy) } : {}),
-      ...(Object.hasOwn(profile, 'requiredEffects') ? { requiredEffects: clone(profile.requiredEffects) } : {}),
+      ...(!readOnlyResult && Object.hasOwn(profile, 'requiredEffects')
+        ? { requiredEffects: clone(profile.requiredEffects) } : {}),
     };
     const workflowPolicy = intent.composition
       ? normalizeWorkflowPolicy(this.driver.coordination.workflowPolicy()) : null;
@@ -4923,6 +5032,11 @@ export class BatonApplication {
       };
       candidates.push(deepFreeze({
         ...core,
+        verification: this._closedVerdictProjection(
+          operational.payload,
+          current.plan.nodes.find((candidate) => candidate.key === binding.nodeKey),
+          'completed', worker,
+        ),
         retainedResultRef: commit.refs.retainedResultRef,
         retention: {
           state: 'pinned', ref: commit.refs.retainedResultRef,
@@ -5703,18 +5817,24 @@ export class BatonApplication {
       const memberStops = this._workflowMemberStops(roundCurrent, definition);
       const attempts = definition.attempts.map((attempt) => {
         const node = projection.nodes.find((candidate) => candidate.key === attempt.nodeKey);
+        const candidate = candidates.find((entry) => entry.role === attempt.role) ?? null;
         return {
           role: attempt.role, nodeKey: attempt.nodeKey, taskId: node?.taskId ?? null,
           state: node?.state ?? 'blocked', route: clone(workflowAttemptRoute(definition, attempt)),
-          candidateId: candidates.find((candidate) => candidate.role === attempt.role)?.candidateId ?? null,
+          candidateId: candidate?.candidateId ?? null,
+          verification: clone(candidate?.verification ?? null),
         };
       });
       const allSettled = attempts.every((attempt) => (
         ['accepted', 'failed', 'cancelled', 'stale'].includes(attempt.state)
       ));
+      const readOnlyResult = objectiveResultPolicy(
+        current.goal.objective, current.goal.constraints,
+      ).mode === 'read_only_evidence';
       const state = !projection.approval ? 'awaiting_plan_approval'
         : projection.approval.disposition === 'rejected' ? 'denied'
           : selection ? 'candidate_selected'
+            : readOnlyResult && allSettled && candidates.length > 0 ? 'completed'
             : allSettled && candidates.length > 0 ? 'selection_required'
               : allSettled ? 'failed' : 'running';
       const revision = roundCurrent.plan.nodes[0]?.revision
@@ -5788,6 +5908,13 @@ export class BatonApplication {
         phase: node?.state === 'accepted' ? 'work_completed'
           : ['failed', 'cancelled'].includes(node?.state) ? node.state : 'running',
       });
+      const attemptVerification = this._closedVerdictProjection(
+        terminalResult, planNode, node?.state ?? 'blocked', handle?.id ?? null,
+      ) ?? {
+        state: node?.state === 'accepted' ? 'mechanically_verified'
+          : node?.state === 'failed' ? 'failed' : 'pending',
+        accepted: node?.state === 'accepted',
+      };
       attempts.push({
         role: binding.role, nodeKey: binding.nodeKey, taskId: node?.taskId ?? null,
         state: handle?.status === 'interrupted' && handle.controllableAttached === true
@@ -5812,8 +5939,7 @@ export class BatonApplication {
           editedPaths: clone(workerStory.editedPaths),
           warnings: clone(workerStory.warnings),
         } : null,
-        verification: node?.state === 'accepted' ? 'mechanically_verified'
-          : node?.state === 'failed' ? 'failed' : 'pending',
+        verification: attemptVerification,
         terminalCause: projectTypedTerminalCause({
           terminalResult, terminalOutcome: node?.terminalOutcome ?? null,
         }),
@@ -5848,9 +5974,14 @@ export class BatonApplication {
       attempt.taskId !== null && !['accepted', 'failed', 'cancelled'].includes(attempt.state)
       && attempt.memberStop === null
     )).map((attempt) => attempt.role);
+    const objectivePolicy = objectiveResultPolicy(
+      current.goal.objective, current.goal.constraints,
+    );
+    const readOnlyResult = objectivePolicy.mode === 'read_only_evidence';
     let phase = !projection.approval ? 'awaiting_plan_approval'
       : projection.approval.disposition === 'rejected' ? 'denied'
         : selection ? (selectedIntegration ? 'completed' : 'candidate_selected')
+          : readOnlyResult && allAccepted && candidates.length > 0 ? 'completed'
           : allSettled && candidates.length > 0 ? 'selection_required'
             : allSettled && anyFailed ? 'failed'
             : anyDispatched ? 'running' : 'approved';
@@ -5938,7 +6069,14 @@ export class BatonApplication {
       { key: 'intent', label: 'Workflow intent', state: 'complete', detail: 'Workflow definition bound to exact Goal and Plan.' },
       { key: 'plan', label: 'Workflow Plan', state: projection.approval?.disposition === 'approved' ? 'complete' : 'active', detail: `${attempts.length} attributable isolated Attempts.` },
       { key: 'wave', label: 'Parallel Wave', state: allSettled ? 'complete' : anyDispatched ? 'active' : 'pending', detail: `${attempts.filter((attempt) => ['accepted', 'failed', 'cancelled'].includes(attempt.state)).length}/${attempts.length} settled.` },
-      { key: 'selection', label: 'Candidate selection', state: phase === 'selection_required' ? 'blocked' : selection ? 'complete' : 'pending', detail: phase === 'selection_required' ? 'Operator selection is required.' : selection ? `${selection.candidate.role} selected.` : 'Awaiting verified Candidates.' },
+      { key: 'selection', label: readOnlyResult ? 'Evidence result set' : 'Candidate selection',
+        state: phase === 'selection_required' ? 'blocked'
+          : selection || (readOnlyResult && phase === 'completed') ? 'complete' : 'pending',
+        detail: phase === 'selection_required' ? 'Operator selection is required.'
+          : selection ? `${selection.candidate.role} selected.`
+            : readOnlyResult && phase === 'completed'
+              ? `${candidates.length} verified evidence result(s) accepted without repository selection.`
+              : 'Awaiting verified Candidates.' },
       { key: 'cleanup', label: 'Owned-resource cleanup', state: resourcesSettled ? 'complete' : 'active', detail: resourcesSettled ? 'Owned resources settled.' : 'Owned resources remain active.' },
     ];
     const currentStage = stages.find((stage) => ['active', 'blocked', 'failed'].includes(stage.state))
@@ -5956,6 +6094,7 @@ export class BatonApplication {
     };
     const view = {
       schemaVersion: 1, runId, objective: current.goal.objective,
+      objectiveResultPolicy: clone(objectivePolicy),
       profile: { name: current.profileName, digest: current.profile.digest },
       phase, cursor: projection.coordinationUpperBound,
       nextActions: phase === 'awaiting_plan_approval'
@@ -6040,6 +6179,13 @@ export class BatonApplication {
           receiptDigest: selectedAdoption.receipt?.receiptDigest
             ?? selectedAdoption.receiptDigest ?? null,
         } : null,
+      } : readOnlyResult && phase === 'completed' ? {
+        state: 'accepted_evidence_set', candidateCount: candidates.length,
+        candidates: candidates.map((candidate) => ({
+          role: candidate.role, candidateId: candidate.candidateId,
+          taskId: candidate.taskId, resultSha: candidate.resultSha,
+          evidenceDigest: candidate.evidenceDigest,
+        })),
       } : candidates.length > 0 ? {
         state: 'selection_required', candidateCount: candidates.length,
       } : null,
@@ -6095,6 +6241,10 @@ export class BatonApplication {
       throw applicationError('run projection differs from the compiled request', 'application_run_conflict');
     }
     const projection = await this._goalPlanStatus(current, observer);
+    const objectivePolicy = objectiveResultPolicy(
+      current.goal.objective, current.goal.constraints,
+    );
+    const readOnlyResult = objectivePolicy.mode === 'read_only_evidence';
     const node = projection.nodes[0];
     const task = node.taskId ? this.driver.coordination.task(node.taskId) : null;
     const workerId = task?.assignee ?? null;
@@ -6119,7 +6269,7 @@ export class BatonApplication {
     let phase;
     if (!projection.approval) phase = 'awaiting_plan_approval';
     else if (projection.approval.disposition === 'rejected') phase = 'denied';
-    else if (node.state === 'accepted') phase = 'work_completed';
+    else if (node.state === 'accepted') phase = readOnlyResult ? 'completed' : 'work_completed';
     else if (node.state === 'failed') phase = 'failed';
     else if (node.state === 'cancelled') phase = 'cancelled';
     else if (node.taskId) phase = 'running';
@@ -6236,6 +6386,7 @@ export class BatonApplication {
       },
       profileDigest: current.profile.digest,
       planDigest: current.plan.digest,
+      objectiveResultPolicy: clone(objectivePolicy),
     };
     let publicResult = resultSha ? {
       state: result?.integration ? 'integrated' : adoptionState(adoption) === 'adopted' ? 'adopted' : 'accepted',
@@ -6289,20 +6440,21 @@ export class BatonApplication {
         cancelledAt: durableExport.cancelledAt ?? null,
       } : null;
     if (!runStop && node.state === 'accepted') {
-      if (semanticReview.state === 'review_running') phase = 'reviewing';
+      if (readOnlyResult) phase = 'completed';
+      else if (semanticReview.state === 'review_running') phase = 'reviewing';
       else if ((integration || durableExport?.status === 'completed')
         && (current.profile.reviewPolicy.mode === 'none' || semanticReview.state === 'semantic_reviewed')) phase = 'completed';
       else phase = 'work_completed';
     }
-    const canAdopt = resultSha && preservation?.state === 'pinned'
+    const canAdopt = !readOnlyResult && resultSha && preservation?.state === 'pinned'
       && current.profile.resultPolicy.mode === 'manual' && adoptionState(adoption) !== 'adopted';
-    const canReview = current.profile.reviewPolicy.mode === 'required' && semanticReview.state === 'semantics_unverified';
-    const canIntegrate = current.profile.integrationPolicy.mode === 'manual'
+    const canReview = !readOnlyResult && current.profile.reviewPolicy.mode === 'required' && semanticReview.state === 'semantics_unverified';
+    const canIntegrate = !readOnlyResult && current.profile.integrationPolicy.mode === 'manual'
       && (!current.profile.integrationPolicy.requireSemanticReview
         || semanticReview.state === 'semantic_reviewed')
       && (!current.profile.integrationPolicy.requireAdoptedResult || adoptionState(adoption) === 'adopted')
       && !integration;
-    const canExport = current.profile.exportPolicy.mode === 'manual' && this.exportRoot !== null
+    const canExport = !readOnlyResult && current.profile.exportPolicy.mode === 'manual' && this.exportRoot !== null
       && resultSha !== null && durableExport === null
       && (!current.profile.exportPolicy.requireAdoptedResult || adoptionState(adoption) === 'adopted')
       && (!current.profile.exportPolicy.requireSemanticReview || semanticReview.state === 'semantic_reviewed')
@@ -6348,6 +6500,7 @@ export class BatonApplication {
       schemaVersion: 1,
       runId,
       objective: current.goal.objective,
+      objectiveResultPolicy: clone(objectivePolicy),
       profile: { name: current.profileName, digest: current.profile.digest },
       phase,
       cursor: projection.coordinationUpperBound,
@@ -6469,8 +6622,10 @@ export class BatonApplication {
     const payload = event.payload ?? {};
     const runId = current.goal.runId;
     if (event.kind === 'evidence.mapped') {
-      const operational = this.driver.log.read(payload.worker)
-        .find((candidate) => candidate.seq === payload.workerSeq);
+      const operational = typeof this.driver.log.at === 'function'
+        ? this.driver.log.at(payload.worker, payload.workerSeq)
+        : this.driver.log.read(payload.worker, payload.workerSeq)
+          .find((candidate) => candidate.seq === payload.workerSeq);
       if (!operational) return false;
       if (operational.runId !== null && operational.runId !== undefined) {
         return operational.runId === runId;
@@ -8064,7 +8219,7 @@ export class BatonApplication {
       timedOut: change.timedOut ?? false,
       terminal,
       truncated: false,
-      help: [{ topic: depth === 'outline' ? 'run.inspect' : `run.inspect.${depth}`, depth: 'outline' }],
+      help: [{ topic: 'run.inspect', depth: 'outline' }],
       ...(terminal || !changeAware
         ? {} : { continuation: { operation: metadata.operation, arguments: continuationArguments } }),
     };
@@ -8078,6 +8233,408 @@ export class BatonApplication {
     const goalVersion = current?.goal?.version ?? 0;
     const planVersion = current?.plan?.version ?? 0;
     return `section-summary:${sectionId}:g${goalVersion}:p${planVersion}`;
+  }
+
+  _episodeBindings(current, view) {
+    const rows = [];
+    const currentRound = (view.rounds ?? []).find((round) => (
+      round.plan?.digest === current.plan?.digest
+    )) ?? null;
+    const currentGeneration = view.workflow?.round ?? currentRound?.round ?? 1;
+    const add = ({ attempt, generation, planDigest, revision = null,
+      candidates = [], memberStops = [], current: isCurrent }) => {
+      if (!attempt || !validId(attempt.role)) return;
+      const candidate = candidates.find((row) => row.role === attempt.role) ?? null;
+      const memberStop = memberStops.find((row) => row.role === attempt.role)
+        ?? attempt.memberStop ?? null;
+      rows.push({
+        role: attempt.role, generation, planDigest, revision: clone(revision), current: isCurrent,
+        taskId: attempt.taskId ?? null, nodeKey: attempt.nodeKey ?? null,
+        state: attempt.state ?? view.phase, route: clone(attempt.route ?? null),
+        verification: clone(attempt.verification ?? null),
+        terminalCause: clone(attempt.terminalCause ?? null),
+        activity: clone(attempt.activity ?? null), candidate: clone(candidate),
+        memberStop: clone(memberStop),
+      });
+    };
+    for (const round of view.rounds ?? []) {
+      const generation = round.round;
+      if (!Number.isSafeInteger(generation) || generation < 1 || generation === currentGeneration) continue;
+      for (const attempt of round.attempts ?? []) add({
+        attempt, generation, planDigest: round.plan?.digest ?? null,
+        revision: round.revision ?? null,
+        candidates: round.candidates ?? [], memberStops: round.memberStops ?? [], current: false,
+      });
+    }
+    const currentAttempts = Array.isArray(view.attempts) && view.attempts.length > 0
+      ? view.attempts : [{
+        role: 'work', nodeKey: view.nodes?.[0]?.key ?? current.plan?.nodes?.[0]?.key ?? null,
+        taskId: view.nodes?.[0]?.taskId ?? null, state: view.nodes?.[0]?.state ?? view.phase,
+        route: view.route ?? null, verification: view.verification ?? null,
+        terminalCause: view.terminalCause ?? null,
+      }];
+    for (const attempt of currentAttempts) add({
+      attempt, generation: currentGeneration,
+      planDigest: current.plan?.digest ?? current.goal.digest,
+      revision: currentRound?.revision ?? (current.plan?.nodes?.[0]?.revision
+        ? { id: current.plan.nodes[0].revision.revisionId ?? null,
+          digest: current.plan.nodes[0].revision.revisionDigest ?? null }
+        : null),
+      candidates: view.candidates ?? [], memberStops: view.memberStops ?? [], current: true,
+    });
+    const unique = new Map();
+    for (const row of rows) unique.set(`${row.role}\0${row.generation}`, row);
+    return [...unique.values()].sort((left, right) => (
+      left.generation - right.generation || compareCanonicalStrings(left.role, right.role)
+    ));
+  }
+
+  _episodeWorkstreams(current, view, bindings = this._episodeBindings(current, view)) {
+    return bindings.map((binding) => ({
+      id: `workstream:${binding.role}:g${binding.generation}`,
+      section: 'workstreams', state: binding.state,
+      summary: `${binding.role} workstream generation ${binding.generation} is ${binding.state}.`,
+      value: {
+        role: binding.role, generation: binding.generation,
+        predecessor: binding.current ? null : 'prior_plan_generation',
+        revision: clone(binding.revision),
+        current: binding.current, node: binding.nodeKey,
+        route: clone(binding.route), verification: clone(binding.verification),
+        terminalCause: clone(binding.terminalCause), resultAvailable: binding.candidate !== null,
+        cleanup: binding.memberStop?.status ?? binding.memberStop?.state ?? 'active',
+        controls: {
+          notify: binding.current ? 'semantic_role_generation' : 'unavailable_predecessor',
+          result: 'episode_projection',
+          stop: binding.current ? 'server_resolved_generation_cleanup' : 'unavailable_predecessor',
+        },
+      },
+    }));
+  }
+
+  _episodeContext(current, view) {
+    const bindings = this._episodeBindings(current, view);
+    return {
+      snapshot: this.driver.coordination.snapshot(), bindings,
+      streams: this._episodeWorkstreams(current, view, bindings),
+    };
+  }
+
+  _episodeBinding(context, role, generation = null) {
+    const candidates = context.bindings.filter((binding) => binding.role === role
+      && (generation === null || binding.generation === generation));
+    return generation === null
+      ? candidates.sort((left, right) => right.generation - left.generation)[0] ?? null
+      : candidates[0] ?? null;
+  }
+
+  _episodeGraph(current, view, role = null, episodeContext = null, generation = null) {
+    const context = episodeContext ?? this._episodeContext(current, view);
+    const selectedBindings = role === null ? context.bindings
+      : [this._episodeBinding(context, role, generation)].filter(Boolean);
+    const selectedKeys = new Set(selectedBindings.map((binding) => `${binding.role}\0${binding.generation}`));
+    const streams = context.streams.filter((stream) => selectedKeys.has(
+      `${stream.value.role}\0${stream.value.generation}`,
+    ));
+    const taskIds = new Set(selectedBindings.map((binding) => binding.taskId).filter(Boolean));
+    const snapshot = context.snapshot;
+    const artifacts = (snapshot.artifacts ?? []).filter((artifact) => taskIds.has(artifact.taskId));
+    const artifactIds = new Set(artifacts.map((artifact) => artifact.id));
+    const representations = (snapshot.representations ?? [])
+      .filter((representation) => taskIds.has(representation.taskId));
+    const knowledgeNodes = (snapshot.knowledge?.nodes ?? []).filter((node) => (
+      node.id === `run:${current.goal.runId}` || taskIds.has(node.taskId)
+      || (node.evidence ?? []).some((ref) => artifactIds.has(ref.artifactId))
+    ));
+    const knowledgeNodeIds = new Set(knowledgeNodes.map((node) => node.id));
+    const representationNodeIds = new Set(representations.flatMap((representation) => [
+      representation.representationId, representation.node?.id, representation.sourceNode?.id,
+    ].filter(Boolean)));
+    const knowledgeEdges = (snapshot.knowledge?.edges ?? []).filter((candidate) => (
+      knowledgeNodeIds.has(candidate.from) || knowledgeNodeIds.has(candidate.to)
+      || representationNodeIds.has(candidate.from) || representationNodeIds.has(candidate.to)
+    ));
+    const temporal = (source) => {
+      const value = {};
+      for (const field of ['observedSeq', 'observedAt', 'validFrom', 'validTo', 'validityVersion',
+        'derivedFromEvent', 'recordedEvent', 'recordedAt']) {
+        if (source?.[field] !== undefined) value[field] = clone(source[field]);
+      }
+      return value;
+    };
+    const makeEdge = (type, from, to, authority, source = {}) => ({
+      id: `episode-edge:${digest({ type, from, to, authority, sourceId: source.id ?? null,
+        evidence: source.evidence ?? [] })}`,
+      type, from, to, immutable: true, readOnly: true, authority,
+      ...(source.id ? { sourceEdgeId: source.id } : {}),
+      ...(source.type ? { sourceEdgeType: source.type } : {}),
+      evidence: clone(source.evidence ?? []), temporal: temporal(source),
+      sourceCoordinates: (source.evidence ?? []).map((ref) => clone(ref)),
+    });
+    const edgeMap = new Map();
+    const addEdge = (value) => edgeMap.set(value.id, value);
+    for (const binding of selectedBindings) {
+      const stream = streams.find((candidate) => candidate.value.role === binding.role
+        && candidate.value.generation === binding.generation);
+      if (!stream) continue;
+      addEdge(makeEdge('covers', `plan:${binding.planDigest ?? current.goal.digest}`, stream.id,
+        'durable_plan_generation', {
+          evidence: [{ planDigest: binding.planDigest, generation: binding.generation }],
+        }));
+      for (const path of binding.activity?.editedPaths ?? []) {
+        addEdge(makeEdge('modified', stream.id, `source:${path}`,
+          'provider_activity_observation', {
+            observedSeq: binding.activity?.lastEventSeq,
+            observedAt: binding.activity?.lastEventAt,
+            evidence: binding.activity?.lastEventSeq
+              ? [{ coordinationSeq: binding.activity.lastEventSeq }] : [],
+          }));
+      }
+      const receipt = binding.memberStop?.receipt ?? null;
+      if (receipt) addEdge(makeEdge('releases', stream.id,
+        `cleanup:${receipt.receiptDigest ?? receipt.completionDigest ?? digest(receipt)}`,
+        'durable_workstream_stop_receipt', {
+          id: receipt.completionDigest ?? null,
+          evidence: [{ completionDigest: receipt.completionDigest ?? digest(receipt),
+            generation: binding.generation, role: binding.role }],
+        }));
+    }
+    for (const artifact of artifacts) {
+      const binding = selectedBindings.find((candidate) => candidate.taskId === artifact.taskId);
+      const stream = binding && streams.find((candidate) => candidate.value.role === binding.role
+        && candidate.value.generation === binding.generation);
+      if (stream) addEdge(makeEdge('produced', stream.id, `artifact:${artifact.id}`,
+        'durable_artifact_manifest', artifact));
+    }
+    for (const representation of representations) {
+      const atlasEdges = Array.isArray(representation.edges) && representation.edges.length > 0
+        ? representation.edges : [{
+          type: 'DerivedFrom', from: representation.representationId,
+          to: representation.sourceNode?.id ?? representation.sourceNodeId,
+          evidence: representation.evidence ?? [], recordedEvent: representation.recordedEvent,
+          recordedAt: representation.recordedAt,
+        }];
+      for (const existing of atlasEdges) {
+        if (!existing.from || !existing.to) continue;
+        const mapping = existing.type === 'ProducedBy'
+          ? ['produced', existing.to, existing.from]
+          : existing.type === 'VerifiedBy'
+            ? ['verified_by', existing.from, existing.to]
+            : existing.type === 'Contains'
+              ? ['covers', existing.from, existing.to]
+              : existing.type === 'Contradicts'
+                ? ['contradicted_by', existing.to, existing.from]
+                : existing.type === 'DerivedFrom'
+                  ? ['derived_from', existing.from, existing.to]
+                  : ['grounded_in', existing.from, existing.to];
+        addEdge(makeEdge(...mapping, 'atlas_structural_lineage', existing));
+      }
+    }
+    for (const node of knowledgeNodes) {
+      for (const ref of node.evidence ?? []) {
+        const coordinate = ref.artifactId ? `artifact:${ref.artifactId}`
+          : Number.isInteger(ref.coordinationSeq) ? `coordination:${ref.coordinationSeq}` : null;
+        if (coordinate) addEdge(makeEdge('grounded_in', node.id, coordinate,
+          'cairn_grounding_evidence', { ...node, evidence: [ref] }));
+      }
+    }
+    for (const existing of knowledgeEdges) {
+      const mapping = existing.type === 'Contradicts'
+        ? ['contradicted_by', existing.to, existing.from]
+        : existing.type === 'ProducedBy'
+          ? ['produced', existing.to, existing.from]
+          : existing.type === 'VerifiedBy'
+            ? ['verified_by', existing.from, existing.to]
+            : existing.type === 'Contains'
+              ? ['covers', existing.from, existing.to]
+              : existing.type === 'DerivedFrom'
+                ? ['derived_from', existing.from, existing.to]
+                : ['grounded_in', existing.from, existing.to];
+      addEdge(makeEdge(...mapping, `cairn:${existing.id}`, existing));
+    }
+    for (const commit of artifacts.filter((artifact) => artifact.kind === 'commit')) {
+      const verification = artifacts.find((artifact) => artifact.kind === 'verification'
+        && artifact.taskId === commit.taskId);
+      if (verification) addEdge(makeEdge('verified_by', `artifact:${commit.id}`,
+        `artifact:${verification.id}`, 'durable_verification_manifest', verification));
+    }
+    const stop = snapshot.runStops?.find((candidate) => candidate.runId === current.goal.runId);
+    if (role === null && stop?.receipt) {
+      for (const stream of streams) addEdge(makeEdge('releases', stream.id,
+        `cleanup:${stop.receipt.receiptDigest ?? stop.receipt.completionDigest ?? digest(stop.receipt)}`,
+        'durable_run_stop_receipt', stop.receipt));
+    }
+    return {
+      streams, selectedBindings, taskIds, artifacts, representations, knowledgeNodes,
+      knowledgeEdges, edges: [...edgeMap.values()].sort((left, right) => compareCanonicalStrings(left.id, right.id)),
+      stop, context,
+    };
+  }
+
+  _episodeItem(current, view, topic, role = null, episodeContext = null, generation = null) {
+    const graph = this._episodeGraph(current, view, role, episodeContext, generation);
+    if (role !== null && graph.selectedBindings.length !== 1) return null;
+    const binding = graph.selectedBindings[0] ?? null;
+    const resolvedGeneration = binding?.generation ?? generation;
+    const id = `episode:${topic}${role === null ? '' : `:${role}:g${resolvedGeneration}`}`;
+    const authoritativeResult = role === null ? view.result : binding?.candidate ?? null;
+    const result = authoritativeResult ? {
+      state: authoritativeResult.state ?? 'verified',
+      role, generation: resolvedGeneration ?? null,
+      nodeKey: authoritativeResult.nodeKey ?? null,
+      sha: authoritativeResult.sha ?? authoritativeResult.resultSha ?? null,
+      resultSha: authoritativeResult.sha ?? authoritativeResult.resultSha ?? null,
+      candidateId: authoritativeResult.candidateId ?? authoritativeResult.candidate?.id ?? null,
+      commitArtifact: clone(authoritativeResult.commitArtifact
+        ?? authoritativeResult.evidence?.commitArtifact ?? null),
+      verificationArtifact: clone(authoritativeResult.verificationArtifact
+        ?? authoritativeResult.evidence?.verificationArtifact ?? null),
+      stability: authoritativeResult.stability ?? null,
+      integration: clone(role === null ? view.integration ?? null : null),
+      export: clone(role === null ? view.export ?? null : null),
+    } : null;
+    const contradictions = graph.edges.filter((candidate) => candidate.type === 'contradicted_by');
+    const derivations = graph.edges.filter((candidate) => (
+      ['produced', 'modified', 'derived_from', 'grounded_in', 'verified_by', 'covers']
+        .includes(candidate.type)
+    ));
+    const chapterArguments = (chapter) => ({
+      runId: current.goal.runId, topic: chapter,
+      detail: chapter === 'output' ? 'content' : 'item',
+      ...(role === null ? {} : { role, generation: resolvedGeneration }),
+    });
+    const values = {
+      outline: {
+        authority: 'replaceable_non_authoritative_summary',
+        objective: current.goal.objective, phase: view.phase,
+        summary: view.progress?.summary ?? view.narrative, workstream: role,
+        generation: resolvedGeneration ?? null,
+        chapters: EPISODE_TOPICS.map((chapter) => ({
+          topic: chapter, summary: `${chapter.replaceAll('_', ' ')} Episode chapter.`,
+          command: { operation: 'run.episode', arguments: chapterArguments(chapter) },
+        })),
+      },
+      output: {
+        authority: 'untrusted_provider_content', occurrenceAuthority: 'durable_event_mapping',
+        paginated: true, workstream: role,
+      },
+      sources: {
+        authority: 'authoritative_coordinates_at_evidence_depth',
+        artifacts: graph.artifacts.length, representations: graph.representations.length,
+        knowledgeNodes: graph.knowledgeNodes.length, workstream: role,
+      },
+      derivations: { authority: 'immutable_lineage_projection', edges: derivations },
+      contradictions: {
+        authority: 'immutable_cairn_contradiction_projection',
+        state: contradictions.length > 0 ? 'present' : 'clear', edges: contradictions,
+      },
+      trace: {
+        authority: 'immutable_structural_temporal_join',
+        edgeVocabulary: ['produced', 'modified', 'derived_from', 'grounded_in',
+          'contradicted_by', 'verified_by', 'covers', 'releases'],
+        edges: graph.edges,
+      },
+      route: { authority: 'exact_route_authority', value: clone(role === null
+        ? view.route : binding?.route ?? null) },
+      verification: { authority: 'durable_verifier_authority', value: clone(role === null
+        ? view.verification : binding?.verification ?? null) },
+      result: { authority: 'exact_result_capsule', value: clone(result) },
+      cleanup: {
+        authority: 'durable_cleanup_authority',
+        state: role === null ? projectedCleanupState(view)
+          : binding?.memberStop?.status === 'stopped' || binding?.memberStop?.state === 'stopped'
+            ? 'reaped' : 'active',
+        terminalCause: clone(role === null ? view.terminalCause ?? null
+          : binding?.terminalCause ?? null),
+        released: graph.edges.filter((candidate) => candidate.type === 'releases'),
+      },
+      help: {
+        authority: 'semantic_registry', topic: 'run.episode',
+        command: { operation: 'application.help', arguments: {
+          topic: 'run.episode', depth: 'content', runId: current.goal.runId,
+        } },
+      },
+    };
+    if (!Object.hasOwn(values, topic)) return null;
+    const resultSettled = result !== null || (role === null
+      ? APPLICATION_RUN_TERMINAL_PHASES.has(view.phase)
+      : ['accepted', 'failed', 'cancelled', 'stale', 'stopped'].includes(binding?.state)
+        || binding?.memberStop?.status === 'stopped' || binding?.memberStop?.state === 'stopped');
+    return {
+      id, section: 'episode', state: topic === 'contradictions'
+        ? values[topic].state : topic === 'result'
+          ? result === null ? resultSettled ? 'unavailable' : 'pending' : 'completed' : view.phase,
+      summary: topic === 'outline'
+        ? 'Replaceable Episode summary; expand authoritative fields as needed.'
+        : `${topic.replaceAll('_', ' ')} projection for this Episode.`,
+      value: values[topic],
+    };
+  }
+
+  _selectedSemanticItem(current, view, section, item, items, episodeContext = null) {
+    const selected = items.find((entry) => entry.id === item);
+    if (selected || typeof item !== 'string') return selected ?? null;
+    if (section === 'workstreams' && item.startsWith('workstream:')) {
+      const coordinate = item.slice('workstream:'.length);
+      const generationMatch = /:g([1-9][0-9]*)$/u.exec(coordinate);
+      const role = generationMatch ? coordinate.slice(0, generationMatch.index) : coordinate;
+      return items.filter((entry) => entry.value?.role === role
+        && (!generationMatch || entry.value.generation === Number(generationMatch[1])))
+        .sort((left, right) => right.value.generation - left.value.generation)[0] ?? null;
+    }
+    if (section !== 'episode') return null;
+    const topic = EPISODE_TOPICS
+      .find((candidate) => item === `episode:${candidate}`
+        || item.startsWith(`episode:${candidate}:`));
+    if (!topic) return null;
+    const prefix = `episode:${topic}`;
+    const coordinate = item === prefix ? '' : item.slice(prefix.length + 1);
+    const generationMatch = /:g([1-9][0-9]*)$/u.exec(coordinate);
+    const generation = generationMatch ? Number(generationMatch[1]) : null;
+    const role = generationMatch ? coordinate.slice(0, generationMatch.index) : coordinate;
+    return this._episodeItem(current, view, topic, role || null, episodeContext, generation);
+  }
+
+  _episodeEvidence(current, view, selected, episodeContext = null) {
+    const raw = selected.id.slice('episode:'.length);
+    const topic = EPISODE_TOPICS
+      .find((candidate) => raw === candidate || raw.startsWith(`${candidate}:`));
+    const coordinate = topic && raw !== topic ? raw.slice(topic.length + 1) : '';
+    const generationMatch = /:g([1-9][0-9]*)$/u.exec(coordinate);
+    const generation = generationMatch ? Number(generationMatch[1]) : null;
+    const role = generationMatch ? coordinate.slice(0, generationMatch.index) : coordinate || null;
+    const graph = this._episodeGraph(current, view, role, episodeContext, generation);
+    const base = [{
+      kind: 'episode-authority', readOnly: true,
+      summaryAuthority: 'replaceable_non_authoritative',
+      authoritative: ['result_capsule', 'source_coordinates', 'route', 'lineage',
+        'verification', 'cleanup'],
+    }];
+    if (['sources', 'derivations', 'contradictions', 'trace'].includes(topic)) {
+      base.push({
+        kind: 'source-coordinates',
+        artifacts: graph.artifacts.map((artifact) => ({
+          id: artifact.id, digest: artifact.digest, kind: artifact.kind,
+        })),
+        representations: graph.representations.map((representation) => ({
+          id: representation.representationId, source: representation.sourceNode?.id ?? null,
+          eventSeq: representation.eventSeq ?? representation.producedEvent ?? null,
+        })),
+        knowledge: graph.knowledgeNodes.map((node) => ({
+          id: node.id, evidence: clone(node.evidence ?? []), observedSeq: node.observedSeq,
+        })),
+        edges: clone(graph.edges),
+      });
+    }
+    if (topic === 'route') base.push({ kind: 'exact-route', value: clone(selected.value.value) });
+    if (topic === 'verification') base.push({
+      kind: 'verification', value: clone(selected.value.value),
+    });
+    if (topic === 'result') base.push({ kind: 'result-capsule', value: clone(selected.value.value) });
+    if (topic === 'cleanup') base.push({
+      kind: 'cleanup', value: clone(role === null ? graph.stop?.receipt ?? null
+        : graph.selectedBindings[0]?.memberStop?.receipt ?? null),
+    });
+    return base;
   }
 
   // VR9/RV: the durable referee verdict is already a closed receipt. This projection validates its
@@ -8101,8 +8658,29 @@ export class BatonApplication {
       && verdict.durationMs <= VERIFIER_DURATION_BOUND_MS ? Math.trunc(verdict.durationMs) : null;
     const capturedOutputBytes = Number.isSafeInteger(verdict.capturedOutputBytes)
       && verdict.capturedOutputBytes >= 0 ? verdict.capturedOutputBytes : null;
+    const acceptance = result?.verificationAcceptance ?? null;
+    const requirements = {
+      requireRedGreen: acceptance?.requireRedGreen === true,
+      requireCoverage: acceptance?.requireCoverage === true,
+      requireMutation: acceptance?.requireMutation === true,
+    };
+    const verdictSatisfiesPolicy = verdict.reverified === true && verdict.passed === true
+      && (!requirements.requireRedGreen || verdict.redGreen === true)
+      && (!requirements.requireCoverage || verdict.coverageOfChange === true)
+      && (!requirements.requireMutation || verdict.mutationPassed === true)
+      && verdict.diagnosticCode !== 'verification_red_green_failed';
+    const accepted = acceptance
+      ? acceptance.accepted === true && verdictSatisfiesPolicy
+      : ['work_completed', 'reviewing', 'completed'].includes(phase)
+        && verdictSatisfiesPolicy;
+    const policyMode = ['pass_only', 'red_green_required', 'pass_plus_hardening']
+      .includes(acceptance?.policy) ? acceptance.policy
+      : requirements.requireRedGreen ? 'red_green_required'
+        : requirements.requireCoverage || requirements.requireMutation
+          ? 'pass_plus_hardening' : 'pass_only';
     return deepFreeze({
-      accepted: ['work_completed', 'reviewing', 'completed'].includes(phase),
+      accepted,
+      acceptancePolicy: { mode: policyMode, ...requirements },
       digest: sanitizeHex64(digest(verdict)),
       outcome: closedEnum(verdict.outcome, VERIFIER_OUTCOMES),
       failureOwnership: verdict.failureOwnership == null
@@ -8121,8 +8699,15 @@ export class BatonApplication {
     });
   }
 
-  _semanticSectionItems(current, view, sectionId) {
+  _semanticSectionItems(current, view, sectionId, episodeContext = null) {
     if (sectionId === 'context') return this._contextSectionItems(current);
+    if (sectionId === 'workstreams') return episodeContext?.streams
+      ?? this._episodeWorkstreams(current, view);
+    if (sectionId === 'episode') {
+      const context = episodeContext ?? this._episodeContext(current, view);
+      return EPISODE_TOPICS
+        .map((topic) => this._episodeItem(current, view, topic, null, context)).filter(Boolean);
+    }
     if (sectionId === 'plan') {
       const projected = new Map((view.nodes ?? []).map((node) => [node.key, node]));
       return (current.plan?.nodes ?? []).map((node) => ({
@@ -8226,21 +8811,24 @@ export class BatonApplication {
     ];
   }
 
-  _runTimelineContent(current, request, bounds) {
+  _runTimelineContent(current, request, bounds, snapshot = null, taskIds = null) {
     const includeOutput = request.item === 'execution:output';
     try {
       return projectRunTimelinePage({
         runId: current.goal.runId,
         events: this.driver.coordination.events(),
-        snapshot: this.driver.coordination.snapshot(),
+        snapshot: snapshot ?? this.driver.coordination.snapshot(),
         cursor: request.pageCursor ?? null,
         limit: bounds.maxItems,
         maxBytes: Math.max(1_024, bounds.maxBytes - 8_192),
         includeOutput,
         recipient: request.recipient ?? null,
+        taskIds,
         maxFragmentBytes: Math.max(256, Math.min(4_096, bounds.maxBytes - 16_384)),
-        resolveOperational: ({ worker, workerSeq }) => this.driver.log.read(worker)
-          .find((event) => event.seq === workerSeq) ?? null,
+        resolveOperational: ({ worker, workerSeq }) => typeof this.driver.log.at === 'function'
+          ? this.driver.log.at(worker, workerSeq)
+          : this.driver.log.read(worker, workerSeq)
+            .find((event) => event.seq === workerSeq) ?? null,
       });
     } catch (error) {
       if (error?.code?.startsWith('run_timeline_')) {
@@ -8248,6 +8836,32 @@ export class BatonApplication {
       }
       throw error;
     }
+  }
+
+  _episodeOutputContent(current, request, bounds, episodeContext = null) {
+    const raw = request.item.slice('episode:output'.length);
+    const coordinate = raw.startsWith(':') ? raw.slice(1) : '';
+    const generationMatch = /:g([1-9][0-9]*)$/u.exec(coordinate);
+    const generation = generationMatch ? Number(generationMatch[1]) : null;
+    const role = generationMatch ? coordinate.slice(0, generationMatch.index) : coordinate || null;
+    const context = episodeContext;
+    const binding = role === null ? null
+      : context ? this._episodeBinding(context, role, generation) : null;
+    if (role !== null && !binding) {
+      throw applicationError('Episode output workstream is unavailable',
+        'application_inspect_item_invalid');
+    }
+    const page = this._runTimelineContent(current, {
+      ...request, item: 'execution:output',
+      ...(role ? { recipient: role } : {}),
+    }, bounds, context?.snapshot ?? null, binding?.taskId ? [binding.taskId] : null);
+    return deepFreeze({
+      ...page,
+      kind: 'baton.episode.output',
+      authority: 'untrusted_provider_content',
+      occurrenceAuthority: 'durable_event_mapping',
+      workstream: role, generation: binding?.generation ?? null,
+    });
   }
 
   _runProgressContent(current, view) {
@@ -8282,9 +8896,12 @@ export class BatonApplication {
       viewDigest: semanticViewDigest(view), cursor: view.cursor,
       changed: false, timedOut: false, terminal,
       truncated: false,
-      help: [{ topic: request.depth === 'outline' ? 'run.inspect' : `run.inspect.${request.depth}`, depth: 'outline' }],
+      help: [{ topic: 'run.inspect', depth: 'outline' }],
       policy: clone(view.policy),
     };
+    const episodeContext = request.depth === 'index'
+      || ['episode', 'workstreams'].includes(request.section)
+      ? this._episodeContext(current, view) : null;
     if (request.depth === 'outline') {
       const timing = this._progressTiming(current, view);
       return this._finalizeSemanticInspection({
@@ -8315,7 +8932,7 @@ export class BatonApplication {
     }
     if (request.depth === 'index') {
       const sections = APPLICATION_SEMANTIC_REGISTRY.sections.map((definition) => {
-        const items = this._semanticSectionItems(current, view, definition.id);
+        const items = this._semanticSectionItems(current, view, definition.id, episodeContext);
         return {
           id: definition.id, state: items[0]?.state ?? 'empty', summary: definition.summary,
           itemCount: items.length, truncated: items.length > MAX_ATTENTION, authorized: true,
@@ -8328,7 +8945,7 @@ export class BatonApplication {
     }
     const definition = APPLICATION_SEMANTIC_REGISTRY.sections.find((entry) => entry.id === request.section);
     if (!definition) throw applicationError('Run inspection section is unavailable', 'application_inspect_section_invalid');
-    const allItems = this._semanticSectionItems(current, view, request.section);
+    const allItems = this._semanticSectionItems(current, view, request.section, episodeContext);
     const items = allItems.slice(0, MAX_ATTENTION);
     if (request.depth === 'section') {
       return this._finalizeSemanticInspection({
@@ -8340,10 +8957,13 @@ export class BatonApplication {
         },
       }, bounds);
     }
-    const selected = items.find((entry) => entry.id === request.item);
+    const selected = this._selectedSemanticItem(
+      current, view, request.section, request.item, items, episodeContext,
+    );
     if (!selected) throw applicationError('Run inspection item is unavailable', 'application_inspect_item_invalid');
     if (request.depth === 'item') {
       const hasContent = request.section === 'context'
+        || (request.section === 'episode' && request.item.startsWith('episode:output'))
         || (request.section === 'execution'
           && ['execution:progress', 'execution:events', 'execution:output'].includes(request.item));
       return this._finalizeSemanticInspection({
@@ -8355,6 +8975,27 @@ export class BatonApplication {
       }, bounds);
     }
     if (request.depth === 'content') {
+      if (request.section === 'episode' && request.item.startsWith('episode:output')) {
+        const content = this._episodeOutputContent(current, request, bounds, episodeContext);
+        const hasMore = content.hasMore === true;
+        return this._finalizeSemanticInspection({
+          ...base, truncated: hasMore,
+          expansions: [
+            ...(hasMore ? [{
+              depth: 'content', section: 'episode', item: request.item,
+              pageCursor: content.cursor,
+            }] : []),
+            { depth: 'evidence', section: 'episode', item: request.item },
+          ],
+          ...(hasMore ? { continuation: {
+            operation: 'run.inspect', arguments: {
+              runId: current.goal.runId, depth: 'content', section: 'episode',
+              item: request.item, pageCursor: content.cursor,
+            },
+          } } : {}),
+          item: { id: selected.id, section: selected.section }, content,
+        }, bounds);
+      }
       if (request.section === 'execution'
         && ['execution:progress', 'execution:events', 'execution:output'].includes(request.item)) {
         const content = request.item === 'execution:progress'
@@ -8405,9 +9046,12 @@ export class BatonApplication {
       ...(current.plan ? [{ kind: 'plan', digest: current.plan.digest, provenance: 'durable Plan authority' }] : []),
       ...(current.approval ? [{ kind: 'approval', digest: current.approval.digest, provenance: 'durable Plan approval authority' }] : []),
       ...(request.section === 'context' ? this._contextItemEvidence(current, selected) : []),
+      ...(request.section === 'episode'
+        ? this._episodeEvidence(current, view, selected, episodeContext) : []),
     ];
     return this._finalizeSemanticInspection({
-      ...base, expansions: [], item: { id: selected.id, section: selected.section }, evidence,
+      ...base, expansions: [],
+      item: { id: selected.id, section: selected.section, state: selected.state }, evidence,
     }, bounds);
   }
 
@@ -8501,6 +9145,9 @@ export class BatonApplication {
       changed,
       timedOut: timedOut && !changed && !APPLICATION_RUN_TERMINAL_PHASES.has(view.phase),
     });
+    const episodeContext = request.depth === 'index'
+      || ['episode', 'workstreams'].includes(request.section)
+      ? this._episodeContext(current, view) : null;
     if (request.depth === 'outline') {
       const attention = view.attention ?? [];
       const timing = this._progressTiming(current, view);
@@ -8548,7 +9195,7 @@ export class BatonApplication {
     }
     if (request.depth === 'index') {
       const sections = APPLICATION_SEMANTIC_REGISTRY.sections.map((definition) => {
-        const items = this._semanticSectionItems(current, view, definition.id);
+        const items = this._semanticSectionItems(current, view, definition.id, episodeContext);
         return {
           id: definition.id,
           state: items[0]?.state ?? 'empty',
@@ -8565,7 +9212,7 @@ export class BatonApplication {
     }
     const sectionDefinition = APPLICATION_SEMANTIC_REGISTRY.sections.find((entry) => entry.id === request.section);
     if (!sectionDefinition) throw applicationError('Run inspection section is unavailable', 'application_inspect_section_invalid');
-    const allItems = this._semanticSectionItems(current, view, request.section);
+    const allItems = this._semanticSectionItems(current, view, request.section, episodeContext);
     const items = allItems.slice(0, bounds.maxItems);
     if (request.depth === 'section') {
       return this._finalizeSemanticInspection({
@@ -8578,10 +9225,13 @@ export class BatonApplication {
         },
       }, bounds);
     }
-    const selected = items.find((entry) => entry.id === request.item);
+    const selected = this._selectedSemanticItem(
+      current, view, request.section, request.item, items, episodeContext,
+    );
     if (!selected) throw applicationError('Run inspection item is unavailable', 'application_inspect_item_invalid');
     if (request.depth === 'item') {
       const hasContent = request.section === 'context'
+        || (request.section === 'episode' && request.item.startsWith('episode:output'))
         || (request.section === 'execution'
           && ['execution:progress', 'execution:events', 'execution:output'].includes(request.item));
       return this._finalizeSemanticInspection({
@@ -8593,6 +9243,30 @@ export class BatonApplication {
       }, bounds);
     }
     if (request.depth === 'content') {
+      if (request.section === 'episode' && request.item.startsWith('episode:output')) {
+        const content = this._episodeOutputContent(current, request, bounds, episodeContext);
+        const hasMore = content.hasMore === true;
+        const continuation = hasMore || !base.terminal ? {
+          operation: 'run.inspect',
+          arguments: {
+            runId: current.goal.runId, depth: 'content', section: 'episode',
+            item: request.item, pageCursor: content.cursor,
+            ...(!hasMore && !base.terminal ? { cursor: view.cursor } : {}),
+          },
+        } : null;
+        return this._finalizeSemanticInspection({
+          ...base, truncated: hasMore,
+          expansions: [
+            ...(hasMore ? [{
+              depth: 'content', section: 'episode', item: request.item,
+              pageCursor: content.cursor,
+            }] : []),
+            { depth: 'evidence', section: 'episode', item: request.item },
+          ],
+          ...(continuation ? { continuation } : {}),
+          item: { id: selected.id, section: selected.section }, content,
+        }, bounds);
+      }
       if (request.section === 'execution'
         && ['execution:progress', 'execution:events', 'execution:output'].includes(request.item)) {
         const content = request.item === 'execution:progress'
@@ -8646,10 +9320,164 @@ export class BatonApplication {
       ...(current.plan ? [{ kind: 'plan', digest: current.plan.digest, provenance: 'durable Plan authority' }] : []),
       ...(current.approval ? [{ kind: 'approval', digest: current.approval.digest, provenance: 'durable Plan approval authority' }] : []),
       ...(request.section === 'context' ? this._contextItemEvidence(current, selected) : []),
+      ...(request.section === 'episode'
+        ? this._episodeEvidence(current, view, selected, episodeContext) : []),
     ];
     return this._finalizeSemanticInspection({
-      ...base, expansions: [], item: { id: selected.id, section: selected.section }, evidence,
+      ...base, expansions: [],
+      item: { id: selected.id, section: selected.section, state: selected.state }, evidence,
     }, bounds);
+  }
+
+  _logicalEpisodeContinuation(request, continuation, runId, cursor = null) {
+    if (!continuation && cursor === null) return null;
+    const source = continuation?.arguments ?? {};
+    return {
+      operation: 'run.episode', arguments: {
+        runId, topic: request.topic, detail: request.detail,
+        ...(request.role ? { role: request.role } : {}),
+        ...(request.generation ? { generation: request.generation } : {}),
+        ...(source.pageCursor ? { pageCursor: source.pageCursor } : {}),
+        ...(source.cursor !== undefined ? { cursor: source.cursor }
+          : cursor !== null ? { cursor } : {}),
+        ...(source.waitMs !== undefined ? { waitMs: source.waitMs } : {}),
+      },
+    };
+  }
+
+  async episode(rawRequest, rawPrincipal, rawContext = null) {
+    validateApplicationCommandArgs('run.episode', rawRequest);
+    const request = {
+      topic: 'outline', ...clone(rawRequest),
+      detail: rawRequest.detail ?? ((rawRequest.topic ?? 'outline') === 'output' ? 'content' : 'item'),
+    };
+    if (request.topic === 'help' && request.detail === 'content') {
+      const content = await this.help({
+        topic: 'run.episode', depth: 'content', runId: request.runId,
+      }, rawPrincipal);
+      return deepFreeze({
+        ...content, operation: 'run.episode', topic: 'help', detail: 'content',
+        role: request.role ?? null, generation: request.generation ?? null,
+        continuation: null,
+      });
+    }
+    const coordinate = `${request.role ? `:${request.role}` : ''}`
+      + `${request.generation ? `:g${request.generation}` : ''}`;
+    const inspection = await this.inspect({
+      runId: request.runId, depth: request.detail,
+      section: 'episode', item: `episode:${request.topic}${coordinate}`,
+      ...(request.pageCursor ? { pageCursor: request.pageCursor } : {}),
+      ...(request.cursor !== undefined ? { cursor: request.cursor } : {}),
+      ...(request.waitMs !== undefined ? { waitMs: request.waitMs } : {}),
+    }, rawPrincipal, rawContext);
+    const selectedId = inspection.item?.id ?? `episode:${request.topic}${coordinate}`;
+    const generationMatch = /:g([1-9][0-9]*)$/u.exec(selectedId);
+    const resolvedGeneration = generationMatch ? Number(generationMatch[1])
+      : request.generation ?? null;
+    const logicalRequest = {
+      ...request, ...(resolvedGeneration ? { generation: resolvedGeneration } : {}),
+    };
+    const logicalContinuation = this._logicalEpisodeContinuation(
+      logicalRequest, inspection.continuation, request.runId,
+      request.topic === 'result' && inspection.item?.state === 'pending'
+        ? inspection.cursor : null,
+    );
+    const capsule = request.detail === 'item' && request.topic === 'result'
+      ? inspection.item?.value?.value ?? null : undefined;
+    const settled = request.topic === 'result'
+      ? inspection.item?.state !== 'pending' : undefined;
+    return deepFreeze({
+      ...inspection, operation: 'run.episode', topic: request.topic,
+      detail: request.detail, role: request.role ?? null,
+      generation: resolvedGeneration,
+      ...(request.topic === 'result' ? {
+        state: settled ? (inspection.item?.state === 'completed' ? 'completed' : 'unavailable')
+          : 'pending',
+        settled,
+      } : {}),
+      continuation: logicalContinuation,
+    });
+  }
+
+  async workstreams(rawRequest, rawPrincipal, rawContext = null) {
+    validateApplicationCommandArgs('run.workstreams', rawRequest);
+    const request = clone(rawRequest);
+    const inspection = await this.inspect({
+      runId: request.runId,
+      depth: request.role ? 'item' : 'section', section: 'workstreams',
+      ...(request.role ? { item: `workstream:${request.role}${request.generation
+        ? `:g${request.generation}` : ''}` } : {}),
+      ...(request.cursor !== undefined ? { cursor: request.cursor } : {}),
+      ...(request.waitMs !== undefined ? { waitMs: request.waitMs } : {}),
+    }, rawPrincipal, rawContext);
+    const source = inspection.continuation?.arguments ?? null;
+    return deepFreeze({
+      ...inspection, operation: 'run.workstreams', role: request.role ?? null,
+      generation: request.generation ?? inspection.item?.value?.generation ?? null,
+      continuation: source ? {
+        operation: 'run.workstreams', arguments: {
+          runId: request.runId,
+          ...(request.role ? { role: request.role } : {}),
+          ...(request.generation ? { generation: request.generation } : {}),
+          ...(source.cursor !== undefined ? { cursor: source.cursor } : {}),
+          ...(source.waitMs !== undefined ? { waitMs: source.waitMs } : {}),
+        },
+      } : null,
+    });
+  }
+
+  async _activeWorkstream(rawRequest, principal) {
+    const current = this._findRun(rawRequest.runId);
+    const view = this._withContextProjection(
+      current, await this._buildView(current, this.principals.observer),
+    );
+    const bindings = this._episodeBindings(current, view);
+    const binding = this._episodeBinding({ bindings }, rawRequest.role,
+      rawRequest.generation ?? null);
+    if (!binding || binding.current !== true) {
+      throw applicationError('Workstream generation is not current effect authority',
+        'application_workstream_generation_unavailable');
+    }
+    await this._authorize('run.status', principal, rawRequest.runId, {
+      operation: 'workstream', role: binding.role, generation: binding.generation,
+    });
+    return { current, view, binding };
+  }
+
+  async notifyWorkstream(rawRequest, rawPrincipal, rawContext = null) {
+    validateApplicationCommandArgs('run.workstream.notify', rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'workstream notification principal');
+    const { current, view, binding } = await this._activeWorkstream(rawRequest, principal);
+    const action = this._semanticActions(current, view, principal)
+      .find((candidate) => candidate.kind === 'send');
+    if (!action) throw applicationError('Workstream is not accepting guidance',
+      'application_action_unavailable');
+    return this.act({
+      runId: rawRequest.runId, actionId: action.actionId,
+      inputs: {
+        message: rawRequest.message, recipient: binding.role,
+        delivery: rawRequest.delivery ?? 'nudge',
+      },
+    }, principal, rawContext);
+  }
+
+  async stopWorkstream(rawRequest, rawPrincipal) {
+    validateApplicationCommandArgs('run.workstream.stop', rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'workstream stop principal');
+    const { current, binding } = await this._activeWorkstream(rawRequest, principal);
+    const reason = rawRequest.reason ?? (binding.role === 'work'
+      ? 'Operator requested Run stop.'
+      : `Stop and reap the ${binding.role} workstream generation ${binding.generation}.`);
+    if (this._isWorkflowRun(current)) {
+      return this.stopWorkflowMember({
+        runId: rawRequest.runId, role: binding.role, reason,
+      }, principal);
+    }
+    if (binding.role !== 'work') {
+      throw applicationError('Workstream stop is unavailable for this Run',
+        'application_workflow_member_stop_unavailable');
+    }
+    return this.stop(rawRequest.runId, reason, principal);
   }
 
   async listRuns(rawPrincipal) {
@@ -8737,28 +9565,68 @@ export class BatonApplication {
       topic: request.topic, depth: request.depth,
     });
     if (request.runId !== undefined) this._findRun(request.runId);
-    const section = APPLICATION_SEMANTIC_REGISTRY.sections.find((entry) => request.topic.endsWith(`.${entry.id}`));
+    const known = new Set([
+      'application', 'advanced', 'worker-policy', 'workflow', 'run.inspect.context',
+      ...APPLICATION_SEMANTIC_REGISTRY.sections.map(({ id }) => `run.inspect.${id}`),
+      ...Object.keys(APPLICATION_SEMANTIC_REGISTRY.cli.helpTopics),
+      ...Object.values(APPLICATION_SEMANTIC_REGISTRY.operations).map((value) => value.helpTopic),
+      ...Object.values(APPLICATION_SEMANTIC_REGISTRY.actions).map((value) => value.helpTopic),
+    ]);
+    if (!known.has(request.topic)) {
+      throw applicationError('Help topic is unavailable', 'application_help_topic_unknown');
+    }
+    const section = APPLICATION_SEMANTIC_REGISTRY.sections
+      .find((entry) => request.topic.endsWith(`.${entry.id}`));
     const workerPolicyTopic = request.topic === 'worker-policy' || request.topic.endsWith('.worker-policy');
+    const action = Object.values(APPLICATION_SEMANTIC_REGISTRY.actions)
+      .find((candidate) => candidate.helpTopic === request.topic) ?? null;
+    const rawCli = APPLICATION_SEMANTIC_REGISTRY.cli.helpTopics[request.topic] ?? null;
+    const cli = rawCli?.aliasFor
+      ? APPLICATION_SEMANTIC_REGISTRY.cli.helpTopics[rawCli.aliasFor] ?? null : rawCli;
+    const synthetic = {
+      advanced: 'Advanced fleet compatibility is opt-in; ordinary Run, Episode, and workstream operations hide worker coordinates.',
+      workflow: 'A Workflow is one Run with role-addressed, generation-stable workstreams and attributable result Episodes.',
+      'run.inspect.context': 'Context is progressively inspectable without exposing storage or capability-call choreography.',
+    }[request.topic] ?? null;
+    const summary = workerPolicyTopic
+      ? 'Worker policy separates approval autonomy, full-versus-workspace harness access, and independently attested containment. The default is unattended full access; a worktree and private runtime do not prove host containment.'
+      : action?.summary ?? section?.summary ?? cli?.paragraphs?.[0] ?? synthetic
+        ?? 'Start or open a Run, inspect only the detail needed, and follow its exact continuation descriptor.';
+    const commands = (cli?.commandIds ?? []).map((commandId) => (
+      APPLICATION_SEMANTIC_REGISTRY.cli.commands.find((command) => command.id === commandId)?.usage
+    )).filter(Boolean);
+    const paragraphs = [summary, ...(cli?.paragraphs ?? []).filter((value) => value !== summary)];
+    const links = request.topic === 'application' || request.topic === 'application.help'
+      ? ['run', 'run.episode', 'run.workstreams', 'routing', 'connection', 'worker-policy', 'advanced']
+      : ['run.episode', 'run.workstreams'].includes(request.topic)
+        || ['run.inspect.episode', 'run.inspect.workstreams'].includes(request.topic)
+        ? ['run.inspect', request.topic.includes('episode') ? 'run.workstreams' : 'run.episode']
+        : ['run.inspect'];
+    const continuation = request.depth === 'content' ? null : {
+      operation: 'application.help', arguments: {
+        topic: request.topic, depth: 'content',
+        ...(request.runId ? { runId: request.runId } : {}),
+      },
+    };
     return deepFreeze({
       schemaVersion: 1,
       topic: request.topic,
       depth: request.depth,
       registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
-      title: workerPolicyTopic ? 'worker permission policy' : section ? `${section.id.replaceAll('_', ' ')} inspection` : request.topic,
-      summary: workerPolicyTopic
-        ? 'Worker policy separates approval autonomy, full-versus-workspace harness access, and independently attested containment. The default is unattended full access; a worktree and private runtime do not prove host containment.'
-        : section?.summary ?? 'Start or open a Run, inspect only the depth needed, then perform a currently offered action. For a nonterminal response, call its continuation descriptor to wait for the next relevant change; this is the preferred change-aware workflow.',
+      title: workerPolicyTopic ? 'worker permission policy'
+        : section ? `${section.id.replaceAll('_', ' ')} inspection` : request.topic,
+      summary,
       examples: workerPolicyTopic && request.runId
         ? [{ operation: 'run.inspect', arguments: { runId: request.runId, depth: 'outline' }, resultField: 'outline.workerPolicy' }]
         : section && request.runId
         ? [{ operation: 'run.inspect', arguments: { runId: request.runId, depth: 'section', section: section.id } }]
         : [{ operation: 'run.inspect', arguments: { runId: 'RUN_ID', depth: 'outline' } }],
-      links: [
-        { topic: 'run.inspect', depth: 'outline' },
-        { topic: 'run.act', depth: 'outline' },
-        { topic: 'worker-policy', depth: 'outline' },
-        { topic: 'advanced', depth: 'outline' },
-      ],
+      links: links.map((topic) => ({ topic, depth: 'outline' })),
+      expansions: request.depth === 'content' ? [] : [{ topic: request.topic, depth: 'content' }],
+      ...(request.depth === 'content' ? {
+        content: { kind: 'baton.help.content', topic: request.topic, paragraphs, commands },
+      } : {}),
+      continuation,
     });
   }
 
@@ -9033,7 +9901,8 @@ export class BatonApplication {
     const principal = normalizePrincipal(rawPrincipal, 'command principal');
     const context = normalizeCommandContext(rawContext);
     validateApplicationCommandArgs(name, args);
-    const recursiveReadCommands = new Set(['application.help', 'run.inspect', 'run.status', 'run.follow', 'run.wait']);
+    const recursiveReadCommands = new Set(['application.help', 'run.inspect', 'run.episode',
+      'run.workstreams', 'run.status', 'run.follow', 'run.wait']);
     const recursiveEffectCommands = new Set(['run.start', 'run.stop']);
     if (context?.sessionAuthority && name !== 'run.act'
       && !recursiveReadCommands.has(name) && !recursiveEffectCommands.has(name)) {
@@ -9052,6 +9921,18 @@ export class BatonApplication {
     }
     if (name === 'run.inspect') {
       return this.inspect(args, principal, context);
+    }
+    if (name === 'run.episode') {
+      return this.episode(args, principal, context);
+    }
+    if (name === 'run.workstreams') {
+      return this.workstreams(args, principal, context);
+    }
+    if (name === 'run.workstream.notify') {
+      return this.notifyWorkstream(args, principal, context);
+    }
+    if (name === 'run.workstream.stop') {
+      return this.stopWorkstream(args, principal);
     }
     if (name === 'run.act') {
       return this.act(args, principal, context);

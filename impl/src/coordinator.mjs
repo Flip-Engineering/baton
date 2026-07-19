@@ -853,6 +853,17 @@ export class Coordinator {
     // C1: the sole done-gate, and the driver-level policy passed to every accept() call.
     this._accept = opts.accept ?? defaultAccept;
     this._acceptOpts = opts.acceptOpts ?? {};
+    const verificationRequirements = {
+      requireRedGreen: this._acceptOpts.requireRedGreen === true,
+      requireCoverage: this._acceptOpts.requireCoverage === true,
+      requireMutation: this._acceptOpts.requireMutation === true,
+    };
+    this._verificationAcceptancePolicy = deepFreeze({
+      policy: verificationRequirements.requireRedGreen ? 'red_green_required'
+        : verificationRequirements.requireCoverage || verificationRequirements.requireMutation
+          ? 'pass_plus_hardening' : 'pass_only',
+      ...verificationRequirements,
+    });
     // VR6: the immutable deployment verifier-runtime identity, used to conflict a retry whose
     // admission was recorded under a different runtime policy than the one now bound.
     this._verificationRuntimeDigest = opts.verificationRuntimeDigest ?? null;
@@ -948,6 +959,9 @@ export class Coordinator {
     this._publicationSeq = 0;
     this._refinementSeq = 0;
 
+    // One bounded startup clone feeds every reconstruction pass. Per-worker snapshot cloning made
+    // replay proportional to worker-count times the complete coordination state.
+    this._startupCoordinationSnapshot = this._coordination.snapshot();
     this._seedCoordinationTasks();
     if (typeof this._coordination.unsettledPlanNodeTasks === 'function' && typeof this._coordination.settlePlanNodeBudget === 'function') {
       for (const taskId of this._coordination.unsettledPlanNodeTasks()) this._settlePlanNodeBudget(taskId);
@@ -1030,6 +1044,7 @@ export class Coordinator {
       if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') this._trackStartupCleanup(() => this._runtimeScopes.reconcile(eligible.map((handle) => handle.id)));
     }
     this._terminalizeUnattachedCoordinationTasks();
+    this._startupCoordinationSnapshot = null;
   }
 
   // =========================================================================
@@ -3115,7 +3130,8 @@ export class Coordinator {
 
   _seedCoordinationTasks() {
     if (!this._coordination) return;
-    for (const durable of this._coordination.snapshot().tasks) {
+    for (const durable of this._startupCoordinationSnapshot?.tasks
+      ?? this._coordination.snapshot().tasks) {
       if (this._tasks.has(durable.id)) continue;
       const workerId = durable.reservedWorkerId;
       if (!workerId) continue;
@@ -7740,6 +7756,12 @@ export class Coordinator {
       hardExceeded: handle.providerPolicyHardExceeded === true,
       telemetryFailed: handle.providerTelemetryFailed === true,
     } : null;
+    const verdictAccepted = task?.verdict?.reverified === true && task.verdict.passed === true
+      && (!this._verificationAcceptancePolicy.requireRedGreen || task.verdict.redGreen === true)
+      && (!this._verificationAcceptancePolicy.requireCoverage
+        || task.verdict.coverageOfChange === true)
+      && (!this._verificationAcceptancePolicy.requireMutation
+        || task.verdict.mutationPassed === true);
     const attribution = {
       taskId: task?.id ?? handle.taskId ?? null,
       runId: task?.runId ?? handle.runId ?? null,
@@ -7771,6 +7793,10 @@ export class Coordinator {
       providerGovernance,
       observationOnly: providerGovernance?.observationOnly === true,
       terminalCause: handle.terminalCause ?? null,
+      verificationAcceptance: {
+        ...this._verificationAcceptancePolicy,
+        accepted: task?.status === 'completed' && verdictAccepted,
+      },
     };
     if (handle.recoveryPending === true) return { ready: false, status: 'orphaned', ...attribution };
     if (!task) return { ready: false, status: handle.status, ...attribution };
@@ -9262,6 +9288,18 @@ export class Coordinator {
 
   _replay() {
     const workerIds = this._log.workers();
+    const durableTasksByWorker = new Map();
+    for (const task of this._startupCoordinationSnapshot?.tasks
+      ?? this._coordination.snapshot().tasks) {
+      const worker = task.reservedWorkerId ?? task.assignee;
+      if (!worker) continue;
+      const rows = durableTasksByWorker.get(worker) ?? [];
+      rows.push(task);
+      durableTasksByWorker.set(worker, rows);
+    }
+    for (const rows of durableTasksByWorker.values()) {
+      rows.sort((left, right) => left.createdEvent - right.createdEvent);
+    }
     for (const workerId of workerIds) {
       const events = this._log.read(workerId);
       if (events.length === 0) continue;
@@ -9773,9 +9811,7 @@ export class Coordinator {
       // and wire session. The coordination stream is authoritative for which refinement is
       // current after restart, so associate the replayed terminal/result state with the newest
       // durable task reserved for this worker instead of silently snapping back to turn one.
-      const durableWorkerTasks = this._coordination?.snapshot().tasks
-        .filter((task) => (task.reservedWorkerId ?? task.assignee) === workerId)
-        .sort((a, b) => a.createdEvent - b.createdEvent) ?? [];
+      const durableWorkerTasks = durableTasksByWorker.get(workerId) ?? [];
       const currentDurableTask = durableWorkerTasks.at(-1) ?? null;
       if (currentDurableTask) taskId = currentDurableTask.id;
       const revisionRecoveryUnknown = currentDurableTask?.relation === 'revision'
@@ -10001,7 +10037,10 @@ export class Coordinator {
 
   _terminalizeUnattachedCoordinationTasks() {
     if (!this._coordination) return;
-    for (const durable of this._coordination.snapshot().tasks) {
+    const startupTasks = this._startupCoordinationSnapshot?.tasks
+      ?? this._coordination.snapshot().tasks;
+    for (const original of startupTasks) {
+      const durable = this._coordination.task(original.id) ?? original;
       if (!['working', 'input_required'].includes(durable.status)) continue;
       const workerId = durable.assignee ?? durable.reservedWorkerId;
       const events = workerId ? this._log.read(workerId) : [];

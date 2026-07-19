@@ -114,6 +114,37 @@ const operations = {
       preferred: true, changeAware: true,
     },
   },
+  'run.episode': {
+    inputSchema: objectSchema({
+      runId: id, topic: id, detail: { type: 'string', enum: ['item', 'content', 'evidence'] },
+      role: id, generation: { type: 'integer', minimum: 1 },
+      pageCursor: { type: 'string', minLength: 1, maxLength: 4096 },
+      cursor: { type: 'integer', minimum: 0 }, waitMs: { type: 'integer', minimum: 1 },
+    }, ['runId']),
+    helpTopic: 'run.episode', idempotent: true, destructive: false,
+  },
+  'run.workstreams': {
+    inputSchema: objectSchema({
+      runId: id, role: id, generation: { type: 'integer', minimum: 1 },
+      cursor: { type: 'integer', minimum: 0 }, waitMs: { type: 'integer', minimum: 1 },
+    }, ['runId']),
+    helpTopic: 'run.workstreams', idempotent: true, destructive: false,
+  },
+  'run.workstream.notify': {
+    inputSchema: objectSchema({
+      runId: id, role: id, generation: { type: 'integer', minimum: 1 },
+      message: { type: 'string', minLength: 1, maxLength: 16384 },
+      delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] },
+    }, ['runId', 'role', 'message']),
+    helpTopic: 'run.workstreams', idempotent: true, destructive: false,
+  },
+  'run.workstream.stop': {
+    inputSchema: objectSchema({
+      runId: id, role: id, generation: { type: 'integer', minimum: 1 },
+      reason: { type: 'string', minLength: 1, maxLength: 1024 },
+    }, ['runId', 'role']),
+    helpTopic: 'run.workstreams', idempotent: true, destructive: true,
+  },
   'run.act': {
     inputSchema: objectSchema({ runId: id, actionId: id, inputs: objectSchema({}, []) }, ['runId', 'actionId', 'inputs']),
     helpTopic: 'run.act', idempotent: true, destructive: true,
@@ -125,6 +156,8 @@ const operations = {
 };
 
 const sections = [
+  ['episode', 'Evidence-backed Episode outline, output, sources, lineage, route, verification, result, and cleanup authority.'],
+  ['workstreams', 'Durable semantic workstreams and their logical generations, without worker, task, fence, or transport choreography.'],
   ['plan', 'Goal, approved Plan, and bounded Plan-node summaries.'],
   ['execution', 'Provider work, current lifecycle state, and bounded worker summaries.'],
   ['orchestration', 'Recursive Run role, descendant topology, recipient authority, and subtree-stop state.'],
@@ -494,8 +527,12 @@ const cliCommands = [
   ['run.progress', 'run.inspect', null, 'baton run progress RUN_ID [--follow]'],
   ['run.events', 'run.inspect', null, 'baton run events RUN_ID [--follow]'],
   ['run.output', 'run.inspect', null, 'baton run output RUN_ID [--to RECIPIENT] [--follow]'],
+  ['run.episode', 'run.episode', null, 'baton run episode RUN_ID [CHAPTER] [--workstream ROLE --generation N] [--content | --evidence] [--page-cursor CURSOR] [--cursor N --wait DURATION]'],
+  ['run.result', 'run.episode', null, 'baton run result RUN_ID [--workstream ROLE --generation N] [--evidence] [--cursor N --wait DURATION]'],
+  ['run.workstreams', 'run.workstreams', null, 'baton run workstreams RUN_ID [ROLE --generation N] [--cursor N --wait DURATION]'],
+  ['run.notify', 'run.workstream.notify', null, 'baton run notify RUN_ID ROLE TEXT [--generation N] [--nudge | --now | --turn]'],
   ['run.do', 'run.act', null, 'baton run do RUN_ID ACTION_ID [--inputs JSON]'],
-  ['run.stop', 'run.stop', 'stop', 'baton run stop RUN_ID --reason REASON'],
+  ['run.stop', 'run.stop', 'stop', 'baton run stop RUN_ID [--reason REASON]'],
   ['run.status', null, null, 'baton run status RUN_ID [--wait DURATION | --follow [--wait DURATION]]'],
   ['run.recover', null, null, 'baton run recover RUN_ID'],
   ['run.approve', null, 'approve_plan', 'baton run approve RUN_ID --plan DIGEST'],
@@ -510,7 +547,7 @@ const cliCommands = [
   ['run.select', null, 'select_candidate', 'baton run select RUN_ID ROLE --reason REASON'],
   ['run.feedback', null, 'send_feedback', 'baton run feedback RUN_ID ROLE --text TEXT'],
   ['run.revise', null, 'revise_candidate', 'baton run revise RUN_ID --reason REASON'],
-  ['run.stop-member', null, 'stop_member', 'baton run stop-member RUN_ID ROLE --reason REASON'],
+  ['run.stop-member', 'run.workstream.stop', 'stop_member', 'baton run stop-member RUN_ID ROLE [--generation N] [--reason REASON]'],
   ['run.retry', null, 'retry_verification', 'baton run retry RUN_ID --reason REASON'],
   ['run.resume', null, 'resume_work', 'baton run resume RUN_ID --reason REASON'],
   ['run.review', null, 'semantic_review', 'baton run review RUN_ID --exact HARNESS/MODEL@EFFORT --reason REASON'],
@@ -614,10 +651,25 @@ const cli = {
     'run.inspect': {
       commandIds: ['run.show', 'run.progress', 'run.events', 'run.output'],
       paragraphs: [
-        'Shows the objective-first Run outline by default. Expand to index, section, item, content, or evidence only when that detail is needed.',
+        'Shows the objective-first Run outline by default. Expand to index, section, item, content, or evidence only when that detail is needed; this is the preferred change-aware workflow.',
         'Section depth requires --section. Item and evidence require --section plus --item. Context content accepts --offset. Execution progress, normalized events, and opt-in untrusted output have concise Run commands that manage pagination and waiting inside Baton.',
       ],
     },
+    'run.inspect.episode': {
+      commandIds: ['run.episode', 'run.result'],
+      paragraphs: [
+        'Episode is a read-only evidence-backed projection over the current Run, Plan, Attempts, Context, structural knowledge, verification, result, and cleanup authorities.',
+        'Outline summaries are replaceable and non-authoritative. Exact routes, result capsules, source coordinates, immutable lineage edges, verification receipts, and cleanup receipts remain authoritative at the addressed item or evidence depth.',
+      ],
+    },
+    'run.episode': { aliasFor: 'run.inspect.episode' },
+    'run.inspect.workstreams': {
+      commandIds: ['run.workstreams', 'run.notify', 'run.stop-member'],
+      paragraphs: [
+        'Workstreams expose stable semantic roles and durable workflow generations. Notify, result, Episode, and stop resolve their worker, task, fence, receipt, and transport coordinates inside Baton.',
+      ],
+    },
+    'run.workstreams': { aliasFor: 'run.inspect.workstreams' },
     'run.act': {
       commandIds: ['run.do'],
       paragraphs: ['Invokes one action advertised by the current Run outline.'],
@@ -637,7 +689,7 @@ const cli = {
     },
     'run.stop': {
       commandIds: ['run.stop'],
-      paragraphs: ['Requests an audited emergency stop through the Run application.'],
+      paragraphs: ['Requests an audited emergency stop through the Run application. The terminal derives a safe operator-stop reason when --reason is omitted.'],
     },
   },
   selectorRules: {
@@ -663,7 +715,8 @@ const core = {
   operations,
   actions: authorizedActions,
   cli,
-  defaultOperations: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.act', 'run.stop'],
+  defaultOperations: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode',
+    'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.stop'],
   advanced: {
     defaultVisible: false,
     operations: ['fleet_spawn', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt',

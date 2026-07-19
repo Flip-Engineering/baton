@@ -19,6 +19,7 @@
 //   - env FAKE_CODEX_MALFORMED=1   -> after every `turn/started`, two garbage lines are written
 //                                     to stdout: one invalid-JSON line and one well-formed
 //                                     unknown-method notification. Both must be silently ignored.
+//   - env FAKE_CODEX_OMIT_THREAD_MODEL=1 -> thread creation omits native model testimony.
 //   - directives embedded in the first `text` UserInput of `turn/start`/`turn/steer` input
 //     (baton tests put these in `brief.goal` or the raw prompt() content):
 //       FAKE:CRASH                       -> turn/completed{status:"failed"}
@@ -58,6 +59,7 @@ const BUSY = process.env.FAKE_CODEX_BUSY === '1';
 const TURN_START_FAIL = process.env.FAKE_CODEX_TURN_START_FAIL === '1';
 const HANG = process.env.FAKE_CODEX_HANG === '1';
 const MALFORMED = process.env.FAKE_CODEX_MALFORMED === '1';
+const OMIT_THREAD_MODEL = process.env.FAKE_CODEX_OMIT_THREAD_MODEL === '1';
 const OVERSIZE_BYTES = Number.parseInt(process.env.FAKE_CODEX_OVERSIZE_BYTES ?? '8192', 10);
 
 let busyConsumed = false;
@@ -311,7 +313,8 @@ rl.on('line', (line) => {
         id: obj.id,
         result: {
           thread: { id: threadId, sessionId: threadId, cwd: obj.params?.cwd ?? '/work', cliVersion: '0.144.0-fake', createdAt: Date.now(), updatedAt: Date.now(), ephemeral: true, source: 'appServer', status: { type: 'idle' }, turns: [], modelProvider: 'fake' },
-          model: obj.params?.model ?? 'fake-model', modelProvider: 'fake', cwd: obj.params?.cwd ?? '/work',
+          ...(OMIT_THREAD_MODEL ? {} : { model: obj.params?.model ?? 'fake-model' }),
+          modelProvider: 'fake', cwd: obj.params?.cwd ?? '/work',
           effort: obj.params?.effort ?? null,
           sandbox: obj.params?.sandbox ?? 'workspace-write', approvalPolicy: obj.params?.approvalPolicy ?? 'never',
           approvalsReviewer: 'user', instructionSources: [],
@@ -326,7 +329,8 @@ rl.on('line', (line) => {
         id: obj.id,
         result: {
           thread: { id: threadId, sessionId: threadId, cwd: threadCwd ?? '/work', cliVersion: '0.144.0-fake', createdAt: Date.now(), updatedAt: Date.now(), ephemeral: false, source: 'appServer', status: { type: 'idle' }, turns: [], modelProvider: 'fake' },
-          model: obj.params?.model ?? 'fake-model', modelProvider: 'fake', cwd: threadCwd ?? '/work',
+          ...(OMIT_THREAD_MODEL ? {} : { model: obj.params?.model ?? 'fake-model' }),
+          modelProvider: 'fake', cwd: threadCwd ?? '/work',
           sandbox: obj.params?.sandbox ?? 'workspace-write', approvalPolicy: obj.params?.approvalPolicy ?? 'never', approvalsReviewer: 'user', instructionSources: [],
         },
       });
@@ -339,7 +343,8 @@ rl.on('line', (line) => {
         id: obj.id,
         result: {
           thread: { id: threadId, sessionId: threadId, forkedFromId: obj.params.threadId, cwd: threadCwd ?? '/work', cliVersion: '0.144.0-fake', createdAt: Date.now(), updatedAt: Date.now(), ephemeral: true, source: 'appServer', status: { type: 'idle' }, turns: [], modelProvider: 'fake' },
-          model: obj.params?.model ?? 'fake-model', modelProvider: 'fake', cwd: threadCwd ?? '/work',
+          ...(OMIT_THREAD_MODEL ? {} : { model: obj.params?.model ?? 'fake-model' }),
+          modelProvider: 'fake', cwd: threadCwd ?? '/work',
           sandbox: obj.params?.sandbox ?? 'workspace-write', approvalPolicy: obj.params?.approvalPolicy ?? 'never', approvalsReviewer: 'user', instructionSources: [],
         },
       });

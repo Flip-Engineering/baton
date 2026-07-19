@@ -435,18 +435,24 @@ test('DF8: one public Claude harness dispatches exact Opus and Kimi tuples only 
   assert.equal(calls.kimi[0][2].reasoningEffort, 'max');
 });
 
-test('DF9: built-in GLM advertises only glm-5.2 xhigh and rejects either mixed-catalog ordering before driver effects', {
+test('DF9: built-in GLM exposes every exact supported effort for glm-5.2 and rejects mixed models before effects', {
   skip: !factoryAvailable,
 }, async (t) => {
   const repo = repository('glm-built-in');
   writeFileSync(join(repo, 'glm_key.json'), '{"glm_key":"phase78-fixture-key"}\n');
   chmodSync(join(repo, 'glm_key.json'), 0o600);
-  const validRoute = { harness: 'glm', model: 'glm-5.2', effort: 'xhigh' };
-  const valid = advanced('glm-built-in-valid', [validRoute]);
+  const efforts = ['low', 'medium', 'high', 'xhigh', 'max'];
+  const canonicalEfforts = ['low', 'high', 'medium', 'xhigh', 'max'];
+  const validRoutes = efforts.map((effort) => ({ harness: 'glm', model: 'glm-5.2', effort }));
+  const validRoute = validRoutes.find((route) => route.effort === 'xhigh');
+  const valid = advanced('glm-built-in-valid', validRoutes);
   delete valid.adapters;
   const deployment = await open({ repo, advanced: valid });
   t.after(async () => { try { await deployment.close(); } catch {} });
-  assert.deepEqual(deployment.card().profiles[0].routes, [validRoute]);
+  assert.deepEqual(deployment.card().profiles[0].routes,
+    canonicalEfforts.map((effort) => ({ harness: 'glm', model: 'glm-5.2', effort })),
+    'the public profile deterministically canonicalizes every exact supported effort');
+  assert.equal(validRoute.effort, 'xhigh', 'the dogfood route remains an explicit xhigh choice');
 
   const obsoleteRoute = { harness: 'glm', model: 'glm-4.7', effort: 'xhigh' };
   for (const [label, selectedRoutes] of [
@@ -470,7 +476,7 @@ test('DF9: built-in GLM advertises only glm-5.2 xhigh and rejects either mixed-c
   }
 });
 
-test('DF10: default route inventory omits auth-unready Claude providers without reading or mutating the real home', {
+test('DF10: default route inventory retains configured Claude routes for explicit readiness without mutating the real home', {
   skip: !factoryAvailable,
 }, () => {
   const repo = repository('isolated-home-inventory');
@@ -491,12 +497,17 @@ test('DF10: default route inventory omits auth-unready Claude providers without 
     encoding: 'utf8',
     env: { ...process.env, HOME: isolatedHome },
   }));
-  assert.deepEqual(observed, [{ harness: 'glm', model: 'glm-5.2', effort: 'xhigh' }]);
-  assert.equal(observed.some((route) => route.harness === 'claude-code'), false);
+  assert.equal(observed.some((route) => (
+    route.harness === 'glm' && route.model === 'glm-5.2' && route.effort === 'xhigh'
+  )), true);
+  assert.deepEqual(observed.filter((route) => route.harness === 'glm')
+    .map((route) => route.effort), ['low', 'high', 'medium', 'xhigh', 'max']);
+  assert.deepEqual(observed.filter((route) => route.harness === 'claude-code')
+    .map((route) => route.effort).sort(), ['high', 'low', 'max', 'medium', 'xhigh']);
   assert.deepEqual(readdirSync(isolatedHome), [], 'inventory must not create auth state in the isolated home');
 });
 
-test('DF10b: default discovery does not advertise a file-present rejected-refresh Kimi route', {
+test('P92-DF10b: default readiness retains a configured rejected-refresh Kimi route as blocked', {
   skip: !factoryAvailable,
 }, () => {
   const repo = repository('tombstoned-kimi-inventory');
@@ -517,14 +528,18 @@ test('DF10b: default discovery does not advertise a file-present rejected-refres
     `const { openBaton } = await import(${JSON.stringify(moduleHref)});`,
     `const deployment = await openBaton({ repo: ${JSON.stringify(repo)} });`,
     'const routes = deployment.card().profiles[0].routes;',
+    'const readiness = await deployment.doctor();',
     'await deployment.close();',
-    'process.stdout.write(JSON.stringify(routes));',
+    'process.stdout.write(JSON.stringify({ routes, readiness }));',
   ].join('\n');
   const observed = JSON.parse(execFileSync(process.execPath, [
     '--input-type=module', '--eval', script,
   ], { encoding: 'utf8', env: { ...process.env, HOME: isolatedHome } }));
-  assert.equal(observed.some((route) => route.harness === 'kimi-code'), false);
-  assert.equal(observed.every((route) => route.harness === 'codex'), true);
+  assert.equal(observed.routes.some((route) => route.harness === 'kimi-code'), true);
+  const kimi = observed.readiness.routes.filter((route) => route.harness === 'kimi-code');
+  assert.equal(kimi.length, 3);
+  assert.equal(kimi.every((route) => route.state === 'blocked'), true);
+  assert.equal(kimi.every((route) => route.code === 'authentication_refresh_required'), true);
 });
 
 test('DF11: concise complete prepares an adopted result and one explicit apply fast-forwards it', {

@@ -2,7 +2,10 @@
 // read cursor. The ONLY source of truth (reliability rule 5); every in-memory index
 // elsewhere is a projection rebuildable from here.
 
-import { appendFileSync, readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import {
+  appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync,
+  readdirSync, statSync, writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -28,6 +31,12 @@ export class Log {
     this.clock = clock;
     /** @type {Map<string, number>} in-memory last-seq cache */
     this._seq = new Map();
+    /** One immutable parsed event vector per worker. Reads never reparse an already indexed file. */
+    this._index = new Map();
+    /** File identity and parsed byte frontier for append-aware cross-instance reads. */
+    this._indexFiles = new Map();
+    this._parsePasses = 0;
+    this._parsedEvents = 0;
     mkdirSync(dir, { recursive: true });
   }
 
@@ -38,15 +47,95 @@ export class Log {
 
   /** Current last seq for a worker, recovered from disk on first touch. @param {string} worker */
   _lastSeq(worker) {
-    if (this._seq.has(worker)) return this._seq.get(worker);
-    let last = 0;
+    if (!this._index.has(worker)) this._load(worker);
+    return this._seq.get(worker) ?? 0;
+  }
+
+  _load(worker) {
     const f = this._file(worker);
-    if (existsSync(f)) {
-      const lines = readFileSync(f, 'utf8').split('\n').filter((l) => l.length > 0);
-      if (lines.length) last = JSON.parse(lines[lines.length - 1]).seq;
+    const indexed = this._index.get(worker) ?? [];
+    const prior = this._indexFiles.get(worker) ?? null;
+    if (!existsSync(f)) {
+      if (prior?.exists && prior.size > 0) {
+        throw Object.assign(new Error(`operational log ${worker} disappeared after indexing`), {
+          code: 'operational_log_replaced',
+        });
+      }
+      if (!this._index.has(worker)) {
+        this._index.set(worker, indexed);
+        this._indexFiles.set(worker, { exists: false, dev: null, ino: null, size: 0, mtimeMs: 0 });
+        this._seq.set(worker, 0);
+        this._parsePasses += 1;
+      }
+      return indexed;
     }
-    this._seq.set(worker, last);
-    return last;
+    const stat = statSync(f);
+    if (prior?.exists && (stat.dev !== prior.dev || stat.ino !== prior.ino || stat.size < prior.size)) {
+      throw Object.assign(new Error(`operational log ${worker} was replaced or truncated`), {
+        code: 'operational_log_replaced',
+      });
+    }
+    if (prior?.exists && stat.size === prior.size) {
+      if (stat.mtimeMs !== prior.mtimeMs) {
+        throw Object.assign(new Error(`operational log ${worker} changed inside its indexed prefix`), {
+          code: 'operational_log_changed',
+        });
+      }
+      return indexed;
+    }
+    const start = prior?.exists ? prior.size : 0;
+    const length = stat.size - start;
+    const raw = Buffer.alloc(length);
+    if (length > 0) {
+      const fd = openSync(f, 'r');
+      try {
+        let read = 0;
+        while (read < length) {
+          const count = readSync(fd, raw, read, length - read, start + read);
+          if (count === 0) throw new Error(`operational log ${worker} changed during indexed read`);
+          read += count;
+        }
+      } finally { closeSync(fd); }
+      if (raw.at(-1) !== 0x0a) {
+        throw Object.assign(new Error(`operational log ${worker} has a truncated tail`), {
+          code: 'operational_log_truncated',
+        });
+      }
+      const text = raw.toString('utf8');
+      if (!Buffer.from(text, 'utf8').equals(raw)) {
+        throw Object.assign(new Error(`operational log ${worker} is not exact UTF-8`), {
+          code: 'operational_log_invalid',
+        });
+      }
+      const lines = text.slice(0, -1).split('\n');
+      const added = lines.map((line, offset) => {
+        const index = indexed.length + offset;
+        let event;
+        try { event = JSON.parse(line); }
+        catch {
+          throw Object.assign(new Error(`operational log ${worker} has invalid JSON at ${index + 1}`), {
+            code: 'operational_log_invalid',
+          });
+        }
+        if (event?.worker !== worker || event?.seq !== index + 1) {
+          throw Object.assign(new Error(`operational log ${worker} has an invalid sequence at ${index + 1}`), {
+            code: 'operational_log_sequence',
+          });
+        }
+        return deepFreeze(event);
+      });
+      indexed.push(...added);
+      this._parsePasses += 1;
+      this._parsedEvents += added.length;
+    } else if (!this._index.has(worker)) {
+      this._parsePasses += 1;
+    }
+    this._index.set(worker, indexed);
+    this._indexFiles.set(worker, {
+      exists: true, dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs,
+    });
+    this._seq.set(worker, indexed.length);
+    return indexed;
   }
 
   /**
@@ -62,21 +151,43 @@ export class Log {
     if (typeof partial.worker !== 'string') throw new TypeError('append: worker required');
     const seq = this._lastSeq(partial.worker) + 1;
     /** @type {BatonEvent} */
-    const full = { ...partial, seq, ts: this.clock() };
+    const full = deepFreeze({ ...partial, seq, ts: this.clock() });
     appendFileSync(this._file(partial.worker), JSON.stringify(full) + '\n', 'utf8');
     this._seq.set(partial.worker, seq);
+    this._index.get(partial.worker).push(full);
+    const stat = statSync(this._file(partial.worker));
+    this._indexFiles.set(partial.worker, {
+      exists: true, dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs,
+    });
     return full;
   }
 
   /** @param {string} worker @param {number} [fromSeq=1] @returns {BatonEvent[]} */
   read(worker, fromSeq = 1) {
-    const f = this._file(worker);
-    if (!existsSync(f)) return [];
-    return readFileSync(f, 'utf8')
-      .split('\n')
-      .filter((l) => l.length > 0)
-      .map((l) => JSON.parse(l))
-      .filter((e) => e.seq >= fromSeq);
+    const events = this._load(worker);
+    if (!Number.isSafeInteger(fromSeq)) return [];
+    return events.slice(Math.max(0, fromSeq - 1));
+  }
+
+  /** Exact O(1) lookup after the worker's single parse pass. */
+  at(worker, seq) {
+    if (!Number.isSafeInteger(seq) || seq <= 0) return null;
+    return this._load(worker)[seq - 1] ?? null;
+  }
+
+  /** Immutable prefix lookup after the worker's single parse pass. */
+  range(worker, throughSeq) {
+    if (!Number.isSafeInteger(throughSeq) || throughSeq < 0) return [];
+    return this._load(worker).slice(0, throughSeq);
+  }
+
+  readStats() {
+    return Object.freeze({
+      schemaVersion: 1,
+      parsedWorkers: this._index.size,
+      parsePasses: this._parsePasses,
+      parsedEvents: this._parsedEvents,
+    });
   }
 
   /** @param {string} worker @returns {number} last seq, or 0 */
@@ -91,6 +202,13 @@ export class Log {
       .filter((n) => n.endsWith('.jsonl'))
       .map((n) => n.slice(0, -'.jsonl'.length));
   }
+}
+
+function deepFreeze(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  Object.freeze(value);
+  for (const child of Object.values(value)) deepFreeze(child);
+  return value;
 }
 
 /**

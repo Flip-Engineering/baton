@@ -127,18 +127,20 @@ function stableDeploymentId(root, repoId, ownerUid) {
   return value.deploymentId;
 }
 
-function leaseOwner(value, repoId, deploymentId) {
+function leaseOwner(value, repoId, deploymentId = null) {
   return exact(value, [
     'schemaVersion', 'repoId', 'deploymentId', 'incarnation', 'pid', 'pidStart', 'nonce', 'startedAt',
   ]) && value.schemaVersion === 1 && value.repoId === repoId
-    && value.deploymentId === deploymentId && identifier(value.incarnation)
+    && (deploymentId === null || value.deploymentId === deploymentId) && identifier(value.incarnation)
     && Number.isSafeInteger(value.pid) && value.pid > 0
     && typeof value.pidStart === 'string' && value.pidStart.length > 0
     && identifier(value.nonce) && Number.isFinite(Date.parse(value.startedAt));
 }
 
-function acquireLease(root, repoId, deploymentId, ownerUid, now) {
-  const path = join(root, 'host.lease');
+function acquireLease(root, repoId, deploymentId, ownerUid, now, {
+  name = 'host.lease', bindDeployment = true,
+} = {}) {
+  const path = join(root, name);
   let reclaimed = false;
   while (true) {
     try { mkdirSync(path, { mode: 0o700 }); break; }
@@ -156,7 +158,7 @@ function acquireLease(root, repoId, deploymentId, ownerUid, now) {
         raw = safeRegular(join(path, 'owner.json'), ownerUid, 16 * 1024);
         prior = JSON.parse(raw.toString('utf8'));
       } catch { throw residentError('resident host ownership is ambiguous', 'application_host_busy'); }
-      if (!leaseOwner(prior, repoId, deploymentId)
+      if (!leaseOwner(prior, repoId, bindDeployment ? deploymentId : null)
         || processState(prior.pid, prior.pidStart) !== 'stale') {
         throw residentError('resident host is already active', 'application_host_busy');
       }
@@ -261,7 +263,9 @@ export class ResidentAuthority {
     this.incarnation = this.lease.incarnation;
     this.startedAt = this.lease.startedAt;
     this.origin = 'https://baton.local';
-    this.profile = `resident-${digest(repoId).slice(0, 16)}`;
+    // Bind publication files to one durable deployment. A stale deployment can therefore never
+    // have its private profile/token overwritten before the repository selector changes.
+    this.profile = `resident-${digest(repoId).slice(0, 12)}-${digest(this.deploymentId).slice(0, 12)}`;
     this.configRoot = safeConfigRoot(env, home, ownerUid);
     this.socketRoot = socketRoot(ownerUid);
     this.socketPath = join(this.socketRoot,
@@ -271,10 +275,19 @@ export class ResidentAuthority {
       throw residentError('resident socket coordinate is too long');
     }
     this.sessionRoot = privateDirectory(join(this.root, 'sessions'), ownerUid);
+    this.selectorRoot = privateDirectory(join(this.commonDir, 'baton'), ownerUid);
     this.profilePath = join(this.configRoot, `${this.profile}.json`);
     this.tokenPath = join(this.configRoot, `${this.profile}.token`);
-    this.selectorRoot = privateDirectory(join(this.commonDir, 'baton'), ownerUid);
     this.selectorPath = join(this.selectorRoot, 'connection.json');
+    try {
+      this.publicationLease = acquireLease(
+        this.selectorRoot, repoId, this.deploymentId, ownerUid, now,
+        { name: 'publication.lease', bindDeployment: false },
+      );
+    } catch (error) {
+      this.lease.release();
+      throw error;
+    }
     this._publication = null;
     this._socketIdentity = null;
     this._closed = false;
@@ -303,6 +316,7 @@ export class ResidentAuthority {
 
   publish({ token, registryDigest }) {
     this.lease.assertHeld();
+    this.publicationLease.assertHeld();
     if (!this._socketIdentity) {
       throw residentError('resident socket is not confirmed', 'application_host_socket_invalid');
     }
@@ -321,23 +335,65 @@ export class ResidentAuthority {
       url: this.origin, origin: this.origin, tokenFile: basename(this.tokenPath),
       deploymentId: this.deploymentId, incarnation: this.incarnation,
       registryDigest, startedAt: this.startedAt,
+      ownerPid: this.lease.pid, ownerPidStart: this.lease.pidStart,
     };
     const selectorBytes = bytes(selector);
     const profileBytes = bytes(profile);
     const tokenBytes = Buffer.from(`${token}\n`);
+    let priorSelectorBytes = null;
+    let recoveredStaleAuthority = false;
     if (existsSync(this.selectorPath)) {
-      const prior = readJson(this.selectorPath, this.ownerUid);
+      priorSelectorBytes = safeRegular(this.selectorPath, this.ownerUid);
+      let prior;
+      try { prior = JSON.parse(priorSelectorBytes.toString('utf8')); }
+      catch { throw residentError('repository Baton authority is malformed', 'application_host_publication_conflict'); }
       const replaceable = prior?.schemaVersion === 2 && prior.repoId === this.repoId
         && prior.profile === this.profile && prior.deploymentId === this.deploymentId;
       if (!replaceable) {
-        throw residentError('repository already selects a different Baton authority',
-          'application_host_publication_conflict');
+        const residentProfilePrefix = `resident-${digest(this.repoId).slice(0, 12)}`;
+        const legacyResidentProfile = `resident-${digest(this.repoId).slice(0, 16)}`;
+        const identityMatches = prior?.schemaVersion === 2 && prior.repoId === this.repoId
+          && (prior.profile === legacyResidentProfile
+            || prior.profile.startsWith(`${residentProfilePrefix}-`))
+          && prior.transport === 'local'
+          && identifier(prior.deploymentId) && identifier(prior.incarnation);
+        const priorProfilePath = identityMatches
+          ? join(this.configRoot, `${prior.profile}.json`) : null;
+        const priorProfile = priorProfilePath ? readJson(priorProfilePath, this.ownerUid) : null;
+        const ownerFields = Object.hasOwn(priorProfile ?? {}, 'ownerPid')
+          || Object.hasOwn(priorProfile ?? {}, 'ownerPidStart');
+        const profileMatches = record(priorProfile)
+          && priorProfile.schemaVersion === 2 && priorProfile.transport === 'local'
+          && priorProfile.deploymentId === prior.deploymentId
+          && priorProfile.incarnation === prior.incarnation
+          && isAbsolute(priorProfile.socketPath ?? '') && !priorProfile.socketPath.includes('\0')
+          && (!ownerFields || (Number.isSafeInteger(priorProfile.ownerPid)
+            && priorProfile.ownerPid > 0 && typeof priorProfile.ownerPidStart === 'string'
+            && priorProfile.ownerPidStart.length > 0));
+        const socketAbsent = profileMatches && !existsSync(priorProfile.socketPath);
+        const ownerStale = !ownerFields || processState(
+          priorProfile.ownerPid, priorProfile.ownerPidStart,
+        ) === 'stale';
+        if (!identityMatches || !profileMatches || !socketAbsent || !ownerStale) {
+          throw residentError('repository already selects a different Baton authority',
+            'application_host_publication_conflict');
+        }
+        recoveredStaleAuthority = true;
       }
     }
     replaceAtomic(this.tokenPath, tokenBytes);
     replaceAtomic(this.profilePath, profileBytes);
+    if (priorSelectorBytes !== null) {
+      const current = safeRegular(this.selectorPath, this.ownerUid);
+      if (!current.equals(priorSelectorBytes)) {
+        throw residentError('repository Baton authority changed during publication',
+          'application_host_reconciliation_required');
+      }
+    }
     replaceAtomic(this.selectorPath, selectorBytes);
-    this._publication = Object.freeze({ selectorBytes, profileBytes, tokenBytes });
+    this._publication = Object.freeze({
+      selectorBytes, profileBytes, tokenBytes, recoveredStaleAuthority,
+    });
     return this.publicOutline();
   }
 
@@ -350,12 +406,14 @@ export class ResidentAuthority {
       deploymentId: this.deploymentId,
       incarnation: this.incarnation,
       startedAt: this.startedAt,
+      recoveredStaleAuthority: this._publication?.recoveredStaleAuthority ?? false,
     });
   }
 
   close() {
     if (this._closed) return Object.freeze({ schemaVersion: 1, state: 'closed' });
     this.lease.assertHeld();
+    this.publicationLease.assertHeld();
     if (this._publication) {
       removeIfExact(this.selectorPath, this._publication.selectorBytes, this.ownerUid);
       removeIfExact(this.profilePath, this._publication.profileBytes, this.ownerUid);
@@ -371,6 +429,7 @@ export class ResidentAuthority {
       }
       unlinkSync(this.socketPath);
     }
+    this.publicationLease.release();
     this.lease.release();
     this._closed = true;
     return Object.freeze({ schemaVersion: 1, state: 'closed' });

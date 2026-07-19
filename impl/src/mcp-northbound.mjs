@@ -13,6 +13,10 @@ const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
     ['baton_runs', 'runs.list'],
     ['baton_run_start', 'run.start'],
     ['baton_run_inspect', 'run.inspect'],
+    ['baton_run_episode', 'run.episode'],
+    ['baton_run_workstreams', 'run.workstreams'],
+    ['baton_workstream_notify', 'run.workstream.notify'],
+    ['baton_workstream_stop', 'run.workstream.stop'],
     ['baton_run_act', 'run.act'],
     ['baton_run_stop', 'run.stop'],
   ].map(([tool, name]) => [tool, name]),
@@ -22,6 +26,10 @@ const ORDINARY_APPLICATION_ENTRIES = Object.freeze([
   ['baton_runs', 'runs.list', APPLICATION_COMMAND_DEFINITIONS['runs.list']],
   ['baton_run_start', 'run.start', APPLICATION_COMMAND_DEFINITIONS['run.start']],
   ['baton_run_inspect', 'run.inspect', APPLICATION_COMMAND_DEFINITIONS['run.inspect']],
+  ['baton_run_episode', 'run.episode', APPLICATION_COMMAND_DEFINITIONS['run.episode']],
+  ['baton_run_workstreams', 'run.workstreams', APPLICATION_COMMAND_DEFINITIONS['run.workstreams']],
+  ['baton_workstream_notify', 'run.workstream.notify', APPLICATION_COMMAND_DEFINITIONS['run.workstream.notify']],
+  ['baton_workstream_stop', 'run.workstream.stop', APPLICATION_COMMAND_DEFINITIONS['run.workstream.stop']],
   ['baton_run_act', 'run.act', APPLICATION_COMMAND_DEFINITIONS['run.act']],
   ['baton_run_stop', 'run.stop', APPLICATION_COMMAND_DEFINITIONS['run.stop']],
 ]);
@@ -43,6 +51,7 @@ const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful && definition.reconcilable).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful && definition.reconcilable) RECONCILABLE.add(tool);
 const GOAL_PLAN_MUTATIONS = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve']);
+const BOUNDED_OBSERVATION_AUDITS = new Set(['tool_completed']);
 const FENCED = new Set(['fleet_send', 'fleet_interrupt', 'fleet_kill']);
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
 const SESSION_FIELDS = new Set(['mode', 'id', 'lastTurnId', 'context']);
@@ -244,6 +253,10 @@ const APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   { name: 'fleet_run_steer', description: 'Steer one current Run-owned worker using its server-resolved fence and an explicit human reason.', inputSchema: schema({ ...repo, ...idem, runId, target: runId, mode: { type: 'string', enum: ['nudge', 'now', 'turn'] }, message: { type: 'string', minLength: 1, maxLength: 4_096 }, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'target', 'mode', 'message', 'reason']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_stop', description: 'Durably close one Run to new effects, then kill and reap only its exact workers and return its stop receipt.', inputSchema: schema({ ...repo, ...idem, runId, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'reason']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_evidence', description: 'Return one bounded content-addressed terminal evidence manifest for a Run.', inputSchema: schema({ ...repo, runId }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_episode', description: 'Read one progressively addressed Episode chapter without inspect selectors.', inputSchema: schema({ ...repo, runId, topic: runId, detail: { type: 'string', enum: ['item', 'content', 'evidence'] }, role: runId, generation: { type: 'integer', minimum: 1 }, pageCursor: { type: 'string', minLength: 1, maxLength: 4096 }, cursor: { type: 'integer', minimum: 0 }, waitMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_workstreams', description: 'List or open durable semantic workstream generations.', inputSchema: schema({ ...repo, runId, role: runId, generation: { type: 'integer', minimum: 1 }, cursor: { type: 'integer', minimum: 0 }, waitMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_workstream_notify', description: 'Notify one exact current semantic workstream generation.', inputSchema: schema({ ...repo, ...idem, runId, role: runId, generation: { type: 'integer', minimum: 1 }, message: { type: 'string', minLength: 1, maxLength: 16384 }, delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] } }, ['repoId', 'idempotencyKey', 'runId', 'role', 'message']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_workstream_stop', description: 'Stop and reap one exact current semantic workstream generation.', inputSchema: schema({ ...repo, ...idem, runId, role: runId, generation: { type: 'integer', minimum: 1 }, reason: { type: 'string', minLength: 1, maxLength: 1024 } }, ['repoId', 'idempotencyKey', 'runId', 'role']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_adopt', description: 'Designate one exact preserved and verified Run result without merging, checking out, or publishing it.', inputSchema: schema({ ...repo, ...idem, runId, nodeKey: runId, resultSha: commitSha, evidenceDigest: digest, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'nodeKey', 'resultSha', 'evidenceDigest', 'reason']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_review', description: 'Start one exact independently-routed structured semantic review over the immutable accepted Run result.', inputSchema: schema({ ...repo, ...idem, runId, route: applicationRouteSchema, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'route', 'reason']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_integrate', description: 'Integrate the exact adopted and semantically reviewed result under fresh evidence and deployment policy; never pushes.', inputSchema: schema({ ...repo, ...idem, runId, evidenceDigest: digest, strategy: { type: 'string', enum: ['ff-only', 'structured'] }, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'evidenceDigest', 'strategy', 'reason']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
@@ -268,9 +281,35 @@ const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     inputSchema: schema({
       ...repo, runId, depth: { type: 'string', enum: APPLICATION_SEMANTIC_REGISTRY.depths },
       section: runId, item: runId, cursor: { type: 'integer', minimum: 0 },
+      offset: { type: 'integer', minimum: 0 },
+      pageCursor: { type: 'string', minLength: 1, maxLength: 4096 }, recipient: runId,
       waitMs: { type: 'integer', minimum: 1 },
     }, ['repoId', 'runId']),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_episode',
+    description: 'Read one Episode chapter with direct topic, role, generation, and continuation coordinates.',
+    inputSchema: schema({ ...repo, runId, topic: runId, detail: { type: 'string', enum: ['item', 'content', 'evidence'] }, role: runId, generation: { type: 'integer', minimum: 1 }, pageCursor: { type: 'string', minLength: 1, maxLength: 4096 }, cursor: { type: 'integer', minimum: 0 }, waitMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_workstreams',
+    description: 'List or open one durable role/generation workstream without worker coordinates.',
+    inputSchema: schema({ ...repo, runId, role: runId, generation: { type: 'integer', minimum: 1 }, cursor: { type: 'integer', minimum: 0 }, waitMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_workstream_notify',
+    description: 'Notify one exact current workstream generation while Baton resolves worker and fence authority.',
+    inputSchema: schema({ ...repo, ...idem, runId, role: runId, generation: { type: 'integer', minimum: 1 }, message: { type: 'string', minLength: 1, maxLength: 16384 }, delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] } }, ['repoId', 'idempotencyKey', 'runId', 'role', 'message']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_workstream_stop',
+    description: 'Stop and reap one exact current workstream generation.',
+    inputSchema: schema({ ...repo, ...idem, runId, role: runId, generation: { type: 'integer', minimum: 1 }, reason: { type: 'string', minLength: 1, maxLength: 1024 } }, ['repoId', 'idempotencyKey', 'runId', 'role']),
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'baton_run_act',
@@ -602,6 +641,11 @@ export class McpFleetServer {
     this.toolNames = new Set(this.toolDefinitions.map((tool) => tool.name));
     this._drainDispatches = new Map();
     this._applicationDispatches = new Map();
+    this.maxObservationAudits = opts.maxObservationAudits ?? 512;
+    if (!Number.isSafeInteger(this.maxObservationAudits) || this.maxObservationAudits <= 0) {
+      throw new TypeError('MCP observation audit bound must be a positive safe integer');
+    }
+    this._observationAudits = [];
     this._closePromise = null;
   }
 
@@ -645,10 +689,19 @@ export class McpFleetServer {
   }
 
   _audit(kind, tool, args, detail = null) {
-    return this.coordination.recordMcpAudit({
+    const entry = {
       kind, tool, userId: this.principal.userId, sessionId: this.principal.sessionId,
       repoId: nonempty(args?.repoId) ? args.repoId : null, detail,
-    }, { actor: `mcp:${this.principal.userId}:${this.principal.sessionId}`, key: `mcp.audit:${randomUUID()}` });
+    };
+    if (BOUNDED_OBSERVATION_AUDITS.has(kind)) {
+      this._observationAudits.push(Object.freeze(entry));
+      if (this._observationAudits.length > this.maxObservationAudits) this._observationAudits.shift();
+      return Object.freeze({ schemaVersion: 1, storage: 'bounded_memory' });
+    }
+    return this.coordination.recordMcpAudit(entry, {
+      actor: `mcp:${this.principal.userId}:${this.principal.sessionId}`,
+      key: `mcp.audit:${randomUUID()}`,
+    });
   }
 
   async handle(message) {

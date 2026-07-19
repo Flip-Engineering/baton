@@ -66,13 +66,14 @@ test('XD1: Kimi-through-Claude discovery honors XDG_CONFIG_HOME without touching
     const doctor = JSON.parse(output);
 
     assert.equal(doctor.ready, true);
-    assert.equal(doctor.routes.length, 1);
+    const kimiRoutes = doctor.routes.filter((route) => route.model === 'kimi-k3[1m]');
+    assert.equal(kimiRoutes.length, 1);
     assert.deepEqual(
-      { harness: doctor.routes[0].harness, model: doctor.routes[0].model, effort: doctor.routes[0].effort },
+      { harness: kimiRoutes[0].harness, model: kimiRoutes[0].model, effort: kimiRoutes[0].effort },
       { harness: 'claude-code', model: 'kimi-k3[1m]', effort: 'max' },
     );
-    assert.equal(doctor.routes[0].state, 'ready');
-    assert.equal(doctor.routes[0].runtime.authentication.state, 'available');
+    assert.equal(kimiRoutes[0].state, 'ready');
+    assert.equal(kimiRoutes[0].runtime.authentication.state, 'available');
     const publicOutput = JSON.stringify(doctor);
     assert.equal(publicOutput.includes('fixture-kimi-key'), false);
     assert.equal(publicOutput.includes(xdg), false);

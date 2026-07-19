@@ -20,12 +20,13 @@ verbs while explicitly leaving program crash/resume durability unresolved. That 
 most informative result of this review: a pleasant orchestration language still needs the durable
 authority and recovery substrate Baton is building.
 
-Phase 85 should continue as specified. Its contract is designed to close the largest gaps in
+Phase 92 now implements the evidence-backed Episode and resumable workstream adaptation described
+below without weakening Phase 85's authority. Together their contracts close the largest gaps in
 Slate's public model:
 per-output lineage, exact harness/model/effort roles, separately approved successor Plans,
 selective retry generations, replay-safe cleanup, authenticated transport parity, and exact
-stop/reap. Slate should influence Baton's outer surface and later Program IR, not weaken these
-invariants.
+stop/reap. Slate now influences Baton's outer surface; the closed Program IR and dynamic runtime
+remain the Phase 93 continuation and must not weaken these invariants.
 
 ## Evidence boundary
 
@@ -299,6 +300,10 @@ temporal work and evidence. The knowledge graph should join them through edges s
 
 ### Stage A — evidence-backed Episode projection
 
+**Phase 92 status: implemented.** Episode is a read-only projection with addressable chapters,
+progressive continuation, exact role/generation attribution, temporal/structural evidence edges,
+and aggregate-only selected-result authority. Its summaries cannot grant acceptance or cleanup.
+
 Complete Phase 85 per-output source lineage, provider derivations, terminal settlements, and
 selective retry first. Then expose an Episode as a deterministic read model, not another mutable
 store:
@@ -320,6 +325,11 @@ never grant completion, selection, integration, or retry authority.
 
 ### Stage B — resumable workstream handle
 
+**Phase 92 status: implemented as the generation-stable substrate.** List/open/notify/result/
+episode/stop/help are projected across direct, CLI, authenticated Web, MCP, and browser. Historical
+generations remain readable; current generation is rechecked for notify/stop. This does not imply
+provider-process continuity.
+
 Add one logical workstream abstraction across immutable action generations:
 
 ```python
@@ -336,6 +346,9 @@ process or hidden context survived. `stop` must use Baton's transitive ownership
 zero remaining resources before the handle becomes stopped.
 
 ### Stage C — closed Program IR and familiar builders
+
+**Phase 93 next.** Workstreams are the substrate; arbitrary TypeScript, Python, shell, callbacks,
+ambient imports, and shared mutable checkout writes remain closed.
 
 Do not initially execute arbitrary TypeScript, Python, shell, callbacks, or ambient imports.
 Provide Pythonic and TypeScript builders that compile to one canonical content-addressed Baton

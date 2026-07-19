@@ -178,8 +178,9 @@ export {
   KIMI_CREDENTIAL_HELP, promptAndInstallKimiCredential, readHiddenKimiCredential,
 } from './kimi-credential-setup.mjs';
 export {
-  BatonClient, BatonContextCall, BatonContextCell, BatonContextExpression, BatonRun,
-  BatonRunContext, BatonRunGroup, BatonRuns, bindBaton, bindBatonPort,
+  BatonClient, BatonContextCall, BatonContextCell, BatonContextExpression, BatonEpisode,
+  BatonRun, BatonRunContext, BatonRunGroup, BatonRuns, BatonWorkstream, BatonWorkstreams,
+  bindBaton, bindBatonPort,
 } from './application-client.mjs';
 export { BatonWebHost, SignalLifecycleOwner } from './application-host.mjs';
 export { HttpsHmacAdvisoryFeedSource, signHmacAdvisoryPollPageForTest } from './https-hmac-advisory-feed.mjs';
@@ -806,8 +807,8 @@ export function createDriver(opts) {
   }
   const coordination = opts.coordination ?? new CoordinationStore(join(opts.logDir, 'coordination'), {
     repoId: deploymentRepoId,
-    operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
-    operationalRangeRead: (worker, throughSeq) => log.read(worker).filter((event) => event.seq <= throughSeq),
+    operationalRead: (worker, seq) => log.at(worker, seq),
+    operationalRangeRead: (worker, throughSeq) => log.range(worker, throughSeq),
     clock: () => new Date(now()).toISOString(),
     advisoryFeedCards,
     advisoryReceiptReverify: (receipt) => advisoryFeeds.reverifyReceiptSync(receipt),

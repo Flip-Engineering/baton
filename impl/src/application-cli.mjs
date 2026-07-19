@@ -24,6 +24,11 @@ const TERMINAL_RUN_PHASES = new Set(['work_completed', 'completed', 'failed', 'c
 const CONNECTION_ENV = Object.freeze(['BATON_URL', 'BATON_ORIGIN', 'BATON_REPO_ID', 'BATON_TOKEN']);
 const DEFAULT_APPLICATION_WAIT_MS = 30_000;
 const WEB_WAIT_TRANSPORT_SLACK_MS = 15_000;
+const RESIDENT_PROFILE_FIELDS = Object.freeze([
+  'schemaVersion', 'transport', 'socketPath', 'url', 'origin', 'tokenFile', 'deploymentId',
+  'incarnation', 'registryDigest', 'startedAt',
+]);
+const RESIDENT_PROFILE_OWNER_FIELDS = Object.freeze(['ownerPid', 'ownerPidStart']);
 
 function cliError(message, code = 'cli_invalid') { return Object.assign(new Error(message), { code }); }
 function record(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
@@ -32,6 +37,18 @@ function exactKeys(value, keys, label) {
   if (!record(value) || Object.keys(value).sort().join('\0') !== [...keys].sort().join('\0')) {
     throw cliError(`${label} has unknown or missing fields`, 'cli_config_invalid');
   }
+}
+function residentProfileKeys(value) {
+  const ownerFields = RESIDENT_PROFILE_OWNER_FIELDS.filter((field) => Object.hasOwn(value ?? {}, field));
+  return ownerFields.length === RESIDENT_PROFILE_OWNER_FIELDS.length
+    ? [...RESIDENT_PROFILE_FIELDS, ...RESIDENT_PROFILE_OWNER_FIELDS]
+    : RESIDENT_PROFILE_FIELDS;
+}
+function residentProfileOwnerValid(value) {
+  const fields = RESIDENT_PROFILE_OWNER_FIELDS.filter((field) => Object.hasOwn(value ?? {}, field));
+  return fields.length === 0 || (fields.length === RESIDENT_PROFILE_OWNER_FIELDS.length
+    && Number.isSafeInteger(value.ownerPid) && value.ownerPid > 0
+    && nonempty(value.ownerPidStart) && Buffer.byteLength(value.ownerPidStart) <= 256);
 }
 function take(args, name, { required = false } = {}) {
   const index = args.indexOf(name);
@@ -210,11 +227,12 @@ export function discoverBatonConnection({
   const profilePath = join(configRoot, 'baton', 'connections', `${repository.profile}.json`);
   const profile = readConnectionJson(profilePath, 'user connection profile', { ownerOnly: true, ownerUid });
   exactKeys(profile, resident
-    ? ['schemaVersion', 'transport', 'socketPath', 'url', 'origin', 'tokenFile', 'deploymentId', 'incarnation', 'registryDigest', 'startedAt']
+    ? residentProfileKeys(profile)
     : ['schemaVersion', 'url', 'origin', 'tokenFile'], 'user connection profile');
   if (profile.schemaVersion !== repository.schemaVersion || !nonempty(profile.url)
     || !nonempty(profile.origin) || !nonempty(profile.tokenFile)
-    || (resident && (profile.transport !== 'local' || !isAbsolute(profile.socketPath)
+    || (resident && (!residentProfileOwnerValid(profile)
+      || profile.transport !== 'local' || !isAbsolute(profile.socketPath)
       || profile.socketPath.includes('\0') || Buffer.byteLength(profile.socketPath) > 103
       || profile.deploymentId !== repository.deploymentId
       || profile.incarnation !== repository.incarnation
@@ -504,11 +522,12 @@ export function inspectBatonConnection({
   try {
     profile = readConnectionJson(profilePath, 'user connection profile', { ownerOnly: true, ownerUid });
     exactKeys(profile, resident
-      ? ['schemaVersion', 'transport', 'socketPath', 'url', 'origin', 'tokenFile', 'deploymentId', 'incarnation', 'registryDigest', 'startedAt']
+      ? residentProfileKeys(profile)
       : ['schemaVersion', 'url', 'origin', 'tokenFile'], 'user connection profile');
     if (profile.schemaVersion !== repository.schemaVersion || !nonempty(profile.url)
       || !nonempty(profile.origin) || !nonempty(profile.tokenFile)
-      || (resident && (profile.transport !== 'local' || !isAbsolute(profile.socketPath)
+      || (resident && (!residentProfileOwnerValid(profile)
+        || profile.transport !== 'local' || !isAbsolute(profile.socketPath)
         || profile.socketPath.includes('\0') || Buffer.byteLength(profile.socketPath) > 103
         || profile.deploymentId !== repository.deploymentId
         || profile.incarnation !== repository.incarnation
@@ -523,6 +542,39 @@ export function inspectBatonConnection({
       next: Object.freeze([{ action: 'setup', command: 'baton setup' }]),
       ...(depth === 'connection' || depth === 'profile' ? { connection: Object.freeze({ profile: repository.profile, repoId: repository.repoId }) } : {}),
     });
+  }
+  if (resident) {
+    let socketState = 'absent';
+    try {
+      const socket = lstatSync(profile.socketPath);
+      socketState = socket.isSocket() && !socket.isSymbolicLink()
+        && (socket.mode & 0o077) === 0
+        && (ownerUid === null || !Number.isInteger(socket.uid) || socket.uid === ownerUid)
+        ? 'ready' : 'unsafe';
+    } catch (error) {
+      if (error?.code !== 'ENOENT') socketState = 'unsafe';
+    }
+    if (socketState !== 'ready') {
+      return Object.freeze({
+        schemaVersion: 1, state: socketState === 'absent' ? 'stale' : 'needs_setup', depth,
+        outline: Object.freeze({
+          repository: 'ready', connection: socketState === 'absent' ? 'stale_authority' : 'invalid',
+          profile: 'ready', credential: 'not_read',
+          remote: socketState === 'absent' ? 'absent' : 'not_checked',
+        }),
+        ...(depth === 'connection' || depth === 'profile' ? { connection: Object.freeze({
+          profile: repository.profile, repoId: repository.repoId, origin: profile.origin,
+          transport: 'local', deploymentId: repository.deploymentId,
+          incarnation: repository.incarnation,
+        }) } : {}),
+        ...(depth === 'evidence' ? { evidence: Object.freeze({
+          selector: 'valid', profile: 'valid', credential: 'not_opened',
+          remote: socketState === 'absent' ? 'socket_absent' : 'socket_unsafe',
+        }) } : {}),
+        next: Object.freeze([{ action: socketState === 'absent' ? 'recover' : 'repair_setup',
+          command: socketState === 'absent' ? 'baton serve' : 'baton setup' }]),
+      });
+    }
   }
   return Object.freeze({
     schemaVersion: 1, state: 'configured', depth,
@@ -1059,11 +1111,78 @@ export function parseBatonCli(rawArgs) {
     return parseStart(args, args.shift(), idempotencyKey);
   }
   const lifecycleActions = new Set(['show', 'do', 'recover', 'status', 'approve', 'answer', 'steer',
-    'send', 'interrupt', 'progress', 'events', 'output',
+    'send', 'interrupt', 'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result',
     'stop', 'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member',
     'retry', 'review', 'integrate', 'export']);
   if (!lifecycleActions.has(action)) return parseStart(args, action, idempotencyKey);
   const runId = id(args.shift(), 'Run ID');
+  if (action === 'episode' || action === 'result') {
+    const topic = action === 'result' ? 'result'
+      : args[0] && !args[0].startsWith('--') ? args.shift() : 'outline';
+    const role = take(args, '--workstream');
+    const rawGeneration = take(args, '--generation');
+    const pageCursor = take(args, '--page-cursor');
+    const rawCursor = take(args, '--cursor');
+    const rawWait = take(args, '--wait');
+    const evidence = flag(args, '--evidence');
+    const content = flag(args, '--content');
+    noRemainder(args);
+    if (!id(topic, 'Episode topic') || (role !== null && !id(role, 'workstream role'))
+      || evidence && content) throw cliError('Episode selector is invalid');
+    const generation = rawGeneration === null ? null : Number(rawGeneration);
+    const cursor = rawCursor === null ? null : Number(rawCursor);
+    if ((generation !== null && (!Number.isSafeInteger(generation) || generation < 1))
+      || (cursor !== null && (!Number.isSafeInteger(cursor) || cursor < 0))
+      || (rawWait !== null && cursor === null)) throw cliError('Episode continuation is invalid');
+    const detail = evidence ? 'evidence' : content ? 'content'
+      : topic === 'output' ? 'content' : 'item';
+    return {
+      kind: 'command', name: 'run.episode', args: {
+        runId, topic, ...(role === null ? {} : { role }),
+        ...(generation === null ? {} : { generation }), detail,
+        ...(pageCursor === null ? {} : { pageCursor }),
+        ...(cursor === null ? {} : { cursor }),
+        ...(rawWait === null ? {} : { waitMs: duration(rawWait) }),
+      }, idempotencyKey,
+    };
+  }
+  if (action === 'workstreams') {
+    const role = args[0] && !args[0].startsWith('--') ? args.shift() : null;
+    const rawGeneration = take(args, '--generation');
+    const rawCursor = take(args, '--cursor');
+    const rawWait = take(args, '--wait');
+    noRemainder(args);
+    const generation = rawGeneration === null ? null : Number(rawGeneration);
+    const cursor = rawCursor === null ? null : Number(rawCursor);
+    if ((role !== null && !id(role, 'workstream role'))
+      || (generation !== null && (!Number.isSafeInteger(generation) || generation < 1))
+      || (generation !== null && role === null)
+      || (cursor !== null && (!Number.isSafeInteger(cursor) || cursor < 0))
+      || (rawWait !== null && cursor === null)) throw cliError('workstream selector is invalid');
+    return { kind: 'command', name: 'run.workstreams', args: {
+      runId, ...(role === null ? {} : { role }),
+      ...(generation === null ? {} : { generation }),
+      ...(cursor === null ? {} : { cursor }),
+      ...(rawWait === null ? {} : { waitMs: duration(rawWait) }),
+    }, idempotencyKey };
+  }
+  if (action === 'notify') {
+    const role = id(args.shift(), 'workstream role');
+    const message = args.shift();
+    const rawGeneration = take(args, '--generation');
+    const modes = [['--nudge', 'nudge'], ['--now', 'now'], ['--turn', 'turn']]
+      .filter(([name]) => flag(args, name));
+    noRemainder(args);
+    const generation = rawGeneration === null ? null : Number(rawGeneration);
+    if (!nonempty(message) || modes.length > 1
+      || (generation !== null && (!Number.isSafeInteger(generation) || generation < 1))) {
+      throw cliError('workstream notification is invalid');
+    }
+    return { kind: 'command', name: 'run.workstream.notify', args: {
+      runId, role, message, delivery: modes[0]?.[1] ?? 'nudge',
+      ...(generation === null ? {} : { generation }),
+    }, idempotencyKey };
+  }
   if (['progress', 'events', 'output'].includes(action)) {
     const follow = flag(args, '--follow');
     const recipient = action === 'output' ? take(args, '--to') : null;
@@ -1187,7 +1306,7 @@ export function parseBatonCli(rawArgs) {
     return { kind: 'command', name: 'run.steer', args: { runId, target, mode: modes[0][1], message, reason }, idempotencyKey };
   }
   if (action === 'stop') {
-    const reason = take(args, '--reason', { required: true }); noRemainder(args);
+    const reason = take(args, '--reason') ?? 'Operator requested Run stop.'; noRemainder(args);
     return { kind: 'command', name: 'run.stop', args: { runId, reason }, idempotencyKey };
   }
   if (action === 'evidence') { noRemainder(args); return { kind: 'command', name: 'run.evidence', args: { runId }, idempotencyKey }; }
@@ -1220,10 +1339,18 @@ export function parseBatonCli(rawArgs) {
   }
   if (action === 'stop-member') {
     const role = id(args.shift(), 'Workflow role');
-    const reason = take(args, '--reason', { required: true }); noRemainder(args);
+    const rawGeneration = take(args, '--generation');
+    const reason = take(args, '--reason'); noRemainder(args);
+    const generation = rawGeneration === null ? null : Number(rawGeneration);
+    if (generation !== null && (!Number.isSafeInteger(generation) || generation < 1)) {
+      throw cliError('workstream generation is invalid');
+    }
     return {
-      kind: 'semantic-action', actionKind: 'stop_member', runId,
-      inputs: { role, reason }, idempotencyKey,
+      kind: 'command', name: 'run.workstream.stop',
+      args: {
+        runId, role, ...(generation === null ? {} : { generation }),
+        ...(reason === null ? {} : { reason }),
+      }, idempotencyKey,
     };
   }
   if (action === 'retry') {

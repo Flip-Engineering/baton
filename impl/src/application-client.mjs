@@ -646,6 +646,140 @@ export class BatonRunContext {
   }
 }
 
+const EPISODE_TOPICS = Object.freeze([
+  'outline', 'output', 'sources', 'derivations', 'contradictions', 'trace', 'route',
+  'verification', 'result', 'cleanup', 'help',
+]);
+
+export class BatonEpisode {
+  #run;
+  #role;
+  #generation;
+
+  constructor(run, role = null, generation = null) {
+    if (!(run instanceof BatonRun) || (role !== null && !nonempty(role))
+      || (generation !== null && (!Number.isSafeInteger(generation) || generation < 1))
+      || (generation !== null && role === null)) {
+      throw clientError('Episode handle is invalid');
+    }
+    this.#run = run;
+    this.#role = role;
+    this.#generation = generation;
+    Object.freeze(this);
+  }
+
+  #item(topic) {
+    if (!EPISODE_TOPICS.includes(topic)) throw clientError('Episode topic is invalid');
+    return `episode:${topic}${this.#role === null ? '' : `:${this.#role}`}`
+      + `${this.#generation === null ? '' : `:g${this.#generation}`}`;
+  }
+
+  #read(topic, options = {}, defaultDetail = 'item') {
+    exactOptions(options, new Set(['detail', 'pageCursor', 'cursor', 'waitMs']), 'Episode read');
+    const detail = options.detail ?? defaultDetail;
+    if (!['item', 'content', 'evidence'].includes(detail)
+      || (options.pageCursor !== undefined && !nonempty(options.pageCursor))
+      || (options.cursor !== undefined && (!Number.isSafeInteger(options.cursor) || options.cursor < 0))
+      || (options.waitMs !== undefined && (!Number.isSafeInteger(options.waitMs) || options.waitMs <= 0))) {
+      throw clientError('Episode progressive read is invalid');
+    }
+    return this.#run._command('run.episode', {
+      runId: this.#run.id, topic, detail,
+      ...(this.#role === null ? {} : { role: this.#role }),
+      ...(this.#generation === null ? {} : { generation: this.#generation }),
+      ...(options.pageCursor === undefined ? {} : { pageCursor: options.pageCursor }),
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      ...(options.waitMs === undefined ? {} : { waitMs: options.waitMs }),
+    });
+  }
+
+  outline(options) { return this.#read('outline', options); }
+  output(options) { return this.#read('output', options, 'content'); }
+  sources(options) { return this.#read('sources', options); }
+  derivations(options) { return this.#read('derivations', options); }
+  contradictions(options) { return this.#read('contradictions', options); }
+  trace(options) { return this.#read('trace', options); }
+  route(options) { return this.#read('route', options); }
+  verification(options) { return this.#read('verification', options); }
+  result(options) { return this.#read('result', options); }
+  cleanup(options) { return this.#read('cleanup', options); }
+  help(options) { return this.#read('help', options); }
+}
+
+export class BatonWorkstream {
+  #run;
+
+  constructor(run, role, generation = null) {
+    if (!(run instanceof BatonRun) || !nonempty(role)
+      || (generation !== null && (!Number.isSafeInteger(generation) || generation < 1))) {
+      throw clientError('Workstream handle is invalid');
+    }
+    this.#run = run;
+    this.role = role;
+    this.generation = generation;
+    this.id = `workstream:${role}${generation === null ? '' : `:g${generation}`}`;
+    Object.freeze(this);
+  }
+
+  open(options = {}) {
+    exactOptions(options, new Set(['cursor', 'waitMs']), 'workstream open');
+    return this.#run._command('run.workstreams', {
+      runId: this.#run.id, role: this.role,
+      ...(this.generation === null ? {} : { generation: this.generation }),
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      ...(options.waitMs === undefined ? {} : { waitMs: options.waitMs }),
+    });
+  }
+
+  notify(message, options = {}) {
+    exactOptions(options, new Set(['delivery']), 'workstream notify');
+    return this.#run._command('run.workstream.notify', {
+      runId: this.#run.id, role: this.role, message,
+      ...(this.generation === null ? {} : { generation: this.generation }),
+      ...(options.delivery === undefined ? {} : { delivery: options.delivery }),
+    });
+  }
+
+  result() { return this.episode().result(); }
+
+  episode() { return new BatonEpisode(this.#run, this.role, this.generation); }
+
+  stop(reason = this.role === 'work'
+    ? 'Operator requested Run stop.'
+    : `Stop and reap the ${this.role} workstream.`) {
+    if (!nonempty(reason)) throw clientError('Workstream stop reason is invalid');
+    return this.#run._command('run.workstream.stop', {
+      runId: this.#run.id, role: this.role, reason,
+      ...(this.generation === null ? {} : { generation: this.generation }),
+    });
+  }
+
+  help(depth = 'outline') { return this.#run.help('run.workstreams', depth); }
+}
+
+export class BatonWorkstreams {
+  #run;
+
+  constructor(run) {
+    if (!(run instanceof BatonRun)) throw clientError('Workstream collection is invalid');
+    this.#run = run;
+    Object.freeze(this);
+  }
+
+  list(options = {}) {
+    exactOptions(options, new Set(['cursor', 'waitMs']), 'workstream list');
+    return this.#run._command('run.workstreams', {
+      runId: this.#run.id,
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      ...(options.waitMs === undefined ? {} : { waitMs: options.waitMs }),
+    });
+  }
+
+  open(role, generation = null) { return new BatonWorkstream(this.#run, role, generation); }
+
+  help(depth = 'outline') { return this.#run.help('run.workstreams', depth); }
+}
+
 export class BatonRun {
   #application;
   #last;
@@ -686,6 +820,11 @@ export class BatonRun {
     return this.#last;
   }
 
+  async _command(name, args) {
+    this.#last = await this.#application.command(name, args);
+    return this.#last;
+  }
+
   outline() { return this.inspect({ depth: 'outline' }); }
 
   index() { return this.inspect({ depth: 'index' }); }
@@ -693,6 +832,10 @@ export class BatonRun {
   members() { return this.inspect({ depth: 'section', section: 'execution' }); }
 
   context() { return new BatonRunContext(this); }
+
+  workstreams() { return new BatonWorkstreams(this); }
+
+  episode() { return new BatonEpisode(this); }
 
   async help(topic = this.helpTopic, depth = 'outline') {
     if (!nonempty(topic)

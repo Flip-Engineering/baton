@@ -874,7 +874,9 @@ export class CodexAppServerCli {
         reason: `expected native thread ${opts.session.id}, observed ${session.threadId ?? '(none)'}`,
       };
     }
-    session.modelObserved = threadResult.model ?? session.modelRequested;
+    // Requested and resolved route authority is not provider observation. When app-server omits
+    // the model field, preserve that absence instead of manufacturing native testimony.
+    session.modelObserved = threadResult.model ?? null;
     let workerPolicyObserved = null;
     if (opts.workerPolicy) {
       try {

@@ -24,6 +24,14 @@ const FENCE_REQUIRED = new Set(['send', 'interrupt', 'kill']);
 const RECONCILABLE = new Set(['goal_define', 'plan_propose', 'plan_approve',
   ...WEB_APPLICATION_ENTRIES.filter(([, , definition]) => definition.reconcilable).map(([transport]) => transport)]);
 const GOAL_PLAN_MUTATIONS = new Set(['goal_define', 'plan_propose', 'plan_approve']);
+const READ_ONLY_COMMANDS = new Set([
+  'list', 'result', 'wait', 'capabilities', 'provider_status', 'goal_plan_status',
+  ...WEB_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful === false)
+    .map(([transport]) => transport),
+]);
+const BOUNDED_OBSERVATION_AUDITS = new Set([
+  'command_replayed', 'action_authority_read', 'operator_read_authorized',
+]);
 const TOP_LEVEL = new Set(['schemaVersion', 'commandId', 'idempotencyKey', 'command', 'args', 'repoId', 'runId', 'expectedFence', 'origin', 'clientObservedCursor']);
 const ARG_FIELDS = Object.freeze({
   spawn: new Set(['harness', 'model', 'effort', 'modelPolicy', 'brief', 'taskId', 'deps', 'taskType', 'session', 'refines', 'goalPlan']),
@@ -449,6 +457,14 @@ export class WebNorthbound {
     this.maxBodyBytes = opts.maxBodyBytes ?? 64 * 1024;
     this._drainDispatches = new Map();
     this._applicationDispatches = new Map();
+    this.maxObservationCommands = opts.maxObservationCommands ?? 1_024;
+    this.maxObservationAudits = opts.maxObservationAudits ?? 512;
+    if (!Number.isSafeInteger(this.maxObservationCommands) || this.maxObservationCommands <= 0
+      || !Number.isSafeInteger(this.maxObservationAudits) || this.maxObservationAudits <= 0) {
+      throw new TypeError('Web observation bounds must be positive safe integers');
+    }
+    this._observationCommands = new Map();
+    this._observationAudits = [];
     this.edge = opts.edge ?? (opts.edgePolicy ? new WebEdgePolicy(opts.edgePolicy) : null);
     this.admitting = true;
     this.readinessChecks = opts.readinessChecks ?? [];
@@ -467,12 +483,20 @@ export class WebNorthbound {
   _audit(kind, ctx, details = {}) {
     const principal = ctx?.principal;
     const auditActor = principal ? actor(principal) : 'web:anonymous';
-    return this.coordination.recordWebAudit({
+    const entry = {
       kind, userId: principal?.userId ?? null, sessionId: principal?.sessionId ?? null,
       credentialDigest: principal?.credentialId && this.edge ? this.edge.digest(`credential:${principal.credentialId}`) : null,
       originClass: ctx?.origin == null ? 'missing' : this.allowedOrigins.has(ctx.origin) ? 'allowed' : 'disallowed',
       remoteAddressClass: ctx?.remoteAddress ? 'present' : 'absent', addressDigest: ctx?.addressDigest ?? null, ...json(details),
-    }, { actor: auditActor, key: `web.audit:${randomUUID()}` });
+    };
+    if (BOUNDED_OBSERVATION_AUDITS.has(kind)) {
+      this._observationAudits.push(Object.freeze({ ...entry, actor: auditActor }));
+      if (this._observationAudits.length > this.maxObservationAudits) this._observationAudits.shift();
+      return Object.freeze({ schemaVersion: 1, storage: 'bounded_memory' });
+    }
+    return this.coordination.recordWebAudit(entry, {
+      actor: auditActor, key: `web.audit:${randomUUID()}`,
+    });
   }
 
   _authenticate(ctx) {
@@ -533,6 +557,66 @@ export class WebNorthbound {
   _postWaitAuthorization(ctx, envelope) {
     if (!['run_follow', 'run_wait'].includes(envelope.command)) return null;
     return this._authenticate(ctx) ?? this._authorize(ctx, envelope);
+  }
+
+  _rememberObservation(scopeKey, entry) {
+    if (!this._observationCommands.has(scopeKey)
+      && this._observationCommands.size >= this.maxObservationCommands) {
+      this._observationCommands.delete(this._observationCommands.keys().next().value);
+    }
+    this._observationCommands.set(scopeKey, entry);
+  }
+
+  async _authorizeObservationReplay(ctx, envelope, webActor) {
+    if (!APPLICATION_COMMAND[envelope.command]) return null;
+    try {
+      await this.application.authorizeReplay(APPLICATION_COMMAND[envelope.command], envelope.args, {
+        actor: webActor, principalId: ctx.principal.userId, sessionId: ctx.principal.sessionId,
+      }, {
+        transport: 'web', requestId: String(envelope.commandId),
+        idempotencyKey: `web.observation:${envelope.commandId}`,
+      });
+      return null;
+    } catch (cause) {
+      const failure = dispatchFailure(cause);
+      return result(failure.httpStatus, failure.body);
+    }
+  }
+
+  async _executeObservation(ctx, envelope, webActor, scopeKey, requestDigest) {
+    let observation = this._observationCommands.get(scopeKey) ?? null;
+    const replay = observation !== null;
+    if (observation && observation.requestDigest !== requestDigest) {
+      try {
+        this._audit('idempotency_refused', ctx, {
+          command: envelope.command, repoId: envelope.repoId, reason: 'idempotency_conflict',
+        });
+      } catch { return error(503, 'temporarily_unavailable'); }
+      return error(409, 'idempotency_conflict');
+    }
+    if (!observation) {
+      const pending = Promise.resolve().then(() => this._dispatch(
+        envelope, webActor, ctx.principal,
+      ));
+      observation = { requestDigest, pending, response: null };
+      this._rememberObservation(scopeKey, observation);
+      void pending.then(
+        (response) => { observation.response = response; },
+        () => { if (this._observationCommands.get(scopeKey) === observation) this._observationCommands.delete(scopeKey); },
+      );
+    } else if (observation.response !== null) {
+      const replayFailure = await this._authorizeObservationReplay(ctx, envelope, webActor);
+      if (replayFailure) return replayFailure;
+    }
+    let response;
+    try { response = observation.response ?? await observation.pending; }
+    catch (cause) {
+      const failure = dispatchFailure(cause);
+      return result(failure.httpStatus, failure.body);
+    }
+    const postAuthorizationFailure = this._postWaitAuthorization(ctx, envelope);
+    if (postAuthorizationFailure) return postAuthorizationFailure;
+    return replay ? { ...response, body: { ...response.body, replayed: true } } : response;
   }
 
   async execute(ctx, envelope) {
@@ -597,6 +681,10 @@ export class WebNorthbound {
         try { this._audit('quota_refused', ctx, { quota: quota.quota }); } catch { return error(503, 'temporarily_unavailable'); }
         return { ...error(429, 'rate_limited'), headers: { 'retry-after': String(quota.retryAfter) } };
       }
+    }
+
+    if (READ_ONLY_COMMANDS.has(envelope.command)) {
+      return this._executeObservation(ctx, envelope, webActor, scopeKey, requestDigest);
     }
 
     let admission;

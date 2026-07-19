@@ -267,7 +267,7 @@ function safeFrame(runId, coordination, kind, at, payload, recipient = null) {
 
 function timelineFrames({
   runId, events, snapshot, includeOutput, maxFragmentBytes, resolveOperational,
-  recipient: recipientFilter,
+  recipient: recipientFilter, taskIds: taskFilter,
 }) {
   const maps = taskMaps(snapshot);
   const frames = [];
@@ -289,6 +289,7 @@ function timelineFrames({
       const belongs = operational.runId !== null && operational.runId !== undefined
         ? operational.runId === runId : taskRun(task) === runId;
       if (!belongs) continue;
+      if (taskFilter !== null && (!task?.id || !taskFilter.has(task.id))) continue;
       const recipient = taskRecipient(task);
       if (includeOutput) {
         if (operational.kind !== 'content.message' || typeof operational.payload?.text !== 'string') continue;
@@ -326,7 +327,7 @@ function timelineFrames({
 export function projectRunTimelinePage({
   runId, events, snapshot, cursor = null, limit = 100, maxBytes = 64 * 1024,
   includeOutput = false, recipient = null, maxFragmentBytes = 4_096,
-  resolveOperational = null,
+  resolveOperational = null, taskIds = null,
 }) {
   if (!validId(runId) || !Array.isArray(events) || !snapshot || typeof snapshot !== 'object'
     || !Number.isSafeInteger(limit) || limit <= 0 || limit > 10_000
@@ -335,6 +336,8 @@ export function projectRunTimelinePage({
     || maxFragmentBytes > Math.max(256, maxBytes - 1_024)
     || typeof includeOutput !== 'boolean'
     || (recipient !== null && !validId(recipient)) || (!includeOutput && recipient !== null)
+    || (taskIds !== null && (!Array.isArray(taskIds) || taskIds.length === 0
+      || taskIds.some((taskId) => !validId(taskId)) || new Set(taskIds).size !== taskIds.length))
     || (resolveOperational !== null && typeof resolveOperational !== 'function')) {
     throw new RunTimelineError('Run timeline projection options are invalid');
   }
@@ -344,9 +347,12 @@ export function projectRunTimelinePage({
         'run_timeline_ledger_gap');
     }
   }
-  const mode = includeOutput ? `output:${recipient ?? '*'}` : 'events';
+  const taskFilter = taskIds === null ? null : new Set([...taskIds].sort());
+  const mode = includeOutput
+    ? `output:${recipient ?? '*'}:${taskIds === null ? '*' : digest([...taskFilter])}` : 'events';
   const frames = timelineFrames({
     runId, events, snapshot, includeOutput, maxFragmentBytes, resolveOperational, recipient,
+    taskIds: taskFilter,
   });
   const start = decodeCursor(cursor, runId, mode, frames);
   const items = [];

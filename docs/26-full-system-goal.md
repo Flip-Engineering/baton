@@ -1374,11 +1374,29 @@ This ledger is the current execution tracker layered over the retained catalog a
   [GitHub #2](https://github.com/wahargis/baton/issues/2#issuecomment-5012736166).
   Executable review/verify, custom syntax, persistent kernels, and deeper recursion remain
   closed until their independence/gate authorities exist; they are not silently claimed or erased.
+- **Phase 92 — Episode/workstream facade and resident trust/liveness closure green:**
+  `spec/phase92-episode-workstream-facade.md` projects one progressive Episode/workstream surface
+  through direct API, selector-free CLI, authenticated Web, MCP, and browser. Aggregate and exact
+  role/generation Episodes retain separate result, artifact, route, verification, and cleanup
+  truth; pending result is explicit; help and continuation are closed. Temporal Run/Plan/Attempt/
+  Context evidence joins Atlas and Cairn through immutable evidence-bearing edges. Replay uses
+  append-aware one-parse-per-byte worker indexes and parsed-event checkpoints that still execute
+  every current replay validator; a checkpoint cannot bless ledger drift or block writer-lease
+  release. Ordinary reads do not amplify the ledger, while readiness/status security audits remain
+  durable. Stale resident replacement is deployment/PID-start exact, serve construction is unified,
+  false verifier verdicts cannot accept, read-only reviews can settle without edits, and route
+  readiness explains blocked Kimi/Grok/Claude/Kimi-through-Claude states. Built-in GLM exposes only
+  `glm-5.2` with exact selectable `low`, `medium`, `high`, `xhigh`, and `max`; `xhigh` remains an
+  explicit dogfood choice and provider-omitted Codex model observation remains null. The complete
+  deterministic implementation suite is green at 2,302/2,302. Fixtures are not live-provider or
+  real-PID proof.
 - **Retained next systems:** the evidence-backed Episode/workstream/closed-Program-IR assessment in
   `docs/29-slate-architecture-assessment.md` complements rather than replaces Context, Atlas,
   Cairn, stop/reap, and Web authority. Adapter identity/capability metadata, authenticated bidirectional Kimi
   control, AST/CST/SCIP/CPG and semantic-delta precision, shared causal knowledge graph, Web control
   depth, Vantage/Evidence/Scratch/Skill Forge, evaluations, and the rest of this catalog remain
-  tracked. No homelab integration is included.
+  tracked. Phase 93 next preserves this sequence: closed Program IR; event-driven recursive/
+  parallel composition; immutable base plus private overlays; one fenced integrator; live
+  multi-harness gates. No homelab integration is included.
 
 No later step is permission to erase it from the goal.

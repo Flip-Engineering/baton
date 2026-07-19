@@ -82,12 +82,12 @@ function inspectDeployment({ credential, attemptRun = false }) {
   }
 }
 
-function credential(expiresAt) {
+function credential(expiresAt, { refreshable = true } = {}) {
   return `${JSON.stringify({
     'https://auth.x.ai::fixture-team': {
       auth_mode: 'oidc',
       key: 'fixture-access-token-must-never-be-public',
-      refresh_token: 'fixture-refresh-token-must-never-be-public',
+      ...(refreshable ? { refresh_token: 'fixture-refresh-token-must-never-be-public' } : {}),
       expires_at: expiresAt,
     },
   })}\n`;
@@ -96,7 +96,7 @@ function credential(expiresAt) {
 test('GR1: expired Grok auth is auth-red before spawn with sanitized login guidance', () => {
   const expired = new Date(Date.now() - 60_000).toISOString();
   const { observed, spawned, home } = inspectDeployment({
-    credential: credential(expired),
+    credential: credential(expired, { refreshable: false }),
     attemptRun: true,
   });
   const routes = observed.doctor.routes.filter((candidate) => candidate.harness === 'grok');
@@ -122,7 +122,7 @@ test('GR1: expired Grok auth is auth-red before spawn with sanitized login guida
 test('GR2: near-expiry Grok auth matches the CLI early-invalidation window', () => {
   const nearExpiry = new Date(Date.now() + (4 * 60 * 1000)).toISOString();
   const { observed, spawned } = inspectDeployment({
-    credential: credential(nearExpiry),
+    credential: credential(nearExpiry, { refreshable: false }),
     attemptRun: true,
   });
   const route = observed.doctor.routes.find((candidate) => candidate.harness === 'grok');
@@ -178,4 +178,19 @@ test('GR5: oversized Grok auth metadata is refused by the bounded static reader'
   assert.equal(route?.state, 'blocked');
   assert.equal(route?.code, 'authentication_metadata_invalid');
   assert.equal(spawned, false);
+});
+
+test('P92-GR6: an expired access token with a bounded refresh token remains statically refreshable', () => {
+  const expired = new Date(Date.now() - 60_000).toISOString();
+  const { observed, spawned, home } = inspectDeployment({ credential: credential(expired) });
+  const routes = observed.doctor.routes.filter((candidate) => candidate.harness === 'grok');
+
+  assert.equal(routes.length, 3);
+  for (const route of routes) {
+    assert.equal(route.state, 'ready');
+    assert.equal(route.runtime.authentication.state, 'refreshable');
+  }
+  assert.equal(spawned, false, 'readiness does not spend the refresh token or launch Grok');
+  assert.equal(JSON.stringify(observed).includes('fixture-refresh-token'), false);
+  assert.equal(JSON.stringify(observed).includes(home), false);
 });

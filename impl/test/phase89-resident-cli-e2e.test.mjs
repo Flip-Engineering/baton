@@ -84,3 +84,41 @@ test('RLC1: baton serve is zero-assembly, connectable, signal-closeable, and sec
   assert.equal(stderr.includes(token), false);
   assert.match(stderr, /"state":"closed"/u);
 });
+
+test('P92-RLC2: CONFIG_MODULE accepts the same public deployment factory as ordinary serve', async (t) => {
+  const repo = repository(t);
+  const home = mkdtempSync('/tmp/bt92-serve-home-');
+  const configRoot = mkdtempSync('/tmp/bt92-serve-config-');
+  const moduleRoot = mkdtempSync('/tmp/bt92-serve-module-');
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  t.after(() => rmSync(configRoot, { recursive: true, force: true }));
+  t.after(() => rmSync(moduleRoot, { recursive: true, force: true }));
+  const modulePath = join(moduleRoot, 'deployment.mjs');
+  const indexUrl = new URL('../src/index.mjs', import.meta.url).href;
+  writeFileSync(modulePath, [
+    `import { openBaton } from ${JSON.stringify(indexUrl)};`,
+    'export const createBatonDeployment = () => openBaton({ repo: process.cwd() });',
+    '',
+  ].join('\n'));
+  const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: configRoot };
+  const child = spawn(process.execPath, [SCRIPT, 'serve', modulePath], {
+    cwd: repo, env, stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
+  t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
+  const selectorPath = join(repo, '.git', 'baton', 'connection.json');
+  try {
+    await until(() => existsSync(selectorPath) && stderr.includes('"state":"published"'),
+      'configured deployment publication');
+  } catch (error) {
+    throw new Error(`${error.message}; child=${child.exitCode ?? 'running'}; stderr=${stderr.slice(-4_096)}`);
+  }
+  child.kill('SIGTERM');
+  const exit = await new Promise((resolveExit, rejectExit) => {
+    child.once('error', rejectExit);
+    child.once('exit', (code, signal) => resolveExit({ code, signal }));
+  });
+  assert.deepEqual(exit, { code: 0, signal: null });
+  assert.match(stderr, /"state":"closed"/u);
+});

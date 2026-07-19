@@ -41,6 +41,7 @@ function makeAdapter(extra = {}) {
     // `node --test` (which discovers every .mjs under test/) never hangs on it.
     args: [FIXTURE, '--serve'],
     env: extra.env,
+    model: extra.model,
     requestTimeoutMs: extra.requestTimeoutMs ?? 2000,
     stopDeadlineMs: extra.stopDeadlineMs,
     ceiling: 4,
@@ -157,6 +158,26 @@ test('XA6: spawn() acks ok:true and drives turn_started -> content.message -> li
     assert.ok(usage);
     assert.equal(usage.payload.counterId, terminal.payload.usageSeal.counterId);
     assert.ok(events.indexOf(usage) < events.indexOf(terminal));
+  } finally {
+    await cleanup(adapter, worker);
+  }
+});
+
+test('P92 route truth: an omitted native thread model remains unobserved instead of copying the request', async () => {
+  const adapter = makeAdapter({
+    model: 'gpt-requested-only', env: { FAKE_CODEX_OMIT_THREAD_MODEL: '1' },
+  });
+  const events = collect(adapter);
+  const worker = 'p92-model-observation';
+  try {
+    const ack = await adapter.spawn(worker, makeBrief('preserve route truth'), {
+      worktree: freshWorktree(), model: 'gpt-requested-only', reasoningEffort: 'high',
+    });
+    assert.equal(ack.ok, true);
+    const spawned = await until(events, (event) => event.kind === 'lifecycle.spawned');
+    assert.equal(spawned.payload.modelRequested, 'gpt-requested-only');
+    assert.equal(spawned.payload.modelObserved, null);
+    assert.equal(spawned.payload.effortObserved, 'high');
   } finally {
     await cleanup(adapter, worker);
   }

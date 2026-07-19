@@ -81,7 +81,8 @@ function application() {
 
 test('CM84-A1: Context map extends the same five-operation registry with a minimal input surface', () => {
   assert.deepEqual(APPLICATION_SEMANTIC_REGISTRY.defaultOperations, [
-    'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.act', 'run.stop',
+    'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode',
+    'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.stop',
   ]);
   const definition = APPLICATION_SEMANTIC_REGISTRY.actions.context_map;
   assert.ok(definition);

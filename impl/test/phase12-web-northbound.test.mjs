@@ -145,8 +145,13 @@ test('UA5/WN: authenticated Run commands are thin mappings to one application co
   }));
   assert.equal(applicationCalls[2].args.timeoutMs, 30_000, 'Web forwards the exact journaled follow timeout');
   assert.equal(applicationCalls[4].args.timeoutMs, 30_000, 'Web forwards the exact journaled wait timeout');
+  const mutations = new Set([
+    'run_start', 'run_approve', 'run_answer', 'run_steer', 'run_stop', 'run_adopt',
+    'run_review', 'run_integrate',
+  ]);
   assert.deepEqual(coordination.events().filter((event) => event.kind === 'web.command_admitted')
-    .map((event) => [event.payload.command, event.payload.runId]), commands.map(([command]) => [command, 'run-web-a']));
+    .map((event) => [event.payload.command, event.payload.runId]), commands
+    .filter(([command]) => mutations.has(command)).map(([command]) => [command, 'run-web-a']));
 });
 
 test('CE5/WN: a Run follow cannot return after its live Web principal is revoked', async () => {
@@ -171,7 +176,8 @@ test('CE5/WN: a Run follow cannot return after its live Web principal is revoked
   const response = await pending;
   assert.equal(response.status, 401);
   assert.equal(response.body.error.code, 'unauthenticated');
-  assert.equal(coordination.webCommand('run-follow-revoked').status, 'failed');
+  assert.equal(coordination.webCommand('run-follow-revoked'), null);
+  assert.equal(coordination.events().some((event) => event.kind.startsWith('web.command_')), false);
 });
 
 test('UA5/WN: malformed Run intent, inconsistent Run identity, and capability refusal occur before application admission', async () => {
@@ -297,7 +303,7 @@ test('UA5/WN: completed Run replay rechecks current application policy before re
   assert.equal(dispatches, 1);
 });
 
-test('UA5/WN: an admitted Run read reconstructs after completion journaling failure instead of sticking at 202', async () => {
+test('UA5/WN: a Run read is independent of command-ledger completion writes and bounded retries replay in memory', async () => {
   let appends = 0;
   const coordination = new CoordinationStore(root(), {
     appendFile: (...args) => {
@@ -317,14 +323,15 @@ test('UA5/WN: an admitted Run read reconstructs after completion journaling fail
     allowedOrigins: ['https://control.example.test'], now: () => Date.parse('2026-07-11T12:00:00.000Z'),
   });
   const request = envelope({ commandId: 'run-reconcile-a', idempotencyKey: 'run-reconcile', command: 'run_status', args: { runId: 'run-web-a' } });
-  assert.equal((await web.execute(context(), request)).status, 503);
+  assert.equal((await web.execute(context(), request)).status, 200);
   const retry = await web.execute(context(), { ...request, commandId: 'run-reconcile-b' });
   assert.equal(retry.status, 200);
   assert.equal(retry.body.replayed, true);
-  assert.equal(dispatches, 2, 'read is safely reconstructed after the failed completion append');
+  assert.equal(dispatches, 1);
+  assert.equal(appends, 0, 'read observation never reached the durable command ledger');
 });
 
-test('UA5/WN: application authorization refusal is typed, non-leaking, and durably failed', async () => {
+test('UA5/WN: application read authorization refusal is typed, non-leaking, and non-ledger-mutating', async () => {
   const application = {
     repoId: 'repo-a',
     card: runApplicationCard,
@@ -338,7 +345,8 @@ test('UA5/WN: application authorization refusal is typed, non-leaking, and durab
   assert.equal(response.status, 403);
   assert.equal(response.body.error.code, 'application_unauthorized');
   assert.equal(JSON.stringify(response).includes('private deployment policy detail'), false);
-  assert.equal(coordination.webCommand('run-app-denied').status, 'failed');
+  assert.equal(coordination.webCommand('run-app-denied'), null);
+  assert.equal(coordination.events().some((event) => event.kind.startsWith('web.command_')), false);
 });
 
 test('RD10: authenticated web reuse decision preserves principal actor, repo, budget, and durable idempotency', async () => {
