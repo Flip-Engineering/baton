@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { BatonApplication, CoordinationStore, MockAdapter, createDriver } from '../src/index.mjs';
+import {
+  BatonApplication, CoordinationStore, DEFAULT_WORKER_POLICY_REQUEST, MockAdapter, bindBaton,
+  bindBatonPort, createDriver,
+} from '../src/index.mjs';
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase64-${name}-`));
 const policy = Object.freeze({
@@ -106,6 +109,20 @@ function fixture(name, {
   return { application, adapter, driver, repo, logDir };
 }
 
+function reopenApplication(driver, authorize = async () => true) {
+  return new BatonApplication({
+    driver,
+    repoId: 'repo-phase64',
+    profiles: { 'safe-code': profile },
+    principals: {
+      planner: principal('application-planner'),
+      dispatcher: principal('application-dispatcher'),
+      observer: principal('application-observer'),
+    },
+    authorize,
+  });
+}
+
 const intent = (overrides = {}) => ({
   runId: 'run-phase64-one',
   objective: 'Repair provider accounting and prove the result',
@@ -113,6 +130,170 @@ const intent = (overrides = {}) => ({
   route: { harness: 'mock', model: 'model-a', effort: 'low' },
   scope: ['impl/**'],
   ...overrides,
+});
+
+test('UA2/RT5: Pythonic Run streams consume internal pagination and expose attributed facts only', async () => {
+  const calls = [];
+  const pages = [
+    {
+      schemaVersion: 1, runId: 'run-stream-client', depth: 'content', cursor: 7,
+      terminal: false, content: {
+        kind: 'baton.run_timeline.page', channel: 'events', cursor: 'opaque-a',
+        hasMore: true, items: [{ position: 1, kind: 'task.created' }],
+      },
+    },
+    {
+      schemaVersion: 1, runId: 'run-stream-client', depth: 'content', cursor: 8,
+      terminal: true, content: {
+        kind: 'baton.run_timeline.page', channel: 'events', cursor: 'opaque-b',
+        hasMore: false, items: [{ position: 2, kind: 'run.stop_completed' }],
+      },
+    },
+  ];
+  const baton = bindBatonPort({ command: async (name, args) => {
+    calls.push({ name, args });
+    return pages.shift();
+  } });
+  const collected = [];
+  for await (const event of baton.runs.open('run-stream-client').events()) collected.push(event);
+  assert.deepEqual(collected.map((event) => event.position), [1, 2]);
+  assert.deepEqual(calls, [
+    { name: 'run.inspect', args: {
+      runId: 'run-stream-client', depth: 'content', section: 'execution', item: 'execution:events',
+    } },
+    { name: 'run.inspect', args: {
+      runId: 'run-stream-client', depth: 'content', section: 'execution',
+      item: 'execution:events', pageCursor: 'opaque-a',
+    } },
+  ]);
+
+  const outputCalls = [];
+  const outputBaton = bindBatonPort({ command: async (name, args) => {
+    outputCalls.push({ name, args });
+    return {
+      schemaVersion: 1, runId: 'run-output-client', depth: 'content', cursor: 2,
+      terminal: true, content: {
+        kind: 'baton.run_timeline.page', channel: 'output', cursor: 'opaque-output',
+        hasMore: false, items: [{ recipient: 'review', contentTrust: 'untrusted_provider' }],
+      },
+    };
+  } });
+  const output = [];
+  for await (const item of outputBaton.runs.open('run-output-client').output({ recipient: 'review' })) {
+    output.push(item);
+  }
+  assert.equal(output[0].contentTrust, 'untrusted_provider');
+  assert.equal(outputCalls[0].args.recipient, 'review');
+});
+
+test('UA1/KC1: application profiles resolve a public harness through one exact private adapter route', async () => {
+  const repo = root('public-private-route-repo');
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'phase64@example.invalid'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Phase 64'], { cwd: repo });
+  writeFileSync(join(repo, 'base.txt'), 'base\n');
+  execFileSync('git', ['add', 'base.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+  const adapter = configuredAdapter({ outcome: 'completed', delayMs: 10, summary: 'done', files: {} });
+  const card = adapter.card.bind(adapter);
+  adapter.card = () => ({
+    ...card(), harness: 'claude-code',
+    modelSelection: {
+      mode: 'exact', configuredDefault: 'kimi-k3', available: ['kimi-k3'], family: 'kimi',
+      acceptedPrefixes: [], acceptedAliases: [], reasoningEffort: ['max'], effortRequired: true,
+      serviceTier: null, provenance: 'test', refreshedAt: null,
+    },
+  });
+  const driver = createDriver({
+    repoRoot: repo, repoId: 'repo-phase64', logDir: root('public-private-route-log'),
+    adapters: { 'private-kimi-provider': adapter }, goalPlanAuthority: { policy, authorize: async () => true },
+    stopDeadlineMs: 2000,
+  });
+  const publicProfile = {
+    ...profile,
+    routes: [{ harness: 'claude-code', model: 'kimi-k3', effort: 'max' }],
+  };
+  const application = new BatonApplication({
+    driver, repoId: 'repo-phase64', profiles: { public: publicProfile },
+    principals: { planner: principal('planner'), dispatcher: principal('dispatcher'), observer: principal('observer') },
+    authorize: async () => true,
+  });
+  const proposed = await application.start({
+    runId: 'run-public-private-route', objective: 'prove public to private routing', profile: 'public',
+    route: publicProfile.routes[0], scope: ['impl/**'],
+  }, principal('owner'));
+  assert.deepEqual(proposed.route.requested, publicProfile.routes[0]);
+  await application.approve(proposed.runId, proposed.plan.digest, principal('approver'));
+  assert.equal(driver.coordinator.list()[0].vendor, 'private-kimi-provider');
+  await application.shutdown(principal('shutdown'));
+});
+
+test('WP9: profile v2 binds unattended full access through Plan, Brief, adapter options, and route identity', async () => {
+  const repo = root('worker-policy-profile-repo');
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'phase64@example.invalid'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Phase 64'], { cwd: repo });
+  writeFileSync(join(repo, 'base.txt'), 'base\n');
+  execFileSync('git', ['add', 'base.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+
+  const adapter = configuredAdapter({ outcome: 'completed', delayMs: 10, summary: 'done', files: {} });
+  const originalCard = adapter.card.bind(adapter);
+  adapter.card = () => ({
+    ...originalCard(),
+    workerPolicy: {
+      schemaVersion: 1,
+      autonomy: { supported: ['unattended'], default: 'unattended', perTask: false, observation: 'launch', mechanisms: ['test-unattended'] },
+      access: { supported: ['full'], default: 'full', perTask: false, observation: 'launch', mechanisms: ['test-full-access'] },
+      containment: { hostProcess: 'same_uid', guarantees: ['private_runtime'], configuredPreferences: [], observation: 'unavailable' },
+    },
+  });
+  const spawnCalls = [];
+  const originalSpawn = adapter.spawn.bind(adapter);
+  adapter.spawn = (worker, brief, options) => {
+    spawnCalls.push({ worker, brief, options });
+    return originalSpawn(worker, brief, options);
+  };
+  const driver = createDriver({
+    repoRoot: repo, repoId: 'repo-phase64', logDir: root('worker-policy-profile-log'),
+    adapters: { mock: adapter }, goalPlanAuthority: { policy, authorize: async () => true },
+    stopDeadlineMs: 2_000,
+  });
+  const policyProfile = { ...profile, schemaVersion: 2, workerPolicy: DEFAULT_WORKER_POLICY_REQUEST };
+  const application = new BatonApplication({
+    driver, repoId: 'repo-phase64', profiles: { full: policyProfile },
+    principals: { planner: principal('planner'), dispatcher: principal('dispatcher'), observer: principal('observer') },
+    authorize: async () => true,
+  });
+  const proposed = await application.start({
+    runId: 'run-worker-policy-profile', objective: 'prove durable worker policy', profile: 'full',
+    route: policyProfile.routes[0], scope: ['impl/**'],
+  }, principal('owner'));
+  assert.deepEqual(application.card().profiles[0].workerPolicy, DEFAULT_WORKER_POLICY_REQUEST);
+  assert.deepEqual(driver.coordination.snapshot().goalPlan.plans[0].nodes[0].workerPolicy, DEFAULT_WORKER_POLICY_REQUEST);
+  const pendingOutline = await application.inspect({
+    runId: proposed.runId, depth: 'outline',
+  }, principal('observer'));
+  assert.equal(pendingOutline.outline.workerPolicy.state, 'requested');
+  assert.equal(pendingOutline.outline.workerPolicy.request.access.mode, 'full');
+  await application.approve(proposed.runId, proposed.plan.digest, principal('approver'));
+  assert.equal(spawnCalls.length, 1);
+  assert.deepEqual(spawnCalls[0].brief.workerPolicy, DEFAULT_WORKER_POLICY_REQUEST);
+  assert.equal(spawnCalls[0].options.workerPolicy.access.resolved, 'full');
+  assert.equal(JSON.parse(driver.coordinator.list()[0].routeKey).length, 7);
+  const activeOutline = await application.inspect({
+    runId: proposed.runId, depth: 'outline',
+  }, principal('observer'));
+  assert.equal(activeOutline.outline.workerPolicy.access.resolved, 'full');
+  assert.equal(activeOutline.outline.workerPolicy.containment.attestation, 'preferred_gap');
+  const help = await application.help({
+    topic: 'worker-policy', depth: 'outline', runId: proposed.runId,
+  }, principal('observer'));
+  assert.match(help.summary, /default is unattended full access/u);
+  await application.wait(proposed.runId, principal('observer'), { timeoutMs: 2_000 });
+  const evidence = await application.evidence(proposed.runId, principal('observer'));
+  assert.equal(evidence.bindings.workerPolicy.access.resolved, 'full');
+  await application.shutdown(principal('shutdown'));
 });
 
 test('UA1-UA5: concise start stops at a readable distinct-authority approval checkpoint without effects', async () => {
@@ -165,6 +346,24 @@ test('UA3/UA6: approval return and dispatch use service authorities, not acciden
   await application.shutdown(principal('shutdown-admin'));
 });
 
+test('UA3/UA4: a structured provider failure exposes no adoptable or exportable result', async () => {
+  const { application, driver } = fixture('provider-failure', {
+    scenario: { outcome: 'failed', delayMs: 10, summary: 'provider rejected the turn', files: {} },
+  });
+  const proposed = await application.start(intent({ runId: 'run-provider-failure' }), principal('failure-owner'));
+  await application.approve('run-provider-failure', proposed.plan.digest, principal('failure-approver'));
+  const failed = await application.wait('run-provider-failure', principal('failure-owner'), { timeoutMs: 5_000 });
+  assert.equal(failed.phase, 'failed');
+  assert.equal(failed.result, null);
+  assert.equal(failed.nodes[0].state, 'failed');
+  assert.equal(failed.nextActions.some((action) => ['adopt_result', 'export_result'].includes(action.kind)), false);
+  const task = driver.coordination.snapshot().tasks.find((row) => row.runId === 'run-provider-failure');
+  assert.equal(task.status, 'failed');
+  assert.equal(driver.coordination.snapshot().artifacts.filter((artifact) => artifact.taskId === task.id)
+    .some((artifact) => artifact.accepted === true), false);
+  await application.shutdown(principal('shutdown-admin'));
+});
+
 test('UA2/UA6: a durable Goal-only planning failure remains a readable retryable RunView', async () => {
   const goalPlanAuthorize = async ({ power, principalId }) => !(principalId === 'application-planner' && power === 'plan:propose');
   const { application, driver } = fixture('planning-failure', { goalPlanAuthorize });
@@ -205,12 +404,14 @@ test('UA4/UA6: RunView redacts credential-shaped attention and answers it exactl
   assert.equal(view.phase, 'running');
   assert.equal(view.attention[0].question, '[credential-shaped content redacted]');
   assert.equal(JSON.stringify(view).includes(secret), false);
-  const answered = await application.answer(
-    'run-attention-redaction', view.attention[0].requestId, { text: 'Use the configured credential reference only.' },
-    principal('attention-owner'),
-  );
-  assert.equal(answered.lastAction.result, 'applied');
-  assert.equal(answered.attention.length, 0);
+  const run = bindBaton(application, principal('attention-owner')).runs.open('run-attention-redaction');
+  const outline = await run.inspect();
+  const answer = outline.outline.actions.find((action) => action.kind === 'answer_question');
+  assert.equal(answer.target.requestId, view.attention[0].requestId);
+  assert.equal(answer.target.question, '[credential-shaped content redacted]');
+  assert.equal(JSON.stringify(answer).includes(secret), false);
+  const answered = await run.act(answer.actionId, { text: 'Use the configured credential reference only.' });
+  assert.equal(answered.outline.attention.count, 0);
   const finished = await application.wait('run-attention-redaction', principal('attention-owner'), { timeoutMs: 5_000 });
   assert.equal(finished.phase, 'work_completed');
   const retry = await application.answer(
@@ -218,6 +419,29 @@ test('UA4/UA6: RunView redacts credential-shaped attention and answers it exactl
     principal('attention-owner'),
   );
   assert.equal(retry.lastAction.result, 'already_resolved');
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('UA4/UA6: pending worker approvals are unique Run actions and need no raw request choreography', async () => {
+  const { application } = fixture('approval-action', {
+    scenario: {
+      outcome: 'completed', delayMs: 1, summary: 'approval handled', files: {},
+      ask: { kind: 'approval', question: 'Allow the bounded tool call?', blocking: true, afterEditIndex: 0 },
+    },
+  });
+  const proposed = await application.start(intent({ runId: 'run-approval-action' }), principal('approval-owner'));
+  await application.approve(proposed.runId, proposed.plan.digest, principal('approval-approver'));
+  await application.wait(proposed.runId, principal('approval-owner'), { timeoutMs: 250 });
+  const run = bindBaton(application, principal('approval-owner')).runs.open(proposed.runId);
+  const outline = await run.inspect();
+  const action = outline.outline.actions.find((candidate) => candidate.kind === 'answer_approval');
+  assert.ok(action);
+  assert.match(action.target.requestId, /^req_/u);
+  assert.deepEqual(action.inputSchema.properties.decision.enum, ['allow', 'deny', 'cancel']);
+  const answered = await run.act(action.actionId, { decision: 'allow' });
+  assert.equal(answered.outline.attention.count, 0);
+  const finished = await application.wait(proposed.runId, principal('approval-owner'), { timeoutMs: 5_000 });
+  assert.equal(finished.phase, 'work_completed');
   await application.shutdown(principal('shutdown-admin'));
 });
 
@@ -319,7 +543,7 @@ test('UA5: the shared command bus exposes the same run flow and a deployment-der
   const spawn = adapter.spawn.bind(adapter);
   adapter.spawn = (...args) => { spawnCalls += 1; return spawn(...args); };
   const card = application.card();
-  assert.deepEqual(card.commands, ['application.help', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.approve', 'run.wait', 'run.answer', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.review', 'run.integrate', 'run.export', 'run.recover', 'application.shutdown']);
+  assert.deepEqual(card.commands, ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'run.recover', 'application.shutdown']);
   assert.deepEqual(card.profiles[0].routes, [{ harness: 'mock', model: 'model-a', effort: 'low' }]);
 
   const proposed = await application.command('run.start', { intent: intent({ runId: 'run-command-bus' }) }, principal('command-owner'));
@@ -369,6 +593,161 @@ test('UA5/UA6: Run steering resolves ownership and the current fence inside the 
     message: 'Redirect.', reason: 'Wrong owner must be rejected.',
   }, principal('steer-owner')), (error) => error.code === 'application_worker_not_found');
   await application.shutdown(principal('shutdown-admin'));
+});
+
+test('RC1: Pythonic send and interrupt resolve one semantic recipient and settle durably', async () => {
+  const { application, driver } = fixture('semantic-control', { delayMs: 1_500 });
+  const proposed = await application.start(
+    intent({ runId: 'run-semantic-control' }), principal('control-owner'),
+  );
+  const running = await application.approve(
+    proposed.runId, proposed.plan.digest, principal('control-approver'),
+  );
+  const workerId = running.ownership.workerIds[0];
+  const run = bindBaton(application, principal('control-owner')).runs.open(proposed.runId);
+  const outline = await run.inspect();
+  const sendAction = outline.outline.actions.find((action) => action.kind === 'send');
+  const interruptAction = outline.outline.actions.find((action) => action.kind === 'interrupt');
+  assert.deepEqual(sendAction.choices, ['work']);
+  assert.deepEqual(sendAction.target, { recipients: ['work'] });
+  assert.equal(JSON.stringify(sendAction).includes(workerId), false);
+  assert.deepEqual(interruptAction.choices, ['work']);
+
+  const sent = await run.send('Keep the verification boundary explicit.');
+  assert.deepEqual(sent.lastAction, {
+    command: 'run.send', recipient: 'work', delivery: 'nudge', result: 'ok',
+    state: 'confirmed', emulated: false, deliveredDespiteStale: false,
+    onlyActiveMember: true, needsAttention: false,
+  });
+  const interrupted = await run.interrupt({ reason: 'Pause this work turn for review.' });
+  assert.equal(interrupted.lastAction.command, 'run.interrupt');
+  assert.equal(interrupted.lastAction.state, 'confirmed');
+  assert.equal(interrupted.lastAction.onlyActiveMember, true);
+  assert.equal(interrupted.lastAction.needsAttention, true);
+  const records = driver.coordination.events().filter((event) => (
+    ['run.control_admitted', 'run.control_effect_started',
+      'run.control_provider_acked', 'run.control_settled'].includes(event.kind)
+  ));
+  assert.deepEqual(records.map((event) => event.kind), [
+    'run.control_admitted', 'run.control_effect_started',
+    'run.control_provider_acked', 'run.control_settled',
+    'run.control_admitted', 'run.control_effect_started',
+    'run.control_provider_acked', 'run.control_settled',
+  ]);
+  assert.equal(records.every((event) => /^control:[a-f0-9]{64}$/u.test(event.payload.controlId)), true);
+  assert.equal(driver.log.read(workerId).some((event) => event.kind === 'control.delivery_requested'
+    && /^control:[a-f0-9]{64}$/u.test(event.payload.controlId)), true);
+  assert.equal(driver.log.read(workerId).some((event) => event.kind === 'control.interrupt_confirmed'
+    && /^control:[a-f0-9]{64}$/u.test(event.payload.controlId)), true);
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('RC2: a post-boundary send exception settles outcome_unknown and is never reported as success', async () => {
+  const { application, adapter, driver } = fixture('semantic-control-unknown', { delayMs: 1_500 });
+  const proposed = await application.start(
+    intent({ runId: 'run-semantic-control-unknown' }), principal('control-owner'),
+  );
+  await application.approve(proposed.runId, proposed.plan.digest, principal('control-approver'));
+  adapter.prompt = async () => { throw Object.assign(new Error('wire acknowledgement lost'), { code: 'wire_lost' }); };
+  const run = bindBaton(application, principal('control-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  const result = await run.send('Recheck the current implementation boundary.');
+  assert.equal(result.lastAction.state, 'outcome_unknown');
+  assert.equal(result.lastAction.result, 'provider_outcome_unknown');
+  const settlement = driver.coordination.events()
+    .findLast((event) => event.kind === 'run.control_settled');
+  assert.equal(settlement.payload.state, 'outcome_unknown');
+  assert.equal(settlement.payload.outcome.code, 'provider_boundary_observed');
+  assert.equal(driver.log.read(driver.coordinator.list()[0].id)
+    .filter((event) => event.kind === 'control.delivery_requested').length, 1);
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('RC3: response-loss replay returns the durable semantic outcome without a second provider call', async () => {
+  const { application, adapter, driver } = fixture('semantic-control-replay', { delayMs: 1_500 });
+  const proposed = await application.start(
+    intent({ runId: 'run-semantic-control-replay' }), principal('control-owner'),
+  );
+  await application.approve(proposed.runId, proposed.plan.digest, principal('control-approver'));
+  const outline = await application.inspect({
+    runId: proposed.runId, depth: 'outline',
+  }, principal('control-owner'));
+  const action = outline.outline.actions.find((candidate) => candidate.kind === 'send');
+  const prompt = adapter.prompt.bind(adapter);
+  let promptCalls = 0;
+  adapter.prompt = (...args) => { promptCalls += 1; return prompt(...args); };
+  const args = {
+    runId: proposed.runId,
+    actionId: action.actionId,
+    inputs: { message: 'Preserve the same provider effect.', recipient: 'work', delivery: 'nudge' },
+  };
+  const context = { transport: 'web', requestId: 'lost-response', idempotencyKey: 'web.command:lost-response' };
+  const first = await application.command('run.act', args, principal('control-owner'), context);
+  const replay = await application.command('run.act', args, principal('control-owner'), context);
+  assert.equal(first.lastAction.state, 'confirmed');
+  assert.deepEqual(replay.lastAction, first.lastAction);
+  assert.equal(promptCalls, 1);
+  const records = driver.coordination.events().filter((event) => (
+    ['run.control_admitted', 'run.control_effect_started',
+      'run.control_provider_acked', 'run.control_settled'].includes(event.kind)
+  ));
+  assert.equal(records.length, 4);
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('RC4: restart after admission but before effect starts performs the provider call exactly once', async () => {
+  const { application, adapter, driver } = fixture('semantic-control-admission-crash', { delayMs: 1_500 });
+  const proposed = await application.start(
+    intent({ runId: 'run-semantic-control-admission-crash' }), principal('control-owner'),
+  );
+  await application.approve(proposed.runId, proposed.plan.digest, principal('control-approver'));
+  const run = bindBaton(application, principal('control-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  const prompt = adapter.prompt.bind(adapter);
+  let promptCalls = 0;
+  adapter.prompt = (...args) => { promptCalls += 1; return prompt(...args); };
+  const begin = driver.coordination.beginRunControlEffect.bind(driver.coordination);
+  driver.coordination.beginRunControlEffect = () => {
+    throw Object.assign(new Error('crash before effect start'), { code: 'injected_crash' });
+  };
+  await assert.rejects(run.send('Resume this exact admitted delivery.'),
+    (error) => error.code === 'injected_crash');
+  assert.equal(promptCalls, 0);
+  driver.coordination.beginRunControlEffect = begin;
+
+  const recovered = reopenApplication(driver);
+  await recovered.ready;
+  assert.equal(promptCalls, 1);
+  assert.equal(driver.coordination.runControls(proposed.runId)[0].status, 'confirmed');
+  await recovered.shutdown(principal('shutdown-admin'));
+});
+
+test('RC5: restart after provider acknowledgement settles without redelivery', async () => {
+  const { application, adapter, driver } = fixture('semantic-control-ack-crash', { delayMs: 1_500 });
+  const proposed = await application.start(
+    intent({ runId: 'run-semantic-control-ack-crash' }), principal('control-owner'),
+  );
+  await application.approve(proposed.runId, proposed.plan.digest, principal('control-approver'));
+  const run = bindBaton(application, principal('control-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  const prompt = adapter.prompt.bind(adapter);
+  let promptCalls = 0;
+  adapter.prompt = (...args) => { promptCalls += 1; return prompt(...args); };
+  const settle = driver.coordination.settleRunControl.bind(driver.coordination);
+  driver.coordination.settleRunControl = () => {
+    throw Object.assign(new Error('crash after provider acknowledgement'), { code: 'injected_crash' });
+  };
+  await assert.rejects(run.send('Do not redeliver after acknowledgement.'),
+    (error) => error.code === 'injected_crash');
+  assert.equal(promptCalls, 1);
+  assert.equal(driver.coordination.runControls(proposed.runId)[0].status, 'provider_acked');
+  driver.coordination.settleRunControl = settle;
+
+  const recovered = reopenApplication(driver);
+  await recovered.ready;
+  assert.equal(promptCalls, 1);
+  assert.equal(driver.coordination.runControls(proposed.runId)[0].status, 'confirmed');
+  await recovered.shutdown(principal('shutdown-admin'));
 });
 
 test('UA5/UA8: Run stop before approval closes dispatch durably without spawning or closing Baton', async () => {

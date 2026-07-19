@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "runId": "run-f00003ae3cd30f31edb2e0f0c70a599c",
+  "phase": "stopped",
+  "attempts": [
+    {
+      "role": "dispatch-design-adversary",
+      "state": "failed",
+      "activity": {
+        "state": "exited",
+        "lastEventAt": "2026-07-19T00:42:35.870Z",
+        "lastEventSeq": 8,
+        "turnCount": 1,
+        "usage": {
+          "tokens": 0,
+          "usd": 0
+        },
+        "editedPaths": [],
+        "warnings": []
+      },
+      "terminalCause": {
+        "kind": "provider_failure",
+        "code": "recovery_terminalized",
+        "category": "provider_failure",
+        "summary": "The provider route failed.",
+        "remediation": "Inspect the Run's bounded evidence and provider readiness, then retry or select another exact route.",
+        "retryable": true
+      }
+    },
+    {
+      "role": "dispatch-design-architect",
+      "state": "failed",
+      "activity": {
+        "state": "exited",
+        "lastEventAt": "2026-07-19T00:42:35.860Z",
+        "lastEventSeq": 166,
+        "turnCount": 1,
+        "usage": {
+          "tokens": 3326408,
+          "usd": 0
+        },
+        "editedPaths": [],
+        "warnings": []
+      },
+      "terminalCause": {
+        "kind": "provider_failure",
+        "code": "recovery_terminalized",
+        "category": "provider_failure",
+        "summary": "The provider route failed.",
+        "remediation": "Inspect the Run's bounded evidence and provider readiness, then retry or select another exact route.",
+        "retryable": true
+      }
+    }
+  ],
+  "close": {
+    "workers": 0,
+    "workerIds": [],
+    "closed": true
+  }
+}
