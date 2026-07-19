@@ -128,6 +128,57 @@ test('CE13: one exact deployment lease excludes a second owner and clean release
   assert.equal(restarted.release(), true);
 });
 
+test('CE13: a replacement deployment reaps an exactly proved dead export-root owner', (t) => {
+  const exportRoot = temporary(t, 'root-lease-crash');
+  chmodSync(exportRoot, 0o700);
+  const moduleUrl = new URL('../src/result-export.mjs', import.meta.url).href;
+  const child = String.raw`
+    import { acquireResultExportRootLease } from ${JSON.stringify(moduleUrl)};
+    acquireResultExportRootLease(process.argv[1]);
+  `;
+  execFileSync(process.execPath, ['--input-type=module', '--eval', child, exportRoot], {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  assert.equal(existsSync(join(exportRoot, '.baton-export-root-lease', 'owner.json')), true,
+    'the child did not leave its crash residue');
+  const restarted = acquireResultExportRootLease(exportRoot);
+  assert.equal(restarted.assertHeld(), true);
+  assert.equal(restarted.release(), true);
+  assert.deepEqual(readdirSync(exportRoot), []);
+});
+
+test('CE13: dead legacy lease metadata remains recoverable without treating a live PID as stale', (t) => {
+  const exportRoot = temporary(t, 'root-lease-legacy-crash');
+  chmodSync(exportRoot, 0o700);
+  const moduleUrl = new URL('../src/result-export.mjs', import.meta.url).href;
+  execFileSync(process.execPath, ['--input-type=module', '--eval', String.raw`
+    import { acquireResultExportRootLease } from ${JSON.stringify(moduleUrl)};
+    acquireResultExportRootLease(process.argv[1]);
+  `, exportRoot], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const ownerPath = join(exportRoot, '.baton-export-root-lease', 'owner.json');
+  const owner = JSON.parse(readFileSync(ownerPath, 'utf8'));
+  delete owner.pidStart;
+  owner.schemaVersion = 1;
+  writeFileSync(ownerPath, `${JSON.stringify(owner)}\n`, { mode: 0o600 });
+
+  const restarted = acquireResultExportRootLease(exportRoot);
+  assert.equal(restarted.release(), true);
+  assert.deepEqual(readdirSync(exportRoot), []);
+});
+
+test('CE13: malformed or unproved lease residue remains busy and is never reaped', (t) => {
+  const exportRoot = temporary(t, 'root-lease-ambiguous');
+  chmodSync(exportRoot, 0o700);
+  const lease = join(exportRoot, '.baton-export-root-lease');
+  mkdirSync(lease, { mode: 0o700 });
+  writeFileSync(join(lease, 'owner.json'), '{"schemaVersion":999}\n', { mode: 0o600 });
+
+  assert.throws(() => acquireResultExportRootLease(exportRoot),
+    (error) => error?.code === 'result_export_root_busy');
+  assert.equal(readFileSync(join(lease, 'owner.json'), 'utf8'), '{"schemaVersion":999}\n');
+});
+
 test('lifecycle close drains an active rejection, excludes restart, and releases exactly once', async (t) => {
   const exportRoot = temporary(t, 'lifecycle-drain');
   chmodSync(exportRoot, 0o700);

@@ -148,7 +148,9 @@ test('AX1: one closed semantic registry defines the compact ordinary vocabulary,
   assert.deepEqual(Object.keys(value.operations).sort(), [
     'application.help', 'run.act', 'run.inspect', 'run.start', 'run.stop',
   ]);
-  assert.deepEqual(value.depths, ['outline', 'index', 'section', 'item', 'evidence']);
+  assert.deepEqual(value.depths, [
+    'outline', 'index', 'section', 'item', 'content', 'evidence',
+  ]);
   for (const section of ['plan', 'execution', 'attention', 'route', 'budget', 'verification',
     'semantic_review', 'result', 'delivery', 'cleanup', 'knowledge', 'capabilities']) {
     assert.ok(value.sections.some((candidate) => candidate.id === section), `missing ${section} section`);
@@ -166,6 +168,38 @@ test('AX1: one closed semantic registry defines the compact ordinary vocabulary,
   assert.equal(JSON.stringify(value).toLowerCase().includes('homelab'), false);
 });
 
+test('AX1b RED: orchestration is one discoverable semantic section and remains empty when recursive Run authority is unconfigured', async (t) => {
+  const f = fixture('legacy-orchestration');
+  cleanup(t, f.application);
+  const runId = 'run-phase67-legacy-orchestration';
+  await f.application.command('run.start', { intent: intent(runId) }, principal('owner'));
+
+  const definition = registry().sections.find((section) => section.id === 'orchestration');
+  assert.ok(definition, 'agents discover recursive topology and authority through the ordinary cascade');
+  assert.match(definition.summary, /authority|topology|child|descendant/iu);
+
+  const outline = await f.application.command(
+    'run.inspect', { runId, depth: 'outline' }, principal('owner'),
+  );
+  assert.equal(Object.hasOwn(outline.outline, 'orchestration'), false,
+    'a legacy deployment does not invent recursive authority state in its compact outline');
+
+  const index = await f.application.command(
+    'run.inspect', { runId, depth: 'index' }, principal('owner'),
+  );
+  const orchestration = index.sections.find((section) => section.id === 'orchestration');
+  assert.deepEqual({ state: orchestration?.state, itemCount: orchestration?.itemCount }, {
+    state: 'empty', itemCount: 0,
+  });
+
+  const section = await f.application.command(
+    'run.inspect', { runId, depth: 'section', section: 'orchestration' }, principal('owner'),
+  );
+  assert.equal(section.section.state, 'empty');
+  assert.equal(section.section.itemCount, 0);
+  assert.deepEqual(section.section.items, []);
+});
+
 test('AX2: inspect cascades from compact outline to index, section, item, and explicit evidence without raw default leakage', async (t) => {
   const f = fixture('cascade');
   cleanup(t, f.application);
@@ -181,6 +215,12 @@ test('AX2: inspect cascades from compact outline to index, section, item, and ex
   assert.equal(outline.outline.phase, 'awaiting_plan_approval');
   assert.equal(typeof outline.outline.narrative, 'string');
   assert.equal(Array.isArray(outline.outline.actions), true);
+  assert.equal(Object.hasOwn(outline, 'bounds'), false,
+    'ordinary inspection must not make agents manage deployment response ceilings');
+  assert.equal(Object.hasOwn(outline.outline, 'budget'), false,
+    'numeric execution authority belongs at explicit budget depth, not the outline');
+  assert.equal(Object.hasOwn(outline.continuation.arguments, 'waitMs'), false,
+    'ordinary continuation must derive its wait policy inside Baton');
   for (const leaked of ['planPreview', 'nodes', 'evidence', 'ownership', 'workerIds', 'receipts', 'events']) {
     assert.equal(Object.hasOwn(outline.outline, leaked), false, `outline leaked ${leaked}`);
   }
@@ -219,6 +259,51 @@ test('AX2: inspect cascades from compact outline to index, section, item, and ex
     && /^[a-f0-9]{64}$/u.test(entry.digest) && typeof entry.provenance === 'string'), true);
   assert.equal(JSON.stringify(evidence).includes(f.repo), false);
   assert.equal(JSON.stringify(evidence).includes('sessionId'), false);
+});
+
+test('AX2b: one hidden finalizer bounds every semantic inspection depth', async (t) => {
+  const f = fixture('all-depth-response-finalizer');
+  cleanup(t, f.application);
+  const runId = 'run-phase67-all-depth-response-finalizer';
+  await f.application.command('run.start', { intent: intent(runId) }, principal('owner'));
+
+  const normalSection = await f.application.command('run.inspect', {
+    runId, depth: 'section', section: 'plan',
+  }, principal('owner'));
+  const itemId = normalSection.section.items[0].id;
+  const ordinary = [
+    await f.application.command('run.inspect', { runId, depth: 'outline' }, principal('owner')),
+    await f.application.command('run.inspect', { runId, depth: 'index' }, principal('owner')),
+    normalSection,
+    await f.application.command('run.inspect', {
+      runId, depth: 'item', section: 'plan', item: itemId,
+    }, principal('owner')),
+    await f.application.command('run.inspect', {
+      runId, depth: 'evidence', section: 'plan', item: itemId,
+    }, principal('owner')),
+  ];
+  const serialized = JSON.stringify(ordinary);
+  for (const internal of ['maxBytes', 'maxItems', 'maxWaitMs', 'maxResponseBytes']) {
+    assert.equal(serialized.includes(`"${internal}"`), false,
+      `ordinary inspection leaked internal guard ${internal}`);
+  }
+
+  f.application._semanticBounds = () => Object.freeze({
+    maxItems: 16, maxBytes: 1, maxWaitMs: 2_000,
+  });
+  for (const request of [
+    { runId, depth: 'outline' },
+    { runId, depth: 'index' },
+    { runId, depth: 'section', section: 'plan' },
+    { runId, depth: 'item', section: 'plan', item: itemId },
+    { runId, depth: 'evidence', section: 'plan', item: itemId },
+  ]) {
+    await assert.rejects(
+      () => f.application.command('run.inspect', request, principal('owner')),
+      expectCode('application_inspect_oversize'),
+      `${request.depth} must pass through the same deployment-owned finalizer`,
+    );
+  }
 });
 
 test('AX3: contextual help is registry-derived, progressive, live-authorized, and does not become a deployment oracle', async (t) => {
@@ -268,6 +353,19 @@ test('AX4/AX8: actions are closed and self-describing, bind to one live Run, rea
   assert.equal(approve.inputSchema.additionalProperties, false);
   assert.deepEqual(approve.serverDerived.sort(), ['planDigest']);
   assert.equal(Object.hasOwn(approve.inputSchema.properties, 'planDigest'), false);
+
+  f.driver.coordination.recordWebAudit({
+    kind: 'operator_read_authorized', resourceClass: 'application_card',
+  }, { actor: 'web:transport-noise', key: 'phase67:transport-noise' });
+  const afterTransportNoise = await f.application.command(
+    'run.inspect', { runId, depth: 'outline' }, principal('owner'),
+  );
+  assert.ok(afterTransportNoise.cursor > outline.cursor);
+  assert.equal(afterTransportNoise.viewDigest, outline.viewDigest);
+  assert.equal(
+    afterTransportNoise.outline.actions.find((action) => action.kind === 'approve_plan').actionId,
+    approve.actionId,
+  );
 
   await assert.rejects(f.application.command('run.act', {
     runId, actionId: approve.actionId, inputs: { planDigest: 'a'.repeat(64) },
@@ -343,8 +441,11 @@ test('AX4b: a real application Run explains one durable budget root cause across
     dimension: 'tokens', used: 15_000, limit: 10_000, ratio: 1.5,
   };
   assert.deepEqual(outline.outline.terminalCause, expected);
-  assert.deepEqual(outline.outline.budget.termination, expected);
+  assert.equal(Object.hasOwn(outline.outline, 'budget'), false);
   assert.deepEqual(outline.outline.resources.terminalCause, expected);
+  assert.equal(outline.outline.resources.state, 'active');
+  assert.equal(outline.outline.resources.cleanupState, 'active');
+  assert.ok(outline.outline.resources.ownedCount > 0);
   assert.match(outline.outline.narrative, /budget_hard_limit_exceeded.*tokens 15000\/10000/u);
 
   for (const section of ['execution', 'budget', 'cleanup']) {
@@ -354,9 +455,51 @@ test('AX4b: a real application Run explains one durable budget root cause across
     const value = expanded.section.items[0].value;
     const cause = section === 'budget' ? value.termination : value.terminalCause;
     assert.deepEqual(cause, expected, `${section} must project the same terminal cause`);
+    if (section === 'cleanup') {
+      assert.equal(expanded.section.state, 'active');
+      assert.equal(value.state, 'active');
+    }
     assert.equal(JSON.stringify(value).includes(f.repo), false);
     assert.equal(JSON.stringify(value).includes('w-'), false);
     assert.equal(JSON.stringify(value).includes('task-'), false);
+  }
+});
+
+test('AX4c: a provider wire failure has one safe actionable cause across outline, execution, and cleanup', async (t) => {
+  const f = fixture('terminal-cause-wire');
+  cleanup(t, f.application);
+  f.adapter.spawn = async () => ({
+    ok: false,
+    code: 'wire_frame_oversize',
+    reason: 'oversized provider response contained token=secret-value at /private/provider/session',
+  });
+  const runId = 'run-phase67-terminal-cause-wire';
+  await f.application.command('run.start', { intent: intent(runId) }, principal('owner'));
+  let outline = await f.application.command('run.inspect', { runId, depth: 'outline' }, principal('owner'));
+  const approve = outline.outline.actions.find((action) => action.kind === 'approve_plan');
+  await f.application.command('run.act', { runId, actionId: approve.actionId, inputs: {} }, principal('owner'));
+
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    outline = await f.application.command('run.inspect', { runId, depth: 'outline' }, principal('owner'));
+    if (outline.outline.phase === 'failed') break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(outline.outline.phase, 'failed');
+  const expected = {
+    kind: 'provider_failure', code: 'wire_frame_oversize', category: 'provider_protocol',
+    summary: 'The provider emitted a frame that exceeded Baton\'s safe wire boundary.',
+    remediation: 'Baton requires exact termination and reaping of the ambiguous session. Update or repair the harness integration, then retry the Run.',
+    retryable: true,
+  };
+  assert.deepEqual(outline.outline.terminalCause, expected);
+  assert.doesNotMatch(JSON.stringify(outline.outline), /secret-value|\/private\/provider|token=/u);
+
+  for (const section of ['execution', 'cleanup']) {
+    const expanded = await f.application.command('run.inspect', {
+      runId, depth: 'section', section,
+    }, principal('owner'));
+    assert.deepEqual(expanded.section.items[0].value.terminalCause, expected);
+    assert.doesNotMatch(JSON.stringify(expanded.section), /secret-value|\/private\/provider|token=|worker-|task-/u);
   }
 });
 
@@ -401,9 +544,11 @@ test('AX5: result adoption and export are application-owned action cascades with
   assert.deepEqual(Object.keys(exportResult.inputSchema.properties), []);
   assert.deepEqual([...exportResult.serverDerived].sort(), ['evidenceDigest', 'exportId', 'nodeKey', 'resultSha']);
 
-  await f.application.command('run.act', {
+  outline = await f.application.command('run.act', {
     runId, actionId: exportResult.actionId, inputs: {},
   }, principal('owner'));
+  assert.equal(outline.outline.phase, 'completed');
+  assert.equal(outline.terminal, true);
   const result = await f.application.command('run.inspect', {
     runId, depth: 'section', section: 'result',
   }, principal('owner'));
