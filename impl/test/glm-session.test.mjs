@@ -72,12 +72,17 @@ function saveEnv(t, names) {
 
 test('SC6: GlmSessionCli exists, satisfies the adapter surface, and carries honest GLM identity + the SC7 capability tag', async () => {
   const GlmSessionCli = await importGlm();
-  const cli = new GlmSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE] });
+  const cli = new GlmSessionCli({
+    cmd: process.execPath, args: [FAKE_CLAUDE], versionProbe: () => 'Claude Code v9.8.7',
+  });
   assertIsAdapter(cli);
   const card = cli.card();
   assert.equal(card.harness, 'glm-via-claude-session');
-  assert.equal(card.version, 'claude-code-2.1.206+zai-anthropic');
+  assert.equal(card.version, 'claude-code-9.8.7+zai-anthropic');
   assert.equal(card.authPosture, 'api_key');
+  assert.equal(card.providerCompatibility.credentialState, 'absent');
+  assert.equal(card.permissions.mode, 'bypassPermissions', 'GLM inherits the unattended Claude-family default');
+  assert.equal(cli._cfg.permissionMode, 'bypassPermissions');
   assert.equal(card.concurrencyCeiling, 1, 'derived limit: Z.ai Pro ≈ one in-flight session (same derivation as ZCodeCli, cli-adapters.mjs:255) — configurable, never arbitrary');
   assert.deepEqual(card.nonRefuserFor, ['ml-ai-inference-training', 'cybersecurity'], 'the explicit classifier tag the fleet routes on (SC7) — never operator folklore');
   assert.deepEqual(
@@ -85,6 +90,28 @@ test('SC6: GlmSessionCli exists, satisfies the adapter surface, and carries hone
     ['answer', 'approve', 'interrupt', 'kill', 'pause', 'prompt', 'spawn', 'steer'],
     'inherits the canonical 8-verb Claude-session card (SC8)',
   );
+});
+
+test('SC6: GLM transport version is probed from its configured Claude executable and never guessed', async () => {
+  const GlmSessionCli = await importGlm();
+  const calls = [];
+  const observed = new GlmSessionCli({
+    cmd: '/fixture/claude',
+    versionProbe: (command, args, options) => {
+      calls.push({ command, args, options });
+      return '2.7.3 (Claude Code)';
+    },
+  });
+  assert.equal(observed.card().version, 'claude-code-2.7.3+zai-anthropic');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, '/fixture/claude');
+  assert.deepEqual(calls[0].args, ['--version']);
+  assert.equal(calls[0].options.timeout, 5_000);
+
+  const unavailable = new GlmSessionCli({
+    cmd: '/fixture/missing-claude', versionProbe: () => { throw new Error('absent'); },
+  });
+  assert.equal(unavailable.card().version, 'unavailable');
 });
 
 test('SC6: ceiling stays configurable — the derivation is documented, the number is not hardcoded', async () => {
@@ -125,11 +152,35 @@ test('GL1/GL2: authTokenFile and exact GLM model mapping reach only the fake chi
   const c = collect(cli); const wt = mkdtempSync(join(tmpdir(), 'baton-glm-key-wt-'));
   try {
     assert.equal(cli.card().modelSelection.configuredDefault, 'glm-5.2');
-    const ack = await cli.spawn('glm-file', brief('REPORT_ENV:ANTHROPIC_AUTH_TOKEN'), { worktree: wt, model: 'glm-5.2' });
+    assert.equal(cli.card().providerCompatibility.credentialState, 'available');
+    const ack = await cli.spawn('glm-file', brief('REPORT_ENV_PRESENT:ANTHROPIC_AUTH_TOKEN'), { worktree: wt, model: 'glm-5.2' });
     assert.equal(ack.ok, true, ack.reason);
     const done = await c.waitFor((event) => event.kind === 'lifecycle.turn_completed' && event.worker === 'glm-file');
-    assert.ok(done.payload.result.summary.includes('env:ANTHROPIC_AUTH_TOKEN=fake-file-token'));
+    assert.ok(done.payload.result.summary.includes('env-present:ANTHROPIC_AUTH_TOKEN=true'));
+    assert.equal(done.payload.result.summary.includes('fake-file-token'), false,
+      'credential material must not cross the provider-output boundary');
   } finally { await Promise.resolve(cli.kill('glm-file')).catch(() => {}); }
+});
+
+test('GL2: exact GLM dispatch rejects a different wire-observed model before accepting provider output', async () => {
+  const GlmSessionCli = await importGlm();
+  const cli = new GlmSessionCli({
+    cmd: process.execPath, args: [FAKE_CLAUDE], authToken: 'fake-model-check-token',
+    model: 'glm-5.2', env: { FAKE_CLAUDE_REPORTED_MODEL: 'glm-unexpected' },
+  });
+  const c = collect(cli);
+  const worker = 'glm-model-mismatch';
+  try {
+    assert.equal((await cli.spawn(worker, brief('provider output must remain private'), {
+      worktree: mkdtempSync(join(tmpdir(), 'baton-glm-model-wt-')),
+      model: 'glm-5.2',
+    })).ok, true);
+    const crashed = await c.waitFor((event) => event.kind === 'lifecycle.crashed'
+      && event.worker === worker);
+    assert.equal(crashed.payload.code, 'model_mismatch');
+    assert.equal(c.events.some((event) => ['content.message', 'resource.provider_call']
+      .includes(event.kind)), false);
+  } finally { await Promise.resolve(cli.kill(worker)).catch(() => {}); }
 });
 
 test('SC6: Z.ai env wiring reaches the child process — base URL, auth token, model map (effect-level, fake values only)', async (t) => {
@@ -142,7 +193,7 @@ test('SC6: Z.ai env wiring reaches the child process — base URL, auth token, m
   const wt = mkdtempSync(join(tmpdir(), 'p10-glm-wt-'));
   const probes = [
     ['g1', 'REPORT_ENV:ANTHROPIC_BASE_URL', 'env:ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic'],
-    ['g2', 'REPORT_ENV:ANTHROPIC_AUTH_TOKEN', 'env:ANTHROPIC_AUTH_TOKEN=test-token-not-a-credential'],
+    ['g2', 'REPORT_ENV_PRESENT:ANTHROPIC_AUTH_TOKEN', 'env-present:ANTHROPIC_AUTH_TOKEN=true'],
     ['g3', 'REPORT_ENV:ANTHROPIC_DEFAULT_OPUS_MODEL', 'env:ANTHROPIC_DEFAULT_OPUS_MODEL=glm-5.2-test'],
     ['g4', 'REPORT_ENV:ANTHROPIC_DEFAULT_SONNET_MODEL', 'env:ANTHROPIC_DEFAULT_SONNET_MODEL=glm-5.2-test'],
   ];
@@ -179,13 +230,14 @@ test('SC6: token resolution falls back authToken -> Z_AI_API_KEY -> ZHIPU_API_KE
   process.env.Z_AI_API_KEY = 'test-zai-fallback-token';
   delete process.env.ZHIPU_API_KEY;
   const cli = new GlmSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE] });
+  assert.equal(cli._cfg.env.ANTHROPIC_AUTH_TOKEN, 'test-zai-fallback-token');
   const c = collect(cli);
   const wt = mkdtempSync(join(tmpdir(), 'p10-glm-wt3-'));
   try {
-    const ack = await cli.spawn('g1', brief('REPORT_ENV:ANTHROPIC_AUTH_TOKEN'), { worktree: wt });
+    const ack = await cli.spawn('g1', brief('REPORT_ENV_PRESENT:ANTHROPIC_AUTH_TOKEN'), { worktree: wt });
     assert.equal(ack.ok, true, ack.reason);
     const done = await c.waitFor((e) => e.kind === 'lifecycle.turn_completed');
-    assert.ok(done.payload.result.summary.includes('env:ANTHROPIC_AUTH_TOKEN=test-zai-fallback-token'), `env fallback chain broken; child reported: ${done.payload.result.summary}`);
+    assert.ok(done.payload.result.summary.includes('env-present:ANTHROPIC_AUTH_TOKEN=true'), `env fallback chain broken; child reported: ${done.payload.result.summary}`);
   } finally { await Promise.resolve(cli.kill('g1')).catch(() => {}); }
 });
 

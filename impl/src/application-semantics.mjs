@@ -16,12 +16,82 @@ const objectSchema = (properties, required = Object.keys(properties)) => ({
   type: 'object', properties, required, additionalProperties: false,
 });
 const id = { type: 'string', minLength: 1, maxLength: 256 };
-const depth = { type: 'string', enum: ['outline', 'index', 'section', 'item', 'evidence'] };
+const depth = {
+  type: 'string', enum: ['outline', 'index', 'section', 'item', 'content', 'evidence'],
+};
+const contextField = { type: 'string', minLength: 1, maxLength: 256 };
+const contextPrimitive = { oneOf: [
+  { type: 'null' }, { type: 'boolean' }, { type: 'number' },
+  { type: 'string', maxLength: 16384 },
+] };
+const contextProgramSchema = {
+  type: 'object', additionalProperties: false,
+  properties: {
+    schemaVersion: { const: 1 }, kind: { const: 'baton.context_program' },
+    expression: { $ref: '#/properties/program/$defs/expression' },
+  },
+  required: ['schemaVersion', 'kind', 'expression'],
+  $defs: {
+    selector: { oneOf: [
+      objectSchema({
+        kind: { const: 'indices' },
+        values: { type: 'array', minItems: 1, maxItems: 10000, uniqueItems: true,
+          items: { type: 'integer', minimum: 0 } },
+      }),
+      objectSchema({ kind: { const: 'field_equals' }, field: contextField,
+        value: contextPrimitive }),
+    ] },
+    predicate: { oneOf: [
+      objectSchema({ field: contextField, operator: { const: 'exists' } }),
+      objectSchema({ field: contextField,
+        operator: { type: 'string', enum: ['eq', 'neq', 'contains'] },
+        value: contextPrimitive }),
+    ] },
+    expression: { oneOf: [
+      objectSchema({ op: { const: 'source' }, branch: contextField }),
+      ...['outline', 'coverage'].map((op) => objectSchema({
+        op: { const: op }, input: { $ref: '#/properties/program/$defs/expression' },
+      })),
+      objectSchema({ op: { const: 'index' }, input: { $ref: '#/properties/program/$defs/expression' },
+        after: { oneOf: [{ type: 'null' }, { type: 'integer', minimum: 0 }] } }),
+      objectSchema({ op: { const: 'search' }, input: { $ref: '#/properties/program/$defs/expression' },
+        query: { type: 'string', minLength: 1, maxLength: 4096 },
+        mode: { type: 'string', enum: ['literal', 'case_insensitive'] } }),
+      objectSchema({ op: { const: 'slice' }, input: { $ref: '#/properties/program/$defs/expression' },
+        selector: { $ref: '#/properties/program/$defs/selector' } }),
+      objectSchema({ op: { const: 'chunk' }, input: { $ref: '#/properties/program/$defs/expression' },
+        by: contextField }),
+      objectSchema({ op: { const: 'filter' }, input: { $ref: '#/properties/program/$defs/expression' },
+        predicate: { $ref: '#/properties/program/$defs/predicate' } }),
+      objectSchema({ op: { const: 'project' }, input: { $ref: '#/properties/program/$defs/expression' },
+        fields: { type: 'array', minItems: 1, maxItems: 128, uniqueItems: true,
+          items: contextField } }),
+      ...['sort', 'unique'].map((op) => objectSchema({
+        op: { const: op }, input: { $ref: '#/properties/program/$defs/expression' },
+        keys: { type: 'array', minItems: 1, maxItems: 128, uniqueItems: true,
+          items: contextField },
+      })),
+      objectSchema({ op: { const: 'join' },
+        left: { $ref: '#/properties/program/$defs/expression' }, right: { $ref: '#/properties/program/$defs/expression' },
+        on: objectSchema({ left: contextField, right: contextField }) }),
+      objectSchema({ op: { const: 'collect' },
+        inputs: { type: 'array', minItems: 1, maxItems: 128,
+          items: { $ref: '#/properties/program/$defs/expression' } } }),
+      objectSchema({ op: { const: 'finish' }, value: { $ref: '#/properties/program/$defs/expression' },
+        evidence: { type: 'array', minItems: 1, maxItems: 128,
+          items: { $ref: '#/properties/program/$defs/expression' } } }),
+    ] },
+  },
+};
 
 const operations = {
   'application.help': {
     inputSchema: objectSchema({ topic: { type: 'string', minLength: 1, maxLength: 256 }, depth, runId: id }, []),
     helpTopic: 'application.help', idempotent: true, destructive: false,
+  },
+  'runs.list': {
+    inputSchema: objectSchema({}, []),
+    helpTopic: 'runs', idempotent: true, destructive: false,
   },
   'run.start': {
     inputSchema: objectSchema({ intent: { type: 'object', additionalProperties: false } }, ['intent']),
@@ -30,19 +100,20 @@ const operations = {
   'run.inspect': {
     inputSchema: objectSchema({
       runId: id, depth, section: id, item: id,
+      offset: { type: 'integer', minimum: 0 },
       cursor: { type: 'integer', minimum: 0 },
       waitMs: { type: 'integer', minimum: 1 },
     }, ['runId']),
     helpTopic: 'run.inspect', idempotent: true, destructive: false,
     continuation: {
-      operation: 'run.inspect', cursorArgument: 'cursor', waitArgument: 'waitMs',
-      selectorArguments: ['depth', 'section', 'item'], waitBound: 'followPolicy.maxWaitMs',
+      operation: 'run.inspect', cursorArgument: 'cursor',
+      selectorArguments: ['depth', 'section', 'item'], waitPolicy: 'deployment_derived',
       preferred: true, changeAware: true,
     },
   },
   'run.act': {
     inputSchema: objectSchema({ runId: id, actionId: id, inputs: objectSchema({}, []) }, ['runId', 'actionId', 'inputs']),
-    helpTopic: 'run.act', idempotent: true, destructive: false,
+    helpTopic: 'run.act', idempotent: true, destructive: true,
   },
   'run.stop': {
     inputSchema: objectSchema({ runId: id, reason: { type: 'string', minLength: 1, maxLength: 1024 } }),
@@ -53,11 +124,16 @@ const operations = {
 const sections = [
   ['plan', 'Goal, approved Plan, and bounded Plan-node summaries.'],
   ['execution', 'Provider work, current lifecycle state, and bounded worker summaries.'],
+  ['orchestration', 'Recursive Run role, descendant topology, recipient authority, and subtree-stop state.'],
   ['attention', 'Questions, approvals, and other operator attention.'],
   ['route', 'Exact launch enforcement and provider-native harness/model/effort attestation truth.'],
   ['budget', 'Allocated, consumed, remaining, and terminal budget cause.'],
   ['verification', 'Mechanical verification state and evidence.'],
   ['semantic_review', 'Independent semantic review state and grounded findings.'],
+  ['candidates', 'Immutable mechanically verified Workflow candidates and their exact role bindings.'],
+  ['feedback', 'Typed source-bound Workflow feedback packets and their candidate targets.'],
+  ['rounds', 'Append-only Workflow Plan rounds, immutable Candidate lineage, and current round state.'],
+  ['context', 'Immutable Context sessions, pure cells, coverage, and source-grounded evidence.'],
   ['result', 'Accepted and adopted result state.'],
   ['delivery', 'Integration and export/delivery state.'],
   ['cleanup', 'Stop, process reaping, worktree, runtime, and export cleanup.'],
@@ -66,18 +142,227 @@ const sections = [
 ].map(([sectionId, summary]) => ({ id: sectionId, summary }));
 
 const actions = {
+  context_eval: {
+    label: 'Evaluate pure Context',
+    summary: 'Evaluate one closed immutable Context expression through a durable addressed cell.',
+    inputSchema: objectSchema({
+      program: contextProgramSchema,
+      role: { type: 'string', minLength: 1, maxLength: 256 },
+    }, ['program']),
+    serverDerived: ['session', 'manifest', 'cell', 'ordinal', 'predecessor'],
+    effect: 'context_pure_compute', destructive: false, irreversible: false,
+    idempotent: true, priority: 'optional', helpTopic: 'run.act.context_eval',
+    expectedDepth: 'outline', genericCli: true,
+  },
+  context_retry: {
+    label: 'Retry failed Context generation',
+    summary: 'Propose one separately approved successor generation that executes only retryable nonaccepted units and inherits accepted results exactly.',
+    inputSchema: objectSchema({
+      callId: {
+        type: 'string', pattern: '^context-call:[a-f0-9]{64}$',
+      },
+    }, ['callId']),
+    serverDerived: [
+      'predecessorCall', 'retryUnits', 'inheritedChildren', 'predecessorPlan',
+      'successorPlan', 'workflowDefinition', 'routes', 'workerPolicy', 'budgets', 'call',
+    ],
+    effect: 'plan_proposal', destructive: false, irreversible: false,
+    idempotent: true, priority: 'recommended', helpTopic: 'run.act.context_retry',
+    expectedDepth: 'outline', genericCli: true,
+  },
+  context_reduce: {
+    label: 'Reduce completed Context',
+    summary: 'Propose one separately approved successor Plan that synthesizes every exact output of a completed Context call.',
+    inputSchema: objectSchema({
+      callId: {
+        type: 'string', pattern: '^context-call:[a-f0-9]{64}$',
+      },
+      role: { type: 'string', minLength: 1, maxLength: 256 },
+      instruction: { type: 'string', minLength: 1, maxLength: 16384 },
+    }, ['callId', 'instruction']),
+    serverDerived: [
+      'session', 'sourceCall', 'outputRef', 'evidenceRef', 'inputLineage',
+      'predecessorPlan', 'successorPlan', 'workflowDefinition', 'route', 'workerPolicy',
+      'budget', 'call',
+    ],
+    effect: 'plan_proposal', destructive: false, irreversible: false,
+    idempotent: true, priority: 'optional', helpTopic: 'run.act.context_reduce',
+    expectedDepth: 'outline', genericCli: true,
+  },
+  context_map: {
+    label: 'Map addressed Context',
+    summary: 'Propose one separately approved parallel successor Plan over an immutable completed Context cell.',
+    inputSchema: objectSchema({
+      cellId: {
+        type: 'string', pattern: '^cell:[a-f0-9]{64}$',
+      },
+      role: { type: 'string', minLength: 1, maxLength: 256 },
+      instruction: { type: 'string', minLength: 1, maxLength: 16384 },
+    }, ['cellId', 'instruction']),
+    serverDerived: [
+      'session', 'manifest', 'sourceProgram', 'outputRef', 'evidenceRef', 'partitions',
+      'predecessorPlan', 'successorPlan', 'workflowDefinition', 'routes', 'workerPolicy',
+      'budgets', 'call', 'wave',
+    ],
+    effect: 'plan_proposal', destructive: false, irreversible: false,
+    idempotent: true, priority: 'optional', helpTopic: 'run.act.context_map',
+    expectedDepth: 'outline', genericCli: true,
+  },
+  context_search: {
+    label: 'Search addressed Context',
+    summary: 'Run one pure deterministic search over an immutable Context branch.',
+    inputSchema: objectSchema({
+      query: { type: 'string', minLength: 1, maxLength: 4096 },
+      branch: { type: 'string', minLength: 1, maxLength: 256, default: 'repository' },
+      mode: {
+        type: 'string', enum: ['literal', 'case_insensitive'], default: 'case_insensitive',
+      },
+      role: { type: 'string', minLength: 1, maxLength: 256 },
+    }, ['query']),
+    serverDerived: ['session', 'manifest', 'program', 'cell', 'ordinal', 'predecessor'],
+    effect: 'context_pure_compute', destructive: false, irreversible: false,
+    idempotent: true, priority: 'optional', helpTopic: 'run.act.context_search',
+    expectedDepth: 'outline', genericCli: true, advertised: false,
+    legacyAliasFor: 'context_eval',
+  },
+  context_chunk: {
+    label: 'Chunk addressed Context',
+    summary: 'Partition one immutable Context branch by a deterministic field.',
+    inputSchema: objectSchema({
+      branch: { type: 'string', minLength: 1, maxLength: 256, default: 'repository' },
+      by: { type: 'string', minLength: 1, maxLength: 256, default: 'item' },
+      role: { type: 'string', minLength: 1, maxLength: 256 },
+    }, []),
+    serverDerived: ['session', 'manifest', 'program', 'cell', 'ordinal', 'predecessor'],
+    effect: 'context_pure_compute', destructive: false, irreversible: false,
+    idempotent: true, priority: 'optional', helpTopic: 'run.act.context_chunk',
+    expectedDepth: 'outline', genericCli: true, advertised: false,
+    legacyAliasFor: 'context_eval',
+  },
+  context_coverage: {
+    label: 'Inspect Context coverage',
+    summary: 'Measure represented and selected coverage for one immutable Context branch.',
+    inputSchema: objectSchema({
+      branch: { type: 'string', minLength: 1, maxLength: 256, default: 'repository' },
+      role: { type: 'string', minLength: 1, maxLength: 256 },
+    }, []),
+    serverDerived: ['session', 'manifest', 'program', 'cell', 'ordinal', 'predecessor'],
+    effect: 'context_pure_compute', destructive: false, irreversible: false,
+    idempotent: true, priority: 'optional', helpTopic: 'run.act.context_coverage',
+    expectedDepth: 'outline', genericCli: true, advertised: false,
+    legacyAliasFor: 'context_eval',
+  },
   approve_plan: {
     label: 'Approve exact Plan', summary: 'Approve the currently displayed Plan and let Baton dispatch it.',
     inputSchema: objectSchema({}, []), serverDerived: ['planDigest'], effect: 'provider_call',
     destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
     helpTopic: 'run.act.approve_plan', expectedDepth: 'outline',
   },
+  answer_approval: {
+    label: 'Answer worker approval', summary: 'Allow, deny, or cancel the exact pending worker tool request advertised by this Run.',
+    inputSchema: objectSchema({ decision: { type: 'string', enum: ['allow', 'deny', 'cancel'] } }, ['decision']),
+    serverDerived: ['requestId', 'workerId'], effect: 'worker_tool_authorization',
+    destructive: true, irreversible: false, idempotent: true, priority: 'required',
+    helpTopic: 'run.act.answer_approval', expectedDepth: 'outline',
+  },
+  answer_question: {
+    label: 'Answer worker question', summary: 'Send bounded text to the exact pending worker question advertised by this Run.',
+    inputSchema: objectSchema({ text: { type: 'string', minLength: 1, maxLength: 4096 } }, ['text']),
+    serverDerived: ['requestId', 'workerId'], effect: 'provider_control',
+    destructive: false, irreversible: false, idempotent: true, priority: 'required',
+    helpTopic: 'run.act.answer_question', expectedDepth: 'outline',
+  },
   adopt_result: {
     label: 'Adopt verified result', summary: 'Reverify and adopt the current accepted result without requiring caller-supplied result coordinates.',
-    inputSchema: objectSchema({ reason: { type: 'string', minLength: 1, maxLength: 1024 } }, ['reason']),
+    inputSchema: objectSchema({
+      reason: {
+        type: 'string', minLength: 1, maxLength: 1024,
+        default: 'Adopt the verified result.',
+      },
+    }, ['reason']),
     serverDerived: ['nodeKey', 'resultSha', 'evidenceDigest'], effect: 'result_adoption',
     destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
     helpTopic: 'run.act.adopt_result', expectedDepth: 'outline',
+  },
+  select_candidate: {
+    label: 'Select verified candidate',
+    summary: 'Select one role-labeled immutable verified Workflow candidate for the next gated stage.',
+    inputSchema: objectSchema({
+      role: { type: 'string', minLength: 1, maxLength: 256 },
+      reason: { type: 'string', minLength: 1, maxLength: 1024 },
+    }, ['role', 'reason']),
+    serverDerived: ['candidateId', 'candidateDigest', 'taskId', 'resultSha', 'evidenceDigest'],
+    effect: 'candidate_selection', destructive: false, irreversible: false,
+    idempotent: true, priority: 'required',
+    helpTopic: 'run.act.select_candidate', expectedDepth: 'outline',
+  },
+  send_feedback: {
+    label: 'Send Candidate feedback',
+    summary: 'Attach source-bound typed feedback to one immutable verified Workflow candidate.',
+    inputSchema: objectSchema({
+      role: { type: 'string', minLength: 1, maxLength: 256 },
+      feedback: {
+        oneOf: [
+          { type: 'string', minLength: 1, maxLength: 4096 },
+          {
+            type: 'object', additionalProperties: false, required: ['summary', 'findings'],
+            properties: {
+              summary: { type: 'string', minLength: 1, maxLength: 4096 },
+              findings: {
+                type: 'array', minItems: 1, maxItems: 32,
+                items: {
+                  type: 'object', additionalProperties: false,
+                  required: ['kind', 'severity', 'message', 'path', 'line'],
+                  properties: {
+                    kind: { type: 'string', enum: ['defect', 'risk', 'suggestion', 'question', 'observation'] },
+                    severity: { type: 'string', enum: ['info', 'low', 'medium', 'high', 'critical'] },
+                    message: { type: 'string', minLength: 1, maxLength: 4096 },
+                    path: { oneOf: [{ type: 'string', minLength: 1, maxLength: 4096 }, { type: 'null' }] },
+                    line: { oneOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
+                  },
+                },
+              },
+            },
+          },
+        ],
+      },
+    }, ['role', 'feedback']),
+    serverDerived: [
+      'candidateId', 'candidateDigest', 'taskId', 'resultSha', 'retainedResultRef',
+      'treeIdentityDigest', 'changedPaths',
+    ],
+    effect: 'workflow_feedback', destructive: false, irreversible: false,
+    idempotent: true, priority: 'recommended',
+    helpTopic: 'run.act.send_feedback', expectedDepth: 'outline',
+  },
+  revise_candidate: {
+    label: 'Revise selected Candidate',
+    summary: 'Propose one exact successor Plan that corrects the selected immutable Candidate from its bound feedback.',
+    inputSchema: objectSchema({
+      reason: {
+        type: 'string', minLength: 1, maxLength: 1024,
+        default: 'Revise the selected Candidate using its recorded feedback.',
+      },
+    }, ['reason']),
+    serverDerived: [
+      'predecessorPlan', 'revisionId', 'candidateId', 'candidateDigest', 'resultSha',
+      'retainedResultRef', 'feedbackIds', 'route', 'nodeBudget',
+    ],
+    effect: 'plan_proposal', destructive: false, irreversible: false,
+    idempotent: true, priority: 'recommended',
+    helpTopic: 'run.act.revise_candidate', expectedDepth: 'outline',
+  },
+  stop_member: {
+    label: 'Stop and reap Workflow member',
+    summary: 'Durably stop one role-addressed active Workflow member while leaving sibling Attempts untouched.',
+    inputSchema: objectSchema({
+      role: { type: 'string', minLength: 1, maxLength: 256 },
+      reason: { type: 'string', minLength: 1, maxLength: 1024 },
+    }, ['role', 'reason']),
+    serverDerived: ['nodeKey', 'taskId', 'workerId', 'targetDigest', 'fence'],
+    effect: 'member_cleanup', destructive: true, irreversible: false,
+    idempotent: true, priority: 'emergency',
+    helpTopic: 'run.act.stop_member', expectedDepth: 'outline',
   },
   semantic_review: {
     label: 'Start semantic review', summary: 'Start an independent review of the exact preserved result using one deployment-authorized route.',
@@ -90,10 +375,13 @@ const actions = {
     helpTopic: 'run.act.semantic_review', expectedDepth: 'outline',
   },
   integrate: {
-    label: 'Integrate accepted result', summary: 'Reverify and integrate the current accepted result using one deployment-authorized strategy.',
+    label: 'Apply adopted result', summary: 'Reverify and apply the current adopted result to the caller repository using one deployment-authorized strategy.',
     inputSchema: objectSchema({
       strategy: { type: 'string', enum: ['ff-only', 'structured'] },
-      reason: { type: 'string', minLength: 1, maxLength: 1024 },
+      reason: {
+        type: 'string', minLength: 1, maxLength: 1024,
+        default: 'Apply the adopted verified result.',
+      },
     }, ['strategy', 'reason']),
     serverDerived: ['evidenceDigest', 'resultSha'], effect: 'repository_edit',
     destructive: true, irreversible: false, idempotent: true, priority: 'recommended',
@@ -113,6 +401,13 @@ const actions = {
     destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
     helpTopic: 'run.act.retry_verification', expectedDepth: 'outline',
   },
+  resume_work: {
+    label: 'Resume preserved work', summary: 'Restore preserved progress in a fresh task using an orchestrator-selected harness, model, and effort.',
+    inputSchema: objectSchema({ reason: { type: 'string', minLength: 1, maxLength: 1024 } }, ['reason']),
+    serverDerived: ['checkpoint', 'planNode', 'routePolicy', 'recoveryLineage'], effect: 'provider_call',
+    destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
+    helpTopic: 'run.act.resume_work', expectedDepth: 'outline',
+  },
   stop: {
     label: 'Stop and reap Run', summary: 'Close this Run dispatch authority and reap its exact owned resources.',
     inputSchema: objectSchema({ reason: { type: 'string', minLength: 1, maxLength: 1024 } }, ['reason']),
@@ -120,6 +415,45 @@ const actions = {
     irreversible: false, idempotent: true, priority: 'emergency', helpTopic: 'run.stop', expectedDepth: 'outline',
   },
 };
+
+const APPLICATION_ACTION_CAPABILITY_SOURCE = {
+  context_eval: ['control', 'observe'],
+  context_retry: ['control', 'observe'],
+  context_reduce: ['control', 'observe'],
+  context_map: ['control', 'observe'],
+  context_search: ['control', 'observe'],
+  context_chunk: ['control', 'observe'],
+  context_coverage: ['control', 'observe'],
+  approve_plan: ['approve', 'observe'],
+  answer_approval: ['approve', 'observe'],
+  answer_question: ['control', 'observe'],
+  adopt_result: ['adopt_result', 'observe'],
+  select_candidate: ['control', 'observe'],
+  send_feedback: ['control', 'observe'],
+  revise_candidate: ['control', 'observe'],
+  stop_member: ['emergency_stop', 'observe'],
+  semantic_review: ['review', 'control', 'observe'],
+  integrate: ['integrate_result', 'observe'],
+  export_result: ['export_result', 'observe'],
+  retry_verification: ['retry_verification', 'observe'],
+  resume_work: ['resume_work', 'observe'],
+  stop: ['emergency_stop', 'observe'],
+};
+
+export const APPLICATION_ACTION_CAPABILITIES = freeze(Object.fromEntries(
+  Object.entries(APPLICATION_ACTION_CAPABILITY_SOURCE)
+    .map(([kind, capabilities]) => [kind, [...capabilities].sort()]),
+));
+
+if (Object.keys(actions).sort().join('\0')
+  !== Object.keys(APPLICATION_ACTION_CAPABILITIES).sort().join('\0')) {
+  throw new Error('application semantic action capability registry is incomplete');
+}
+
+const authorizedActions = Object.fromEntries(Object.entries(actions).map(([kind, definition]) => [
+  kind,
+  { ...definition, requiredCapabilities: APPLICATION_ACTION_CAPABILITIES[kind] },
+]));
 
 const cliCommands = [
   ['run.objective', 'run.start', null, 'baton run OBJECTIVE [--model MODEL --effort EFFORT] [--harness HARNESS]'],
@@ -132,10 +466,17 @@ const cliCommands = [
   ['run.recover', null, null, 'baton run recover RUN_ID'],
   ['run.approve', null, 'approve_plan', 'baton run approve RUN_ID --plan DIGEST'],
   ['run.answer', null, null, 'baton run answer RUN_ID REQUEST_ID (--allow | --deny | --cancel | --text TEXT)'],
+  ['run.answer.approval', null, 'answer_approval', 'baton run answer RUN_ID REQUEST_ID (--allow | --deny | --cancel)'],
+  ['run.answer.question', null, 'answer_question', 'baton run answer RUN_ID REQUEST_ID --text TEXT'],
   ['run.steer', null, null, 'baton run steer RUN_ID TARGET (--nudge | --now | --turn) TEXT --reason REASON'],
   ['run.evidence', null, null, 'baton run evidence RUN_ID'],
   ['run.adopt', null, 'adopt_result', 'baton run adopt RUN_ID --reason REASON'],
+  ['run.select', null, 'select_candidate', 'baton run select RUN_ID ROLE --reason REASON'],
+  ['run.feedback', null, 'send_feedback', 'baton run feedback RUN_ID ROLE --text TEXT'],
+  ['run.revise', null, 'revise_candidate', 'baton run revise RUN_ID --reason REASON'],
+  ['run.stop-member', null, 'stop_member', 'baton run stop-member RUN_ID ROLE --reason REASON'],
   ['run.retry', null, 'retry_verification', 'baton run retry RUN_ID --reason REASON'],
+  ['run.resume', null, 'resume_work', 'baton run resume RUN_ID --reason REASON'],
   ['run.review', null, 'semantic_review', 'baton run review RUN_ID --exact HARNESS/MODEL@EFFORT --reason REASON'],
   ['run.integrate', null, 'integrate', 'baton run integrate RUN_ID --strategy ff-only|structured --reason REASON'],
   ['run.export', null, 'export_result', 'baton run export RUN_ID DIR'],
@@ -152,24 +493,64 @@ const cli = {
   helpTopics: {
     application: {
       commandIds: ['run.objective', 'run.show', 'run.do', 'run.stop', 'run.export'],
-      usage: ['baton help [run|routing|TOPIC]', 'baton doctor'],
+      usage: [
+        'baton serve',
+        'baton setup',
+        'baton credentials install kimi',
+        'baton doctor [--depth outline|connection|profile|evidence] [--check]',
+        'baton help [run|routing|connection|TOPIC]',
+      ],
       sections: [
         {
           title: 'connection discovery',
           lines: [
-            'Git common metadata at baton/connection.json selects a user profile and repository ID.',
-            '~/.config/baton/connections/PROFILE.json selects the URL, origin, and private token file.',
+            'baton serve starts and publishes an owner-local authenticated resident with no assembly module.',
+            'Git common metadata selects its owner-private profile; connectBaton and CLI commands discover it automatically.',
+            'Schema-v1 HTTPS profiles remain available for explicit network deployments and baton setup.',
             'BATON_URL, BATON_ORIGIN, BATON_REPO_ID, and BATON_TOKEN form an explicit compatibility override.',
           ],
         },
       ],
       paragraphs: ['All Run commands use the authenticated Web command bus. Provider credentials are never CLI arguments.'],
     },
+    connection: {
+      usage: [
+        'baton serve',
+        'baton setup [--profile PROFILE]',
+        'baton doctor [--depth outline|connection|profile|evidence] [--check]',
+      ],
+      sections: [
+        {
+          title: 'profile files',
+          lines: [
+            'baton serve publishes a schema-v2 owner-local profile only after authenticated readiness succeeds.',
+            'Explicit network profiles contain schemaVersion, url, origin, and tokenFile and are installed with baton setup.',
+            'The profile and token file must be owner-only regular files; token values never belong on argv.',
+            'Setup authenticates the application card and session before installing the repository selector.',
+          ],
+        },
+        {
+          title: 'progressive diagnosis',
+          lines: [
+            'baton doctor is local and never reads the credential or contacts the remote application.',
+            'Add --depth evidence for sanitized local evidence; add --check for an authenticated remote check.',
+          ],
+        },
+      ],
+    },
     'application.help': { aliasFor: 'application' },
+    runs: {
+      commandIds: [],
+      paragraphs: [
+        'Lists the bounded Runs this authenticated principal may observe, then attach to one Run for progressive detail and actions.',
+        'The ordinary list omits receipts, event cursors, process and worker identities, filesystem paths, budgets, and transport authority.',
+      ],
+    },
     run: {
       commandIds: ['run.objective', 'run.show', 'run.do', 'run.stop', 'run.status', 'run.recover',
-        'run.approve', 'run.answer', 'run.steer', 'run.evidence', 'run.adopt', 'run.retry',
-        'run.review', 'run.integrate', 'run.export'],
+        'run.approve', 'run.answer', 'run.steer', 'run.evidence', 'run.adopt', 'run.select',
+        'run.feedback', 'run.revise', 'run.stop-member', 'run.retry',
+        'run.resume', 'run.review', 'run.integrate', 'run.export'],
       selectorRule: 'manualRoute',
       paragraphs: ['Use baton help routing for exact and deployment-profile routing.'],
     },
@@ -178,6 +559,13 @@ const cli = {
       paragraphs: [
         'Retry is safe because Baton replays only the already-approved trust gate: it re-resolves the exact preserved candidate checkpoint, rebuilds fresh candidate and base sandboxes, and re-runs the pinned Plan command under the current deployment verifier runtime. It never launches or resumes an agent harness and consumes no provider turn.',
         'Baton did not blame the agent route because the verifier itself could not complete (its command could not start, timed out, exceeded its output boundary, or the baseline also failed), so no candidate defect was proven; inconclusive verification never updates route statistics.',
+      ],
+    },
+    'run.act.resume_work': {
+      commandIds: ['run.resume'],
+      paragraphs: [
+        'Baton restores the server-derived preserved checkpoint into a fresh owned task and lets the orchestrator select harness, model, and per-task effort from the approved route policy. The caller supplies only a reason; no Git coordinate, worktree path, provider credential, budget, or storage ceiling is accepted.',
+        'Preserved work is untrusted progress. It must pass the ordinary fresh verifier and every configured review, adoption, integration, and delivery gate before it can become a result.',
       ],
     },
     'run.start': { aliasFor: 'run' },
@@ -215,13 +603,13 @@ const cli = {
 
 const core = {
   schemaVersion: 1,
-  version: '1.0.0',
-  depths: ['outline', 'index', 'section', 'item', 'evidence'],
+  version: '1.2.0',
+  depths: ['outline', 'index', 'section', 'item', 'content', 'evidence'],
   sections,
   operations,
-  actions,
+  actions: authorizedActions,
   cli,
-  defaultOperations: ['application.help', 'run.start', 'run.inspect', 'run.act', 'run.stop'],
+  defaultOperations: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.act', 'run.stop'],
   advanced: {
     defaultVisible: false,
     operations: ['fleet_spawn', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt',
@@ -234,14 +622,68 @@ export const APPLICATION_SEMANTIC_REGISTRY = freeze({
   digest: createHash('sha256').update(JSON.stringify(canonical(core))).digest('hex'),
 });
 
-export function projectTypedTerminalCause({ terminalResult = null, runStop = null } = {}) {
+const PROVIDER_TERMINAL_GUIDANCE = freeze({
+  authentication_required: {
+    category: 'provider_authentication',
+    summary: 'The selected provider route requires authentication.',
+    remediation: 'Establish or refresh the harness-native login outside Baton, rerun baton doctor, then retry the Run.',
+    retryable: true,
+  },
+  authentication_refresh_required: {
+    category: 'provider_authentication',
+    summary: 'The selected provider route requires refreshed authentication.',
+    remediation: 'Refresh the harness-native login outside Baton, rerun baton doctor, then retry the Run.',
+    retryable: true,
+  },
+  wire_frame_oversize: {
+    category: 'provider_protocol',
+    summary: 'The provider emitted a frame that exceeded Baton\'s safe wire boundary.',
+    remediation: 'Baton requires exact termination and reaping of the ambiguous session. Update or repair the harness integration, then retry the Run.',
+    retryable: true,
+  },
+  provider_crashed: {
+    category: 'provider_runtime',
+    summary: 'The provider process or session ended unexpectedly; the specific cause is unclassified.',
+    remediation: 'Check Baton route readiness and the harness-native status, then retry. If it repeats, inspect the Run\'s bounded evidence.',
+    retryable: true,
+  },
+});
+
+const GENERIC_PROVIDER_TERMINAL_GUIDANCE = freeze({
+  category: 'provider_failure',
+  summary: 'The provider route failed.',
+  remediation: 'Inspect the Run\'s bounded evidence and provider readiness, then retry or select another exact route.',
+  retryable: true,
+});
+
+function canonicalTerminalCode(value, fallback) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 256
+    && /^[a-z0-9][a-z0-9._-]*$/iu.test(value) ? value : fallback;
+}
+
+function projectProviderTerminalCause(cause) {
+  const code = canonicalTerminalCode(cause?.code, 'provider_failure_unclassified');
+  const guidance = Object.hasOwn(PROVIDER_TERMINAL_GUIDANCE, code)
+    ? PROVIDER_TERMINAL_GUIDANCE[code] : GENERIC_PROVIDER_TERMINAL_GUIDANCE;
+  return freeze({ kind: 'provider_failure', code, ...guidance });
+}
+
+export function projectTypedTerminalCause({
+  terminalResult = null, terminalOutcome = null, runStop = null,
+} = {}) {
   const cause = terminalResult?.terminalCause;
-  if (cause && ['budget_exceeded', 'provider_failure'].includes(cause.kind)) {
-    if (cause.kind === 'provider_failure') return freeze({ kind: cause.kind, code: cause.code });
+  if (cause && ['budget_exceeded', 'provider_failure', 'policy_failure'].includes(cause.kind)) {
+    if (cause.kind === 'provider_failure') return projectProviderTerminalCause(cause);
+    if (cause.kind === 'policy_failure') {
+      return freeze({ kind: cause.kind, code: canonicalTerminalCode(cause.code, 'policy_failure_unclassified') });
+    }
     return freeze({
-      kind: cause.kind, code: cause.code, dimension: cause.dimension,
+      kind: cause.kind, code: canonicalTerminalCode(cause.code, 'budget_failure_unclassified'), dimension: cause.dimension,
       used: cause.used, limit: cause.limit, ratio: cause.ratio,
     });
+  }
+  if (terminalOutcome?.accepted === false) {
+    return projectProviderTerminalCause({ code: terminalOutcome.code });
   }
   return runStop ? freeze({ kind: 'operator_stop', code: 'operator_stop' }) : null;
 }

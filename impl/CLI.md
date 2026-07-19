@@ -5,7 +5,21 @@ kernel choreography.
 
 ## Connect to a resident authenticated Web host
 
-For ordinary use, place the repository selector in private Git common metadata:
+For ordinary local use, start Baton from the repository:
+
+```sh
+baton serve
+```
+
+This creates one stable deployment identity and fresh resident incarnation, serves authenticated
+HTTP over an owner-only Unix-domain socket, self-checks readiness/card/session authority, and only
+then publishes the Git-common selector plus owner-private profile/token. No URL, origin, socket,
+token, timeout, capacity, or budget is an ordinary argument. `connectBaton({repo})`, the CLI, and
+other orchestrators discover that authority automatically. `SIGINT`/`SIGTERM` drain, revoke, and
+remove only the current incarnation.
+
+Explicit authenticated network deployments retain the schema-v1 setup convention. Their
+repository selector is:
 
 ```json
 { "schemaVersion": 1, "profile": "progressive", "repoId": "repo-a" }
@@ -62,7 +76,10 @@ publishes, or deploys.
 
 ## Own a Web deployment
 
-`baton serve CONFIG_MODULE` loads a deployment factory exporting `default` or
+`baton serve` is the normal zero-assembly owner-local host. It returns only a non-secret outline
+and never falls back to cleartext TCP or a wildcard bind.
+
+`baton serve CONFIG_MODULE` is the advanced explicit-network compatibility seam. It loads a deployment factory exporting `default` or
 `createBatonWebHost()`. It may return a `BatonWebHost` or these already policy-bound authorities:
 
 ```js
@@ -85,5 +102,5 @@ The config owns deployment policy; the host owns lifecycle. `SIGINT`, `SIGTERM`,
 and listener error close Web admission first and then call the host-only
 `application.shutdown`. Remote clients cannot invoke that fleet-wide authority.
 
-`run recover`, cursor `--follow`, materialized result export, and multi-node scheduling remain
-unavailable rather than being emulated in the CLI.
+Cursor `--follow`, exact recovery, materialized result export, and bounded multi-node Workflow
+operations use the same application authority rather than a second fleet controller.

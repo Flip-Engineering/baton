@@ -228,7 +228,7 @@ GLM `glm-4.7`/low at `230db8e`. These focused greens do not relabel the original
 matrix.
 
 **What baton is:** a run-centric **fleet application** — one orchestrator agent directs full Claude
-Code / Codex / GLM / Grok workers across vendors while Baton compiles the objective into approved
+Code / Codex / Kimi Code / GLM 5.2 / Grok workers across vendors while Baton compiles the objective into approved
 work, routes it, watches it, handles attention, verifies it, and closes its resources. The
 Coordinator is the safety kernel beneath that application, not the interface every agent should
 have to assemble manually. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)` remain core uses.
@@ -239,7 +239,10 @@ have to assemble manually. `Claude → (Codex + GLM)` and `Codex → (Claude + G
 deployment profile, visible Plan approval, exact route, one bounded RunView, attention, evidence,
 and cleanup. Direct embedding, authenticated Web, the `baton` CLI, MCP, and the browser Run desk
 share that command bus. The CLI is a thin authenticated Web client rather than another fleet
-controller; `baton serve` separately owns the Web listener and exact shutdown lifecycle. Underneath,
+controller. `baton serve` now starts the ordinary owner-local resident without a configuration
+module: authenticated HTTP runs over an owner-only Unix socket, discovery is published only after
+an authenticated card/session/readiness challenge, and signal close revokes and CAS-removes only
+the current incarnation. `baton serve CONFIG_MODULE` remains an advanced explicit-network seam. Underneath,
 the reliable Coordinator kernel makes dispatch, fencing, verification, replay, and reap exact.
 Phase 64 now ships the initial Run bus through direct embedding, authenticated Web, MCP stdio, and
 the authenticated browser desk: start, status, distinct approval, bounded wait, answer, and
@@ -260,18 +263,17 @@ digest, policy-required result adoption and semantic approval, then delegates on
 or structured transaction to the Coordinator. Web, MCP, CLI, and the browser Run desk expose the
 same commands; none push, publish, or deploy. Restart reconstruction, report forgery/scope
 smuggling, review/stop races, stale evidence, dirty checkout, and non-fast-forward refusal are
-covered by executable contracts. A clean credential-filtered dogfood Run used the real GLM
-`glm-4.7`/low route as the independent reviewer, reached `completed` only after adoption and
-fast-forward integration, and had already reaped both Run workers before host shutdown; the
-provider observed `glm-4.7` but did not expose effort, which remains honestly `null`.
+covered by executable contracts. Historical dogfood evidence used older GLM routes, but those are
+not current routing recommendations. Baton now restricts GLM work to `glm-5.2`, with effort chosen
+explicitly by the orchestrator instead of inherited from a blanket low-effort default.
 MCP EOF/signals separately invoke the host-only exact deployment shutdown path. The `baton` CLI
 ships `doctor`, start, status/wait, approve, answer, steer, stop, evidence, and evidence-bound
-adopt, semantic review, and evidence-bound integration using `BATON_URL`, `BATON_ORIGIN`,
-`BATON_REPO_ID`, and `BATON_TOKEN`; credentials are never
-command arguments. `baton serve CONFIG_MODULE` owns Web admission and closes it before exact
-application shutdown on listener failure or process signals. See [impl/CLI.md](impl/CLI.md).
-Cursor follow, materialized result export, recovery, and multi-node
-scheduling remain active work. Southbound, the product tier
+adopt, semantic review, evidence-bound integration, typed feedback, Candidate selection,
+approval-gated revision, and role-addressed member stop through repository discovery. The
+`BATON_URL`, `BATON_ORIGIN`, `BATON_REPO_ID`, and `BATON_TOKEN` tuple remains a compatibility
+override; credentials are never command arguments. See [impl/CLI.md](impl/CLI.md).
+Cursor follow, materialized result export, exact recovery, and the bounded parallel Workflow plus
+one-round revision vertical now ship; deeper multi-round/strategy composition remains active. Southbound, the product tier
 uses persistent Claude stream-json, Codex app-server, and Grok ACP sessions; one-shot subprocess
 adapters remain an explicitly limited fire-and-forget tier. All retained Goal/Plan, causal graph,
 Vantage, Evidence Ladder, Scratch, Skill Forge, Atlas AST/CST/SCIP/CPG/IR, semantic merge,
