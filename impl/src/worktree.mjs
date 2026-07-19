@@ -48,6 +48,9 @@ export class WorktreeLockedError extends Error {
 export class WorktreeCleanupError extends Error {
   constructor(message) { super(message); this.name = 'WorktreeCleanupError'; this.code = 'worktree_cleanup_failed'; }
 }
+export class WorktreeAuthorityAmbiguousError extends Error {
+  constructor(message) { super(message); this.name = 'WorktreeAuthorityAmbiguousError'; this.code = 'worktree_authority_ambiguous'; }
+}
 export class SparseCheckoutError extends Error {
   constructor(message, code = 'worker_sparse_projection_changed') { super(message); this.name = 'SparseCheckoutError'; this.code = code; }
 }
@@ -375,11 +378,17 @@ function trackedProjectionPathsAtCommit(repoRoot, sha, targetPaths) {
 function validatedMetadata(repoRoot, taskId) {
   const meta = readMeta(repoRoot, taskId);
   const baseFields = ['schemaVersion', 'taskId', 'branch', 'baseSha', 'createdAt', 'stoppedAt', 'copiedDependencies', 'sparsePaths', 'sparseCheckoutIdentity'];
+  const authorityFields = ['physicalOwnerId', 'logicalTaskId', 'deploymentId', 'controllerId', 'runId', 'attempt', 'generation', 'worktree', 'state'];
   const projectionFields = ['toolchainProjection', 'toolchainProjectionTargets', 'projectionExclude'];
-  const expectedFields = meta?.toolchainProjection ? [...baseFields, ...projectionFields] : baseFields;
+  const versionFields = meta?.schemaVersion === 2 ? [...baseFields, ...authorityFields] : baseFields;
+  const expectedFields = meta?.toolchainProjection ? [...versionFields, ...projectionFields] : versionFields;
   if (!meta || typeof meta !== 'object' || Array.isArray(meta)
     || Object.keys(meta).sort().join(',') !== expectedFields.sort().join(',')
-    || meta.schemaVersion !== 1 || meta.taskId !== taskId || meta.branch !== `baton/${taskId}`
+    || ![1, 2].includes(meta.schemaVersion) || meta.taskId !== taskId || meta.branch !== `baton/${taskId}`
+    || (meta.schemaVersion === 2 && (meta.physicalOwnerId !== taskId || meta.state !== 'ready'
+      || typeof meta.logicalTaskId !== 'string' || meta.worktree !== wtDirFor(repoRoot, taskId)
+      || !Number.isSafeInteger(meta.attempt) || meta.attempt < 1
+      || !Number.isSafeInteger(meta.generation) || meta.generation < 1))
     || typeof meta.baseSha !== 'string' || !/^[a-f0-9]{40}$/u.test(meta.baseSha)
     || typeof meta.createdAt !== 'string' || (meta.stoppedAt !== null && typeof meta.stoppedAt !== 'string')
     || !Array.isArray(meta.copiedDependencies) || !Array.isArray(meta.sparsePaths)) throw sparseError('owned worktree metadata is missing or invalid', 'worker_sparse_metadata_invalid');
@@ -472,11 +481,12 @@ export async function pinBaseSha(repoRoot, opts = {}) {
  */
 export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
   normalizePhysicalOwnerId(taskId, 'taskId');
-  try { gitFile(['check-ref-format', '--branch', `baton/${taskId}`], repoRoot, { stdio: 'ignore' }); }
-  catch { throw new TypeError('taskId must produce one valid Baton branch ref'); }
-  assertNoPhysicalOwnerCollision(repoRoot, taskId);
+  const physicalOwnerId = normalizePhysicalOwnerId(opts.physicalOwnerId ?? taskId, 'physicalOwnerId');
+  try { gitFile(['check-ref-format', '--branch', `baton/${physicalOwnerId}`], repoRoot, { stdio: 'ignore' }); }
+  catch { throw new TypeError('physicalOwnerId must produce one valid Baton branch ref'); }
+  assertNoPhysicalOwnerCollision(repoRoot, physicalOwnerId);
   const wtRoot = authorityRoot(repoRoot, 'wt', { create: true });
-  const dir = join(wtRoot, taskId);
+  const dir = join(wtRoot, physicalOwnerId);
   if (existsSync(dir)) {
     throw new WorktreeAlreadyExistsError(`createFromBase: ${dir} already exists`);
   }
@@ -489,7 +499,16 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
   const sources = dependencySources(repoRoot, opts.dependencyDirs ?? []);
   const sparsePaths = normalizeSparsePaths(opts.sparsePaths ?? []);
   const sparseIdentity = sparseCheckoutIdentity(sparsePaths);
-  const branch = `baton/${taskId}`;
+  const branch = `baton/${physicalOwnerId}`;
+  const ownerReceipt = Object.freeze({
+    schemaVersion: 2, physicalOwnerId, logicalTaskId: taskId,
+    deploymentId: opts.deploymentId ?? 'legacy', controllerId: opts.controllerId ?? 'legacy',
+    runId: opts.runId ?? 'legacy', attempt: opts.attempt ?? 1, generation: opts.generation ?? 1,
+    branch, worktree: dir, baseSha,
+  });
+  // This intent is the local proof needed to reconcile a crash after ref creation but before
+  // worktree registration or the ready receipt. It is written before either Git effect.
+  writeMeta(repoRoot, physicalOwnerId, { ...ownerReceipt, state: 'creating', createdAt: new Date().toISOString(), stoppedAt: null });
   if (opts.toolchainProjection) {
     const collisions = trackedProjectionPathsAtCommit(repoRoot, baseSha, opts.toolchainProjection.targetPaths());
     if (collisions.length > 0) throw new ToolchainProjectionError('toolchain projection target is tracked by the worker base commit', 'toolchain_projection_materialization_failed');
@@ -516,7 +535,7 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
     }
     if (opts.toolchainProjection) {
       toolchainProjectionTargets = opts.toolchainProjection.targetPaths();
-      projectionExcludePath = configureProjectionExcludes(repoRoot, dir, taskId, toolchainProjectionTargets);
+      projectionExcludePath = configureProjectionExcludes(repoRoot, dir, physicalOwnerId, toolchainProjectionTargets);
       const result = opts.toolchainProjection.materialize(dir);
       toolchainProjection = result.identity;
       if (JSON.stringify(result.materializedTargets) !== JSON.stringify(toolchainProjectionTargets)) throw new ToolchainProjectionError('toolchain materialization is invalid', 'toolchain_projection_materialization_failed');
@@ -525,22 +544,22 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
     }
     const createdAt = new Date().toISOString();
     const meta = {
-      schemaVersion: 1, taskId, branch, baseSha, createdAt, stoppedAt: null,
+      ...ownerReceipt, state: 'ready', taskId: physicalOwnerId, createdAt, stoppedAt: null,
       copiedDependencies, sparsePaths: [...sparsePaths], sparseCheckoutIdentity: sparseIdentity,
     };
     if (toolchainProjection) {
       meta.toolchainProjection = toolchainProjection;
       meta.toolchainProjectionTargets = toolchainProjectionTargets;
-      meta.projectionExclude = `${taskId}.projection.exclude`;
+      meta.projectionExclude = `${physicalOwnerId}.projection.exclude`;
     }
-    writeMeta(repoRoot, taskId, meta);
-    validateOwnedWorktree(repoRoot, taskId, { expectedBaseSha: baseSha, expectedBranch: branch, sparseCheckoutIdentity: sparseIdentity });
+    writeMeta(repoRoot, physicalOwnerId, meta);
+    validateOwnedWorktree(repoRoot, physicalOwnerId, { expectedBaseSha: baseSha, expectedBranch: branch, sparseCheckoutIdentity: sparseIdentity });
     logEvent(opts, taskId, 'worktree.created', {
       dir, branch, baseSha, copiedDependencies, sparsePaths: [...sparsePaths], sparseCheckoutIdentity: sparseIdentity,
       ...(toolchainProjection ? { toolchainProjection } : {}),
     });
     return {
-      taskId, dir, branch, baseSha, createdAt, copiedDependencies, sparsePaths: [...sparsePaths], sparseCheckoutIdentity: sparseIdentity,
+      taskId, physicalOwnerId, ownerReceipt, dir, branch, baseSha, createdAt, copiedDependencies, sparsePaths: [...sparsePaths], sparseCheckoutIdentity: sparseIdentity,
       ...(toolchainProjection ? { toolchainProjection } : {}),
     };
   } catch (err) {
@@ -549,7 +568,7 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
     try { sh('git', ['branch', '-D', branch], repoRoot); } catch { /* best-effort */ }
     try { sh('git', ['worktree', 'prune'], repoRoot); } catch { /* best-effort */ }
     if (projectionExcludePath) rmSync(projectionExcludePath, { force: true });
-    rmSync(metaPathFor(repoRoot, taskId), { force: true });
+    rmSync(metaPathFor(repoRoot, physicalOwnerId), { force: true });
     throw err;
   }
 }
@@ -921,7 +940,7 @@ export async function reap(repoRoot, taskId, opts = {}) {
  * @returns {Promise<{prunedAdminEntries:string[], removedZombieDirs:string[], removedIntegrationDirs:string[], removedVerifyDirs:string[], errors:string[]}>}
  */
 export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
-  const report = { prunedAdminEntries: [], removedZombieDirs: [], removedIntegrationDirs: [], removedVerifyDirs: [], errors: [] };
+  const report = { prunedAdminEntries: [], removedZombieDirs: [], removedIntegrationDirs: [], removedVerifyDirs: [], diagnostics: [], errors: [] };
   let registrationsBeforePrune = [];
   try { registrationsBeforePrune = listWorktrees(repoRoot); }
   catch (err) { report.errors.push(`registration-scan: ${err.message || err}`); }
@@ -1010,6 +1029,16 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         report.errors.push(`${taskId}: ${err.message || err}`);
       }
     }
+    // A branch alone is not ownership. Surface it without turning ambiguity into cleanup power.
+    try {
+      const branches = sh('git', ['for-each-ref', '--format=%(refname:strip=3)', 'refs/heads/baton/'], repoRoot)
+        .split('\n').filter(Boolean);
+      for (const branchOwner of branches) {
+        if (!candidates.has(branchOwner) && !expected.has(branchOwner)) report.diagnostics.push(Object.freeze({
+          code: 'worktree_authority_ambiguous', physicalOwnerId: branchOwner, disposition: 'retained',
+        }));
+      }
+    } catch (err) { report.errors.push(`branch-scan: ${err.message || err}`); }
   }
 
   // Verification sandboxes are never resumable. A crash can occur between sandbox creation and

@@ -451,9 +451,18 @@ export class WorktreeCapacityAuthority {
       }
       const within = relative(materializedRoot, materializedPath);
       const verifyLabel = row.resourceId.slice(0, row.resourceId.lastIndexOf(':'));
+      let workerOwnerMatches = basename(materializedPath) === row.resourceId;
+      if (row.kind === 'worker' && !workerOwnerMatches) {
+        try {
+          const receipt = JSON.parse(readFileSync(`${materializedPath}.meta.json`, 'utf8'));
+          workerOwnerMatches = receipt?.schemaVersion === 2
+            && receipt.physicalOwnerId === basename(materializedPath)
+            && receipt.logicalTaskId === row.resourceId && receipt.worktree === materializedPath;
+        } catch { workerOwnerMatches = false; }
+      }
       if (within === '' || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)
         || within.includes(sep)
-        || (row.kind === 'worker' && basename(materializedPath) !== row.resourceId)
+        || (row.kind === 'worker' && !workerOwnerMatches)
         || (row.kind === 'verify' && (verifyLabel.length === 0
           || !basename(materializedPath).startsWith(`${verifyLabel}-`)))) {
         throw typed('capacity materialization resource identity changed',

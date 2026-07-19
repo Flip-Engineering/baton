@@ -1092,6 +1092,11 @@ This ledger is the current execution tracker layered over the retained catalog a
   target `.baton/wt` namespace concurrently. Current parallel dogfood uses one exact snapshot clone
   per host; future deployment assembly needs explicit namespace/lease authority rather than racing
   startup cleanup.
+- **Phase 92.2 — physical workspace authority green:** logical task identity no longer names a Git
+  branch or checkout. Baton derives a deployment-qualified opaque owner and durably binds it to the
+  Run, Attempt, generation, base SHA, branch, worktree, and logical task before Git creation. Two
+  controllers can execute the same logical task without collision or cross-reap; restart removes
+  only locally proven dead residue and retains ambiguous foreign authority diagnostically.
 - **Phase 74 — deterministic application connection green:** `baton setup`, progressive `doctor`,
   connection help, and authenticated repository selection now form one owner-only Git-common-dir
   connection path. Setup never asks an agent to manage token budgets, export byte ceilings, or

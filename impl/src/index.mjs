@@ -7,7 +7,7 @@
 import { join, basename, sep, resolve, relative, isAbsolute } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 
 import { Log } from './log.mjs';
 import { FenceTable } from './fence.mjs';
@@ -220,6 +220,12 @@ function worktreeManager(repoRoot, opts = {}) {
   const verifyReservations = new Map();
   const workerReservations = new Map();
   const pendingWorkerReservations = new Map();
+  const physicalToLogical = new Map();
+  const deploymentId = createHash('sha256').update(String(opts.deploymentRoot ?? realpathSync(repoRoot))).digest('hex').slice(0, 20);
+  const physicalOwner = (taskId, authority = {}) => `w-${createHash('sha256').update(JSON.stringify({
+    deploymentId, runId: authority.runId ?? 'direct', logicalTaskId: taskId,
+    attempt: authority.attempt ?? 1, generation: authority.generation ?? 1,
+  })).digest('hex').slice(0, 32)}`;
   const capacityRequest = (baseSha, sparsePaths, sparseCheckoutIdentity) => ({
     baseSha,
     sparsePaths,
@@ -316,7 +322,7 @@ function worktreeManager(repoRoot, opts = {}) {
       owned.forEach(({ taskId }) => pendingWorkerReservations.delete(taskId));
       return Object.freeze(taskIds.map(() => true));
     },
-    async create(taskId, requestedBaseSha = null) {
+    async create(taskId, requestedBaseSha = null, authority = {}) {
       let selected = requestedBaseSha ?? opts.deploymentBaseSha ?? null;
       if (selected === null) {
         const base = await worktreeMod.pinBaseSha(repoRoot, {});
@@ -337,17 +343,27 @@ function worktreeManager(repoRoot, opts = {}) {
         capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
       );
       let r = null;
+      const ownerId = physicalOwner(taskId, authority);
+      physicalToLogical.set(ownerId, taskId);
       try {
-        r = await worktreeMod.createFromBase(repoRoot, taskId, selected, { dependencyDirs: opts.workerDependencyDirs ?? [], sparsePaths: opts.workerSparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
+        r = await worktreeMod.createFromBase(repoRoot, taskId, selected, {
+          physicalOwnerId: ownerId, deploymentId, controllerId: deploymentId,
+          runId: authority.runId ?? 'direct', attempt: authority.attempt ?? 1,
+          generation: authority.generation ?? 1,
+          dependencyDirs: opts.workerDependencyDirs ?? [], sparsePaths: opts.workerSparsePaths ?? [],
+          ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}),
+        });
         if (capacityReservation) {
           capacityReservation = opts.worktreeCapacity.materialize(capacityReservation, r.dir);
           workerReservations.set(taskId, capacityReservation);
         }
-        return { path: r.dir, branch: r.branch, baseSha: r.baseSha, sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity, ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}), ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
+        return { path: r.dir, branch: r.branch, baseSha: r.baseSha, ownerTaskId: ownerId,
+          logicalTaskId: taskId, physicalOwnerId: ownerId, ownerReceipt: r.ownerReceipt,
+          sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity, ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}), ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
       } catch (error) {
         let cleanupError = null;
         if (r) {
-          try { await worktreeMod.reap(repoRoot, taskId, { force: true, deleteBranch: true }); }
+          try { await worktreeMod.reap(repoRoot, ownerId, { force: true, deleteBranch: true }); }
           catch (cause) { cleanupError = cause; }
         }
         if (capacityReservation) opts.worktreeCapacity.release(capacityReservation);
@@ -362,10 +378,11 @@ function worktreeManager(repoRoot, opts = {}) {
     worktreeAvailable(taskId, context) {
       try {
         worktreeMod.normalizePhysicalOwnerId(taskId, 'taskId');
-        if (!context || context.ownerTaskId !== taskId || typeof context.worktree !== 'string') {
+        if (!context || (context.logicalTaskId ?? taskId) !== taskId
+          || typeof context.ownerTaskId !== 'string' || typeof context.worktree !== 'string') {
           return false;
         }
-        const expected = resolve(realpathSync(repoRoot), '.baton', 'wt', taskId);
+        const expected = resolve(realpathSync(repoRoot), '.baton', 'wt', context.ownerTaskId);
         if (!existsSync(context.worktree) || realpathSync(context.worktree) !== expected
           || !existsSync(expected) || !existsSync(`${expected}.meta.json`)) return false;
         const stat = lstatSync(expected);
@@ -564,17 +581,18 @@ function worktreeManager(repoRoot, opts = {}) {
     },
     // Terminal policy cleanup owns non-evidence task branches as well as their checkout/metadata.
     async remove(taskId) {
-      const pending = pendingWorkerReservations.get(taskId);
+      const logicalTaskId = physicalToLogical.get(taskId) ?? taskId;
+      const pending = pendingWorkerReservations.get(logicalTaskId);
       if (pending && opts.worktreeCapacity) {
-        if (opts.worktreeCapacity.release(pending.reservation)) pendingWorkerReservations.delete(taskId);
+        if (opts.worktreeCapacity.release(pending.reservation)) pendingWorkerReservations.delete(logicalTaskId);
       }
       await worktreeMod.reap(repoRoot, taskId, { force: true, deleteBranch: true });
       if (opts.worktreeCapacity) {
-        const reservation = workerReservations.get(taskId);
+        const reservation = workerReservations.get(logicalTaskId);
         if (reservation) {
-          if (opts.worktreeCapacity.release(reservation)) workerReservations.delete(taskId);
+          if (opts.worktreeCapacity.release(reservation)) workerReservations.delete(logicalTaskId);
         }
-        else opts.worktreeCapacity.releaseAbsent(`worker:${taskId}`);
+        else opts.worktreeCapacity.releaseAbsent(`worker:${logicalTaskId}`);
       }
     },
     async validateSessionContext(context) {
@@ -627,12 +645,23 @@ function worktreeManager(repoRoot, opts = {}) {
       if (report.errors.length > 0) throw Object.assign(new Error('worktree reconciliation was incomplete'), { code: 'worktree_cleanup_failed' });
       if (opts.worktreeCapacity) {
         const retained = expectedActiveTaskIds.filter((taskId) => existsSync(join(repoRoot, '.baton', 'wt', taskId)));
+        const retainedCapacityOwners = retained.map((ownerId) => {
+          try {
+            const metaPath = join(repoRoot, '.baton', 'wt', `${ownerId}.meta.json`);
+            const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
+            const logical = meta?.schemaVersion === 2 && meta.physicalOwnerId === ownerId
+              ? meta.logicalTaskId : ownerId;
+            physicalToLogical.set(ownerId, logical);
+            return logical;
+          } catch { return ownerId; }
+        });
         for (const taskId of expectedActiveTaskIds) if (!retained.includes(taskId)) opts.worktreeCapacity.releaseAbsent(`worker:${taskId}`);
+        const retainedCapacitySet = new Set(retainedCapacityOwners);
         for (const row of opts.worktreeCapacity.snapshot().reservations) {
           if (row.kind === 'verify') opts.worktreeCapacity.releaseAbsent(row.id);
-          else if (row.kind === 'worker' && !existsSync(join(repoRoot, '.baton', 'wt', row.resourceId))) opts.worktreeCapacity.releaseAbsent(row.id);
+          else if (row.kind === 'worker' && !retainedCapacitySet.has(row.resourceId)) opts.worktreeCapacity.releaseAbsent(row.id);
         }
-        const capacityReconcile = opts.worktreeCapacity.reconcile(retained);
+        const capacityReconcile = opts.worktreeCapacity.reconcile(retainedCapacityOwners);
         for (const row of capacityReconcile.adopted) workerReservations.set(row.resourceId, row);
       }
       return report;
@@ -976,6 +1005,7 @@ export function createDriver(opts) {
     log, fences,
     adapters: opts.adapters,
     worktrees: worktreeManager(opts.repoRoot, {
+      deploymentRoot: opts.logDir,
       deploymentBaseSha: opts.deploymentBaseSha,
       workerDependencyDirs: opts.workerDependencyDirs,
       workerSparsePaths,

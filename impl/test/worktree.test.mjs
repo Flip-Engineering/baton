@@ -555,6 +555,51 @@ test('reconcile does not claim or delete a live Baton branch owned by another li
   await reap(controllerA, 'controller-a-live', { deleteBranch: true });
 });
 
+test('Phase 92.2: two controllers may use one logical task without physical branch collision or cross-reap', async (t) => {
+  const parent = mkdtempSync(join(tmpdir(), 'baton-wt-physical-owner-'));
+  t.after(() => rmSync(parent, { recursive: true, force: true }));
+  const main = join(parent, 'main'); mkdirSync(main);
+  sh('git', ['init', '-q'], main); sh('git', ['config', 'user.email', 'test@example.com'], main);
+  sh('git', ['config', 'user.name', 'Baton Test'], main); writeFileSync(join(main, 'README.md'), '# base\n');
+  sh('git', ['add', '-A'], main); sh('git', ['commit', '-qm', 'base'], main);
+  const baseSha = sh('git', ['rev-parse', 'HEAD'], main);
+  const a = join(parent, 'a'); const b = join(parent, 'b');
+  sh('git', ['worktree', 'add', '--detach', a, baseSha], main);
+  sh('git', ['worktree', 'add', '--detach', b, baseSha], main);
+  const first = await createFromBase(a, 'same-logical-task', baseSha, {
+    physicalOwnerId: 'w-controller-a-run-attempt-1', deploymentId: 'a', controllerId: 'a',
+    runId: 'same-run', attempt: 1, generation: 1,
+  });
+  const second = await createFromBase(b, 'same-logical-task', baseSha, {
+    physicalOwnerId: 'w-controller-b-run-attempt-1', deploymentId: 'b', controllerId: 'b',
+    runId: 'same-run', attempt: 1, generation: 1,
+  });
+  assert.notEqual(first.branch, second.branch); assert.notEqual(first.dir, second.dir);
+  await reconcile(a, []);
+  assert.equal(existsSync(first.dir), false); assert.equal(existsSync(second.dir), true);
+  assert.equal(sh('git', ['branch', '--show-current'], second.dir), second.branch);
+  await markStopped(b, second.physicalOwnerId); await reap(b, second.physicalOwnerId, { deleteBranch: true });
+});
+
+test('Phase 92.2: a lost create response leaves a durable binding and restart reaps only proven residue', async (t) => {
+  const { dir, baseSha } = makeRepo(); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const owner = 'w-response-lost-generation-2';
+  const made = await createFromBase(dir, 'stable-task', baseSha, {
+    physicalOwnerId: owner, deploymentId: 'deployment', controllerId: 'controller',
+    runId: 'run', attempt: 2, generation: 2,
+  });
+  const receipt = JSON.parse(readFileSync(join(dir, '.baton', 'wt', `${owner}.meta.json`), 'utf8'));
+  assert.deepEqual({ logicalTaskId: receipt.logicalTaskId, physicalOwnerId: receipt.physicalOwnerId,
+    branch: receipt.branch, worktree: receipt.worktree, baseSha: receipt.baseSha,
+    attempt: receipt.attempt, generation: receipt.generation }, {
+    logicalTaskId: 'stable-task', physicalOwnerId: owner, branch: made.branch,
+    worktree: made.dir, baseSha, attempt: 2, generation: 2,
+  });
+  await reconcile(dir, []); await reconcile(dir, []);
+  assert.equal(existsSync(made.dir), false);
+  assert.equal(sh('git', ['branch', '--list', made.branch]), '');
+});
+
 // ============================================================
 // reconcile() log-event attribution — red workers-trust#9
 // ============================================================

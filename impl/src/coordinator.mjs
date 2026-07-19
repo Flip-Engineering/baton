@@ -2374,7 +2374,10 @@ export class Coordinator {
           ...(task.sessionContext.capacityReservation ? { capacityReservation: task.sessionContext.capacityReservation } : {}),
         });
     } else {
-      try { worktreeSource = Promise.resolve(this._worktrees.create(task.id, task.worktreeBaseSha ?? null)); }
+      try { worktreeSource = Promise.resolve(this._worktrees.create(task.id, task.worktreeBaseSha ?? null, {
+        runId: task.runId, attempt: task.recoveryAttempt?.attempt ?? 1,
+        generation: (handle.processGeneration ?? 0) + 1,
+      })); }
       catch (error) { worktreeSource = Promise.reject(error); }
     }
     let worktreeReady = worktreeSource
@@ -2395,6 +2398,9 @@ export class Coordinator {
             ...(res.sparseCheckoutIdentity !== undefined ? { sparseCheckoutIdentity: normalizeSparseCheckoutIdentity(res.sparseCheckoutIdentity) } : {}),
             ...(res.capacityReservation ? { capacityReservation: Object.freeze({ ...res.capacityReservation }) } : {}),
             ownerTaskId: res.ownerTaskId ?? task.sessionContext?.ownerTaskId ?? task.id,
+            logicalTaskId: res.logicalTaskId ?? task.id,
+            ...(res.physicalOwnerId ? { physicalOwnerId: res.physicalOwnerId } : {}),
+            ...(res.ownerReceipt ? { ownerReceipt: Object.freeze({ ...res.ownerReceipt }) } : {}),
           });
           task.sessionContext = sessionContext;
           handle.sessionContext = sessionContext;

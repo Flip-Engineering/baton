@@ -324,9 +324,11 @@ evidence and disagreement are retained in
   artifacts still use host-locale `localeCompare`. A repository-wide canonical-order audit,
   migration/version policy, and cross-locale replay gate remain open in
   [GitHub #4](https://github.com/wahargis/baton/issues/4).
-- Same-task-ID branch namespaces across independent controllers and branch-only crash residue still
-  need explicit ownership and reconciliation contracts; see
-  [GitHub #5](https://github.com/wahargis/baton/issues/5).
+- **Phase 92.2 / GitHub #5:** stable logical tasks are separated from deployment-qualified opaque
+  physical workspace owners. Durable pre-create/ready receipts bind Run, Attempt, generation, base,
+  path, branch, and both identities; concurrent linked-checkout controllers do not collide or
+  cross-reap. Locally proven branch-only crash residue is removed idempotently, while live or
+  ambiguous foreign authority is retained with a typed diagnostic.
 - Goal/Plan capability/effect declarations provide bounded commitments and dispatch checks, but
   finer-grained effect enforcement, authorized continuation/recovery, live amendments, and richer
   risk/multi-principal policy remain open.
