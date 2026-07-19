@@ -1,0 +1,5 @@
+# Generic settlement adversarial review — context unit 3/5
+
+## High — failed settlements erase non-retryable terminality
+
+`_validateContextEffectCallSettlementPayload` derives failure from the normalized post-cleanup children (`children.every(contextChildAccepted)` at `impl/src/coordination-store.mjs:6042`), but then accepts only the fixed aggregate termination `context_child_failed` with `retryable: true` (`impl/src/coordination-store.mjs:6058-6066`). Nothing in this branch derives that retryability from the normalized children, `providerResults`, or cleanup receipt. Consequently, a generic call whose exact child/provider result or cleanup outcome is non-retryable cannot preserve that terminal truth at the call boundary: its settlement must either falsely advertise a retry or be rejected as malformed. A caller following the accepted aggregate result can re-execute providers despite contrary evidence. Derive and evidence-bind the aggregate termination/retryability from the normalized child, provider-result, and cleanup terminal states (at minimum, never mark the aggregate retryable when any constituent failure is non-retryable or cleanup is unresolved).
