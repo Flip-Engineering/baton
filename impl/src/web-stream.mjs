@@ -24,6 +24,156 @@ const AUTHORITY_FIELDS = new Set([
 ]);
 const RUN_CHANNELS = new Set(['progress', 'events', 'output']);
 const OPAQUE_CURSOR = /^[A-Za-z0-9_-]{1,4096}$/u;
+const HEX_DIGEST = /^[a-f0-9]{64}$/u;
+const RUN_FACT_FIELDS = new Set([
+  'accept', 'accepted', 'alreadyTerminal', 'attempt', 'byteCount', 'decision',
+  'dispatchClosed', 'fileCount', 'from', 'interactionsResolved', 'killConfirmed',
+  'limit', 'outcome', 'pendingCancelled', 'phase', 'processesClosed',
+  'processesObserved', 'ratio', 'remainingCallCount', 'remainingCellCount',
+  'remainingCount', 'remainingSessionCount', 'result', 'resultOutcome',
+  'resultState', 'resultStatus', 'runAuthorityReleased', 'state', 'status',
+  'targetCallCount', 'targetCellCount', 'targetCount', 'targetSessionCount',
+  'terminal', 'to', 'tokenCount', 'used',
+]);
+const TERMINAL_CAUSE_FIELDS = new Set([
+  'kind', 'code', 'category', 'summary', 'remediation', 'retryable',
+  'dimension', 'used', 'limit', 'ratio',
+]);
+const TIMING_FIELDS = new Set([
+  'startedAt', 'observedAt', 'elapsedMs', 'lastProgress', 'silenceMs', 'completedAt',
+]);
+
+function optionalScalar(value) {
+  return value === null || typeof value === 'string' || typeof value === 'boolean'
+    || Number.isSafeInteger(value) || (typeof value === 'number' && Number.isFinite(value));
+}
+
+function closedScalars(value, allowed) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const result = {};
+  for (const key of allowed) if (Object.hasOwn(value, key) && optionalScalar(value[key])) {
+    result[key] = value[key];
+  }
+  return result;
+}
+
+function projectTerminalCause(value) {
+  if (value === null || value === undefined) return null;
+  return closedScalars(value, TERMINAL_CAUSE_FIELDS);
+}
+
+function projectRunOutline(value) {
+  const outline = value?.outline;
+  if (!outline || typeof outline !== 'object' || Array.isArray(outline)) {
+    throw new TypeError('Run outline projection is invalid');
+  }
+  const projectedOutline = {};
+  for (const key of ['objective', 'phase', 'narrative', 'risk', 'stage']) {
+    if (Object.hasOwn(outline, key) && optionalScalar(outline[key])) projectedOutline[key] = outline[key];
+  }
+  const timing = closedScalars(outline, TIMING_FIELDS);
+  Object.assign(projectedOutline, timing ?? {});
+  if (outline.progress && typeof outline.progress === 'object' && !Array.isArray(outline.progress)) {
+    projectedOutline.progress = closedScalars(outline.progress,
+      new Set(['current', 'summary', 'completed', 'total', 'state'])) ?? {};
+  }
+  if (outline.attention && typeof outline.attention === 'object' && !Array.isArray(outline.attention)) {
+    projectedOutline.attention = closedScalars(outline.attention,
+      new Set(['state', 'count', 'summary'])) ?? {};
+  }
+  projectedOutline.terminalCause = projectTerminalCause(outline.terminalCause);
+  if (outline.resources && typeof outline.resources === 'object' && !Array.isArray(outline.resources)) {
+    projectedOutline.resources = {
+      ...(closedScalars(outline.resources, new Set(['state', 'ownedCount', 'cleanupState'])) ?? {}),
+      terminalCause: projectTerminalCause(outline.resources.terminalCause),
+    };
+  }
+  if (outline.preservation && typeof outline.preservation === 'object'
+    && !Array.isArray(outline.preservation)) {
+    projectedOutline.preservation = closedScalars(outline.preservation,
+      new Set(['state', 'resumeAvailable', 'summary'])) ?? {};
+  }
+  return {
+    schemaVersion: 1, runId: value.runId, depth: 'outline', cursor: value.cursor,
+    terminal: value.terminal === true, outline: projectedOutline,
+  };
+}
+
+function projectRunProgress(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 1 || value.kind !== 'baton.run_progress'
+    || !string(value.runId) || typeof value.terminal !== 'boolean') {
+    throw new TypeError('Run progress projection is invalid');
+  }
+  const projected = {
+    schemaVersion: 1, kind: 'baton.run_progress', runId: value.runId,
+  };
+  for (const key of ['phase', 'stage', 'summary']) {
+    if (Object.hasOwn(value, key) && optionalScalar(value[key])) projected[key] = value[key];
+  }
+  if (value.attention && typeof value.attention === 'object' && !Array.isArray(value.attention)) {
+    projected.attention = closedScalars(value.attention, new Set(['state', 'count'])) ?? {};
+  }
+  projected.terminal = value.terminal;
+  projected.terminalCause = projectTerminalCause(value.terminalCause);
+  if (value.resources && typeof value.resources === 'object' && !Array.isArray(value.resources)) {
+    projected.resources = closedScalars(value.resources, new Set(['state', 'ownedCount'])) ?? {};
+  }
+  if (value.timing && typeof value.timing === 'object' && !Array.isArray(value.timing)) {
+    projected.timing = closedScalars(value.timing, TIMING_FIELDS) ?? {};
+  }
+  return projected;
+}
+
+function projectRunTimelineItem(value, runId, channel, recipient) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.runId !== runId || !Number.isSafeInteger(value.position) || value.position <= 0
+    || !string(value.kind) || !string(value.category)
+    || !string(value.summary) && channel === 'events'
+    || value.occurrenceTrust !== 'authoritative'
+    || !HEX_DIGEST.test(value.occurrenceDigest ?? '')) {
+    throw new TypeError('Run timeline item projection is invalid');
+  }
+  const base = {
+    runId, position: value.position, category: value.category, kind: value.kind,
+    ...(string(value.at) ? { at: value.at } : {}),
+    ...(string(value.summary) ? { summary: value.summary } : {}),
+    occurrenceTrust: 'authoritative', occurrenceDigest: value.occurrenceDigest,
+  };
+  if (channel === 'events') {
+    if (string(value.recipient)) base.recipient = value.recipient;
+    base.facts = closedScalars(value.facts, RUN_FACT_FIELDS) ?? {};
+    return base;
+  }
+  const output = value.output;
+  if (value.category !== 'output' || value.kind !== 'untrusted_output'
+    || value.contentTrust !== 'untrusted_provider' || !string(value.recipient)
+    || (recipient !== null && value.recipient !== recipient)
+    || !output || typeof output !== 'object' || Array.isArray(output)
+    || typeof output.text !== 'string' || !Number.isSafeInteger(output.fragment)
+    || output.fragment < 0 || !Number.isSafeInteger(output.fragmentCount)
+    || output.fragmentCount <= 0 || output.fragment >= output.fragmentCount
+    || !HEX_DIGEST.test(output.digest ?? '')) {
+    throw new TypeError('Run provider output projection is invalid');
+  }
+  return {
+    ...base, recipient: value.recipient, contentTrust: 'untrusted_provider',
+    output: {
+      text: output.text, fragment: output.fragment,
+      fragmentCount: output.fragmentCount, digest: output.digest,
+    },
+  };
+}
+
+function projectRunTimelinePage(value, runId, channel, recipient, terminal, viewCursor) {
+  return {
+    schemaVersion: 1, kind: 'baton.run_timeline.page', runId, channel,
+    ...(recipient === null ? {} : { recipient }), cursor: value.cursor,
+    hasMore: value.hasMore, itemCount: value.items.length,
+    items: value.items.map((item) => projectRunTimelineItem(item, runId, channel, recipient)),
+    terminal, viewCursor,
+  };
+}
 
 function runCoordinates(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
@@ -389,11 +539,21 @@ export class WebEventStream {
     return null;
   }
 
-  _runFrame(grant, streamId, type, cursor, payload) {
+  _runFrame(grant, streamId, type, cursor, payload, sourceState) {
+    const source = {
+      operation: 'run.inspect', repoId: grant.repoId, runId: grant.runId,
+      channel: grant.channel, viewCursor: sourceState.viewCursor,
+      channelCursor: sourceState.channelCursor,
+      ...(grant.recipient ? { recipient: grant.recipient } : {}),
+    };
     return {
       schemaVersion: 1, streamId, cursor,
-      eventId: cursor === null ? `snapshot:${grant.runId}` : String(cursor),
-      provenance: 'run-application', occurrenceTrust: 'authoritative',
+      eventId: type === 'snapshot' ? `snapshot:${grant.runId}:${sourceState.viewCursor}`
+        : ['lag', 'shutdown'].includes(type) ? `${type}:${streamId}` : String(cursor),
+      provenance: {
+        authority: 'run-application', source, digest: jsonDigest(payload),
+      },
+      occurrenceTrust: 'authoritative',
       contentTrust: type === 'output' ? 'untrusted_provider'
         : type === 'events' ? 'excluded' : 'safe_projection',
       resource: {
@@ -416,7 +576,7 @@ export class WebEventStream {
       || Array.isArray(inspected.outline)) {
       throw new TypeError('Run outline projection is invalid');
     }
-    return inspected;
+    return projectRunOutline(inspected);
   }
 
   async _runRead(grant, principal, state) {
@@ -440,12 +600,14 @@ export class WebEventStream {
           code: 'run_progress_cursor_mismatch',
         });
       }
-      const progressDigest = jsonDigest(inspected.content);
-      const changed = state.progressDigest !== undefined && state.progressDigest !== progressDigest;
+      const content = projectRunProgress(inspected.content);
+      const progressDigest = jsonDigest(content);
+      const changed = state.viewCursor < inspected.cursor
+        || (state.progressDigest !== undefined && state.progressDigest !== progressDigest);
       return {
         state: { viewCursor: inspected.cursor, progressDigest }, terminal: inspected.terminal === true,
         hasMore: false,
-        payload: changed || inspected.terminal === true ? clone(inspected.content) : null,
+        payload: changed || inspected.terminal === true ? content : null,
         cursor: inspected.cursor,
       };
     }
@@ -475,9 +637,10 @@ export class WebEventStream {
     return {
       state: { timelineCursor: content.cursor, viewCursor: inspected.cursor },
       terminal, hasMore: content.hasMore === true, cursor: content.cursor,
-      payload: content.items.length > 0 || terminal ? {
-        ...clone(content), terminal, viewCursor: inspected.cursor,
-      } : null,
+      payload: content.items.length > 0 || terminal
+        ? projectRunTimelinePage(content, grant.runId, grant.channel, grant.recipient,
+          terminal, inspected.cursor)
+        : null,
     };
   }
 
@@ -555,7 +718,9 @@ export class WebEventStream {
     }
     const encode = (type, id, value) => `${id === null ? '' : `id: ${id}\n`}event: ${type}\ndata: ${JSON.stringify(value)}\n\n`;
     const snapshotFrame = this._runFrame(grant, streamId, 'snapshot', initialSnapshot.cursor, {
-      view: clone(initialSnapshot),
+      view: initialSnapshot,
+    }, {
+      viewCursor: initialSnapshot.cursor, channelCursor: grant.startingCursor,
     });
     const initial = encode('snapshot', null, snapshotFrame);
     if (Buffer.byteLength(initial) > this.maxFrameBytes
@@ -593,6 +758,11 @@ export class WebEventStream {
         || (res.writableLength ?? 0) + Buffer.byteLength(encoded) > this.maxBufferedBytes) return false;
       try { return res.write(encoded) !== false; } catch { return false; }
     };
+    const sourceState = (candidate = state) => ({
+      viewCursor: candidate.viewCursor,
+      channelCursor: grant.channel === 'progress'
+        ? candidate.viewCursor : candidate.timelineCursor,
+    });
     const write = (type, id, value) => {
       if (grant.incarnation !== this.incarnation
         || !this._liveAuthorized(principal, origin, grant.repoId)) {
@@ -601,17 +771,28 @@ export class WebEventStream {
         endSocket();
         return false;
       }
-      const encoded = encode(type, id, value);
-      const bytes = Buffer.byteLength(encoded);
+      const body = `event: ${type}\ndata: ${JSON.stringify(value)}\n`;
+      const commit = `${id === null ? '' : `id: ${id}\n`}\n`;
+      const bytes = Buffer.byteLength(body) + Buffer.byteLength(commit);
       if (bytes > this.maxFrameBytes || (res.writableLength ?? 0) + bytes > this.maxBufferedBytes) {
-        const lag = this._runFrame(grant, streamId, 'lag', id, { code: 'backpressure', reconnect: true });
-        writeControl(encode('lag', id, lag));
+        const committed = sourceState();
+        const lagCursor = committed.channelCursor;
+        const lagPayload = { code: 'backpressure', reconnect: true };
+        const lag = this._runFrame(grant, streamId, 'lag', lagCursor, lagPayload, committed);
+        writeControl(encode('lag', lagCursor, lag));
         disconnect('stream_backpressure_disconnect');
         endSocket();
         return false;
       }
       try {
-        if (res.write(encoded) === false) {
+        // Commit the SSE id only after the page body was accepted. If the body applies
+        // backpressure, EventSource sees neither a completed event nor a resumable cursor.
+        if (res.write(body) === false) {
+          disconnect('stream_backpressure_disconnect');
+          endSocket();
+          return false;
+        }
+        if (res.write(commit) === false) {
           disconnect('stream_backpressure_disconnect');
           endSocket();
           return false;
@@ -625,7 +806,10 @@ export class WebEventStream {
     };
     const closeForShutdown = () => {
       if (closed) return;
-      const frame = this._runFrame(grant, streamId, 'shutdown', null, { reconnect: true });
+      const committed = sourceState();
+      const payload = { reconnect: true };
+      const frame = this._runFrame(grant, streamId, 'shutdown', committed.channelCursor,
+        payload, committed);
       writeControl(encode('shutdown', null, frame));
       disconnect('stream_shutdown');
       endSocket();
@@ -633,7 +817,9 @@ export class WebEventStream {
     const deliver = (page) => {
       if (!page || closed) return false;
       if (page.payload !== null) {
-        const frame = this._runFrame(grant, streamId, grant.channel, page.cursor, page.payload);
+        const frame = this._runFrame(grant, streamId, grant.channel, page.cursor, page.payload, {
+          viewCursor: page.state.viewCursor, channelCursor: page.cursor,
+        });
         if (!write(grant.channel, page.cursor, frame)) return false;
       }
       state = page.state;

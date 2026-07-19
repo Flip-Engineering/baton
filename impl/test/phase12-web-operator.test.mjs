@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { createHash, randomUUID, webcrypto } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { createContext, runInContext } from 'node:vm';
 
 import { CoordinationStore, WebNorthbound, WebSessionStore } from '../src/index.mjs';
 
@@ -128,4 +130,62 @@ test('BU3/BU4/BU5/BU6: static client makes Run flow primary and keeps fenced rea
   assert.match(css.headers['content-type'], /^text\/css/);
   assert.ok(css.body.length > 100);
   assert.deepEqual(s.fleetCalls, []);
+});
+
+test('BU4 executed browser behavior rejects malformed Run frames and restores output opt-in across Runs', async () => {
+  const s = system();
+  const script = await get(s.web, '/control/app.js', {
+    cookie: sessionCookie(s.issued), 'sec-fetch-site': 'same-origin',
+  });
+  const elements = new Map();
+  const element = (id = '') => ({
+    id, disabled: false, value: '', textContent: '', dataset: {}, children: [],
+    classList: { add() {}, remove() {}, toggle() {} },
+    addEventListener() {}, replaceChildren() { this.children = []; }, append() {},
+  });
+  const document = {
+    cookie: '', body: element('body'), createElement: (tag) => element(tag),
+    getElementById(id) { if (!elements.has(id)) elements.set(id, element(id)); return elements.get(id); },
+  };
+  const context = createContext({
+    document, fetch: () => new Promise(() => {}), crypto: {
+      subtle: webcrypto.subtle, randomUUID,
+    }, TextEncoder, setTimeout, clearTimeout, Promise, URL, Blob,
+    location: { origin: ORIGIN, replace() {} }, window: { confirm: () => false },
+    EventSource: class {}, console,
+  });
+  runInContext(script.body, context);
+  runInContext("state.outputOptIn=true;byId('include-output').disabled=true;closeRunActivity(true);globalThis.switchState={optIn:state.outputOptIn,disabled:byId('include-output').disabled};", context);
+  assert.deepEqual({ ...context.switchState }, { optIn: false, disabled: false });
+
+  const payload = {
+    schemaVersion: 1, kind: 'baton.run_timeline.page', runId: 'run-a', channel: 'events',
+    cursor: 'cursor_a', hasMore: false, itemCount: 1, terminal: false, viewCursor: 7,
+    items: [{
+      runId: 'run-a', position: 1, category: 'lifecycle', kind: 'task.created',
+      summary: 'Run work was created.', occurrenceTrust: 'authoritative',
+      occurrenceDigest: 'a'.repeat(64), facts: {},
+    }],
+  };
+  const frame = {
+    schemaVersion: 1, streamId: 'stream-a', cursor: 'cursor_a', eventId: 'cursor_a',
+    provenance: {
+      authority: 'run-application',
+      source: {
+        operation: 'run.inspect', repoId: 'repo-a', runId: 'run-a',
+        channel: 'events', viewCursor: 7, channelCursor: 'cursor_a',
+      },
+      digest: createHash('sha256').update(JSON.stringify(payload)).digest('hex'),
+    },
+    occurrenceTrust: 'authoritative', contentTrust: 'excluded',
+    resource: { repoId: 'repo-a', runId: 'run-a', channel: 'events' },
+    type: 'events', payload,
+  };
+  const hostile = structuredClone(frame);
+  hostile.payload.items[0].facts.credentialId = 'browser-must-reject';
+  hostile.provenance.digest = createHash('sha256')
+    .update(JSON.stringify(hostile.payload)).digest('hex');
+  context.frame = frame; context.hostile = hostile;
+  runInContext("state.activityRunId='run-a';globalThis.validation=Promise.all([strictRunFrame('events','events',{lastEventId:'cursor_a'},frame),strictRunFrame('events','events',{lastEventId:'cursor_a'},hostile)]);", context);
+  assert.deepEqual(await context.validation, [true, false]);
 });

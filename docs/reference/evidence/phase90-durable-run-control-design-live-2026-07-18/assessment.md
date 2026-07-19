@@ -97,6 +97,30 @@ application frictions rather than hiding them behind the provider:
   the one-member Run as `cancelled`. Whole-Run stop then proved zero ownership and exact reap. The
   checkpoint behavior is correct; successor-turn/session semantics are not yet correct.
 
+## Independent Web-stream red audit
+
+The authenticated Run-bound SSE surface was subsequently red-tested independently. Two data-loss
+defects were reproduced and fixed:
+
+- an events/output page could place its candidate `id:` on the wire before a false backpressure
+  result was handled, and a lag frame could repeat that undelivered candidate cursor. Run page
+  writes now stage the event body before committing `id:`; page state advances only after both
+  writes are accepted, and lag/shutdown provenance names only the last committed durable cursor;
+- the first progress read after a supplied older cursor initialized its digest baseline from the
+  current view and silently advanced without emitting the accumulated state. Resume now emits the
+  current closed progress projection whenever the durable view cursor is newer than the supplied
+  cursor.
+
+Snapshot, progress, events, and output now have distinct closed wire projections. Recursive
+whitelisting removes unknown, authority, session, credential, and token-shaped object fields;
+provider output is admitted only through its explicit untrusted text/fragment/digest schema. Every
+Run frame binds a SHA-256 payload digest to its exact `run.inspect` repository/Run/channel/view
+cursor/channel cursor/recipient coordinate. The browser recomputes that digest and validates the
+closed frame, source coordinate, scope, trust labels, channel payload, and SSE id agreement before
+retaining a cursor. Executed browser behavior also proves that switching Runs clears prior output
+consent and re-enables the per-Run output opt-in control; a failed output connection rolls consent
+back instead of leaving the control unusable.
+
 ## Validation
 
 Focused and affected regressions are green:
@@ -108,29 +132,30 @@ Focused and affected regressions are green:
 - updated kernel/control/timeline cluster: 93/93;
 - updated integrated application and CLI cluster: 39/39;
 - progressive agent-experience coverage: 11/11;
-- authenticated Web/MCP transport coverage: 62/62; and
-- authenticated resident/restart coverage: 34/34.
+- authenticated Web/MCP transport coverage: 62/62;
+- authenticated resident/restart coverage: 34/34; and
+- scoped Phase 12 Web stream/operator red coverage after the independent audit: 31/31, including
+  executed browser validation and Run-switch behavior.
 
 The complete suite then reached 2213/2214 and found one eager-startup compatibility regression:
 an application card fixture with no admitted Run controls was required to fabricate durable control
 authority. Startup now permits the all-absent/no-history compatibility case while partial authority
 or durable control history still fails closed; that focused recovery/control cluster is green at
 12/12. Adapter Brief/argv coverage is green at 65/65, and the combined timeline, CLI, progressive
-AX, route-discovery, and Kimi-readiness cluster is green at 78/78. A new complete-suite result is
-still required after the Web-stream increment lands.
-
-The final canonical full-suite count will be recorded here only after the remaining Phase 90 stream work and a fresh complete run.
+AX, route-discovery, and Kimi-readiness cluster is green at 78/78. After the Web-stream increment,
+the exact deployment verification `npm test --prefix impl` completed with exit code 0: 2230/2230
+tests passed with no failures, cancellations, skips, or todos.
 
 ## Honest remaining gaps
 
-- `run.follow` remains an advanced compatibility feed, while the new Run streams are progressive
-  inspection chapters. A Run-bound authenticated Web/SSE ticket and browser rendering still need
-  to replace the repository-wide operator stream for ordinary live observation.
+- `run.follow` remains an advanced compatibility feed. Ordinary browser observation now uses the
+  Run-bound progress/events/output streams; the repository-wide stream remains explicitly
+  separated under Advanced rather than serving as Run activity.
 - The application-level outline returned over Web/MCP is still more detailed than the compact CLI presentation; cross-surface progressive rendering remains a convergence task.
 - Read-only/research/review objectives need explicit intent/effect authority so a valid no-edit result is not rejected as `required_effect_absent`.
 - Pre-Phase-90 operational history needs an explicit one-time deterministic mapping policy; Baton
   does not invent historical cross-worker order from timestamps.
-- Opaque `runs.list` pagination, browser migration, crash-supervisor takeover, and populated
+- Opaque `runs.list` pagination, crash-supervisor takeover, and populated
   `knowledge` / `capabilities` chapters remain open.
 - Semantic interrupt currently checkpoints the worktree but terminalizes a one-member Run as
   `cancelled`; Baton cannot yet start a successor turn on the preserved provider session through the

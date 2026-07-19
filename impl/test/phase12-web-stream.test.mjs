@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -372,6 +373,151 @@ const timelinePage = ({ runId = 'run-a', channel = 'events', cursor = 'timeline_
   },
 });
 
+const progressContent = ({ runId = 'run-a', cursor = 7, terminal = false,
+  summary = 'Current accumulated state.' } = {}) => ({
+  schemaVersion: 1, runId, depth: 'content', cursor, terminal,
+  content: {
+    schemaVersion: 1, kind: 'baton.run_progress', runId,
+    phase: terminal ? 'completed' : 'running', stage: 'work', summary,
+    attention: { state: 'clear', count: 0 }, terminal, terminalCause: null,
+    resources: { state: terminal ? 'complete' : 'owned', ownedCount: terminal ? 0 : 1 },
+    timing: { observedAt: '2026-07-19T00:00:00.000Z', elapsedMs: 10 },
+  },
+});
+
+test('RT5/RT7 red: an undelivered Run page never commits its candidate SSE cursor', async () => {
+  const item = {
+    runId: 'run-a', position: 1, kind: 'task.created', category: 'lifecycle',
+    summary: 'Run work was created.', occurrenceTrust: 'authoritative',
+    occurrenceDigest: 'a'.repeat(64), facts: {},
+  };
+  const application = { async command(_name, args) {
+    return args.depth === 'outline' ? runSnapshot(args.runId)
+      : timelinePage({ cursor: 'candidate_cursor', items: [item] });
+  } };
+  class BackpressureOnPageBody extends Response {
+    write(value) {
+      this.writeCount = (this.writeCount ?? 0) + 1;
+      this.output += value;
+      return this.writeCount !== 2;
+    }
+  }
+  const { stream } = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const output = new BackpressureOnPageBody();
+  await stream.open({ ticket: stream.issue(principal(), 'https://control.test', {
+    repoId: 'repo-a', runId: 'run-a', channel: 'events', snapshot: runSnapshot(),
+  }).body.ticket, principal: principal(), origin: 'https://control.test' }, output);
+  assert.equal(output.ended, true);
+  assert.doesNotMatch(output.output, /^id: candidate_cursor$/m);
+  assert.equal(stream.activeConnections, 0);
+});
+
+test('RT5/RT7 red: lag reports only the last committed durable cursor', async () => {
+  const item = {
+    runId: 'run-a', position: 2, kind: 'task.created', category: 'lifecycle',
+    summary: 'x'.repeat(2_000), occurrenceTrust: 'authoritative',
+    occurrenceDigest: 'b'.repeat(64), facts: {},
+  };
+  const application = { async command(_name, args) {
+    return args.depth === 'outline' ? runSnapshot(args.runId)
+      : timelinePage({ cursor: 'candidate_cursor', items: [item] });
+  } };
+  const { stream } = fixture({
+    application, maxFrameBytes: 1_200, maxControlFrameBytes: 2_000,
+    maxBufferedBytes: 100_000,
+  });
+  const output = new Response();
+  await stream.open({ ticket: stream.issue(principal(), 'https://control.test', {
+    repoId: 'repo-a', runId: 'run-a', channel: 'events', cursor: 'committed_cursor',
+    snapshot: runSnapshot(),
+  }).body.ticket, principal: principal(), origin: 'https://control.test',
+  cursor: 'committed_cursor' }, output);
+  assert.match(output.output, /event: lag/);
+  assert.match(output.output, /^id: committed_cursor$/m);
+  assert.doesNotMatch(output.output, /^id: candidate_cursor$/m);
+  const lag = output.output.split('\n').filter((line) => line.startsWith('data: '))
+    .map((line) => JSON.parse(line.slice(6))).find((frame) => frame.type === 'lag');
+  assert.equal(lag.cursor, 'committed_cursor');
+  assert.equal(lag.provenance.source.channelCursor, 'committed_cursor');
+});
+
+test('RT3/RT5 red: first progress read after a supplied cursor emits accumulated state', async () => {
+  const calls = [];
+  const application = { async command(_name, args) {
+    calls.push(structuredClone(args));
+    return args.depth === 'outline' ? runSnapshot(args.runId, 9)
+      : progressContent({ runId: args.runId, cursor: 9, summary: 'Progress accumulated after cursor 7.' });
+  } };
+  const { stream } = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const output = new Response();
+  await stream.open({ ticket: stream.issue(principal(), 'https://control.test', {
+    repoId: 'repo-a', runId: 'run-a', channel: 'progress', cursor: 7,
+    snapshot: runSnapshot('run-a', 7),
+  }).body.ticket, principal: principal(), origin: 'https://control.test', cursor: 7 }, output);
+  assert.match(output.output, /^id: 9$/m);
+  assert.match(output.output, /Progress accumulated after cursor 7\./);
+  assert.equal(calls.some((call) => call.item === 'execution:progress'), true);
+  output.emit('close');
+});
+
+test('RT1/RT4: Run wire frames are closed recursively and carry verifiable source provenance', async () => {
+  const application = { async command(_name, args) {
+    if (args.depth === 'outline') {
+      const view = runSnapshot(args.runId);
+      Object.assign(view, { credentialId: 'credential-private', unknownTop: 'unknown-private' });
+      Object.assign(view.outline, {
+        sessionId: 'session-private', authority: { token: 'token-private' },
+        progress: { current: 'work', summary: 'safe', credential: 'nested-private' },
+      });
+      return view;
+    }
+    return timelinePage({
+      channel: 'output', recipient: args.recipient ?? null,
+      items: [{
+        runId: 'run-a', position: 1, kind: 'untrusted_output', category: 'output',
+        recipient: 'review', occurrenceTrust: 'authoritative',
+        contentTrust: 'untrusted_provider', occurrenceDigest: 'c'.repeat(64),
+        sessionId: 'item-session-private',
+        output: {
+          text: 'provider words', fragment: 0, fragmentCount: 1,
+          digest: 'd'.repeat(64), credentialId: 'output-credential-private',
+          unknown: 'output-unknown-private',
+        },
+      }],
+    });
+  } };
+  const { stream } = fixture({ application, maxFrameBytes: 100_000, maxBufferedBytes: 100_000 });
+  const output = new Response();
+  await stream.open({ ticket: stream.issue(principal(), 'https://control.test', {
+    repoId: 'repo-a', runId: 'run-a', channel: 'output', recipient: 'review',
+    snapshot: runSnapshot(),
+  }).body.ticket, principal: principal(), origin: 'https://control.test' }, output);
+  for (const absent of [
+    'credential-private', 'unknown-private', 'session-private', 'token-private',
+    'nested-private', 'item-session-private', 'output-credential-private',
+    'output-unknown-private',
+  ]) assert.equal(output.output.includes(absent), false, absent);
+  const frames = output.output.split('\n')
+    .filter((line) => line.startsWith('data: ')).map((line) => JSON.parse(line.slice(6)));
+  assert.equal(frames.length, 2);
+  for (const frame of frames) {
+    assert.deepEqual(Object.keys(frame).sort(), [
+      'contentTrust', 'cursor', 'eventId', 'occurrenceTrust', 'payload',
+      'provenance', 'resource', 'schemaVersion', 'streamId', 'type',
+    ]);
+    assert.deepEqual(Object.keys(frame.provenance).sort(), ['authority', 'digest', 'source']);
+    assert.equal(frame.provenance.authority, 'run-application');
+    assert.equal(frame.provenance.source.operation, 'run.inspect');
+    assert.equal(frame.provenance.source.runId, 'run-a');
+    assert.equal(frame.provenance.source.channel, 'output');
+    assert.equal(frame.provenance.digest,
+      createHash('sha256').update(JSON.stringify(frame.payload)).digest('hex'));
+  }
+  assert.deepEqual(Object.keys(frames[1].payload.items[0].output).sort(),
+    ['digest', 'fragment', 'fragmentCount', 'text']);
+  output.emit('close');
+});
+
 test('RT1/RT4/RT6: Run tickets bind every authority coordinate and start with the exact inspected RunView', async () => {
   const calls = [];
   const application = {
@@ -539,7 +685,11 @@ test('RT6: revocation during an awaited read and during snapshot write closes be
   const second = fixture({
     application: { async command(_name, args) {
       return args.depth === 'outline' ? runSnapshot(args.runId) : timelinePage({
-        items: [{ runId: 'run-a', occurrenceTrust: 'authoritative', summary: 'must not write' }],
+        items: [{
+          runId: 'run-a', position: 1, kind: 'task.created', category: 'lifecycle',
+          occurrenceTrust: 'authoritative', occurrenceDigest: 'a'.repeat(64),
+          summary: 'must not write', facts: {},
+        }],
       });
     } },
     isPrincipalActive: () => active, maxFrameBytes: 100_000, maxBufferedBytes: 100_000,

@@ -188,9 +188,15 @@ continuing page must contain at least one item.
 
 - RT1 initial state and every frame contain only the authorized Run.
 - RT2 sibling Runs never affect counts, cursors, stages, or frames.
-- RT3 progress ignores transport/audit/token chatter and survives restart exactly.
-- RT4 events are safe facts; output is opt-in, bounded, redacted, and explicitly untrusted.
-- RT5 ordered at-least-once resume uses durable cursors; expiry requests a fresh snapshot.
+- RT3 progress ignores transport/audit/token chatter, survives restart exactly, and the first read
+  after a supplied progress cursor emits the accumulated newer state before advancing.
+- RT4 events are safe facts; output is opt-in, bounded, recursively projected through a closed
+  provider-output schema, and explicitly untrusted. Unknown, authority, session, and credential
+  fields are absent at every nesting depth.
+- RT5 ordered at-least-once resume uses direct durable cursors; expiry requests a fresh snapshot.
+  A page cursor is committed to SSE only after its page body is accepted. Backpressure lag and
+  shutdown frames carry only the last successfully committed channel cursor, never the candidate
+  cursor of an undelivered page.
 - RT6 revocation/downgrade/incarnation change closes before the next frame.
 - RT7 backpressure/disconnect never controls provider work.
 - RT8 interrupt confirmation, stop admission, terminal cause, and zero-reap truth cannot be dropped.
@@ -216,7 +222,12 @@ session, credential, Origin, resident incarnation, and the application timeline 
 state is the authorized atomic RunView, events/output resume directly from rebuildable
 `run.inspect` cursors, and provider output remains explicit opt-in and untrusted. The browser now
 renders progress and safe events as one Run activity chapter while preserving the repository-wide
-trace under advanced controls. Step 6 is partially green through live exact Kimi Code failure/reap and
+trace under advanced controls. Run frames use one closed schema per channel and bind the projected
+payload digest to a `run.inspect` source coordinate containing repository, Run, channel, view
+cursor, channel cursor, and optional recipient. The browser verifies that provenance, exact scope,
+channel trust, payload schema, payload digest, and SSE id/cursor agreement before retaining a
+resume cursor. Switching Runs clears the prior output consent and restores the per-Run output
+opt-in control. Step 6 is partially green through live exact Kimi Code failure/reap and
 Codex output-follow dogfood. The read-only objective rejected as `required_effect_absent` remains
 an explicit intent/effect-authority gap rather than an implicit exception.
 
