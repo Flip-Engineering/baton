@@ -50,11 +50,17 @@
 // env FAKE_CLAUDE_SESSION_ID: fallback for --resume/--session-id.
 // env FAKE_CLAUDE_IGNORE_SIGTERM=1: install a no-op SIGTERM handler once, simulating an unresponsive
 //   vendor process so a caller's kill() must escalate to SIGKILL to actually end it.
+// env FAKE_CLAUDE_LIFECYCLE_BARRIER=<unix-socket-path>: listen before provider init and retain the
+//   process if controller stdin closes. Cross-controller tests use the listening socket as an
+//   explicit readiness/ownership barrier; only an exact process-group signal closes the fixture.
 //
-// Exits 0 when stdin closes (EOF) with nothing further to do — mirrors sdk.mjs's own contract:
-// "stream-json input requires a readable stdin for the lifetime of the session."
+// Unless the explicit lifecycle barrier is enabled, exits 0 when stdin closes (EOF) with nothing
+// further to do — mirrors sdk.mjs's own contract: "stream-json input requires a readable stdin
+// for the lifetime of the session."
 
 import { randomUUID } from 'node:crypto';
+import { rmSync } from 'node:fs';
+import { createServer } from 'node:net';
 import readline from 'node:readline';
 
 // Discovery guard (phase8 cross-cluster reconciliation R1): Node's test runner discovers
@@ -87,6 +93,17 @@ const sessionId = args.forkSession && resumedId ? `${resumedId}-fork` : (resumed
 
 if (process.env.FAKE_CLAUDE_IGNORE_SIGTERM === '1') {
   process.on('SIGTERM', () => { /* deliberately unresponsive, for kill() escalation tests */ });
+}
+
+const lifecycleBarrierPath = process.env.FAKE_CLAUDE_LIFECYCLE_BARRIER;
+let lifecycleBarrier = null;
+if (lifecycleBarrierPath) {
+  rmSync(lifecycleBarrierPath, { force: true });
+  lifecycleBarrier = createServer();
+  await new Promise((resolve, reject) => {
+    lifecycleBarrier.once('error', reject);
+    lifecycleBarrier.listen(lifecycleBarrierPath, resolve);
+  });
 }
 
 function send(obj) {
@@ -349,5 +366,5 @@ rl.on('line', (line) => {
 });
 
 rl.on('close', () => {
-  process.exit(0);
+  if (!lifecycleBarrier) process.exit(0);
 });

@@ -1395,6 +1395,10 @@ export class Coordinator {
     if (this._startupCleanupError) throw Object.assign(new Error('Run stop startup reconciliation is incomplete'), { code: 'coordinator_run_stop_incomplete' });
     const deadline = Date.now() + this._drainPolicy.timeoutMs;
     const dispositions = new Map();
+    // A recovered exact-identity reap may signal just before its bounded confirmation probe
+    // expires. Preserve that effect across convergence attempts: later authoritative absence is
+    // closure of the generation this Run stop targeted, not pre-existing terminal state.
+    const recoveredSignals = new Map();
 
     const cancelTask = async (handle, task, kind) => {
       const cancelled = this._log.append({
@@ -1448,6 +1452,12 @@ export class Coordinator {
         const reaped = await reapRecoveredProcessGroup(handle.processRef, handle.processAuthority, {
           timeoutMs: Math.max(1, Math.min(this._stopDeadlineMs, deadline - Date.now())),
         });
+        if (reaped.signaled) recoveredSignals.set(workerId, Object.freeze({
+          generation: handle.processRef.generation,
+          pid: handle.processRef.pid,
+          processGroupId: handle.processRef.processGroupId,
+          pidStart: handle.processAuthority.pidStart,
+        }));
         if (reaped.confirmed && reaped.signaled) {
           const closed = this._log.append({
             worker: handle.id,
@@ -1467,30 +1477,40 @@ export class Coordinator {
           if (!runtimeRemoved) return;
           handle.localAuthority = false;
           dispositions.set(workerId, 'killConfirmed');
+          recoveredSignals.delete(workerId);
           return;
         }
       }
       if (replayedProcess
         && (replayedAuthorityState === 'absent'
           || !processGroupAlive(handle.processRef.processGroupId))) {
-        const absent = this._log.append({
+        const signaled = recoveredSignals.get(workerId);
+        const exactSignal = !!signaled
+          && signaled.generation === handle.processRef.generation
+          && signaled.pid === handle.processRef.pid
+          && signaled.processGroupId === handle.processRef.processGroupId
+          && signaled.pidStart === handle.processAuthority?.pidStart;
+        const closed = this._log.append({
           worker: handle.id,
           harness: handle.vendor ? this._harnessOf(handle.vendor) : '',
           turnEpoch: this._safeTurnEpoch(handle),
-          kind: 'control.recovery_process_absent',
+          kind: exactSignal ? 'control.recovery_process_reaped' : 'control.recovery_process_absent',
           actor: 'policy',
           ...this._routeAttribution(handle, task),
-          payload: recoveryProcessAbsentPayload(handle.processRef),
+          payload: exactSignal
+            ? recoveryProcessReapedPayload(handle.processRef, handle.processAuthority)
+            : recoveryProcessAbsentPayload(handle.processRef),
         });
-        this._coordMapEvent(absent);
-        handle.processRef = { ...handle.processRef, state: 'closed', closedSeq: absent.seq };
+        this._coordMapEvent(closed);
+        handle.processRef = { ...handle.processRef, state: 'closed', closedSeq: closed.seq };
         handle.recoveredProcessAuthority = false;
         handle.status = 'dead';
         const runtimeRemoved = this._removeRuntimeScope(handle);
         await this._removeOwnedTaskWorktree(handle, task);
         if (!runtimeRemoved) return;
         handle.localAuthority = false;
-        dispositions.set(workerId, 'alreadyTerminal');
+        dispositions.set(workerId, exactSignal ? 'killConfirmed' : 'alreadyTerminal');
+        recoveredSignals.delete(workerId);
         return;
       }
       try {
