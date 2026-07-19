@@ -572,11 +572,10 @@ function locallyConfiguredRoutes(repoRoot) {
     'kimi-code': KIMI_CREDENTIAL_FILES.every(
       (path) => existingRegular(join(homedir(), '.kimi-code', path)),
     ),
-    // Claude Code may keep subscription authority in the platform credential store rather than
-    // ~/.claude. The executable's bounded `auth status --json` probe below remains the readiness
-    // authority; executable discovery merely keeps the configured route available to that probe.
-    'claude-code': existingRegular(join(homedir(), '.claude', '.credentials.json'))
-      || commandCandidates('claude').some((candidate) => existingExecutable(candidate)),
+    // ClaudeSessionCli is a built-in adapter, so its advertised route inventory is deployment
+    // configuration rather than an ambient executable/authentication observation. The bounded
+    // version and projected `auth status --json` probes below remain the readiness authorities.
+    'claude-code': true,
   };
   const routes = DEFAULT_ROUTES.filter((route) => configured[route.harness] === true);
   if (existingRegular(kimiThroughClaudeCredential())) {
