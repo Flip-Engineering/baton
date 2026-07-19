@@ -123,6 +123,13 @@ exception settles explicit `outcome_unknown`.
 11. Interrupt racing stop cannot enqueue a successor turn.
 12. An already-terminal, absent, orphaned, or replaced target is not reported as newly interrupted.
 
+Known open defect, deliberately outside the Web-stream increment: semantic interrupt can still race
+the provider/session lifecycle so that a successor provider session is admitted for the interrupted
+member. Confirmation of the predecessor interrupt does not yet constitute a durable no-successor
+session gate. That defect means invariant 11 is not fully discharged; it requires a later
+coordination/session-generation change. Run streaming must expose the resulting durable truth and
+must not hide it, synthesize a cleaner terminal state, or attempt to control the provider.
+
 ## 5. Progressive Run timeline
 
 Streams extend the same outline -> index -> section -> item -> content cascade. They do not add
@@ -144,6 +151,14 @@ snapshot.
 Web tickets bind repository, Run, channel, user/session/credential, exact Origin, resident
 incarnation, and starting cursor. Revocation, scope downgrade, incarnation change, lag, and shutdown
 close delivery without controlling a worker.
+
+Ticket admission is ordered: transport/session/repository/channel authorization and the edge ticket
+reservation complete before any application inspection. A refusal at either boundary performs zero
+`run.inspect` reads. At connection open, the initial projection is accepted only from a stable
+`outline -> channel content -> outline` sandwich whose three application cursors are equal.
+Authorization and resident incarnation are rechecked after every awaited inspection and again
+immediately before each snapshot or page write. Timeline pages require a boolean `hasMore`; a
+continuing page must contain at least one item.
 
 ## 6. Acceptance matrix
 
@@ -190,14 +205,18 @@ close delivery without controlling a worker.
 6. Baton-on-Baton proof: exact parallel routes, semantic guidance, selective interrupt with sibling
    survival, reconnect/restart, whole-group stop, and zero ownership/worktrees.
 
-Current checkpoint: steps 1-4 are green. The authenticated resident CLI has exercised semantic
+Current checkpoint: steps 1-5 are green. The authenticated resident CLI has exercised semantic
 send and interrupt against an exact Codex route and whole-Run stop with zero remaining ownership.
 The execution chapter now projects stable progress/events/output content, Pythonic and CLI
 facades consume server-owned cursors and waits, mapped operational events are integrity checked in
 one per-Run coordination order, sibling traffic is excluded, large Unicode output resumes
 losslessly, and stop frames retain zero-reap truth. Authenticated Web and MCP inherit the exact
-`run.inspect` authority and reauthorization boundary; step 5's Run-bound Web ticket and browser
-rendering remain active. Step 6 is partially green through live exact Kimi Code failure/reap and
+`run.inspect` authority and reauthorization boundary. Web tickets bind Run/channel/recipient,
+session, credential, Origin, resident incarnation, and the application timeline cursor; initial
+state is the authorized atomic RunView, events/output resume directly from rebuildable
+`run.inspect` cursors, and provider output remains explicit opt-in and untrusted. The browser now
+renders progress and safe events as one Run activity chapter while preserving the repository-wide
+trace under advanced controls. Step 6 is partially green through live exact Kimi Code failure/reap and
 Codex output-follow dogfood. The read-only objective rejected as `required_effect_absent` remains
 an explicit intent/effect-authority gap rather than an implicit exception.
 

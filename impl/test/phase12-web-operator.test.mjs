@@ -107,7 +107,7 @@ test('BU3/BU4/BU5/BU6: static client makes Run flow primary and keeps fenced rea
   const s = system();
   const script = await get(s.web, '/control/app.js', { cookie: sessionCookie(s.issued), 'sec-fetch-site': 'same-origin' });
   assert.match(script.headers['content-type'], /^text\/javascript/);
-  for (const term of ['run_start', 'run_status', 'run_inspect', 'run_act', 'run_answer', 'run_steer', 'run_stop', 'actionId', 'inputSchema', 'approve_plan', 'semantic_review', 'integrate', 'Follow Run', 'activeFollowPolicy', 'followLoop', 'review-form', 'review-route', 'review-reason', 'integrate-form', 'integration-strategy', 'integration-reason', 'semantic-summary', 'steer-target', 'steer-mode', 'steer-reason', 'stop-form', 'stop-reason', 'progress-list', 'renderProgress', '/v1/application-card', 'harness', 'model', 'effort', 'expectedFence', 'kill', 'drain', 'idempotencyKey', 'crypto.randomUUID', 'x-baton-csrf', '/v1/stream-tickets', 'EventSource', '/v1/auth/logout']) {
+  for (const term of ['run_start', 'run_status', 'run_inspect', 'run_act', 'run_answer', 'run_steer', 'run_stop', 'actionId', 'inputSchema', 'approve_plan', 'semantic_review', 'integrate', 'Follow Run', 'activeFollowPolicy', 'followLoop', 'review-form', 'review-route', 'review-reason', 'integrate-form', 'integration-strategy', 'integration-reason', 'semantic-summary', 'steer-target', 'steer-mode', 'steer-reason', 'stop-form', 'stop-reason', 'progress-list', 'renderProgress', 'Run activity', 'activity-list', 'connectRunActivity', 'connectRunChannel', 'activityCursors', 'provider_output_opt_in_required', 'untrusted_provider', '/v1/application-card', 'harness', 'model', 'effort', 'expectedFence', 'kill', 'drain', 'idempotencyKey', 'crypto.randomUUID', 'x-baton-csrf', '/v1/stream-tickets', 'EventSource', '/v1/auth/logout']) {
     assert.equal(script.body.includes(term), true, term);
   }
   assert.equal(script.body.includes("command('spawn'"), false);
@@ -118,6 +118,12 @@ test('BU3/BU4/BU5/BU6: static client makes Run flow primary and keeps fenced rea
   assert.equal(script.body.includes('innerHTML'), false);
   assert.equal(script.body.includes('document.write'), false);
   assert.match(script.body, /textContent/);
+  assert.match(script.body, /connectRunChannel\('events'\)/);
+  assert.match(script.body, /channel==='output'/);
+  assert.match(script.body, /body:JSON\.stringify\(\{repoId:state\.session\.identity\.repoIds\[0\]\}\)/,
+    'the advanced repository-wide trace remains a separate legacy connection');
+  const page = await get(s.web, '/control', { cookie: sessionCookie(s.issued), 'sec-fetch-site': 'same-origin' });
+  assert.match(page.body, /Include untrusted output/);
   const css = await get(s.web, '/control/app.css', { cookie: sessionCookie(s.issued), 'sec-fetch-site': 'same-origin' });
   assert.match(css.headers['content-type'], /^text\/css/);
   assert.ok(css.body.length > 100);
