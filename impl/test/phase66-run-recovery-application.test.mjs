@@ -214,12 +214,34 @@ test('CE2: recovery policy is closed, deployment-owned, digest-bound, and visibl
   const card = application.card();
   assert.equal(card.commands.includes('run.recover'), true);
   const projected = card.profiles.find((candidate) => candidate.name === 'recoverable');
-  assert.deepEqual(projected.recoveryPolicy, recoveryPolicy);
+  assert.deepEqual(projected.recoveryPolicy, {
+    mode: recoveryPolicy.mode,
+    eligibleSessionModes: recoveryPolicy.eligibleSessionModes,
+    ambiguousDispatch: recoveryPolicy.ambiguousDispatch,
+  });
+  assert.equal(Object.hasOwn(projected.recoveryPolicy, 'maxAttempts'), false);
+  assert.equal(Object.hasOwn(projected.recoveryPolicy, 'timeoutMs'), false);
   assert.match(projected.digest, /^[a-f0-9]{64}$/u);
   assert.equal(JSON.stringify(projected).includes('native-session'), false);
 });
 
-function applicationFixture(name, { handles = null, authorize = async () => true } = {}) {
+test('CE2b: durable Run-control history without its complete recovery authority fails application readiness closed', async () => {
+  const driver = cardDriver();
+  driver.coordination.events = () => [{ seq: 1, kind: 'run.control_admitted', payload: {} }];
+  const application = new BatonApplication({
+    driver, repoId, profiles: { recoverable: requestedProfile },
+    principals: {
+      planner: principal('application-planner'), dispatcher: principal('application-dispatcher'),
+      observer: principal('application-observer'),
+    },
+    authorize: async () => true,
+  });
+  await assert.rejects(application.ready, (error) => error.code === 'application_config_invalid');
+});
+
+function applicationFixture(name, {
+  handles = null, authorize = async () => true, outcomeAttempt = 1,
+} = {}) {
   const operational = new Map();
   const store = new CoordinationStore(root(`${name}-store`), {
     goalPlanPolicy,
@@ -270,7 +292,7 @@ function applicationFixture(name, { handles = null, authorize = async () => true
       handle.status = 'working';
       return {
         ok: true, result: 'attached', workerId: selectedWorkerId, taskId: created.task.id,
-        attempt: request.attempt, dispatchDisposition: 'dispatch_accepted', processGeneration: 2,
+        attempt: outcomeAttempt, dispatchDisposition: 'dispatch_accepted', processGeneration: 2,
         route: {
           requested: applicationRoute,
           resolved: { harness: 'session@phase66', model: 'model-a', effort: 'low' },
@@ -357,12 +379,13 @@ test('CE6-CE8: one eligible orphan is server-selected, admitted once, and projec
   assert.equal(f.calls.length, 1);
   assert.equal(f.calls[0].selectedWorkerId, workerId);
   assert.deepEqual(Object.keys(f.calls[0].request).sort(), [
-    'actor', 'attempt', 'gate', 'profileDigest', 'recoveryPolicyDigest', 'runId', 'timeoutMs',
+    'actor', 'gate', 'maxAttempts', 'profileDigest', 'recoveryPolicyDigest', 'runId', 'timeoutMs',
   ]);
   assert.equal(f.calls[0].request.runId, runId);
   assert.equal(f.calls[0].request.gate.nodeKey, 'recover');
   assert.equal(f.calls[0].request.timeoutMs, recoveryPolicy.timeoutMs);
-  assert.equal(f.calls[0].request.attempt, 1);
+  assert.equal(f.calls[0].request.maxAttempts, recoveryPolicy.maxAttempts);
+  assert.equal(Object.hasOwn(f.calls[0].request, 'attempt'), false);
   assert.equal(f.authorizations.findIndex((row) => row.command === 'run.recover') >= 0, true);
   assert.deepEqual(f.store.events().filter((event) => event.batch?.kind === 'goal_plan_recovery_dispatch')
     .map((event) => event.kind), ['plan.node_dispatched', 'task.created', 'task.claimed']);
@@ -377,6 +400,20 @@ test('CE6-CE8: one eligible orphan is server-selected, admitted once, and projec
   assert.deepEqual(view.recovery.route.requested, applicationRoute);
   assert.equal(view.recovery.cleanup.state, 'owned');
   assert.equal(JSON.stringify(view.recovery).includes('native-session-phase66'), false);
+});
+
+test('CE2/CE8: application delegates attempt derivation and the ceiling to durable Coordinator authority', async () => {
+  const retry = applicationFixture('durable-second-attempt', { outcomeAttempt: 2 });
+  await retry.application.ready;
+  // Generic driver testimony is not attempt authority. Only the dedicated Coordinator/store
+  // protocol may derive the head and enforce the deployment-owned ceiling.
+  retry.store.recordDriver('recovery.requested', {
+    taskId: 'prior-plan-task', workerId, runId, attempt: 1,
+  }, { actor: 'direct:operator', key: 'recovery.requested:prior:1' });
+  const retried = await retry.application.recover(runId, principal('operator'));
+  assert.equal(Object.hasOwn(retry.calls[0].request, 'attempt'), false);
+  assert.equal(retry.calls[0].request.maxAttempts, recoveryPolicy.maxAttempts);
+  assert.equal(retried.recovery.attempt, 2);
 });
 
 test('CE6/CE8: admitted Run stop fences public recovery before Coordinator attach authority', async () => {
@@ -489,10 +526,11 @@ test('CE7: dedicated Coordinator Plan recovery attaches first, commits the appro
   const recovered = await f.replay.recoverPlanBound(f.handle.id, {
     schemaVersion: 1, runId, gate: f.state.recoveryGate,
     profileDigest: 'a'.repeat(64), recoveryPolicyDigest: 'b'.repeat(64),
-    attempt: 1, timeoutMs: 500, actor: 'direct:operator',
+    maxAttempts: 2, timeoutMs: 500, actor: 'direct:operator',
   });
   assert.equal(recovered.ok, true);
   assert.equal(recovered.result, 'attached');
+  assert.equal(recovered.attempt, 1);
   assert.equal(primitiveCalls, 1);
   assert.equal(f.resumed.calls.spawn.length, 1);
   assert.equal(f.resumed.calls.spawn[0][2].attachOnly, true);

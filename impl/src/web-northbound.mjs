@@ -58,7 +58,9 @@ const GOAL_PLAN_BUDGET_FIELDS = new Set(['tokens', 'usd', 'wallMin', 'providerTu
 const GOAL_REF_FIELDS = new Set(['goalId', 'version', 'digest']);
 const PLAN_REF_FIELDS = new Set(['planId', 'version', 'digest']);
 const PLAN_NODE_FIELDS = new Set(['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects']);
-const PLAN_ROUTE_FIELDS = new Set(['harnesses', 'models', 'efforts']);
+const PLAN_ROUTE_FIELDS_V2 = new Set(['schemaVersion', 'allowed']);
+const PLAN_ROUTE_TUPLE_FIELDS = new Set(['harness', 'model', 'effort']);
+const LEGACY_PLAN_ROUTE_FIELDS = new Set(['harnesses', 'models', 'efforts']);
 const PLAN_VERIFICATION_FIELDS = new Set(['command', 'arguments', 'cwd', 'envAllowlist', 'expectExit', 'expectResult', 'timeoutMs', 'maxOutputBytes', 'requiredPredecessorEvidence']);
 const PLAN_GATE_FIELDS = new Set(['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'expectedDispatchVersion', 'capabilities', 'effects']);
 const PLAN_BRIEF_FIELDS = new Set(['goal', 'constraints', 'pathScope', 'tools', 'outputFormat', 'definitionOfDone', 'verification', 'budget', 'providerTurns', 'capabilities', 'effects']);
@@ -83,6 +85,18 @@ function result(status, body) { return Object.freeze({ status, body: Object.free
 function error(status, code, message = code) { return result(status, { ok: false, error: { code, message } }); }
 function dispatchFailure(cause) {
   const goalPlanCode = cause?.code;
+  if (typeof goalPlanCode === 'string' && goalPlanCode.startsWith('worker_policy_')) {
+    const invalid = ['worker_policy_invalid', 'worker_policy_observation_invalid'].includes(goalPlanCode);
+    return { httpStatus: invalid ? 400 : 409, body: { ok: false, error: {
+      code: goalPlanCode, message: invalid ? 'worker policy precondition failed' : 'worker policy unavailable or conflicted',
+    } } };
+  }
+  if ((typeof goalPlanCode === 'string' && goalPlanCode.startsWith('run_orchestrator_'))
+    || goalPlanCode === 'run_stopping') {
+    return { httpStatus: 409, body: { ok: false, error: {
+      code: goalPlanCode, message: 'recursive Run authority is no longer active',
+    } } };
+  }
   if (goalPlanCode === 'application_unauthorized') return { httpStatus: 403, body: { ok: false, error: { code: goalPlanCode, message: 'application command forbidden' } } };
   if (goalPlanCode === 'application_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: goalPlanCode, message: 'run application unavailable' } } };
   if (['application_run_lookup_oversize', 'application_run_view_oversize'].includes(goalPlanCode)) return { httpStatus: 503, body: { ok: false, error: { code: 'temporarily_unavailable', message: 'run application projection unavailable' } } };
@@ -98,7 +112,8 @@ function dispatchFailure(cause) {
   if (['goal_plan_invalid', 'goal_plan_secret_rejected', 'goal_plan_status_invalid', 'goal_reference_invalid', 'plan_reference_invalid', 'goal_too_large',
     'plan_approval_invalid', 'plan_budget_exceeded', 'plan_cycle', 'plan_dangling_dependency', 'plan_duplicate_node',
     'plan_effect_invalid', 'plan_goal_mismatch', 'plan_node_invalid', 'plan_node_limit', 'plan_risk_mismatch', 'plan_scope_invalid',
-    'plan_too_large', 'plan_verification_invalid', 'plan_dispatch_invalid'].includes(goalPlanCode)) {
+    'plan_too_large', 'plan_verification_invalid', 'plan_dispatch_invalid', 'plan_route_invalid',
+    'plan_route_authority_legacy_ambiguous'].includes(goalPlanCode)) {
     return { httpStatus: 400, body: { ok: false, error: { code: goalPlanCode, message: 'goal/plan precondition failed' } } };
   }
   if (['goal_conflict', 'goal_predecessor_required', 'goal_stale', 'goal_version_limit', 'goal_weakened',
@@ -160,6 +175,9 @@ function exactRecord(value, fields) {
   return isRecord(value) && Object.keys(value).length === fields.size
     && Object.keys(value).every((key) => fields.has(key));
 }
+function requiredEffectFields(fields, value) {
+  return Object.hasOwn(value ?? {}, 'requiredEffects') ? new Set([...fields, 'requiredEffects']) : fields;
+}
 function stringList(value) {
   return Array.isArray(value) && value.every(string) && new Set(value).size === value.length;
 }
@@ -185,27 +203,44 @@ function planVerification(value) {
     && Number.isSafeInteger(value.maxOutputBytes) && value.maxOutputBytes > 0
     && stringList(value.requiredPredecessorEvidence);
 }
+function planRoutes(value) {
+  if (exactRecord(value, PLAN_ROUTE_FIELDS_V2)) {
+    const identities = Array.isArray(value.allowed) ? value.allowed.map((route) => (
+      exactRecord(route, PLAN_ROUTE_TUPLE_FIELDS)
+        ? `${route.harness}\0${route.model}\0${route.effort}` : null
+    )) : [];
+    return value.schemaVersion === 2 && Array.isArray(value.allowed) && value.allowed.length > 0
+      && value.allowed.every((route) => exactRecord(route, PLAN_ROUTE_TUPLE_FIELDS)
+        && string(route.harness) && string(route.model) && string(route.effort))
+      && identities.every((identity) => identity !== null)
+      && new Set(identities).size === identities.length;
+  }
+  return exactRecord(value, LEGACY_PLAN_ROUTE_FIELDS)
+    && stringList(value.harnesses) && value.harnesses.length === 1
+    && stringList(value.models) && value.models.length === 1
+    && stringList(value.efforts) && value.efforts.length === 1;
+}
 function planNode(value) {
-  return exactRecord(value, PLAN_NODE_FIELDS) && string(value.key) && string(value.objective)
+  return exactRecord(value, requiredEffectFields(PLAN_NODE_FIELDS, value)) && string(value.key) && string(value.objective)
     && stringList(value.definitionOfDone) && stringList(value.deps) && stringList(value.pathScope)
     && string(value.risk) && goalPlanBudget(value.budget) && planVerification(value.verification)
     && value.pathScope.length > 0
-    && exactRecord(value.routes, PLAN_ROUTE_FIELDS) && stringList(value.routes.harnesses) && value.routes.harnesses.length > 0
-    && stringList(value.routes.models) && value.routes.models.length > 0
-    && stringList(value.routes.efforts) && value.routes.efforts.length > 0
-    && stringList(value.capabilities) && stringList(value.effects);
+    && planRoutes(value.routes)
+    && stringList(value.capabilities) && stringList(value.effects)
+    && (!Object.hasOwn(value, 'requiredEffects') || stringList(value.requiredEffects));
 }
 function planGate(value) {
-  return exactRecord(value, PLAN_GATE_FIELDS)
+  return exactRecord(value, requiredEffectFields(PLAN_GATE_FIELDS, value))
     && /^goal:[a-f0-9]{64}$/.test(value.goalId ?? '') && Number.isSafeInteger(value.goalVersion) && value.goalVersion > 0
     && /^[a-f0-9]{64}$/.test(value.goalDigest ?? '')
     && /^plan:[a-f0-9]{64}$/.test(value.planId ?? '') && Number.isSafeInteger(value.planVersion) && value.planVersion > 0
     && /^[a-f0-9]{64}$/.test(value.planDigest ?? '') && string(value.nodeKey)
     && value.expectedDispatchVersion === 0
-    && stringList(value.capabilities) && stringList(value.effects);
+    && stringList(value.capabilities) && stringList(value.effects)
+    && (!Object.hasOwn(value, 'requiredEffects') || stringList(value.requiredEffects));
 }
 function planBrief(value) {
-  return exactRecord(value, PLAN_BRIEF_FIELDS) && string(value.goal)
+  return exactRecord(value, requiredEffectFields(PLAN_BRIEF_FIELDS, value)) && string(value.goal)
     && stringList(value.constraints) && stringList(value.pathScope) && stringList(value.tools)
     && typeof value.outputFormat === 'string' && typeof value.definitionOfDone === 'string'
     && planVerification(value.verification) && exactRecord(value.budget, BUDGET_FIELDS)
@@ -213,7 +248,8 @@ function planBrief(value) {
     && Number.isFinite(value.budget.usd) && value.budget.usd >= 0
     && Number.isSafeInteger(value.budget.wallMin) && value.budget.wallMin > 0
     && Number.isSafeInteger(value.providerTurns) && value.providerTurns > 0
-    && stringList(value.capabilities) && stringList(value.effects);
+    && stringList(value.capabilities) && stringList(value.effects)
+    && (!Object.hasOwn(value, 'requiredEffects') || stringList(value.requiredEffects));
 }
 function validProviderClaims(value) {
   if (!isRecord(value)) return false;
@@ -444,7 +480,13 @@ export class WebNorthbound {
     if (!principal || !string(principal.userId) || !string(principal.sessionId) || !string(principal.credentialId)) return error(401, 'unauthenticated');
     const expiresAt = Date.parse(principal.expiresAt);
     if (principal.revoked === true || !string(principal.expiresAt) || !Number.isFinite(expiresAt) || expiresAt <= this.now()) return error(401, 'unauthenticated');
-    if (ctx.transport !== 'https') return error(503, 'temporarily_unavailable', 'secure transport required');
+    // `local` is stamped only by createLocalAuthenticatedWebServer after accepting an
+    // owner-permissioned Unix-domain-socket connection. It is not a caller header and never
+    // represents cleartext TCP. Treat that OS-local boundary as a secure transport while keeping
+    // every network path HTTPS-only.
+    if (!['https', 'local'].includes(ctx.transport)) {
+      return error(503, 'temporarily_unavailable', 'secure transport required');
+    }
     return null;
   }
 
@@ -515,6 +557,37 @@ export class WebNorthbound {
       catch { return error(503, 'temporarily_unavailable'); }
       return error(503, 'application_unavailable', 'run application unavailable');
     }
+    const webActor = actor(ctx.principal);
+    const scopeKey = hash({ userId: ctx.principal.userId, command: envelope.command, repoId: envelope.repoId, idempotencyKey: envelope.idempotencyKey });
+    const requestDigest = hash(canonicalRequest(envelope));
+    let semanticAuthority = null;
+    if (envelope.command === 'run_act') {
+      const prior = this.coordination.webCommandByScope?.(scopeKey) ?? null;
+      if (prior && prior.requestDigest !== requestDigest) {
+        try { this._audit('idempotency_refused', ctx, { command: envelope.command, repoId: envelope.repoId, reason: 'idempotency_conflict' }); }
+        catch { return error(503, 'temporarily_unavailable'); }
+        return error(409, 'idempotency_conflict');
+      }
+      try {
+        semanticAuthority = prior?.semanticAuthority ?? await this.application.actionAuthority(
+          envelope.args,
+          { actor: webActor, principalId: ctx.principal.userId, sessionId: ctx.principal.sessionId },
+        );
+      } catch (cause) {
+        const failure = dispatchFailure(cause);
+        try { this._audit('authorization_refused', ctx, { command: envelope.command, repoId: envelope.repoId }); }
+        catch { return error(503, 'temporarily_unavailable'); }
+        return result(failure.httpStatus, failure.body);
+      }
+      if (!Array.isArray(semanticAuthority?.requiredCapabilities)
+        || !semanticAuthority.requiredCapabilities.every(
+          (capability) => ctx.principal.capabilities.includes(capability),
+        )) {
+        try { this._audit('authorization_refused', ctx, { command: envelope.command, repoId: envelope.repoId }); }
+        catch { return error(503, 'temporarily_unavailable'); }
+        return error(403, 'forbidden');
+      }
+    }
     if (this.edge) {
       const key = ctx.principal.credentialId;
       const commandCost = envelope.command === 'reuse_recheck' ? (envelope.args.trigger === 'advisory_refresh' ? 20 : 2)
@@ -526,9 +599,6 @@ export class WebNorthbound {
       }
     }
 
-    const webActor = actor(ctx.principal);
-    const scopeKey = hash({ userId: ctx.principal.userId, command: envelope.command, repoId: envelope.repoId, idempotencyKey: envelope.idempotencyKey });
-    const requestDigest = hash(canonicalRequest(envelope));
     let admission;
     try {
       admission = this.coordination.admitWebCommand({
@@ -536,6 +606,7 @@ export class WebNorthbound {
         repoId: envelope.repoId, runId: admittedRunId(envelope),
         userId: ctx.principal.userId, sessionId: ctx.principal.sessionId, credentialId: ctx.principal.credentialId,
         origin: envelope.origin, expectedFence: envelope.expectedFence ?? null,
+        ...(semanticAuthority ? { semanticAuthority } : {}),
       }, { actor: webActor, key: `web.admit:${scopeKey}` });
     } catch {
       return error(503, 'temporarily_unavailable');
@@ -543,6 +614,12 @@ export class WebNorthbound {
     if (!admission.ok) {
       try { this._audit('idempotency_refused', ctx, { command: envelope.command, repoId: envelope.repoId, reason: admission.result }); } catch { return error(503, 'temporarily_unavailable'); }
       return error(409, admission.result === 'idempotency_conflict' ? 'idempotency_conflict' : 'invalid_command');
+    }
+    if (envelope.command === 'run_act'
+      && admission.command.semanticAuthority?.authorityDigest !== semanticAuthority?.authorityDigest) {
+      try { this._audit('authorization_refused', ctx, { command: envelope.command, repoId: envelope.repoId }); }
+      catch { return error(503, 'temporarily_unavailable'); }
+      return error(409, 'application_action_authority_invalid');
     }
     if (admission.result === 'replay') {
       try { this._audit('command_replayed', ctx, { command: envelope.command, repoId: envelope.repoId, commandId: admission.command.commandId }); } catch { return error(503, 'temporarily_unavailable'); }
@@ -569,6 +646,10 @@ export class WebNorthbound {
       }
       if (admission.command.status === 'admitted' && (RECONCILABLE.has(envelope.command)
         || (envelope.command === 'spawn' && envelope.args.goalPlan))) {
+        if (envelope.command === 'run_act'
+          && admission.command.sessionId !== ctx.principal.sessionId) {
+          return error(403, 'forbidden');
+        }
         const commandId = admission.command.commandId;
         const admittedActor = actor({ userId: admission.command.userId, sessionId: admission.command.sessionId });
         const admittedPrincipal = { ...ctx.principal, userId: admission.command.userId, sessionId: admission.command.sessionId };
@@ -576,7 +657,10 @@ export class WebNorthbound {
         let replayed;
         try {
           replayed = APPLICATION_COMMAND[envelope.command]
-            ? await this._dispatchApplicationOnce(admittedEnvelope, admittedActor, commandId, admittedPrincipal)
+            ? await this._dispatchApplicationOnce(
+              admittedEnvelope, admittedActor, commandId, admittedPrincipal,
+              admission.command.semanticAuthority ?? null,
+            )
             : await this._dispatch(admittedEnvelope, admittedActor, admittedPrincipal);
         } catch (cause) {
           const failure = dispatchFailure(cause);
@@ -607,8 +691,29 @@ export class WebNorthbound {
       }
       if (admission.command.status === 'completed' && APPLICATION_COMMAND[envelope.command]) {
         try {
+          const lease = typeof this.coordination.activeRunOrchestratorLeaseForSession === 'function'
+            ? this.coordination.activeRunOrchestratorLeaseForSession({
+              repoId: envelope.repoId,
+              principalId: ctx.principal.userId,
+              sessionId: ctx.principal.sessionId,
+              expiresAt: ctx.principal.expiresAt,
+            }) : null;
           await this.application.authorizeReplay(APPLICATION_COMMAND[envelope.command], envelope.args, {
             actor: webActor, principalId: ctx.principal.userId, sessionId: ctx.principal.sessionId,
+          }, {
+            transport: 'web', requestId: String(envelope.commandId),
+            idempotencyKey: `web.command:${envelope.commandId}`,
+            ...(envelope.command === 'run_act' ? {
+              capabilityAuthority: northboundCapabilityToken('web'),
+              capabilities: [...ctx.principal.capabilities],
+              semanticAuthority: admission.command.semanticAuthority,
+            } : {}),
+            ...(lease ? { sessionAuthority: {
+              schemaVersion: 1,
+              authorityDigest: lease.session.authorityDigest,
+              expiresAt: lease.session.expiresAt,
+              orchestratorLeaseId: lease.leaseId,
+            } } : {}),
           });
         } catch (cause) {
           const failure = dispatchFailure(cause);
@@ -626,7 +731,10 @@ export class WebNorthbound {
       response = envelope.command === 'drain'
         ? await this._dispatchDrain(envelope, webActor, envelope.commandId, ctx.principal)
         : APPLICATION_COMMAND[envelope.command]
-          ? await this._dispatchApplicationOnce(envelope, webActor, envelope.commandId, ctx.principal)
+          ? await this._dispatchApplicationOnce(
+            envelope, webActor, envelope.commandId, ctx.principal,
+            admission.command.semanticAuthority ?? null,
+          )
           : await this._dispatch(envelope, webActor, ctx.principal);
     } catch (cause) {
       const failure = dispatchFailure(cause);
@@ -669,16 +777,18 @@ export class WebNorthbound {
     return pending;
   }
 
-  _dispatchApplicationOnce(envelope, webActor, commandId, principal) {
+  _dispatchApplicationOnce(envelope, webActor, commandId, principal, semanticAuthority = null) {
     const existing = this._applicationDispatches.get(commandId);
     if (existing) return existing;
     const admittedEnvelope = commandId === envelope.commandId ? envelope : { ...envelope, commandId };
-    const pending = Promise.resolve().then(() => this._dispatch(admittedEnvelope, webActor, principal));
+    const pending = Promise.resolve().then(
+      () => this._dispatch(admittedEnvelope, webActor, principal, semanticAuthority),
+    );
     this._applicationDispatches.set(commandId, pending);
     return pending;
   }
 
-  async _dispatch(envelope, webActor, principal) {
+  async _dispatch(envelope, webActor, principal, semanticAuthority = null) {
     const a = envelope.args;
     const needsGoalPlanPrincipal = ['goal_define', 'plan_propose', 'plan_approve', 'goal_plan_status'].includes(envelope.command)
       || (envelope.command === 'spawn' && Boolean(a.goalPlan));
@@ -691,10 +801,31 @@ export class WebNorthbound {
     let value;
     if (APPLICATION_COMMAND[envelope.command]) {
       if (!this.application) throw Object.assign(new Error('Run application is unavailable'), { code: 'application_unavailable' });
+      const lease = typeof this.coordination.activeRunOrchestratorLeaseForSession === 'function'
+        ? this.coordination.activeRunOrchestratorLeaseForSession({
+          repoId: envelope.repoId,
+          principalId: principal.userId,
+          sessionId: principal.sessionId,
+          expiresAt: principal.expiresAt,
+        }) : null;
       value = await this.application.command(APPLICATION_COMMAND[envelope.command], a, {
         actor: webActor,
         principalId: principal.userId,
         sessionId: principal.sessionId,
+      }, {
+        transport: 'web', requestId: String(envelope.commandId),
+        idempotencyKey: `web.command:${envelope.commandId}`,
+        ...(envelope.command === 'run_act' ? {
+          capabilityAuthority: northboundCapabilityToken('web'),
+          capabilities: [...principal.capabilities],
+          semanticAuthority,
+        } : {}),
+        ...(lease ? { sessionAuthority: {
+          schemaVersion: 1,
+          authorityDigest: lease.session.authorityDigest,
+          expiresAt: lease.session.expiresAt,
+          orchestratorLeaseId: lease.leaseId,
+        } } : {}),
       });
     } else if (envelope.command === 'spawn') {
       const goalPlan = a.goalPlan ? json(a.goalPlan) : undefined;
@@ -721,7 +852,7 @@ export class WebNorthbound {
       value = await this.coordinator.spawnScratchOracle(a.scratchFactId, a.harness, {
         model: a.model, effort: a.effort, modelPolicy: a.modelPolicy, verification: a.verification,
         budget: a.budget, constraints: a.constraints, goal: a.goal, definitionOfDone: a.definitionOfDone,
-        taskId: a.taskId ?? `web-${envelope.commandId}`, runId: envelope.runId ?? null,
+        taskId: a.taskId ?? `web-${envelope.commandId}`,
         actor: `operator:${webActor}`, idempotencyKey: `web.command:${envelope.commandId}`,
       });
     } else if (envelope.command === 'send') {
@@ -902,7 +1033,7 @@ export class WebNorthbound {
       if (opened) return this._write(res, opened, origin);
       return;
     }
-    if (req.method === 'OPTIONS' && (['/v1/commands', '/v1/stream-tickets'].includes(url.pathname) || AUTH_PATHS.has(url.pathname))) {
+    if (req.method === 'OPTIONS' && (['/v1/commands', '/v1/stream-tickets', '/v1/action-authority'].includes(url.pathname) || AUTH_PATHS.has(url.pathname))) {
       if (!this.allowedOrigins.has(origin)) return this._write(res, error(403, 'forbidden'));
       res.writeHead(204, {
         'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true',
@@ -930,23 +1061,61 @@ export class WebNorthbound {
           : ctx.csrfToken === principal.csrfToken);
         if (!csrfValid) return this._write(res, error(403, 'forbidden'), origin);
       }
+      const legacyScope = isRecord(body) && Object.keys(body).length === 1 && string(body.repoId);
+      const runScope = isRecord(body)
+        && Object.keys(body).every((key) => ['repoId', 'runId', 'channel', 'recipient', 'cursor'].includes(key))
+        && string(body.repoId) && string(body.runId)
+        && ['progress', 'events', 'output'].includes(body.channel)
+        && (body.recipient === undefined || (string(body.recipient) && body.recipient.length <= 256))
+        && (body.channel === 'output' || body.recipient === undefined)
+        && (body.cursor === undefined || (body.channel === 'progress'
+          ? Number.isSafeInteger(body.cursor) && body.cursor >= 0
+          : typeof body.cursor === 'string' && body.cursor.length >= 1
+            && body.cursor.length <= 4_096 && /^[A-Za-z0-9_-]+$/u.test(body.cursor)));
+      if (!legacyScope && !runScope) return this._write(res, error(400, 'invalid_command'), origin);
+      if (runScope && !this.application) return this._write(res, error(503, 'application_unavailable'), origin);
+      let streamScope = body.repoId;
+      if (runScope) streamScope = { ...body };
       if (typeof this.stream.authorizeIssue !== 'function') return this._write(res, error(503, 'temporarily_unavailable'), origin);
-      if (!this.stream.authorizeIssue(principal, origin, body?.repoId)) {
+      if (!await this.stream.authorizeIssue(principal, origin, streamScope)) {
         try { this._audit('stream_ticket_refused', { principal, origin, addressDigest: req.edgeAddressDigest ?? null }, { reason: 'forbidden' }); }
         catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
         return this._write(res, error(403, 'forbidden'), origin);
       }
+      let ticketQuota = null;
       if (this.edge) {
-        const ticketQuota = this.edge.reserve('ticket', principal.credentialId);
+        ticketQuota = this.edge.reserve('ticket', principal.credentialId);
         if (!ticketQuota.ok) {
           try { this._audit('quota_refused', { principal, origin, addressDigest: req.edgeAddressDigest ?? null }, { quota: 'ticket' }); }
           catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
           return this._write(res, error(429, 'rate_limited'), origin, { 'retry-after': String(ticketQuota.retryAfter) });
         }
+      }
+      if (runScope) {
+        let snapshot;
+        try {
+          snapshot = await this.application.command('run.inspect', {
+            runId: body.runId, depth: 'outline',
+          }, {
+            actor: actor(principal), principalId: principal.userId, sessionId: principal.sessionId,
+          }, { transport: 'web-stream', requestId: randomUUID() });
+        } catch (cause) {
+          ticketQuota?.rollback();
+          const failure = dispatchFailure(cause);
+          return this._write(res, result(failure.httpStatus, failure.body), origin);
+        }
+        if (!snapshot || snapshot.runId !== body.runId || snapshot.depth !== 'outline'
+          || !Number.isSafeInteger(snapshot.cursor) || !isRecord(snapshot.outline)) {
+          ticketQuota?.rollback();
+          return this._write(res, error(503, 'temporarily_unavailable'), origin);
+        }
+        streamScope = { ...body, snapshot };
+      }
+      if (this.edge) {
         let issuance;
         try {
           if (typeof this.stream.beginIssue !== 'function') throw new TypeError('transactional ticket issuance required');
-          issuance = this.stream.beginIssue(principal, origin, body?.repoId);
+          issuance = await this.stream.beginIssue(principal, origin, streamScope);
         }
         catch { ticketQuota.rollback(); return this._write(res, error(503, 'temporarily_unavailable'), origin); }
         const issued = issuance?.response ?? error(503, 'temporarily_unavailable');
@@ -959,7 +1128,75 @@ export class WebNorthbound {
         issuance.commit(); ticketQuota.commit();
         return;
       }
-      return this._write(res, this.stream.issue(principal, origin, body?.repoId), origin);
+      return this._write(res, await this.stream.issue(principal, origin, streamScope), origin);
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/action-authority') {
+      if (url.search || req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
+        return this._write(res, error(400, 'invalid_command'), origin);
+      }
+      let principal;
+      try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
+      let body;
+      try { body = await this._readBody(req); }
+      catch { return this._write(res, error(400, 'invalid_command'), origin); }
+      const ctx = {
+        principal, origin, csrfToken: req.headers['x-baton-csrf'] ?? null,
+        remoteAddress: req.edgeAddressDigest ? 'canonical' : (req.socket?.remoteAddress ?? null),
+        addressDigest: req.edgeAddressDigest ?? null,
+        transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http'),
+      };
+      const authFailure = this._authenticate(ctx);
+      if (authFailure) return this._write(res, authFailure, origin);
+      if (!isRecord(body)
+        || Object.keys(body).sort().join(',') !== ['args', 'idempotencyKey', 'repoId', 'schemaVersion'].join(',')
+        || body.schemaVersion !== 1) {
+        return this._write(res, error(400, 'invalid_command'), origin);
+      }
+      const envelope = {
+        schemaVersion: 1,
+        commandId: 'action-authority-preflight',
+        idempotencyKey: body.idempotencyKey,
+        command: 'run_act',
+        args: body.args,
+        repoId: body.repoId,
+        runId: body.args?.runId,
+        origin,
+      };
+      if (validateEnvelope(envelope)
+        || !Array.isArray(principal.capabilities) || !principal.capabilities.includes('observe')) {
+        return this._write(res, error(403, 'forbidden'), origin);
+      }
+      const authorizationFailure = this._authorize(ctx, envelope);
+      if (authorizationFailure) return this._write(res, authorizationFailure, origin);
+      if (!this.application) return this._write(res, error(503, 'application_unavailable'), origin);
+      const scopeKey = hash({
+        userId: principal.userId, command: envelope.command,
+        repoId: envelope.repoId, idempotencyKey: envelope.idempotencyKey,
+      });
+      const requestDigest = hash(canonicalRequest(envelope));
+      const prior = this.coordination.webCommandByScope?.(scopeKey) ?? null;
+      if (prior && prior.requestDigest !== requestDigest) {
+        return this._write(res, error(409, 'idempotency_conflict'), origin);
+      }
+      let semanticAuthority;
+      try {
+        semanticAuthority = prior?.semanticAuthority ?? await this.application.actionAuthority(
+          envelope.args,
+          {
+            actor: actor(principal), principalId: principal.userId,
+            sessionId: principal.sessionId,
+          },
+        );
+      } catch (cause) {
+        const failure = dispatchFailure(cause);
+        return this._write(res, result(failure.httpStatus, failure.body), origin);
+      }
+      if (!Array.isArray(semanticAuthority?.requiredCapabilities)) {
+        return this._write(res, error(409, 'application_action_authority_invalid'), origin);
+      }
+      try { this._audit('action_authority_read', ctx, { repoId: envelope.repoId }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+      return this._write(res, result(200, { ok: true, semanticAuthority }), origin);
     }
     if (req.method === 'GET' && url.pathname === '/v1/events') {
       let principal;
@@ -967,7 +1204,7 @@ export class WebNorthbound {
       if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), origin);
       const authFailure = this._authenticate({ principal, transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http') });
       if (authFailure) return this._write(res, authFailure, origin);
-      const responseValue = this.stream.open({
+      const responseValue = await this.stream.open({
         ticket: url.searchParams.get('ticket'), principal, origin,
         cursor: req.headers['last-event-id'] ?? url.searchParams.get('cursor'),
       }, res);
@@ -1027,7 +1264,10 @@ export class WebNorthbound {
     if (pathname === '/v1/session') {
       return this._write(res, result(200, {
         ok: true,
-        identity: { userId: principal.userId, capabilities: [...principal.capabilities], repoIds: [...principal.repoIds] },
+        identity: {
+          userId: principal.userId, sessionId: principal.sessionId,
+          capabilities: [...principal.capabilities], repoIds: [...principal.repoIds],
+        },
         expiresAt: principal.expiresAt,
       }));
     }
@@ -1385,6 +1625,26 @@ export function createAuthenticatedWebServer(northbound, opts = {}) {
     if (northbound.edge.proxyMode) throw new TypeError('direct TLS requires a direct-mode edge policy');
     server = createHttpsServer({ key: opts.tls.key, cert: opts.tls.cert, minVersion: 'TLSv1.2' }, (req, res) => northbound.handle(req, res));
   }
+  server.batonShutdown = (shutdownOpts = {}) => northbound.shutdown({ ...shutdownOpts, server });
+  return server;
+}
+
+/** Owner-local authenticated Web transport. The synthetic transport identity is assigned by the
+ * server closure, never parsed from request headers. The caller must bind the returned server to
+ * one owner-only Unix-domain socket; this factory deliberately exposes no TCP listen default. */
+export function createLocalAuthenticatedWebServer(northbound) {
+  if (!(northbound instanceof WebNorthbound)) throw new TypeError('WebNorthbound required');
+  if (typeof northbound.authenticate !== 'function') throw new TypeError('an authenticator is required');
+  if (!(northbound.readinessAuthority instanceof WebReadinessAuthority)
+    || northbound.readinessAuthority.coordination !== northbound.coordination
+    || northbound.readinessAuthority.sessions !== northbound.sessions
+    || northbound.readinessAuthority.authenticate !== northbound.authenticate) {
+    throw new TypeError('local web server requires a readiness authority bound to its coordination, session, and authentication authorities');
+  }
+  const server = createHttpServer((req, res) => {
+    req.edgeIdentity = Object.freeze({ transport: 'local', address: 'owner-local-socket' });
+    northbound.handle(req, res);
+  });
   server.batonShutdown = (shutdownOpts = {}) => northbound.shutdown({ ...shutdownOpts, server });
   return server;
 }

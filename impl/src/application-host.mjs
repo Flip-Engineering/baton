@@ -114,12 +114,19 @@ export class SignalLifecycleOwner {
 export class BatonWebHost {
   constructor(options) {
     exact(options, ['application', 'server', 'shutdownPrincipal', 'listen', 'webDrainMs'], 'Web host configuration');
-    exact(options.listen, ['host', 'port'], 'Web listen configuration');
+    const tcp = record(options.listen)
+      && Object.keys(options.listen).sort().join('\0') === ['host', 'port'].sort().join('\0');
+    const local = record(options.listen)
+      && Object.keys(options.listen).sort().join('\0') === 'path';
     if (typeof options.application?.shutdown !== 'function' || !options.application?.ready
       || typeof options.server?.listen !== 'function' || typeof options.server?.once !== 'function'
       || typeof options.server?.off !== 'function' || typeof options.server?.batonShutdown !== 'function'
-      || typeof options.listen.host !== 'string' || options.listen.host.length === 0
-      || !Number.isSafeInteger(options.listen.port) || options.listen.port < 0 || options.listen.port > 65_535
+      || (!tcp && !local)
+      || (tcp && (typeof options.listen.host !== 'string' || options.listen.host.length === 0
+        || !Number.isSafeInteger(options.listen.port) || options.listen.port < 0
+        || options.listen.port > 65_535))
+      || (local && (typeof options.listen.path !== 'string' || options.listen.path.length === 0
+        || Buffer.byteLength(options.listen.path) > 103 || options.listen.path.includes('\0')))
       || !Number.isSafeInteger(options.webDrainMs) || options.webDrainMs <= 0) {
       throw hostError('Web host configuration is invalid');
     }
@@ -138,12 +145,32 @@ export class BatonWebHost {
       const onError = (error) => { this.server.off('listening', onListening); reject(error); };
       const onListening = () => {
         this.server.off('error', onError);
-        const address = this.server.address?.() ?? null;
-        resolve(Object.freeze({ schemaVersion: 1, state: 'listening', address }));
+        try {
+          if (this.listenOptions.path) {
+            let stat = lstatSync(this.listenOptions.path);
+            if (!stat.isSocket() || stat.isSymbolicLink()
+              || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
+              throw hostError('local Web socket authority is unsafe', 'application_host_socket_invalid');
+            }
+            chmodSync(this.listenOptions.path, 0o600);
+            stat = lstatSync(this.listenOptions.path);
+            if (!stat.isSocket() || (stat.mode & 0o077) !== 0) {
+              throw hostError('local Web socket could not be made private', 'application_host_socket_invalid');
+            }
+          }
+          const address = this.server.address?.() ?? null;
+          resolve(Object.freeze({ schemaVersion: 1, state: 'listening', address }));
+        } catch (error) {
+          try { this.server.close?.(); } catch {}
+          reject(error);
+        }
       };
       this.server.once('error', onError);
       this.server.once('listening', onListening);
-      try { this.server.listen(this.listenOptions.port, this.listenOptions.host); }
+      try {
+        if (this.listenOptions.path) this.server.listen(this.listenOptions.path);
+        else this.server.listen(this.listenOptions.port, this.listenOptions.host);
+      }
       catch (error) { this.server.off('error', onError); this.server.off('listening', onListening); reject(error); }
     }));
     this._start = started;
@@ -222,3 +249,4 @@ export class BatonWebHost {
     });
   }
 }
+import { chmodSync, lstatSync } from 'node:fs';
