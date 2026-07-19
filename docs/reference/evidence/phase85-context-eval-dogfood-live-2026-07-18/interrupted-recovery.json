@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "runId": "run-549d7376e7edc4ceb2247e8221ec6d6a",
+  "disposition": "operator_interrupted_then_recovered",
+  "stop": {
+    "schemaVersion": 3,
+    "state": "stopped",
+    "targetCount": 4,
+    "remainingCount": 0,
+    "counts": {
+      "pendingCancelled": 0,
+      "killConfirmed": 0,
+      "alreadyTerminal": 4,
+      "processesObserved": 4,
+      "processesClosed": 4
+    },
+    "context": {
+      "targetSessionCount": 1,
+      "targetCellCount": 0,
+      "targetCallCount": 1,
+      "remainingSessionCount": 0,
+      "remainingCellCount": 0,
+      "remainingCallCount": 0
+    },
+    "receiptDigest": "da11617da232a0009114af937616c271b7367624fc6923165abaa4e691eb97a7"
+  },
+  "ownership": {
+    "workers": 0,
+    "closed": true
+  },
+  "note": "The PTY interrupted receipt delivery after durable stop admission. Exact deployment reopen converged the stop without redispatch and removed the disposable deployment root."
+}
