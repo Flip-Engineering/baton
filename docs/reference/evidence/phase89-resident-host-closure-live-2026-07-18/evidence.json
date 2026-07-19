@@ -1,0 +1,203 @@
+{
+  "schemaVersion": 1,
+  "completed": {
+    "schemaVersion": 1,
+    "state": "ready",
+    "counts": {
+      "total": 2,
+      "active": 0,
+      "waiting": 0,
+      "ready": 2,
+      "completed": 0,
+      "failed": 0,
+      "stopped": 0,
+      "terminal": 0,
+      "attention": 0,
+      "cleanupIncomplete": 0,
+      "byPhase": {
+        "work_completed": 2
+      }
+    },
+    "members": [
+      {
+        "runId": "run-ed9c926ecb725ce16b8d014d275164cb",
+        "objective": "Act as Baton's independent resident-host-authority reviewer after the first Phase 89 fixes. Inspect the Phase 89 specifications, assessment, application/client/deployment/CLI/host/Web implementation, and both Phase 89 tests. Confirm or refute each claimed post-fix property. Then design the smallest next ordinary openBaton().host() vertical that owns a private local transport, private session authority, stable deployment ID, fresh incarnation, fenced writer lease, readiness-before-publication, authenticated connection challenge, and CAS cleanup. Separate invariants, implementation seams, adversarial tests, and intentionally deferred network/send/interrupt/stream work. Look specifically for principal/idempotency confusion, token or path leakage, PID reuse, symlink/permission attacks, duplicate hosts, stale selector takeover, partial start rollback, and host/application close ownership. Prefer an integrated Pythonic owner/connected Runs surface; do not expose budgets, limits, sockets, tokens, leases, or receipts to ordinary callers. Do not invoke nested Baton. Use rtk for every shell command, one command per call. Do not mutate credentials, harness installations, global configuration, or the main checkout. Write only docs/reference/evidence/phase89-resident-host-closure-live-2026-07-18/glm-host-authority-review.md, run the pinned verification, and finish.",
+        "state": "ready",
+        "phase": "work_completed",
+        "terminal": false,
+        "attention": "clear",
+        "stage": "cleanup",
+        "route": {
+          "requested": {
+            "harness": "glm",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "resolved": {
+            "harness": "glm@claude-code-2.1.211+zai-anthropic",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "observed": {
+            "harness": null,
+            "model": "glm-5.2",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "glm",
+              "resolved": "glm@claude-code-2.1.211+zai-anthropic",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "glm-5.2",
+              "resolved": "glm-5.2",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": "xhigh",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "glm-5.2",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          },
+          "rationale": {
+            "launchEnforcement": "exact deployment-profile route",
+            "providerAttestation": "provider-native observation only"
+          }
+        },
+        "verification": "complete",
+        "cleanup": "active",
+        "terminalCause": null,
+        "actions": [
+          "integrate",
+          "stop"
+        ],
+        "viewDigest": "70606fb7e914aae0acc819c5419404552d74be4ce6c6c6ffbffecccdc9389a21"
+      },
+      {
+        "runId": "run-31c94605f6abcb7d04e2de981dad66cf",
+        "objective": "Act as Baton's independent post-fix-command-port-and-AX reviewer after the first Phase 89 fixes. Inspect the Phase 89 specifications, assessment, application/client/deployment/CLI/host/Web implementation, and both Phase 89 tests. Confirm or refute each claimed post-fix property. Then design the smallest next ordinary openBaton().host() vertical that owns a private local transport, private session authority, stable deployment ID, fresh incarnation, fenced writer lease, readiness-before-publication, authenticated connection challenge, and CAS cleanup. Separate invariants, implementation seams, adversarial tests, and intentionally deferred network/send/interrupt/stream work. Look specifically for principal/idempotency confusion, token or path leakage, PID reuse, symlink/permission attacks, duplicate hosts, stale selector takeover, partial start rollback, and host/application close ownership. Prefer an integrated Pythonic owner/connected Runs surface; do not expose budgets, limits, sockets, tokens, leases, or receipts to ordinary callers. Do not invoke nested Baton. Use rtk for every shell command, one command per call. Do not mutate credentials, harness installations, global configuration, or the main checkout. Write only docs/reference/evidence/phase89-resident-host-closure-live-2026-07-18/codex-postfix-review.md, run the pinned verification, and finish.",
+        "state": "ready",
+        "phase": "work_completed",
+        "terminal": false,
+        "attention": "clear",
+        "stage": "cleanup",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "high"
+          },
+          "resolved": {
+            "harness": "codex@codex-cli 0.144.6",
+            "model": "gpt-5.6-sol",
+            "effort": "high"
+          },
+          "observed": {
+            "harness": null,
+            "model": "gpt-5.6-sol",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": "codex@codex-cli 0.144.6",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "high",
+              "resolved": "high",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          },
+          "rationale": {
+            "launchEnforcement": "exact deployment-profile route",
+            "providerAttestation": "provider-native observation only"
+          }
+        },
+        "verification": "complete",
+        "cleanup": "active",
+        "terminalCause": null,
+        "actions": [
+          "integrate",
+          "stop"
+        ],
+        "viewDigest": "f12e6ea966b558a5afb81d8a4ac33455803ba9421dd5eb043d66b8f15f28a93a"
+      }
+    ]
+  },
+  "materialized": [
+    {
+      "role": "resident-host-authority",
+      "route": {
+        "harness": "glm",
+        "model": "glm-5.2",
+        "effort": "xhigh"
+      },
+      "path": "docs/reference/evidence/phase89-resident-host-closure-live-2026-07-18/glm-host-authority-review.md",
+      "sha": "ccc24fd66d7024d021535ea179b51e91b2e32a8e"
+    },
+    {
+      "role": "post-fix-command-port-and-AX",
+      "route": {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high"
+      },
+      "path": "docs/reference/evidence/phase89-resident-host-closure-live-2026-07-18/codex-postfix-review.md",
+      "sha": "e2a90736da73efb64ab5a1a1431bcc6123dc8375"
+    }
+  ],
+  "cleanup": {
+    "stops": [
+      {
+        "runId": "run-ed9c926ecb725ce16b8d014d275164cb",
+        "stop": null,
+        "ownership": null
+      },
+      {
+        "runId": "run-31c94605f6abcb7d04e2de981dad66cf",
+        "stop": null,
+        "ownership": null
+      }
+    ],
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    }
+  }
+}

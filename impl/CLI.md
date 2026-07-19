@@ -5,7 +5,21 @@ kernel choreography.
 
 ## Connect to a resident authenticated Web host
 
-For ordinary use, place the repository selector in private Git common metadata:
+For ordinary local use, start Baton from the repository:
+
+```sh
+baton serve
+```
+
+This creates one stable deployment identity and fresh resident incarnation, serves authenticated
+HTTP over an owner-only Unix-domain socket, self-checks readiness/card/session authority, and only
+then publishes the Git-common selector plus owner-private profile/token. No URL, origin, socket,
+token, timeout, capacity, or budget is an ordinary argument. `connectBaton({repo})`, the CLI, and
+other orchestrators discover that authority automatically. `SIGINT`/`SIGTERM` drain, revoke, and
+remove only the current incarnation.
+
+Explicit authenticated network deployments retain the schema-v1 setup convention. Their
+repository selector is:
 
 ```json
 { "schemaVersion": 1, "profile": "progressive", "repoId": "repo-a" }
@@ -41,11 +55,17 @@ baton run start 'Implement the accepted design' \
   --profile standard --exact codex/gpt-5.6-sol@low
 baton run approve RUN_ID --plan PLAN_DIGEST
 baton run status RUN_ID --wait 30s
-baton run steer RUN_ID WORKER_ID --nudge 'Check the failing boundary.' \
-  --reason 'Fresh verification identified it.'
+baton run send RUN_ID 'Check the failing boundary.' --nudge
+baton run interrupt RUN_ID --reason 'Pause this turn for operator review.'
+baton run show RUN_ID
+baton run show RUN_ID --depth index
+baton run show RUN_ID --depth section --section execution
+baton run progress RUN_ID --follow
+baton run events RUN_ID --follow
+baton run output RUN_ID --to work --follow
 baton run evidence RUN_ID
 baton run adopt RUN_ID --reason 'Select the preserved independently inspected result.'
-baton run review RUN_ID --exact glm/glm-5.2@low \
+baton run review RUN_ID --exact glm/glm-5.2@xhigh \
   --reason 'Obtain independent semantic evidence before integration.'
 baton run integrate RUN_ID --strategy ff-only \
   --reason 'Integrate the adopted independently reviewed result.'
@@ -55,14 +75,34 @@ baton run stop RUN_ID --reason 'Operator cancelled this Run.'
 `run adopt` first reads `run.evidence` and binds the exact displayed manifest/result coordinates;
 it does not inspect a disposable worktree, merge, checkout, or publish. Use
 `--idempotency-key KEY` when an external caller needs stable retry identity. Provider credentials
-are not CLI fields. `run review` selects one deployment-allowed exact
+are not CLI fields. `run send` and `run interrupt` resolve the current semantic recipient inside
+Baton; ordinary callers never supply a worker ID or fence. Interrupt ends only that provider turn
+and preserves the Run/worktree for continuation, while `run stop` closes dispatch authority and
+reaps the whole Run subtree. The worker-targeted `run steer` command remains an advanced
+compatibility surface.
+
+Routine mutations and status return a compact machine-readable outline: objective, phase, current
+progress, exact requested/resolved/observed route, attention, action outcome, and next expansion.
+Internal budgets, ceilings, task/worker IDs, fences, policy attestations, and full lifecycle
+chapters stay hidden. `run show` follows the same progressive cascade as the application:
+`outline` (default) → `index` → `section` → `item`, with `content` for Context result chunks and
+execution progress/events/output, and `evidence` for exact provenance. The three Run stream
+commands manage opaque continuation, response, and wait policy inside Baton. Normalized events
+exclude provider payloads; output is an explicit opt-in and every item is marked
+`contentTrust: untrusted_provider`. Section/item selectors are required only at the corresponding
+depth.
+
+`run review` selects one deployment-allowed exact
 `harness/model/effort` reviewer route. `run integrate` first refreshes `run.evidence`, binds that
 manifest digest, and invokes only the profile-allowed local integration strategy; it never pushes,
 publishes, or deploys.
 
 ## Own a Web deployment
 
-`baton serve CONFIG_MODULE` loads a deployment factory exporting `default` or
+`baton serve` is the normal zero-assembly owner-local host. It returns only a non-secret outline
+and never falls back to cleartext TCP or a wildcard bind.
+
+`baton serve CONFIG_MODULE` is the advanced explicit-network compatibility seam. It loads a deployment factory exporting `default` or
 `createBatonWebHost()`. It may return a `BatonWebHost` or these already policy-bound authorities:
 
 ```js
@@ -85,5 +125,5 @@ The config owns deployment policy; the host owns lifecycle. `SIGINT`, `SIGTERM`,
 and listener error close Web admission first and then call the host-only
 `application.shutdown`. Remote clients cannot invoke that fleet-wide authority.
 
-`run recover`, cursor `--follow`, materialized result export, and multi-node scheduling remain
-unavailable rather than being emulated in the CLI.
+Cursor `--follow`, exact recovery, materialized result export, and bounded multi-node Workflow
+operations use the same application authority rather than a second fleet controller.

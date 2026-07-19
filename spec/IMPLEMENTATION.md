@@ -908,14 +908,14 @@ class SubprocessAdapterBase {
 export class CodexAdapter extends SubprocessAdapterBase {
   /** verbs: {spawn:"native", interrupt:"native", steer:"native", ask:"native"} */
   card() {}
-  /** cmd:"codex", args:["exec","--json","--skip-git-repo-check", renderBrief(brief,"codex-v2")] */
+  /** cmd:"codex", args:["--ask-for-approval","never","--sandbox","danger-full-access","exec","--json","--skip-git-repo-check", renderBrief(brief,"codex-v2")] */
   argv(brief, opts) {}
 }
 
 export class ClaudeAdapter extends SubprocessAdapterBase {
   /** verbs: {spawn:"native", interrupt:"native", steer:"emulated", ask:"native"} */
   card() {}
-  /** cmd:"claude", args:["-p", renderBrief(brief,"claude"), "--permission-mode","acceptEdits", ...(opts.model?["--model",opts.model]:[])] */
+  /** cmd:"claude", args:["-p", renderBrief(brief,"claude"), "--permission-mode",opts.permissionMode ?? "bypassPermissions", ...(opts.model?["--model",opts.model]:[])] */
   argv(brief, opts) {}
 }
 
@@ -961,7 +961,7 @@ export function renderBrief(brief, dialect) {}
 18. `renderBrief(brief, "codex-v2")` and `renderBrief(brief, "claude")` both include the exact `definitionOfDone` string and the exact `verification.command` string verbatim (this is the load-bearing property from `docs/21`: "the worker can never redefine done" — the rendered brief must literally contain the pinned command).
 19. `SubprocessAdapter.run()` with the live guard OFF (default): resolves (never rejects, never actually spawns — assert via monkeypatching `child_process.spawn` to throw if called, or checking no child process appears) with `status:"blocked"`, `blocker` mentioning the guard, `verification.claimedExit === -1`, for all three of `CodexAdapter`/`ClaudeAdapter`/`GlmAdapter`.
 20. `SubprocessAdapter.run()` with only ONE of the two guard keys set (either `opts.live:true` XOR the env var) still takes the disabled path — proves the two-key guard is a real AND, not an OR.
-21. `argv()` for each `SubprocessAdapter` subclass produces the exact `cmd`/`args` documented in `spec/adapter-contract.md` (Codex: `codex exec --json --skip-git-repo-check <brief>`; Claude: `claude -p <brief> --permission-mode acceptEdits`; GLM: same as Claude), verified as a pure unit test with no process spawned.
+21. `argv()` for each `SubprocessAdapter` subclass produces the exact `cmd`/`args` documented in `spec/adapter-contract.md` (Codex: `codex --ask-for-approval never --sandbox danger-full-access exec --json --skip-git-repo-check <brief>`; Claude: `claude -p <brief> --permission-mode bypassPermissions`; GLM: same as Claude), verified as a pure unit test with no process spawned. Explicit narrower permission overrides remain selectable.
 22. `GlmAdapter.card().harness === "glm-via-claude"` and `concurrencyCeiling === 1` even though it extends `ClaudeAdapter`.
 
 ---

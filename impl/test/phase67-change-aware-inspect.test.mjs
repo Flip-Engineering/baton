@@ -58,16 +58,29 @@ function fixture({ cursor = 7, phase = 'executing', authorize = async () => true
   };
 }
 
-test('inspect schema accepts its numeric cursor and requires the cursor/wait pair', () => {
+test('inspect schema accepts its numeric cursor, derives ordinary wait, and forbids an unanchored wait', () => {
   assert.equal(APPLICATION_SEMANTIC_REGISTRY.operations['run.inspect'].inputSchema.properties.cursor.type, 'integer');
   assert.throws(
     () => validateApplicationCommandArgs('run.inspect', { runId: 'run-change-aware', waitMs: 10 }),
     { code: 'application_inspect_cursor_wait_invalid' },
   );
-  assert.throws(
-    () => validateApplicationCommandArgs('run.inspect', { runId: 'run-change-aware', cursor: 1 }),
-    { code: 'application_inspect_cursor_wait_invalid' },
-  );
+  assert.equal(validateApplicationCommandArgs('run.inspect', {
+    runId: 'run-change-aware', cursor: 1,
+  }), true);
+});
+
+test('inspect derives its bounded wait from deployment policy when continuation omits machinery', async () => {
+  let observedWait = null;
+  const harness = fixture({ waitAfter: async (_cursor, waitMs) => {
+    observedWait = waitMs;
+    return { advanced: false, upperBound: 7 };
+  } });
+  const result = await harness.app.inspect({
+    runId: 'run-change-aware', cursor: 7,
+  }, principal);
+  assert.equal(observedWait > 0 && observedWait <= 1_000, true);
+  assert.equal(result.timedOut, true);
+  assert.equal(Object.hasOwn(result.continuation.arguments, 'waitMs'), false);
 });
 
 test('inspect waits once on durable notification and returns changed bounded outline', async () => {

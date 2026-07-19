@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { compareCanonicalStrings } from './canonical-order.mjs';
+import { parseRouteTupleKey } from './route-tuple.mjs';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 const INTERVENTIONS = new Set([
@@ -142,8 +143,8 @@ export class CairnRunScorecard {
     const candidates = args.candidates.map((row) => {
       if (!row || Object.keys(row).sort().join(',') !== ['concurrencyCeiling', 'inFlight', 'modelFamily', 'routeKey'].sort().join(',') || typeof row.routeKey !== 'string' || Buffer.byteLength(row.routeKey) > 4096 || typeof row.modelFamily !== 'string' || row.modelFamily.length === 0 || Buffer.byteLength(row.modelFamily) > 128
         || !Number.isSafeInteger(row.concurrencyCeiling) || row.concurrencyCeiling <= 0 || !Number.isSafeInteger(row.inFlight) || row.inFlight < 0) throw typed('route advice candidate is invalid', 'route_advice_invalid');
-      let tuple; try { tuple = JSON.parse(row.routeKey); } catch { throw typed('route advice tuple is invalid', 'route_advice_invalid'); }
-      if (!Array.isArray(tuple) || tuple.length !== 6 || tuple[4] !== row.modelFamily || tuple[5] !== args.taskType) throw typed('route advice tuple is invalid', 'route_advice_invalid');
+      let tuple; try { tuple = parseRouteTupleKey(row.routeKey); } catch { throw typed('route advice tuple is invalid', 'route_advice_invalid'); }
+      if (tuple.modelFamily !== row.modelFamily || tuple.taskType !== args.taskType) throw typed('route advice tuple is invalid', 'route_advice_invalid');
       return { modelVersion: row.routeKey, family: row.modelFamily, concurrencyCeiling: row.concurrencyCeiling, inFlight: row.inFlight };
     });
     if (new Set(candidates.map((row) => row.modelVersion)).size !== candidates.length) throw typed('route advice candidates are duplicated', 'route_advice_invalid');

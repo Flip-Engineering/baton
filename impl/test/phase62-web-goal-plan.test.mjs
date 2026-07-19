@@ -318,6 +318,19 @@ test('GP7/GP8: closed nested schemas and typed non-leaking goal/plan failures re
     envelope('plan_propose', { ...planArgs(), nodes: [{ ...planArgs().nodes[0], eventKind: 'task.created' }] }, 'plan-event'),
     envelope('plan_approve', { ...approvalArgs(), plan: { ...plan, credential: 'forged' } }, 'approval-credential'),
     envelope('goal_plan_status', { ...statusArgs(), throughSeq: -1 }, 'status-bound'),
+    envelope('plan_propose', {
+      ...planArgs(),
+      nodes: [{
+        ...planArgs().nodes[0],
+        routes: {
+          schemaVersion: 2,
+          allowed: [
+            { harness: 'mock', model: 'model-exact', effort: 'low' },
+            { harness: 'mock', model: 'model-exact', effort: 'low' },
+          ],
+        },
+      }],
+    }, 'plan-duplicate-route'),
   ];
   for (const request of malformed) {
     const power = { goal_define: 'goal:define', plan_propose: 'plan:propose', plan_approve: 'plan:approve', goal_plan_status: 'goal:observe' }[request.command];
