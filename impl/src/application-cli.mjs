@@ -61,6 +61,14 @@ function take(args, name, { required = false } = {}) {
   args.splice(index, 2);
   return value;
 }
+function takeAll(args, name) {
+  const values = [];
+  for (;;) {
+    const value = take(args, name);
+    if (value === null) return values;
+    values.push(value);
+  }
+}
 function flag(args, name) {
   const index = args.indexOf(name);
   if (index === -1) return false;
@@ -827,7 +835,7 @@ export function batonCliHelp(topic = 'application') {
 export const BATON_CLI_HELP = batonCliHelp(APPLICATION_SEMANTIC_REGISTRY.cli.defaultHelpTopic);
 
 const RUN_VIEW_OUTPUT_KINDS = new Set([
-  'command', 'semantic-action', 'adopt', 'integrate',
+  'command', 'review-start', 'semantic-action', 'adopt', 'integrate',
 ]);
 
 function compactRunResult(result) {
@@ -1068,6 +1076,10 @@ export function parseBatonCli(rawArgs) {
         .map((command) => [command.subcommand, command.helpTopic]));
       topic = commandTopics[args[1]]
         ?? (args.length > 1 ? 'run.start' : 'run');
+    } else if (args[0] === 'review') {
+      topic = 'review';
+    } else if (args[0] === 'route') {
+      topic = 'routing';
     }
     return {
       kind: 'command', name: 'application.help',
@@ -1102,7 +1114,38 @@ export function parseBatonCli(rawArgs) {
     noRemainder(args);
     return { kind: 'serve', configPath };
   }
-  if (args.shift() !== 'run') throw cliError('expected credentials, setup, doctor, or run');
+  if (args[0] === 'route') {
+    args.shift();
+    const exact = route(args.shift());
+    noRemainder(args);
+    return { kind: 'route', exact };
+  }
+  if (args[0] === 'review') {
+    args.shift();
+    const objective = args.shift();
+    const reviewers = takeAll(args, '--exact').map(route);
+    const profile = take(args, '--profile');
+    const runId = take(args, '--run-id');
+    const rawScope = take(args, '--scope');
+    noRemainder(args);
+    if (!nonempty(objective) || reviewers.length < 2 || reviewers.length > 16) {
+      throw cliError('review requires an objective and two to sixteen --exact reviewer routes');
+    }
+    const scope = rawScope === null ? null
+      : rawScope.split(',').map((item) => item.trim()).filter(Boolean);
+    if (scope !== null && (scope.length === 0 || new Set(scope).size !== scope.length)) {
+      throw cliError('review scope is invalid');
+    }
+    return {
+      kind: 'review-start', objective, reviewers,
+      ...(profile === null ? {} : { profile: id(profile, 'profile') }),
+      ...(runId === null ? {} : { runId: id(runId, 'Run ID') }),
+      ...(scope === null ? {} : { scope }), idempotencyKey,
+    };
+  }
+  if (args.shift() !== 'run') {
+    throw cliError('expected credentials, setup, doctor, route, review, or run');
+  }
   const action = args.shift();
   if (action === 'follow') {
     throw cliError(`${action} is not shipped by the Run application`, 'cli_command_unavailable');
@@ -1693,12 +1736,49 @@ export async function connectBaton({
   }
   return bindBatonPort(Object.freeze({
     command: (name, args) => client.command(name, args),
+    doctor: async () => {
+      const observed = await client.doctor();
+      const readiness = observed?.application?.readiness;
+      if (readiness?.schemaVersion !== 1 || typeof readiness.ready !== 'boolean'
+        || !Array.isArray(readiness.routes)) {
+        throw cliError('Baton resident did not expose deployment readiness',
+          'cli_connection_incompatible');
+      }
+      return readiness;
+    },
   }));
 }
 
 export async function runBatonCli(parsed, client, options = {}) {
   if (parsed.kind === 'help') return { help: BATON_CLI_HELP };
   if (parsed.kind === 'doctor') return client.doctor();
+  if (parsed.kind === 'route') {
+    const doctor = await client.doctor();
+    const matches = doctor?.application?.readiness?.routes?.filter((candidate) => (
+      candidate.harness === parsed.exact.harness && candidate.model === parsed.exact.model
+      && candidate.effort === parsed.exact.effort
+    )) ?? [];
+    if (matches.length !== 1) {
+      throw cliError('Exact route is not configured by this deployment',
+        'application_route_unavailable');
+    }
+    return matches[0];
+  }
+  if (parsed.kind === 'review-start') {
+    const intent = {
+      objective: parsed.objective,
+      ...(parsed.profile === undefined ? {} : { profile: parsed.profile }),
+      ...(parsed.runId === undefined ? {} : { runId: parsed.runId }),
+      ...(parsed.scope === undefined ? {} : { scope: parsed.scope }),
+      composition: {
+        strategy: 'parallel_attempts', workspace: 'isolated', join: 'operator_selected',
+        team: parsed.reviewers.map((reviewer, index) => ({
+          role: `reviewer-${index + 1}`, route: reviewer,
+        })),
+      },
+    };
+    return client.command('run.start', { intent }, parsed.idempotencyKey);
+  }
   if (parsed.kind === 'command') return client.command(parsed.name, parsed.args, parsed.idempotencyKey);
   if (parsed.kind === 'stream') {
     if (!options || typeof options !== 'object' || Array.isArray(options)

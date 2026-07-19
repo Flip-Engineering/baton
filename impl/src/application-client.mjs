@@ -184,6 +184,22 @@ function prepareWorkflowStart(objective, options) {
   });
 }
 
+function prepareReviewStart(objective, options) {
+  exactOptions(options, new Set(['runId', 'profile', 'scope', 'reviewers']), 'review');
+  if (!Array.isArray(options.reviewers) || options.reviewers.length < 2
+    || options.reviewers.length > 16) {
+    throw clientError('Review requires between two and sixteen exact reviewer routes');
+  }
+  return prepareWorkflowStart(objective, {
+    ...(options.runId === undefined ? {} : { runId: options.runId }),
+    ...(options.profile === undefined ? {} : { profile: options.profile }),
+    ...(options.scope === undefined ? {} : { scope: options.scope }),
+    team: options.reviewers.map((exact, index) => ({
+      role: `reviewer-${index + 1}`, exact,
+    })),
+  });
+}
+
 function runGroupSummary(runs, views) {
   if (!Array.isArray(views) || views.length !== runs.length) {
     throw clientError('Run-group status views are invalid');
@@ -1040,6 +1056,24 @@ export class BatonRun {
     return this.#last;
   }
 
+  async #actWithAdvertisedDefaults(kind, inputs = {}) {
+    if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) {
+      throw clientError(`Run ${kind} inputs are invalid`);
+    }
+    const actions = await this.actions();
+    const descriptor = actions.find((action) => action.kind === kind);
+    if (!descriptor) {
+      throw clientError(`Run action ${kind} is unavailable`, 'application_action_unavailable');
+    }
+    const materialized = { ...inputs };
+    for (const [field, property] of Object.entries(descriptor.inputSchema?.properties ?? {})) {
+      if (!Object.hasOwn(materialized, field) && Object.hasOwn(property, 'default')) {
+        materialized[field] = structuredClone(property.default);
+      }
+    }
+    return this.act(descriptor.actionId, materialized);
+  }
+
   approve() { return this.act('approve_plan'); }
   select(role, reason = 'Select this verified Candidate for the next gated stage.') {
     if (!nonempty(role) || !nonempty(reason)) throw clientError('Workflow Candidate selection is invalid');
@@ -1049,14 +1083,21 @@ export class BatonRun {
     if (!nonempty(role) || !nonempty(reason)) throw clientError('Workflow member stop is invalid');
     return this.act('stop_member', { role, reason });
   }
-  adopt(reason = 'Adopt the verified result.') { return this.act('adopt_result', { reason }); }
-  revise(reason = 'Revise the selected Candidate using its recorded feedback.') {
-    if (!nonempty(reason)) throw clientError('Workflow revision reason is invalid');
-    return this.act('revise_candidate', { reason });
+  adopt(reason) {
+    if (reason !== undefined && !nonempty(reason)) throw clientError('Result adoption reason is invalid');
+    return this.#actWithAdvertisedDefaults('adopt_result', {
+      ...(reason === undefined ? {} : { reason }),
+    });
+  }
+  revise(reason) {
+    if (reason !== undefined && !nonempty(reason)) throw clientError('Workflow revision reason is invalid');
+    return this.#actWithAdvertisedDefaults('revise_candidate', {
+      ...(reason === undefined ? {} : { reason }),
+    });
   }
   export() { return this.act('export_result'); }
-  review(inputs) { return this.act('semantic_review', inputs); }
-  integrate(inputs) { return this.act('integrate', inputs); }
+  review(inputs = {}) { return this.#actWithAdvertisedDefaults('semantic_review', inputs); }
+  integrate(inputs = {}) { return this.#actWithAdvertisedDefaults('integrate', inputs); }
 
   candidates() { return this.inspect({ depth: 'section', section: 'candidates' }); }
 
@@ -1436,6 +1477,31 @@ export class BatonClient {
     Object.freeze(this);
   }
 
+  async doctor() {
+    if (typeof this.#application.doctor !== 'function') {
+      throw clientError('Deployment readiness is unavailable on this Baton connection',
+        'application_readiness_unavailable');
+    }
+    return frozenClone(await this.#application.doctor());
+  }
+
+  async route(exact) {
+    exactOptions(exact, new Set(['harness', 'model', 'effort']), 'exact route');
+    if (['harness', 'model', 'effort'].some((field) => !nonempty(exact[field]))) {
+      throw clientError('exact route is invalid');
+    }
+    const doctor = await this.doctor();
+    const matches = doctor?.routes?.filter((candidate) => (
+      candidate.harness === exact.harness && candidate.model === exact.model
+      && candidate.effort === exact.effort
+    )) ?? [];
+    if (matches.length !== 1) {
+      throw clientError('Exact route is not configured by this deployment',
+        'application_route_unavailable');
+    }
+    return matches[0];
+  }
+
   help(topic = 'application', depth = 'outline') {
     if (!nonempty(topic)
       || !['outline', 'index', 'section', 'item', 'content', 'evidence'].includes(depth)) {
@@ -1450,6 +1516,15 @@ export class BatonClient {
     const runId = initial?.runId ?? initial?.outline?.runId ?? intent.runId;
     return new BatonRun(this.#application, runId, initial, {
       objective: intent.objective, helpTopic: 'workflow',
+    });
+  }
+
+  async review(objective, options = {}) {
+    const intent = prepareReviewStart(objective, options);
+    const initial = await this.#application.command('run.start', { intent });
+    const runId = initial?.runId ?? initial?.outline?.runId ?? intent.runId;
+    return new BatonRun(this.#application, runId, initial, {
+      objective: intent.objective, helpTopic: 'review',
     });
   }
 }
@@ -1470,6 +1545,8 @@ export function bindBatonPort(commandPort) {
   }
   const port = Object.freeze({
     command: (name, args) => commandPort.command(name, args),
+    ...(typeof commandPort.doctor === 'function'
+      ? { doctor: () => commandPort.doctor() } : {}),
   });
   return new BatonClient(port);
 }

@@ -791,9 +791,9 @@ export class WebNorthbound {
           }, {
             transport: 'web', requestId: String(envelope.commandId),
             idempotencyKey: `web.command:${envelope.commandId}`,
+            capabilityAuthority: northboundCapabilityToken('web'),
+            capabilities: [...ctx.principal.capabilities],
             ...(envelope.command === 'run_act' ? {
-              capabilityAuthority: northboundCapabilityToken('web'),
-              capabilities: [...ctx.principal.capabilities],
               semanticAuthority: admission.command.semanticAuthority,
             } : {}),
             ...(lease ? { sessionAuthority: {
@@ -903,9 +903,9 @@ export class WebNorthbound {
       }, {
         transport: 'web', requestId: String(envelope.commandId),
         idempotencyKey: `web.command:${envelope.commandId}`,
+        capabilityAuthority: northboundCapabilityToken('web'),
+        capabilities: [...principal.capabilities],
         ...(envelope.command === 'run_act' ? {
-          capabilityAuthority: northboundCapabilityToken('web'),
-          capabilities: [...principal.capabilities],
           semanticAuthority,
         } : {}),
         ...(lease ? { sessionAuthority: {

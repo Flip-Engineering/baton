@@ -520,6 +520,8 @@ const authorizedActions = Object.fromEntries(Object.entries(actions).map(([kind,
 ]));
 
 const cliCommands = [
+  ['review.objective', 'run.start', null, 'baton review OBJECTIVE --exact HARNESS/MODEL@EFFORT --exact HARNESS/MODEL@EFFORT [--profile PROFILE] [--scope PATHS]'],
+  ['route.exact', null, null, 'baton route HARNESS/MODEL@EFFORT'],
   ['run.objective', 'run.start', null, 'baton run OBJECTIVE [--model MODEL --effort EFFORT] [--harness HARNESS]'],
   ['run.objective.manual', 'run.start', null, 'baton run OBJECTIVE --model MODEL --effort EFFORT [--harness HARNESS]'],
   ['run.start.exact', 'run.start', null, 'baton run start OBJECTIVE --exact HARNESS/MODEL@EFFORT [--profile PROFILE] [--scope PATHS]'],
@@ -565,12 +567,13 @@ const cli = {
   commands: cliCommands,
   helpTopics: {
     application: {
-      commandIds: ['run.objective', 'run.show', 'run.do', 'run.stop', 'run.export'],
+      commandIds: ['run.objective', 'review.objective', 'run.show', 'run.do', 'run.stop', 'run.export'],
       usage: [
         'baton serve',
         'baton setup',
         'baton credentials install kimi',
         'baton doctor [--depth outline|connection|profile|evidence] [--check]',
+        'baton route HARNESS/MODEL@EFFORT',
         'baton help [run|routing|connection|TOPIC]',
       ],
       sections: [
@@ -628,6 +631,22 @@ const cli = {
       selectorRule: 'manualRoute',
       paragraphs: ['Use baton help routing for exact and deployment-profile routing.'],
     },
+    review: {
+      commandIds: ['review.objective'],
+      paragraphs: [
+        'Objective-first review starts two or more independent exact-routed reviewers as one existing Workflow; Baton assigns stable reviewer roles and keeps selection explicit.',
+        'Each --exact value preserves harness, model, and effort together. Use baton route HARNESS/MODEL@EFFORT to inspect sanitized readiness before admission.',
+        'The preset adds no scheduler or mutable truth. baton.workflow() remains the advanced inner surface for explicit roles, strategy, workspace, and join composition.',
+      ],
+    },
+    workflow: {
+      commandIds: [],
+      paragraphs: [
+        'Workflow is the advanced composition surface beneath objective-first review: callers explicitly provide role-labeled team members while Baton retains Plan, Attempt, verification, selection, and cleanup authority.',
+        'Every team member carries one exact harness, model, and effort tuple. The supported strategy remains parallel_attempts with isolated workspaces and operator_selected joining.',
+        'Routine callers use review when generated reviewer roles are sufficient; they do not supply budgets, storage ceilings, task IDs, fences, receipt paths, or export plumbing.',
+      ],
+    },
     'run.act.retry_verification': {
       commandIds: ['run.retry'],
       paragraphs: [
@@ -645,7 +664,7 @@ const cli = {
     },
     'run.start': { aliasFor: 'run' },
     routing: {
-      commandIds: ['run.objective.manual', 'run.start.exact'],
+      commandIds: ['route.exact', 'run.objective.manual', 'run.start.exact'],
       selectorRule: 'routingDetail',
     },
     'run.inspect': {
@@ -709,7 +728,7 @@ const cli = {
 
 const core = {
   schemaVersion: 1,
-  version: '1.2.0',
+  version: '1.3.0',
   depths: ['outline', 'index', 'section', 'item', 'content', 'evidence'],
   sections,
   operations,

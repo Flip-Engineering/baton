@@ -924,9 +924,9 @@ export class McpFleetServer {
           }, {
             transport: 'mcp', requestId: String(admission.call.callId),
             idempotencyKey: `mcp.call:${admission.call.callId}`,
+            capabilityAuthority: northboundCapabilityToken('mcp'),
+            capabilities: [...this.principal.capabilities],
             ...(APPLICATION_TOOL[name] === 'run.act' ? {
-              capabilityAuthority: northboundCapabilityToken('mcp'),
-              capabilities: [...this.principal.capabilities],
               semanticAuthority: admission.call.semanticAuthority,
             } : {}),
             ...(lease ? { sessionAuthority: {
@@ -1014,9 +1014,9 @@ export class McpFleetServer {
         },
         {
           transport: 'mcp', requestId: String(callId), idempotencyKey: `mcp.call:${callId}`,
+          capabilityAuthority: northboundCapabilityToken('mcp'),
+          capabilities: [...principal.capabilities],
           ...(APPLICATION_TOOL[name] === 'run.act' ? {
-            capabilityAuthority: northboundCapabilityToken('mcp'),
-            capabilities: [...principal.capabilities],
             semanticAuthority,
           } : {}),
           ...(lease ? { sessionAuthority: {
