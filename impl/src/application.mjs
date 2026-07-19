@@ -2203,24 +2203,27 @@ export class BatonApplication {
     }), principal, runId);
   }
 
-  async _resolveSemanticAction(request, principal) {
+  async _resolveSemanticAction(request, principal, capabilities = null) {
     const current = this._findRun(request.runId);
     const view = this._withContextProjection(
       current, await this._buildView(current, this.principals.observer),
     );
-    const action = this._semanticActions(current, view, principal)
+    const action = this._semanticActions(current, view, principal, capabilities)
       .find((candidate) => candidate.actionId === request.actionId);
     return { current, view, action: action ?? null };
   }
 
-  async actionAuthority(rawRequest, rawPrincipal) {
+  async actionAuthority(rawRequest, rawPrincipal, rawContext = null) {
     this._assertOpen();
     await this.ready;
+    const context = normalizeCommandContext(rawContext);
     validateApplicationCommandArgs('run.act', rawRequest);
     const request = deepFreeze(clone(rawRequest));
     const principal = normalizePrincipal(rawPrincipal, 'action authority principal');
     await this._authorize('run.status', principal, request.runId, { operation: 'action_authority' });
-    const { action } = await this._resolveSemanticAction(request, principal);
+    const { action } = await this._resolveSemanticAction(
+      request, principal, context?.capabilities ?? null,
+    );
     if (!action) {
       throw applicationError('Run action is outside the current authority scope',
         'application_action_scope_mismatch');
@@ -8029,7 +8032,7 @@ export class BatonApplication {
     return cell;
   }
 
-  _semanticActions(current, view, principal) {
+  _semanticActions(current, view, principal, capabilities = null) {
     const candidates = [];
     if (view.phase === 'awaiting_plan_approval') candidates.push({ kind: 'approve_plan', source: null, target: null });
     for (const candidate of view.nextActions ?? []) {
@@ -8119,7 +8122,11 @@ export class BatonApplication {
       && (stopClosesOpenDispatchAuthority || (view.ownership?.workers ?? 0) > 0)) {
       candidates.push({ kind: 'stop', source: null, target: null });
     }
-    return candidates.map(({ kind, source, target, authorityTarget = target }) => {
+    const eligible = capabilities === null ? candidates : candidates.filter(({ kind }) => (
+      APPLICATION_SEMANTIC_REGISTRY.actions[kind].requiredCapabilities
+        .every((capability) => capabilities.includes(capability))
+    ));
+    return eligible.map(({ kind, source, target, authorityTarget = target }) => {
       const definition = APPLICATION_SEMANTIC_REGISTRY.actions[kind];
       const viewDigest = semanticViewDigest(view);
       const inputSchema = clone(definition.inputSchema);
@@ -9192,7 +9199,7 @@ export class BatonApplication {
           summary: view.preservation?.state === 'pinned' ? 'Work preserved; resume available after fresh verification.'
             : 'No preserved work is advertised.',
         },
-        actions: this._semanticActions(current, view, principal),
+        actions: this._semanticActions(current, view, principal, context?.capabilities ?? null),
       };
       return this._finalizeSemanticInspection({
         ...base,
@@ -9487,9 +9494,10 @@ export class BatonApplication {
     return this.stop(rawRequest.runId, reason, principal);
   }
 
-  async listRuns(rawPrincipal) {
+  async listRuns(rawPrincipal, rawContext = null) {
     this._assertOpen();
     await this.ready;
+    const context = normalizeCommandContext(rawContext);
     const principal = normalizePrincipal(rawPrincipal, 'Run list principal');
     await this._authorize('runs.list', principal, null, { operation: 'runs.list' });
     const goalPlan = this.driver.coordination.snapshot().goalPlan;
@@ -9529,7 +9537,8 @@ export class BatonApplication {
         current, await this._buildView(current, this.principals.observer),
       );
       const actions = current.profile
-        ? this._semanticActions(current, view, principal).map((action) => action.kind)
+        ? this._semanticActions(current, view, principal, context?.capabilities ?? null)
+          .map((action) => action.kind)
         : [];
       const attention = view.attention ?? [];
       const timing = this._progressTiming(current, view);
@@ -9605,6 +9614,8 @@ export class BatonApplication {
     const paragraphs = [summary, ...(cli?.paragraphs ?? []).filter((value) => value !== summary)];
     const links = request.topic === 'application' || request.topic === 'application.help'
       ? ['run', 'run.episode', 'run.workstreams', 'routing', 'connection', 'worker-policy', 'advanced']
+      : request.topic === 'review' ? ['workflow', 'routing', 'run.inspect']
+        : request.topic === 'workflow' ? ['review', 'routing', 'run.workstreams']
       : ['run.episode', 'run.workstreams'].includes(request.topic)
         || ['run.inspect.episode', 'run.inspect.workstreams'].includes(request.topic)
         ? ['run.inspect', request.topic.includes('episode') ? 'run.workstreams' : 'run.episode']
@@ -9921,7 +9932,7 @@ export class BatonApplication {
       return this.help(args, principal);
     }
     if (name === 'runs.list') {
-      return this.listRuns(principal);
+      return this.listRuns(principal, context);
     }
     if (name === 'run.start') {
       return this.start(args.intent, principal, context);

@@ -51,6 +51,9 @@ Then use the same command bus as the browser and MCP:
 
 ```sh
 baton doctor
+baton doctor --check
+baton review 'Audit this change for correctness and integration risks' \
+  --exact codex/gpt-5.6-sol@high --exact grok/grok-4.5@medium
 baton run start 'Implement the accepted design' \
   --profile standard --exact codex/gpt-5.6-sol@low
 baton run approve RUN_ID --plan PLAN_DIGEST
@@ -71,6 +74,17 @@ baton run integrate RUN_ID --strategy ff-only \
   --reason 'Integrate the adopted independently reviewed result.'
 baton run stop RUN_ID --reason 'Operator cancelled this Run.'
 ```
+
+`baton review` is the ordinary objective-first independent-review preset. Its two exact routes
+become the fixed `reviewer` and `challenger` roles of one isolated, operator-selected Workflow.
+Use the connected JavaScript `workflow(objective, {team})` surface only when advanced caller-named
+team composition is needed. Both forms retain the complete harness/model/effort tuple; neither
+accepts budgets, storage ceilings, worker/task/fence coordinates, or receipt paths.
+
+`baton doctor --check` now includes the deployment's sanitized repository, verifier, dependency,
+and per-exact-route readiness. The connected JavaScript client exposes the same data through
+`doctor()`, `routes()`, and `route({harness, model, effort})`, so route selection does not require
+opening the deployment factory.
 
 `run adopt` first reads `run.evidence` and binds the exact displayed manifest/result coordinates;
 it does not inspect a disposable worktree, merge, checkout, or publish. Use

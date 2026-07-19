@@ -788,6 +788,11 @@ export class McpFleetServer {
             principalId: this.principal.userId,
             sessionId: this.principal.sessionId,
           },
+          {
+            transport: 'mcp', requestId: String(id), idempotencyKey: `mcp.call:${id}`,
+            capabilityAuthority: northboundCapabilityToken('mcp'),
+            capabilities: [...this.principal.capabilities],
+          },
         );
       } catch (cause) {
         try { this._audit('tool_refused', params.name, args, stateFailureCode(cause)); }
@@ -924,9 +929,9 @@ export class McpFleetServer {
           }, {
             transport: 'mcp', requestId: String(admission.call.callId),
             idempotencyKey: `mcp.call:${admission.call.callId}`,
+            capabilityAuthority: northboundCapabilityToken('mcp'),
+            capabilities: [...this.principal.capabilities],
             ...(APPLICATION_TOOL[name] === 'run.act' ? {
-              capabilityAuthority: northboundCapabilityToken('mcp'),
-              capabilities: [...this.principal.capabilities],
               semanticAuthority: admission.call.semanticAuthority,
             } : {}),
             ...(lease ? { sessionAuthority: {
@@ -1014,9 +1019,9 @@ export class McpFleetServer {
         },
         {
           transport: 'mcp', requestId: String(callId), idempotencyKey: `mcp.call:${callId}`,
+          capabilityAuthority: northboundCapabilityToken('mcp'),
+          capabilities: [...principal.capabilities],
           ...(APPLICATION_TOOL[name] === 'run.act' ? {
-            capabilityAuthority: northboundCapabilityToken('mcp'),
-            capabilities: [...principal.capabilities],
             semanticAuthority,
           } : {}),
           ...(lease ? { sessionAuthority: {
