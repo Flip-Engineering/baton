@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "route": {
+    "harness": "glm",
+    "model": "glm-5.2",
+    "effort": "xhigh",
+    "state": "ready"
+  },
+  "group": {
+    "schemaVersion": 1,
+    "state": "ready",
+    "counts": {
+      "total": 1,
+      "active": 0,
+      "waiting": 0,
+      "ready": 1,
+      "completed": 0,
+      "failed": 0,
+      "stopped": 0,
+      "terminal": 0,
+      "attention": 0,
+      "cleanupIncomplete": 0,
+      "byPhase": {
+        "work_completed": 1
+      }
+    },
+    "members": [
+      {
+        "runId": "run-1fc2eeac6db5ea2dd7b64e8e5e9a8215",
+        "objective": "Adversarially review Phase 88 exact Plan route tuple authority as a bounded Baton worker. Inspect spec/phase88-plan-route-tuple-authority-v2.md; the route normalization/helpers in impl/src/goal-plan.mjs; Plan replay/live dispatch in impl/src/coordination-store.mjs; route generation, recovery, resume, and progressive projection in impl/src/application.mjs; workflow validation in impl/src/workflow-definition.mjs; Web/MCP Plan route schemas; and impl/test/phase88-plan-route-authority.test.mjs. Use no more than fourteen repository reads. Look specifically for Cartesian authority widening, locale-dependent digests, unsafe legacy migration, new dispatch from ambiguous historical authority, idempotent replay breakage, first-element selection, recovery/resume route substitution, or Web/MCP schema drift. Separate concrete defects from bounded follow-up gaps. Do not invoke nested Baton. Use rtk for every shell operation, exactly one command per call, with no pipes, &&, semicolons, or unwrapped shell commands. Do not mutate home state, credentials, toolchains, shims, caches, global configuration, runtime paths, or the main checkout. Write only docs/reference/evidence/phase88-plan-route-tuple-authority-dogfood-live-2026-07-18/glm-review.md, then finish immediately. Do not change any other path.",
+        "state": "ready",
+        "phase": "work_completed",
+        "terminal": false,
+        "attention": "clear",
+        "stage": "cleanup",
+        "route": {
+          "requested": {
+            "harness": "glm",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "resolved": {
+            "harness": "glm@claude-code-2.1.211+zai-anthropic",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "observed": {
+            "harness": null,
+            "model": "glm-5.2",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "glm",
+              "resolved": "glm@claude-code-2.1.211+zai-anthropic",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "glm-5.2",
+              "resolved": "glm-5.2",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": "xhigh",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "glm-5.2",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          },
+          "rationale": {
+            "launchEnforcement": "exact deployment-profile route",
+            "providerAttestation": "provider-native observation only"
+          }
+        },
+        "verification": "complete",
+        "cleanup": "active",
+        "terminalCause": null,
+        "actions": [
+          "integrate",
+          "stop"
+        ],
+        "viewDigest": "71b86c99feef1b18600225cd552ae6acd6c1c65ec8ddfd4c1d27ecd58211fba5"
+      }
+    ]
+  },
+  "materialized": {
+    "path": "docs/reference/evidence/phase88-plan-route-tuple-authority-dogfood-live-2026-07-18/glm-review.md",
+    "sha": "6d22dc8b5e6b6bcc9a111d3b77a10f4a535af21a"
+  },
+  "cleanup": {
+    "stops": [
+      {
+        "runId": "run-1fc2eeac6db5ea2dd7b64e8e5e9a8215",
+        "stop": null,
+        "ownership": null
+      }
+    ],
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    }
+  }
+}

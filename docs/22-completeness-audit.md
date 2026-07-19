@@ -2,6 +2,68 @@
 
 *Honest assessment against the plan-of-record and the broader vision. Every claim below is grounded in the PLANNED-vs-BUILT matrix and the adversarial verification pass; where the adversarial pass downgraded a "done" claim, this report does not repeat the overclaim.*
 
+> **Historical snapshot:** the measurements below describe the early implementation audited when
+> this report was written. They are retained as evidence, not current percentages. The live plan of
+> record is `docs/26-full-system-goal.md`; later phases must not use this snapshot to erase scope.
+
+## 2026-07-17 scope and gap refresh
+
+The control/trust spine, native session adapters, authenticated Web/SSE and MCP authority,
+Goal/Plan authority, exact route tuples, recovery, recursive Run authorization, and substantial
+representation seeds have advanced well beyond this snapshot. Phase 78 is integrating them behind
+one repository-oriented deployment and bound-Run surface. Deployment-owned readiness/capacity,
+crash-safe export-owner recovery, exact close/reap, profile replay, and current-incarnation
+ownership are now implemented behind that surface. Real Codex medium-effort dogfood is green
+through >1 MiB telemetry recovery and close/reopen; two Grok Runs proved concurrent admission,
+selective stop, and reap, but provider work is auth-red on expired metadata. Recursive
+multi-harness provider-success evidence remains incomplete and must use the concise surface rather
+than a phase-specific runner.
+
+Phase 79/80 now provide the first bounded dynamic-workflow vertical through that concise surface:
+one WorkItem can dispatch an atomic parallel Wave of exact-route Attempts in isolated worktrees,
+retain attributable verified Candidates, record typed Candidate-bound feedback, require an explicit
+selection, and append a separately approved exact-Candidate-base revision Plan. Live Baton-on-Baton
+Codex dogfood completed that loop and closed with zero workers/worktrees. Batch preflight,
+all-settled stop/reap, cleanup-incomplete outcomes, compact failure/route/cleanup truth, and bound
+member identity checks are covered. This does not complete arbitrary-depth recursion, the adverse
+restart/stop matrix, review/debate/synthesis/partition strategy compilation, or the deeper Atlas and
+causal-graph catalog.
+
+The intended product remains larger than the integrated control surface. The following are active
+scope, not optional details that may disappear from summaries:
+
+- one Pythonic, self-describing application across embedding, CLI, authenticated Web, and MCP,
+  with contextual help and progressive Outline → index → section → item depth;
+- objective-first calls with no routine caller budgets, provider-turn counts, export/file-size
+  ceilings, temp roots, lease coordinates, or host-capacity arithmetic;
+- exact independent harness/model/effort routing selected by the orchestrator: Codex
+  `gpt-5.6-sol`, native Kimi `kimi-code/k3` at `max`, isolated Kimi K3 through Claude Code at
+  `max`, Claude Code `claude-opus-4-6`, Grok 4.5/literal Grok Build only when provider-observed,
+  and GLM only `glm-5.2` with context-selected effort such as `xhigh`; no silent fallback and no
+  blanket low effort;
+- approval-free/full-permission harness launch by default with truthful same-UID containment
+  reporting, emergency stop, and exact process/worktree/runtime/lease/export reap;
+- continuous reflexive Baton-on-Baton dogfood, including multiple harnesses in parallel and a
+  selective kill/reap proof;
+- durable recursive-feedback and parallel workflow composition under one Run/Plan: shared logical
+  WorkItems with attributable Attempts, typed evidence-bound feedback, review/revision/synthesis,
+  exact per-role routing, compact group progress, selective stop/reap, and restart recovery;
+- safe collaboration modes that share immutable snapshots, indexes, artifacts, Scratch, and causal
+  knowledge while keeping parallel writers in private worktrees; shared writable lineage is
+  single-writer/fenced, and direct concurrent multi-writer is not claimed under same-UID full
+  access;
+- Atlas lexical plus AST/CST structural work, symbol/LSP/SCIP graphs, CPG/CFG/PDG/dataflow/taint,
+  compiler/IR, behavioral fingerprints, and structured/semantic delta and merge;
+- the remaining capability plane: Vantage, Evidence Ladder, Scratch/Bench, Skill Forge/computer
+  use, Cartographer/Quartermaster, and Cairn; and
+- a deployment-neutral shared typed causal knowledge graph inspired by `project-manager` concepts,
+  with evidence edges, temporal/bitemporal validity, contradiction/supersession, selective
+  promotion, and bounded recall. **There is no homelab integration or dependency.**
+
+None of those capability-plane or deeper representation/knowledge items is complete merely because
+the Phase 78 application surface becomes usable; each retains its own deterministic, adversarial,
+and live-evidence gate.
+
 ---
 
 ## 1. Headline
@@ -68,7 +130,7 @@ The Adapter interface was **designed session-shaped** (8 verbs: card/spawn/promp
 ### What one-shot genuinely cannot do
 - **Graceful interrupt** — only SIGINT-kills; in-progress work is lost, a full respawn is required.
 - **Mid-run steering / context injection** — stdin closed → `steer()`/`prompt()` structurally impossible.
-- **Interactive approvals** — `approve()`/`answer()` return `ok:false`; approvals are *avoided* via sandbox (`workspace-write` / `acceptEdits`), never *answered* by hub policy.
+- **Interactive approvals** — `approve()`/`answer()` return `ok:false`; routine prompts are avoided with approval-free modes and Phase 74's explicit full-access defaults (Codex `never`, Claude `bypassPermissions`, Grok `--always-approve`), never answered by the one-shot tier's hub policy. Explicit narrower/session approval paths remain separate.
 - **Multi-turn** — single prompt then EOF; no follow-up.
 - **Session resume / fork / reattach** — no control-session id tracked.
 

@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
+import { normalizeContextMapNodeBinding } from './context-map.mjs';
+import { normalizeContextEffectNodeBinding } from './context-call.mjs';
 import { usdFromNanos, usdToNanos } from './usd.mjs';
+import { normalizeWorkerPolicyRequest } from './worker-policy.mjs';
+import { normalizeWorkflowRevision } from './workflow-revision.mjs';
 
 export class GoalPlanValidationError extends Error {
   constructor(message, code = 'goal_plan_invalid') {
@@ -171,35 +175,173 @@ function normalizeScope(values, policy) {
   if (scope.some((item) => item.startsWith('/') || item.split('/').includes('..') || item.includes('\\'))) fail('plan scope is not repository relative', 'plan_scope_invalid');
   return scope;
 }
-function normalizeRoutes(value, policy) {
-  exactObject(value, ['harnesses', 'models', 'efforts']);
+function comparePlanRouteTuples(left, right) {
+  const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+  return compare(left.harness, right.harness)
+    || compare(left.model, right.model)
+    || compare(left.effort, right.effort);
+}
+function normalizePlanRouteTuple(value) {
+  exactObject(value, ['harness', 'model', 'effort'], 'plan_route_invalid');
   return {
-    harnesses: normalizedSet(value.harnesses, policy.limits.maxRouteValues, 256, 'routes.harnesses', { empty: false }),
-    models: normalizedSet(value.models, policy.limits.maxRouteValues, 256, 'routes.models', { empty: false }),
-    efforts: normalizedSet(value.efforts, policy.limits.maxRouteValues, 64, 'routes.efforts', { empty: false }),
+    harness: normalizedText(value.harness, 256, 'routes.allowed.harness'),
+    model: normalizedText(value.model, 256, 'routes.allowed.model'),
+    effort: normalizedText(value.effort, 64, 'routes.allowed.effort'),
   };
 }
-function normalizeNode(value, policy, goal) {
-  exactObject(value, ['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects']);
+function normalizedLegacyRoutes(value, policy) {
+  exactObject(value, ['harnesses', 'models', 'efforts'], 'plan_route_invalid');
+  return {
+    harnesses: normalizedSet(value.harnesses, policy.limits.maxRouteValues, 256,
+      'routes.harnesses', { empty: false }),
+    models: normalizedSet(value.models, policy.limits.maxRouteValues, 256,
+      'routes.models', { empty: false }),
+    efforts: normalizedSet(value.efforts, policy.limits.maxRouteValues, 64,
+      'routes.efforts', { empty: false }),
+  };
+}
+function normalizeRoutes(value, policy, { preserveLegacyRoutes = false } = {}) {
+  if (value?.schemaVersion === 2 || Object.hasOwn(value ?? {}, 'allowed')) {
+    exactObject(value, ['schemaVersion', 'allowed'], 'plan_route_invalid');
+    if (value.schemaVersion !== 2 || !Array.isArray(value.allowed) || value.allowed.length === 0
+      || value.allowed.length > policy.limits.maxRouteValues) {
+      fail('Plan route tuple allowlist is invalid', 'plan_route_invalid');
+    }
+    const allowed = value.allowed.map(normalizePlanRouteTuple).sort(comparePlanRouteTuples);
+    const identities = allowed.map((route) => `${route.harness}\0${route.model}\0${route.effort}`);
+    if (new Set(identities).size !== identities.length) {
+      fail('Plan route tuple allowlist contains duplicates', 'plan_route_invalid');
+    }
+    return { schemaVersion: 2, allowed };
+  }
+  const legacy = normalizedLegacyRoutes(value, policy);
+  if (preserveLegacyRoutes) return legacy;
+  if (legacy.harnesses.length === 1 && legacy.models.length === 1 && legacy.efforts.length === 1) {
+    return {
+      schemaVersion: 2,
+      allowed: [{ harness: legacy.harnesses[0], model: legacy.models[0], effort: legacy.efforts[0] }],
+    };
+  }
+  fail('Ambiguous legacy Plan route axes cannot authorize a new proposal',
+    'plan_route_authority_legacy_ambiguous');
+}
+
+export function planRouteAuthorityState(routes) {
+  if (routes?.schemaVersion === 2 && Array.isArray(routes.allowed)) {
+    const allowed = routes.allowed
+      .filter((route) => route && typeof route.harness === 'string'
+        && typeof route.model === 'string' && typeof route.effort === 'string')
+      .map((route) => ({ harness: route.harness, model: route.model, effort: route.effort }))
+      .sort(comparePlanRouteTuples);
+    const identities = allowed.map((route) => `${route.harness}\0${route.model}\0${route.effort}`);
+    const valid = allowed.length > 0 && allowed.length === routes.allowed.length
+      && Object.keys(routes).sort().join(',') === ['allowed', 'schemaVersion'].sort().join(',')
+      && routes.allowed.every((route) => Object.keys(route).sort().join(',')
+        === ['effort', 'harness', 'model'].sort().join(',')
+        && [route.harness, route.model, route.effort].every((coordinate) => coordinate.length > 0
+          && !coordinate.includes('\0') && coordinate === coordinate.normalize('NFKC').trim()))
+      && new Set(identities).size === identities.length;
+    return {
+      schemaVersion: 2, mode: valid ? 'tuple' : 'invalid', dispatchable: valid,
+      routeCount: valid ? allowed.length : 0, allowed: valid ? allowed : [],
+      reason: valid ? null : 'plan_route_authority_invalid',
+    };
+  }
+  const legacy = routes && typeof routes === 'object' && !Array.isArray(routes)
+    && Object.keys(routes).sort().join(',') === ['efforts', 'harnesses', 'models'].sort().join(',')
+    && ['harnesses', 'models', 'efforts'].every((key) => Array.isArray(routes[key])
+      && routes[key].length > 0 && routes[key].every((item) => typeof item === 'string'));
+  if (legacy) {
+    const singleton = routes.harnesses.length === 1 && routes.models.length === 1
+      && routes.efforts.length === 1;
+    return {
+      schemaVersion: 1, mode: singleton ? 'legacy_singleton' : 'legacy_ambiguous',
+      dispatchable: singleton, routeCount: singleton ? 1 : 0,
+      allowed: singleton ? [{ harness: routes.harnesses[0], model: routes.models[0],
+        effort: routes.efforts[0] }] : [],
+      reason: singleton ? null : 'plan_route_authority_legacy_ambiguous',
+    };
+  }
+  return {
+    schemaVersion: null, mode: 'invalid', dispatchable: false, routeCount: 0, allowed: [],
+    reason: 'plan_route_authority_invalid',
+  };
+}
+
+export function planRouteMatches(routes, route, { historical = false } = {}) {
+  const harness = route?.harness ?? route?.vendor;
+  if (typeof harness !== 'string' || typeof route?.model !== 'string'
+    || typeof route?.effort !== 'string') return false;
+  const state = planRouteAuthorityState(routes);
+  if (state.dispatchable) return state.allowed.some((allowed) => allowed.harness === harness
+    && allowed.model === route.model && allowed.effort === route.effort);
+  if (historical && state.mode === 'legacy_ambiguous') {
+    return routes.harnesses.includes(harness) && routes.models.includes(route.model)
+      && routes.efforts.includes(route.effort);
+  }
+  return false;
+}
+
+export function planSingleExactRoute(routes) {
+  const state = planRouteAuthorityState(routes);
+  return state.dispatchable && state.allowed.length === 1 ? clone(state.allowed[0]) : null;
+}
+
+function normalizeNode(value, policy, goal, options) {
+  const hasRequiredEffects = Object.hasOwn(value ?? {}, 'requiredEffects');
+  const hasWorkerPolicy = Object.hasOwn(value ?? {}, 'workerPolicy');
+  const hasRevision = Object.hasOwn(value ?? {}, 'revision');
+  const hasContextScope = Object.hasOwn(value ?? {}, 'contextScope');
+  const hasContextCall = Object.hasOwn(value ?? {}, 'contextCall');
+  exactObject(value, ['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects', ...(hasContextScope ? ['contextScope'] : []), ...(hasRequiredEffects ? ['requiredEffects'] : []), ...(hasWorkerPolicy ? ['workerPolicy'] : []), ...(hasRevision ? ['revision'] : []), ...(hasContextCall ? ['contextCall'] : [])]);
   const key = normalizedText(value.key, 256, 'node.key');
   if (!/^[A-Za-z0-9._:-]+$/.test(key)) fail('plan node key is invalid', 'plan_node_invalid');
   const deps = normalizedSet(value.deps, policy.limits.maxDepsPerNode, 256, 'node.deps');
+  let revision;
+  if (hasRevision) {
+    try { revision = normalizeWorkflowRevision(value.revision); }
+    catch (error) { fail(error.message, error.code ?? 'workflow_revision_invalid'); }
+  }
+  let contextCall;
+  if (hasContextCall) {
+    if (hasRevision) fail('Context call and revision authority are mutually exclusive',
+      'context_call_binding_invalid');
+    try {
+      contextCall = value.contextCall?.kind === 'context_effect_child'
+        ? normalizeContextEffectNodeBinding(value.contextCall)
+        : normalizeContextMapNodeBinding(value.contextCall);
+    } catch (error) {
+      fail(error.message, error.code ?? (value.contextCall?.kind === 'context_effect_child'
+        ? 'context_call_binding_invalid' : 'context_map_binding_invalid'));
+    }
+  }
   const result = {
     key,
     objective: normalizedText(value.objective, policy.limits.maxTextBytes, 'node.objective'),
     definitionOfDone: normalizedSet(value.definitionOfDone, policy.limits.maxItems, policy.limits.maxTextBytes, 'node.definitionOfDone'),
     deps,
     pathScope: normalizeScope(value.pathScope, policy),
+    ...(hasContextScope ? { contextScope: normalizeScope(value.contextScope, policy) } : {}),
     risk: value.risk,
     budget: normalizeBudget(value.budget, policy, 'plan node'),
     verification: normalizeVerification(value.verification, policy, deps),
-    routes: normalizeRoutes(value.routes, policy),
+    routes: normalizeRoutes(value.routes, policy, options),
     capabilities: normalizedSet(value.capabilities, policy.limits.maxItems, 128, 'node.capabilities'),
     effects: normalizedSet(value.effects, policy.limits.maxItems, 128, 'node.effects'),
+    ...(hasRequiredEffects ? {
+      requiredEffects: normalizedSet(value.requiredEffects, policy.limits.maxItems, 128, 'node.requiredEffects'),
+    } : {}),
+    ...(hasWorkerPolicy ? { workerPolicy: normalizeWorkerPolicyRequest(value.workerPolicy) } : {}),
+    ...(hasRevision ? { revision } : {}),
+    ...(hasContextCall ? { contextCall } : {}),
   };
   if (riskIndex(policy, result.risk) < riskIndex(policy, goal.risk)) fail('plan node risk weakens the goal execution-control tier', 'plan_risk_mismatch');
   if (result.definitionOfDone.some((item) => !goal.definitionOfDone.includes(item))) fail('plan node assigns an unknown definition-of-done item', 'plan_goal_mismatch');
   if (result.capabilities.some((item) => !policy.capabilityClasses.includes(item)) || result.effects.some((item) => !policy.effectClasses.includes(item))) fail('plan node exceeds deployment capability/effect policy', 'plan_effect_invalid');
+  if (hasRequiredEffects && (result.requiredEffects.some((item) => !result.effects.includes(item))
+    || result.requiredEffects.some((item) => item !== 'repository_edit'))) {
+    fail('plan node required effects exceed authorized or supported effects', 'plan_required_effect_invalid');
+  }
   return result;
 }
 function assertDag(nodes) {
@@ -226,12 +368,13 @@ function assertDag(nodes) {
   if (visited !== nodes.length) fail('plan contains a dependency cycle', 'plan_cycle');
 }
 
-export function normalizePlanRequest(value, policy, goal) {
+export function normalizePlanRequest(value, policy, goal, options = {}) {
   exactObject(value, ['goal', 'predecessor', 'nodes']);
   const goalRef = normalizeRef(value.goal, 'goal');
   if (goalRef.goalId !== goal.goalId || goalRef.version !== goal.version || goalRef.digest !== goal.digest) fail('plan goal reference is stale', 'goal_stale');
   if (!Array.isArray(value.nodes) || value.nodes.length === 0 || value.nodes.length > policy.limits.maxNodes) fail('plan node count is invalid', 'plan_node_limit');
-  const nodes = value.nodes.map((node) => normalizeNode(node, policy, goal)).sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const nodes = value.nodes.map((node) => normalizeNode(node, policy, goal, options))
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   assertDag(nodes);
   const covered = new Set(nodes.flatMap((node) => node.definitionOfDone));
   if (goal.definitionOfDone.some((item) => !covered.has(item))) fail('plan does not cover the goal definition of done', 'plan_goal_mismatch');
@@ -266,6 +409,10 @@ export function buildAuthoritativeBrief(goal, plan, node, binding) {
     providerTurns: node.budget.providerTurns,
     capabilities: clone(node.capabilities),
     effects: clone(node.effects),
+    ...(Object.hasOwn(node, 'requiredEffects') ? { requiredEffects: clone(node.requiredEffects) } : {}),
+    ...(Object.hasOwn(node, 'workerPolicy') ? { workerPolicy: clone(node.workerPolicy) } : {}),
+    ...(Object.hasOwn(node, 'revision') ? { revisionContext: clone(node.revision) } : {}),
+    ...(Object.hasOwn(node, 'contextCall') ? { contextCall: clone(node.contextCall) } : {}),
     goalPlan: clone(binding),
   };
 }
@@ -277,14 +424,28 @@ export const PLAN_BRIEF_FIELDS = Object.freeze([
 
 export function semanticBriefCore(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
-  return Object.fromEntries(PLAN_BRIEF_FIELDS
+  const fields = [
+    ...PLAN_BRIEF_FIELDS,
+    ...(Object.hasOwn(value, 'requiredEffects') ? ['requiredEffects'] : []),
+    ...(Object.hasOwn(value, 'workerPolicy') ? ['workerPolicy'] : []),
+    ...(Object.hasOwn(value, 'revisionContext') ? ['revisionContext'] : []),
+    ...(Object.hasOwn(value, 'contextCall') ? ['contextCall'] : []),
+  ];
+  return Object.fromEntries(fields
     .filter((key) => Object.hasOwn(value, key)).map((key) => [key, clone(value[key])]));
 }
 
 export function planBriefMatches(value, authoritative, { goalPlanCoordinates = false } = {}) {
   const supplied = semanticBriefCore(value);
   const expected = semanticBriefCore(authoritative);
-  const fields = goalPlanCoordinates ? [...PLAN_BRIEF_FIELDS, 'goalPlan'] : PLAN_BRIEF_FIELDS;
+  const fields = [
+    ...PLAN_BRIEF_FIELDS,
+    ...(Object.hasOwn(authoritative ?? {}, 'requiredEffects') ? ['requiredEffects'] : []),
+    ...(Object.hasOwn(authoritative ?? {}, 'workerPolicy') ? ['workerPolicy'] : []),
+    ...(Object.hasOwn(authoritative ?? {}, 'revisionContext') ? ['revisionContext'] : []),
+    ...(Object.hasOwn(authoritative ?? {}, 'contextCall') ? ['contextCall'] : []),
+    ...(goalPlanCoordinates ? ['goalPlan'] : []),
+  ];
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     && Object.keys(value).sort().join('\0') === [...fields].sort().join('\0')
     && goalPlanDigest(supplied) === goalPlanDigest(expected);

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "error": {
+    "name": "Error",
+    "code": null,
+    "message": "GLM review produced no preserved result"
+  },
+  "cleanup": {
+    "stops": [
+      {
+        "runId": "run-9ac2cebbb2bddb61c47486841606967d",
+        "stop": null,
+        "ownership": null
+      }
+    ],
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    }
+  }
+}

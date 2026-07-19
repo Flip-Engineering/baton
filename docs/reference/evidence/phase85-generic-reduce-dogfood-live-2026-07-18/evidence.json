@@ -1,0 +1,20 @@
+{
+  "record": {
+    "schemaVersion": 1,
+    "deploymentRoot": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-phase85-generic-reduce-AqOxkk",
+    "runId": null,
+    "error": {
+      "name": "Error",
+      "code": "authentication_refresh_required",
+      "message": "Kimi authentication has expired. Run the ordinary `kimi` login flow to refresh authentication, then reopen Baton."
+    }
+  },
+  "cleanup": {
+    "stopped": null,
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    }
+  }
+}

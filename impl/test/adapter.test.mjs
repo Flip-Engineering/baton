@@ -884,6 +884,56 @@ test('renderBrief includes definitionOfDone and the pinned verification.command 
   }
 });
 
+test('renderBrief preserves structured verifier argv for every provider dialect', () => {
+  const brief = makeBrief({
+    verification: {
+      command: 'npm',
+      arguments: ['test', '--prefix', 'impl', '--', 'a value with spaces'],
+      cwd: 'packages/worker',
+      expectExit: 0,
+    },
+  });
+  for (const dialect of ['codex-v2', 'claude', 'grok-acp', 'kimi-acp']) {
+    const rendered = renderBrief(brief, dialect);
+    assert.match(rendered, /direct executable and argv \(no shell\)/u);
+    assert.match(rendered, /Executable \(JSON string\): "npm"/u);
+    assert.ok(rendered.includes('Arguments (JSON array, in order): ["test","--prefix","impl","--","a value with spaces"]'));
+    assert.match(rendered, /Working directory .*: "packages\/worker"/u);
+  }
+});
+
+test('renderBrief tells Context recipients they are already supervised without inventing a nested Baton surface', () => {
+  const brief = makeBrief({
+    tools: [],
+    contextInput: {
+      callId: `context-call:${'a'.repeat(64)}`,
+      unitId: `context-unit:${'b'.repeat(64)}`,
+      value: { finding: 'attached immutable result' },
+    },
+  });
+  for (const dialect of ['codex-v2', 'claude']) {
+    const rendered = renderBrief(brief, dialect);
+    assert.match(rendered, /already dispatched and supervised by Baton/u);
+    assert.match(rendered, /attached immutable Context is the complete task input/u);
+    assert.match(rendered, /Writing a named output path does not authorize reading/u);
+    assert.match(rendered, /Do not search for or launch another Baton CLI, MCP server, or Run/u);
+    assert.match(rendered, /Unit: context-unit:/u);
+    assert.ok(rendered.indexOf('## Immutable Context') < rendered.indexOf('## Verification'));
+  }
+});
+
+test('renderBrief separates unattended harness capability from Baton write authority', () => {
+  const brief = makeBrief({ pathScope: ['reviews/exact-report.md'] });
+  for (const dialect of ['codex-v2', 'claude', 'grok-acp', 'kimi-acp']) {
+    const rendered = renderBrief(brief, dialect);
+    assert.match(rendered, /Harness permissions are execution capability, not write authority/u);
+    assert.match(rendered, /Never modify, move, chmod, delete, replace, or repair anything outside/u);
+    assert.match(rendered, /home directory, credentials, toolchains, shims, global configuration, or caches/u);
+    assert.match(rendered, /Report an environmental blocker instead of repairing the host/u);
+    assert.ok(rendered.indexOf('## Write authority') < rendered.indexOf('## Path scope'));
+  }
+});
+
 // ============================================================
 // SubprocessAdapter family — behaviors 19-22 (guard-off only; never live)
 // ============================================================
@@ -952,10 +1002,11 @@ test('argv() produces the documented cmd/args for each SubprocessAdapter subclas
 
   const codex = new CodexAdapter().argv(brief, opts);
   assert.equal(codex.cmd, 'codex');
-  assert.deepEqual(codex.args.slice(0, 3), ['exec', '--json', '--skip-git-repo-check']);
-  assert.equal(codex.args.length, 4, 'exactly one trailing positional: the rendered brief');
-  assert.equal(codex.args[3], renderBrief(brief, 'codex-v2'), 'the 4th arg IS the rendered brief, not merely "contains something"');
-  assert.ok(codex.args[3].includes(brief.verification.command));
+  assert.deepEqual(codex.args.slice(0, 5), ['--ask-for-approval', 'never', '--sandbox', 'danger-full-access', 'exec']);
+  assert.deepEqual(codex.args.slice(5, 7), ['--json', '--skip-git-repo-check']);
+  assert.equal(codex.args.length, 8, 'exactly one trailing positional follows the explicit autonomy policy');
+  assert.equal(codex.args[7], renderBrief(brief, 'codex-v2'));
+  assert.ok(codex.args[7].includes(brief.verification.command));
 
   const claude = new ClaudeAdapter().argv(brief, opts);
   assert.equal(claude.cmd, 'claude');
@@ -963,7 +1014,7 @@ test('argv() produces the documented cmd/args for each SubprocessAdapter subclas
   assert.equal(claude.args[1], renderBrief(brief, 'claude'), 'the rendered brief is the positional arg right after -p');
   assert.ok(claude.args[1].includes(brief.verification.command));
   assert.ok(claude.args.includes('--permission-mode'));
-  assert.ok(claude.args.includes('acceptEdits'));
+  assert.ok(claude.args.includes('bypassPermissions'));
 
   const glm = new GlmAdapter().argv(brief, opts);
   assert.equal(glm.cmd, 'claude');
@@ -971,7 +1022,9 @@ test('argv() produces the documented cmd/args for each SubprocessAdapter subclas
   assert.equal(glm.args[1], renderBrief(brief, 'claude'));
   assert.ok(glm.args[1].includes(brief.verification.command));
   assert.ok(glm.args.includes('--permission-mode'));
-  assert.ok(glm.args.includes('acceptEdits'));
+  assert.ok(glm.args.includes('bypassPermissions'));
+
+  assert.equal(new ClaudeAdapter().argv(brief, { ...opts, permissionMode: 'acceptEdits' }).args.at(-1), 'acceptEdits');
 });
 
 test('GlmAdapter.card() reports harness "glm-via-claude" and concurrencyCeiling 1 despite extending ClaudeAdapter', () => {

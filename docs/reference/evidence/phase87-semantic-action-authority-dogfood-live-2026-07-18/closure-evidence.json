@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "error": {
+    "name": "Error",
+    "code": null,
+    "message": "Codex closure review produced no preserved result"
+  },
+  "group": {
+    "schemaVersion": 1,
+    "state": "cleanup_incomplete",
+    "counts": {
+      "total": 1,
+      "active": 0,
+      "waiting": 0,
+      "ready": 0,
+      "completed": 0,
+      "failed": 0,
+      "stopped": 0,
+      "terminal": 1,
+      "attention": 0,
+      "cleanupIncomplete": 1,
+      "byPhase": {
+        "failed": 1
+      }
+    },
+    "members": [
+      {
+        "runId": "run-1239f6cd827164a543e35f166e9f4841",
+        "objective": "Perform a narrow closure review of the Phase 87 MCP-over-Web replay fix. Read the concrete defect section in glm-review.md, the authorizeReplay implementation in impl/src/mcp-web-bridge.mjs, the relevant completed-replay path in impl/src/mcp-northbound.mjs, and the bridge/MCP assertions in impl/test/phase87-semantic-action-authority.test.mjs. Use no more than six repository reads. Decide whether current capabilities, persisted semantic authority, action identity, registry effect/capabilities, digest, and opaque MCP transport authority are all checked before a cached completed result is returned. Identify any remaining concrete bypass separately from test gaps. Do not invoke nested Baton or run the full suite. Use rtk for every shell operation, exactly one command per call, with no pipes, &&, semicolons, or unwrapped shell commands. Do not mutate home state, credentials, toolchains, shims, caches, global configuration, runtime paths, or main checkout. Write only docs/reference/evidence/phase87-semantic-action-authority-dogfood-live-2026-07-18/codex-closure-review.md, then finish immediately.",
+        "state": "cleanup_incomplete",
+        "phase": "failed",
+        "terminal": true,
+        "attention": "clear",
+        "stage": "provider",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "low"
+          },
+          "resolved": {
+            "harness": "codex@codex-cli 0.144.6",
+            "model": "gpt-5.6-sol",
+            "effort": "low"
+          },
+          "observed": {
+            "harness": null,
+            "model": "gpt-5.6-sol",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": "codex@codex-cli 0.144.6",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "low",
+              "resolved": "low",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          },
+          "rationale": {
+            "launchEnforcement": "exact deployment-profile route",
+            "providerAttestation": "provider-native observation only"
+          }
+        },
+        "verification": "failed",
+        "cleanup": "active",
+        "terminalCause": {
+          "kind": "provider_failure",
+          "code": "provider_crashed",
+          "category": "provider_runtime",
+          "summary": "The provider process or session ended unexpectedly; the specific cause is unclassified.",
+          "remediation": "Check Baton route readiness and the harness-native status, then retry. If it repeats, inspect the Run's bounded evidence.",
+          "retryable": true
+        },
+        "actions": [
+          "stop"
+        ],
+        "viewDigest": "7914bbc6ea517579fa971956e5d42b7bc6e3894b2bac33198472d19ebb492688"
+      }
+    ]
+  },
+  "cleanup": {
+    "stops": [
+      {
+        "runId": "run-1239f6cd827164a543e35f166e9f4841",
+        "stop": null,
+        "ownership": null
+      }
+    ],
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    }
+  }
+}

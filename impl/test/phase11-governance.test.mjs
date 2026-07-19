@@ -306,6 +306,11 @@ test('GV6: runtime scope creation failure becomes a durable failed task before a
 test('GV7: Grok sandbox is top-level while exact model and effort remain agent flags', () => {
   assert.deepEqual(
     withGrokModelArgs(['agent', 'stdio'], { sandbox: 'workspace', model: 'grok-x', reasoningEffort: 'high' }),
-    ['--sandbox', 'workspace', 'agent', '--model', 'grok-x', '--reasoning-effort', 'high', 'stdio'],
+    ['--sandbox', 'workspace', 'agent', '--always-approve', '--model', 'grok-x', '--reasoning-effort', 'high', 'stdio'],
+  );
+  assert.deepEqual(
+    withGrokModelArgs(['agent', 'stdio'], { sandbox: 'workspace', alwaysApprove: false }),
+    ['--sandbox', 'workspace', 'agent', 'stdio'],
+    'an explicit narrower approval profile remains available',
   );
 });

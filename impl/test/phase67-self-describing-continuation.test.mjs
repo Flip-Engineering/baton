@@ -40,7 +40,7 @@ function fixture() {
 }
 
 function expected(argumentsValue) {
-  return { operation: 'run.inspect', arguments: { ...argumentsValue, cursor: 41, waitMs: 1_234 } };
+  return { operation: 'run.inspect', arguments: { ...argumentsValue, cursor: 41 } };
 }
 
 test('ordinary outline exposes one registry-derived, callable, bounded continuation without coordinates', async () => {
@@ -48,7 +48,8 @@ test('ordinary outline exposes one registry-derived, callable, bounded continuat
   const response = await app.inspect({ runId: 'run-self-describing' }, principal);
   assert.deepEqual(response.continuation, expected({ runId: 'run-self-describing', depth: 'outline' }));
   assert.equal(APPLICATION_SEMANTIC_REGISTRY.operations['run.inspect'].continuation.preferred, true);
-  assert.equal(APPLICATION_SEMANTIC_REGISTRY.operations['run.inspect'].continuation.waitBound, 'followPolicy.maxWaitMs');
+  assert.equal(APPLICATION_SEMANTIC_REGISTRY.operations['run.inspect'].continuation.waitPolicy,
+    'deployment_derived');
   assert.equal(validateApplicationCommandArgs(response.continuation.operation, response.continuation.arguments), true);
   const serialized = JSON.stringify(response);
   for (const leak of ['receipt', 'workerId', 'taskId', 'sessionId', '/private/', 'worktree']) {

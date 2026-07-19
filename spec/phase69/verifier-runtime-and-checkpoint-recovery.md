@@ -1,7 +1,7 @@
 # Phase 69 — verifier runtime truth and recoverable candidate checkpoints
 
-Status: acceptance-red until every numbered contract below is implemented, adversarially tested,
-projected through the application surface, and recursively exercised by Baton itself.
+Status: implemented through the durable verifier-receipt and candidate-confirmation boundary,
+with focused adversarial coverage and ordinary application projection.
 
 Phase 68 made the ordinary Baton surface objective-first. Recursive use then exposed a trust-gate
 failure that the earlier contracts did not distinguish: the candidate was correct, but the closed
@@ -75,15 +75,17 @@ dispositions. Candidate-owned failures retain the existing loss and counterexamp
 
 ## VR5 — non-adoptable checkpoint before reap
 
-After capture and before removing the worker worktree, an inconclusive result is pinned under
-Baton's deterministic checkpoint namespace. The checkpoint resolves to the exact captured commit
-and is recorded in internal evidence. It is not an accepted-result ref, cannot satisfy adoption,
-review, integration, export, publication, or push gates, and never makes the task successful.
+After capture and before removing the worker worktree, an inconclusive or initial
+`candidate_failed` result is pinned under Baton's deterministic checkpoint namespace. The
+checkpoint resolves to the exact captured commit and records its closed `originOutcome`. It is not
+an accepted-result ref, cannot satisfy adoption, review, integration, export, publication, or push
+gates, and never makes the task successful.
 
 Checkpoint creation and resolution are postchecked. Failure to preserve the checkpoint is a trust
 gate infrastructure failure and prevents cleanup from pretending that recovery is possible. An
-accepted result receives the existing accepted-result ref; a candidate-owned failure is not
-silently checkpointed as though it were an environmental incident.
+accepted result receives the existing accepted-result ref. A candidate-owned diagnostic checkpoint
+remains a verified loss and counterexample; checkpointing it does not relabel it as an environmental
+incident or make it adoptable.
 
 Operational replay restores the checkpoint from the immutable verification event and postchecks it
 against the captured SHA. Restart cannot erase, substitute, or upgrade checkpoint authority, and a
@@ -97,11 +99,21 @@ does not supply a ref, SHA, command, sandbox, environment, budget, or worker. Ba
 checkpoint, recreates fresh candidate and base sandboxes, reuses the pinned Plan command and current
 deployment verifier runtime, and records a new verification attempt linked to the prior evidence.
 
-A successful retry may create the accepted-result ref and continue through normal adoption. A
-candidate-owned retry failure closes as an ordinary verified failure. Another inconclusive attempt
-retains the same checkpoint and actionable state. Changed Plan, command, runtime policy, candidate,
-base, repository, or evidence conflicts before execution. Stop and shutdown cancel and reap an
-in-flight retry exactly.
+A successful retry may create the accepted-result ref and continue through normal adoption. For an
+inconclusive origin, a candidate-owned retry failure closes as an ordinary verified failure and
+another inconclusive attempt retains the same checkpoint and actionable runtime-repair state.
+Changed Plan, command, admitted runtime policy, candidate SHA/ref, base, toolchain, repository, or
+evidence conflicts before execution. Stop and shutdown cancel and reap an in-flight retry exactly.
+
+An initial `candidate_failed` origin uses the same reason-only action but a distinct durable rule:
+exactly one confirmation is admitted across concurrency, restart, and response loss. Its Plan,
+command, base, runtime, toolchain, candidate SHA, and checkpoint ref are identical to the original
+diagnostic attempt. It consumes no provider turn and the shot is consumed by `passed`,
+`candidate_failed`, or `inconclusive`. A pass accepts only that exact SHA and records
+`stability=passed_after_candidate_failure`; it is never projected or learned as a clean mechanical
+win. A later failure or inconclusive result is final. Both closed attempt receipts and the original
+counterexample remain durable. Inconclusive runtime repair remains separate and is not narrowed by
+this one-shot confirmation rule.
 
 `retry_verification` is application authority rather than provider work: it never launches or
 resumes an agent harness, consumes a provider turn, or asks the caller to choose a harness, model,
@@ -111,7 +123,8 @@ retry only replays the already-approved trust gate.
 ## VR7 — concise operator projection
 
 Outline depth shows only: verification needs another attempt, whether the candidate is preserved,
-and the next semantic action. Detail shows candidate/base execution dispositions and runtime digest.
+and the next semantic action. Detail shows candidate/base execution dispositions, runtime digest,
+captured-output byte count and SHA-256 digest, and the closed diagnostic code.
 Evidence depth carries exact receipts and checkpoint identity. Ordinary output never prints the
 checkpoint Git ref, sandbox path, PATH entries, HOME, dependency-copy roots, or process internals.
 Contextual help explains why retry is safe and why Baton did not blame the agent route.
@@ -127,9 +140,28 @@ Acceptance proves:
 5. inconclusive results do not affect route learning or promote verified counterexamples;
 6. the exact candidate checkpoint survives worktree/process/runtime reap but is non-adoptable;
 7. retry after a corrected verifier runtime accepts the same commit without another provider turn;
-8. restart and response-loss replay preserve one attempt and one checkpoint authority; and
-9. Baton recursively implements or reviews this phase through the objective-first application
+8. restart and response-loss replay preserve one attempt and one checkpoint authority;
+9. an initial candidate failure gets one exact confirmation, preserves both attempts and the
+   original counterexample, consumes the shot for every outcome, and retains instability through
+   acceptance, learning, restart, and integration; and
+10. Baton recursively implements or reviews this phase through the objective-first application
    surface using an orchestrator-selected model and per-task effort, then proves no provider,
    worktree, verifier sandbox, or branch residue remains.
 
 No homelab integration is part of this phase.
+
+## VR9 — persisted verifier-secret boundary
+
+The referee may hold captured stdout/stderr only while deriving one verdict. It computes the exact
+captured byte count and SHA-256 digest, then the coordinator reduces the observation to a closed
+schema before assigning task state or appending any operational, coordination, receipt, knowledge,
+or artifact record. No durable verdict contains raw output, a tail/window, a free-form note,
+command argv, cwd, environment values, worker/session identifiers, or free-form provider text.
+Output-derived coverage and mutation identity lists are likewise persisted only as count/digest
+pairs.
+
+Acceptance generates a credential-shaped secret only inside verifier output, then recursively scans
+the persisted worker log and coordination store (including registered artifact manifests) and proves
+the secret is absent. Application outline, verification/execution/cleanup sections, status, and
+public evidence are checked separately. This persisted-byte assertion, not an application-only
+projection check described as a receipt test, is the VR9 security claim.

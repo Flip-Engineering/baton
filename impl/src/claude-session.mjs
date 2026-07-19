@@ -7,11 +7,13 @@
 // Conforms to the D1 session-shaped Adapter contract (assertIsAdapter in adapter.mjs):
 // card/spawn/prompt/interrupt/approve/answer/kill/onEvent. Dependency-free ESM; only Node builtins.
 
-import { spawn } from 'node:child_process';
-import { lstatSync, readFileSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync } from 'node:fs';
+import { isAbsolute, relative, resolve } from 'node:path';
 import { renderPrompt } from './cli-adapters.mjs';
 import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
 import { usdToNanos } from './usd.mjs';
+import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const CLAUDE_TOKEN_METRIC = 'anthropic_input_plus_output_tokens_excluding_cache';
@@ -49,42 +51,113 @@ function resultUsage(obj, counterId) {
   };
 }
 
-const credentialError = (message, code) => Object.assign(new Error(message), { code });
+const CREDENTIAL_MAX_BYTES = 16 * 1024;
+const KIMI_MODEL = 'kimi-k3[1m]';
+const KIMI_BASE_URL = 'https://api.moonshot.ai/anthropic';
+const KIMI_PROVIDER_ENV = Object.freeze([
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_MODEL',
+  'ANTHROPIC_DEFAULT_OPUS_MODEL',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+  'ANTHROPIC_DEFAULT_FABLE_MODEL',
+  'CLAUDE_CODE_SUBAGENT_MODEL',
+  'ENABLE_TOOL_SEARCH',
+  'CLAUDE_CODE_AUTO_COMPACT_WINDOW',
+  'CLAUDE_CODE_EFFORT_LEVEL',
+  'CLAUDE_CODE_USE_BEDROCK',
+  'CLAUDE_CODE_SKIP_BEDROCK_AUTH',
+  'CLAUDE_CODE_USE_VERTEX',
+  'CLAUDE_CODE_SKIP_VERTEX_AUTH',
+  'CLAUDE_CODE_USE_FOUNDRY',
+  'CLAUDE_CODE_SKIP_FOUNDRY_AUTH',
+]);
 
-function jsonPointerSegments(pointer) {
+function credentialError(providerLabel, code) {
+  return Object.assign(new Error(`${providerLabel}: ${code}`), { code });
+}
+
+function jsonPointerSegments(pointer, providerLabel) {
   if (typeof pointer !== 'string' || !pointer.startsWith('/') || pointer.length > 512) {
-    throw credentialError('GLM auth token JSON pointer invalid', 'credential_file_invalid');
+    throw credentialError(providerLabel, 'credential_pointer_invalid');
   }
   const segments = pointer.slice(1).split('/').map((segment) => {
-    if (/~(?![01])/u.test(segment)) throw credentialError('GLM auth token JSON pointer invalid', 'credential_file_invalid');
+    if (/~(?![01])/u.test(segment)) throw credentialError(providerLabel, 'credential_pointer_invalid');
     return segment.replaceAll('~1', '/').replaceAll('~0', '~');
   });
   if (segments.length === 0 || segments.length > 8 || segments.some((segment) => !segment || ['__proto__', 'prototype', 'constructor'].includes(segment))) {
-    throw credentialError('GLM auth token JSON pointer invalid', 'credential_file_invalid');
+    throw credentialError(providerLabel, 'credential_pointer_invalid');
   }
   return segments;
 }
 
-/** Load one bounded local credential without ever including its value in diagnostics. */
-export function loadGlmAuthTokenFile(path, { jsonPointer = '/env/ANTHROPIC_AUTH_TOKEN' } = {}) {
-  if (typeof path !== 'string' || path.length === 0) throw credentialError('GLM auth token file path required', 'credential_file_invalid');
-  let stat;
-  try { stat = lstatSync(path); } catch { throw credentialError('GLM auth token file unavailable', 'credential_file_unavailable'); }
-  if (!stat.isFile() || stat.isSymbolicLink()) throw credentialError('GLM auth token file must be a regular non-symlink', 'credential_file_invalid');
-  if ((stat.mode & 0o077) !== 0) throw credentialError('GLM auth token file must be owner-only', 'credential_file_permissions');
-  if (stat.size <= 0 || stat.size > 16 * 1024) throw credentialError('GLM auth token file size outside policy', 'credential_file_invalid');
+/** Load one bounded local credential without including its path, pointer, or value in diagnostics. */
+export function loadProviderCredentialFile(path, {
+  providerLabel = 'Provider', jsonPointer = '/env/ANTHROPIC_AUTH_TOKEN',
+  ownerUid = typeof process.getuid === 'function' ? process.getuid() : null,
+  forbiddenRoots = [],
+} = {}) {
+  if (typeof path !== 'string' || path.length === 0) throw credentialError(providerLabel, 'credential_path_required');
+  if (!Array.isArray(forbiddenRoots)) throw credentialError(providerLabel, 'credential_path_forbidden');
+  const lexicalPath = resolve(path);
+  for (const root of forbiddenRoots) {
+    if (typeof root !== 'string' || root.length === 0) throw credentialError(providerLabel, 'credential_path_forbidden');
+    const rel = relative(resolve(root), lexicalPath);
+    if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) {
+      throw credentialError(providerLabel, 'credential_path_forbidden');
+    }
+  }
+  let before;
+  try { before = lstatSync(path); } catch { throw credentialError(providerLabel, 'credential_file_missing'); }
+  if (before.isSymbolicLink()) throw credentialError(providerLabel, 'credential_file_symlink');
+  if (!before.isFile()) throw credentialError(providerLabel, 'credential_file_not_regular');
+  if (ownerUid !== null && Number.isInteger(before.uid) && before.uid !== ownerUid) {
+    throw credentialError(providerLabel, 'credential_file_owner');
+  }
+  if ((before.mode & 0o077) !== 0) throw credentialError(providerLabel, 'credential_file_permissions');
+  if (before.size <= 0 || before.size > CREDENTIAL_MAX_BYTES) throw credentialError(providerLabel, 'credential_file_size');
+  let descriptor;
+  try { descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); }
+  catch { throw credentialError(providerLabel, 'credential_file_unavailable'); }
   let text;
-  try { text = readFileSync(path, 'utf8').trim(); } catch { throw credentialError('GLM auth token file unreadable', 'credential_file_unavailable'); }
-  if (!text || text.includes('\0')) throw credentialError('GLM auth token file content invalid', 'credential_file_invalid');
+  try {
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile() || stat.dev !== before.dev || stat.ino !== before.ino || stat.size !== before.size) {
+      throw credentialError(providerLabel, 'credential_file_changed');
+    }
+    if (ownerUid !== null && Number.isInteger(stat.uid) && stat.uid !== ownerUid) {
+      throw credentialError(providerLabel, 'credential_file_owner');
+    }
+    if ((stat.mode & 0o077) !== 0) throw credentialError(providerLabel, 'credential_file_permissions');
+    if (stat.size <= 0 || stat.size > CREDENTIAL_MAX_BYTES) throw credentialError(providerLabel, 'credential_file_size');
+    let actualPath;
+    try { actualPath = realpathSync(path); } catch { throw credentialError(providerLabel, 'credential_file_changed'); }
+    for (const root of forbiddenRoots) {
+      let actualRoot;
+      try { actualRoot = realpathSync(root); } catch { throw credentialError(providerLabel, 'credential_path_forbidden'); }
+      const rel = relative(actualRoot, actualPath);
+      if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) {
+        throw credentialError(providerLabel, 'credential_path_forbidden');
+      }
+    }
+    try { text = readFileSync(descriptor, 'utf8').trim(); }
+    catch { throw credentialError(providerLabel, 'credential_file_unavailable'); }
+    const after = fstatSync(descriptor);
+    if (after.dev !== stat.dev || after.ino !== stat.ino || after.size !== stat.size
+      || after.uid !== stat.uid || after.mode !== stat.mode || after.mtimeMs !== stat.mtimeMs
+      || after.ctimeMs !== stat.ctimeMs) throw credentialError(providerLabel, 'credential_file_changed');
+  } finally { closeSync(descriptor); }
+  if (!text || text.includes('\0')) throw credentialError(providerLabel, 'credential_token_invalid');
   if (!text.startsWith('{')) {
-    if (/\s/.test(text)) throw credentialError('GLM raw auth token must be one line', 'credential_file_invalid');
+    if (/\s/u.test(text)) throw credentialError(providerLabel, 'credential_token_invalid');
     return text;
   }
   let parsed;
-  try { parsed = JSON.parse(text); } catch { throw credentialError('GLM auth token JSON invalid', 'credential_file_invalid'); }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw credentialError('GLM auth token JSON must be an object', 'credential_file_invalid');
+  try { parsed = JSON.parse(text); } catch { throw credentialError(providerLabel, 'credential_json_malformed'); }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) throw credentialError(providerLabel, 'credential_json_malformed');
   let token = parsed;
-  for (const segment of jsonPointerSegments(jsonPointer)) {
+  for (const segment of jsonPointerSegments(jsonPointer, providerLabel)) {
     if (token === null || typeof token !== 'object' || Array.isArray(token) || !Object.hasOwn(token, segment)) {
       token = undefined;
       break;
@@ -92,7 +165,37 @@ export function loadGlmAuthTokenFile(path, { jsonPointer = '/env/ANTHROPIC_AUTH_
     token = token[segment];
   }
   if (typeof token !== 'string' || token.length === 0 || /\s/.test(token)) {
-    throw credentialError('GLM auth token JSON does not contain the selected token', 'credential_file_invalid');
+    throw credentialError(providerLabel, token === undefined ? 'credential_pointer_missing' : 'credential_token_invalid');
+  }
+  return token;
+}
+
+/** Compatibility projection for the older GLM-specific loader contract. */
+export function loadGlmAuthTokenFile(path, { jsonPointer = '/env/ANTHROPIC_AUTH_TOKEN', ownerUid } = {}) {
+  try {
+    return loadProviderCredentialFile(path, { providerLabel: 'GLM', jsonPointer, ownerUid });
+  } catch (error) {
+    const code = error?.code === 'credential_file_permissions'
+      ? 'credential_file_permissions'
+      : ['credential_file_missing', 'credential_file_unavailable'].includes(error?.code)
+        ? 'credential_file_unavailable' : 'credential_file_invalid';
+    throw credentialError('GLM', code);
+  }
+}
+
+function observedClaudeVersion(cmd, probe) {
+  if (typeof cmd !== 'string' || cmd.length === 0 || cmd.includes('\0')) return 'unavailable';
+  try {
+    const source = String((probe ?? execFileSync)(cmd, ['--version'], {
+      encoding: 'utf8', timeout: 5_000, maxBuffer: 64 * 1024,
+    }));
+    return /(\d+\.\d+\.\d+)/u.exec(source)?.[1] ?? 'unavailable';
+  } catch { return 'unavailable'; }
+}
+
+function validInjectedToken(token, providerLabel) {
+  if (typeof token !== 'string' || token.length === 0 || /\s/u.test(token)) {
+    throw credentialError(providerLabel, 'credential_token_invalid');
   }
   return token;
 }
@@ -101,15 +204,19 @@ export function loadGlmAuthTokenFile(path, { jsonPointer = '/env/ANTHROPIC_AUTH_
 // buildClaudeSessionArgs — pure function (no process spawned), CS1.
 // ---------------------------------------------------------------------------
 
-export function buildClaudeSessionArgs({ approvals = false, sessionId, forkSession = false, model, effort, permissionMode = 'acceptEdits' } = {}) {
+export function buildClaudeSessionArgs({ approvals = false, sessionId, forkSession = false, model, effort, permissionMode } = {}) {
   // stream-json "only works with --print"; --verbose is required alongside it (CS1/§1).
   const args = ['--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'];
-  // Erratum E1 (live-caught 2026-07-10): without a permission mode, a --print session's tool
-  // calls are auto-DENIED — the worker cannot even edit files. Default matches the proven
-  // one-shot ClaudeCli argv (acceptEdits: worktree edits auto-allowed; everything else routes
-  // to the permission prompt / approve() when approvals is on). Pass permissionMode:null to
-  // opt out and supply your own policy flags via ctor args.
-  if (permissionMode != null) args.push('--permission-mode', permissionMode);
+  // Unattended workers default to bypassing routine approval choreography while Baton's private
+  // Claude settings retain the worktree sandbox. Interactive approval mode must remain ask-capable:
+  // Claude never invokes its permission callback under bypassPermissions.
+  const resolvedPermissionMode = permissionMode === undefined
+    ? (approvals ? 'acceptEdits' : 'bypassPermissions')
+    : permissionMode;
+  if (approvals && resolvedPermissionMode === 'bypassPermissions') {
+    throw new TypeError('Claude approval callbacks cannot be combined with bypassPermissions');
+  }
+  if (resolvedPermissionMode != null) args.push('--permission-mode', resolvedPermissionMode);
   if (approvals) args.push('--permission-prompt-tool', 'stdio'); // magic value per the Agent SDK source (§0)
   if (sessionId) args.push('--resume', sessionId);
   if (forkSession) args.push('--fork-session');
@@ -123,17 +230,27 @@ export function buildClaudeSessionArgs({ approvals = false, sessionId, forkSessi
 // (referee/story) consistency (CS5/§4b). Not trusted from the wire — the hub re-runs verification.
 // ---------------------------------------------------------------------------
 
-function makeResult(status, summary, usage, usd) {
+function makeResult(status, summary, usage, usd, failureCode = null) {
   const tokens = safeUsageTokenTotal(usage);
   const exactUsd = usdToNanos(usd) === null ? null : usd;
   return {
     status,
-    summary: (summary ?? '').slice(0, 500),
+    summary: failureCode === 'authentication_refresh_required'
+      ? 'Provider authentication requires refresh.' : (summary ?? '').slice(0, 500),
     artifacts: { commits: [], files: [] },
     verification: { command: null, claimedExit: null },
     openQuestions: [],
     budgetUsed: { tokens: tokens ?? 0, usd: exactUsd ?? 0 },
+    ...(failureCode ? { failure: { code: failureCode } } : {}),
   };
+}
+
+function claudeResultFailureCode(obj) {
+  if (obj?.is_error !== true || typeof obj.result !== 'string') return null;
+  const message = obj.result.trim();
+  return message === 'authentication_error'
+    || /^Not logged in\s*[·:.-]?\s*Please run (?:\/login|claude auth login)\.?$/iu.test(message)
+    ? 'authentication_refresh_required' : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -145,20 +262,29 @@ export class ClaudeSessionCli {
   constructor(opts = {}) {
     const maxWireFrameBytes = opts.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
     if (!Number.isSafeInteger(maxWireFrameBytes) || maxWireFrameBytes <= 0) throw new TypeError('maxWireFrameBytes must be a positive safe integer');
+    const approvals = opts.approvals ?? false;
+    const permissionMode = opts.permissionMode === undefined
+      ? (approvals ? 'acceptEdits' : 'bypassPermissions')
+      : opts.permissionMode;
+    if (approvals && permissionMode === 'bypassPermissions') {
+      throw new TypeError('ClaudeSessionCli: approvals:true cannot use bypassPermissions');
+    }
     this._cfg = {
       cmd: opts.cmd ?? 'claude',
       args: opts.args ?? [],
       env: opts.env ?? {},
       harness: opts.harness ?? 'claude-code',
-      version: opts.version ?? '2.1.206',
+      version: opts.version ?? observedClaudeVersion(opts.cmd ?? 'claude', opts.versionProbe),
       ceiling: opts.ceiling ?? 4,
       maxContext: opts.maxContext ?? 200000,
-      approvals: opts.approvals ?? false,
+      approvals,
       sessionId: opts.sessionId,
       killGraceMs: opts.killGraceMs ?? 5000,
       model: opts.model,
-      permissionMode: opts.permissionMode === undefined ? 'acceptEdits' : opts.permissionMode, // E1
+      permissionMode,
       maxWireFrameBytes,
+      authenticationProbe: opts.authenticationProbe ?? spawnSync,
+      providerSecrets: Object.freeze((opts.providerSecrets ?? []).filter((value) => typeof value === 'string' && value.length > 0)),
     };
     /** @type {Map<string, object>} worker -> session */
     this._sessions = new Map();
@@ -167,7 +293,53 @@ export class ClaudeSessionCli {
     this._cb = null;
   }
 
+  authenticationReadiness({ env } = {}) {
+    if (!env || typeof env !== 'object' || Array.isArray(env)) {
+      return Object.freeze({
+        state: 'blocked', code: 'authentication_probe_unavailable',
+        credentialState: 'unavailable', summary: 'Projected Claude authentication could not be verified.',
+      });
+    }
+    let result;
+    try {
+      result = this._cfg.authenticationProbe(this._cfg.cmd, ['auth', 'status', '--json'], {
+        encoding: 'utf8', env: { ...env, ...this._cfg.env },
+        stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000,
+        maxBuffer: 64 * 1024, killSignal: 'SIGKILL',
+      });
+    } catch {
+      return Object.freeze({
+        state: 'blocked', code: 'authentication_probe_unavailable',
+        credentialState: 'unavailable', summary: 'Projected Claude authentication could not be verified.',
+      });
+    }
+    const stdout = typeof result === 'string' ? result : result?.stdout;
+    let status;
+    try {
+      status = typeof stdout === 'string' && Buffer.byteLength(stdout) <= 64 * 1024
+        ? JSON.parse(stdout) : null;
+    } catch { status = null; }
+    if (status?.loggedIn === true && (typeof result === 'string' || result?.status === 0)) {
+      return Object.freeze({
+        state: 'ready', credentialState: 'verified',
+        summary: 'Projected Claude authentication was verified in the private worker runtime.',
+      });
+    }
+    if (status?.loggedIn === false) {
+      return Object.freeze({
+        state: 'blocked', code: 'authentication_refresh_required',
+        credentialState: 'refresh_required',
+        summary: 'Claude authentication is not usable in the private worker runtime. Refresh or provision projected authentication, then reopen Baton.',
+      });
+    }
+    return Object.freeze({
+      state: 'blocked', code: 'authentication_probe_invalid',
+      credentialState: 'invalid', summary: 'Projected Claude authentication returned invalid readiness data.',
+    });
+  }
+
   card() {
+    const autonomy = this._cfg.permissionMode === 'bypassPermissions' ? 'unattended' : 'interactive';
     return {
       harness: this._cfg.harness,
       version: this._cfg.version,
@@ -194,8 +366,27 @@ export class ClaudeSessionCli {
       },
       sessions: { multiTurn: 'native', resume: 'native', fork: 'native' },
       isolation: {
-        configHome: 'driver-scoped', environment: 'driver-scoped', filesystem: 'worktree+harness-policy',
+        configHome: 'driver-scoped', environment: 'driver-scoped', filesystem: 'unverified',
         osSandbox: 'unverified', network: 'uncontrolled', credentialProjection: 'explicit',
+      },
+      permissions: {
+        mode: this._cfg.permissionMode ?? 'external', sandbox: 'unverified',
+        boundary: 'Full same-UID host access by default; filesystem and network containment are unverified',
+      },
+      workerPolicy: {
+        schemaVersion: 1,
+        autonomy: {
+          supported: [autonomy], default: autonomy, perTask: false,
+          observation: 'launch', mechanisms: [`permission-mode-${this._cfg.permissionMode}`],
+        },
+        access: {
+          supported: ['full'], default: 'full', perTask: false,
+          observation: 'launch', mechanisms: ['claude-unsandboxed-permissions'],
+        },
+        containment: {
+          hostProcess: 'same_uid', guarantees: ['private_runtime'],
+          configuredPreferences: [], observation: 'unavailable',
+        },
       },
       verbs: {
         spawn: 'native',
@@ -211,6 +402,17 @@ export class ClaudeSessionCli {
   }
 
   onEvent(cb) { this._cb = cb; }
+
+  /** Resolve one complete provider route immediately before child creation. */
+  _prepareProviderRoute({ model, effort, env }) {
+    return { model, effort, env };
+  }
+
+  /** Provider-specialized init validation; the base Claude route accepts its native observation. */
+  _validateProviderReady({ modelRequested, modelObserved }) {
+    void modelRequested;
+    void modelObserved;
+  }
 
   _emitPendingStop(worker, kind) {
     const pending = this._pendingSpawns.get(worker);
@@ -280,26 +482,47 @@ export class ClaudeSessionCli {
     if (pending.cancelled || opts.signal?.aborted) return { ok: false, reason: 'spawn cancelled before child creation', cancelled: true };
     if (!cwd) return { ok: false, reason: 'spawn requires a worktree (opts.worktree, or opts.worktreeReady resolving {path})' };
 
+    let route;
+    try {
+      route = this._prepareProviderRoute({
+        model: opts.model ?? this._cfg.model,
+        effort: opts.reasoningEffort,
+        env: opts.replaceEnv
+          ? { ...(opts.env ?? {}), ...(this._cfg.env ?? {}) }
+          : { ...process.env, ...(this._cfg.env ?? {}), ...(opts.env ?? {}) },
+      });
+    } catch (error) {
+      return { ok: false, code: error?.code ?? 'provider_route_invalid', reason: String(error?.message ?? 'provider route invalid') };
+    }
     const argv = [
       ...(this._cfg.args ?? []),
       ...buildClaudeSessionArgs({
         approvals: this._cfg.approvals,
         sessionId: opts.session?.id ?? this._cfg.sessionId,
         forkSession: opts.session?.mode === 'fork',
-        model: opts.model ?? this._cfg.model,
-        effort: opts.reasoningEffort,
+        model: route.model,
+        effort: route.effort,
         permissionMode: this._cfg.permissionMode,
       }),
     ];
+    let workerPolicyObserved = null;
+    if (opts.workerPolicy) {
+      try {
+        workerPolicyObserved = attestWorkerPolicyObservation(opts.workerPolicy, {
+          autonomy: this._cfg.permissionMode === 'bypassPermissions' ? 'unattended' : 'interactive',
+          access: 'full',
+        });
+      } catch (error) {
+        return { ok: false, code: error?.code, reason: String(error?.message ?? error) };
+      }
+    }
 
     const processGeneration = normalizeProcessGeneration(opts.processGeneration);
     let child;
     try {
       child = spawn(this._cfg.cmd, argv, {
         cwd,
-        env: opts.replaceEnv
-          ? { ...(opts.env ?? {}), ...(this._cfg.env ?? {}) }
-          : { ...process.env, ...(this._cfg.env ?? {}), ...(opts.env ?? {}) },
+        env: route.env,
         detached: true, // own process group, so interrupt/kill can signal the whole tree
         stdio: ['pipe', 'pipe', 'pipe'],
       });
@@ -318,6 +541,7 @@ export class ClaudeSessionCli {
       timeoutFailure: null,
       processFailure: null,
       buf: '',
+      stderrCanaryTail: '',
       spawnedEmitted: false,
       sessionIdWire: null,
       turnInFlight: false,
@@ -334,8 +558,11 @@ export class ClaudeSessionCli {
       // adapter-minted requestId -> {wireId, input?, toolUseID?} (R4 + erratum E3: approve()
       // must echo the request's own input and tool_use_id back on an allow)
       wireToAdapterId: new Map(),
-      modelRequested: opts.model ?? this._cfg.model ?? null,
+      modelRequested: route.model ?? null,
       modelObserved: null,
+      workerPolicyObserved,
+      pendingBrief: opts.attachOnly === true ? null : renderPrompt(brief),
+      bootstrapTurnPending: false,
     };
     this._sessions.set(worker, session);
     if (opts.timeoutMs > 0) {
@@ -345,18 +572,37 @@ export class ClaudeSessionCli {
 
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => this._onData(session, chunk));
-    child.stderr.on('data', () => {}); // discard; failures surface via exit code / event stream
+    child.stderr.on('data', (chunk) => this._onStderr(session, chunk));
 
     child.on('close', (code, signal) => this._onClose(session, code, signal));
     child.on('error', (err) => this._onSpawnError(session, err));
 
     const processStarted = processStartedPayload(session.processGeneration, session.pid);
     if (processStarted) this._emit(session, 'lifecycle.process_started', processStarted);
+    if (session.workerPolicyObserved) {
+      this._emit(session, 'worker_policy.observed', {
+        processGeneration: session.processGeneration, pid: session.pid, processGroupId: session.pid,
+        workerPolicyObserved: session.workerPolicyObserved,
+      });
+      if (session.stopping || session.terminal) {
+        return { ok: false, code: 'provider_ready_refused', reason: 'launch worker policy was rejected by coordinator policy' };
+      }
+    }
 
-    // Phase 60 recovery first proves the provider's own session identity. The coordinator creates
-    // and claims the refinement durably before it calls prompt(); sending the Brief here would let
-    // provider work escape that transaction. Ordinary spawn retains the Brief-as-first-turn wire.
-    if (opts.attachOnly !== true) this._writeUserFrame(session, renderPrompt(brief));
+    // Claude Code 2.1.211 does not emit its system/init frame until stream-json receives the first
+    // user frame. Bootstrap the admitted Brief now, then keep every provider result private until
+    // init validates the requested model and lifecycle.spawned is durable. Older CLIs that emit
+    // init eagerly remain compatible because stdout callbacks cannot interleave this stack.
+    if (session.pendingBrief !== null) {
+      const pendingBrief = session.pendingBrief;
+      session.pendingBrief = null;
+      session.turnInFlight = true;
+      session.turnEpoch = 1;
+      session.bootstrapTurnPending = true;
+      this._write(session, {
+        type: 'user', message: { role: 'user', content: [{ type: 'text', text: pendingBrief }] },
+      });
+    }
 
     return { ok: true, ...(opts.attachOnly === true ? { attached: true } : {}) };
     } finally {
@@ -394,6 +640,10 @@ export class ClaudeSessionCli {
     while ((nl = session.buf.indexOf('\n')) !== -1) {
       const line = session.buf.slice(0, nl);
       session.buf = session.buf.slice(nl + 1);
+      if (this._containsProviderSecret(line)) {
+        this._providerSecretFailure(session);
+        return;
+      }
       if (Buffer.byteLength(line, 'utf8') > this._cfg.maxWireFrameBytes) {
         this._wireFrameFailure(session);
         return;
@@ -402,9 +652,49 @@ export class ClaudeSessionCli {
       if (session.terminal) continue; // CS16
       let obj;
       try { obj = JSON.parse(line); } catch { continue; } // tolerant NDJSON reader, like the real CLI
+      if (this._containsProviderSecret(obj)) {
+        this._providerSecretFailure(session);
+        return;
+      }
       this._handleWireObject(session, obj);
+      if (session.processFailure) {
+        session.buf = '';
+        return;
+      }
     }
-    if (!session.terminal && Buffer.byteLength(session.buf, 'utf8') > this._cfg.maxWireFrameBytes) this._wireFrameFailure(session);
+    if (!session.terminal && this._containsProviderSecret(session.buf)) this._providerSecretFailure(session);
+    else if (!session.terminal && Buffer.byteLength(session.buf, 'utf8') > this._cfg.maxWireFrameBytes) this._wireFrameFailure(session);
+  }
+
+  _containsProviderSecret(value) {
+    if (typeof value === 'string') return this._cfg.providerSecrets.some((secret) => value.includes(secret));
+    if (Array.isArray(value)) return value.some((item) => this._containsProviderSecret(item));
+    if (value && typeof value === 'object') return Object.values(value).some((item) => this._containsProviderSecret(item));
+    return false;
+  }
+
+  _providerSecretFailure(session) {
+    if (session.terminal || session.processFailure) return;
+    session.buf = '';
+    session.processFailure = {
+      error: 'provider output contained protected credential material',
+      code: 'provider_output_secret',
+      phase: 'wire',
+      usageSeal: unavailableUsageSeal(),
+    };
+    this._signal(session, 'SIGKILL');
+  }
+
+  _onStderr(session, chunk) {
+    if (session.terminal || this._cfg.providerSecrets.length === 0) return;
+    const candidate = `${session.stderrCanaryTail}${String(chunk)}`;
+    if (this._containsProviderSecret(candidate)) {
+      session.stderrCanaryTail = '';
+      this._providerSecretFailure(session);
+      return;
+    }
+    const maxSecretBytes = Math.max(...this._cfg.providerSecrets.map((secret) => Buffer.byteLength(secret, 'utf8')));
+    session.stderrCanaryTail = candidate.slice(-Math.max(0, maxSecretBytes - 1));
   }
 
   _wireFrameFailure(session) {
@@ -423,6 +713,20 @@ export class ClaudeSessionCli {
     switch (obj.type) {
       case 'system':
         if (obj.subtype === 'init' && !session.spawnedEmitted) {
+          try {
+            this._validateProviderReady({ modelRequested: session.modelRequested, modelObserved: obj.model ?? null });
+          } catch (error) {
+            if (!session.processFailure) {
+              session.processFailure = {
+                error: String(error?.message ?? 'provider initialization invalid'),
+                code: error?.code ?? 'provider_init_invalid',
+                phase: 'provider_init',
+                usageSeal: unavailableUsageSeal(),
+              };
+              this._signal(session, 'SIGKILL');
+            }
+            return;
+          }
           // CS3: lifecycle.spawned carries the WIRE session_id, never a client-generated one.
           session.spawnedEmitted = true;
           session.sessionIdWire = obj.session_id;
@@ -431,7 +735,16 @@ export class ClaudeSessionCli {
             sessionId: obj.session_id, pid: session.pid,
             processGeneration: session.processGeneration,
             modelRequested: session.modelRequested, modelObserved: session.modelObserved,
+            ...(session.workerPolicyObserved ? { workerPolicyObserved: session.workerPolicyObserved } : {}),
           });
+          if (!session.stopping && !session.terminal && session.bootstrapTurnPending) {
+            session.bootstrapTurnPending = false;
+            this._emit(session, 'lifecycle.turn_started', {});
+          } else if (!session.stopping && !session.terminal && session.pendingBrief !== null) {
+            const pendingBrief = session.pendingBrief;
+            session.pendingBrief = null;
+            this._writeUserFrame(session, pendingBrief);
+          }
         }
         return;
       case 'assistant': {
@@ -489,8 +802,9 @@ export class ClaudeSessionCli {
       return;
     }
     const status = obj.is_error ? 'failed' : 'completed';
+    const failureCode = claudeResultFailureCode(obj);
     this._emit(session, 'lifecycle.turn_completed', {
-      result: makeResult(status, obj.result, obj.usage, obj.total_cost_usd),
+      result: makeResult(status, obj.result, obj.usage, obj.total_cost_usd, failureCode),
       usageSeal: usage.seal,
       pid: session.pid,
       modelRequested: session.modelRequested,
@@ -568,7 +882,11 @@ export class ClaudeSessionCli {
     if (!pending || pending.emitted || !pending.wireConfirmed || !pending.resultSeen || session.terminal) return;
     pending.emitted = true;
     if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
-    this._emit(session, 'control.interrupt_confirmed', { usageSeal: pending.usageSeal });
+    this._emit(session, 'control.interrupt_confirmed', {
+      sessionId: session.sessionIdWire,
+      transportOpen: true,
+      usageSeal: pending.usageSeal,
+    });
     session.pendingInterrupt = null;
   }
 
@@ -785,19 +1103,33 @@ export class ClaudeSessionCli {
 export class GlmSessionCli extends ClaudeSessionCli {
   constructor(opts = {}) {
     const token = opts.authToken ?? (opts.authTokenFile ? loadGlmAuthTokenFile(opts.authTokenFile, { jsonPointer: opts.authTokenJsonPointer }) : undefined) ?? process.env.Z_AI_API_KEY ?? process.env.ZHIPU_API_KEY;
+    const validatedToken = token === undefined ? undefined : validInjectedToken(token, 'GLM');
+    const observedVersion = opts.version === undefined
+      ? observedClaudeVersion(opts.cmd ?? 'claude', opts.versionProbe)
+      : null;
     super({
       ...opts,
       harness: opts.harness ?? 'glm-via-claude-session',
-      version: opts.version ?? 'claude-code-2.1.206+zai-anthropic',
+      version: opts.version ?? (observedVersion === 'unavailable'
+        ? 'unavailable' : `claude-code-${observedVersion}+zai-anthropic`),
       ceiling: opts.ceiling ?? 1,
       env: {
         ANTHROPIC_BASE_URL: opts.baseUrl ?? 'https://api.z.ai/api/anthropic',
-        ANTHROPIC_AUTH_TOKEN: token ?? '',
+        ANTHROPIC_AUTH_TOKEN: validatedToken ?? '',
         ...(opts.model ? { ANTHROPIC_DEFAULT_OPUS_MODEL: opts.model, ANTHROPIC_DEFAULT_SONNET_MODEL: opts.model } : {}),
         ...opts.env,
       },
+      providerSecrets: validatedToken ? [validatedToken] : [],
     });
+    this._glmCredentialState = validatedToken ? 'available' : 'absent';
     this._nonRefuserFor = opts.nonRefuserFor ?? ['ml-ai-inference-training', 'cybersecurity'];
+  }
+
+  _validateProviderReady({ modelRequested, modelObserved }) {
+    if (modelRequested !== null && modelRequested !== undefined
+      && modelObserved !== modelRequested) {
+      throw credentialError('GLM', 'model_mismatch');
+    }
   }
 
   card() {
@@ -812,7 +1144,98 @@ export class GlmSessionCli extends ClaudeSessionCli {
         acceptedAliases: [],
         provenance: 'adapter-configuration+zai-model-mapping',
       },
+      providerCompatibility: {
+        provider: 'zai', transport: 'anthropic-compatible', credential: 'api_key',
+        credentialState: this._glmCredentialState,
+        nativeEffortObservation: 'unavailable',
+      },
       nonRefuserFor: [...this._nonRefuserFor],
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// KimiSessionCli — Phase 71 Kimi K3 through the Claude Code session harness
+// ---------------------------------------------------------------------------
+
+export class KimiSessionCli extends ClaudeSessionCli {
+  constructor(opts = {}) {
+    if (opts.harness !== undefined && opts.harness !== 'claude-code') {
+      throw credentialError('Kimi', 'harness_identity_immutable');
+    }
+    const token = opts.authToken ?? (opts.authTokenFile
+      ? loadProviderCredentialFile(opts.authTokenFile, {
+        providerLabel: 'Kimi', jsonPointer: opts.authTokenJsonPointer ?? '/env/ANTHROPIC_AUTH_TOKEN',
+        forbiddenRoots: opts.credentialForbiddenRoots ?? (opts.repoRoot ? [opts.repoRoot] : []),
+      })
+      : undefined);
+    const validatedToken = token === undefined ? undefined : validInjectedToken(token, 'Kimi');
+    super({
+      ...opts,
+      harness: 'claude-code',
+      version: opts.version ?? observedClaudeVersion(opts.cmd ?? 'claude', opts.versionProbe),
+      ceiling: opts.ceiling ?? 1,
+      maxContext: opts.maxContext ?? 1_048_576,
+      model: KIMI_MODEL,
+      env: opts.env ?? {},
+      providerSecrets: validatedToken ? [validatedToken] : [],
+    });
+    this._kimiToken = validatedToken;
+  }
+
+  _prepareProviderRoute({ model, effort, env }) {
+    if (model !== KIMI_MODEL) throw credentialError('Kimi', 'model_unsupported');
+    if (effort === undefined || effort === null || effort === '') throw credentialError('Kimi', 'effort_required');
+    if (effort !== 'max') throw credentialError('Kimi', 'effort_unsupported');
+    if (!this._kimiToken) throw credentialError('Kimi', 'credential_missing');
+    const closed = { ...env };
+    for (const key of Object.keys(closed)) {
+      if (key.startsWith('ANTHROPIC_') || KIMI_PROVIDER_ENV.includes(key)
+        || /^(AWS_|GOOGLE_|GCLOUD_|CLOUD_ML_|AZURE_|FOUNDRY_|ZAI_|Z_AI_|MOONSHOT_)/u.test(key)) delete closed[key];
+    }
+    Object.assign(closed, {
+      ANTHROPIC_BASE_URL: KIMI_BASE_URL,
+      ANTHROPIC_AUTH_TOKEN: this._kimiToken,
+      ANTHROPIC_MODEL: KIMI_MODEL,
+      ANTHROPIC_DEFAULT_OPUS_MODEL: KIMI_MODEL,
+      ANTHROPIC_DEFAULT_SONNET_MODEL: KIMI_MODEL,
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: KIMI_MODEL,
+      ANTHROPIC_DEFAULT_FABLE_MODEL: KIMI_MODEL,
+      CLAUDE_CODE_SUBAGENT_MODEL: KIMI_MODEL,
+      ENABLE_TOOL_SEARCH: 'false',
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1048576',
+      CLAUDE_CODE_EFFORT_LEVEL: 'max',
+    });
+    return { model: KIMI_MODEL, effort: 'max', env: closed };
+  }
+
+  _validateProviderReady({ modelRequested, modelObserved }) {
+    if (modelRequested !== KIMI_MODEL || modelObserved !== KIMI_MODEL) {
+      throw credentialError('Kimi', 'model_mismatch');
+    }
+  }
+
+  card() {
+    const base = super.card();
+    return {
+      ...base,
+      authPosture: 'api_key',
+      modelSelection: {
+        ...base.modelSelection,
+        configuredDefault: KIMI_MODEL,
+        available: [KIMI_MODEL],
+        family: 'kimi',
+        acceptedPrefixes: [],
+        acceptedAliases: [],
+        reasoningEffort: ['max'],
+        effortRequired: true,
+        provenance: 'adapter-configuration+moonshot-anthropic-compatibility',
+      },
+      providerCompatibility: {
+        provider: 'moonshot', transport: 'anthropic-compatible', credential: 'api_key',
+        credentialState: this._kimiToken ? 'available' : 'absent',
+        toolSearch: 'unsupported', nativeEffortObservation: 'unavailable',
+      },
     };
   }
 }

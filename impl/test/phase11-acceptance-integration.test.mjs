@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -9,6 +10,7 @@ import { createDriver, IntegrationError, PublicationError } from '../src/index.m
 import { MockAdapter } from '../src/adapter.mjs';
 
 function git(args, cwd) { return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim(); }
+const receiptDigest = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function repo() {
   const root = mkdtempSync(join(tmpdir(), 'baton-acceptance-'));
   git(['init', '-q'], root);
@@ -91,6 +93,46 @@ const closeForReplay = async (coordinator, coordination) => {
   coordinator.closeAuthority(); coordination.releaseWriterLease();
 };
 
+test('AC0: a provider-native failed result bypasses capture/referee and preserves progress without an adoptable result', async () => {
+  const root = repo();
+  commitBase(root);
+  const adapter = new MockAdapter({ scenario: {
+    outcome: 'failed', summary: 'structured provider failure',
+    edits: [{ path: 'src/partial.txt', content: 'recoverable progress\n' }],
+  } });
+  const driver = createDriver({
+    repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac0-log-')), adapters: { mock: adapter },
+    watchdog: { stallMs: 0 },
+  });
+  let captureCalls = 0;
+  let refereeCalls = 0;
+  const capture = driver.coordinator._worktrees.capture.bind(driver.coordinator._worktrees);
+  driver.coordinator._worktrees.capture = async (...args) => { captureCalls += 1; return capture(...args); };
+  const referee = driver.coordinator._referee;
+  driver.coordinator._referee = async (...args) => { refereeCalls += 1; return referee(...args); };
+
+  const handle = await driver.coordinator.spawn('mock', brief({ command: 'true', expectExit: 0 }), { taskId: 'provider-failed' });
+  const result = await until(async () => {
+    const value = await driver.coordinator.result(handle.id);
+    return value.ready ? value : null;
+  });
+  assert.equal(result.status, 'failed');
+  assert.deepEqual(result.terminalCause, { kind: 'provider_failure', code: 'provider_turn_failed' });
+  assert.equal(result.verdict, null);
+  assert.equal(result.capturedSha, null);
+  assert.equal(result.retainedResultRef, null);
+  // The only capture is Phase 70's non-adoptable progress checkpoint; the trust gate never runs.
+  assert.equal(captureCalls, 1);
+  assert.equal(refereeCalls, 0);
+  assert.equal(driver.log.read(handle.id).some((event) => event.kind === 'verify.reverified'), false);
+
+  await until(() => driver.log.read(handle.id).some((event) => event.kind === 'worktree.progress_checkpointed'));
+  const stopped = await driver.coordinator.result(handle.id);
+  assert.equal(stopped.status, 'failed');
+  assert.equal(stopped.checkpoint?.state, 'pinned');
+  assert.equal(stopped.retainedResultRef, null);
+});
+
 test('AC1: createDriver requireRedGreen proves base red and result green', async () => {
   const root = repo();
   commitBase(root);
@@ -125,7 +167,8 @@ test('AC2: createDriver requireCoverage computes changed lines and accepts cover
   const result = await coordinator.result(h.id);
   assert.equal(result.status, 'completed');
   assert.equal(result.verdict.coverageOfChange, true);
-  assert.deepEqual(result.verdict.uncoveredChangedLines, []);
+  assert.equal(result.verdict.uncoveredChangedLineCount, 0);
+  assert.equal(result.verdict.uncoveredChangedLinesDigest, receiptDigest([]));
 });
 
 test('AC2: requireCoverage rejects a passing but uncovered change', async () => {
@@ -145,7 +188,8 @@ test('AC2: requireCoverage rejects a passing but uncovered change', async () => 
   const result = await coordinator.result(h.id);
   assert.equal(result.status, 'failed');
   assert.equal(result.verdict.coverageOfChange, false);
-  assert.deepEqual(result.verdict.uncoveredChangedLines, ['src/x.js:1']);
+  assert.equal(result.verdict.uncoveredChangedLineCount, 1);
+  assert.equal(result.verdict.uncoveredChangedLinesDigest, receiptDigest(['src/x.js:1']));
 });
 
 test('AC3: required mutation accepts a nonzero all-killed population', async () => {
@@ -166,7 +210,7 @@ test('AC3: required mutation accepts a nonzero all-killed population', async () 
   assert.equal(result.verdict.mutationStrength, 1);
 });
 
-test('AC3: required mutation rejects survivors and records their identities', async () => {
+test('AC3: required mutation rejects survivors and records only their closed count/digest receipt', async () => {
   const root = repo();
   commitBase(root, { 'mutation.mjs': 'console.log(JSON.stringify({killed:1,total:2,survived:["m2"]}))\n' });
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'src/x.js', content: 'export const x = 1;\n' }] } });
@@ -181,7 +225,8 @@ test('AC3: required mutation rejects survivors and records their identities', as
   const result = await coordinator.result(h.id);
   assert.equal(result.status, 'failed');
   assert.equal(result.verdict.mutationPassed, false);
-  assert.deepEqual(result.verdict.survivedMutants, ['m2']);
+  assert.equal(result.verdict.survivedMutantCount, 1);
+  assert.equal(result.verdict.survivedMutantsDigest, receiptDigest(['m2']));
 });
 
 test('AC4: independent oracle receives immutable spec/git evidence and unlocks required integration', async () => {
@@ -394,6 +439,40 @@ test('AC5: a dirty main refuses without touching the index or working tree', asy
   assert.equal(log.read(handle.id).at(-1).kind, 'integration.refused');
   const retained = (await coordinator.result(handle.id)).retainedResultRef;
   assert.equal(git(['show-ref', '--verify', retained], root).endsWith(` ${retained}`), true);
+});
+
+test('AC5: a tagged ff-only failure after HEAD moves is recorded incomplete and poisons authority', async () => {
+  const root = repo();
+  commitBase(root, { 'README.md': 'base\n' });
+  const { coordinator, coordination, log, handle } = await completedTask(root, 'ff-post-effect-task');
+  const rawIntegrate = coordinator._worktrees.integrate;
+  coordinator._worktrees.integrate = async (...args) => {
+    const integrated = await rawIntegrate(...args);
+    throw Object.assign(new Error('injected failure after ff-only post-effect'), {
+      code: 'ff_only_post_effect_inconsistent', postEffect: true,
+      beforeSha: integrated.beforeSha, afterSha: integrated.afterSha,
+      resultSha: integrated.resultSha,
+    });
+  };
+
+  await assert.rejects(
+    coordinator.integrate(handle.id),
+    (error) => error?.code === 'integration_post_effect_inconsistent',
+  );
+  const resultSha = log.read(handle.id)
+    .find((entry) => entry.kind === 'verify.reverified')?.payload?.capture?.sha;
+  assert.equal(git(['rev-parse', 'HEAD'], root), resultSha, 'the test must cross the Git effect boundary');
+  assert.equal(log.read(handle.id).some((event) => (
+    event.kind === 'integration.incomplete'
+      && event.payload.strategy === 'ff-only'
+      && event.payload.postEffect === true
+      && event.payload.afterSha === resultSha
+  )), true);
+  assert.equal(log.read(handle.id).some((event) => event.kind === 'integration.refused'), false);
+  assert.equal(coordination.events().some((event) => (
+    event.kind === 'driver.recorded' && event.payload.kind === 'integration.incomplete'
+  )), true);
+  assert.throws(() => coordinator.list(), (error) => error?.code === 'integration_post_effect_inconsistent');
 });
 
 test('AC5: integration refuses an unaccepted captured result', async () => {

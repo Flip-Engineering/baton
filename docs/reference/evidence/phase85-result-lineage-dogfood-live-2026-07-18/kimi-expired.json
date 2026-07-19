@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "attemptedRoute": {
+    "harness": "kimi-code",
+    "model": "kimi-code/k3",
+    "effort": "max"
+  },
+  "outcome": "preflight_refused",
+  "error": {
+    "code": "authentication_refresh_required",
+    "message": "Kimi authentication has expired. Run the ordinary kimi login flow to refresh authentication, then reopen Baton."
+  },
+  "cleanup": {
+    "workers": 0,
+    "closed": true,
+    "callerStatusUnchanged": true,
+    "callerIndexUnchanged": true
+  }
+}

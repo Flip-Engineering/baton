@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-07-17",
+  "route": {
+    "harness": "kimi-code",
+    "model": "kimi-code/k3",
+    "effort": "max",
+    "permissionMode": "yolo"
+  },
+  "run": {
+    "runId": "run-kimi-live",
+    "phase": "work_completed",
+    "promptStopReason": "end_turn"
+  },
+  "shutdown": {
+    "kimiProcessReaped": true,
+    "remainingWorkers": 0,
+    "coordinatorClosed": true,
+    "writerReleased": true
+  },
+  "globalKimiSourceUnchanged": true,
+  "repositoryEffects": {
+    "adopted": false,
+    "exported": false,
+    "integrated": false,
+    "published": false
+  }
+}

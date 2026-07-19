@@ -1,0 +1,203 @@
+{
+  "schemaVersion": 1,
+  "completed": {
+    "schemaVersion": 1,
+    "state": "ready",
+    "counts": {
+      "total": 2,
+      "active": 0,
+      "waiting": 0,
+      "ready": 2,
+      "completed": 0,
+      "failed": 0,
+      "stopped": 0,
+      "terminal": 0,
+      "attention": 0,
+      "cleanupIncomplete": 0,
+      "byPhase": {
+        "work_completed": 2
+      }
+    },
+    "members": [
+      {
+        "runId": "run-0de05d978c65c7b99f833e96b4e8bc86",
+        "objective": "Act as Baton's independent durable-control-authority designer for the next resident application slice. Inspect the authenticated resident application and security-matrix specs, application semantic registry, client, application dispatcher, coordinator control paths, coordination ledger patterns, Web command reconciliation, progressive AX tests, and Slate assessment. Design the smallest implementation-ready vertical for ordinary run.send(message, options) and run.interrupt(options), followed by Run-scoped resumable event/output/progress streams. The ordinary surface must resolve semantic recipients such as work, workflow role, or review server-side; callers never manage worker IDs, fences, request IDs, event limits, budgets, or transport details. Bind durable admission to semantic recipient, resolved worker and current fence at effect time, delivery mode, message/reason digests, actor/session, registry digest, and provider request identity. Specify exact confirmed/refused/outcome_unknown settlement, restart reconciliation, response-loss replay, concurrent send ordering, send/interrupt and interrupt/stop races, selective-session preservation, Web/direct parity, and exact stop/reap. Prefer one Pythonic cascading Run API and context-sensitive help. Do not invent a second control plane or expose internal receipts. Identify exact source seams and RED tests, critique overengineering, and preserve later recursive/shared-task/RLM/Slate/Atlas/Cairn composition. Do not invoke nested Baton. Use rtk for every shell command, one command per call. Do not mutate credentials, harness installations, global configuration, or the main checkout. Write only docs/reference/evidence/phase90-durable-run-control-design-live-2026-07-18/glm-control-authority-review.md, run the pinned verification, and finish.",
+        "state": "ready",
+        "phase": "work_completed",
+        "terminal": false,
+        "attention": "clear",
+        "stage": "cleanup",
+        "route": {
+          "requested": {
+            "harness": "glm",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "resolved": {
+            "harness": "glm@claude-code-2.1.211+zai-anthropic",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "observed": {
+            "harness": null,
+            "model": "glm-5.2",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "glm",
+              "resolved": "glm@claude-code-2.1.211+zai-anthropic",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "glm-5.2",
+              "resolved": "glm-5.2",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": "xhigh",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "glm-5.2",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          },
+          "rationale": {
+            "launchEnforcement": "exact deployment-profile route",
+            "providerAttestation": "provider-native observation only"
+          }
+        },
+        "verification": "complete",
+        "cleanup": "active",
+        "terminalCause": null,
+        "actions": [
+          "integrate",
+          "stop"
+        ],
+        "viewDigest": "f9311bd93508702a1404d8eae83713568cdb0cba898d5fe4c630df33957480c6"
+      },
+      {
+        "runId": "run-5f52c11615a53aeb26b9c4f0797abcfb",
+        "objective": "Act as Baton's independent progressive-run-control-AX designer for the next resident application slice. Inspect the authenticated resident application and security-matrix specs, application semantic registry, client, application dispatcher, coordinator control paths, coordination ledger patterns, Web command reconciliation, progressive AX tests, and Slate assessment. Design the smallest implementation-ready vertical for ordinary run.send(message, options) and run.interrupt(options), followed by Run-scoped resumable event/output/progress streams. The ordinary surface must resolve semantic recipients such as work, workflow role, or review server-side; callers never manage worker IDs, fences, request IDs, event limits, budgets, or transport details. Bind durable admission to semantic recipient, resolved worker and current fence at effect time, delivery mode, message/reason digests, actor/session, registry digest, and provider request identity. Specify exact confirmed/refused/outcome_unknown settlement, restart reconciliation, response-loss replay, concurrent send ordering, send/interrupt and interrupt/stop races, selective-session preservation, Web/direct parity, and exact stop/reap. Prefer one Pythonic cascading Run API and context-sensitive help. Do not invent a second control plane or expose internal receipts. Identify exact source seams and RED tests, critique overengineering, and preserve later recursive/shared-task/RLM/Slate/Atlas/Cairn composition. Do not invoke nested Baton. Use rtk for every shell command, one command per call. Do not mutate credentials, harness installations, global configuration, or the main checkout. Write only docs/reference/evidence/phase90-durable-run-control-design-live-2026-07-18/codex-run-control-ax-review.md, run the pinned verification, and finish.",
+        "state": "ready",
+        "phase": "work_completed",
+        "terminal": false,
+        "attention": "clear",
+        "stage": "cleanup",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "high"
+          },
+          "resolved": {
+            "harness": "codex@codex-cli 0.144.6",
+            "model": "gpt-5.6-sol",
+            "effort": "high"
+          },
+          "observed": {
+            "harness": null,
+            "model": "gpt-5.6-sol",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": "codex@codex-cli 0.144.6",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "high",
+              "resolved": "high",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          },
+          "rationale": {
+            "launchEnforcement": "exact deployment-profile route",
+            "providerAttestation": "provider-native observation only"
+          }
+        },
+        "verification": "complete",
+        "cleanup": "active",
+        "terminalCause": null,
+        "actions": [
+          "integrate",
+          "stop"
+        ],
+        "viewDigest": "2f8e913311c9f783f9ffe9b7025c2bc4728536c32e2092002d99b089656ce4c7"
+      }
+    ]
+  },
+  "materialized": [
+    {
+      "role": "durable-control-authority",
+      "route": {
+        "harness": "glm",
+        "model": "glm-5.2",
+        "effort": "xhigh"
+      },
+      "path": "docs/reference/evidence/phase90-durable-run-control-design-live-2026-07-18/glm-control-authority-review.md",
+      "sha": "014071faf6a03c374ee4655ee86207c3ed3c2ab2"
+    },
+    {
+      "role": "progressive-run-control-AX",
+      "route": {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high"
+      },
+      "path": "docs/reference/evidence/phase90-durable-run-control-design-live-2026-07-18/codex-run-control-ax-review.md",
+      "sha": "910b4f2cd48f45ee7f7bb4b4dd99e16e2a308538"
+    }
+  ],
+  "cleanup": {
+    "stops": [
+      {
+        "runId": "run-0de05d978c65c7b99f833e96b4e8bc86",
+        "stop": null,
+        "ownership": null
+      },
+      {
+        "runId": "run-5f52c11615a53aeb26b9c4f0797abcfb",
+        "stop": null,
+        "ownership": null
+      }
+    ],
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    }
+  }
+}

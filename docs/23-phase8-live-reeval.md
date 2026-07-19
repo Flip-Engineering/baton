@@ -46,7 +46,7 @@ shows. The errata sections in `spec/phase8/*` are the template.
 
 ## What was fixed in this pass (all test-locked, all live-re-proven where live-provable)
 
-- **E1** `--permission-mode acceptEdits` default (opt-out via `permissionMode:null`) — live: `probe.txt` created.
+- **E1** an explicit permission mode was made load-bearing; this pass used `acceptEdits` and live-created `probe.txt`. The Phase 74 unattended/full-access default is `bypassPermissions` with the private Claude command sandbox disabled; approval-enabled sessions resolve to `acceptEdits`, and `permissionMode:null` remains an explicit opt-out.
 - **E2** steer native: direct mid-turn frame + `control.steer` event; no interrupt round-trip; no phantom
   `turn_started`/`interrupt_confirmed`; R5.1 claude-side machinery deleted — live: running turn absorbed
   the steer verb and answered `REDIRECTED` as its single terminal.

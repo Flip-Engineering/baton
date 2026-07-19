@@ -213,7 +213,15 @@ test('CE2: export root is deployment authority and is absent from profile/card/d
   const f = fixture('profile-card');
   t.after(() => f.application.shutdown(principal('shutdown')).catch(() => {}));
   const card = f.application.card();
-  assert.deepEqual(card.profiles[0].exportPolicy, exportPolicy);
+  assert.deepEqual(card.profiles[0].exportPolicy, {
+    mode: exportPolicy.mode,
+    format: exportPolicy.format,
+    requireAdoptedResult: exportPolicy.requireAdoptedResult,
+    requireSemanticReview: exportPolicy.requireSemanticReview,
+    requireIntegration: exportPolicy.requireIntegration,
+  });
+  assert.equal(Object.hasOwn(card.profiles[0].exportPolicy, 'maxFiles'), false);
+  assert.equal(Object.hasOwn(card.profiles[0].exportPolicy, 'maxBytes'), false);
   assert.equal(JSON.stringify(card).includes(f.exportRoot), false);
   assert.equal(JSON.stringify(card.profiles[0].digest).includes(f.exportRoot), false);
 

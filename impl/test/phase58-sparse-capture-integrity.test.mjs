@@ -455,6 +455,17 @@ test('SP12: createDriver native resume borrows one sparse projected worktree and
     stopDeadlineMs: 1_000,
   });
   const ownerTaskId = 'resume-projection-owner';
+  driver.coordination.createTask({
+    id: ownerTaskId,
+    brief: {
+      goal: 'own the sparse projected session context', constraints: [], pathScope: ['src/**'],
+      definitionOfDone: 'the context is owned durably',
+      verification: { command: 'true', expectExit: 0 },
+      budget: { tokens: 100, usd: 1, wallMin: 1 },
+    },
+    deps: [], refines: null, runId: null, taskType: 'general',
+    reservedWorkerId: 'resume-projection-owner-worker',
+  }, { actor: 'orchestrator', key: 'task.created:resume-projection-owner' });
   let owned;
   let resumed;
   t.after(async () => {

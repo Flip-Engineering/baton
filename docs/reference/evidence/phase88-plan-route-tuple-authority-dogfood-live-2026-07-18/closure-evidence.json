@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "route": {
+    "harness": "glm",
+    "model": "glm-5.2",
+    "effort": "xhigh",
+    "state": "ready"
+  },
+  "group": {
+    "schemaVersion": 1,
+    "state": "ready",
+    "counts": {
+      "total": 1,
+      "active": 0,
+      "waiting": 0,
+      "ready": 1,
+      "completed": 0,
+      "failed": 0,
+      "stopped": 0,
+      "terminal": 0,
+      "attention": 0,
+      "cleanupIncomplete": 0,
+      "byPhase": {
+        "work_completed": 1
+      }
+    },
+    "members": [
+      {
+        "runId": "run-c39cd57fcfffc8c330c1af29a724adab",
+        "objective": "Perform a bounded closure review of the Phase 88 follow-up changes discovered through the first Baton review. Inspect the Phase 88 spec; exact route helpers; the changed Workflow matching in workflow-definition.mjs, coordination-store.mjs, and application.mjs; Web route validation; and the new RC85-2b/duplicate-Web tests. Use at most ten repository reads. Prove that a Workflow Attempt can select one listed tuple from a multi-route Plan node while an unlisted or Cartesian tuple still fails, legacy ambiguous authority remains quarantined, and no replay path gained new effect authority. Report concrete defects separately from AX follow-ons. Do not invoke nested Baton. Use rtk for every shell operation, exactly one command per call, with no pipes, &&, semicolons, or unwrapped shell commands. Do not mutate home state, credentials, toolchains, shims, caches, global configuration, runtime paths, or the main checkout. Write only docs/reference/evidence/phase88-plan-route-tuple-authority-dogfood-live-2026-07-18/glm-closure-review.md, then finish immediately.",
+        "state": "ready",
+        "phase": "work_completed",
+        "terminal": false,
+        "attention": "clear",
+        "stage": "cleanup",
+        "route": {
+          "requested": {
+            "harness": "glm",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "resolved": {
+            "harness": "glm@claude-code-2.1.211+zai-anthropic",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "observed": {
+            "harness": null,
+            "model": "glm-5.2",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "glm",
+              "resolved": "glm@claude-code-2.1.211+zai-anthropic",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "glm-5.2",
+              "resolved": "glm-5.2",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": "xhigh",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "glm-5.2",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          },
+          "rationale": {
+            "launchEnforcement": "exact deployment-profile route",
+            "providerAttestation": "provider-native observation only"
+          }
+        },
+        "verification": "complete",
+        "cleanup": "active",
+        "terminalCause": null,
+        "actions": [
+          "integrate",
+          "stop"
+        ],
+        "viewDigest": "e2b8df051a4c369a4aae64b2841bf6efaab3e8762f6dc7a085867900be27f251"
+      }
+    ]
+  },
+  "materialized": {
+    "path": "docs/reference/evidence/phase88-plan-route-tuple-authority-dogfood-live-2026-07-18/glm-closure-review.md",
+    "sha": "f14fdf14ebc7032a159e07ac1592928ee16fae30"
+  },
+  "cleanup": {
+    "stops": [
+      {
+        "runId": "run-c39cd57fcfffc8c330c1af29a724adab",
+        "stop": null,
+        "ownership": null
+      }
+    ],
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    }
+  }
+}

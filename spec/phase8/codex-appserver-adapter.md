@@ -96,13 +96,18 @@ XA10).
 
 **XA6 — `spawn(worker, brief, opts)`**: performs, IN ORDER, `initialize` (+ `initialized`
 notification) → `thread/start` (`cwd: opts.worktree`, `sandbox: opts.sandbox ??
-'workspace-write'`, `approvalPolicy: opts.approvalPolicy ?? 'never'`, `ephemeral: true`) →
+'danger-full-access'`, `approvalPolicy: opts.approvalPolicy ?? 'never'`, `ephemeral: true`) →
 `turn/start` with `input: [{type:'text', text: renderBrief(brief, 'codex-v2')}]` (reusing the
 existing D2 brief-rendering contract from `src/adapter.mjs`, not a second dialect). The `Ack`
 returned by `spawn()` resolves once `turn/start`'s response is received (turn accepted,
 `status:"inProgress"`) — **not** once the turn completes (D1: spawn does not block on
 completion). Session state after a successful spawn: `{child, threadId, activeTurn:{id},
 turnEpoch:1}`.
+
+The default pair is deliberately unattended and full-permission: `approvalPolicy:'never'` removes
+routine approval choreography and `danger-full-access` leaves harness access unrestricted. The card
+exposes both settings and separately reports that same-UID host containment is unverified. A
+deployment may explicitly construct a narrower workspace-scoped adapter.
 
 **XA7 — `prompt(worker, content, mode)` — the 3-way D1 verb, all mapped onto this ONE thread:**
 - `mode:'turn'` → a **new** `turn/start` on the SAME `threadId` (multi-turn, native — the

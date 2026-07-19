@@ -4,7 +4,7 @@
 // retry_verification seam through the ordinary BatonApplication surface.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -85,6 +85,12 @@ function configuredAdapter() {
     },
   });
   const card = adapter.card.bind(adapter);
+  const spawn = adapter.spawn.bind(adapter);
+  adapter.calls = { spawn: 0 };
+  adapter.spawn = async (...args) => {
+    adapter.calls.spawn += 1;
+    return spawn(...args);
+  };
   adapter.card = () => ({
     ...card(),
     modelSelection: {
@@ -94,6 +100,15 @@ function configuredAdapter() {
     },
   });
   return adapter;
+}
+
+function persistedText(rootDir) {
+  return readdirSync(rootDir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(rootDir, entry.name);
+    if (entry.isDirectory()) return persistedText(path);
+    if (!entry.isFile() || statSync(path).size > 16 * 1024 * 1024) return [];
+    return [readFileSync(path, 'utf8')];
+  }).join('\n');
 }
 
 function gitRepo(name) {
@@ -354,7 +369,9 @@ test('VR8.8: restart and response-loss replay preserve one retry attempt and one
   const acted = await actByKind(applicationB, runId, 'retry_verification', { reason: 'accept after runtime correction' });
   assert.equal(acted.outline.phase, 'work_completed');
   const statusB = await applicationB.command('run.status', { runId }, principal('owner'));
-  const workerId = statusB.ownership.workerIds[0];
+  assert.deepEqual(statusB.ownership, { workers: 0, workerIds: [], closed: false },
+    'durable replay coordinates are not current-process resource ownership');
+  const workerId = driverB.coordination.task(statusB.nodes[0].taskId).assignee;
   const attemptEvents = driverB.log.read(workerId).filter((event) => event.kind === 'verify.reverified');
   assert.equal(attemptEvents.length, 2, 'one original attempt plus exactly one retry attempt');
   await applicationB.shutdown(principal('restart-2'));
@@ -432,4 +449,231 @@ test('VR6 registry: retry_verification is a first-class semantic action with CLI
   assert.match(command.usage, /^baton run retry /u);
   const rendered = batonCliHelp(action.helpTopic);
   assert.match(rendered, new RegExp(action.label, 'u'));
+});
+
+test('VR9: an inconclusive verification projects closed mechanical failure detail through ordinary inspection and never the raw output tail', async (t) => {
+  const f = fixture('closed-detail');
+  cleanup(t, f.application);
+  const runId = 'run-phase69-closed-detail';
+  await driveToInconclusive(f, runId);
+
+  const status = await f.application.command('run.status', { runId }, principal('owner'));
+  const verdict = status.verification?.verdict;
+  assert.ok(verdict, 'an inconclusive Run projects its verifier verdict through ordinary status');
+  assert.equal(verdict.accepted, false);
+  assert.equal(verdict.outcome, 'inconclusive');
+  assert.equal(verdict.failureOwnership, 'verifier');
+  assert.equal(verdict.expectedExit, 0);
+  assert.equal(verdict.observedExit, null, 'an unavailable spawn observes no exit');
+  assert.deepEqual(verdict.execution, { state: 'unavailable', code: 'verification_spawn_unavailable' });
+  assert.deepEqual(verdict.baseExecution, { state: 'unavailable', code: 'verification_spawn_unavailable' },
+    'the baseline sandbox also could not spawn under the broken runtime');
+  assert.equal(verdict.outputExceeded, false);
+  assert.equal(Number.isSafeInteger(verdict.capturedOutputBytes), true);
+  assert.match(verdict.capturedOutputDigest ?? '', /^[a-f0-9]{64}$/u,
+    'captured output is represented only by its digest');
+  assert.equal(typeof verdict.diagnosticCode, 'string');
+  assert.ok(verdict.durationMs === null || verdict.durationMs >= 0);
+  assert.match(verdict.runtimeDigest ?? '', /^[a-f0-9]{64}$/u);
+  assert.match(verdict.digest ?? '', /^[a-f0-9]{64}$/u);
+  assert.equal(verdict.attemptOrdinal, 1, 'the original attempt is ordinal one');
+
+  // The closed surface carries no free-form verifier note, no total-output claim, and never the
+  // raw captured output tail.
+  assert.equal(Object.hasOwn(verdict, 'note'), false,
+    'a free-form verifier note is not a closed field and is not projected');
+  assert.equal(Object.hasOwn(verdict, 'outputTailBytes'), false,
+    'the projection has no historical raw-tail receipt');
+  assert.equal(Object.hasOwn(verdict, 'observedOutputTail'), false,
+    'the raw verifier output tail must never reach an ordinary Run surface');
+  const serialized = JSON.stringify(status);
+  assert.equal(serialized.includes('refs/baton/checkpoints'), false);
+  assert.equal(serialized.includes(f.repo), false);
+
+  const section = await f.application.command('run.inspect', {
+    runId, depth: 'section', section: 'verification',
+  }, principal('owner'));
+  const row = section.section.items[0];
+  assert.equal(row.value.verdict.outcome, 'inconclusive');
+  assert.equal(Object.hasOwn(row.value.verdict, 'observedOutputTail'), false);
+});
+
+test('VR9: a candidate_failed verdict projects candidate-owned failure detail without laundering it into success or blaming the route', async (t) => {
+  const contract = verification({
+    arguments: ['-e', "process.exit(require('node:fs').existsSync('candidate.txt') ? 1 : 0)"],
+  });
+  const f = fixture('candidate-detail', { verificationContract: contract });
+  const runId = 'run-phase69-candidate-detail';
+  await driveToInconclusive(f, runId);
+  await f.application.shutdown(principal('restart'));
+
+  const adapter = configuredAdapter();
+  const driver = buildDriver({ repo: f.repo, logDir: f.logDir, adapter, runtimePolicy: correctedRuntimePolicy() });
+  const application = buildApplication(driver, f.profiles);
+  cleanup(t, { application, driver });
+
+  await actByKind(application, runId, 'retry_verification', { reason: 'retry under corrected runtime projects the candidate failure' });
+  const status = await application.command('run.status', { runId }, principal('owner'));
+  assert.equal(status.verification.state, 'failed',
+    'a candidate_failed verdict is a real failure, never classified as inconclusive or success');
+  const verdict = status.verification.verdict;
+  assert.equal(verdict.outcome, 'candidate_failed');
+  assert.equal(verdict.failureOwnership, 'candidate');
+  assert.equal(verdict.accepted, false);
+  assert.equal(verdict.observedExit, 1);
+  assert.equal(verdict.expectedExit, 0);
+  assert.deepEqual(verdict.execution, { state: 'completed', code: 'verification_completed' });
+  assert.deepEqual(verdict.baseExecution, { state: 'completed', code: 'verification_completed' });
+  assert.notEqual(status.terminalCause?.kind, 'provider_failure',
+    'a candidate failure is never blamed on the agent route');
+  assert.equal(Object.hasOwn(verdict, 'observedOutputTail'), false);
+});
+
+test('VR9/RV: a secret-bearing verifier output never reaches application surfaces or persisted worker, coordination, and artifact receipts', async (t) => {
+  const secret = 'ghp_leakedVerifierSecretToken';
+  // Build the secret at runtime from char codes so the verification argument itself is not
+  // credential-shaped (the plan validator accepts it), while the captured output is.
+  const codes = [...secret].map((ch) => ch.charCodeAt(0)).join(',');
+  const contract = verification({
+    arguments: ['-e', `process.stdout.write(String.fromCharCode(${codes}));`
+      + " process.exit(require('node:fs').existsSync('candidate.txt') ? 1 : 0)"],
+  });
+  const f = fixture('secret-output', { verificationContract: contract });
+  const runId = 'run-phase69-secret-output';
+  await driveToInconclusive(f, runId);
+  await f.application.shutdown(principal('restart'));
+
+  const adapter = configuredAdapter();
+  const driver = buildDriver({ repo: f.repo, logDir: f.logDir, adapter, runtimePolicy: correctedRuntimePolicy() });
+  const application = buildApplication(driver, f.profiles);
+  cleanup(t, { application, driver });
+
+  await actByKind(application, runId, 'retry_verification', { reason: 'retry under corrected runtime' });
+
+  for (const request of [
+    { runId, depth: 'outline' },
+    { runId, depth: 'section', section: 'verification' },
+    { runId, depth: 'section', section: 'execution' },
+    { runId, depth: 'section', section: 'cleanup' },
+  ]) {
+    const view = await application.command('run.inspect', request, principal('owner'));
+    assert.equal(JSON.stringify(view).includes(secret), false,
+      `verification secret leaked at ${request.depth}/${request.section ?? ''}`);
+  }
+  const status = await application.command('run.status', { runId }, principal('owner'));
+  assert.equal(JSON.stringify(status).includes(secret), false, 'verification secret leaked through run.status');
+  const evidence = await application.command('run.evidence', { runId }, principal('owner'));
+  assert.equal(JSON.stringify(evidence).includes(secret), false, 'verification secret leaked through run.evidence');
+  const persisted = persistedText(f.logDir);
+  assert.equal(persisted.includes(secret), false,
+    'the generated verifier secret must not exist in worker logs, coordination events, or artifact manifests');
+  // The verdict digest is structural; raw captured output is never carried.
+  assert.equal(Object.hasOwn(status.verification.verdict, 'observedOutputTail'), false);
+  assert.match(status.verification.verdict.capturedOutputDigest ?? '', /^[a-f0-9]{64}$/u);
+});
+
+test('RV: an initial candidate_failed result gets one exact no-provider confirmation and a later pass remains explicitly unstable across restart', async (t) => {
+  const sentinel = join(root('candidate-confirmation-sentinel'), 'allow-pass');
+  const contract = verification({
+    arguments: ['-e', `const fs=require('node:fs'); const candidate=fs.existsSync('candidate.txt');`
+      + ` process.exit(candidate && !fs.existsSync(${JSON.stringify(sentinel)}) ? 1 : 0);`],
+  });
+  const f = fixture('candidate-confirmation-pass', {
+    verificationContract: contract,
+    runtimePolicy: correctedRuntimePolicy(),
+  });
+  const runId = 'run-phase90-candidate-confirmation-pass';
+  await driveToInconclusive(f, runId);
+
+  const failed = await f.application.command('run.status', { runId }, principal('owner'));
+  assert.equal(failed.verification.verdict.outcome, 'candidate_failed');
+  assert.equal(failed.verification.retry?.available, true,
+    'the initial candidate-owned diagnostic failure offers reason-only confirmation');
+  const taskId = failed.nodes[0].taskId;
+  const task = f.driver.coordination.task(taskId);
+  const initial = await f.driver.coordinator.result(task.assignee);
+  assert.equal(initial.checkpoint.originOutcome, 'candidate_failed');
+  assert.equal(initial.checkpoint.sha, initial.capturedSha);
+  assert.equal(f.adapter.calls.spawn, 1);
+  const learningAfterFailure = f.driver.router.snapshot();
+
+  writeFileSync(sentinel, 'allow\n');
+  const [left, right] = await Promise.all([
+    f.application.retryVerification({ runId, reason: 'confirm the exact diagnostic candidate' }, principal('owner')),
+    f.application.retryVerification({ runId, reason: 'confirm the exact diagnostic candidate' }, principal('owner')),
+  ]);
+  assert.equal(left.result.sha, initial.capturedSha);
+  assert.equal(right.result.sha, initial.capturedSha);
+  assert.equal(f.adapter.calls.spawn, 1, 'confirmation never launches or resumes a provider');
+
+  const accepted = await f.application.command('run.status', { runId }, principal('owner'));
+  assert.equal(accepted.verification.state, 'mechanically_verified_unstable');
+  assert.equal(accepted.verification.stability, 'passed_after_candidate_failure');
+  assert.equal(accepted.result.stability, 'passed_after_candidate_failure');
+  assert.equal(accepted.result.sha, initial.capturedSha, 'only the exact diagnostic checkpoint SHA is accepted');
+  assert.equal(accepted.verification.retry?.available ?? false, false, 'the confirmation shot is consumed');
+
+  const attempts = f.driver.log.read(task.assignee).filter((event) => event.kind === 'verify.reverified');
+  assert.equal(attempts.length, 2, 'the original losing attempt and one confirmation are both retained');
+  assert.equal(attempts[0].payload.verdict.outcome, 'candidate_failed');
+  assert.equal(attempts[1].payload.verdict.outcome, 'passed');
+  assert.equal(attempts[1].payload.stability, 'passed_after_candidate_failure');
+  const verificationArtifacts = f.driver.coordination.task(taskId).artifactIds
+    .map((id) => f.driver.coordination.artifact(id)).filter((artifact) => artifact.kind === 'verification');
+  assert.equal(verificationArtifacts.length, 2, 'both closed verdict artifacts survive acceptance');
+  assert.equal(f.driver.coordination.queryKnowledge({ types: ['Counterexample'] })
+    .some((node) => node.taskId === taskId), true, 'the original counterexample is not erased by the later pass');
+  assert.deepEqual(f.driver.router.snapshot(), learningAfterFailure,
+    'learning retains the original loss instead of rewriting the route as a clean win');
+  const integrated = await f.driver.coordinator.integrate(task.assignee, {
+    strategy: 'ff-only', actor: 'direct:owner',
+  });
+  assert.equal(integrated.integration.stability, 'passed_after_candidate_failure');
+  const integratedStatus = await f.application.command('run.status', { runId }, principal('owner'));
+  assert.equal(integratedStatus.integration.stability, 'passed_after_candidate_failure',
+    'integration preserves the instability classification');
+
+  await f.application.shutdown(principal('restart'));
+  const driver = buildDriver({
+    repo: f.repo, logDir: f.logDir, adapter: configuredAdapter(), runtimePolicy: correctedRuntimePolicy(),
+  });
+  const application = buildApplication(driver, f.profiles);
+  cleanup(t, { application, driver });
+  const replayed = await application.command('run.status', { runId }, principal('owner'));
+  assert.equal(replayed.verification.stability, 'passed_after_candidate_failure');
+  const responseReplay = await application.retryVerification({
+    runId, reason: 'replay after a lost confirmation response',
+  }, principal('owner'));
+  assert.equal(responseReplay.result.sha, initial.capturedSha);
+  assert.equal(responseReplay.lastAction.result, 'replayed');
+  assert.equal(driver.log.read(task.assignee).filter((event) => event.kind === 'verify.reverified').length, 2,
+    'restart and response replay cannot create a second confirmation');
+});
+
+test('RV: candidate-origin confirmation failure or inconclusive execution is final and consumes the one shot', async (t) => {
+  for (const later of ['candidate_failed', 'inconclusive']) {
+    await t.test(later, async (t2) => {
+      const binDir = root(`candidate-confirmation-${later}-bin`);
+      symlinkSync(process.execPath, join(binDir, 'node'));
+      const runtimePolicy = {
+        schemaVersion: 1, pathEntries: [binDir], constants: { LANG: 'C', LC_ALL: 'C', TZ: 'UTC' },
+      };
+      const contract = verification({
+        arguments: ['-e', "process.exit(require('node:fs').existsSync('candidate.txt') ? 1 : 0)"],
+      });
+      const f = fixture(`candidate-confirmation-${later}`, { verificationContract: contract, runtimePolicy });
+      cleanup(t2, f.application);
+      const runId = `run-phase90-candidate-confirmation-${later}`;
+      await driveToInconclusive(f, runId);
+      if (later === 'inconclusive') unlinkSync(join(binDir, 'node'));
+
+      await actByKind(f.application, runId, 'retry_verification', { reason: `consume confirmation as ${later}` });
+      const status = await f.application.command('run.status', { runId }, principal('owner'));
+      assert.equal(status.verification.verdict.outcome, later);
+      assert.equal(status.verification.retry?.available ?? false, false,
+        'candidate-origin confirmation is one-shot for every verifier outcome');
+      const outline = await inspectOutline(f.application, runId);
+      assert.equal(outline.outline.actions.some((action) => action.kind === 'retry_verification'), false);
+    });
+  }
 });

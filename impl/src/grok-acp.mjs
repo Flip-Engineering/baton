@@ -21,6 +21,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { renderBrief } from './adapter.mjs';
 import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
+import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const GROK_TOKEN_METRIC = 'grok_prompt_meta_total_tokens';
@@ -104,7 +105,9 @@ function boundedEvidence(value, maxBytes) {
   };
 }
 
-export function withGrokModelArgs(baseArgs, { model, reasoningEffort, sandbox } = {}) {
+export function withGrokModelArgs(baseArgs, {
+  model, reasoningEffort, sandbox, alwaysApprove = true,
+} = {}) {
   const args = [...baseArgs];
   // `--sandbox` is a top-level Grok flag and is rejected after `agent`; model/effort are agent
   // flags and belong between `agent` and `stdio`. The live governance probe caught this split.
@@ -115,6 +118,7 @@ export function withGrokModelArgs(baseArgs, { model, reasoningEffort, sandbox } 
   }
   const insertion = agentIndex >= 0 ? agentIndex + 1 : args.length;
   const selection = [];
+  if (alwaysApprove) selection.push('--always-approve');
   if (model) selection.push('--model', model);
   if (reasoningEffort) selection.push('--reasoning-effort', reasoningEffort);
   args.splice(insertion, 0, ...selection);
@@ -148,6 +152,9 @@ export class GrokAcpCli {
     this._maxContext = opts.maxContext ?? 500000;
     this._model = opts.model;
     this._reasoningEffort = opts.reasoningEffort;
+    this._sandbox = opts.sandbox ?? 'off';
+    this._alwaysApprove = opts.alwaysApprove ?? true;
+    if (typeof this._alwaysApprove !== 'boolean') throw new TypeError('GrokAcpCli: alwaysApprove must be boolean');
     this._maxEventPayloadBytes = opts.maxEventPayloadBytes ?? 64 * 1024;
     if (!Number.isSafeInteger(this._maxEventPayloadBytes) || this._maxEventPayloadBytes < 1024) {
       throw new TypeError('GrokAcpCli: maxEventPayloadBytes must be an integer of at least 1024 bytes');
@@ -200,8 +207,31 @@ export class GrokAcpCli {
       // request/result schemas pinned, so advertising them as native would be a lying card.
       sessions: { multiTurn: 'native', resume: 'native', fork: 'planned', rewind: 'planned' },
       isolation: {
-        configHome: 'driver-scoped', environment: 'driver-scoped', filesystem: 'worktree+harness-policy',
+        configHome: 'driver-scoped', environment: 'driver-scoped', filesystem: 'unverified',
         osSandbox: 'unverified', network: 'uncontrolled', credentialProjection: 'explicit',
+      },
+      permissions: {
+        mode: this._alwaysApprove ? 'always-approve' : 'interactive', sandbox: this._sandbox,
+        boundary: this._sandbox === 'off'
+          ? 'Unattended full host permissions by default; containment is a separate deployment boundary'
+          : 'Harness sandbox requested; its containment remains separately attested',
+      },
+      workerPolicy: {
+        schemaVersion: 1,
+        autonomy: {
+          supported: [this._alwaysApprove ? 'unattended' : 'interactive'],
+          default: this._alwaysApprove ? 'unattended' : 'interactive', perTask: false,
+          observation: 'launch', mechanisms: [this._alwaysApprove ? 'always-approve' : 'interactive'],
+        },
+        access: {
+          supported: [this._sandbox === 'off' ? 'full' : 'workspace'],
+          default: this._sandbox === 'off' ? 'full' : 'workspace', perTask: false,
+          observation: 'launch', mechanisms: [`grok-sandbox-${this._sandbox}`],
+        },
+        containment: {
+          hostProcess: 'same_uid', guarantees: ['private_runtime'],
+          configuredPreferences: [], observation: 'unavailable',
+        },
       },
       verbs: {
         spawn: 'native',
@@ -581,7 +611,10 @@ export class GrokAcpCli {
       }
       const res = makeResult('cancelled', 'interrupted', tokens);
       if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
-      this._emit(session, 'control.interrupt_confirmed', { sessionId: session.sessionId, turnId, result: res, usageSeal: usage.seal });
+      this._emit(session, 'control.interrupt_confirmed', {
+        sessionId: session.sessionId, turnId, result: res, transportOpen: true,
+        usageSeal: usage.seal,
+      });
       this._maybeIssueFollowUp(session, turnId);
       return;
     }
@@ -649,11 +682,27 @@ export class GrokAcpCli {
 
     const processGeneration = normalizeProcessGeneration(opts.processGeneration);
     const modelRequested = opts.model ?? this._model ?? null;
-    const sandboxRequested = opts.sandbox ?? 'workspace';
+    const sandboxRequested = opts.sandbox ?? this._sandbox;
+    const alwaysApproveRequested = opts.alwaysApprove ?? this._alwaysApprove;
+    if (typeof alwaysApproveRequested !== 'boolean') {
+      return { ok: false, reason: 'alwaysApprove must be boolean' };
+    }
+    let workerPolicyObserved = null;
+    if (opts.workerPolicy) {
+      try {
+        workerPolicyObserved = attestWorkerPolicyObservation(opts.workerPolicy, {
+          autonomy: alwaysApproveRequested ? 'unattended' : 'interactive',
+          access: sandboxRequested === 'off' ? 'full' : 'workspace',
+        });
+      } catch (error) {
+        return { ok: false, code: error?.code, reason: String(error?.message ?? error) };
+      }
+    }
     const childArgs = withGrokModelArgs(this._args, {
       model: modelRequested,
       reasoningEffort: opts.reasoningEffort ?? this._reasoningEffort,
       sandbox: sandboxRequested,
+      alwaysApprove: alwaysApproveRequested,
     });
     const child = this._spawnFn(this._cmd, childArgs, {
       env: opts.replaceEnv
@@ -681,11 +730,22 @@ export class GrokAcpCli {
       modelRequested,
       modelObserved: null,
       sandboxRequested,
+      alwaysApproveRequested,
+      workerPolicyObserved,
     };
     this._sessions.set(worker, session);
     this._attachChild(session);
     const processStarted = processStartedPayload(session.processGeneration, child.pid);
     if (processStarted) this._emit(session, 'lifecycle.process_started', processStarted);
+    if (session.workerPolicyObserved) {
+      this._emit(session, 'worker_policy.observed', {
+        processGeneration: session.processGeneration, pid: child.pid, processGroupId: child.pid,
+        workerPolicyObserved: session.workerPolicyObserved,
+      });
+      if (session.killing || session.closed) {
+        return { ok: false, code: 'provider_ready_refused', reason: 'launch worker policy was rejected by coordinator policy' };
+      }
+    }
     if (opts.timeoutMs > 0) {
       session.wallTimer = setTimeout(() => this._onWallTimeout(session, opts.timeoutMs), opts.timeoutMs);
       if (typeof session.wallTimer.unref === 'function') session.wallTimer.unref();
@@ -740,7 +800,12 @@ export class GrokAcpCli {
       processGeneration: session.processGeneration,
       modelRequested: session.modelRequested, modelObserved: session.modelObserved,
       sandboxRequested: session.sandboxRequested,
+      ...(session.workerPolicyObserved ? { workerPolicyObserved: session.workerPolicyObserved } : {}),
     });
+
+    if (session.killing || session.closed) {
+      return { ok: false, code: 'provider_ready_refused', reason: 'provider readiness was rejected by coordinator policy' };
+    }
 
     // Recovery attaches and proves identity before a durable refinement is allowed to dispatch.
     if (opts.attachOnly === true) return { ok: true, attached: true };

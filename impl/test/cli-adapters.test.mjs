@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { fileURLToPath } from 'node:url';
 import {
   CodexCli, ClaudeCli, ZCodeCli, PiCli, CLI_ADAPTERS,
   parseCodexEvent, parseClaudeEvent, renderPrompt,
@@ -26,6 +27,7 @@ const CLAUDE_LINES = [
   { type: 'assistant', message: { content: [{ type: 'text', text: 'HELLO' }], usage: { output_tokens: 3 } } },
   { type: 'result', subtype: 'success', is_error: false, result: 'HELLO', total_cost_usd: 0.01, usage: { output_tokens: 3 } },
 ];
+const FAKE_CLI_ENV = fileURLToPath(new URL('./fixtures/fake-cli-env.mjs', import.meta.url));
 
 // ---------- codex parser ----------
 
@@ -173,11 +175,62 @@ test('Z-Code injects the Z.ai Anthropic-compatible endpoint into the child env',
   assert.equal(z._cfg.env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'glm-5.2');
 });
 
-test('argv: codex uses exec --json workspace-write; claude uses -p stream-json acceptEdits', () => {
+test('argv: one-shot workers default to approval-free operation and disclose route-specific containment', () => {
   const cargs = new CodexCli()._cfg.args({});
-  assert.ok(cargs.includes('exec') && cargs.includes('--json') && cargs.includes('workspace-write'));
+  assert.ok(cargs.includes('exec') && cargs.includes('--json') && cargs.includes('danger-full-access'));
+  assert.deepEqual(cargs.slice(cargs.indexOf('--ask-for-approval'), cargs.indexOf('--ask-for-approval') + 2), ['--ask-for-approval', 'never']);
+  assert.ok(cargs.indexOf('--ask-for-approval') < cargs.indexOf('exec'));
   const clargs = new ClaudeCli()._cfg.args({});
-  assert.ok(clargs.includes('-p') && clargs.includes('stream-json') && clargs.includes('acceptEdits'));
+  assert.ok(clargs.includes('-p') && clargs.includes('stream-json') && clargs.includes('bypassPermissions'));
+  assert.deepEqual(new CodexCli().card().permissions, {
+    mode: 'never', sandbox: 'danger-full-access', boundary: 'Unattended full host permissions by default; containment is a separate deployment boundary',
+  });
+  assert.deepEqual(new ClaudeCli().card().permissions, {
+    mode: 'bypassPermissions', sandbox: 'unverified',
+    boundary: 'Full same-UID host access by default; filesystem and network containment are unverified',
+  });
+});
+
+test('one-shot workers honor RuntimeIsolation replacement env without inheriting ambient host state', async () => {
+  const originalPoison = process.env.BATON_AMBIENT_POISON;
+  process.env.BATON_AMBIENT_POISON = 'must-not-cross';
+  try {
+    const adapter = new PiCli({
+      cmd: process.execPath, args: () => [FAKE_CLI_ENV], live: true,
+      env: { BATON_ADAPTER_ONLY: 'adapter' },
+    });
+    const terminal = new Promise((resolve) => adapter.onEvent((event) => {
+      if (event.kind === 'lifecycle.turn_completed') resolve(event);
+    }));
+    const ack = await adapter.spawn('runtime-env-worker', {
+      goal: 'observe the child environment', constraints: [], pathScope: ['**'],
+      definitionOfDone: 'environment observed', verification: { command: 'true', expectExit: 0 },
+    }, {
+      live: true, worktree: '/tmp', replaceEnv: true,
+      env: { PATH: process.env.PATH, HOME: '/private/baton-home', BATON_RUNTIME_ONLY: 'runtime' },
+    });
+    assert.equal(ack.ok, true);
+    const event = await terminal;
+    assert.deepEqual(JSON.parse(event.payload.result.summary), {
+      home: '/private/baton-home', runtimeOnly: 'runtime', adapterOnly: 'adapter', ambientPoison: null,
+    });
+  } finally {
+    if (originalPoison === undefined) delete process.env.BATON_AMBIENT_POISON;
+    else process.env.BATON_AMBIENT_POISON = originalPoison;
+  }
+});
+
+test('one-shot workers preserve explicit narrower permission overrides', () => {
+  const codex = new CodexCli({ sandbox: 'read-only', approvalPolicy: 'untrusted' });
+  assert.deepEqual(codex.card().permissions, {
+    mode: 'untrusted', sandbox: 'read-only', boundary: 'Harness sandbox requested; its containment remains separately attested',
+  });
+  assert.deepEqual(codex._cfg.args({}).slice(0, 5), ['--ask-for-approval', 'untrusted', '--sandbox', 'read-only', 'exec']);
+  const claude = new ClaudeCli({ permissionMode: 'acceptEdits' });
+  assert.equal(claude.card().permissions.mode, 'acceptEdits');
+  const argv = claude._cfg.args({});
+  assert.equal(argv[argv.indexOf('--permission-mode') + 1], 'acceptEdits');
+  assert.equal(new ZCodeCli({ permissionMode: 'acceptEdits' }).card().permissions.mode, 'acceptEdits');
 });
 
 test('one-shot argv binds each coordinator-selected model and effort instead of constructor defaults', () => {
@@ -213,6 +266,41 @@ test('renderPrompt puts the pinned verification command in the brief so the work
   assert.match(p, /add rate limiting/);
   assert.match(p, /npm test/);
   assert.match(p, /src\/\*\*/);
+});
+
+test('renderPrompt gives Claude-family providers the complete structured verifier argv', () => {
+  const p = renderPrompt({
+    goal: 'validate the implementation', constraints: [], pathScope: ['impl/**'],
+    definitionOfDone: 'the focused suite passes',
+    verification: { command: 'npm', arguments: ['test', '--prefix', 'impl'], cwd: '.', expectExit: 0 },
+  });
+  assert.match(p, /direct executable and argv \(no shell\)/u);
+  assert.match(p, /Executable \(JSON string\): "npm"/u);
+  assert.ok(p.includes('Arguments (JSON array, in order): ["test","--prefix","impl"]'));
+  assert.doesNotMatch(p, /check your work: `npm`/u);
+});
+
+test('renderPrompt makes a generic Context unit self-describing before repository and verification guidance', () => {
+  const unitId = `context-unit:${'a'.repeat(64)}`;
+  const p = renderPrompt({
+    goal: 'Review only the attached settlement slice', constraints: [], pathScope: ['review.md'],
+    definitionOfDone: 'write one grounded finding',
+    verification: { command: 'node --test settlement.test.mjs', expectExit: 0 },
+    contextInput: {
+      callId: `context-call:${'b'.repeat(64)}`, unitId,
+      value: { path: 'impl/src/coordination-store.mjs', content: 'selected immutable slice' },
+    },
+  });
+  assert.match(p, new RegExp(`Unit: ${unitId}`, 'u'));
+  assert.doesNotMatch(p, /Partition: undefined/u);
+  assert.match(p, /Use the attached value directly/u);
+  assert.match(p, /already dispatched and supervised by Baton/u);
+  assert.match(p, /attached immutable Context is the complete task input/u);
+  assert.match(p, /Writing a named output path does not authorize reading/u);
+  assert.match(p, /Do not search for or launch another Baton CLI, MCP server, or Run/u);
+  assert.match(p, /do not substitute it for analyzing the attached Context/u);
+  assert.ok(p.indexOf('Attached immutable Context') < p.indexOf('Work only within'));
+  assert.ok(p.indexOf('selected immutable slice') < p.indexOf('node --test settlement.test.mjs'));
 });
 
 test('_onData emits each terminal event exactly once and ignores trailing output after terminal', () => {

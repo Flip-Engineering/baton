@@ -1,0 +1,221 @@
+{
+  "record": {
+    "schemaVersion": 1,
+    "deploymentRoot": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-phase85-generic-reduce-yXW9Bc",
+    "runId": "run-da2f74c167cad4fde011017962a7cea9",
+    "readiness": [
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+        "state": "ready",
+        "code": null
+      },
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "state": "ready",
+        "code": null
+      }
+    ],
+    "team": [
+      {
+        "role": "reduce-contract-reviewer",
+        "exact": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "xhigh"
+        }
+      },
+      {
+        "role": "reduce-ax-adversary",
+        "exact": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        }
+      }
+    ],
+    "phase": "selection_required",
+    "attempts": [
+      {
+        "role": "reduce-ax-adversary",
+        "state": "accepted",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "high"
+          },
+          "resolved": {
+            "harness": "codex@codex-cli 0.144.6",
+            "model": "gpt-5.6-sol",
+            "effort": "high"
+          },
+          "observed": {
+            "harness": null,
+            "model": "gpt-5.6-sol",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": "codex@codex-cli 0.144.6",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "high",
+              "resolved": "high",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          }
+        },
+        "taskId": "baton-d5e4fd3f36fa60ff3083d797-attempt-reduce-ax-adversary",
+        "candidateId": "candidate:8ac004508f953b97d304e1c8cbc8fe1f03e5274406defa163da13b0e7a03df9c"
+      },
+      {
+        "role": "reduce-contract-reviewer",
+        "state": "accepted",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "xhigh"
+          },
+          "resolved": {
+            "harness": "codex@codex-cli 0.144.6",
+            "model": "gpt-5.6-sol",
+            "effort": "xhigh"
+          },
+          "observed": {
+            "harness": null,
+            "model": "gpt-5.6-sol",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": "codex@codex-cli 0.144.6",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": "xhigh",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          }
+        },
+        "taskId": "baton-dba57f85720405650748248a-attempt-reduce-contract-reviewer",
+        "candidateId": "candidate:5391d8b511f56df414fa5ff308b161fa05feef1f7428e8bfd2b0b99e7c356405"
+      }
+    ],
+    "candidates": [
+      {
+        "role": "reduce-ax-adversary",
+        "candidateId": "candidate:8ac004508f953b97d304e1c8cbc8fe1f03e5274406defa163da13b0e7a03df9c",
+        "resultSha": "e36b94b40c076452fcf0ff04256a3e1cfa10e0c4",
+        "retainedResultRef": "refs/baton/results/e36b94b40c076452fcf0ff04256a3e1cfa10e0c4",
+        "changedPaths": [
+          "docs/reference/evidence/phase85-generic-reduce-dogfood-live-2026-07-18/review.md"
+        ]
+      },
+      {
+        "role": "reduce-contract-reviewer",
+        "candidateId": "candidate:5391d8b511f56df414fa5ff308b161fa05feef1f7428e8bfd2b0b99e7c356405",
+        "resultSha": "ade5bf6cfa2dba606a097038c581e2fb69567c47",
+        "retainedResultRef": "refs/baton/results/ade5bf6cfa2dba606a097038c581e2fb69567c47",
+        "changedPaths": [
+          "docs/reference/evidence/phase85-generic-reduce-dogfood-live-2026-07-18/review.md"
+        ]
+      }
+    ]
+  },
+  "cleanup": {
+    "stopped": {
+      "stop": {
+        "state": "stopped",
+        "admittedAt": "2026-07-19T01:16:47.988Z",
+        "completedAt": "2026-07-19T01:16:48.493Z",
+        "targetCount": 2,
+        "targetDigest": "ac4bc9af10f2196501947b8ee5fcba21f0670119a658f3f18f2f8e396d89c047",
+        "receipt": {
+          "schemaVersion": 1,
+          "state": "stopped",
+          "scope": "run_subtree",
+          "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+          "runId": "run-da2f74c167cad4fde011017962a7cea9",
+          "targetCount": 2,
+          "remainingCount": 0,
+          "targetDigest": "ac4bc9af10f2196501947b8ee5fcba21f0670119a658f3f18f2f8e396d89c047",
+          "counts": {
+            "pendingCancelled": 0,
+            "killConfirmed": 2,
+            "alreadyTerminal": 0,
+            "processesObserved": 2,
+            "processesClosed": 2
+          },
+          "checks": {
+            "dispatchClosed": true,
+            "interactionsResolved": true,
+            "runAuthorityReleased": true
+          },
+          "effects": {
+            "coordinatorClosed": false,
+            "writerReleased": false,
+            "transportsClosed": false
+          },
+          "receiptDigest": "d03741bddc99da7108c5696c478a375e5327c73f16fd2a77b8f1537ae70cd810"
+        }
+      },
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      }
+    },
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    }
+  }
+}

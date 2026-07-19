@@ -342,6 +342,32 @@ test('a FILE_EDIT outside brief.pathScope produces out_of_scope; one inside does
   assert.ok(!w1.outOfScopePaths.has('src/auth/login.js'));
 });
 
+test('FILE_EDIT projects batched adapter paths as repository-relative worker edits', () => {
+  let state = initialState();
+  state = foldEvent(state, ev({
+    worker: 'w1', kind: KIND.SPAWNED, seq: 1, turnEpoch: 0, actor: 'orchestrator',
+    payload: { taskId: 't1', brief: makeBrief() },
+  }));
+  state = foldEvent(state, ev({
+    worker: 'w1', kind: KIND.TURN_STARTED, seq: 2, turnEpoch: 1,
+    actor: 'orchestrator', payload: {},
+  }));
+  state = foldEvent(state, ev({
+    worker: 'w1', kind: KIND.FILE_EDIT, seq: 3, turnEpoch: 1,
+    payload: {
+      paths: [
+        '/repo/.baton/wt/w1/src/auth/login.js',
+        '/repo/.baton/wt/w1/src/payments/card.js',
+      ],
+    },
+  }));
+  const worker = state.workers.get('w1');
+  assert.deepEqual([...worker.editedPaths].sort(), [
+    'src/auth/login.js', 'src/payments/card.js',
+  ]);
+  assert.deepEqual([...worker.outOfScopePaths], ['src/payments/card.js']);
+});
+
 // ===========================================================================
 // 13. stalled
 // ===========================================================================

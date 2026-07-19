@@ -38,6 +38,7 @@
 //                                     effect-level proof of which directory the child actually runs in.
 //   "REPORT_ENV:<VAR>"             -> completes with result text `env:<VAR>=<value-or-<unset>>` — phase10
 //                                     SC6's effect-level proof of env threading (tests use fake values only).
+//   "REPORT_ARGV"                  -> completes with the JSON encoded child argv.
 //   anything else                  -> emits an assistant text event ("Echo: <text>") then a success
 //                                     result.
 //
@@ -74,6 +75,7 @@ function parseArgs(argv) {
     if (a === '--resume' || a === '-r') out.resume = argv[i + 1];
     else if (a === '--session-id') out.sessionId = argv[i + 1];
     else if (a === '--model') out.model = argv[i + 1];
+    else if (a === '--permission-mode') out.permissionMode = argv[i + 1];
     else if (a === '--fork-session') out.forkSession = true;
   }
   return out;
@@ -203,9 +205,29 @@ function startNonApprovalTurn(text) {
     process.exit(1);
   }
 
+  if (text.includes('TRIGGER_AUTH_REFUSAL')) {
+    emitResult({ text: 'Not logged in · Please run /login', isError: true });
+    currentTurn = null;
+    drainQueue();
+    return;
+  }
+
+  if (text.includes('REPORT_SECRET_STDERR')) {
+    process.stderr.write(process.env.ANTHROPIC_AUTH_TOKEN ?? '');
+    return; // adapter must detect and kill; never provide a competing terminal result
+  }
+
   if (text.includes('REPORT_CWD')) {
     emitAssistantText(`cwd is ${process.cwd()}`);
     emitResult({ text: `cwd:${process.cwd()}` });
+    currentTurn = null;
+    drainQueue();
+    return;
+  }
+
+  if (text.includes('REPORT_ARGV')) {
+    emitAssistantText('argv probe');
+    emitResult({ text: `argv:${JSON.stringify(process.argv.slice(2))}` });
     currentTurn = null;
     drainQueue();
     return;
@@ -240,6 +262,16 @@ function startNonApprovalTurn(text) {
     return;
   }
 
+  const envPresenceMatch = text.match(/REPORT_ENV_PRESENT:([A-Z0-9_]+)/);
+  if (envPresenceMatch) {
+    const name = envPresenceMatch[1];
+    emitAssistantText(`env presence probe ${name}`);
+    emitResult({ text: `env-present:${name}=${process.env[name] === undefined ? 'false' : 'true'}` });
+    currentTurn = null;
+    drainQueue();
+    return;
+  }
+
   emitAssistantText(`Echo: ${text}`);
   emitResult({ text });
   currentTurn = null;
@@ -256,18 +288,25 @@ function handleInterrupt(requestId) {
   drainQueue();
 }
 
-send({
-  type: 'system',
-  subtype: 'init',
-  session_id: sessionId,
-  cwd: process.cwd(),
-  tools: [],
-  model: args.model ?? 'claude-sonnet-5-fake',
-  permissionMode: 'acceptEdits',
-  apiKeySource: 'user',
-  claude_code_version: '2.1.206-fake',
-  capabilities: ['interrupt_receipt_v1'],
-});
+let initEmitted = false;
+function emitInit() {
+  if (initEmitted) return;
+  initEmitted = true;
+  send({
+    type: 'system',
+    subtype: 'init',
+    session_id: sessionId,
+    cwd: process.cwd(),
+    tools: [],
+    model: process.env.FAKE_CLAUDE_REPORTED_MODEL ?? args.model ?? 'claude-sonnet-5-fake',
+    permissionMode: args.permissionMode ?? 'manual',
+    apiKeySource: 'user',
+    claude_code_version: '2.1.211-fake',
+    capabilities: ['interrupt_receipt_v1'],
+  });
+}
+
+if (process.env.FAKE_CLAUDE_INIT_AFTER_INPUT !== '1') emitInit();
 
 const rl = readline.createInterface({ input: process.stdin, terminal: false });
 
@@ -277,6 +316,7 @@ rl.on('line', (line) => {
   try { obj = JSON.parse(line); } catch { return; }
 
   if (obj.type === 'user') {
+    emitInit();
     const text = (obj.message?.content ?? []).map((c) => c.text ?? '').join('');
     if (currentTurn && currentTurn.kind === 'hold') {
       // Erratum E2 (live-faithful): a user frame landing mid-turn is ABSORBED by the running

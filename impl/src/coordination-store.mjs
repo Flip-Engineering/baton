@@ -3,16 +3,81 @@ import {
   readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import {
   GoalPlanValidationError, assertGoalSuccessor, buildAuthoritativeBrief, goalPlanCanonical,
-  goalPlanDigest, normalizeGoalPlanPolicy, normalizeGoalRequest, normalizePlanRequest, planBriefMatches,
+  goalPlanDigest, normalizeGoalPlanPolicy, normalizeGoalRequest, normalizePlanRequest,
+  planBriefMatches, planRouteAuthorityState, planRouteMatches,
 } from './goal-plan.mjs';
 import { usdFromNanos, usdToNanos } from './usd.mjs';
 import {
   CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings,
   normalizeCanonicalOrderMigration, normalizeCanonicalOrderPolicy,
 } from './canonical-order.mjs';
+import { parseRouteTupleKey } from './route-tuple.mjs';
+import { inferTaskTopologyRelation, normalizeTaskTopologyPolicy } from './task-topology.mjs';
+import {
+  normalizeRecoveryAttemptAdmission, normalizeRecoveryAttemptCompletion,
+} from './recovery-attempt.mjs';
+import {
+  normalizeRunLineagePolicy, RUN_ORCHESTRATOR_CAPABILITIES,
+  RUN_ORCHESTRATOR_REVOCATION_REASONS,
+} from './run-lineage.mjs';
+import { LEGACY_WORKFLOW_POLICY, normalizeWorkflowPolicy } from './workflow-policy.mjs';
+import {
+  buildWorkflowRoleCatalog, normalizeWorkflowDefinition, validateWorkflowDefinitionLegacy,
+  validateWorkflowDefinitionV3, workflowAttemptRoute, workflowCatalogRole,
+} from './workflow-definition.mjs';
+import { normalizeContextProgramPolicy } from './context-program-policy.mjs';
+import {
+  contextCellIdentity, contextProgramIsPure, contextSessionIdentity, normalizeContextArtifactRef,
+  normalizeContextAuthority,
+} from './context-authority.mjs';
+import { contextValueDigest, normalizeContextManifest, normalizeContextProgram } from './context-program.mjs';
+import { validatePureContextOutputLineage } from './context-lineage.mjs';
+import { validateContextMapResultLineage } from './context-result-lineage.mjs';
+import { validateContextEffectResultLineage } from './context-effect-result-lineage.mjs';
+import {
+  contextEffectNodeBinding, normalizeContextEffectCall, normalizeContextEffectSource,
+} from './context-call.mjs';
+import {
+  contextMapCallIdentity, contextMapNodeBinding, normalizeContextMapCall,
+} from './context-map.mjs';
+import {
+  normalizeContextResultPathScope, validateContextProviderResultReference,
+} from './context-result.mjs';
+import { pathInScopes } from './path-scope.mjs';
+import {
+  validProcessClosedPayload, validProcessStartedPayload, validRecoveryProcessAbsentPayload,
+} from './process-lifecycle.mjs';
+
+function writerProcessStartIdentity(pid) {
+  try {
+    const value = execFileSync('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], {
+      encoding: 'utf8', maxBuffer: 4_096, stdio: ['ignore', 'pipe', 'ignore'], timeout: 1_000,
+    }).trim();
+    return value && Buffer.byteLength(value) <= 256 ? value : null;
+  } catch { return null; }
+}
+
+function writerOwnerState(owner) {
+  if (!Number.isSafeInteger(owner?.pid) || owner.pid <= 0) return 'unknown';
+  let alive = false;
+  try { process.kill(owner.pid, 0); alive = true; }
+  catch (error) {
+    if (error?.code === 'EPERM') alive = true;
+    else if (error?.code !== 'ESRCH') return 'unknown';
+  }
+  if (!alive) return 'stale';
+  // Legacy v1 records remain fail-closed while a PID is alive. Every newly-created v2 record binds
+  // the kernel-observed process start, so PID reuse is distinguishable on all new deployments.
+  if (owner.schemaVersion !== 2 || typeof owner.pidStart !== 'string') return 'active';
+  const observed = writerProcessStartIdentity(owner.pid);
+  if (!observed) return 'unknown';
+  return observed === owner.pidStart ? 'active' : 'stale';
+}
 
 const CANONICAL_ORDER_MIGRATION = Symbol('canonical-order-migration');
 const CANONICAL_ORDER_RECEIPT = 'canonical-order-receipt.json';
@@ -58,6 +123,9 @@ const REPRESENTATION_AUTHORITY = Object.freeze({
 
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
 function digest(value) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
+function contextChildAccepted(value) {
+  return value?.origin === 'inherited' || value?.state === 'accepted';
+}
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (!value || typeof value !== 'object') return value;
@@ -234,6 +302,46 @@ export class CoordinationStore {
     if (opts.goalPlanPolicy !== undefined) {
       try { this._goalPlanPolicy = freeze(clone(normalizeGoalPlanPolicy(opts.goalPlanPolicy))); }
       catch (error) { throw new TypeError(error?.message ?? 'goal/plan policy is invalid'); }
+    }
+    try { this._workflowPolicy = normalizeWorkflowPolicy(opts.workflowPolicy); }
+    catch (error) { throw new TypeError(error?.message ?? 'Workflow policy is invalid'); }
+    this._contextProgramPolicy = null;
+    this._deploymentBaseSha = opts.deploymentBaseSha ?? null;
+    this._contextEnvironmentDigest = opts.contextEnvironmentDigest ?? null;
+    this._contextReferenceIdentity = opts.contextReferenceIdentity ?? null;
+    this._contextReferenceRead = opts.contextReferenceRead ?? null;
+    this._contextSourceAttest = opts.contextSourceAttest ?? null;
+    this._contextArtifactVerificationStorage = new AsyncLocalStorage();
+    if (opts.contextProgramPolicy !== undefined) {
+      try { this._contextProgramPolicy = normalizeContextProgramPolicy(opts.contextProgramPolicy); }
+      catch (error) { throw new TypeError(error?.message ?? 'Context Program policy is invalid'); }
+      if (!/^[a-f0-9]{40}$/u.test(this._deploymentBaseSha ?? '')
+        || !/^[a-f0-9]{64}$/u.test(this._contextEnvironmentDigest ?? '')
+        || !/^[a-f0-9]{64}$/u.test(this._contextReferenceIdentity ?? '')
+        || typeof this._contextReferenceRead !== 'function'
+        || typeof this._contextSourceAttest !== 'function') {
+        throw new TypeError('Context Program authority requires one deployment tree, environment, and artifact resolver identity');
+      }
+    } else if (opts.deploymentBaseSha !== undefined || opts.contextEnvironmentDigest !== undefined
+      || opts.contextReferenceIdentity !== undefined || opts.contextReferenceRead !== undefined
+      || opts.contextSourceAttest !== undefined) {
+      throw new TypeError('Context Program dependencies require Context Program policy');
+    }
+    this._repoId = opts.repoId ?? this._goalPlanPolicy?.repoId ?? null;
+    if (this._repoId !== null && !validRunId(this._repoId)) {
+      throw new TypeError('coordination repository identity is invalid');
+    }
+    if (this._goalPlanPolicy && this._repoId !== this._goalPlanPolicy.repoId) {
+      throw new TypeError('coordination repository identity differs from goal/plan authority');
+    }
+    this._taskTopologyPolicy = opts.taskTopologyPolicy === undefined
+      ? null : normalizeTaskTopologyPolicy(opts.taskTopologyPolicy);
+    this._runLineagePolicy = opts.runLineagePolicy === undefined
+      ? null : normalizeRunLineagePolicy(opts.runLineagePolicy);
+    if (this._runLineagePolicy && this._repoId === null) {
+      throw Object.assign(new TypeError('run lineage authority requires one deployment repository'), {
+        code: 'run_lineage_policy_invalid',
+      });
     }
     this._resetProjection();
     if (opts.operationalRangeRead !== undefined && typeof opts.operationalRangeRead !== 'function') throw new TypeError('operationalRangeRead must be a function');
@@ -445,6 +553,7 @@ export class CoordinationStore {
   canonicalOrderReceipt() { return clone(this._canonicalOrderReceipt); }
 
   _resetProjection() {
+    this._projectionPoison = null;
     this._events = []; this._byKey = new Map(); this._tasks = new Map(); this._runs = new Map(); this._artifacts = new Map();
     this._reuseDecisions = new Map(); this._reuseSubjects = new Map(); this._reuseRiskGuards = new Map(); this._reusePolicyHeads = new Map(); this._reusePolicyTransitions = [];
     this._routeObservations = new Map();
@@ -455,11 +564,16 @@ export class CoordinationStore {
     this._evidence = new Map(); this._scratchFacts = new Map(); this._scratchClaims = new Map(); this._scratchReads = [];
     this._knowledgeNodes = new Map(); this._knowledgeEdges = new Map(); this._knowledgeNodeHistory = new Map(); this._knowledgeEdgeHistory = new Map(); this._knowledgeReads = []; this._knowledgeRecallAssessments = new Map(); this._contamination = [];
     this._webCommands = new Map(); this._webCommandScopes = new Map(); this._mcpCalls = new Map(); this._mcpCallScopes = new Map();
-    this._fleetDrains = new Map(); this._runStops = new Map(); this._runResultAdoptions = new Map(); this._runResultExports = new Map();
+    this._fleetDrains = new Map(); this._runStops = new Map(); this._runStopByTarget = new Map(); this._runControls = new Map(); this._runResultAdoptions = new Map(); this._runResultExports = new Map();
     this._runVerificationRetries = new Map();
-    this._recoveryDispatches = new Map();
+    this._runOrchestratorLeases = new Map(); this._runLineages = new Map(); this._runLineageEventSeqs = new Map(); this._runChildrenByParent = new Map();
+    this._recoveryDispatches = new Map(); this._taskTopologies = new Map();
+    this._recoveryAttemptsById = new Map(); this._recoveryAttemptHeads = new Map();
     this._providerReceipts = new Map(); this._providerDeliveryIds = new Map(); this._providerProcessing = new Map(); this._providerPending = new Map();
     this._providerSequences = new Map(); this._providerSourceHealth = new Map();
+    this._contextSessions = new Map(); this._contextCells = new Map(); this._contextCalls = new Map();
+    this._contextPrograms = new Map(); this._contextArtifacts = new Map();
+    this._taskResourceReleases = new Map();
   }
 
   _configureAdvisoryFeedCards(cards) {
@@ -478,17 +592,26 @@ export class CoordinationStore {
   claimWriterLease() {
     if (this._writerLease) throw new CoordinationRefusal('coordination writer is already active', 'coordination_writer_busy');
     const path = join(this.root, 'writer.lease'); const token = randomUUID(); const claimToken = randomUUID(); const claimPath = join(this.root, `writer.claim.${claimToken}`);
-    const payload = { schemaVersion: 1, pid: process.pid, token, acquiredAt: this._clock() };
+    const pidStart = writerProcessStartIdentity(process.pid);
+    if (!pidStart) throw new CoordinationRefusal('coordination writer process identity is unavailable', 'coordination_writer_identity_unavailable');
+    const payload = { schemaVersion: 2, pid: process.pid, pidStart, token, acquiredAt: this._clock() };
     const claim = () => writeFileSync(path, `${JSON.stringify(payload)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-    writeFileSync(claimPath, `${JSON.stringify({ schemaVersion: 1, pid: process.pid, token: claimToken, acquiredAt: this._clock() })}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    writeFileSync(claimPath, `${JSON.stringify({ schemaVersion: 2, pid: process.pid, pidStart, token: claimToken, acquiredAt: this._clock() })}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
     try {
       const liveClaims = [];
       for (const name of readdirSync(this.root).filter((item) => item.startsWith('writer.claim.')).sort()) {
         const candidatePath = join(this.root, name); let candidate;
         try { candidate = JSON.parse(readFileSync(candidatePath, 'utf8')); } catch { throw new CoordinationRefusal('coordination writer claim is malformed', 'coordination_writer_busy'); }
-        if (candidate?.schemaVersion !== 1 || !Number.isSafeInteger(candidate.pid) || candidate.pid <= 0 || typeof candidate.token !== 'string' || name !== `writer.claim.${candidate.token}`) throw new CoordinationRefusal('coordination writer claim is malformed', 'coordination_writer_busy');
-        let alive = false; try { process.kill(candidate.pid, 0); alive = true; } catch (cause) { if (cause?.code === 'EPERM') alive = true; }
-        if (!alive) { unlinkSync(candidatePath); continue; }
+        if (![1, 2].includes(candidate?.schemaVersion) || !Number.isSafeInteger(candidate.pid)
+          || candidate.pid <= 0 || typeof candidate.token !== 'string'
+          || (candidate.schemaVersion === 2 && (typeof candidate.pidStart !== 'string'
+            || candidate.pidStart.length === 0 || Buffer.byteLength(candidate.pidStart) > 256))
+          || name !== `writer.claim.${candidate.token}`) {
+          throw new CoordinationRefusal('coordination writer claim is malformed', 'coordination_writer_busy');
+        }
+        const candidateState = writerOwnerState(candidate);
+        if (candidateState === 'stale') { unlinkSync(candidatePath); continue; }
+        if (candidateState === 'unknown') throw new CoordinationRefusal('coordination writer claim ownership is ambiguous', 'coordination_writer_busy');
         liveClaims.push(name);
       }
       // A claim is intentionally a short fail-closed exclusion window, not an election.
@@ -497,16 +620,17 @@ export class CoordinationStore {
       if (liveClaims.some((name) => name !== `writer.claim.${claimToken}`)) throw new CoordinationRefusal('coordination writer claim is already active', 'coordination_writer_busy');
       if (existsSync(path)) {
         let prior; try { prior = JSON.parse(readFileSync(path, 'utf8')); } catch { throw new CoordinationRefusal('coordination writer lease is malformed', 'coordination_writer_busy'); }
-        let alive = false;
-        if (Number.isSafeInteger(prior?.pid) && prior.pid > 0) { try { process.kill(prior.pid, 0); alive = true; } catch (cause) { if (cause?.code === 'EPERM') alive = true; } }
-        if (alive) throw new CoordinationRefusal('coordination writer is already active', 'coordination_writer_busy');
+        const priorState = writerOwnerState(prior);
+        if (priorState !== 'stale') throw new CoordinationRefusal(
+          priorState === 'active' ? 'coordination writer is already active' : 'coordination writer ownership is ambiguous',
+          'coordination_writer_busy');
         unlinkSync(path);
       }
       try { claim(); } catch (error) { if (error?.code === 'EEXIST') throw new CoordinationRefusal('coordination writer is already active', 'coordination_writer_busy'); throw error; }
     } finally {
       try { const observed = JSON.parse(readFileSync(claimPath, 'utf8')); if (observed?.token === claimToken) unlinkSync(claimPath); } catch { /* claim guard was already removed or replaced */ }
     }
-    this._writerLease = freeze({ path, token, pid: process.pid }); this._writerLeaseRequired = true;
+    this._writerLease = freeze({ path, token, pid: process.pid, pidStart }); this._writerLeaseRequired = true;
     try {
       if (this._canonicalOrderPolicy) this._ensureCanonicalOrderReceipt();
       this._reloadProjection();
@@ -515,13 +639,35 @@ export class CoordinationStore {
   }
 
   _assertWriterLease() {
+    if (this._projectionPoison) {
+      throw new CoordinationIntegrityError(
+        `coordination projection is poisoned after durable seq ${this._projectionPoison.seq}; restart and replay are required`,
+        'coordination_projection_poisoned',
+      );
+    }
     const path = join(this.root, 'writer.lease');
     if (!this._writerLease) {
       if (this._writerLeaseRequired || existsSync(path)) throw new CoordinationRefusal('coordination writer authority is absent', 'coordination_writer_lost');
       this.claimWriterLease(); return;
     }
     let observed; try { observed = JSON.parse(readFileSync(path, 'utf8')); } catch { throw new CoordinationRefusal('coordination writer lease is absent or malformed', 'coordination_writer_lost'); }
-    if (observed?.token !== this._writerLease.token || observed?.pid !== this._writerLease.pid) throw new CoordinationRefusal('coordination writer lease was replaced', 'coordination_writer_lost');
+    if (observed?.token !== this._writerLease.token || observed?.pid !== this._writerLease.pid
+      || (observed.pidStart !== undefined && observed.pidStart !== this._writerLease.pidStart)) {
+      throw new CoordinationRefusal('coordination writer lease was replaced', 'coordination_writer_lost');
+    }
+  }
+
+  _poisonProjection(event, error) {
+    this._projectionPoison ??= freeze({
+      schemaVersion: 1, seq: event.seq, kind: event.kind,
+      causeCode: typeof error?.code === 'string' ? error.code : 'projection_apply_failed',
+    });
+    const poisoned = new CoordinationIntegrityError(
+      `coordination projection failed after durable seq ${event.seq}; restart and replay are required`,
+      'coordination_projection_poisoned',
+    );
+    poisoned.cause = error;
+    return poisoned;
   }
 
   releaseWriterLease(options = undefined) {
@@ -535,13 +681,20 @@ export class CoordinationStore {
       let observed;
       try { observed = JSON.parse(readFileSync(lease.path, 'utf8')); }
       catch { throw new CoordinationRefusal('coordination writer lease is absent or malformed', 'coordination_writer_lost'); }
-      if (observed?.token !== lease.token || observed?.pid !== lease.pid) throw new CoordinationRefusal('coordination writer lease was replaced', 'coordination_writer_lost');
+      if (observed?.token !== lease.token || observed?.pid !== lease.pid
+        || (observed.pidStart !== undefined && observed.pidStart !== lease.pidStart)) {
+        throw new CoordinationRefusal('coordination writer lease was replaced', 'coordination_writer_lost');
+      }
       try { unlinkSync(lease.path); }
       catch { throw new CoordinationRefusal('coordination writer lease could not be released', 'coordination_writer_lost'); }
       if (existsSync(lease.path)) throw new CoordinationRefusal('coordination writer lease release was not exact', 'coordination_writer_lost');
       this._writerLease = null; return true;
     }
-    try { const observed = JSON.parse(readFileSync(lease.path, 'utf8')); if (observed?.token === lease.token && observed?.pid === process.pid) unlinkSync(lease.path); }
+    try {
+      const observed = JSON.parse(readFileSync(lease.path, 'utf8'));
+      if (observed?.token === lease.token && observed?.pid === process.pid
+        && (observed.pidStart === undefined || observed.pidStart === lease.pidStart)) unlinkSync(lease.path);
+    }
     catch { /* absent or replaced lease is not ours to remove */ }
     this._writerLease = null; return true;
   }
@@ -576,6 +729,7 @@ export class CoordinationStore {
     if (typeof key !== 'string' || key.length === 0) throw new TypeError('coordination idempotency key required');
     const prior = this._byKey.get(key);
     if (prior) return prior;
+    if (kind === 'task.created') this._validateTaskTopology(payload, null, false);
     const event = freeze({ schemaVersion: 1, seq: this._events.length + 1, ts: fixedTs ?? this._clock(), kind, actor, idempotencyKey: key, payload: freeze(clone(payload)) });
     if (beforeWrite !== null) {
       if (typeof beforeWrite !== 'function') throw new TypeError('coordination before-write gate must be a function');
@@ -585,7 +739,8 @@ export class CoordinationStore {
     this._appendFile(this.file, `${JSON.stringify(event)}\n`, 'utf8');
     this._events.push(event);
     this._byKey.set(key, event);
-    this._apply(event);
+    try { this._apply(event); }
+    catch (error) { throw this._poisonProjection(event, error); }
     this._notifyAppend();
     return event;
   }
@@ -595,7 +750,7 @@ export class CoordinationStore {
     if (!Array.isArray(entries) || entries.length === 0) throw new TypeError('coordination batch requires entries');
     if (batchKind !== null && ![
       'recovery_refinement_create_claim', 'recovery_dispatch_refusal',
-      'goal_plan_node_dispatch', 'goal_plan_recovery_dispatch',
+      'goal_plan_node_dispatch', 'goal_plan_wave_dispatch', 'goal_plan_recovery_dispatch',
     ].includes(batchKind)) {
       throw new TypeError('coordination batch kind is invalid');
     }
@@ -605,6 +760,17 @@ export class CoordinationStore {
       if (typeof entry.auth?.key !== 'string' || entry.auth.key.length === 0) throw new TypeError('coordination idempotency key required');
       if (keys.has(entry.auth.key) || this._byKey.has(entry.auth.key)) throw new CoordinationRefusal(`duplicate batch key ${entry.auth.key}`, 'duplicate_key');
       keys.add(entry.auth.key);
+    }
+    const createdEntries = entries.filter((entry) => entry.kind === 'task.created');
+    for (const created of createdEntries) {
+      const index = entries.indexOf(created);
+      const dispatch = index > 0 && entries[index - 1]?.kind === 'plan.node_dispatched'
+        ? entries[index - 1] : null;
+      const hint = batchKind === 'recovery_refinement_create_claim' || batchKind === 'goal_plan_recovery_dispatch'
+        ? 'recovery'
+        : dispatch?.payload?.preservedResume ? 'preserved_resume'
+          : dispatch?.payload?.revision ? 'revision' : null;
+      this._validateTaskTopology(created.payload, hint, false);
     }
     const start = this._events.length;
     const batchId = batchKind === null ? null : canonicalDigest({
@@ -626,7 +792,8 @@ export class CoordinationStore {
     for (const event of events) {
       this._events.push(event);
       this._byKey.set(event.idempotencyKey, event);
-      this._apply(event);
+      try { this._apply(event); }
+      catch (error) { throw this._poisonProjection(event, error); }
     }
     this._notifyAppend();
     return events;
@@ -636,6 +803,493 @@ export class CoordinationStore {
     for (const waiter of [...this._appendWaiters]) {
       if (this._events.length > waiter.afterSeq) waiter.finish(true);
     }
+  }
+
+  _taskTopologyHint(event) {
+    if (event.batch?.kind === 'recovery_refinement_create_claim'
+      || event.batch?.kind === 'goal_plan_recovery_dispatch') return 'recovery';
+    if (event.batch?.kind === 'goal_plan_node_dispatch') {
+      const dispatch = this._events[event.seq - 2];
+      if (dispatch?.kind === 'plan.node_dispatched' && dispatch.payload?.preservedResume) return 'preserved_resume';
+      if (dispatch?.kind === 'plan.node_dispatched' && dispatch.payload?.revision) return 'revision';
+    }
+    return null;
+  }
+
+  _taskTopologyFailure(message, code, integrity) {
+    throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code);
+  }
+
+  _validateTaskTopology(fields, hint = null, integrity = false) {
+    if (!this._taskTopologyPolicy) return null;
+    const fail = (message, code) => this._taskTopologyFailure(message, code, integrity);
+    const relation = inferTaskTopologyRelation(fields, hint);
+    if (!relation) fail('task refinement relation is missing or unsupported', 'task_topology_relation_invalid');
+    const taskId = fields?.id;
+    const runId = fields?.runId ?? null;
+    if (typeof taskId !== 'string' || taskId.length === 0) fail('task topology identity is invalid', 'task_topology_invalid');
+    if (this._taskTopologies.has(taskId)) fail('task topology identity already exists', 'duplicate_task');
+    const sameRun = [...this._taskTopologies.values()].filter((node) => node.runId === runId);
+    if (sameRun.length >= this._taskTopologyPolicy.maxTasksPerRun) {
+      fail('task topology reached the deployment Run task ceiling', 'task_topology_run_limit');
+    }
+    if (relation === 'root') {
+      if (fields.refines != null) fail('root task cannot refine another task', 'task_topology_relation_invalid');
+      return freeze({ schemaVersion: 1, taskId, runId, relation, parentTaskId: null, depth: 0, ancestors: [] });
+    }
+    const parentTaskId = fields.refines;
+    if (parentTaskId === taskId) {
+      fail('task cannot refine itself', 'task_topology_self_refinement');
+    }
+    const parent = this._tasks.get(parentTaskId);
+    const parentTopology = this._taskTopologies.get(parentTaskId);
+    if (!parent || !parentTopology) fail('task refinement parent is unavailable', 'task_topology_parent_missing');
+    if (parentTopology.ancestors.includes(taskId)) {
+      fail('task refinement would create a lineage cycle', 'task_topology_cycle');
+    }
+    if ((parent.runId ?? null) !== runId || parentTopology.runId !== runId) {
+      fail('task refinement parent belongs to a different Run', 'task_topology_run_mismatch');
+    }
+    const children = [...this._taskTopologies.values()].filter((node) => node.parentTaskId === parentTaskId);
+    if (children.length >= this._taskTopologyPolicy.maxChildrenPerTask) {
+      fail('task refinement reached the deployment parent fanout ceiling', 'task_topology_fanout_limit');
+    }
+    if (children.filter((node) => node.relation === relation).length
+      >= this._taskTopologyPolicy.maxChildrenByRelation[relation]) {
+      fail('task refinement reached its deployment relation fanout ceiling', 'task_topology_relation_limit');
+    }
+    const depth = parentTopology.depth + 1;
+    if (depth > this._taskTopologyPolicy.maxDepth) {
+      fail('task refinement reached the deployment lineage depth ceiling', 'task_topology_depth_limit');
+    }
+    return freeze({
+      schemaVersion: 1, taskId, runId, relation, parentTaskId, depth,
+      ancestors: [...parentTopology.ancestors, parentTaskId],
+    });
+  }
+
+  previewTaskTopology(fields, hint = null) {
+    const node = this._validateTaskTopology(fields, hint, false);
+    return node === null ? null : clone(node);
+  }
+
+  taskTopologyPolicy() { return clone(this._taskTopologyPolicy); }
+
+  repositoryId() { return this._repoId; }
+
+  runLineagePolicy() { return clone(this._runLineagePolicy); }
+
+  runLineagePolicyDigest() {
+    return this._runLineagePolicy ? canonicalDigest(this._runLineagePolicy) : null;
+  }
+
+  _runLineageFailure(message, code, integrity = false) {
+    if (integrity) {
+      const replayCode = code.startsWith('run_orchestrator_')
+        ? 'run_orchestrator_lease_integrity' : 'run_lineage_integrity';
+      throw new CoordinationIntegrityError(message, replayCode);
+    }
+    throw new CoordinationRefusal(message, code);
+  }
+
+  _normalizeRunOrchestratorLeaseRequest(fields, integrity = false) {
+    const fail = (message) => this._runLineageFailure(message, 'run_orchestrator_lease_invalid', integrity);
+    const expected = ['parentTask', 'repoId', 'schemaVersion', 'session'];
+    const parentFields = ['id', 'version'];
+    const sessionFields = ['authorityDigest', 'expiresAt', 'principalId', 'sessionId'];
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+      || Object.keys(fields).sort().join(',') !== expected.join(',') || fields.schemaVersion !== 1
+      || !validRunId(fields.repoId) || !fields.parentTask || Array.isArray(fields.parentTask)
+      || Object.keys(fields.parentTask).sort().join(',') !== parentFields.join(',')
+      || !boundedText(fields.parentTask.id, 4_096)
+      || !Number.isSafeInteger(fields.parentTask.version) || fields.parentTask.version <= 0
+      || !fields.session || Array.isArray(fields.session)
+      || Object.keys(fields.session).sort().join(',') !== sessionFields.join(',')
+      || !validRunId(fields.session.principalId) || !validRunId(fields.session.sessionId)
+      || !/^[a-f0-9]{64}$/.test(fields.session.authorityDigest ?? '')
+      || !Number.isFinite(Date.parse(fields.session.expiresAt ?? ''))
+      || new Date(Date.parse(fields.session.expiresAt)).toISOString() !== fields.session.expiresAt) {
+      fail('run orchestrator lease request is invalid');
+    }
+    return freeze(clone(fields));
+  }
+
+  _deriveRunOrchestratorLeasePayload(request, event, integrity = false) {
+    const fail = (message, code = 'run_orchestrator_lease_invalid') => this._runLineageFailure(message, code, integrity);
+    if (!this._runLineagePolicy) fail('run lineage authority is not configured', 'run_lineage_policy_invalid');
+    if (request.repoId !== this._repoId) {
+      fail('run orchestrator repository differs from deployment authority', 'run_orchestrator_repository_mismatch');
+    }
+    const task = this._tasks.get(request.parentTask.id);
+    if (!task || task.version !== request.parentTask.version) fail('run orchestrator parent task is stale', 'run_orchestrator_parent_stale');
+    if (task.status !== 'working' || !validRunId(task.assignee) || !validRunId(task.runId)) {
+      fail('run orchestrator parent task is inactive', 'run_orchestrator_parent_inactive');
+    }
+    if (!Array.isArray(task.brief?.capabilities) || !task.brief.capabilities.includes('baton_orchestrator')) {
+      fail('run orchestrator capability is required', 'run_orchestrator_capability_required');
+    }
+    this._assertRunAdmissionOpen(task.runId, integrity);
+    const issuedAt = event.ts;
+    if (!Number.isFinite(Date.parse(issuedAt ?? ''))
+      || new Date(Date.parse(issuedAt)).toISOString() !== issuedAt
+      || Date.parse(request.session.expiresAt) <= Date.parse(issuedAt)) {
+      fail('run orchestrator lease timestamp is invalid');
+    }
+    const identity = {
+      repoId: request.repoId,
+      parentRunId: task.runId,
+      parentTaskId: request.parentTask.id,
+      parentTaskVersion: request.parentTask.version,
+      workerId: task.assignee,
+      principalId: request.session.principalId,
+      sessionId: request.session.sessionId,
+      sessionAuthorityDigest: request.session.authorityDigest,
+    };
+    const leaseId = `run-orchestrator-lease:${canonicalDigest(identity)}`;
+    const expiresAt = new Date(Math.min(
+      Date.parse(request.session.expiresAt),
+      Date.parse(issuedAt) + this._runLineagePolicy.leaseTtlMs,
+    )).toISOString();
+    const core = {
+      schemaVersion: 1,
+      scope: 'application_run_subtree',
+      repoId: request.repoId,
+      leaseId,
+      parent: {
+        runId: task.runId, taskId: task.id, taskVersion: task.version, workerId: task.assignee,
+      },
+      session: clone(request.session),
+      capabilities: [...RUN_ORCHESTRATOR_CAPABILITIES],
+      issuedAt,
+      expiresAt,
+      policyDigest: canonicalDigest(this._runLineagePolicy),
+      requestDigest: canonicalDigest(request),
+    };
+    return freeze({ ...core, leaseDigest: canonicalDigest(core) });
+  }
+
+  _validateRunOrchestratorLeaseIssued(payload, event, integrity = false) {
+    const fail = (message, code = 'run_orchestrator_lease_invalid') => this._runLineageFailure(message, code, integrity);
+    const fields = [
+      'capabilities', 'expiresAt', 'issuedAt', 'leaseDigest', 'leaseId', 'parent', 'policyDigest',
+      'repoId', 'requestDigest', 'schemaVersion', 'scope', 'session',
+    ];
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || Object.keys(payload).sort().join(',') !== fields.sort().join(',')
+      || payload.schemaVersion !== 1 || payload.scope !== 'application_run_subtree') {
+      fail('run orchestrator lease payload is invalid');
+    }
+    const request = this._normalizeRunOrchestratorLeaseRequest({
+      schemaVersion: 1,
+      repoId: payload.repoId,
+      parentTask: { id: payload.parent?.taskId, version: payload.parent?.taskVersion },
+      session: payload.session,
+    }, integrity);
+    const expected = this._deriveRunOrchestratorLeasePayload(request, event, integrity);
+    if (canonicalDigest(payload) !== canonicalDigest(expected)
+      || event.idempotencyKey !== `run.orchestrator_lease:${expected.leaseId}`
+      || !boundedText(event.actor, 256)) fail('run orchestrator lease binding is invalid');
+    return expected;
+  }
+
+  _validateRunOrchestratorLeaseRevoked(payload, event, integrity = false) {
+    const fail = (message, code = 'run_orchestrator_lease_invalid') => this._runLineageFailure(message, code, integrity);
+    const fields = ['leaseDigest', 'leaseId', 'reason', 'revocationDigest', 'schemaVersion'];
+    if (!payload || Object.keys(payload).sort().join(',') !== fields.sort().join(',')
+      || payload.schemaVersion !== 1 || !RUN_ORCHESTRATOR_REVOCATION_REASONS.includes(payload.reason)
+      || !/^[a-f0-9]{64}$/.test(payload.leaseDigest ?? '')
+      || !/^[a-f0-9]{64}$/.test(payload.revocationDigest ?? '')) fail('run orchestrator lease revocation is invalid');
+    const lease = this._runOrchestratorLeases.get(payload.leaseId);
+    if (!lease || lease.status !== 'active' || lease.leaseDigest !== payload.leaseDigest) {
+      fail('run orchestrator lease revocation has no active authority', 'run_orchestrator_lease_not_found');
+    }
+    const { revocationDigest, ...core } = payload;
+    if (revocationDigest !== canonicalDigest(core)
+      || event.idempotencyKey !== `run.orchestrator_lease.revoke:${payload.leaseId}`
+      || !boundedText(event.actor, 256)) fail('run orchestrator lease revocation binding is invalid');
+    return lease;
+  }
+
+  _activeRunOrchestratorLease(auth, now = this._clock()) {
+    const lease = this._runOrchestratorLeases.get(auth?.orchestratorLeaseId);
+    if (!lease) this._runLineageFailure('run orchestrator lease was not found', 'run_orchestrator_lease_not_found');
+    if (lease.status === 'revoked') this._runLineageFailure('run orchestrator lease is revoked', 'run_orchestrator_lease_revoked');
+    if (Date.parse(now) >= Date.parse(lease.expiresAt)) this._runLineageFailure('run orchestrator lease is expired', 'run_orchestrator_lease_expired');
+    if (auth?.principalId !== lease.session.principalId || auth?.sessionId !== lease.session.sessionId
+      || auth?.sessionAuthorityDigest !== lease.session.authorityDigest) {
+      this._runLineageFailure('run orchestrator session does not match the lease', 'run_orchestrator_session_mismatch');
+    }
+    const task = this._tasks.get(lease.parent.taskId);
+    if (task && task.status !== 'working') this._runLineageFailure('run orchestrator parent task is inactive', 'run_orchestrator_parent_inactive');
+    if (!task || task.version !== lease.parent.taskVersion || task.assignee !== lease.parent.workerId) {
+      this._runLineageFailure('run orchestrator parent task is stale', 'run_orchestrator_parent_stale');
+    }
+    this._assertRunAdmissionOpen(lease.parent.runId);
+    return lease;
+  }
+
+  _runIdentityHasEffects(runId, ignoredSeq = null) {
+    if (this._runLineages.has(runId) || this._runs.has(runId) || this._runStopByTarget.has(runId)
+      || [...this._tasks.values()].some((task) => task.runId === runId)
+      || [...this._goals.values()].some((goal) => goal.runId === runId)
+      || [...this._plans.values()].some((plan) => plan.runId === runId)
+      || [...this._runResultAdoptions.values()].some((row) => row.runId === runId)
+      || [...this._runResultExports.values()].some((row) => row.runId === runId)
+      || [...this._runVerificationRetries.values()].some((row) => row.runId === runId)
+      || [...this._recoveryAttemptsById.values()].some((row) => row.runId === runId)) return true;
+    return this._events.some((row) => row.seq !== ignoredSeq && (
+      row.payload?.runId === runId || row.payload?.childRunId === runId
+      || row.payload?.goal?.runId === runId || row.payload?.plan?.runId === runId
+    ));
+  }
+
+  _deriveRunLineagePayload(request, lease, ignoredSeq = null, integrity = false) {
+    const fail = (message, code = 'run_lineage_invalid') => this._runLineageFailure(message, code, integrity);
+    if (request.repoId !== lease.repoId) fail('run lineage repository differs from its lease', 'run_lineage_invalid');
+    if (this._runIdentityHasEffects(request.childRunId, ignoredSeq)) fail('child Run identity already has effects', 'run_lineage_conflict');
+    const parentLineage = this._runLineages.get(lease.parent.runId) ?? null;
+    const rootRunId = parentLineage?.rootRunId ?? lease.parent.runId;
+    const depth = (parentLineage?.depth ?? 0) + 1;
+    const ancestors = parentLineage
+      ? [...parentLineage.ancestors, lease.parent.runId] : [lease.parent.runId];
+    if (ancestors.includes(request.childRunId)) fail('run lineage would create a cycle', 'run_lineage_cycle');
+    if (depth > this._runLineagePolicy.maxDepth) fail('run lineage depth ceiling reached', 'run_lineage_depth');
+    if (this.runChildren(lease.parent.runId).length >= this._runLineagePolicy.maxChildrenPerRun) {
+      fail('run lineage child ceiling reached', 'run_lineage_children');
+    }
+    if (this.runDescendants(rootRunId).length >= this._runLineagePolicy.maxDescendantsPerRoot) {
+      fail('run lineage descendant ceiling reached', 'run_lineage_descendants');
+    }
+    const core = {
+      schemaVersion: 1,
+      scope: 'application_run_child',
+      repoId: request.repoId,
+      rootRunId,
+      parentRunId: lease.parent.runId,
+      childRunId: request.childRunId,
+      depth,
+      ancestors,
+      parent: {
+        taskId: lease.parent.taskId,
+        taskVersion: lease.parent.taskVersion,
+        workerId: lease.parent.workerId,
+      },
+      parentLineageEvent: parentLineage
+        ? this._runLineageEventSeqs.get(parentLineage.childRunId) : null,
+      lease: { id: lease.leaseId, digest: lease.leaseDigest, issuedEvent: lease.issuedEvent },
+      intentDigest: request.intentDigest,
+      policyDigest: canonicalDigest(this._runLineagePolicy),
+      requestDigest: canonicalDigest({ ...request, orchestratorLeaseId: lease.leaseId }),
+    };
+    return freeze({ ...core, admissionDigest: canonicalDigest(core) });
+  }
+
+  _validateRunLineageAdmission(payload, event, integrity = false) {
+    const fail = (message, code = 'run_lineage_invalid') => this._runLineageFailure(message, code, integrity);
+    const fields = [
+      'admissionDigest', 'ancestors', 'childRunId', 'depth', 'intentDigest', 'lease',
+      'parent', 'parentLineageEvent', 'parentRunId', 'policyDigest', 'repoId', 'requestDigest',
+      'rootRunId', 'schemaVersion', 'scope',
+    ];
+    if (!payload || Object.keys(payload).sort().join(',') !== fields.sort().join(',')
+      || payload.schemaVersion !== 1 || payload.scope !== 'application_run_child'
+      || !validRunId(payload.childRunId) || !/^[a-f0-9]{64}$/.test(payload.intentDigest ?? '')) {
+      fail('run lineage admission is invalid');
+    }
+    const lease = this._runOrchestratorLeases.get(payload.lease?.id);
+    if (!lease || lease.status !== 'active' || lease.leaseDigest !== payload.lease?.digest
+      || lease.issuedEvent !== payload.lease?.issuedEvent) fail('run lineage lease binding is invalid', 'run_orchestrator_lease_not_found');
+    const request = freeze({
+      schemaVersion: 1, repoId: payload.repoId,
+      childRunId: payload.childRunId, intentDigest: payload.intentDigest,
+    });
+    const expected = this._deriveRunLineagePayload(request, lease, event.seq, integrity);
+    if (canonicalDigest(payload) !== canonicalDigest(expected)
+      || event.idempotencyKey !== `run.lineage:${payload.childRunId}`
+      || !boundedText(event.actor, 256)) fail('run lineage admission binding is invalid');
+    return expected;
+  }
+
+  issueRunOrchestratorLease(fields, auth) {
+    const request = this._normalizeRunOrchestratorLeaseRequest(fields);
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'run.orchestrator_lease_issued' || prior.actor !== auth?.actor
+        || prior.payload?.requestDigest !== canonicalDigest(request)) {
+        this._runLineageFailure('run orchestrator lease idempotency conflict', 'run_orchestrator_lease_conflict');
+      }
+      return freeze({
+        ok: true, result: 'replay', event: clone(prior),
+        lease: this.runOrchestratorLease(prior.payload.leaseId),
+      });
+    }
+    if (!boundedText(auth?.actor, 256)) {
+      this._runLineageFailure('run orchestrator lease actor is invalid', 'run_orchestrator_lease_invalid');
+    }
+    const issuedAt = this._clock();
+    const preview = { ts: issuedAt, actor: auth.actor, idempotencyKey: auth?.key };
+    const payload = this._deriveRunOrchestratorLeasePayload(request, preview);
+    if (auth?.key !== `run.orchestrator_lease:${payload.leaseId}`) {
+      this._runLineageFailure('run orchestrator lease authority is invalid', 'run_orchestrator_lease_invalid');
+    }
+    if (this._runOrchestratorLeases.has(payload.leaseId)) {
+      this._runLineageFailure('run orchestrator lease identity conflict', 'run_orchestrator_lease_conflict');
+    }
+    const event = this._append('run.orchestrator_lease_issued', payload, auth, issuedAt);
+    return freeze({ ok: true, result: 'issued', event: clone(event), lease: this.runOrchestratorLease(payload.leaseId) });
+  }
+
+  revokeRunOrchestratorLease(fields, auth) {
+    const expected = ['leaseDigest', 'leaseId', 'reason', 'schemaVersion'];
+    if (!fields || Object.keys(fields).sort().join(',') !== expected.sort().join(',')
+      || fields.schemaVersion !== 1 || !boundedText(fields.leaseId, 512)
+      || !/^[a-f0-9]{64}$/.test(fields.leaseDigest ?? '')
+      || !RUN_ORCHESTRATOR_REVOCATION_REASONS.includes(fields.reason)
+      || auth?.key !== `run.orchestrator_lease.revoke:${fields.leaseId}`
+      || !boundedText(auth?.actor, 256)) {
+      this._runLineageFailure('run orchestrator lease revocation request is invalid', 'run_orchestrator_lease_invalid');
+    }
+    const core = clone(fields);
+    const payload = freeze({ ...core, revocationDigest: canonicalDigest(core) });
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      if (prior.kind !== 'run.orchestrator_lease_revoked' || prior.actor !== auth.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
+        this._runLineageFailure('run orchestrator lease revocation conflict', 'run_orchestrator_lease_conflict');
+      }
+      return freeze({ ok: true, result: 'replay', event: clone(prior), lease: this.runOrchestratorLease(fields.leaseId) });
+    }
+    const preview = { seq: this._events.length + 1, actor: auth.actor, idempotencyKey: auth.key, payload };
+    this._validateRunOrchestratorLeaseRevoked(payload, preview);
+    const event = this._append('run.orchestrator_lease_revoked', payload, auth);
+    return freeze({ ok: true, result: 'revoked', event: clone(event), lease: this.runOrchestratorLease(fields.leaseId) });
+  }
+
+  runOrchestratorLease(leaseId) {
+    return clone(this._runOrchestratorLeases.get(leaseId) ?? null);
+  }
+
+  activeRunOrchestratorLeaseForSession(fields) {
+    const expected = ['expiresAt', 'principalId', 'repoId', 'sessionId'];
+    if (!fields || Object.keys(fields).sort().join(',') !== expected.sort().join(',')
+      || !validRunId(fields.repoId) || !validRunId(fields.principalId) || !validRunId(fields.sessionId)
+      || !Number.isFinite(Date.parse(fields.expiresAt ?? ''))
+      || new Date(Date.parse(fields.expiresAt)).toISOString() !== fields.expiresAt) {
+      this._runLineageFailure('run orchestrator session lookup is invalid', 'run_orchestrator_lease_invalid');
+    }
+    const matches = [...this._runOrchestratorLeases.values()].filter((lease) => {
+      if (lease.repoId !== fields.repoId
+        || lease.session.principalId !== fields.principalId || lease.session.sessionId !== fields.sessionId
+        || lease.session.expiresAt !== fields.expiresAt) return false;
+      return true;
+    });
+    if (matches.length > 1) {
+      this._runLineageFailure('run orchestrator session resolves ambiguously', 'run_orchestrator_lease_conflict');
+    }
+    if (matches.length === 0) return null;
+    const lease = matches[0];
+    return clone(this._activeRunOrchestratorLease({
+      orchestratorLeaseId: lease.leaseId,
+      principalId: fields.principalId,
+      sessionId: fields.sessionId,
+      sessionAuthorityDigest: lease.session.authorityDigest,
+    }));
+  }
+
+  admitRunLineage(fields, auth) {
+    const expected = ['childRunId', 'intentDigest', 'repoId', 'schemaVersion'];
+    if (!fields || Object.keys(fields).sort().join(',') !== expected.sort().join(',')
+      || fields.schemaVersion !== 1 || !validRunId(fields.repoId) || !validRunId(fields.childRunId)
+      || !/^[a-f0-9]{64}$/.test(fields.intentDigest ?? '') || !boundedText(auth?.actor, 256)
+      || !boundedText(auth?.key, 512) || !boundedText(auth?.orchestratorLeaseId, 512)) {
+      this._runLineageFailure('run lineage request is invalid', 'run_lineage_invalid');
+    }
+    const request = freeze(clone(fields));
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      const lease = this._runOrchestratorLeases.get(auth.orchestratorLeaseId);
+      const sameSession = lease && auth.principalId === lease.session.principalId
+        && auth.sessionId === lease.session.sessionId
+        && auth.sessionAuthorityDigest === lease.session.authorityDigest;
+      if (prior.kind !== 'run.lineage_admitted' || prior.actor !== auth.actor || !sameSession
+        || prior.payload?.requestDigest !== canonicalDigest({ ...request, orchestratorLeaseId: auth.orchestratorLeaseId })) {
+        this._runLineageFailure('run lineage idempotency conflict', 'run_lineage_conflict');
+      }
+      return freeze({ ok: true, result: 'replay', event: clone(prior), lineage: this.runLineage(prior.payload.childRunId) });
+    }
+    if (auth.key !== `run.lineage:${request.childRunId}`) {
+      this._runLineageFailure('run lineage authority is invalid', 'run_lineage_invalid');
+    }
+    const lease = this._activeRunOrchestratorLease(auth);
+    const payload = this._deriveRunLineagePayload(request, lease);
+    const event = this._append('run.lineage_admitted', payload, auth);
+    return freeze({ ok: true, result: 'admitted', event: clone(event), lineage: this.runLineage(request.childRunId) });
+  }
+
+  runLineage(runId) { return clone(this._runLineages.get(runId) ?? null); }
+
+  runChildren(runId) {
+    return [...(this._runChildrenByParent.get(runId) ?? [])]
+      .map((childRunId) => clone(this._runLineages.get(childRunId)))
+      .filter(Boolean);
+  }
+
+  runDescendants(runId) {
+    return [...this._runLineages.values()]
+      .filter((lineage) => lineage.ancestors.includes(runId))
+      .map(clone);
+  }
+
+  authorizeRunOrchestratorCommand(fields, auth) {
+    const expected = ['command', 'repoId', 'runId', 'schemaVersion'];
+    if (!fields || Object.keys(fields).sort().join(',') !== expected.sort().join(',')
+      || fields.schemaVersion !== 1 || !validRunId(fields.repoId) || !validRunId(fields.runId)
+      || !boundedText(fields.command, 256)) {
+      this._runLineageFailure('run orchestrator command is invalid', 'run_orchestrator_command_forbidden');
+    }
+    const lease = this._activeRunOrchestratorLease(auth);
+    if (!RUN_ORCHESTRATOR_CAPABILITIES.includes(fields.command)) {
+      this._runLineageFailure('run orchestrator command is forbidden', 'run_orchestrator_command_forbidden');
+    }
+    const target = this._runLineages.get(fields.runId);
+    const ancestorIndex = target?.ancestors.indexOf(lease.parent.runId) ?? -1;
+    const firstChildRunId = ancestorIndex < 0 ? null
+      : (ancestorIndex + 1 < target.ancestors.length
+        ? target.ancestors[ancestorIndex + 1] : target.childRunId);
+    const firstLineage = firstChildRunId ? this._runLineages.get(firstChildRunId) : null;
+    if (fields.repoId !== lease.repoId || !target || !firstLineage
+      || firstLineage.parentRunId !== lease.parent.runId || firstLineage.lease.id !== lease.leaseId) {
+      this._runLineageFailure('run orchestrator command is outside the lease subtree', 'run_orchestrator_scope_forbidden');
+    }
+    return freeze({
+      ok: true, leaseId: lease.leaseId, command: fields.command,
+      repoId: fields.repoId, runId: fields.runId,
+    });
+  }
+
+  taskTopologyNode(taskId) {
+    const node = this._taskTopologies.get(taskId);
+    if (!node) return null;
+    const children = [...this._taskTopologies.values()].filter((candidate) => candidate.parentTaskId === taskId);
+    return freeze({
+      ...clone(node), childCount: children.length,
+      childrenByRelation: Object.fromEntries(
+        ['follow_up', 'oracle', 'preserved_resume', 'recovery', 'review', 'revision']
+          .map((relation) => [relation, children.filter((child) => child.relation === relation).length]),
+      ),
+    });
+  }
+
+  taskTopology(runId = null) {
+    const tasks = [...this._taskTopologies.values()]
+      .filter((node) => node.runId === runId)
+      .map((node) => this.taskTopologyNode(node.taskId))
+      .sort((left, right) => left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : 0);
+    return freeze({
+      schemaVersion: 1, runId,
+      policyDigest: this._taskTopologyPolicy ? canonicalDigest(this._taskTopologyPolicy) : null,
+      tasks,
+    });
   }
 
   _recoveryBatchIdentity(kind, events) {
@@ -719,10 +1373,66 @@ export class CoordinationStore {
     for (let index = 0; index < this._events.length; index += 1) {
       const first = this._events[index];
       const isPlanRecovery = first.batch?.kind === 'goal_plan_recovery_dispatch';
+      const isPlanWave = first.batch?.kind === 'goal_plan_wave_dispatch';
       const isDispatch = first.kind === 'plan.node_dispatched'
-        || ['goal_plan_node_dispatch', 'goal_plan_recovery_dispatch'].includes(first.batch?.kind);
+        || ['goal_plan_node_dispatch', 'goal_plan_wave_dispatch', 'goal_plan_recovery_dispatch'].includes(first.batch?.kind);
       const isBoundTask = first.kind === 'task.created' && first.payload?.brief?.goalPlan;
       if (!isDispatch && !isBoundTask) continue;
+      if (isPlanWave) {
+        const count = first.batch?.count;
+        const events = Number.isSafeInteger(count) && count >= 4 && count % 2 === 0
+          ? this._events.slice(index, index + count) : [];
+        const exactBatch = events.length === count
+          && first.kind === 'plan.node_dispatched' && first.batch.index === 0
+          && /^[a-f0-9]{64}$/.test(first.batch.id ?? '')
+          && this._recoveryBatchIdentity('goal_plan_wave_dispatch', events) === first.batch.id
+          && events.every((event, offset) => event.seq === first.seq + offset
+            && event.ts === first.ts && event.actor === first.actor
+            && event.batch?.schemaVersion === 1 && event.batch.kind === 'goal_plan_wave_dispatch'
+            && event.batch.id === first.batch.id && event.batch.index === offset
+            && event.batch.count === count)
+          && events.every((event, offset) => offset % 2 === 0
+            ? event.kind === 'plan.node_dispatched'
+              && event.payload?.wave?.index === offset / 2
+              && event.payload?.wave?.count === count / 2
+            : event.kind === 'task.created'
+              && event.idempotencyKey === `${events[offset - 1].idempotencyKey}:task`
+              && events[offset - 1].payload?.taskId === event.payload?.id
+              && events[offset - 1].payload?.taskPayloadDigest === canonicalDigest(event.payload)
+              && canonicalDigest(events[offset - 1].payload?.binding) === canonicalDigest(event.payload?.brief?.goalPlan));
+        const waveDigests = new Set(events.filter((_, offset) => offset % 2 === 0)
+          .map((event) => event.payload?.wave?.digest));
+        const reconstructedEntries = events.filter((_, offset) => offset % 2 === 0)
+          .map((dispatch, memberIndex) => {
+            const p = dispatch.payload; const binding = p?.binding;
+            return {
+              fields: events[memberIndex * 2 + 1]?.payload,
+              gate: {
+                goalId: binding?.goalId, goalVersion: binding?.goalVersion,
+                goalDigest: binding?.goalDigest, planId: binding?.planId,
+                planVersion: binding?.planVersion, planDigest: binding?.planDigest,
+                nodeKey: binding?.nodeKey, expectedDispatchVersion: 0,
+                capabilities: p?.capabilities, effects: p?.effects,
+                ...(Object.hasOwn(p ?? {}, 'requiredEffects')
+                  ? { requiredEffects: p.requiredEffects } : {}),
+              },
+              route: p?.route,
+            };
+          });
+        const expectedWaveDigest = goalPlanDigest({
+          authority: first.payload?.authority,
+          entries: reconstructedEntries,
+        });
+        if (!exactBatch || waveDigests.size !== 1
+          || [...waveDigests][0] !== expectedWaveDigest) {
+          fail(`goal/plan wave dispatch at seq ${first.seq} is torn or mismatched`);
+        }
+        for (let offset = 0; offset < count; offset += 2) {
+          this._validateGoalPlanDispatchPair(events[offset], events[offset + 1], true);
+        }
+        index += count - 1;
+        continue;
+      }
       if (isPlanRecovery) {
         const second = this._events[index + 1]; const third = this._events[index + 2];
         const batchFields = ['count', 'id', 'index', 'kind', 'schemaVersion'].sort().join(',');
@@ -781,6 +1491,211 @@ export class CoordinationStore {
     return state;
   }
 
+  // PS5: a preserved-resume attestation is the exact, immutable coordinate set that authorizes one
+  // re-dispatch of an already-cancelled node: the prior task id, the pinned checkpoint SHA, and the
+  // immutable checkpoint ref. It is carried inside the dispatch payload so both prospective and
+  // integrity validation read the same attestation without a side channel. Returns a frozen
+  // normalized attestation or null when none/invalid.
+  _validPreservedResumeAttestation(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const names = ['priorTaskId', 'checkpointSha', 'checkpointRef'];
+    if (Object.keys(value).sort().join(',') !== names.sort().join(',')) return null;
+    const { priorTaskId, checkpointSha, checkpointRef } = value;
+    if (!boundedText(priorTaskId, 4_096) || !/^[a-f0-9]{40,64}$/u.test(checkpointSha ?? '')
+      || typeof checkpointRef !== 'string'
+      || !/^refs\/baton\/checkpoints\/[a-f0-9]{40,64}$/u.test(checkpointRef)) return null;
+    return freeze({ priorTaskId, checkpointSha, checkpointRef });
+  }
+
+  _workflowRevisionAuthority(plan, node, throughSeq = this._events.length, integrity = false) {
+    const fail = (message) => this._goalPlanFailure(message,
+      integrity ? 'workflow_revision_integrity' : 'workflow_revision_invalid', integrity);
+    const revision = node?.revision;
+    if (!revision) fail('Plan node has no workflow revision authority');
+    const predecessor = plan?.predecessor;
+    if (!predecessor || canonicalDigest(predecessor) !== canonicalDigest(revision.predecessorPlan)
+      || plan.version !== predecessor.version + 1 || node.deps.length !== 0
+      || plan.nodes.filter((candidate) => Object.hasOwn(candidate, 'revision')).length !== 1) {
+      fail('workflow revision is not a root node of the immediate successor Plan');
+    }
+    const sourcePlan = this._plans.get(this._planVersionKey(
+      revision.predecessorPlan.planId, revision.predecessorPlan.version,
+    ));
+    if (!sourcePlan || sourcePlan.digest !== revision.predecessorPlan.digest
+      || sourcePlan.repoId !== plan.repoId || sourcePlan.runId !== plan.runId
+      || canonicalDigest(sourcePlan.goal) !== canonicalDigest(plan.goal)) {
+      fail('workflow revision predecessor Plan is unavailable');
+    }
+    const goal = this._goals.get(this._goalVersionKey(plan.goal.goalId, plan.goal.version));
+    const lineage = [];
+    const seenPlans = new Set();
+    let cursor = plan;
+    while (cursor) {
+      const key = this._planVersionKey(cursor.planId, cursor.version);
+      if (seenPlans.has(key) || lineage.length >= this._goalPlanPolicy.limits.maxPlanVersions) {
+        fail('workflow revision Plan ancestry is cyclic or exceeds structural authority');
+      }
+      seenPlans.add(key);
+      lineage.push(cursor);
+      if (cursor.predecessor === null) break;
+      const prior = this._plans.get(this._planVersionKey(
+        cursor.predecessor.planId, cursor.predecessor.version,
+      ));
+      if (!prior || prior.digest !== cursor.predecessor.digest
+        || prior.repoId !== plan.repoId || prior.runId !== plan.runId
+        || canonicalDigest(prior.goal) !== canonicalDigest(plan.goal)) {
+        fail('workflow revision Plan ancestry is incomplete or changed');
+      }
+      cursor = prior;
+    }
+    const cumulative = lineage.reduce((sum, ancestor) => ({
+      tokens: sum.tokens + ancestor.totals.tokens,
+      usd: sum.usd + usdToNanos(ancestor.totals.usd),
+      wallMin: sum.wallMin + ancestor.totals.wallMin,
+      providerTurns: sum.providerTurns + ancestor.totals.providerTurns,
+    }), { tokens: 0, usd: 0, wallMin: 0, providerTurns: 0 });
+    if (!goal || goal.digest !== plan.goal.digest
+      || cumulative.tokens > goal.budget.tokens
+      || cumulative.usd > usdToNanos(goal.budget.usd)
+      || cumulative.wallMin > goal.budget.wallMin
+      || cumulative.providerTurns > goal.budget.providerTurns) {
+      fail('workflow revision cumulative Plan authority exceeds its Goal budget');
+    }
+    const prefix = this._events.filter((event) => event.seq <= throughSeq);
+    const definition = prefix.find((event) => event.kind === 'driver.recorded'
+      && event.payload?.kind === 'application.workflow_definition_bound'
+      && event.payload?.repoId === plan.repoId && event.payload?.runId === plan.runId
+      && event.payload?.planDigest === sourcePlan.digest
+      && event.payload?.definitionDigest === revision.workflow.definitionDigest);
+    const definitionCore = definition ? Object.fromEntries(Object.entries(definition.payload)
+      .filter(([key]) => !['kind', 'definitionDigest'].includes(key))) : null;
+    if (!definition || definition.actor !== 'application:workflow-registry'
+      || definition.idempotencyKey !== `application.workflow_definition_bound:${plan.runId}:${sourcePlan.digest}`
+      || definition.payload.definitionDigest !== canonicalDigest(definitionCore)) {
+      fail('workflow revision definition authority is unavailable');
+    }
+
+    const selection = prefix.find((event) => event.kind === 'driver.recorded'
+      && event.payload?.kind === 'application.workflow_candidate_selected'
+      && event.payload?.repoId === plan.repoId && event.payload?.runId === plan.runId
+      && event.payload?.planDigest === sourcePlan.digest
+      && event.payload?.definitionDigest === revision.workflow.definitionDigest
+      && event.payload?.candidate?.id === revision.parent.candidateId
+      && event.payload?.candidate?.digest === revision.parent.candidateDigest);
+    const selected = selection?.payload?.candidate;
+    if (!selection || selection.seq >= plan.proposedEvent
+      || selection.actor !== selection.payload?.selectedBy?.actor
+      || selection.idempotencyKey !== `application.workflow_candidate_selected:${plan.runId}:${sourcePlan.digest}`
+      || selection.payload?.selectionDigest !== canonicalDigest(Object.fromEntries(
+        Object.entries(selection.payload).filter(([key]) => !['kind', 'selectionDigest'].includes(key)),
+      ))
+      || selected.role !== revision.parent.role || selected.nodeKey !== revision.parent.nodeKey
+      || selected.taskId !== revision.parent.taskId || selected.resultSha !== revision.parent.resultSha
+      || selected.retainedResultRef !== revision.parent.retainedResultRef
+      || selected.evidenceDigest !== revision.parent.evidenceDigest) {
+      fail('workflow revision Candidate selection is unavailable or changed');
+    }
+    const parent = this._tasks.get(revision.parent.taskId);
+    if (!parent || parent.runId !== plan.runId || parent.status !== 'completed'
+      || parent.acceptanceRevocation) fail('workflow revision parent task is not durably accepted');
+    const artifacts = (parent.artifactIds ?? []).map((id) => this._artifacts.get(id)).filter(Boolean);
+    const active = (artifact) => artifact.accepted === true && artifact.supersededBy === null
+      && !Object.hasOwn(artifact, 'acceptanceInvalidation');
+    const commit = artifacts.find((artifact) => artifact.id === revision.parent.commitArtifact.id);
+    const verification = artifacts.find((artifact) => artifact.id === revision.parent.verificationArtifact.id);
+    const operational = verification?.refs?.worker && Number.isSafeInteger(verification?.refs?.workerSeq)
+      ? this._operationalRead?.(verification.refs.worker, verification.refs.workerSeq) : null;
+    const changedPaths = Array.isArray(operational?.payload?.capture?.changedPaths)
+      ? [...operational.payload.capture.changedPaths].sort() : null;
+    const evidence = changedPaths ? {
+      commitArtifact: { id: commit?.id, digest: commit?.digest },
+      verificationArtifact: { id: verification?.id, digest: verification?.digest },
+      verification: {
+        worker: verification.refs.worker, workerSeq: verification.refs.workerSeq,
+        verdictDigest: canonicalDigest(operational.payload.verdict),
+        changedPathsDigest: canonicalDigest(changedPaths),
+      },
+    } : null;
+    const evidenceDigest = evidence ? canonicalDigest(evidence) : null;
+    const candidateCore = evidence ? {
+      schemaVersion: 1, repoId: plan.repoId, runId: plan.runId,
+      planDigest: sourcePlan.digest, definitionDigest: revision.workflow.definitionDigest,
+      role: revision.parent.role, nodeKey: revision.parent.nodeKey,
+      taskId: revision.parent.taskId, resultSha: revision.parent.resultSha,
+      changedPaths, evidence, evidenceDigest,
+    } : null;
+    const candidateDigest = candidateCore ? canonicalDigest(candidateCore) : null;
+    if (!commit || !active(commit) || commit.kind !== 'commit'
+      || commit.digest !== revision.parent.commitArtifact.digest
+      || commit.refs?.sha !== revision.parent.resultSha
+      || commit.refs?.retainedResultRef !== revision.parent.retainedResultRef
+      || !verification || !active(verification) || verification.kind !== 'verification'
+      || verification.digest !== revision.parent.verificationArtifact.digest
+      || operational?.kind !== 'verify.reverified' || operational.payload?.accept !== true
+      || operational.payload?.capture?.sha !== revision.parent.resultSha
+      || operational.payload?.capture?.retainedResultRef !== revision.parent.retainedResultRef
+      || canonicalDigest(changedPaths) !== canonicalDigest(revision.parent.changedPaths)
+      || evidenceDigest !== revision.parent.evidenceDigest
+      || revision.parent.candidateId !== `candidate:${candidateDigest}`
+      || revision.parent.candidateDigest !== candidateDigest
+      || revision.parent.treeIdentityDigest !== canonicalDigest({
+        resultSha: revision.parent.resultSha,
+        retainedResultRef: revision.parent.retainedResultRef,
+      })) fail('workflow revision Candidate artifacts are unavailable or changed');
+
+    const feedbackEvents = prefix.filter((event) => event.kind === 'driver.recorded'
+      && event.seq < plan.proposedEvent
+      && event.payload?.kind === 'application.workflow_feedback_recorded'
+      && event.payload?.repoId === plan.repoId && event.payload?.runId === plan.runId
+      && event.payload?.planDigest === sourcePlan.digest
+      && event.payload?.definitionDigest === revision.workflow.definitionDigest
+      && event.payload?.target?.candidateId === revision.parent.candidateId);
+    if (feedbackEvents.length !== revision.feedback.length) {
+      fail('workflow revision feedback set omits or adds durable feedback');
+    }
+    const feedbackById = new Map(feedbackEvents.map((event) => [event.payload.feedbackId, event]));
+    for (const packet of revision.feedback) {
+      const event = feedbackById.get(packet.feedbackId);
+      const payload = event?.payload;
+      const feedbackCore = payload ? Object.fromEntries(Object.entries(payload)
+        .filter(([key]) => !['kind', 'feedbackDigest'].includes(key))) : null;
+      const expectedFeedbackId = payload ? `feedback:${canonicalDigest({
+        repoId: payload.repoId, runId: payload.runId, planDigest: payload.planDigest,
+        definitionDigest: payload.definitionDigest, source: payload.source,
+        target: payload.target, feedback: payload.feedback,
+      })}` : null;
+      if (!event || event.seq !== packet.eventSeq || payload.feedbackDigest !== packet.feedbackDigest
+        || payload.feedbackDigest !== canonicalDigest(feedbackCore)
+        || packet.feedbackId !== expectedFeedbackId
+        || event.actor !== payload.source?.actor
+        || event.idempotencyKey !== `application.workflow_feedback_recorded:${packet.feedbackId}`
+        || payload.prefix?.goalDigest !== plan.goal.digest
+        || payload.prefix?.planDigest !== sourcePlan.digest
+        || payload.prefix?.definitionDigest !== revision.workflow.definitionDigest
+        || !Number.isSafeInteger(payload.prefix?.throughSeq)
+        || payload.prefix.throughSeq <= 0 || payload.prefix.throughSeq >= event.seq
+        || canonicalDigest(payload.feedback) !== canonicalDigest(packet.feedback)
+        || payload.target?.candidateDigest !== revision.parent.candidateDigest
+        || payload.target?.taskId !== revision.parent.taskId
+        || payload.target?.resultSha !== revision.parent.resultSha
+        || payload.target?.retainedResultRef !== revision.parent.retainedResultRef
+        || canonicalDigest(payload.target?.changedPaths) !== canonicalDigest(revision.parent.changedPaths)
+        || payload.target?.changedPathsDigest !== revision.parent.changedPathsDigest) {
+        fail('workflow revision feedback authority is unavailable or changed');
+      }
+    }
+    for (const sourceNode of sourcePlan.nodes) {
+      const dispatch = this._planDispatches.get(this._planNodeKey(
+        sourcePlan.planId, sourcePlan.version, sourceNode.key,
+      ));
+      const task = dispatch ? this._tasks.get(dispatch.taskId) : null;
+      if (!task || !['completed', 'failed', 'cancelled'].includes(task.status)) {
+        fail('workflow revision predecessor Plan is not provider-settled');
+      }
+    }
+    return freeze({ sourcePlan: clone(sourcePlan), parent: clone(parent), revision: clone(revision) });
+  }
+
   _validateGoalPlanDispatchPair(dispatchEvent, taskEvent, integrity = false, recoveryClaimEvent = null) {
     const fail = (message) => this._goalPlanFailure(
       message,
@@ -823,19 +1738,43 @@ export class CoordinationStore {
       || Date.parse(dispatchEvent.ts) - Date.parse(approval.decidedAt) > this._goalPlanPolicy.approvalTtlMs) fail('goal/plan dispatch lacks current approval authority');
 
     const node = plan.nodes.find((row) => row.key === p.binding.nodeKey);
+    const planRevision = Object.hasOwn(node ?? {}, 'revision');
     if (!node || p.binding.schemaVersion !== 1 || p.binding.dispatchVersion !== 1
       || p.expectedDispatchVersion !== 0 || p.newDispatchVersion !== 1
       || canonicalDigest(node.budget) !== canonicalDigest(p.nodeBudget)
       || canonicalDigest(node.capabilities) !== canonicalDigest(p.capabilities)
-      || canonicalDigest(node.effects) !== canonicalDigest(p.effects)) fail('goal/plan dispatch node authority changed');
-    if (prefix.some((event) => event.kind === 'plan.node_dispatched'
+      || canonicalDigest(node.effects) !== canonicalDigest(p.effects)
+      || Object.hasOwn(node, 'requiredEffects') !== Object.hasOwn(p, 'requiredEffects')
+      || canonicalDigest(node.requiredEffects ?? []) !== canonicalDigest(p.requiredEffects ?? [])
+      || planRevision !== Object.hasOwn(p, 'revision')
+      || (planRevision && canonicalDigest(node.revision) !== canonicalDigest(p.revision))) fail('goal/plan dispatch node authority changed');
+    if (planRevision) this._workflowRevisionAuthority(plan, node, dispatchEvent.seq - 1, integrity);
+    // PS5: a preserved-resume re-dispatch is the one sanctioned exception to "one dispatch per
+    // node". It is permitted only when a prior dispatch exists, the latest task is durably
+    // terminal-cancelled, and the caller attested the exact preserved checkpoint lineage. The
+    // coordination store records the attestation; the physical checkpoint ref is postchecked by
+    // the Coordinator before this admission, so re-dispatch can never manufacture a fresh
+    // identity for work that was not actually preserved.
+    const priorDispatches = prefix.filter((event) => event.kind === 'plan.node_dispatched'
       && event.payload.binding.planId === plan.planId && event.payload.binding.planVersion === plan.version
-      && event.payload.binding.nodeKey === node.key)) fail('goal/plan node was dispatched more than once');
+      && event.payload.binding.nodeKey === node.key);
+    const preservedResume = this._validPreservedResumeAttestation(p.preservedResume);
+    if (preservedResume) {
+      if (priorDispatches.length === 0) fail('preserved resume requires a prior node dispatch');
+      // Recursive resource stops form a linear same-node recovery chain. Only the latest dispatch
+      // is eligible, so an older cancelled checkpoint can never fork the current node authority.
+      const priorTaskId = priorDispatches.at(-1).payload.taskId;
+      const priorState = this._historicalTaskState(priorTaskId, dispatchEvent.seq - 1);
+      if (!priorState || priorState.status !== 'cancelled') fail('preserved resume prior task was not cancelled');
+      if (priorTaskId !== preservedResume.priorTaskId) fail('preserved resume prior task lineage changed');
+    } else if (priorDispatches.length > 0) {
+      fail('goal/plan node was dispatched more than once');
+    }
 
     if (!p.route || Object.keys(p.route).sort().join(',') !== ['effort', 'model', 'vendor'].sort().join(',')
-      || (node.routes.harnesses.length > 0 && !node.routes.harnesses.includes(p.route.vendor))
-      || (node.routes.models.length > 0 && !node.routes.models.includes(p.route.model))
-      || (node.routes.efforts.length > 0 && !node.routes.efforts.includes(p.route.effort))) fail('goal/plan dispatch route is outside approved authority');
+      || !planRouteMatches(node.routes, p.route, { historical: true })) {
+      fail('goal/plan dispatch route is outside approved authority');
+    }
 
     const resolvedDeps = [];
     for (const depKey of node.deps) {
@@ -856,10 +1795,18 @@ export class CoordinationStore {
     };
     if (canonicalDigest(expectedBinding) !== canonicalDigest(p.binding)) fail('goal/plan dispatch binding changed');
     const expectedBrief = buildAuthoritativeBrief(goal, plan, node, expectedBinding);
+    const resumeAttestation = this._validPreservedResumeAttestation(p.preservedResume);
     const expectedTaskFields = planRecovery
       ? ['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'sessionRequest', 'relation', 'worktreeBaseSha', 'review']
-      : ['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'effortResolved', 'effortObserved', 'routeKey', 'sessionRequest'];
+      : resumeAttestation
+        ? ['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'effortResolved', 'effortObserved', 'routeKey', 'sessionRequest', 'relation', 'worktreeBaseSha']
+        : planRevision
+          ? ['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'effortResolved', 'effortObserved', 'routeKey', 'sessionRequest', 'relation', 'worktreeBaseSha']
+        : ['id', 'brief', 'deps', 'refines', 'runId', 'taskType', 'reservedWorkerId', 'vendorRequested', 'modelRequested', 'modelPolicy', 'effortRequested', 'effortResolved', 'effortObserved', 'routeKey', 'sessionRequest'];
     if (Object.keys(task).sort().join(',') !== expectedTaskFields.sort().join(',')) fail('goal/plan task field set changed');
+    if (resumeAttestation && (!/^[a-f0-9]{40}$/.test(task.worktreeBaseSha ?? '') || task.refines !== resumeAttestation.priorTaskId)) {
+      fail('preserved resume task base or lineage does not match its attestation');
+    }
     if (task.id !== p.taskId || !boundedText(task.reservedWorkerId, 4_096)) fail('goal/plan task physical identity changed');
     if (canonicalDigest(task.brief) !== canonicalDigest(expectedBrief)) fail('goal/plan authoritative Brief changed');
     if (canonicalDigest(task.deps) !== canonicalDigest(resolvedDeps)) fail('goal/plan task dependencies changed');
@@ -887,6 +1834,30 @@ export class CoordinationStore {
         || canonicalDigest(task.review ?? null) !== canonicalDigest(priorTask.review ?? null)) {
         this._recoveryFailure('plan recovery changes immutable prior-task lineage', 'recovery_refinement_conflict', integrity);
       }
+    } else if (resumeAttestation) {
+      // PS5: a preserved-resume task re-dispatches the same node from its pinned checkpoint. Its
+      // lineage is the cancelled prior task; its route, session, and resolved fields stay exact.
+      if (task.refines !== resumeAttestation.priorTaskId || task.runId !== goal.runId
+        || task.taskType !== 'general' || task.relation !== 'preserved_resume') {
+        fail('preserved resume task lineage, run, or type changed');
+      }
+      if (task.vendorRequested !== p.route.vendor || task.modelRequested !== p.route.model || task.modelPolicy !== null
+        || task.effortRequested !== p.route.effort || task.effortResolved !== null || task.effortObserved !== null || task.routeKey !== null) {
+        fail('preserved resume task route fields changed');
+      }
+      if (canonicalDigest(task.sessionRequest) !== canonicalDigest({ mode: 'new' })) fail('preserved resume task session fields changed');
+    } else if (planRevision) {
+      if (task.refines !== node.revision.parent.taskId || task.runId !== goal.runId
+        || task.taskType !== 'general' || task.relation !== 'revision'
+        || task.worktreeBaseSha !== node.revision.parent.resultSha) {
+        fail('workflow revision task lineage, run, or base changed');
+      }
+      if (task.vendorRequested !== p.route.vendor || task.modelRequested !== p.route.model
+        || task.modelPolicy !== null || task.effortRequested !== p.route.effort
+        || task.effortResolved !== null || task.effortObserved !== null || task.routeKey !== null
+        || canonicalDigest(task.sessionRequest) !== canonicalDigest({ mode: 'new' })) {
+        fail('workflow revision task route or session fields changed');
+      }
     } else {
       if (task.refines !== null || task.runId !== goal.runId || task.taskType !== 'general') fail('goal/plan task lineage, run, or type changed');
       if (task.vendorRequested !== p.route.vendor || task.modelRequested !== p.route.model || task.modelPolicy !== null
@@ -901,11 +1872,13 @@ export class CoordinationStore {
       planId: plan.planId, planVersion: plan.version, planDigest: plan.digest,
       nodeKey: node.key, expectedDispatchVersion: 0,
       capabilities: clone(node.capabilities), effects: clone(node.effects),
+      ...(Object.hasOwn(node, 'requiredEffects') ? { requiredEffects: clone(node.requiredEffects) } : {}),
     };
     const requestTask = planRecovery ? this._planRecoveryRequestFields(task) : task;
     const expectedRequestDigest = goalPlanDigest({
       principalId: p.authority.principalId, gate, route: p.route, task: requestTask,
       ...(planRecovery ? { attribution: this._recoveryAttributionFromClaim(recoveryClaimEvent.payload) } : {}),
+      ...(resumeAttestation ? { preservedResume: resumeAttestation } : {}),
     });
     if (p.requestDigest !== expectedRequestDigest) fail('goal/plan dispatch request digest changed');
     return true;
@@ -1005,6 +1978,121 @@ export class CoordinationStore {
       fail('recovery refinement requires the exact completed hub-verified prior task');
     }
     return { terminal, mapped, source };
+  }
+
+  _recoveryAttemptFailure(message, code, integrity = false) {
+    throw integrity
+      ? new CoordinationIntegrityError(message, 'recovery_attempt_integrity')
+      : new CoordinationRefusal(message, code);
+  }
+
+  _normalizeRecoveryAttemptAdmission(payload, integrity = false) {
+    try { return normalizeRecoveryAttemptAdmission(payload); }
+    catch (error) {
+      this._recoveryAttemptFailure(
+        error?.message ?? 'recovery attempt admission is invalid',
+        'recovery_attempt_invalid', integrity,
+      );
+    }
+  }
+
+  _normalizeRecoveryAttemptCompletion(payload, integrity = false) {
+    try { return normalizeRecoveryAttemptCompletion(payload); }
+    catch (error) {
+      this._recoveryAttemptFailure(
+        error?.message ?? 'recovery attempt completion is invalid',
+        'recovery_attempt_completion_invalid', integrity,
+      );
+    }
+  }
+
+  _validateRecoveryAttemptAdmissionPayload(payload, event, integrity = false) {
+    const p = this._normalizeRecoveryAttemptAdmission(payload, integrity);
+    const fail = (message, code) => this._recoveryAttemptFailure(message, code, integrity);
+    const task = this._tasks.get(p.priorTask.id);
+    if (!task || (task.runId ?? null) !== p.runId) {
+      fail('recovery attempt belongs to a different or unavailable Run', 'recovery_attempt_run_mismatch');
+    }
+    if (this._runStops.has(p.runId)) fail(`run ${p.runId} is stopping`, 'run_stopping');
+    if (task.version !== p.priorTask.version || task.terminalEvent !== p.priorTask.terminalEvent
+      || task.status !== 'completed' || task.acceptanceRevocation) {
+      fail('recovery attempt prior task binding is stale', 'recovery_attempt_stale');
+    }
+    if (task.assignee !== p.verifiedOwner.workerId) {
+      fail('recovery attempt worker is not the prior task owner', 'recovery_attempt_owner_mismatch');
+    }
+    let verified;
+    try { verified = this._verifiedRecoveryPrior(task, integrity); }
+    catch {
+      fail('recovery attempt owner lacks exact hub verification', 'recovery_attempt_owner_unverified');
+    }
+    if (verified.mapped.seq !== p.verifiedOwner.evidence.coordinationSeq) {
+      fail('recovery attempt owner verification evidence differs', 'recovery_attempt_owner_unverified');
+    }
+    if (task.routeKey !== p.route.tupleKey) {
+      fail('recovery attempt route differs from the verified prior task', 'recovery_attempt_invalid');
+    }
+    if (this._taskTopologyPolicy) {
+      this._validateTaskTopology({
+        id: p.recoveryTaskId, runId: p.runId, refines: p.priorTask.id,
+        taskType: task.taskType ?? 'general', relation: 'recovery',
+      }, 'recovery', integrity);
+    }
+
+    const headId = this._recoveryAttemptHeads.get(p.seriesId);
+    const head = headId ? this._recoveryAttemptsById.get(headId) : null;
+    if (head) {
+      if (head.state === 'pending') fail('recovery attempt has an unresolved admitted effect', 'recovery_attempt_unresolved');
+      if (['attached', 'unknown'].includes(head.state)) {
+        fail('recovery attempt outcome forbids automatic continuation', 'recovery_attempt_continuation_forbidden');
+      }
+      if (head.maxAttempts !== p.maxAttempts
+        || canonicalDigest(head.authority) !== canonicalDigest(p.authority)
+        || canonicalDigest(head.route) !== canonicalDigest(p.route)
+        || canonicalDigest(head.workerPolicy) !== canonicalDigest(p.workerPolicy)
+        || head.session.idDigest !== p.session.idDigest
+        || head.session.contextDigest !== p.session.contextDigest) {
+        fail('recovery attempt series authority changed', 'recovery_attempt_authority_changed');
+      }
+      if (head.attempt >= head.maxAttempts || p.attempt > p.maxAttempts) {
+        fail('recovery attempt ceiling is exhausted', 'recovery_attempt_exhausted');
+      }
+      if (p.attempt !== head.attempt + 1) {
+        fail('recovery attempt sequence is not contiguous', 'recovery_attempt_sequence');
+      }
+      if (p.expectedAttemptHeadEvent !== head.completedEvent) {
+        fail('recovery attempt head compare-and-set is stale', 'recovery_attempt_stale');
+      }
+    } else {
+      const unresolved = [...this._recoveryAttemptsById.values()].find((attempt) => (
+        attempt.priorTask.id === p.priorTask.id
+        && attempt.verifiedOwner.workerId === p.verifiedOwner.workerId
+        && ['pending', 'attached', 'unknown'].includes(attempt.state)
+      ));
+      if (unresolved) fail('recovery prior owner already has an unresolved effect', 'recovery_attempt_unresolved');
+      if (p.attempt !== 1) fail('recovery attempt series must begin at one', 'recovery_attempt_sequence');
+      if (p.expectedAttemptHeadEvent !== null) {
+        fail('new recovery attempt series has a stale head', 'recovery_attempt_stale');
+      }
+    }
+    if (this._recoveryAttemptsById.has(p.attemptId)) {
+      fail('recovery attempt identity already exists', 'recovery_attempt_conflict');
+    }
+    if (!boundedText(event?.actor, 4_096)) fail('recovery attempt actor is invalid', 'recovery_attempt_invalid');
+    return p;
+  }
+
+  _validateRecoveryAttemptCompletionPayload(payload, event, integrity = false) {
+    const p = this._normalizeRecoveryAttemptCompletion(payload, integrity);
+    const fail = (message, code) => this._recoveryAttemptFailure(message, code, integrity);
+    const attempt = this._recoveryAttemptsById.get(p.attemptId);
+    if (!attempt || attempt.admissionDigest !== p.admissionDigest || attempt.state !== 'pending') {
+      fail('recovery attempt completion does not bind one pending admission', 'recovery_attempt_completion_invalid');
+    }
+    if (event?.actor !== attempt.actor) {
+      fail('recovery attempt completion actor differs from admission', 'recovery_attempt_conflict');
+    }
+    return { payload: p, attempt };
   }
 
   _normalizedRecoveryCreatedPayload(fields, priorTask) {
@@ -1599,9 +2687,9 @@ export class CoordinationStore {
       || !p.route || Object.keys(p.route).sort().join(',') !== routeFields.sort().join(',') || !['completed', 'failed'].includes(p.terminalStatus) || p.verifiedWin !== (p.terminalStatus === 'completed')
       || !Number.isSafeInteger(p.expectedTaskVersion) || !Number.isFinite(Date.parse(p.observedAt)) || new Date(Date.parse(p.observedAt)).toISOString() !== p.observedAt || p.observedAt !== event.ts
       || !/^[a-f0-9]{64}$/.test(p.observationDigest ?? '') || event.actor !== 'policy') fail('route observation shape is invalid');
-    let tuple; try { tuple = JSON.parse(p.routeKey); } catch { fail('route observation key is invalid'); }
-    if (!Array.isArray(tuple) || tuple.length !== 6 || tuple[4] !== p.modelFamily || tuple[5] !== p.taskType || `${tuple[0]}@${tuple[1]}` !== p.route.harnessResolved
-      || tuple[2] !== (p.route.modelResolved ?? 'default') || tuple[3] !== (p.route.effortResolved ?? 'default')) fail('route observation tuple is invalid');
+    let tuple; try { tuple = parseRouteTupleKey(p.routeKey); } catch { fail('route observation key is invalid'); }
+    if (tuple.modelFamily !== p.modelFamily || tuple.taskType !== p.taskType || `${tuple.harness}@${tuple.version}` !== p.route.harnessResolved
+      || tuple.model !== (p.route.modelResolved ?? 'default') || tuple.effort !== (p.route.effortResolved ?? 'default')) fail('route observation tuple is invalid');
     const task = this._tasks.get(p.taskId); if (!task || task.taskType !== p.taskType || (task.runId ?? null) !== p.runId) fail('route observation task is invalid', 'route_observation_stale');
     if (integrity) {
       if (task.status !== p.terminalStatus || task.version !== p.expectedTaskVersion + 1) fail('route observation terminal task diverged', 'route_observation_stale');
@@ -2296,40 +3384,452 @@ export class CoordinationStore {
     return drain;
   }
 
-  _runStopTargets(runId) {
-    const tasks = [...this._tasks.values()].filter((task) => task.runId === runId).sort((a, b) => compareCanonicalStrings(a.id, b.id));
+  _runStopContextTargets(targetRunIds) {
+    const targetRunSet = new Set(targetRunIds);
+    const targetContextSessionIds = [...this._contextSessions.values()]
+      .filter((session) => targetRunSet.has(session.runId) && session.state === 'active')
+      .map((session) => session.sessionId).sort(compareCanonicalStrings);
+    const targetContextCellIds = [...this._contextCells.values()]
+      .filter((cell) => {
+        const session = this._contextSessions.get(cell.sessionId);
+        if (!session) {
+          throw new CoordinationRefusal('run stop Context cell has no owning session',
+            'run_stop_integrity');
+        }
+        return targetRunSet.has(session.runId) && cell.state === 'admitted';
+      })
+      .map((cell) => cell.cellId).sort(compareCanonicalStrings);
+    const targetContextCallIds = [...this._contextCalls.values()]
+      .filter((call) => targetRunSet.has(this._contextCallRunId(call))
+        && call.state !== 'stopped')
+      .map((call) => call.callId).sort(compareCanonicalStrings);
+    if (targetContextSessionIds.length > 100_000 || targetContextCellIds.length > 100_000
+      || targetContextCallIds.length > 100_000
+      || new Set(targetContextSessionIds).size !== targetContextSessionIds.length
+      || new Set(targetContextCellIds).size !== targetContextCellIds.length
+      || new Set(targetContextCallIds).size !== targetContextCallIds.length) {
+      throw new CoordinationRefusal('run stop Context target set exceeds capacity',
+        'run_stop_capacity');
+    }
+    return { targetContextSessionIds, targetContextCellIds, targetContextCallIds };
+  }
+
+  _runStopTargets(runId, throughSeq = this._events.length, contextVersion = 3) {
+    const targetRunIds = this._runLineagePolicy
+      ? [...new Set([runId, ...this.runDescendants(runId).map((row) => row.childRunId)])].sort(compareCanonicalStrings)
+      : [runId];
+    const targetRunSet = new Set(targetRunIds);
+    const tasks = [...this._tasks.values()].filter((task) => targetRunSet.has(task.runId)).sort((a, b) => compareCanonicalStrings(a.id, b.id));
     if (tasks.length > 100_000) throw new CoordinationRefusal('run stop target set exceeds capacity', 'run_stop_capacity');
     const targetTaskIds = tasks.map((task) => task.id);
     const targetWorkerIds = [...new Set(tasks.map((task) => task.reservedWorkerId ?? task.assignee).filter(Boolean))]
       .sort(compareCanonicalStrings);
-    return { targetTaskIds, targetWorkerIds, targetDigest: canonicalDigest({ targetTaskIds, targetWorkerIds }) };
+    const includeContext = contextVersion >= 2;
+    const observedContextTargets = includeContext
+      ? this._runStopContextTargets(targetRunIds)
+      : { targetContextSessionIds: [], targetContextCellIds: [], targetContextCallIds: [] };
+    const contextTargets = contextVersion >= 3 && observedContextTargets.targetContextCallIds.length > 0
+      ? observedContextTargets : {
+      targetContextSessionIds: observedContextTargets.targetContextSessionIds,
+      targetContextCellIds: observedContextTargets.targetContextCellIds,
+    };
+    const hasContextTargets = contextTargets.targetContextSessionIds.length > 0
+      || contextTargets.targetContextCellIds.length > 0
+      || (contextTargets.targetContextCallIds?.length ?? 0) > 0;
+    if (this._runLineagePolicy) {
+      const core = {
+        throughSeq, targetRunIds, targetTaskIds, targetWorkerIds,
+        ...(hasContextTargets ? contextTargets : {}),
+      };
+      return {
+        scope: 'run_subtree', ...core, targetDigest: canonicalDigest(core),
+      };
+    }
+    const core = {
+      targetTaskIds, targetWorkerIds, ...(hasContextTargets ? contextTargets : {}),
+    };
+    return { ...core, targetDigest: canonicalDigest(core) };
+  }
+
+  _validSessionPreservationReceipt(receipt) {
+    if (receipt === null) return true;
+    const fields = [
+      'fence', 'planBindingDigest', 'processGeneration', 'reattachment', 'receiptDigest',
+      'routeDigest', 'runAuthorityDigest', 'schemaVersion', 'sessionDigest', 'state',
+      'transport', 'turnEpoch', 'worktreeDigest',
+    ];
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
+      || Object.keys(receipt).sort().join(',') !== fields.sort().join(',')
+      || receipt.schemaVersion !== 1 || receipt.state !== 'preserved'
+      || receipt.transport !== 'attached'
+      || !['not_required', 'confirmed'].includes(receipt.reattachment)
+      || !Number.isSafeInteger(receipt.processGeneration) || receipt.processGeneration < 0
+      || !Number.isSafeInteger(receipt.turnEpoch) || receipt.turnEpoch < 0
+      || !Number.isSafeInteger(receipt.fence) || receipt.fence < 0
+      || ['sessionDigest', 'worktreeDigest', 'routeDigest', 'planBindingDigest',
+        'runAuthorityDigest', 'receiptDigest']
+        .some((field) => !/^[a-f0-9]{64}$/u.test(receipt[field] ?? ''))) return false;
+    const core = clone(receipt); delete core.receiptDigest;
+    return receipt.receiptDigest === canonicalDigest(core);
+  }
+
+  _validPreservedContinuationReceipt(receipt) {
+    if (receipt === null) return true;
+    const fields = [
+      'preservationReceiptDigest', 'providerAdmissionSeq', 'receiptDigest', 'routeDigest',
+      'schemaVersion', 'sessionDigest', 'state', 'taskBindingDigest', 'turnEpoch',
+    ];
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
+      || Object.keys(receipt).sort().join(',') !== fields.sort().join(',')
+      || receipt.schemaVersion !== 1 || receipt.state !== 'admitted'
+      || (receipt.providerAdmissionSeq !== null
+        && (!Number.isSafeInteger(receipt.providerAdmissionSeq) || receipt.providerAdmissionSeq <= 0))
+      || !Number.isSafeInteger(receipt.turnEpoch) || receipt.turnEpoch <= 0
+      || ['preservationReceiptDigest', 'sessionDigest', 'taskBindingDigest', 'routeDigest',
+        'receiptDigest'].some((field) => !/^[a-f0-9]{64}$/u.test(receipt[field] ?? ''))) return false;
+    const core = clone(receipt); delete core.receiptDigest;
+    return receipt.receiptDigest === canonicalDigest(core);
+  }
+
+  _validateRunControlAdmission(p, event, integrity = false) {
+    const fail = (message, code = 'run_control_integrity') => {
+      throw integrity ? new CoordinationIntegrityError(message, code)
+        : new CoordinationRefusal(message, code);
+    };
+    const version = p?.schemaVersion;
+    const fields = [
+      'actionId', 'admissionDigest', 'controlId', 'delivery', 'message', 'messageDigest',
+      'operation', 'reasonDigest', 'recipient', 'registryDigest', 'repoId', 'requestDigest',
+      'runId', 'schemaVersion', 'source', 'target', 'targetDigest',
+      ...(version >= 2 ? ['turnDisposition'] : []),
+    ];
+    const sourceFields = ['actor', 'principalId', 'sessionId'];
+    const targetFields = ['activeCount', 'fence', 'role', 'taskId', 'workerId',
+      ...(version >= 2 ? [
+        'planBindingDigest', 'processGeneration', 'routeDigest', 'runAuthorityDigest',
+        'sessionDigest', 'preservationReceiptDigest', 'turnEpoch', 'turnState',
+        'worktreeDigest',
+      ] : [])];
+    if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',')
+      || ![1, 2].includes(version) || !validRunId(p.repoId) || !validRunId(p.runId)
+      || !/^control:[a-f0-9]{64}$/u.test(p.controlId ?? '')
+      || !/^[a-f0-9]{64}$/u.test(p.actionId ?? '')
+      || !['send', 'interrupt'].includes(p.operation) || !boundedText(p.recipient, 256)
+      || (p.operation === 'send' && (!boundedText(p.message, 16_384)
+        || !['nudge', 'now', 'turn'].includes(p.delivery)))
+      || (p.operation === 'interrupt' && (p.message !== null || p.delivery !== null))
+      || (version >= 2 && p.turnDisposition !== (p.operation === 'interrupt' ? 'preserve_turn' : null))
+      || p.messageDigest !== (p.message === null ? null : canonicalDigest(p.message))
+      || !/^[a-f0-9]{64}$/u.test(p.reasonDigest ?? '')
+      || !/^[a-f0-9]{64}$/u.test(p.registryDigest ?? '')
+      || !/^[a-f0-9]{64}$/u.test(p.requestDigest ?? '')
+      || !/^[a-f0-9]{64}$/u.test(p.targetDigest ?? '')
+      || !/^[a-f0-9]{64}$/u.test(p.admissionDigest ?? '')
+      || !p.source || Object.keys(p.source).sort().join(',') !== sourceFields.sort().join(',')
+      || !boundedText(p.source.actor, 256) || !validRunId(p.source.principalId)
+      || !validRunId(p.source.sessionId) || event.actor !== p.source.actor
+      || !p.target || Object.keys(p.target).sort().join(',') !== targetFields.sort().join(',')
+      || !validRunId(p.target.workerId) || !boundedText(p.target.taskId, 4_096)
+      || !Number.isSafeInteger(p.target.fence) || p.target.fence < 0
+      || (p.target.role !== null && !boundedText(p.target.role, 256))
+      || !Number.isSafeInteger(p.target.activeCount) || p.target.activeCount <= 0
+      || (version >= 2 && (
+        !Number.isSafeInteger(p.target.turnEpoch) || p.target.turnEpoch < 0
+        || !['working', 'blocked', 'interrupted'].includes(p.target.turnState)
+        || (p.target.sessionDigest !== null && !/^[a-f0-9]{64}$/u.test(p.target.sessionDigest ?? ''))
+        || (p.target.preservationReceiptDigest !== null
+          && !/^[a-f0-9]{64}$/u.test(p.target.preservationReceiptDigest ?? ''))
+        || (p.target.turnState === 'interrupted')
+          !== (p.target.preservationReceiptDigest !== null)
+        || !Number.isSafeInteger(p.target.processGeneration) || p.target.processGeneration < 0
+        || ['worktreeDigest', 'routeDigest', 'planBindingDigest', 'runAuthorityDigest']
+          .some((field) => !/^[a-f0-9]{64}$/u.test(p.target[field] ?? ''))
+      ))
+      || event.idempotencyKey !== `run.control.admit:${p.controlId}`) {
+      fail('run control admission is invalid');
+    }
+    const core = clone(p); delete core.admissionDigest;
+    const request = {
+      actionId: p.actionId, operation: p.operation, recipient: p.recipient,
+      delivery: p.delivery, message: p.message, reasonDigest: p.reasonDigest,
+      source: p.source, target: p.target, registryDigest: p.registryDigest,
+      ...(version >= 2 ? { turnDisposition: p.turnDisposition } : {}),
+    };
+    if (p.targetDigest !== canonicalDigest(p.target)
+      || p.requestDigest !== canonicalDigest(request)
+      || p.admissionDigest !== canonicalDigest(core)) {
+      fail('run control admission binding is invalid');
+    }
+    if (this.runStop(p.runId)) fail(`run ${p.runId} is stopping`, 'run_stopping');
+    return p;
+  }
+
+  _validateRunControlEffect(p, event, integrity = false) {
+    const fail = (message, code = 'run_control_integrity') => {
+      throw integrity ? new CoordinationIntegrityError(message, code)
+        : new CoordinationRefusal(message, code);
+    };
+    const fields = [
+      'admissionDigest', 'controlId', 'effectDigest', 'providerRequestId',
+      'schemaVersion', 'targetDigest',
+      ...(p?.schemaVersion >= 2 ? ['turnDisposition'] : []),
+    ];
+    const control = this._runControls.get(p?.controlId);
+    if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',')
+      || p.schemaVersion !== control?.schemaVersion || !control || control.status !== 'admitted'
+      || p.admissionDigest !== control.admissionDigest
+      || p.targetDigest !== control.targetDigest
+      || (p.schemaVersion >= 2 && p.turnDisposition !== control.turnDisposition)
+      || !/^provider-control:[a-f0-9]{64}$/u.test(p.providerRequestId ?? '')
+      || event.actor !== control.source.actor
+      || event.idempotencyKey !== `run.control.begin:${p.controlId}`) {
+      fail('run control effect start is invalid');
+    }
+    const core = clone(p); delete core.effectDigest;
+    if (p.providerRequestId !== `provider-control:${canonicalDigest({
+      controlId: control.controlId,
+      targetDigest: control.targetDigest,
+      admittedEvent: control.admittedEvent,
+    })}` || p.effectDigest !== canonicalDigest(core)) {
+      fail('run control effect binding is invalid');
+    }
+    if (this.runStop(control.runId)) fail(`run ${control.runId} is stopping`, 'run_stopping');
+    return control;
+  }
+
+  _validateRunControlProviderAck(p, event, integrity = false) {
+    const fail = (message, code = 'run_control_integrity') => {
+      throw integrity ? new CoordinationIntegrityError(message, code)
+        : new CoordinationRefusal(message, code);
+    };
+    const fields = [
+      'ackDigest', 'controlId', 'effectDigest', 'outcome', 'providerRequestId',
+      'schemaVersion', 'state',
+    ];
+    const outcomeFields = ['code', 'deliveredDespiteStale', 'emulated', 'result',
+      ...(p?.schemaVersion >= 2 ? ['actualDelivery', 'continuation', 'preservation'] : [])];
+    const control = this._runControls.get(p?.controlId);
+    if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',')
+      || p.schemaVersion !== control?.schemaVersion || !control || control.status !== 'effect_started'
+      || p.effectDigest !== control.effect?.effectDigest
+      || p.providerRequestId !== control.effect?.providerRequestId
+      || !['confirmed', 'refused', 'outcome_unknown'].includes(p.state)
+      || !p.outcome || Object.keys(p.outcome).sort().join(',') !== outcomeFields.sort().join(',')
+      || !boundedText(p.outcome.result, 256)
+      || (p.outcome.code !== null && !boundedText(p.outcome.code, 256))
+      || typeof p.outcome.emulated !== 'boolean'
+      || typeof p.outcome.deliveredDespiteStale !== 'boolean'
+      || (p.schemaVersion >= 2 && (
+        (p.outcome.actualDelivery !== null
+          && !['nudge', 'now', 'turn'].includes(p.outcome.actualDelivery))
+        || !this._validSessionPreservationReceipt(p.outcome.preservation)
+        || !this._validPreservedContinuationReceipt(p.outcome.continuation)
+        || (control.operation === 'interrupt'
+          && (p.outcome.actualDelivery !== null || p.outcome.continuation !== null))
+        || (control.operation === 'interrupt' && p.state !== 'confirmed'
+          && p.outcome.preservation !== null)
+        || (control.operation === 'interrupt' && p.state === 'confirmed'
+          && p.outcome.preservation?.state !== 'preserved')
+        || (control.operation === 'interrupt' && p.state === 'confirmed' && (
+          p.outcome.preservation.sessionDigest !== control.target.sessionDigest
+          || p.outcome.preservation.processGeneration !== control.target.processGeneration
+          || p.outcome.preservation.worktreeDigest !== control.target.worktreeDigest
+          || p.outcome.preservation.routeDigest !== control.target.routeDigest
+          || p.outcome.preservation.planBindingDigest !== control.target.planBindingDigest
+          || p.outcome.preservation.runAuthorityDigest !== control.target.runAuthorityDigest
+        ))
+        || (control.operation === 'send' && control.target.turnState === 'interrupted'
+          && p.state === 'confirmed' && (
+            p.outcome.actualDelivery !== 'turn'
+            || p.outcome.continuation?.state !== 'admitted'
+            || p.outcome.continuation.preservationReceiptDigest
+              !== control.target.preservationReceiptDigest
+            || p.outcome.continuation.sessionDigest !== control.target.sessionDigest
+            || p.outcome.continuation.taskBindingDigest !== control.target.planBindingDigest
+            || p.outcome.continuation.routeDigest !== control.target.routeDigest
+          ))
+        || (control.operation === 'send' && (p.state !== 'confirmed'
+          || control.target.turnState !== 'interrupted')
+          && p.outcome.continuation !== null)
+        || (control.operation !== 'interrupt' && p.outcome.preservation !== null)
+      ))
+      || event.actor !== control.source.actor
+      || event.idempotencyKey !== `run.control.ack:${p.controlId}`) {
+      fail('run control provider acknowledgement is invalid');
+    }
+    const core = clone(p); delete core.ackDigest;
+    if (p.ackDigest !== canonicalDigest(core)) {
+      fail('run control provider acknowledgement binding is invalid');
+    }
+    return control;
+  }
+
+  _validateRunControlSettlement(p, event, integrity = false) {
+    const fail = (message, code = 'run_control_integrity') => {
+      throw integrity ? new CoordinationIntegrityError(message, code)
+        : new CoordinationRefusal(message, code);
+    };
+    const fields = [
+      'admissionDigest', 'controlId', 'operation', 'outcome', 'repoId', 'runId',
+      'schemaVersion', 'settlementDigest', 'state',
+    ];
+    const outcomeFields = ['code', 'deliveredDespiteStale', 'emulated', 'result',
+      ...(p?.schemaVersion >= 2 ? ['actualDelivery', 'continuation', 'preservation'] : [])];
+    const control = this._runControls.get(p?.controlId);
+    if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',')
+      || p.schemaVersion !== control?.schemaVersion || !control
+      || !['admitted', 'provider_acked'].includes(control.status)
+      || p.repoId !== control.repoId || p.runId !== control.runId
+      || p.operation !== control.operation || p.admissionDigest !== control.admissionDigest
+      || !['confirmed', 'refused', 'outcome_unknown'].includes(p.state)
+      || !p.outcome || Object.keys(p.outcome).sort().join(',') !== outcomeFields.sort().join(',')
+      || !boundedText(p.outcome.result, 256)
+      || (p.outcome.code !== null && !boundedText(p.outcome.code, 256))
+      || typeof p.outcome.emulated !== 'boolean'
+      || typeof p.outcome.deliveredDespiteStale !== 'boolean'
+      || (p.schemaVersion >= 2 && (
+        (p.outcome.actualDelivery !== null
+          && !['nudge', 'now', 'turn'].includes(p.outcome.actualDelivery))
+        || !this._validSessionPreservationReceipt(p.outcome.preservation)
+        || !this._validPreservedContinuationReceipt(p.outcome.continuation)
+        || (control.operation === 'interrupt'
+          && (p.outcome.actualDelivery !== null || p.outcome.continuation !== null))
+        || (control.operation === 'interrupt' && p.state !== 'confirmed'
+          && p.outcome.preservation !== null)
+        || (control.operation === 'interrupt' && p.state === 'confirmed'
+          && p.outcome.preservation?.state !== 'preserved')
+        || (control.operation === 'interrupt' && p.state === 'confirmed' && (
+          p.outcome.preservation.sessionDigest !== control.target.sessionDigest
+          || p.outcome.preservation.processGeneration !== control.target.processGeneration
+          || p.outcome.preservation.worktreeDigest !== control.target.worktreeDigest
+          || p.outcome.preservation.routeDigest !== control.target.routeDigest
+          || p.outcome.preservation.planBindingDigest !== control.target.planBindingDigest
+          || p.outcome.preservation.runAuthorityDigest !== control.target.runAuthorityDigest
+        ))
+        || (control.operation === 'send' && control.target.turnState === 'interrupted'
+          && p.state === 'confirmed' && (
+            p.outcome.actualDelivery !== 'turn'
+            || p.outcome.continuation?.state !== 'admitted'
+            || p.outcome.continuation.preservationReceiptDigest
+              !== control.target.preservationReceiptDigest
+            || p.outcome.continuation.sessionDigest !== control.target.sessionDigest
+            || p.outcome.continuation.taskBindingDigest !== control.target.planBindingDigest
+            || p.outcome.continuation.routeDigest !== control.target.routeDigest
+          ))
+        || (control.operation === 'send' && (p.state !== 'confirmed'
+          || control.target.turnState !== 'interrupted')
+          && p.outcome.continuation !== null)
+        || (control.operation !== 'interrupt' && p.outcome.preservation !== null)
+      ))
+      || event.actor !== control.source.actor
+      || event.idempotencyKey !== `run.control.settle:${p.controlId}`) {
+      fail('run control settlement is invalid');
+    }
+    const core = clone(p); delete core.settlementDigest;
+    if (p.settlementDigest !== canonicalDigest(core)) {
+      fail('run control settlement binding is invalid');
+    }
+    if (control.status === 'provider_acked'
+      && (p.state !== control.providerAck.state
+        || canonicalDigest(p.outcome) !== canonicalDigest(control.providerAck.outcome))) {
+      fail('run control settlement differs from provider acknowledgement');
+    }
+    return control;
   }
 
   _validateRunStopAdmission(p, event, integrity = false) {
     const fail = (message, code = 'run_stop_integrity') => {
       throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code);
     };
-    const fields = ['schemaVersion', 'repoId', 'runId', 'reasonDigest', 'requestDigest', 'targetTaskIds', 'targetWorkerIds', 'targetDigest'];
-    if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || p.schemaVersion !== 1
+    const version = p?.schemaVersion;
+    const contextFields = version >= 2 ? [
+      'targetContextSessionIds', 'targetContextCellIds',
+      ...(version >= 3 ? ['targetContextCallIds'] : []),
+    ] : [];
+    const fields = this._runLineagePolicy
+      ? ['schemaVersion', 'scope', 'repoId', 'runId', 'reasonDigest', 'requestDigest', 'throughSeq', 'targetRunIds', 'targetTaskIds', 'targetWorkerIds', 'targetDigest', ...contextFields]
+      : ['schemaVersion', 'repoId', 'runId', 'reasonDigest', 'requestDigest', 'targetTaskIds', 'targetWorkerIds', 'targetDigest', ...contextFields];
+    if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',') || ![1, 2, 3].includes(version)
       || !validRunId(p.repoId) || !validRunId(p.runId) || !/^[a-f0-9]{64}$/.test(p.reasonDigest ?? '')
       || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.targetDigest ?? '')
       || !Array.isArray(p.targetTaskIds) || !Array.isArray(p.targetWorkerIds)
       || p.targetTaskIds.length > 100_000 || p.targetWorkerIds.length > 100_000
-      || p.targetTaskIds.some((id) => !boundedText(id, 4_096)) || p.targetWorkerIds.some((id) => !validRunId(id))) {
+      || p.targetTaskIds.some((id) => !boundedText(id, 4_096)) || p.targetWorkerIds.some((id) => !validRunId(id))
+      || (this._runLineagePolicy && (p.scope !== 'run_subtree'
+        || !Number.isSafeInteger(p.throughSeq) || p.throughSeq !== event.seq - 1
+        || !Array.isArray(p.targetRunIds) || p.targetRunIds.length === 0 || p.targetRunIds.length > 1_000_000
+        || p.targetRunIds.some((id) => !validRunId(id))))
+      || (version >= 2 && (!Array.isArray(p.targetContextSessionIds)
+        || !Array.isArray(p.targetContextCellIds)
+        || p.targetContextSessionIds.length > 100_000 || p.targetContextCellIds.length > 100_000
+        || p.targetContextSessionIds.some((id) => !/^context-session:[a-f0-9]{64}$/u.test(id))
+        || p.targetContextCellIds.some((id) => !/^cell:[a-f0-9]{64}$/u.test(id))))
+      || (version >= 3 && (!Array.isArray(p.targetContextCallIds)
+        || p.targetContextCallIds.length > 100_000
+        || p.targetContextCallIds.some((id) => !/^context-call:[a-f0-9]{64}$/u.test(id))))) {
       fail('run stop admission is invalid');
     }
+    const contextCanonical = version === 1 || (
+      new Set(p.targetContextSessionIds).size === p.targetContextSessionIds.length
+      && new Set(p.targetContextCellIds).size === p.targetContextCellIds.length
+      && (version < 3 || new Set(p.targetContextCallIds).size === p.targetContextCallIds.length)
+      && JSON.stringify([...p.targetContextSessionIds].sort(compareCanonicalStrings))
+        === JSON.stringify(p.targetContextSessionIds)
+      && JSON.stringify([...p.targetContextCellIds].sort(compareCanonicalStrings))
+        === JSON.stringify(p.targetContextCellIds)
+      && (version < 3 || JSON.stringify([...p.targetContextCallIds].sort(compareCanonicalStrings))
+        === JSON.stringify(p.targetContextCallIds))
+    );
+    const digestCore = this._runLineagePolicy ? {
+      throughSeq: p.throughSeq, targetRunIds: p.targetRunIds,
+      targetTaskIds: p.targetTaskIds, targetWorkerIds: p.targetWorkerIds,
+      ...(version >= 2 ? {
+        targetContextSessionIds: p.targetContextSessionIds,
+        targetContextCellIds: p.targetContextCellIds,
+        ...(version >= 3 ? { targetContextCallIds: p.targetContextCallIds } : {}),
+      } : {}),
+    } : {
+      targetTaskIds: p.targetTaskIds, targetWorkerIds: p.targetWorkerIds,
+      ...(version >= 2 ? {
+        targetContextSessionIds: p.targetContextSessionIds,
+        targetContextCellIds: p.targetContextCellIds,
+        ...(version >= 3 ? { targetContextCallIds: p.targetContextCallIds } : {}),
+      } : {}),
+    };
     if (new Set(p.targetTaskIds).size !== p.targetTaskIds.length || new Set(p.targetWorkerIds).size !== p.targetWorkerIds.length
       || JSON.stringify([...p.targetTaskIds].sort(compareCanonicalStrings)) !== JSON.stringify(p.targetTaskIds)
       || JSON.stringify([...p.targetWorkerIds].sort(compareCanonicalStrings)) !== JSON.stringify(p.targetWorkerIds)
+      || !contextCanonical
       || p.requestDigest !== canonicalDigest({ repoId: p.repoId, runId: p.runId, reasonDigest: p.reasonDigest })
-      || p.targetDigest !== canonicalDigest({ targetTaskIds: p.targetTaskIds, targetWorkerIds: p.targetWorkerIds })) {
+      || (this._runLineagePolicy
+        ? (new Set(p.targetRunIds).size !== p.targetRunIds.length
+          || JSON.stringify([...p.targetRunIds].sort(compareCanonicalStrings)) !== JSON.stringify(p.targetRunIds)
+          || p.targetDigest !== canonicalDigest(digestCore))
+        : p.targetDigest !== canonicalDigest(digestCore))) {
       fail('run stop admission binding is invalid');
     }
     if (event.idempotencyKey !== `run.stop:${p.runId}` || !boundedText(event.actor, 256)) fail('run stop authority is invalid');
-    const targets = this._runStopTargets(p.runId);
-    if (canonicalDigest(targets) !== canonicalDigest({
+    const targets = this._runStopTargets(
+      p.runId, this._runLineagePolicy ? p.throughSeq : undefined, version,
+    );
+    const observed = this._runLineagePolicy ? {
+      scope: p.scope, throughSeq: p.throughSeq, targetRunIds: p.targetRunIds,
       targetTaskIds: p.targetTaskIds, targetWorkerIds: p.targetWorkerIds, targetDigest: p.targetDigest,
-    })) fail('run stop target snapshot diverged');
+      ...(version >= 2 ? {
+        targetContextSessionIds: p.targetContextSessionIds,
+        targetContextCellIds: p.targetContextCellIds,
+        ...(version >= 3 ? { targetContextCallIds: p.targetContextCallIds } : {}),
+      } : {}),
+    } : {
+      targetTaskIds: p.targetTaskIds, targetWorkerIds: p.targetWorkerIds,
+      targetDigest: p.targetDigest,
+      ...(version >= 2 ? {
+        targetContextSessionIds: p.targetContextSessionIds,
+        targetContextCellIds: p.targetContextCellIds,
+        ...(version >= 3 ? { targetContextCallIds: p.targetContextCallIds } : {}),
+      } : {}),
+    };
+    if (canonicalDigest(targets) !== canonicalDigest(observed)) fail('run stop target snapshot diverged');
     return targets;
   }
 
@@ -2338,17 +3838,19 @@ export class CoordinationStore {
       throw integrity ? new CoordinationIntegrityError(message, 'run_stop_integrity') : new CoordinationRefusal(message, 'run_stop_integrity');
     };
     if (!p || Object.keys(p).sort().join(',') !== ['receipt', 'runId', 'schemaVersion'].join(',')
-      || p.schemaVersion !== 1 || !validRunId(p.runId)) fail('run stop completion is invalid');
+      || ![1, 2, 3].includes(p.schemaVersion) || !validRunId(p.runId)) fail('run stop completion is invalid');
     const stop = this._runStops.get(p.runId);
     if (!stop || stop.status !== 'stopping' || stop.receipt !== null) fail('run stop completion has no open admission');
+    if (p.schemaVersion !== stop.schemaVersion) fail('run stop completion version differs from admission');
     if (event.idempotencyKey !== `run.stop.complete:${p.runId}` || event.actor !== stop.actor) fail('run stop completion authority is invalid');
     const receipt = p.receipt;
-    const receiptFields = ['schemaVersion', 'state', 'scope', 'repoId', 'runId', 'targetCount', 'remainingCount', 'targetDigest', 'counts', 'checks', 'effects', 'receiptDigest'];
+    const receiptFields = ['schemaVersion', 'state', 'scope', 'repoId', 'runId', 'targetCount', 'remainingCount', 'targetDigest', 'counts', 'checks', 'effects', 'receiptDigest',
+      ...(stop.schemaVersion >= 2 ? ['context'] : [])];
     const countFields = ['pendingCancelled', 'killConfirmed', 'alreadyTerminal', 'processesObserved', 'processesClosed'];
     const checkFields = ['dispatchClosed', 'interactionsResolved', 'runAuthorityReleased'];
     const effectFields = ['coordinatorClosed', 'writerReleased', 'transportsClosed'];
-    if (!receipt || Object.keys(receipt).sort().join(',') !== receiptFields.sort().join(',') || receipt.schemaVersion !== 1
-      || receipt.state !== 'stopped' || receipt.scope !== 'run' || receipt.repoId !== stop.repoId || receipt.runId !== stop.runId
+    if (!receipt || Object.keys(receipt).sort().join(',') !== receiptFields.sort().join(',') || receipt.schemaVersion !== stop.schemaVersion
+      || receipt.state !== 'stopped' || receipt.scope !== (stop.scope ?? 'run') || receipt.repoId !== stop.repoId || receipt.runId !== stop.runId
       || receipt.targetCount !== stop.targetWorkerIds.length || receipt.remainingCount !== 0 || receipt.targetDigest !== stop.targetDigest
       || !receipt.counts || Object.keys(receipt.counts).sort().join(',') !== countFields.sort().join(',')
       || countFields.some((field) => !Number.isSafeInteger(receipt.counts[field]) || receipt.counts[field] < 0 || receipt.counts[field] > receipt.targetCount)
@@ -2359,6 +3861,39 @@ export class CoordinationStore {
       || !receipt.effects || Object.keys(receipt.effects).sort().join(',') !== effectFields.sort().join(',')
       || effectFields.some((field) => receipt.effects[field] !== false)
       || !/^[a-f0-9]{64}$/.test(receipt.receiptDigest ?? '')) fail('run stop receipt is invalid');
+    if (stop.schemaVersion >= 2) {
+      const contextFields = [
+        'targetSessionCount', 'targetCellCount', 'remainingSessionCount', 'remainingCellCount',
+        ...(stop.schemaVersion >= 3 ? ['targetCallCount', 'remainingCallCount'] : []),
+      ];
+      const context = receipt.context;
+      const sessionStates = stop.targetContextSessionIds.map((sessionId) => (
+        this._contextSessions.get(sessionId)?.state ?? null
+      ));
+      const cellStates = stop.targetContextCellIds.map((cellId) => (
+        this._contextCells.get(cellId)?.state ?? null
+      ));
+      const callStates = (stop.targetContextCallIds ?? []).map((callId) => (
+        this._contextCalls.get(callId)?.state ?? null
+      ));
+      const remainingSessionCount = sessionStates.filter((state) => state !== 'stopped').length;
+      const remainingCellCount = cellStates.filter((state) => state !== 'stopped').length;
+      const remainingCallCount = callStates.filter((state) => (
+        !['completed', 'failed', 'stopped'].includes(state)
+      )).length;
+      if (!context || Object.keys(context).sort().join(',') !== contextFields.sort().join(',')
+        || context.targetSessionCount !== stop.targetContextSessionIds.length
+        || context.targetCellCount !== stop.targetContextCellIds.length
+        || context.remainingSessionCount !== remainingSessionCount
+        || context.remainingCellCount !== remainingCellCount
+        || (stop.schemaVersion >= 3 && (
+          context.targetCallCount !== stop.targetContextCallIds.length
+          || context.remainingCallCount !== remainingCallCount
+        ))
+        || remainingSessionCount !== 0 || remainingCellCount !== 0 || remainingCallCount !== 0) {
+        fail('run stop Context receipt is invalid');
+      }
+    }
     const { receiptDigest, ...core } = receipt;
     if (receiptDigest !== canonicalDigest(core)) fail('run stop receipt digest is invalid');
     return stop;
@@ -2654,8 +4189,2337 @@ export class CoordinationStore {
     return state;
   }
 
-  _assertRunAdmissionOpen(runId) {
-    if (runId != null && this._runStops.has(runId)) {
+  _contextFailure(message, code, integrity = false) {
+    if (integrity) throw new CoordinationIntegrityError(message, code);
+    throw new CoordinationRefusal(message, code);
+  }
+
+  _contextDefinition(manifest, integrity = false) {
+    const records = this._events.filter((event) => event.kind === 'driver.recorded'
+      && event.payload?.kind === 'application.workflow_definition_bound'
+      && event.payload?.repoId === manifest.repoId
+      && event.payload?.runId === manifest.workflow.runId
+      && event.payload?.planDigest === manifest.workflow.plan.digest
+      && event.payload?.definitionDigest === manifest.workflow.definitionDigest);
+    if (records.length !== 1) {
+      this._contextFailure('Context Workflow definition is absent or ambiguous',
+        'context_session_invalid', integrity);
+    }
+    const event = records[0];
+    const { kind, definitionDigest, ...core } = event.payload;
+    void kind;
+    if (event.actor !== 'application:workflow-registry'
+      || event.idempotencyKey
+        !== `application.workflow_definition_bound:${manifest.workflow.runId}:${manifest.workflow.plan.digest}`
+      || definitionDigest !== canonicalDigest(core)) {
+      this._contextFailure('Context Workflow definition failed integrity validation',
+        'context_session_invalid', integrity);
+    }
+    const plan = this._plans.get(this._planVersionKey(
+      manifest.workflow.plan.planId, manifest.workflow.plan.version,
+    ));
+    if (event.payload.schemaVersion === 3) {
+      const ancestors = this._events.filter((candidate) => (
+        candidate.seq < event.seq && candidate.kind === 'driver.recorded'
+          && candidate.payload?.kind === 'application.workflow_definition_bound'
+          && candidate.payload?.repoId === manifest.repoId
+          && candidate.payload?.runId === manifest.workflow.runId
+      )).map((candidate) => candidate.payload);
+      try {
+        if (!plan || plan.digest !== manifest.workflow.plan.digest) {
+          throw new TypeError('Context Workflow Plan is unavailable');
+        }
+        validateWorkflowDefinitionV3(event.payload, { nodes: plan.nodes, ancestors });
+      } catch (error) {
+        this._contextFailure(error.message, 'context_session_invalid', integrity);
+      }
+    } else if (Array.isArray(event.payload.attempts)) {
+      try {
+        if (!plan || plan.digest !== manifest.workflow.plan.digest) {
+          throw new TypeError('Context Workflow Plan is unavailable');
+        }
+        validateWorkflowDefinitionLegacy(event.payload, { nodes: plan.nodes });
+      } catch (error) {
+        this._contextFailure(error.message, 'context_session_invalid', integrity);
+      }
+    }
+    return event;
+  }
+
+  _currentContextDeployment() {
+    if (!this._contextProgramPolicy) return null;
+    const body = {
+      schemaVersion: 1,
+      kind: 'baton.context_deployment_authority',
+      deploymentBaseSha: this._deploymentBaseSha,
+      environmentDigest: this._contextEnvironmentDigest,
+      referenceIdentity: this._contextReferenceIdentity,
+      policy: clone(this._contextProgramPolicy),
+    };
+    return freeze({ ...body, authorityDigest: canonicalDigest(body) });
+  }
+
+  _normalizeContextDeployment(value, integrity = false) {
+    const fields = [
+      'authorityDigest', 'deploymentBaseSha', 'environmentDigest', 'kind', 'policy',
+      'referenceIdentity', 'schemaVersion',
+    ];
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).sort().join(',') !== fields.sort().join(',')
+      || value.schemaVersion !== 1 || value.kind !== 'baton.context_deployment_authority'
+      || !/^[a-f0-9]{40}$/u.test(value.deploymentBaseSha ?? '')
+      || !/^[a-f0-9]{64}$/u.test(value.environmentDigest ?? '')
+      || !/^[a-f0-9]{64}$/u.test(value.referenceIdentity ?? '')) {
+      this._contextFailure('Context deployment authority is malformed',
+        integrity ? 'context_session_integrity' : 'context_session_invalid', integrity);
+    }
+    let policy;
+    try { policy = normalizeContextProgramPolicy(value.policy); }
+    catch (error) {
+      this._contextFailure(error.message,
+        integrity ? 'context_session_integrity' : 'context_session_invalid', integrity);
+    }
+    const body = {
+      schemaVersion: 1,
+      kind: 'baton.context_deployment_authority',
+      deploymentBaseSha: value.deploymentBaseSha,
+      environmentDigest: value.environmentDigest,
+      referenceIdentity: value.referenceIdentity,
+      policy,
+    };
+    if (value.authorityDigest !== canonicalDigest(body)) {
+      this._contextFailure('Context deployment authority digest changed',
+        integrity ? 'context_session_integrity' : 'context_session_invalid', integrity);
+    }
+    return freeze({ ...body, authorityDigest: value.authorityDigest });
+  }
+
+  _normalizeContextSourceAttestation(value, { deployment, manifest, node, branch, source = null },
+    integrity = false) {
+    const fail = (message) => this._contextFailure(message,
+      integrity ? 'context_source_attestation_integrity' : 'context_source_attestation_invalid',
+      integrity);
+    const fields = [
+      'branch', 'coverage', 'itemCount', 'kind', 'nodeDigest', 'producerIdentity', 'proofDigest',
+      'receiptDigest', 'schemaVersion', 'scopeDigest', 'sourceDigest', 'sourceRef', 'treeSha',
+      ...(value?.schemaVersion === 2 ? [
+        'gitObjectFormat', 'repoId', 'rootTreeOid', 'sourcePolicyDigest',
+      ] : []),
+    ];
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).sort().join(',') !== fields.sort().join(',')
+      || ![1, 2].includes(value.schemaVersion)
+      || value.kind !== 'baton.context_source_attestation'
+      || value.producerIdentity !== deployment.referenceIdentity
+      || value.treeSha !== manifest.tree.sha || value.nodeDigest !== manifest.workflow.node.digest
+      || value.scopeDigest !== contextValueDigest([...(node.contextScope ?? node.pathScope)].sort())
+      || value.branch !== branch.name || value.sourceRef !== branch.ref
+      || value.sourceDigest !== branch.digest || value.itemCount !== branch.itemCount
+      || !/^[a-f0-9]{64}$/u.test(value.proofDigest ?? '')
+      || (value.schemaVersion === 2 && (
+        value.repoId !== this._repoId || value.repoId !== manifest.repoId
+        || value.gitObjectFormat !== 'sha1'
+        || !/^[a-f0-9]{40}$/u.test(value.rootTreeOid ?? '')
+        || !/^[a-f0-9]{64}$/u.test(value.sourcePolicyDigest ?? '')
+      ))
+      || !/^[a-f0-9]{64}$/u.test(value.receiptDigest ?? '')) {
+      fail('Context source attestation is malformed or outside Plan authority');
+    }
+    const coverageFields = [
+      'complete', 'excludedBinaryOrInvalidText', 'excludedOversizeFiles',
+      'excludedSensitiveContent', 'excludedSensitivePaths', 'excludedUnsupportedTypes',
+      'includedFiles', 'includedItems', 'listedEntries', 'outsideScopeEntries', 'scopedEntries',
+    ];
+    const coverage = value.coverage;
+    const countFields = coverageFields.filter((field) => field !== 'complete');
+    if (!coverage || typeof coverage !== 'object' || Array.isArray(coverage)
+      || Object.keys(coverage).sort().join(',') !== coverageFields.sort().join(',')
+      || coverage.complete !== true
+      || countFields.some((field) => !Number.isSafeInteger(coverage[field]) || coverage[field] < 0)
+      || coverage.includedItems !== branch.itemCount
+      || coverage.listedEntries !== coverage.outsideScopeEntries + coverage.scopedEntries
+      || coverage.scopedEntries !== coverage.includedFiles
+        + coverage.excludedBinaryOrInvalidText + coverage.excludedOversizeFiles
+        + coverage.excludedSensitiveContent + coverage.excludedSensitivePaths
+        + coverage.excludedUnsupportedTypes) {
+      fail('Context source attestation coverage is malformed');
+    }
+    const { receiptDigest, ...core } = value;
+    if (receiptDigest !== contextValueDigest(core)) {
+      fail('Context source attestation receipt digest changed');
+    }
+    if (source !== null) {
+      if (!Array.isArray(source) || contextValueDigest(source) !== branch.digest
+        || source.length !== branch.itemCount) {
+        fail('Context source attestation content differs from its branch');
+      }
+      const coordinates = [];
+      const files = new Map();
+      let priorPath = null;
+      let priorChunk = -1;
+      for (const item of source) {
+        const itemFields = [
+          'byteEnd', 'byteStart', 'chunk', 'contentDigest', 'gitBlobOid', 'language',
+          'path', 'text',
+          ...(value.schemaVersion === 2 ? ['blobBytes', 'gitMode'] : []),
+        ];
+        if (!item || typeof item !== 'object' || Array.isArray(item)
+          || Object.keys(item).sort().join(',') !== itemFields.sort().join(',')
+          || !boundedText(item.path, 4_096) || item.path.startsWith('/')
+          || item.path.includes('\\') || item.path.split('/').includes('..')
+          || !Number.isSafeInteger(item.chunk) || item.chunk < 0
+          || !Number.isSafeInteger(item.byteStart) || item.byteStart < 0
+          || !Number.isSafeInteger(item.byteEnd) || item.byteEnd <= item.byteStart
+          || Buffer.byteLength(item.text ?? '') !== item.byteEnd - item.byteStart
+          || !/^[a-f0-9]{40}$/u.test(item.gitBlobOid ?? '')
+          || !/^[a-f0-9]{64}$/u.test(item.contentDigest ?? '')
+          || (value.schemaVersion === 2 && (
+            !['100644', '100755'].includes(item.gitMode)
+            || !Number.isSafeInteger(item.blobBytes) || item.blobBytes <= 0
+            || item.byteEnd > item.blobBytes
+          ))
+          || !boundedText(item.language, 128)) {
+          fail('Context source attestation item is malformed');
+        }
+        if (priorPath !== null && (item.path < priorPath
+          || (item.path === priorPath && item.chunk <= priorChunk))) {
+          fail('Context source attestation items are not canonically ordered');
+        }
+        priorPath = item.path;
+        priorChunk = item.chunk;
+        const scopeAllows = pathInScopes(item.path, node.contextScope ?? node.pathScope);
+        if (!scopeAllows) fail('Context source attestation item escaped Plan path scope');
+        const file = files.get(item.path) ?? {
+          gitBlobOid: item.gitBlobOid, contentDigest: item.contentDigest,
+          gitMode: item.gitMode ?? null, blobBytes: item.blobBytes ?? null,
+          nextChunk: 0, nextByte: 0, text: '',
+        };
+        if (item.gitBlobOid !== file.gitBlobOid || item.contentDigest !== file.contentDigest
+          || (value.schemaVersion === 2
+            && (item.gitMode !== file.gitMode || item.blobBytes !== file.blobBytes))
+          || item.chunk !== file.nextChunk || item.byteStart !== file.nextByte) {
+          fail('Context source attestation file coordinates are discontinuous');
+        }
+        file.nextChunk += 1;
+        file.nextByte = item.byteEnd;
+        file.text += item.text;
+        files.set(item.path, file);
+        coordinates.push({
+          path: item.path, chunk: item.chunk,
+          ...(value.schemaVersion === 2 ? {
+            gitMode: item.gitMode, gitBlobOid: item.gitBlobOid, blobBytes: item.blobBytes,
+          } : { gitBlobOid: item.gitBlobOid }),
+          byteStart: item.byteStart, byteEnd: item.byteEnd, contentDigest: item.contentDigest,
+        });
+      }
+      for (const file of files.values()) {
+        const bytes = Buffer.from(file.text);
+        const gitBlobOid = createHash('sha1')
+          .update(Buffer.from(`blob ${bytes.byteLength}\0`)).update(bytes).digest('hex');
+        if (gitBlobOid !== file.gitBlobOid || contextValueDigest(file.text) !== file.contentDigest
+          || (value.schemaVersion === 2 && bytes.byteLength !== file.blobBytes)) {
+          fail('Context source attestation blob content failed identity');
+        }
+      }
+      if (contextValueDigest(coordinates) !== value.proofDigest) {
+        fail('Context source attestation coordinate proof changed');
+      }
+    }
+    return freeze(clone(value));
+  }
+
+  _assertContextSessionCurrent(session, integrity = false) {
+    const manifest = session?.manifest;
+    const deployment = this._normalizeContextDeployment(session?.deployment, integrity);
+    if (!manifest || manifest.tree.source !== 'deployment_snapshot'
+      || manifest.tree.sha !== deployment.deploymentBaseSha
+      || session.environmentDigest !== deployment.environmentDigest
+      || manifest.policyDigest !== deployment.policy.policyDigest
+      || (!integrity && canonicalDigest(deployment)
+        !== canonicalDigest(this._currentContextDeployment()))) {
+      this._contextFailure('Context session tree, environment, or policy is stale',
+        integrity ? 'context_session_integrity' : 'context_session_stale', integrity);
+    }
+    const goal = this._goals.get(this._goalVersionKey(
+      manifest.workflow.goal.goalId, manifest.workflow.goal.version,
+    ));
+    const plan = this._plans.get(this._planVersionKey(
+      manifest.workflow.plan.planId, manifest.workflow.plan.version,
+    ));
+    const goalHead = this._goalHeads.get(this._goalScopeKey(this._repoId, session.runId));
+    const planHead = goal ? this._planHeads.get(this._planHeadKey(goal)) : null;
+    const approval = plan
+      ? this._planApprovals.get(this._planVersionKey(plan.planId, plan.version)) : null;
+    if (!goal || !plan
+      || goal.digest !== manifest.workflow.goal.digest
+      || plan.digest !== manifest.workflow.plan.digest
+      || goal.repoId !== this._repoId || goal.runId !== session.runId
+      || plan.repoId !== this._repoId || plan.runId !== session.runId
+      || canonicalDigest(plan.goal) !== canonicalDigest(manifest.workflow.goal)
+      || goalHead?.digest !== goal.digest || planHead?.digest !== plan.digest
+      || approval?.disposition !== 'approved') {
+      this._contextFailure('Context session Goal or Plan authority is stale',
+        integrity ? 'context_session_integrity' : 'context_session_stale', integrity);
+    }
+    this._contextDefinition(manifest, integrity);
+    const node = plan.nodes.find((candidate) => candidate.key === manifest.workflow.node.key);
+    const task = this._tasks.get(manifest.workflow.task.taskId);
+    const dispatch = this._planTaskLinks.get(manifest.workflow.task.taskId);
+    if (!node || contextValueDigest(node) !== manifest.workflow.node.digest
+      || !task || task.runId !== session.runId || task.status !== 'working'
+      || task.version !== manifest.workflow.task.version
+      || task.createdEvent !== manifest.workflow.task.createdEvent
+      || task.claimedEvent !== manifest.workflow.task.claimedEvent
+      || dispatch?.binding?.planId !== plan.planId
+      || dispatch?.binding?.planVersion !== plan.version
+      || dispatch?.binding?.planDigest !== plan.digest
+      || dispatch?.binding?.nodeKey !== node.key) {
+      this._contextFailure('Context session node or claimed task authority is stale',
+        integrity ? 'context_session_integrity' : 'context_session_stale', integrity);
+    }
+    this._assertRunAdmissionOpen(session.runId, integrity);
+    return freeze({ goal, plan, node, task });
+  }
+
+  _validateContextSessionPayload(payload, event, integrity = false) {
+    if (!this._contextProgramPolicy) {
+      this._contextFailure('Context Program authority is unavailable',
+        'context_session_unavailable', integrity);
+    }
+    const fields = [
+      'admissionDigest', 'authority', 'deployment', 'requestDigest', 'schemaVersion', 'session',
+      ...(payload?.schemaVersion === 2 ? ['sourceAttestations'] : []),
+    ];
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || Object.keys(payload).sort().join(',') !== fields.sort().join(',')
+      || ![1, 2].includes(payload.schemaVersion)
+      || !payload.authority || typeof payload.authority !== 'object'
+      || Array.isArray(payload.authority)
+      || Object.keys(payload.authority).sort().join(',')
+        !== ['actor', 'principalId', 'repoId', 'runId'].sort().join(',')) {
+      this._contextFailure('Context session event is malformed', 'context_session_integrity', integrity);
+    }
+    try { normalizeContextAuthority(payload.authority); }
+    catch (error) {
+      this._contextFailure(error.message,
+        integrity ? 'context_session_integrity' : 'context_session_invalid', integrity);
+    }
+    const deployment = this._normalizeContextDeployment(payload.deployment, integrity);
+    let session;
+    try {
+      session = contextSessionIdentity({
+        manifest: payload.session?.manifest,
+        environmentDigest: payload.session?.environmentDigest,
+        policy: deployment.policy,
+      });
+    } catch (error) {
+      this._contextFailure(error.message, integrity ? 'context_session_integrity' : 'context_session_invalid',
+        integrity);
+    }
+    const expectedSession = { ...session };
+    const requestCore = {
+      actor: payload.authority.actor, principalId: payload.authority.principalId,
+      repoId: payload.authority.repoId,
+      runId: payload.authority.runId,
+      manifestDigest: session.manifestDigest,
+      environmentDigest: session.environmentDigest,
+    };
+    const admissionCore = {
+      authority: payload.authority, deployment, session: expectedSession,
+      ...(payload.schemaVersion === 2 ? { sourceAttestations: payload.sourceAttestations } : {}),
+    };
+    if (payload.authority.repoId !== this._repoId
+      || payload.authority.runId !== session.runId
+      || session.repoId !== this._repoId
+      || payload.requestDigest !== canonicalDigest(requestCore)
+      || payload.admissionDigest !== canonicalDigest(admissionCore)
+      || canonicalDigest(payload.session) !== canonicalDigest(expectedSession)
+      || canonicalDigest(payload.deployment) !== canonicalDigest(deployment)
+      || event.idempotencyKey !== `context.session:${session.manifestDigest}`
+      || event.actor !== payload.authority.actor) {
+      this._contextFailure('Context session authority or identity changed',
+        integrity ? 'context_session_integrity' : 'context_session_invalid', integrity);
+    }
+    const manifest = session.manifest;
+    if (manifest.tree.source !== 'deployment_snapshot'
+      || manifest.tree.sha !== deployment.deploymentBaseSha
+      || session.environmentDigest !== deployment.environmentDigest
+      || manifest.policyDigest !== deployment.policy.policyDigest
+      || (!integrity && canonicalDigest(deployment)
+        !== canonicalDigest(this._currentContextDeployment()))) {
+      this._contextFailure('Context session tree, environment, or policy differs from deployment authority',
+        integrity ? 'context_session_integrity' : 'context_session_invalid', integrity);
+    }
+    const goal = this._goals.get(this._goalVersionKey(
+      manifest.workflow.goal.goalId, manifest.workflow.goal.version,
+    ));
+    const plan = this._plans.get(this._planVersionKey(
+      manifest.workflow.plan.planId, manifest.workflow.plan.version,
+    ));
+    const goalHead = this._goalHeads.get(this._goalScopeKey(this._repoId, session.runId));
+    const planHead = goal ? this._planHeads.get(this._planHeadKey(goal)) : null;
+    const approval = plan ? this._planApprovals.get(this._planVersionKey(plan.planId, plan.version)) : null;
+    if (!goal || !plan
+      || goal.digest !== manifest.workflow.goal.digest
+      || plan.digest !== manifest.workflow.plan.digest
+      || goal.repoId !== this._repoId || goal.runId !== session.runId
+      || plan.repoId !== this._repoId || plan.runId !== session.runId
+      || canonicalDigest(plan.goal) !== canonicalDigest(manifest.workflow.goal)
+      || goalHead?.digest !== goal.digest || planHead?.digest !== plan.digest
+      || approval?.disposition !== 'approved') {
+      this._contextFailure('Context session Goal or Plan authority is stale',
+        integrity ? 'context_session_integrity' : 'context_session_invalid', integrity);
+    }
+    this._contextDefinition(manifest, integrity);
+    const node = plan.nodes.find((candidate) => candidate.key === manifest.workflow.node.key);
+    const task = this._tasks.get(manifest.workflow.task.taskId);
+    const dispatch = this._planTaskLinks.get(manifest.workflow.task.taskId);
+    if (!node || contextValueDigest(node) !== manifest.workflow.node.digest
+      || !task || task.runId !== session.runId || task.status !== 'working'
+      || task.version !== manifest.workflow.task.version
+      || task.createdEvent !== manifest.workflow.task.createdEvent
+      || task.claimedEvent !== manifest.workflow.task.claimedEvent
+      || dispatch?.binding?.planId !== plan.planId
+      || dispatch?.binding?.planVersion !== plan.version
+      || dispatch?.binding?.planDigest !== plan.digest
+      || dispatch?.binding?.nodeKey !== node.key) {
+      this._contextFailure('Context session node or claimed task authority changed',
+        integrity ? 'context_session_integrity' : 'context_session_invalid', integrity);
+    }
+    let sourceAttestations = [];
+    if (payload.schemaVersion === 2) {
+      if (!Array.isArray(payload.sourceAttestations)
+        || payload.sourceAttestations.length !== manifest.branches.length) {
+        this._contextFailure('Context session source attestations are incomplete',
+          integrity ? 'context_session_integrity' : 'context_session_invalid', integrity);
+      }
+      sourceAttestations = manifest.branches.map((branch, index) => (
+        this._normalizeContextSourceAttestation(payload.sourceAttestations[index], {
+          deployment, manifest, node, branch,
+        }, integrity)
+      ));
+    }
+    this._assertRunAdmissionOpen(session.runId, integrity);
+    return freeze({
+      session: freeze({ ...session, deployment, sourceAttestations }),
+      requestCore, admissionCore,
+    });
+  }
+
+  _validateContextCellAdmissionPayload(payload, event, integrity = false) {
+    const fields = ['admissionDigest', 'authority', 'cell', 'requestDigest', 'schemaVersion'];
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || Object.keys(payload).sort().join(',') !== fields.sort().join(',')
+      || payload.schemaVersion !== 1
+      || !payload.authority || typeof payload.authority !== 'object'
+      || Array.isArray(payload.authority)
+      || Object.keys(payload.authority).sort().join(',')
+        !== ['actor', 'principalId', 'repoId', 'runId'].sort().join(',')) {
+      this._contextFailure('Context cell admission is malformed',
+        'context_cell_integrity', integrity);
+    }
+    try { normalizeContextAuthority(payload.authority); }
+    catch (error) {
+      this._contextFailure(error.message,
+        integrity ? 'context_cell_integrity' : 'context_cell_invalid', integrity);
+    }
+    const session = this._contextSessions.get(payload.cell?.sessionId);
+    if (!session) this._contextFailure('Context cell session is unavailable',
+      integrity ? 'context_cell_integrity' : 'context_cell_invalid', integrity);
+    let cell;
+    const contextPolicy = this._normalizeContextDeployment(session.deployment, integrity).policy;
+    try {
+      cell = contextCellIdentity({
+        session, program: payload.cell?.program, ordinal: payload.cell?.ordinal,
+        predecessor: payload.cell?.predecessor ?? null, policy: contextPolicy,
+      });
+    } catch (error) {
+      this._contextFailure(error.message, integrity ? 'context_cell_integrity' : 'context_cell_invalid',
+        integrity);
+    }
+    const requestCore = {
+      actor: payload.authority.actor, principalId: payload.authority.principalId,
+      repoId: payload.authority.repoId,
+      runId: payload.authority.runId,
+      sessionId: session.sessionId,
+      programDigest: cell.programDigest,
+    };
+    if (canonicalDigest(payload.authority) !== canonicalDigest(session.authority)) {
+      this._contextFailure('Context cell principal differs from session admission',
+        integrity ? 'context_cell_integrity' : 'context_cell_unauthorized', integrity);
+    }
+    if (payload.authority.repoId !== this._repoId || payload.authority.runId !== session.runId
+      || payload.requestDigest !== canonicalDigest(requestCore)
+      || payload.admissionDigest !== cell.admissionDigest
+      || canonicalDigest(payload.cell) !== canonicalDigest(cell)
+      || event.idempotencyKey !== `context.cell:${session.sessionId}:${cell.programDigest}`
+      || event.actor !== payload.authority.actor
+      || !contextProgramIsPure(cell.program, contextPolicy)) {
+      this._contextFailure('Context cell authority or identity changed',
+        integrity ? 'context_cell_integrity' : 'context_cell_invalid', integrity);
+    }
+    const cells = [...this._contextCells.values()].filter((row) => row.sessionId === session.sessionId);
+    const expectedOrdinal = cells.length + 1;
+    const expectedPredecessor = cells.length === 0 ? null : cells.at(-1).cellId;
+    if (cell.ordinal !== expectedOrdinal || cell.predecessor !== expectedPredecessor
+      || cells.length >= contextPolicy.maxCellsPerSession) {
+      this._contextFailure('Context cell sequence is stale or exhausted',
+        integrity ? 'context_cell_integrity' : 'context_cell_invalid', integrity);
+    }
+    this._assertContextSessionCurrent(session, integrity);
+    return cell;
+  }
+
+  _validateContextCellSettlementPayload(payload, event, integrity = false) {
+    const fields = [
+      'authority', 'cellId', 'expectedVersion', 'newVersion', 'result', 'schemaVersion',
+      'settlementDigest',
+    ];
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || Object.keys(payload).sort().join(',') !== fields.sort().join(',')
+      || payload.schemaVersion !== 1 || payload.expectedVersion !== 1 || payload.newVersion !== 2
+      || !payload.result || typeof payload.result !== 'object' || Array.isArray(payload.result)
+      || !payload.authority || typeof payload.authority !== 'object'
+      || Array.isArray(payload.authority)
+      || Object.keys(payload.authority).sort().join(',')
+        !== ['actor', 'principalId', 'repoId', 'runId'].sort().join(',')) {
+      this._contextFailure('Context cell settlement is malformed',
+        'context_cell_settlement_integrity', integrity);
+    }
+    try { normalizeContextAuthority(payload.authority); }
+    catch (error) {
+      this._contextFailure(error.message,
+        integrity ? 'context_cell_settlement_integrity' : 'context_cell_settlement_invalid', integrity);
+    }
+    const cell = this._contextCells.get(payload.cellId);
+    if (!cell || cell.state !== 'admitted' || cell.version !== payload.expectedVersion) {
+      this._contextFailure('Context cell settlement target is stale',
+        integrity ? 'context_cell_settlement_integrity' : 'context_cell_settlement_invalid', integrity);
+    }
+    if (canonicalDigest(payload.authority) !== canonicalDigest(cell.authority)
+      || event.actor !== payload.authority.actor) {
+      this._contextFailure('Context cell settlement principal differs from admission',
+        integrity ? 'context_cell_settlement_integrity'
+          : 'context_cell_settlement_unauthorized', integrity);
+    }
+    const session = this._contextSessions.get(cell.sessionId);
+    const contextPolicy = this._normalizeContextDeployment(session?.deployment, integrity).policy;
+    let expectedResult;
+    try {
+      if (payload.result.state === 'completed') {
+        const resultFields = [
+          'coordinateDigest', 'evidenceRef', 'outputRef', 'providerEffects',
+          'sourceCoordinateCount', 'state',
+        ];
+        if (Object.keys(payload.result).sort().join(',') !== resultFields.sort().join(',')
+          || payload.result.providerEffects !== 0
+          || !Number.isSafeInteger(payload.result.sourceCoordinateCount)
+          || payload.result.sourceCoordinateCount < 0
+          || payload.result.sourceCoordinateCount > contextPolicy.maxEvidenceCoordinates
+          || !/^[a-f0-9]{64}$/u.test(payload.result.coordinateDigest ?? '')) {
+          throw new TypeError('Context completion result is invalid');
+        }
+        const outputRef = normalizeContextArtifactRef(
+          payload.result.outputRef, 'context_value', contextPolicy,
+        );
+        const evidenceRef = normalizeContextArtifactRef(
+          payload.result.evidenceRef, 'context_evidence', contextPolicy,
+        );
+        expectedResult = { ...payload.result, outputRef, evidenceRef };
+      } else {
+        const resultFields = ['providerEffects', 'state', 'termination'];
+        const termination = payload.result.termination;
+        if (!['failed', 'attention', 'stopped'].includes(payload.result.state)
+          || Object.keys(payload.result).sort().join(',') !== resultFields.sort().join(',')
+          || payload.result.providerEffects !== 0
+          || !termination || typeof termination !== 'object' || Array.isArray(termination)
+          || Object.keys(termination).sort().join(',') !== ['code', 'retryable', 'summary'].sort().join(',')
+          || !/^[a-z0-9_:-]{1,128}$/u.test(termination.code ?? '')
+          || !boundedText(termination.summary, 1_024)
+          || typeof termination.retryable !== 'boolean') {
+          throw new TypeError('Context terminal result is invalid');
+        }
+        expectedResult = clone(payload.result);
+      }
+    } catch (error) {
+      this._contextFailure(error.message,
+        integrity ? 'context_cell_settlement_integrity' : 'context_cell_settlement_invalid', integrity);
+    }
+    const settlementCore = {
+      authority: payload.authority,
+      cellId: cell.cellId, admissionDigest: cell.admissionDigest,
+      expectedVersion: 1, newVersion: 2, result: expectedResult,
+    };
+    if (payload.settlementDigest !== canonicalDigest(settlementCore)
+      || event.idempotencyKey !== `context.cell.settle:${cell.cellId}:${cell.admissionDigest}`) {
+      this._contextFailure('Context cell settlement identity changed',
+        integrity ? 'context_cell_settlement_integrity' : 'context_cell_settlement_invalid', integrity);
+    }
+    return freeze({ cell, result: freeze(clone(expectedResult)), settlementCore });
+  }
+
+  _contextCallRunId(call) {
+    return call?.kind === 'baton.context_effect_call'
+      ? call.authority?.contextPrincipal?.runId ?? null : call?.source?.runId ?? null;
+  }
+
+  _validateContextMapCallAdmissionPayload(payload, event, integrity = false) {
+    const fields = [
+      'admissionDigest', 'authority', 'call', 'expectedPlanDigest', 'planRequest',
+      'requestDigest', 'schemaVersion',
+    ];
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || Object.keys(payload).sort().join(',') !== fields.sort().join(',')
+      || payload.schemaVersion !== 1
+      || !payload.authority || typeof payload.authority !== 'object'
+      || Array.isArray(payload.authority)
+      || Object.keys(payload.authority).sort().join(',')
+        !== ['actor', 'principalId', 'repoId', 'runId'].sort().join(',')) {
+      this._contextFailure('Context map call admission is malformed',
+        'context_map_call_integrity', integrity);
+    }
+    let authority; let call;
+    try {
+      authority = normalizeContextAuthority(payload.authority);
+      call = normalizeContextMapCall(payload.call);
+    } catch (error) {
+      this._contextFailure(error.message,
+        integrity ? 'context_map_call_integrity' : 'context_map_call_invalid', integrity);
+    }
+    const source = call.source;
+    const session = this._contextSessions.get(source.sessionId);
+    const cell = this._contextCells.get(source.cellId);
+    if (!session || !cell || cell.sessionId !== session.sessionId || cell.state !== 'completed'
+      || !cell.result || authority.repoId !== this._repoId || authority.runId !== source.runId
+      || canonicalDigest(authority) !== canonicalDigest(cell.authority)
+      || source.repoId !== this._repoId || source.runId !== session.runId
+      || source.cellAdmissionDigest !== cell.admissionDigest
+      || source.cellSettlementDigest !== cell.settlementDigest
+      || source.manifestDigest !== session.manifestDigest
+      || source.sourceProgramDigest !== cell.programDigest
+      || source.coordinateDigest !== cell.result.coordinateDigest
+      || canonicalDigest(source.outputRef) !== canonicalDigest(cell.result.outputRef)
+      || canonicalDigest(source.evidenceRef) !== canonicalDigest(cell.result.evidenceRef)
+      || source.predecessorPlan.planId !== session.manifest.workflow.plan.planId
+      || source.predecessorPlan.version !== session.manifest.workflow.plan.version
+      || source.predecessorPlan.digest !== session.manifest.workflow.plan.digest
+      || source.definitionDigest !== session.manifest.workflow.definitionDigest
+      || source.treeSha !== session.manifest.tree.sha
+      || source.environmentDigest !== session.environmentDigest
+      || source.policyDigest !== session.policyDigest) {
+      this._contextFailure('Context map source authority changed',
+        integrity ? 'context_map_call_integrity' : 'context_map_source_stale', integrity);
+    }
+
+    // The source Context session is current at call admission. The successor Plan deliberately
+    // advances the head immediately afterward, so replay/recovery must validate these historical
+    // coordinates rather than call _assertContextSessionCurrent after proposal.
+    const predecessor = this._plans.get(this._planVersionKey(
+      source.predecessorPlan.planId, source.predecessorPlan.version,
+    ));
+    const goal = predecessor ? this._goals.get(this._goalVersionKey(
+      predecessor.goal.goalId, predecessor.goal.version,
+    )) : null;
+    const goalHead = goal ? this._goalHeads.get(this._goalScopeKey(this._repoId, source.runId)) : null;
+    const planHead = goal ? this._planHeads.get(this._planHeadKey(goal)) : null;
+    if (!predecessor || predecessor.digest !== source.predecessorPlan.digest || !goal
+      || goalHead?.digest !== goal.digest || planHead?.digest !== predecessor.digest) {
+      this._contextFailure('Context map predecessor is not the current Plan head',
+        integrity ? 'context_map_call_integrity' : 'context_map_predecessor_stale', integrity);
+    }
+
+    let normalizedPlan;
+    try {
+      if (!payload.planRequest || typeof payload.planRequest !== 'object'
+        || Array.isArray(payload.planRequest)
+        || Object.keys(payload.planRequest).sort().join(',')
+          !== ['goal', 'nodes', 'predecessor', 'totals'].sort().join(',')) {
+        throw new GoalPlanValidationError('Context map normalized Plan request is malformed',
+          'context_map_plan_invalid');
+      }
+      normalizedPlan = normalizePlanRequest({
+        goal: payload.planRequest.goal,
+        predecessor: payload.planRequest.predecessor,
+        nodes: payload.planRequest.nodes,
+      }, this._goalPlanPolicy, goal, { preserveLegacyRoutes: integrity });
+      if (canonicalDigest(payload.planRequest.totals) !== canonicalDigest(normalizedPlan.totals)) {
+        throw new GoalPlanValidationError('Context map Plan totals changed',
+          'context_map_plan_invalid');
+      }
+    }
+    catch (error) {
+      this._contextFailure(error.message,
+        integrity ? 'context_map_call_integrity' : (error.code ?? 'context_map_plan_invalid'), integrity);
+    }
+    const expectedPlanDigest = goalPlanDigest({
+      schemaVersion: 1, repoId: this._repoId, runId: source.runId,
+      goal: normalizedPlan.goal, predecessor: normalizedPlan.predecessor,
+      nodes: normalizedPlan.nodes, totals: normalizedPlan.totals,
+      policyDigest: this._goalPlanPolicy.policyDigest,
+    });
+    if (payload.expectedPlanDigest !== expectedPlanDigest
+      || normalizedPlan.predecessor?.planId !== predecessor.planId
+      || normalizedPlan.predecessor?.version !== predecessor.version
+      || normalizedPlan.predecessor?.digest !== predecessor.digest
+      || normalizedPlan.nodes.length !== call.partitions.length
+      || normalizedPlan.nodes.length < 2
+      || normalizedPlan.nodes.length > this._goalPlanPolicy.limits.maxNodes) {
+      this._contextFailure('Context map successor Plan identity changed',
+        integrity ? 'context_map_call_integrity' : 'context_map_plan_invalid', integrity);
+    }
+    const partitions = new Set();
+    for (const node of normalizedPlan.nodes) {
+      const binding = node.contextCall;
+      if (!binding || binding.callId !== call.callId || binding.callDigest !== call.callDigest
+        || binding.programDigest !== call.programDigest || binding.logicalRole !== call.role
+        || binding.source.predecessorPlan.digest !== predecessor.digest
+        || canonicalDigest(binding.source) !== canonicalDigest(call.source)) {
+        this._contextFailure('Context map Plan node differs from its admitted call',
+          integrity ? 'context_map_call_integrity' : 'context_map_plan_invalid', integrity);
+      }
+      let expectedBinding;
+      try { expectedBinding = contextMapNodeBinding(call, binding.partition); }
+      catch (error) {
+        this._contextFailure(error.message,
+          integrity ? 'context_map_call_integrity' : 'context_map_plan_invalid', integrity);
+      }
+      if (canonicalDigest(binding) !== canonicalDigest(expectedBinding)
+        || partitions.has(binding.partition.partitionId)) {
+        this._contextFailure('Context map partition binding changed or repeated',
+          integrity ? 'context_map_call_integrity' : 'context_map_plan_invalid', integrity);
+      }
+      partitions.add(binding.partition.partitionId);
+    }
+    if (partitions.size !== call.partitions.length
+      || call.partitions.some(({ partitionId }) => !partitions.has(partitionId))) {
+      this._contextFailure('Context map Plan does not cover the exact partition set',
+        integrity ? 'context_map_call_integrity' : 'context_map_plan_invalid', integrity);
+    }
+
+    const prefix = this._events.filter((candidate) => candidate.seq < event.seq);
+    const sourceDefinitions = prefix.filter((candidate) => candidate.kind === 'driver.recorded'
+      && candidate.payload?.kind === 'application.workflow_definition_bound'
+      && candidate.payload?.repoId === this._repoId
+      && candidate.payload?.runId === source.runId
+      && candidate.payload?.planDigest === predecessor.digest
+      && candidate.payload?.definitionDigest === source.definitionDigest);
+    const successorDefinitions = prefix.filter((candidate) => candidate.kind === 'driver.recorded'
+      && candidate.payload?.kind === 'application.workflow_definition_bound'
+      && candidate.payload?.repoId === this._repoId
+      && candidate.payload?.runId === source.runId
+      && candidate.payload?.planDigest === expectedPlanDigest);
+    if (sourceDefinitions.length !== 1 || successorDefinitions.length !== 1) {
+      this._contextFailure('Context map Workflow definition binding is absent or ambiguous',
+        integrity ? 'context_map_call_integrity' : 'context_map_definition_invalid', integrity);
+    }
+    const sourceDefinitionEvent = sourceDefinitions[0];
+    const successorDefinitionEvent = successorDefinitions[0];
+    if (sourceDefinitionEvent.actor !== 'application:workflow-registry'
+      || sourceDefinitionEvent.idempotencyKey
+        !== `application.workflow_definition_bound:${source.runId}:${predecessor.digest}`
+      || successorDefinitionEvent.actor !== 'application:workflow-registry'
+      || successorDefinitionEvent.idempotencyKey
+        !== `application.workflow_definition_bound:${source.runId}:${expectedPlanDigest}`) {
+      this._contextFailure('Context map Workflow definition authority is invalid',
+        integrity ? 'context_map_call_integrity' : 'context_map_definition_invalid', integrity);
+    }
+    const sourceDefinition = sourceDefinitionEvent.payload;
+    const successorDefinition = successorDefinitionEvent.payload;
+    if (successorDefinition.schemaVersion === 3) {
+      const ancestry = prefix.filter((candidate) => (
+        candidate.kind === 'driver.recorded'
+          && candidate.payload?.kind === 'application.workflow_definition_bound'
+          && candidate.payload?.repoId === this._repoId
+          && candidate.payload?.runId === source.runId
+      )).map((candidate) => candidate.payload);
+      let sourceCatalog;
+      try {
+        if (sourceDefinition.schemaVersion === 3) {
+          validateWorkflowDefinitionV3(sourceDefinition, {
+            nodes: predecessor.nodes,
+            ancestors: ancestry.filter((candidate) => (
+              candidate.definitionDigest !== sourceDefinition.definitionDigest
+            )),
+          });
+          sourceCatalog = sourceDefinition.roleCatalog;
+        } else {
+          normalizeWorkflowDefinition(sourceDefinition, { nodes: predecessor.nodes });
+          if (!Array.isArray(sourceDefinition.attempts)
+            || sourceDefinition.attempts.length !== predecessor.nodes.length) {
+            throw new TypeError('Historical Workflow Attempt set does not cover its exact Plan');
+          }
+          const nodesByKey = new Map(predecessor.nodes.map((node) => [node.key, node]));
+          const boundNodes = new Set();
+          sourceCatalog = buildWorkflowRoleCatalog(sourceDefinition.attempts.map((attempt) => {
+            const node = nodesByKey.get(attempt?.nodeKey);
+            const route = attempt?.route ?? null;
+            if (!node || boundNodes.has(node.key)
+              || !planRouteMatches(node.routes, route)
+              || canonicalDigest(attempt.route) !== canonicalDigest(route)) {
+              throw new TypeError('Historical Workflow Attempt differs from its exact Plan node');
+            }
+            boundNodes.add(node.key);
+            return { role: attempt.role, route: attempt.route, node };
+          }));
+          if (boundNodes.size !== predecessor.nodes.length) {
+            throw new TypeError('Historical Workflow Attempt set does not cover its exact Plan');
+          }
+        }
+        validateWorkflowDefinitionV3(successorDefinition, {
+          nodes: normalizedPlan.nodes,
+          ancestors: ancestry.filter((candidate) => (
+            candidate.definitionDigest !== successorDefinition.definitionDigest
+          )),
+        });
+      } catch (error) {
+        this._contextFailure(error.message,
+          integrity ? 'context_map_call_integrity'
+            : (error.code ?? 'context_map_definition_invalid'), integrity);
+      }
+      const sourceRole = sourceDefinition.schemaVersion === 3
+        ? workflowCatalogRole(sourceDefinition, call.role)
+        : sourceCatalog.roles.find((role) => role.role === call.role) ?? null;
+      const expectedGeneration = sourceDefinition.schemaVersion === 3
+        ? sourceDefinition.lineage.generation + 1 : 2;
+      const expectedRoot = sourceDefinition.schemaVersion === 3
+        && sourceDefinition.lineage.generation > 1
+        ? sourceDefinition.lineage.rootDefinitionDigest : sourceDefinition.definitionDigest;
+      const sourcePolicyDigest = sourceDefinition.schemaVersion === 3
+        ? sourceDefinition.workflowPolicyDigest
+        : sourceDefinition.schemaVersion === 2
+          ? sourceDefinition.workflowPolicyDigest : LEGACY_WORKFLOW_POLICY.policyDigest;
+      if (!sourceRole || sourceDefinition.profileDigest !== source.profileDigest
+        || successorDefinition.profileDigest !== source.profileDigest
+        || successorDefinition.workflowPolicyDigest !== sourcePolicyDigest
+        || canonicalDigest(successorDefinition.workItem)
+          !== canonicalDigest(sourceDefinition.workItem)
+        || canonicalDigest(successorDefinition.roleCatalog)
+          !== canonicalDigest(sourceCatalog)
+        || successorDefinition.lineage.generation !== expectedGeneration
+        || successorDefinition.lineage.parentDefinitionDigest
+          !== sourceDefinition.definitionDigest
+        || successorDefinition.lineage.rootDefinitionDigest !== expectedRoot) {
+        this._contextFailure('Context map logical role is outside Workflow authority',
+          integrity ? 'context_map_call_integrity' : 'context_map_role_invalid', integrity);
+      }
+      const nodes = new Map(normalizedPlan.nodes.map((node) => [node.key, node]));
+      for (const attempt of successorDefinition.attempts) {
+        const node = nodes.get(attempt.nodeKey);
+        const partitionIndex = node?.contextCall?.partition?.index;
+        const expectedRole = Number.isSafeInteger(partitionIndex)
+          ? `${call.role}:${String(partitionIndex + 1).padStart(4, '0')}` : null;
+        const route = node ? workflowAttemptRoute(successorDefinition, attempt) : null;
+        if (!node || attempt.logicalRole !== call.role
+          || attempt.role !== expectedRole || node.key !== `attempt:${expectedRole}`
+          || !planRouteMatches(node.routes, route)
+          || canonicalDigest(workflowAttemptRoute(successorDefinition, attempt))
+            !== canonicalDigest(route)
+          || canonicalDigest(route) !== canonicalDigest(sourceRole.route)) {
+          this._contextFailure('Context map route differs from the approved logical role',
+            integrity ? 'context_map_call_integrity' : 'context_map_route_invalid', integrity);
+        }
+      }
+    } else {
+      if (sourceDefinition.schemaVersion === 3) {
+        this._contextFailure('Context map Workflow definition cannot downgrade its schema',
+          integrity ? 'context_map_call_integrity' : 'context_map_definition_invalid', integrity);
+      }
+      try {
+        validateWorkflowDefinitionLegacy(sourceDefinition, { nodes: predecessor.nodes });
+        validateWorkflowDefinitionLegacy(successorDefinition, { nodes: normalizedPlan.nodes });
+      } catch (error) {
+        this._contextFailure(error.message,
+          integrity ? 'context_map_call_integrity'
+            : (error.code ?? 'context_map_definition_invalid'), integrity);
+      }
+      const sourceAttempt = sourceDefinition.attempts?.find((attempt) => attempt.role === call.role);
+      if (!sourceAttempt || sourceDefinition.profileDigest !== source.profileDigest
+        || successorDefinition.profileDigest !== source.profileDigest
+        || !Array.isArray(successorDefinition.attempts)
+        || successorDefinition.attempts.length !== normalizedPlan.nodes.length) {
+        this._contextFailure('Context map logical role is outside Workflow authority',
+          integrity ? 'context_map_call_integrity' : 'context_map_role_invalid', integrity);
+      }
+      const nodes = new Map(normalizedPlan.nodes.map((node) => [node.key, node]));
+      for (const attempt of successorDefinition.attempts) {
+        const node = nodes.get(attempt.nodeKey);
+        const partitionIndex = node?.contextCall?.partition?.index;
+        const expectedRole = Number.isSafeInteger(partitionIndex)
+          ? `${call.role}:${String(partitionIndex + 1).padStart(4, '0')}` : null;
+        const route = attempt?.route ?? null;
+        if (!node || attempt.role !== expectedRole || node.key !== `attempt:${expectedRole}`
+          || !planRouteMatches(node.routes, route)
+          || canonicalDigest(attempt.route) !== canonicalDigest(route)
+          || canonicalDigest(attempt.route) !== canonicalDigest(sourceAttempt.route)) {
+          this._contextFailure('Context map route differs from the approved logical role',
+            integrity ? 'context_map_call_integrity' : 'context_map_route_invalid', integrity);
+        }
+      }
+    }
+
+    if (!integrity) {
+      let output; let evidence;
+      try {
+        output = this._contextReferenceRead(cell.result.outputRef);
+        evidence = this._contextReferenceRead(cell.result.evidenceRef);
+      } catch (error) {
+        this._contextFailure(error?.message ?? 'Context map source artifact is unavailable',
+          error?.code ?? 'context_map_source_unavailable', false);
+      }
+      const verified = this._validateContextCompletionArtifacts(
+        cell, cell.result, output, evidence, true,
+      );
+      if (call.schemaVersion !== 2 || verified.evidence.schemaVersion !== 2) {
+        this._contextFailure(
+          'Context map admission requires exact per-output source lineage',
+          'context_output_lineage_required',
+          false,
+        );
+      }
+      const outputLineages = verified.evidence.outputLineages;
+      if (!Array.isArray(verified.output.items)
+        || !Array.isArray(outputLineages)
+        || verified.output.items.length !== call.partitions.length
+        || outputLineages.length !== call.partitions.length
+        || call.source.outputLineageDigest !== verified.evidence.outputLineageDigest
+        || call.partitions.some((partition) => (
+          contextValueDigest(verified.output.items[partition.index]) !== partition.itemDigest
+          || outputLineages[partition.index]?.itemDigest !== partition.itemDigest
+          || outputLineages[partition.index]?.coordinateDigest !== partition.coordinateDigest
+          || outputLineages[partition.index]?.lineageDigest !== partition.lineageDigest
+        ))) {
+        this._contextFailure('Context map partitions differ from the verified source cell',
+          'context_map_partition_invalid', false);
+      }
+    }
+
+    const requestCore = {
+      authority, call, planRequest: normalizedPlan, expectedPlanDigest,
+    };
+    const admissionCore = { ...requestCore, sourceCellSettlementDigest: cell.settlementDigest };
+    if (payload.requestDigest !== canonicalDigest(requestCore)
+      || payload.admissionDigest !== canonicalDigest(admissionCore)
+      || event.actor !== authority.actor
+      || event.idempotencyKey !== `context.call:${call.callId}`) {
+      this._contextFailure('Context map call admission identity changed',
+        integrity ? 'context_map_call_integrity' : 'context_map_call_invalid', integrity);
+    }
+    this._assertRunAdmissionOpen(source.runId, integrity);
+    return freeze({
+      call, authority, planRequest: normalizedPlan, expectedPlanDigest,
+      requestCore, admissionCore,
+    });
+  }
+
+  _validateContextEffectCallAdmissionPayload(payload, event, integrity = false) {
+    const fail = (message, code = 'context_call_invalid') => this._contextFailure(
+      message, integrity ? 'context_call_integrity' : code, integrity,
+    );
+    const fields = [
+      'admissionDigest', 'authority', 'call', 'expectedPlanDigest', 'planRequest',
+      'requestDigest', 'schemaVersion',
+    ];
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || Object.keys(payload).sort().join(',') !== fields.sort().join(',')
+      || payload.schemaVersion !== 2) {
+      return fail('Context effect-call admission is malformed');
+    }
+    let call; let admissionAuthority;
+    try {
+      call = normalizeContextEffectCall(payload.call);
+      admissionAuthority = normalizeContextAuthority(payload.authority);
+    }
+    catch (error) { return fail(error.message, error.code ?? 'context_call_invalid'); }
+    const authority = call.authority;
+    const principal = authority.contextPrincipal;
+    const runId = principal.runId;
+    if (canonicalDigest(admissionAuthority) !== canonicalDigest(principal)
+      || principal.repoId !== this._repoId || principal.actor !== 'deployment:context'
+      || event.actor !== principal.actor
+      || event.idempotencyKey !== `context.call:${call.callId}`) {
+      return fail('Context effect-call principal authority changed',
+        'context_call_unauthorized');
+    }
+    const session = this._contextSessions.get(authority.sessionId);
+    if (!session || session.state !== 'active' || session.runId !== runId
+      || canonicalDigest(session.authority) !== canonicalDigest(principal)
+      || session.manifestDigest !== authority.manifestDigest
+      || session.manifest.tree.sha !== authority.treeSha
+      || session.environmentDigest !== authority.environmentDigest
+      || session.policyDigest !== authority.policyDigest) {
+      return fail('Context effect-call session authority changed',
+        'context_call_authority_stale');
+    }
+
+    if (call.generation > 1) {
+      const predecessorCall = this._contextCalls.get(call.predecessorCall.callId);
+      let selection;
+      try { selection = this._contextRetrySelection(call.predecessorCall.callId, integrity); }
+      catch (error) { return fail(error.message, error.code ?? 'context_retry_not_eligible'); }
+      const invariantAuthority = (candidate) => ({
+        contextPrincipal: candidate.contextPrincipal,
+        requester: {
+          principalId: candidate.requester.principalId,
+          sessionId: candidate.requester.sessionId,
+        },
+        sessionId: candidate.sessionId, manifestDigest: candidate.manifestDigest,
+        treeSha: candidate.treeSha, environmentDigest: candidate.environmentDigest,
+        policyDigest: candidate.policyDigest, profileDigest: candidate.profileDigest,
+        roleCatalogDigest: candidate.roleCatalogDigest,
+      });
+      if (!predecessorCall || call.generation !== predecessorCall.generation + 1
+        || call.predecessorCall.callDigest !== predecessorCall.callDigest
+        || call.predecessorCall.generation !== predecessorCall.generation
+        || call.predecessorCall.settlementDigest !== predecessorCall.settlementDigest
+        || call.requestId !== predecessorCall.requestId
+        || call.requestDigest !== predecessorCall.requestDigest
+        || call.operator !== predecessorCall.operator
+        || call.role !== predecessorCall.role || call.instruction !== predecessorCall.instruction
+        || canonicalDigest(call.source) !== canonicalDigest(predecessorCall.source)
+        || canonicalDigest(call.units) !== canonicalDigest(predecessorCall.units)
+        || canonicalDigest(invariantAuthority(call.authority))
+          !== canonicalDigest(invariantAuthority(predecessorCall.authority))
+        || canonicalDigest(call.executionUnitIds)
+          !== canonicalDigest(selection.retryUnitIds)
+        || canonicalDigest(call.inheritedChildren)
+          !== canonicalDigest(selection.inheritedChildren)
+        || canonicalDigest(call.predecessorCall.retryUnitIds)
+          !== canonicalDigest(selection.retryUnitIds)
+        || canonicalDigest(call.predecessorCall.inheritedChildren)
+          !== canonicalDigest(selection.inheritedChildren)) {
+        return fail('Context retry generation differs from its exact terminal predecessor',
+          'context_retry_integrity');
+      }
+    }
+
+    const predecessorRef = authority.predecessorPlan;
+    const predecessor = this._plans.get(this._planVersionKey(
+      predecessorRef.planId, predecessorRef.version,
+    ));
+    const goal = predecessor ? this._goals.get(this._goalVersionKey(
+      predecessor.goal.goalId, predecessor.goal.version,
+    )) : null;
+    const goalHead = goal ? this._goalHeads.get(this._goalScopeKey(this._repoId, runId)) : null;
+    const planHead = goal ? this._planHeads.get(this._planHeadKey(goal)) : null;
+    if (!predecessor || predecessor.digest !== predecessorRef.digest || !goal
+      || predecessor.repoId !== this._repoId || predecessor.runId !== runId
+      || goalHead?.digest !== goal.digest || planHead?.digest !== predecessor.digest) {
+      return fail('Context effect-call predecessor is not the current Plan head',
+        'context_call_predecessor_stale');
+    }
+
+    let normalizedPlan;
+    try {
+      if (!payload.planRequest || typeof payload.planRequest !== 'object'
+        || Array.isArray(payload.planRequest)
+        || Object.keys(payload.planRequest).sort().join(',')
+          !== ['goal', 'nodes', 'predecessor', 'totals'].sort().join(',')) {
+        throw new GoalPlanValidationError('Context effect-call normalized Plan request is malformed',
+          'context_call_plan_invalid');
+      }
+      normalizedPlan = normalizePlanRequest({
+        goal: payload.planRequest.goal,
+        predecessor: payload.planRequest.predecessor,
+        nodes: payload.planRequest.nodes,
+      }, this._goalPlanPolicy, goal, { preserveLegacyRoutes: integrity });
+      if (canonicalDigest(payload.planRequest.totals) !== canonicalDigest(normalizedPlan.totals)) {
+        throw new GoalPlanValidationError('Context effect-call Plan totals changed',
+          'context_call_plan_invalid');
+      }
+    } catch (error) {
+      return fail(error.message, error.code ?? 'context_call_plan_invalid');
+    }
+    const expectedPlanDigest = goalPlanDigest({
+      schemaVersion: 1, repoId: this._repoId, runId,
+      goal: normalizedPlan.goal, predecessor: normalizedPlan.predecessor,
+      nodes: normalizedPlan.nodes, totals: normalizedPlan.totals,
+      policyDigest: this._goalPlanPolicy.policyDigest,
+    });
+    if (payload.expectedPlanDigest !== expectedPlanDigest
+      || normalizedPlan.predecessor?.planId !== predecessor.planId
+      || normalizedPlan.predecessor?.version !== predecessor.version
+      || normalizedPlan.predecessor?.digest !== predecessor.digest
+      || normalizedPlan.nodes.length !== call.executionUnitIds.length
+      || normalizedPlan.nodes.length === 0
+      || normalizedPlan.nodes.length > this._goalPlanPolicy.limits.maxNodes) {
+      return fail('Context effect-call successor Plan identity changed',
+        'context_call_plan_invalid');
+    }
+    const units = new Set();
+    for (const node of normalizedPlan.nodes) {
+      const binding = node.contextCall;
+      if (!binding || binding.kind !== 'context_effect_child'
+        || binding.callId !== call.callId || binding.callDigest !== call.callDigest
+        || binding.requestId !== call.requestId || binding.requestDigest !== call.requestDigest
+        || binding.logicalRole !== call.role || binding.operator !== call.operator
+        || canonicalDigest(binding.source) !== canonicalDigest(call.source)) {
+        return fail('Context effect-call Plan node differs from its admitted call',
+          'context_call_plan_invalid');
+      }
+      let expectedBinding;
+      try { expectedBinding = contextEffectNodeBinding(call, binding.unit); }
+      catch (error) { return fail(error.message, 'context_call_plan_invalid'); }
+      if (canonicalDigest(binding) !== canonicalDigest(expectedBinding)
+        || units.has(binding.unit.unitId)) {
+        return fail('Context effect-call unit binding changed or repeated',
+          'context_call_plan_invalid');
+      }
+      units.add(binding.unit.unitId);
+    }
+    if (units.size !== call.executionUnitIds.length
+      || call.executionUnitIds.some((unitId) => !units.has(unitId))) {
+      return fail('Context effect-call Plan does not cover the exact execution unit set',
+        'context_call_plan_invalid');
+    }
+
+    const prefix = this._events.filter((candidate) => candidate.seq < event.seq);
+    const definitions = prefix.filter((candidate) => (
+      candidate.kind === 'driver.recorded'
+        && candidate.payload?.kind === 'application.workflow_definition_bound'
+        && candidate.payload?.repoId === this._repoId
+        && candidate.payload?.runId === runId
+    ));
+    const sourceDefinitions = definitions.filter((candidate) => (
+      candidate.payload?.planDigest === predecessor.digest
+        && candidate.payload?.definitionDigest === authority.definitionDigest
+    ));
+    const successorDefinitions = definitions.filter((candidate) => (
+      candidate.payload?.planDigest === expectedPlanDigest
+    ));
+    if (sourceDefinitions.length !== 1 || successorDefinitions.length !== 1) {
+      return fail('Context effect-call Workflow definition binding is absent or ambiguous',
+        'context_call_definition_invalid');
+    }
+    const sourceEvent = sourceDefinitions[0];
+    const successorEvent = successorDefinitions[0];
+    const sourceDefinition = sourceEvent.payload;
+    const successorDefinition = successorEvent.payload;
+    if (sourceEvent.actor !== 'application:workflow-registry'
+      || sourceEvent.idempotencyKey
+        !== `application.workflow_definition_bound:${runId}:${predecessor.digest}`
+      || successorEvent.actor !== 'application:workflow-registry'
+      || successorEvent.idempotencyKey
+        !== `application.workflow_definition_bound:${runId}:${expectedPlanDigest}`
+      || ![1, 2, 3].includes(sourceDefinition.schemaVersion)
+      || successorDefinition.schemaVersion !== 3) {
+      return fail('Context effect-call Workflow definition authority is invalid',
+        'context_call_definition_invalid');
+    }
+    let sourceCatalog;
+    try {
+      const ancestry = definitions.map((candidate) => candidate.payload);
+      if (sourceDefinition.schemaVersion === 3) {
+        validateWorkflowDefinitionV3(sourceDefinition, {
+          nodes: predecessor.nodes,
+          ancestors: ancestry.filter((candidate) => (
+            candidate.definitionDigest !== sourceDefinition.definitionDigest
+          )),
+        });
+        sourceCatalog = sourceDefinition.roleCatalog;
+      } else {
+        normalizeWorkflowDefinition(sourceDefinition, { nodes: predecessor.nodes });
+        if (!Array.isArray(sourceDefinition.attempts)
+          || sourceDefinition.attempts.length !== predecessor.nodes.length) {
+          throw new TypeError('Historical Workflow Attempt set does not cover its exact Plan');
+        }
+        const nodesByKey = new Map(predecessor.nodes.map((node) => [node.key, node]));
+        const boundNodes = new Set();
+        sourceCatalog = buildWorkflowRoleCatalog(sourceDefinition.attempts.map((attempt) => {
+          const node = nodesByKey.get(attempt?.nodeKey);
+          const route = attempt?.route ?? null;
+          if (!node || boundNodes.has(node.key)
+            || !planRouteMatches(node.routes, route)
+            || canonicalDigest(attempt.route) !== canonicalDigest(route)) {
+            throw new TypeError('Historical Workflow Attempt differs from its exact Plan node');
+          }
+          boundNodes.add(node.key);
+          return { role: attempt.role, route: attempt.route, node };
+        }));
+        if (boundNodes.size !== predecessor.nodes.length) {
+          throw new TypeError('Historical Workflow Attempt set does not cover its exact Plan');
+        }
+      }
+      validateWorkflowDefinitionV3(successorDefinition, {
+        nodes: normalizedPlan.nodes,
+        ancestors: ancestry.filter((candidate) => (
+          candidate.definitionDigest !== successorDefinition.definitionDigest
+        )),
+      });
+    } catch (error) {
+      return fail(error.message, error.code ?? 'context_call_definition_invalid');
+    }
+    const catalogRole = sourceDefinition.schemaVersion === 3
+      ? workflowCatalogRole(sourceDefinition, call.role)
+      : sourceCatalog.roles.find((role) => role.role === call.role) ?? null;
+    const expectedGeneration = sourceDefinition.schemaVersion === 3
+      ? sourceDefinition.lineage.generation + 1 : 2;
+    const expectedRoot = sourceDefinition.schemaVersion === 3
+      && sourceDefinition.lineage.generation > 1
+      ? sourceDefinition.lineage.rootDefinitionDigest : sourceDefinition.definitionDigest;
+    const sourcePolicyDigest = sourceDefinition.schemaVersion === 3
+      ? sourceDefinition.workflowPolicyDigest
+      : sourceDefinition.schemaVersion === 2
+        ? sourceDefinition.workflowPolicyDigest : LEGACY_WORKFLOW_POLICY.policyDigest;
+    if (!catalogRole || authority.roleCatalogDigest !== sourceCatalog.catalogDigest
+      || authority.profileDigest !== sourceDefinition.profileDigest
+      || successorDefinition.profileDigest !== sourceDefinition.profileDigest
+      || successorDefinition.workflowPolicyDigest !== sourcePolicyDigest
+      || canonicalDigest(successorDefinition.workItem)
+        !== canonicalDigest(sourceDefinition.workItem)
+      || canonicalDigest(successorDefinition.roleCatalog) !== canonicalDigest(sourceCatalog)
+      || successorDefinition.lineage.generation !== expectedGeneration
+      || successorDefinition.lineage.parentDefinitionDigest !== sourceDefinition.definitionDigest
+      || successorDefinition.lineage.rootDefinitionDigest !== expectedRoot
+      || successorDefinition.attempts.length !== call.executionUnitIds.length) {
+      return fail('Context effect-call logical role is outside Workflow authority',
+        'context_call_role_invalid');
+    }
+    const planNodes = new Map(normalizedPlan.nodes.map((node) => [node.key, node]));
+    const attemptedUnits = new Set();
+    for (const attempt of successorDefinition.attempts) {
+      const node = planNodes.get(attempt.nodeKey);
+      const unit = node?.contextCall?.unit;
+      const expectedRole = Number.isSafeInteger(unit?.index)
+        ? `${call.role}:${String(unit.index + 1).padStart(4, '0')}` : null;
+      const route = node ? workflowAttemptRoute(successorDefinition, attempt) : null;
+      if (!node || attemptedUnits.has(unit?.unitId)
+        || attempt.logicalRole !== call.role || attempt.role !== expectedRole
+        || node.key !== `attempt:${expectedRole}`
+        || !planRouteMatches(node.routes, route)
+        || canonicalDigest(workflowAttemptRoute(successorDefinition, attempt))
+          !== canonicalDigest(route)
+        || canonicalDigest(route) !== canonicalDigest(catalogRole.route)) {
+        return fail('Context effect-call route differs from the approved logical role',
+          'context_call_route_invalid');
+      }
+      attemptedUnits.add(unit.unitId);
+    }
+    if (attemptedUnits.size !== call.executionUnitIds.length
+      || call.executionUnitIds.some((unitId) => !attemptedUnits.has(unitId))) {
+      return fail('Context effect-call Workflow Attempts do not cover its execution units',
+        'context_call_definition_invalid');
+    }
+
+    let sourceSettlementDigest = null;
+    try {
+      if (call.operator === 'map') {
+        const cell = this._contextCells.get(call.source.id);
+        if (!cell || cell.state !== 'completed' || cell.sessionId !== session.sessionId
+          || !cell.result || cell.admissionDigest !== call.source.admissionDigest
+          || cell.settlementDigest !== call.source.settlementDigest
+          || canonicalDigest(cell.result.outputRef) !== canonicalDigest(call.source.outputRef)
+          || canonicalDigest(cell.result.evidenceRef) !== canonicalDigest(call.source.evidenceRef)
+          || cell.result.coordinateDigest !== call.source.coordinateDigest) {
+          return fail('Context effect-call cell source is stale', 'context_call_source_stale');
+        }
+        const artifacts = this.contextCellArtifacts(cell.cellId);
+        const lineages = artifacts.evidence?.outputLineages;
+        if (artifacts.evidence?.schemaVersion !== 2
+          || artifacts.evidence.outputLineageDigest !== call.source.outputLineageDigest
+          || artifacts.output?.items?.length !== call.source.itemCount
+          || lineages?.length !== call.source.itemCount
+          || call.units.some((unit) => {
+            const input = unit.inputs[0]; const lineage = lineages?.[input.index];
+            return contextValueDigest(artifacts.output.items[input.index]) !== input.itemDigest
+              || lineage?.itemDigest !== input.itemDigest
+              || lineage?.lineageDigest !== input.lineageDigest
+              || lineage?.coordinateDigest !== unit.coordinateDigest;
+          })) {
+          return fail('Context effect-call map units differ from verified cell outputs',
+            'context_call_source_invalid');
+        }
+        sourceSettlementDigest = cell.settlementDigest;
+      } else {
+        const sourceCall = this._contextCalls.get(call.source.id);
+        if (!sourceCall || this._contextCallRunId(sourceCall) !== runId) {
+          return fail('Context effect-call call source is outside its Run',
+            'context_call_source_stale');
+        }
+        const expectedSource = this.contextCompletedCallSource(call.source.id);
+        const artifacts = this.contextCallArtifacts(call.source.id);
+        const lineages = artifacts.evidence?.outputLineages;
+        const unit = call.units[0];
+        const sourceEvidenceVersion = sourceCall.kind === 'baton.context_effect_call' ? 4 : 3;
+        if (canonicalDigest(expectedSource) !== canonicalDigest(call.source)
+          || artifacts.evidence?.schemaVersion !== sourceEvidenceVersion
+          || artifacts.output?.items?.length !== call.source.itemCount
+          || lineages?.length !== call.source.itemCount
+          || unit.coordinateDigest !== call.source.coordinateDigest
+          || unit.inputs.some((input) => {
+            const lineage = lineages?.[input.index];
+            return contextValueDigest(artifacts.output.items[input.index]) !== input.itemDigest
+              || lineage?.itemDigest !== input.itemDigest
+              || lineage?.lineageDigest !== input.lineageDigest;
+          })) {
+          return fail('Context effect-call reduce unit differs from verified call outputs',
+            'context_call_source_invalid');
+        }
+        sourceSettlementDigest = sourceCall?.settlementDigest ?? null;
+      }
+    } catch (error) {
+      if (error instanceof CoordinationRefusal || error instanceof CoordinationIntegrityError) {
+        return fail(error.message, error.code ?? 'context_call_source_invalid');
+      }
+      return fail(error?.message ?? 'Context effect-call source is unavailable',
+        'context_call_source_invalid');
+    }
+
+    const requestCore = {
+      authority: admissionAuthority, call, planRequest: normalizedPlan, expectedPlanDigest,
+    };
+    const admissionCore = {
+      ...requestCore, sourceSettlementDigest,
+    };
+    if (payload.requestDigest !== canonicalDigest(requestCore)
+      || payload.admissionDigest !== canonicalDigest(admissionCore)) {
+      return fail('Context effect-call admission identity changed');
+    }
+    this._assertRunAdmissionOpen(runId, integrity);
+    return freeze({
+      call, authority: admissionAuthority, planRequest: normalizedPlan, expectedPlanDigest,
+      requestCore, admissionCore,
+    });
+  }
+
+  _contextSettlementChildren(call, kind, integrity = false, cleanup = null) {
+    const generic = kind === 'effect';
+    const subject = generic ? 'effect' : 'map';
+    const failChild = (message, code = 'context_map_call_not_terminal') => (
+      this._contextFailure(message, integrity
+        ? (generic ? 'context_call_integrity' : 'context_map_call_integrity')
+        : (generic && code.startsWith('context_map_')
+          ? code.replace('context_map_', 'context_') : code), integrity)
+    );
+    const plan = [...this._plans.values()].find((candidate) => (
+      candidate.digest === call.expectedPlanDigest
+    ));
+    const approval = plan ? this._planApprovals.get(this._planVersionKey(
+      plan.planId, plan.version,
+    )) : null;
+    if (!plan || approval?.disposition !== 'approved') {
+      return failChild(`Context ${subject} settlement requires its exact approved successor Plan`);
+    }
+    const terminalCause = (task) => {
+      const terminal = Number.isSafeInteger(task.terminalEvent)
+        ? this._events[task.terminalEvent - 1] : null;
+      const transitioned = terminal?.kind === 'task.transitioned'
+        && terminal.payload?.id === task.id && terminal.payload?.to === task.status;
+      const revoked = terminal?.kind === 'task.acceptance_revoked'
+        && terminal.payload?.taskId === task.id && task.status === 'failed';
+      if (!transitioned && !revoked) {
+        return failChild(`Context ${subject} child terminal identity is invalid`,
+          'context_map_child_terminal_invalid');
+      }
+      const coordinate = terminal.payload?.evidence;
+      let source = null;
+      if (coordinate !== null && coordinate !== undefined) {
+        const mapped = Number.isSafeInteger(coordinate?.coordinationSeq)
+          ? this._events[coordinate.coordinationSeq - 1] : null;
+        source = mapped?.kind === 'evidence.mapped'
+          ? this._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq) : null;
+        if (!mapped || mapped.seq >= terminal.seq || mapped.payload.worker !== task.assignee
+          || canonicalDigest({ ...mapped.payload, coordinationSeq: mapped.seq })
+            !== canonicalDigest(coordinate)
+          || !source || source.worker !== task.assignee || source.taskId !== task.id
+          || source.runId !== task.runId || source.kind !== mapped.payload.kind
+          || digest(source) !== mapped.payload.digest) {
+          return failChild(`Context ${subject} child terminal evidence is invalid`,
+            'context_map_child_terminal_invalid');
+        }
+      }
+      const defaultCode = task.status === 'cancelled'
+        ? 'context_child_cancelled'
+        : revoked ? 'task_acceptance_revoked'
+          : source?.kind === 'lifecycle.crashed' ? 'provider_crashed'
+            : source?.kind === 'lifecycle.exited' ? 'provider_exited'
+              : source?.kind === 'verify.reverified' ? 'verification_failed'
+                : 'provider_turn_failed';
+      const candidateCode = source?.payload?.failure?.code ?? source?.payload?.code ?? defaultCode;
+      const code = /^[a-z0-9_:-]{1,128}$/u.test(candidateCode ?? '')
+        ? candidateCode : defaultCode;
+      const defaultSummary = task.status === 'cancelled'
+        ? `Context ${subject} child was cancelled before acceptance.`
+        : `Context ${subject} child failed before acceptance.`;
+      const summary = boundedText(source?.payload?.summary, 1_024)
+        ? source.payload.summary : defaultSummary;
+      return freeze({ code, retryable: true, summary });
+    };
+    const rows = [];
+    const units = generic
+      ? call.units.filter((unit) => call.executionUnitIds.includes(unit.unitId))
+      : call.partitions;
+    for (const unit of units) {
+      const node = plan.nodes.find((candidate) => (
+        generic
+          ? candidate.contextCall?.unit?.unitId === unit.unitId
+          : candidate.contextCall?.partition?.partitionId === unit.partitionId
+      ));
+      const dispatch = node ? this._planDispatches.get(this._planNodeKey(
+        plan.planId, plan.version, node.key,
+      )) : null;
+      const task = dispatch ? this._tasks.get(dispatch.taskId) : null;
+      if (!node || !dispatch || !task || !TERMINAL.has(task.status)
+        || dispatch.binding?.planDigest !== plan.digest
+        || dispatch.binding?.nodeKey !== node.key) {
+        return failChild(`Context ${subject} settlement has a missing or nonterminal child`);
+      }
+      const activeArtifacts = (task.artifactIds ?? []).map((artifactId) => (
+        this._artifacts.get(artifactId)
+      )).filter((artifact) => artifact?.accepted === true && artifact.supersededBy === null
+        && !Object.hasOwn(artifact, 'acceptanceInvalidation'))
+        .sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
+      const commit = activeArtifacts.find((artifact) => artifact.kind === 'commit') ?? null;
+      const verification = activeArtifacts.find((artifact) => artifact.kind === 'verification') ?? null;
+      if (task.status === 'completed' && (!commit?.refs?.sha || !verification)) {
+        return failChild(`Completed Context ${subject} child lacks exact gate artifacts`,
+          'context_map_child_artifact_invalid');
+      }
+      if (task.status !== 'completed' && activeArtifacts.length > 0) {
+        return failChild(`Unaccepted Context ${subject} child retains accepted gate artifacts`,
+          'context_map_child_artifact_invalid');
+      }
+      // A Plan node carries the authorized route sets; the dispatch records the route that was
+      // actually selected inside those sets. Settlement is execution evidence, so it must project
+      // the durable dispatch choice rather than reconstructing a plausible choice from set order.
+      const route = {
+        harness: dispatch.route.vendor, model: dispatch.route.model,
+        effort: dispatch.route.effort,
+      };
+      const release = cleanup?.targets?.find((target) => (
+        generic ? target.unitId === unit.unitId : target.partitionId === unit.partitionId
+      )) ?? null;
+      const core = {
+        schemaVersion: generic ? (call.generation > 1 ? 3 : 2) : 1,
+        ...(generic && call.generation > 1 ? { origin: 'executed' } : {}),
+        ...(generic ? {
+          unitId: unit.unitId, unitDigest: unit.unitDigest,
+        } : {
+          partitionId: unit.partitionId, partitionDigest: unit.partitionDigest,
+        }),
+        index: unit.index,
+        nodeKey: node.key,
+        nodeDigest: canonicalDigest(node),
+        taskId: task.id,
+        taskVersion: task.version,
+        workerId: task.assignee ?? null,
+        state: task.status === 'completed' ? 'accepted' : task.status,
+        terminalEvent: task.terminalEvent,
+        route,
+        resultSha: commit?.refs?.sha ?? null,
+        artifactDigest: canonicalDigest(activeArtifacts.map((artifact) => ({
+          id: artifact.id, kind: artifact.kind, digest: artifact.digest,
+          refs: artifact.refs,
+        }))),
+        artifacts: activeArtifacts.map((artifact) => ({
+          id: artifact.id, kind: artifact.kind, digest: artifact.digest,
+          refs: clone(artifact.refs),
+        })),
+        ...(task.status === 'completed' ? {} : { termination: terminalCause(task) }),
+        ...(release === null ? {} : {
+          cleanupDigest: cleanup.cleanupDigest,
+          resourceRelease: clone(release),
+        }),
+      };
+      rows.push(freeze({ ...core, childDigest: canonicalDigest(core) }));
+    }
+    if (generic && call.generation > 1) {
+      const predecessor = this._contextCalls.get(call.predecessorCall.callId);
+      const predecessorChildren = predecessor?.result?.children;
+      const predecessorResults = predecessor?.result?.providerResults;
+      if (!predecessor || predecessor.state !== 'failed'
+        || !Array.isArray(predecessorChildren) || !Array.isArray(predecessorResults)) {
+        return failChild('Context effect inherited predecessor is unavailable');
+      }
+      for (const binding of call.inheritedChildren) {
+        const unit = call.units.find((candidate) => candidate.unitId === binding.unitId);
+        const origin = predecessorChildren.find((candidate) => (
+          candidate.unitId === binding.unitId && candidate.childDigest === binding.childDigest
+        ));
+        const providerResult = predecessorResults.find((candidate) => (
+          candidate.unitId === binding.unitId
+        ));
+        if (!unit || !origin || !(origin.origin === 'inherited' || origin.state === 'accepted')
+          || binding.originCallId !== predecessor.callId || !providerResult) {
+          return failChild('Context effect inherited child authority changed');
+        }
+        const core = {
+          schemaVersion: 3, origin: 'inherited',
+          unitId: unit.unitId, unitDigest: unit.unitDigest, index: unit.index,
+          originCallId: predecessor.callId, originChildDigest: origin.childDigest,
+          resultRefDigest: canonicalDigest(providerResult),
+        };
+        rows.push(freeze({ ...core, childDigest: canonicalDigest(core) }));
+      }
+      const byUnit = new Map(rows.map((row) => [row.unitId, row]));
+      if (byUnit.size !== call.units.length) {
+        return failChild('Context effect retry settlement does not cover every logical unit');
+      }
+      return freeze(call.units.map((unit) => byUnit.get(unit.unitId)));
+    }
+    return freeze(rows);
+  }
+
+  _contextMapSettlementChildren(call, integrity = false, cleanup = null) {
+    return this._contextSettlementChildren(call, 'map', integrity, cleanup);
+  }
+
+  _contextEffectSettlementChildren(call, integrity = false, cleanup = null) {
+    return this._contextSettlementChildren(call, 'effect', integrity, cleanup);
+  }
+
+  _validateTaskResourceReleasePayload(payload, event, integrity = false) {
+    const fail = (message) => {
+      if (integrity) throw new CoordinationIntegrityError(message, 'task_resource_release_integrity');
+      throw new CoordinationRefusal(message, 'task_resource_release_invalid');
+    };
+    const fields = [
+      'evidence', 'releaseDigest', 'taskId', 'taskVersion', 'terminalEvent', 'workerId',
+    ];
+    const evidenceFields = ['coordinationSeq', 'digest', 'kind', 'ts', 'worker', 'workerSeq'];
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || Object.keys(payload).sort().join(',') !== fields.sort().join(',')
+      || !validRunId(payload.taskId) || !validRunId(payload.workerId)
+      || !Number.isSafeInteger(payload.taskVersion) || payload.taskVersion <= 0
+      || !Number.isSafeInteger(payload.terminalEvent) || payload.terminalEvent <= 0
+      || !/^[a-f0-9]{64}$/u.test(payload.releaseDigest ?? '')
+      || !payload.evidence || typeof payload.evidence !== 'object'
+      || Object.keys(payload.evidence).sort().join(',') !== evidenceFields.sort().join(',')) {
+      return fail('task resource-release record is malformed');
+    }
+    const task = this._tasks.get(payload.taskId);
+    if (!task || !TERMINAL.has(task.status) || task.version !== payload.taskVersion
+      || task.terminalEvent !== payload.terminalEvent || task.assignee !== payload.workerId) {
+      return fail('task resource-release target is stale');
+    }
+    const mapped = this._events[payload.evidence.coordinationSeq - 1];
+    const mappedEvidence = mapped?.kind === 'evidence.mapped'
+      ? { ...mapped.payload, coordinationSeq: mapped.seq } : null;
+    const source = mappedEvidence ? this._operationalRead?.(
+      mappedEvidence.worker, mappedEvidence.workerSeq,
+    ) : null;
+    if (!mappedEvidence) return fail('task resource release lacks mapped operational evidence');
+    if (canonicalDigest(mappedEvidence) !== canonicalDigest(payload.evidence)) {
+      return fail('task resource release mapped coordinate changed');
+    }
+    if (!source || digest(source) !== payload.evidence.digest) {
+      return fail('task resource release operational bytes changed');
+    }
+    if (source.kind !== 'resource.worker_cleanup_attested' || source.actor !== 'policy') {
+      return fail('task resource release operational kind or actor changed');
+    }
+    if (source.worker !== payload.workerId || source.taskId !== payload.taskId
+      || source.runId !== task.runId || source.payload?.releaseDigest !== payload.releaseDigest) {
+      return fail('task resource release operational target changed');
+    }
+    const release = source.payload;
+    const releaseFields = [
+      'checks', 'process', 'releaseDigest', 'runId', 'runtime', 'schemaVersion', 'session',
+      'taskId', 'taskTerminalEvent', 'taskVersion', 'workerId', 'worktree',
+    ];
+    const checkFields = [
+      'interactionsResolved', 'localAuthorityReleased', 'processClosed', 'runtimeAbsent',
+      'sessionDetached', 'worktreeAbsent',
+    ];
+    const processFields = [
+      'generation', 'pid', 'processGroupId', 'state', 'terminalKind', 'terminalSeq',
+    ];
+    if (Object.keys(release).sort().join(',') !== releaseFields.sort().join(',')
+      || release.schemaVersion !== 1 || release.taskId !== task.id
+      || release.taskVersion !== task.version || release.taskTerminalEvent !== task.terminalEvent
+      || release.workerId !== task.assignee || release.runId !== task.runId
+      || !release.checks || Object.keys(release.checks).sort().join(',') !== checkFields.sort().join(',')
+      || checkFields.some((field) => release.checks[field] !== true)
+      || !release.process || Object.keys(release.process).sort().join(',') !== processFields.sort().join(',')
+      || !release.worktree || release.worktree.state !== 'absent'
+      || release.worktree.ownerTaskId !== task.id
+      || !release.runtime || release.runtime.state !== 'absent'
+      || !release.session || !['not_created', 'historical_only'].includes(release.session.state)
+      || release.session.recoveryClosed !== true) {
+      return fail('task resource-release operational proof is malformed');
+    }
+    const core = Object.fromEntries(Object.entries(release)
+      .filter(([key]) => key !== 'releaseDigest'));
+    if (release.releaseDigest !== canonicalDigest(core)) {
+      return fail('task resource-release operational identity changed');
+    }
+    const prefix = this._operationalRangeRead?.(payload.workerId, payload.evidence.workerSeq);
+    if (!Array.isArray(prefix) || prefix.length !== payload.evidence.workerSeq
+      || prefix.some((row, index) => row.seq !== index + 1)) {
+      return fail('task resource-release operational prefix is incomplete');
+    }
+    if (release.process.state === 'not_started') {
+      if (['generation', 'pid', 'processGroupId', 'terminalKind', 'terminalSeq']
+        .some((field) => release.process[field] !== null)
+        || prefix.some((row) => (
+          row.kind === 'lifecycle.process_started' && row.worker === payload.workerId
+            && row.taskId === task.id && row.runId === task.runId
+        ))) {
+        return fail('task resource-release invented a process-free state');
+      }
+    } else {
+      if (!['closed', 'absent_after_restart'].includes(release.process.state)
+        || !Number.isSafeInteger(release.process.generation) || release.process.generation <= 0
+        || !Number.isSafeInteger(release.process.pid) || release.process.pid <= 0
+        || !Number.isSafeInteger(release.process.processGroupId)
+        || release.process.processGroupId !== release.process.pid
+        || !Number.isSafeInteger(release.process.terminalSeq)
+        || !['lifecycle.process_closed', 'control.recovery_process_absent']
+          .includes(release.process.terminalKind)
+        || (release.process.state === 'closed'
+          && release.process.terminalKind !== 'lifecycle.process_closed')
+        || (release.process.state === 'absent_after_restart'
+          && release.process.terminalKind !== 'control.recovery_process_absent')) {
+        return fail('task resource-release process proof is invalid');
+      }
+      const terminal = prefix.find((row) => row.seq === release.process.terminalSeq);
+      const startsReleasedTask = (row) => (
+        row.kind === 'lifecycle.process_started'
+          && row.worker === payload.workerId
+          && row.taskId === task.id
+          && row.runId === task.runId
+      );
+      const started = prefix.slice(0, release.process.terminalSeq - 1)
+        .findLast(startsReleasedTask);
+      const terminalActor = release.process.terminalKind === 'lifecycle.process_closed'
+        ? 'worker' : 'policy';
+      const terminalPayloadValid = release.process.terminalKind === 'lifecycle.process_closed'
+        ? validProcessClosedPayload(terminal?.payload)
+        : validRecoveryProcessAbsentPayload(terminal?.payload);
+      if (!started || started.actor !== 'worker'
+        || started.worker !== payload.workerId
+        || started.taskId !== task.id || started.runId !== task.runId
+        || !validProcessStartedPayload(started.payload)
+        || started.payload.generation !== release.process.generation
+        || started.payload.pid !== release.process.pid
+        || started.payload.processGroupId !== release.process.processGroupId
+        || !terminal || terminal.kind !== release.process.terminalKind
+        || terminal.worker !== payload.workerId
+        || terminal.actor !== terminalActor
+        || terminal.taskId !== task.id || terminal.runId !== task.runId
+        || !terminalPayloadValid
+        || terminal.payload?.generation !== release.process.generation
+        || terminal.payload?.pid !== release.process.pid
+        || terminal.payload?.processGroupId !== release.process.processGroupId
+        || !started
+        || prefix.slice(release.process.terminalSeq)
+          .some(startsReleasedTask)) {
+        return fail('task resource-release process lifecycle is not closed');
+      }
+    }
+    if (event.actor !== 'policy'
+      || event.idempotencyKey !== `task.resources_released:${task.id}:${task.terminalEvent}`) {
+      return fail('task resource-release authority changed');
+    }
+    return freeze({
+      schemaVersion: 1, taskId: task.id, taskVersion: task.version,
+      terminalEvent: task.terminalEvent, workerId: task.assignee,
+      releaseDigest: payload.releaseDigest, evidence: clone(payload.evidence),
+      releaseEvent: event.seq, releasedAt: event.ts,
+    });
+  }
+
+  _normalizeContextCleanupReceipt(call, kind, children, value, integrity = false) {
+    const generic = kind === 'effect';
+    const subject = generic ? 'effect' : 'map';
+    const fail = (message) => this._contextFailure(message,
+      integrity
+        ? (generic ? 'context_call_settlement_integrity'
+          : 'context_map_call_settlement_integrity')
+        : (generic ? 'context_cleanup_invalid' : 'context_map_cleanup_invalid'),
+      integrity);
+    const fields = [
+      'admissionDigest', 'callId', 'cleanupDigest', 'remainingCount', 'schemaVersion',
+      'targetCount', 'targetDigest', 'targets',
+    ];
+    const cleanupChildren = generic
+      ? children.filter((child) => child.origin !== 'inherited') : children;
+    const targets = cleanupChildren.map((child) => {
+      const release = this._taskResourceReleases.get(child.taskId);
+      return release ? {
+        ...(generic ? { unitId: child.unitId } : { partitionId: child.partitionId }),
+        taskId: child.taskId, workerId: child.workerId,
+        releaseEvent: release.releaseEvent, releaseDigest: release.releaseDigest,
+        evidence: clone(release.evidence),
+      } : null;
+    });
+    if (targets.some((target) => !target || typeof target.workerId !== 'string'
+      || target.workerId.length === 0)) {
+      return fail(`Context ${subject} cleanup target lacks an exact durable resource release`);
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).sort().join(',') !== fields.sort().join(',')
+      || value.schemaVersion !== (generic ? 2 : 1) || value.callId !== call.callId
+      || value.admissionDigest !== call.admissionDigest
+      || canonicalDigest(value.targets) !== canonicalDigest(targets)
+      || value.targetDigest !== canonicalDigest(targets)
+      || value.targetCount !== targets.length || value.remainingCount !== 0
+      || targets.some((target) => {
+        const release = this._taskResourceReleases.get(target.taskId);
+        return !release || release.workerId !== target.workerId
+          || release.releaseEvent !== target.releaseEvent
+          || release.releaseDigest !== target.releaseDigest
+          || canonicalDigest(release.evidence) !== canonicalDigest(target.evidence);
+      })) {
+      return fail(`Context ${subject} cleanup receipt does not prove its exact descendant union`);
+    }
+    const core = {
+      schemaVersion: generic ? 2 : 1,
+      callId: call.callId, admissionDigest: call.admissionDigest,
+      targets, targetDigest: canonicalDigest(targets), targetCount: targets.length,
+      remainingCount: 0,
+    };
+    if (value.cleanupDigest !== canonicalDigest(core)) {
+      return fail(`Context ${subject} cleanup receipt identity changed`);
+    }
+    return freeze({ ...core, cleanupDigest: value.cleanupDigest });
+  }
+
+  _normalizeContextMapCleanupReceipt(call, children, value, integrity = false) {
+    return this._normalizeContextCleanupReceipt(call, 'map', children, value, integrity);
+  }
+
+  _normalizeContextEffectCleanupReceipt(call, children, value, integrity = false) {
+    return this._normalizeContextCleanupReceipt(call, 'effect', children, value, integrity);
+  }
+
+  _contextArtifactVerification() {
+    return this._contextArtifactVerificationStorage.getStore()
+      ?? { calls: new Map(), references: new Map(), activeCalls: new Set() };
+  }
+
+  withContextArtifactVerification(operation) {
+    if (typeof operation !== 'function') {
+      throw new TypeError('Context artifact verification operation is invalid');
+    }
+    if (this._contextArtifactVerificationStorage.getStore()) return operation();
+    return this._contextArtifactVerificationStorage.run({
+      calls: new Map(), references: new Map(), activeCalls: new Set(),
+    }, operation);
+  }
+
+  _contextArtifactRead(reference, verification) {
+    const key = canonicalDigest(reference);
+    if (verification.references.has(key)) return verification.references.get(key);
+    const value = this._contextReferenceRead(reference);
+    verification.references.set(key, value);
+    return value;
+  }
+
+  _validateContextProviderResults(call, kind, children, cleanup, values, integrity = false,
+    verification = this._contextArtifactVerification()) {
+    const generic = kind === 'effect';
+    const subject = generic ? 'effect' : 'map';
+    const fail = (message) => this._contextFailure(message,
+      integrity
+        ? (generic ? 'context_call_settlement_integrity'
+          : 'context_map_call_settlement_integrity')
+        : (generic ? 'context_call_settlement_invalid'
+          : 'context_map_call_settlement_invalid'), integrity);
+    const acceptedChildren = children.filter(contextChildAccepted);
+    if (!Array.isArray(values) || values.length !== acceptedChildren.length) {
+      return fail(`Context ${subject} provider-result set does not match accepted children`);
+    }
+    const plan = [...this._plans.values()].find((candidate) => (
+      candidate.digest === call.expectedPlanDigest
+    ));
+    if (!plan) {
+      return fail(`Context ${subject} provider-result Plan is unavailable`);
+    }
+    const normalized = [];
+    for (let index = 0; index < acceptedChildren.length; index += 1) {
+      const child = acceptedChildren[index];
+      const value = values[index];
+      if (generic && child.origin === 'inherited') {
+        const predecessor = this._contextCalls.get(child.originCallId);
+        const originChild = predecessor?.result?.children?.find((candidate) => (
+          candidate.unitId === child.unitId
+            && candidate.childDigest === child.originChildDigest
+        ));
+        const originResult = predecessor?.result?.providerResults?.find((candidate) => (
+          candidate.unitId === child.unitId
+        ));
+        let capsule; let resultRef;
+        try {
+          if (!predecessor || predecessor.callId !== call.predecessorCall?.callId
+            || !(originChild?.origin === 'inherited' || originChild?.state === 'accepted')
+            || canonicalDigest(originResult) !== child.resultRefDigest
+            || canonicalDigest(value) !== canonicalDigest(originResult)) {
+            throw new TypeError('Context inherited provider-result predecessor changed');
+          }
+          this._contextCallArtifacts(predecessor.callId, verification);
+          capsule = this._contextArtifactRead(value?.capsuleRef, verification);
+          resultRef = validateContextProviderResultReference(value, capsule);
+        } catch (error) {
+          return fail(error?.message ?? 'Context inherited provider-result is unavailable');
+        }
+        if (resultRef.unitId !== child.unitId
+          || resultRef.childDigest !== originResult.childDigest
+          || resultRef.capsuleId !== capsule.capsuleId
+          || resultRef.capsuleDigest !== capsule.capsuleDigest
+          || resultRef.resultSourceDigest !== capsule.resultSourceDigest) {
+          return fail('Context inherited provider-result authority changed');
+        }
+        normalized.push(resultRef);
+        continue;
+      }
+      const node = plan.nodes.find((candidate) => (
+        candidate.key === child.nodeKey
+          && candidate.contextCall?.callId === call.callId
+          && (generic
+            ? candidate.contextCall?.unit?.unitId === child.unitId
+            : candidate.contextCall?.partition?.partitionId === child.partitionId)
+      ));
+      const commits = child.artifacts.filter((artifact) => artifact.kind === 'commit');
+      let capsule; let resultRef; let pathScope;
+      try {
+        capsule = this._contextArtifactRead(value?.capsuleRef, verification);
+        resultRef = validateContextProviderResultReference(value, capsule);
+        pathScope = normalizeContextResultPathScope(node?.pathScope);
+      } catch (error) {
+        return fail(error?.message ?? `Context ${subject} provider-result CAS is unavailable`);
+      }
+      if (!node || canonicalDigest(node) !== child.nodeDigest || commits.length !== 1
+        || commits[0].refs?.sha !== child.resultSha
+        || commits[0].refs?.retainedResultRef !== retainedResultRef(child.resultSha)
+        || resultRef.unitId !== (generic ? child.unitId : child.partitionId)
+        || resultRef.childDigest !== child.childDigest
+        || resultRef.capsuleId !== capsule.capsuleId
+        || resultRef.capsuleDigest !== capsule.capsuleDigest
+        || resultRef.resultSourceDigest !== capsule.resultSourceDigest
+        || capsule.callId !== call.callId
+        || capsule.unitId !== (generic ? child.unitId : child.partitionId)
+        || capsule.taskId !== child.taskId || capsule.taskVersion !== child.taskVersion
+        || capsule.terminalEvent !== child.terminalEvent
+        || capsule.childDigest !== child.childDigest
+        || canonicalDigest(capsule.route) !== canonicalDigest(child.route)
+        || capsule.artifactDigest !== child.artifactDigest
+        || capsule.cleanupDigest !== cleanup.cleanupDigest
+        || child.cleanupDigest !== cleanup.cleanupDigest
+        || capsule.result.baseSha !== (generic ? call.authority.treeSha : call.source.treeSha)
+        || capsule.result.resultSha !== child.resultSha
+        || capsule.result.retainedResultRef !== commits[0].refs.retainedResultRef
+        || canonicalDigest(capsule.result.pathScope) !== canonicalDigest(pathScope)) {
+        return fail(`Context ${subject} provider-result authority changed`);
+      }
+      normalized.push(resultRef);
+    }
+    return freeze(normalized);
+  }
+
+  _validateContextMapProviderResults(call, children, cleanup, values, integrity = false,
+    verification = this._contextArtifactVerification()) {
+    return this._validateContextProviderResults(
+      call, 'map', children, cleanup, values, integrity, verification,
+    );
+  }
+
+  _validateContextEffectProviderResults(call, children, cleanup, values, integrity = false,
+    verification = this._contextArtifactVerification()) {
+    return this._validateContextProviderResults(
+      call, 'effect', children, cleanup, values, integrity, verification,
+    );
+  }
+
+  _validateContextMapPlanProposal(plan, integrity = false) {
+    const bindings = plan?.nodes?.map((node) => node.contextCall).filter(Boolean) ?? [];
+    if (bindings.length === 0) return null;
+    const fail = (message) => this._contextFailure(message,
+      'context_map_plan_integrity', integrity);
+    if (bindings.length !== plan.nodes.length
+      || new Set(bindings.map((binding) => binding.callId)).size !== 1) {
+      return fail('Context map Plan bindings are incomplete or ambiguous');
+    }
+    const call = this._contextCalls.get(bindings[0].callId);
+    if (!call || call.state !== 'plan_pending'
+      || call.expectedPlanDigest !== plan.digest
+      || call.source.runId !== plan.runId
+      || canonicalDigest(call.planRequest) !== canonicalDigest({
+        goal: plan.goal, predecessor: plan.predecessor,
+        nodes: plan.nodes, totals: plan.totals,
+      })) {
+      return fail('Context map Plan has no exact durable call admission');
+    }
+    const callCore = {
+      schemaVersion: call.schemaVersion,
+      kind: call.kind,
+      generation: call.generation,
+      source: clone(call.source),
+      role: call.role,
+      instruction: call.instruction,
+      partitions: clone(call.partitions),
+      programDigest: call.programDigest,
+      callId: call.callId,
+      callDigest: call.callDigest,
+    };
+    const partitions = new Set();
+    for (const binding of bindings) {
+      const partition = call.partitions.find((candidate) => (
+        candidate.partitionId === binding.partition.partitionId
+      ));
+      let expected;
+      try { expected = partition ? contextMapNodeBinding(callCore, partition) : null; }
+      catch { expected = null; }
+      if (!expected || canonicalDigest(expected) !== canonicalDigest(binding)
+        || partitions.has(partition.partitionId)) {
+        return fail('Context map Plan substituted or repeated an admitted partition');
+      }
+      partitions.add(partition.partitionId);
+    }
+    if (partitions.size !== call.partitions.length) {
+      return fail('Context map Plan does not cover its admitted partition set');
+    }
+    return call;
+  }
+
+  _validateContextCallPlanProposal(plan, integrity = false) {
+    const bindings = plan?.nodes?.map((node) => node.contextCall).filter(Boolean) ?? [];
+    if (bindings.length === 0 || bindings[0]?.kind === 'context_map_child') {
+      return this._validateContextMapPlanProposal(plan, integrity);
+    }
+    const fail = (message) => this._contextFailure(message,
+      'context_call_plan_integrity', integrity);
+    if (bindings.length !== plan.nodes.length
+      || new Set(bindings.map((binding) => binding.callId)).size !== 1) {
+      return fail('Context effect Plan bindings are incomplete or ambiguous');
+    }
+    const call = this._contextCalls.get(bindings[0].callId);
+    if (!call || call.kind !== 'baton.context_effect_call' || call.state !== 'plan_pending'
+      || call.expectedPlanDigest !== plan.digest
+      || this._contextCallRunId(call) !== plan.runId
+      || canonicalDigest(call.planRequest) !== canonicalDigest({
+        goal: plan.goal, predecessor: plan.predecessor,
+        nodes: plan.nodes, totals: plan.totals,
+      })) {
+      return fail('Context effect Plan has no exact durable call admission');
+    }
+    const callCore = {
+      schemaVersion: call.schemaVersion, kind: call.kind, operator: call.operator,
+      requestId: call.requestId, requestDigest: call.requestDigest,
+      generation: call.generation, predecessorCall: clone(call.predecessorCall),
+      executionUnitIds: clone(call.executionUnitIds),
+      inheritedChildren: clone(call.inheritedChildren), authority: clone(call.authority),
+      source: clone(call.source), role: call.role, instruction: call.instruction,
+      units: clone(call.units), callId: call.callId, callDigest: call.callDigest,
+    };
+    const units = new Set();
+    for (const binding of bindings) {
+      const unit = call.units.find((candidate) => candidate.unitId === binding.unit?.unitId);
+      let expected;
+      try { expected = unit ? contextEffectNodeBinding(callCore, unit) : null; }
+      catch { expected = null; }
+      if (!expected || canonicalDigest(expected) !== canonicalDigest(binding)
+        || units.has(unit.unitId)) {
+        return fail('Context effect Plan substituted or repeated an admitted unit');
+      }
+      units.add(unit.unitId);
+    }
+    if (units.size !== call.executionUnitIds.length
+      || call.executionUnitIds.some((unitId) => !units.has(unitId))) {
+      return fail('Context effect Plan does not cover its admitted execution unit set');
+    }
+    return call;
+  }
+
+  _validateContextMapResultLineageEvidence(
+    call, evidence, children, providerResults, cleanup, integrity = false,
+    verification = this._contextArtifactVerification(),
+  ) {
+    const fail = (message) => this._contextFailure(message,
+      integrity ? 'context_map_call_settlement_integrity'
+        : 'context_map_call_settlement_invalid', integrity);
+    if (evidence?.schemaVersion !== 3) {
+      return fail('Context map result lineage evidence is unavailable');
+    }
+    try {
+      const sourceOutput = this._contextArtifactRead(call.source.outputRef, verification);
+      const sourceEvidence = this._contextArtifactRead(call.source.evidenceRef, verification);
+      const capsules = providerResults.map((providerResult) => (
+        this._contextArtifactRead(providerResult.capsuleRef, verification)
+      ));
+      return validateContextMapResultLineage({
+        call: {
+          schemaVersion: call.schemaVersion, kind: call.kind, generation: call.generation,
+          source: clone(call.source), role: call.role, instruction: call.instruction,
+          partitions: clone(call.partitions), programDigest: call.programDigest,
+          callId: call.callId, callDigest: call.callDigest,
+        },
+        children, providerResults, capsules, sourceOutput, sourceEvidence,
+        planDigest: call.expectedPlanDigest, cleanupDigest: cleanup.cleanupDigest,
+        outputLineages: evidence.outputLineages,
+        outputLineageDigest: evidence.outputLineageDigest,
+        sourceCoordinates: evidence.sourceCoordinates,
+        coordinateDigest: evidence.coordinateDigest,
+      });
+    } catch (error) {
+      return fail(error?.message ?? 'Context map result lineage changed');
+    }
+  }
+
+  _contextEffectCallCore(call) {
+    return {
+      schemaVersion: call.schemaVersion, kind: call.kind, operator: call.operator,
+      requestId: call.requestId, requestDigest: call.requestDigest,
+      generation: call.generation, predecessorCall: clone(call.predecessorCall),
+      executionUnitIds: clone(call.executionUnitIds),
+      inheritedChildren: clone(call.inheritedChildren), authority: clone(call.authority),
+      source: clone(call.source), role: call.role, instruction: call.instruction,
+      units: clone(call.units), callId: call.callId, callDigest: call.callDigest,
+    };
+  }
+
+  _validateContextEffectResultLineageEvidence(
+    call, evidence, children, providerResults, cleanup, integrity = false,
+    verification = this._contextArtifactVerification(),
+  ) {
+    const fail = (message) => this._contextFailure(message,
+      integrity ? 'context_call_settlement_integrity'
+        : 'context_call_settlement_invalid', integrity);
+    if (evidence?.schemaVersion !== 4) {
+      return fail('Context effect result lineage evidence is unavailable');
+    }
+    try {
+      const sourceOutput = this._contextArtifactRead(call.source.outputRef, verification);
+      const sourceEvidence = this._contextArtifactRead(call.source.evidenceRef, verification);
+      const capsules = providerResults.map((providerResult) => (
+        this._contextArtifactRead(providerResult.capsuleRef, verification)
+      ));
+      return validateContextEffectResultLineage({
+        call: this._contextEffectCallCore(call),
+        children, providerResults, capsules, sourceOutput, sourceEvidence,
+        planDigest: call.expectedPlanDigest, cleanupDigest: cleanup.cleanupDigest,
+        outputLineages: evidence.outputLineages,
+        outputLineageDigest: evidence.outputLineageDigest,
+        sourceCoordinates: evidence.sourceCoordinates,
+        coordinateDigest: evidence.coordinateDigest,
+      });
+    } catch (error) {
+      return fail(error?.message ?? 'Context effect result lineage changed');
+    }
+  }
+
+  _validateContextMapCallSettlementPayload(payload, event, integrity = false) {
+    const fields = [
+      'authority', 'callId', 'expectedVersion', 'newVersion', 'result', 'schemaVersion',
+      'settlementDigest',
+    ];
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || Object.keys(payload).sort().join(',') !== fields.sort().join(',')
+      || payload.schemaVersion !== 1 || payload.expectedVersion !== 1 || payload.newVersion !== 2
+      || !payload.result || typeof payload.result !== 'object' || Array.isArray(payload.result)) {
+      this._contextFailure('Context map call settlement is malformed',
+        'context_map_call_settlement_integrity', integrity);
+    }
+    let authority;
+    try { authority = normalizeContextAuthority(payload.authority); }
+    catch (error) {
+      this._contextFailure(error.message,
+        integrity ? 'context_map_call_settlement_integrity'
+          : 'context_map_call_settlement_invalid', integrity);
+    }
+    const call = this._contextCalls.get(payload.callId);
+    if (!call || call.version !== 1 || call.state !== 'plan_pending'
+      || canonicalDigest(authority) !== canonicalDigest(call.authority)
+      || event.actor !== authority.actor) {
+      this._contextFailure('Context map call settlement target or authority is stale',
+        integrity ? 'context_map_call_settlement_integrity'
+          : 'context_map_call_settlement_stale', integrity);
+    }
+    const completedResultFields = [
+      'childDigest', 'children', 'cleanup', 'evidenceRef', 'outputRef', 'providerEffects',
+      'providerResultDigest', 'providerResults', 'state',
+    ];
+    const failedResultFields = [...completedResultFields, 'termination'];
+    let outputRef; let evidenceRef; let children; let cleanup; let state; let termination;
+    let providerResults; let providerResultDigest;
+    try {
+      if (!['completed', 'failed'].includes(payload.result.state)
+        || Object.keys(payload.result).sort().join(',') !== (payload.result.state === 'failed'
+          ? failedResultFields : completedResultFields).sort().join(',')
+        || !Array.isArray(payload.result.children)
+        || payload.result.providerEffects !== call.partitions.length) {
+        throw new TypeError('Context map terminal result is invalid');
+      }
+      const baseChildren = this._contextMapSettlementChildren(call, integrity);
+      cleanup = this._normalizeContextMapCleanupReceipt(
+        call, baseChildren, payload.result.cleanup, integrity,
+      );
+      children = this._contextMapSettlementChildren(call, integrity, cleanup);
+      state = children.every(contextChildAccepted) ? 'completed' : 'failed';
+      providerResults = this._validateContextMapProviderResults(
+        call, children, cleanup, payload.result.providerResults, integrity,
+      );
+      providerResultDigest = canonicalDigest(providerResults);
+      if (canonicalDigest(payload.result.children) !== canonicalDigest(children)
+        || payload.result.childDigest !== canonicalDigest(children)
+        || payload.result.providerResultDigest !== providerResultDigest
+        || payload.result.state !== state) {
+        throw new TypeError('Context map terminal child identities changed');
+      }
+      if (state === 'completed') {
+        outputRef = normalizeContextArtifactRef(
+          payload.result.outputRef, 'context_value', this._contextProgramPolicy,
+        );
+      } else {
+        termination = payload.result.termination;
+        if (payload.result.outputRef !== null || !termination
+          || typeof termination !== 'object' || Array.isArray(termination)
+          || Object.keys(termination).sort().join(',')
+            !== ['code', 'retryable', 'summary'].sort().join(',')
+          || termination.code !== 'context_child_failed' || termination.retryable !== true
+          || termination.summary
+            !== 'One or more Context map children failed before acceptance.') {
+          throw new TypeError('Context map failure termination is invalid');
+        }
+        outputRef = null;
+        termination = clone(termination);
+      }
+      evidenceRef = normalizeContextArtifactRef(
+        payload.result.evidenceRef, 'context_call_evidence', this._contextProgramPolicy,
+      );
+    } catch (error) {
+      this._contextFailure(error.message,
+        integrity ? 'context_map_call_settlement_integrity'
+          : 'context_map_call_settlement_invalid', integrity);
+    }
+    const result = freeze({
+      state, providerEffects: call.partitions.length,
+      children, childDigest: canonicalDigest(children),
+      providerResults, providerResultDigest, cleanup, outputRef, evidenceRef,
+      ...(state === 'failed' ? { termination } : {}),
+    });
+    let output; let evidence;
+    try {
+      output = outputRef === null ? null : this._contextReferenceRead(outputRef);
+      evidence = this._contextReferenceRead(evidenceRef);
+    } catch (error) {
+      this._contextFailure(error?.message ?? 'Context map settlement artifact is unavailable',
+        integrity ? 'context_map_call_settlement_integrity'
+          : (error?.code ?? 'context_map_call_settlement_invalid'), integrity);
+    }
+    const outputFields = [
+      'chunks', 'items', 'kind', 'schemaVersion', 'selectedSourceItems', 'sourceBranches',
+      'sourceItems',
+    ];
+    const lineageEvidence = state === 'completed' && evidence?.schemaVersion === 3;
+    const evidenceFields = [
+      'callDigest', 'callId', 'childDigest', 'children', 'cleanup', 'coordinateDigest',
+      'generation', 'kind', 'outputRef', 'partitions', 'programDigest', 'providerEffects',
+      'providerResultDigest', 'providerResults', 'schemaVersion', 'source',
+      ...(lineageEvidence
+        ? ['outputLineageDigest', 'outputLineages', 'sourceCoordinates'] : []),
+      ...(state === 'failed' ? ['state', 'termination'] : []),
+    ];
+    const outputValid = state === 'failed' ? output === null
+      : output?.schemaVersion === 1 && output.kind === 'baton.context_value'
+        && Object.keys(output).sort().join(',') === outputFields.sort().join(',')
+        && canonicalDigest(output.items) === canonicalDigest(providerResults)
+        && canonicalDigest(output.sourceBranches) === canonicalDigest([
+          'context_provider_results',
+        ])
+        && output.sourceItems === children.length
+        && output.selectedSourceItems === providerResults.length
+        && output.chunks === providerResults.length;
+    const failureEvidenceValid = state === 'completed' || (
+      evidence?.state === 'failed' && evidence.outputRef === null
+      && canonicalDigest(evidence.termination) === canonicalDigest(termination)
+    );
+    const evidenceVersionValid = state === 'failed'
+      ? evidence?.schemaVersion === 2
+      : integrity ? [2, 3].includes(evidence?.schemaVersion) : evidence?.schemaVersion === 3;
+    if (!outputValid || !evidence || !evidenceVersionValid
+      || evidence.kind !== 'baton.context_call_evidence'
+      || Object.keys(evidence).sort().join(',') !== evidenceFields.sort().join(',')
+      || evidence.callId !== call.callId || evidence.callDigest !== call.callDigest
+      || evidence.programDigest !== call.programDigest || evidence.generation !== call.generation
+      || evidence.childDigest !== result.childDigest
+      || evidence.providerResultDigest !== providerResultDigest
+      || evidence.providerEffects !== children.length
+      || evidence.coordinateDigest !== call.source.coordinateDigest
+      || canonicalDigest(evidence.source) !== canonicalDigest(call.source)
+      || canonicalDigest(evidence.partitions) !== canonicalDigest(call.partitions)
+      || canonicalDigest(evidence.children) !== canonicalDigest(children)
+      || canonicalDigest(evidence.providerResults) !== canonicalDigest(providerResults)
+      || canonicalDigest(evidence.cleanup) !== canonicalDigest(cleanup)
+      || canonicalDigest(evidence.outputRef) !== canonicalDigest(outputRef)
+      || !failureEvidenceValid) {
+      this._contextFailure('Context map settlement artifacts changed',
+        integrity ? 'context_map_call_settlement_integrity'
+          : 'context_map_call_settlement_invalid', integrity);
+    }
+    if (state === 'completed' && evidence.schemaVersion === 3) {
+      this._validateContextMapResultLineageEvidence(
+        call, evidence, children, providerResults, cleanup, integrity,
+      );
+    }
+    const settlementCore = {
+      authority, callId: call.callId, admissionDigest: call.admissionDigest,
+      expectedVersion: 1, newVersion: 2, result,
+    };
+    if (payload.settlementDigest !== canonicalDigest(settlementCore)
+      || event.idempotencyKey !== `context.call.settle:${call.callId}:${call.admissionDigest}`) {
+      this._contextFailure('Context map call settlement identity changed',
+        integrity ? 'context_map_call_settlement_integrity'
+          : 'context_map_call_settlement_invalid', integrity);
+    }
+    this._assertRunAdmissionOpen(call.source.runId, integrity);
+    return freeze({ call, result, settlementCore });
+  }
+
+  _validateContextEffectCallSettlementPayload(payload, event, integrity = false) {
+    const fail = (message, code = 'context_call_settlement_invalid') => (
+      this._contextFailure(message,
+        integrity ? 'context_call_settlement_integrity' : code, integrity)
+    );
+    const fields = [
+      'authority', 'callId', 'expectedVersion', 'newVersion', 'result', 'schemaVersion',
+      'settlementDigest',
+    ];
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || Object.keys(payload).sort().join(',') !== fields.sort().join(',')
+      || payload.schemaVersion !== 2 || payload.expectedVersion !== 1 || payload.newVersion !== 2
+      || !payload.result || typeof payload.result !== 'object' || Array.isArray(payload.result)) {
+      return fail('Context effect call settlement is malformed');
+    }
+    let authority;
+    try { authority = normalizeContextAuthority(payload.authority); }
+    catch (error) { return fail(error.message); }
+    const call = this._contextCalls.get(payload.callId);
+    if (!call || call.kind !== 'baton.context_effect_call'
+      || call.version !== 1 || call.state !== 'plan_pending'
+      || canonicalDigest(authority) !== canonicalDigest(call.admissionAuthority)
+      || event.actor !== authority.actor) {
+      return fail('Context effect call settlement target or authority is stale',
+        'context_call_settlement_stale');
+    }
+    const completedResultFields = [
+      'childDigest', 'children', 'cleanup', 'evidenceRef', 'outputRef', 'providerEffects',
+      'providerResultDigest', 'providerResults', 'state',
+    ];
+    const failedResultFields = [...completedResultFields, 'termination'];
+    let outputRef; let evidenceRef; let children; let cleanup; let state; let termination;
+    let providerResults; let providerResultDigest;
+    try {
+      if (!['completed', 'failed'].includes(payload.result.state)
+        || Object.keys(payload.result).sort().join(',') !== (payload.result.state === 'failed'
+          ? failedResultFields : completedResultFields).sort().join(',')
+        || !Array.isArray(payload.result.children)
+        || payload.result.providerEffects !== call.executionUnitIds.length) {
+        throw new TypeError('Context effect terminal result is invalid');
+      }
+      const baseChildren = this._contextEffectSettlementChildren(call, integrity);
+      cleanup = this._normalizeContextEffectCleanupReceipt(
+        call, baseChildren, payload.result.cleanup, integrity,
+      );
+      children = this._contextEffectSettlementChildren(call, integrity, cleanup);
+      state = children.every(contextChildAccepted) ? 'completed' : 'failed';
+      providerResults = this._validateContextEffectProviderResults(
+        call, children, cleanup, payload.result.providerResults, integrity,
+      );
+      providerResultDigest = canonicalDigest(providerResults);
+      if (canonicalDigest(payload.result.children) !== canonicalDigest(children)
+        || payload.result.childDigest !== canonicalDigest(children)
+        || payload.result.providerResultDigest !== providerResultDigest
+        || payload.result.state !== state) {
+        throw new TypeError('Context effect terminal child identities changed');
+      }
+      if (state === 'completed') {
+        outputRef = normalizeContextArtifactRef(
+          payload.result.outputRef, 'context_value', this._contextProgramPolicy,
+        );
+      } else {
+        termination = payload.result.termination;
+        if (payload.result.outputRef !== null || !termination
+          || typeof termination !== 'object' || Array.isArray(termination)
+          || Object.keys(termination).sort().join(',')
+            !== ['code', 'retryable', 'summary'].sort().join(',')
+          || termination.code !== 'context_child_failed' || termination.retryable !== true
+          || termination.summary
+            !== `One or more Context ${call.operator} children failed before acceptance.`) {
+          throw new TypeError('Context effect failure termination is invalid');
+        }
+        outputRef = null;
+        termination = clone(termination);
+      }
+      evidenceRef = normalizeContextArtifactRef(
+        payload.result.evidenceRef, 'context_call_evidence', this._contextProgramPolicy,
+      );
+    } catch (error) {
+      return fail(error.message);
+    }
+    const result = freeze({
+      state, providerEffects: call.executionUnitIds.length,
+      children, childDigest: canonicalDigest(children),
+      providerResults, providerResultDigest, cleanup, outputRef, evidenceRef,
+      ...(state === 'failed' ? { termination } : {}),
+    });
+    let output; let evidence;
+    try {
+      output = outputRef === null ? null : this._contextReferenceRead(outputRef);
+      evidence = this._contextReferenceRead(evidenceRef);
+    } catch (error) {
+      return fail(error?.message ?? 'Context effect settlement artifact is unavailable',
+        error?.code ?? 'context_call_settlement_invalid');
+    }
+    const outputFields = [
+      'chunks', 'items', 'kind', 'schemaVersion', 'selectedSourceItems', 'sourceBranches',
+      'sourceItems',
+    ];
+    const evidenceFields = [
+      'call', 'childDigest', 'children', 'cleanup', 'coordinateDigest', 'kind', 'outputRef',
+      'providerEffects', 'providerResultDigest', 'providerResults', 'schemaVersion',
+      ...(state === 'completed'
+        ? ['outputLineageDigest', 'outputLineages', 'sourceCoordinates']
+        : ['state', 'termination']),
+    ];
+    const outputValid = state === 'failed' ? output === null
+      : output?.schemaVersion === 1 && output.kind === 'baton.context_value'
+        && Object.keys(output).sort().join(',') === outputFields.sort().join(',')
+        && canonicalDigest(output.items) === canonicalDigest(providerResults)
+        && canonicalDigest(output.sourceBranches) === canonicalDigest([
+          'context_provider_results',
+        ])
+        && output.sourceItems === call.source.itemCount
+        && output.selectedSourceItems === providerResults.length
+        && output.chunks === providerResults.length;
+    const failureEvidenceValid = state === 'completed' || (
+      evidence?.state === 'failed' && evidence.outputRef === null
+      && canonicalDigest(evidence.termination) === canonicalDigest(termination)
+    );
+    if (!outputValid || evidence?.schemaVersion !== 4
+      || evidence.kind !== 'baton.context_call_evidence'
+      || Object.keys(evidence).sort().join(',') !== evidenceFields.sort().join(',')
+      || canonicalDigest(evidence.call) !== canonicalDigest(this._contextEffectCallCore(call))
+      || evidence.childDigest !== result.childDigest
+      || evidence.providerResultDigest !== providerResultDigest
+      || evidence.providerEffects !== call.executionUnitIds.length
+      || evidence.coordinateDigest !== call.source.coordinateDigest
+      || canonicalDigest(evidence.children) !== canonicalDigest(children)
+      || canonicalDigest(evidence.providerResults) !== canonicalDigest(providerResults)
+      || canonicalDigest(evidence.cleanup) !== canonicalDigest(cleanup)
+      || canonicalDigest(evidence.outputRef) !== canonicalDigest(outputRef)
+      || !failureEvidenceValid) {
+      return fail('Context effect settlement artifacts changed');
+    }
+    if (state === 'completed') {
+      this._validateContextEffectResultLineageEvidence(
+        call, evidence, children, providerResults, cleanup, integrity,
+      );
+    }
+    const settlementCore = {
+      authority, callId: call.callId, admissionDigest: call.admissionDigest,
+      expectedVersion: 1, newVersion: 2, result,
+    };
+    if (payload.settlementDigest !== canonicalDigest(settlementCore)
+      || event.idempotencyKey !== `context.call.settle:${call.callId}:${call.admissionDigest}`) {
+      return fail('Context effect call settlement identity changed');
+    }
+    this._assertRunAdmissionOpen(this._contextCallRunId(call), integrity);
+    return freeze({ call, result, settlementCore });
+  }
+
+  _assertRunAdmissionOpen(runId, integrity = false) {
+    if (runId != null && (this._runStopByTarget.has(runId) || this._runStops.has(runId))) {
+      if (integrity) throw new CoordinationIntegrityError(`run ${runId} is stopping`, 'run_stopping');
       throw new CoordinationRefusal(`run ${runId} is stopping`, 'run_stopping');
     }
   }
@@ -2906,7 +6770,8 @@ export class CoordinationStore {
         if (!plan || Object.keys(plan).sort().join(',') !== ['digest', 'goal', 'nodes', 'planId', 'policyDigest', 'predecessor', 'proposedAt', 'proposedEvent', 'proposerPrincipalId', 'repoId', 'runId', 'schemaVersion', 'totals', 'version'].sort().join(',')) malformed();
         const goal = this._goals.get(this._goalVersionKey(plan.goal?.goalId, plan.goal?.version));
         if (!goal || goal.digest !== plan.goal.digest) malformed();
-        const normalized = normalizePlanRequest({ goal: plan.goal, predecessor: plan.predecessor, nodes: plan.nodes }, this._goalPlanPolicy, goal);
+        const normalized = normalizePlanRequest({ goal: plan.goal, predecessor: plan.predecessor,
+          nodes: plan.nodes }, this._goalPlanPolicy, goal, { preserveLegacyRoutes: true });
         const core = { schemaVersion: 1, repoId: plan.repoId, runId: plan.runId, goal: normalized.goal, predecessor: normalized.predecessor, nodes: normalized.nodes, totals: normalized.totals, policyDigest: plan.policyDigest };
         if (plan.schemaVersion !== 1 || plan.repoId !== goal.repoId || plan.runId !== goal.runId || plan.policyDigest !== this._goalPlanPolicy.policyDigest
           || !validRunId(plan.proposerPrincipalId) || plan.proposedEvent !== event.seq || plan.proposedAt !== event.ts
@@ -2917,6 +6782,7 @@ export class CoordinationStore {
         if (plan.predecessor === null) {
           if (head || plan.version !== 1 || plan.planId !== `plan:${goalPlanDigest({ schemaVersion: 1, goal: plan.goal, firstDigest: plan.digest })}`) malformed();
         } else if (!head || head.planId !== plan.planId || head.version !== plan.predecessor.version || head.digest !== plan.predecessor.digest || plan.version !== head.version + 1) malformed();
+        this._validateContextCallPlanProposal(plan, true);
         const frozen = freeze(clone(plan)); this._plans.set(this._planVersionKey(plan.planId, plan.version), frozen); this._planHeads.set(headKey, frozen);
       } else if (event.kind === 'plan.approval_decided') {
         if (Object.keys(p).sort().join(',') !== ['approval', 'requestDigest', 'schemaVersion'].sort().join(',') || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '')) malformed();
@@ -2937,18 +6803,44 @@ export class CoordinationStore {
         const key = this._planVersionKey(plan.planId, plan.version); if (this._planApprovals.has(key)) malformed(); this._planApprovals.set(key, freeze(clone(approval)));
       } else if (event.kind === 'plan.node_dispatched') {
         const dispatchFields = ['authority', 'binding', 'capabilities', 'effects', 'expectedDispatchVersion', 'newDispatchVersion', 'nodeBudget', 'requestDigest', 'resolvedDeps', 'route', 'schemaVersion', 'taskId', 'taskPayloadDigest'];
+        if (Object.hasOwn(p, 'requiredEffects')) dispatchFields.push('requiredEffects');
         if (event.batch?.kind === 'goal_plan_recovery_dispatch') dispatchFields.push('claimPayloadDigest');
+        if (event.batch?.kind === 'goal_plan_wave_dispatch') dispatchFields.push('wave');
+        if (this._validPreservedResumeAttestation(p.preservedResume)) dispatchFields.push('preservedResume');
+        if (Object.hasOwn(p, 'revision')) dispatchFields.push('revision');
         if (Object.keys(p).sort().join(',') !== dispatchFields.sort().join(',')
           || p.schemaVersion !== 1 || p.expectedDispatchVersion !== 0 || p.newDispatchVersion !== 1 || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '') || !/^[a-f0-9]{64}$/.test(p.taskPayloadDigest ?? '')) malformed();
         if (event.batch?.kind === 'goal_plan_recovery_dispatch' && !/^[a-f0-9]{64}$/.test(p.claimPayloadDigest ?? '')) malformed();
+        if (event.batch?.kind === 'goal_plan_wave_dispatch'
+          && (!p.wave || Object.keys(p.wave).sort().join(',') !== ['count', 'digest', 'index', 'schemaVersion'].sort().join(',')
+            || p.wave.schemaVersion !== 1 || !/^[a-f0-9]{64}$/.test(p.wave.digest ?? '')
+            || !Number.isSafeInteger(p.wave.index) || p.wave.index < 0
+            || !Number.isSafeInteger(p.wave.count) || p.wave.count < 2
+            || p.wave.index >= p.wave.count)) malformed();
         const binding = p.binding; const plan = this._plans.get(this._planVersionKey(binding?.planId, binding?.planVersion));
         const goal = this._goals.get(this._goalVersionKey(binding?.goalId, binding?.goalVersion));
         const node = plan?.nodes.find((row) => row.key === binding?.nodeKey);
         if (!plan || !goal || !node || plan.digest !== binding.planDigest || goal.digest !== binding.goalDigest
           || canonicalDigest(node.budget) !== canonicalDigest(p.nodeBudget)
           || canonicalDigest(node.capabilities) !== canonicalDigest(p.capabilities)
-          || canonicalDigest(node.effects) !== canonicalDigest(p.effects)) malformed();
-        const key = this._planNodeKey(plan.planId, plan.version, node.key); if (this._planDispatches.has(key) || this._planTaskLinks.has(p.taskId)) malformed();
+          || canonicalDigest(node.effects) !== canonicalDigest(p.effects)
+          || Object.hasOwn(node, 'requiredEffects') !== Object.hasOwn(p, 'requiredEffects')
+          || canonicalDigest(node.requiredEffects ?? []) !== canonicalDigest(p.requiredEffects ?? [])
+          || Object.hasOwn(node, 'revision') !== Object.hasOwn(p, 'revision')
+          || canonicalDigest(node.revision ?? null) !== canonicalDigest(p.revision ?? null)) malformed();
+        const key = this._planNodeKey(plan.planId, plan.version, node.key);
+        const resumeAttestation = this._validPreservedResumeAttestation(p.preservedResume);
+        if (this._planTaskLinks.has(p.taskId)) malformed();
+        if (resumeAttestation) {
+          // PS5: a preserved resume supersedes the prior (cancelled) dispatch of this node. The
+          // plan projection is last-wins over events, so the resumed task becomes the node's
+          // current dispatch; the prior cancelled task keeps its own budget link.
+          const prior = this._planDispatches.get(key);
+          const priorTask = prior ? this._tasks.get(prior.taskId) : null;
+          if (!prior || !priorTask || priorTask.status !== 'cancelled' || prior.taskId !== resumeAttestation.priorTaskId) {
+            malformed('preserved resume prior dispatch is not the cancelled preserved task');
+          }
+        } else if (this._planDispatches.has(key)) malformed();
         const record = freeze({ ...clone(p), eventSeq: event.seq, dispatchedAt: event.ts, state: 'dispatched' }); this._planDispatches.set(key, record); this._planTaskLinks.set(p.taskId, record);
       } else if (event.kind === 'plan.node_budget_settled') {
         this._validatePlanBudgetSettlement(p, event, true);
@@ -2972,7 +6864,17 @@ export class CoordinationStore {
       admittedRunId = this._plans.get(this._planVersionKey(p?.binding?.planId, p?.binding?.planVersion))?.runId ?? null;
     } else if (event.kind === 'task.created') admittedRunId = p?.runId ?? null;
     else if (event.kind === 'task.claimed') admittedRunId = this._tasks.get(p?.id)?.runId ?? null;
-    if (admittedRunId !== null && this._runStops.has(admittedRunId)) {
+    else if (event.kind === 'context.session_admitted') admittedRunId = p?.session?.runId ?? null;
+    else if (event.kind === 'context.cell_admitted') {
+      admittedRunId = this._contextSessions.get(p?.cell?.sessionId)?.runId ?? null;
+    } else if (event.kind === 'context.call_admitted') {
+      admittedRunId = p?.schemaVersion === 2
+        ? p?.call?.authority?.contextPrincipal?.runId ?? null : p?.call?.source?.runId ?? null;
+    }
+    else if (event.kind === 'context.call_settled') {
+      admittedRunId = this._contextCallRunId(this._contextCalls.get(p?.callId));
+    }
+    if (admittedRunId !== null && (this._runStopByTarget.has(admittedRunId) || this._runStops.has(admittedRunId))) {
       throw new CoordinationIntegrityError(`effect ${event.kind} was admitted after run ${admittedRunId} began stopping`, 'run_stopping');
     }
     if (['goal.version_defined', 'plan.version_proposed', 'plan.approval_decided', 'plan.node_dispatched', 'plan.node_budget_settled'].includes(event.kind)) {
@@ -3036,10 +6938,149 @@ export class CoordinationStore {
       }
       const nodeId = receipt.nodeId;
       this._setKnowledgeNode(event, nodeId, freeze({ id: nodeId, type: 'Source', grounding: 'observed', body: `Authenticated ${p.receipt.providerId} delivery ${p.receipt.deliveryId}`, evidence: [{ coordinationSeq: event.seq }], promotion: { kind: 'ProviderDelivery', trigger: 'provider.delivery' }, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: event.seq, eventTime: p.receipt.occurredAt, validFrom: event.ts, validTo: null, validityVersion: 1, repoId: p.repoId, providerId: p.receipt.providerId, sourceEpoch: p.receipt.sourceEpoch, receiptDigest: p.receiptDigest, processingId: p.processingId }));
+    } else if (event.kind === 'run.orchestrator_lease_issued') {
+      const lease = this._validateRunOrchestratorLeaseIssued(p, event, true);
+      this._runOrchestratorLeases.set(lease.leaseId, freeze({
+        ...clone(lease), status: 'active', issuedEvent: event.seq, revokedEvent: null,
+      }));
+    } else if (event.kind === 'run.orchestrator_lease_revoked') {
+      const lease = this._validateRunOrchestratorLeaseRevoked(p, event, true);
+      this._runOrchestratorLeases.set(lease.leaseId, freeze({
+        ...clone(lease), status: 'revoked', revokedEvent: event.seq,
+      }));
+    } else if (event.kind === 'run.lineage_admitted') {
+      const lineage = this._validateRunLineageAdmission(p, event, true);
+      this._runLineages.set(lineage.childRunId, freeze(clone(lineage)));
+      this._runLineageEventSeqs.set(lineage.childRunId, event.seq);
+      const children = [...(this._runChildrenByParent.get(lineage.parentRunId) ?? [])];
+      children.push(lineage.childRunId);
+      this._runChildrenByParent.set(lineage.parentRunId, freeze(children));
+    } else if (event.kind === 'context.session_admitted') {
+      const validated = this._validateContextSessionPayload(p, event, true);
+      this._contextSessions.set(validated.session.sessionId, freeze({
+        ...clone(validated.session), authority: clone(p.authority),
+        admissionDigest: p.admissionDigest, state: 'active', version: 1,
+        admittedEvent: event.seq, admittedAt: event.ts,
+      }));
+    } else if (event.kind === 'context.cell_admitted') {
+      const cell = this._validateContextCellAdmissionPayload(p, event, true);
+      const priorProgram = this._contextPrograms.get(cell.programDigest);
+      if (priorProgram && canonicalDigest(priorProgram) !== canonicalDigest(cell.program)) {
+        throw new CoordinationIntegrityError('Context Program digest namespace collided',
+          'context_program_integrity');
+      }
+      this._contextPrograms.set(cell.programDigest, freeze(clone(cell.program)));
+      this._contextCells.set(cell.cellId, freeze({
+        ...clone(cell), authority: clone(p.authority), state: 'admitted', version: 1,
+        admittedEvent: event.seq, admittedAt: event.ts,
+        result: null, settledEvent: null, settledAt: null,
+      }));
+    } else if (event.kind === 'context.cell_settled') {
+      const validated = this._validateContextCellSettlementPayload(p, event, true);
+      const artifactRows = validated.result.state === 'completed' ? [
+        ['context-value', validated.result.outputRef],
+        ['context-evidence', validated.result.evidenceRef],
+      ] : [];
+      for (const [prefix, ref] of artifactRows) {
+        const id = `${prefix}:${ref.digest}`;
+        const artifact = freeze({
+          id, taskId: null, kind: ref.kind, refs: clone(ref), mediaType: ref.mediaType,
+          accepted: false, provenance: [{ coordinationSeq: event.seq }],
+          digest: canonicalDigest({ id, kind: ref.kind, refs: ref, mediaType: ref.mediaType }),
+          createdEvent: event.seq, version: 1, supersededBy: null, supersededEvent: null,
+        });
+        const prior = this._artifacts.get(id);
+        if (prior && (prior.kind !== artifact.kind
+          || canonicalDigest(prior.refs) !== canonicalDigest(artifact.refs)
+          || prior.mediaType !== artifact.mediaType)) {
+          throw new CoordinationIntegrityError('Context artifact identity collided',
+            'context_artifact_integrity');
+        }
+        if (!prior) this._artifacts.set(id, artifact);
+        this._contextArtifacts.set(ref.handle, id);
+      }
+      this._contextCells.set(validated.cell.cellId, freeze({
+        ...clone(validated.cell), state: validated.result.state, version: p.newVersion,
+        result: clone(validated.result), settlementDigest: p.settlementDigest,
+        settledEvent: event.seq, settledAt: event.ts,
+      }));
+    } else if (event.kind === 'context.call_admitted') {
+      const validated = p?.schemaVersion === 1
+        ? this._validateContextMapCallAdmissionPayload(p, event, true)
+        : this._validateContextEffectCallAdmissionPayload(p, event, true);
+      this._contextCalls.set(validated.call.callId, freeze({
+        ...clone(validated.call),
+        ...(p.schemaVersion === 1
+          ? { authority: clone(validated.authority) }
+          : { admissionAuthority: clone(validated.authority) }),
+        planRequest: clone(validated.planRequest),
+        expectedPlanDigest: validated.expectedPlanDigest,
+        ...(p.schemaVersion === 2 ? { admissionSchemaVersion: 2 } : {}),
+        admissionDigest: p.admissionDigest,
+        state: 'plan_pending', version: 1,
+        admittedEvent: event.seq, admittedAt: event.ts,
+      }));
+    } else if (event.kind === 'task.resources_released') {
+      const release = this._validateTaskResourceReleasePayload(p, event, true);
+      this._taskResourceReleases.set(release.taskId, release);
+    } else if (event.kind === 'context.call_settled') {
+      const validated = p?.schemaVersion === 1
+        ? this._validateContextMapCallSettlementPayload(p, event, true)
+        : this._validateContextEffectCallSettlementPayload(p, event, true);
+      const artifactRows = [
+        ['context-value', validated.result.outputRef],
+        ['context-call-evidence', validated.result.evidenceRef],
+        ...validated.result.providerResults.map((result) => (
+          ['context-provider-result', result.capsuleRef]
+        )),
+      ].filter(([, ref]) => ref !== null);
+      for (const [prefix, ref] of artifactRows) {
+        const id = `${prefix}:${ref.digest}`;
+        const artifact = freeze({
+          id, taskId: null, kind: ref.kind, refs: clone(ref), mediaType: ref.mediaType,
+          accepted: false, provenance: [{ coordinationSeq: event.seq }],
+          digest: canonicalDigest({ id, kind: ref.kind, refs: ref, mediaType: ref.mediaType }),
+          createdEvent: event.seq, version: 1, supersededBy: null, supersededEvent: null,
+        });
+        const prior = this._artifacts.get(id);
+        if (prior && (prior.kind !== artifact.kind
+          || canonicalDigest(prior.refs) !== canonicalDigest(artifact.refs)
+          || prior.mediaType !== artifact.mediaType)) {
+          throw new CoordinationIntegrityError('Context call artifact identity collided',
+            p.schemaVersion === 1 ? 'context_map_call_settlement_integrity'
+              : 'context_call_settlement_integrity');
+        }
+        if (!prior) this._artifacts.set(id, artifact);
+        this._contextArtifacts.set(ref.handle, id);
+      }
+      this._contextCalls.set(validated.call.callId, freeze({
+        ...clone(validated.call), state: validated.result.state, version: p.newVersion,
+        result: clone(validated.result), settlementDigest: p.settlementDigest,
+        settledEvent: event.seq, settledAt: event.ts,
+      }));
+    } else if (event.kind === 'recovery.attempt_admitted') {
+      const admission = this._validateRecoveryAttemptAdmissionPayload(p, event, true);
+      const attempt = freeze({
+        ...clone(admission), actor: event.actor, state: 'pending', admittedEvent: event.seq,
+        completedEvent: null, receipt: null, receiptDigest: null,
+      });
+      this._recoveryAttemptsById.set(admission.attemptId, attempt);
+      this._recoveryAttemptHeads.set(admission.seriesId, admission.attemptId);
+    } else if (event.kind === 'recovery.attempt_completed') {
+      const completion = this._validateRecoveryAttemptCompletionPayload(p, event, true);
+      const attempt = freeze({
+        ...clone(completion.attempt), state: completion.payload.state,
+        completedEvent: event.seq, receipt: clone(completion.payload.receipt),
+        receiptDigest: completion.payload.receiptDigest,
+      });
+      this._recoveryAttemptsById.set(attempt.attemptId, attempt);
+      this._recoveryAttemptHeads.set(attempt.seriesId, attempt.attemptId);
     } else if (event.kind === 'task.created') {
       if (p.runId != null && this._runs.get(p.runId)?.status === 'sealed') {
         throw new CoordinationIntegrityError(`task ${p.id} was admitted to sealed run ${p.runId}`, 'run_sealed');
       }
+      const topology = this._validateTaskTopology(p, this._taskTopologyHint(event), this._loading);
+      if (topology) this._taskTopologies.set(p.id, topology);
       this._tasks.set(p.id, freeze({ ...clone(p), status: 'pending', assignee: null, version: 1, createdEvent: event.seq, claimedEvent: null, terminalEvent: null, artifactIds: [] }));
       this._setKnowledgeNode(event, `task:${p.id}`, freeze({ id: `task:${p.id}`, type: 'Task', grounding: 'observed', body: `Task ${p.id}`, evidence: [{ coordinationSeq: event.seq }], observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: event.seq, eventTime: event.ts, validFrom: event.ts, validTo: null, validityVersion: 1 }));
     } else if (event.kind === 'task.claimed') {
@@ -3415,14 +7456,43 @@ export class CoordinationStore {
     } else if (event.kind === 'fleet.drain_completed') {
       const old = this._validateFleetDrainCompletion(p, event, true);
       this._fleetDrains.set(p.drainId, freeze({ ...clone(old), status: 'completed', receipt: clone(p.receipt), completedEvent: event.seq, completedAt: event.ts }));
+    } else if (event.kind === 'run.control_admitted') {
+      this._validateRunControlAdmission(p, event, true);
+      this._runControls.set(p.controlId, freeze({
+        ...clone(p), actor: event.actor, status: 'admitted',
+        admittedEvent: event.seq, admittedAt: event.ts,
+        effect: null, effectEvent: null, effectAt: null,
+        providerAck: null, providerAckEvent: null, providerAckAt: null,
+        settlement: null, settledEvent: null, settledAt: null,
+      }));
+    } else if (event.kind === 'run.control_effect_started') {
+      const old = this._validateRunControlEffect(p, event, true);
+      this._runControls.set(p.controlId, freeze({
+        ...clone(old), status: 'effect_started', effect: clone(p),
+        effectEvent: event.seq, effectAt: event.ts,
+      }));
+    } else if (event.kind === 'run.control_provider_acked') {
+      const old = this._validateRunControlProviderAck(p, event, true);
+      this._runControls.set(p.controlId, freeze({
+        ...clone(old), status: 'provider_acked', providerAck: clone(p),
+        providerAckEvent: event.seq, providerAckAt: event.ts,
+      }));
+    } else if (event.kind === 'run.control_settled') {
+      const old = this._validateRunControlSettlement(p, event, true);
+      this._runControls.set(p.controlId, freeze({
+        ...clone(old), status: p.state, settlement: clone(p),
+        settledEvent: event.seq, settledAt: event.ts,
+      }));
     } else if (event.kind === 'run.stop_admitted') {
       this._validateRunStopAdmission(p, event, true);
       this._runStops.set(p.runId, freeze({
         ...clone(p), actor: event.actor, status: 'stopping', admittedEvent: event.seq, admittedAt: event.ts,
         receipt: null, completedEvent: null, completedAt: null,
       }));
+      for (const targetRunId of p.targetRunIds ?? [p.runId]) this._runStopByTarget.set(targetRunId, p.runId);
+      const stoppedRunIds = new Set(p.targetRunIds ?? [p.runId]);
       for (const [exportId, state] of this._runResultExports) {
-        if (state.runId !== p.runId || state.status !== 'pending') continue;
+        if (!stoppedRunIds.has(state.runId) || state.status !== 'pending') continue;
         const cancellationCore = {
           schemaVersion: 1,
           kind: 'run_stop',
@@ -3438,6 +7508,56 @@ export class CoordinationStore {
           cancelledEvent: event.seq,
           cancelledAt: event.ts,
         }));
+      }
+      const sessionTargets = p.schemaVersion >= 2
+        ? p.targetContextSessionIds.map((sessionId) => [sessionId, this._contextSessions.get(sessionId)])
+        : [...this._contextSessions].filter(([, session]) => (
+          stoppedRunIds.has(session.runId) && session.state === 'active'
+        ));
+      for (const [sessionId, session] of sessionTargets) {
+        if (!session || session.state !== 'active') {
+          if (p.schemaVersion >= 2) throw new CoordinationIntegrityError(
+            'run stop Context session target changed before application', 'run_stop_integrity',
+          );
+          continue;
+        }
+        this._contextSessions.set(sessionId, freeze({
+          ...clone(session), state: 'stopped', version: session.version + 1,
+          stoppedEvent: event.seq, stoppedAt: event.ts, stopReasonDigest: p.reasonDigest,
+        }));
+      }
+      const cellTargets = p.schemaVersion >= 2
+        ? p.targetContextCellIds.map((cellId) => [cellId, this._contextCells.get(cellId)])
+        : [...this._contextCells].filter(([, cell]) => {
+          const session = this._contextSessions.get(cell.sessionId);
+          return session && stoppedRunIds.has(session.runId) && cell.state === 'admitted';
+        });
+      for (const [cellId, cell] of cellTargets) {
+        if (!cell || cell.state !== 'admitted') {
+          if (p.schemaVersion >= 2) throw new CoordinationIntegrityError(
+            'run stop Context cell target changed before application', 'run_stop_integrity',
+          );
+          continue;
+        }
+        this._contextCells.set(cellId, freeze({
+          ...clone(cell), state: 'stopped', version: cell.version + 1,
+          stoppedEvent: event.seq, stoppedAt: event.ts, stopReasonDigest: p.reasonDigest,
+        }));
+      }
+      if (p.schemaVersion >= 3) {
+        for (const callId of p.targetContextCallIds) {
+          const call = this._contextCalls.get(callId);
+          if (!call || call.state === 'stopped') {
+            throw new CoordinationIntegrityError(
+              'run stop Context call target changed before application', 'run_stop_integrity',
+            );
+          }
+          if (['completed', 'failed'].includes(call.state)) continue;
+          this._contextCalls.set(callId, freeze({
+            ...clone(call), state: 'stopped', version: call.version + 1,
+            stoppedEvent: event.seq, stoppedAt: event.ts, stopReasonDigest: p.reasonDigest,
+          }));
+        }
       }
     } else if (event.kind === 'run.stop_completed') {
       const old = this._validateRunStopCompletion(p, event, true);
@@ -3547,9 +7667,1036 @@ export class CoordinationStore {
   routePolicy() { return clone(this._routePolicy); }
   representationPolicy() { return clone(this._representationPolicy); }
   goalPlanPolicy() { return clone(this._goalPlanPolicy); }
+  workflowPolicy() { return clone(this._workflowPolicy); }
+  contextProgramPolicy() { return clone(this._contextProgramPolicy); }
+  contextProgramAuthority() {
+    if (!this._contextProgramPolicy) return null;
+    return freeze({
+      schemaVersion: 1,
+      deploymentBaseSha: this._deploymentBaseSha,
+      environmentDigest: this._contextEnvironmentDigest,
+      policyDigest: this._contextProgramPolicy.policyDigest,
+      referenceIdentity: this._contextReferenceIdentity,
+    });
+  }
+  contextSession(sessionId) { return clone(this._contextSessions.get(sessionId) ?? null); }
+  contextCell(cellId) { return clone(this._contextCells.get(cellId) ?? null); }
+  contextCall(callId) {
+    const admitted = this._contextCalls.get(callId);
+    if (!admitted) return null;
+    const generic = admitted.kind === 'baton.context_effect_call';
+    const plan = [...this._plans.values()].find((candidate) => (
+      candidate.digest === admitted.expectedPlanDigest
+    )) ?? null;
+    const approval = plan ? this._planApprovals.get(this._planVersionKey(
+      plan.planId, plan.version,
+    )) ?? null : null;
+    const executionUnits = generic
+      ? admitted.units.filter((unit) => admitted.executionUnitIds.includes(unit.unitId))
+      : admitted.partitions;
+    const children = plan ? executionUnits.map((unit) => {
+      const node = plan.nodes.find((candidate) => (
+        generic
+          ? candidate.contextCall?.unit?.unitId === unit.unitId
+          : candidate.contextCall?.partition?.partitionId === unit.partitionId
+      ));
+      const dispatch = node ? this._planDispatches.get(this._planNodeKey(
+        plan.planId, plan.version, node.key,
+      )) : null;
+      const task = dispatch ? this._tasks.get(dispatch.taskId) : null;
+      return {
+        ...(generic ? {
+          unitId: unit.unitId, unitDigest: unit.unitDigest,
+        } : {
+          partitionId: unit.partitionId, partitionDigest: unit.partitionDigest,
+        }),
+        index: unit.index,
+        nodeKey: node?.key ?? null,
+        nodeDigest: node ? canonicalDigest(node) : null,
+        taskId: dispatch?.taskId ?? null,
+        state: task?.status ?? 'missing', workerId: task?.assignee ?? null,
+        taskVersion: task?.version ?? null, terminalEvent: task?.terminalEvent ?? null,
+        route: dispatch ? {
+          harness: dispatch.route.vendor, model: dispatch.route.model,
+          effort: dispatch.route.effort,
+        } : null,
+      };
+    }) : [];
+    const sourceRunId = this._contextCallRunId(admitted);
+    const sourceSessionId = generic ? admitted.authority.sessionId : admitted.source.sessionId;
+    const sourceCellId = generic && admitted.source.kind === 'cell'
+      ? admitted.source.id : admitted.source.cellId;
+    const stopped = this._runStopByTarget.has(sourceRunId)
+      || this._runStops.has(sourceRunId)
+      || this._contextSessions.get(sourceSessionId)?.state === 'stopped'
+      || this._contextCells.get(sourceCellId)?.state === 'stopped';
+    const state = ['completed', 'failed'].includes(admitted.state) ? admitted.state
+      : admitted.state === 'stopped' ? 'stopped'
+      : stopped ? 'stopped'
+      : !plan ? 'plan_pending'
+        : !approval ? 'awaiting_plan_approval'
+          : approval.disposition === 'rejected' ? 'denied'
+            : children.length === 0 ? 'approved'
+              : children.every((child) => TERMINAL.has(child.state))
+                ? 'settlement_ready' : 'running';
+    return clone({
+      ...admitted, state,
+      plan: plan ? {
+        planId: plan.planId, version: plan.version, digest: plan.digest,
+        predecessor: clone(plan.predecessor),
+      } : null,
+      approval: approval ? {
+        disposition: approval.disposition, digest: approval.digest,
+      } : null,
+      children,
+    });
+  }
+  contextCalls({ runId = null } = {}) {
+    if (runId !== null && (typeof runId !== 'string' || runId.length === 0)) {
+      throw new TypeError('Context call Run filter is invalid');
+    }
+    return [...this._contextCalls.keys()].map((callId) => this.contextCall(callId))
+      .filter((call) => runId === null || this._contextCallRunId(call) === runId)
+      .sort((left, right) => left.admittedEvent - right.admittedEvent);
+  }
+  _contextRetrySelection(callId, integrity = false) {
+    const fail = (message, code) => this._contextFailure(
+      message, integrity ? 'context_call_integrity' : code, integrity,
+    );
+    const call = this._contextCalls.get(callId);
+    if (!call || call.kind !== 'baton.context_effect_call') {
+      return fail('Context retry predecessor is unavailable', 'context_retry_not_found');
+    }
+    if (call.state !== 'failed' || !call.result || !call.settlementDigest
+      || call.result.cleanup?.remainingCount !== 0) {
+      return fail('Context retry requires one failed terminal generation with exact cleanup',
+        'context_retry_not_eligible');
+    }
+    this.contextCallArtifacts(callId);
+    const children = call.result.children;
+    if (!Array.isArray(children) || children.length !== call.units.length) {
+      return fail('Context retry predecessor logical children are incomplete',
+        'context_retry_not_eligible');
+    }
+    const inheritedChildren = [];
+    const retryUnitIds = [];
+    for (let index = 0; index < call.units.length; index += 1) {
+      const unit = call.units[index];
+      const child = children[index];
+      if (child?.unitId !== unit.unitId || child?.unitDigest !== unit.unitDigest) {
+        return fail('Context retry predecessor child identity changed',
+          'context_retry_not_eligible');
+      }
+      if (child.origin === 'inherited' || child.state === 'accepted') {
+        inheritedChildren.push({
+          unitId: unit.unitId, originCallId: call.callId, childDigest: child.childDigest,
+        });
+      } else if (child.termination?.retryable === true) {
+        retryUnitIds.push(unit.unitId);
+      } else {
+        return fail('Context retry predecessor contains a nonretryable logical child',
+          'context_retry_nonretryable');
+      }
+    }
+    if (retryUnitIds.length === 0) {
+      return fail('Context retry predecessor has no retryable logical units',
+        'context_retry_not_eligible');
+    }
+    const successor = [...this._contextCalls.values()].find((candidate) => (
+      candidate.kind === 'baton.context_effect_call'
+        && candidate.predecessorCall?.callId === call.callId
+    ));
+    if (successor) {
+      return fail('Context retry predecessor already has a successor generation',
+        'context_retry_fork');
+    }
+    return freeze({
+      schemaVersion: 1, kind: 'baton.context_retry_selection',
+      callId: call.callId, callDigest: call.callDigest, generation: call.generation,
+      settlementDigest: call.settlementDigest,
+      inheritedChildren: freeze(inheritedChildren), retryUnitIds: freeze(retryUnitIds),
+    });
+  }
+  contextRetryEligibility(callId) {
+    try {
+      return clone({ eligible: true, ...this._contextRetrySelection(callId, false) });
+    } catch (error) {
+      if (!(error instanceof CoordinationRefusal)) throw error;
+      return freeze({
+        eligible: false, callId, code: error.code ?? 'context_retry_not_eligible',
+        summary: error.message,
+      });
+    }
+  }
+  contextCallSettlementChildren(callId, cleanupReceipt = null) {
+    const call = this._contextCalls.get(callId);
+    const generic = call?.kind === 'baton.context_effect_call';
+    if (!call) throw new CoordinationRefusal('Context call is unavailable',
+      'context_call_not_found');
+    const children = generic
+      ? this._contextEffectSettlementChildren(call, false)
+      : this._contextMapSettlementChildren(call, false);
+    if (cleanupReceipt === null) return clone(children);
+    const cleanup = generic
+      ? this._normalizeContextEffectCleanupReceipt(call, children, cleanupReceipt, false)
+      : this._normalizeContextMapCleanupReceipt(call, children, cleanupReceipt, false);
+    return clone(generic
+      ? this._contextEffectSettlementChildren(call, false, cleanup)
+      : this._contextMapSettlementChildren(call, false, cleanup));
+  }
+  contextCallArtifacts(callId) {
+    return clone(this._contextCallArtifacts(callId, this._contextArtifactVerification()));
+  }
+  contextCallContents(callId) {
+    const verification = this._contextArtifactVerification();
+    const artifacts = this._contextCallArtifacts(callId, verification);
+    if (!artifacts.output || !Array.isArray(artifacts.output.items)) {
+      throw new CoordinationRefusal('Context call has no completed result content',
+        'context_call_content_unavailable');
+    }
+    const results = artifacts.output.items.map((candidate, index) => {
+      let capsule; let resultRef; let source;
+      try {
+        capsule = this._contextArtifactRead(candidate?.capsuleRef, verification);
+        resultRef = validateContextProviderResultReference(candidate, capsule);
+        source = this._contextArtifactRead(capsule.sourceRef, verification);
+      } catch (error) {
+        throw new CoordinationIntegrityError(
+          error?.message ?? 'Context provider result content is unavailable',
+          'context_call_settlement_integrity',
+        );
+      }
+      if (!Array.isArray(source) || source.length !== capsule.sourceRef.itemCount
+        || contextValueDigest(source) !== capsule.sourceRef.digest) {
+        throw new CoordinationIntegrityError('Context provider result content changed',
+          'context_call_settlement_integrity');
+      }
+      return freeze({
+        index, unitId: resultRef.unitId, capsuleId: resultRef.capsuleId,
+        route: clone(capsule.route),
+        result: {
+          resultSha: capsule.result.resultSha,
+          retainedResultRef: capsule.result.retainedResultRef,
+          changedPaths: clone(capsule.result.changedPaths),
+          pathScope: clone(capsule.result.pathScope),
+        },
+        source: clone(source),
+      });
+    });
+    return clone(freeze({
+      schemaVersion: 1, kind: 'baton.context_call_content', callId,
+      resultCount: results.length, results: freeze(results),
+    }));
+  }
+  _contextCallArtifacts(callId, verification) {
+    if (verification.calls.has(callId)) return verification.calls.get(callId);
+    const call = this._contextCalls.get(callId);
+    const generic = call?.kind === 'baton.context_effect_call';
+    if (!call) throw new CoordinationRefusal('Context call is unavailable',
+      'context_call_not_found');
+    if (!['completed', 'failed'].includes(call.state) || !call.result) {
+      throw new CoordinationRefusal('Context call has no terminal artifacts',
+        'context_call_not_completed');
+    }
+    let output; let evidence; let providerResults;
+    try {
+      providerResults = generic
+        ? this._validateContextEffectProviderResults(
+          call, call.result.children, call.result.cleanup, call.result.providerResults, true,
+          verification,
+        )
+        : this._validateContextMapProviderResults(
+          call, call.result.children, call.result.cleanup, call.result.providerResults, true,
+          verification,
+        );
+      if (canonicalDigest(providerResults) !== call.result.providerResultDigest) {
+        throw new CoordinationIntegrityError('Context call provider-result set changed',
+          generic ? 'context_call_settlement_integrity'
+            : 'context_map_call_settlement_integrity');
+      }
+      output = call.result.outputRef === null
+        ? null : this._contextArtifactRead(call.result.outputRef, verification);
+      evidence = this._contextArtifactRead(call.result.evidenceRef, verification);
+    } catch (error) {
+      if (error?.code === 'context_artifact_unavailable') throw error;
+      throw new CoordinationIntegrityError(error?.message ?? 'Context call artifact reverify failed',
+        generic ? 'context_call_settlement_integrity'
+          : 'context_map_call_settlement_integrity');
+    }
+    const outputValid = call.state === 'failed'
+      ? output === null && evidence?.state === 'failed' && evidence.outputRef === null
+        && canonicalDigest(evidence?.cleanup) === canonicalDigest(call.result.cleanup)
+        && canonicalDigest(evidence?.termination) === canonicalDigest(call.result.termination)
+      : canonicalDigest(output?.items) === canonicalDigest(call.result.providerResults);
+    const evidenceCallValid = generic
+      ? canonicalDigest(evidence?.call) === canonicalDigest(this._contextEffectCallCore(call))
+      : evidence?.callId === call.callId && evidence?.callDigest === call.callDigest;
+    if (!outputValid
+      || !evidenceCallValid
+      || evidence?.childDigest !== call.result.childDigest
+      || evidence?.providerResultDigest !== call.result.providerResultDigest
+      || canonicalDigest(evidence?.children) !== canonicalDigest(call.result.children)
+      || canonicalDigest(evidence?.providerResults)
+        !== canonicalDigest(call.result.providerResults)
+      || canonicalDigest(evidence?.cleanup) !== canonicalDigest(call.result.cleanup)
+      || canonicalDigest(evidence?.outputRef) !== canonicalDigest(call.result.outputRef)) {
+      throw new CoordinationIntegrityError('Context call artifacts changed',
+        generic ? 'context_call_settlement_integrity'
+          : 'context_map_call_settlement_integrity');
+    }
+    if (call.state === 'completed') {
+      if (generic ? evidence?.schemaVersion !== 4 : ![2, 3].includes(evidence?.schemaVersion)) {
+        throw new CoordinationIntegrityError('Context call evidence version changed',
+          generic ? 'context_call_settlement_integrity'
+            : 'context_map_call_settlement_integrity');
+      }
+      if (generic) {
+        this._validateContextEffectResultLineageEvidence(
+          call, evidence, call.result.children, providerResults, call.result.cleanup, true,
+          verification,
+        );
+      } else if (evidence.schemaVersion === 3) {
+        this._validateContextMapResultLineageEvidence(
+          call, evidence, call.result.children, providerResults, call.result.cleanup, true,
+          verification,
+        );
+      }
+    } else if (evidence?.schemaVersion !== (generic ? 4 : 2)) {
+      throw new CoordinationIntegrityError('Failed Context call evidence version changed',
+        generic ? 'context_call_settlement_integrity'
+          : 'context_map_call_settlement_integrity');
+    }
+    const artifacts = freeze({ output: clone(output), evidence: clone(evidence) });
+    verification.calls.set(callId, artifacts);
+    return artifacts;
+  }
+  contextCompletedCallSource(callId) {
+    return this.contextCompletedCallSourceAndArtifacts(callId).source;
+  }
+  contextCompletedCallSourceAndArtifacts(callId) {
+    const call = this._contextCalls.get(callId);
+    if (!call) throw new CoordinationRefusal('Context call is unavailable',
+      'context_map_call_not_found');
+    if (call.state !== 'completed' || !call.result) {
+      throw new CoordinationRefusal('Context call is not a completed source',
+        'context_map_call_not_completed');
+    }
+    const verification = this._contextArtifactVerification();
+    const artifacts = this._contextCallArtifacts(callId, verification);
+    const expectedEvidenceVersion = call.kind === 'baton.context_effect_call' ? 4 : 3;
+    if (artifacts.evidence.schemaVersion !== expectedEvidenceVersion) {
+      throw new CoordinationRefusal(
+        'Historical Context call output has no exact per-item lineage',
+        'context_output_lineage_required',
+      );
+    }
+    try {
+      const source = clone(normalizeContextEffectSource({
+        kind: 'call', id: call.callId, callDigest: call.callDigest,
+        generation: call.generation, settlementDigest: call.settlementDigest,
+        outputRef: call.result.outputRef, evidenceRef: call.result.evidenceRef,
+        itemCount: artifacts.output.items.length,
+        coordinateDigest: artifacts.evidence.coordinateDigest,
+        outputLineageDigest: artifacts.evidence.outputLineageDigest,
+      }));
+      return freeze({ source, artifacts: clone(artifacts) });
+    } catch (error) {
+      throw new CoordinationIntegrityError(
+        error?.message ?? 'Completed Context call source changed',
+        'context_map_call_settlement_integrity',
+      );
+    }
+  }
+  pendingContextCells(limit = 1_000) {
+    if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
+      throw new TypeError('Context pending-cell scan limit is invalid');
+    }
+    return [...this._contextCells.values()].filter((cell) => cell.state === 'admitted')
+      .sort((left, right) => left.admittedEvent - right.admittedEvent)
+      .slice(0, limit).map(clone);
+  }
+  _validateContextCompletionArtifacts(cell, result, output, evidence, integrity = false) {
+    const session = this._contextSessions.get(cell.sessionId);
+    const contextPolicy = this._normalizeContextDeployment(session?.deployment, integrity).policy;
+    const evidenceFields = [
+      'cellId', 'coordinateDigest', 'environmentDigest', 'kind', 'manifestDigest',
+      'outputRef', 'policyDigest', 'programDigest', 'providerEffects', 'schemaVersion',
+      'selectedSourceItems', 'sourceBranches', 'sourceCoordinates', 'sourceItems',
+      ...(evidence?.schemaVersion === 2 ? ['outputLineageDigest', 'outputLineages'] : []),
+    ];
+    const outputFields = [
+      'chunks', 'items', 'kind', 'schemaVersion', 'selectedSourceItems',
+      'sourceBranches', 'sourceItems',
+    ];
+    const fail = (message, code = 'context_artifact_integrity') => {
+      this._contextFailure(message, code, integrity);
+    };
+    if (contextValueDigest(output) !== result.outputRef.digest
+      || contextValueDigest(evidence) !== result.evidenceRef.digest
+      || !output || typeof output !== 'object' || Array.isArray(output)
+      || Object.keys(output).sort().join(',') !== outputFields.sort().join(',')
+      || output.schemaVersion !== 1 || output.kind !== 'baton.context_value'
+      || !Array.isArray(output.items)
+      || output.items.length > contextPolicy.maxResultItems
+      || !Number.isSafeInteger(output.chunks) || output.chunks < 0
+      || !Number.isSafeInteger(output.sourceItems) || output.sourceItems < 0
+      || !Number.isSafeInteger(output.selectedSourceItems) || output.selectedSourceItems < 0
+      || !evidence || typeof evidence !== 'object' || Array.isArray(evidence)
+      || Object.keys(evidence).sort().join(',') !== evidenceFields.sort().join(',')
+      || ![1, 2].includes(evidence.schemaVersion)
+      || evidence.kind !== 'baton.context_cell_evidence'
+      || evidence.cellId !== cell.cellId
+      || evidence.manifestDigest !== cell.manifestDigest
+      || evidence.programDigest !== cell.programDigest
+      || evidence.environmentDigest !== cell.environmentDigest
+      || evidence.policyDigest !== cell.policyDigest
+      || evidence.providerEffects !== 0
+      || canonicalDigest(evidence.outputRef) !== canonicalDigest(result.outputRef)
+      || canonicalDigest(evidence.sourceBranches) !== canonicalDigest(output.sourceBranches)
+      || evidence.sourceItems !== output.sourceItems
+      || evidence.selectedSourceItems !== output.selectedSourceItems
+      || !Array.isArray(evidence.sourceCoordinates)
+      || evidence.sourceCoordinates.length !== result.sourceCoordinateCount
+      || contextValueDigest(evidence.sourceCoordinates) !== result.coordinateDigest
+      || evidence.coordinateDigest !== result.coordinateDigest) {
+      fail('Context cell artifact evidence changed');
+    }
+    if (evidence.schemaVersion === 2) {
+      try {
+        validatePureContextOutputLineage({
+          items: output.items,
+          outputLineages: evidence.outputLineages,
+          outputLineageDigest: evidence.outputLineageDigest,
+          sourceCoordinates: evidence.sourceCoordinates,
+          coordinateDigest: evidence.coordinateDigest,
+        });
+      } catch (error) {
+        fail(error?.message ?? 'Context output lineage changed');
+      }
+    }
+    if (!Array.isArray(evidence.sourceBranches)
+      || new Set(evidence.sourceBranches).size !== evidence.sourceBranches.length
+      || evidence.sourceBranches.some((branch) => typeof branch !== 'string')) {
+      fail('Context cell source-branch evidence is invalid');
+    }
+    const inputs = new Map(cell.inputRefs.map((input) => [input.branch, input]));
+    const branches = new Map((session?.manifest?.branches ?? [])
+      .map((branch) => [branch.name, branch]));
+    if (evidence.sourceBranches.some((branch) => !inputs.has(branch) || !branches.has(branch))) {
+      fail('Context cell evidence cites a source outside its admitted program');
+    }
+    const resolved = new Map();
+    const coordinateIdentities = new Set();
+    for (const coordinate of evidence.sourceCoordinates) {
+      const fields = ['branch', 'itemDigest', 'itemIndex', 'sourceDigest', 'sourceRef'];
+      if (!coordinate || typeof coordinate !== 'object' || Array.isArray(coordinate)
+        || Object.keys(coordinate).sort().join(',') !== fields.sort().join(',')
+        || !Number.isSafeInteger(coordinate.itemIndex) || coordinate.itemIndex < 0
+        || !/^[a-f0-9]{64}$/u.test(coordinate.itemDigest ?? '')) {
+        fail('Context cell source coordinate is malformed');
+      }
+      const input = inputs.get(coordinate.branch);
+      const branch = branches.get(coordinate.branch);
+      if (!input || !branch || coordinate.sourceRef !== input.ref
+        || coordinate.sourceDigest !== input.digest
+        || coordinate.sourceRef !== branch.ref || coordinate.sourceDigest !== branch.digest
+        || coordinate.itemIndex >= branch.itemCount) {
+        fail('Context cell source coordinate is outside its manifest');
+      }
+      const identity = canonicalDigest(coordinate);
+      if (coordinateIdentities.has(identity)) fail('Context cell source coordinates repeat');
+      coordinateIdentities.add(identity);
+      let source = resolved.get(branch.ref);
+      if (!source) {
+        try {
+          source = this._contextReferenceRead({
+            kind: 'context_source', ref: branch.ref, digest: branch.digest,
+            mediaType: branch.mediaType, itemCount: branch.itemCount,
+          });
+        } catch (error) {
+          fail(error?.message ?? 'Context source evidence is unavailable',
+            error?.code ?? 'context_source_unavailable');
+        }
+        resolved.set(branch.ref, source);
+      }
+      const items = Array.isArray(source) ? source : [source];
+      if (contextValueDigest(source) !== branch.digest || items.length !== branch.itemCount
+        || contextValueDigest(items[coordinate.itemIndex]) !== coordinate.itemDigest) {
+        fail('Context cell source item evidence changed');
+      }
+    }
+    return freeze({ output: clone(output), evidence: clone(evidence) });
+  }
+  contextCellArtifacts(cellId) {
+    const cell = this._contextCells.get(cellId);
+    if (!cell) throw new CoordinationRefusal('Context cell is unavailable', 'context_cell_not_found');
+    if (cell.state !== 'completed' || !cell.result) {
+      throw new CoordinationRefusal('Context cell has no completed artifacts',
+        'context_cell_not_completed');
+    }
+    let output; let evidence;
+    try {
+      output = this._contextReferenceRead(cell.result.outputRef);
+      evidence = this._contextReferenceRead(cell.result.evidenceRef);
+    } catch (error) {
+      if (error?.code === 'context_artifact_unavailable') throw error;
+      throw new CoordinationIntegrityError(error?.message ?? 'Context artifact reverify failed',
+        'context_artifact_integrity');
+    }
+    return this._validateContextCompletionArtifacts(cell, cell.result, output, evidence, true);
+  }
   canonicalOrderPolicy() { return clone(this._canonicalOrderPolicy); }
   goalVersion(goalId, version) { return clone(this._goals.get(this._goalVersionKey(goalId, version)) ?? null); }
   planVersion(planId, version) { return clone(this._plans.get(this._planVersionKey(planId, version)) ?? null); }
+
+  admitContextSession(fields, auth) {
+    if (!this._contextProgramPolicy) {
+      throw new CoordinationRefusal('Context Program authority is unavailable',
+        'context_session_unavailable');
+    }
+    const deployment = this._currentContextDeployment();
+    let session;
+    try {
+      session = contextSessionIdentity({
+        manifest: fields?.manifest, environmentDigest: fields?.environmentDigest,
+        policy: deployment.policy,
+      });
+    } catch (error) {
+      throw new CoordinationRefusal(error.message, 'context_session_invalid');
+    }
+    let authority;
+    try {
+      authority = normalizeContextAuthority({
+        actor: auth?.actor, principalId: auth?.principalId,
+        repoId: auth?.repoId, runId: auth?.runId,
+      });
+    } catch (error) {
+      throw new CoordinationRefusal(error.message, 'context_session_invalid');
+    }
+    const requestCore = {
+      actor: authority.actor, principalId: authority.principalId,
+      repoId: authority.repoId, runId: authority.runId,
+      manifestDigest: session.manifestDigest, environmentDigest: session.environmentDigest,
+    };
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'context.session_admitted' || prior.actor !== auth.actor
+        || canonicalDigest(prior.payload?.authority) !== canonicalDigest(authority)
+        || canonicalDigest(prior.payload?.deployment) !== canonicalDigest(deployment)
+        || canonicalDigest(prior.payload?.session) !== canonicalDigest(session)
+        || prior.payload?.requestDigest !== canonicalDigest(requestCore)) {
+        throw new CoordinationRefusal('Context session idempotency key is bound differently',
+          'context_session_conflict');
+      }
+      const projected = this.contextSession(session.sessionId);
+      if (!projected || projected.admittedEvent !== prior.seq) {
+        throw new CoordinationIntegrityError('Context session projection is absent',
+          'context_session_integrity');
+      }
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), session: projected });
+    }
+    const plan = this._plans.get(this._planVersionKey(
+      session.manifest.workflow.plan.planId, session.manifest.workflow.plan.version,
+    ));
+    const node = plan?.nodes.find((candidate) => (
+      candidate.key === session.manifest.workflow.node.key
+    ));
+    if (!node) {
+      throw new CoordinationRefusal('Context source has no Plan node authority',
+        'context_source_attestation_invalid');
+    }
+    const sourceAttestations = [];
+    for (const branch of session.manifest.branches) {
+      let source;
+      try {
+        source = this._contextReferenceRead({
+          kind: 'context_source', ref: branch.ref, digest: branch.digest,
+          mediaType: branch.mediaType, itemCount: branch.itemCount,
+        });
+      } catch (error) {
+        throw new CoordinationRefusal(error?.message ?? 'Context source is unavailable',
+          error?.code ?? 'context_source_unavailable');
+      }
+      const items = Array.isArray(source) ? source : [source];
+      if (contextValueDigest(source) !== branch.digest || items.length !== branch.itemCount) {
+        throw new CoordinationRefusal('Context source differs from its manifest',
+          'context_source_integrity');
+      }
+      let attestation;
+      try {
+        attestation = this._contextSourceAttest({
+          manifest: session.manifest, branch: clone(branch), source: clone(source),
+        });
+      } catch (error) {
+        throw new CoordinationRefusal(error?.message ?? 'Context source attestation is unavailable',
+          error?.code ?? 'context_source_attestation_invalid');
+      }
+      sourceAttestations.push(this._normalizeContextSourceAttestation(attestation, {
+        deployment, manifest: session.manifest, node, branch, source,
+      }, false));
+    }
+    const admissionCore = { authority, deployment, session, sourceAttestations };
+    const payload = {
+      schemaVersion: 2, authority, requestDigest: canonicalDigest(requestCore),
+      deployment, session, sourceAttestations,
+      admissionDigest: canonicalDigest(admissionCore),
+    };
+    const prospective = {
+      schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(),
+      kind: 'context.session_admitted', actor: auth?.actor,
+      idempotencyKey: auth?.key, payload,
+    };
+    this._validateContextSessionPayload(payload, prospective, false);
+    const event = this._append('context.session_admitted', payload, auth, prospective.ts);
+    const projected = this.contextSession(session.sessionId);
+    if (projected?.admittedEvent !== event.seq) {
+      throw new CoordinationIntegrityError('Context session admission did not materialize',
+        'context_session_integrity');
+    }
+    return freeze({ ok: true, result: 'admitted', event: clone(event), session: projected });
+  }
+
+  admitContextCell(fields, auth) {
+    if (!this._contextProgramPolicy) {
+      throw new CoordinationRefusal('Context Program authority is unavailable',
+        'context_cell_unavailable');
+    }
+    const session = this._contextSessions.get(fields?.sessionId);
+    if (!session) throw new CoordinationRefusal('Context session is unavailable',
+      'context_cell_invalid');
+    const contextPolicy = this._normalizeContextDeployment(session.deployment, false).policy;
+    let program;
+    try { program = normalizeContextProgram(fields?.program, contextPolicy); }
+    catch (error) { throw new CoordinationRefusal(error.message, 'context_cell_invalid'); }
+    if (!contextProgramIsPure(program, contextPolicy)) {
+      throw new CoordinationRefusal('Provider-effect Context Program requires Workflow authority',
+        'context_cell_effect_requires_workflow');
+    }
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      const priorCell = prior.payload?.cell;
+      const expectedAuthority = {
+        actor: auth?.actor, principalId: auth?.principalId,
+        repoId: auth?.repoId, runId: auth?.runId ?? null,
+      };
+      if (prior.kind !== 'context.cell_admitted' || prior.actor !== auth.actor
+        || priorCell?.sessionId !== session.sessionId
+        || canonicalDigest(priorCell?.program) !== canonicalDigest(program)
+        || canonicalDigest(prior.payload?.authority) !== canonicalDigest(expectedAuthority)) {
+        throw new CoordinationRefusal('Context cell idempotency key is bound differently',
+          'context_cell_conflict');
+      }
+      const projected = this.contextCell(priorCell.cellId);
+      if (!projected || projected.admittedEvent !== prior.seq) {
+        throw new CoordinationIntegrityError('Context cell projection is absent',
+          'context_cell_integrity');
+      }
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), cell: projected });
+    }
+    const cells = [...this._contextCells.values()].filter((row) => row.sessionId === session.sessionId);
+    const cell = contextCellIdentity({
+      session, program, ordinal: cells.length + 1,
+      predecessor: cells.length === 0 ? null : cells.at(-1).cellId,
+      policy: contextPolicy,
+    });
+    let authority;
+    try {
+      authority = normalizeContextAuthority({
+        actor: auth?.actor, principalId: auth?.principalId,
+        repoId: auth?.repoId, runId: auth?.runId,
+      });
+    } catch (error) {
+      throw new CoordinationRefusal(error.message, 'context_cell_invalid');
+    }
+    if (canonicalDigest(authority) !== canonicalDigest(session.authority)) {
+      throw new CoordinationRefusal('Context cell principal differs from session admission',
+        'context_cell_unauthorized');
+    }
+    const requestCore = {
+      actor: authority.actor, principalId: authority.principalId,
+      repoId: authority.repoId, runId: authority.runId,
+      sessionId: session.sessionId, programDigest: program.programDigest,
+    };
+    const payload = {
+      schemaVersion: 1, authority, requestDigest: canonicalDigest(requestCore),
+      cell, admissionDigest: cell.admissionDigest,
+    };
+    const prospective = {
+      schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(),
+      kind: 'context.cell_admitted', actor: auth?.actor,
+      idempotencyKey: auth?.key, payload,
+    };
+    this._validateContextCellAdmissionPayload(payload, prospective, false);
+    const event = this._append('context.cell_admitted', payload, auth, prospective.ts);
+    const projected = this.contextCell(cell.cellId);
+    if (projected?.admittedEvent !== event.seq) {
+      throw new CoordinationIntegrityError('Context cell admission did not materialize',
+        'context_cell_integrity');
+    }
+    return freeze({ ok: true, result: 'admitted', event: clone(event), cell: projected });
+  }
+
+  settleContextCell(fields, auth) {
+    const cell = this._contextCells.get(fields?.cellId);
+    if (!cell) throw new CoordinationRefusal('Context cell is unavailable', 'context_cell_not_found');
+    const session = this._contextSessions.get(cell.sessionId);
+    let authority;
+    try {
+      authority = normalizeContextAuthority({
+        actor: auth?.actor, principalId: auth?.principalId,
+        repoId: auth?.repoId, runId: auth?.runId,
+      });
+    } catch (error) {
+      throw new CoordinationRefusal(error.message, 'context_cell_settlement_unauthorized');
+    }
+    if (canonicalDigest(authority) !== canonicalDigest(cell.authority)) {
+      throw new CoordinationRefusal('Context cell settlement principal differs from admission',
+        'context_cell_settlement_unauthorized');
+    }
+    const result = clone(fields?.result);
+    const settlementCore = {
+      authority,
+      cellId: cell.cellId, admissionDigest: cell.admissionDigest,
+      expectedVersion: fields?.expectedVersion, newVersion: fields?.expectedVersion + 1, result,
+    };
+    const payload = {
+      schemaVersion: 1, authority, cellId: cell.cellId,
+      expectedVersion: fields?.expectedVersion, newVersion: fields?.expectedVersion + 1,
+      result, settlementDigest: canonicalDigest(settlementCore),
+    };
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'context.cell_settled' || prior.actor !== auth.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
+        throw new CoordinationRefusal('Context settlement idempotency key is bound differently',
+          'context_cell_settlement_conflict');
+      }
+      const projected = this.contextCell(cell.cellId);
+      if (!projected || projected.settledEvent !== prior.seq) {
+        throw new CoordinationIntegrityError('Context settlement projection is absent',
+          'context_cell_settlement_integrity');
+      }
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), cell: projected });
+    }
+    this._assertContextSessionCurrent(session, false);
+    if (result?.state === 'completed') {
+      let output; let evidence;
+      try {
+        output = this._contextReferenceRead(result?.outputRef);
+        evidence = this._contextReferenceRead(result?.evidenceRef);
+      } catch (error) {
+        throw new CoordinationRefusal(error?.message ?? 'Context settlement artifact is unavailable',
+          error?.code ?? 'context_artifact_unavailable');
+      }
+      this._validateContextCompletionArtifacts(cell, result, output, evidence, false);
+    }
+    const prospective = {
+      schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(),
+      kind: 'context.cell_settled', actor: auth?.actor,
+      idempotencyKey: auth?.key, payload,
+    };
+    this._validateContextCellSettlementPayload(payload, prospective, false);
+    const event = this._append('context.cell_settled', payload, auth, prospective.ts);
+    const projected = this.contextCell(cell.cellId);
+    if (projected?.settledEvent !== event.seq) {
+      throw new CoordinationIntegrityError('Context cell settlement did not materialize',
+        'context_cell_settlement_integrity');
+    }
+    return freeze({ ok: true, result: 'settled', event: clone(event), cell: projected });
+  }
+
+  admitContextMapCall(fields, auth) {
+    if (!this._contextProgramPolicy || !this._goalPlanPolicy) {
+      throw new CoordinationRefusal('Context map authority is unavailable',
+        'context_map_unavailable');
+    }
+    let authority; let call;
+    try {
+      authority = normalizeContextAuthority({
+        actor: auth?.actor, principalId: auth?.principalId,
+        repoId: auth?.repoId, runId: auth?.runId,
+      });
+      call = contextMapCallIdentity(fields?.call);
+    } catch (error) {
+      throw new CoordinationRefusal(error.message, 'context_map_call_invalid');
+    }
+    const predecessor = this._plans.get(this._planVersionKey(
+      call.source.predecessorPlan.planId, call.source.predecessorPlan.version,
+    ));
+    const goal = predecessor ? this._goals.get(this._goalVersionKey(
+      predecessor.goal.goalId, predecessor.goal.version,
+    )) : null;
+    if (!goal) throw new CoordinationRefusal('Context map Goal is unavailable',
+      'context_map_plan_invalid');
+    let planRequest;
+    try { planRequest = normalizePlanRequest(fields?.planRequest, this._goalPlanPolicy, goal); }
+    catch (error) {
+      throw new CoordinationRefusal(error.message, error.code ?? 'context_map_plan_invalid');
+    }
+    const expectedPlanDigest = goalPlanDigest({
+      schemaVersion: 1, repoId: this._repoId, runId: call.source.runId,
+      goal: planRequest.goal, predecessor: planRequest.predecessor,
+      nodes: planRequest.nodes, totals: planRequest.totals,
+      policyDigest: this._goalPlanPolicy.policyDigest,
+    });
+    if (fields?.expectedPlanDigest !== expectedPlanDigest) {
+      throw new CoordinationRefusal('Context map expected Plan digest changed',
+        'context_map_plan_invalid');
+    }
+    const requestCore = { authority, call, planRequest, expectedPlanDigest };
+    const cell = this._contextCells.get(call.source.cellId);
+    const admissionCore = {
+      ...requestCore, sourceCellSettlementDigest: cell?.settlementDigest ?? null,
+    };
+    const payload = {
+      schemaVersion: 1, authority, call, planRequest, expectedPlanDigest,
+      requestDigest: canonicalDigest(requestCore),
+      admissionDigest: canonicalDigest(admissionCore),
+    };
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'context.call_admitted' || prior.actor !== auth.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
+        throw new CoordinationRefusal('Context map call idempotency key is bound differently',
+          'context_map_call_conflict');
+      }
+      const projected = this.contextCall(call.callId);
+      if (!projected || projected.admittedEvent !== prior.seq) {
+        throw new CoordinationIntegrityError('Context map call projection is absent',
+          'context_map_call_integrity');
+      }
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), call: projected });
+    }
+    const prospective = {
+      schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(),
+      kind: 'context.call_admitted', actor: auth?.actor,
+      idempotencyKey: auth?.key, payload,
+    };
+    this._validateContextMapCallAdmissionPayload(payload, prospective, false);
+    const event = this._append('context.call_admitted', payload, auth, prospective.ts);
+    const projected = this.contextCall(call.callId);
+    if (projected?.admittedEvent !== event.seq) {
+      throw new CoordinationIntegrityError('Context map call admission did not materialize',
+        'context_map_call_integrity');
+    }
+    return freeze({ ok: true, result: 'admitted', event: clone(event), call: projected });
+  }
+
+  admitContextEffectCall(fields, auth) {
+    if (!this._contextProgramPolicy || !this._goalPlanPolicy) {
+      throw new CoordinationRefusal('Context effect-call authority is unavailable',
+        'context_call_unavailable');
+    }
+    let call;
+    try { call = normalizeContextEffectCall(fields?.call); }
+    catch (error) {
+      throw new CoordinationRefusal(error.message, error.code ?? 'context_call_invalid');
+    }
+    const callAuthority = call.authority;
+    const principal = callAuthority.contextPrincipal;
+    const requester = callAuthority.requester;
+    if (auth?.actor !== principal.actor || auth?.principalId !== principal.principalId
+      || auth?.repoId !== principal.repoId || auth?.runId !== principal.runId
+      || auth?.requesterPrincipalId !== requester.principalId
+      || auth?.requesterSessionId !== requester.sessionId) {
+      throw new CoordinationRefusal('Context effect-call service or requester authority differs',
+        'context_call_unauthorized');
+    }
+    const authority = normalizeContextAuthority({
+      actor: auth.actor, principalId: auth.principalId,
+      repoId: auth.repoId, runId: auth.runId,
+    });
+    const predecessor = this._plans.get(this._planVersionKey(
+      callAuthority.predecessorPlan.planId, callAuthority.predecessorPlan.version,
+    ));
+    const goal = predecessor ? this._goals.get(this._goalVersionKey(
+      predecessor.goal.goalId, predecessor.goal.version,
+    )) : null;
+    if (!goal) throw new CoordinationRefusal('Context effect-call Goal is unavailable',
+      'context_call_plan_invalid');
+    let planRequest;
+    try { planRequest = normalizePlanRequest(fields?.planRequest, this._goalPlanPolicy, goal); }
+    catch (error) {
+      throw new CoordinationRefusal(error.message, error.code ?? 'context_call_plan_invalid');
+    }
+    const expectedPlanDigest = goalPlanDigest({
+      schemaVersion: 1, repoId: this._repoId, runId: principal.runId,
+      goal: planRequest.goal, predecessor: planRequest.predecessor,
+      nodes: planRequest.nodes, totals: planRequest.totals,
+      policyDigest: this._goalPlanPolicy.policyDigest,
+    });
+    if (fields?.expectedPlanDigest !== expectedPlanDigest) {
+      throw new CoordinationRefusal('Context effect-call expected Plan digest changed',
+        'context_call_plan_invalid');
+    }
+    const sourceSettlementDigest = call.operator === 'map'
+      ? this._contextCells.get(call.source.id)?.settlementDigest ?? null
+      : this._contextCalls.get(call.source.id)?.settlementDigest ?? null;
+    const requestCore = { authority, call, planRequest, expectedPlanDigest };
+    const admissionCore = {
+      ...requestCore, sourceSettlementDigest,
+    };
+    const payload = {
+      schemaVersion: 2, authority, call, planRequest, expectedPlanDigest,
+      requestDigest: canonicalDigest(requestCore),
+      admissionDigest: canonicalDigest(admissionCore),
+    };
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'context.call_admitted' || prior.actor !== auth.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
+        throw new CoordinationRefusal('Context effect-call idempotency key is bound differently',
+          'context_call_conflict');
+      }
+      const projected = this.contextCall(call.callId);
+      if (!projected || projected.admittedEvent !== prior.seq) {
+        throw new CoordinationIntegrityError('Context effect-call projection is absent',
+          'context_call_integrity');
+      }
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), call: projected });
+    }
+    const prospective = {
+      schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(),
+      kind: 'context.call_admitted', actor: auth?.actor,
+      idempotencyKey: auth?.key, payload,
+    };
+    this._validateContextEffectCallAdmissionPayload(payload, prospective, false);
+    const event = this._append('context.call_admitted', payload, auth, prospective.ts);
+    const projected = this.contextCall(call.callId);
+    if (projected?.admittedEvent !== event.seq) {
+      throw new CoordinationIntegrityError('Context effect-call admission did not materialize',
+        'context_call_integrity');
+    }
+    return freeze({ ok: true, result: 'admitted', event: clone(event), call: projected });
+  }
+
+  taskResourceRelease(taskId) {
+    return clone(this._taskResourceReleases.get(taskId) ?? null);
+  }
+
+  recordTaskResourceRelease(fields, auth) {
+    const payload = clone(fields);
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'task.resources_released' || prior.actor !== auth.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
+        throw new CoordinationRefusal('task resource-release key is bound differently',
+          'task_resource_release_conflict');
+      }
+      return freeze({
+        ok: true, result: 'idempotent', event: clone(prior),
+        release: this.taskResourceRelease(payload.taskId),
+      });
+    }
+    const prospective = {
+      schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(),
+      kind: 'task.resources_released', actor: auth?.actor,
+      idempotencyKey: auth?.key, payload,
+    };
+    const release = this._validateTaskResourceReleasePayload(payload, prospective, false);
+    const event = this._append('task.resources_released', payload, auth, prospective.ts);
+    const projected = this._taskResourceReleases.get(payload.taskId);
+    if (!projected || projected.releaseEvent !== event.seq
+      || projected.releaseDigest !== release.releaseDigest) {
+      throw new CoordinationIntegrityError('task resource release did not materialize',
+        'task_resource_release_integrity');
+    }
+    return freeze({
+      ok: true, result: 'recorded', event: clone(event), release: clone(projected),
+    });
+  }
+
+  _settleContextCall(fields, auth, expectedKind = null) {
+    const call = this._contextCalls.get(fields?.callId);
+    const generic = call?.kind === 'baton.context_effect_call';
+    const kind = generic ? 'effect' : 'map';
+    const codePrefix = expectedKind === 'effect' ? 'context_call'
+      : expectedKind === 'map' ? 'context_map_call'
+        : generic ? 'context_call' : 'context_map_call';
+    if (!call || (expectedKind !== null && expectedKind !== kind)) {
+      throw new CoordinationRefusal('Context call is unavailable', `${codePrefix}_not_found`);
+    }
+    let authority;
+    try {
+      authority = normalizeContextAuthority({
+        actor: auth?.actor, principalId: auth?.principalId,
+        repoId: auth?.repoId, runId: auth?.runId,
+      });
+    } catch (error) {
+      throw new CoordinationRefusal(error.message, `${codePrefix}_settlement_invalid`);
+    }
+    const baseChildren = generic
+      ? this._contextEffectSettlementChildren(call, false)
+      : this._contextMapSettlementChildren(call, false);
+    const cleanup = generic
+      ? this._normalizeContextEffectCleanupReceipt(call, baseChildren, fields?.cleanup, false)
+      : this._normalizeContextMapCleanupReceipt(call, baseChildren, fields?.cleanup, false);
+    const children = generic
+      ? this._contextEffectSettlementChildren(call, false, cleanup)
+      : this._contextMapSettlementChildren(call, false, cleanup);
+    const state = children.every(contextChildAccepted) ? 'completed' : 'failed';
+    const providerResults = clone(fields?.result?.providerResults);
+    const providerResultDigest = fields?.result?.providerResultDigest;
+    const result = {
+      state, providerEffects: generic ? call.executionUnitIds.length : children.length,
+      children, childDigest: canonicalDigest(children),
+      providerResults, providerResultDigest,
+      cleanup,
+      outputRef: clone(fields?.result?.outputRef),
+      evidenceRef: clone(fields?.result?.evidenceRef),
+      ...(state === 'failed' ? { termination: clone(fields?.result?.termination) } : {}),
+    };
+    const settlementCore = {
+      authority, callId: call.callId, admissionDigest: call.admissionDigest,
+      expectedVersion: fields?.expectedVersion,
+      newVersion: fields?.expectedVersion + 1, result,
+    };
+    const payload = {
+      schemaVersion: generic ? 2 : 1, authority, callId: call.callId,
+      expectedVersion: fields?.expectedVersion, newVersion: fields?.expectedVersion + 1,
+      result, settlementDigest: canonicalDigest(settlementCore),
+    };
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'context.call_settled' || prior.actor !== auth.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
+        throw new CoordinationRefusal('Context call settlement key is bound differently',
+          `${codePrefix}_settlement_conflict`);
+      }
+      const projected = this.contextCall(call.callId);
+      if (!projected || projected.settledEvent !== prior.seq) {
+        throw new CoordinationIntegrityError('Context call settlement projection is absent',
+          `${codePrefix}_settlement_integrity`);
+      }
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), call: projected });
+    }
+    const prospective = {
+      schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(),
+      kind: 'context.call_settled', actor: auth?.actor,
+      idempotencyKey: auth?.key, payload,
+    };
+    if (generic) this._validateContextEffectCallSettlementPayload(payload, prospective, false);
+    else this._validateContextMapCallSettlementPayload(payload, prospective, false);
+    const event = this._append('context.call_settled', payload, auth, prospective.ts);
+    const projected = this.contextCall(call.callId);
+    if (projected?.settledEvent !== event.seq) {
+      throw new CoordinationIntegrityError('Context call settlement did not materialize',
+        `${codePrefix}_settlement_integrity`);
+    }
+    return freeze({ ok: true, result: 'settled', event: clone(event), call: projected });
+  }
+
+  settleContextCall(fields, auth) {
+    return this._settleContextCall(fields, auth);
+  }
+
+  settleContextMapCall(fields, auth) {
+    return this._settleContextCall(fields, auth, 'map');
+  }
+
+  settleContextEffectCall(fields, auth) {
+    return this._settleContextCall(fields, auth, 'effect');
+  }
 
   defineGoal(fields, auth) {
     if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
@@ -3595,12 +8742,18 @@ export class CoordinationStore {
     if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
     const goal = this._goals.get(this._goalVersionKey(fields?.goal?.goalId, fields?.goal?.version));
     if (!goal || goal.digest !== fields?.goal?.digest || goal.repoId !== auth.repoId || goal.runId !== (auth.runId ?? null)) throw new CoordinationRefusal('plan goal is unavailable', 'goal_stale');
+    const prior = this._byKey.get(auth.key);
     let request;
-    try { request = normalizePlanRequest(fields, this._goalPlanPolicy, goal); }
+    try {
+      const priorUsesLegacyRoutes = prior?.kind === 'plan.version_proposed'
+        && prior.payload?.plan?.nodes?.some((node) => node?.routes?.schemaVersion !== 2);
+      request = normalizePlanRequest(fields, this._goalPlanPolicy, goal, {
+        preserveLegacyRoutes: priorUsesLegacyRoutes,
+      });
+    }
     catch (error) { if (error instanceof GoalPlanValidationError) throw new CoordinationRefusal(error.message, error.code); throw error; }
     const coreBase = { schemaVersion: 1, repoId: auth.repoId, runId: auth.runId ?? null, goal: request.goal, predecessor: request.predecessor, nodes: request.nodes, totals: request.totals, policyDigest: this._goalPlanPolicy.policyDigest };
     const requestDigest = goalPlanDigest({ proposerPrincipalId: auth.principalId, ...coreBase });
-    const prior = this._byKey.get(auth.key);
     if (prior) {
       if (prior.kind !== 'plan.version_proposed' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest) throw new CoordinationRefusal('plan idempotency key is bound differently', 'plan_conflict');
       return freeze({ ok: true, result: 'idempotent', event: clone(prior), plan: clone(prior.payload.plan) });
@@ -3620,6 +8773,7 @@ export class CoordinationStore {
       policyDigest: this._goalPlanPolicy.policyDigest, proposerPrincipalId: auth.principalId,
       proposedEvent: this._events.length + 1, proposedAt: fixedTs,
     };
+    this._validateContextCallPlanProposal(plan, false);
     const event = this._append('plan.version_proposed', { schemaVersion: 1, requestDigest, plan }, { actor: auth.actor, key: auth.key }, fixedTs);
     return freeze({ ok: true, result: 'proposed', event: clone(event), plan: clone(plan) });
   }
@@ -3655,10 +8809,12 @@ export class CoordinationStore {
     return freeze({ ok: true, result: 'decided', event: clone(event), approval: clone(approval) });
   }
 
-  _planDispatchState(gate, route) {
+  _planDispatchState(gate, route, preservedResumeClaim = null, options = {}) {
     const fields = ['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'expectedDispatchVersion', 'capabilities', 'effects'];
+    if (Object.hasOwn(gate ?? {}, 'requiredEffects')) fields.push('requiredEffects');
     if (!gate || typeof gate !== 'object' || Array.isArray(gate) || Object.keys(gate).sort().join(',') !== fields.sort().join(',')
       || gate.expectedDispatchVersion !== 0 || !Array.isArray(gate.capabilities) || !Array.isArray(gate.effects)
+      || (Object.hasOwn(gate, 'requiredEffects') && !Array.isArray(gate.requiredEffects))
       || !route || Object.keys(route).sort().join(',') !== ['effort', 'model', 'vendor'].sort().join(',')) throw new CoordinationRefusal('plan dispatch coordinates are invalid', 'plan_dispatch_invalid');
     const goal = this._goals.get(this._goalVersionKey(gate.goalId, gate.goalVersion)); const plan = this._plans.get(this._planVersionKey(gate.planId, gate.planVersion));
     if (!goal || !plan || goal.digest !== gate.goalDigest || plan.digest !== gate.planDigest || plan.goal.goalId !== goal.goalId || plan.goal.version !== goal.version || plan.goal.digest !== goal.digest) throw new CoordinationRefusal('plan dispatch coordinates are stale', 'plan_stale');
@@ -3670,13 +8826,37 @@ export class CoordinationStore {
     if (!approval || approval.disposition !== 'approved' || approval.policyDigest !== this._goalPlanPolicy.policyDigest) throw new CoordinationRefusal('plan is not currently approved', 'plan_not_approved');
     if (Date.parse(this._clock()) - Date.parse(approval.decidedAt) > this._goalPlanPolicy.approvalTtlMs) throw new CoordinationRefusal('plan approval expired', 'plan_approval_expired');
     const node = plan.nodes.find((row) => row.key === gate.nodeKey); if (!node) throw new CoordinationRefusal('plan node is unavailable', 'plan_node_not_found');
+    if (Object.hasOwn(node, 'revision') && options.allowRevision !== true) {
+      throw new CoordinationRefusal('workflow revision requires its dedicated Plan admission',
+        'plan_revision_api_required');
+    }
     const dispatchKey = this._planNodeKey(plan.planId, plan.version, node.key);
-    if (this._planDispatches.has(dispatchKey)) throw new CoordinationRefusal('plan node dispatch version is stale', 'plan_dispatch_stale');
+    if (preservedResumeClaim) {
+      // PS5: one sanctioned re-dispatch of an already-cancelled node from a pinned checkpoint.
+      const attestation = this._validPreservedResumeAttestation(preservedResumeClaim);
+      if (!attestation) throw new CoordinationRefusal('preserved resume attestation is invalid', 'preserved_resume_invalid');
+      const prior = this._planDispatches.get(dispatchKey);
+      if (!prior) throw new CoordinationRefusal('preserved resume has no prior node dispatch', 'plan_dispatch_stale');
+      const priorTask = this._tasks.get(prior.taskId);
+      if (!priorTask || priorTask.status !== 'cancelled' || priorTask.id !== attestation.priorTaskId) {
+        throw new CoordinationRefusal('preserved resume prior task is not the cancelled preserved task', 'plan_dispatch_stale');
+      }
+    } else if (this._planDispatches.has(dispatchKey)) throw new CoordinationRefusal('plan node dispatch version is stale', 'plan_dispatch_stale');
     const capabilities = [...gate.capabilities].sort(); const effects = [...gate.effects].sort();
-    if (canonicalDigest(capabilities) !== canonicalDigest(node.capabilities) || canonicalDigest(effects) !== canonicalDigest(node.effects)) throw new CoordinationRefusal('plan node capabilities/effects changed', 'plan_effect_mismatch');
-    if ((node.routes.harnesses.length > 0 && !node.routes.harnesses.includes(route.vendor))
-      || (node.routes.models.length > 0 && !node.routes.models.includes(route.model))
-      || (node.routes.efforts.length > 0 && !node.routes.efforts.includes(route.effort))) throw new CoordinationRefusal('requested route is outside the approved plan node', 'plan_route_mismatch');
+    const requiredEffects = Array.isArray(gate.requiredEffects) ? [...gate.requiredEffects].sort() : [];
+    if (canonicalDigest(capabilities) !== canonicalDigest(node.capabilities)
+      || canonicalDigest(effects) !== canonicalDigest(node.effects)
+      || Object.hasOwn(gate, 'requiredEffects') !== Object.hasOwn(node, 'requiredEffects')
+      || canonicalDigest(requiredEffects) !== canonicalDigest(node.requiredEffects ?? [])) throw new CoordinationRefusal('plan node capabilities/effects changed', 'plan_effect_mismatch');
+    const routeAuthority = planRouteAuthorityState(node.routes);
+    if (!routeAuthority.dispatchable) {
+      throw new CoordinationRefusal('Plan node route authority is quarantined',
+        routeAuthority.reason ?? 'plan_route_mismatch');
+    }
+    if (!planRouteMatches(node.routes, route)) {
+      throw new CoordinationRefusal('requested route is outside the approved plan node',
+        'plan_route_mismatch');
+    }
     const resolvedDeps = [];
     for (const depKey of node.deps) {
       const dep = this._planDispatches.get(this._planNodeKey(plan.planId, plan.version, depKey)); const task = dep ? this._tasks.get(dep.taskId) : null;
@@ -3691,7 +8871,13 @@ export class CoordinationStore {
     return freeze({ goal: clone(goal), plan: clone(plan), node: clone(node), approval: clone(approval), binding, resolvedDeps: resolvedDeps.sort(), brief: buildAuthoritativeBrief(goal, plan, node, binding) });
   }
 
-  previewPlanDispatch(gate, route) { return this._planDispatchState(gate, route); }
+  previewPlanDispatch(gate, route, preservedResumeClaim = null) { return this._planDispatchState(gate, route, preservedResumeClaim); }
+
+  previewPlanRevision(gate, route) {
+    const state = this._planDispatchState(gate, route, null, { allowRevision: true });
+    this._workflowRevisionAuthority(state.plan, state.node);
+    return state;
+  }
 
   reconcilePlanGatedTask(taskId, gate, route, auth) {
     if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
@@ -3712,10 +8898,105 @@ export class CoordinationStore {
       || canonicalDigest(expectedBinding) !== canonicalDigest(observedBinding)
       || canonicalDigest(gate?.capabilities) !== canonicalDigest(prior.payload?.capabilities)
       || canonicalDigest(gate?.effects) !== canonicalDigest(prior.payload?.effects)
+      || Object.hasOwn(gate ?? {}, 'requiredEffects') !== Object.hasOwn(prior.payload ?? {}, 'requiredEffects')
+      || canonicalDigest(gate?.requiredEffects ?? []) !== canonicalDigest(prior.payload?.requiredEffects ?? [])
       || canonicalDigest(route) !== canonicalDigest(prior.payload?.route)) {
       throw new CoordinationRefusal('plan dispatch replay differs from the admitted transaction', 'plan_dispatch_conflict');
     }
     return freeze({ ok: true, result: 'reconciled', dispatchEvent: clone(prior), taskEvent: clone(taskEvent), task: this.task(taskId), dispatch: clone(prior.payload) });
+  }
+
+  reconcilePlanRevisionTask(taskId, gate, route, auth) {
+    const prior = this._byKey.get(auth?.key); const taskEvent = prior ? this._events[prior.seq] : null;
+    const binding = prior?.payload?.binding;
+    const expected = gate && typeof gate === 'object' ? {
+      goalId: gate.goalId, goalVersion: gate.goalVersion, goalDigest: gate.goalDigest,
+      planId: gate.planId, planVersion: gate.planVersion, planDigest: gate.planDigest,
+      nodeKey: gate.nodeKey,
+    } : null;
+    const observed = binding ? {
+      goalId: binding.goalId, goalVersion: binding.goalVersion, goalDigest: binding.goalDigest,
+      planId: binding.planId, planVersion: binding.planVersion, planDigest: binding.planDigest,
+      nodeKey: binding.nodeKey,
+    } : null;
+    const plan = binding ? this._plans.get(this._planVersionKey(binding.planId, binding.planVersion)) : null;
+    const node = plan?.nodes.find((row) => row.key === binding?.nodeKey);
+    if (!prior || prior.kind !== 'plan.node_dispatched' || prior.actor !== auth?.actor
+      || prior.payload?.taskId !== taskId || taskEvent?.kind !== 'task.created'
+      || taskEvent.batch?.id !== prior.batch?.id || gate?.expectedDispatchVersion !== 0
+      || canonicalDigest(expected) !== canonicalDigest(observed)
+      || canonicalDigest(gate?.capabilities) !== canonicalDigest(prior.payload?.capabilities)
+      || canonicalDigest(gate?.effects) !== canonicalDigest(prior.payload?.effects)
+      || canonicalDigest(route) !== canonicalDigest(prior.payload?.route)
+      || !node?.revision || canonicalDigest(node.revision) !== canonicalDigest(prior.payload?.revision)) {
+      throw new CoordinationRefusal('Plan revision replay differs from the admitted transaction',
+        'plan_revision_conflict');
+    }
+    return freeze({ ok: true, result: 'reconciled', dispatchEvent: clone(prior),
+      taskEvent: clone(taskEvent), task: this.task(taskId), dispatch: clone(prior.payload) });
+  }
+
+  createPlanRevisionTask(fields, gate, route, auth) {
+    if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
+    const requestDigest = goalPlanDigest({ principalId: auth.principalId, gate, route,
+      task: fields });
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      const second = this._events[prior.seq];
+      if (prior.kind !== 'plan.node_dispatched' || prior.actor !== auth.actor
+        || prior.payload?.requestDigest !== requestDigest
+        || !prior.payload?.revision
+        || second?.kind !== 'task.created' || second.batch?.id !== prior.batch?.id) {
+        throw new CoordinationRefusal('Plan revision idempotency key is bound differently',
+          'plan_revision_conflict');
+      }
+      return freeze({ ok: true, result: 'idempotent', dispatchEvent: clone(prior),
+        taskEvent: clone(second), task: this.task(second.payload.id), dispatch: clone(prior.payload) });
+    }
+    const state = this._planDispatchState(gate, route, null, { allowRevision: true });
+    if (!state.node.revision) throw new CoordinationRefusal('Plan node has no workflow revision authority', 'plan_revision_invalid');
+    this._workflowRevisionAuthority(state.plan, state.node);
+    if (this._tasks.has(fields?.id)) throw new CoordinationRefusal('Plan revision task id already exists', 'duplicate_task');
+    if (!planBriefMatches(fields?.brief, state.brief, { goalPlanCoordinates: true })
+      || canonicalDigest(fields?.brief?.goalPlan) !== canonicalDigest(state.binding)
+      || canonicalDigest(fields?.brief?.revisionContext) !== canonicalDigest(state.node.revision)
+      || canonicalDigest(fields?.deps ?? []) !== canonicalDigest(state.resolvedDeps)
+      || fields?.refines !== state.node.revision.parent.taskId || fields?.relation !== 'revision'
+      || fields?.worktreeBaseSha !== state.node.revision.parent.resultSha
+      || fields?.runId !== state.goal.runId || fields?.taskType !== 'general'
+      || fields?.vendorRequested !== route.vendor || fields?.modelRequested !== route.model
+      || fields?.modelPolicy !== null || fields?.effortRequested !== route.effort
+      || fields?.effortResolved !== null || fields?.effortObserved !== null
+      || fields?.routeKey !== null
+      || canonicalDigest(fields?.sessionRequest) !== canonicalDigest({ mode: 'new' })) {
+      throw new CoordinationRefusal('Plan revision task differs from approved authority',
+        'plan_revision_invalid');
+    }
+    const taskPayload = clone(fields);
+    const dispatchPayload = {
+      schemaVersion: 1, requestDigest,
+      authority: { principalId: auth.principalId, repoId: auth.repoId, runId: auth.runId ?? null },
+      binding: clone(state.binding), taskId: taskPayload.id,
+      taskPayloadDigest: canonicalDigest(taskPayload), expectedDispatchVersion: 0,
+      newDispatchVersion: 1, resolvedDeps: clone(state.resolvedDeps),
+      nodeBudget: clone(state.node.budget), route: clone(route),
+      capabilities: clone(state.node.capabilities), effects: clone(state.node.effects),
+      ...(Object.hasOwn(state.node, 'requiredEffects')
+        ? { requiredEffects: clone(state.node.requiredEffects) } : {}),
+      revision: clone(state.node.revision),
+    };
+    const fixedTs = this._clock();
+    const prospectiveDispatch = { seq: this._events.length + 1, ts: fixedTs, payload: dispatchPayload };
+    const prospectiveTask = { seq: this._events.length + 2, ts: fixedTs, payload: taskPayload };
+    this._validateGoalPlanDispatchPair(prospectiveDispatch, prospectiveTask, false);
+    const [dispatchEvent, taskEvent] = this._appendBatch([
+      { kind: 'plan.node_dispatched', payload: dispatchPayload,
+        auth: { actor: auth.actor, key: auth.key }, fixedTs },
+      { kind: 'task.created', payload: taskPayload,
+        auth: { actor: auth.actor, key: `${auth.key}:task` }, fixedTs },
+    ], 'goal_plan_node_dispatch');
+    return freeze({ ok: true, result: 'created', dispatchEvent: clone(dispatchEvent),
+      taskEvent: clone(taskEvent), task: this.task(taskPayload.id), dispatch: clone(dispatchPayload) });
   }
 
   createPlanGatedTask(fields, gate, route, auth) {
@@ -3733,6 +9014,7 @@ export class CoordinationStore {
       || canonicalDigest(fields?.brief?.goalPlan) !== canonicalDigest(state.binding)
       || canonicalDigest(fields?.brief?.capabilities) !== canonicalDigest(state.node.capabilities)
       || canonicalDigest(fields?.brief?.effects) !== canonicalDigest(state.node.effects)
+      || canonicalDigest(fields?.brief?.requiredEffects ?? []) !== canonicalDigest(state.node.requiredEffects ?? [])
       || fields?.brief?.providerTurns !== state.node.budget.providerTurns) throw new CoordinationRefusal('task Brief differs from the approved authoritative Brief', 'plan_brief_mismatch');
     if (canonicalDigest(fields?.deps ?? []) !== canonicalDigest(state.resolvedDeps)) throw new CoordinationRefusal('task dependencies differ from the plan DAG', 'plan_dependency_mismatch');
     if (fields?.runId !== state.goal.runId || fields?.vendorRequested !== route.vendor || (fields?.modelRequested ?? null) !== route.model || (fields?.effortRequested ?? null) !== route.effort) throw new CoordinationRefusal('task route differs from the plan dispatch', 'plan_route_mismatch');
@@ -3743,6 +9025,178 @@ export class CoordinationStore {
       taskPayloadDigest: canonicalDigest(taskPayload), expectedDispatchVersion: 0, newDispatchVersion: 1,
       resolvedDeps: clone(state.resolvedDeps), nodeBudget: clone(state.node.budget),
       route: clone(route), capabilities: clone(state.node.capabilities), effects: clone(state.node.effects),
+      ...(Object.hasOwn(state.node, 'requiredEffects') ? { requiredEffects: clone(state.node.requiredEffects) } : {}),
+    };
+    const fixedTs = this._clock();
+    const prospectiveDispatch = { seq: this._events.length + 1, ts: fixedTs, payload: dispatchPayload };
+    const prospectiveTask = { seq: this._events.length + 2, ts: fixedTs, payload: taskPayload };
+    this._validateGoalPlanDispatchPair(prospectiveDispatch, prospectiveTask, false);
+    const [dispatchEvent, taskEvent] = this._appendBatch([
+      { kind: 'plan.node_dispatched', payload: dispatchPayload, auth: { actor: auth.actor, key: auth.key }, fixedTs },
+      { kind: 'task.created', payload: taskPayload, auth: { actor: auth.actor, key: `${auth.key}:task` }, fixedTs },
+    ], 'goal_plan_node_dispatch');
+    return freeze({ ok: true, result: 'created', dispatchEvent: clone(dispatchEvent), taskEvent: clone(taskEvent), task: this.task(taskPayload.id), dispatch: clone(dispatchPayload) });
+  }
+
+  createPlanGatedWave(rawEntries, auth) {
+    if (!this._goalPlanPolicy) {
+      throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
+    }
+    if (!Array.isArray(rawEntries) || rawEntries.length < 2
+      || rawEntries.length > this._goalPlanPolicy.limits.maxNodes
+      || !auth || typeof auth !== 'object' || Array.isArray(auth)) {
+      throw new CoordinationRefusal('plan wave dispatch is invalid', 'plan_wave_invalid');
+    }
+    const entries = [...rawEntries].sort((left, right) => {
+      const a = left?.gate?.nodeKey ?? ''; const b = right?.gate?.nodeKey ?? '';
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
+    const nodeKeys = entries.map((entry) => entry?.gate?.nodeKey);
+    const taskIds = entries.map((entry) => entry?.fields?.id);
+    if (new Set(nodeKeys).size !== entries.length || new Set(taskIds).size !== entries.length) {
+      throw new CoordinationRefusal('plan wave contains duplicate node or task identity', 'plan_wave_invalid');
+    }
+    const waveDigest = goalPlanDigest({
+      authority: { principalId: auth.principalId, repoId: auth.repoId, runId: auth.runId ?? null },
+      entries: entries.map(({ fields, gate, route }) => ({ fields, gate, route })),
+    });
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      const count = entries.length * 2;
+      const events = this._events.slice(prior.seq - 1, prior.seq - 1 + count);
+      if (prior.kind !== 'plan.node_dispatched' || prior.actor !== auth.actor
+        || prior.batch?.kind !== 'goal_plan_wave_dispatch' || prior.batch.index !== 0
+        || prior.batch.count !== count || events.length !== count
+        || events.some((event, index) => event.batch?.id !== prior.batch.id || event.batch?.index !== index)
+        || events.filter((_, index) => index % 2 === 0)
+          .some((event) => event.payload?.wave?.digest !== waveDigest)) {
+        throw new CoordinationRefusal('plan wave idempotency key is bound differently', 'plan_wave_conflict');
+      }
+      return freeze({
+        ok: true, result: 'idempotent', waveDigest,
+        tasks: entries.map((entry) => this.task(entry.fields.id)),
+        events: events.map(clone),
+      });
+    }
+
+    const states = entries.map(({ gate, route }) => this._planDispatchState(gate, route));
+    const planIdentity = states.map((state) => `${state.plan.planId}\0${state.plan.version}\0${state.plan.digest}`);
+    if (new Set(planIdentity).size !== 1 || states.some((state) => state.node.deps.length !== 0)) {
+      throw new CoordinationRefusal('initial plan wave must contain root nodes from one approved Plan',
+        'plan_wave_invalid');
+    }
+    if (taskIds.some((taskId) => this._tasks.has(taskId))) {
+      throw new CoordinationRefusal('plan wave task identity already exists', 'duplicate_task');
+    }
+    if (this._taskTopologyPolicy) {
+      const runId = states[0].goal.runId;
+      const sameRun = [...this._taskTopologies.values()].filter((node) => node.runId === runId).length;
+      if (sameRun + entries.length > this._taskTopologyPolicy.maxTasksPerRun) {
+        throw new CoordinationRefusal('plan wave exceeds the deployment Run task ceiling',
+          'task_topology_run_limit');
+      }
+    }
+    // Capacity preflight may await at the Coordinator boundary. A stop can be admitted after the
+    // preview but before this synchronous transaction, so fence again at the last pre-write point.
+    this._assertRunAdmissionOpen(states[0].goal.runId);
+
+    const fixedTs = this._clock();
+    const batchEntries = [];
+    for (let index = 0; index < entries.length; index += 1) {
+      const { fields, gate, route } = entries[index];
+      const state = states[index];
+      if (!planBriefMatches(fields?.brief, state.brief, { goalPlanCoordinates: true })
+        || canonicalDigest(fields?.brief?.goalPlan) !== canonicalDigest(state.binding)
+        || canonicalDigest(fields?.brief?.capabilities) !== canonicalDigest(state.node.capabilities)
+        || canonicalDigest(fields?.brief?.effects) !== canonicalDigest(state.node.effects)
+        || canonicalDigest(fields?.brief?.requiredEffects ?? []) !== canonicalDigest(state.node.requiredEffects ?? [])
+        || fields?.brief?.providerTurns !== state.node.budget.providerTurns
+        || canonicalDigest(fields?.deps ?? []) !== canonicalDigest(state.resolvedDeps)
+        || fields?.runId !== state.goal.runId || fields?.vendorRequested !== route.vendor
+        || (fields?.modelRequested ?? null) !== route.model
+        || (fields?.effortRequested ?? null) !== route.effort) {
+        throw new CoordinationRefusal('plan wave task differs from approved authority',
+          'plan_wave_invalid');
+      }
+      const taskPayload = clone(fields);
+      const requestDigest = goalPlanDigest({ principalId: auth.principalId, gate, route, task: fields });
+      const dispatchPayload = {
+        schemaVersion: 1, requestDigest,
+        authority: { principalId: auth.principalId, repoId: auth.repoId, runId: auth.runId ?? null },
+        binding: clone(state.binding), taskId: taskPayload.id,
+        taskPayloadDigest: canonicalDigest(taskPayload), expectedDispatchVersion: 0,
+        newDispatchVersion: 1, resolvedDeps: clone(state.resolvedDeps),
+        nodeBudget: clone(state.node.budget), route: clone(route),
+        capabilities: clone(state.node.capabilities), effects: clone(state.node.effects),
+        ...(Object.hasOwn(state.node, 'requiredEffects')
+          ? { requiredEffects: clone(state.node.requiredEffects) } : {}),
+        wave: { schemaVersion: 1, digest: waveDigest, index, count: entries.length },
+      };
+      const dispatchKey = index === 0 ? auth.key : `${auth.key}:${state.node.key}`;
+      const prospectiveDispatch = {
+        seq: this._events.length + batchEntries.length + 1, ts: fixedTs, payload: dispatchPayload,
+      };
+      const prospectiveTask = {
+        seq: prospectiveDispatch.seq + 1, ts: fixedTs, payload: taskPayload,
+      };
+      this._validateGoalPlanDispatchPair(prospectiveDispatch, prospectiveTask, false);
+      batchEntries.push(
+        { kind: 'plan.node_dispatched', payload: dispatchPayload, auth: { actor: auth.actor, key: dispatchKey }, fixedTs },
+        { kind: 'task.created', payload: taskPayload, auth: { actor: auth.actor, key: `${dispatchKey}:task` }, fixedTs },
+      );
+    }
+    const events = this._appendBatch(batchEntries, 'goal_plan_wave_dispatch');
+    return freeze({
+      ok: true, result: 'created', waveDigest,
+      tasks: entries.map((entry) => this.task(entry.fields.id)), events: events.map(clone),
+    });
+  }
+
+  // PS5: re-dispatch one approved Plan node from a preserved progress checkpoint. The caller
+  // (Coordinator) has already postchecked the immutable checkpoint ref; this admission only
+  // records the attestation and validates that the prior dispatch's task is durably terminal-
+  // cancelled, so a fresh owned task may continue the same Plan node at the preserved commit.
+  // Reuses the ordinary two-event goal_plan_node_dispatch batch so the integrity walker and the
+  // last-wins plan projection pick up the resumed task as the node's current dispatch.
+  createAndClaimPreservedResumeRefinement(fields, gate, route, preservedResume, auth) {
+    if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
+    const attestation = this._validPreservedResumeAttestation(preservedResume);
+    if (!attestation) throw new CoordinationRefusal('preserved resume attestation is invalid', 'preserved_resume_invalid');
+    if (!gate || !route || !auth || typeof auth !== 'object') throw new CoordinationRefusal('preserved resume request is invalid', 'preserved_resume_invalid');
+    const requestDigest = goalPlanDigest({ principalId: auth.principalId, gate, route, task: fields, preservedResume: attestation });
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      const second = this._events[prior.seq];
+      if (prior.kind !== 'plan.node_dispatched' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest
+        || second?.kind !== 'task.created' || second.batch?.id !== prior.batch?.id
+        || !this._validPreservedResumeAttestation(prior.payload?.preservedResume)) {
+        throw new CoordinationRefusal('preserved resume idempotency key is bound differently', 'preserved_resume_conflict');
+      }
+      return freeze({ ok: true, result: 'idempotent', dispatchEvent: clone(prior), taskEvent: clone(second), task: this.task(second.payload.id), dispatch: clone(prior.payload) });
+    }
+    const state = this._planDispatchState(gate, route, attestation);
+    if (this._tasks.has(fields?.id)) throw new CoordinationRefusal('plan task id already exists', 'duplicate_task');
+    if (!planBriefMatches(fields?.brief, state.brief, { goalPlanCoordinates: true })
+      || canonicalDigest(fields?.brief?.goalPlan) !== canonicalDigest(state.binding)
+      || canonicalDigest(fields?.brief?.capabilities) !== canonicalDigest(state.node.capabilities)
+      || canonicalDigest(fields?.brief?.effects) !== canonicalDigest(state.node.effects)
+      || canonicalDigest(fields?.brief?.requiredEffects ?? []) !== canonicalDigest(state.node.requiredEffects ?? [])
+      || fields?.brief?.providerTurns !== state.node.budget.providerTurns) throw new CoordinationRefusal('task Brief differs from the approved authoritative Brief', 'plan_brief_mismatch');
+    if (canonicalDigest(fields?.deps ?? []) !== canonicalDigest(state.resolvedDeps)) throw new CoordinationRefusal('task dependencies differ from the plan DAG', 'plan_dependency_mismatch');
+    if (fields?.runId !== state.goal.runId || fields?.vendorRequested !== route.vendor || (fields?.modelRequested ?? null) !== route.model || (fields?.effortRequested ?? null) !== route.effort) throw new CoordinationRefusal('task route differs from the plan dispatch', 'plan_route_mismatch');
+    // The resumed task carries the preserved lineage explicitly; it is not constrained to the
+    // node's DAG dependencies because it re-dispatches the same node, not a successor.
+    if (fields?.refines !== attestation.priorTaskId) throw new CoordinationRefusal('preserved resume lineage does not match the attested prior task', 'preserved_resume_lineage_mismatch');
+    const taskPayload = clone(fields);
+    const dispatchPayload = {
+      schemaVersion: 1, requestDigest,
+      authority: { principalId: auth.principalId, repoId: auth.repoId, runId: auth.runId ?? null },
+      binding: clone(state.binding), taskId: taskPayload.id,
+      taskPayloadDigest: canonicalDigest(taskPayload), expectedDispatchVersion: 0, newDispatchVersion: 1,
+      resolvedDeps: clone(state.resolvedDeps), nodeBudget: clone(state.node.budget),
+      route: clone(route), capabilities: clone(state.node.capabilities), effects: clone(state.node.effects),
+      ...(Object.hasOwn(state.node, 'requiredEffects') ? { requiredEffects: clone(state.node.requiredEffects) } : {}),
+      preservedResume: clone(attestation),
     };
     const fixedTs = this._clock();
     const prospectiveDispatch = { seq: this._events.length + 1, ts: fixedTs, payload: dispatchPayload };
@@ -3811,6 +9265,7 @@ export class CoordinationStore {
       || canonicalDigest(fields.brief?.goalPlan) !== canonicalDigest(state.binding)
       || canonicalDigest(fields.brief?.capabilities) !== canonicalDigest(state.node.capabilities)
       || canonicalDigest(fields.brief?.effects) !== canonicalDigest(state.node.effects)
+      || canonicalDigest(fields.brief?.requiredEffects ?? []) !== canonicalDigest(state.node.requiredEffects ?? [])
       || fields.brief?.providerTurns !== state.node.budget.providerTurns) {
       throw new CoordinationRefusal('task Brief differs from the approved recovery node', 'plan_brief_mismatch');
     }
@@ -3850,6 +9305,7 @@ export class CoordinationStore {
       expectedDispatchVersion: 0, newDispatchVersion: 1,
       resolvedDeps: clone(state.resolvedDeps), nodeBudget: clone(state.node.budget),
       route: clone(route), capabilities: clone(state.node.capabilities), effects: clone(state.node.effects),
+      ...(Object.hasOwn(state.node, 'requiredEffects') ? { requiredEffects: clone(state.node.requiredEffects) } : {}),
     };
     const fixedTs = this._clock();
     const prospectiveDispatch = { seq: this._events.length + 1, ts: fixedTs, payload: dispatchPayload };
@@ -4098,7 +9554,85 @@ export class CoordinationStore {
     }
     return freeze({ ok: true, projection: clone(representation), grounding: 'derived' });
   }
-  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), ...(this._runStops.size > 0 ? { runStops: [...this._runStops.values()].map(clone) } : {}), ...(this._runResultAdoptions.size > 0 ? { runResultAdoptions: [...this._runResultAdoptions.values()].map(clone) } : {}), ...(this._runResultExports.size > 0 ? { runResultExports: [...this._runResultExports.values()].map(clone) } : {}), artifacts: [...this._artifacts.values()].map(clone), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._goalPlanPolicy || this._goals.size > 0 ? { goalPlan: { goals: [...this._goals.values()].map(clone), plans: [...this._plans.values()].map(clone), approvals: [...this._planApprovals.values()].map(clone), dispatches: [...this._planDispatches.values()].map(clone), budgetSettlements: [...this._planBudgetSettlements.values()].map(clone) } } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
+
+  _effectiveRunOrchestratorLeaseState(lease, now = this._clock()) {
+    if (lease.status === 'revoked') return freeze({ state: 'revoked', reason: lease.revocation?.reason ?? 'session_revoked' });
+    if (Date.parse(now) >= Date.parse(lease.expiresAt)) return freeze({ state: 'expired', reason: 'expired' });
+    const task = this._tasks.get(lease.parent.taskId);
+    if (!task || task.version !== lease.parent.taskVersion || task.assignee !== lease.parent.workerId) {
+      return freeze({ state: 'inactive', reason: 'parent_stale' });
+    }
+    if (task.status !== 'working') return freeze({ state: 'inactive', reason: 'parent_terminal' });
+    if (this.runStop(lease.parent.runId)) return freeze({ state: 'inactive', reason: 'parent_run_stopping' });
+    return freeze({ state: 'active', reason: null });
+  }
+
+  runAuthoritySnapshot() {
+    if (!this._runLineagePolicy) return null;
+    const leases = [...this._runOrchestratorLeases.values()];
+    const roots = new Set([...this._runLineages.values()].map((lineage) => lineage.rootRunId));
+    for (const lease of leases) {
+      roots.add(this._runLineages.get(lease.parent.runId)?.rootRunId ?? lease.parent.runId);
+    }
+    return freeze({
+      schemaVersion: 1,
+      policy: clone(this._runLineagePolicy),
+      policyDigest: canonicalDigest(this._runLineagePolicy),
+      counts: {
+        leases: leases.length,
+        activeLeases: leases.filter((lease) => this._effectiveRunOrchestratorLeaseState(lease).state === 'active').length,
+        lineages: this._runLineages.size,
+        roots: roots.size,
+      },
+    });
+  }
+
+  runOrchestrationView(runId) {
+    if (!this._runLineagePolicy) return null;
+    if (!validRunId(runId)) {
+      this._runLineageFailure('run orchestration view request is invalid', 'run_lineage_invalid');
+    }
+    const lineage = this._runLineages.get(runId) ?? null;
+    const children = this.runChildren(runId);
+    const descendants = this.runDescendants(runId);
+    const leaseStates = { active: 0, expired: 0, revoked: 0, inactive: 0 };
+    const leases = [...this._runOrchestratorLeases.values()]
+      .filter((lease) => lease.parent.runId === runId);
+    for (const lease of leases) {
+      leaseStates[this._effectiveRunOrchestratorLeaseState(lease).state] += 1;
+    }
+    const stopOwnerRunId = this._runStopByTarget.get(runId) ?? null;
+    const stop = stopOwnerRunId ? this._runStops.get(stopOwnerRunId) ?? null : null;
+    const stopOwnedHere = stopOwnerRunId === runId;
+    return freeze({
+      schemaVersion: 1,
+      role: lineage ? 'descendant' : 'root',
+      depth: lineage?.depth ?? 0,
+      topology: {
+        hasParent: lineage !== null,
+        directChildren: children.length,
+        descendants: descendants.length,
+      },
+      recipientAuthority: {
+        state: leaseStates.active > 0 ? 'active' : leases.length === 0 ? 'unavailable' : 'inactive',
+        counts: { total: leases.length, ...leaseStates },
+      },
+      subtreeStop: stop ? {
+        state: stop.status,
+        inherited: !stopOwnedHere,
+        targets: stopOwnedHere ? {
+          runs: stop.targetRunIds?.length ?? 1,
+          tasks: stop.targetTaskIds.length,
+          workers: stop.targetWorkerIds.length,
+          remainingWorkers: stop.receipt?.remainingCount ?? stop.targetWorkerIds.length,
+        } : null,
+      } : {
+        state: 'open', inherited: false, targets: null,
+      },
+    });
+  }
+
+  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), ...(this._runStops.size > 0 ? { runStops: [...this._runStops.values()].map(clone) } : {}), ...(this._runControls.size > 0 ? { runControls: [...this._runControls.values()].map(clone) } : {}), ...(this._runLineagePolicy ? { runAuthority: this.runAuthoritySnapshot() } : {}), ...(this._runResultAdoptions.size > 0 ? { runResultAdoptions: [...this._runResultAdoptions.values()].map(clone) } : {}), ...(this._runResultExports.size > 0 ? { runResultExports: [...this._runResultExports.values()].map(clone) } : {}), ...(this._contextProgramPolicy ? { context: { policy: clone(this._contextProgramPolicy), sessions: [...this._contextSessions.values()].map(clone), cells: [...this._contextCells.values()].map(clone), calls: this.contextCalls() } } : {}), artifacts: [...this._artifacts.values()].map(clone), ...(this._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...this._recoveryAttemptsById.values()].map(clone) } : {}), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._goalPlanPolicy || this._goals.size > 0 ? { goalPlan: { goals: [...this._goals.values()].map(clone), plans: [...this._plans.values()].map(clone), approvals: [...this._planApprovals.values()].map(clone), dispatches: [...this._planDispatches.values()].map(clone), budgetSettlements: [...this._planBudgetSettlements.values()].map(clone) } } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
   healthCheck() { try { if (!existsSync(this.file)) return this._events.length === 0; const raw = readFileSync(this.file, 'utf8'); return raw.length === 0 || raw.endsWith('\n'); } catch { return false; } }
   readyTasks() {
     return [...this._tasks.values()].filter((task) => task.status === 'pending' && task.assignee == null
@@ -4107,7 +9641,10 @@ export class CoordinationStore {
 
   fleetDrain(id) { return clone(this._fleetDrains.get(id) ?? null); }
 
-  runStop(runId) { return clone(this._runStops.get(runId) ?? null); }
+  runStop(runId) {
+    const authorityRunId = this._runStopByTarget.get(runId) ?? runId;
+    return clone(this._runStops.get(authorityRunId) ?? null);
+  }
 
   runResultAdoption(runId, nodeKey) {
     if (!validRunId(runId) || !boundedText(nodeKey, 256)) throw new TypeError('run result adoption coordinates are invalid');
@@ -4203,18 +9740,23 @@ export class CoordinationStore {
 
   _normalizeRunVerificationRetryRequest(fields, event, integrity = false) {
     const fail = (message, code = 'run_verification_retry_invalid') => this._runVerificationRetryFailure(message, code, integrity);
-    const expected = ['attempt', 'checkpointSha', 'nodeKey', 'planDigest', 'priorEvidence', 'reasonDigest',
-      'repoId', 'requestDigest', 'runId', 'runtimePolicyDigest', 'schemaVersion', 'taskId', 'verificationDigest'];
+    const expected = ['attempt', 'baseSha', 'checkpointRef', 'checkpointSha', 'nodeKey', 'originOutcome',
+      'planDigest', 'priorEvidence', 'reasonDigest', 'repoId', 'requestDigest', 'runId',
+      'runtimePolicyDigest', 'schemaVersion', 'taskId', 'toolchainDigest', 'verificationDigest'];
     if (!fields || typeof fields !== 'object' || Array.isArray(fields)
       || Object.keys(fields).sort().join(',') !== expected.join(',') || fields.schemaVersion !== 1
       || !validRunId(fields.repoId) || !validRunId(fields.runId) || !boundedText(fields.nodeKey, 256)
       || !boundedText(fields.taskId, 4_096) || !Number.isSafeInteger(fields.attempt) || fields.attempt < 1
       || !validResultSha(fields.checkpointSha)
+      || !validResultSha(fields.baseSha)
+      || fields.checkpointRef !== `refs/baton/checkpoints/${fields.checkpointSha}`
+      || !['inconclusive', 'candidate_failed'].includes(fields.originOutcome)
       || !fields.priorEvidence || typeof fields.priorEvidence !== 'object' || Array.isArray(fields.priorEvidence)
       || Object.keys(fields.priorEvidence).join(',') !== 'coordinationSeq'
       || !Number.isSafeInteger(fields.priorEvidence.coordinationSeq)
       || !/^[a-f0-9]{64}$/.test(fields.planDigest ?? '') || !/^[a-f0-9]{64}$/.test(fields.verificationDigest ?? '')
-      || !/^[a-f0-9]{64}$/.test(fields.runtimePolicyDigest ?? '') || !/^[a-f0-9]{64}$/.test(fields.reasonDigest ?? '')
+      || !/^[a-f0-9]{64}$/.test(fields.runtimePolicyDigest ?? '') || !/^[a-f0-9]{64}$/.test(fields.toolchainDigest ?? '')
+      || !/^[a-f0-9]{64}$/.test(fields.reasonDigest ?? '')
       || !/^[a-f0-9]{64}$/.test(fields.requestDigest ?? '')) fail('run verification retry request is invalid');
     const requestCore = Object.fromEntries(expected.filter((key) => key !== 'requestDigest')
       .map((key) => [key, clone(fields[key])]));
@@ -4252,17 +9794,26 @@ export class CoordinationStore {
     }
     const { source } = this._readRetryVerificationEvidence(request.priorEvidence, integrity);
     if (source.worker !== task.assignee || source.payload?.accept === true
-      || source.payload?.verdict?.outcome !== 'inconclusive'
+      || source.payload?.verdict?.outcome !== request.originOutcome
       || source.payload?.capture?.checkpoint?.sha !== request.checkpointSha
-      || source.payload?.capture?.checkpoint?.state !== 'pinned') {
-      fail('run verification retry evidence is not the inconclusive checkpointed attempt');
+      || source.payload?.capture?.checkpoint?.ref !== request.checkpointRef
+      || source.payload?.capture?.checkpoint?.state !== 'pinned'
+      || source.payload?.capture?.checkpoint?.originOutcome !== request.originOutcome
+      || source.payload?.capture?.baseSha !== request.baseSha
+      || canonicalDigest(source.payload?.capture?.toolchainProjection ?? null) !== request.toolchainDigest
+      || (request.originOutcome === 'candidate_failed'
+        && source.payload?.verdict?.runtimeDigest !== request.runtimePolicyDigest)) {
+      fail('run verification retry evidence is not the exact diagnostic checkpointed attempt');
     }
     const existing = this._runVerificationRetries.get(this._runVerificationRetryKey(request.runId, request.nodeKey));
     if (existing?.status === 'pending') fail('run verification retry admission is already pending', 'run_verification_retry_conflict');
+    if (existing?.originOutcome === 'candidate_failed') {
+      fail('candidate failure confirmation is already consumed', 'run_verification_retry_conflict');
+    }
     if (existing && !['inconclusive', 'cancelled'].includes(existing.status)) {
       fail('run verification retry identity is already settled', 'run_verification_retry_conflict');
     }
-    const expectedAttempt = existing ? existing.attempt + 1 : 1;
+    const expectedAttempt = request.originOutcome === 'candidate_failed' ? 1 : existing ? existing.attempt + 1 : 1;
     if (request.attempt !== expectedAttempt) fail('run verification retry attempt sequence is invalid', 'run_verification_retry_conflict');
     return request;
   }
@@ -4284,14 +9835,16 @@ export class CoordinationStore {
       fail('run verification retry completion authority is invalid');
     }
     const receipt = p.receipt;
-    const receiptFields = ['attempt', 'admissionDigest', 'checkpoint', 'evidence', 'nodeKey', 'outcome',
-      'receiptDigest', 'repoId', 'result', 'runId', 'schemaVersion', 'scope', 'state', 'taskId'];
+    const receiptFields = ['attempt', 'admissionDigest', 'checkpoint', 'evidence', 'nodeKey', 'originOutcome', 'outcome',
+      'receiptDigest', 'repoId', 'result', 'runId', 'schemaVersion', 'scope', 'stability', 'state', 'taskId'];
     if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
       || Object.keys(receipt).sort().join(',') !== [...receiptFields].sort().join(',') || receipt.schemaVersion !== 1
       || receipt.scope !== 'run-verification-retry'
       || !['accepted', 'candidate_failed', 'inconclusive', 'cancelled'].includes(receipt.state)
       || receipt.repoId !== retry.repoId || receipt.runId !== retry.runId || receipt.nodeKey !== retry.nodeKey
       || receipt.taskId !== retry.taskId || receipt.attempt !== retry.attempt
+      || receipt.originOutcome !== retry.originOutcome
+      || ![null, 'passed_after_candidate_failure'].includes(receipt.stability)
       || receipt.admissionDigest !== retry.admissionDigest
       || !/^[a-f0-9]{64}$/.test(receipt.receiptDigest ?? '')) fail('run verification retry receipt is invalid');
     const { receiptDigest, ...receiptCore } = receipt;
@@ -4299,7 +9852,9 @@ export class CoordinationStore {
     const task = this._tasks.get(retry.taskId);
     if (!task || task.status !== 'failed') fail('run verification retry completion requires the admitted failed task');
     if (receipt.state === 'cancelled') {
-      if (receipt.evidence !== null || receipt.result !== null) fail('a cancelled retry carries no verification evidence or result');
+      if (receipt.evidence !== null || receipt.result !== null || receipt.stability !== null) {
+        fail('a cancelled retry carries no verification evidence, result, or stability');
+      }
       return retry;
     }
     const { mapped, source } = this._readRetryVerificationEvidence(receipt.evidence, integrity);
@@ -4311,6 +9866,9 @@ export class CoordinationStore {
     const outcome = source.payload?.verdict?.outcome;
     if (receipt.state === 'accepted') {
       if (source.payload?.accept !== true || outcome !== 'passed'
+        || source.payload?.stability !== receipt.stability
+        || (retry.originOutcome === 'candidate_failed'
+          ? receipt.stability !== 'passed_after_candidate_failure' : receipt.stability !== null)
         || source.payload?.capture?.sha !== retry.checkpointSha
         || !receipt.result || Object.keys(receipt.result).sort().join(',') !== ['ref', 'sha'].join(',')
         || receipt.result.sha !== retry.checkpointSha
@@ -4319,13 +9877,15 @@ export class CoordinationStore {
       }
     } else if (source.payload?.accept === true
       || (receipt.state === 'candidate_failed' && outcome !== 'candidate_failed')
-      || (receipt.state === 'inconclusive' && outcome !== 'inconclusive')) {
+      || (receipt.state === 'inconclusive' && outcome !== 'inconclusive')
+      || receipt.stability !== null || source.payload?.stability !== null) {
       fail('run verification retry completion state contradicts its verification evidence');
     }
     if (receipt.state !== 'accepted' && receipt.result !== null) fail('only an accepted retry carries a result');
-    if (['inconclusive', 'cancelled'].includes(receipt.state)
-      && (receipt.checkpoint?.state !== 'pinned' || receipt.checkpoint?.sha !== retry.checkpointSha)) {
-      fail('an unresolved retry must retain the exact original checkpoint');
+    if (receipt.state !== 'accepted'
+      && (receipt.checkpoint?.state !== 'pinned' || receipt.checkpoint?.sha !== retry.checkpointSha
+        || receipt.checkpoint?.originOutcome !== retry.originOutcome)) {
+      fail('a nonaccepted retry must retain the exact original diagnostic checkpoint');
     }
     return retry;
   }
@@ -4456,6 +10016,138 @@ export class CoordinationStore {
     return freeze({ ok: true, result: 'completed', event: clone(event), export: this.runResultExport(state.runId, state.nodeKey) });
   }
 
+  runControl(controlId) {
+    return clone(this._runControls.get(controlId) ?? null);
+  }
+
+  runControls(runId, limit = 100_000) {
+    if (!validRunId(runId) || !Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
+      throw new TypeError('run control query is invalid');
+    }
+    return [...this._runControls.values()].filter((control) => control.runId === runId)
+      .sort((left, right) => left.admittedEvent - right.admittedEvent)
+      .slice(0, limit).map(clone);
+  }
+
+  pendingRunControls(limit = 1_000) {
+    if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
+      throw new TypeError('run control scan limit is invalid');
+    }
+    return [...this._runControls.values()].filter((control) => (
+      ['admitted', 'effect_started', 'provider_acked'].includes(control.status)
+    ))
+      .sort((left, right) => left.admittedEvent - right.admittedEvent)
+      .slice(0, limit).map(clone);
+  }
+
+  admitRunControl(fields, auth) {
+    const preview = {
+      seq: this._events.length + 1,
+      actor: auth?.actor,
+      idempotencyKey: auth?.key,
+      payload: fields,
+    };
+    this._validateRunControlAdmission(fields, preview);
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      if (prior.kind !== 'run.control_admitted' || prior.actor !== auth.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(fields)) {
+        throw new CoordinationRefusal('run control idempotency conflict', 'run_control_conflict');
+      }
+      return freeze({
+        ok: true, result: 'replay', event: clone(prior),
+        control: this.runControl(fields.controlId),
+      });
+    }
+    if (this._runControls.has(fields.controlId)) {
+      throw new CoordinationRefusal('run control identity conflict', 'run_control_conflict');
+    }
+    const event = this._append('run.control_admitted', clone(fields), auth);
+    return freeze({
+      ok: true, result: 'admitted', event: clone(event),
+      control: this.runControl(fields.controlId),
+    });
+  }
+
+  beginRunControlEffect(fields, auth) {
+    const state = this._runControls.get(fields?.controlId);
+    if (state && state.status !== 'admitted') {
+      const prior = this._byKey.get(auth?.key);
+      if (!prior || prior.kind !== 'run.control_effect_started' || prior.actor !== auth?.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(fields)) {
+        throw new CoordinationRefusal('run control effect conflict', 'run_control_conflict');
+      }
+      return freeze({
+        ok: true, result: 'replay', event: clone(prior),
+        control: this.runControl(fields.controlId),
+      });
+    }
+    const preview = { actor: auth?.actor, idempotencyKey: auth?.key, payload: fields };
+    this._validateRunControlEffect(fields, preview);
+    if (this._byKey.has(auth.key)) {
+      throw new CoordinationRefusal('run control effect idempotency conflict',
+        'run_control_conflict');
+    }
+    const event = this._append('run.control_effect_started', clone(fields), auth);
+    return freeze({
+      ok: true, result: 'started', event: clone(event),
+      control: this.runControl(fields.controlId),
+    });
+  }
+
+  acknowledgeRunControl(fields, auth) {
+    const state = this._runControls.get(fields?.controlId);
+    if (state && !['effect_started'].includes(state.status)) {
+      const prior = this._byKey.get(auth?.key);
+      if (!prior || prior.kind !== 'run.control_provider_acked' || prior.actor !== auth?.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(fields)) {
+        throw new CoordinationRefusal('run control acknowledgement conflict',
+          'run_control_conflict');
+      }
+      return freeze({
+        ok: true, result: 'replay', event: clone(prior),
+        control: this.runControl(fields.controlId),
+      });
+    }
+    const preview = { actor: auth?.actor, idempotencyKey: auth?.key, payload: fields };
+    this._validateRunControlProviderAck(fields, preview);
+    if (this._byKey.has(auth.key)) {
+      throw new CoordinationRefusal('run control acknowledgement idempotency conflict',
+        'run_control_conflict');
+    }
+    const event = this._append('run.control_provider_acked', clone(fields), auth);
+    return freeze({
+      ok: true, result: 'acknowledged', event: clone(event),
+      control: this.runControl(fields.controlId),
+    });
+  }
+
+  settleRunControl(fields, auth) {
+    const state = this._runControls.get(fields?.controlId);
+    if (state && !['admitted', 'provider_acked'].includes(state.status)) {
+      const prior = this._byKey.get(auth?.key);
+      if (!prior || prior.kind !== 'run.control_settled' || prior.actor !== auth?.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(fields)) {
+        throw new CoordinationRefusal('run control settlement conflict', 'run_control_conflict');
+      }
+      return freeze({
+        ok: true, result: 'replay', event: clone(prior),
+        control: this.runControl(fields.controlId),
+      });
+    }
+    const preview = { actor: auth?.actor, idempotencyKey: auth?.key, payload: fields };
+    this._validateRunControlSettlement(fields, preview);
+    if (this._byKey.has(auth.key)) {
+      throw new CoordinationRefusal('run control settlement idempotency conflict',
+        'run_control_conflict');
+    }
+    const event = this._append('run.control_settled', clone(fields), auth);
+    return freeze({
+      ok: true, result: 'settled', event: clone(event),
+      control: this.runControl(fields.controlId),
+    });
+  }
+
   pendingRunStops(limit = 1_000) {
     if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) throw new TypeError('run stop scan limit is invalid');
     return [...this._runStops.values()].filter((stop) => stop.status === 'stopping')
@@ -4477,21 +10169,30 @@ export class CoordinationStore {
       }
       return freeze({ ok: true, result: 'replay', event: clone(prior), stop: this.runStop(fields.runId) });
     }
-    if (this._runStops.has(fields.runId)) throw new CoordinationRefusal('run stop identity conflict', 'run_stop_conflict');
+    if (this.runStop(fields.runId)) throw new CoordinationRefusal('run stop identity conflict', 'run_stop_conflict');
+    const lineage = this._runLineages.get(fields.runId) ?? null;
+    if (this._runLineagePolicy && (fields.repoId !== this._repoId
+      || (lineage && lineage.repoId !== fields.repoId))) {
+      throw new CoordinationRefusal('run stop repository differs from Run authority', 'run_stop_repository_mismatch');
+    }
     const known = this._goalHeads.has(this._goalScopeKey(fields.repoId, fields.runId))
+      || lineage?.repoId === fields.repoId
       || [...this._tasks.values()].some((task) => task.runId === fields.runId);
     if (!known) throw new CoordinationRefusal(`unknown run ${fields.runId}`, 'not_found');
     const targets = this._runStopTargets(fields.runId);
-    const payload = { ...clone(fields), ...targets };
-    const preview = { actor: auth.actor, idempotencyKey: auth.key, payload };
+    const schemaVersion = targets.targetContextCallIds?.length > 0 ? 3
+      : targets.targetContextSessionIds?.length > 0
+        || targets.targetContextCellIds?.length > 0 ? 2 : 1;
+    const payload = { ...clone(fields), schemaVersion, ...targets };
+    const preview = { seq: this._events.length + 1, actor: auth.actor, idempotencyKey: auth.key, payload };
     this._validateRunStopAdmission(payload, preview);
     const event = this._append('run.stop_admitted', payload, auth);
     return freeze({ ok: true, result: 'admitted', event: clone(event), stop: this.runStop(fields.runId) });
   }
 
   completeRunStop(runId, receipt, auth) {
-    const payload = { schemaVersion: 1, runId, receipt: clone(receipt) };
     const stop = this._runStops.get(runId);
+    const payload = { schemaVersion: stop?.schemaVersion ?? receipt?.schemaVersion, runId, receipt: clone(receipt) };
     if (stop?.status === 'stopped') {
       const prior = this._byKey.get(auth?.key);
       if (!prior || prior.kind !== 'run.stop_completed' || prior.actor !== auth?.actor
@@ -4557,6 +10258,11 @@ export class CoordinationStore {
 
   webCommand(id) { return clone(this._webCommands.get(id) ?? null); }
 
+  webCommandByScope(scopeKey) {
+    const commandId = this._webCommandScopes.get(scopeKey);
+    return clone(commandId ? this._webCommands.get(commandId) ?? null : null);
+  }
+
   admitWebCommand(fields, auth) {
     if (!fields?.commandId || !fields?.scopeKey || !fields?.requestDigest) throw new TypeError('web command identity, scope, and digest required');
     const priorId = this._webCommandScopes.get(fields.scopeKey);
@@ -4587,6 +10293,11 @@ export class CoordinationStore {
   }
 
   mcpCall(id) { return clone(this._mcpCalls.get(id) ?? null); }
+
+  mcpCallByScope(scopeKey) {
+    const callId = this._mcpCallScopes.get(scopeKey);
+    return clone(callId ? this._mcpCalls.get(callId) ?? null : null);
+  }
 
   admitMcpCall(fields, auth) {
     if (!fields?.callId || !fields?.scopeKey || !fields?.requestDigest) throw new TypeError('MCP call identity, scope, and digest required');
@@ -4652,8 +10363,9 @@ export class CoordinationStore {
   }
 
   createTask(fields, auth) {
-    if (fields?.relation === 'recovery') {
-      throw new CoordinationRefusal('recovery relation requires the dedicated atomic refinement API', 'recovery_refinement_api_required');
+    if (['recovery', 'revision'].includes(fields?.relation)) {
+      throw new CoordinationRefusal(`${fields.relation} relation requires its dedicated atomic refinement API`,
+        fields.relation === 'revision' ? 'plan_revision_api_required' : 'recovery_refinement_api_required');
     }
     if (fields?.brief?.goalPlan) {
       throw new CoordinationRefusal('plan-bound tasks require the dedicated atomic dispatch API', 'goal_plan_dispatch_api_required');
@@ -4815,7 +10527,10 @@ export class CoordinationStore {
 
   mapOperationalEvent(operationalEvent, auth) {
     const prior = this._byKey.get(auth?.key);
-    if (prior) return { ok: true, result: 'idempotent', event: clone(prior), evidence: clone(prior.payload) };
+    if (prior) return {
+      ok: true, result: 'idempotent', event: clone(prior),
+      evidence: clone({ ...prior.payload, coordinationSeq: prior.seq }),
+    };
     if (!operationalEvent || typeof operationalEvent.worker !== 'string' || !Number.isInteger(operationalEvent.seq)) {
       throw new CoordinationRefusal('operational event requires worker and integer seq', 'invalid_evidence');
     }
@@ -5212,6 +10927,85 @@ export class CoordinationStore {
     if (replacement.createdEvent <= old.createdEvent) throw new CoordinationRefusal('replacement must be newer than corrected artifact', 'invalid_replacement');
     const event = this._append('artifact.superseded', { oldId, newId, expectedVersion, newVersion: expectedVersion + 1 }, auth);
     return { ok: true, result: 'superseded', event: clone(event), artifact: this.artifact(oldId) };
+  }
+
+  admitRecoveryAttempt(fields, auth) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      this._normalizeRecoveryAttemptAdmission(fields, false);
+      if (prior.kind !== 'recovery.attempt_admitted' || prior.actor !== auth?.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(fields)) {
+        throw new CoordinationRefusal('recovery attempt admission idempotency conflict', 'recovery_attempt_conflict');
+      }
+      const attempt = this.recoveryAttempt(prior.payload.attemptId);
+      if (!attempt || attempt.admittedEvent !== prior.seq) {
+        throw new CoordinationIntegrityError('recovery attempt projection is absent', 'recovery_attempt_integrity');
+      }
+      return freeze({ ok: true, result: 'replay', event: clone(prior), attempt });
+    }
+    const prospective = {
+      schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(),
+      kind: 'recovery.attempt_admitted', actor: auth?.actor,
+      idempotencyKey: auth?.key, payload: clone(fields),
+    };
+    const admission = this._validateRecoveryAttemptAdmissionPayload(fields, prospective, false);
+    if (auth?.key !== `recovery.attempt:${admission.attemptId}`) {
+      throw new CoordinationRefusal('recovery attempt idempotency key is invalid', 'recovery_attempt_invalid');
+    }
+    const event = this._append('recovery.attempt_admitted', clone(admission), auth, prospective.ts);
+    const attempt = this.recoveryAttempt(admission.attemptId);
+    if (!attempt || attempt.state !== 'pending' || attempt.admittedEvent !== event.seq) {
+      throw new CoordinationIntegrityError('recovery attempt admission did not materialize', 'recovery_attempt_integrity');
+    }
+    return freeze({ ok: true, result: 'admitted', event: clone(event), attempt });
+  }
+
+  completeRecoveryAttempt(fields, auth) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'recovery.attempt_completed' || prior.actor !== auth?.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(fields)) {
+        throw new CoordinationRefusal('recovery attempt completion idempotency conflict', 'recovery_attempt_conflict');
+      }
+      const attempt = this.recoveryAttempt(prior.payload.attemptId);
+      if (!attempt || attempt.completedEvent !== prior.seq) {
+        throw new CoordinationIntegrityError('recovery attempt completion projection is absent', 'recovery_attempt_integrity');
+      }
+      return freeze({ ok: true, result: 'replay', event: clone(prior), attempt });
+    }
+    const prospective = {
+      schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(),
+      kind: 'recovery.attempt_completed', actor: auth?.actor,
+      idempotencyKey: auth?.key, payload: clone(fields),
+    };
+    const completion = this._validateRecoveryAttemptCompletionPayload(fields, prospective, false);
+    if (auth?.key !== `recovery.attempt.complete:${completion.payload.attemptId}`) {
+      throw new CoordinationRefusal('recovery attempt completion key is invalid', 'recovery_attempt_completion_invalid');
+    }
+    const event = this._append('recovery.attempt_completed', clone(completion.payload), auth, prospective.ts);
+    const attempt = this.recoveryAttempt(completion.payload.attemptId);
+    if (!attempt || attempt.state !== completion.payload.state || attempt.completedEvent !== event.seq) {
+      throw new CoordinationIntegrityError('recovery attempt completion did not materialize', 'recovery_attempt_integrity');
+    }
+    return freeze({ ok: true, result: 'completed', event: clone(event), attempt });
+  }
+
+  recoveryAttempt(attemptId) {
+    return clone(this._recoveryAttemptsById.get(attemptId) ?? null);
+  }
+
+  recoveryAttemptHead(seriesId) {
+    const attemptId = this._recoveryAttemptHeads.get(seriesId);
+    return attemptId ? this.recoveryAttempt(attemptId) : null;
+  }
+
+  pendingRecoveryAttempts(limit = 1_000) {
+    if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
+      throw new TypeError('recovery attempt scan limit is invalid');
+    }
+    return [...this._recoveryAttemptsById.values()].filter((attempt) => attempt.state === 'pending')
+      .sort((left, right) => left.admittedEvent - right.admittedEvent)
+      .slice(0, limit).map(clone);
   }
 
   recordDriver(kind, payload, auth) {
@@ -5717,20 +11511,21 @@ export class CoordinationStore {
     if (!factRow?.active || fact?.grounding !== 'derived' || fact?.envRef?.repoId !== repoId || typeof fact.ownerTask !== 'string' || !task || task.status !== 'completed' || !task.terminalEvent || !nodeMap.has(`task:${oracleTaskId}`)) return null;
     if (!/^scratch-fact:[a-f0-9]{64}$/.test(fact.id)) return null;
     const producer = state.tasks.get(fact.ownerTask); let producerRoute; let reviewerRoute;
-    try { producerRoute = JSON.parse(producer?.routeKey); reviewerRoute = JSON.parse(task.routeKey); } catch { return null; }
-    if (![producerRoute, reviewerRoute].every((tuple) => Array.isArray(tuple) && tuple.length === 6 && tuple.every((value) => typeof value === 'string')) || producerRoute[0] === reviewerRoute[0] || producerRoute[4] === reviewerRoute[4]) return null;
+    try { producerRoute = parseRouteTupleKey(producer?.routeKey); reviewerRoute = parseRouteTupleKey(task.routeKey); } catch { return null; }
+    const producerTuple = producerRoute.fields; const reviewerTuple = reviewerRoute.fields;
+    if (producerTuple[0] === reviewerTuple[0] || producerTuple[4] === reviewerTuple[4]) return null;
     const routeMatchesTask = (row, tuple) => row?.claimed?.payload?.routeKey === row.routeKey && row.claimed.payload.harnessResolved === `${tuple[0]}@${tuple[1]}`
       && (row.claimed.payload.modelResolved ?? 'default') === tuple[2] && (row.claimed.payload.effortResolved ?? 'default') === tuple[3] && row.payload.taskType === tuple[5];
-    if (!routeMatchesTask(producer, producerRoute) || !routeMatchesTask(task, reviewerRoute)) return null;
-    const commitment = { schemaVersion: 1, kind: 'scratch.fact', scratchFactId: fact.id, scratchFactDigest: canonicalDigest(fact), sourceEventSeq: factRow.event.seq, sourceEventDigest: canonicalDigest(factRow.event), repoId, envRefDigest: canonicalDigest(fact.envRef), producerTaskId: fact.ownerTask, producerHarness: producerRoute[0], producerFamily: producerRoute[4], reviewerHarness: reviewerRoute[0], reviewerFamily: reviewerRoute[4] };
+    if (!routeMatchesTask(producer, producerTuple) || !routeMatchesTask(task, reviewerTuple)) return null;
+    const commitment = { schemaVersion: 1, kind: 'scratch.fact', scratchFactId: fact.id, scratchFactDigest: canonicalDigest(fact), sourceEventSeq: factRow.event.seq, sourceEventDigest: canonicalDigest(factRow.event), repoId, envRefDigest: canonicalDigest(fact.envRef), producerTaskId: fact.ownerTask, producerHarness: producerTuple[0], producerFamily: producerTuple[4], reviewerHarness: reviewerTuple[0], reviewerFamily: reviewerTuple[4] };
     const review = task.payload.review;
     if (!review || review.kind !== 'oracle' || review.independent !== true || review.parentTaskId !== fact.ownerTask || review.baseSha !== fact.envRef.treeSha || task.payload.worktreeBaseSha !== fact.envRef.treeSha || canonicalDigest(review.knowledgeTarget) !== canonicalDigest(commitment)) return null;
     const acceptedByOracle = (artifact) => (artifact.provenance ?? []).some((ref) => {
         const mapped = Number.isSafeInteger(ref?.coordinationSeq) ? state.prefix[ref.coordinationSeq - 1] : null; if (mapped?.kind !== 'evidence.mapped' || mapped.payload?.kind !== 'verify.reverified') return false;
         if (mapped.payload.worker !== task.claimed?.payload?.worker || mapped.payload.worker !== task.payload.reservedWorkerId) return false;
         const source = this._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq); return source?.kind === 'verify.reverified' && source?.taskId === oracleTaskId && source?.runId === task.payload.runId && source?.payload?.accept === true && source?.routeKey === task.routeKey
-          && source?.harness === `${reviewerRoute[0]}@${reviewerRoute[1]}` && source?.modelResolved === reviewerRoute[2] && source?.effortResolved === reviewerRoute[3]
-          && source?.payload?.capture?.sha === artifact.refs?.sha && source?.payload?.capture?.baseSha === fact.envRef.treeSha && source?.payload?.capture?.model === reviewerRoute[2] && source?.payload?.capture?.effort === reviewerRoute[3] && source?.payload?.capture?.routeKey === task.routeKey;
+          && source?.harness === `${reviewerTuple[0]}@${reviewerTuple[1]}` && source?.modelResolved === reviewerTuple[2] && source?.effortResolved === reviewerTuple[3]
+          && source?.payload?.capture?.sha === artifact.refs?.sha && source?.payload?.capture?.baseSha === fact.envRef.treeSha && source?.payload?.capture?.model === reviewerTuple[2] && source?.payload?.capture?.effort === reviewerTuple[3] && source?.payload?.capture?.routeKey === task.routeKey;
       });
     const eligible = state.artifacts.filter((event) => {
       const artifact = event.payload; if (artifact.taskId !== oracleTaskId || artifact.kind !== 'review' || artifact.mediaType !== 'application/vnd.baton.review+json' || artifact.accepted !== true || canonicalDigest(artifact.review) !== canonicalDigest(review) || !nodeMap.has(`artifact:${artifact.id}`)) return false;
@@ -5741,7 +11536,7 @@ export class CoordinationStore {
     }).sort((a, b) => a.seq - b.seq);
     if (eligible.length !== 1) return null;
     const artifactEvent = eligible[0]; const mappedSeqs = artifactEvent.payload.provenance.map((ref) => ref.coordinationSeq).filter(Number.isSafeInteger).sort((a, b) => a - b);
-    return { taskId: oracleTaskId, taskNodeId: `task:${oracleTaskId}`, artifactId: artifactEvent.payload.id, artifactNodeId: `artifact:${artifactEvent.payload.id}`, artifactEventSeq: artifactEvent.seq, terminalEventSeq: task.terminalEvent.seq, evidenceSeqs: [...new Set([factRow.event.seq, task.terminalEvent.seq, artifactEvent.seq, ...mappedSeqs])].sort((a, b) => a - b), producerRoute, reviewerRoute, producerRouteDigest: canonicalDigest(producerRoute), reviewerRouteDigest: canonicalDigest(reviewerRoute) };
+    return { taskId: oracleTaskId, taskNodeId: `task:${oracleTaskId}`, artifactId: artifactEvent.payload.id, artifactNodeId: `artifact:${artifactEvent.payload.id}`, artifactEventSeq: artifactEvent.seq, terminalEventSeq: task.terminalEvent.seq, evidenceSeqs: [...new Set([factRow.event.seq, task.terminalEvent.seq, artifactEvent.seq, ...mappedSeqs])].sort((a, b) => a - b), producerRoute: producerTuple, reviewerRoute: reviewerTuple, producerRouteDigest: canonicalDigest(producerTuple), reviewerRouteDigest: canonicalDigest(reviewerTuple) };
   }
 
   _deriveScratchCorrection(repoId, observedSeq, policy, rawRequest, beforeEventSeq = this._events.length + 1) {
