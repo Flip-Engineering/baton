@@ -1061,8 +1061,36 @@ export class WebNorthbound {
           : ctx.csrfToken === principal.csrfToken);
         if (!csrfValid) return this._write(res, error(403, 'forbidden'), origin);
       }
+      const legacyScope = isRecord(body) && Object.keys(body).length === 1 && string(body.repoId);
+      const runScope = isRecord(body)
+        && Object.keys(body).every((key) => ['repoId', 'runId', 'channel', 'recipient', 'cursor'].includes(key))
+        && string(body.repoId) && string(body.runId)
+        && ['progress', 'events', 'output'].includes(body.channel)
+        && (body.recipient === undefined || (string(body.recipient) && body.recipient.length <= 256))
+        && (body.channel === 'output' || body.recipient === undefined)
+        && (body.cursor === undefined || (typeof body.cursor === 'string'
+          && body.cursor.length >= 16 && body.cursor.length <= 4_096
+          && /^[A-Za-z0-9_-]+$/u.test(body.cursor)));
+      if (!legacyScope && !runScope) return this._write(res, error(400, 'invalid_command'), origin);
+      let streamScope = body.repoId;
+      if (runScope) {
+        if (!this.application) return this._write(res, error(503, 'application_unavailable'), origin);
+        let snapshot;
+        try {
+          snapshot = await this.application.command('run.status', { runId: body.runId }, {
+            actor: actor(principal), principalId: principal.userId, sessionId: principal.sessionId,
+          }, { transport: 'web-stream', requestId: randomUUID() });
+        } catch (cause) {
+          const failure = dispatchFailure(cause);
+          return this._write(res, result(failure.httpStatus, failure.body), origin);
+        }
+        if (!snapshot || snapshot.runId !== body.runId) {
+          return this._write(res, error(503, 'temporarily_unavailable'), origin);
+        }
+        streamScope = { ...body, snapshot };
+      }
       if (typeof this.stream.authorizeIssue !== 'function') return this._write(res, error(503, 'temporarily_unavailable'), origin);
-      if (!this.stream.authorizeIssue(principal, origin, body?.repoId)) {
+      if (!await this.stream.authorizeIssue(principal, origin, streamScope)) {
         try { this._audit('stream_ticket_refused', { principal, origin, addressDigest: req.edgeAddressDigest ?? null }, { reason: 'forbidden' }); }
         catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
         return this._write(res, error(403, 'forbidden'), origin);
@@ -1077,7 +1105,7 @@ export class WebNorthbound {
         let issuance;
         try {
           if (typeof this.stream.beginIssue !== 'function') throw new TypeError('transactional ticket issuance required');
-          issuance = this.stream.beginIssue(principal, origin, body?.repoId);
+          issuance = this.stream.beginIssue(principal, origin, streamScope);
         }
         catch { ticketQuota.rollback(); return this._write(res, error(503, 'temporarily_unavailable'), origin); }
         const issued = issuance?.response ?? error(503, 'temporarily_unavailable');
@@ -1090,7 +1118,7 @@ export class WebNorthbound {
         issuance.commit(); ticketQuota.commit();
         return;
       }
-      return this._write(res, this.stream.issue(principal, origin, body?.repoId), origin);
+      return this._write(res, await this.stream.issue(principal, origin, streamScope), origin);
     }
     if (req.method === 'POST' && url.pathname === '/v1/action-authority') {
       if (url.search || req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
@@ -1166,7 +1194,7 @@ export class WebNorthbound {
       if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), origin);
       const authFailure = this._authenticate({ principal, transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http') });
       if (authFailure) return this._write(res, authFailure, origin);
-      const responseValue = this.stream.open({
+      const responseValue = await this.stream.open({
         ticket: url.searchParams.get('ticket'), principal, origin,
         cursor: req.headers['last-event-id'] ?? url.searchParams.get('cursor'),
       }, res);
