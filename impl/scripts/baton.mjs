@@ -3,9 +3,13 @@
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
-  BatonWebClient, batonCliHelp, discoverBatonConnection, parseBatonCli, runBatonCli,
+  BatonWebClient, batonCliHelp, discoverBatonConnection, inspectBatonConnection,
+  parseBatonCli, runBatonCli, setupBatonConnection,
 } from '../src/application-cli.mjs';
 import { BatonWebHost } from '../src/application-host.mjs';
+import {
+  formatKimiCredentialInstallResult, KIMI_CREDENTIAL_HELP, promptAndInstallKimiCredential,
+} from '../src/kimi-credential-setup.mjs';
 
 function integer(value, fallback) {
   if (value === undefined) return fallback;
@@ -14,11 +18,53 @@ function integer(value, fallback) {
   return parsed;
 }
 
+function clientFor(connection) {
+  return new BatonWebClient({
+    baseUrl: connection.baseUrl,
+    origin: connection.origin,
+    repoId: connection.repoId,
+    token: connection.token,
+    commandTimeoutMs: integer(process.env.BATON_COMMAND_TIMEOUT_MS, 30_000),
+    pollMs: integer(process.env.BATON_COMMAND_POLL_MS, 250),
+    fetchImpl: globalThis.fetch,
+    clock: Date.now,
+    sleep: (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms)),
+  });
+}
+
 try {
   const parsed = parseBatonCli(process.argv.slice(2));
   if (parsed.kind === 'help' || parsed.name === 'application.help') {
     process.stdout.write(`${batonCliHelp(parsed.topic ?? parsed.args.topic)}\n`);
+  } else if (parsed.kind === 'credential-help') {
+    process.stdout.write(`${KIMI_CREDENTIAL_HELP}\n`);
+  } else if (parsed.kind === 'credential-install') {
+    const result = await promptAndInstallKimiCredential();
+    process.stdout.write(`${formatKimiCredentialInstallResult(result)}\n`);
+  } else if (parsed.kind === 'setup') {
+    const result = await setupBatonConnection({ profile: parsed.profile });
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else if (parsed.kind === 'doctor') {
+    const local = inspectBatonConnection({ depth: parsed.depth });
+    if (!parsed.check || local.state !== 'configured') {
+      process.stdout.write(`${JSON.stringify(local, null, 2)}\n`);
+      if (parsed.check && local.state !== 'configured') process.exitCode = 1;
+    } else {
+      const remote = await clientFor(discoverBatonConnection()).doctor();
+      const result = {
+        schemaVersion: 1, state: remote.ready === true ? 'ready' : 'not_ready',
+        depth: parsed.depth, outline: { ...local.outline, credential: 'accepted', remote: remote.ready === true ? 'ready' : 'not_ready' },
+        application: remote.application,
+      };
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      if (remote.ready !== true) process.exitCode = 1;
+    }
   } else if (parsed.kind === 'serve') {
+    if (parsed.configPath === null) {
+      throw Object.assign(new Error(
+        'owner-local resident hosting is not available until private socket publication is configured; use an advanced host module for now',
+      ), { code: 'application_host_unavailable' });
+    }
     const module = await import(pathToFileURL(resolve(parsed.configPath)).href);
     const factory = module.createBatonWebHost ?? module.default;
     if (typeof factory !== 'function') throw Object.assign(new Error('serve config must export default or createBatonWebHost()'), { code: 'cli_config_invalid' });
@@ -31,17 +77,7 @@ try {
     if (outcome.closed.state !== 'closed') process.exitCode = 1;
   } else {
     const connection = discoverBatonConnection();
-    const client = new BatonWebClient({
-      baseUrl: connection.baseUrl,
-      origin: connection.origin,
-      repoId: connection.repoId,
-      token: connection.token,
-      commandTimeoutMs: integer(process.env.BATON_COMMAND_TIMEOUT_MS, 30_000),
-      pollMs: integer(process.env.BATON_COMMAND_POLL_MS, 250),
-      fetchImpl: globalThis.fetch,
-      clock: Date.now,
-      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-    });
+    const client = clientFor(connection);
     let followPages = 0;
     const result = await runBatonCli(parsed, client, parsed.kind === 'follow' ? {
       onFollowPage: async (page) => {

@@ -89,14 +89,34 @@ export function assertIsAdapter(obj) {
 
 /**
  * @param {object} brief
- * @param {'codex-v2'|'claude'|'grok-acp'} dialect
+ * @param {'codex-v2'|'claude'|'grok-acp'|'kimi-acp'} dialect
  * @returns {string}
  */
 export function renderBrief(brief, dialect) {
   const lines = [];
+  const advertisesBatonTool = (brief.tools ?? []).some((tool) => (
+    /baton/iu.test(typeof tool === 'string' ? tool : JSON.stringify(tool))
+  ));
   lines.push(`[baton brief:${dialect}]`);
   lines.push('## Goal');
   lines.push(brief.goal ?? '');
+  lines.push('## Dispatch');
+  if (brief.contextInput) {
+    lines.push(advertisesBatonTool
+      ? 'This task is already dispatched by Baton. The attached immutable Context is the complete task input; do not inspect repository files, prior Run artifacts, receipts, or ledgers to reconstruct or broaden it. Writing a named output path does not authorize reading its preexisting contents. Orchestration actions may use only the Baton control surface explicitly listed in this Brief.'
+      : 'This task is already dispatched and supervised by Baton. The attached immutable Context is the complete task input; do not inspect repository files, prior Run artifacts, receipts, or ledgers to reconstruct or broaden it. Writing a named output path does not authorize reading its preexisting contents. Do not search for or launch another Baton CLI, MCP server, or Run; use one only when this Brief explicitly advertises it.');
+    lines.push('## Immutable Context');
+    lines.push(`Call: ${brief.contextInput.callId}`);
+    lines.push(brief.contextInput.unitId
+      ? `Unit: ${brief.contextInput.unitId}`
+      : `Partition: ${brief.contextInput.partitionId}`);
+    lines.push('Use the attached value directly; do not replace it with a broader repository review:');
+    lines.push(JSON.stringify(brief.contextInput.value, null, 2));
+  } else {
+    lines.push('This task is already dispatched by Baton. Perform the assigned work in this worktree and use only tools explicitly advertised in this Brief.');
+  }
+  lines.push('## Write authority');
+  lines.push('Harness permissions are execution capability, not write authority. Write only inside the assigned Baton worktree and only at the Path scope below. Never modify, move, chmod, delete, replace, or repair anything outside that authority, including the home directory, credentials, toolchains, shims, global configuration, or caches. Report an environmental blocker instead of repairing the host.');
   if (brief.constraints?.length) {
     lines.push('## Constraints');
     for (const c of brief.constraints) lines.push(`- ${c}`);
@@ -642,6 +662,7 @@ export class CodexAdapter extends SubprocessAdapterBase {
       authPosture: 'subscription',
       concurrencyCeiling: 4,
       maxContext: 200000,
+      permissions: { mode: 'never', sandbox: 'danger-full-access', boundary: 'Unattended full host permissions by default; containment is a separate deployment boundary' },
       // SC8 honesty: SubprocessAdapterBase implements ONLY spawn — prompt/interrupt/approve/
       // answer/kill are not-implemented stubs, and the card may not claim otherwise.
       verbs: { spawn: 'native', prompt: 'unsupported', steer: 'unsupported', interrupt: 'unsupported', approve: 'unsupported', answer: 'unsupported', kill: 'unsupported', pause: 'unsupported' },
@@ -650,7 +671,7 @@ export class CodexAdapter extends SubprocessAdapterBase {
 
   argv(brief, opts) {
     void opts;
-    return { cmd: 'codex', args: ['exec', '--json', '--skip-git-repo-check', renderBrief(brief, 'codex-v2')] };
+    return { cmd: 'codex', args: ['--ask-for-approval', 'never', '--sandbox', 'danger-full-access', 'exec', '--json', '--skip-git-repo-check', renderBrief(brief, 'codex-v2')] };
   }
 }
 
@@ -662,13 +683,14 @@ export class ClaudeAdapter extends SubprocessAdapterBase {
       authPosture: 'subscription',
       concurrencyCeiling: 4,
       maxContext: 200000,
+      permissions: { mode: 'bypassPermissions', sandbox: 'unverified', boundary: 'Approval autonomy only; host filesystem and network containment are unverified' },
       // SC8 honesty: only spawn is implemented on this legacy subprocess tier (see base stubs).
       verbs: { spawn: 'native', prompt: 'unsupported', steer: 'unsupported', interrupt: 'unsupported', approve: 'unsupported', answer: 'unsupported', kill: 'unsupported', pause: 'unsupported' },
     };
   }
 
   argv(brief, opts) {
-    const args = ['-p', renderBrief(brief, 'claude'), '--permission-mode', 'acceptEdits'];
+    const args = ['-p', renderBrief(brief, 'claude'), '--permission-mode', opts.permissionMode ?? 'bypassPermissions'];
     if (opts.model) args.push('--model', opts.model);
     return { cmd: 'claude', args };
   }
