@@ -35,7 +35,7 @@ function system(claims = {}) {
     card() {
       return {
         schemaVersion: 1, repoId: 'repo-a',
-        commands: ['application.help', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.review', 'run.integrate', 'run.export', 'application.shutdown'],
+        commands: ['application.help', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'application.shutdown'],
         profiles: [{
           name: 'standard', digest: 'a'.repeat(64), routes: [{ harness: 'grok', model: 'grok-4-code', effort: 'high' }], pathScope: ['impl/**'],
           reviewPolicy: { mode: 'required', routes: [{ harness: 'reviewer', model: 'review-model', effort: 'low' }], reportPath: '.baton/review.json', maxFindings: 20, maxReportBytes: 65_536 },
@@ -89,10 +89,13 @@ test('BU1/BU2: HTML and session projection are CSP-bound and sanitized', async (
   const session = await get(s.web, '/v1/session', headers);
   assert.deepEqual(session.body, {
     ok: true,
-    identity: { userId: 'operator', capabilities: ['observe', 'control', 'approve', 'emergency_stop'], repoIds: ['repo-a'] },
+    identity: {
+      userId: 'operator', sessionId: s.issued.sessionId,
+      capabilities: ['observe', 'control', 'approve', 'emergency_stop'], repoIds: ['repo-a'],
+    },
     expiresAt: new Date(NOW + 60_000).toISOString(),
   });
-  for (const forbidden of ['sessionId', 'credentialId', 'csrfTokenDigest', s.issued.token]) {
+  for (const forbidden of ['credentialId', 'csrfTokenDigest', s.issued.token]) {
     assert.equal(session.rawBody.includes(forbidden), false);
   }
   const card = await get(s.web, '/v1/application-card', headers);
@@ -104,10 +107,14 @@ test('BU3/BU4/BU5/BU6: static client makes Run flow primary and keeps fenced rea
   const s = system();
   const script = await get(s.web, '/control/app.js', { cookie: sessionCookie(s.issued), 'sec-fetch-site': 'same-origin' });
   assert.match(script.headers['content-type'], /^text\/javascript/);
-  for (const term of ['run_start', 'run_status', 'run_follow', 'run_inspect', 'run_act', 'run_wait', 'run_answer', 'run_steer', 'run_stop', 'actionId', 'inputSchema', 'approve_plan', 'semantic_review', 'integrate', 'Follow Run', 'activeFollowPolicy', 'followLoop', 'review-form', 'review-route', 'review-reason', 'integrate-form', 'integration-strategy', 'integration-reason', 'semantic-summary', 'steer-target', 'steer-mode', 'steer-reason', 'stop-form', 'stop-reason', 'progress-list', 'renderProgress', '/v1/application-card', 'harness', 'model', 'effort', 'expectedFence', 'kill', 'drain', 'idempotencyKey', 'crypto.randomUUID', 'x-baton-csrf', '/v1/stream-tickets', 'EventSource', '/v1/auth/logout']) {
+  for (const term of ['run_start', 'run_status', 'run_inspect', 'run_act', 'run_answer', 'run_steer', 'run_stop', 'actionId', 'inputSchema', 'approve_plan', 'semantic_review', 'integrate', 'Follow Run', 'activeFollowPolicy', 'followLoop', 'review-form', 'review-route', 'review-reason', 'integrate-form', 'integration-strategy', 'integration-reason', 'semantic-summary', 'steer-target', 'steer-mode', 'steer-reason', 'stop-form', 'stop-reason', 'progress-list', 'renderProgress', '/v1/application-card', 'harness', 'model', 'effort', 'expectedFence', 'kill', 'drain', 'idempotencyKey', 'crypto.randomUUID', 'x-baton-csrf', '/v1/stream-tickets', 'EventSource', '/v1/auth/logout']) {
     assert.equal(script.body.includes(term), true, term);
   }
   assert.equal(script.body.includes("command('spawn'"), false);
+  assert.equal(script.body.includes("command('run_follow'"), false,
+    'browser follow must use the same policy-derived semantic continuation as every agent');
+  assert.equal(script.body.includes('Allocated tokens'), false);
+  assert.equal(script.body.includes('.maxWaitMs'), false);
   assert.equal(script.body.includes('innerHTML'), false);
   assert.equal(script.body.includes('document.write'), false);
   assert.match(script.body, /textContent/);

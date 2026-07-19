@@ -49,6 +49,8 @@ function makeAdapter(extra = {}) {
     stopDeadlineMs: extra.stopDeadlineMs,
     ceiling: 4,
     maxContext: extra.maxContext,
+    sandbox: extra.sandbox,
+    alwaysApprove: extra.alwaysApprove,
     maxEventPayloadBytes: extra.maxEventPayloadBytes,
     versionProbe: extra.versionProbe ?? (() => 'fake-grok/0.1.216-test'),
   });
@@ -132,6 +134,11 @@ test('GA14/GA15: card() reports harness grok, injected version, steer:emulated, 
     toolCalls: { observation: 'native', enforcement: 'unavailable' },
     maxWireFrameBytes: 1024 * 1024,
   });
+  assert.deepEqual(card.permissions, {
+    mode: 'always-approve', sandbox: 'off',
+    boundary: 'Unattended full host permissions by default; containment is a separate deployment boundary',
+  });
+  assert.equal(makeAdapter({ alwaysApprove: false }).card().permissions.mode, 'interactive');
 });
 
 test('GA15: the default version probe describes the injected executable, not a different bare grok on PATH', () => {
