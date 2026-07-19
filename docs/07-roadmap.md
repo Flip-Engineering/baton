@@ -4,6 +4,102 @@
 > is not part of Baton's current goal. Baton remains deployment-neutral and single-project; adding
 > homelab integration would be a detriment. The line is retained only as exploration history.
 
+> **Current implementation continuation (2026-07-18):** Phases 70–77 add preserved-stop/resume,
+> required-effects authority, native Kimi worker/orchestrator support, authenticated control,
+> explicit full-access policy, bounded topology/recovery, and durable recursive Run authority;
+> Phases 78–88 integrate them behind one deployment-owned, cascading application surface and
+> close exact Plan-owned harness/model/effort route tuples. Phase 89 now lands the first ordinary
+> resident-application vertical: one owner/connected Runs facade, authenticated bounded catalog,
+> validating attach, stable progress timing, repository-bound discovery, hardened Web reads,
+> owner-only HTTP-over-UDS, private bearer publication, stable deployment/fresh incarnation,
+> PID-start writer fencing, authenticated self-challenge, restart rotation, CAS cleanup, and
+> zero-assembly `baton serve`. Phase 90 now lands durable semantic control settlement and the
+> first Run-scoped progress/events/output stream vertical. Run-bound Web/browser streaming,
+> opaque catalog continuation, read-only intent authority, and browser control convergence remain
+> acceptance-red. The
+> milestone prose below is historical sequencing, not a claim that a Git worktree or private HOME
+> is an OS sandbox or that the capability and representation planes are complete.
+
+## Current execution order
+
+1. Finish the concise `openBaton`/bound-Run surface, contextual doctor/help, deployment-owned
+   readiness and capacity, crash recovery, exact stop/reap, and Web/MCP parity. The local factory,
+   fixed internal capacity, profile/crash replay, auth readiness, close/reopen ownership,
+   `deployment.runs`, safe `runs.list`, validating `runs.attach`, repository-bound
+   `connectBaton`, stable progress timing, ordinary `openBaton().host()`, and zero-assembly
+   `baton serve` are green. The resident owns an owner-only Unix socket, private bearer/session,
+   stable deployment identity, fresh incarnation, PID-start-fenced leases, readiness-before-
+   publication, authenticated self-check, restart rotation, and compare-and-swap cleanup. The
+   advanced loopback HTTPS assembly seam remains only for explicit integration/network work.
+2. Dogfood Baton on Baton continuously: route multiple workers in parallel, select exact
+   harness/model/effort per task, and live-prove selective kill plus zero ownership after close.
+   Current route targets are Codex `gpt-5.6-sol`, native Kimi `kimi-code/k3` at
+   orchestrator-selected effort, isolated Kimi-through-Claude K3 at `max`, Claude Code
+   `claude-opus-4-6`, Grok 4.5/literal Grok Build when
+   provider-observed, and only `glm-5.2` at orchestrator-selected effort (including `xhigh` when
+   warranted).
+   The current live checkpoint has a green Codex medium-effort >1 MiB telemetry recovery and a
+   green two-Grok concurrent admission/selective-stop/exact-reap lifecycle. Native Kimi login was
+   refreshed on 2026-07-18; exact `kimi-code/k3`/high and Codex `gpt-5.6-sol`/low then produced
+   freshly verified parallel Phase 81 Candidates, followed by an exact Kimi Candidate-based Plan
+   v2 revision and zero-ownership close. Grok remains separately auth-red. No provider-success
+   claim is borrowed from readiness alone.
+3. Build durable dynamic workflow composition over the existing Run application: one approved
+   multi-node Goal/Plan, parallel Attempts for shared WorkItems, typed feedback, append-only
+   review/revision Plan versions, synthesis, deterministic joins/gates, compact group progress,
+   selective stop/reap, and restart recovery. The default shares immutable context and private
+   writable overlays; an optional shared lineage has one fenced writer at a time. Direct
+   concurrent multi-writer checkouts remain refused under same-UID full-access harnesses.
+   The first recursive vertical is specified in
+   `spec/phase80-recursive-candidate-revision.md`: selected immutable Candidate plus anchored
+   feedback becomes an independently approved successor Plan and one fresh Candidate-based
+   revision Attempt, never an agent-authored loop or reuse of review/recovery authority.
+   The bounded Plan-v2 vertical is live-green through Baton itself. Deployment-owned multi-round
+   policy, cumulative Goal headroom, Plan v3 replay, repeated-feedback/no-progress/contradiction
+   stops, and ambiguous-worker recovery are now deterministic-green. Remaining hardening is the
+   full effect-boundary/selective-stop matrix and explicit multi-round transport parity;
+   arbitrary-depth recursion is not claimed.
+4. Build the common Context Program and Scratch Bench as the context-computation layer for dynamic
+   workflows. Phase 81 now specifies a Pythonic ContextSession over a closed canonical AST and has
+   a first green stateless pure-cell vertical: immutable tree-bound manifests, deterministic
+   search/chunk/coverage, content-addressed output, source-integrity refusal, and contextual help.
+   Durable cell admission and the first provider-backed successor are now green: a Context map call
+   content-addresses exact partitions, prebinds an ordinary successor Plan, waits for distinct
+   approval, dispatches one atomic parallel Wave, attaches only mechanically accepted children,
+   and settles only after replay-verifiable per-task resource release. Run-stop v3 includes calls.
+   Phase 85 now preserves per-output lineage and the root semantic role catalog, adds one
+   separately approved reduce successor, failed-call settlement, selective retry generations, and
+   an immutable expression builder over one `context_eval` action. Phase 87 closes semantic
+   per-action northbound authority, and Phase 88 closes exact Plan route tuple authority across
+   replay, workflow, recovery, context, Web, and MCP surfaces. No ambient shell, host `exec`,
+   arbitrary-code REPL, hidden provider callback, caller route/budget knob, or shared mutable
+   checkout is added. Authenticated resident catalog/discovery and attach have a first green
+   vertical. Phase 90 now makes semantic `Run.send()` / `Run.interrupt()` first-class durable
+   resident controls with server-derived recipients and admit/effect-start/provider-ack/settle
+   recovery. Live Baton-on-Baton CLI dogfood proved exact route binding, selective interrupt,
+   whole-Run reap, compact mutation output, and explicit outline/index/section/item/content/evidence
+   expansion. The execution chapter now also ships Run-scoped resumable progress/event/output
+   streams, safe per-Run positions, opt-in untrusted provider output, Pythonic iterators, and
+   concise CLI facades. Run-bound authenticated Web streaming/browser rendering, read-only intent
+   authority, opaque catalog continuation, and deeper recursive composition remain next, followed by
+   direct-vs-context-vs-RLM evaluation.
+5. Deepen the capability and representation plane from the shipped bounded R1 structural-delta,
+   R2 SCIP-snapshot, and R3 CPG seeds: Atlas AST/CST precision, native symbol/SCIP depth,
+   CPG/dataflow/taint, compiler/IR, behavioral fingerprints, structured/semantic delta and merge, then Vantage,
+   Evidence Ladder, Scratch/Bench, Skill Forge, Cartographer/Quartermaster, and Cairn.
+6. Extend the shipped Cairn causal/temporal primitives into the deployment-neutral shared typed
+   knowledge graph inspired by
+   `project-manager` concepts, including provenance, temporal/bitemporal validity,
+   contradiction/supersession, selective promotion, and bounded recall. There is no homelab
+   integration or runtime dependency.
+7. Run and publish the routing, control-latency, cross-vendor decorrelation, recovery, and
+   human-audit-cost evaluations. Pending work remains pending until its own evidence is green.
+
+All ordinary surfaces follow one self-describing Run model: objective first, Pythonic logical
+methods, closed branches, and progressive Outline → index → section → item depth with contextual
+help. Routine callers do not manage budgets, export/file-size ceilings, temporary roots, or host
+capacity; the deployment owns safe defaults and exposes remediation only when attention is needed.
+
 *Build sequence for the Option-A hub (doc 04). Milestones are cut so each one is independently useful and **falsifies something measurable**. Rewritten after review round 1 (doc 09 §F): the single strongest convergent signal from the Codex external review, the product judge, the ambition judge, and the time-scale judge was **"you are spending before you prove value, and the proof is cheap."** So eval and the differentiating demo move to the front, and the honest MVP is cut hard.*
 
 ## Guiding re-estimate (time-scale judge + Codex review)
@@ -15,8 +111,8 @@ The old "M1 in 1–2 weeks" was fiction. The supervisor invariants alone (`spec/
 Goal: prove the load-bearing bridge works in *both* orchestrator directions, and establish the number every later milestone is judged against.
 
 - Hub skeleton: single process, in-memory registry + JSONL event log. No policy engine, no budgets.
-- `codex-adapter`: persistent `codex app-server` (stdio child), `thread/start`→`turn/start`→stream→`turn/interrupt`. Sandbox/approval via `thread/start`/`turn/start` params (**not** a `--sandbox` CLI flag — app-server has none; ref `docs/reference/codex-app-server.md`), workspace-write confined to the worktree.
-- `claude-adapter`: child `claude -p --input-format stream-json --output-format stream-json --permission-mode acceptEdits`, one process per worker, **adapter-owned outbox** (nudges never hit stdin mid-turn).
+- `codex-adapter`: persistent `codex app-server` (stdio child), `thread/start`→`turn/start`→stream→`turn/interrupt`. Sandbox/approval travel through `thread/start`/`turn/start` params (**not** an app-server CLI flag); Phase 74 defaults to `danger-full-access` plus `never`, with narrower profiles explicit.
+- `claude-adapter`: child `claude -p --input-format stream-json --output-format stream-json --permission-mode bypassPermissions`, one process per worker, with Baton's private Claude settings defaulting to unsandboxed command execution. Approval-enabled profiles resolve to `acceptEdits`; the callback is never combined with bypass mode. **Adapter-owned outbox** (nudges never hit stdin mid-turn).
 - Northbound MCP tools (minimal): `fleet_spawn`, `fleet_send`, `fleet_wait`, `fleet_result`, `fleet_interrupt`, `fleet_list`.
 - **Empirical experiments (this is the point of M0), each a recorded number:**
   1. `fleet_wait` under real host timeouts — set `tool_timeout_sec` (Codex `~/.codex/config.toml`) and `MCP_TOOL_TIMEOUT`/`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` (Claude); confirm the bounded-poll-under-timeout (`HOST_SAFE_MS`) loop + progress heartbeats survive, both directions (Claude-orchestrator and Codex-as-orchestrator via `codex mcp`).
@@ -41,7 +137,7 @@ The two things a `codex exec` for-loop *cannot* do, shipped first because they j
 ## M2 — Full control surface + human seat + hardening (~weeks, earned by M1's eval)
 
 - Control verbs complete with their corrected semantics (doc 05 §4): `nudge` (with `at=tool_boundary`), `steer` (effect-receipt ack; native-Codex-if-M0-verified / emulated-Claude), `fleet_freeze`, honest `pause` (emulated per card), `ask`/`fleet_respond` (the worker's voice — agent-xp C1). "Amendment is loud" conformance assertion.
-- `glm-adapter` = claude-adapter + Z.ai env (officially supported config; `glm-5.2[1m]`, long timeout, auto-compact); scheduler respects plan concurrency ceilings (Pro ≈ 1 in-flight) as a hard input. Evaluate **OpenCode-as-GLM-worker** as a distinct, possibly richer adapter (`opencode serve` REST/WS + `export/import`) if the Claude-harness/GLM mismatch degrades quality.
+- `glm-adapter` = claude-adapter + Z.ai env (officially supported config; exact `glm-5.2`, long timeout, auto-compact); scheduler respects plan concurrency ceilings (Pro ≈ 1 in-flight) as a hard input. Evaluate **OpenCode-as-GLM-worker** as a distinct, possibly richer adapter (`opencode serve` REST/WS + `export/import`) if the Claude-harness/GLM mismatch degrades quality. No older GLM example is a supported route.
 - `baton top`: TUI dashboard — fleet view, provenance-typed digests (`facts` vs delimiter-wrapped untrusted `prose`), approve/deny, **takeover** (resume worker session in its own TUI).
 - **New: worker isolation & threat model** implemented (per-worker throwaway `$HOME`, mount/sandbox enforcement, honey-token canary boot test) — doc 09 §C4.
 - Per-vendor backoff/reroute (reroute is a headroom-checked scheduler decision, not a retry cascade); hub-lifecycle recovery (process registry in the ledger, boot reconcile, orphan reaper).
@@ -52,7 +148,8 @@ The two things a `codex exec` for-loop *cannot* do, shipped first because they j
 
 - Conductor mode (Option D): orchestrator under Agent SDK with a true push loop, reusing hub + adapters unchanged (the supervisor already removed the LLM from the liveness path, so this is a northbound swap, not a rewrite).
 - ACP southbound tier (Gemini CLI first); draft ACP `steer`/usage extension proposals upstream (ambition judge C4).
-- Foreman posture: hub on a remote box (atari-homelab-class), SSH/Tailscale northbound; unix control socket + `codex app-server proxy` + `codex remote-control` pairing (**not** the ws:// transport — explicitly unsupported; Codex review).
+- Historical Foreman/homelab posture: **excluded from the current product goal**. Deployment-neutral
+  Web/MCP northbound remains; no homelab integration or runtime dependency is pursued.
 - Full eval publication (doc 06 Q9) with the harness card + per-vendor cost; routing-by-empirics falls out of the same data.
 
 ## Deliberately deferred / cut

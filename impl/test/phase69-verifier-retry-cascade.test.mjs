@@ -354,7 +354,9 @@ test('VR8.8: restart and response-loss replay preserve one retry attempt and one
   const acted = await actByKind(applicationB, runId, 'retry_verification', { reason: 'accept after runtime correction' });
   assert.equal(acted.outline.phase, 'work_completed');
   const statusB = await applicationB.command('run.status', { runId }, principal('owner'));
-  const workerId = statusB.ownership.workerIds[0];
+  assert.deepEqual(statusB.ownership, { workers: 0, workerIds: [], closed: false },
+    'durable replay coordinates are not current-process resource ownership');
+  const workerId = driverB.coordination.task(statusB.nodes[0].taskId).assignee;
   const attemptEvents = driverB.log.read(workerId).filter((event) => event.kind === 'verify.reverified');
   assert.equal(attemptEvents.length, 2, 'one original attempt plus exactly one retry attempt');
   await applicationB.shutdown(principal('restart-2'));
@@ -432,4 +434,121 @@ test('VR6 registry: retry_verification is a first-class semantic action with CLI
   assert.match(command.usage, /^baton run retry /u);
   const rendered = batonCliHelp(action.helpTopic);
   assert.match(rendered, new RegExp(action.label, 'u'));
+});
+
+test('VR9: an inconclusive verification projects closed mechanical failure detail through ordinary inspection and never the raw output tail', async (t) => {
+  const f = fixture('closed-detail');
+  cleanup(t, f.application);
+  const runId = 'run-phase69-closed-detail';
+  await driveToInconclusive(f, runId);
+
+  const status = await f.application.command('run.status', { runId }, principal('owner'));
+  const verdict = status.verification?.verdict;
+  assert.ok(verdict, 'an inconclusive Run projects its verifier verdict through ordinary status');
+  assert.equal(verdict.accepted, false);
+  assert.equal(verdict.outcome, 'inconclusive');
+  assert.equal(verdict.failureOwnership, 'verifier');
+  assert.equal(verdict.expectedExit, 0);
+  assert.equal(verdict.observedExit, null, 'an unavailable spawn observes no exit');
+  assert.deepEqual(verdict.execution, { state: 'unavailable', code: 'verification_spawn_unavailable' });
+  assert.deepEqual(verdict.baseExecution, { state: 'unavailable', code: 'verification_spawn_unavailable' },
+    'the baseline sandbox also could not spawn under the broken runtime');
+  assert.equal(verdict.outputExceeded, false);
+  assert.equal(Number.isSafeInteger(verdict.outputTailBytes), true);
+  assert.match(verdict.outputTailDigest ?? '', /^[a-f0-9]{64}$/u,
+    'the captured output tail is represented only by a digest');
+  assert.equal(typeof verdict.tailWindowSaturated, 'boolean');
+  assert.ok(verdict.durationMs === null || verdict.durationMs >= 0);
+  assert.match(verdict.runtimeDigest ?? '', /^[a-f0-9]{64}$/u);
+  assert.match(verdict.digest ?? '', /^[a-f0-9]{64}$/u);
+  assert.equal(verdict.attemptOrdinal, 1, 'the original attempt is ordinal one');
+
+  // The closed surface carries no free-form verifier note, no total-output claim, and never the
+  // raw captured output tail.
+  assert.equal(Object.hasOwn(verdict, 'note'), false,
+    'a free-form verifier note is not a closed field and is not projected');
+  assert.equal(Object.hasOwn(verdict, 'outputBytes'), false,
+    'the projection does not claim a total captured output size');
+  assert.equal(Object.hasOwn(verdict, 'observedOutputTail'), false,
+    'the raw verifier output tail must never reach an ordinary Run surface');
+  const serialized = JSON.stringify(status);
+  assert.equal(serialized.includes('refs/baton/checkpoints'), false);
+  assert.equal(serialized.includes(f.repo), false);
+
+  const section = await f.application.command('run.inspect', {
+    runId, depth: 'section', section: 'verification',
+  }, principal('owner'));
+  const row = section.section.items[0];
+  assert.equal(row.value.verdict.outcome, 'inconclusive');
+  assert.equal(Object.hasOwn(row.value.verdict, 'observedOutputTail'), false);
+});
+
+test('VR9: a candidate_failed verdict projects candidate-owned failure detail without laundering it into success or blaming the route', async (t) => {
+  const contract = verification({
+    arguments: ['-e', "process.exit(require('node:fs').existsSync('candidate.txt') ? 1 : 0)"],
+  });
+  const f = fixture('candidate-detail', { verificationContract: contract });
+  const runId = 'run-phase69-candidate-detail';
+  await driveToInconclusive(f, runId);
+  await f.application.shutdown(principal('restart'));
+
+  const adapter = configuredAdapter();
+  const driver = buildDriver({ repo: f.repo, logDir: f.logDir, adapter, runtimePolicy: correctedRuntimePolicy() });
+  const application = buildApplication(driver, f.profiles);
+  cleanup(t, { application, driver });
+
+  await actByKind(application, runId, 'retry_verification', { reason: 'retry under corrected runtime projects the candidate failure' });
+  const status = await application.command('run.status', { runId }, principal('owner'));
+  assert.equal(status.verification.state, 'failed',
+    'a candidate_failed verdict is a real failure, never classified as inconclusive or success');
+  const verdict = status.verification.verdict;
+  assert.equal(verdict.outcome, 'candidate_failed');
+  assert.equal(verdict.failureOwnership, 'candidate');
+  assert.equal(verdict.accepted, false);
+  assert.equal(verdict.observedExit, 1);
+  assert.equal(verdict.expectedExit, 0);
+  assert.deepEqual(verdict.execution, { state: 'completed', code: 'verification_completed' });
+  assert.deepEqual(verdict.baseExecution, { state: 'completed', code: 'verification_completed' });
+  assert.notEqual(status.terminalCause?.kind, 'provider_failure',
+    'a candidate failure is never blamed on the agent route');
+  assert.equal(Object.hasOwn(verdict, 'observedOutputTail'), false);
+});
+
+test('VR9: a secret-bearing verifier output never reaches outline, section, evidence, status, or receipts', async (t) => {
+  const secret = 'ghp_leakedVerifierSecretToken';
+  // Build the secret at runtime from char codes so the verification argument itself is not
+  // credential-shaped (the plan validator accepts it), while the captured output is.
+  const codes = [...secret].map((ch) => ch.charCodeAt(0)).join(',');
+  const contract = verification({
+    arguments: ['-e', `process.stdout.write(String.fromCharCode(${codes}));`
+      + " process.exit(require('node:fs').existsSync('candidate.txt') ? 1 : 0)"],
+  });
+  const f = fixture('secret-output', { verificationContract: contract });
+  const runId = 'run-phase69-secret-output';
+  await driveToInconclusive(f, runId);
+  await f.application.shutdown(principal('restart'));
+
+  const adapter = configuredAdapter();
+  const driver = buildDriver({ repo: f.repo, logDir: f.logDir, adapter, runtimePolicy: correctedRuntimePolicy() });
+  const application = buildApplication(driver, f.profiles);
+  cleanup(t, { application, driver });
+
+  await actByKind(application, runId, 'retry_verification', { reason: 'retry under corrected runtime' });
+
+  for (const request of [
+    { runId, depth: 'outline' },
+    { runId, depth: 'section', section: 'verification' },
+    { runId, depth: 'section', section: 'execution' },
+    { runId, depth: 'section', section: 'cleanup' },
+  ]) {
+    const view = await application.command('run.inspect', request, principal('owner'));
+    assert.equal(JSON.stringify(view).includes(secret), false,
+      `verification secret leaked at ${request.depth}/${request.section ?? ''}`);
+  }
+  const status = await application.command('run.status', { runId }, principal('owner'));
+  assert.equal(JSON.stringify(status).includes(secret), false, 'verification secret leaked through run.status');
+  const evidence = await application.command('run.evidence', { runId }, principal('owner'));
+  assert.equal(JSON.stringify(evidence).includes(secret), false, 'verification secret leaked through run.evidence');
+  // The verdict digest is structural; the raw secret-bearing tail is never carried.
+  assert.equal(Object.hasOwn(status.verification.verdict, 'observedOutputTail'), false);
 });
