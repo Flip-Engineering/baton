@@ -1120,7 +1120,14 @@ test('Phase 60 adversarial: every pre-spawn post-admission failure compensates p
       let spawnCalls = 0;
       f.resumed.spawn = async () => { spawnCalls += 1; return { ok: true }; };
       const originalLogDir = f.log.dir;
-      if (phase === 'operational_log') f.log.dir = join(originalLogDir, 'missing', 'nested');
+      if (phase === 'operational_log') {
+        const admit = f.coordination.admitRecoveryAttempt.bind(f.coordination);
+        f.coordination.admitRecoveryAttempt = (...args) => {
+          const admitted = admit(...args);
+          f.log.dir = join(originalLogDir, 'missing', 'nested');
+          return admitted;
+        };
+      }
       if (phase === 'coordination') f.replay._coordRecord = () => { throw new Error('coordination setup failed'); };
       if (phase === 'runtime') f.replay._runtimeScopes.create = () => { throw new Error('runtime setup failed'); };
 
