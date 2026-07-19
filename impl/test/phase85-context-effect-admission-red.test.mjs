@@ -310,12 +310,12 @@ test('CC85-A1: generic reduce admission shares one event/store, replays inertly,
   deployment = await open();
   const afterRestart = eventsAt(deploymentRoot);
   assert.equal(afterRestart.filter((event) => event.kind === 'plan.version_proposed').length,
-    plansBeforeRestart,
-    'map reconciliation must ignore a generic plan-pending call');
+    plansBeforeRestart + 1,
+    'generic reconciliation must propose its own exactly prebound pending Plan');
   assert.equal(afterRestart.filter((event) => event.kind === 'context.call_admitted').length,
     callsBeforeRestart);
   assert.equal(tracker.calls.length, providerCallsBeforeAdmission,
-    'restart must neither dispatch nor repeat provider work for generic admission');
+    'restart proposal must neither dispatch nor repeat provider work without approval');
   const replayed = driver.coordination.contextCall(call.callId);
   assert.equal(replayed.callDigest, call.callDigest);
   assert.deepEqual(replayed.authority, call.authority,

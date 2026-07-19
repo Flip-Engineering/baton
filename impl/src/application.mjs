@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { normalizeGoalRequest, normalizePlanRequest } from './goal-plan.mjs';
+import { contextEffectCallIdentity, contextEffectNodeBinding } from './context-call.mjs';
 import { contextMapCallIdentity, contextMapNodeBinding } from './context-map.mjs';
 import { normalizeWorkerPolicyRequest } from './worker-policy.mjs';
 import { normalizeWorkflowRevision } from './workflow-revision.mjs';
@@ -2262,6 +2263,9 @@ export class BatonApplication {
         }
         continue;
       }
+      if (await this._reconcileContextEffectCalls(current)) {
+        current = this._findRun(runId, { allowUnavailableProfile: true });
+      }
       if (await this._reconcileContextMapCalls(current)) {
         current = this._findRun(runId, { allowUnavailableProfile: true });
       }
@@ -2645,7 +2649,10 @@ export class BatonApplication {
         await this._validateWorkflowRevisionPlan(current);
       }
       if (current.plan.nodes.some((node) => node.contextCall)) {
-        this._validateContextMapPlan(current);
+        if (current.plan.nodes.every((node) => (
+          node.contextCall?.kind === 'context_effect_child'
+        ))) this._validateContextEffectPlan(current);
+        else this._validateContextMapPlan(current);
       }
     }
     if (current.approval === null) {
@@ -5191,6 +5198,9 @@ export class BatonApplication {
   }
 
   async _buildView(current, observer, options = {}) {
+    if (await this._reconcileContextEffectCalls(current)) {
+      current = this._findRun(current.goal.runId);
+    }
     if (await this._reconcileContextMapCalls(current)) {
       current = this._findRun(current.goal.runId);
     }
@@ -5735,8 +5745,11 @@ export class BatonApplication {
       .filter((cell) => sessionIds.has(cell.sessionId))
       .sort((left, right) => left.admittedEvent - right.admittedEvent);
     const calls = (projected?.calls ?? [])
-      .filter((call) => call.kind === 'baton.context_map_call'
-        && call.source?.runId === current.goal.runId)
+      .filter((call) => (
+        call.kind === 'baton.context_effect_call'
+          ? call.authority?.contextPrincipal?.runId === current.goal.runId
+          : call.kind === 'baton.context_map_call' && call.source?.runId === current.goal.runId
+      ))
       .sort((left, right) => left.admittedEvent - right.admittedEvent);
     const currentSessions = sessions.filter((session) => (
       session.manifest?.workflow?.plan?.digest === current.plan?.digest
@@ -5744,10 +5757,12 @@ export class BatonApplication {
     ));
     const currentSessionIds = new Set(currentSessions.map((session) => session.sessionId));
     const currentCells = cells.filter((cell) => currentSessionIds.has(cell.sessionId));
-    const currentCalls = calls.filter((call) => (
-      call.expectedPlanDigest === current.plan?.digest
-        || call.source.predecessorPlan.digest === current.plan?.digest
-    ));
+    const currentCalls = calls.filter((call) => {
+      const predecessor = call.kind === 'baton.context_effect_call'
+        ? call.authority.predecessorPlan : call.source.predecessorPlan;
+      return call.expectedPlanDigest === current.plan?.digest
+        || predecessor.digest === current.plan?.digest;
+    });
     const lastCell = currentCells.at(-1) ?? cells.at(-1) ?? null;
     const lastCall = currentCalls.at(-1) ?? calls.at(-1) ?? null;
     const branchCount = sessions.reduce(
@@ -5797,8 +5812,11 @@ export class BatonApplication {
           operation: lastCell.program?.expression?.op ?? null,
         } : null,
         lastCall: lastCall ? {
-          id: lastCall.callId, state: lastCall.state, operation: 'map',
-          partitionCount: lastCall.partitions.length,
+          id: lastCall.callId, state: lastCall.state,
+          operation: lastCall.kind === 'baton.context_effect_call' ? lastCall.operator : 'map',
+          ...(lastCall.kind === 'baton.context_effect_call'
+            ? { unitCount: lastCall.units.length }
+            : { partitionCount: lastCall.partitions.length }),
         } : null,
         summary: currentCalls.length > 0
           ? 'Provider-backed Context is compiled through a separately approved successor Plan.'
@@ -5860,19 +5878,28 @@ export class BatonApplication {
         ...(cell.result?.termination ? { termination: clone(cell.result.termination) } : {}),
       },
     }));
-    const callItems = context.calls.map((call) => ({
-      id: call.callId,
-      section: 'context',
-      state: call.state,
-      summary: `Context map over ${call.partitions.length} immutable partitions is ${call.state}.`,
-      value: {
-        kind: 'call', operation: 'map', inputCellId: call.source.cellId,
-        logicalRole: call.role, partitionCount: call.partitions.length,
-        childCount: call.children?.length ?? 0,
-        providerEffects: call.children?.length ?? 0,
-        plan: clone(call.plan), approval: clone(call.approval),
-      },
-    }));
+    const callItems = context.calls.map((call) => {
+      const generic = call.kind === 'baton.context_effect_call';
+      const operation = generic ? call.operator : 'map';
+      const unitCount = generic ? call.units.length : call.partitions.length;
+      return {
+        id: call.callId,
+        section: 'context',
+        state: call.state,
+        summary: `Context ${operation} over ${unitCount} immutable ${
+          generic ? 'units' : 'partitions'} is ${call.state}.`,
+        value: {
+          kind: 'call', operation,
+          ...(generic
+            ? { inputCallId: call.source.kind === 'call' ? call.source.id : null, unitCount }
+            : { inputCellId: call.source.cellId, partitionCount: unitCount }),
+          logicalRole: call.role,
+          childCount: call.children?.length ?? 0,
+          providerEffects: call.children?.filter((child) => child.taskId !== null).length ?? 0,
+          plan: clone(call.plan), approval: clone(call.approval),
+        },
+      };
+    });
     return [...sessionItems, ...cellItems, ...callItems];
   }
 
@@ -5913,7 +5940,12 @@ export class BatonApplication {
         kind: 'context_call_admission', digest: call.admissionDigest,
         provenance: 'durable Context call and successor Plan prebinding',
         value: {
-          call: clone({
+          call: call.kind === 'baton.context_effect_call' ? clone({
+            callId: call.callId, callDigest: call.callDigest,
+            requestId: call.requestId, requestDigest: call.requestDigest,
+            generation: call.generation, operator: call.operator,
+            source: call.source, role: call.role, units: call.units,
+          }) : clone({
             callId: call.callId, callDigest: call.callDigest,
             programDigest: call.programDigest, generation: call.generation,
             source: call.source, role: call.role, partitions: call.partitions,
@@ -5982,6 +6014,33 @@ export class BatonApplication {
     return deepFreeze(call);
   }
 
+  _validateContextEffectPlan(current) {
+    const bindings = current.plan?.nodes?.map((node) => node.contextCall).filter((binding) => (
+      binding?.kind === 'context_effect_child'
+    )) ?? [];
+    if (bindings.length === 0) return null;
+    if (bindings.length !== current.plan.nodes.length
+      || new Set(bindings.map((binding) => binding.callId)).size !== 1) {
+      throw applicationError('Context effect Plan bindings are incomplete or ambiguous',
+        'application_context_call_integrity');
+    }
+    const call = this.driver.coordination.contextCall?.(bindings[0].callId);
+    if (!call || call.kind !== 'baton.context_effect_call'
+      || call.expectedPlanDigest !== current.plan.digest
+      || call.authority.contextPrincipal.runId !== current.goal.runId
+      || call.authority.predecessorPlan.digest !== current.plan.predecessor?.digest
+      || call.units.length !== bindings.length
+      || bindings.some((binding) => (
+        binding.callDigest !== call.callDigest
+        || binding.requestDigest !== call.requestDigest
+        || !call.units.some((unit) => unit.unitId === binding.unit.unitId)
+      ))) {
+      throw applicationError('Context effect Plan differs from its durable call admission',
+        'application_context_call_integrity');
+    }
+    return deepFreeze(call);
+  }
+
   _contextMapCallCore(call) {
     return {
       schemaVersion: call.schemaVersion, kind: call.kind, generation: call.generation,
@@ -6030,6 +6089,32 @@ export class BatonApplication {
         pathScope: clone(node.pathScope),
       };
     });
+  }
+
+  async _reconcileContextEffectCalls(current) {
+    if (!this.context || this._closing) return false;
+    const calls = (this.driver.coordination.contextCalls?.({ runId: current.goal.runId }) ?? [])
+      .filter((call) => call.kind === 'baton.context_effect_call');
+    let planChanged = false;
+    for (const call of calls) {
+      if (call.state !== 'plan_pending' || call.plan !== null) continue;
+      if (current.plan?.digest !== call.authority.predecessorPlan.digest) {
+        throw applicationError('Context effect pending Plan lost its predecessor head',
+          'application_context_call_recovery_conflict');
+      }
+      const proposed = await this.driver.coordinator.proposePlan({
+        goal: call.planRequest.goal,
+        predecessor: call.planRequest.predecessor,
+        nodes: call.planRequest.nodes,
+      }, authority(this.principals.planner, this.repoId, current.goal.runId, 'plan:propose',
+        `application:${current.goal.runId}:context-${call.operator}:${call.callDigest}`));
+      if (proposed.plan.digest !== call.expectedPlanDigest) {
+        throw applicationError('Context effect recovered Plan differs from its durable admission',
+          'application_context_call_integrity');
+      }
+      planChanged = true;
+    }
+    return planChanged;
   }
 
   async _reconcileContextMapCalls(current) {
@@ -6315,25 +6400,206 @@ export class BatonApplication {
     return this._validateContextMapPlan(refreshed);
   }
 
+  async _proposeContextReduce(current, inputs, caller) {
+    if (!this._isWorkflowRun(current) || !current.profile) {
+      throw applicationError('Context reduce requires a current recursively composable Workflow',
+        'application_context_reduce_unavailable');
+    }
+    const sourceCall = this.driver.coordination.contextCall(inputs.callId);
+    const sourceRunId = sourceCall?.kind === 'baton.context_effect_call'
+      ? sourceCall.authority?.contextPrincipal?.runId : sourceCall?.source?.runId;
+    const sourceSessionId = sourceCall?.kind === 'baton.context_effect_call'
+      ? sourceCall.authority?.sessionId : sourceCall?.source?.sessionId;
+    const sourceSession = sourceSessionId
+      ? this.driver.coordination.contextSession(sourceSessionId) : null;
+    if (!sourceCall || sourceCall.state !== 'completed' || sourceRunId !== current.goal.runId
+      || sourceCall.expectedPlanDigest !== current.plan?.digest
+      || !sourceSession || sourceSession.state !== 'active') {
+      throw applicationError(
+        'Context reduce input is not one completed call at the current Plan head',
+        'application_context_reduce_source_invalid',
+      );
+    }
+    let source; let artifacts;
+    try {
+      source = this.driver.coordination.contextCompletedCallSource(sourceCall.callId);
+      artifacts = this.driver.coordination.contextCallArtifacts(sourceCall.callId);
+    } catch (error) {
+      throw applicationError(error?.message ?? 'Context reduce source evidence is unavailable',
+        error?.code ?? 'application_context_reduce_source_invalid');
+    }
+    const outputLineages = artifacts.evidence?.outputLineages;
+    if (artifacts.evidence?.schemaVersion !== 3 || !Array.isArray(artifacts.output?.items)
+      || !Array.isArray(outputLineages)
+      || outputLineages.length !== artifacts.output.items.length
+      || outputLineages.length !== source.itemCount
+      || outputLineages.some((lineage, index) => (
+        lineage?.index !== index || lineage.itemDigest !== digest(artifacts.output.items[index])
+          || !/^[a-f0-9]{64}$/u.test(lineage.lineageDigest ?? '')
+      ))) {
+      throw applicationError('Context reduce requires fully verified call-evidence-v3 lineage',
+        'context_output_lineage_required');
+    }
+    const definition = this._workflowDefinition(current);
+    if (definition.schemaVersion !== 3) {
+      throw applicationError('Context reduce requires a preserved Workflow v3 role catalog',
+        'application_context_reduce_role_invalid');
+    }
+    const roleCatalog = this._workflowRoleCatalog(current, definition);
+    const catalogRole = roleCatalog.roles.find((entry) => entry.role === inputs.role) ?? null;
+    if (!catalogRole) {
+      throw applicationError('Context reduce role is outside the Workflow role catalog',
+        'application_context_reduce_role_invalid');
+    }
+    const workflowPolicy = workflowDefinitionPolicy(definition);
+    const history = this._workflowPlanHistory(current);
+    const nodeBudget = workflowRevisionBudget(
+      current.profile, history.map((entry) => entry.plan), 1, workflowPolicy.maxRounds,
+    );
+    if (!nodeBudget) {
+      throw applicationError('Context reduce has no remaining Workflow budget authority',
+        'application_context_reduce_capacity');
+    }
+    const call = contextEffectCallIdentity({
+      schemaVersion: 1, kind: 'baton.context_effect_call', operator: 'reduce',
+      generation: 1, predecessorCall: null, inheritedChildren: [],
+      authority: {
+        contextPrincipal: clone(sourceSession.authority),
+        requester: { principalId: caller.principalId, sessionId: caller.sessionId },
+        sessionId: sourceSession.sessionId,
+        manifestDigest: sourceSession.manifestDigest,
+        treeSha: sourceSession.manifest.tree.sha,
+        environmentDigest: sourceSession.environmentDigest,
+        policyDigest: sourceSession.policyDigest,
+        definitionDigest: definition.definitionDigest,
+        roleCatalogDigest: roleCatalog.catalogDigest,
+        profileDigest: current.profile.digest,
+        predecessorPlan: {
+          planId: current.plan.planId, version: current.plan.version,
+          digest: current.plan.digest,
+        },
+      },
+      source, role: inputs.role, instruction: inputs.instruction,
+      units: [{
+        index: 0,
+        inputs: outputLineages.map((lineage) => ({
+          index: lineage.index, itemDigest: lineage.itemDigest,
+          lineageDigest: lineage.lineageDigest,
+        })),
+        coordinateDigest: source.coordinateDigest,
+      }],
+    });
+    const unit = call.units[0];
+    const template = catalogRole.nodeTemplate;
+    const memberRole = `${call.role}:0001`;
+    const node = {
+      definitionOfDone: clone(template.definitionOfDone),
+      pathScope: clone(template.pathScope),
+      contextScope: clone(template.contextScope),
+      risk: template.risk,
+      verification: clone(template.verification),
+      routes: {
+        harnesses: [catalogRole.route.harness], models: [catalogRole.route.model],
+        efforts: [catalogRole.route.effort],
+      },
+      capabilities: clone(template.capabilities),
+      effects: clone(template.effects),
+      requiredEffects: clone(template.requiredEffects),
+      ...(template.workerPolicy ? { workerPolicy: clone(template.workerPolicy) } : {}),
+      key: `attempt:${memberRole}`,
+      objective: `${call.role} Context reduce: ${call.instruction}\nImmutable unit: ${unit.unitId}`,
+      deps: [], budget: clone(nodeBudget),
+      contextCall: contextEffectNodeBinding(call, unit),
+    };
+    const planRequest = {
+      goal: {
+        goalId: current.goal.goalId, version: current.goal.version, digest: current.goal.digest,
+      },
+      predecessor: {
+        planId: current.plan.planId, version: current.plan.version, digest: current.plan.digest,
+      },
+      nodes: [node],
+    };
+    const goalPlanPolicy = this.driver.coordination.goalPlanPolicy();
+    const normalizedPlan = normalizePlanRequest(planRequest, goalPlanPolicy, current.goal);
+    const expectedPlanDigest = digest({
+      schemaVersion: 1, repoId: this.repoId, runId: current.goal.runId,
+      goal: normalizedPlan.goal, predecessor: normalizedPlan.predecessor,
+      nodes: normalizedPlan.nodes, totals: normalizedPlan.totals,
+      policyDigest: goalPlanPolicy.policyDigest,
+    });
+    const successorDefinitionCore = {
+      schemaVersion: 3, repoId: this.repoId, runId: current.goal.runId,
+      goalDigest: current.goal.digest, planDigest: expectedPlanDigest,
+      profileDigest: current.profile.digest,
+      workflowPolicy: clone(workflowPolicy), workflowPolicyDigest: workflowPolicy.policyDigest,
+      strategy: definition.strategy, workspace: definition.workspace, join: definition.join,
+      workItem: clone(definition.workItem), roleCatalog: clone(roleCatalog),
+      lineage: {
+        generation: definition.lineage.generation + 1,
+        rootDefinitionDigest: definition.lineage.rootDefinitionDigest
+          ?? definition.definitionDigest,
+        parentDefinitionDigest: definition.definitionDigest,
+      },
+      attempts: [workflowAttempt(memberRole, call.role, node.key, roleCatalog)],
+    };
+    validateWorkflowDefinitionV3(successorDefinitionCore, {
+      nodes: normalizedPlan.nodes,
+      ancestors: this._workflowDefinitionAncestors(current.goal.runId),
+    });
+    this.driver.coordination.recordDriver(APPLICATION_WORKFLOW_RECORD_KIND, {
+      ...successorDefinitionCore, definitionDigest: digest(successorDefinitionCore),
+    }, {
+      actor: APPLICATION_WORKFLOW_RECORD_ACTOR,
+      key: `${APPLICATION_WORKFLOW_RECORD_KIND}:${current.goal.runId}:${expectedPlanDigest}`,
+    });
+    const contextPrincipal = this.context.principal;
+    const admitted = this.driver.coordination.admitContextEffectCall({
+      call, planRequest, expectedPlanDigest,
+    }, {
+      actor: contextPrincipal.actor, principalId: contextPrincipal.principalId,
+      repoId: this.repoId, runId: current.goal.runId,
+      requesterPrincipalId: caller.principalId,
+      requesterSessionId: caller.sessionId,
+      key: `context.call:${call.callId}`,
+    });
+    const proposed = await this.driver.coordinator.proposePlan(planRequest,
+      authority(this.principals.planner, this.repoId, current.goal.runId, 'plan:propose',
+        `application:${current.goal.runId}:context-reduce:${call.callDigest}`));
+    if (proposed.plan.digest !== expectedPlanDigest
+      || admitted.call.expectedPlanDigest !== expectedPlanDigest) {
+      throw applicationError('Context reduce successor Plan differs from its durable prebinding',
+        'application_context_call_integrity');
+    }
+    const refreshed = this._findRun(current.goal.runId);
+    this._workflowDefinition(refreshed);
+    return this._validateContextEffectPlan(refreshed);
+  }
+
   async _performContextAction(current, action, inputs, caller, signal = null) {
     if (!this.context) {
       throw applicationError('Context runtime is unavailable', 'application_context_unavailable');
     }
-    if (action.kind === 'context_map') {
+    if (['context_map', 'context_reduce'].includes(action.kind)) {
       const definition = this._workflowDefinition(current);
       const roles = definition.schemaVersion === 3
         ? definition.roleCatalog.roles.map((entry) => entry.role)
         : [...new Set(definition.attempts.map((attempt) => attempt.role))];
       const selectedRole = inputs.role ?? (roles.length === 1 ? roles[0] : null);
       if (!selectedRole || !roles.includes(selectedRole)) {
-        throw applicationError('Context map requires one eligible approved Workflow role',
-          'application_context_map_role_invalid');
+        throw applicationError(`Context ${action.kind === 'context_map' ? 'map' : 'reduce'} requires one eligible approved Workflow role`,
+          action.kind === 'context_map'
+            ? 'application_context_map_role_invalid' : 'application_context_reduce_role_invalid');
       }
       const resolvedInputs = { ...inputs, role: selectedRole };
       await this._authorize('run.act', caller, current.goal.runId, {
-        action: action.kind, role: selectedRole, cellId: inputs.cellId,
+        action: action.kind, role: selectedRole,
+        ...(action.kind === 'context_map'
+          ? { cellId: inputs.cellId } : { callId: inputs.callId }),
       });
-      return this._proposeContextMap(current, resolvedInputs, caller);
+      return action.kind === 'context_map'
+        ? this._proposeContextMap(current, resolvedInputs, caller)
+        : this._proposeContextReduce(current, resolvedInputs, caller);
     }
     const targets = this._contextTargets(
       current, this._withContextProjection(current, await this._buildView(
@@ -6412,6 +6678,20 @@ export class BatonApplication {
         : definition.attempts.map((attempt) => attempt.role);
       if (roles.length > 0) {
         candidates.push({ kind: 'context_map', source: { roles }, target: { roles } });
+      }
+    }
+    const completedCalls = this._contextState(current).currentCalls.filter((call) => (
+      call.state === 'completed'
+    ));
+    if (completedCalls.length > 0) {
+      const definition = this._workflowDefinition(current);
+      const roles = definition.schemaVersion === 3
+        ? definition.roleCatalog.roles.map((entry) => entry.role) : [];
+      if (roles.length > 0) {
+        candidates.push({
+          kind: 'context_reduce', source: { roles },
+          target: { callIds: completedCalls.map((call) => call.callId), roles },
+        });
       }
     }
     const stopClosesOpenDispatchAuthority = [
@@ -6924,6 +7204,10 @@ export class BatonApplication {
           || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(request.inputs.query))))
         || (action.kind === 'context_map'
           && (!/^cell:[a-f0-9]{64}$/u.test(request.inputs.cellId ?? '')
+            || !validText(request.inputs.instruction, 16_384)
+            || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(request.inputs.instruction))))
+        || (action.kind === 'context_reduce'
+          && (!/^context-call:[a-f0-9]{64}$/u.test(request.inputs.callId ?? '')
             || !validText(request.inputs.instruction, 16_384)
             || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(request.inputs.instruction))))
         || (request.inputs.branch !== undefined && !validText(request.inputs.branch, 256))

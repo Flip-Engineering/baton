@@ -5442,21 +5442,51 @@ export class CoordinationStore {
   _validateContextMapPlanProposal(plan, integrity = false) {
     const bindings = plan?.nodes?.map((node) => node.contextCall).filter(Boolean) ?? [];
     if (bindings.length === 0) return null;
+    const genericBinding = bindings[0]?.kind === 'context_effect_child';
     const fail = (message) => this._contextFailure(message,
-      'context_map_plan_integrity', integrity);
+      genericBinding ? 'context_call_plan_integrity' : 'context_map_plan_integrity', integrity);
     if (bindings.length !== plan.nodes.length
       || new Set(bindings.map((binding) => binding.callId)).size !== 1) {
       return fail('Context map Plan bindings are incomplete or ambiguous');
     }
     const call = this._contextCalls.get(bindings[0].callId);
+    const generic = call?.kind === 'baton.context_effect_call';
+    const callRunId = generic ? call?.authority?.contextPrincipal?.runId : call?.source?.runId;
     if (!call || call.state !== 'plan_pending'
       || call.expectedPlanDigest !== plan.digest
-      || call.source.runId !== plan.runId
+      || callRunId !== plan.runId
       || canonicalDigest(call.planRequest) !== canonicalDigest({
         goal: plan.goal, predecessor: plan.predecessor,
         nodes: plan.nodes, totals: plan.totals,
       })) {
       return fail('Context map Plan has no exact durable call admission');
+    }
+    if (generic) {
+      const callCore = {
+        schemaVersion: call.schemaVersion, kind: call.kind, operator: call.operator,
+        requestId: call.requestId, requestDigest: call.requestDigest,
+        generation: call.generation, predecessorCall: call.predecessorCall,
+        executionUnitIds: clone(call.executionUnitIds),
+        inheritedChildren: clone(call.inheritedChildren), authority: clone(call.authority),
+        source: clone(call.source), role: call.role, instruction: call.instruction,
+        units: clone(call.units), callId: call.callId, callDigest: call.callDigest,
+      };
+      const units = new Set();
+      for (const binding of bindings) {
+        const unit = call.units.find((candidate) => candidate.unitId === binding.unit?.unitId);
+        let expected;
+        try { expected = unit ? contextEffectNodeBinding(callCore, unit) : null; }
+        catch { expected = null; }
+        if (!expected || canonicalDigest(expected) !== canonicalDigest(binding)
+          || units.has(unit.unitId)) {
+          return fail('Context effect Plan substituted or repeated an admitted unit');
+        }
+        units.add(unit.unitId);
+      }
+      if (units.size !== call.units.length) {
+        return fail('Context effect Plan does not cover its admitted unit set');
+      }
+      return call;
     }
     const callCore = {
       schemaVersion: call.schemaVersion,

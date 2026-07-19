@@ -71,6 +71,24 @@ const sections = [
 ].map(([sectionId, summary]) => ({ id: sectionId, summary }));
 
 const actions = {
+  context_reduce: {
+    label: 'Reduce completed Context call',
+    summary: 'Propose one separately approved successor Plan over a fully verified completed Context call.',
+    inputSchema: objectSchema({
+      callId: {
+        type: 'string', pattern: '^context-call:[a-f0-9]{64}$',
+      },
+      instruction: { type: 'string', minLength: 1, maxLength: 16384 },
+      role: { type: 'string', minLength: 1, maxLength: 256 },
+    }, ['callId', 'instruction']),
+    serverDerived: [
+      'completedCallEvidence', 'resultCapsuleRefs', 'lineage', 'predecessorPlan',
+      'successorPlan', 'workflowDefinition', 'route', 'workerPolicy', 'budget', 'call',
+    ],
+    effect: 'plan_proposal', destructive: false, irreversible: false,
+    idempotent: true, priority: 'optional', helpTopic: 'run.act.context_reduce',
+    expectedDepth: 'outline', genericCli: true,
+  },
   context_map: {
     label: 'Map addressed Context',
     summary: 'Propose one separately approved parallel successor Plan over an immutable completed Context cell.',

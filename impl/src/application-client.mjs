@@ -383,6 +383,28 @@ export class BatonRunContext {
     return new BatonContextCall(this.#run, callId,
       view?.item?.id === callId ? view : null);
   }
+
+  async reduce(input, options = {}) {
+    exactOptions(options, new Set(['role', 'instruction']), 'Context reduce');
+    const callId = input instanceof BatonContextCall ? input.id : input;
+    if (!/^context-call:[a-f0-9]{64}$/u.test(callId ?? '')
+      || (options.role !== undefined && !nonempty(options.role))
+      || !nonempty(options.instruction)) {
+      throw clientError('Context reduce request is invalid');
+    }
+    const view = await this.#run.act('context_reduce', {
+      callId, ...(options.role === undefined ? {} : { role: options.role }),
+      instruction: options.instruction,
+    });
+    const reducedCallId = view?.item?.section === 'context' ? view.item.id
+      : view?.outline?.context?.lastCall?.id;
+    if (!/^context-call:[a-f0-9]{64}$/u.test(reducedCallId ?? '')) {
+      throw clientError('Context reduce action did not return one addressed call',
+        'application_context_result_invalid');
+    }
+    return new BatonContextCall(this.#run, reducedCallId,
+      view?.item?.id === reducedCallId ? view : null);
+  }
 }
 
 export class BatonRun {
