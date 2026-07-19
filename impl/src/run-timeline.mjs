@@ -8,8 +8,10 @@ const SAFE_COORDINATION_KINDS = new Set([
   'plan.node_budget_settled', 'plan.node_dispatched', 'plan.version_proposed',
   'run.control_admitted', 'run.control_effect_started', 'run.control_provider_acked',
   'run.control_settled', 'run.lineage_admitted', 'run.orchestrator_lease_issued',
-  'run.orchestrator_lease_revoked', 'run.result_adopted', 'run.result_export_admitted',
+  'run.orchestrator_lease_revoked', 'run.result_adoption_admitted',
+  'run.result_adoption_completed', 'run.result_export_admitted',
   'run.result_export_completed', 'run.stop_admitted', 'run.stop_completed',
+  'run.verification_retry_admitted', 'run.verification_retry_completed',
   'task.acceptance_revoked', 'task.claimed', 'task.created', 'task.resources_released',
   'task.transitioned',
 ]);
@@ -26,9 +28,23 @@ const SAFE_OPERATIONAL_KINDS = new Set([
 ]);
 
 const SAFE_FACT_FIELDS = new Set([
-  'accept', 'accepted', 'decision', 'dispatchClosed', 'from', 'killConfirmed', 'outcome',
-  'phase', 'processesClosed', 'remainingCount', 'result', 'runAuthorityReleased', 'state',
-  'status', 'targetCount', 'terminal', 'to',
+  'accept', 'accepted', 'attempt', 'byteCount', 'decision', 'dispatchClosed', 'fileCount',
+  'from', 'killConfirmed', 'outcome', 'phase', 'processesClosed', 'remainingCount',
+  'result', 'runAuthorityReleased', 'state', 'status', 'targetCount', 'terminal', 'to',
+]);
+
+const SAFE_CLEANUP_COUNT_FIELDS = Object.freeze([
+  'pendingCancelled', 'killConfirmed', 'alreadyTerminal', 'processesObserved',
+  'processesClosed',
+]);
+
+const SAFE_CLEANUP_CHECK_FIELDS = Object.freeze([
+  'dispatchClosed', 'interactionsResolved', 'runAuthorityReleased',
+]);
+
+const SAFE_CONTEXT_CLEANUP_FIELDS = Object.freeze([
+  'targetSessionCount', 'targetCellCount', 'targetCallCount',
+  'remainingSessionCount', 'remainingCellCount', 'remainingCallCount',
 ]);
 
 const SUMMARIES = Object.freeze({
@@ -46,8 +62,14 @@ const SUMMARIES = Object.freeze({
   'run.control_effect_started': 'Run control crossed its provider-effect boundary.',
   'run.control_provider_acked': 'The provider acknowledged Run control.',
   'run.control_settled': 'Run control settled.',
+  'run.result_adoption_admitted': 'Run result adoption was durably admitted.',
+  'run.result_adoption_completed': 'Run result adoption completed.',
+  'run.result_export_admitted': 'Run result export was durably admitted.',
+  'run.result_export_completed': 'Run result export completed.',
   'run.stop_admitted': 'Run stop was durably admitted.',
   'run.stop_completed': 'Run stop completed with cleanup evidence.',
+  'run.verification_retry_admitted': 'Run result verification retry was durably admitted.',
+  'run.verification_retry_completed': 'Run result verification retry completed.',
   'task.claimed': 'Run work was claimed.',
   'task.created': 'Run work was created.',
   'task.transitioned': 'Run work changed lifecycle state.',
@@ -89,13 +111,24 @@ function safeFacts(payload) {
   for (const key of [...SAFE_FACT_FIELDS].sort()) {
     if (safeScalar(source[key])) facts[key] = source[key];
   }
+  for (const [nested, fields] of [
+    ['counts', SAFE_CLEANUP_COUNT_FIELDS],
+    ['checks', SAFE_CLEANUP_CHECK_FIELDS],
+    ['context', SAFE_CONTEXT_CLEANUP_FIELDS],
+  ]) {
+    if (!source[nested] || typeof source[nested] !== 'object' || Array.isArray(source[nested])) continue;
+    for (const key of fields) {
+      if (safeScalar(source[nested][key])) facts[key] = source[nested][key];
+    }
+  }
   if (source.result && typeof source.result === 'object' && !Array.isArray(source.result)) {
     for (const key of ['state', 'status', 'outcome']) {
       if (safeScalar(source.result[key])) facts[`result${key[0].toUpperCase()}${key.slice(1)}`] = source.result[key];
     }
   }
-  if (Number.isSafeInteger(source.payload?.totalTokens) && source.payload.totalTokens >= 0) {
-    facts.tokenCount = source.payload.totalTokens;
+  const totalTokens = source.totalTokens ?? source.payload?.totalTokens;
+  if (Number.isSafeInteger(totalTokens) && totalTokens >= 0) {
+    facts.tokenCount = totalTokens;
   }
   return facts;
 }
@@ -105,7 +138,7 @@ function category(kind) {
     || kind.startsWith('lifecycle.process_')) return 'cleanup';
   if (kind.startsWith('run.control_') || kind.startsWith('control.')) return 'control';
   if (kind.startsWith('plan.') || kind.startsWith('goal.')) return 'plan';
-  if (kind.startsWith('verify.')) return 'verification';
+  if (kind.startsWith('verify.') || kind.startsWith('run.verification_')) return 'verification';
   if (kind.startsWith('resource.')) return 'resource';
   if (kind.startsWith('content.')) return 'work';
   if (kind.startsWith('context.')) return 'context';
@@ -147,7 +180,8 @@ function explicitRunIds(payload) {
   const values = [
     payload?.runId, payload?.goal?.runId, payload?.plan?.runId, payload?.authority?.runId,
     payload?.binding?.runId, payload?.parentRunId, payload?.childRunId, payload?.rootRunId,
-    payload?.parent?.runId,
+    payload?.parent?.runId, payload?.receipt?.runId, payload?.session?.runId,
+    payload?.task?.runId,
   ];
   if (Array.isArray(payload?.targetRunIds)) values.push(...payload.targetRunIds);
   if (Array.isArray(payload?.ancestors)) values.push(...payload.ancestors);
@@ -243,7 +277,10 @@ function timelineFrames({
       verifyOperational(coordination.payload ?? {}, operational);
       if (!SAFE_OPERATIONAL_KINDS.has(operational.kind)) continue;
       const task = eventTask(operational, maps) ?? maps.byWorker.get(operational.worker) ?? null;
-      const belongs = operational.runId === runId || taskRun(task) === runId;
+      // An explicit operational Run binding is authoritative. Never let a stale or conflicting
+      // task/worker lookup widen it back into another Run.
+      const belongs = operational.runId !== null && operational.runId !== undefined
+        ? operational.runId === runId : taskRun(task) === runId;
       if (!belongs) continue;
       const recipient = taskRecipient(task);
       if (includeOutput) {
@@ -255,7 +292,7 @@ function timelineFrames({
           frames.push({
             runId, category: 'output', kind: 'untrusted_output', at: operational.ts,
             recipient, occurrenceTrust: 'authoritative', contentTrust: 'untrusted_provider',
-            occurrenceDigest: digest({ mapped: coordination.payload.digest, fragment }),
+            occurrenceDigest: digest({ coordination: digest(coordination), fragment }),
             output: { text, fragment, fragmentCount: fragments.length, digest: fullDigest },
           });
         });
@@ -269,7 +306,11 @@ function timelineFrames({
     const payload = coordination.payload ?? {};
     const task = eventTask(payload, maps);
     const ids = explicitRunIds(payload);
-    const belongs = ids.has(runId) || taskRun(task) === runId;
+    const boundTaskRun = taskRun(task);
+    // Coordination facts with both an explicit Run and task authority must agree. A conflicting
+    // task lookup is evidence ambiguity, not permission to show the fact in either Run.
+    const belongs = ids.size > 0 && validId(boundTaskRun) && !ids.has(boundTaskRun)
+      ? false : ids.has(runId) || (ids.size === 0 && boundTaskRun === runId);
     if (!belongs) continue;
     frames.push(safeFrame(runId, coordination, coordination.kind, coordination.ts,
       payload, task ? taskRecipient(task) : null));

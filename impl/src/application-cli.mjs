@@ -1564,27 +1564,51 @@ export async function runBatonCli(parsed, client, options = {}) {
       ...(parsed.recipient ? { recipient: parsed.recipient } : {}), ...extra,
     }, `${parsed.idempotencyKey}:${parsed.channel}:${extra.pageCursor ?? 'initial'}:${extra.cursor ?? 'now'}`);
     let view = await request();
-    if (!parsed.follow) return view;
     if (parsed.channel === 'progress') {
+      if (view?.runId !== parsed.runId || view.content?.runId !== parsed.runId
+        || view.content?.kind !== 'baton.run_progress') {
+        throw cliError('Baton returned progress for a different Run or channel',
+          'cli_protocol_failed');
+      }
+      if (!parsed.follow) return view;
       await options.onFollowPage?.(view);
       while (!view.terminal) {
         view = await request({ cursor: view.cursor });
+        if (view?.runId !== parsed.runId || view.content?.runId !== parsed.runId
+          || view.content?.kind !== 'baton.run_progress') {
+          throw cliError('Baton returned progress for a different Run or channel',
+            'cli_protocol_failed');
+        }
         if (view.changed || view.terminal) await options.onFollowPage?.(view);
       }
       return view;
     }
+    const assertTimelineView = (candidate) => {
+      const content = candidate?.content;
+      if (candidate?.runId !== parsed.runId
+        || content?.kind !== 'baton.run_timeline.page'
+        || content.channel !== parsed.channel
+        || (content.runId !== undefined && content.runId !== parsed.runId)
+        || !Array.isArray(content.items)
+        || content.items.some((entry) => entry?.runId !== undefined
+          && entry.runId !== parsed.runId)
+        || typeof content.cursor !== 'string'
+        || typeof content.hasMore !== 'boolean'
+        || (content.hasMore && content.items.length === 0)) {
+        throw cliError('Baton returned an invalid or cross-Run timeline page',
+          'cli_protocol_failed');
+      }
+    };
+    assertTimelineView(view);
+    if (!parsed.follow) return view;
     if ((view.content?.items?.length ?? 0) > 0) await options.onFollowPage?.(view);
     for (;;) {
-      if (view.content?.kind !== 'baton.run_timeline.page'
-        || typeof view.content.cursor !== 'string'
-        || typeof view.content.hasMore !== 'boolean') {
-        throw cliError('Baton returned an invalid Run timeline page', 'cli_protocol_failed');
-      }
       if (view.terminal && !view.content.hasMore) return view;
       view = await request({
         pageCursor: view.content.cursor,
         ...(!view.content.hasMore ? { cursor: view.cursor } : {}),
       });
+      assertTimelineView(view);
       if ((view.content?.items?.length ?? 0) > 0) await options.onFollowPage?.(view);
     }
   }

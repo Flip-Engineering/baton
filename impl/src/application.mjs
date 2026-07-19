@@ -8236,7 +8236,7 @@ export class BatonApplication {
           : this._runTimelineContent(current, request, bounds);
         const hasMore = content.kind === 'baton.run_timeline.page' && content.hasMore;
         const continuation = content.kind === 'baton.run_timeline.page'
-          ? {
+          ? (hasMore || !base.terminal ? {
             operation: 'run.inspect',
             arguments: {
               runId: current.goal.runId, depth: 'content', section: 'execution',
@@ -8244,7 +8244,7 @@ export class BatonApplication {
               ...(request.recipient ? { recipient: request.recipient } : {}),
               ...(!hasMore && !base.terminal ? { cursor: view.cursor } : {}),
             },
-          }
+          } : null)
           : base.continuation;
         return this._finalizeSemanticInspection({
           ...base, truncated: hasMore,

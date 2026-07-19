@@ -775,9 +775,13 @@ export class BatonRun {
       if (outcome.aborted) return;
       this.#last = outcome.next;
       const content = outcome.next?.content;
-      if (content?.kind !== 'baton.run_timeline.page'
+      if (outcome.next?.runId !== this.id
+        || content?.kind !== 'baton.run_timeline.page'
         || content.channel !== channel || !Array.isArray(content.items)
-        || typeof content.cursor !== 'string' || typeof content.hasMore !== 'boolean') {
+        || (content.runId !== undefined && content.runId !== this.id)
+        || content.items.some((entry) => entry?.runId !== undefined && entry.runId !== this.id)
+        || typeof content.cursor !== 'string' || typeof content.hasMore !== 'boolean'
+        || (content.hasMore && content.items.length === 0)) {
         throw clientError(`Run ${channel} page is invalid`, 'application_client_protocol_invalid');
       }
       for (const entry of content.items) {
