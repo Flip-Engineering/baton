@@ -17,8 +17,9 @@ const GOAL_PLAN_EVENT_KINDS = new Set(['goal.version_defined', 'plan.version_pro
 const GOAL_PLAN_WEB_COMMANDS = new Set(['goal_define', 'plan_propose', 'plan_approve', 'goal_plan_status']);
 const GOAL_PLAN_MCP_TOOLS = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'fleet_goal_plan_status']);
 const AUTHORITY_FIELDS = new Set([
+  'admissionDigest', 'authorityDigest', 'leaseDigest', 'requestDigest', 'revocationDigest',
   'credentialId', 'credentialDigest', 'principalId', 'principalDigest', 'proposerPrincipalId',
-  'sessionId', 'sessionDigest', 'userId', 'tokenDigest', 'csrfTokenDigest',
+  'sessionAuthorityDigest', 'sessionId', 'sessionDigest', 'userId', 'tokenDigest', 'csrfTokenDigest',
 ]);
 
 export class WebEventStream {
@@ -336,12 +337,12 @@ export class WebEventStream {
     return Array.isArray(principal?.capabilities) && principal.capabilities.includes('goal:observe');
   }
 
-  _redactAuthority(value) {
-    if (Array.isArray(value)) return value.map((item) => this._redactAuthority(item));
+  _redactAuthority(value, parentKey = null) {
+    if (Array.isArray(value)) return value.map((item) => this._redactAuthority(item, parentKey));
     if (!value || typeof value !== 'object') return value;
     return Object.fromEntries(Object.entries(value)
-      .filter(([key]) => !AUTHORITY_FIELDS.has(key))
-      .map(([key, item]) => [key, this._redactAuthority(item)]));
+      .filter(([key]) => !AUTHORITY_FIELDS.has(key) && !(parentKey === 'lease' && key === 'digest'))
+      .map(([key, item]) => [key, this._redactAuthority(item, key)]));
   }
 
   _stripGoalPlan(value) {

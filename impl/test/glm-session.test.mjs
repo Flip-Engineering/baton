@@ -72,12 +72,16 @@ function saveEnv(t, names) {
 
 test('SC6: GlmSessionCli exists, satisfies the adapter surface, and carries honest GLM identity + the SC7 capability tag', async () => {
   const GlmSessionCli = await importGlm();
-  const cli = new GlmSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE] });
+  const cli = new GlmSessionCli({
+    cmd: process.execPath, args: [FAKE_CLAUDE], versionProbe: () => 'Claude Code v9.8.7',
+  });
   assertIsAdapter(cli);
   const card = cli.card();
   assert.equal(card.harness, 'glm-via-claude-session');
-  assert.equal(card.version, 'claude-code-2.1.206+zai-anthropic');
+  assert.equal(card.version, 'claude-code-9.8.7+zai-anthropic');
   assert.equal(card.authPosture, 'api_key');
+  assert.equal(card.permissions.mode, 'bypassPermissions', 'GLM inherits the unattended Claude-family default');
+  assert.equal(cli._cfg.permissionMode, 'bypassPermissions');
   assert.equal(card.concurrencyCeiling, 1, 'derived limit: Z.ai Pro ≈ one in-flight session (same derivation as ZCodeCli, cli-adapters.mjs:255) — configurable, never arbitrary');
   assert.deepEqual(card.nonRefuserFor, ['ml-ai-inference-training', 'cybersecurity'], 'the explicit classifier tag the fleet routes on (SC7) — never operator folklore');
   assert.deepEqual(
@@ -85,6 +89,28 @@ test('SC6: GlmSessionCli exists, satisfies the adapter surface, and carries hone
     ['answer', 'approve', 'interrupt', 'kill', 'pause', 'prompt', 'spawn', 'steer'],
     'inherits the canonical 8-verb Claude-session card (SC8)',
   );
+});
+
+test('SC6: GLM transport version is probed from its configured Claude executable and never guessed', async () => {
+  const GlmSessionCli = await importGlm();
+  const calls = [];
+  const observed = new GlmSessionCli({
+    cmd: '/fixture/claude',
+    versionProbe: (command, args, options) => {
+      calls.push({ command, args, options });
+      return '2.7.3 (Claude Code)';
+    },
+  });
+  assert.equal(observed.card().version, 'claude-code-2.7.3+zai-anthropic');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, '/fixture/claude');
+  assert.deepEqual(calls[0].args, ['--version']);
+  assert.equal(calls[0].options.timeout, 5_000);
+
+  const unavailable = new GlmSessionCli({
+    cmd: '/fixture/missing-claude', versionProbe: () => { throw new Error('absent'); },
+  });
+  assert.equal(unavailable.card().version, 'unavailable');
 });
 
 test('SC6: ceiling stays configurable — the derivation is documented, the number is not hardcoded', async () => {

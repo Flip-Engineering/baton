@@ -1,0 +1,69 @@
+{
+  "record": {
+    "schemaVersion": 1,
+    "deploymentRoot": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-phase85-generic-settlement-LGYp1U",
+    "runId": "run-28463154e2ae6574d38c530800c1a19f",
+    "error": {
+      "name": "Error",
+      "code": null,
+      "message": "Context map did not settle: failed"
+    }
+  },
+  "cleanup": {
+    "stopped": {
+      "stop": {
+        "state": "stopped",
+        "admittedAt": "2026-07-19T01:59:59.020Z",
+        "completedAt": "2026-07-19T01:59:59.021Z",
+        "targetCount": 7,
+        "targetDigest": "1c6aab71e139de89b66b5201b3db9765b0ba2f44b6c7257b2bd2d5f0415eb5ac",
+        "receipt": {
+          "schemaVersion": 3,
+          "state": "stopped",
+          "scope": "run_subtree",
+          "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+          "runId": "run-28463154e2ae6574d38c530800c1a19f",
+          "targetCount": 7,
+          "remainingCount": 0,
+          "targetDigest": "1c6aab71e139de89b66b5201b3db9765b0ba2f44b6c7257b2bd2d5f0415eb5ac",
+          "counts": {
+            "pendingCancelled": 0,
+            "killConfirmed": 0,
+            "alreadyTerminal": 7,
+            "processesObserved": 7,
+            "processesClosed": 7
+          },
+          "checks": {
+            "dispatchClosed": true,
+            "interactionsResolved": true,
+            "runAuthorityReleased": true
+          },
+          "effects": {
+            "coordinatorClosed": false,
+            "writerReleased": false,
+            "transportsClosed": false
+          },
+          "context": {
+            "targetSessionCount": 1,
+            "targetCellCount": 0,
+            "targetCallCount": 1,
+            "remainingSessionCount": 0,
+            "remainingCellCount": 0,
+            "remainingCallCount": 0
+          },
+          "receiptDigest": "caf5c10c237cab27e2e8963d8a29c8852605fc6a1104d8024d40c2c0c8ba0bcc"
+        }
+      },
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      }
+    },
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    }
+  }
+}
