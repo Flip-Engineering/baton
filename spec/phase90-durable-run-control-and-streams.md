@@ -206,23 +206,32 @@ continuing page must contain at least one item.
   view.
 - RT10 verification failures expose a closed structural projection: enum-checked outcome and
   ownership, expected/observed exit, candidate/baseline execution state and code, output-exceeded
-  state, bounded-tail byte count/digest/saturation, bounded duration, validated runtime/verdict
-  digests, and attempt ordinal. Raw verifier output and free-form notes are absent.
+  state, exact captured-output byte count/SHA-256 digest, a closed diagnostic code, bounded
+  duration, validated runtime/verdict digests, and attempt ordinal. The same closed verdict is the
+  durable task/log/coordination/artifact authority; raw verifier output, tails, free-form notes,
+  argv/cwd/environment echoes, identities, and provider prose are absent from persistence.
 
-### RV — candidate-confirmation retry (documented remaining invariant)
+### RV — durable candidate-confirmation retry
 
-An initial `candidate_failed` checkpoint is not yet retriable through the ordinary Run surface.
-The boundary change is a durable Phase 69 invariant, not a broadened outcome condition:
+An initial `candidate_failed` checkpoint is retriable through the ordinary reason-only Run action
+under a durable Phase 69 invariant, not a broadened outcome condition:
 
 - pin the non-adoptable exact checkpoint and record `originOutcome=candidate_failed`;
-- admit exactly one operator-authorized confirmation across restart/response loss with the same
-  Plan, command, base, runtime, toolchain, and checkpoint, and no provider turn;
-- consume that one shot even when the confirmation is inconclusive;
-- retain both attempt records and the original losing verdict; and
-- mark a later pass `passed_after_candidate_failure`/unstable, never an ordinary clean pass.
+- admit exactly one operator-authorized confirmation across concurrency, restart, and response
+  loss with the same Plan, command, base, runtime, toolchain, candidate SHA/ref, and no provider
+  turn;
+- consume that one shot for passed, candidate-failed, or inconclusive confirmation;
+- retain both closed attempt records, the original losing verdict/counterexample, and its route
+  loss; and
+- accept a later pass only for the exact SHA with
+  `stability=passed_after_candidate_failure`, project `mechanically_verified_unstable`, and retain
+  that classification through restart, artifacts, evidence, integration, and learning.
 
-Until coordination-store and coordinator enforcement lands, `retry_verification` remains limited
-to inconclusive origins. RT10 supplies the ordinary diagnosis without weakening acceptance.
+Candidate-origin failure or inconclusiveness is final. Inconclusive-origin runtime repair remains a
+separate repeatable state and may bind the current corrected deployment runtime; it is neither
+consumed nor widened by candidate confirmation. Persisted-secret acceptance scans the worker and
+coordination stores after a verifier-only credential canary and proves RT10 at rest, rather than
+inferring it from an application projection.
 
 ## 7. Ordered implementation
 

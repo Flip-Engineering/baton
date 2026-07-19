@@ -424,9 +424,9 @@ const actions = {
     helpTopic: 'run.act.export_result', expectedDepth: 'outline',
   },
   retry_verification: {
-    label: 'Retry trust-gate verification', summary: 'Re-run the pinned verification of the exact preserved candidate under the current deployment verifier runtime, without another provider turn.',
+    label: 'Retry trust-gate verification', summary: 'Re-run the pinned verification of the exact preserved candidate without another provider turn; candidate-failure confirmation is one-shot and instability-preserving.',
     inputSchema: objectSchema({ reason: { type: 'string', minLength: 1, maxLength: 1024 } }, ['reason']),
-    serverDerived: ['checkpointSha', 'planDigest', 'runtimeDigest', 'attempt'], effect: 'verification_retry',
+    serverDerived: ['checkpointSha', 'checkpointRef', 'planDigest', 'baseSha', 'runtimeDigest', 'toolchainDigest', 'attempt'], effect: 'verification_retry',
     destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
     helpTopic: 'run.act.retry_verification', expectedDepth: 'outline',
   },
@@ -594,8 +594,9 @@ const cli = {
     'run.act.retry_verification': {
       commandIds: ['run.retry'],
       paragraphs: [
-        'Retry is safe because Baton replays only the already-approved trust gate: it re-resolves the exact preserved candidate checkpoint, rebuilds fresh candidate and base sandboxes, and re-runs the pinned Plan command under the current deployment verifier runtime. It never launches or resumes an agent harness and consumes no provider turn.',
+        'Retry is safe because Baton replays only the already-approved trust gate: it re-resolves the exact preserved candidate checkpoint, rebuilds fresh candidate and base sandboxes, and re-runs the pinned Plan command. It never launches or resumes an agent harness and consumes no provider turn.',
         'Baton did not blame the agent route because the verifier itself could not complete (its command could not start, timed out, exceeded its output boundary, or the baseline also failed), so no candidate defect was proven; inconclusive verification never updates route statistics.',
+        'An initial candidate-owned failure may be confirmed exactly once under the identical Plan, command, base, runtime, toolchain, and candidate SHA/ref. Every outcome consumes that shot. A later pass remains explicitly passed-after-candidate-failure and never becomes a clean mechanical win.',
       ],
     },
     'run.act.resume_work': {

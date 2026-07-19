@@ -1346,6 +1346,36 @@ test('the trust gate runs the referee in a fresh verify sandbox, never the worke
   assert.notEqual(capturedSandbox, ownWorktree, 'the referee sandbox must never be the worker\'s own worktree');
 });
 
+test('RV: coordinator closes even an injected referee verdict before task, log, coordination, or artifact persistence', async () => {
+  const adapter = new ScriptableAdapter();
+  const secret = 'verifier-output-only-canary';
+  const referee = async () => ({
+    reverified: true, observedExit: 0, passed: true, matchesClaim: true, locus: 'fresh_sandbox',
+    outcome: 'passed', failureOwnership: null, observedOutputTail: secret, note: secret,
+    command: ['node', '--credential-shaped-output'], cwd: secret, environment: { CANARY: secret },
+    workerId: secret, sessionId: secret, providerOutput: secret,
+  });
+  const { coordinator, log } = setup({ adapters: { mock: adapter }, referee });
+  const handle = await coordinator.spawn('mock', makeBrief());
+  adapter.emit({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'lifecycle.turn_completed',
+    actor: 'worker', payload: makeWorkerResult(),
+  });
+  await coordinator.wait(50);
+
+  const outcome = await coordinator.result(handle.id);
+  const verifyEvent = log.read(handle.id).find((event) => event.kind === 'verify.reverified');
+  const task = coordinator._coordination.task(handle.taskId);
+  const artifacts = task.artifactIds.map((id) => coordinator._coordination.artifact(id));
+  for (const persisted of [outcome.verdict, verifyEvent.payload.verdict, ...artifacts.map((artifact) => artifact.verdict)]) {
+    if (persisted === undefined) continue;
+    assert.equal(JSON.stringify(persisted).includes(secret), false);
+    for (const field of ['observedOutputTail', 'note', 'command', 'cwd', 'environment', 'workerId', 'sessionId', 'providerOutput']) {
+      assert.equal(Object.hasOwn(persisted, field), false, `${field} crossed the closed verdict boundary`);
+    }
+  }
+});
+
 test('forged done: worker claims completed/exit-0 but the referee observes a mismatched exit -> task ends failed', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapters: { mock: adapter }, referee: failingReferee(1) });

@@ -45,13 +45,9 @@ const MAX_ATTENTION = 64;
 const MAX_ATTENTION_TEXT_BYTES = 4_096;
 const MAX_REVIEW_SOURCE_BYTES = 4 * 1024 * 1024;
 const MAX_WORKFLOW_PLAN_HISTORY = 16;
-// VR9 closed verifier projection bounds. The durable verdict carries only the last
-// VERIFIER_OUTPUT_TAIL_WINDOW characters of captured output, so the projection names its tail
-// fields honestly and never claims a total captured size; a single verifier run is bounded by a
-// generous wall-clock ceiling so a malformed duration is dropped instead of passed through. outcome,
-// failure ownership, and execution state/code are reduced to the referee's closed enums so no
-// arbitrary string is passed through to an ordinary Run surface.
-const VERIFIER_OUTPUT_TAIL_WINDOW = 4_000;
+// VR9/RV closed verifier projection bounds. Durable verdicts carry only exact captured-byte
+// metadata and closed enums; raw command output and free-form diagnostics never cross the referee
+// receipt boundary. A malformed duration is dropped rather than passed through.
 const VERIFIER_DURATION_BOUND_MS = 7 * 24 * 60 * 60 * 1_000;
 const HEX64 = /^[a-f0-9]{64}$/u;
 const VERIFIER_OUTCOMES = Object.freeze(new Set(['passed', 'candidate_failed', 'inconclusive']));
@@ -59,6 +55,12 @@ const VERIFIER_OWNERSHIPS = Object.freeze(new Set(['candidate', 'verifier', 'bas
 const VERIFIER_EXECUTION_STATES = Object.freeze(new Set(['completed', 'timed_out', 'output_exceeded', 'unavailable']));
 const VERIFIER_EXECUTION_CODES = Object.freeze(new Set([
   'verification_completed', 'verification_timed_out', 'verification_output_exceeded', 'verification_spawn_unavailable',
+]));
+const VERIFIER_DIAGNOSTIC_CODES = Object.freeze(new Set([
+  'verification_output_exceeded', 'verification_timed_out', 'verification_spawn_unavailable',
+  'verification_claim_diverged', 'verification_red_green_failed', 'verification_coverage_failed',
+  'verification_mutation_failed', 'verification_coverage_unavailable', 'verification_mutation_unavailable',
+  'verification_passed', 'verification_exit_mismatch',
 ]));
 function sanitizeHex64(value) {
   return typeof value === 'string' && HEX64.test(value) ? value : null;
@@ -1173,10 +1175,12 @@ function runProgress({ phase, approval, node, route, verification, reviewPolicyM
     route?.observed ? 'Provider identity observed'
       : route?.resolved ? 'Route resolved; provider identity pending'
         : node?.taskId ? 'Provider startup pending' : 'Provider not started'),
-    stage('verification', 'Fresh verification', verification?.state === 'mechanically_verified' ? 'complete'
+    stage('verification', 'Fresh verification', ['mechanically_verified', 'mechanically_verified_unstable'].includes(verification?.state) ? 'complete'
       : verification?.state === 'inconclusive' ? 'blocked'
         : verification?.state === 'failed' ? 'failed' : 'pending',
-    verification?.state === 'mechanically_verified' ? 'Pinned verification accepted'
+    verification?.state === 'mechanically_verified_unstable'
+      ? 'Exact candidate confirmed after an original diagnostic failure; instability is retained.'
+      : verification?.state === 'mechanically_verified' ? 'Pinned verification accepted'
       : verification?.state === 'inconclusive' ? 'Verification needs another attempt; the exact candidate is preserved.'
         : verification?.state === 'failed' ? 'Pinned verification failed' : 'No accepted verification yet'),
     stage('semantic_review', 'Independent semantic review', reviewPolicyMode === 'none' ? 'complete'
@@ -1261,6 +1265,8 @@ function publicArtifact(artifact) {
     mediaType: artifact.mediaType,
     accepted: artifact.accepted === true && active,
     state: !active ? (artifact.supersededBy ? 'superseded' : 'invalidated') : 'active',
+    ...(artifact.stability === 'passed_after_candidate_failure'
+      ? { stability: artifact.stability } : {}),
     provenance: (artifact.provenance ?? []).filter((ref) => Number.isSafeInteger(ref?.coordinationSeq))
       .map((ref) => ({ coordinationSeq: ref.coordinationSeq })).sort((a, b) => a.coordinationSeq - b.coordinationSeq),
   };
@@ -3773,11 +3779,15 @@ export class BatonApplication {
       nodeKey: pending.nodeKey,
       taskId: pending.taskId,
       attempt: pending.attempt,
+      originOutcome: pending.originOutcome,
       admissionDigest: pending.admissionDigest,
       outcome: { disposition: { candidate: null, base: null }, runtimeDigest: null, verdictDigest: null },
+      stability: null,
       evidence: null,
       result: null,
-      checkpoint: { state: 'pinned', sha: pending.checkpointSha },
+      checkpoint: {
+        state: 'pinned', sha: pending.checkpointSha, originOutcome: pending.originOutcome,
+      },
     };
     const receipt = { ...receiptCore, receiptDigest: digest(receiptCore) };
     return this.driver.coordination.completeRunVerificationRetry({
@@ -3830,6 +3840,14 @@ export class BatonApplication {
         action: { command: 'run.retry_verification', result: receipt.state, receiptDigest: receipt.receiptDigest },
       });
     }
+    if (existing?.originOutcome === 'candidate_failed' && existing.receipt) {
+      return this._buildView(current, this.principals.observer, {
+        action: {
+          command: 'run.retry_verification', result: 'replayed',
+          state: existing.receipt.state, receiptDigest: existing.receipt.receiptDigest,
+        },
+      });
+    }
     const view = await this._buildView(current, this.principals.observer);
     const retry = view.verification?.retry;
     if (!retry) throw applicationError('Run has no retryable verification', 'application_retry_unavailable');
@@ -3839,9 +3857,18 @@ export class BatonApplication {
     const node = view.nodes[0];
     const task = node?.taskId ? this.driver.coordination.task(node.taskId) : null;
     if (!task?.assignee) throw applicationError('Run verification retry worker authority is unavailable', 'application_retry_unavailable');
+    const terminalResult = await this.driver.coordinator.result(task.assignee);
+    const diagnosticCheckpoint = terminalResult?.checkpoint;
+    if (diagnosticCheckpoint?.state !== 'pinned'
+      || diagnosticCheckpoint.sha !== retry.checkpointSha
+      || !['inconclusive', 'candidate_failed'].includes(diagnosticCheckpoint.originOutcome)) {
+      throw applicationError('Run verification retry diagnostic checkpoint is unavailable', 'application_retry_unavailable');
+    }
     const artifacts = (task.artifactIds ?? []).map((id) => this.driver.coordination.artifact(id)).filter(Boolean);
-    const priorSeq = artifacts.filter((artifact) => artifact.kind === 'verification').at(-1)
-      ?.provenance?.find((ref) => Number.isSafeInteger(ref?.coordinationSeq))?.coordinationSeq;
+    const priorArtifact = artifacts.filter((artifact) => artifact.kind === 'verification')
+      .sort((left, right) => (left.createdEvent ?? 0) - (right.createdEvent ?? 0)).at(-1);
+    const priorSeq = priorArtifact?.provenance
+      ?.find((ref) => Number.isSafeInteger(ref?.coordinationSeq))?.coordinationSeq;
     if (!Number.isSafeInteger(priorSeq)) {
       throw applicationError('Run verification retry evidence is unavailable', 'application_retry_unavailable');
     }
@@ -3851,8 +3878,11 @@ export class BatonApplication {
     }
     const requestCore = {
       attempt: retry.attempt,
+      baseSha: terminalResult.sessionContext?.baseSha ?? null,
+      checkpointRef: diagnosticCheckpoint.ref,
       checkpointSha: retry.checkpointSha,
       nodeKey,
+      originOutcome: diagnosticCheckpoint.originOutcome,
       planDigest: current.plan.digest,
       priorEvidence: { coordinationSeq: priorSeq },
       reasonDigest: digest(request.reason),
@@ -3861,6 +3891,7 @@ export class BatonApplication {
       runtimePolicyDigest,
       schemaVersion: 1,
       taskId: task.id,
+      toolchainDigest: digest(terminalResult.sessionContext?.toolchainProjection ?? null),
       verificationDigest: digest(current.plan.nodes[0].verification),
     };
     const admitted = this.driver.coordination.admitRunVerificationRetry({
@@ -5872,6 +5903,7 @@ export class BatonApplication {
     const acceptedCommit = artifacts.find((artifact) => activeAccepted(artifact) && artifact.kind === 'commit') ?? null;
     const acceptedVerification = artifacts.find((artifact) => activeAccepted(artifact) && artifact.kind === 'verification') ?? null;
     const resultSha = acceptedCommit?.refs?.sha ?? null;
+    const resultStability = acceptedVerification?.stability ?? result?.verificationStability ?? null;
     const adoption = this.driver.coordination.runResultAdoption?.(runId, node.key) ?? null;
     let preservation = null;
     if (workerId && resultSha && typeof this.driver.coordinator.inspectPreservedResult === 'function') {
@@ -5889,26 +5921,31 @@ export class BatonApplication {
     if (runStop?.status === 'stopped') phase = 'stopped';
     else if (runStop) phase = 'stopping';
 
-    // VR6/VR7: an inconclusive verifier outcome is distinguished from a candidate-owned loss
-    // and, while its exact checkpoint and approved Plan remain current, offers one retry.
+    // VR6/RV: inconclusive runtime repair remains repeatable while a candidate-owned diagnostic
+    // checkpoint gets exactly one confirmation. The origin is pinned on the checkpoint so a later
+    // inconclusive confirmation cannot be mistaken for a fresh runtime-repair allowance.
     const verdictOutcome = result?.verdict?.outcome ?? null;
     const durableRetry = this.driver.coordination.runVerificationRetry?.(runId, node.key) ?? null;
     let retryProjection = null;
-    if (verdictOutcome === 'inconclusive' && result?.checkpoint?.state === 'pinned') {
+    const originOutcome = result?.checkpoint?.originOutcome ?? verdictOutcome;
+    const candidateConfirmationUnspent = originOutcome === 'candidate_failed' && durableRetry === null;
+    const runtimeRepairable = originOutcome === 'inconclusive' && verdictOutcome === 'inconclusive';
+    if ((candidateConfirmationUnspent || runtimeRepairable) && result?.checkpoint?.state === 'pinned') {
       let candidatePreserved = false;
       if (workerId && typeof this.driver.coordinator.inspectCheckpoint === 'function') {
         candidatePreserved = (await this.driver.coordinator.inspectCheckpoint(workerId)).state === 'pinned';
       }
-      const attempt = durableRetry
+      const attempt = originOutcome === 'candidate_failed' ? 1 : durableRetry
         ? (durableRetry.status === 'pending' ? durableRetry.attempt : durableRetry.attempt + 1)
         : 1;
       const available = candidatePreserved && !runStop
         && projection.approval?.disposition === 'approved'
         && typeof this.driver.coordinator.retryVerification === 'function'
         && typeof this.driver.coordination.admitRunVerificationRetry === 'function'
-        && (!durableRetry || ['pending', 'inconclusive', 'cancelled'].includes(durableRetry.status));
+        && (originOutcome === 'candidate_failed' ? durableRetry === null
+          : (!durableRetry || ['pending', 'inconclusive', 'cancelled'].includes(durableRetry.status)));
       retryProjection = {
-        available, attempt, checkpointSha: result.checkpoint.sha, candidatePreserved,
+        available, attempt, checkpointSha: result.checkpoint.sha, candidatePreserved, originOutcome,
       };
     }
     // PS5: while a cancelled Run's pinned checkpoint and approved Plan remain current, offer one
@@ -5987,6 +6024,7 @@ export class BatonApplication {
       sha: resultSha,
       commitArtifact: acceptedCommit ? { id: acceptedCommit.id, digest: acceptedCommit.digest } : null,
       verificationArtifact: acceptedVerification ? { id: acceptedVerification.id, digest: acceptedVerification.digest } : null,
+      stability: resultStability,
       preservation: result?.integration ? { state: 'integrated' }
         : preservation ? { state: preservation.state } : { state: 'unavailable' },
       adoption: adoption ? {
@@ -6002,6 +6040,7 @@ export class BatonApplication {
       state: 'integrated', strategy: result.integration.strategy,
       beforeSha: result.integration.beforeSha, resultSha: result.integration.resultSha,
       afterSha: result.integration.afterSha,
+      stability: result.integration.stability ?? resultStability,
     }) : null;
     const durableExport = this.driver.coordination.runResultExport?.(runId, node.key) ?? null;
     const exportResult = durableExport?.status === 'completed' ? clone(durableExport.receipt)
@@ -6071,13 +6110,14 @@ export class BatonApplication {
               ...exportActions,
               ...(canAdopt ? [{ kind: 'adopt_result', nodeKey: node.key, resultSha }] : [])]
               : [{ kind: 'status' }];
-    const verificationState = ['work_completed', 'reviewing', 'completed'].includes(phase) ? 'mechanically_verified'
-      : phase === 'failed' ? (retryProjection ? 'inconclusive' : 'failed') : 'pending';
+    const verificationState = ['work_completed', 'reviewing', 'completed'].includes(phase)
+      ? resultStability === 'passed_after_candidate_failure' ? 'mechanically_verified_unstable' : 'mechanically_verified'
+      : phase === 'failed' ? (retryProjection && verdictOutcome === 'inconclusive' ? 'inconclusive' : 'failed') : 'pending';
     const resourcesSettled = ownedWorkers.length === 0;
     const progress = runProgress({
       phase, approval: projection.approval, node,
       route,
-      verification: { state: verificationState }, reviewPolicyMode: current.profile.reviewPolicy.mode, semanticReview,
+      verification: { state: verificationState, stability: resultStability }, reviewPolicyMode: current.profile.reviewPolicy.mode, semanticReview,
       result: publicResult, integration, exportResult, resourcesSettled, stop: runStop ? {
         state: runStop.status, receipt: runStop.receipt,
       } : null,
@@ -6112,6 +6152,7 @@ export class BatonApplication {
       attentionTruncated,
       verification: {
         state: verificationState,
+        stability: resultStability,
         verdict: this._closedVerdictProjection(result, planNode, phase, workerId),
         ...(retryProjection ? {
           retry: retryProjection,
@@ -7801,17 +7842,11 @@ export class BatonApplication {
     return `section-summary:${sectionId}:g${goalVersion}:p${planVersion}`;
   }
 
-  // VR9: project only closed, credential-safe verifier mechanics onto ordinary Run surfaces so a
-  // user or agent never has to read a private worker log to understand a mechanical failure. The
-  // raw captured output tail and the free-form verifier note are deliberately excluded — the tail
-  // may persist repository secrets and the note is not a closed enum. Captured output is reduced to
-  // a bounded tail byte count, tail digest, and a truncation flag; every field is selected or
-  // validated rather than passed through. The original verdict object remains the durable authority
-  // behind this projection.
+  // VR9/RV: the durable referee verdict is already a closed receipt. This projection validates its
+  // enums, bounds, byte count, and digest without ever reading command output or free-form text.
   _closedVerdictProjection(result, planNode, phase, workerId) {
     const verdict = result?.verdict ?? null;
     if (!verdict) return null;
-    const outputTail = typeof verdict.observedOutputTail === 'string' ? verdict.observedOutputTail : '';
     let verifierAttempts = 0;
     if (workerId && result?.checkpoint?.sha && typeof this.driver?.log?.read === 'function') {
       verifierAttempts = this.driver.log.read(workerId).filter((event) => event.kind === 'verify.reverified'
@@ -7826,6 +7861,8 @@ export class BatonApplication {
       ? planNode.verification.expectExit : null;
     const durationMs = Number.isFinite(verdict.durationMs) && verdict.durationMs >= 0
       && verdict.durationMs <= VERIFIER_DURATION_BOUND_MS ? Math.trunc(verdict.durationMs) : null;
+    const capturedOutputBytes = Number.isSafeInteger(verdict.capturedOutputBytes)
+      && verdict.capturedOutputBytes >= 0 ? verdict.capturedOutputBytes : null;
     return deepFreeze({
       accepted: ['work_completed', 'reviewing', 'completed'].includes(phase),
       digest: sanitizeHex64(digest(verdict)),
@@ -7837,13 +7874,9 @@ export class BatonApplication {
       execution: projectExecution(verdict.execution),
       baseExecution: projectExecution(verdict.baseExecution),
       outputExceeded: verdict.outputExceeded === true,
-      outputTailBytes: Buffer.byteLength(outputTail),
-      outputTailDigest: sanitizeHex64(digest(outputTail)),
-      // The captured tail is a bounded window (the last VERIFIER_OUTPUT_TAIL_WINDOW characters).
-      // A saturated window means the original output may have been longer; it is not proof of
-      // truncation, since an exactly-window-sized output is indistinguishable. The full captured
-      // size is not represented because the durable verdict does not carry it.
-      tailWindowSaturated: outputTail.length >= VERIFIER_OUTPUT_TAIL_WINDOW,
+      capturedOutputBytes,
+      capturedOutputDigest: sanitizeHex64(verdict.capturedOutputDigest),
+      diagnosticCode: closedEnum(verdict.diagnosticCode, VERIFIER_DIAGNOSTIC_CODES),
       durationMs,
       runtimeDigest: sanitizeHex64(verdict.runtimeDigest),
       attemptOrdinal: Math.max(1, verifierAttempts),

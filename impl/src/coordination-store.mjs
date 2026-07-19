@@ -9607,18 +9607,23 @@ export class CoordinationStore {
 
   _normalizeRunVerificationRetryRequest(fields, event, integrity = false) {
     const fail = (message, code = 'run_verification_retry_invalid') => this._runVerificationRetryFailure(message, code, integrity);
-    const expected = ['attempt', 'checkpointSha', 'nodeKey', 'planDigest', 'priorEvidence', 'reasonDigest',
-      'repoId', 'requestDigest', 'runId', 'runtimePolicyDigest', 'schemaVersion', 'taskId', 'verificationDigest'];
+    const expected = ['attempt', 'baseSha', 'checkpointRef', 'checkpointSha', 'nodeKey', 'originOutcome',
+      'planDigest', 'priorEvidence', 'reasonDigest', 'repoId', 'requestDigest', 'runId',
+      'runtimePolicyDigest', 'schemaVersion', 'taskId', 'toolchainDigest', 'verificationDigest'];
     if (!fields || typeof fields !== 'object' || Array.isArray(fields)
       || Object.keys(fields).sort().join(',') !== expected.join(',') || fields.schemaVersion !== 1
       || !validRunId(fields.repoId) || !validRunId(fields.runId) || !boundedText(fields.nodeKey, 256)
       || !boundedText(fields.taskId, 4_096) || !Number.isSafeInteger(fields.attempt) || fields.attempt < 1
       || !validResultSha(fields.checkpointSha)
+      || !validResultSha(fields.baseSha)
+      || fields.checkpointRef !== `refs/baton/checkpoints/${fields.checkpointSha}`
+      || !['inconclusive', 'candidate_failed'].includes(fields.originOutcome)
       || !fields.priorEvidence || typeof fields.priorEvidence !== 'object' || Array.isArray(fields.priorEvidence)
       || Object.keys(fields.priorEvidence).join(',') !== 'coordinationSeq'
       || !Number.isSafeInteger(fields.priorEvidence.coordinationSeq)
       || !/^[a-f0-9]{64}$/.test(fields.planDigest ?? '') || !/^[a-f0-9]{64}$/.test(fields.verificationDigest ?? '')
-      || !/^[a-f0-9]{64}$/.test(fields.runtimePolicyDigest ?? '') || !/^[a-f0-9]{64}$/.test(fields.reasonDigest ?? '')
+      || !/^[a-f0-9]{64}$/.test(fields.runtimePolicyDigest ?? '') || !/^[a-f0-9]{64}$/.test(fields.toolchainDigest ?? '')
+      || !/^[a-f0-9]{64}$/.test(fields.reasonDigest ?? '')
       || !/^[a-f0-9]{64}$/.test(fields.requestDigest ?? '')) fail('run verification retry request is invalid');
     const requestCore = Object.fromEntries(expected.filter((key) => key !== 'requestDigest')
       .map((key) => [key, clone(fields[key])]));
@@ -9656,17 +9661,26 @@ export class CoordinationStore {
     }
     const { source } = this._readRetryVerificationEvidence(request.priorEvidence, integrity);
     if (source.worker !== task.assignee || source.payload?.accept === true
-      || source.payload?.verdict?.outcome !== 'inconclusive'
+      || source.payload?.verdict?.outcome !== request.originOutcome
       || source.payload?.capture?.checkpoint?.sha !== request.checkpointSha
-      || source.payload?.capture?.checkpoint?.state !== 'pinned') {
-      fail('run verification retry evidence is not the inconclusive checkpointed attempt');
+      || source.payload?.capture?.checkpoint?.ref !== request.checkpointRef
+      || source.payload?.capture?.checkpoint?.state !== 'pinned'
+      || source.payload?.capture?.checkpoint?.originOutcome !== request.originOutcome
+      || source.payload?.capture?.baseSha !== request.baseSha
+      || canonicalDigest(source.payload?.capture?.toolchainProjection ?? null) !== request.toolchainDigest
+      || (request.originOutcome === 'candidate_failed'
+        && source.payload?.verdict?.runtimeDigest !== request.runtimePolicyDigest)) {
+      fail('run verification retry evidence is not the exact diagnostic checkpointed attempt');
     }
     const existing = this._runVerificationRetries.get(this._runVerificationRetryKey(request.runId, request.nodeKey));
     if (existing?.status === 'pending') fail('run verification retry admission is already pending', 'run_verification_retry_conflict');
+    if (existing?.originOutcome === 'candidate_failed') {
+      fail('candidate failure confirmation is already consumed', 'run_verification_retry_conflict');
+    }
     if (existing && !['inconclusive', 'cancelled'].includes(existing.status)) {
       fail('run verification retry identity is already settled', 'run_verification_retry_conflict');
     }
-    const expectedAttempt = existing ? existing.attempt + 1 : 1;
+    const expectedAttempt = request.originOutcome === 'candidate_failed' ? 1 : existing ? existing.attempt + 1 : 1;
     if (request.attempt !== expectedAttempt) fail('run verification retry attempt sequence is invalid', 'run_verification_retry_conflict');
     return request;
   }
@@ -9688,14 +9702,16 @@ export class CoordinationStore {
       fail('run verification retry completion authority is invalid');
     }
     const receipt = p.receipt;
-    const receiptFields = ['attempt', 'admissionDigest', 'checkpoint', 'evidence', 'nodeKey', 'outcome',
-      'receiptDigest', 'repoId', 'result', 'runId', 'schemaVersion', 'scope', 'state', 'taskId'];
+    const receiptFields = ['attempt', 'admissionDigest', 'checkpoint', 'evidence', 'nodeKey', 'originOutcome', 'outcome',
+      'receiptDigest', 'repoId', 'result', 'runId', 'schemaVersion', 'scope', 'stability', 'state', 'taskId'];
     if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
       || Object.keys(receipt).sort().join(',') !== [...receiptFields].sort().join(',') || receipt.schemaVersion !== 1
       || receipt.scope !== 'run-verification-retry'
       || !['accepted', 'candidate_failed', 'inconclusive', 'cancelled'].includes(receipt.state)
       || receipt.repoId !== retry.repoId || receipt.runId !== retry.runId || receipt.nodeKey !== retry.nodeKey
       || receipt.taskId !== retry.taskId || receipt.attempt !== retry.attempt
+      || receipt.originOutcome !== retry.originOutcome
+      || ![null, 'passed_after_candidate_failure'].includes(receipt.stability)
       || receipt.admissionDigest !== retry.admissionDigest
       || !/^[a-f0-9]{64}$/.test(receipt.receiptDigest ?? '')) fail('run verification retry receipt is invalid');
     const { receiptDigest, ...receiptCore } = receipt;
@@ -9703,7 +9719,9 @@ export class CoordinationStore {
     const task = this._tasks.get(retry.taskId);
     if (!task || task.status !== 'failed') fail('run verification retry completion requires the admitted failed task');
     if (receipt.state === 'cancelled') {
-      if (receipt.evidence !== null || receipt.result !== null) fail('a cancelled retry carries no verification evidence or result');
+      if (receipt.evidence !== null || receipt.result !== null || receipt.stability !== null) {
+        fail('a cancelled retry carries no verification evidence, result, or stability');
+      }
       return retry;
     }
     const { mapped, source } = this._readRetryVerificationEvidence(receipt.evidence, integrity);
@@ -9715,6 +9733,9 @@ export class CoordinationStore {
     const outcome = source.payload?.verdict?.outcome;
     if (receipt.state === 'accepted') {
       if (source.payload?.accept !== true || outcome !== 'passed'
+        || source.payload?.stability !== receipt.stability
+        || (retry.originOutcome === 'candidate_failed'
+          ? receipt.stability !== 'passed_after_candidate_failure' : receipt.stability !== null)
         || source.payload?.capture?.sha !== retry.checkpointSha
         || !receipt.result || Object.keys(receipt.result).sort().join(',') !== ['ref', 'sha'].join(',')
         || receipt.result.sha !== retry.checkpointSha
@@ -9723,13 +9744,15 @@ export class CoordinationStore {
       }
     } else if (source.payload?.accept === true
       || (receipt.state === 'candidate_failed' && outcome !== 'candidate_failed')
-      || (receipt.state === 'inconclusive' && outcome !== 'inconclusive')) {
+      || (receipt.state === 'inconclusive' && outcome !== 'inconclusive')
+      || receipt.stability !== null || source.payload?.stability !== null) {
       fail('run verification retry completion state contradicts its verification evidence');
     }
     if (receipt.state !== 'accepted' && receipt.result !== null) fail('only an accepted retry carries a result');
-    if (['inconclusive', 'cancelled'].includes(receipt.state)
-      && (receipt.checkpoint?.state !== 'pinned' || receipt.checkpoint?.sha !== retry.checkpointSha)) {
-      fail('an unresolved retry must retain the exact original checkpoint');
+    if (receipt.state !== 'accepted'
+      && (receipt.checkpoint?.state !== 'pinned' || receipt.checkpoint?.sha !== retry.checkpointSha
+        || receipt.checkpoint?.originOutcome !== retry.originOutcome)) {
+      fail('a nonaccepted retry must retain the exact original diagnostic checkpoint');
     }
     return retry;
   }

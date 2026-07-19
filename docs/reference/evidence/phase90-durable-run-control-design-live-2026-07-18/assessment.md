@@ -142,9 +142,10 @@ an application card fixture with no admitted Run controls was required to fabric
 authority. Startup now permits the all-absent/no-history compatibility case while partial authority
 or durable control history still fails closed; that focused recovery/control cluster is green at
 12/12. Adapter Brief/argv coverage is green at 65/65, and the combined timeline, CLI, progressive
-AX, route-discovery, and Kimi-readiness cluster is green at 78/78. After the Web-stream increment,
-the exact deployment verification `npm test --prefix impl` completed with exit code 0: 2230/2230
-tests passed with no failures, cancellations, skips, or todos.
+AX, route-discovery, and Kimi-readiness cluster is green at 78/78. After the Web-stream and durable
+candidate-confirmation increments, the exact deployment verification `npm test --prefix impl`
+completed with exit code 0: 2239/2239 tests passed with no failures, cancellations, skips, or
+todos.
 
 ## Verification agent-experience repair (Run run-0546d3fbf747f2170f13e83915e3094d)
 
@@ -155,7 +156,7 @@ worker-log receipt was a single isolated descendant-reap timeout: `observedExit 
 not need a private worker log to understand that, and a clean rerun must never rewrite the original
 failure into a clean pass.
 
-Two coherent increments landed with focused Phase 67/Phase 69 regressions:
+Three coherent increments landed with focused coordinator and Phase 69 regressions:
 
 - **Stable, authority-bound section summary addresses.** Singleton summary addresses now use
   `section-summary:<section>:g<goalVersion>:p<planVersion>` instead of the coordination cursor.
@@ -163,26 +164,35 @@ Two coherent increments landed with focused Phase 67/Phase 69 regressions:
   refuses closed as `application_inspect_item_invalid`. No cursor-suffix compatibility alias maps
   old semantic content onto current authority. Attention items likewise prefer their request
   identity instead of a cursor-suffixed position.
-- **Closed verification failure projection.** Ordinary Run inspection and status now expose
+- **Closed verifier receipt at rest.** Ordinary Run inspection and status expose
   enum-checked outcome, failure ownership, expected/observed exit, candidate and baseline execution
-  state/code, `outputExceeded`, `outputTailBytes`, `outputTailDigest`,
-  `tailWindowSaturated`, bounded duration, validated runtime/verdict digests, and attempt ordinal.
-  Raw `observedOutputTail` and the free-form verifier note are excluded. A secret-bearing verifier
-  fixture proves the generated secret is absent from outline, section, status, and public evidence
-  projections.
+  state/code, `outputExceeded`, exact `capturedOutputBytes`/`capturedOutputDigest`, a closed
+  diagnostic code, bounded duration, validated runtime/verdict digests, and attempt ordinal. The
+  coordinator closes even an injected referee result before task, worker-log, coordination, or
+  artifact persistence; output-derived identity lists become count/digest pairs. Raw tails, notes,
+  argv/cwd/environment echoes, worker/session IDs, and free-form provider output are not verdict
+  fields. The credential-canary test now recursively scans the actual persisted worker and
+  coordination stores, including artifact manifests, and proves the verifier-only secret is absent;
+  this replaces the earlier application-only test that misleadingly claimed receipt coverage.
+- **One-shot candidate confirmation.** An initial `candidate_failed` result pins its exact
+  non-adoptable checkpoint with `originOutcome=candidate_failed`. The reason-only
+  `retry_verification` action durably admits exactly one confirmation across concurrency, restart,
+  and response loss, binds the same Plan, command, base, runtime, toolchain, candidate SHA/ref, and
+  consumes no provider turn. Passed, candidate-failed, and inconclusive outcomes all consume the
+  shot; later failure/inconclusiveness is final. A pass accepts only the original SHA and records
+  `stability=passed_after_candidate_failure` / `mechanically_verified_unstable`. Both attempts and
+  the original counterexample remain; route learning retains the original loss, and restart,
+  artifacts, evidence, and integration retain the instability label. Inconclusive-origin runtime
+  repair remains a separate repeatable path using the current deployment runtime.
 
-Two related invariants remain explicit rather than approximated:
+## Concurrent root-suite authority incident
 
-- **Candidate confirmation for an initial `candidate_failed` checkpoint.** Baton must pin the
-  non-adoptable exact checkpoint, record `originOutcome=candidate_failed`, durably admit one
-  operator-authorized confirmation across restart/response loss, require the same
-  Plan/command/base/runtime/checkpoint, consume the shot for every confirmation outcome, retain
-  both attempts, and label a later pass `passed_after_candidate_failure`/unstable. Merely widening
-  the current inconclusive gate would violate the no-laundering invariant.
-- **Operational-log raw-output sanitization.** Ordinary surfaces are closed, but the durable worker
-  log and coordination artifacts still persist the full referee verdict, including
-  `observedOutputTail`. The next verifier/coordinator increment must persist digest and byte metadata
-  instead, or place raw diagnostics behind separate protected authority.
+An in-place root full suite was run concurrently with a live Baton Run and changed the effective
+tree beneath that Run. The coordinator correctly invalidated the worker as
+`worker_worktree_authority_lost`. This is recorded as an operator/test-isolation incident only; this
+increment does not broaden into repairing it. No separate in-place root suite was run during the
+candidate-confirmation provider turn; only scoped tests and the Brief's final deployment command
+belong to this work.
 
 ## Honest remaining gaps
 

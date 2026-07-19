@@ -238,6 +238,88 @@ function canonical(value) {
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
 }
 function canonicalDigest(value) { return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex'); }
+
+const CLOSED_VERIFIER_OUTCOMES = new Set(['passed', 'candidate_failed', 'inconclusive']);
+const CLOSED_VERIFIER_OWNERS = new Set(['candidate', 'verifier', 'baseline_or_environment']);
+const CLOSED_VERIFIER_EXECUTIONS = new Map([
+  ['completed', 'verification_completed'],
+  ['timed_out', 'verification_timed_out'],
+  ['output_exceeded', 'verification_output_exceeded'],
+  ['unavailable', 'verification_spawn_unavailable'],
+]);
+const CLOSED_VERIFIER_DIAGNOSTICS = new Set([
+  'verification_output_exceeded', 'verification_timed_out', 'verification_spawn_unavailable',
+  'verification_claim_diverged', 'verification_red_green_failed', 'verification_coverage_failed',
+  'verification_mutation_failed', 'verification_coverage_unavailable', 'verification_mutation_unavailable',
+  'verification_passed', 'verification_exit_mismatch',
+]);
+const hex64OrNull = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value) ? value : null;
+const boolOrNull = (value) => typeof value === 'boolean' ? value : null;
+const intOrNull = (value) => Number.isSafeInteger(value) ? value : null;
+const closedExecution = (value, observedExit = null) => {
+  const state = CLOSED_VERIFIER_EXECUTIONS.has(value?.state)
+    ? value.state : Number.isSafeInteger(observedExit) ? 'completed' : 'unavailable';
+  return Object.freeze({ state, code: CLOSED_VERIFIER_EXECUTIONS.get(state) });
+};
+
+// RV receipt boundary: injected/custom referees are not persistence authority. Reduce every
+// referee observation to one structural schema before it reaches task memory, operational logs,
+// coordination evidence, or artifact manifests. Output-derived lists become count/digest pairs;
+// unknown strings and all free-form text are discarded.
+function closedVerificationVerdict(value, verification = {}) {
+  const observed = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const observedExit = intOrNull(observed.observedExit);
+  const reverified = observed.reverified === true;
+  const passed = typeof observed.passed === 'boolean' ? observed.passed
+    : reverified && observedExit === verification.expectExit;
+  const execution = closedExecution(observed.execution, observedExit);
+  const outcome = CLOSED_VERIFIER_OUTCOMES.has(observed.outcome) ? observed.outcome
+    : execution.state !== 'completed' ? 'inconclusive' : passed ? 'passed' : 'candidate_failed';
+  const failureOwnership = CLOSED_VERIFIER_OWNERS.has(observed.failureOwnership)
+    ? observed.failureOwnership : outcome === 'candidate_failed' ? 'candidate'
+      : outcome === 'inconclusive' ? 'verifier' : null;
+  const uncovered = Array.isArray(observed.uncoveredChangedLines) ? observed.uncoveredChangedLines : [];
+  const survived = Array.isArray(observed.survivedMutants) ? observed.survivedMutants : [];
+  const capturedOutputBytes = Number.isSafeInteger(observed.capturedOutputBytes)
+    && observed.capturedOutputBytes >= 0 ? observed.capturedOutputBytes : 0;
+  const emptyDigest = createHash('sha256').update('').digest('hex');
+  let diagnosticCode = CLOSED_VERIFIER_DIAGNOSTICS.has(observed.diagnosticCode)
+    ? observed.diagnosticCode : null;
+  if (!diagnosticCode) {
+    diagnosticCode = execution.state !== 'completed' ? execution.code
+      : passed ? 'verification_passed' : 'verification_exit_mismatch';
+  }
+  return Object.freeze({
+    schemaVersion: 1,
+    reverified,
+    observedExit,
+    outputExceeded: observed.outputExceeded === true,
+    hadClaim: observed.hadClaim === true,
+    matchesClaim: observed.matchesClaim !== false,
+    passed,
+    locus: observed.locus === 'fresh_sandbox' ? 'fresh_sandbox' : null,
+    redGreen: boolOrNull(observed.redGreen),
+    baseExit: intOrNull(observed.baseExit),
+    coverageOfChange: boolOrNull(observed.coverageOfChange),
+    uncoveredChangedLineCount: uncovered.length,
+    uncoveredChangedLinesDigest: canonicalDigest(uncovered),
+    mutationStrength: Number.isFinite(observed.mutationStrength)
+      && observed.mutationStrength >= 0 && observed.mutationStrength <= 1 ? observed.mutationStrength : null,
+    mutationPassed: boolOrNull(observed.mutationPassed),
+    survivedMutantCount: survived.length,
+    survivedMutantsDigest: canonicalDigest(survived),
+    capturedOutputBytes,
+    capturedOutputDigest: hex64OrNull(observed.capturedOutputDigest) ?? emptyDigest,
+    diagnosticCode,
+    durationMs: Number.isFinite(observed.durationMs) && observed.durationMs >= 0
+      ? Math.trunc(observed.durationMs) : null,
+    execution,
+    baseExecution: observed.baseExecution == null ? null : closedExecution(observed.baseExecution),
+    runtimeDigest: hex64OrNull(observed.runtimeDigest),
+    outcome,
+    failureOwnership,
+  });
+}
 function replayProviderGovernanceRoute(event, vendor, model, effort) {
   const payload = event?.payload;
   const reserve = payload?.reserve;
@@ -4098,16 +4180,17 @@ export class Coordinator {
         const workerToolchainProjection = task.sessionContext?.toolchainProjection ?? null;
         if ((workerToolchainProjection || structuredToolchainProjection)
           && (!workerToolchainProjection || !structuredToolchainProjection || canonicalDigest(workerToolchainProjection) !== canonicalDigest(structuredToolchainProjection))) throw Object.assign(new Error('structured verification toolchain projection mismatch'), { code: 'structured_verification_environment_mismatch' });
-        const verdict = await this._referee(task, { verification: { claimedExit: null } }, {
+        const observedVerdict = await this._referee(task, { verification: { claimedExit: null } }, {
           pinnedVerification: task.brief.verification,
           sandbox: structuredVerifyPath,
         });
-        const accepted = this._accept(verdict, {
+        const accepted = this._accept(observedVerdict, {
           expectExit: task.brief.verification.expectExit,
           requireRedGreen: false,
           requireCoverage: false,
           requireMutation: false,
         });
+        const verdict = closedVerificationVerdict(observedVerdict, task.brief.verification);
         this._log.append({
           worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
           kind: 'integration.merge_reverified', actor: 'policy',
@@ -4167,7 +4250,12 @@ export class Coordinator {
     // also the immutable source for evidence-bound export; releasing it here can break another Run
     // that accepted the same commit and makes integration-required delivery impossible. A later
     // durable retention/GC authority may release pins only after every owning Run/export is closed.
-    const integration = Object.freeze({ ...integrated, strategy, actor: opts.actor ?? 'orchestrator' });
+    const integration = Object.freeze({
+      ...integrated,
+      strategy,
+      actor: opts.actor ?? 'orchestrator',
+      stability: task.verificationStability ?? null,
+    });
     const integrationEvent = this._log.append({
       worker: workerId, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
       kind: 'integration.completed', actor: opts.actor ?? 'orchestrator', payload: integration,
@@ -4506,7 +4594,10 @@ export class Coordinator {
           return receipt;
         }
         // Conflict-before-execute (VR6): changed Plan command, runtime, or candidate refuses.
-        if (!task.checkpoint || task.checkpoint.state !== 'pinned' || task.checkpoint.sha !== admission.checkpointSha) {
+        if (!task.checkpoint || task.checkpoint.state !== 'pinned'
+          || task.checkpoint.sha !== admission.checkpointSha
+          || task.checkpoint.ref !== admission.checkpointRef
+          || task.checkpoint.originOutcome !== admission.originOutcome) {
           refuse('verification retry checkpoint authority is unavailable', 'verification_retry_unavailable');
         }
         if (canonicalDigest(task.brief.verification) !== admission.verificationDigest) {
@@ -4517,7 +4608,11 @@ export class Coordinator {
           refuse('verification retry checkpoint no longer resolves to the admitted candidate', 'verification_retry_conflict');
         }
         const priorCapture = priorAttempts.at(-1)?.payload?.capture ?? {};
-        const baseSha = priorCapture.baseSha ?? task.sessionContext?.baseSha ?? null;
+        const baseSha = admission.baseSha;
+        if (baseSha !== task.sessionContext?.baseSha
+          || canonicalDigest(task.sessionContext?.toolchainProjection ?? null) !== admission.toolchainDigest) {
+          refuse('verification retry base or toolchain binding changed after admission', 'verification_retry_conflict');
+        }
         const created = await this._worktrees.createVerifyWorktree(
           `${task.id}-retry-${attempt}`, admission.checkpointSha, { requiredPaths: priorCapture.changedPaths ?? [] },
         );
@@ -4540,13 +4635,18 @@ export class Coordinator {
           }
         }
         let verdict;
+        let accept;
         try {
-          verdict = await this._referee(task, { verification: { claimedExit: null } }, {
+          const observedVerdict = await this._referee(task, { verification: { claimedExit: null } }, {
             pinnedVerification: task.brief.verification,
             sandbox: verifyPath,
             baseSandbox: baseVerifyPath,
             signal,
           });
+          accept = this._accept(observedVerdict, {
+            ...this._acceptOpts, expectExit: task.brief.verification.expectExit,
+          });
+          verdict = closedVerificationVerdict(observedVerdict, task.brief.verification);
         } catch (error) {
           if (error?.code === 'verification_aborted') {
             completeCancelled();
@@ -4554,7 +4654,8 @@ export class Coordinator {
           }
           throw error;
         }
-        const accept = this._accept(verdict, { ...this._acceptOpts, expectExit: task.brief.verification.expectExit });
+        const stability = accept && admission.originOutcome === 'candidate_failed'
+          ? 'passed_after_candidate_failure' : null;
         // A run-scoped stop that landed while the verifier ran keeps its authority: suppress
         // the attempt's effects exactly and settle the admission as cancelled.
         if (signal?.aborted || this._coordination.runStop?.(runId)) {
@@ -4574,8 +4675,10 @@ export class Coordinator {
           payload: {
             verdict,
             accept,
+            stability,
             retry: {
               attempt,
+              originOutcome: admission.originOutcome,
               admissionDigest: admission.admissionDigest,
               priorAttempt: priorLast ? { worker: workerId, workerSeq: priorLast.seq } : null,
             },
@@ -4597,6 +4700,7 @@ export class Coordinator {
       }
       const verdict = verifyEvent.payload.verdict;
       const accept = verifyEvent.payload.accept === true;
+      const stability = verifyEvent.payload.stability ?? null;
       const capture = verifyEvent.payload.capture;
       const evidence = this._coordMapEvent(verifyEvent);
       const state = accept ? 'accepted' : verdict?.outcome === 'candidate_failed' ? 'candidate_failed' : 'inconclusive';
@@ -4605,12 +4709,12 @@ export class Coordinator {
         manifests.push({
           taskId: task.id, kind: 'commit',
           refs: { sha: capture.sha, retainedResultRef: capture.retainedResultRef },
-          mediaType: 'application/vnd.git.commit', accepted: true, provenance: [evidence],
+          mediaType: 'application/vnd.git.commit', accepted: true, provenance: [evidence], stability,
         });
       }
       manifests.push({
         taskId: task.id, kind: 'verification', refs: { worker: workerId, workerSeq: verifyEvent.seq },
-        mediaType: 'application/vnd.baton.verdict+json', accepted: accept, provenance: [evidence], verdict,
+        mediaType: 'application/vnd.baton.verdict+json', accepted: accept, provenance: [evidence], verdict, stability,
       });
       const receiptCore = {
         schemaVersion: 1,
@@ -4621,6 +4725,7 @@ export class Coordinator {
         nodeKey,
         taskId: task.id,
         attempt,
+        originOutcome: admission.originOutcome,
         admissionDigest: admission.admissionDigest,
         outcome: {
           disposition: {
@@ -4630,12 +4735,15 @@ export class Coordinator {
           runtimeDigest: verdict?.runtimeDigest ?? null,
           verdictDigest: canonicalDigest(verdict ?? null),
         },
+        stability,
         evidence: {
           worker: evidence.worker, workerSeq: evidence.workerSeq,
           digest: evidence.digest, coordinationSeq: evidence.coordinationSeq,
         },
         result: accept ? { sha: capture.sha, ref: capture.retainedResultRef } : null,
-        checkpoint: accept ? null : { state: 'pinned', sha: admission.checkpointSha },
+        checkpoint: accept ? null : {
+          state: 'pinned', sha: admission.checkpointSha, originOutcome: admission.originOutcome,
+        },
       };
       const receipt = { ...receiptCore, receiptDigest: canonicalDigest(receiptCore) };
       let completed;
@@ -4652,13 +4760,16 @@ export class Coordinator {
         task.coordinationVersion = completed.task.version;
         task.capturedSha = capture.sha;
         task.retainedResultRef = capture.retainedResultRef;
+        task.verificationStability = stability;
       }
       task.verdict = verdict;
       this._coordination.promoteKnowledgeNode({
         id: `outcome:${task.id}:${verifyEvent.seq}`,
         taskId: task.id,
         type: accept ? 'Finding' : state === 'candidate_failed' ? 'Counterexample' : 'Question',
-        body: accept ? `Task ${task.id} passed its hub verification on retry`
+        body: accept && stability === 'passed_after_candidate_failure'
+          ? `Task ${task.id} passed confirmation after an original candidate failure and remains unstable`
+          : accept ? `Task ${task.id} passed its hub verification on retry`
           : state === 'candidate_failed' ? `Task ${task.id} failed its hub verification on retry`
             : `Task ${task.id} still needs another verification attempt`,
         grounding: state === 'inconclusive' ? 'observed' : 'verified',
@@ -4684,11 +4795,15 @@ export class Coordinator {
       nodeKey: admission.nodeKey,
       taskId: admission.taskId,
       attempt: admission.attempt,
+      originOutcome: admission.originOutcome,
       admissionDigest: admission.admissionDigest,
       outcome: { disposition: { candidate: null, base: null }, runtimeDigest: null, verdictDigest: null },
+      stability: null,
       evidence: null,
       result: null,
-      checkpoint: { state: 'pinned', sha: admission.checkpointSha },
+      checkpoint: {
+        state: 'pinned', sha: admission.checkpointSha, originOutcome: admission.originOutcome,
+      },
     };
     const receipt = { ...receiptCore, receiptDigest: canonicalDigest(receiptCore) };
     try {
@@ -6988,6 +7103,7 @@ export class Coordinator {
       publication: task?.publication ?? null,
       capturedSha: task?.capturedSha ?? null,
       retainedResultRef: task?.retainedResultRef ?? null,
+      verificationStability: task?.verificationStability ?? null,
       providerGovernance,
       observationOnly: providerGovernance?.observationOnly === true,
       terminalCause: handle.terminalCause ?? null,
@@ -8158,16 +8274,17 @@ export class Coordinator {
         task.changedLines = await this._worktrees.changedLines(baseSha, sha);
       }
 
-      const verdict = await this._referee(task, workerResult, {
+      const observedVerdict = await this._referee(task, workerResult, {
         pinnedVerification: task.brief.verification,
         sandbox: verifyPath,
         baseSandbox: baseVerifyPath,
       });
 
-      task.verdict = verdict;
       // C1: referee.accept() (or an injected equivalent) is the SOLE done-gate.
       const acceptOpts = { ...this._acceptOpts, expectExit: task.brief.verification.expectExit };
-      const refereeAccept = this._accept(verdict, acceptOpts);
+      const refereeAccept = this._accept(observedVerdict, acceptOpts);
+      const verdict = closedVerificationVerdict(observedVerdict, task.brief.verification);
+      task.verdict = verdict;
       // Provider usage can arrive only as a terminal lump. Native kill cannot claw back that
       // spend, but an over-hard-limit artifact must still fail admission and router learning.
       const accept = refereeAccept
@@ -8175,6 +8292,7 @@ export class Coordinator {
         && handle.providerPolicyHardExceeded !== true
         && handle.providerTelemetryFailed !== true;
       const inconclusive = verdict.outcome === 'inconclusive';
+      const diagnosticCheckpoint = ['inconclusive', 'candidate_failed'].includes(verdict.outcome);
       // An accepted commit must remain reachable independently of its disposable task branch.
       // Standard Baton deployments provide this authority; legacy injected worktree fixtures may
       // omit it and therefore remain unable to expose Run-level adoption.
@@ -8184,12 +8302,14 @@ export class Coordinator {
         && typeof this._worktrees?.resolveResult === 'function') {
         retainedResultRef = (await this._pinAcceptedResult(task, captured.sha)).ref;
       }
-      if (inconclusive && captured?.sha && typeof this._worktrees?.retainCheckpoint === 'function'
+      if (diagnosticCheckpoint && captured?.sha && typeof this._worktrees?.retainCheckpoint === 'function'
         && typeof this._worktrees?.resolveCheckpoint === 'function') {
         const ref = await this._worktrees.retainCheckpoint(captured.sha);
         const resolved = await this._worktrees.resolveCheckpoint(ref);
         if (resolved !== captured.sha) throw Object.assign(new Error('candidate checkpoint postcheck failed'), { code: 'checkpoint_failed' });
-        checkpoint = Object.freeze({ state: 'pinned', sha: captured.sha, ref });
+        checkpoint = Object.freeze({
+          state: 'pinned', sha: captured.sha, ref, originOutcome: verdict.outcome,
+        });
       }
       const verifyEvent = this._log.append({
         worker: handle.id,
@@ -8456,6 +8576,7 @@ export class Coordinator {
       let maxTurnEpoch = 1;
       let terminalStatus = 'working';
       let verdict = null;
+      let verificationStability = null;
       let lastResult = null;
       let recoveryTerminalized = false;
       let refinementAborted = false;
@@ -8827,6 +8948,7 @@ export class Coordinator {
               retainedResultRef = e.payload?.capture?.retainedResultRef ?? retainedResultRef;
               checkpoint = e.payload?.capture?.checkpoint ?? checkpoint;
             }
+            verificationStability = e.payload?.stability ?? verificationStability;
             break;
           case 'worktree.progress_checkpointed':
             if (e.actor === 'policy' && e.payload?.checkpoint?.state === 'pinned') {
@@ -9001,6 +9123,7 @@ export class Coordinator {
           integration,
           retainedResultRef,
           checkpoint,
+          verificationStability,
           publication,
           review,
         };
@@ -9020,6 +9143,7 @@ export class Coordinator {
         task.integration = integration;
         task.retainedResultRef = retainedResultRef;
         task.checkpoint = checkpoint;
+        task.verificationStability = verificationStability;
         task.progressPreservation = progressPreservation;
         task.publication = publication;
         task.review = review;
