@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { BatonApplication, CoordinationStore, MockAdapter, createDriver } from '../src/index.mjs';
+import {
+  BatonApplication, CoordinationStore, DEFAULT_WORKER_POLICY_REQUEST, MockAdapter, bindBaton, createDriver,
+} from '../src/index.mjs';
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase64-${name}-`));
 const policy = Object.freeze({
@@ -115,6 +117,116 @@ const intent = (overrides = {}) => ({
   ...overrides,
 });
 
+test('UA1/KC1: application profiles resolve a public harness through one exact private adapter route', async () => {
+  const repo = root('public-private-route-repo');
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'phase64@example.invalid'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Phase 64'], { cwd: repo });
+  writeFileSync(join(repo, 'base.txt'), 'base\n');
+  execFileSync('git', ['add', 'base.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+  const adapter = configuredAdapter({ outcome: 'completed', delayMs: 10, summary: 'done', files: {} });
+  const card = adapter.card.bind(adapter);
+  adapter.card = () => ({
+    ...card(), harness: 'claude-code',
+    modelSelection: {
+      mode: 'exact', configuredDefault: 'kimi-k3', available: ['kimi-k3'], family: 'kimi',
+      acceptedPrefixes: [], acceptedAliases: [], reasoningEffort: ['max'], effortRequired: true,
+      serviceTier: null, provenance: 'test', refreshedAt: null,
+    },
+  });
+  const driver = createDriver({
+    repoRoot: repo, repoId: 'repo-phase64', logDir: root('public-private-route-log'),
+    adapters: { 'private-kimi-provider': adapter }, goalPlanAuthority: { policy, authorize: async () => true },
+    stopDeadlineMs: 2000,
+  });
+  const publicProfile = {
+    ...profile,
+    routes: [{ harness: 'claude-code', model: 'kimi-k3', effort: 'max' }],
+  };
+  const application = new BatonApplication({
+    driver, repoId: 'repo-phase64', profiles: { public: publicProfile },
+    principals: { planner: principal('planner'), dispatcher: principal('dispatcher'), observer: principal('observer') },
+    authorize: async () => true,
+  });
+  const proposed = await application.start({
+    runId: 'run-public-private-route', objective: 'prove public to private routing', profile: 'public',
+    route: publicProfile.routes[0], scope: ['impl/**'],
+  }, principal('owner'));
+  assert.deepEqual(proposed.route.requested, publicProfile.routes[0]);
+  await application.approve(proposed.runId, proposed.plan.digest, principal('approver'));
+  assert.equal(driver.coordinator.list()[0].vendor, 'private-kimi-provider');
+  await application.shutdown(principal('shutdown'));
+});
+
+test('WP9: profile v2 binds unattended full access through Plan, Brief, adapter options, and route identity', async () => {
+  const repo = root('worker-policy-profile-repo');
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'phase64@example.invalid'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Phase 64'], { cwd: repo });
+  writeFileSync(join(repo, 'base.txt'), 'base\n');
+  execFileSync('git', ['add', 'base.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+
+  const adapter = configuredAdapter({ outcome: 'completed', delayMs: 10, summary: 'done', files: {} });
+  const originalCard = adapter.card.bind(adapter);
+  adapter.card = () => ({
+    ...originalCard(),
+    workerPolicy: {
+      schemaVersion: 1,
+      autonomy: { supported: ['unattended'], default: 'unattended', perTask: false, observation: 'launch', mechanisms: ['test-unattended'] },
+      access: { supported: ['full'], default: 'full', perTask: false, observation: 'launch', mechanisms: ['test-full-access'] },
+      containment: { hostProcess: 'same_uid', guarantees: ['private_runtime'], configuredPreferences: [], observation: 'unavailable' },
+    },
+  });
+  const spawnCalls = [];
+  const originalSpawn = adapter.spawn.bind(adapter);
+  adapter.spawn = (worker, brief, options) => {
+    spawnCalls.push({ worker, brief, options });
+    return originalSpawn(worker, brief, options);
+  };
+  const driver = createDriver({
+    repoRoot: repo, repoId: 'repo-phase64', logDir: root('worker-policy-profile-log'),
+    adapters: { mock: adapter }, goalPlanAuthority: { policy, authorize: async () => true },
+    stopDeadlineMs: 2_000,
+  });
+  const policyProfile = { ...profile, schemaVersion: 2, workerPolicy: DEFAULT_WORKER_POLICY_REQUEST };
+  const application = new BatonApplication({
+    driver, repoId: 'repo-phase64', profiles: { full: policyProfile },
+    principals: { planner: principal('planner'), dispatcher: principal('dispatcher'), observer: principal('observer') },
+    authorize: async () => true,
+  });
+  const proposed = await application.start({
+    runId: 'run-worker-policy-profile', objective: 'prove durable worker policy', profile: 'full',
+    route: policyProfile.routes[0], scope: ['impl/**'],
+  }, principal('owner'));
+  assert.deepEqual(application.card().profiles[0].workerPolicy, DEFAULT_WORKER_POLICY_REQUEST);
+  assert.deepEqual(driver.coordination.snapshot().goalPlan.plans[0].nodes[0].workerPolicy, DEFAULT_WORKER_POLICY_REQUEST);
+  const pendingOutline = await application.inspect({
+    runId: proposed.runId, depth: 'outline',
+  }, principal('observer'));
+  assert.equal(pendingOutline.outline.workerPolicy.state, 'requested');
+  assert.equal(pendingOutline.outline.workerPolicy.request.access.mode, 'full');
+  await application.approve(proposed.runId, proposed.plan.digest, principal('approver'));
+  assert.equal(spawnCalls.length, 1);
+  assert.deepEqual(spawnCalls[0].brief.workerPolicy, DEFAULT_WORKER_POLICY_REQUEST);
+  assert.equal(spawnCalls[0].options.workerPolicy.access.resolved, 'full');
+  assert.equal(JSON.parse(driver.coordinator.list()[0].routeKey).length, 7);
+  const activeOutline = await application.inspect({
+    runId: proposed.runId, depth: 'outline',
+  }, principal('observer'));
+  assert.equal(activeOutline.outline.workerPolicy.access.resolved, 'full');
+  assert.equal(activeOutline.outline.workerPolicy.containment.attestation, 'preferred_gap');
+  const help = await application.help({
+    topic: 'worker-policy', depth: 'outline', runId: proposed.runId,
+  }, principal('observer'));
+  assert.match(help.summary, /default is unattended full access/u);
+  await application.wait(proposed.runId, principal('observer'), { timeoutMs: 2_000 });
+  const evidence = await application.evidence(proposed.runId, principal('observer'));
+  assert.equal(evidence.bindings.workerPolicy.access.resolved, 'full');
+  await application.shutdown(principal('shutdown'));
+});
+
 test('UA1-UA5: concise start stops at a readable distinct-authority approval checkpoint without effects', async () => {
   const { application, adapter, driver } = fixture('start');
   let spawnCalls = 0;
@@ -165,6 +277,24 @@ test('UA3/UA6: approval return and dispatch use service authorities, not acciden
   await application.shutdown(principal('shutdown-admin'));
 });
 
+test('UA3/UA4: a structured provider failure exposes no adoptable or exportable result', async () => {
+  const { application, driver } = fixture('provider-failure', {
+    scenario: { outcome: 'failed', delayMs: 10, summary: 'provider rejected the turn', files: {} },
+  });
+  const proposed = await application.start(intent({ runId: 'run-provider-failure' }), principal('failure-owner'));
+  await application.approve('run-provider-failure', proposed.plan.digest, principal('failure-approver'));
+  const failed = await application.wait('run-provider-failure', principal('failure-owner'), { timeoutMs: 5_000 });
+  assert.equal(failed.phase, 'failed');
+  assert.equal(failed.result, null);
+  assert.equal(failed.nodes[0].state, 'failed');
+  assert.equal(failed.nextActions.some((action) => ['adopt_result', 'export_result'].includes(action.kind)), false);
+  const task = driver.coordination.snapshot().tasks.find((row) => row.runId === 'run-provider-failure');
+  assert.equal(task.status, 'failed');
+  assert.equal(driver.coordination.snapshot().artifacts.filter((artifact) => artifact.taskId === task.id)
+    .some((artifact) => artifact.accepted === true), false);
+  await application.shutdown(principal('shutdown-admin'));
+});
+
 test('UA2/UA6: a durable Goal-only planning failure remains a readable retryable RunView', async () => {
   const goalPlanAuthorize = async ({ power, principalId }) => !(principalId === 'application-planner' && power === 'plan:propose');
   const { application, driver } = fixture('planning-failure', { goalPlanAuthorize });
@@ -205,12 +335,14 @@ test('UA4/UA6: RunView redacts credential-shaped attention and answers it exactl
   assert.equal(view.phase, 'running');
   assert.equal(view.attention[0].question, '[credential-shaped content redacted]');
   assert.equal(JSON.stringify(view).includes(secret), false);
-  const answered = await application.answer(
-    'run-attention-redaction', view.attention[0].requestId, { text: 'Use the configured credential reference only.' },
-    principal('attention-owner'),
-  );
-  assert.equal(answered.lastAction.result, 'applied');
-  assert.equal(answered.attention.length, 0);
+  const run = bindBaton(application, principal('attention-owner')).runs.open('run-attention-redaction');
+  const outline = await run.inspect();
+  const answer = outline.outline.actions.find((action) => action.kind === 'answer_question');
+  assert.equal(answer.target.requestId, view.attention[0].requestId);
+  assert.equal(answer.target.question, '[credential-shaped content redacted]');
+  assert.equal(JSON.stringify(answer).includes(secret), false);
+  const answered = await run.act(answer.actionId, { text: 'Use the configured credential reference only.' });
+  assert.equal(answered.outline.attention.count, 0);
   const finished = await application.wait('run-attention-redaction', principal('attention-owner'), { timeoutMs: 5_000 });
   assert.equal(finished.phase, 'work_completed');
   const retry = await application.answer(
@@ -218,6 +350,29 @@ test('UA4/UA6: RunView redacts credential-shaped attention and answers it exactl
     principal('attention-owner'),
   );
   assert.equal(retry.lastAction.result, 'already_resolved');
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('UA4/UA6: pending worker approvals are unique Run actions and need no raw request choreography', async () => {
+  const { application } = fixture('approval-action', {
+    scenario: {
+      outcome: 'completed', delayMs: 1, summary: 'approval handled', files: {},
+      ask: { kind: 'approval', question: 'Allow the bounded tool call?', blocking: true, afterEditIndex: 0 },
+    },
+  });
+  const proposed = await application.start(intent({ runId: 'run-approval-action' }), principal('approval-owner'));
+  await application.approve(proposed.runId, proposed.plan.digest, principal('approval-approver'));
+  await application.wait(proposed.runId, principal('approval-owner'), { timeoutMs: 250 });
+  const run = bindBaton(application, principal('approval-owner')).runs.open(proposed.runId);
+  const outline = await run.inspect();
+  const action = outline.outline.actions.find((candidate) => candidate.kind === 'answer_approval');
+  assert.ok(action);
+  assert.match(action.target.requestId, /^req_/u);
+  assert.deepEqual(action.inputSchema.properties.decision.enum, ['allow', 'deny', 'cancel']);
+  const answered = await run.act(action.actionId, { decision: 'allow' });
+  assert.equal(answered.outline.attention.count, 0);
+  const finished = await application.wait(proposed.runId, principal('approval-owner'), { timeoutMs: 5_000 });
+  assert.equal(finished.phase, 'work_completed');
   await application.shutdown(principal('shutdown-admin'));
 });
 
@@ -319,7 +474,7 @@ test('UA5: the shared command bus exposes the same run flow and a deployment-der
   const spawn = adapter.spawn.bind(adapter);
   adapter.spawn = (...args) => { spawnCalls += 1; return spawn(...args); };
   const card = application.card();
-  assert.deepEqual(card.commands, ['application.help', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.approve', 'run.wait', 'run.answer', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.review', 'run.integrate', 'run.export', 'run.recover', 'application.shutdown']);
+  assert.deepEqual(card.commands, ['application.help', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'run.recover', 'application.shutdown']);
   assert.deepEqual(card.profiles[0].routes, [{ harness: 'mock', model: 'model-a', effort: 'low' }]);
 
   const proposed = await application.command('run.start', { intent: intent({ runId: 'run-command-bus' }) }, principal('command-owner'));
