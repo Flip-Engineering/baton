@@ -1,0 +1,5 @@
+# Adversarial review — context map partition 4/5
+
+## High — completed generic calls cannot be replayed as call sources
+
+`contextCallArtifacts()` accepts a completed `baton.context_effect_call` only with evidence schema v4 and then verifies its exact result lineage with `_validateContextEffectResultLineageEvidence()`. However, the adjacent `contextCompletedCallSource()` unconditionally rejects every evidence version other than v3 before constructing the normalized `kind: 'call'` source. Consequently, every completed generic call that passed the v4 artifact and lineage checks is refused with `context_output_lineage_required`; only legacy map v3 calls can cross this adapter. This blocks generic call-to-call replay/chaining and falsely reports missing lineage that was just verified. Branch on `call.kind`: accept and translate generic v4 evidence alongside legacy map v3 evidence (or, if generic calls are intentionally not valid sources, reject them explicitly with a truthful unsupported-source code before claiming a lineage deficit), and cover a completed generic-v4 source round trip.
