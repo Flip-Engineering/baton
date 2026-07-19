@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-07-18T19:28:31-07:00",
+  "runId": "run-a1abbe5e9efc4d9952498a89efe3612c",
+  "deploymentTreeSha": "feff388c1c60fe4866af1c894e62369dd18de469",
+  "prefix": {
+    "completedMapCallId": "context-call:63cfe1aaced2835bfea5f55bbdc3aad5b73d6c338a52ef8792866bcc909dfa89",
+    "genericReduceCallId": "context-call:8136f414067bacdf70a84d3db05e48705c087cc769e977fe2b4787606ffc31b6",
+    "genericAdmissionSeq": 116,
+    "stopAdmissionSeq": 117,
+    "stopCompletionSeq": 118
+  },
+  "defect": {
+    "code": "run_stop_integrity",
+    "message": "run stop target snapshot diverged",
+    "storedTargetContextCallIds": [
+      "context-call:63cfe1aaced2835bfea5f55bbdc3aad5b73d6c338a52ef8792866bcc909dfa89"
+    ],
+    "missingTargetContextCallIds": [
+      "context-call:8136f414067bacdf70a84d3db05e48705c087cc769e977fe2b4787606ffc31b6"
+    ],
+    "finding": "The stop writer used a creation-time runtime or projection that omitted the just-admitted plan-pending generic call. Strict replay correctly refused the incomplete cryptographically bound target snapshot."
+  },
+  "reaping": {
+    "stopReceiptProcessesObserved": 7,
+    "stopReceiptProcessesClosed": 7,
+    "independentlyObservedPids": 7,
+    "independentlyLivePids": 0,
+    "verifiedAt": "2026-07-18T19:28:31-07:00"
+  },
+  "disposition": "The disposable deployment was quarantined long enough to preserve this proof, then removed without rewriting its append-only ledger."
+}

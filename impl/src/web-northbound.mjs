@@ -83,6 +83,18 @@ function result(status, body) { return Object.freeze({ status, body: Object.free
 function error(status, code, message = code) { return result(status, { ok: false, error: { code, message } }); }
 function dispatchFailure(cause) {
   const goalPlanCode = cause?.code;
+  if (typeof goalPlanCode === 'string' && goalPlanCode.startsWith('worker_policy_')) {
+    const invalid = ['worker_policy_invalid', 'worker_policy_observation_invalid'].includes(goalPlanCode);
+    return { httpStatus: invalid ? 400 : 409, body: { ok: false, error: {
+      code: goalPlanCode, message: invalid ? 'worker policy precondition failed' : 'worker policy unavailable or conflicted',
+    } } };
+  }
+  if ((typeof goalPlanCode === 'string' && goalPlanCode.startsWith('run_orchestrator_'))
+    || goalPlanCode === 'run_stopping') {
+    return { httpStatus: 409, body: { ok: false, error: {
+      code: goalPlanCode, message: 'recursive Run authority is no longer active',
+    } } };
+  }
   if (goalPlanCode === 'application_unauthorized') return { httpStatus: 403, body: { ok: false, error: { code: goalPlanCode, message: 'application command forbidden' } } };
   if (goalPlanCode === 'application_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: goalPlanCode, message: 'run application unavailable' } } };
   if (['application_run_lookup_oversize', 'application_run_view_oversize'].includes(goalPlanCode)) return { httpStatus: 503, body: { ok: false, error: { code: 'temporarily_unavailable', message: 'run application projection unavailable' } } };
@@ -160,6 +172,9 @@ function exactRecord(value, fields) {
   return isRecord(value) && Object.keys(value).length === fields.size
     && Object.keys(value).every((key) => fields.has(key));
 }
+function requiredEffectFields(fields, value) {
+  return Object.hasOwn(value ?? {}, 'requiredEffects') ? new Set([...fields, 'requiredEffects']) : fields;
+}
 function stringList(value) {
   return Array.isArray(value) && value.every(string) && new Set(value).size === value.length;
 }
@@ -186,26 +201,28 @@ function planVerification(value) {
     && stringList(value.requiredPredecessorEvidence);
 }
 function planNode(value) {
-  return exactRecord(value, PLAN_NODE_FIELDS) && string(value.key) && string(value.objective)
+  return exactRecord(value, requiredEffectFields(PLAN_NODE_FIELDS, value)) && string(value.key) && string(value.objective)
     && stringList(value.definitionOfDone) && stringList(value.deps) && stringList(value.pathScope)
     && string(value.risk) && goalPlanBudget(value.budget) && planVerification(value.verification)
     && value.pathScope.length > 0
     && exactRecord(value.routes, PLAN_ROUTE_FIELDS) && stringList(value.routes.harnesses) && value.routes.harnesses.length > 0
     && stringList(value.routes.models) && value.routes.models.length > 0
     && stringList(value.routes.efforts) && value.routes.efforts.length > 0
-    && stringList(value.capabilities) && stringList(value.effects);
+    && stringList(value.capabilities) && stringList(value.effects)
+    && (!Object.hasOwn(value, 'requiredEffects') || stringList(value.requiredEffects));
 }
 function planGate(value) {
-  return exactRecord(value, PLAN_GATE_FIELDS)
+  return exactRecord(value, requiredEffectFields(PLAN_GATE_FIELDS, value))
     && /^goal:[a-f0-9]{64}$/.test(value.goalId ?? '') && Number.isSafeInteger(value.goalVersion) && value.goalVersion > 0
     && /^[a-f0-9]{64}$/.test(value.goalDigest ?? '')
     && /^plan:[a-f0-9]{64}$/.test(value.planId ?? '') && Number.isSafeInteger(value.planVersion) && value.planVersion > 0
     && /^[a-f0-9]{64}$/.test(value.planDigest ?? '') && string(value.nodeKey)
     && value.expectedDispatchVersion === 0
-    && stringList(value.capabilities) && stringList(value.effects);
+    && stringList(value.capabilities) && stringList(value.effects)
+    && (!Object.hasOwn(value, 'requiredEffects') || stringList(value.requiredEffects));
 }
 function planBrief(value) {
-  return exactRecord(value, PLAN_BRIEF_FIELDS) && string(value.goal)
+  return exactRecord(value, requiredEffectFields(PLAN_BRIEF_FIELDS, value)) && string(value.goal)
     && stringList(value.constraints) && stringList(value.pathScope) && stringList(value.tools)
     && typeof value.outputFormat === 'string' && typeof value.definitionOfDone === 'string'
     && planVerification(value.verification) && exactRecord(value.budget, BUDGET_FIELDS)
@@ -213,7 +230,8 @@ function planBrief(value) {
     && Number.isFinite(value.budget.usd) && value.budget.usd >= 0
     && Number.isSafeInteger(value.budget.wallMin) && value.budget.wallMin > 0
     && Number.isSafeInteger(value.providerTurns) && value.providerTurns > 0
-    && stringList(value.capabilities) && stringList(value.effects);
+    && stringList(value.capabilities) && stringList(value.effects)
+    && (!Object.hasOwn(value, 'requiredEffects') || stringList(value.requiredEffects));
 }
 function validProviderClaims(value) {
   if (!isRecord(value)) return false;
@@ -607,8 +625,24 @@ export class WebNorthbound {
       }
       if (admission.command.status === 'completed' && APPLICATION_COMMAND[envelope.command]) {
         try {
+          const lease = typeof this.coordination.activeRunOrchestratorLeaseForSession === 'function'
+            ? this.coordination.activeRunOrchestratorLeaseForSession({
+              repoId: envelope.repoId,
+              principalId: ctx.principal.userId,
+              sessionId: ctx.principal.sessionId,
+              expiresAt: ctx.principal.expiresAt,
+            }) : null;
           await this.application.authorizeReplay(APPLICATION_COMMAND[envelope.command], envelope.args, {
             actor: webActor, principalId: ctx.principal.userId, sessionId: ctx.principal.sessionId,
+          }, {
+            transport: 'web', requestId: String(envelope.commandId),
+            idempotencyKey: `web.command:${envelope.commandId}`,
+            ...(lease ? { sessionAuthority: {
+              schemaVersion: 1,
+              authorityDigest: lease.session.authorityDigest,
+              expiresAt: lease.session.expiresAt,
+              orchestratorLeaseId: lease.leaseId,
+            } } : {}),
           });
         } catch (cause) {
           const failure = dispatchFailure(cause);
@@ -691,10 +725,26 @@ export class WebNorthbound {
     let value;
     if (APPLICATION_COMMAND[envelope.command]) {
       if (!this.application) throw Object.assign(new Error('Run application is unavailable'), { code: 'application_unavailable' });
+      const lease = typeof this.coordination.activeRunOrchestratorLeaseForSession === 'function'
+        ? this.coordination.activeRunOrchestratorLeaseForSession({
+          repoId: envelope.repoId,
+          principalId: principal.userId,
+          sessionId: principal.sessionId,
+          expiresAt: principal.expiresAt,
+        }) : null;
       value = await this.application.command(APPLICATION_COMMAND[envelope.command], a, {
         actor: webActor,
         principalId: principal.userId,
         sessionId: principal.sessionId,
+      }, {
+        transport: 'web', requestId: String(envelope.commandId),
+        idempotencyKey: `web.command:${envelope.commandId}`,
+        ...(lease ? { sessionAuthority: {
+          schemaVersion: 1,
+          authorityDigest: lease.session.authorityDigest,
+          expiresAt: lease.session.expiresAt,
+          orchestratorLeaseId: lease.leaseId,
+        } } : {}),
       });
     } else if (envelope.command === 'spawn') {
       const goalPlan = a.goalPlan ? json(a.goalPlan) : undefined;
@@ -721,7 +771,7 @@ export class WebNorthbound {
       value = await this.coordinator.spawnScratchOracle(a.scratchFactId, a.harness, {
         model: a.model, effort: a.effort, modelPolicy: a.modelPolicy, verification: a.verification,
         budget: a.budget, constraints: a.constraints, goal: a.goal, definitionOfDone: a.definitionOfDone,
-        taskId: a.taskId ?? `web-${envelope.commandId}`, runId: envelope.runId ?? null,
+        taskId: a.taskId ?? `web-${envelope.commandId}`,
         actor: `operator:${webActor}`, idempotencyKey: `web.command:${envelope.commandId}`,
       });
     } else if (envelope.command === 'send') {
@@ -1027,7 +1077,10 @@ export class WebNorthbound {
     if (pathname === '/v1/session') {
       return this._write(res, result(200, {
         ok: true,
-        identity: { userId: principal.userId, capabilities: [...principal.capabilities], repoIds: [...principal.repoIds] },
+        identity: {
+          userId: principal.userId, sessionId: principal.sessionId,
+          capabilities: [...principal.capabilities], repoIds: [...principal.repoIds],
+        },
         expiresAt: principal.expiresAt,
       }));
     }
