@@ -25,6 +25,7 @@ import { APPLICATION_SEMANTIC_REGISTRY, projectTypedTerminalCause } from './appl
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { projectRunTimelinePage } from './run-timeline.mjs';
 import { compareCanonicalStrings } from './canonical-order.mjs';
+import { normalizeVerifierFailureCapsule } from './verifier-diagnostics.mjs';
 
 export { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 
@@ -46,9 +47,9 @@ const MAX_ATTENTION = 64;
 const MAX_ATTENTION_TEXT_BYTES = 4_096;
 const MAX_REVIEW_SOURCE_BYTES = 4 * 1024 * 1024;
 const MAX_WORKFLOW_PLAN_HISTORY = 16;
-// VR9/RV closed verifier projection bounds. Durable verdicts carry only exact captured-byte
-// metadata and closed enums; raw command output and free-form diagnostics never cross the referee
-// receipt boundary. A malformed duration is dropped rather than passed through.
+// VR9/RV closed verifier projection bounds. Durable verdicts carry exact captured-byte metadata,
+// closed enums, and at most one sanitized bounded failure tail. A malformed duration or capsule is
+// dropped rather than passed through.
 const VERIFIER_DURATION_BOUND_MS = 7 * 24 * 60 * 60 * 1_000;
 const HEX64 = /^[a-f0-9]{64}$/u;
 const VERIFIER_OUTCOMES = Object.freeze(new Set(['passed', 'candidate_failed', 'inconclusive']));
@@ -8658,6 +8659,11 @@ export class BatonApplication {
       && verdict.durationMs <= VERIFIER_DURATION_BOUND_MS ? Math.trunc(verdict.durationMs) : null;
     const capturedOutputBytes = Number.isSafeInteger(verdict.capturedOutputBytes)
       && verdict.capturedOutputBytes >= 0 ? verdict.capturedOutputBytes : null;
+    const capturedOutputDigest = sanitizeHex64(verdict.capturedOutputDigest);
+    const failureCapsule = capturedOutputBytes === null || capturedOutputDigest === null
+      ? null : normalizeVerifierFailureCapsule(verdict.failureCapsule, {
+        capturedOutputBytes, capturedOutputDigest,
+      });
     const acceptance = result?.verificationAcceptance ?? null;
     const requirements = {
       requireRedGreen: acceptance?.requireRedGreen === true,
@@ -8691,7 +8697,8 @@ export class BatonApplication {
       baseExecution: projectExecution(verdict.baseExecution),
       outputExceeded: verdict.outputExceeded === true,
       capturedOutputBytes,
-      capturedOutputDigest: sanitizeHex64(verdict.capturedOutputDigest),
+      capturedOutputDigest,
+      ...(failureCapsule ? { failureCapsule } : {}),
       diagnosticCode: closedEnum(verdict.diagnosticCode, VERIFIER_DIAGNOSTIC_CODES),
       durationMs,
       runtimeDigest: sanitizeHex64(verdict.runtimeDigest),

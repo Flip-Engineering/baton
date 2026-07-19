@@ -12,6 +12,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, resolve, sep } from 'node:path';
+import { verifierFailureCapsule } from './verifier-diagnostics.mjs';
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
@@ -385,6 +386,12 @@ export async function verify(task, result, sandbox, opts = {}) {
     baseExecution,
     runtimeDigest: runtime.digest,
   };
+
+  verdict.failureCapsule = passed ? null : verifierFailureCapsule(resultRun.output, {
+    capturedOutputBytes: resultRun.capturedOutputBytes,
+    capturedOutputDigest: resultRun.capturedOutputDigest,
+    sandboxRoots: [sandbox.dir, opts.baseSandbox?.dir].filter(Boolean),
+  });
 
   if (execution.state !== 'completed') Object.assign(verdict, { reverified: false, passed: false, outcome: 'inconclusive', failureOwnership: 'verifier' });
   else if (!passed && opts.classifyFailureOwnership && baseExecution?.state === 'completed' && baseExit === task.verification.expectExit) Object.assign(verdict, { outcome: 'candidate_failed', failureOwnership: 'candidate' });

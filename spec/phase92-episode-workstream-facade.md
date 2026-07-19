@@ -54,6 +54,12 @@ their explicit required effects. No false verifier verdict can produce an accept
 result: pass-only and red-green-required policy are explicit, and `accepted:false` is terminal for
 acceptance projection.
 
+A failed verifier is not reduced to an opaque digest. Its verification Episode item and evidence
+retain one closed, 8 KiB maximum sanitized tail capsule bound to the exact full-output byte count and
+digest. Successful verification retains no output tail. Ordinary authenticated observe authority can
+read the capsule without a new coordination write; secret-shaped content and runtime paths remain
+outside every public or durable surface.
+
 ## 3. Temporal and structural evidence join
 
 One Episode request computes one narrow context and at most one broad coordination snapshot. Its
@@ -98,6 +104,13 @@ Resident authority is deployment-scoped and PID-start fenced. A stale different-
 selector may be replaced only after exact stale proof; a live authority is never replaced.
 Ordinary `baton serve` and `CONFIG_MODULE` accept the same public deployment factory, eliminating
 the temporary bootstrap. Startup progress and failure remain truthful before publication.
+
+Fresh verifier sandboxes use collision-resistant paths and joined idempotent cleanup. Cleanup is
+scoped to one exact common-Git registration, preserves live siblings, captures expected Git
+diagnostics, and fails typed unless both the directory and administrative record are absent. The
+ordinary authenticated local owner has the minimum additional `retry_verification` capability so a
+currently advertised reason-only retry and its contextual help are usable without adoption,
+review, integration, resume, or shutdown authority.
 
 ## 5. Route truth
 

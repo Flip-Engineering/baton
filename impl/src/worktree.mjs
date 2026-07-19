@@ -60,7 +60,10 @@ export class StructuredMergeError extends Error {
 // ---------------------------------------------------------------------------
 
 function sh(cmd, args, cwd) {
-  return execFileSync(cmd, args, { cwd, encoding: 'utf8', ...(cmd === 'git' ? { env: localGitEnv() } : {}) }).trim();
+  return execFileSync(cmd, args, {
+    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    ...(cmd === 'git' ? { env: localGitEnv() } : {}),
+  }).trim();
 }
 
 function localGitEnv(extra = {}) {
@@ -773,17 +776,40 @@ export async function freshVerifySandbox(repoRoot, label, sha, opts = {}) {
   const suffix = randomBytes(4).toString('hex');
   const dir = join(verifyRoot, `${label}-${suffix}`);
   let registered = false;
+  let cleanupPromise = null;
 
-  const cleanup = async () => {
-    if (registered || existsSync(dir)) {
-      if (existsSync(dir)) authorityChild(repoRoot, 'verify', basename(dir), { kind: 'directory', mustExist: true });
-      try {
-        sh('git', ['worktree', 'remove', '--force', dir], repoRoot);
-      } catch {
-        rmSync(dir, { recursive: true, force: true });
+  const cleanup = () => {
+    if (!cleanupPromise) cleanupPromise = (async () => {
+      if (!existsSync(repoRoot)) {
+        registered = false;
+        return;
       }
-    }
-    try { sh('git', ['worktree', 'prune'], repoRoot); } catch { /* best-effort */ }
+      const present = existsSync(dir);
+      const administrativelyRegistered = registered && listWorktrees(repoRoot)
+        .some((entry) => pathResolve(entry.dir) === pathResolve(dir));
+      if (present || administrativelyRegistered) {
+        if (present) authorityChild(repoRoot, 'verify', basename(dir), { kind: 'directory', mustExist: true });
+        try {
+          sh('git', ['worktree', 'remove', '--force', dir], repoRoot);
+        } catch (error) {
+          if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+          try { sh('git', ['worktree', 'prune'], repoRoot); } catch { /* exact postcheck below */ }
+          const stillRegistered = listWorktrees(repoRoot)
+            .some((entry) => pathResolve(entry.dir) === pathResolve(dir));
+          if (stillRegistered) throw new WorktreeCleanupError(
+            'verification sandbox administration could not be removed', { cause: error },
+          );
+        }
+      }
+      registered = false;
+      try { sh('git', ['worktree', 'prune'], repoRoot); }
+      catch (error) { throw new WorktreeCleanupError('verification sandbox administration could not be pruned', { cause: error }); }
+      if (existsSync(dir) || listWorktrees(repoRoot)
+        .some((entry) => pathResolve(entry.dir) === pathResolve(dir))) {
+        throw new WorktreeCleanupError('verification sandbox cleanup did not reach an exact absent state');
+      }
+    })();
+    return cleanupPromise;
   };
 
   // Source stays commit-fresh while explicitly configured installed dependencies are copied into

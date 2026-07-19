@@ -124,7 +124,10 @@ retry only replays the already-approved trust gate.
 
 Outline depth shows only: verification needs another attempt, whether the candidate is preserved,
 and the next semantic action. Detail shows candidate/base execution dispositions, runtime digest,
-captured-output byte count and SHA-256 digest, and the closed diagnostic code.
+captured-output byte count and SHA-256 digest, the closed diagnostic code, and, only for a failed
+attempt, one sanitized failure capsule. The capsule is an 8 KiB maximum UTF-8 tail with its own
+digest and an exact binding to the full captured byte count/digest; credential-shaped content,
+ANSI/control bytes, verifier sandbox roots, temporary paths, and user-home coordinates are removed.
 Evidence depth carries exact receipts and checkpoint identity. Ordinary output never prints the
 checkpoint Git ref, sandbox path, PATH entries, HOME, dependency-copy roots, or process internals.
 Contextual help explains why retry is safe and why Baton did not blame the agent route.
@@ -152,16 +155,19 @@ No homelab integration is part of this phase.
 
 ## VR9 — persisted verifier-secret boundary
 
-The referee may hold captured stdout/stderr only while deriving one verdict. It computes the exact
-captured byte count and SHA-256 digest, then the coordinator reduces the observation to a closed
-schema before assigning task state or appending any operational, coordination, receipt, knowledge,
-or artifact record. No durable verdict contains raw output, a tail/window, a free-form note,
-command argv, cwd, environment values, worker/session identifiers, or free-form provider text.
+The referee may hold complete captured stdout/stderr only while deriving one verdict. It computes
+the exact captured byte count and SHA-256 digest, then the coordinator reduces the observation to a
+closed schema before assigning task state or appending any operational, coordination, receipt,
+knowledge, or artifact record. A failed verdict retains only the bounded sanitized failure capsule
+defined by VR7; a successful verdict retains none. No durable verdict contains complete raw output,
+an unbounded window, a free-form note, command argv, cwd, environment values, worker/session
+identifiers, or free-form provider text.
 Output-derived coverage and mutation identity lists are likewise persisted only as count/digest
 pairs.
 
 Acceptance generates a credential-shaped secret only inside verifier output, then recursively scans
 the persisted worker log and coordination store (including registered artifact manifests) and proves
-the secret is absent. Application outline, verification/execution/cleanup sections, status, and
-public evidence are checked separately. This persisted-byte assertion, not an application-only
-projection check described as a receipt test, is the VR9 security claim.
+the secret is absent while the safe terminal diagnostic remains actionable. Application outline,
+Episode verification evidence, verification/execution/cleanup sections, status, and public evidence
+are checked separately. This persisted-byte assertion, not an application-only projection check
+described as a receipt test, is the VR9 security claim.

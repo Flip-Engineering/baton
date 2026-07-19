@@ -143,3 +143,35 @@ test('P92-WB3: authenticated Web round-trips Episode continuation and exact gene
     ['run.workstream.notify', 2], ['run.workstream.stop', 2],
   ]);
 });
+
+test('P92-WB4: authenticated observe authority receives the bounded verifier failure capsule through Episode evidence', async (t) => {
+  const failureCapsule = {
+    schemaVersion: 1, kind: 'verification_failure_tail',
+    text: 'not ok 17 - concurrent verifier cleanup\nAssertionError: sibling worktree disappeared',
+    textDigest: 'a'.repeat(64), capturedOutputBytes: 4096,
+    capturedOutputDigest: 'b'.repeat(64), truncated: false, redacted: true,
+  };
+  const application = {
+    repoId: 'repo-phase92', card, async authorizeReplay() { return true; },
+    async command(name, args) {
+      assert.equal(name, 'run.episode');
+      assert.deepEqual(args, { runId: 'run-phase92', topic: 'verification', detail: 'evidence' });
+      return { schemaVersion: 1, runId: args.runId, topic: args.topic, detail: args.detail,
+        evidence: [{ kind: 'verification', value: { failureCapsule } }] };
+    },
+  };
+  const coordination = new CoordinationStore(root(t));
+  const web = new WebNorthbound({
+    coordinator: {}, coordination, application, repoIds: ['repo-phase92'],
+    allowedOrigins: ['https://phase92.example.test'],
+    now: () => Date.parse('2026-07-19T12:00:00.000Z'),
+  });
+
+  const response = await web.execute(context(), envelope('run_episode', {
+    runId: 'run-phase92', topic: 'verification', detail: 'evidence',
+  }, 'verification-capsule'));
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.result.evidence[0].value.failureCapsule, failureCapsule);
+  assert.equal(coordination.snapshot().lastSeq, 0,
+    'reading verifier diagnostics remains an ordinary non-amplifying observation');
+});

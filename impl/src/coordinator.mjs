@@ -30,6 +30,7 @@ import { normalizeRunLineagePolicy } from './run-lineage.mjs';
 import {
   createRecoveryAttemptAdmission, createRecoveryAttemptCompletion, recoveryAttemptSeriesId,
 } from './recovery-attempt.mjs';
+import { normalizeVerifierFailureCapsule } from './verifier-diagnostics.mjs';
 
 const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
 const WORKTREE_FAILURE = Symbol('worktree-failure');
@@ -286,6 +287,11 @@ function closedVerificationVerdict(value, verification = {}) {
   const capturedOutputBytes = Number.isSafeInteger(observed.capturedOutputBytes)
     && observed.capturedOutputBytes >= 0 ? observed.capturedOutputBytes : 0;
   const emptyDigest = createHash('sha256').update('').digest('hex');
+  const capturedOutputDigest = hex64OrNull(observed.capturedOutputDigest) ?? emptyDigest;
+  const failureCapsule = passed ? null : normalizeVerifierFailureCapsule(
+    observed.failureCapsule,
+    { capturedOutputBytes, capturedOutputDigest },
+  );
   let diagnosticCode = CLOSED_VERIFIER_DIAGNOSTICS.has(observed.diagnosticCode)
     ? observed.diagnosticCode : null;
   if (!diagnosticCode) {
@@ -312,7 +318,8 @@ function closedVerificationVerdict(value, verification = {}) {
     survivedMutantCount: survived.length,
     survivedMutantsDigest: canonicalDigest(survived),
     capturedOutputBytes,
-    capturedOutputDigest: hex64OrNull(observed.capturedOutputDigest) ?? emptyDigest,
+    capturedOutputDigest,
+    ...(failureCapsule ? { failureCapsule } : {}),
     diagnosticCode,
     durationMs: Number.isFinite(observed.durationMs) && observed.durationMs >= 0
       ? Math.trunc(observed.durationMs) : null,

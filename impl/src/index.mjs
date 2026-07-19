@@ -191,7 +191,11 @@ function localGitEnv() {
   return { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
 }
 
-function localGit(args, cwd, opts = {}) { return execFileSync('git', args, { ...opts, cwd, env: localGitEnv() }); }
+function localGit(args, cwd, opts = {}) {
+  return execFileSync('git', args, {
+    stdio: ['ignore', 'pipe', 'pipe'], ...opts, cwd, env: localGitEnv(),
+  });
+}
 
 function boundedRepoPath(value) {
   return typeof value === 'string' && value.length > 0 && Buffer.byteLength(value) <= 4_096

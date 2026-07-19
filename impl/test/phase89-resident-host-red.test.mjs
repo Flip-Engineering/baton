@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import {
-  mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync,
   realpathSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -43,10 +43,12 @@ function repository(t, name) {
   return root;
 }
 
-function exactAdapter() {
+function exactAdapter(scenario = {
+  outcome: 'completed', delayMs: 1, summary: 'unused resident fixture',
+}) {
   const adapter = new batonModule.MockAdapter({
     harness: ROUTE.harness,
-    scenario: { outcome: 'completed', delayMs: 1, summary: 'unused resident fixture' },
+    scenario,
   });
   const rawCard = adapter.card.bind(adapter);
   adapter.card = () => ({
@@ -61,6 +63,21 @@ function exactAdapter() {
     permissions: {
       mode: 'unattended-full',
       boundary: 'Fixture-only same-UID host access',
+    },
+    workerPolicy: {
+      schemaVersion: 1,
+      autonomy: {
+        supported: ['unattended'], default: 'unattended', perTask: false,
+        observation: 'unavailable', mechanisms: ['phase92-test-unattended'],
+      },
+      access: {
+        supported: ['full'], default: 'full', perTask: false,
+        observation: 'unavailable', mechanisms: ['phase92-test-full-access'],
+      },
+      containment: {
+        hostProcess: 'same_uid', guarantees: ['private_runtime'],
+        configuredPreferences: [], observation: 'unavailable',
+      },
     },
   });
   return adapter;
@@ -320,4 +337,82 @@ test('RH4 RED: baton serve may select deployment-owned hosting without a user-au
   assert.deepEqual(batonModule.parseBatonCli(['serve', './advanced-host.mjs']), {
     kind: 'serve', configPath: './advanced-host.mjs',
   });
+});
+
+test('P92-RH5: the ordinary authenticated local owner can inspect help and invoke its advertised one-shot verification retry', async (t) => {
+  const repo = repository(t, 'retry-owner');
+  const home = mkdtempSync(join(tmpdir(), 'baton-phase92-retry-owner-home-'));
+  const configRoot = mkdtempSync(join(tmpdir(), 'baton-phase92-retry-owner-config-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  t.after(() => rmSync(configRoot, { recursive: true, force: true }));
+  const failingAdapter = exactAdapter({
+    outcome: 'completed', delayMs: 0, edits: [{
+      path: 'test/fresh-verifier-failure.test.mjs',
+      content: "import test from 'node:test';test('fresh verifier failure',()=>{throw new Error('isolated retry fixture');});\n",
+    }],
+  });
+  const advanced = deploymentAdvanced(t, 'retry-owner');
+  advanced.adapters = { codex: failingAdapter };
+  advanced.resident = {
+    env: { ...process.env, HOME: home, XDG_CONFIG_HOME: configRoot }, home,
+    commandTimeoutMs: 30_000, pollMs: 10,
+  };
+  const deployment = await batonModule.openBaton({ repo, advanced });
+  t.after(async () => { try { await deployment.close(); } catch {} });
+  await deployment.host();
+  const selector = JSON.parse(readFileSync(join(repo, '.git', 'baton', 'connection.json'), 'utf8'));
+  const profileRoot = join(configRoot, 'baton', 'connections');
+  const profile = JSON.parse(readFileSync(join(profileRoot, `${selector.profile}.json`), 'utf8'));
+  const token = readFileSync(join(profileRoot, `${selector.profile}.token`), 'utf8').trim();
+  const authenticatedClient = new batonModule.BatonWebClient({
+    baseUrl: profile.url, origin: profile.origin, repoId: selector.repoId, token,
+    commandTimeoutMs: 30_000, pollMs: 10, clock: Date.now,
+    sleep: (milliseconds) => new Promise((resolveWait) => setTimeout(resolveWait, milliseconds)),
+    fetchImpl: batonModule.createLocalSocketFetch({
+      socketPath: profile.socketPath, baseUrl: profile.url,
+      ownerUid: typeof process.getuid === 'function' ? process.getuid() : null,
+    }),
+  });
+  const session = await authenticatedClient.session();
+  assert.deepEqual(session.identity.capabilities, [
+    'observe', 'control', 'approve', 'emergency_stop', 'export_result',
+    'retry_verification',
+    'goal:define', 'goal:observe', 'plan:propose', 'plan:approve',
+  ], 'the local owner gains only the missing retry power; adoption, review, integration, and resume remain absent');
+  const baton = await batonModule.connectBaton({
+    repo, advanced: { env: advanced.resident.env, home },
+  });
+  const run = await baton.runs.start('Exercise the advertised resident verification retry.', {
+    runId: 'run-phase92-resident-retry', exact: ROUTE,
+  });
+  await run.approve();
+  let outline;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    outline = await run.outline();
+    if (outline.terminal) break;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+  }
+  assert.equal(outline?.outline?.phase, 'failed');
+  assert.equal(outline.outline.actions.some((action) => action.kind === 'retry_verification'), true);
+
+  const help = await run.help('run.act.retry_verification', 'content');
+  assert.match(JSON.stringify(help), /exact preserved candidate/iu);
+  const retried = await run.act('retry_verification', {
+    reason: 'Confirm the exact candidate under the ordinary authenticated resident authority.',
+  });
+  assert.equal(retried.runId, run.id);
+  assert.equal(retried.outline.phase, 'failed');
+  assert.equal(retried.outline.actions.some((action) => action.kind === 'retry_verification'), false,
+    'candidate-owned confirmation is consumed exactly once');
+
+  const stopped = await run.stop('Record exact stop and worker-reap evidence after the failed retry.');
+  assert.equal(stopped.terminal, true);
+  const closed = await deployment.close();
+  assert.deepEqual(closed.ownership, { workers: 0, workerIds: [], closed: true });
+  assert.deepEqual(closed.resident, { state: 'closed' });
+  assert.equal(closed.state, 'closed');
+  assert.equal(existsSync(join(repo, '.git', 'baton', 'connection.json')), false,
+    'close removes only the exact resident selector it published');
+  assert.equal(existsSync(join(profileRoot, `${selector.profile}.json`)), false);
+  assert.equal(existsSync(join(profileRoot, `${selector.profile}.token`)), false);
 });

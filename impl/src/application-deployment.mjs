@@ -1160,6 +1160,7 @@ class BatonDeployment {
       authMethod: 'bearer',
       capabilities: [
         'observe', 'control', 'approve', 'emergency_stop', 'export_result',
+        'retry_verification',
         'goal:define', 'goal:observe', 'plan:propose', 'plan:approve',
       ],
       repoIds: [this.#repository.repoId],

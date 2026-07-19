@@ -146,6 +146,11 @@ directory-synced after the listener and authenticated readiness check succeed. U
 compare-and-swap: a process may remove only the coordinate whose instance epoch it owns. PID
 liveness alone is not sufficient because PID reuse must not strand or steal resident ownership.
 
+The ordinary authenticated local-owner session includes exactly the semantic powers exposed by its
+resident facade. In particular it includes `retry_verification`, so an advertised reason-only
+verification retry and its contextual help are callable through the authenticated connection. This
+does not grant result adoption, semantic review, integration, work resumption, or host shutdown.
+
 ### 3.2 Explicit network mode
 
 Network reach is opt-in: `host({ mode: 'network', ... })`. It requires explicit non-wildcard intent,

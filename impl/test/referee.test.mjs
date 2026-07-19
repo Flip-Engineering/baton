@@ -503,7 +503,7 @@ test('verify() appends exactly one verify.reverified event whose payload deep-eq
 // closed captured-output receipt — behavior 62 / Phase 90 RV
 // ============================================================
 
-test('captured verifier output is represented only by its exact byte count and SHA-256 digest', async (t) => {
+test('successful captured verifier output is represented only by its exact byte count and SHA-256 digest', async (t) => {
   const sandbox = makeSandbox();
   t.after(() => sandbox.cleanup());
 
@@ -515,7 +515,39 @@ test('captured verifier output is represented only by its exact byte count and S
   assert.equal(verdict.capturedOutputBytes, 5000);
   assert.equal(verdict.capturedOutputDigest, createHash('sha256').update('x'.repeat(5000)).digest('hex'));
   assert.equal(Object.hasOwn(verdict, 'observedOutputTail'), false);
+  assert.equal(verdict.failureCapsule, null);
   assert.equal(Object.hasOwn(verdict, 'note'), false);
+});
+
+test('failed verifier output retains one bounded sanitized tail capsule bound to the full output digest', async (t) => {
+  const sandbox = makeSandbox();
+  t.after(() => sandbox.cleanup());
+  const secret = 'sk-proj-abcdefghijklmnopqrstuvwxyz012345';
+  const diagnostic = `${'prefix\n'.repeat(2_000)}${sandbox.dir}/impl/test/failure.test.mjs:42\n`
+    + `authorization: Bearer ${secret}\nAssertionError: expected 1 to equal 2\n`;
+  const verification = {
+    command: 'node',
+    arguments: ['-e', `process.stderr.write(${JSON.stringify(diagnostic)});process.exit(1)`],
+    cwd: '.', envAllowlist: ['PATH'], expectExit: 0, expectResult: 'exit_code', timeoutMs: 5_000,
+    maxOutputBytes: 64 * 1_024, requiredPredecessorEvidence: [],
+  };
+  const task = makeTask({ verification });
+  const verdict = await verify(task,
+    makeResult({ verification: { command: verification.command, claimedExit: 1 } }), sandbox);
+
+  assert.equal(verdict.passed, false);
+  assert.equal(verdict.failureCapsule.schemaVersion, 1);
+  assert.equal(verdict.failureCapsule.kind, 'verification_failure_tail');
+  assert.equal(Buffer.byteLength(verdict.failureCapsule.text) <= 8_192, true);
+  assert.equal(verdict.failureCapsule.truncated, true);
+  assert.equal(verdict.failureCapsule.capturedOutputBytes, verdict.capturedOutputBytes);
+  assert.equal(verdict.failureCapsule.capturedOutputDigest, verdict.capturedOutputDigest);
+  assert.match(verdict.failureCapsule.text, /AssertionError: expected 1 to equal 2/u);
+  assert.equal(verdict.failureCapsule.text.includes(secret), false);
+  assert.equal(verdict.failureCapsule.text.includes(sandbox.dir), false);
+  assert.match(verdict.failureCapsule.text, /\[verification-sandbox\]/u);
+  assert.equal(verdict.failureCapsule.textDigest,
+    createHash('sha256').update(verdict.failureCapsule.text).digest('hex'));
 });
 
 test('closed plan verification executes argv without a shell, strips ambient env, and fails at the output bound', async (t) => {
@@ -541,4 +573,6 @@ test('closed plan verification executes argv without a shell, strips ambient env
   assert.equal(verdict.capturedOutputDigest, createHash('sha256').update('x'.repeat(64)).digest('hex'));
   assert.equal(verdict.diagnosticCode, 'verification_output_exceeded');
   assert.equal(Object.hasOwn(verdict, 'observedOutputTail'), false);
+  assert.equal(verdict.failureCapsule.kind, 'verification_failure_tail');
+  assert.equal(verdict.failureCapsule.capturedOutputDigest, verdict.capturedOutputDigest);
 });

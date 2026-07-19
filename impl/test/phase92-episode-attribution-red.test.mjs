@@ -1,6 +1,7 @@
 // These projections use synthetic coordination records to falsify attribution and graph shape.
 // They are not live provider, repository-integrator, or PID-reap proof.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 
 import { BatonApplication } from '../src/index.mjs';
@@ -141,4 +142,35 @@ test('P92-EA4: predecessor generations remain exactly addressable and never fall
   const oldResult = f.application._episodeItem(current, view, 'result', 'reviewer', context, 1);
   assert.equal(currentResult.value.value.resultSha, '2'.repeat(40));
   assert.equal(oldResult.value.value.resultSha, '3'.repeat(40));
+});
+
+test('P92-EA5: a failed fresh verifier capsule remains actionable in ordinary Episode evidence', () => {
+  const f = fixture();
+  const failureText = 'not ok 17 - shared ref collision\nAssertionError: branch ownership changed';
+  const failureCapsule = {
+    schemaVersion: 1, kind: 'verification_failure_tail',
+    text: failureText,
+    textDigest: createHash('sha256').update(failureText).digest('hex'), capturedOutputBytes: 301_693,
+    capturedOutputDigest: '7'.repeat(64), truncated: true, redacted: true,
+  };
+  const planNode = { verification: { expectExit: 0 } };
+  const result = { verdict: {
+    schemaVersion: 1, reverified: true, passed: false, observedExit: 1,
+    outputExceeded: false, outcome: 'candidate_failed', failureOwnership: 'candidate',
+    execution: { state: 'completed', code: 'verification_completed' }, baseExecution: {
+      state: 'completed', code: 'verification_completed',
+    }, capturedOutputBytes: 301_693, capturedOutputDigest: '7'.repeat(64),
+    diagnosticCode: 'verification_exit_mismatch', durationMs: 168_093,
+    runtimeDigest: '8'.repeat(64), failureCapsule,
+  } };
+  const verification = f.application._closedVerdictProjection(result, planNode, 'failed', null);
+  const failedView = { ...view, phase: 'failed', verification: { state: 'failed', verdict: verification } };
+  const context = f.application._episodeContext(current, failedView);
+  const item = f.application._episodeItem(current, failedView, 'verification', null, context);
+  const evidence = f.application._episodeEvidence(current, failedView, item, context);
+
+  assert.deepEqual(item.value.value.verdict.failureCapsule, failureCapsule);
+  assert.deepEqual(evidence.find((entry) => entry.kind === 'verification').value.verdict.failureCapsule,
+    failureCapsule);
+  assert.equal(JSON.stringify(evidence).includes('shared ref collision'), true);
 });
