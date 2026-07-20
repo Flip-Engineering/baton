@@ -972,24 +972,38 @@ Every `await`, regardless of handle kind, produces exactly this registered value
 
 ```text
 SettlementEnvelope = exact{
-  schemaVersion,kind,target,targetDigest,join,dispositions,workProductRefs,
-  eligibility,valueRef,memberSettlements,effectResultDigests,
+  schemaVersion,kind,ownerKind,target,targetDigest,join,dispositions,workProductRefs,
+  eligibility,valueRef,memberSettlements,effectResultDigests,cleanup,
   terminalRevisionDigests,settlementDigest
 }
 kind="baton.settlement_envelope"
 target=EffectHandle|ParallelHandle|ChildHandle
+ownerKind=target.effectKind when target=EffectHandle
+ownerKind="parallel_aggregate" when target=ParallelHandle
+ownerKind="program" when target=ChildHandle
+
+ParallelAggregateValue = exact{
+  schemaVersion,kind,parallelId,join,members,aggregateValueDigest
+}
+schemaVersion=1
+kind="baton.parallel_aggregate_value"
+members=branch variant of MemberSettlement[1..policy.maxParallelBranches]
 ```
 
 The disposition, work-product-reference, eligibility, and member-settlement shapes are the exact
-§93.15 schemas. `valueRef` is `ValueRef|null`; it is evidence inside the envelope, not another
-node port. `memberSettlements` is canonical by member name/index and is empty for a scalar handle.
+§93.15 schemas, and `cleanup` is its exact `CleanupRecord`. `ownerKind` is copied from an effect
+handle's `effectKind`, is `program` for a child handle, and is exactly `parallel_aggregate` for a
+parallel handle; no result shape implies an unnamed owner. `valueRef` is `ValueRef|null`, MUST
+equal `workProductRefs.valueRef`, and is evidence inside the envelope rather than another node
+port. `memberSettlements` is canonical by member name/index and is empty for a scalar handle.
 `effectResultDigests` and `terminalRevisionDigests` are set-like by digest. `settlementDigest`
 hashes the envelope excluding itself. `targetDigest` MUST equal the embedded handle's
 `handleDigest`; a handle cannot be replaced by another handle with the same result schema.
 
-For an effect handle, the envelope mirrors the exact `EffectResult`. For a child handle, it mirrors
-the exact `ProgramResult`. For a parallel handle, every branch has a named `MemberSettlement`; the
-aggregate is computed from the declared join, not a worst-result or arrival-order heuristic.
+For an effect handle, the envelope mirrors the exact `EffectResult`, including its owner and
+cleanup. For a child handle, it mirrors the exact `ProgramResult`. For a parallel handle, every
+branch has a named `MemberSettlement`; the aggregate is a result in its own right and is computed
+from the declared join, not a worst-result or arrival-order heuristic.
 `all_terminal` succeeds only when every member succeeds. `all_verified` succeeds only when every
 member is verified. `first_verified` uses its preference list after the fenced terminal/stopped
 member set exists. `operator_selected` uses only the separately admitted selection event.
@@ -997,7 +1011,7 @@ member set exists. `operator_selected` uses only the separately admitted selecti
 Parallel aggregate execution is one closed function over that complete name-sorted set. For
 `all_terminal|all_verified`, every member contributes. For `first_verified|operator_selected`, a
 successfully chosen member is the sole aggregate contributor; if no choice satisfies the join, all
-members contribute and selection remains `unresolved`. Multiple contributing execution outcomes
+members contribute and the join choice remains unresolved. Multiple contributing execution outcomes
 use this total precedence, highest first:
 `ambiguous > failed > cancelled > stopped > not_dispatched > succeeded`. Equal outcomes are equal;
 member names and arrival order never break a disposition tie. A non-chosen active branch stopped
@@ -1006,9 +1020,52 @@ with cause `selective_stop`, or a non-chosen branch never dispatched with cause
 settlement but does not replace the chosen member's aggregate disposition. Every other chosen or
 unchosen ambiguity, failure, cancellation, stop, and not-dispatched fact is handled only by the
 contributor rule and total precedence above; no scheduler heuristic or prose exception exists.
-Every non-chosen disposition and work product remains in `memberSettlements`. A parallel envelope
-cannot settle while an admitted member lacks a terminal revision or durable `CleanupRecord`; an
-open/attention cleanup disposition remains visible and blocks eligible follow-on actions.
+The aggregate execution cause is null for `succeeded`; for every other winning execution value it
+is the exact fixed `SafeId` formed by `"parallel_aggregate_" + executionDisposition`.
+Verification is reduced over the same contributors by the total precedence
+`inconclusive > candidate_failed > pending > not_dispatched > passed > not_required`. Its cause is
+null for `passed|not_required` and otherwise the exact fixed `SafeId` formed by
+`"parallel_aggregate_" + verificationDisposition`. Thus causes never depend on a member name,
+scheduler order, or arbitrarily selected member cause; the complete member causes remain present.
+
+A parallel aggregate always has `workProductDisposition="value"`. Its sole non-null
+`WorkProductRefs` field and its envelope `valueRef` are the same `ValueRef` to the registered
+`baton.parallel_aggregate_value`. That value repeats the exact handle `parallelId` and join and
+contains every complete branch `MemberSettlement` in canonical name order; its digest excludes
+only itself. The aggregate value is derived even when members have zero, one, or several different
+product kinds, so no heterogeneous product is discarded or coerced into a Candidate, artifact,
+notification, checkpoint, or partial map. Its members MUST byte-equal `memberSettlements`, and
+every original product and ref remains only in those members.
+
+Aggregate cleanup is reduced over every member, including non-contributors. The envelope cleanup
+`remaining` counts are component-wise sums of the member cleanup records reached through their
+result/terminal-revision digests. Cleanup precedence is
+`attention > open > settled > not_required`. Its non-null `ownershipSnapshotDigest` resolves to
+the exact §93.15 `OwnershipSnapshot` with scope
+`{kind:"parallel_aggregate",id:parallelId}` and the canonical set unions of every member snapshot;
+member ownership sets MUST be disjoint, so component-wise remaining sums cannot double-count one
+authority. Its non-null `ownershipSettlementDigest` is the existing lifecycle authority's canonical
+settlement of that exact aggregate snapshot. Each digest is null exactly when all corresponding
+member digests are null. The aggregate cleanup disposition equals
+`dispositions.cleanupDisposition`. Selection and integration are exactly `not_applicable`, because
+the aggregate work product is the closed settlement collection rather than one member's Candidate;
+member selection and integration truth remains in the members.
+
+Downstream eligibility is also closed. If aggregate cleanup is `open|attention`, all six actions
+are `blocked_cleanup` with their own `program.<action>` capability and reason
+`parallel_aggregate_cleanup_open`. Otherwise `retry`, `revise`, `select`, `integrate`, and `export`
+are `ineligible` with null capability/approval and reason `parallel_aggregate_member_scoped`; their
+member-level eligibility remains actionable only at the named member. `reduce` addresses the
+complete aggregate collection: it is `eligible` with `requiredCapability="program.reduce"` and
+the exact separately admitted downstream approval digest when that approval exists, and otherwise
+`requires_approval` with the same capability, null approval, and reason
+`parallel_aggregate_reduce_approval_required`. No other aggregate eligibility tuple validates.
+
+The aggregate `effectResultDigests` and `terminalRevisionDigests` are respectively the sorted
+unique non-null member values of those fields. A parallel envelope cannot settle while an admitted
+member lacks a terminal revision or durable `CleanupRecord`; an open/attention cleanup disposition
+therefore remains visible and blocks eligible follow-on actions. These reductions consume the
+complete name-sorted `MemberSettlement` array and the frozen join bytes only.
 
 `call`, `map`, `reduce`, `gate`, `notify`, and `checkpoint` are asynchronous. Evaluation admits and
 prepares the effect and yields its durable handle; it does not block the branch until provider or
@@ -1461,7 +1518,7 @@ OwnershipSnapshot = exact{
 }
 
 OwnershipScope = exact{kind,id}
-kind="execution|branch|child|effect"
+kind="execution|branch|child|effect|parallel_aggregate"
 ProcessAuthority = exact{
   pid,pgid,pidStartToken,launchNonceDigest,leaseGeneration,
   ownerExecutionId,ownerBranchId
@@ -1586,15 +1643,22 @@ The parallel aggregate precedence in §93.11 chooses an execution value before t
 validates its cross-product; it does not define another valid row. In the table,
 `F={failed,cancelled,stopped,ambiguous}`; `Z` means cleanup `not_required|settled` with every
 remaining ownership count zero; `O` means cleanup `open|attention` with at least one remaining
-ownership count; `C=Z|O`; `NA=not_applicable`; and `I=ineligible`. An owner is an
-`EffectResult.effectKind`, a `MemberSettlement.ownerKind` (`parallel_member|map_member`), or
-`program`. A `parallel_member` row validates the member's axes and refs plus the exact evidence,
-map-settlement, and cleanup facts reached through its applicable non-null result/terminal-revision
-digests; required facts cannot be omitted by projecting them out of `MemberSettlement`. All
-`WorkProductRefs` not explicitly named in a row MUST be null.
+ownership count; `C=Z|O`; `V={not_required,pending,passed,candidate_failed,inconclusive,
+not_dispatched}`; `NA=not_applicable`; and `I=ineligible`. An owner is an
+`EffectResult.effectKind`, a `MemberSettlement.ownerKind` (`parallel_member|map_member`), a
+`SettlementEnvelope.ownerKind` (the exact underlying effect kind, `parallel_aggregate`, or
+`program`), or `ProgramResult`'s `program`. A `parallel_member` row
+validates the member's axes and refs plus the exact evidence, map-settlement, and cleanup facts
+reached through its applicable non-null result/terminal-revision digests; required facts cannot be
+omitted by projecting them out of `MemberSettlement`. A `parallel_aggregate` row validates the
+complete envelope, its aggregate value, its cleanup record, and every embedded member under the
+§93.11 reductions. All `WorkProductRefs` not explicitly named in a row MUST be null.
 
 | Profile | Owner | Execution | Verification | Product and exact refs | Cleanup | Selection | Integration |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| parallel aggregate succeeded | `parallel_aggregate` | `succeeded` | `V` exactly derived by §93.11 | `value`; `valueRef` only, validating as the exact `baton.parallel_aggregate_value` over all members | `C` exactly derived by §93.11 | `NA` | `NA` |
+| parallel aggregate interrupted | `parallel_aggregate` | `F` | `V` exactly derived by §93.11 | `value`; same aggregate-value shape | `C` exactly derived by §93.11 | `NA` | `NA` |
+| parallel aggregate not dispatched | `parallel_aggregate` | `not_dispatched` | `V` exactly derived by §93.11 | `value`; same aggregate-value shape | `C` exactly derived by §93.11 | `NA` | `NA` |
 | settled value | `call|map|reduce|finish|parallel_member|map_member|program` | `succeeded` | `not_required` | `value`; `valueRef` only, not a `baton.gate_result` | `Z` | `NA|eligible|selected|unresolved` | `NA` |
 | gate verdict value | `gate|parallel_member|program` | `succeeded` | `passed|candidate_failed|inconclusive` exactly matching the embedded verdict | `value`; `valueRef` only, validating as the exact `baton.gate_result` | `Z` | `NA` | `NA` |
 | unverified Candidate | `call|reduce|finish|parallel_member|map_member|program` | `succeeded` | `not_required|pending` | `candidate`; `candidateRef` plus exactly one matching backing ref | `Z` | `I` | `I` |
@@ -1616,11 +1680,14 @@ digests; required facts cannot be omitted by projecting them out of `MemberSettl
 | not dispatched | any | `not_dispatched` | `not_dispatched` | `absent`; all refs null and no provider observation | `Z` | `I` | `I` |
 
 These rows partition the valid space by owner, execution, verification, product, and, for the two
-verified-Candidate rows, selection. A value-shaped gate result is therefore never smuggled into an
-artifact row; cancelled-before-product and stopped-before-product truth use the explicit
-`terminal without product` row; and `not_dispatched` is not a spelling of cancellation. The
-validator requires exactly one matching row; zero matches or multiple matches are
-`program_result_invalid`. The
+verified-Candidate rows, selection. The three `parallel_aggregate` rows additionally partition all
+six aggregate execution outcomes and the complete verification/cleanup product; §93.11 supplies
+one exact value for every other axis and field. Consequently every all-terminal, selected, and
+heterogeneous-member-product settlement matches exactly one row. A value-shaped gate result is
+therefore never smuggled into an artifact row; cancelled-before-product and stopped-before-product
+truth use the explicit `terminal without product` row; and `not_dispatched` is not a spelling of
+cancellation. The validator requires exactly one matching row; zero matches or multiple matches
+are `program_result_invalid`. The
 `executionCause` rule and `verificationCause` rule above apply to every row without exception. A
 row with `O` is preservation-failed custody: all six action eligibilities are `blocked_cleanup`,
 and only cleanup/preservation repair is permitted. A row with `Z` has no retained ownership. A
@@ -1953,9 +2020,13 @@ One `baton.program_policy` schema v1 binds the admitted canonical-order, Context
 Goal/Plan, capacity, route-card, artifact, and lifecycle authorities by digest. Ordinary callers
 and model workers provide none of its numeric fields. This version defines no Program-local
 numeric default, ratio, floor, offset, empirically asserted constant, or caller-selectable narrower
-value. Every admitted number is copied from one exact pre-existing approved lower-policy field.
-The only parallel-concurrency operand is the exact admitted route card field
-`card().concurrencyCeiling`; structural Goal/Plan bounds are not described as capacity.
+value. Every admitted number is either copied from the one exact pre-existing approved lower-policy
+field named below or, only for `maxParallelBranches`, is the exact minimum of all named approved
+positive operands. Every operand's field name, value, immutable bytes, version, owning-policy/card
+digest, and admission provenance is bound by `ProgramPolicy` and its enclosing approval. The route
+cards' `card().concurrencyCeiling` fields are the only concurrency-authority operands in that
+minimum; Goal/Plan `limits.maxNodes` is a separate structural bound and is never described as
+capacity. No other Program-policy arithmetic is permitted.
 
 Its field set is exhaustive:
 
@@ -1977,7 +2048,7 @@ Every dependency is the exact immutable policy/card version admitted by the encl
 Plan and approval envelope. Preview and admission recompute the following like-for-like bindings;
 replay uses the recorded bytes and never re-resolves a newer policy:
 
-| Program field | Sole lower-authority value |
+| Program field | Exact lower-authority binding |
 | --- | --- |
 | `maxProgramBytes` | Context Program policy v1 `maxProgramBytes` |
 | `maxProgramNodes` | Context Program policy v1 `maxProgramNodes` |
@@ -1986,7 +2057,7 @@ replay uses the recorded bytes and never re-resolves a newer policy:
 | `maxValueBytes` | Context Program policy v1 `maxArtifactBytes` |
 | `maxResultBytes` | canonical-order policy v1 `maxReceiptBytes` |
 | `maxEvidenceRefs` | Goal/Plan policy v1 `limits.maxItems` |
-| `maxParallelBranches` | for a Program containing `parallel`, `min(Goal/Plan policy v1 limits.maxNodes, min_role card(role).concurrencyCeiling)`; otherwise null |
+| `maxParallelBranches` | after every `parallel` proves a nonempty reachable role set, `min(Goal/Plan policy v1 limits.maxNodes, min_role card(role).concurrencyCeiling)` over their union; for a Program with no `parallel`, null; an empty role set is refused rather than valued |
 | `maxRepeatRounds` | Workflow policy v1 `maxRounds` |
 | `maxChildDepth` | Context Program policy v1 `recursionDepth` |
 | `maxEffectInstances` | Goal/Plan policy v1 `limits.maxProviderTurns` |
@@ -2000,11 +2071,17 @@ separately authorized service-tier, and worker-policy resolution. Its existing c
 `concurrencyCeiling` field is the sole lower-policy concurrency authority. Roles that resolve to
 the same card share that card's ceiling; normalization additionally rejects a parallel frontier
 whose count for that card exceeds the field. A Program with no `parallel` node carries
-`maxParallelBranches=null`, because it consumes no parallel authority. If any role reachable in a
-parallel branch lacks one exact approved positive `card().concurrencyCeiling`, or its card bytes,
-version, or digest do not match the frozen route authority, preview refuses
+`maxParallelBranches=null`, because it consumes no parallel authority. For each `parallel`, the
+normalizer computes the set of `call|map|reduce` roles reachable through every branch's static
+control and data-dependency closure, including reachable repeat/child bodies. If that set is empty,
+normalization and preview refuse `program_parallel_authority_unavailable` before constructing the
+parallel node, admitting Program state, or producing any effect; route-free parallelism has no
+Program v1 authority. If any role in the set lacks one exact approved positive
+`card().concurrencyCeiling`, or its card bytes, version, or digest do not match the frozen route
+authority, preview refuses
 `program_parallel_authority_unavailable` and the normalizer refuses to construct the parallel
-node. It never substitutes a capacity-ledger worker count, a private-worktree slot count, Goal/Plan
+node. The table's `min_role` ranges over the union of all of those proven-nonempty sets. It never
+substitutes a capacity-ledger worker count, a private-worktree slot count, Goal/Plan
 node count, `max(1,...)`, queued work, worker prose, or a missing-value default as concurrency
 authority. Worktree byte/inode admission and worker dispatch still run under their existing lower
 authorities, but neither manufactures a Program concurrency number. A later lower-authority
@@ -2023,7 +2100,7 @@ versioned §93.21 evaluation contract and grant no Program runtime authority.
 
 `policyDigest` hashes every Program-policy field except itself. Unknown fields, a value unequal to
 its table binding, a non-null parallel value in a serial Program, or a parallel value unequal to
-the complete route-card/structural minimum fails before effect. This
+the complete provenance-bound route-card/structural minimum fails before effect. This
 removes the former unsupported branch/depth/byte/ref/effect/revision/trace constants while
 preserving exact historical replay and the zero-capacity refusal.
 
@@ -2471,10 +2548,12 @@ Implementation starts with these exact red suites:
 10. `phase93c-result-disposition-red.test.mjs`: every orthogonal execution (incl. `stopped`/
     `not_dispatched`)/verification/work-product/cleanup/selection/integration value through every
     row of the one exhaustive table, plus every invalid cross-product and row-overlap assertion;
-    execution and verification causes; `parallel_member`/`map_member` owner binding; deterministic
-    parallel ambiguity/failure/cancellation/stopped/not-dispatched precedence and selection-stopped
-    handling; product-only work-product states; gate-result-as-value and artifact/capsule/commit
-    consistency;
+    execution and verification causes; `parallel_member`/`map_member`/`parallel_aggregate` owner
+    binding; deterministic parallel ambiguity/failure/cancellation/stopped/not-dispatched
+    precedence and selection-stopped handling; aggregate verification/cause, canonical all-member
+    value/refs, cleanup, selection/integration, eligibility, every all-terminal and heterogeneous
+    member-product cross-product; product-only work-product states; gate-result-as-value and
+    artifact/capsule/commit consistency;
     retry/revise/reduce/select/integrate/export eligibility; partial map members; preservation-failed
     custody and open ownership; forensic late-result sidecar records; explicit capability-gated
     apply/integrate; completion requires zero.
@@ -2495,8 +2574,9 @@ Implementation starts with these exact red suites:
     set from one registry across every transport.
 17. `phase93e-policy-red.test.mjs`: every exact lower-policy field binding, exact route-card
     `concurrencyCeiling`, shared-card frontier counting, serial null, missing/mismatched parallel-
-    authority refusal, removal of invented worker/worktree slot operands and unsupported constants,
-    historical policy stability, and no caller numeric knobs.
+    authority refusal, empty reachable `call|map|reduce` role-set refusal before state/effect, exact
+    provenance-bound structural/route-card minimum, removal of invented worker/worktree slot
+    operands and unsupported constants, historical policy stability, and no caller numeric knobs.
 18. `phase93f-evaluation-red.test.mjs`: closed deployment-owned `EvaluationPlan` (preflight ranges
     and refusal, total token/USD/provider-call/wall authority, one approval, pilot paired blocks,
     per-route rate-limit scheduling, early stop, cancellation/reap, crash-ambiguous never-repeat, and
