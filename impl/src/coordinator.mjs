@@ -2253,6 +2253,36 @@ export class Coordinator {
     return { ok: true, receipt, card, control: exactControls[0], processless };
   }
 
+  _exactPreservedRecoveryContext(handle, opts = {}) {
+    let receiptContext;
+    let context;
+    try {
+      receiptContext = handle?.sessionContext
+        ? normalizeSessionRequest({
+          mode: 'resume', id: handle.sessionRef.id, context: handle.sessionContext,
+        }).context
+        : null;
+      const rawContext = opts.context ?? receiptContext;
+      context = rawContext
+        ? normalizeSessionRequest({
+          mode: 'resume', id: handle.sessionRef.id, context: rawContext,
+        }).context
+        : null;
+    } catch (error) {
+      return { ok: false, result: error.code ?? 'session_context_mismatch', reason: error.message };
+    }
+    if (!receiptContext || !context) {
+      return { ok: false, result: 'session_context_required' };
+    }
+    if (canonicalDigest(context) !== canonicalDigest(receiptContext)) {
+      return {
+        ok: false, result: 'session_context_mismatch',
+        reason: 'preserved recovery context does not match the receipt-bound session context',
+      };
+    }
+    return { ok: true, context };
+  }
+
   _semanticTargetMatches(handle, expected, expectedDigest) {
     if (!handle || !expected || typeof expected !== 'object'
       || canonicalDigest(expected) !== expectedDigest) return false;
@@ -3913,6 +3943,8 @@ export class Coordinator {
       }));
     }
     if (handle?.sessionPreservation?.state === 'preserved') {
+      const contextAuthority = this._exactPreservedRecoveryContext(handle, opts);
+      if (!contextAuthority.ok) return Promise.resolve(contextAuthority);
       const preservationAuthority = this._exactProcesslessPreservationAuthority(handle, task);
       if (!preservationAuthority.ok) return Promise.resolve(preservationAuthority);
     }
@@ -4688,6 +4720,9 @@ export class Coordinator {
 
   async _reattachPreservedSession(handle, task, opts = {}) {
     const workerId = handle.id;
+    const contextAuthority = this._exactPreservedRecoveryContext(handle, opts);
+    if (!contextAuthority.ok) return contextAuthority;
+    const { context } = contextAuthority;
     const preservationAuthority = this._exactProcesslessPreservationAuthority(handle, task);
     if (!preservationAuthority.ok) return preservationAuthority;
     const adapter = this._adapters[handle.vendor];
@@ -4695,11 +4730,6 @@ export class Coordinator {
       || this._coordination.run?.(task.runId)?.status === 'sealed')) {
       return { ok: false, result: 'run_stopping' };
     }
-    const rawContext = opts.context ?? handle.sessionContext;
-    const context = rawContext
-      ? normalizeSessionRequest({ mode: 'resume', id: handle.sessionRef.id, context: rawContext }).context
-      : null;
-    if (!context) return { ok: false, result: 'session_context_required' };
     try { await this._validateSessionContext(context); }
     catch (error) {
       return { ok: false, result: error.code ?? 'session_context_mismatch', reason: error.message };
@@ -4842,7 +4872,15 @@ export class Coordinator {
         `task.failed:${task.id}:preserved_reattachment:${failed.seq}`, evidence);
       task.status = 'failed';
     }
-    const reap = await this._beginStop(handle, 'kill', undefined, 'policy');
+    const retainUnownedWorktree = /^ws-[a-f0-9]{32}$/u.test(
+      handle.sessionContext?.ownerTaskId ?? '',
+    ) && handle.ownedWorktreeAuthority !== true;
+    // A failed attach did not mint physical-owner authority. Reap only the transport/runtime
+    // created by this attempt and retain the pre-existing checkout for authoritative restart
+    // reconciliation instead of either deleting it without authority or reporting false cleanup.
+    const reap = await this._beginStop(handle, 'kill', undefined, 'policy', {
+      retainUnownedWorktree,
+    });
     const reapConfirmed = reap?.ok === true
       && ['confirmed', 'already_dead', 'already_stopped'].includes(reap.result);
     return {
@@ -6628,6 +6666,7 @@ export class Coordinator {
       then: mode === 'interrupt' ? then : undefined,
       controlId: context?.controlId ?? null,
       preserveTurn: context?.preserveTurn === true,
+      retainUnownedWorktree: context?.retainUnownedWorktree === true,
       confirmationPayload: null,
       interactionReady: false,
       interactionResolutionOk: false,
@@ -7892,7 +7931,8 @@ export class Coordinator {
           const runtimeRemoved = this._removeRuntimeScope(handle);
           if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'cancelled';
           waiter.cleanupPromise = this._preserveProgressBeforeReap(handle, task, stopEvent, preserveProgress)
-            .then(() => this._removeOwnedTaskWorktree(handle, task)).then(() => {
+            .then(() => waiter.retainUnownedWorktree
+              ? undefined : this._removeOwnedTaskWorktree(handle, task)).then(() => {
             if (!runtimeRemoved) throw Object.assign(new Error('runtime cleanup failed'), { code: 'runtime_cleanup_failed' });
           });
         } else if (waiter.preserveTurn === true) {

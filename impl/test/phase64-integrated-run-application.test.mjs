@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
 import {
   BatonApplication, CoordinationStore, DEFAULT_WORKER_POLICY_REQUEST, MockAdapter, bindBaton,
-  bindBatonPort, createDriver,
+  bindBatonPort, createBrief, createDriver,
 } from '../src/index.mjs';
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase64-${name}-`));
@@ -185,6 +185,23 @@ const intent = (overrides = {}) => ({
   scope: ['impl/**'],
   ...overrides,
 });
+
+const managedContextBrief = () => createBrief({
+  goal: 'hold a second Baton-managed workspace for adversarial recovery coverage',
+  constraints: [], pathScope: ['**'], definitionOfDone: 'wait for an addressed answer',
+  verification: { command: 'true', expectExit: 0, timeoutMs: 2_000 },
+  budget: { tokens: 1_000, usd: 1, wallMin: 1 },
+});
+
+async function until(read, label, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await read();
+    if (value) return value;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`timeout waiting for ${label}`);
+}
 
 test('UA2/RT5: Pythonic Run streams consume internal pagination and expose attributed facts only', async () => {
   const calls = [];
@@ -784,7 +801,7 @@ test('P91 application: interrupt projects one paused attached member, then send 
   await application.shutdown(principal('shutdown-admin'));
 });
 
-test('P91 application restart: coordinate-free recovery attach-only reuses the preserved member without a prompt', async () => {
+test('P91 application restart: coordinate-free recovery attach-only reuses the preserved member without a prompt', async (t) => {
   const first = fixture('phase91-application-restart', {
     scenario: {
       outcome: 'completed', summary: 'preserved restart completes',
@@ -814,6 +831,12 @@ test('P91 application restart: coordinate-free recovery attach-only reuses the p
   enablePreservedMockSession(resumedAdapter);
   const spawnOptions = [];
   let promptCalls = 0;
+  let cardCalls = 0;
+  const cardResumed = resumedAdapter.card.bind(resumedAdapter);
+  resumedAdapter.card = (...args) => {
+    cardCalls += 1;
+    return cardResumed(...args);
+  };
   const spawnResumed = resumedAdapter.spawn.bind(resumedAdapter);
   resumedAdapter.spawn = (worker, brief, opts) => {
     spawnOptions.push(opts);
@@ -860,6 +883,83 @@ test('P91 application restart: coordinate-free recovery attach-only reuses the p
     delete core.receiptDigest;
     return { ...core, receiptDigest: digest(core) };
   };
+
+  let adversaryDriver = createDriver({
+    repoRoot: first.repo,
+    repoId: 'repo-phase64-adversarial-context',
+    logDir: root('phase91-adversarial-context-log'),
+    adapters: { mock: new MockAdapter({ scenario: {
+      outcome: 'completed', edits: [],
+      ask: { kind: 'question', question: 'continue?', blocking: true, afterEditIndex: 0 },
+    } }) },
+    stopDeadlineMs: 2_000,
+  });
+  t.after(async () => {
+    try { await adversaryDriver?.drainAndClose('phase91:adversarial-context-cleanup'); }
+    catch { try { adversaryDriver?.coordination.releaseWriterLease(); } catch { /* best effort */ } }
+  });
+  await adversaryDriver.ready;
+  const adversary = await adversaryDriver.coordinator.spawn('mock', managedContextBrief(), {
+    taskId: 'adversarial-context-task', runId: 'adversarial-context-run',
+  });
+  const adversaryContext = await until(() => adversaryDriver.coordinator.list()
+    .find((row) => row.id === adversary.id)?.sessionContext, 'second Baton-managed context');
+  assert.deepEqual(await adversaryDriver.coordinator._worktrees.validateSessionContext(
+    adversaryContext,
+  ), { ok: true });
+  assert.notEqual(adversaryContext.ownerTaskId, replayHandle.sessionContext.ownerTaskId);
+
+  const logSequence = resumedDriver.log.read(workerId).map((event) => [event.seq, event.kind]);
+  const coordinationSequence = resumedDriver.coordination.events()
+    .map((event) => [event.seq, event.kind]);
+  const preEffectState = {
+    status: replayHandle.status,
+    processGeneration: replayHandle.processGeneration,
+    runtimeScope: replayHandle.runtimeScope,
+    currentIncarnation: replayHandle.currentIncarnation,
+    localAuthority: replayHandle.localAuthority,
+    ownedWorktreeAuthority: replayHandle.ownedWorktreeAuthority,
+    workspaceOwnerProcessAuthorityValid: replayHandle.workspaceOwnerProcessAuthorityValid,
+    sessionContext: replayHandle.sessionContext,
+  };
+  const cardCount = cardCalls;
+  const spawnCount = spawnOptions.length;
+  const promptCount = promptCalls;
+  let ownerChecks = 0;
+  const restoreWorkspaceAuthority = resumedDriver.coordinator
+    ._restoreRecoveredPhysicalWorkspaceAuthority.bind(resumedDriver.coordinator);
+  resumedDriver.coordinator._restoreRecoveredPhysicalWorkspaceAuthority = (...args) => {
+    ownerChecks += 1;
+    return restoreWorkspaceAuthority(...args);
+  };
+  assert.deepEqual(await resumedDriver.coordinator.recover(workerId, {
+    context: adversaryContext,
+  }), {
+    ok: false, result: 'session_context_mismatch',
+    reason: 'preserved recovery context does not match the receipt-bound session context',
+  });
+  assert.deepEqual(resumedDriver.log.read(workerId)
+    .map((event) => [event.seq, event.kind]), logSequence);
+  assert.deepEqual(resumedDriver.coordination.events()
+    .map((event) => [event.seq, event.kind]), coordinationSequence);
+  assert.deepEqual({
+    status: replayHandle.status,
+    processGeneration: replayHandle.processGeneration,
+    runtimeScope: replayHandle.runtimeScope,
+    currentIncarnation: replayHandle.currentIncarnation,
+    localAuthority: replayHandle.localAuthority,
+    ownedWorktreeAuthority: replayHandle.ownedWorktreeAuthority,
+    workspaceOwnerProcessAuthorityValid: replayHandle.workspaceOwnerProcessAuthorityValid,
+    sessionContext: replayHandle.sessionContext,
+  }, preEffectState);
+  assert.equal(cardCalls, cardCount);
+  assert.equal(spawnOptions.length, spawnCount);
+  assert.equal(promptCalls, promptCount);
+  assert.equal(ownerChecks, 0);
+  assert.equal(resumedDriver.coordinator._recoveryAttempts.size, 0);
+  await adversaryDriver.drainAndClose('phase91:adversarial-context-complete');
+  adversaryDriver = null;
+
   const expectPreEffectRefusal = async (expected) => {
     const seq = resumedDriver.coordination.snapshot().lastSeq;
     const spawns = spawnOptions.length;
@@ -883,6 +983,10 @@ test('P91 application restart: coordinate-free recovery attach-only reuses the p
   await expectPreEffectRefusal('preservation_receipt_stale');
   replayHandle.sessionPreservation = reseal({ sessionDigest: '4'.repeat(64) });
   await expectPreEffectRefusal('preservation_receipt_stale');
+  replayHandle.sessionPreservation = reseal({
+    processGeneration: exactReceipt.processGeneration + 1,
+  });
+  await expectPreEffectRefusal('preservation_receipt_invalid');
   replayHandle.sessionPreservation = exactReceipt;
   resumedDriver.coordination.runControls = () => [];
   await expectPreEffectRefusal('preservation_control_unproven');
@@ -949,6 +1053,128 @@ test('P91 application restart: coordinate-free recovery attach-only reuses the p
 
   // The first controller is intentionally crash-simulated, so detach its in-memory mock wire
   // from durable authority and clear its long budget timer without emitting stale evidence.
+  first.adapter.onEvent(() => {});
+  await first.adapter.kill(workerId);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+});
+
+test('P92.2 processless recovery: ack.ok without attached authority exposes nothing and cleans up exactly', async (t) => {
+  const first = fixture('phase92-2-unattached-ack', {
+    scenario: {
+      outcome: 'completed', summary: 'must remain preserved until restart',
+      edits: [{ path: 'impl/unattached-ack.txt', content: 'untrusted\n', delayMs: 1_200 }],
+    },
+  });
+  enablePreservedMockSession(first.adapter);
+  let resumedDriver = null;
+  let restarted = null;
+  t.after(async () => {
+    try { resumedDriver?.coordination.releaseWriterLease(); } catch { /* best effort */ }
+    first.adapter.onEvent(() => {});
+    try { await first.adapter.kill(first.driver.coordinator.list()[0]?.id); } catch { /* best effort */ }
+  });
+
+  const proposed = await first.application.start(
+    intent({ runId: 'run-phase92-2-unattached-ack' }), principal('unattached-owner'),
+  );
+  const running = await first.application.approve(
+    proposed.runId, proposed.plan.digest, principal('unattached-approver'),
+  );
+  const workerId = running.ownership.workerIds[0];
+  const run = bindBaton(first.application, principal('unattached-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  await run.interrupt({ reason: 'Preserve for unattached acknowledgement coverage.' });
+  const preserved = first.driver.coordinator.list()[0];
+  const receiptContext = preserved.sessionContext;
+  const preservedGeneration = first.driver.coordinator._workers.get(workerId).processGeneration;
+  first.driver.coordination.releaseWriterLease({ requireOwned: true });
+
+  const resumedAdapter = configuredAdapter({
+    outcome: 'completed', summary: 'unattached acknowledgement must never resume work',
+    edits: [{ path: 'impl/unattached-ack.txt', content: 'must not commit\n', delayMs: 1 }],
+  });
+  enablePreservedMockSession(resumedAdapter);
+  let spawnCalls = 0;
+  let promptCalls = 0;
+  const spawn = resumedAdapter.spawn.bind(resumedAdapter);
+  resumedAdapter.spawn = async (...args) => {
+    spawnCalls += 1;
+    const ack = await spawn(...args);
+    return ack?.ok === true ? { ...ack, attached: false } : ack;
+  };
+  const prompt = resumedAdapter.prompt.bind(resumedAdapter);
+  resumedAdapter.prompt = (...args) => {
+    promptCalls += 1;
+    return prompt(...args);
+  };
+  resumedDriver = createDriver({
+    repoRoot: first.repo,
+    repoId: 'repo-phase64',
+    logDir: first.logDir,
+    adapters: { mock: resumedAdapter },
+    goalPlanAuthority: { policy, authorize: async () => true },
+    stopDeadlineMs: 2_000,
+  });
+  restarted = reopenApplication(resumedDriver);
+  await restarted.ready;
+  const handle = resumedDriver.coordinator._workers.get(workerId);
+  assert.equal(handle.processRef, null);
+  assert.equal(handle.processAuthority, null);
+  assert.equal(handle.workspaceOwnerProcessAuthorityValid, false);
+
+  let ownerRestorations = 0;
+  const restoreWorkspaceAuthority = resumedDriver.coordinator
+    ._restoreRecoveredPhysicalWorkspaceAuthority.bind(resumedDriver.coordinator);
+  resumedDriver.coordinator._restoreRecoveredPhysicalWorkspaceAuthority = (...args) => {
+    ownerRestorations += 1;
+    return restoreWorkspaceAuthority(...args);
+  };
+  const beforeKinds = resumedDriver.log.read(workerId).map((event) => event.kind);
+  const outcome = await resumedDriver.coordinator.recover(workerId);
+  assert.deepEqual(outcome, {
+    ok: false,
+    result: 'recovery_attachment_unproven',
+    reap: 'confirmed',
+    reapResult: 'confirmed',
+  });
+  assert.equal(spawnCalls, 1);
+  assert.equal(promptCalls, 0);
+  assert.equal(ownerRestorations, 0);
+  assert.equal(outcome.handle, undefined);
+  assert.equal(handle.status, 'dead');
+  assert.equal(handle.localAuthority, false);
+  assert.equal(handle.runtimeScope?.active ?? false, false);
+  assert.equal(handle.processRef?.state ?? 'closed', 'closed');
+  assert.equal(handle.processAuthority, null);
+  assert.equal(handle.processGeneration, preservedGeneration);
+  assert.equal(handle.workspaceOwnerProcessAuthorityValid, false);
+  assert.equal(handle.ownedWorktreeAuthority, false);
+  assert.equal(handle.sessionPreservation, null);
+  assert.equal(handle.preservedTurnEpoch, null);
+  assert.deepEqual(handle.sessionContext, receiptContext);
+  assert.equal(handle.worktree, receiptContext.worktree);
+  assert.equal(existsSync(receiptContext.worktree), true);
+  assert.equal(handle.cleanupPending, false);
+  assert.equal(handle.cleanupError, null);
+  assert.equal(resumedDriver.coordinator._recoveryAttempts.size, 0);
+  assert.equal(resumedAdapter._sessions.get(workerId)?.terminal, true);
+  assert.equal(resumedAdapter._sessions.get(workerId)?.haltSignal.aborted, true);
+  assert.deepEqual(resumedDriver.log.read(workerId).map((event) => event.kind)
+    .slice(beforeKinds.length), [
+    'control.recovery_requested',
+    'runtime.scope_created',
+    'control.recovery_failed',
+    'kill.requested',
+    'kill.requested',
+    'kill.confirmed',
+  ]);
+  assert.equal(resumedDriver.log.read(workerId)
+    .some((event) => event.kind === 'control.session_preservation_reattached'), false);
+  assert.equal(resumedDriver.coordination.task(handle.taskId).status, 'failed');
+
+  await restarted.shutdown(principal('shutdown-admin'));
+  restarted = null;
+  resumedDriver = null;
   first.adapter.onEvent(() => {});
   await first.adapter.kill(workerId);
   await new Promise((resolve) => setTimeout(resolve, 40));
