@@ -125,17 +125,18 @@ test('DC4: linked-worktree controllers start and drain without reconciling each 
   driverA = createDriver({ repoRoot: controllerA, logDir: join(world, 'log-a'), repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { maxWorkers: 1, timeoutMs: 5_000, pollMs: 5 }, watchdog: { stallMs: 0 } });
   const worker = await driverA.coordinator.spawn('mock', brief('controller A live work'), { taskId: 'controller-a-live' });
   await until(() => driverA.coordinator.list().find((row) => row.id === worker.id)?.status === 'working', 'controller A worker');
-  const livePath = join(controllerA, '.baton', 'wt', 'controller-a-live');
+  const liveContext = await until(() => driverA.coordinator.list().find((row) => row.id === worker.id)?.sessionContext, 'controller A workspace');
+  const livePath = liveContext.worktree;
   driverB = createDriver({ repoRoot: controllerB, logDir: join(world, 'log-b'), repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 5_000, pollMs: 5 } });
   await driverB.ready;
   assert.equal(existsSync(livePath), true);
-  assert.match(git(['branch', '--list', 'baton/controller-a-live'], controllerB), /baton\/controller-a-live$/u);
+  assert.equal(git(['branch', '--list', liveContext.branch, '--format=%(refname:short)'], controllerB), liveContext.branch);
   assert.equal((await driverB.drainAndClose()).state, 'closed');
   assert.equal(existsSync(livePath), true);
-  assert.match(git(['branch', '--list', 'baton/controller-a-live'], controllerB), /baton\/controller-a-live$/u);
+  assert.equal(git(['branch', '--list', liveContext.branch, '--format=%(refname:short)'], controllerB), liveContext.branch);
   assert.equal((await driverA.drainAndClose()).state, 'closed');
   assert.equal(existsSync(livePath), false);
-  assert.equal(git(['branch', '--list', 'baton/controller-a-live'], controllerA), '');
+  assert.equal(git(['branch', '--list', liveContext.branch], controllerA), '');
 });
 
 test('DC4: drain cannot attest while worktree creation or native spawn remains pending', async (t) => {
@@ -194,12 +195,12 @@ test('DC4: drain reconciles historical worktree, branch, metadata, and runtime r
   await driver.ready;
   const worktree = await driver.coordinator._worktrees.create('historical');
   driver.coordinator._runtimeScopes.create('historical', 'mock');
-  assert.equal(existsSync(worktree.path), true); assert.notEqual(git(['branch', '--list', 'baton/historical'], f.directory), '');
+  assert.equal(existsSync(worktree.path), true); assert.equal(git(['branch', '--list', worktree.branch, '--format=%(refname:short)'], f.directory), worktree.branch);
   const receipt = await driver.drainAndClose();
   assert.equal(receipt.state, 'closed'); assert.equal(existsSync(worktree.path), false);
-  assert.equal(existsSync(join(f.directory, '.baton', 'wt', 'historical.meta.json')), false);
+  assert.equal(existsSync(join(f.directory, '.baton', 'wt', `${worktree.ownerTaskId}.meta.json`)), false);
   assert.equal(existsSync(join(f.directory, '.baton', 'runtime', 'historical')), false);
-  assert.equal(git(['branch', '--list', 'baton/historical'], f.directory), '');
+  assert.equal(git(['branch', '--list', worktree.branch], f.directory), '');
 });
 
 test('DC2/DC4: drain policy-resolves pending interaction and publication authority and discards late asks', async (t) => {

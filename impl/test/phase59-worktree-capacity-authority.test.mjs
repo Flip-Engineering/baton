@@ -196,6 +196,7 @@ test('WC2: default pinned sparse tree estimate composes projection identity and 
   assert.equal(injected.observations.length, 1);
 
   const snapshot = driver.worktreeCapacity.snapshot();
+  const owner = driver.coordinator.list().find((row) => row.id === handle.id).sessionContext.ownerTaskId;
   assert.equal(snapshot.totals.bytes, totalBytes);
   assert.equal(snapshot.totals.inodes, totalInodes);
   assert.deepEqual(snapshot.outstanding, {
@@ -216,7 +217,7 @@ test('WC2: default pinned sparse tree estimate composes projection identity and 
       inodes: snapshot.reservations[0].inodes,
     },
     {
-      id: 'worker:capacity-estimate',
+      id: `worker:${owner}`,
       baseSha: f.sha,
       sparseDigest: sparseCheckoutIdentity(['src/selected.txt']).digest,
       toolchainProjectionDigest: f.projectionIdentity.projectionDigest,
@@ -507,14 +508,16 @@ test('WC5: kill/reap releases exactly, capacity can be reused, and final drain r
 
   const first = await driver.coordinator.spawn('mock', brief(), { taskId: 'capacity-release-first' });
   await until(() => driver.coordinator.list().find((row) => row.id === first.id)?.pendingQuestionId, 'first reserved worker');
+  const firstOwner = driver.coordinator.list().find((row) => row.id === first.id).sessionContext.ownerTaskId;
   assert.equal(driver.worktreeCapacity.snapshot().reservations.length, 1);
   await driver.coordinator.kill(first.id, 'phase59:test');
   await until(() => driver.worktreeCapacity.snapshot().reservations.length === 0, 'first reservation release');
-  assert.equal(existsSync(join(f.repo, '.baton', 'wt', 'capacity-release-first')), false);
+  assert.equal(existsSync(join(f.repo, '.baton', 'wt', firstOwner)), false);
 
   const second = await driver.coordinator.spawn('mock', brief(), { taskId: 'capacity-release-second' });
   await until(() => driver.coordinator.list().find((row) => row.id === second.id)?.pendingQuestionId, 'replacement reserved worker');
-  assert.equal(driver.worktreeCapacity.snapshot().reservations[0].id, 'worker:capacity-release-second');
+  const secondOwner = driver.coordinator.list().find((row) => row.id === second.id).sessionContext.ownerTaskId;
+  assert.equal(driver.worktreeCapacity.snapshot().reservations[0].id, `worker:${secondOwner}`);
   await driver.drainAndClose('phase59:release');
   assert.deepEqual(driver.worktreeCapacity.snapshot().reservations, []);
   driver = null;
@@ -536,8 +539,9 @@ test('WC6: worktree creation failure releases the reservation and permits an exa
     worktreeCapacityEstimate: injected.worktreeCapacityEstimate,
     worktreeCapacityObserve: injected.worktreeCapacityObserve,
   });
-  const collision = join(f.repo, '.baton', 'wt', 'capacity-create-failure');
-  mkdirSync(collision, { recursive: true });
+  const collision = join(f.repo, '.baton', 'wt');
+  mkdirSync(join(f.repo, '.baton'), { recursive: true });
+  writeFileSync(collision, 'not a directory\n');
 
   const failed = await driver.coordinator.spawn('mock', brief(), { taskId: 'capacity-create-failure' });
   await until(async () => {
@@ -549,7 +553,8 @@ test('WC6: worktree creation failure releases the reservation and permits an exa
 
   const replacement = await driver.coordinator.spawn('mock', brief(), { taskId: 'capacity-create-replacement' });
   await until(() => driver.coordinator.list().find((row) => row.id === replacement.id)?.pendingQuestionId, 'replacement after create failure');
-  assert.equal(driver.worktreeCapacity.snapshot().reservations[0].id, 'worker:capacity-create-replacement');
+  const replacementOwner = driver.coordinator.list().find((row) => row.id === replacement.id).sessionContext.ownerTaskId;
+  assert.equal(driver.worktreeCapacity.snapshot().reservations[0].id, `worker:${replacementOwner}`);
 });
 
 class InertAdapter extends MockAdapter {
@@ -580,11 +585,12 @@ test('WC7: startup replay plus reconciliation clears a stale reservation whose o
   });
   first = createDriver({ ...options, adapters: { inert: firstAdapter } });
   const handle = await first.coordinator.spawn('inert', brief(), { taskId: 'capacity-stale-replay' });
-  const workerPath = await until(() => first.coordinator.list().find((row) => row.id === handle.id)?.sessionContext?.worktree, 'stale reservation worktree');
+  const workerContext = await until(() => first.coordinator.list().find((row) => row.id === handle.id)?.sessionContext, 'stale reservation worktree');
+  const workerPath = workerContext.worktree;
   assert.equal(first.worktreeCapacity.snapshot().reservations.length, 1);
 
   git(['worktree', 'remove', '--force', workerPath], f.repo);
-  git(['branch', '-D', 'baton/capacity-stale-replay'], f.repo);
+  git(['branch', '-D', workerContext.branch], f.repo);
   first.coordination.releaseWriterLease({ requireOwned: true });
   replay = createDriver({ ...options, adapters: {} });
   await replay.ready;
@@ -592,7 +598,7 @@ test('WC7: startup replay plus reconciliation clears a stale reservation whose o
   assert.equal(replay.worktreeCapacity.snapshot().totals.bytes, 0);
   assert.equal(replay.worktreeCapacity.snapshot().totals.inodes, 0);
   assert.deepEqual(replay.worktreeCapacity.snapshot().reservations, []);
-  assert.equal(existsSync(join(f.repo, '.baton', 'wt', 'capacity-stale-replay.meta.json')), false);
+  assert.equal(existsSync(join(f.repo, '.baton', 'wt', `${workerContext.ownerTaskId}.meta.json`)), false);
 });
 
 for (const scenario of [
@@ -649,8 +655,8 @@ test('WC10: worker and verifier reservations release only after their exact owne
   });
   assert.equal(active.reservations.every((row) => typeof row.materializedAt === 'string'), true);
   await driver.coordinator._worktrees.removeVerifyWorktree(verifier.path);
-  assert.deepEqual(driver.worktreeCapacity.snapshot().reservations.map((row) => row.id), ['worker:capacity-verifier-owner']);
-  await driver.coordinator._worktrees.remove('capacity-verifier-owner');
+  assert.deepEqual(driver.worktreeCapacity.snapshot().reservations.map((row) => row.id), [`worker:${worker.ownerTaskId}`]);
+  await driver.coordinator._worktrees.remove(worker.ownerTaskId);
   assert.deepEqual(driver.worktreeCapacity.snapshot().reservations, []);
   assert.equal(existsSync(worker.path), false);
 });
