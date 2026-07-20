@@ -9631,6 +9631,16 @@ export class Coordinator {
       });
       const sha = captured && captured.sha;
       const changedPaths = Array.isArray(captured?.changedPaths) ? captured.changedPaths : [];
+      const derivedSemanticReview = task.taskType === 'review'
+        && task.review?.structured?.purpose === 'run_semantic_review';
+      if (task.brief?.goalPlan && changedPaths.length > 0
+        && !task.brief.effects?.includes('repository_edit') && !derivedSemanticReview) {
+        trustPhase = 'forbidden_effect';
+        throw Object.assign(
+          new Error('captured worker result observed an effect forbidden by its approved Plan'),
+          { code: 'forbidden_effect_observed' },
+        );
+      }
       const inScopeChangedPaths = changedPaths.filter((path) => pathInScope(task.brief.pathScope, path));
       const outOfScopeChangedPaths = changedPaths.filter((path) => !pathInScope(task.brief.pathScope, path));
       if (outOfScopeChangedPaths.length > 0) {
@@ -9936,7 +9946,7 @@ export class Coordinator {
       if (['evidence_mapping', 'terminal_batch', 'promotion'].includes(trustPhase)) this._poisonCoordination(err);
       task.status = durable?.status ?? 'failed';
       if (task.status !== 'completed') task.verdict = null;
-      if (['required_effect_absent', 'worker_path_scope_violation'].includes(code)) {
+      if (['forbidden_effect_observed', 'required_effect_absent', 'worker_path_scope_violation'].includes(code)) {
         handle.terminalCause ??= deepFreeze({ kind: 'policy_failure', code });
         task.result = null;
         this._expireScratchClaims(handle, task, code);

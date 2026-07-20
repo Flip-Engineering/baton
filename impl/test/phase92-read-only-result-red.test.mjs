@@ -72,11 +72,11 @@ async function terminal(run) {
   }
   throw new Error(`Run did not settle: ${JSON.stringify({
     phase: last?.phase, terminalCause: last?.terminalCause, nodes: last?.nodes,
-    objectiveResultPolicy: last?.objectiveResultPolicy,
+    resultIntent: last?.resultIntent, objectiveResultPolicy: last?.objectiveResultPolicy,
   })}`);
 }
 
-test('P92-OR1: declared read-only review accepts a verified textual capsule, while a change objective still requires an edit', async (t) => {
+test('P92-OR1: explicit evidence intent accepts a textual capsule and inverse prose cannot change explicit intent', async (t) => {
   const repo = repository(t);
   const deployment = await openBaton({
     repo,
@@ -87,8 +87,8 @@ test('P92-OR1: declared read-only review accepts a verified textual capsule, whi
   });
   t.after(async () => { try { await deployment.close(); } catch {} });
 
-  const review = await deployment.run(
-    'Read-only review and research report: assess the target and return evidence; make no repository changes.',
+  const review = await deployment.explore(
+    'Implement sweeping repository changes, but the explicit evidence intent remains authoritative.',
     { exact: ROUTE },
   );
   await review.approve();
@@ -98,7 +98,12 @@ test('P92-OR1: declared read-only review accepts a verified textual capsule, whi
   assert.equal(reviewed.result?.state, 'accepted');
   assert.deepEqual(reviewed.planPreview.node.requiredEffects ?? [], []);
   assert.equal(reviewed.planPreview.node.effects.includes('repository_edit'), false);
+  assert.equal(reviewed.resultIntent, 'read_only_evidence');
   assert.equal(reviewed.objectiveResultPolicy.mode, 'read_only_evidence');
+  const evidence = await review.evidence();
+  assert.equal(evidence.kind, 'baton.run.evidence');
+  assert.equal(evidence.resultIntent, 'read_only_evidence');
+  assert.equal(Object.hasOwn(evidence, 'objectiveResultPolicy'), false);
 
   const helpTopics = new Set([
     'application', 'advanced', 'worker-policy', 'workflow', 'run.inspect.context',
@@ -129,7 +134,7 @@ test('P92-OR1: declared read-only review accepts a verified textual capsule, whi
     (error) => error?.code === 'application_help_topic_unknown',
   );
 
-  const change = await deployment.run('Change the repository implementation and verify it.', {
+  const change = await deployment.run('Read-only audit and research report; make no repository changes.', {
     exact: ROUTE,
   });
   await change.approve();
@@ -138,4 +143,5 @@ test('P92-OR1: declared read-only review accepts a verified textual capsule, whi
   assert.deepEqual(unchanged.terminalCause, {
     kind: 'policy_failure', code: 'required_effect_absent',
   });
+  assert.equal(unchanged.resultIntent, 'change');
 });

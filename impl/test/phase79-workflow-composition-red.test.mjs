@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,6 +11,11 @@ import { Coordinator } from '../src/coordinator.mjs';
 
 const routeA = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
 const routeB = Object.freeze({ harness: 'grok', model: 'grok-4.5', effort: 'medium' });
+const canonical = (value) => Array.isArray(value) ? value.map(canonical)
+  : value && typeof value === 'object'
+    ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]))
+    : value;
+const digest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 
 function repository() {
   const root = mkdtempSync(join(tmpdir(), 'baton-phase79-workflow-repo-'));
@@ -206,6 +212,15 @@ test('WF79-1: deployment workflow compiles one durable multi-node Plan and start
   assert.equal(selected.result.preservation.state, 'pinned');
   const evidence = await workflow.evidence();
   assert.equal(evidence.kind, 'baton.workflow.evidence');
+  assert.equal(evidence.resultIntent, 'change');
+  assert.deepEqual(Object.keys(evidence), [
+    'schemaVersion', 'kind', 'state', 'repoId', 'runId', 'resultIntent',
+    'observedThroughSeq', 'bindings', 'phase', 'progress', 'attempts', 'candidates',
+    'feedback', 'memberStops', 'selection', 'rounds', 'result', 'verification', 'stop',
+    'ownership', 'checks', 'manifestDigest',
+  ]);
+  const { manifestDigest, ...evidenceCore } = evidence;
+  assert.equal(manifestDigest, digest(evidenceCore));
   assert.equal(evidence.state, 'provider_settled');
   assert.equal(evidence.candidates.length, 2);
   assert.equal(evidence.feedback.length, 1);

@@ -51,7 +51,7 @@ function connectionFixture({ linked = false } = {}) {
 test('ordinary CLI is objective-first and manual routing selects model and effort together', () => {
   assert.deepEqual(parseBatonCli(['run', 'Improve Baton', '--idempotency-key', 'run-default']), {
     kind: 'command', name: 'run.start',
-    args: { intent: { objective: 'Improve Baton' } },
+    args: { intent: { objective: 'Improve Baton', resultIntent: 'change' } },
     idempotencyKey: 'run-default',
   });
   const selected = parseBatonCli([
@@ -60,7 +60,7 @@ test('ordinary CLI is objective-first and manual routing selects model and effor
   ]);
   assert.deepEqual(selected, {
     kind: 'command', name: 'run.start', idempotencyKey: 'run-a',
-    args: { intent: { objective: 'Improve Baton', route: { model: 'gpt-5.6-sol', effort: 'high' } } },
+    args: { intent: { objective: 'Improve Baton', resultIntent: 'change', route: { model: 'gpt-5.6-sol', effort: 'high' } } },
   });
   assert.throws(() => parseBatonCli(['run', 'No silent effort', '--model', 'gpt-5.6-sol']),
     (error) => error?.code === 'cli_invalid' && /model and --effort together/u.test(error.message));
@@ -133,7 +133,7 @@ test('exact compatibility remains and ordinary help hides deployment policy plum
     '--exact', 'codex/gpt-5.6-sol@low', '--idempotency-key', 'exact-a',
   ]);
   assert.deepEqual(exact.args.intent, {
-    objective: 'Improve Baton', profile: 'progressive', route,
+    objective: 'Improve Baton', resultIntent: 'change', profile: 'progressive', route,
   });
   assert.match(BATON_CLI_HELP, /baton run OBJECTIVE \[--model MODEL --effort EFFORT\]/u);
   for (const leaked of ['--profile PROFILE', 'TOKEN_BUDGET', 'EVIDENCE_OWNER_ROOT', 'EXPORT_MAX_BYTES', 'PROVIDER_TURNS']) {
@@ -358,7 +358,7 @@ test('bound Pythonic facade cascades start, inspect, semantic action, continuati
     'run.start', 'run.inspect', 'run.inspect', 'run.act', 'run.answer', 'run.steer', 'run.stop',
   ]);
   assert.deepEqual(calls[0].args, {
-    intent: { objective: 'Improve Baton', route: { model: 'gpt-5.6-sol', effort: 'high' } },
+    intent: { objective: 'Improve Baton', resultIntent: 'change', route: { model: 'gpt-5.6-sol', effort: 'high' } },
   });
   assert.deepEqual(calls[3].args, {
     runId: 'run-bound', actionId: 'action-approve', inputs: {},

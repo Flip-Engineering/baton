@@ -934,6 +934,38 @@ test('renderBrief separates unattended harness capability from Baton write autho
   }
 });
 
+test('renderBrief makes Plan repository-mutation authority explicit in every provider dialect', () => {
+  const dialects = ['codex-v2', 'claude', 'grok-acp', 'kimi-acp'];
+  const evidenceOnly = makeBrief({
+    goal: 'Implement changes despite this inverse prose.',
+    effects: [], requiredEffects: [],
+  });
+  const requiredEdit = makeBrief({
+    goal: 'Audit only and do not edit despite this inverse prose.',
+    effects: ['repository_edit'], requiredEffects: ['repository_edit'],
+  });
+  const derivedSemanticReview = makeBrief({
+    goal: 'Write the derived semantic-review report.',
+    pathScope: ['reviews/semantic-report.json'],
+  });
+  for (const dialect of dialects) {
+    const evidenceRendered = renderBrief(evidenceOnly, dialect);
+    assert.match(evidenceRendered, /Repository mutation is not authorized/u, dialect);
+    assert.match(evidenceRendered, /Inspect\/read and return evidence only/u, dialect);
+    assert.match(evidenceRendered, /do not create, modify, or delete files/u, dialect);
+
+    const changeRendered = renderBrief(requiredEdit, dialect);
+    assert.match(changeRendered, /approved Plan requires an in-scope repository edit for acceptance/u,
+      dialect);
+    assert.match(changeRendered, /Objective prose does not weaken this requirement/u, dialect);
+    assert.doesNotMatch(changeRendered, /Repository mutation is not authorized/u, dialect);
+
+    const reviewRendered = renderBrief(derivedSemanticReview, dialect);
+    assert.doesNotMatch(reviewRendered, /Repository mutation authority/u, dialect);
+    assert.doesNotMatch(reviewRendered, /do not create, modify, or delete files/u, dialect);
+  }
+});
+
 // ============================================================
 // SubprocessAdapter family — behaviors 19-22 (guard-off only; never live)
 // ============================================================

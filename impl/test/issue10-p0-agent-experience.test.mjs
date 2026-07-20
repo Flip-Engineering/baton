@@ -32,6 +32,7 @@ test('I10-P0-1: connected review is an objective-first two-role preset over exac
     name: 'run.start',
     args: { intent: {
       objective: 'Find correctness risks before integration.',
+      resultIntent: 'read_only_evidence',
       scope: ['impl/src', 'impl/test'],
       composition: {
         strategy: 'parallel_attempts', workspace: 'isolated', join: 'operator_selected',
@@ -64,6 +65,40 @@ test('I10-P0-2: concise review CLI preserves both exact route tuples and help ex
   assert.match(batonCliHelp('review'), /Workflow/iu);
   assert.match(batonCliHelp('workflow'), /team/iu);
   assert.match(batonCliHelp('workflow'), /harness\/model@effort/iu);
+  const explore = parseBatonCli([
+    'explore', 'Collect bounded evidence.', '--exact', 'codex/gpt-5.6-sol@high',
+  ]);
+  assert.equal(explore.name, 'run.start');
+  assert.equal(explore.args.intent.resultIntent, 'read_only_evidence');
+  const exploreHelp = parseBatonCli(['help', 'explore']);
+  assert.equal(exploreHelp.name, 'application.help');
+  assert.deepEqual(exploreHelp.args, { topic: 'explore', depth: 'outline' });
+  assert.match(batonCliHelp('explore'), /single-route evidence/iu);
+});
+
+test('I10-P0-2b: Workflow and startMany forward each explicit result intent', async () => {
+  const calls = [];
+  const baton = bindBatonPort({
+    async command(name, args) {
+      calls.push({ name, args });
+      return { runId: `run-${calls.length}`, depth: 'outline', outline: { actions: [] } };
+    },
+  });
+  await baton.workflow('Compare two implementations.', {
+    resultIntent: 'read_only_evidence',
+    team: [
+      { role: 'implementer', exact: ROUTE_A },
+      { role: 'challenger', exact: ROUTE_B },
+    ],
+  });
+  await baton.runs.startMany([
+    { objective: 'Apply the selected change.', resultIntent: 'change', exact: ROUTE_A },
+    { objective: 'Collect supporting evidence.', resultIntent: 'read_only_evidence', exact: ROUTE_B },
+  ]);
+  assert.deepEqual(calls.map(({ args }) => args.intent.resultIntent), [
+    'read_only_evidence', 'change', 'read_only_evidence',
+  ]);
+  assert.equal(calls[0].args.intent.composition.strategy, 'parallel_attempts');
 });
 
 test('I10-P0-3: connected doctor exposes sanitized deployment and exact route readiness', async () => {
@@ -172,7 +207,7 @@ test('I10-P0-6: exact-route CLI selection uses the connected sanitized readiness
   assert.equal(JSON.stringify(blocked).includes('credential'), false);
 });
 
-test('I10-P0-7: review and Workflow help close the preset-to-advanced navigation', async () => {
+test('I10-P0-7: explore, review, and Workflow help close the ordinary-to-advanced navigation', async () => {
   const application = Object.create(BatonApplication.prototype);
   application.ready = Promise.resolve();
   application.repoId = 'repo-help';
@@ -185,16 +220,23 @@ test('I10-P0-7: review and Workflow help close the preset-to-advanced navigation
   const applicationOutline = await application.help(
     { topic: 'application', depth: 'outline' }, principal,
   );
+  const exploreContent = await application.help({ topic: 'explore', depth: 'content' }, principal);
   const reviewContent = await application.help({ topic: 'review', depth: 'content' }, principal);
   const workflowContent = await application.help(
     { topic: 'workflow', depth: 'content' }, principal,
   );
 
+  assert.ok(applicationOutline.links.some(({ topic }) => topic === 'explore'));
   assert.ok(applicationOutline.links.some(({ topic }) => topic === 'review'));
   assert.ok(applicationOutline.links.some(({ topic }) => topic === 'workflow'));
+  assert.deepEqual(exploreContent.links.map(({ topic }) => topic), [
+    'run', 'review', 'routing', 'run.inspect', 'run.episode',
+  ]);
   assert.ok(reviewContent.links.some(({ topic }) => topic === 'workflow'));
   assert.ok(workflowContent.links.some(({ topic }) => topic === 'review'));
+  assert.match(exploreContent.content.paragraphs.join(' '), /single-route evidence/iu);
   assert.match(reviewContent.content.paragraphs.join(' '), /objective-first/iu);
   assert.match(workflowContent.content.paragraphs.join(' '), /advanced/iu);
+  assert.ok(APPLICATION_SEMANTIC_REGISTRY.cli.helpTopics.explore);
   assert.ok(APPLICATION_SEMANTIC_REGISTRY.cli.helpTopics.review);
 });

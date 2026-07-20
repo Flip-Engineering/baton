@@ -212,6 +212,15 @@ test('SR1-SR10: exact independent structured review gates an evidence-bound inte
   assert.equal(execFileSync('git', ['show', 'HEAD:impl/work.mjs'], { cwd: f.repo, encoding: 'utf8' }), 'export const fixed = true;\n');
 
   const reviewerTask = f.driver.coordination.snapshot().tasks.find((task) => task.taskType === 'review');
+  assert.equal(Object.hasOwn(reviewerTask.brief, 'goalPlan'), false,
+    'semantic review remains a derived Brief rather than an approved Plan node');
+  const reviewerEvents = f.driver.log.read(reviewerTask.assignee);
+  assert.equal(reviewerEvents.some((event) => event.kind === 'verify.reverified'
+    && event.payload?.capture?.changedPaths?.includes('impl/.baton-semantic-review.json')), true,
+  'the derived review report edit reaches the verifier');
+  assert.equal(reviewerEvents.some((event) => event.kind === 'error'
+    && event.payload?.code === 'forbidden_effect_observed'), false,
+  'the Plan-only forbidden-effect check does not reject a derived semantic-review report');
   assert.match(reviewerTask.brief.outputFormat, new RegExp(reviewed.semanticReview.targetDigest));
   assert.match(reviewerTask.brief.outputFormat, /startLine.*contentDigest/u);
   assert.deepEqual(reviewerTask.brief.semanticReviewTarget.changedPaths, ['impl/work.mjs']);

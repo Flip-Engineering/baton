@@ -236,6 +236,40 @@ test('RA1 RED: recursive context admits child lineage before its first Goal or P
     .map((row) => row.childRunId), [childRunId]);
 });
 
+test('RA1 result intent: recursive lineage digest preserves legacy omission and binds each explicit enum', async (t) => {
+  const fixtures = [fixture('intent-legacy'), fixture('intent-change'), fixture('intent-evidence')];
+  t.after(async () => Promise.all(fixtures.map((value) => cleanupFixture(value))));
+  const childRunId = 'run-phase77-result-intent-child';
+  const rawIntents = [
+    intent(childRunId),
+    { ...intent(childRunId), resultIntent: 'change' },
+    { ...intent(childRunId), resultIntent: 'read_only_evidence' },
+  ];
+  const observed = [];
+  for (let index = 0; index < fixtures.length; index += 1) {
+    const value = fixtures[index];
+    await value.application.command(
+      'run.start', { intent: rawIntents[index] }, value.recursivePrincipal,
+      recursiveContext(value.lease, `result-intent-${index}`),
+    );
+    observed.push(value.driver.coordination.events().find((event) => (
+      event.kind === 'run.lineage_admitted' && event.payload.childRunId === childRunId
+    )).payload.intentDigest);
+  }
+  const base = {
+    objective: rawIntents[0].objective, profile: 'recursive', route: rawIntents[0].route,
+    composition: null, scope: rawIntents[0].scope, runId: childRunId,
+  };
+  assert.deepEqual(observed, [
+    digest(base),
+    digest({ objective: base.objective, profile: base.profile, resultIntent: 'change',
+      route: base.route, composition: base.composition, scope: base.scope, runId: base.runId }),
+    digest({ objective: base.objective, profile: base.profile, resultIntent: 'read_only_evidence',
+      route: base.route, composition: base.composition, scope: base.scope, runId: base.runId }),
+  ]);
+  assert.equal(new Set(observed).size, 3);
+});
+
 test('RA2 RED: public arguments and principals cannot inject recursive session or lease authority', async () => {
   const base = { intent: intent('run-public-authority-forgery') };
   for (const [field, value] of [

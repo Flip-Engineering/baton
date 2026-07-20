@@ -72,6 +72,7 @@ function closedEnum(value, allowed) {
 }
 const SEMANTIC_ACTION_DISPATCH = Object.freeze({});
 const READ_ONLY_RESULT_CONSTRAINT = 'Baton objective/result policy read_only_evidence_v1';
+const RESULT_INTENTS = Object.freeze(new Set(['change', 'read_only_evidence']));
 const READ_ONLY_RESULT_DEFINITION = Object.freeze([
   'A bounded evidence-backed textual/result capsule answers the declared read-only objective.',
   'Sources, derivations, contradictions, verification, and cleanup remain inspectable.',
@@ -658,10 +659,14 @@ function normalizeProfileRegistryEvent(event) {
 }
 
 function normalizeIntent(value) {
-  const allowed = new Set(['runId', 'objective', 'profile', 'route', 'scope', 'composition']);
+  const allowed = new Set([
+    'runId', 'objective', 'resultIntent', 'profile', 'route', 'scope', 'composition',
+  ]);
+  const hasResultIntent = Object.hasOwn(value ?? {}, 'resultIntent');
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).some((key) => !allowed.has(key))
     || !Object.hasOwn(value, 'objective')
+    || (hasResultIntent && !RESULT_INTENTS.has(value.resultIntent))
     || (value.runId !== undefined && !validId(value.runId))
     || !validText(value.objective) || (value.profile !== undefined && !validId(value.profile))
     || (value.scope !== undefined && (!Array.isArray(value.scope) || value.scope.length === 0 || value.scope.length > 64
@@ -671,6 +676,7 @@ function normalizeIntent(value) {
   return deepFreeze({
     runId: value.runId ?? null,
     objective: value.objective.normalize('NFKC').trim(),
+    ...(hasResultIntent ? { resultIntent: value.resultIntent } : {}),
     profile: value.profile ?? null,
     route: normalizeRouteSelector(value.route),
     scope: value.scope === undefined ? null : [...value.scope].sort(),
@@ -1214,17 +1220,22 @@ function parseProfileConstraint(constraints) {
   return { name: value.slice(0, split), digest: value.slice(split + 1) };
 }
 
-function objectiveResultPolicy(objective, constraints = []) {
-  const declared = constraints.includes(READ_ONLY_RESULT_CONSTRAINT)
-    || (/\bread[ -]?only\b/iu.test(objective ?? '')
-      && /\b(?:review|research|audit|analysis|report)\b/iu.test(objective ?? ''));
-  return deepFreeze(declared ? {
+function resultIntentFromConstraints(constraints = []) {
+  return constraints.includes(READ_ONLY_RESULT_CONSTRAINT) ? 'read_only_evidence' : 'change';
+}
+
+function objectiveResultPolicy(resultIntent) {
+  return deepFreeze(resultIntent === 'read_only_evidence' ? {
     mode: 'read_only_evidence', repositoryMutation: 'forbidden',
     acceptance: 'verified_textual_result_capsule',
   } : {
     mode: 'change', repositoryMutation: 'required_when_declared',
     acceptance: 'verified_effect_result',
   });
+}
+
+function explicitResultIntentIdentity(intent) {
+  return Object.hasOwn(intent, 'resultIntent') ? { resultIntent: intent.resultIntent } : {};
 }
 
 function runNarrative(storyWorkers, runWorkerIds) {
@@ -2264,6 +2275,7 @@ export class BatonApplication {
       const scope = intent.scope ?? clone(profile.pathScope);
       const runId = intent.runId ?? `run-${digest({
         objective: intent.objective,
+        ...explicitResultIntentIdentity(intent),
         profileDigest: profile.digest,
         route: intent.route,
         composition: intent.composition,
@@ -2271,7 +2283,8 @@ export class BatonApplication {
         ownerPrincipalId: principal.principalId,
       }).slice(0, 32)}`;
       await this._authorize(name, principal, runId, {
-        objectiveDigest: digest(intent.objective), profile: intent.profile, route: intent.route,
+        objectiveDigest: digest(intent.objective), ...explicitResultIntentIdentity(intent),
+        profile: intent.profile, route: intent.route,
         compositionDigest: intent.composition ? digest(intent.composition) : null, scope,
       });
       this._authorizeRecursiveCommand('run.start', runId, principal, context);
@@ -3344,6 +3357,7 @@ export class BatonApplication {
       childRunId: intent.runId,
       intentDigest: digest({
         objective: intent.objective, profile: intent.profile,
+        ...explicitResultIntentIdentity(intent),
         route: intent.route, composition: intent.composition,
         scope: intent.scope, runId: intent.runId,
       }),
@@ -3362,6 +3376,7 @@ export class BatonApplication {
     const scope = requestedIntent.scope ?? clone(profile.pathScope);
     const runId = requestedIntent.runId ?? `run-${digest({
       objective: requestedIntent.objective,
+      ...explicitResultIntentIdentity(requestedIntent),
       profileDigest: profile.digest,
       route: requestedIntent.route,
       composition: requestedIntent.composition,
@@ -3369,8 +3384,22 @@ export class BatonApplication {
       ownerPrincipalId: owner.principalId,
     }).slice(0, 32)}`;
     const intent = deepFreeze({ ...requestedIntent, runId, scope });
+    let existingRun = false;
+    try {
+      this._findRun(intent.runId, { allowUnavailableProfile: true });
+      existingRun = true;
+    } catch (error) {
+      if (error?.code !== 'application_run_not_found') throw error;
+    }
+    if (!existingRun && profile.constraints.some((constraint) => (
+      constraint.startsWith('Baton objective/result policy ')
+    ))) {
+      throw applicationError('deployment profile uses a reserved result-policy constraint',
+        'application_profile_invalid');
+    }
     await this._authorize('run.start', owner, intent.runId, {
-      objectiveDigest: digest(intent.objective), profile: intent.profile, route: intent.route,
+      objectiveDigest: digest(intent.objective), ...explicitResultIntentIdentity(intent),
+      profile: intent.profile, route: intent.route,
       compositionDigest: intent.composition ? digest(intent.composition) : null, scope: intent.scope,
     });
     if (owner.principalId === this.principals.planner.principalId) {
@@ -3387,7 +3416,7 @@ export class BatonApplication {
     const workflowConstraint = intent.composition
       ? `Baton workflow ${intent.composition.strategy}:${intent.composition.workspace}:${intent.composition.join}`
       : null;
-    const objectivePolicy = objectiveResultPolicy(intent.objective);
+    const objectivePolicy = objectiveResultPolicy(intent.resultIntent ?? 'change');
     const readOnlyResult = objectivePolicy.mode === 'read_only_evidence';
     const definitionOfDone = readOnlyResult
       ? clone(READ_ONLY_RESULT_DEFINITION) : clone(profile.definitionOfDone);
@@ -3783,6 +3812,7 @@ export class BatonApplication {
       state: 'terminal',
       repoId: this.repoId,
       runId,
+      resultIntent: view.resultIntent,
       observedThroughSeq: relevantSeqs.length > 0 ? Math.max(...relevantSeqs) : 0,
       bindings: {
         profileDigest: view.profile.digest,
@@ -3870,6 +3900,7 @@ export class BatonApplication {
       state: APPLICATION_RUN_TERMINAL_PHASES.has(view.phase) ? 'terminal' : 'provider_settled',
       repoId: this.repoId,
       runId,
+      resultIntent: view.resultIntent,
       observedThroughSeq: relevantSeqs.length > 0 ? Math.max(...relevantSeqs) : 0,
       bindings: {
         profileDigest: view.profile.digest,
@@ -4516,6 +4547,7 @@ export class BatonApplication {
   }
 
   _planningView(current, cause = null) {
+    const resultIntent = resultIntentFromConstraints(current.goal.constraints);
     const runStop = this.driver.coordination.runStop?.(current.goal.runId) ?? null;
     const stop = runStop ? {
       state: runStop.status, admittedAt: runStop.admittedAt, completedAt: runStop.completedAt,
@@ -4532,6 +4564,7 @@ export class BatonApplication {
       schemaVersion: 1,
       runId: current.goal.runId,
       objective: current.goal.objective,
+      resultIntent,
       profile: { name: current.profileName, digest: current.profile.digest },
       phase,
       cursor: this.driver.coordination.snapshot().lastSeq,
@@ -4574,6 +4607,7 @@ export class BatonApplication {
 
   async _historicalProfileView(current, observer, options = {}) {
     const runId = current.goal.runId;
+    const resultIntent = resultIntentFromConstraints(current.goal.constraints);
     if (options.expected) {
       throw applicationError('historical Run policy is unavailable for mutation replay', 'application_profile_stale');
     }
@@ -4629,6 +4663,7 @@ export class BatonApplication {
       schemaVersion: 1,
       runId,
       objective: current.goal.objective,
+      resultIntent,
       profile: {
         name: current.profileName, digest: current.profileDigest,
         state: 'historical_definition_unavailable',
@@ -4658,6 +4693,7 @@ export class BatonApplication {
           route: requested, capabilities: clone(planNode.capabilities), effects: clone(planNode.effects),
         },
         profileDigest: current.profileDigest, planDigest: current.plan.digest,
+        resultIntent,
       } : null,
       nodes: clone(projection?.nodes ?? []),
       route: route ? {
@@ -5830,9 +5866,8 @@ export class BatonApplication {
       const allSettled = attempts.every((attempt) => (
         ['accepted', 'failed', 'cancelled', 'stale'].includes(attempt.state)
       ));
-      const readOnlyResult = objectiveResultPolicy(
-        current.goal.objective, current.goal.constraints,
-      ).mode === 'read_only_evidence';
+      const readOnlyResult = resultIntentFromConstraints(current.goal.constraints)
+        === 'read_only_evidence';
       const state = !projection.approval ? 'awaiting_plan_approval'
         : projection.approval.disposition === 'rejected' ? 'denied'
           : selection ? 'candidate_selected'
@@ -5976,9 +6011,8 @@ export class BatonApplication {
       attempt.taskId !== null && !['accepted', 'failed', 'cancelled'].includes(attempt.state)
       && attempt.memberStop === null
     )).map((attempt) => attempt.role);
-    const objectivePolicy = objectiveResultPolicy(
-      current.goal.objective, current.goal.constraints,
-    );
+    const resultIntent = resultIntentFromConstraints(current.goal.constraints);
+    const objectivePolicy = objectiveResultPolicy(resultIntent);
     const readOnlyResult = objectivePolicy.mode === 'read_only_evidence';
     let phase = !projection.approval ? 'awaiting_plan_approval'
       : projection.approval.disposition === 'rejected' ? 'denied'
@@ -6093,9 +6127,11 @@ export class BatonApplication {
       round: rounds.length,
       revision: current.plan.nodes[0]?.revision?.revisionId ?? null,
       profileDigest: current.profile.digest, planDigest: current.plan.digest,
+      resultIntent,
     };
     const view = {
       schemaVersion: 1, runId, objective: current.goal.objective,
+      resultIntent,
       objectiveResultPolicy: clone(objectivePolicy),
       profile: { name: current.profileName, digest: current.profile.digest },
       phase, cursor: projection.coordinationUpperBound,
@@ -6243,9 +6279,8 @@ export class BatonApplication {
       throw applicationError('run projection differs from the compiled request', 'application_run_conflict');
     }
     const projection = await this._goalPlanStatus(current, observer);
-    const objectivePolicy = objectiveResultPolicy(
-      current.goal.objective, current.goal.constraints,
-    );
+    const resultIntent = resultIntentFromConstraints(current.goal.constraints);
+    const objectivePolicy = objectiveResultPolicy(resultIntent);
     const readOnlyResult = objectivePolicy.mode === 'read_only_evidence';
     const node = projection.nodes[0];
     const task = node.taskId ? this.driver.coordination.task(node.taskId) : null;
@@ -6388,6 +6423,8 @@ export class BatonApplication {
       },
       profileDigest: current.profile.digest,
       planDigest: current.plan.digest,
+      resultIntent,
+      // Compatibility alias for clients predating the closed resultIntent enum.
       objectiveResultPolicy: clone(objectivePolicy),
     };
     let publicResult = resultSha ? {
@@ -6502,6 +6539,7 @@ export class BatonApplication {
       schemaVersion: 1,
       runId,
       objective: current.goal.objective,
+      resultIntent,
       objectiveResultPolicy: clone(objectivePolicy),
       profile: { name: current.profileName, digest: current.profile.digest },
       phase,
@@ -8514,7 +8552,8 @@ export class BatonApplication {
     const values = {
       outline: {
         authority: 'replaceable_non_authoritative_summary',
-        objective: current.goal.objective, phase: view.phase,
+        objective: current.goal.objective, resultIntent: view.resultIntent,
+        phase: view.phase,
         summary: view.progress?.summary ?? view.narrative, workstream: role,
         generation: resolvedGeneration ?? null,
         chapters: EPISODE_TOPICS.map((chapter) => ({
@@ -8923,6 +8962,7 @@ export class BatonApplication {
         ...base, expansions: [{ depth: 'index' }],
         outline: {
           objective: current.goal.objective,
+          resultIntent: view.resultIntent,
           phase: view.phase, narrative: view.narrative, risk: current.goal.risk,
           stage: view.progress?.current ?? null,
           ...timing,
@@ -9169,6 +9209,7 @@ export class BatonApplication {
       const orchestration = this.driver.coordination.runOrchestrationView?.(current.goal.runId) ?? null;
       const outline = {
         objective: current.goal.objective,
+        resultIntent: view.resultIntent,
         phase: view.phase,
         stage: view.progress?.current ?? null,
         ...timing,
@@ -9545,6 +9586,7 @@ export class BatonApplication {
       items.push(deepFreeze({
         id: goal.runId,
         objective: goal.objective,
+        resultIntent: view.resultIntent,
         phase: view.phase,
         stage: view.progress?.current ?? null,
         ...timing,
@@ -9613,8 +9655,10 @@ export class BatonApplication {
     )).filter(Boolean);
     const paragraphs = [summary, ...(cli?.paragraphs ?? []).filter((value) => value !== summary)];
     const links = request.topic === 'application' || request.topic === 'application.help'
-      ? ['run', 'review', 'workflow', 'run.episode', 'run.workstreams', 'routing',
+      ? ['run', 'explore', 'review', 'workflow', 'run.episode', 'run.workstreams', 'routing',
         'connection', 'worker-policy', 'advanced']
+      : request.topic === 'explore'
+        ? ['run', 'review', 'routing', 'run.inspect', 'run.episode']
       : request.topic === 'review'
         ? ['workflow', 'routing', 'run.inspect', 'run.episode', 'run.workstreams']
         : request.topic === 'workflow'

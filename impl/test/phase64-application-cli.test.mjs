@@ -19,7 +19,7 @@ test('UC1: concise CLI vocabulary compiles only shipped commands into shared Run
   const start = parseBatonCli(['run', 'start', 'Ship it', '--profile', 'standard', '--exact', 'codex/gpt-5.6-sol@low', '--scope', 'impl/src,impl/test', '--run-id', 'run-a', '--idempotency-key', 'start-a']);
   assert.deepEqual(start, {
     kind: 'command', name: 'run.start', idempotencyKey: 'start-a',
-    args: { intent: { objective: 'Ship it', profile: 'standard', route: { harness: 'codex', model: 'gpt-5.6-sol', effort: 'low' }, runId: 'run-a', scope: ['impl/src', 'impl/test'] } },
+    args: { intent: { objective: 'Ship it', resultIntent: 'change', profile: 'standard', route: { harness: 'codex', model: 'gpt-5.6-sol', effort: 'low' }, runId: 'run-a', scope: ['impl/src', 'impl/test'] } },
   });
   assert.equal(parseBatonCli(['run', 'status', 'run-a', '--wait', '5s']).name, 'run.wait');
   assert.deepEqual(parseBatonCli([

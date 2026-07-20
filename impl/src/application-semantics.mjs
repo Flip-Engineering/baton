@@ -16,6 +16,31 @@ const objectSchema = (properties, required = Object.keys(properties)) => ({
   type: 'object', properties, required, additionalProperties: false,
 });
 const id = { type: 'string', minLength: 1, maxLength: 256 };
+const resultIntent = {
+  type: 'string', enum: ['change', 'read_only_evidence'], default: 'change',
+};
+const applicationRoute = objectSchema({ harness: id, model: id, effort: id }, []);
+const applicationIntent = objectSchema({
+  runId: id,
+  objective: { type: 'string', minLength: 1, maxLength: 4096 },
+  resultIntent,
+  profile: id,
+  route: applicationRoute,
+  scope: {
+    type: 'array', minItems: 1, maxItems: 64, uniqueItems: true,
+    items: { type: 'string', minLength: 1, maxLength: 4096 },
+  },
+  composition: objectSchema({
+    strategy: { const: 'parallel_attempts' }, workspace: { const: 'isolated' },
+    join: { const: 'operator_selected' },
+    team: {
+      type: 'array', minItems: 2, maxItems: 16,
+      items: objectSchema({ role: id, route: objectSchema({
+        harness: id, model: id, effort: id,
+      }) }),
+    },
+  }),
+}, ['objective']);
 const depth = {
   type: 'string', enum: ['outline', 'index', 'section', 'item', 'content', 'evidence'],
 };
@@ -94,7 +119,7 @@ const operations = {
     helpTopic: 'runs', idempotent: true, destructive: false,
   },
   'run.start': {
-    inputSchema: objectSchema({ intent: { type: 'object', additionalProperties: false } }, ['intent']),
+    inputSchema: objectSchema({ intent: applicationIntent }, ['intent']),
     helpTopic: 'run.start', idempotent: true, destructive: false,
   },
   'run.inspect': {
@@ -520,6 +545,7 @@ const authorizedActions = Object.fromEntries(Object.entries(actions).map(([kind,
 ]));
 
 const cliCommands = [
+  ['explore.objective', 'run.start', null, 'baton explore OBJECTIVE [--exact HARNESS/MODEL@EFFORT] [--profile PROFILE] [--scope PATHS]'],
   ['review.objective', 'run.start', null, 'baton review OBJECTIVE --exact HARNESS/MODEL@EFFORT --exact HARNESS/MODEL@EFFORT [--profile PROFILE] [--scope PATHS]'],
   ['route.exact', null, null, 'baton route HARNESS/MODEL@EFFORT'],
   ['run.objective', 'run.start', null, 'baton run OBJECTIVE [--model MODEL --effort EFFORT] [--harness HARNESS]'],
@@ -573,6 +599,7 @@ const cli = {
         'baton setup',
         'baton credentials install kimi',
         'baton doctor [--depth outline|connection|profile|evidence] [--check]',
+        'baton explore OBJECTIVE [--exact HARNESS/MODEL@EFFORT]',
         'baton review OBJECTIVE --exact HARNESS/MODEL@EFFORT --exact HARNESS/MODEL@EFFORT',
         'baton route HARNESS/MODEL@EFFORT',
         'baton help [run|routing|connection|TOPIC]',
@@ -616,10 +643,17 @@ const cli = {
       ],
     },
     'application.help': { aliasFor: 'application' },
+    explore: {
+      commandIds: ['explore.objective'],
+      paragraphs: [
+        'Explore is the single-route evidence preset. It compiles read_only_evidence intent, forbids repository edits, and accepts a verified bounded textual result capsule.',
+        'Use run for change intent. Objective wording never changes result intent.',
+      ],
+    },
     review: {
       commandIds: ['review.objective'],
       paragraphs: [
-        'Review is the objective-first preset for one durable Workflow: reviewer and challenger run as isolated parallel Attempts, and the operator selects the attributable verified Candidate.',
+        'Review is the objective-first read-only evidence preset for one durable Workflow: reviewer and challenger run as isolated parallel Attempts and Baton accepts their attributable verified evidence set without repository selection.',
         'Each reviewer is bound to one exact harness/model/effort route. Baton derives the Plan, roles, worktrees, tasks, fences, budgets, receipts, and cleanup authority.',
         'Use workflow help for the advanced team-composition surface when the fixed reviewer/challenger roles do not fit.',
       ],
@@ -630,6 +664,7 @@ const cli = {
       ],
       paragraphs: [
         'Workflow is the advanced inner surface: one durable Run with a caller-named team of two to sixteen role-addressed isolated parallel Attempts and operator-selected join authority.',
+        'Ordinary Workflow starts use change result intent unless the caller explicitly selects read_only_evidence.',
         'Every team member requires one exact harness/model@effort route tuple. Strategy, workspace, and join remain fixed to parallel_attempts, isolated, and operator_selected.',
         'Use review for the ordinary objective-first reviewer/challenger preset.',
       ],
@@ -648,7 +683,10 @@ const cli = {
         'run.feedback', 'run.revise', 'run.stop-member', 'run.retry',
         'run.resume', 'run.review', 'run.integrate', 'run.export'],
       selectorRule: 'manualRoute',
-      paragraphs: ['Use baton help routing for exact and deployment-profile routing.'],
+      paragraphs: [
+        'Run starts compile explicit change result intent. Use explore for one-route evidence or review for two-route evidence.',
+        'Use baton help routing for exact and deployment-profile routing.',
+      ],
     },
     'run.act.retry_verification': {
       commandIds: ['run.retry'],
