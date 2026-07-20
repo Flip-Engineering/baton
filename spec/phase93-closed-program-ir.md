@@ -101,6 +101,7 @@ The schemas below use these exact primitives:
 Digest       := lowercase /[a-f0-9]{64}/
 GitSha       := lowercase /[a-f0-9]{40}/
 SafeId       := /[A-Za-z0-9._:@/-]{1,512}/
+RouteTupleKey := opaque canonical route-tuple string, 1..4096 UTF-8 bytes
 NodeKey      := /[A-Za-z][A-Za-z0-9._:-]{0,127}/
 NodeId       := "pnode:" + Digest
 ProgramId    := "program:" + Digest
@@ -530,6 +531,7 @@ resolved = exact{
   harness,model,effort,serviceTier,harnessCardVersion,adapterCardDigest,routeKey,
   resolutionDigest
 }
+routeKey=RouteTupleKey
 observed = exact{
   harness,model,effort,serviceTier,harnessSource,modelSource,effortSource,
   serviceTierSource,observationDigest
@@ -988,13 +990,25 @@ hashes the envelope excluding itself. `targetDigest` MUST equal the embedded han
 For an effect handle, the envelope mirrors the exact `EffectResult`. For a child handle, it mirrors
 the exact `ProgramResult`. For a parallel handle, every branch has a named `MemberSettlement`; the
 aggregate is computed from the declared join, not a worst-result or arrival-order heuristic.
-`all_terminal` succeeds only when every member succeeds; otherwise ambiguity precedes failure,
-which precedes cancellation. `all_verified` succeeds only when every member is verified.
-`first_verified` uses its preference list after the fenced terminal/stopped member set exists.
-`operator_selected` uses only the separately admitted selection event. Every non-chosen disposition
-and work product remains in `memberSettlements`. A parallel envelope cannot settle while an
-admitted member lacks a terminal revision or durable `CleanupRecord`; an open/attention cleanup
-disposition remains visible and blocks eligible follow-on actions.
+`all_terminal` succeeds only when every member succeeds. `all_verified` succeeds only when every
+member is verified. `first_verified` uses its preference list after the fenced terminal/stopped
+member set exists. `operator_selected` uses only the separately admitted selection event.
+
+Parallel aggregate execution is one closed function over that complete name-sorted set. For
+`all_terminal|all_verified`, every member contributes. For `first_verified|operator_selected`, a
+successfully chosen member is the sole aggregate contributor; if no choice satisfies the join, all
+members contribute and selection remains `unresolved`. Multiple contributing execution outcomes
+use this total precedence, highest first:
+`ambiguous > failed > cancelled > stopped > not_dispatched > succeeded`. Equal outcomes are equal;
+member names and arrival order never break a disposition tie. A non-chosen active branch stopped
+with cause `selective_stop`, or a non-chosen branch never dispatched with cause
+`superseded_by_selection`, is a selection-stopped branch. It remains an exact `parallel_member`
+settlement but does not replace the chosen member's aggregate disposition. Every other chosen or
+unchosen ambiguity, failure, cancellation, stop, and not-dispatched fact is handled only by the
+contributor rule and total precedence above; no scheduler heuristic or prose exception exists.
+Every non-chosen disposition and work product remains in `memberSettlements`. A parallel envelope
+cannot settle while an admitted member lacks a terminal revision or durable `CleanupRecord`; an
+open/attention cleanup disposition remains visible and blocks eligible follow-on actions.
 
 `call`, `map`, `reduce`, `gate`, `notify`, and `checkpoint` are asynchronous. Evaluation admits and
 prepares the effect and yields its durable handle; it does not block the branch until provider or
@@ -1389,13 +1403,13 @@ state="eligible|ineligible|requires_approval|requires_repair|blocked_cleanup|blo
 
 MemberSettlement union(memberKind):
   branch = exact{
-    memberKind,name,index,dispositions,workProductRefs,eligibility,
+    memberKind,ownerKind,name,index,dispositions,workProductRefs,eligibility,
     effectResultDigest,terminalRevisionDigest,memberDigest
-  }  memberKind="branch"; index=null; name=SafeId
+  }  memberKind="branch"; ownerKind="parallel_member"; index=null; name=SafeId
   map = exact{
-    memberKind,name,index,dispositions,workProductRefs,eligibility,
+    memberKind,ownerKind,name,index,dispositions,workProductRefs,eligibility,
     effectResultDigest,terminalRevisionDigest,memberDigest
-  }  memberKind="map"; name=null; index=non-negative safe integer
+  }  memberKind="map"; ownerKind="map_member"; name=null; index=non-negative safe integer
 ```
 
 `reasonCode` is `SafeId`. `requiredCapability` and `approvalDigest` are respectively `SafeId|null`
@@ -1405,9 +1419,11 @@ exact current action approval exists. `requires_approval`, `requires_repair`, `b
 performs the action. In particular, apply/integrate is a
 new authenticated semantic action requiring current `program.integrate`, repository-write, and
 generation-fenced integrator capability; neither `approved` nor `eligible` mutates a checkout.
-`MemberSettlement.memberDigest` hashes the complete member excluding itself. Branch members sort
-by name; map members sort by contiguous index. A member's effect/result and terminal-revision
-digests are null only when that member kind has no such record; null never means pending.
+`MemberSettlement.memberDigest` hashes the complete member excluding itself. `ownerKind` is the
+exact owner used by the one disposition table below; it is not inferred from a result's shape.
+Branch members sort by name; map members sort by contiguous index. A member's effect/result and
+terminal-revision digests are null only when that member kind has no such record; null never means
+pending.
 
 Every effect settlement embeds an immutable, content-addressed result:
 
@@ -1565,32 +1581,37 @@ sort by `(cursor,forensicDigest)`; across anchors they sort by `forensicDigest`.
 trace-only and projects to no semantic field.
 
 The axes remain independent facts, but their valid product is closed by the single exhaustive table
-below. There is no second work-product table, precedence rule, or prose exception. In the table,
+below. There is no second work-product table, disposition-row precedence rule, or prose exception.
+The parallel aggregate precedence in §93.11 chooses an execution value before this same table
+validates its cross-product; it does not define another valid row. In the table,
 `F={failed,cancelled,stopped,ambiguous}`; `Z` means cleanup `not_required|settled` with every
 remaining ownership count zero; `O` means cleanup `open|attention` with at least one remaining
 ownership count; `C=Z|O`; `NA=not_applicable`; and `I=ineligible`. An owner is an
-`EffectResult.effectKind`, `map_member`, or `program`. All `WorkProductRefs` not explicitly named
-in a row MUST be null.
+`EffectResult.effectKind`, a `MemberSettlement.ownerKind` (`parallel_member|map_member`), or
+`program`. A `parallel_member` row validates the member's axes and refs plus the exact evidence,
+map-settlement, and cleanup facts reached through its applicable non-null result/terminal-revision
+digests; required facts cannot be omitted by projecting them out of `MemberSettlement`. All
+`WorkProductRefs` not explicitly named in a row MUST be null.
 
 | Profile | Owner | Execution | Verification | Product and exact refs | Cleanup | Selection | Integration |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| settled value | `call|map|reduce|finish|map_member|program` | `succeeded` | `not_required` | `value`; `valueRef` only, not a `baton.gate_result` | `Z` | `NA|eligible|selected|unresolved` | `NA` |
-| gate verdict value | `gate|program` | `succeeded` | `passed|candidate_failed|inconclusive` exactly matching the embedded verdict | `value`; `valueRef` only, validating as the exact `baton.gate_result` | `Z` | `NA` | `NA` |
-| unverified Candidate | `call|reduce|finish|map_member|program` | `succeeded` | `not_required|pending` | `candidate`; `candidateRef` plus exactly one matching backing ref | `Z` | `I` | `I` |
-| verified Candidate, not selected | `call|reduce|finish|map_member|program` | `succeeded` | `passed` | `candidate`; verified `candidateRef` plus exactly one matching backing ref | `Z` | `I|eligible|unresolved` | `I` |
-| verified Candidate, selected | `call|reduce|finish|map_member|program` | `succeeded` | `passed` | `candidate`; verified `candidateRef` plus exactly one matching backing ref | `Z` | `selected` | `I|eligible|approved|integrated|refused|failed_preserved` |
-| rejected Candidate | `call|reduce|finish|map_member|program` | `succeeded` | `candidate_failed` | `candidate`; rejected `candidateRef` plus exactly one matching backing ref | `Z` | `I` | `I` |
-| inconclusive Candidate | `call|reduce|finish|map_member|program` | `succeeded` | `inconclusive` | `candidate`; inconclusive `candidateRef` plus exactly one matching backing ref | `Z` | `I` | `I` |
-| unverified standalone artifact | `call|reduce|finish|map_member|program` | `succeeded` | `not_required|pending` | `artifact`; nonempty mutually consistent standalone subset of `artifactRef|capsuleRef|commitRef`; `candidateRef` null | `Z` | `NA|I` | `NA|I` |
-| verified standalone artifact | `call|reduce|finish|map_member|program` | `succeeded` | `passed` | `artifact`; same standalone shape | `Z` | `NA|I|eligible|selected|unresolved` | `NA|I` |
-| rejected standalone artifact | `call|reduce|finish|map_member|program` | `succeeded` | `candidate_failed` | `artifact`; same standalone shape | `Z` | `I` | `I` |
-| inconclusive standalone artifact | `call|reduce|finish|map_member|program` | `succeeded` | `inconclusive` | `artifact`; same standalone shape | `Z` | `I` | `I` |
-| delivered notification | `notify|program` | `succeeded` | `not_required` | `notification`; all refs null and exactly one delivery-receipt evidence ref | `Z` | `NA` | `NA` |
-| settled checkpoint | `checkpoint|program` | `succeeded` | `not_required` | `checkpoint`; `checkpointRef` only and its ledger-receipt evidence ref | `Z` | `NA` | `NA` |
-| partial map | `map|program` | `F` | `not_required|inconclusive` | `partial_collection`; `valueRef` to the exact `PartialMapValue` and non-null `mapSettlement` | `C` | `I` | `I` |
-| interrupted Candidate | `call|reduce|finish|map_member|program` | `F` | `not_required|pending|passed|candidate_failed|inconclusive` | `candidate`; `candidateRef` plus exactly one matching backing ref; state matches verification | `C` | `I` | `I` |
-| interrupted standalone artifact | `call|reduce|finish|map_member|program` | `F` | `not_required|pending|passed|candidate_failed|inconclusive` | `artifact`; the standalone shape above | `C` | `I` | `I` |
-| interrupted checkpoint | `checkpoint|program` | `F` | `not_required` | `checkpoint`; `checkpointRef` only and its ledger-receipt evidence ref | `C` | `I` | `I` |
+| settled value | `call|map|reduce|finish|parallel_member|map_member|program` | `succeeded` | `not_required` | `value`; `valueRef` only, not a `baton.gate_result` | `Z` | `NA|eligible|selected|unresolved` | `NA` |
+| gate verdict value | `gate|parallel_member|program` | `succeeded` | `passed|candidate_failed|inconclusive` exactly matching the embedded verdict | `value`; `valueRef` only, validating as the exact `baton.gate_result` | `Z` | `NA` | `NA` |
+| unverified Candidate | `call|reduce|finish|parallel_member|map_member|program` | `succeeded` | `not_required|pending` | `candidate`; `candidateRef` plus exactly one matching backing ref | `Z` | `I` | `I` |
+| verified Candidate, not selected | `call|reduce|finish|parallel_member|map_member|program` | `succeeded` | `passed` | `candidate`; verified `candidateRef` plus exactly one matching backing ref | `Z` | `I|eligible|unresolved` | `I` |
+| verified Candidate, selected | `call|reduce|finish|parallel_member|map_member|program` | `succeeded` | `passed` | `candidate`; verified `candidateRef` plus exactly one matching backing ref | `Z` | `selected` | `I|eligible|approved|integrated|refused|failed_preserved` |
+| rejected Candidate | `call|reduce|finish|parallel_member|map_member|program` | `succeeded` | `candidate_failed` | `candidate`; rejected `candidateRef` plus exactly one matching backing ref | `Z` | `I` | `I` |
+| inconclusive Candidate | `call|reduce|finish|parallel_member|map_member|program` | `succeeded` | `inconclusive` | `candidate`; inconclusive `candidateRef` plus exactly one matching backing ref | `Z` | `I` | `I` |
+| unverified standalone artifact | `call|reduce|finish|parallel_member|map_member|program` | `succeeded` | `not_required|pending` | `artifact`; nonempty mutually consistent standalone subset of `artifactRef|capsuleRef|commitRef`; `candidateRef` null | `Z` | `NA|I` | `NA|I` |
+| verified standalone artifact | `call|reduce|finish|parallel_member|map_member|program` | `succeeded` | `passed` | `artifact`; same standalone shape | `Z` | `NA|I|eligible|selected|unresolved` | `NA|I` |
+| rejected standalone artifact | `call|reduce|finish|parallel_member|map_member|program` | `succeeded` | `candidate_failed` | `artifact`; same standalone shape | `Z` | `I` | `I` |
+| inconclusive standalone artifact | `call|reduce|finish|parallel_member|map_member|program` | `succeeded` | `inconclusive` | `artifact`; same standalone shape | `Z` | `I` | `I` |
+| delivered notification | `notify|parallel_member|program` | `succeeded` | `not_required` | `notification`; all refs null and exactly one delivery-receipt evidence ref | `Z` | `NA` | `NA` |
+| settled checkpoint | `checkpoint|parallel_member|program` | `succeeded` | `not_required` | `checkpoint`; `checkpointRef` only and its ledger-receipt evidence ref | `Z` | `NA` | `NA` |
+| partial map | `map|parallel_member|program` | `F` | `not_required|inconclusive` | `partial_collection`; `valueRef` to the exact `PartialMapValue` and non-null `mapSettlement` | `C` | `I` | `I` |
+| interrupted Candidate | `call|reduce|finish|parallel_member|map_member|program` | `F` | `not_required|pending|passed|candidate_failed|inconclusive` | `candidate`; `candidateRef` plus exactly one matching backing ref; state matches verification | `C` | `I` | `I` |
+| interrupted standalone artifact | `call|reduce|finish|parallel_member|map_member|program` | `F` | `not_required|pending|passed|candidate_failed|inconclusive` | `artifact`; the standalone shape above | `C` | `I` | `I` |
+| interrupted checkpoint | `checkpoint|parallel_member|program` | `F` | `not_required` | `checkpoint`; `checkpointRef` only and its ledger-receipt evidence ref | `C` | `I` | `I` |
 | terminal without product | any | `F` | `not_required|pending|inconclusive` | `absent`; all refs null | `C` | `I` | `I` |
 | not dispatched | any | `not_dispatched` | `not_dispatched` | `absent`; all refs null and no provider observation | `Z` | `I` | `I` |
 
@@ -1932,8 +1953,9 @@ One `baton.program_policy` schema v1 binds the admitted canonical-order, Context
 Goal/Plan, capacity, route-card, artifact, and lifecycle authorities by digest. Ordinary callers
 and model workers provide none of its numeric fields. This version defines no Program-local
 numeric default, ratio, floor, offset, empirically asserted constant, or caller-selectable narrower
-value. Every admitted number is copied from one exact pre-existing approved lower-policy field,
-except parallel concurrency, which is the minimum of exact reservable lower-authority facts.
+value. Every admitted number is copied from one exact pre-existing approved lower-policy field.
+The only parallel-concurrency operand is the exact admitted route card field
+`card().concurrencyCeiling`; structural Goal/Plan bounds are not described as capacity.
 
 Its field set is exhaustive:
 
@@ -1964,7 +1986,7 @@ replay uses the recorded bytes and never re-resolves a newer policy:
 | `maxValueBytes` | Context Program policy v1 `maxArtifactBytes` |
 | `maxResultBytes` | canonical-order policy v1 `maxReceiptBytes` |
 | `maxEvidenceRefs` | Goal/Plan policy v1 `limits.maxItems` |
-| `maxParallelBranches` | `min(C,W,min_role Q(role),Goal/Plan policy v1 limits.maxNodes)` |
+| `maxParallelBranches` | for a Program containing `parallel`, `min(Goal/Plan policy v1 limits.maxNodes, min_role card(role).concurrencyCeiling)`; otherwise null |
 | `maxRepeatRounds` | Workflow policy v1 `maxRounds` |
 | `maxChildDepth` | Context Program policy v1 `recursionDepth` |
 | `maxEffectInstances` | Goal/Plan policy v1 `limits.maxProviderTurns` |
@@ -1973,14 +1995,21 @@ replay uses the recorded bytes and never re-resolves a newer policy:
 | `maxStateRevisions` | canonical-order policy v1 `maxEvents` |
 | `maxTraceBytes` | Context Program policy v1 `maxArtifactBytes` |
 
-Here `C` is the capacity ledger's reservable worker slots, `W` is its reservable private-worktree
-slots, and `Q(role)` is the admitted route card's `concurrency_ceiling` after exact
-harness/model/effort, separately authorized service tier, and worker-policy resolution. These are
-typed deployment facts, not Program fields supplied by a caller. If any operand of the concurrency
-minimum is zero, preview refuses `program_capacity_unavailable`; `max(1,...)`, queuing capacity,
-worker prose, and missing-value defaults are forbidden. Admission reserves against the same facts.
-A later capacity decrease may delay or stop admitted work but cannot rewrite the frozen policy; an
-increase cannot widen it.
+`card(role)` is the exact immutable admitted route card selected after harness/model/effort,
+separately authorized service-tier, and worker-policy resolution. Its existing camel-case
+`concurrencyCeiling` field is the sole lower-policy concurrency authority. Roles that resolve to
+the same card share that card's ceiling; normalization additionally rejects a parallel frontier
+whose count for that card exceeds the field. A Program with no `parallel` node carries
+`maxParallelBranches=null`, because it consumes no parallel authority. If any role reachable in a
+parallel branch lacks one exact approved positive `card().concurrencyCeiling`, or its card bytes,
+version, or digest do not match the frozen route authority, preview refuses
+`program_parallel_authority_unavailable` and the normalizer refuses to construct the parallel
+node. It never substitutes a capacity-ledger worker count, a private-worktree slot count, Goal/Plan
+node count, `max(1,...)`, queued work, worker prose, or a missing-value default as concurrency
+authority. Worktree byte/inode admission and worker dispatch still run under their existing lower
+authorities, but neither manufactures a Program concurrency number. A later lower-authority
+decrease may delay or stop admitted work but cannot rewrite the frozen policy; an increase cannot
+widen it.
 
 `artifactPolicyDigest` and `lifecyclePolicyDigest` still bind storage and cleanup enforcement, but
 they do not manufacture additional numbers. If any exact lower field is absent, unapproved,
@@ -1993,7 +2022,8 @@ Goal/Plan node rather than by a Program constant. Evaluation-only limits belong 
 versioned §93.21 evaluation contract and grant no Program runtime authority.
 
 `policyDigest` hashes every Program-policy field except itself. Unknown fields, a value unequal to
-its table binding, or a parallel value unequal to the complete minimum fail before effect. This
+its table binding, a non-null parallel value in a serial Program, or a parallel value unequal to
+the complete route-card/structural minimum fails before effect. This
 removes the former unsupported branch/depth/byte/ref/effect/revision/trace constants while
 preserving exact historical replay and the zero-capacity refusal.
 
@@ -2034,13 +2064,13 @@ artifact=ArtifactRef
 corpus=EvaluationCorpusRef
 
 EvaluationRoute = exact{
-  order,routeKey,routeRequest,serviceTierRequest,workerPolicyRequest,
+  order,routeTupleKey,routeRequest,serviceTierRequest,workerPolicyRequest,
   workerPolicyRequestDigest,harnessCardVersion,adapterCardDigest,routeDigest
 }
 routes=EvaluationRoute[1..approved Goal/Plan policy v1 limits.maxRouteValues]
 N=routes.length
 order=contiguous non-negative safe integer
-routeKey=SafeId
+routeTupleKey=RouteTupleKey
 routeRequest=exact{harness,model,effort}
 serviceTierRequest=the exact §93.7 exact|none request
 workerPolicyRequest=the exact Phase 92/default schema-v1 request
@@ -2074,19 +2104,19 @@ coldStateArtifact/warmStateArtifact=ArtifactRef
 cache=EvaluationCache
 
 LatinSquareSchedule = exact{
-  schemaVersion,kind,contractVersion,routeKeys,rows,scheduleDigest
+  schemaVersion,kind,contractVersion,routeTupleKeys,rows,scheduleDigest
 }
 schemaVersion=1
 kind="baton.evaluation_latin_square"
 contractVersion="phase93-evaluation-latin-square-v1"
-LatinSquareRow=exact{index,routeKeys,rowDigest}
+LatinSquareRow=exact{index,routeTupleKeys,rowDigest}
 latinSquare=LatinSquareSchedule
-routeKeys=SafeId[N]
+routeTupleKeys=RouteTupleKey[N]
 rows=LatinSquareRow[N]
 
 EvaluationBlock = exact{
   taskOrdinal,taskId,repetition,seedDigest,latinRow,cacheMode,cacheArtifactDigest,
-  crashPoint,parallelCrashPoint,blockDigest
+  crashPoint,parallelCrashPoints,blockDigest
 }
 blocks=EvaluationBlock[120]
 repetition=1..5
@@ -2094,11 +2124,13 @@ seedDigest/cacheArtifactDigest=Digest
 latinRow=non-negative safe integer < N
 cacheMode="cold|warm"
 crashPoint="none|after_prepared_before_effect_started|after_effect_started_before_ack|after_ack_before_settlement|after_settlement_before_response"
+ParallelCrashAssignment=exact{arm,parallelCrashPoint}
+parallelCrashPoints=ParallelCrashAssignment[4] in the byte-identical order of arms
+arm="direct|naive_parallel|lossy_episode|program"; each arm occurs exactly once
 parallelCrashPoint="none|after_sibling_admission|before_join_settlement"
 
 preflight = exact{
-  minRouteFamilies,minWorkerCapacityC,minWorktreeCapacityW,
-  requiredGreenContracts,rangeChecks
+  minRouteFamilies,requiredGreenContracts,rangeChecks
 }
 rangeChecks = exact{
   tokenHeadroomBasisPoints,wallHeadroomBasisPoints,
@@ -2112,7 +2144,7 @@ authority = exact{
 pilot = exact{pairedBlocks,pilotGate}; pairedBlocks=positive safe integer <=120
 pilotGate = exact{minUtilityLiftBasisPoints,maxDuplicateAmbiguousBasisPoints}
 
-rateLimits = semantic ordered exact{routeKey,perMinute,concurrency}[routes.length]
+rateLimits = semantic ordered exact{routeTupleKey,perMinute,concurrencyCeiling}[routes.length]
 
 earlyStop = exact{kind,futility}
 kind="futility_on_paired_utility|none"
@@ -2129,7 +2161,10 @@ crashAmbiguous = exact{neverRepeat,preserveDisposition}
 `corpus.artifact` bytes MUST parse canonically as the exact versioned corpus below; its
 `ArtifactRef.artifactDigest` authenticates artifact bytes and is never compared to
 `corpusDigest`, which authenticates the corpus object excluding only its own digest. `routes` are
-ordered by contiguous `order`; `routeDigest` hashes its complete route excluding itself. Every
+ordered by contiguous `order`; their `routeTupleKey` values are byte-unique, and `routeDigest`
+hashes its complete route excluding itself. Each `routeTupleKey` is the opaque canonical lower-
+authority route-tuple string and MUST byte-equal `RouteAttestation.resolved.routeKey` for every run
+using that EvaluationRoute. It is neither a `SafeId` nor an alias derived by the evaluation. Every
 requested harness/model/effort tuple, exact-or-none service tier, worker-policy request/digest,
 harness-card version, and adapter-card digest is therefore fixed before any run. Resolution or
 observation may only attest that exact route; a missing route invalidates the block and cannot be
@@ -2149,31 +2184,43 @@ likewise binds exact immutable empty/cold and prewarmed states under one namespa
 `cacheArtifactDigest` MUST equal the artifact digest selected by its `cacheMode`; ambient provider,
 harness, repository, or OS caches are disabled or make preflight fail.
 
-`latinSquare.routeKeys` MUST byte-equal `routes` projected in order. It contains exactly `N` rows
-for `N` routes; every row is a permutation of all route keys, and every column contains each route
-exactly once. `blocks` contains exactly one row for every `(taskOrdinal 0..23,repetition 1..5)`,
-and `latinRow` selects the precommitted row used by all four arms in that paired block. Each
-`blockDigest` and Latin-row `rowDigest` excludes itself; `scheduleDigest` hashes the complete Latin-square
-contract excluding itself. Repetition crash points are exact: 1 is `none`, 2 is
+`latinSquare.routeTupleKeys` MUST byte-equal `routes[*].routeTupleKey` projected in order. It
+contains exactly `N` rows for `N` routes; every row's `routeTupleKeys` is a permutation of those
+same unique opaque strings, and every column contains each string exactly once. No Latin field may
+contain a `SafeId` alias or a reserialized tuple. `blocks` contains exactly one row for every
+`(taskOrdinal 0..23,repetition 1..5)`,
+and `latinRow` selects the precommitted row used by all four arms in that paired block. Every
+`blockDigest` and every Latin-row `rowDigest` excludes its own field; `scheduleDigest` hashes the
+complete Latin-square contract excluding itself. Repetition crash points are exact: 1 is `none`, 2 is
 `after_prepared_before_effect_started`, 3 is `after_effect_started_before_ack`, 4 is
-`after_ack_before_settlement`, and 5 is `after_settlement_before_response`. Any parallel crash is
-also named in the block; a task/arm with no parallel boundary requires `parallelCrashPoint="none"`.
-There is no runtime rotation or scheduler-selected injection. The
+`after_ack_before_settlement`, and 5 is `after_settlement_before_response`. Each block's four
+`parallelCrashPoints` name every arm exactly once in fixed arm order, so an injection can never
+leak from one arm to another. For each `(taskOrdinal,arm)` with no parallel boundary, all five
+repetitions require `parallelCrashPoint="none"`. Where that task/arm has a parallel boundary, the
+five precommitted assignments MUST cover each non-`none` point supported by
+`phase93-evaluation-crash-v1` (`after_sibling_admission` and `before_join_settlement`) at least
+once; the remaining assignments are precommitted `none` or a supported point. Adding, removing, or
+weakening that applicable-point coverage requires successor crash-schedule and evaluation contract
+versions. There is no
+runtime rotation or scheduler-selected injection. The
 schedule digest, block digests, cache state, routes, envelopes, and toolchain all participate in
 `planDigest`.
 
 `preflight.rangeChecks` are headroom basis points (0..10000) verified against the corpus and route
 inventory before any arm runs; the run refuses `evaluation_preflight_failed` if any measured range
-falls below its headroom, if reservable worker/worktree capacity is below `minWorkerCapacityC`/
-`minWorktreeCapacityW`, if fewer than `minRouteFamilies` route families are ready, or if any
-`requiredGreenContracts` entry is not green at the candidate commit. `authority` is the hard total
+falls below its headroom, if fewer than `minRouteFamilies` route families are ready, if an exact
+route card lacks positive headroom under its approved `concurrencyCeiling`, if existing worktree
+byte/inode admission refuses the complete next paired block, or if any `requiredGreenContracts`
+entry is not green at the candidate commit. The plan defines no worker-slot or private-worktree-
+slot count and cannot replace either lower authority. `authority` is the hard total
 token/USD/provider-call/wall ceiling for the whole evaluation; the runner stops the evaluation when
 any ceiling is reached and records which ceiling bound it. `pilot` runs `pairedBlocks` paired
 blocks first and gates the full run on `pilotGate`; the pilot itself resumes only from complete
-paired blocks. `rateLimits` has the same length and route-key order as `routes`; each positive
-`perMinute`/`concurrency` value is the exact approved provider/adapter rate contract for that route,
-never a plan-authored widening. The runner paces and queues within it and never exceeds the route's
-native limit. `earlyStop` declares one named
+paired blocks. `rateLimits` has the same length and `routeTupleKey` order as `routes`; each positive
+`perMinute` value is the exact approved provider rate contract for that route, and
+`concurrencyCeiling` MUST equal the exact positive integer in its admitted route
+card. Neither is a plan-authored widening. The runner paces and queues within both and never
+exceeds the route's native limit. `earlyStop` declares one named
 futility rule (or `none`) computed only from complete paired blocks. `cancellation.reap` requires
 that a selective stop, a whole-run stop, and zero-residue cleanup all be demonstrated within the
 run. `cancellation.crashAmbiguous` requires that an ambiguous provider/Git/verifier effect is never
@@ -2255,9 +2302,11 @@ The precommitted block rows assign repetitions 2–5 one crash at respectively:
 - after provider acknowledgement before settlement; and
 - after settlement before caller response.
 
-For a parallel task, `parallelCrashPoint` precommits either no additional injection, after sibling
-admission, or before join settlement. The runner performs exactly the block value; it does not
-rotate or choose at runtime. Every injection restarts from the same durable ledger and records
+For each task and arm, its `parallelCrashPoints` entry precommits either no additional injection,
+after sibling admission, or before join settlement. Arms without a parallel boundary always carry
+`none`; applicable arms satisfy the versioned five-repetition coverage rule above. The runner
+performs exactly the entry addressed to that arm; it does not rotate, copy an injection to a sibling
+arm, or choose at runtime. Every injection restarts from the same durable ledger and records
 duplicate effects and residue. Ambiguous effects are never repeated.
 
 ### Metrics and utility
@@ -2422,8 +2471,10 @@ Implementation starts with these exact red suites:
 10. `phase93c-result-disposition-red.test.mjs`: every orthogonal execution (incl. `stopped`/
     `not_dispatched`)/verification/work-product/cleanup/selection/integration value through every
     row of the one exhaustive table, plus every invalid cross-product and row-overlap assertion;
-    execution and verification causes; product-only work-product states; gate-result-as-value and
-    artifact/capsule/commit consistency;
+    execution and verification causes; `parallel_member`/`map_member` owner binding; deterministic
+    parallel ambiguity/failure/cancellation/stopped/not-dispatched precedence and selection-stopped
+    handling; product-only work-product states; gate-result-as-value and artifact/capsule/commit
+    consistency;
     retry/revise/reduce/select/integrate/export eligibility; partial map members; preservation-failed
     custody and open ownership; forensic late-result sidecar records; explicit capability-gated
     apply/integrate; completion requires zero.
@@ -2442,16 +2493,19 @@ Implementation starts with these exact red suites:
 16. `phase93e-surface-parity-red.test.mjs`: start/preview/approval/handle/outline/steps/workstreams/
     result/episode/trace/stop/help and the closed revise/reduce/select/apply/integrate/export action
     set from one registry across every transport.
-17. `phase93e-policy-red.test.mjs`: every exact lower-policy field binding, complete four-way
-    concurrency minimum, zero/missing/mismatched refusal, removal of unsupported constants,
+17. `phase93e-policy-red.test.mjs`: every exact lower-policy field binding, exact route-card
+    `concurrencyCeiling`, shared-card frontier counting, serial null, missing/mismatched parallel-
+    authority refusal, removal of invented worker/worktree slot operands and unsupported constants,
     historical policy stability, and no caller numeric knobs.
 18. `phase93f-evaluation-red.test.mjs`: closed deployment-owned `EvaluationPlan` (preflight ranges
     and refusal, total token/USD/provider-call/wall authority, one approval, pilot paired blocks,
     per-route rate-limit scheduling, early stop, cancellation/reap, crash-ambiguous never-repeat, and
     resume only from complete paired blocks); fixed four-arm order × five repetitions × 24-task
-    corpus, 120 blocks/480 runs, ordered route/service-tier/worker-policy tuples, exact arm
-    envelopes, pinned toolchain/cache artifacts, valid precommitted Latin square, exact crash rows,
-    metric formula, artifacts, incomplete/losing-result publication, and confidence rule.
+    corpus, 120 blocks/480 runs, unique opaque canonical route-tuple keys byte-equal to resolved
+    route attestations, ordered route/service-tier/worker-policy tuples, exact arm envelopes, pinned
+    toolchain/cache artifacts, valid precommitted Latin square, arm-addressed exact crash rows with
+    applicable versioned parallel-point coverage, metric formula, artifacts, incomplete/losing-
+    result publication, and confidence rule.
 19. Retain cross-phase CK8/CK9, RC2/RC3, RR recovery races, D4/D6 verifier freshness, Phase 88 route
     substitution, Phase 91 response loss, Phase 92 facade/reap, writer-lease release, issue-5
     cross-controller lifecycle, and full process-group descendant reap suites.
