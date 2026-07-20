@@ -271,6 +271,22 @@ test('P94A-RA1e: the complete binding is closed and coherent beyond taskType', a
   ]), (error) => error.code === 'route_lease_invalid');
 });
 
+test('P94A-RA1i: worker policy authority is cross-bound to the exact adapter card digest', async () => {
+  const authority = new RouteReadinessAuthority({
+    routes: [ROUTE], evaluate: () => ({ state: 'ready' }), credentialEpoch: () => 'epoch',
+  });
+  const policy = {
+    schemaVersion: 1, requestDigest: 'b'.repeat(64),
+    adapterCardDigest: 'c'.repeat(64), resolutionDigest: 'd'.repeat(64),
+  };
+  await assert.rejects(authority.issue(binding({ workerPolicy: policy })), (error) => (
+    error.code === 'route_admission_invalid'
+  ));
+  const exact = binding({ workerPolicy: { ...policy, adapterCardDigest: 'a'.repeat(64) } });
+  const lease = await authority.issue(exact);
+  assert.equal((await authority.consume(lease, exact)).state, 'admitted');
+});
+
 test('P94A-RA1f: credential generation failure blocks and rotation invalidates an atomic batch with unchanged public readiness', async () => {
   let epoch = 'epoch-a';
   let throws = true;
@@ -664,6 +680,223 @@ test('P94A-RA3c: restart rechecks a capacity-delayed durable task and never reco
   assert.equal(waiting.at(-1).payload.receipt.cardDigest, authorityDigest(replayAdapter.card()));
 });
 
+test('P94A-RA3e: restart preserves consume-time waiting and a fresh deliberate retry dispatches exactly once', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'baton-phase94a-restart-retry-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const log = new Log(join(root, 'log'));
+  const coordination = coordinationForLog(log);
+  const capacity = new Set();
+  let evaluations = 0;
+  let providerStarts = 0;
+  const adapter = { card: () => ({ ...card(), concurrencyCeiling: 2 }), onEvent() {},
+    async spawn() { providerStarts += 1; return { ok: false, reason: 'observed' }; },
+    async prompt() { return { ok: true }; }, async interrupt() { return { ok: true }; },
+    async kill() { return { ok: true }; } };
+  const worktrees = {
+    async reserveCapacity(taskId) { capacity.add(taskId); return {}; },
+    async releaseCapacity(taskId) { return capacity.delete(taskId); },
+    async create() { return {}; }, async remove() { return true; }, async reconcile() { return []; },
+  };
+  const firstAuthority = new RouteReadinessAuthority({
+    routes: [ROUTE], credentialEpoch: () => 'epoch',
+    evaluate: () => (++evaluations === 1 ? { state: 'ready' }
+      : { state: 'blocked', code: 'authentication_refresh_required', summary: 'rotate' }),
+  });
+  const first = new Coordinator({
+    log, coordination, fences: new FenceTable(), adapters: { grok: adapter }, worktrees,
+    runtimeScopes: { create() { return {}; }, remove() { return true; } },
+    referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'grok',
+    routeReadinessAuthority: firstAuthority,
+  });
+  const taskId = 'phase94a-restart-waiting';
+  const handle = await first.spawn('grok', {
+    goal: 'restart a waiting route', constraints: [], pathScope: ['impl/**'],
+    definitionOfDone: 'one deliberate provider edge', verification: { command: 'true', expectExit: 0 },
+    budget: { tokens: 1_000, usd: 1, wallMin: 1 },
+  }, { model: ROUTE.model, effort: ROUTE.effort, taskId });
+  for (let index = 0; index < 40 && first.list().find((row) => row.id === handle.id)?.status !== 'blocked'; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(first.list().find((row) => row.id === handle.id)?.status, 'blocked');
+  assert.equal(capacity.size, 0);
+  assert.equal(first.closeAuthority(), true, 'close while waiting owns no runtime, process, worktree, or capacity');
+  await firstAuthority.close();
+
+  let replayEvaluations = 0;
+  const replay = new Coordinator({
+    log, coordination, fences: new FenceTable(), adapters: { grok: adapter }, worktrees,
+    runtimeScopes: { create() { return {}; }, remove() { return true; } },
+    referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'grok',
+    routeReadinessAuthority: new RouteReadinessAuthority({
+      routes: [ROUTE], credentialEpoch: () => 'epoch-2',
+      evaluate: () => { replayEvaluations += 1; return { state: 'ready' }; },
+    }),
+  });
+  await replay.startupReady();
+  replay.tick();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(replayEvaluations, 0, 'restart never automatically retries durable waiting authority');
+  assert.equal(replay.list().find((row) => row.taskId === taskId)?.status, 'blocked');
+  assert.equal((await replay.retryRoute([taskId])).state, 'dispatched');
+  for (let index = 0; index < 20 && providerStarts < 1; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(providerStarts, 1);
+  await assert.rejects(replay.retryRoute([taskId]), (error) => error.code === 'route_retry_unavailable');
+  assert.equal(providerStarts, 1);
+});
+
+test('P94A-RA3f: live adapter-card drift at the provider edge waits with zero effects until fresh retry', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'baton-phase94a-card-drift-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const log = new Log(join(root, 'log'));
+  const coordination = coordinationForLog(log);
+  let drifted = false;
+  let evaluations = 0;
+  let providerStarts = 0;
+  const liveCard = () => ({ ...card(), version: drifted ? '2.0.0' : '1.2.3' });
+  const adapter = { card: liveCard, onEvent() {},
+    async spawn() { providerStarts += 1; return { ok: false, reason: 'observed' }; },
+    async prompt() { return { ok: true }; }, async interrupt() { return { ok: true }; },
+    async kill() { return { ok: true }; } };
+  const reservations = new Set();
+  const coordinator = new Coordinator({
+    log, coordination, fences: new FenceTable(), adapters: { grok: adapter },
+    worktrees: {
+      async reserveCapacity(taskId) { reservations.add(taskId); return {}; },
+      async releaseCapacity(taskId) { return reservations.delete(taskId); },
+      async create() { return {}; }, async remove() { return true; }, async reconcile() { return []; },
+    },
+    runtimeScopes: { create() { return {}; }, remove() { return true; } },
+    referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'grok',
+    routeReadinessAuthority: new RouteReadinessAuthority({
+      routes: [ROUTE], credentialEpoch: () => 'epoch', evaluate: () => {
+        evaluations += 1;
+        if (evaluations === 2) drifted = true;
+        return { state: 'ready' };
+      },
+    }),
+  });
+  const taskId = 'phase94a-card-drift';
+  const handle = await coordinator.spawn('grok', {
+    goal: 'bind the live card at effect', constraints: [], pathScope: ['impl/**'],
+    definitionOfDone: 'no stale card effect', verification: { command: 'true', expectExit: 0 },
+    budget: { tokens: 1_000, usd: 1, wallMin: 1 },
+  }, { model: ROUTE.model, effort: ROUTE.effort, taskId });
+  for (let index = 0; index < 40 && coordinator.list().find((row) => row.id === handle.id)?.status !== 'blocked'; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const waiting = coordinator.list().find((row) => row.id === handle.id);
+  assert.equal(waiting.status, 'blocked');
+  assert.equal(waiting.routeAdmission.blocker.code, 'adapter_card_changed');
+  assert.equal(providerStarts, 0);
+  assert.equal(reservations.size, 0);
+  assert.equal((await coordinator.retryRoute([taskId])).state, 'dispatched');
+  for (let index = 0; index < 20 && providerStarts < 1; index += 1) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(providerStarts, 1);
+});
+
+test('P94A-RA3g: a false single capacity release escalates exact cleanup failure and forbids further authority', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'baton-phase94a-cleanup-failure-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const log = new Log(join(root, 'log'));
+  const coordination = coordinationForLog(log);
+  let evaluations = 0;
+  let providerStarts = 0;
+  const coordinator = new Coordinator({
+    log, coordination, fences: new FenceTable(), adapters: { grok: { card, onEvent() {},
+      async spawn() { providerStarts += 1; return { ok: true }; },
+      async prompt() { return { ok: true }; }, async interrupt() { return { ok: true }; },
+      async kill() { return { ok: true }; } } },
+    worktrees: { async reserveCapacity() { return {}; }, async releaseCapacity() { return false; },
+      async create() { return {}; }, async remove() { return true; }, async reconcile() { return []; } },
+    runtimeScopes: { create() { return {}; }, remove() { return true; } },
+    referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'grok',
+    routeReadinessAuthority: new RouteReadinessAuthority({
+      routes: [ROUTE], evaluate: () => (++evaluations === 1 ? { state: 'ready' }
+        : { state: 'blocked', code: 'authentication_required', summary: 'blocked' }),
+    }),
+  });
+  await coordinator.spawn('grok', {
+    goal: 'escalate failed cleanup', constraints: [], pathScope: ['impl/**'],
+    definitionOfDone: 'no silent residue', verification: { command: 'true', expectExit: 0 },
+    budget: { tokens: 1_000, usd: 1, wallMin: 1 },
+  }, { model: ROUTE.model, effort: ROUTE.effort, taskId: 'phase94a-cleanup-failure' });
+  for (let index = 0; index < 40; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    try { coordinator.list(); } catch { break; }
+  }
+  assert.throws(() => coordinator.list(), (error) => error.code === 'coordination_write_unavailable'
+    && error.cause?.code === 'route_waiting_cleanup_incomplete');
+  assert.equal(providerStarts, 0);
+});
+
+test('P94A-RA3h: spawn authentication refusal invalidates the unversioned exact route and rejection is never swallowed', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'baton-phase94a-auth-invalidation-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const brief = {
+    goal: 'invalidate refused authentication', constraints: [], pathScope: ['impl/**'],
+    definitionOfDone: 'exact route blocked', verification: { command: 'true', expectExit: 0 },
+    budget: { tokens: 1_000, usd: 1, wallMin: 1 },
+  };
+  const makeWorktrees = () => ({ async reserveCapacity() { return {}; },
+    async releaseCapacity() { return true; }, async create() { return {}; },
+    async remove() { return true; }, async reconcile() { return []; } });
+  const refusingAdapter = { card, onEvent() {},
+    async spawn() { return { ok: false, reason: 'Authentication required' }; },
+    async prompt() { return { ok: true }; }, async interrupt() { return { ok: true }; },
+    async kill() { return { ok: true }; } };
+
+  const log = new Log(join(root, 'accepted-log'));
+  const authority = new RouteReadinessAuthority({
+    routes: [ROUTE], credentialEpoch: () => 'epoch', evaluate: () => ({ state: 'ready' }),
+  });
+  const accepted = new Coordinator({
+    log, coordination: coordinationForLog(log), fences: new FenceTable(),
+    adapters: { grok: refusingAdapter }, worktrees: makeWorktrees(),
+    runtimeScopes: { create() { return {}; }, remove() { return true; } },
+    referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'grok',
+    routeReadinessAuthority: authority,
+  });
+  await accepted.spawn('grok', brief, {
+    model: ROUTE.model, effort: ROUTE.effort, taskId: 'phase94a-auth-refused',
+  });
+  for (let index = 0; index < 20; index += 1) await new Promise((resolve) => setImmediate(resolve));
+  const invalidated = await authority.inspect(ROUTE, { probe: false });
+  assert.equal(invalidated.state, 'blocked');
+  assert.equal(invalidated.code, 'authentication_required');
+
+  const rejectedLog = new Log(join(root, 'rejected-log'));
+  const underlying = new RouteReadinessAuthority({
+    routes: [ROUTE], credentialEpoch: () => 'epoch', evaluate: () => ({ state: 'ready' }),
+  });
+  let rejectedRoute = null;
+  const rejecting = Object.fromEntries([
+    'issue', 'consume', 'admit', 'inspect', 'validate', 'waiting', 'prepareMany', 'consumeMany',
+  ].map((name) => [name, underlying[name].bind(underlying)]));
+  rejecting.invalidate = (route) => {
+    rejectedRoute = route;
+    throw Object.assign(new Error('exact route rejection'), { code: 'route_unconfigured' });
+  };
+  const rejected = new Coordinator({
+    log: rejectedLog, coordination: coordinationForLog(rejectedLog), fences: new FenceTable(),
+    adapters: { grok: refusingAdapter }, worktrees: makeWorktrees(),
+    runtimeScopes: { create() { return {}; }, remove() { return true; } },
+    referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'grok',
+    routeReadinessAuthority: rejecting,
+  });
+  await rejected.spawn('grok', brief, {
+    model: ROUTE.model, effort: ROUTE.effort, taskId: 'phase94a-auth-invalidation-rejected',
+  });
+  for (let index = 0; index < 20; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    try { rejected.list(); } catch { break; }
+  }
+  assert.deepEqual(rejectedRoute, ROUTE, 'versioned harness identity never crosses exact-route authority');
+  assert.throws(() => rejected.list(), (error) => error.code === 'coordination_write_unavailable'
+    && error.cause?.code === 'route_invalidation_failed');
+});
+
 test('P94A-RA4: Wave authorization and approved preview precede all-or-none readiness, then no resource or provider effect occurs', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'baton-phase94a-wave-admission-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -1047,6 +1280,48 @@ test('P94A-C1: deployment close drains Web/application owners before surfacing a
     (error) => error.code === 'cli_config_invalid');
 });
 
+test('P94A-C2: deployment construction closes route authority and escalates failed construction cleanup', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'baton-phase94a-construction-close-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repo = join(root, 'repo');
+  mkdirSync(repo, { recursive: true });
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'phase94a-construction@example.invalid'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Phase 94A construction'], { cwd: repo });
+  writeFileSync(join(repo, 'README.md'), '# construction\n');
+  execFileSync('git', ['add', '.'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+  const adapter = { card: () => ({ ...card(), readiness: { state: 'ready' } }),
+    onEvent() { throw Object.assign(new Error('fixture construction refusal'), { code: 'fixture_construction_refused' }); },
+    async routeReadinessProbe() { return { state: 'ready', initialized: true, authenticated: true,
+      sessionCreated: false, promptSent: false, reaped: true }; },
+    async spawn() { return { ok: true }; }, async prompt() { return { ok: true }; },
+    async interrupt() { return { ok: true }; }, async kill() { return { ok: true }; } };
+  const originalClose = RouteReadinessAuthority.prototype.close;
+  let closes = 0;
+  try {
+    RouteReadinessAuthority.prototype.close = function closeConstructionAuthority() {
+      closes += 1;
+      return originalClose.call(this);
+    };
+    await assert.rejects(openBaton({ repo, advanced: {
+      deploymentRoot: join(root, 'deployment-clean'), routes: [ROUTE], adapters: { grok: adapter },
+      verification: { command: 'node', arguments: ['--version'] },
+    } }), (error) => error.code === 'fixture_construction_refused');
+    assert.equal(closes, 1);
+
+    RouteReadinessAuthority.prototype.close = async function rejectConstructionClose() {
+      throw Object.assign(new Error('fixture route close refused'), { code: 'route_probe_unreaped' });
+    };
+    await assert.rejects(openBaton({ repo, advanced: {
+      deploymentRoot: join(root, 'deployment-degraded'), routes: [ROUTE], adapters: { grok: adapter },
+      verification: { command: 'node', arguments: ['--version'] },
+    } }), (error) => error.code === 'deployment_construction_cleanup_incomplete'
+      && error.errors?.some((cause) => cause.code === 'fixture_construction_refused')
+      && error.errors?.some((cause) => cause.code === 'route_probe_unreaped'));
+  } finally { RouteReadinessAuthority.prototype.close = originalClose; }
+});
+
 test('P94A-P1: direct, resident Web, and connected MCP expose one sanitized live route truth', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'baton-phase94a-parity-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -1245,4 +1520,192 @@ test('P94A-P1: direct, resident Web, and connected MCP expose one sanitized live
   assert.equal(replayed.last.outline.resources.ownedCount, 0);
   await reopened.close();
   cleanupReopened = null;
+});
+
+test('P94A-R1: consume-time blocked single dispatch is durably waiting and only deliberate retry crosses one provider edge', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'baton-phase94a-single-retry-'));
+  let deployment;
+  t.after(async () => {
+    try { await deployment?.close(); } catch {}
+    rmSync(root, { recursive: true, force: true });
+  });
+  const repo = join(root, 'repo');
+  mkdirSync(repo, { recursive: true });
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'phase94a-retry@example.invalid'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Phase 94A retry'], { cwd: repo });
+  writeFileSync(join(repo, 'README.md'), '# retry\n');
+  execFileSync('git', ['add', '.'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+  let probeCalls = 0;
+  let ready = false;
+  let armed = false;
+  let consumePhase = false;
+  let providerStarts = 0;
+  const adapter = {
+    card: () => ({ ...card(), readiness: { state: 'ready' } }), onEvent() {},
+    async routeReadinessProbe() {
+      probeCalls += 1;
+      const admitted = ready || !consumePhase;
+      return { state: admitted ? 'ready' : 'blocked', initialized: true,
+        authenticated: admitted, sessionCreated: false, promptSent: false, reaped: true };
+    },
+    async spawn(_worker, _brief, options) {
+      await options.worktreeReady;
+      providerStarts += 1;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return { ok: false, reason: 'single retry fixture completed its edge observation' };
+    },
+    async prompt() { return { ok: true }; }, async interrupt() { return { ok: true }; },
+    async kill() { return { ok: true }; },
+  };
+  deployment = await openBaton({ repo, advanced: {
+    deploymentRoot: join(root, 'deployment'), routes: [ROUTE], adapters: { grok: adapter },
+    verification: { command: 'node', arguments: ['--version'] },
+    capacity: {
+      estimate: () => ({ bytes: 1, inodes: 1 }),
+      observe: () => {
+        if (armed) consumePhase = true;
+        return { freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER };
+      },
+    },
+  } });
+  const run = await deployment.run('Consume-time route retry remains deliberate.', { exact: ROUTE });
+  probeCalls = 0;
+  armed = true;
+  await run.approve();
+  let waiting;
+  for (let index = 0; index < 100; index += 1) {
+    waiting = await run.status();
+    if (waiting.phase === 'waiting_for_route') break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(waiting.phase, 'waiting_for_route', JSON.stringify({
+    phase: waiting.phase, probeCalls, providerStarts,
+    attention: waiting.attention, ownership: waiting.ownership,
+  }));
+  assert.equal(waiting.ownership.workers, 0);
+  assert.equal(providerStarts, 0);
+  const probesAtWaiting = probeCalls;
+  assert.equal((await run.drive()).outline.phase, 'waiting_for_route');
+  assert.equal((await run.complete()).outline.phase, 'waiting_for_route');
+  assert.equal(probeCalls, probesAtWaiting, 'automatic drive and complete never retry route authority');
+
+  ready = true;
+  const retried = await run.act('retry_route');
+  assert.equal(retried.outline.phase, 'running');
+  for (let index = 0; index < 40 && providerStarts < 1; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(providerStarts, 1);
+  await assert.rejects(run.act('retry_route'), (error) => (
+    ['application_action_unavailable', 'application_action_stale'].includes(error?.code)
+  ));
+  assert.equal(providerStarts, 1, 'repeated retry never duplicates the provider effect');
+  for (let index = 0; index < 40 && (await run.status()).phase !== 'failed'; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+});
+
+test('P94A-R2: same- and mixed-route atomic Waves wait after consume and retry all-or-none', async (t) => {
+  const scenarios = [
+    {
+      name: 'same', routes: [ROUTE, ROUTE],
+    },
+    {
+      name: 'mixed', routes: [ROUTE, { harness: 'grok', model: 'grok-4.5-fast', effort: 'medium' }],
+    },
+  ];
+  for (const scenario of scenarios) {
+    const root = mkdtempSync(join(tmpdir(), `baton-phase94a-wave-retry-${scenario.name}-`));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const repo = join(root, 'repo');
+    mkdirSync(repo, { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: repo });
+    execFileSync('git', ['config', 'user.email', 'phase94a-wave@example.invalid'], { cwd: repo });
+    execFileSync('git', ['config', 'user.name', 'Phase 94A Wave'], { cwd: repo });
+    writeFileSync(join(repo, 'README.md'), `# ${scenario.name}\n`);
+    execFileSync('git', ['add', '.'], { cwd: repo });
+    execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+    const probeCalls = new Map();
+    let ready = false;
+    let armed = false;
+    let consumePhase = false;
+    let providerStarts = 0;
+    const available = [...new Set(scenario.routes.map((route) => route.model))];
+    const efforts = [...new Set(scenario.routes.map((route) => route.effort))];
+    const waveCard = () => ({
+      ...card(), concurrencyCeiling: 4, readiness: { state: 'ready' },
+      modelSelection: {
+        ...card().modelSelection, configuredDefault: available[0], available,
+        reasoningEffort: efforts,
+      },
+    });
+    const adapter = {
+      card: waveCard, onEvent() {},
+      async routeReadinessProbe({ route }) {
+        const key = `${route.model}\0${route.effort}`;
+        const calls = (probeCalls.get(key) ?? 0) + 1;
+        probeCalls.set(key, calls);
+        const admitted = ready || !consumePhase;
+        return { state: admitted ? 'ready' : 'blocked', initialized: true,
+          authenticated: admitted, sessionCreated: false, promptSent: false, reaped: true };
+      },
+      async spawn(_worker, _brief, options) {
+        await options.worktreeReady;
+        providerStarts += 1;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return { ok: false, reason: 'Wave retry fixture completed its edge observation' };
+      },
+      async prompt() { return { ok: true }; }, async interrupt() { return { ok: true }; },
+      async kill() { return { ok: true }; },
+    };
+    const configuredRoutes = [...new Map(scenario.routes.map((route) => (
+      [`${route.harness}\0${route.model}\0${route.effort}`, route]
+    ))).values()];
+    const deployment = await openBaton({ repo, advanced: {
+      deploymentRoot: join(root, 'deployment'), routes: configuredRoutes,
+      adapters: { grok: adapter }, verification: { command: 'node', arguments: ['--version'] },
+      capacity: {
+        estimate: () => ({ bytes: 1, inodes: 1 }),
+        observe: () => {
+          if (armed) consumePhase = true;
+          return { freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER };
+        },
+      },
+    } });
+    try {
+      const workflow = await deployment.workflow(`Retry ${scenario.name} Wave atomically.`, {
+        team: scenario.routes.map((route, index) => ({ role: `member-${index}`, exact: route })),
+      });
+      armed = true;
+      await workflow.approve();
+      let waiting;
+      for (let index = 0; index < 100; index += 1) {
+        waiting = await workflow.outline();
+        if ((waiting.phase ?? waiting.outline?.phase) === 'waiting_for_route') break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      const waitingView = waiting.outline ?? waiting;
+      assert.equal(waitingView.phase, 'waiting_for_route', `${scenario.name}: ${JSON.stringify(waiting)}`);
+      assert.equal(waitingView.resources.ownedCount, 0, scenario.name);
+      assert.equal(providerStarts, 0, scenario.name);
+      const probesAtWaiting = [...probeCalls.values()].reduce((sum, value) => sum + value, 0);
+      assert.equal((await workflow.drive()).outline.phase, 'waiting_for_route');
+      assert.equal([...probeCalls.values()].reduce((sum, value) => sum + value, 0), probesAtWaiting);
+      ready = true;
+      assert.equal((await workflow.act('retry_route')).outline.phase, 'running');
+      for (let index = 0; index < 40 && providerStarts < 2; index += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      assert.equal(providerStarts, 2, scenario.name);
+      await assert.rejects(workflow.act('retry_route'));
+      assert.equal(providerStarts, 2, scenario.name);
+      for (let index = 0; index < 40; index += 1) {
+        const view = await workflow.outline();
+        if ((view.phase ?? view.outline?.phase) === 'failed') break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    } finally { await deployment.close(); }
+  }
 });

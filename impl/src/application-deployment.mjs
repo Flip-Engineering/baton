@@ -1508,42 +1508,43 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     repoRoot: repository.root,
     treeSha: snapshot.sha,
   });
-  const driver = createDriver({
-    repoRoot: repository.root,
-    repoId: repository.repoId,
-    deploymentBaseSha: snapshot.sha,
-    logDir: stateRoot,
-    adapters,
-    routeReadinessAuthority,
-    worktreeCapacity: DEFAULT_WORKTREE_CAPACITY,
-    ...(capacity ? {
-      worktreeCapacityEstimate: capacity.estimate,
-      worktreeCapacityObserve: capacity.observe,
-    } : {}),
-    ...(toolchainProjection ? { toolchainProjection } : {}),
-    runtimeIsolation: {
-      root: runtimeRoot,
-      credentialFiles: projection.credentialFiles,
-      credentialTrees: projection.credentialTrees,
-    },
-    goalPlanAuthority: { policy, authorize: async () => true },
-    contextProgram: contextRuntime.driverConfiguration(),
-    workflowPolicy,
-    runLineagePolicy: DEFAULT_RUN_LINEAGE_POLICY,
-    approvalTimeoutMs: DEFAULT_BUDGET.wallMin * 60_000,
-    stopDeadlineMs: 15_000,
-    drainPolicy: { maxWorkers: 64, timeoutMs: 90_000, pollMs: 10 },
-    budgetPolicy: { terminalGraceMs: 2_000 },
-    watchdog: { stallMs: DEFAULT_BUDGET.wallMin * 60_000 },
-  });
   const principal = Object.freeze({
     actor: `deployment:${repository.repoId}`, principalId: 'local-owner', sessionId: 'local-owner-session',
   });
   const service = (name) => Object.freeze({
     actor: `deployment:${name}`, principalId: `service-${name}`, sessionId: `service-${name}-session`,
   });
+  let driver = null;
   let application;
   try {
+    driver = createDriver({
+      repoRoot: repository.root,
+      repoId: repository.repoId,
+      deploymentBaseSha: snapshot.sha,
+      logDir: stateRoot,
+      adapters,
+      routeReadinessAuthority,
+      worktreeCapacity: DEFAULT_WORKTREE_CAPACITY,
+      ...(capacity ? {
+        worktreeCapacityEstimate: capacity.estimate,
+        worktreeCapacityObserve: capacity.observe,
+      } : {}),
+      ...(toolchainProjection ? { toolchainProjection } : {}),
+      runtimeIsolation: {
+        root: runtimeRoot,
+        credentialFiles: projection.credentialFiles,
+        credentialTrees: projection.credentialTrees,
+      },
+      goalPlanAuthority: { policy, authorize: async () => true },
+      contextProgram: contextRuntime.driverConfiguration(),
+      workflowPolicy,
+      runLineagePolicy: DEFAULT_RUN_LINEAGE_POLICY,
+      approvalTimeoutMs: DEFAULT_BUDGET.wallMin * 60_000,
+      stopDeadlineMs: 15_000,
+      drainPolicy: { maxWorkers: 64, timeoutMs: 90_000, pollMs: 10 },
+      budgetPolicy: { terminalGraceMs: 2_000 },
+      watchdog: { stallMs: DEFAULT_BUDGET.wallMin * 60_000 },
+    });
     contextRuntime.attachCoordination(driver.coordination);
     application = new BatonApplication({
       driver,
@@ -1569,11 +1570,24 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       driver, repository, deploymentRoot, residentOptions, preflight,
     });
   } catch (error) {
+    const cleanupErrors = [];
     try {
       if (application) await application.shutdown(principal);
-      else await driver.closeAsync();
-    } catch {
-      try { await driver.closeAsync(); } catch { /* original construction failure remains authoritative */ }
+      else if (driver) await driver.closeAsync();
+    } catch (cleanupError) {
+      cleanupErrors.push(cleanupError);
+      try { if (driver) await driver.closeAsync(); }
+      catch (fallbackError) { cleanupErrors.push(fallbackError); }
+    }
+    try { await routeReadinessAuthority.close(); }
+    catch (cleanupError) { cleanupErrors.push(cleanupError); }
+    if (cleanupErrors.length > 0) {
+      const failure = new AggregateError(
+        [error, ...cleanupErrors], 'Baton deployment construction cleanup was incomplete',
+      );
+      failure.code = 'deployment_construction_cleanup_incomplete';
+      failure.cause = error;
+      throw failure;
     }
     throw error;
   }
