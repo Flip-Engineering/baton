@@ -102,6 +102,12 @@ export class KimiAcpCli {
     // path omits them, so the ordinary launch starts in the selected permission mode itself.
     this._args = options.args ? [...options.args] : permissionArgs;
     this._env = options.env;
+    this._diagnosticRuntime = options.diagnosticRuntime ?? null;
+    this._diagnosticArgs = options.diagnosticArgs ? [...options.diagnosticArgs] : ['acp'];
+    this._diagnosticEnv = options.diagnosticEnv ? { ...options.diagnosticEnv } : {};
+    if (this._diagnosticRuntime !== null && typeof this._diagnosticRuntime !== 'function') {
+      throw new TypeError('KimiAcpCli: diagnosticRuntime must be a function');
+    }
     this._spawnFn = options.spawnFn;
     this._reapOwnedProcessGroup = options.reapOwnedProcessGroup;
     this._ceiling = options.ceiling ?? 1;
@@ -125,6 +131,7 @@ export class KimiAcpCli {
     try { this._version = versionProbe(); } catch { this._version = 'unknown'; }
     this._sessions = new Map();
     this._pendingSpawns = new Map();
+    this._diagnosticGeneration = 0;
     this._callback = null;
   }
 
@@ -243,6 +250,79 @@ export class KimiAcpCli {
     if (!this._catalog.get(model)?.includes(effort)) {
       throw Object.assign(new Error('requested Kimi effort is absent from the pinned catalog'), { code: 'effort_unavailable' });
     }
+  }
+
+  /**
+   * Bounded authentication-only readiness. This diagnostic owns a disposable ACP process and
+   * deliberately stops before session/new, configuration, or prompt authority exists.
+   */
+  async routeReadinessProbe({ route, signal } = {}) {
+    const closed = (state, initialized = false, authenticated = false, reaped = true) => ({
+      state, initialized, authenticated,
+      sessionCreated: false, promptSent: false, reaped,
+    });
+    if (!route || route.harness !== 'kimi-code' || !this._catalog.has(route.model)
+      || !this._catalog.get(route.model)?.includes(route.effort) || signal?.aborted
+      || !this._diagnosticRuntime) {
+      return closed('blocked');
+    }
+    let initialized = false;
+    let authenticated = false;
+    let process = null;
+    let reap = { confirmed: true };
+    let runtime = null;
+    const abort = () => { void process?.kill(); };
+    signal?.addEventListener?.('abort', abort, { once: true });
+    try {
+      runtime = await this._diagnosticRuntime({ route: Object.freeze({ ...route }), card: this.card() });
+      if (!runtime || typeof runtime.cwd !== 'string' || !runtime.env
+        || typeof runtime.cleanup !== 'function') {
+        throw Object.assign(new Error('diagnostic runtime is invalid'), { code: 'diagnostic_runtime_invalid' });
+      }
+      this._diagnosticGeneration += 1;
+      process = new AcpJsonRpcProcess({
+        command: this._cmd, args: this._diagnosticArgs, cwd: runtime.cwd,
+        env: { ...runtime.env, ...this._diagnosticEnv },
+        setupTimeoutMs: this._requestTimeoutMs, maxFrameBytes: this._maxWireFrameBytes,
+        reapTimeoutMs: 2_000, spawnFn: this._spawnFn,
+        processGeneration: this._diagnosticGeneration,
+        processReady: () => false,
+        reapOwnedProcessGroup: this._reapOwnedProcessGroup,
+      }).start();
+      if (signal?.aborted) throw Object.assign(new Error('diagnostic aborted'), { code: 'aborted' });
+      const response = await process.request('initialize', {
+        protocolVersion: 1,
+        clientInfo: { name: 'baton-readiness', version: '1' },
+        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+      });
+      if (response?.agentInfo?.name !== 'Kimi Code CLI') {
+        throw Object.assign(new Error('ACP peer is not Kimi Code CLI'), {
+          code: 'agent_identity_mismatch',
+        });
+      }
+      initialized = true;
+      if (!Array.isArray(response.authMethods)
+        || !response.authMethods.some((method) => method?.id === 'login')) {
+        throw Object.assign(new Error('Kimi subscription authentication is unavailable'), {
+          code: 'auth_unavailable',
+        });
+      }
+      if (signal?.aborted) throw Object.assign(new Error('diagnostic aborted'), { code: 'aborted' });
+      await process.request('authenticate', { methodId: 'login' });
+      authenticated = true;
+    } catch { /* the closed public result below carries no provider prose */ }
+    finally {
+      signal?.removeEventListener?.('abort', abort);
+      try { reap = await process?.kill() ?? reap; }
+      catch { reap = { confirmed: false }; }
+      if (reap?.confirmed === true && runtime) {
+        try { await runtime.cleanup(); }
+        catch { reap = { confirmed: false }; }
+      }
+    }
+    const reaped = reap?.confirmed === true;
+    return closed(authenticated && reaped && !signal?.aborted ? 'ready' : 'blocked',
+      initialized, authenticated, reaped);
   }
 
   async spawn(worker, brief, options = {}) {

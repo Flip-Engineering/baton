@@ -248,7 +248,7 @@ function runGroupSummary(runs, views) {
           : phase === 'stopped' ? 'stopped'
             : phase === 'work_completed' ? 'ready'
               : ['completed', 'closed'].includes(phase) ? 'completed'
-                : ['planning', 'awaiting_plan_approval'].includes(phase) ? 'waiting'
+                : ['planning', 'awaiting_plan_approval', 'waiting_for_route'].includes(phase) ? 'waiting'
                   : 'active';
     return Object.freeze({
       runId: runs[index].id,

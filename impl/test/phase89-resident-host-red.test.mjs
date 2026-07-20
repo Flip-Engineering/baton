@@ -51,6 +51,11 @@ function exactAdapter(scenario = {
     scenario,
   });
   const rawCard = adapter.card.bind(adapter);
+  adapter.credentialEpoch = () => 'phase89-resident-host-credential-generation';
+  adapter.routeReadinessProbe = async () => ({
+    state: 'ready', initialized: true, authenticated: true,
+    sessionCreated: false, promptSent: false, reaped: true,
+  });
   adapter.card = () => ({
     ...rawCard(),
     authPosture: 'subscription',

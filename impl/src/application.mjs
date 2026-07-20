@@ -26,6 +26,7 @@ import { hasNorthboundCapabilityAuthority } from './northbound-capability-author
 import { projectRunTimelinePage } from './run-timeline.mjs';
 import { compareCanonicalStrings } from './canonical-order.mjs';
 import { normalizeVerifierFailureCapsule } from './verifier-diagnostics.mjs';
+import { projectRouteReadinessError } from './route-readiness-authority.mjs';
 
 export { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 
@@ -39,6 +40,7 @@ const APPLICATION_WORKFLOW_SELECTION_RECORD_KIND = 'application.workflow_candida
 const APPLICATION_WORKFLOW_FEEDBACK_RECORD_KIND = 'application.workflow_feedback_recorded';
 const APPLICATION_WORKFLOW_MEMBER_STOP_ADMITTED_KIND = 'application.workflow_member_stop_admitted';
 const APPLICATION_WORKFLOW_MEMBER_STOP_COMPLETED_KIND = 'application.workflow_member_stop_completed';
+const APPLICATION_ROUTE_WAITING_KIND = 'application.route_waiting';
 const MAX_RUN_RECORDS = 100_000;
 const MAX_RUN_VIEW_BYTES = 512 * 1024;
 const MAX_RUN_VIEW_WORKERS = 1_024;
@@ -1317,7 +1319,9 @@ function runProgress({ phase, approval, node, route, verification, reviewPolicyM
       : approval?.disposition === 'rejected' ? 'Plan rejected' : 'Awaiting distinct approval'),
     stage('dispatch', 'Worker dispatch', stopped && !node?.taskId ? 'stopped'
       : node?.taskId ? 'complete' : approval?.disposition === 'approved' ? 'active' : 'pending',
-    node?.taskId ? 'Plan node claimed exactly once' : stopped ? 'Dispatch authority closed' : 'No worker admitted'),
+    node?.taskId ? 'Plan node claimed exactly once' : stopped ? 'Dispatch authority closed'
+      : phase === 'waiting_for_route' ? 'Approved dispatch is waiting for fresh exact-route readiness'
+        : 'No worker admitted'),
     stage('provider', 'Provider turn', stopped ? 'stopped'
       : ['interrupted', 'interruption_uncertain'].includes(phase) ? 'blocked'
       : node?.state === 'accepted' ? 'complete'
@@ -3256,6 +3260,22 @@ export class BatonApplication {
   }
 
   async _dispatchCurrent(current) {
+    try { return await this._dispatchCurrentUnchecked(current); }
+    catch (error) {
+      const projected = projectRouteReadinessError(error);
+      if (!projected) throw error;
+      const runId = current.goal.runId;
+      const planDigest = current.plan?.digest ?? null;
+      this.driver.coordination.recordDriver(APPLICATION_ROUTE_WAITING_KIND, {
+        schemaVersion: 1, runId, planDigest, receipt: projected.receipt,
+      }, {
+        actor: 'policy', key: `application.route_waiting:${runId}:${planDigest}:${projected.receipt.receiptDigest}`,
+      });
+      return null;
+    }
+  }
+
+  async _dispatchCurrentUnchecked(current) {
     const refreshed = this._findRun(current.goal.runId);
     this._assertRunMutable(refreshed.goal.runId);
     if (!refreshed.plan || refreshed.approval?.disposition !== 'approved') return refreshed.dispatch;
@@ -6418,6 +6438,11 @@ export class BatonApplication {
     else if (node.state === 'cancelled') phase = 'cancelled';
     else if (node.taskId) phase = 'running';
     else phase = 'approved';
+    const routeWaitingRecord = !node.taskId ? [...this.driver.coordination.events()].reverse().find((event) => (
+      event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_ROUTE_WAITING_KIND
+      && event.payload.runId === runId && event.payload.planDigest === current.plan.digest
+    )) ?? null : null;
+    if (phase === 'approved' && routeWaitingRecord) phase = 'waiting_for_route';
     const runStop = this.driver.coordination.runStop?.(runId) ?? null;
     if (runStop?.status === 'stopped') phase = 'stopped';
     else if (runStop) phase = 'stopping';
@@ -6504,6 +6529,14 @@ export class BatonApplication {
         kind: 'session_preservation', state: 'quarantined',
         reason: 'session_attachment_unproven',
         summary: 'Reusable provider-session attachment is unproven; whole-Run stop is the only safe action.',
+      });
+    }
+    if (phase === 'waiting_for_route') {
+      allAttention.push({
+        kind: 'route_readiness', state: 'blocked',
+        blocker: clone(routeWaitingRecord.payload.receipt.blocker),
+        remediation: routeWaitingRecord.payload.receipt.remediation,
+        receiptDigest: routeWaitingRecord.payload.receipt.receiptDigest,
       });
     }
     const attention = allAttention.slice(0, MAX_ATTENTION);
@@ -6612,6 +6645,8 @@ export class BatonApplication {
     const nextActions = phase === 'stopping' ? [{ kind: 'wait' }, { kind: 'status' }]
       : phase === 'awaiting_plan_approval'
         ? [{ kind: 'approve_plan', planDigest: current.plan.digest }]
+        : phase === 'waiting_for_route'
+          ? [{ kind: 'retry_route' }, { kind: 'status' }, { kind: 'stop' }]
         : phase === 'interrupted'
           ? [{ kind: 'send' }, { kind: 'stop' }, { kind: 'wait' }]
         : phase === 'interruption_uncertain' ? [{ kind: 'stop' }]
@@ -8179,7 +8214,7 @@ export class BatonApplication {
     const candidates = [];
     if (view.phase === 'awaiting_plan_approval') candidates.push({ kind: 'approve_plan', source: null, target: null });
     for (const candidate of view.nextActions ?? []) {
-      if (['adopt_result', 'select_candidate', 'send_feedback', 'revise_candidate', 'stop_member', 'semantic_review', 'integrate', 'export_result', 'retry_verification', 'resume_work'].includes(candidate.kind)
+      if (['adopt_result', 'select_candidate', 'send_feedback', 'revise_candidate', 'stop_member', 'semantic_review', 'integrate', 'export_result', 'retry_verification', 'retry_route', 'resume_work'].includes(candidate.kind)
         && !candidates.some((entry) => entry.kind === candidate.kind)) {
         candidates.push({ kind: candidate.kind, source: candidate, target: null });
       }
@@ -8259,7 +8294,8 @@ export class BatonApplication {
       }
     }
     const stopClosesOpenDispatchAuthority = [
-      'planning', 'planning_failed', 'awaiting_plan_approval', 'approved', 'running', 'reviewing',
+      'planning', 'planning_failed', 'awaiting_plan_approval', 'approved', 'waiting_for_route',
+      'running', 'reviewing',
     ].includes(view.phase);
     if (!['stopped', 'closed'].includes(view.phase)
       && (stopClosesOpenDispatchAuthority || (view.ownership?.workers ?? 0) > 0)) {
@@ -9979,6 +10015,8 @@ export class BatonApplication {
         throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
       }
       await this.retryVerification({ runId: request.runId, reason: request.inputs.reason }, principal);
+    } else if (action.kind === 'retry_route') {
+      await this._dispatchCurrent(current);
     } else if (action.kind === 'resume_work') {
       if (!validText(request.inputs.reason, 1_024)) {
         throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');

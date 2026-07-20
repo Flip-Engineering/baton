@@ -842,7 +842,7 @@ test('RA11 RED: BatonWebClient refuses redirect/URL ambiguity and bounds declare
     const requests = [];
     const documents = new Map([
       ['/readyz', { ready: true }],
-      ['/v1/application-card', { ok: true, application: { schemaVersion: 1 } }],
+      ['/v1/doctor', { ok: true, application: { schemaVersion: 1 } }],
     ]);
     const client = new BatonWebClient(options(async (url, request) => {
       const pathname = new URL(url).pathname;
@@ -855,7 +855,7 @@ test('RA11 RED: BatonWebClient refuses redirect/URL ambiguity and bounds declare
       };
     }));
     await client.doctor();
-    assert.deepEqual(requests.map(({ pathname }) => pathname), ['/readyz', '/v1/application-card']);
+    assert.deepEqual(requests.map(({ pathname }) => pathname), ['/readyz', '/v1/doctor']);
     for (const { request } of requests) {
       assert.equal(request.redirect, 'error');
       assert.ok(request.signal instanceof AbortSignal);
@@ -926,17 +926,27 @@ test('RA12 RED: unauthorized Runs do not consume the 64-visible-Run response cei
   );
 });
 
-test('RA13 RED: deployment.runs.start and deployment.run share the exact route-readiness gate', async (t) => {
+test('RA13 RED: deployment.runs.start and deployment.run approve configured blockers as waiting_for_route', async (t) => {
   const blocked = adapter();
   const card = blocked.card.bind(blocked);
   blocked.card = () => ({
     ...card(),
+    workerPolicy: {
+      schemaVersion: 1,
+      autonomy: { supported: ['unattended'], default: 'unattended', perTask: false,
+        observation: 'launch', mechanisms: ['phase89-unattended'] },
+      access: { supported: ['full'], default: 'full', perTask: false,
+        observation: 'launch', mechanisms: ['phase89-full'] },
+      containment: { hostProcess: 'same_uid', guarantees: ['private_runtime'],
+        configuredPreferences: [], observation: 'unavailable' },
+    },
     readiness: {
       state: 'blocked',
       code: 'phase89_route_not_ready',
       summary: 'The Phase89 fixture route is deliberately unavailable.',
     },
   });
+  blocked.credentialEpoch = () => 'phase89-fixture-credential-generation';
   const deployment = await openBaton({
     repo: repository('route-readiness-parity'),
     advanced: {
@@ -962,14 +972,12 @@ test('RA13 RED: deployment.runs.start and deployment.run share the exact route-r
     () => deployment.run('Blocked through the concise alias', EXACT_ROUTE),
     () => deployment.runs.start('Blocked through the common Runs collection', EXACT_ROUTE),
   ]) {
-    await assert.rejects(
-      async () => start(),
-      (error) => error?.code === 'phase89_route_not_ready'
-        && error?.route?.harness === EXACT_ROUTE.harness
-        && error?.route?.model === EXACT_ROUTE.model
-        && error?.route?.effort === EXACT_ROUTE.effort,
-    );
+    const run = await start();
+    await run.approve();
+    assert.equal(run.last.phase ?? run.last.outline?.phase, 'waiting_for_route');
+    const status = await run.status();
+    assert.equal(status.attention[0].blocker.code, 'phase89_route_not_ready');
   }
-  assert.deepEqual((await deployment.runs.list()).items, [],
-    'neither readiness failure may admit a Run');
+  assert.equal((await deployment.runs.list()).items.length, 2,
+    'configured blockers preserve both approved Runs without admitting provider ownership');
 });

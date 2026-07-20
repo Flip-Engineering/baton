@@ -10,6 +10,9 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { Cursor } from './log.mjs';
 import { createBrief, createDigest, wrapFact, wrapProse } from './messages.mjs';
 import { parseRouteTupleKey, resolveEffort, routeTupleKey } from './route-tuple.mjs';
+import {
+  normalizeRouteAdmissionReceipt, RouteReadinessBlockedError,
+} from './route-readiness-authority.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import {
   processAuthorityPayload, processAuthorityState, processGroupAlive, processReadyPayload,
@@ -704,6 +707,20 @@ export class Coordinator {
     });
     this._fences = opts.fences;
     this._adapters = opts.adapters;
+    this._routeReadiness = opts.routeReadinessAuthority ?? null;
+    if (this._routeReadiness) {
+      for (const method of [
+        'issue', 'consume', 'admit', 'inspect', 'invalidate', 'validate',
+        'prepareMany', 'consumeMany',
+      ]) {
+        if (typeof this._routeReadiness[method] !== 'function') {
+          throw Object.assign(
+            new TypeError(`Coordinator route readiness authority is missing ${method}()`),
+            { code: 'coordinator_config_invalid' },
+          );
+        }
+      }
+    }
     this._providerGovernance = opts.providerGovernance === undefined
       ? null
       : normalizeProviderGovernancePolicy(opts.providerGovernance, Object.keys(this._adapters));
@@ -1907,7 +1924,7 @@ export class Coordinator {
         if (task && !TERMINAL_TASK_STATUSES.has(task.status)) this._coordTransition(task, 'cancelled', `task.cancelled:${task.id}:${cancelled.seq}`, evidence);
         if (task) task.status = 'cancelled';
         handle.status = 'dead';
-        if (!handle.processRef && !handle.runtimeScope && !handle.worktree) handle.localAuthority = false;
+        if (!handle.processRef && !handle.runtimeScope && !handle.ownedWorktreeAuthority) handle.localAuthority = false;
         await this._beforeDrainDeadline(this._removeOwnedTaskWorktree(handle, task), deadline);
         setDisposition(workerId, 'pendingCancelled');
       } else if (!this._ownsLocalResources(handle) && (!handle.processRef || handle.processRef.state === 'closed')) {
@@ -2009,7 +2026,7 @@ export class Coordinator {
       const task = this._tasks.get(taskId);
       if (!task || task.status !== 'pending') continue;
       if (task.deps.some((d) => this._tasks.get(d)?.status !== 'completed')) continue;
-      const selection = this._resolveVendor(task);
+      const selection = task.initialRouteSelection ?? this._resolveVendor(task);
       const vendor = selection?.vendor;
       if (!vendor || !this._adapters[vendor]) continue;
       const card = this._adapters[vendor].card();
@@ -2033,6 +2050,90 @@ export class Coordinator {
       if (!waiter.finalized && waiter.deadlineAt != null && now >= waiter.deadlineAt) {
         this._forceStop(workerId, waiter);
       }
+    }
+  }
+
+  _routeReadinessBinding(vendor, model, effort, taskType = 'general', workerPolicy = null,
+    serviceTier = null, effect = null) {
+    if (!this._routeReadiness) return null;
+    const card = this._adapters[vendor]?.card?.();
+    if (!card) throw Object.assign(new Error('route adapter card is unavailable'), { code: 'route_admission_invalid' });
+    const selection = card.modelSelection ?? {};
+    if (!effect) throw Object.assign(new Error('route effect identity is unavailable'), {
+      code: 'route_admission_invalid',
+    });
+    return Object.freeze({
+      harness: card.harness, model, effort, version: card.version,
+      taskType, serviceTier: serviceTier ?? null,
+      workerPolicy: workerPolicy ? Object.freeze({
+        schemaVersion: 1,
+        requestDigest: workerPolicy.requestDigest,
+        adapterCardDigest: workerPolicy.adapterCardDigest,
+        resolutionDigest: workerPolicy.resolutionDigest,
+      }) : null,
+      effect: Object.freeze({ ...effect }),
+      card: Object.freeze({
+        harness: card.harness, version: card.version, family: selection.family,
+        adapterCardDigest: canonicalDigest(card),
+        modelSelection: Object.freeze({
+          mode: selection.mode,
+          configuredDefault: selection.configuredDefault ?? null,
+          available: Array.isArray(selection.available) ? [...selection.available] : null,
+          acceptedAliases: Array.isArray(selection.acceptedAliases) ? [...selection.acceptedAliases] : [],
+          acceptedPrefixes: Array.isArray(selection.acceptedPrefixes) ? [...selection.acceptedPrefixes] : [],
+          reasoningEffort: Array.isArray(selection.reasoningEffort) ? [...selection.reasoningEffort] : [],
+          serviceTier: Array.isArray(selection.serviceTier) ? [...selection.serviceTier] : null,
+        }),
+      }),
+    });
+  }
+
+  async _admitRoute(vendor, model, effort, taskType = 'general', workerPolicy = null,
+    serviceTier = null, effect = null) {
+    if (!this._routeReadiness) return null;
+    return this._routeReadiness.admit(
+      this._routeReadinessBinding(vendor, model, effort, taskType, workerPolicy, serviceTier, effect),
+    );
+  }
+
+  async _admitRouteEffect(handle, task, phase) {
+    if (!this._routeReadiness) return null;
+    const receipt = await this._admitRoute(
+      handle.vendor, handle.modelResolved, handle.effortResolved,
+      task.taskType ?? 'general', handle.workerPolicyResolution,
+      handle.modelPolicy?.serviceTier ?? null, {
+        runId: task.runId ?? null, taskId: task.id,
+        nodeKey: task.brief?.goalPlan?.nodeKey ?? null, workerId: handle.id,
+        processGeneration: Math.max(1, handle.processGeneration ?? 1), phase,
+      },
+    );
+    if (receipt) this._recordRouteAdmission(task, handle, receipt);
+    return receipt;
+  }
+
+  _validatePlanReadinessRoutes(fields) {
+    if (!this._routeReadiness || !Array.isArray(fields?.nodes)) return;
+    for (const node of fields.nodes) {
+      const routes = node?.routes;
+      if (routes?.schemaVersion === 2 && Array.isArray(routes.allowed)) {
+        for (const route of routes.allowed) this._routeReadiness.validate(route);
+        continue;
+      }
+      if (Array.isArray(routes?.harnesses) && routes.harnesses.length > 0
+        && Array.isArray(routes?.models) && routes.models.length > 0
+        && Array.isArray(routes?.efforts) && routes.efforts.length > 0) {
+        for (const harness of routes.harnesses) {
+          for (const model of routes.models) {
+            for (const effort of routes.efforts) {
+              this._routeReadiness.validate({ harness, model, effort });
+            }
+          }
+        }
+        continue;
+      }
+      // Let the durable Plan normalizer produce its established structural code, but do so
+      // only after proving that no malformed value was mistaken for a configured exact route.
+      if (routes?.schemaVersion === 2 && Array.isArray(routes.allowed)) continue;
     }
   }
 
@@ -2577,7 +2678,141 @@ export class Coordinator {
     handle.providerTurn.sealed = true;
   }
 
+  _recordRouteAdmission(task, handle, receipt) {
+    task.routeAdmissionReceipt = receipt;
+    handle.routeAdmissionReceipt = receipt;
+    return this._log.append({
+      worker: handle.id, harness: receipt.route.harness,
+      turnEpoch: this._safeTurnEpoch(handle), kind: 'resource.route_admission_consumed',
+      actor: 'policy', ...this._routeAttribution(handle, task),
+      payload: { receipt },
+    });
+  }
+
   _dispatch(task, vendor, model, effort, workerPolicyResolution = null) {
+    if (!this._routeReadiness) {
+      this._dispatchAdmitted(task, vendor, model, effort, workerPolicyResolution);
+      return;
+    }
+    const group = task.routeReadinessGroup;
+    if (group) {
+      if (group.pending) return;
+      group.pending = true;
+      this._trackAuthorityPromise(async () => {
+        const currentBindings = group.members.map(({ taskId }, index) => {
+          const memberTask = this._tasks.get(taskId);
+          const memberHandle = memberTask ? this._workers.get(memberTask.assignee) : null;
+          if (!memberTask || !memberHandle) throw Object.assign(
+            new Error('route admission Wave member is unavailable'), { code: 'route_lease_invalid' },
+          );
+          const selection = this._resolveVendor(memberTask);
+          const prior = group.bindings[index];
+          return this._routeReadinessBinding(
+            selection.vendor, selection.model, selection.effort,
+            memberTask.taskType ?? 'general', selection.workerPolicyResolution,
+            memberTask.modelPolicy?.serviceTier ?? null, prior.effect,
+          );
+        });
+        let receipts;
+        try {
+          receipts = await this._routeReadiness.consumeMany(group.batch, currentBindings);
+        } catch (error) {
+          if (error?.code !== 'route_lease_invalid') throw error;
+          group.batch = await this._routeReadiness.prepareMany(currentBindings);
+          receipts = await this._routeReadiness.consumeMany(group.batch, currentBindings);
+        }
+        group.bindings = currentBindings;
+        const dispatches = group.members.map(({ taskId }, index) => {
+          const memberTask = this._tasks.get(taskId);
+          const memberHandle = memberTask ? this._workers.get(memberTask.assignee) : null;
+          if (!memberTask || !memberHandle) throw Object.assign(
+            new Error('route admission Wave member is unavailable'), { code: 'route_lease_invalid' },
+          );
+          this._recordRouteAdmission(memberTask, memberHandle, receipts[index]);
+          const selection = this._resolveVendor(memberTask);
+          return { memberTask, selection };
+        });
+        for (const { memberTask, selection } of dispatches) {
+          delete memberTask.routeReadinessGroup;
+          this._dispatchAdmitted(memberTask, selection.vendor, selection.model, selection.effort,
+            selection.workerPolicyResolution);
+        }
+      }).catch(async (error) => {
+        if (error instanceof RouteReadinessBlockedError) {
+          for (const [index, { taskId }] of group.members.entries()) {
+            const memberTask = this._tasks.get(taskId);
+            const memberHandle = memberTask ? this._workers.get(memberTask.assignee) : null;
+            const receipt = error.receipts?.[index] ?? error.receipt;
+            if (memberTask && memberHandle && receipt) {
+              this._recordRouteAdmission(memberTask, memberHandle, receipt);
+              memberHandle.status = 'blocked';
+            }
+          }
+          if (typeof this._worktrees?.releaseCapacityMany === 'function') {
+            await this._worktrees.releaseCapacityMany(group.members.map(({ taskId }) => taskId));
+          } else {
+            await Promise.all(group.members.map(({ taskId }) => (
+              Promise.resolve(this._worktrees?.releaseCapacity?.(taskId))
+            )));
+          }
+          return;
+        }
+        this._fatal(error);
+      }).finally(() => { group.pending = false; });
+      return;
+    }
+    if (task.routeAdmissionPending) return;
+    const handle = this._workers.get(task.assignee);
+    if (!handle) return;
+    const preparedBinding = task.routeAdmissionBinding;
+    const effect = preparedBinding?.effect ?? {
+      runId: task.runId ?? null, taskId: task.id,
+      nodeKey: task.brief?.goalPlan?.nodeKey ?? null, workerId: handle.id,
+      processGeneration: (handle.processGeneration ?? 0) + 1, phase: 'spawn',
+    };
+    const binding = this._routeReadinessBinding(
+      vendor, model, effort, task.taskType ?? 'general', workerPolicyResolution,
+      task.modelPolicy?.serviceTier ?? null, effect,
+    );
+    task.routeAdmissionPending = true;
+    this._trackAuthorityPromise(async () => {
+      const preparedLease = task.routeAdmissionLease;
+      let lease = preparedLease ?? await this._routeReadiness.issue(binding);
+      let receipt;
+      try { receipt = await this._routeReadiness.consume(lease, binding); }
+      catch (error) {
+        if (!preparedLease || error?.code !== 'route_lease_invalid') throw error;
+        lease = await this._routeReadiness.issue(binding);
+        receipt = await this._routeReadiness.consume(lease, binding);
+      }
+      task.routeAdmissionLease = null;
+      task.routeAdmissionBinding = null;
+      if (receipt) this._recordRouteAdmission(task, handle, receipt);
+      if (task.status === 'pending' && !this._closed && this._drainState === 'open') {
+        task.initialRouteSelection = null;
+        handle.status = 'pending';
+        this._dispatchAdmitted(task, vendor, model, effort, workerPolicyResolution);
+      }
+    }).catch(async (error) => {
+      if (error instanceof RouteReadinessBlockedError) {
+        this._recordRouteAdmission(task, handle, error.receipt);
+        handle.status = 'blocked';
+        task.routeAdmissionLease = null;
+        task.routeAdmissionBinding = null;
+        await Promise.resolve(this._worktrees?.releaseCapacity?.(task.id));
+        if (!handle.processRef && !handle.runtimeScope && !handle.worktree) handle.localAuthority = false;
+        return;
+      }
+      this._fatal(error);
+    }).finally(() => { task.routeAdmissionPending = false; });
+  }
+
+  _dispatchAdmitted(task, vendor, model, effort, workerPolicyResolution = null) {
+    if (this._routeReadiness && task.routeAdmissionReceipt?.state !== 'admitted') {
+      throw Object.assign(new Error('provider effect lacks consumed route admission'), {
+        code: 'route_lease_invalid',
+      });
+    }
     const handle = this._workers.get(task.assignee);
     const workerId = handle.id;
     if (this._coordination) {
@@ -2875,6 +3110,18 @@ export class Coordinator {
     const refusalCode = worktreeFailure ? 'worktree_unavailable'
       : authenticationRequired ? 'authentication_required'
         : typedTerminalCode(ack?.code, null);
+    if (this._routeReadiness && (authenticationRequired
+      || /^authentication_(?:required|refresh_required|metadata_invalid|probe_failed)$/u.test(refusalCode ?? ''))) {
+      try {
+        const binding = {
+          harness: this._harnessOf(handle.vendor), model: handle.modelResolved,
+          effort: handle.effortResolved,
+        };
+        this._routeReadiness.invalidate({
+          harness: binding.harness, model: binding.model, effort: binding.effort,
+        }, refusalCode ?? 'authentication_required');
+      } catch { /* cleanup and the provider refusal remain authoritative */ }
+    }
     handle.terminalCause ??= deepFreeze({
       kind: 'provider_failure', code: refusalCode ?? 'provider_crashed',
     });
@@ -2901,7 +3148,12 @@ export class Coordinator {
       return true;
     }
     this._removeRuntimeScope(handle);
-    if (task.sessionRequest?.mode === 'new') this._removeOwnedTaskWorktree(handle, task).catch(noop);
+    if (task.sessionRequest?.mode === 'new') {
+      this._removeOwnedTaskWorktree(handle, task).then(() => {
+        if (!handle.processRef && !handle.runtimeScope && !handle.worktree) handle.localAuthority = false;
+      }).catch(noop);
+    }
+    if (!handle.processRef && !handle.runtimeScope && !handle.ownedWorktreeAuthority) handle.localAuthority = false;
     this._dispatchPass();
     return true;
   }
@@ -2928,7 +3180,11 @@ export class Coordinator {
   }
 
   proposePlan(fields, ctx) {
-    return this._withAuthorityOp(async () => this._coordination.proposePlan(fields, await this._goalPlanAuth(ctx, 'plan:propose', 'plan_propose', fields)));
+    return this._withAuthorityOp(async () => {
+      const auth = await this._goalPlanAuth(ctx, 'plan:propose', 'plan_propose', fields);
+      this._validatePlanReadinessRoutes(fields);
+      return this._coordination.proposePlan(fields, auth);
+    });
   }
 
   approvePlan(fields, ctx) {
@@ -2986,7 +3242,7 @@ export class Coordinator {
       throw Object.assign(new Error('coordinator admission is draining'), { code: 'coordinator_draining' });
     }
     const allowed = ['brief', 'effort', 'goalPlan', 'model', 'runId', 'taskId', 'vendor'];
-    const members = rawMembers.map((member) => {
+    let members = rawMembers.map((member) => {
       if (!member || typeof member !== 'object' || Array.isArray(member)
         || Object.keys(member).some((field) => !allowed.includes(field))) {
         throw Object.assign(new Error('plan wave member is invalid'), { code: 'plan_wave_invalid' });
@@ -2999,15 +3255,6 @@ export class Coordinator {
       }
       const workerPolicyRequest = member.brief?.workerPolicy === undefined
         ? null : normalizeWorkerPolicyRequest(member.brief.workerPolicy);
-      const explicit = this._resolveExplicitRoute(member.vendor, {
-        sessionRequest: { mode: 'new' }, model: member.model,
-        effort: member.effort, workerPolicyRequest,
-      });
-      if (!explicit.ok) {
-        throw new ModelSelectionError(
-          `harness "${member.vendor}" cannot select the exact wave route`, explicit.reason,
-        );
-      }
       return {
         ...member, runId, workerPolicyRequest,
         workerId: `w-wave-${createHash('sha256').update(member.taskId).digest('hex').slice(0, 24)}`,
@@ -3031,6 +3278,26 @@ export class Coordinator {
         goalPlan, taskId, vendor, model, effort,
       })),
     });
+    members = members.map((member) => {
+      const explicit = this._resolveExplicitRoute(member.vendor, {
+        sessionRequest: { mode: 'new' }, model: member.model,
+        effort: member.effort, workerPolicyRequest: member.workerPolicyRequest,
+      });
+      if (!explicit.ok) {
+        throw new ModelSelectionError(
+          `harness "${member.vendor}" cannot select the exact wave route`, explicit.reason,
+        );
+      }
+      return { ...member, readinessSelection: explicit.selection };
+    });
+    const readinessBindings = members.map((member) => this._routeReadinessBinding(
+      member.readinessSelection.vendor, member.readinessSelection.model,
+      member.readinessSelection.effort, 'general',
+      member.readinessSelection.workerPolicyResolution, null, {
+        runId: member.runId, taskId: member.taskId, nodeKey: member.goalPlan.nodeKey,
+        workerId: member.workerId, processGeneration: 1, phase: 'plan_wave_spawn',
+      },
+    )).filter(Boolean);
     const prepared = members.map((member) => {
       const route = { vendor: member.vendor, model: member.model, effort: member.effort };
       const state = this._coordination.previewPlanDispatch(member.goalPlan, route);
@@ -3054,6 +3321,16 @@ export class Coordinator {
         },
       };
     });
+
+    let preparedReadiness = null;
+    if (readinessBindings.length > 0) {
+      if (typeof this._routeReadiness.prepareMany !== 'function') {
+        throw Object.assign(new Error('atomic route readiness batch authority is unavailable'), {
+          code: 'route_admission_invalid',
+        });
+      }
+      preparedReadiness = await this._routeReadiness.prepareMany(readinessBindings);
+    }
 
     const reservedCapacityTaskIds = [];
     const releaseWaveCapacity = async () => {
@@ -3154,6 +3431,15 @@ export class Coordinator {
         }
         return handle;
       });
+      if (preparedReadiness) {
+        const routeReadinessGroup = {
+          batch: preparedReadiness, bindings: readinessBindings,
+          members: prepared.map((member) => ({ taskId: member.taskId })), pending: false,
+        };
+        for (const { taskId } of routeReadinessGroup.members) {
+          this._tasks.get(taskId).routeReadinessGroup = routeReadinessGroup;
+        }
+      }
       this.tick();
       return handles.map((handle) => this._publicHandle(handle));
     } catch (error) {
@@ -3256,7 +3542,8 @@ export class Coordinator {
       || opts.review != null || modelPolicy !== null || sessionRequest.mode !== 'new')) {
       throw Object.assign(new Error('preserved resume re-dispatch carries unapproved execution fields'), { code: 'plan_execution_mismatch' });
     }
-    if (vendor !== 'auto') {
+    let readinessSelection = null;
+    const resolveExplicitSelection = () => {
       const explicit = this._resolveExplicitRoute(vendor, {
         sessionRequest, model: opts.model, modelPolicy, effort: effortRequested, workerPolicyRequest,
       });
@@ -3276,7 +3563,11 @@ export class Coordinator {
           explicit.reason,
         );
       }
-    } else if (opts.model !== undefined || modelPolicy || effortRequested || workerPolicyRequest) {
+      readinessSelection = explicit.selection;
+    };
+    if (vendor !== 'auto' && !opts.goalPlan) {
+      resolveExplicitSelection();
+    } else if (vendor === 'auto' && (opts.model !== undefined || modelPolicy || effortRequested || workerPolicyRequest)) {
       const modelCapable = Object.values(this._adapters).filter((ad) => resolveCardModel(ad.card(), opts.model, modelPolicy, { explicit: false }).ok);
       const effortCapable = modelCapable.filter((ad) => resolveEffort(ad.card(), effortRequested).ok);
       const policyCapable = effortCapable.filter((ad) => {
@@ -3324,6 +3615,7 @@ export class Coordinator {
     if (opts.goalPlan && vendor === 'auto') throw Object.assign(new Error('plan-gated dispatch requires an exact harness'), { code: 'plan_route_mismatch' });
     const workerId = this._allocWorkerId();
     let planAuth = null; let planState = null; let capacityPrepared = false;
+    let routeAdmissionLease = null; let routeAdmissionBinding = null;
     let capacityPreflightDone = false;
     let revisionParentTaskId = null;
     const routeBinding = { vendor, model: opts.model ?? null, effort: effortRequested ?? null };
@@ -3333,6 +3625,7 @@ export class Coordinator {
         powers: opts.powers, repoId: this._repoId, runId,
         idempotencyKey: opts.idempotencyKey ?? `task.created:${taskId}`,
       }, 'plan:dispatch', 'plan_dispatch', { gate: opts.goalPlan, route: routeBinding, taskId });
+      resolveExplicitSelection();
       if (brief?.goalPlan !== undefined) throw Object.assign(new Error('caller cannot supply authoritative goal/plan Brief coordinates'), { code: 'plan_brief_mismatch' });
       if (reconcileExistingPlanTask) {
         const reconciled = derivedRevisionAuthorized
@@ -3349,6 +3642,17 @@ export class Coordinator {
         : this._coordination.previewPlanDispatch(opts.goalPlan, routeBinding, derivedResumeAuthorized ? opts.preservedResume : null);
       if (!planBriefMatches(brief, planState.brief)) throw Object.assign(new Error('caller Brief differs from the approved plan'), { code: 'plan_brief_mismatch' });
       admittedBrief = createBrief(planState.brief);
+      if (readinessSelection && this._routeReadiness) {
+        routeAdmissionBinding = this._routeReadinessBinding(
+          readinessSelection.vendor, readinessSelection.model, readinessSelection.effort,
+          opts.taskType ?? 'general', readinessSelection.workerPolicyResolution,
+          modelPolicy?.serviceTier ?? null, {
+            runId, taskId, nodeKey: opts.goalPlan.nodeKey, workerId,
+            processGeneration: 1, phase: 'spawn',
+          },
+        );
+        routeAdmissionLease = await this._routeReadiness.issue(routeAdmissionBinding);
+      }
       if (derivedRevisionAuthorized) {
         revisionParentTaskId = planState.node.revision.parent.taskId;
         worktreeBaseSha = planState.node.revision.parent.resultSha;
@@ -3379,6 +3683,23 @@ export class Coordinator {
       }
     } else {
       admittedBrief = createBrief(brief);
+      if (vendor === 'auto' && this._routeReadiness) {
+        readinessSelection = this._resolveVendor({
+          id: taskId, runId, brief: admittedBrief, taskType: opts.taskType ?? 'general',
+          vendorRequested: 'auto', modelRequested: opts.model ?? null, modelPolicy,
+          effortRequested, workerPolicyRequest, sessionRequest,
+        });
+      }
+      if (readinessSelection && this._routeReadiness) {
+        routeAdmissionBinding = this._routeReadinessBinding(
+          readinessSelection.vendor, readinessSelection.model, readinessSelection.effort,
+          opts.taskType ?? 'general', readinessSelection.workerPolicyResolution,
+          modelPolicy?.serviceTier ?? null, {
+            runId, taskId, nodeKey: null, workerId, processGeneration: 1, phase: 'spawn',
+          },
+        );
+        routeAdmissionLease = await this._routeReadiness.issue(routeAdmissionBinding);
+      }
     }
 
     const deps = planState ? [...planState.resolvedDeps] : (opts.deps ? [...opts.deps] : []);
@@ -3518,6 +3839,9 @@ export class Coordinator {
       review: opts.review ? Object.freeze({ ...opts.review }) : null,
       coordinationVersion,
       taskType: opts.taskType ?? 'general',
+      routeAdmissionLease,
+      routeAdmissionBinding,
+      initialRouteSelection: vendor === 'auto' ? readinessSelection : null,
     };
     this._tasks.set(taskId, task);
     this._taskOrder.push(taskId);
@@ -3617,6 +3941,13 @@ export class Coordinator {
         capturedSha: null, integration: null, retainedResultRef: null, publication: null,
         review: durable.review ? Object.freeze({ ...durable.review }) : null, taskType: durable.taskType ?? 'general', coordinationVersion: durable.version,
       };
+      const replayAdmission = [...this._log.read(workerId)].reverse().find((event) => (
+        event.kind === 'resource.route_admission_consumed'
+        && event.payload?.receipt?.effect?.taskId === durable.id
+      ));
+      const projectedAdmission = replayAdmission
+        ? normalizeRouteAdmissionReceipt(replayAdmission.payload.receipt) : null;
+      if (projectedAdmission) task.routeAdmissionEvidence = projectedAdmission;
       this._tasks.set(task.id, task);
       this._taskOrder.push(task.id);
       this._workers.set(workerId, {
@@ -4204,6 +4535,16 @@ export class Coordinator {
       if (!task || !handle.sessionRef || handle.sessionRef.persistence !== 'native') {
         return { ok: false, result: 'session_not_resumable' };
       }
+      try {
+        await this._admitRouteEffect(
+          handle, task, `preserved_recovery_${(handle.processGeneration ?? 0) + 1}`,
+        );
+      } catch (error) {
+        if (error instanceof RouteReadinessBlockedError) {
+          return { ok: false, result: 'waiting_for_route', receipt: error.receipt };
+        }
+        throw error;
+      }
       return this._reattachPreservedSession(handle, task, opts);
     }
     const priorDispatchRefusal = this._recoveryDispatchRefusal(handle, task);
@@ -4272,6 +4613,23 @@ export class Coordinator {
     }
     const session = normalizeSessionRequest({ mode: 'resume', id: handle.sessionRef.id, context });
     const recoveryActor = opts.actor ?? 'orchestrator';
+    try {
+      const receipt = await this._admitRoute(
+        handle.vendor, handle.modelResolved, handle.effortResolved,
+        task.taskType ?? 'general', recoveryWorkerPolicyResolution,
+        handle.modelPolicy?.serviceTier ?? null, {
+          runId: task.runId ?? null, taskId: task.id,
+          nodeKey: task.brief?.goalPlan?.nodeKey ?? null, workerId: handle.id,
+          processGeneration: (handle.processGeneration ?? 0) + 1, phase: 'recovery',
+        },
+      );
+      if (receipt) this._recordRouteAdmission(task, handle, receipt);
+    } catch (error) {
+      if (error instanceof RouteReadinessBlockedError) {
+        return { ok: false, result: 'waiting_for_route', receipt: error.receipt };
+      }
+      throw error;
+    }
     let durableRecoveryAttempt = this._admitDurableRecoveryAttempt(
       handle, task, session, adapter, planRecovery, recoveryActor,
     );
@@ -5985,6 +6343,9 @@ export class Coordinator {
       return this._interruptThenGoverned(handle, message, opts.actor ?? 'orchestrator');
     }
 
+    await this._admitRouteEffect(
+      handle, task, `delivery_${mode}_${this._safeTurnEpoch(handle) + 1}`,
+    );
     const stamp = this._fences.issue(workerId);
     const harness = this._harnessOf(handle.vendor);
     if (opts.controlId) {
@@ -6072,6 +6433,9 @@ export class Coordinator {
       if (!preCheck.ok) return { ok: false, result: 'stale_fence', current: preCheck.current };
     }
 
+    await this._admitRouteEffect(
+      handle, task, `preserved_continuation_${this._safeTurnEpoch(handle) + 1}`,
+    );
     const providerAdmission = this._admitProviderTurn(handle, task, 'semantic_continuation');
     if (!providerAdmission.ok) {
       return { ok: false, result: 'provider_turn_refused', reason: providerAdmission.code };
@@ -6185,6 +6549,9 @@ export class Coordinator {
       }, 'follow_up');
     }
 
+    await this._admitRouteEffect(
+      handle, task, `follow_up_${this._safeTurnEpoch(handle) + 1}`,
+    );
     const providerAdmission = this._admitProviderTurn(handle, task, 'follow_up');
     if (!providerAdmission.ok) return { ok: false, result: 'provider_turn_refused', reason: providerAdmission.code };
 

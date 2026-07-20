@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
-  chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync,
+  chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -23,7 +23,7 @@ function repository(root) {
   return repo;
 }
 
-function grokHome(root, credential) {
+function grokHome(root, credential, marker) {
   const home = join(root, 'home');
   const executable = join(home, '.grok', 'bin', 'grok');
   mkdirSync(dirname(executable), { recursive: true });
@@ -34,7 +34,12 @@ function grokHome(root, credential) {
     "  printf 'grok 9.8.7 (fixture) [stable]\\n'",
     '  exit 0',
     'fi',
-    'printf spawned > "$BATON_GROK_SPAWN_MARKER"',
+    'if [ "$1" = "models" ]; then',
+    `  printf models > ${JSON.stringify(marker)}`,
+    "  printf 'grok-4.5\\n'",
+    '  exit 0',
+    'fi',
+    `printf spawned > ${JSON.stringify(marker)}`,
     'exit 70',
     '',
   ].join('\n'));
@@ -45,20 +50,20 @@ function grokHome(root, credential) {
 function inspectDeployment({ credential, attemptRun = false }) {
   const root = mkdtempSync(join(tmpdir(), 'baton-phase78-grok-auth-'));
   try {
-    const repo = repository(root);
-    const home = grokHome(root, credential);
     const marker = join(root, 'provider-spawned');
+    const repo = repository(root);
+    const home = grokHome(root, credential, marker);
     const deploymentRoot = join(root, 'deployment');
     const script = [
       `const { openBaton } = await import(${JSON.stringify(MODULE_URL)});`,
       `const route = ${JSON.stringify(ROUTE)};`,
       `const deployment = await openBaton({ repo: ${JSON.stringify(repo)}, advanced: {`,
       `  deploymentRoot: ${JSON.stringify(deploymentRoot)},`,
-      '  verification: { command: process.execPath, arguments: ["--version"] },',
+      '  verification: { command: "node", arguments: ["--version"] },',
       '} });',
       'let runError = null;',
       attemptRun
-        ? 'try { await deployment.run("must be refused before provider spawn", { exact: route }); } catch (error) { runError = { code: error?.code, message: error?.message }; }'
+        ? 'try { const run = await deployment.run("must wait before provider spawn", { exact: route }); await run.approve(); const view = await run.status(); const blocker = view.attention?.find((item) => item.kind === "route_readiness"); runError = blocker ? { code: blocker.blocker.code, message: blocker.blocker.summary } : null; } catch (error) { runError = { code: error?.code, message: error?.message }; }'
         : '',
       'const doctor = await deployment.doctor();',
       'const card = deployment.card();',
@@ -76,7 +81,10 @@ function inspectDeployment({ credential, attemptRun = false }) {
       maxBuffer: 4 * 1024 * 1024,
       timeout: 30_000,
     });
-    return { observed: JSON.parse(output), spawned: existsSync(marker), home };
+    return {
+      observed: JSON.parse(output), spawned: existsSync(marker),
+      diagnostic: existsSync(marker) ? readFileSync(marker, 'utf8') : null, home,
+    };
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -151,9 +159,9 @@ test('GR3: malformed or ambiguous Grok credential metadata fails closed', () => 
   assert.equal(JSON.stringify(observed).includes(home), false);
 });
 
-test('GR4: bounded, owner-readable, unexpired Grok metadata preserves static readiness', () => {
+test('GR4: unexpired Grok metadata is delivered only after the private session-free models probe', () => {
   const future = new Date(Date.now() + (60 * 60 * 1000)).toISOString();
-  const { observed, spawned } = inspectDeployment({ credential: credential(future) });
+  const { observed, spawned, diagnostic } = inspectDeployment({ credential: credential(future) });
   const routes = observed.doctor.routes.filter((candidate) => candidate.harness === 'grok');
 
   assert.equal(observed.doctor.ready, true);
@@ -162,7 +170,8 @@ test('GR4: bounded, owner-readable, unexpired Grok metadata preserves static rea
     assert.equal(route.state, 'ready');
     assert.equal(route.runtime.authentication.state, 'available');
   }
-  assert.equal(spawned, false, 'static readiness never launches the provider');
+  assert.equal(spawned, true);
+  assert.equal(diagnostic, 'models', 'doctor uses grok models, never agent/session/prompt');
 });
 
 test('GR5: oversized Grok auth metadata is refused by the bounded static reader', () => {
@@ -180,9 +189,9 @@ test('GR5: oversized Grok auth metadata is refused by the bounded static reader'
   assert.equal(spawned, false);
 });
 
-test('P92-GR6: an expired access token with a bounded refresh token remains statically refreshable', () => {
+test('P92-GR6: refreshable metadata becomes ready only when the projected live models probe succeeds', () => {
   const expired = new Date(Date.now() - 60_000).toISOString();
-  const { observed, spawned, home } = inspectDeployment({ credential: credential(expired) });
+  const { observed, spawned, diagnostic, home } = inspectDeployment({ credential: credential(expired) });
   const routes = observed.doctor.routes.filter((candidate) => candidate.harness === 'grok');
 
   assert.equal(routes.length, 3);
@@ -190,7 +199,8 @@ test('P92-GR6: an expired access token with a bounded refresh token remains stat
     assert.equal(route.state, 'ready');
     assert.equal(route.runtime.authentication.state, 'refreshable');
   }
-  assert.equal(spawned, false, 'readiness does not spend the refresh token or launch Grok');
+  assert.equal(spawned, true);
+  assert.equal(diagnostic, 'models');
   assert.equal(JSON.stringify(observed).includes('fixture-refresh-token'), false);
   assert.equal(JSON.stringify(observed).includes(home), false);
 });

@@ -28,6 +28,11 @@ function adapter(route, path, tracker) {
     scenario: { outcome: 'completed', edits: [{ path, content: `${route.harness}\n`, delayMs: 20 }] },
   });
   const baseCard = value.card.bind(value);
+  value.credentialEpoch = () => `phase80-${route.harness}-credential-generation`;
+  value.routeReadinessProbe = async () => ({
+    state: 'ready', initialized: true, authenticated: true,
+    sessionCreated: false, promptSent: false, reaped: true,
+  });
   value.card = () => ({
     ...baseCard(), authPosture: 'subscription',
     modelSelection: {
