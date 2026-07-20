@@ -215,6 +215,7 @@ const applicationRouteSchema = schema({ harness: text, model: text, effort: text
 const applicationIntentSchema = schema({
   runId,
   objective: { type: 'string', minLength: 1, maxLength: 4_096 },
+  resultIntent: { type: 'string', enum: ['change', 'read_only_evidence'], default: 'change' },
   profile: runId,
   route: applicationRouteSchema,
   scope: { type: 'array', minItems: 1, maxItems: 64, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4_096 } },
@@ -242,7 +243,7 @@ const applicationFeedbackSchema = {
   ],
 };
 const APPLICATION_TOOL_DEFINITIONS = Object.freeze([
-  { name: 'fleet_run_start', description: 'Start one Baton Run from a concise objective, deployment profile, and exact harness/model/effort route; returns a readable Plan awaiting approval.', inputSchema: schema({ ...repo, ...idem, intent: applicationIntentSchema }, ['repoId', 'idempotencyKey', 'intent']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_start', description: 'Start one Baton Run from a concise objective, explicit change or read-only evidence result intent, deployment profile, and exact harness/model/effort route; returns a readable Plan awaiting approval.', inputSchema: schema({ ...repo, ...idem, intent: applicationIntentSchema }, ['repoId', 'idempotencyKey', 'intent']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_status', description: 'Read the fresh bounded authoritative RunView for one Run.', inputSchema: schema({ ...repo, runId }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_follow', description: 'Resume one Run-specific bounded at-least-once change page after an acknowledged coordination cursor.', inputSchema: schema({ ...repo, runId, afterCursor: { type: 'integer', minimum: 0 }, timeoutMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId', 'afterCursor', 'timeoutMs']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_recover', description: 'Recover the one server-selected eligible orphan for a Run under its deployment-owned recovery policy and approved Plan authority.', inputSchema: schema({ ...repo, ...idem, runId }, ['repoId', 'idempotencyKey', 'runId']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
@@ -271,7 +272,7 @@ const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   },
   {
     name: 'baton_run_start',
-    description: 'Start one Run from a concise intent; Baton returns the progressive outline.',
+    description: 'Start one Run from a concise explicit change or read-only evidence intent; Baton returns the progressive outline.',
     inputSchema: schema({ ...repo, ...idem, intent: applicationIntentSchema }, ['repoId', 'idempotencyKey', 'intent']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },

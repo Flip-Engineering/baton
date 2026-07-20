@@ -1057,6 +1057,11 @@ class BatonDeployment {
     return this.#baton.workflow(objective, options);
   }
 
+  async explore(objective, options = {}) {
+    assertRouteReady(options, this.#readiness);
+    return this.#baton.explore(objective, options);
+  }
+
   async review(objective, options = {}) {
     if (record(options) && Array.isArray(options.routes)) {
       for (const exact of options.routes) {

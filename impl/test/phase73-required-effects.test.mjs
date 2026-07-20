@@ -265,6 +265,30 @@ test('PH3/PH5: read-only-permitted unchanged work remains valid, while a require
   assert.equal(verified.payload.requiredEffectEvidence.repositoryEdit.inScopeChangedPathCount, 1);
 });
 
+test('PH5: a Plan without repository_edit refuses an observed edit before verification without path disclosure', async (t) => {
+  const instance = driver('forbidden-edit', { 'impl/forbidden.txt': 'forbidden\n' });
+  t.after(async () => { await instance.drainAndClose('phase73-forbidden-edit').catch(() => {}); });
+  const authority = await approved(instance, 'forbidden-edit', undefined, []);
+  const handle = await spawnApproved(instance, 'forbidden-edit', authority);
+  const result = await until(async () => {
+    const current = await instance.coordinator.result(handle.id);
+    return current.ready ? current : null;
+  });
+  assert.equal(result.status, 'failed');
+  assert.deepEqual(result.terminalCause, {
+    kind: 'policy_failure', code: 'forbidden_effect_observed',
+  });
+  assert.equal(result.verdict, null);
+  const events = instance.log.read(handle.id);
+  assert.equal(events.some((event) => event.kind === 'verify.reverified'), false);
+  const failure = events.find((event) => event.kind === 'error'
+    && event.payload?.code === 'forbidden_effect_observed');
+  assert.deepEqual(Object.keys(failure.payload).sort(), [
+    'code', 'message', 'phase', 'trustPhase',
+  ]);
+  assert.equal(JSON.stringify(failure).includes('impl/forbidden.txt'), false);
+});
+
 test('captured mixed-scope changes fail before verifier or result retention', async (t) => {
   const instance = driver('mixed-scope-capture', {
     'impl/allowed.txt': 'allowed\n',

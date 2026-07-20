@@ -606,8 +606,11 @@ test('UA1: profiles permit narrowing but reject route, scope, and input widening
   await application.shutdown(principal('shutdown-admin'));
 });
 
-test('UA1: the ordinary concise intent can derive a stable Run ID and default profile scope', async () => {
-  const { application } = fixture('concise-intent');
+test('UA1: explicit result intent binds Run/auth identity while a missing legacy field preserves its old preimage', async () => {
+  const authorizations = [];
+  const { application } = fixture('concise-intent', {
+    applicationAuthorize: async (request) => { authorizations.push(request); return true; },
+  });
   const concise = {
     objective: 'Fix the bounded accounting path',
     profile: 'safe-code',
@@ -615,10 +618,35 @@ test('UA1: the ordinary concise intent can derive a stable Run ID and default pr
   };
   const first = await application.start(concise, principal('concise-owner'));
   const replay = await application.start(concise, principal('concise-owner'));
-  assert.match(first.runId, /^run-[a-f0-9]{32}$/);
+  const expectedLegacyRunId = `run-${digest({
+    objective: concise.objective,
+    profileDigest: application.profiles.get('safe-code').digest,
+    route: concise.route, composition: null, scope: ['impl/**', 'spec/**'],
+    ownerPrincipalId: 'concise-owner',
+  }).slice(0, 32)}`;
+  assert.equal(first.runId, expectedLegacyRunId);
   assert.equal(replay.runId, first.runId);
   assert.equal(replay.plan.digest, first.plan.digest);
   assert.deepEqual(first.planPreview.node.pathScope, ['impl/**', 'spec/**']);
+  assert.equal(first.resultIntent, 'change');
+  assert.equal(first.objectiveResultPolicy.mode, 'change');
+
+  const explicitChange = await application.start({ ...concise, resultIntent: 'change' }, principal('concise-owner'));
+  const evidence = await application.start({
+    ...concise, resultIntent: 'read_only_evidence',
+  }, principal('concise-owner'));
+  assert.notEqual(explicitChange.runId, first.runId);
+  assert.notEqual(evidence.runId, explicitChange.runId);
+  assert.equal(explicitChange.resultIntent, 'change');
+  assert.equal(explicitChange.planPreview.node.effects.includes('repository_edit'), true);
+  assert.equal(evidence.resultIntent, 'read_only_evidence');
+  assert.equal(evidence.objectiveResultPolicy.mode, 'read_only_evidence');
+  assert.equal(evidence.planPreview.node.effects.includes('repository_edit'), false);
+  const startSubjects = authorizations.filter(({ command }) => command === 'run.start')
+    .map(({ subject }) => subject);
+  assert.equal(Object.hasOwn(startSubjects[0], 'resultIntent'), false);
+  assert.equal(startSubjects.some((subject) => subject.resultIntent === 'change'), true);
+  assert.equal(startSubjects.some((subject) => subject.resultIntent === 'read_only_evidence'), true);
   await application.shutdown(principal('shutdown-admin'));
 });
 
@@ -1739,6 +1767,15 @@ test('UA4-UA8: accepted result is pinned, evidenced, and explicitly adopted with
   const beforeEvidenceEvents = driver.coordination.events().length;
   const evidence = await application.command('run.evidence', { runId }, principal('result-owner'));
   assert.equal(evidence.kind, 'baton.run.evidence');
+  assert.equal(evidence.resultIntent, 'change');
+  assert.deepEqual(Object.keys(evidence), [
+    'schemaVersion', 'kind', 'state', 'repoId', 'runId', 'resultIntent',
+    'observedThroughSeq', 'bindings', 'phase', 'progress', 'node', 'result',
+    'integration', 'verification', 'semanticReview', 'artifacts', 'stop', 'ownership',
+    'checks', 'manifestDigest',
+  ]);
+  const { manifestDigest, ...evidenceCore } = evidence;
+  assert.equal(manifestDigest, digest(evidenceCore));
   assert.equal(evidence.phase, 'work_completed');
   assert.equal(evidence.progress.current, 'result');
   assert.equal(evidence.result.sha, finished.result.sha);

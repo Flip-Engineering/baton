@@ -118,6 +118,13 @@ export function renderBrief(brief, dialect) {
   }
   lines.push('## Write authority');
   lines.push('Harness permissions are execution capability, not write authority. Write only inside the assigned Baton worktree and only at the Path scope below. Never modify, move, chmod, delete, replace, or repair anything outside that authority, including the home directory, credentials, toolchains, shims, global configuration, or caches. Report an environmental blocker instead of repairing the host.');
+  if (Array.isArray(brief.requiredEffects) && brief.requiredEffects.includes('repository_edit')) {
+    lines.push('## Repository mutation authority');
+    lines.push('The approved Plan requires an in-scope repository edit for acceptance. Objective prose does not weaken this requirement.');
+  } else if (Array.isArray(brief.effects) && !brief.effects.includes('repository_edit')) {
+    lines.push('## Repository mutation authority');
+    lines.push('Repository mutation is not authorized. Inspect/read and return evidence only; do not create, modify, or delete files.');
+  }
   if (brief.constraints?.length) {
     lines.push('## Constraints');
     for (const c of brief.constraints) lines.push(`- ${c}`);

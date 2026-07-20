@@ -891,6 +891,7 @@ function compactInspectOutline(result) {
     terminal: result.terminal === true,
     outline: {
       objective: outline.objective ?? null,
+      resultIntent: outline.resultIntent ?? null,
       phase: outline.phase ?? null,
       stage: outline.stage ?? null,
       narrative: outline.narrative ?? null,
@@ -979,6 +980,9 @@ export function projectBatonCliResult(parsed, result) {
     schemaVersion: 1,
     runId: result.runId,
     ...(nonempty(result.objective) ? { objective: result.objective } : {}),
+    ...(nonempty(result.resultIntent) ? { resultIntent: result.resultIntent } : {}),
+    ...(record(result.objectiveResultPolicy)
+      ? { objectiveResultPolicy: result.objectiveResultPolicy } : {}),
     phase: result.phase,
     ...(record(result.progress) ? { progress: {
       current: result.progress.current ?? null,
@@ -1005,7 +1009,7 @@ export function projectBatonCliResult(parsed, result) {
   return Object.freeze(compact);
 }
 
-function parseStart(args, objective, idempotencyKey) {
+function parseStart(args, objective, idempotencyKey, resultIntent = 'change') {
   if (!nonempty(objective)) throw cliError('OBJECTIVE is required');
   const profile = take(args, '--profile');
   const exactValue = take(args, '--exact');
@@ -1025,7 +1029,7 @@ function parseStart(args, objective, idempotencyKey) {
     throw cliError('manual routing requires --model and --effort together');
   }
   noRemainder(args);
-  const intent = { objective };
+  const intent = { objective, resultIntent };
   if (profile !== null) intent.profile = id(profile, 'profile');
   if (exactValue !== null) intent.route = route(exactValue);
   else {
@@ -1056,6 +1060,7 @@ function parseReviewStart(args, objective, idempotencyKey) {
   }
   const intent = {
     objective,
+    resultIntent: 'read_only_evidence',
     composition: {
       strategy: 'parallel_attempts', workspace: 'isolated', join: 'operator_selected',
       team: [
@@ -1112,7 +1117,7 @@ export function parseBatonCli(rawArgs) {
         .map((command) => [command.subcommand, command.helpTopic]));
       topic = commandTopics[args[1]]
         ?? (args.length > 1 ? 'run.start' : 'run');
-    } else if (['review', 'workflow'].includes(args[0])) {
+    } else if (['explore', 'review', 'workflow'].includes(args[0])) {
       topic = args[0];
     } else if (args[0] === 'route') {
       topic = 'routing';
@@ -1160,8 +1165,12 @@ export function parseBatonCli(rawArgs) {
     args.shift();
     return parseReviewStart(args, args.shift(), idempotencyKey);
   }
+  if (args[0] === 'explore') {
+    args.shift();
+    return parseStart(args, args.shift(), idempotencyKey, 'read_only_evidence');
+  }
   if (args.shift() !== 'run') {
-    throw cliError('expected credentials, setup, doctor, route, review, or run');
+    throw cliError('expected credentials, setup, doctor, route, explore, review, or run');
   }
   const action = args.shift();
   if (action === 'follow') {

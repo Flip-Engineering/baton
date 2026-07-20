@@ -109,7 +109,9 @@ function conciseProgress(view) {
 
 function prepareRunStart(objective, options) {
   if (!nonempty(objective)) throw clientError('Run objective is required');
-  exactOptions(options, new Set(['runId', 'profile', 'scope', 'model', 'harness', 'effort', 'exact']), 'start');
+  exactOptions(options, new Set([
+    'runId', 'resultIntent', 'profile', 'scope', 'model', 'harness', 'effort', 'exact',
+  ]), 'start');
   for (const field of ['runId', 'profile', 'model', 'harness', 'effort']) {
     if (options[field] !== undefined && !nonempty(options[field])) {
       throw clientError(`Run ${field} is invalid`);
@@ -119,6 +121,10 @@ function prepareRunStart(objective, options) {
     || options.scope.length > 64 || options.scope.some((value) => !nonempty(value))
     || new Set(options.scope).size !== options.scope.length)) {
     throw clientError('Run scope is invalid');
+  }
+  const resultIntent = options.resultIntent ?? 'change';
+  if (!['change', 'read_only_evidence'].includes(resultIntent)) {
+    throw clientError('Run resultIntent is invalid');
   }
   if (options.exact !== undefined) {
     exactOptions(options.exact, new Set(['harness', 'model', 'effort']), 'exact route');
@@ -136,7 +142,7 @@ function prepareRunStart(objective, options) {
     && (options.model === undefined || options.effort === undefined)) {
     throw clientError('manual routing requires model and effort together');
   }
-  const intent = { objective: objective.normalize('NFKC').trim() };
+  const intent = { objective: objective.normalize('NFKC').trim(), resultIntent };
   for (const key of ['runId', 'profile', 'scope']) {
     if (options[key] !== undefined) intent[key] = options[key];
   }
@@ -154,7 +160,7 @@ function prepareRunStart(objective, options) {
 function prepareWorkflowStart(objective, options) {
   if (!nonempty(objective)) throw clientError('Workflow objective is required');
   exactOptions(options, new Set([
-    'runId', 'profile', 'scope', 'strategy', 'workspace', 'join', 'team',
+    'runId', 'resultIntent', 'profile', 'scope', 'strategy', 'workspace', 'join', 'team',
   ]), 'workflow');
   const strategy = options.strategy ?? 'parallel_attempts';
   const workspace = options.workspace ?? 'isolated';
@@ -187,8 +193,13 @@ function prepareWorkflowStart(objective, options) {
     || new Set(options.scope).size !== options.scope.length)) {
     throw clientError('Workflow scope is invalid');
   }
+  const resultIntent = options.resultIntent ?? 'change';
+  if (!['change', 'read_only_evidence'].includes(resultIntent)) {
+    throw clientError('Workflow resultIntent is invalid');
+  }
   return Object.freeze({
     objective: objective.normalize('NFKC').trim(),
+    resultIntent,
     ...(options.runId === undefined ? {} : { runId: options.runId }),
     ...(options.profile === undefined ? {} : { profile: options.profile }),
     ...(options.scope === undefined ? {} : { scope: options.scope }),
@@ -208,6 +219,7 @@ function prepareReviewStart(objective, options) {
     ...(options.runId === undefined ? {} : { runId: options.runId }),
     ...(options.profile === undefined ? {} : { profile: options.profile }),
     ...(options.scope === undefined ? {} : { scope: options.scope }),
+    resultIntent: 'read_only_evidence',
     team,
   });
 }
@@ -1285,7 +1297,7 @@ export class BatonRuns {
       throw clientError('startMany requires one bounded non-empty request array');
     }
     const allowed = new Set([
-      'objective', 'runId', 'profile', 'scope', 'model', 'harness', 'effort', 'exact',
+      'objective', 'runId', 'resultIntent', 'profile', 'scope', 'model', 'harness', 'effort', 'exact',
     ]);
     const normalized = requests.map((request) => {
       if (!request || typeof request !== 'object' || Array.isArray(request)) {
@@ -1514,6 +1526,18 @@ export class BatonClient {
     const runId = initial?.runId ?? initial?.outline?.runId ?? intent.runId;
     return new BatonRun(this.#application, runId, initial, {
       objective: intent.objective, helpTopic: 'review',
+    });
+  }
+
+  async explore(objective, options = {}) {
+    exactOptions(options, new Set([
+      'runId', 'profile', 'scope', 'model', 'harness', 'effort', 'exact',
+    ]), 'explore');
+    const intent = prepareRunStart(objective, { ...options, resultIntent: 'read_only_evidence' });
+    const initial = await this.#application.command('run.start', { intent });
+    const runId = initial?.runId ?? initial?.outline?.runId ?? intent.runId;
+    return new BatonRun(this.#application, runId, initial, {
+      objective: intent.objective, helpTopic: 'explore',
     });
   }
 
