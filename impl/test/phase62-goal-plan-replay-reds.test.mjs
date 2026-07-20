@@ -873,6 +873,12 @@ test('GP5/GP8: unauthorized Plan follow-up and recovery precede physical-owner c
   };
   const beforeSeq = driver.coordination.snapshot().lastSeq;
   const beforeAuthorityOps = driver.coordinator._authorityOps;
+  let cardCalls = 0;
+  const admittedCard = adapter.card;
+  adapter.card = () => {
+    cardCalls += 1;
+    throw new Error('poison card must remain unread');
+  };
 
   assert.deepEqual(
     await driver.coordinator.send(worker.id, 'Unchecked follow-up', 'turn'),
@@ -890,8 +896,34 @@ test('GP5/GP8: unauthorized Plan follow-up and recovery precede physical-owner c
   assert.equal(driver.coordination.snapshot().lastSeq, beforeSeq);
   assert.equal(spawnCalls, 1);
   assert.equal(promptCalls, 0);
+  assert.equal(cardCalls, 0, 'unauthorized continuation never consults adapter.card');
   assert.notEqual(handle.worktreeAuthorityLost, true);
 
+  // A turn can be admissible when called but terminal by the time its serialized delivery slot
+  // opens. Re-evaluation at that slot must use the same Plan-first refusal and must precede a
+  // poisoned semantic target, adapter card, fence/owner observations, and durable telemetry.
+  task.status = 'working';
+  handle.status = 'working';
+  let releaseSlot;
+  handle.sendChain = new Promise((resolve) => { releaseSlot = resolve; });
+  const queued = driver.coordinator.send(worker.id, 'Queued unchecked follow-up', 'turn', {
+    semanticTarget: { poisoned: true }, semanticTargetDigest: '0'.repeat(64),
+  });
+  await Promise.resolve();
+  task.status = 'completed';
+  handle.status = 'idle';
+  const queuedSeq = driver.coordination.snapshot().lastSeq;
+  const queuedFence = driver.coordinator._fences.current(worker.id);
+  releaseSlot();
+  assert.deepEqual(await queued,
+    { ok: false, result: 'goal_plan_continuation_not_authorized' });
+  assert.equal(driver.coordination.snapshot().lastSeq, queuedSeq);
+  assert.deepEqual(driver.coordinator._fences.current(worker.id), queuedFence);
+  assert.equal(cardCalls, 0);
+  assert.equal(promptCalls, 0);
+  assert.equal(spawnCalls, 1);
+
+  adapter.card = admittedCard;
   driver.coordinator._worktreeAuthorityAvailable = worktreeAuthorityAvailable;
   handle.status = original.handleStatus;
   task.status = original.taskStatus;
