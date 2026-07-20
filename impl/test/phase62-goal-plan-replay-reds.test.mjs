@@ -778,3 +778,126 @@ test('GP5/GP8: caller verification substitution refuses before task, capacity, o
   assert.deepEqual(driver.coordinator.list(), []);
   driver.close();
 });
+
+test('GP5/GP8: unauthorized Plan follow-up and recovery precede physical-owner checks and effects', async () => {
+  const repo = root('continuation-precedence-repo');
+  const logDir = root('continuation-precedence-log');
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'phase62@example.invalid'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Phase 62'], { cwd: repo });
+  writeFileSync(join(repo, 'base.txt'), 'base\n');
+  execFileSync('git', ['add', 'base.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+
+  const adapter = new MockAdapter({
+    harness: 'mock',
+    scenario: { outcome: 'completed', delayMs: 60_000, summary: 'must be stopped', files: {} },
+  });
+  const baseCard = adapter.card.bind(adapter);
+  adapter.card = () => ({
+    ...baseCard(),
+    sessions: { multiTurn: 'native', resume: 'native', fork: 'unsupported' },
+    modelSelection: {
+      mode: 'exact', configuredDefault: 'model-a', available: ['model-a'], family: 'mock',
+      acceptedPrefixes: ['model-'], acceptedAliases: [], reasoningEffort: ['low'],
+      serviceTier: null, provenance: 'test', refreshedAt: null,
+    },
+  });
+  let spawnCalls = 0; let promptCalls = 0;
+  const nativeSpawn = adapter.spawn.bind(adapter);
+  adapter.spawn = (...args) => { spawnCalls += 1; return nativeSpawn(...args); };
+  const nativePrompt = adapter.prompt.bind(adapter);
+  adapter.prompt = (...args) => { promptCalls += 1; return nativePrompt(...args); };
+
+  const driver = createDriver({
+    repoRoot: repo, repoId: policy.repoId, logDir, adapters: { mock: adapter },
+    goalPlanAuthority: { policy, authorize: async () => true }, stopDeadlineMs: 1_000,
+  });
+  const ctx = (principalId, powers, idempotencyKey) => ({
+    actor: `direct:${principalId}`, principalId, sessionId: `${principalId}-session`, powers,
+    repoId: policy.repoId, runId: null, idempotencyKey,
+  });
+  const goal = (await driver.coordinator.defineGoal({
+    objective: 'Hold one Plan-bound worker', definitionOfDone: ['node --test passes'],
+    constraints: ['No unchecked continuation'], risk: 'high', budget: goalBudget(), predecessor: null,
+  }, ctx('goal-owner', ['goal:define'], 'goal:continuation-precedence'))).goal;
+  const plan = (await driver.coordinator.proposePlan({
+    goal: ref('goal', goal), predecessor: null, nodes: [{
+      key: 'implement', objective: 'Hold the approved worker',
+      definitionOfDone: ['node --test passes'], deps: [], pathScope: ['impl/**'], risk: 'high',
+      budget: nodeBudget(), verification: verification(),
+      routes: { harnesses: ['mock'], models: ['model-a'], efforts: ['low'] },
+      capabilities: ['code', 'test'], effects: ['repository_edit'],
+    }],
+  }, ctx('planner', ['plan:propose'], 'plan:continuation-precedence'))).plan;
+  await driver.coordinator.approvePlan({
+    goal: ref('goal', goal), plan: ref('plan', plan),
+    expectedDisposition: null, disposition: 'approved',
+  }, ctx('approver', ['plan:approve'], 'approval:continuation-precedence'));
+  const gate = gateFor(goal, plan);
+  const approved = driver.coordination.previewPlanDispatch(
+    gate, { vendor: 'mock', model: 'model-a', effort: 'low' },
+  ).brief;
+  const { goalPlan: _coordinates, ...approvedBrief } = approved;
+  const worker = await driver.coordinator.spawn('mock', approvedBrief, {
+    taskId: 'continuation-precedence', goalPlan: gate,
+    model: 'model-a', effort: 'low', actor: 'direct:dispatcher', principalId: 'dispatcher',
+    sessionId: 'dispatcher-session', powers: ['plan:dispatch'],
+    idempotencyKey: 'dispatch:continuation-precedence',
+  });
+  const handle = driver.coordinator._workers.get(worker.id);
+  const task = driver.coordinator._tasks.get(handle.taskId);
+  await handle.worktreeReady;
+  assert.equal(spawnCalls, 1);
+
+  const original = {
+    handleStatus: handle.status, taskStatus: task.status,
+    ownedWorktreeAuthority: handle.ownedWorktreeAuthority,
+    workspaceOwnerBindingValid: handle.workspaceOwnerBindingValid,
+    workspaceOwnerProcessAuthorityValid: handle.workspaceOwnerProcessAuthorityValid,
+    workspaceOwnerBindingDiagnostic: handle.workspaceOwnerBindingDiagnostic,
+  };
+  task.status = 'completed';
+  handle.status = 'idle';
+  handle.ownedWorktreeAuthority = false;
+  handle.workspaceOwnerBindingValid = false;
+  handle.workspaceOwnerProcessAuthorityValid = false;
+  handle.workspaceOwnerBindingDiagnostic = 'workspace_owner_binding_unproven';
+  let physicalOwnerChecks = 0;
+  const worktreeAuthorityAvailable = driver.coordinator._worktreeAuthorityAvailable.bind(
+    driver.coordinator,
+  );
+  driver.coordinator._worktreeAuthorityAvailable = (...args) => {
+    physicalOwnerChecks += 1;
+    return worktreeAuthorityAvailable(...args);
+  };
+  const beforeSeq = driver.coordination.snapshot().lastSeq;
+  const beforeAuthorityOps = driver.coordinator._authorityOps;
+
+  assert.deepEqual(
+    await driver.coordinator.send(worker.id, 'Unchecked follow-up', 'turn'),
+    { ok: false, result: 'goal_plan_continuation_not_authorized' },
+  );
+  assert.equal(physicalOwnerChecks, 0, 'follow-up refusal precedes owner validation');
+  handle.status = 'orphaned';
+  assert.deepEqual(
+    await driver.coordinator.recover(worker.id),
+    { ok: false, result: 'goal_plan_continuation_not_authorized' },
+  );
+  assert.equal(physicalOwnerChecks, 0, 'recovery refusal precedes owner validation');
+  assert.equal(driver.coordinator._authorityOps, beforeAuthorityOps);
+  assert.equal(driver.coordinator._recoveryAttempts.size, 0);
+  assert.equal(driver.coordination.snapshot().lastSeq, beforeSeq);
+  assert.equal(spawnCalls, 1);
+  assert.equal(promptCalls, 0);
+  assert.notEqual(handle.worktreeAuthorityLost, true);
+
+  driver.coordinator._worktreeAuthorityAvailable = worktreeAuthorityAvailable;
+  handle.status = original.handleStatus;
+  task.status = original.taskStatus;
+  handle.ownedWorktreeAuthority = original.ownedWorktreeAuthority;
+  handle.workspaceOwnerBindingValid = original.workspaceOwnerBindingValid;
+  handle.workspaceOwnerProcessAuthorityValid = original.workspaceOwnerProcessAuthorityValid;
+  handle.workspaceOwnerBindingDiagnostic = original.workspaceOwnerBindingDiagnostic;
+  assert.equal((await driver.drainAndClose()).state, 'closed');
+});
