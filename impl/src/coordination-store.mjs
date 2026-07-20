@@ -5,7 +5,7 @@ import {
 import { createHash, randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFileSync } from 'node:child_process';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { deserialize, serialize } from 'node:v8';
 import {
   GoalPlanValidationError, assertGoalSuccessor, buildAuthoritativeBrief, goalPlanCanonical,
@@ -2415,7 +2415,7 @@ export class CoordinationStore {
   _validateRecoverySessionRequest(sessionRequest, priorTask, fail) {
     const requestFields = ['context', 'id', 'mode'];
     const contextFields = new Set([
-      'baseSha', 'branch', 'capacityReservation', 'ownerTaskId', 'repoRoot',
+      'baseSha', 'branch', 'capacityReservation', 'logicalTaskId', 'ownerReceiptDigest', 'ownerTaskId', 'repoRoot',
       'sparseCheckoutIdentity', 'sparsePaths', 'toolchainProjection', 'worktree',
     ]);
     const context = sessionRequest?.context;
@@ -2428,6 +2428,8 @@ export class CoordinationStore {
       || Object.keys(context).some((key) => !contextFields.has(key))
       || !boundedText(context.worktree, 32_768)
       || !boundedText(context.ownerTaskId, 4_096)
+      || (context.logicalTaskId !== undefined && !boundedText(context.logicalTaskId, 4_096))
+      || (context.ownerReceiptDigest !== undefined && !/^[a-f0-9]{64}$/u.test(context.ownerReceiptDigest))
       || ['repoRoot', 'baseSha', 'branch'].some((key) => context[key] !== undefined
         && !boundedText(context[key], key === 'repoRoot' ? 32_768 : 4_096))
       || (context.sparsePaths !== undefined && (!Array.isArray(context.sparsePaths)
@@ -2443,7 +2445,13 @@ export class CoordinationStore {
       ? priorTask.sessionRequest.context
       : null;
     const expectedOwnerTaskId = priorContext?.ownerTaskId ?? priorTask?.id;
-    if (context.ownerTaskId !== expectedOwnerTaskId
+    const boundPhysicalOwner = priorContext === null
+      && /^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId)
+      && context.logicalTaskId === priorTask?.id
+      && /^[a-f0-9]{64}$/u.test(context.ownerReceiptDigest ?? '')
+      && context.branch === `baton/${context.ownerTaskId}`
+      && basename(context.worktree) === context.ownerTaskId;
+    if ((context.ownerTaskId !== expectedOwnerTaskId && !boundPhysicalOwner)
       || (priorTask?.worktreeBaseSha != null && context.baseSha !== priorTask.worktreeBaseSha)
       || (priorContext && canonicalDigest(context) !== canonicalDigest(priorContext))) {
       fail('recovery refinement session context changes durable worktree lineage', 'recovery_refinement_conflict');

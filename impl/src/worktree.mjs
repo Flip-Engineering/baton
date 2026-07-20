@@ -48,6 +48,11 @@ export class WorktreeLockedError extends Error {
 export class WorktreeCleanupError extends Error {
   constructor(message) { super(message); this.name = 'WorktreeCleanupError'; this.code = 'worktree_cleanup_failed'; }
 }
+export class WorkspaceOwnerDiagnostic extends Error {
+  constructor(message, code = 'workspace_owner_ambiguous') {
+    super(message); this.name = 'WorkspaceOwnerDiagnostic'; this.code = code;
+  }
+}
 export class SparseCheckoutError extends Error {
   constructor(message, code = 'worker_sparse_projection_changed') { super(message); this.name = 'SparseCheckoutError'; this.code = code; }
 }
@@ -176,6 +181,230 @@ function writeMeta(repoRoot, taskId, meta) {
     rmSync(temp, { force: true });
     throw error;
   }
+}
+
+function writePrivateJson(f, value, { exclusive = false } = {}) {
+  mkdirSync(dirname(f), { recursive: true, mode: 0o700 });
+  chmodSync(dirname(f), 0o700);
+  if (exclusive) {
+    const fd = openSync(f, 'wx', 0o600);
+    try { writeFileSync(fd, `${JSON.stringify(value, null, 2)}\n`, 'utf8'); fsyncSync(fd); }
+    finally { closeSync(fd); }
+    try { const parent = openSync(dirname(f), 'r'); try { fsyncSync(parent); } finally { closeSync(parent); } }
+    catch { /* directory fsync is unavailable on some filesystems */ }
+    return;
+  }
+  const temp = `${f}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`;
+  let fd;
+  try {
+    fd = openSync(temp, 'wx', 0o600);
+    writeFileSync(fd, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+    fsyncSync(fd);
+    closeSync(fd); fd = undefined;
+    renameSync(temp, f);
+    try { const parent = openSync(dirname(f), 'r'); try { fsyncSync(parent); } finally { closeSync(parent); } }
+    catch { /* directory fsync is unavailable on some filesystems */ }
+  } catch (error) {
+    if (fd !== undefined) try { closeSync(fd); } catch { /* no-op */ }
+    rmSync(temp, { force: true });
+    throw error;
+  }
+}
+
+function workspaceOwnerRoot(repoRoot, create = false) {
+  const raw = sh('git', ['rev-parse', '--git-common-dir'], repoRoot);
+  const common = isAbsolute(raw) ? raw : pathResolve(repoRoot, raw);
+  const commonReal = realpathSync(common);
+  const batonRoot = join(commonReal, 'baton');
+  const root = join(batonRoot, 'workspace-owners');
+  if (create && !existsSync(batonRoot)) {
+    try { mkdirSync(batonRoot, { mode: 0o700 }); }
+    catch (error) { if (error?.code !== 'EEXIST') throw error; }
+  }
+  if (existsSync(batonRoot)) {
+    const stat = lstatSync(batonRoot);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync(batonRoot) !== batonRoot) {
+      throw new WorkspaceOwnerDiagnostic('physical workspace owner parent is unsafe', 'workspace_owner_root_invalid');
+    }
+  }
+  if (create && !existsSync(root)) {
+    try { mkdirSync(root, { mode: 0o700 }); }
+    catch (error) { if (error?.code !== 'EEXIST') throw error; }
+  }
+  if (existsSync(root)) {
+    const stat = lstatSync(root);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync(root) !== root) {
+      throw new WorkspaceOwnerDiagnostic('physical workspace owner root is unsafe', 'workspace_owner_root_invalid');
+    }
+    chmodSync(root, 0o700);
+  }
+  return root;
+}
+
+function workspaceOwnerReceiptPath(repoRoot, physicalOwnerId) {
+  normalizePhysicalOwnerId(physicalOwnerId, 'physical workspace owner');
+  return join(workspaceOwnerRoot(repoRoot, false), `${physicalOwnerId}.json`);
+}
+
+function validOwnerText(value, maxBytes = 4_096, nullable = false) {
+  return (nullable && value === null) || (typeof value === 'string' && value.length > 0
+    && Buffer.byteLength(value) <= maxBytes && !value.includes('\0'));
+}
+
+function receiptCore(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const { receiptDigest: _receiptDigest, ...core } = value;
+  return core;
+}
+
+function validateWorkspaceOwnerReceipt(value, repoRoot, expectedOwnerId = null) {
+  const fields = [
+    'attemptId', 'baseSha', 'branch', 'controller', 'controllerId', 'createdAt',
+    'deploymentId', 'logicalTaskId', 'physicalOwnerId', 'processGeneration', 'receiptDigest',
+    'runId', 'schemaVersion', 'state', 'worktree',
+  ];
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).sort().join(',') !== fields.sort().join(',')
+    || value.schemaVersion !== 1
+    || !/^ws-[a-f0-9]{32}$/u.test(value.physicalOwnerId ?? '')
+    || (expectedOwnerId !== null && value.physicalOwnerId !== expectedOwnerId)
+    || value.branch !== `baton/${value.physicalOwnerId}`
+    || value.worktree !== pathResolve(repoRoot, '.baton', 'wt', value.physicalOwnerId)
+    || !/^[a-f0-9]{40}$/u.test(value.baseSha ?? '')
+    || !validOwnerText(value.logicalTaskId)
+    || !validOwnerText(value.runId, 4_096, true)
+    || !validOwnerText(value.attemptId, 4_096)
+    || !Number.isSafeInteger(value.processGeneration) || value.processGeneration <= 0
+    || !/^[a-f0-9]{64}$/u.test(value.deploymentId ?? '')
+    || !/^[a-f0-9]{64}$/u.test(value.controllerId ?? '')
+    || !value.controller || typeof value.controller !== 'object' || Array.isArray(value.controller)
+    || Object.keys(value.controller).sort().join(',') !== ['pid', 'pidStart'].join(',')
+    || !Number.isSafeInteger(value.controller.pid) || value.controller.pid <= 0
+    || !validOwnerText(value.controller.pidStart, 256)
+    || !['allocated', 'ready', 'stopped'].includes(value.state)
+    || !Number.isFinite(Date.parse(value.createdAt))
+    || value.receiptDigest !== canonicalDigest(receiptCore(value))) {
+    throw new WorkspaceOwnerDiagnostic('physical workspace owner receipt is invalid', 'workspace_owner_receipt_invalid');
+  }
+  return Object.freeze(JSON.parse(JSON.stringify(value)));
+}
+
+function readWorkspaceOwnerReceipt(repoRoot, physicalOwnerId) {
+  let f;
+  try { f = workspaceOwnerReceiptPath(repoRoot, physicalOwnerId); } catch { return null; }
+  if (!existsSync(f)) return null;
+  try {
+    const stat = lstatSync(f);
+    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || stat.size > 64 * 1024) {
+      throw new WorkspaceOwnerDiagnostic('physical workspace owner receipt is unsafe', 'workspace_owner_receipt_invalid');
+    }
+    return validateWorkspaceOwnerReceipt(JSON.parse(readFileSync(f, 'utf8')), repoRoot, physicalOwnerId);
+  } catch (error) {
+    if (error instanceof WorkspaceOwnerDiagnostic) throw error;
+    throw Object.assign(new WorkspaceOwnerDiagnostic('physical workspace owner receipt is unreadable', 'workspace_owner_receipt_invalid'), { cause: error });
+  }
+}
+
+function ownerProcessStart(pid) {
+  try {
+    const observed = execFileSync('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], {
+      encoding: 'utf8', maxBuffer: 4_096, stdio: ['ignore', 'pipe', 'ignore'], timeout: 1_000,
+    }).trim();
+    return observed && Buffer.byteLength(observed) <= 256 ? observed : null;
+  } catch { return null; }
+}
+
+function workspaceOwnerAuthorityState(receipt, authority) {
+  if (authority && receipt.deploymentId === authority.deploymentId) {
+    return receipt.controllerId === authority.controllerId ? 'current' : 'local_dead';
+  }
+  let alive = false;
+  try { process.kill(receipt.controller.pid, 0); alive = true; }
+  catch (error) {
+    if (error?.code === 'EPERM') alive = true;
+    else if (error?.code !== 'ESRCH') return 'ambiguous_foreign';
+  }
+  if (!alive) return 'dead_foreign';
+  const observed = ownerProcessStart(receipt.controller.pid);
+  if (observed === null) return 'ambiguous_foreign';
+  return observed === receipt.controller.pidStart ? 'live_foreign' : 'dead_foreign';
+}
+
+/** Allocate an opaque physical workspace owner before any branch/worktree effect. */
+export function allocatePhysicalWorkspaceOwner(repoRoot, binding, authority) {
+  const bindingFields = ['attemptId', 'baseSha', 'logicalTaskId', 'processGeneration', 'runId'];
+  const authorityFields = ['controllerId', 'deploymentId', 'pid', 'pidStart'];
+  if (!binding || typeof binding !== 'object' || Array.isArray(binding)
+    || Object.keys(binding).sort().join(',') !== bindingFields.sort().join(',')
+    || !validOwnerText(binding.logicalTaskId) || !validOwnerText(binding.runId, 4_096, true)
+    || !validOwnerText(binding.attemptId) || !/^[a-f0-9]{40}$/u.test(binding.baseSha ?? '')
+    || !Number.isSafeInteger(binding.processGeneration) || binding.processGeneration <= 0
+    || !authority || typeof authority !== 'object' || Array.isArray(authority)
+    || Object.keys(authority).sort().join(',') !== authorityFields.sort().join(',')
+    || !/^[a-f0-9]{64}$/u.test(authority.deploymentId ?? '')
+    || !/^[a-f0-9]{64}$/u.test(authority.controllerId ?? '')
+    || !Number.isSafeInteger(authority.pid) || authority.pid <= 0
+    || !validOwnerText(authority.pidStart, 256)) {
+    throw new TypeError('physical workspace owner binding is invalid');
+  }
+  try { gitFile(['cat-file', '-e', `${binding.baseSha}^{commit}`], repoRoot, { stdio: 'ignore' }); }
+  catch { throw new InvalidShaError('physical workspace owner base SHA is not an exact commit'); }
+  const root = workspaceOwnerRoot(repoRoot, true);
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const physicalOwnerId = `ws-${randomBytes(16).toString('hex')}`;
+    normalizePhysicalOwnerId(physicalOwnerId, 'physical workspace owner');
+    const core = {
+      schemaVersion: 1,
+      physicalOwnerId,
+      deploymentId: authority.deploymentId,
+      controllerId: authority.controllerId,
+      controller: { pid: authority.pid, pidStart: authority.pidStart },
+      runId: binding.runId,
+      attemptId: binding.attemptId,
+      logicalTaskId: binding.logicalTaskId,
+      processGeneration: binding.processGeneration,
+      branch: `baton/${physicalOwnerId}`,
+      worktree: pathResolve(repoRoot, '.baton', 'wt', physicalOwnerId),
+      baseSha: binding.baseSha,
+      state: 'allocated',
+      createdAt: new Date().toISOString(),
+    };
+    const receipt = Object.freeze({ ...core, receiptDigest: canonicalDigest(core) });
+    try {
+      writePrivateJson(join(root, `${physicalOwnerId}.json`), receipt, { exclusive: true });
+      return validateWorkspaceOwnerReceipt(receipt, repoRoot, physicalOwnerId);
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+    }
+  }
+  throw new WorktreeAlreadyExistsError('could not allocate a collision-free physical workspace owner');
+}
+
+function updateWorkspaceOwnerState(repoRoot, physicalOwnerId, state) {
+  const prior = readWorkspaceOwnerReceipt(repoRoot, physicalOwnerId);
+  if (!prior) throw new WorkspaceOwnerDiagnostic('physical workspace owner receipt is absent', 'workspace_owner_receipt_absent');
+  const core = { ...receiptCore(prior), state };
+  const next = { ...core, receiptDigest: canonicalDigest(core) };
+  writePrivateJson(workspaceOwnerReceiptPath(repoRoot, physicalOwnerId), next);
+  return validateWorkspaceOwnerReceipt(next, repoRoot, physicalOwnerId);
+}
+
+export function physicalWorkspaceOwnerReceipt(repoRoot, physicalOwnerId) {
+  return readWorkspaceOwnerReceipt(repoRoot, physicalOwnerId);
+}
+
+export function releasePhysicalWorkspaceOwner(repoRoot, physicalOwnerId, opts = {}) {
+  const receipt = readWorkspaceOwnerReceipt(repoRoot, physicalOwnerId);
+  if (!receipt) return false;
+  if (opts.requireAllocated === true && receipt.state !== 'allocated') return false;
+  const registered = listWorktrees(repoRoot).some((entry) => pathResolve(entry.dir) === receipt.worktree);
+  let branchPresent = false;
+  try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/${receipt.branch}`], repoRoot); branchPresent = true; } catch { /* absent */ }
+  if (existsSync(receipt.worktree) || registered || branchPresent) return false;
+  rmSync(workspaceOwnerReceiptPath(repoRoot, physicalOwnerId), { force: true });
+  try { const parent = openSync(workspaceOwnerRoot(repoRoot, false), 'r'); try { fsyncSync(parent); } finally { closeSync(parent); } }
+  catch { /* directory fsync is unavailable on some filesystems */ }
+  return true;
 }
 
 function logEvent(opts, worker, kind, payload) {
@@ -472,6 +701,19 @@ export async function pinBaseSha(repoRoot, opts = {}) {
  */
 export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
   normalizePhysicalOwnerId(taskId, 'taskId');
+  let ownerReceipt = null;
+  if (opts.ownerReceipt !== undefined) {
+    ownerReceipt = validateWorkspaceOwnerReceipt(opts.ownerReceipt, repoRoot, taskId);
+    if (ownerReceipt.baseSha !== baseSha || ownerReceipt.branch !== `baton/${taskId}`
+      || ownerReceipt.worktree !== pathResolve(repoRoot, '.baton', 'wt', taskId)
+      || ownerReceipt.state !== 'allocated') {
+      throw new WorkspaceOwnerDiagnostic('physical workspace owner receipt disagrees with creation', 'workspace_owner_receipt_mismatch');
+    }
+    const durable = readWorkspaceOwnerReceipt(repoRoot, taskId);
+    if (!durable || durable.receiptDigest !== ownerReceipt.receiptDigest) {
+      throw new WorkspaceOwnerDiagnostic('physical workspace owner receipt is not durable', 'workspace_owner_receipt_mismatch');
+    }
+  }
   try { gitFile(['check-ref-format', '--branch', `baton/${taskId}`], repoRoot, { stdio: 'ignore' }); }
   catch { throw new TypeError('taskId must produce one valid Baton branch ref'); }
   assertNoPhysicalOwnerCollision(repoRoot, taskId);
@@ -535,12 +777,15 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
     }
     writeMeta(repoRoot, taskId, meta);
     validateOwnedWorktree(repoRoot, taskId, { expectedBaseSha: baseSha, expectedBranch: branch, sparseCheckoutIdentity: sparseIdentity });
+    if (ownerReceipt) ownerReceipt = updateWorkspaceOwnerState(repoRoot, taskId, 'ready');
     logEvent(opts, taskId, 'worktree.created', {
       dir, branch, baseSha, copiedDependencies, sparsePaths: [...sparsePaths], sparseCheckoutIdentity: sparseIdentity,
+      ...(ownerReceipt ? { ownerReceiptDigest: ownerReceipt.receiptDigest } : {}),
       ...(toolchainProjection ? { toolchainProjection } : {}),
     });
     return {
       taskId, dir, branch, baseSha, createdAt, copiedDependencies, sparsePaths: [...sparsePaths], sparseCheckoutIdentity: sparseIdentity,
+      ...(ownerReceipt ? { ownerReceipt } : {}),
       ...(toolchainProjection ? { toolchainProjection } : {}),
     };
   } catch (err) {
@@ -550,6 +795,7 @@ export async function createFromBase(repoRoot, taskId, baseSha, opts = {}) {
     try { sh('git', ['worktree', 'prune'], repoRoot); } catch { /* best-effort */ }
     if (projectionExcludePath) rmSync(projectionExcludePath, { force: true });
     rmSync(metaPathFor(repoRoot, taskId), { force: true });
+    if (ownerReceipt) releasePhysicalWorkspaceOwner(repoRoot, taskId, { requireAllocated: true });
     throw err;
   }
 }
@@ -855,6 +1101,8 @@ export async function markStopped(repoRoot, taskId) {
   const meta = { ...validatedMetadata(repoRoot, taskId) };
   meta.stoppedAt = new Date().toISOString();
   writeMeta(repoRoot, taskId, meta);
+  try { if (readWorkspaceOwnerReceipt(repoRoot, taskId)) updateWorkspaceOwnerState(repoRoot, taskId, 'stopped'); }
+  catch (error) { throw Object.assign(new WorktreeCleanupError('physical workspace owner could not be stopped'), { cause: error }); }
 }
 
 // ---------------------------------------------------------------------------
@@ -907,6 +1155,8 @@ export async function reap(repoRoot, taskId, opts = {}) {
   if (existsSync(dir) || existsSync(metaFile) || existsSync(projectionExclude) || registered || branchPresent) {
     throw new WorktreeCleanupError('owned worktree cleanup did not reach an exact absent state');
   }
+  try { releasePhysicalWorkspaceOwner(repoRoot, taskId); }
+  catch (error) { throw Object.assign(new WorktreeCleanupError('physical workspace owner receipt could not be released'), { cause: error }); }
   logEvent(opts, taskId, 'worktree.reaped', { dir });
 }
 
@@ -921,7 +1171,7 @@ export async function reap(repoRoot, taskId, opts = {}) {
  * @returns {Promise<{prunedAdminEntries:string[], removedZombieDirs:string[], removedIntegrationDirs:string[], removedVerifyDirs:string[], errors:string[]}>}
  */
 export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
-  const report = { prunedAdminEntries: [], removedZombieDirs: [], removedIntegrationDirs: [], removedVerifyDirs: [], errors: [] };
+  const report = { prunedAdminEntries: [], removedZombieDirs: [], removedIntegrationDirs: [], removedVerifyDirs: [], diagnostics: [], errors: [] };
   let registrationsBeforePrune = [];
   try { registrationsBeforePrune = listWorktrees(repoRoot); }
   catch (err) { report.errors.push(`registration-scan: ${err.message || err}`); }
@@ -981,13 +1231,37 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
       catch (err) { report.errors.push(`${taskId}: ${err.message || err}`); continue; }
       const baseRoot = wtRoot ?? join(realpathSync(repoRoot), '.baton', 'wt');
       const fullDir = join(baseRoot, normalizedTaskId); const metaFile = join(baseRoot, `${normalizedTaskId}.meta.json`); const projectionExclude = join(baseRoot, `${normalizedTaskId}.projection.exclude`);
+      let ownerReceipt = null; let ownerState = null;
+      try {
+        ownerReceipt = readWorkspaceOwnerReceipt(repoRoot, normalizedTaskId);
+        if (ownerReceipt) ownerState = workspaceOwnerAuthorityState(ownerReceipt, opts.ownerAuthority);
+      } catch (error) {
+        report.diagnostics.push(Object.freeze({
+          code: error?.code ?? 'workspace_owner_ambiguous', physicalOwnerId: normalizedTaskId,
+          authority: 'ambiguous', retained: true,
+        }));
+        continue;
+      }
+      // An expected-owner list is liveness input, not a transferable cleanup capability. A
+      // foreign receipt remains authoritative even if a caller names its opaque owner or its
+      // local metadata fails this deployment's sparse-policy validation.
+      if (ownerReceipt && ['live_foreign', 'ambiguous_foreign', 'dead_foreign'].includes(ownerState)) {
+        report.diagnostics.push(Object.freeze({
+          code: ownerState === 'live_foreign' ? 'workspace_owner_live_foreign'
+            : ownerState === 'dead_foreign' ? 'workspace_owner_dead_foreign_checkout'
+              : 'workspace_owner_ambiguous_foreign',
+          physicalOwnerId: normalizedTaskId, deploymentId: ownerReceipt.deploymentId,
+          logicalTaskId: ownerReceipt.logicalTaskId, authority: ownerState, retained: true,
+        }));
+        continue;
+      }
       if (expected.has(taskId) && existsSync(fullDir)) {
         try {
           validateOwnedWorktree(repoRoot, taskId, {
             ...(opts.sparseCheckoutIdentity ? { sparseCheckoutIdentity: opts.sparseCheckoutIdentity } : {}),
           });
           continue;
-        } catch { /* invalid expected authority is quarantined below */ }
+        } catch { /* invalid expected local authority is quarantined below */ }
       }
       try {
         const hadDir = existsSync(fullDir); const hadResidue = hadDir || existsSync(metaFile) || existsSync(projectionExclude);
@@ -1006,9 +1280,72 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         if (existsSync(fullDir) || existsSync(metaFile) || existsSync(projectionExclude) || branchPresent) throw new WorktreeCleanupError('reconciled worker ownership remained after cleanup');
         if (hadDir) report.removedZombieDirs.push(fullDir);
         if (hadResidue || hadBranch) logEvent(opts, taskId, 'worktree.reconciled', { dir: fullDir });
+        if (ownerReceipt) releasePhysicalWorkspaceOwner(repoRoot, normalizedTaskId);
       } catch (err) {
         report.errors.push(`${taskId}: ${err.message || err}`);
       }
+    }
+  }
+
+  // A crash can leave only the pre-effect receipt and its branch: no local checkout directory,
+  // no metadata, and no Git worktree registration. The shared common-Git receipt is the sole
+  // authority that makes this residue attributable. Reap it only when its exact controller is
+  // locally proven dead; live and observation-ambiguous foreign owners remain untouched.
+  let receiptRoot = null;
+  try { receiptRoot = workspaceOwnerRoot(repoRoot, false); } catch { /* non-Git already failed above */ }
+  if (receiptRoot && existsSync(receiptRoot)) {
+    const registered = listWorktrees(repoRoot);
+    for (const name of readdirSync(receiptRoot).filter((entry) => entry.endsWith('.json')).sort()) {
+      const physicalOwnerId = name.slice(0, -'.json'.length);
+      if (localWorkerCandidates.has(physicalOwnerId) || expected.has(physicalOwnerId)) continue;
+      let receipt;
+      try { receipt = readWorkspaceOwnerReceipt(repoRoot, physicalOwnerId); }
+      catch (error) {
+        report.diagnostics.push(Object.freeze({
+          code: error?.code ?? 'workspace_owner_receipt_invalid', physicalOwnerId,
+          authority: 'ambiguous', retained: true,
+        }));
+        continue;
+      }
+      if (!receipt) continue;
+      const isRegistered = registered.some((entry) => pathResolve(entry.dir) === receipt.worktree);
+      if (existsSync(receipt.worktree) || isRegistered) {
+        report.diagnostics.push(Object.freeze({
+          code: 'workspace_owner_foreign_checkout_retained', physicalOwnerId,
+          deploymentId: receipt.deploymentId, logicalTaskId: receipt.logicalTaskId,
+          authority: workspaceOwnerAuthorityState(receipt, opts.ownerAuthority), retained: true,
+        }));
+        continue;
+      }
+      const authority = workspaceOwnerAuthorityState(receipt, opts.ownerAuthority);
+      if (!['local_dead', 'dead_foreign'].includes(authority)) {
+        report.diagnostics.push(Object.freeze({
+          code: authority === 'live_foreign' ? 'workspace_owner_live_foreign' : 'workspace_owner_ambiguous_foreign',
+          physicalOwnerId, deploymentId: receipt.deploymentId, logicalTaskId: receipt.logicalTaskId,
+          authority, retained: true,
+        }));
+        continue;
+      }
+      let branchPresent = false; let branchSha = null;
+      try { branchSha = sh('git', ['rev-parse', '--verify', `refs/heads/${receipt.branch}^{commit}`], repoRoot); branchPresent = true; } catch { /* absent */ }
+      if (branchPresent && branchSha !== receipt.baseSha) {
+        report.diagnostics.push(Object.freeze({
+          code: 'workspace_owner_branch_mismatch', physicalOwnerId,
+          deploymentId: receipt.deploymentId, logicalTaskId: receipt.logicalTaskId,
+          authority, retained: true,
+        }));
+        continue;
+      }
+      try {
+        if (branchPresent) sh('git', ['branch', '-D', receipt.branch], repoRoot);
+        if (!releasePhysicalWorkspaceOwner(repoRoot, physicalOwnerId, { requireAllocated: true })) {
+          throw new WorktreeCleanupError('branch-only physical owner receipt remained');
+        }
+        if (branchPresent) logEvent(opts, physicalOwnerId, 'worktree.branch_residue_reconciled', {
+          branch: receipt.branch, baseSha: receipt.baseSha, logicalTaskId: receipt.logicalTaskId,
+          processGeneration: receipt.processGeneration,
+        });
+      } catch (error) { report.errors.push(`${physicalOwnerId}: ${error.message || error}`); }
     }
   }
 
@@ -1034,6 +1371,8 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
   catch (err) { report.errors.push(`final-prune: ${err.message || err}`); }
   try {
     const registered = listWorktrees(repoRoot);
+    const retainedOwners = new Set(report.diagnostics.filter((row) => row.retained === true)
+      .map((row) => row.physicalOwnerId));
     const verifyPrefix = `${pathResolve(repoRoot, '.baton', 'verify')}${sep}`;
     const integrationPrefix = `${pathResolve(repoRoot, '.baton', 'integrate')}${sep}`;
     const workerRoot = pathResolve(repoRoot, '.baton', 'wt');
@@ -1046,13 +1385,14 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
       const withinWorkers = pathRelative(workerRoot, absolute);
       if (withinWorkers !== '' && withinWorkers !== '..' && !withinWorkers.startsWith(`..${sep}`) && !isAbsolute(withinWorkers)) {
         const taskId = withinWorkers.split(sep)[0];
-        if (!expected.has(taskId)) report.errors.push(`registered-zombie-worker:${taskId}`);
+        if (!expected.has(taskId) && !retainedOwners.has(taskId)) report.errors.push(`registered-zombie-worker:${taskId}`);
       }
     }
     for (const taskId of localWorkerCandidates) {
       let branchPresent = false;
       try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/baton/${taskId}`], repoRoot); branchPresent = true; } catch { /* absent */ }
-      if (branchPresent && (!expected.has(taskId) || !existsSync(join(wtRoot, taskId)))) report.errors.push(`branch-zombie-worker:${taskId}`);
+      if (branchPresent && !retainedOwners.has(taskId)
+        && (!expected.has(taskId) || !existsSync(join(wtRoot, taskId)))) report.errors.push(`branch-zombie-worker:${taskId}`);
     }
   } catch (err) { report.errors.push(`registration-postcheck: ${err.message || err}`); }
   return report;
