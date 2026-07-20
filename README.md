@@ -1,3 +1,9 @@
+<div align="center">
+
+<img src=".github/assets/banner.svg" alt="Baton — cross-harness agent orchestration" width="100%"/>
+
+</div>
+
 # baton
 
 **Cross-harness agent orchestration research.** Can an orchestrator agent running in one full coding harness (Claude Code CLI, Codex CLI) direct *other* full-session harnesses (Codex CLI, Claude Code CLI, Z.ai GLM harness) as subordinate workers — with real messaging, telemetry, and mid-flight interruption/steering — rather than the flat "spawn a process, wait for stdout" pattern?

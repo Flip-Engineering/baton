@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 400" role="img" aria-label="Baton — cross-harness agent orchestration">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="900" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0A0A14"/>
+      <stop offset="100%" stop-color="#10101E"/>
+    </linearGradient>
+    <linearGradient id="b-chip" x1="400" y1="130" x2="540" y2="330" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFDF7"/>
+      <stop offset="1" stop-color="#EFE8D8"/>
+    </linearGradient>
+    <linearGradient id="b-hat" x1="420" y1="60" x2="530" y2="180" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3B4FA8"/>
+      <stop offset="1" stop-color="#1B2452"/>
+    </linearGradient>
+    <linearGradient id="b-gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#E5B45C"/>
+      <stop offset="1" stop-color="#8E6230"/>
+    </linearGradient>
+    <linearGradient id="b-red" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F26D5B"/>
+      <stop offset="1" stop-color="#A63F35"/>
+    </linearGradient>
+    <linearGradient id="b-cool" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#83C8BF"/>
+      <stop offset="1" stop-color="#315F6E"/>
+    </linearGradient>
+    <linearGradient id="b-violet" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#B07CD8"/>
+      <stop offset="1" stop-color="#5E3A8C"/>
+    </linearGradient>
+    <linearGradient id="b-green" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7BC8A4"/>
+      <stop offset="1" stop-color="#2F6B52"/>
+    </linearGradient>
+    <filter id="b-shadow" filterUnits="userSpaceOnUse" x="380" y="40" width="280" height="330" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#D9A44B" flood-opacity="0.16"/>
+    </filter>
+  </defs>
+
+  <rect width="900" height="400" fill="url(#bg)"/>
+
+  <!-- wordmark -->
+  <text x="64" y="118" font-family="system-ui, -apple-system, sans-serif" font-size="52" font-weight="800" letter-spacing="12" fill="#EAEAEA">BATON</text>
+  <text x="66" y="150" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" letter-spacing="2" fill="#8B8B8B">CROSS-HARNESS AGENT ORCHESTRATION</text>
+  <text x="66" y="196" font-family="system-ui, -apple-system, sans-serif" font-size="12.5" fill="#6B6B6B">One conductor. Full-harness workers.</text>
+  <text x="66" y="216" font-family="system-ui, -apple-system, sans-serif" font-size="12.5" fill="#6B6B6B">Real messaging, telemetry, mid-flight steering.</text>
+
+  <!-- music staff flowing under everything -->
+  <g stroke="#3A3A4E" stroke-width="1" fill="none" opacity="0.5">
+    <path d="M50 320 C 230 300, 420 350, 620 310 S 840 280, 870 288"/>
+    <path d="M50 332 C 230 312, 420 362, 620 322 S 840 292, 870 300"/>
+    <path d="M50 344 C 230 324, 420 374, 620 334 S 840 304, 870 312"/>
+  </g>
+
+  <!-- constellation lanes: baton-tip magic to the fleet chips -->
+  <g stroke="#9B59B6" stroke-opacity="0.45" stroke-width="1.5" stroke-dasharray="5 4">
+    <line x1="610" y1="92" x2="714" y2="116"/>
+    <line x1="610" y1="92" x2="714" y2="176"/>
+    <line x1="610" y1="92" x2="714" y2="236"/>
+    <line x1="610" y1="92" x2="714" y2="296"/>
+    <line x1="610" y1="92" x2="714" y2="356"/>
+  </g>
+
+  <!-- the Flip chip, conducting -->
+  <g filter="url(#b-shadow)">
+    <rect x="404" y="150" width="136" height="136" rx="32" fill="url(#b-chip)" stroke="#292313" stroke-width="6"/>
+
+    <!-- sorcerer hat -->
+    <path d="M424 134 C436 96 462 74 480 70 C482 92 499 106 525 114 C499 123 458 129 424 134 Z" fill="url(#b-hat)" stroke="#292313" stroke-width="4.5" stroke-linejoin="round"/>
+    <path d="M424 134 C457 125 502 117 532 113 C536 120 534 127 526 130 C493 138 456 141 428 142 C422 140 420 136 424 134 Z" fill="url(#b-hat)" stroke="#292313" stroke-width="4.5" stroke-linejoin="round"/>
+    <path d="M464 92 l3 7 7 3 -7 3 -3 7 -3-7 -7-3 7-3 z" fill="#FFE9A8"/>
+    <path d="M494 108 l2.5 6 6 2.5 -6 2.5 -2.5 6 -2.5-6 -6-2.5 6-2.5 z" fill="#FFE9A8"/>
+    <path d="M444 112 a7.5 7.5 0 1 0 6.5 12 a5.5 5.5 0 1 1 -6.5 -12 z" fill="#FFE9A8"/>
+
+    <!-- face -->
+    <circle cx="450" cy="200" r="4.5" fill="#292313"/>
+    <circle cx="494" cy="200" r="4.5" fill="#292313"/>
+    <path d="M456 222 C468 233 482 233 492 222" fill="none" stroke="#292313" stroke-width="5" stroke-linecap="round"/>
+
+    <!-- raised arm -->
+    <path d="M536 242 C558 232 566 212 568 190" fill="none" stroke="#292313" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="568" cy="190" r="7" fill="#FFFDF7" stroke="#292313" stroke-width="5"/>
+
+    <!-- conductor's baton -->
+    <path d="M571 183 L600 100" stroke="#8E6230" stroke-width="5" stroke-linecap="round"/>
+    <path d="M600 100 L604 88" stroke="#FFFDF7" stroke-width="5" stroke-linecap="round"/>
+
+    <!-- sparkles at the baton tip -->
+    <path d="M610 58 l5 12 12 5 -12 5 -5 12 -5-12 -12-5 12-5 z" fill="url(#b-gold)" stroke="#0B0B12" stroke-width="2.5" stroke-linejoin="round"/>
+    <path d="M580 72 l3.5 9 9 3.5 -9 3.5 -3.5 9 -3.5-9 -9-3.5 9-3.5 z" fill="url(#b-gold)" stroke="#0B0B12" stroke-width="2.5" stroke-linejoin="round"/>
+  </g>
+
+  <!-- the fleet: five harness chips -->
+  <g font-family="system-ui, -apple-system, sans-serif" font-size="10" font-weight="700" text-anchor="middle">
+    <g>
+      <rect x="714" y="94" width="58" height="44" rx="10" fill="url(#b-red)" stroke="#292313" stroke-width="3"/>
+      <text x="743" y="121" fill="#FFFDF7">Claude</text>
+    </g>
+    <g>
+      <rect x="714" y="154" width="58" height="44" rx="10" fill="url(#b-green)" stroke="#292313" stroke-width="3"/>
+      <text x="743" y="181" fill="#FFFDF7">Codex</text>
+    </g>
+    <g>
+      <rect x="714" y="214" width="58" height="44" rx="10" fill="url(#b-violet)" stroke="#292313" stroke-width="3"/>
+      <text x="743" y="241" fill="#FFFDF7">GLM</text>
+    </g>
+    <g>
+      <rect x="714" y="274" width="58" height="44" rx="10" fill="#17171D" stroke="#4A4A55" stroke-width="3"/>
+      <text x="743" y="301" fill="#EAEAEA">Grok</text>
+    </g>
+    <g>
+      <rect x="714" y="334" width="58" height="44" rx="10" fill="url(#b-cool)" stroke="#292313" stroke-width="3"/>
+      <text x="743" y="361" fill="#FFFDF7">Kimi</text>
+    </g>
+  </g>
+
+  <text x="743" y="76" font-family="system-ui, -apple-system, sans-serif" font-size="10" letter-spacing="2" fill="#6B6B6B" text-anchor="middle">THE FLEET</text>
+</svg>
