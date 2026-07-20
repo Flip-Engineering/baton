@@ -227,12 +227,12 @@ Every normative array is classified; an array field absent from this table is in
 
 | Classification | Fields | Normalization |
 | --- | --- | --- |
-| semantic ordered | `sequence.steps`, selector/join `preference`, `reduce.inputs`, NodeTemplate `definitionOfDone`, verification-contract `arguments`, `ownerControlPath`, `BranchState.stack`, `BranchState.rounds`, `controlOccurrencePath`, `repeatRounds`, `childPath`, Context v1 expression arrays, typed-value arrays, evaluation route inventory and crash schedule | preserve input order; order changes identity |
-| canonical ordered by integer | selector `criteria` by `order`, map `members` and map-handle `memberSettlements` by `index`, partial-map `members` by original index, effect phase history by phase rank, state revisions by semantic ordinal, operational revisions by arrival ordinal, corpus repetitions by repetition index | reject duplicate integers and sort ascending; gaps are invalid except in partial-map members; input typed arrays retain their semantic index |
+| semantic ordered | `sequence.steps`, selector/join `preference`, `reduce.inputs`, NodeTemplate `definitionOfDone`, verification-contract `arguments`, `ownerControlPath`, `BranchState.stack`, `BranchState.rounds`, `controlOccurrencePath`, `repeatRounds`, `childPath`, Context v1 expression arrays, typed-value arrays, fixed evaluation arms, evaluation rate limits, arm envelopes, corpus repetition-seed digests, Latin-square rows and route permutations | preserve input order; order changes identity |
+| canonical ordered by integer | selector `criteria` by `order`, map `members` and map-handle `memberSettlements` by `index`, partial-map `members` by original index, effect phase history by phase rank, state revisions by semantic ordinal, operational revisions by arrival ordinal, evaluation routes by `order`, corpus tasks by `taskOrdinal`, and evaluation blocks by `(taskOrdinal,repetition)` | reject duplicate integers and sort ascending; gaps are invalid except in partial-map members; input typed arrays retain their semantic index |
 | canonical topological | `Program.nodes` | use §93.4 Kahn order |
 | set-like by name | `ProgramSource.nodes` by `nodeKey`, role catalog `roles`, parallel node/handle/fence `branches`, parallel-handle `memberSettlements`, join `branchTerminalRevisions`, collect `items`, select `candidates`, object-schema `properties`, union `variants`, NodeTemplate `capabilities/effects/requiredEffects`, verification environment allowlist | reject duplicate names, sort by unsigned UTF-16 name |
 | set-like by path | NodeTemplate `pathScope/contextScope`, approval/template `repositoryScopes`, feedback/revision changed paths | reject duplicate normalized paths; sort by unsigned UTF-16 path |
-| set-like by digest/ID | `schemas`, `verificationContracts`, verification required-predecessor evidence, static-effect ownership `entries`, approval contract digests, predicate `and/or` children, join contract digests, finish/result/review/map evidence refs, route/worker attestations, `branchHeads`, state pending/settled effects, values/children/fences, join terminal revisions/member settlements, semantic-barrier events, source-lineage constituents, ownership arrays, review findings/anchors/evidence, effect/result/terminal/feedback digests and forensic sidecar records, evaluation corpus tasks | reject duplicates; sort by the documented name/ID/digest tuple; barrier events use §93.13 total key |
+| set-like by digest/ID | `schemas`, `verificationContracts`, verification required-predecessor evidence, static-effect ownership `entries`, approval contract digests, predicate `and/or` children, join contract digests, finish/result/review/map evidence refs, route/worker attestations, `branchHeads`, state pending/settled effects, values/children/fences, join terminal revisions/member settlements, semantic-barrier events, source-lineage constituents, ownership arrays, review findings/anchors/evidence, effect/result/terminal/feedback digests and forensic sidecar records, evaluation `requiredGreenContracts` | reject duplicates; sort by the documented name/ID/digest tuple; barrier events use §93.13 total key |
 | set-like scalar | string-schema `enum`, approval role/effect lists, action lists, and imported worker-policy `supported/mechanisms/guarantees/configuredPreferences` | reject duplicates; sort by canonical scalar bytes |
 | fixed positional | route tuple coordinates, disposition/eligibility records, process authority tuples | represented as objects, never arrays |
 
@@ -377,15 +377,16 @@ points are null or 0..10000. `requiredPredecessorEvidence` is a set-like Digest 
 approved Plan node predecessor evidence. `contractDigest` hashes every field except itself and MUST match its
 ref; `approvalDigest` binds separate verification authority. It is
 approved separately from Program authoring. Those fields never appear in Program JSON. Resolution
-requires `freshSandbox=true`, exact tree/Candidate/artifact identity, the current approved contract
-digest, and the existing referee as sole verdict authority.
+requires `freshSandbox=true`, exact tree/Candidate/artifact identity, the exact contract ref and
+contract bytes already bound by the immutable approval event, and the existing referee as sole
+verdict authority. Gate preparation never consults a current contract registry or Plan head.
 
 Gate preparation freezes this runtime-only binding; it is never accepted from Program JSON:
 
 ```text
 GateBinding = exact{
-  schemaVersion,kind,effectId,candidate,approvedPlanDigest,nodeKey,
-  nodeTemplateDigest,approvalEvent,frozenTaskBriefVerification,
+  schemaVersion,kind,effectId,candidate,verificationContract,
+  approvedPlanDigest,nodeKey,nodeTemplateDigest,approvalEvent,frozenTaskBriefVerification,
   frozenTaskBriefVerificationDigest,frozenVerificationContract,
   frozenVerificationContractDigest,gateBindingDigest
 }
@@ -393,6 +394,7 @@ kind="baton.gate_binding"
 frozenTaskBriefVerification=ArtifactRef
 frozenVerificationContract=ArtifactRef
 candidate=CandidateRef|ArtifactRef
+verificationContract=VerificationContractRef
 ```
 
 The two frozen artifacts carry exact approval-event-bound bytes:
@@ -411,27 +413,48 @@ candidateFailedWhen = "exit_not_equals|quality_gate_failed"
 inconclusiveWhen = "provider_inconclusive"
 ```
 
-The gate authority uses these frozen bytes and never current state. `frozenTaskBriefVerification`
-MUST be the immutable artifact whose bytes ARE the `TaskBriefVerification` object approved at
-`approvalEvent`; `frozenTaskBriefVerificationDigest` MUST equal its `artifactDigest`. The
-`expectResult` inside it pins the result schema and the complete exit/quality-gate → verdict mapping
-the referee applies. `frozenVerificationContract` MUST be the immutable artifact whose bytes ARE the
-exact `VerificationContract` object bound at that same `approvalEvent`;
-`frozenVerificationContractDigest` MUST equal its `artifactDigest`, equal
-`TaskBriefVerification.verificationContractDigest`, and equal the approval-event-bound contract
-digest. The gate executes those frozen contract bytes; it MUST NOT resolve the current Plan head,
-current node template, current deployment verification, current task brief, or current contract
-registry entry.
+The four digest domains used here are closed and non-interchangeable:
 
-The binding digest equals the CandidateRef and Plan commitments exactly. When `candidate` is a
+| Domain | Digest field | Exact preimage | Permitted equality checks |
+| --- | --- | --- | --- |
+| canonical artifact bytes | `ArtifactRef.artifactDigest` | the complete immutable artifact bytes | another `artifactDigest` for those same bytes |
+| verification contract | `VerificationContract.contractDigest` | the canonical contract object excluding only `contractDigest` | `VerificationContractRef.contractDigest`, `TaskBriefVerification.verificationContractDigest`, `GateBinding.frozenVerificationContractDigest`, and the approval event's contract digest |
+| Task Brief verification | `TaskBriefVerification.taskBriefVerificationDigest` | the canonical Task Brief verification object excluding only that field | `CandidateRef.taskBriefVerificationDigest`, `GateBinding.frozenTaskBriefVerificationDigest`, and the approval event's Task Brief verification digest |
+| Candidate | `CandidateRef.candidateDigest` | the canonical Candidate excluding `candidateDigest` and `candidateId` | the same Candidate digest in its production receipt, gate subject, verifier receipt, or result |
+
+No comparison across rows is valid, even if two SHA-256 strings happen to be byte-equal. In
+particular, an artifact digest is never compared with a contract, Task Brief verification, or
+Candidate digest. Embedding a canonical object in an artifact binds both domains: the artifact
+digest authenticates the complete stored bytes, while parsing those bytes and recomputing the
+object's own digest authenticates its typed semantic identity.
+
+The gate authority uses those frozen bytes and never current state. `frozenTaskBriefVerification`
+MUST be the immutable artifact whose complete bytes parse canonically as the exact
+`TaskBriefVerification` object approved at `approvalEvent`; its `artifactDigest` is checked only
+against those bytes. `frozenTaskBriefVerificationDigest` MUST equal the parsed object's
+`taskBriefVerificationDigest` and the approval event's Task Brief verification digest. The
+`expectResult` inside it pins the result schema and the complete exit/quality-gate → verdict mapping
+the referee applies. `frozenVerificationContract` MUST likewise be the immutable artifact whose
+complete bytes parse canonically as the exact `VerificationContract` object bound at that same
+`approvalEvent`; its `artifactDigest` is checked only against those bytes.
+`frozenVerificationContractDigest` MUST equal the parsed object's `contractDigest`,
+`verificationContract.contractDigest`, `TaskBriefVerification.verificationContractDigest`, and the
+approval event's contract digest. The gate executes the parsed frozen contract bytes; it MUST NOT
+resolve the current Plan head, current node template, current deployment verification, current
+task brief, or current contract registry entry.
+
+The binding coordinates equal the CandidateRef and Plan commitments exactly. When `candidate` is a
 `CandidateRef`, `approvedPlanDigest`, `nodeKey`, `nodeTemplateDigest`, `approvalEvent`, and
 `frozenTaskBriefVerificationDigest` MUST respectively equal that Candidate's `planDigest`,
 `nodeKey`, `nodeTemplateDigest`, `approvalEvent`, and `taskBriefVerificationDigest`, and the
-Candidate's `candidateDigest`, `baseSha`, and `resultSha` MUST bind the exact verified result tree;
+Candidate's `candidateDigest`, `baseSha`, and `resultSha` MUST equal the same typed coordinates in
+the immutable production and verifier receipts for the exact result tree;
 when `candidate` is an `ArtifactRef`, the same Plan/node-template/approval-event/task-brief
-commitments MUST equal the Plan node that produced that artifact. `gateBindingDigest` hashes the
-complete binding excluding itself, and admission refuses any coordinate that diverges from the
-frozen Candidate/Plan commitments.
+commitments MUST equal the immutable production receipt and approval-event bytes for the Plan node
+that produced that artifact. The gate node's `verificationContract` MUST byte-equal the binding's
+ref. `gateBindingDigest` hashes the complete binding excluding itself, and admission refuses any
+coordinate that diverges from those frozen Candidate/artifact/Plan commitments. No current-state
+lookup participates in any of these comparisons.
 
 The produced `baton.gate_result` maps completely to `expectResult`: its result schema MUST equal
 `expectResult.resultSchemaRef`, and its `verdict` MUST equal the verdict that
@@ -596,18 +619,22 @@ catalog projections; it cannot omit Program authority merely to obtain a smaller
 
 ## 93.9 Exhaustive control-node schemas
 
-Every canonical node has common exact fields `{nodeId,kind,...kindFields}`. Every source node has
-the same fields with `nodeKey` replacing `nodeId`. There are no optional fields; use explicit null
-where a schema permits null.
+Every canonical node has common exact fields `{nodeId,kind,...kindFields}`. Except for the two
+explicit derived-schema forms below, every source node has the same fields with `nodeKey` replacing
+`nodeId`. A source `context` or `collect` node omits `outputSchema`; the normalizer derives and
+inserts it. Supplying that field in either source form is an unknown-field error, so an author can
+never assert a result schema independently of the exact normalized result. There are no optional
+fields; use explicit null where a schema permits null.
 
 ```text
 value = exact{nodeId,kind,value,schema}
   kind="value"; value=TypedValue; schema=value.schema
   ports: value:schema
 
-context = exact{nodeId,kind,program,outputSchema}
-  kind="context"
-  program=normalized baton.context_program v1 proven pure under §93.10
+context source = exact{nodeKey,kind,program}
+context canonical = exact{nodeId,kind,program,outputSchema}
+  kind="context"; program=normalized baton.context_program v1 proven pure under §93.10
+  outputSchema=deriveContextResultSchema(program,manifest,schemas)
   ports: value:outputSchema
 
 sequence = exact{nodeId,kind,steps,result,outputSchema}
@@ -634,9 +661,11 @@ await = exact{nodeId,kind,target,join,outputSchema}
   outputSchema MUST be registered "baton.settlement_envelope"
   ports: settlement:outputSchema
 
-collect = exact{nodeId,kind,items,outputSchema}
+collect source = exact{nodeKey,kind,items}
+collect canonical = exact{nodeId,kind,items,outputSchema}
   kind="collect"; items=set-like exact{name,value}[1..policy.maxJoinMembers]; value=PortRef
-  ports: value:closed object schema with exactly those names/schemas
+  outputSchema=deriveCollectResultSchema(items,schemas)
+  ports: value:outputSchema
 
 select = exact{nodeId,kind,candidates,selector,outputSchema}
   kind="select"; candidates=set-like exact{name,value}[1..policy.maxJoinMembers]; value=PortRef
@@ -661,6 +690,17 @@ child = exact{nodeId,kind,program,input,bound,resultSchema}
 `ChildProgramRef = exact{kind,program,inputSchema,resultSchema}` with
 `kind="child_program_ref"`. A child/repeat body is already normalized, independently approved or
 within the parent envelope shape, acyclic by `programDigest`, and cannot widen authority.
+
+The two schema derivations are closed normalization operations, not runtime inference. For
+`context`, the normalizer performs the §93.10 complete pure-AST walk and derives the exact result
+schema from the normalized terminal expression and the schema refs of every addressed immutable
+manifest/artifact input. Each operation has one checked-in schema transformer; an operation or
+input without an exact result schema is `program_invalid`. For `collect`, the normalizer constructs
+the object definition `exact{type:"object",properties:[exact{name:<item name>,schema:<item
+value.schema>,required:true}...],additionalProperties:false}` in canonical item-name order. In both cases the resulting definition
+MUST already be present in `schemas`; `outputSchema` is its byte-matching `SchemaRef`. A missing,
+ambiguous, unregistered, or caller-substituted result schema fails normalization. Evaluation then
+validates the exact produced `TypedValue` against that derived ref before publishing the port.
 
 The node table is inert data. Execution enters only `root:ControlRef`; a `PortRef` never schedules
 its producer. When an entered control node needs a value, demand evaluation recursively evaluates
@@ -873,10 +913,11 @@ effectClass="terminal_ledger_write"
 ports: result:resultSchema
 ```
 
-Every `instruction` is non-empty, non-secret bounded text with UTF-8 length at most
-`min(policy.maxValueBytes,floor(policy.maxProgramBytes/4))`. Every other text/value bound comes from
-its registered schema and cannot exceed `policy.maxValueBytes`; every array uses the classification
-and ceiling in §93.4. These are validation limits, not caller knobs.
+Every `instruction` is non-empty, non-secret bounded text whose exact registered string schema has
+`maxBytes` equal to the admitted Context Program policy v1 `maxTextBytes`; the whole canonical
+Program independently remains bounded by `policy.maxProgramBytes`. Every other text/value bound
+comes from its registered schema and cannot exceed `policy.maxValueBytes`; every array uses the
+classification and bound in §93.4. These are lower-policy-bound validation limits, not caller knobs.
 
 `EvidenceRef = exact{kind,id,digest}`; its kind is one of
 `artifact|candidate|gate_receipt|review_artifact|feedback|representation|cairn_node|trace`.
@@ -1293,7 +1334,7 @@ revision inputs and pure reduction produce byte-identical semantic state and res
 ## 93.15 Typed effect and Program results
 
 Result state is orthogonal. Each axis carries an independent disposition; no axis is inferred from
-another, and the cross-axis constraints below are checked as a closed union. Execution and
+another, and the single exhaustive disposition table below is checked as a closed union. Execution and
 verification each carry an exact cause:
 
 ```text
@@ -1315,6 +1356,7 @@ cleanupDisposition = "not_required|open|settled|attention"
 selectionDisposition = "not_applicable|ineligible|eligible|selected|unresolved"
 integrationDisposition =
   "not_applicable|ineligible|eligible|approved|integrated|refused|failed_preserved"
+```
 
 The six execution values preserve the exact Phase 84/85 output truth: `succeeded` is accepted,
 `failed` is failed, `cancelled` is cancelled, and `not_dispatched` is not-dispatched; `stopped` is a
@@ -1330,6 +1372,7 @@ example `exit_mismatch`, `quality_gate_failed`, `provider_inconclusive`). The wo
 product-only: it names the kind of product produced and never encodes execution or verification
 outcome, which live on their own axes. `absent` means no work product was produced.
 
+```text
 WorkProductRefs = exact{
   artifactRef,capsuleRef,commitRef,candidateRef,valueRef,checkpointRef
 }
@@ -1370,11 +1413,12 @@ Every effect settlement embeds an immutable, content-addressed result:
 
 ```text
 EffectResult = exact{
-  schemaVersion,kind,effectId,effectKind,dispositions,workProductRefs,
+  schemaVersion,kind,effectId,effectKind,generation,dispositions,workProductRefs,
   eligibility,evidenceRefs,routeAttestation,workerPolicyAttestation,
   roleCatalogDigest,policyDigest,approvalDigest,successor,mapSettlement,
   cleanup,resultDigest
 }
+schemaVersion=1
 kind="baton.program_effect_result"
 successor=null or exact{planDigest,programDigest,executionId}
 
@@ -1388,6 +1432,7 @@ remaining=exact{processes,sessions,worktrees,runtimes,branches,leases}
 Digest or null exactly as required by that disposition; every remaining count is a non-negative
 safe integer. `routeAttestation` and `workerPolicyAttestation` are null for effects that launch no
 worker; otherwise both are the exact §93.7 objects. `mapSettlement` is null except for `map`.
+`generation` is the non-negative retry generation already committed by the effect prebinding.
 `EffectResult` is immutable and content-addressed: `resultDigest` hashes every field except itself,
 so once an effect is settled its result digest never changes. Late observations arriving after
 settlement are append-only `ForensicLateResultRecord` sidecar records (§93.15); they reference this
@@ -1423,12 +1468,15 @@ MapSettlement = exact{
   schemaVersion,kind,parentEffectId,generation,members,summary,
   sourceLineageDigest,mapSettlementDigest
 }
+schemaVersion=1
 kind="baton.map_settlement"
 
 MapMemberResult = exact{
-  index,memberEffectId,generation,dispositions,workProductRefs,
+  schemaVersion,kind,parentEffectId,index,memberEffectId,generation,dispositions,workProductRefs,
   eligibility,evidenceRefs,sourceLineageDigest,memberResultDigest
 }
+schemaVersion=1
+kind="baton.map_member_result"
 
 MapSummary = exact{
   total,succeeded,failed,cancelled,stopped,notDispatched,ambiguous,
@@ -1439,6 +1487,7 @@ PartialMapValue = exact{
   schemaVersion,kind,parentEffectId,generation,members,
   sourceLineageDigest,partialDigest
 }
+schemaVersion=1
 kind="baton.partial_map_value"
 PartialMapValueMember = exact{
   index,memberEffectId,valueRef,capsuleRef,memberResultDigest
@@ -1449,13 +1498,22 @@ ForensicLateResultRecord = exact{
   providerReceiptDigest,artifactRef,capsuleRef,commitRef,routeAttestationDigest,
   workerPolicyAttestationDigest,reasonCode,forensicDigest
 }
+schemaVersion=1
 kind="baton.forensic_late_result_record"
-anchor = exact{resultDigest,effectId,memberEffectId,generation,fence}
-  resultDigest = the immutable EffectResult/MapMemberResult/ProgramResult digest referenced
-  effectId = EffectId (required)
-  memberEffectId = MemberEffectId|null (null for a non-map effect)
-  generation = retry generation safe integer
-  fence = ParallelAdmissionFence/JoinFence digest or null
+
+ForensicResultAnchor union(resultKind):
+  effect = exact{
+    resultKind,resultDigest,effectId,generation,fenceDigest
+  } resultKind="effect"
+  map_member = exact{
+    resultKind,resultDigest,parentEffectId,memberEffectId,index,generation,fenceDigest
+  } resultKind="map_member"
+  program = exact{
+    resultKind,resultDigest,programId,executionId,finalRevisionDigest
+  } resultKind="program"
+
+anchor=ForensicResultAnchor
+fenceDigest=Digest|null
 ```
 
 `members` is canonical ordered by integer `index`, which is contiguous from zero and matches the
@@ -1480,8 +1538,10 @@ unique index (gaps are permitted), and each digest/ref MUST equal its `MapMember
 `partialDigest` excludes itself. This is the only value schema permitted by the `partial_collection`
 work-product row; it cannot make a failed member disappear from `MapSettlement`.
 
-`MapMemberResult` is immutable and content-addressed: `memberResultDigest` hashes every field except
-itself. `MapSettlement` is immutable and content-addressed: `mapSettlementDigest` hashes the
+`MapMemberResult.parentEffectId` MUST equal the containing `MapSettlement.parentEffectId`, and its
+`index`, `memberEffectId`, and `generation` MUST equal that member's prebinding. It is immutable and
+content-addressed: `memberResultDigest` hashes every field except itself. `MapSettlement` is
+immutable and content-addressed: `mapSettlementDigest` hashes the
 complete members, summary, and all other fields except itself. Neither embeds late results, so late
 arrival cannot rewrite parent or member identity.
 
@@ -1489,61 +1549,76 @@ A `ForensicLateResultRecord` is append-only trace evidence in a separate sidecar
 after cancellation, ambiguity, selective stop, generation replacement, or terminal settlement. It
 may preserve exact artifact, capsule, and commit refs, but it never changes a settlement, semantic
 revision, work-product, eligibility, selector input, verification verdict, integration state,
-learning, or result digest. The `anchor` pins the exact immutable result/effect/member/generation/
-fence it pertains to; `resultDigest` is the already-settled digest it observes and never the digest
-of a record that embeds it. `cursor` is a per-anchor non-negative safe integer that strictly
+learning, or result digest. The `resultKind` discriminator selects one non-overlapping anchor
+shape. An `effect` anchor's typed coordinates and `resultDigest` MUST equal one exact
+`EffectResult`; a `map_member` anchor's coordinates and `resultDigest` MUST equal one exact
+`MapMemberResult.memberResultDigest`; and a `program` anchor's coordinates and `resultDigest` MUST
+equal one exact `ProgramResult`. No null placeholder or effect ID is accepted for a Program result,
+and no result digest can be reinterpreted under another `resultKind`. `fenceDigest`, when present,
+MUST resolve to the admission/join fence containing the anchored effect/member. `resultDigest` is
+the already-settled digest it observes and never the digest of a record that embeds it. `cursor` is
+a per-anchor non-negative safe integer that strictly
 increases as records append and is the only append order. Artifact/capsule/commit refs and
 route/worker attestation digests are independently nullable; provider and observed-after-transition
 digests are required. `forensicDigest` hashes the record excluding itself. Records within an anchor
 sort by `(cursor,forensicDigest)`; across anchors they sort by `forensicDigest`. The sidecar is
 trace-only and projects to no semantic field.
 
-The axes are orthogonal; validity is the conjunction of the product-only work-product table below
-and the cross-axis constraints. No other combination is valid.
+The axes remain independent facts, but their valid product is closed by the single exhaustive table
+below. There is no second work-product table, precedence rule, or prose exception. In the table,
+`F={failed,cancelled,stopped,ambiguous}`; `Z` means cleanup `not_required|settled` with every
+remaining ownership count zero; `O` means cleanup `open|attention` with at least one remaining
+ownership count; `C=Z|O`; `NA=not_applicable`; and `I=ineligible`. An owner is an
+`EffectResult.effectKind`, `map_member`, or `program`. All `WorkProductRefs` not explicitly named
+in a row MUST be null.
 
-The work-product axis is product-only. It names the product, the producing effect kinds, and its
-non-null refs, and never encodes execution or verification outcome:
+| Profile | Owner | Execution | Verification | Product and exact refs | Cleanup | Selection | Integration |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| settled value | `call|map|reduce|finish|map_member|program` | `succeeded` | `not_required` | `value`; `valueRef` only, not a `baton.gate_result` | `Z` | `NA|eligible|selected|unresolved` | `NA` |
+| gate verdict value | `gate|program` | `succeeded` | `passed|candidate_failed|inconclusive` exactly matching the embedded verdict | `value`; `valueRef` only, validating as the exact `baton.gate_result` | `Z` | `NA` | `NA` |
+| unverified Candidate | `call|reduce|finish|map_member|program` | `succeeded` | `not_required|pending` | `candidate`; `candidateRef` plus exactly one matching backing ref | `Z` | `I` | `I` |
+| verified Candidate, not selected | `call|reduce|finish|map_member|program` | `succeeded` | `passed` | `candidate`; verified `candidateRef` plus exactly one matching backing ref | `Z` | `I|eligible|unresolved` | `I` |
+| verified Candidate, selected | `call|reduce|finish|map_member|program` | `succeeded` | `passed` | `candidate`; verified `candidateRef` plus exactly one matching backing ref | `Z` | `selected` | `I|eligible|approved|integrated|refused|failed_preserved` |
+| rejected Candidate | `call|reduce|finish|map_member|program` | `succeeded` | `candidate_failed` | `candidate`; rejected `candidateRef` plus exactly one matching backing ref | `Z` | `I` | `I` |
+| inconclusive Candidate | `call|reduce|finish|map_member|program` | `succeeded` | `inconclusive` | `candidate`; inconclusive `candidateRef` plus exactly one matching backing ref | `Z` | `I` | `I` |
+| unverified standalone artifact | `call|reduce|finish|map_member|program` | `succeeded` | `not_required|pending` | `artifact`; nonempty mutually consistent standalone subset of `artifactRef|capsuleRef|commitRef`; `candidateRef` null | `Z` | `NA|I` | `NA|I` |
+| verified standalone artifact | `call|reduce|finish|map_member|program` | `succeeded` | `passed` | `artifact`; same standalone shape | `Z` | `NA|I|eligible|selected|unresolved` | `NA|I` |
+| rejected standalone artifact | `call|reduce|finish|map_member|program` | `succeeded` | `candidate_failed` | `artifact`; same standalone shape | `Z` | `I` | `I` |
+| inconclusive standalone artifact | `call|reduce|finish|map_member|program` | `succeeded` | `inconclusive` | `artifact`; same standalone shape | `Z` | `I` | `I` |
+| delivered notification | `notify|program` | `succeeded` | `not_required` | `notification`; all refs null and exactly one delivery-receipt evidence ref | `Z` | `NA` | `NA` |
+| settled checkpoint | `checkpoint|program` | `succeeded` | `not_required` | `checkpoint`; `checkpointRef` only and its ledger-receipt evidence ref | `Z` | `NA` | `NA` |
+| partial map | `map|program` | `F` | `not_required|inconclusive` | `partial_collection`; `valueRef` to the exact `PartialMapValue` and non-null `mapSettlement` | `C` | `I` | `I` |
+| interrupted Candidate | `call|reduce|finish|map_member|program` | `F` | `not_required|pending|passed|candidate_failed|inconclusive` | `candidate`; `candidateRef` plus exactly one matching backing ref; state matches verification | `C` | `I` | `I` |
+| interrupted standalone artifact | `call|reduce|finish|map_member|program` | `F` | `not_required|pending|passed|candidate_failed|inconclusive` | `artifact`; the standalone shape above | `C` | `I` | `I` |
+| interrupted checkpoint | `checkpoint|program` | `F` | `not_required` | `checkpoint`; `checkpointRef` only and its ledger-receipt evidence ref | `C` | `I` | `I` |
+| terminal without product | any | `F` | `not_required|pending|inconclusive` | `absent`; all refs null | `C` | `I` | `I` |
+| not dispatched | any | `not_dispatched` | `not_dispatched` | `absent`; all refs null and no provider observation | `Z` | `I` | `I` |
 
-| Work product | Produced by | Required non-null refs | Forbidden refs |
-| --- | --- | --- | --- |
-| `value` | `call`/`reduce` | `valueRef` only | every other ref null |
-| `candidate` | `call`/`reduce` | `candidateRef` and exactly one backing `artifactRef`/`capsuleRef`/`commitRef` | `valueRef`/`checkpointRef` null |
-| `artifact` | `call`/`reduce`/`gate` | `candidateRef` null and one or more mutually consistent standalone `artifactRef`/`capsuleRef`/`commitRef` | `valueRef`/`checkpointRef` null |
-| `notification` | `notify` only | all six refs null; `evidenceRefs` exactly one delivery receipt | any work-product ref |
-| `checkpoint` | `checkpoint` only | `checkpointRef`, also present in the checkpoint ledger receipt evidence | other refs null |
-| `partial_collection` | `map` only | `valueRef` to a closed partial collection and non-null `mapSettlement` | `candidateRef`/`checkpointRef` null |
-| `absent` | any | all six refs null | any work-product ref |
+These rows partition the valid space by owner, execution, verification, product, and, for the two
+verified-Candidate rows, selection. A value-shaped gate result is therefore never smuggled into an
+artifact row; cancelled-before-product and stopped-before-product truth use the explicit
+`terminal without product` row; and `not_dispatched` is not a spelling of cancellation. The
+validator requires exactly one matching row; zero matches or multiple matches are
+`program_result_invalid`. The
+`executionCause` rule and `verificationCause` rule above apply to every row without exception. A
+row with `O` is preservation-failed custody: all six action eligibilities are `blocked_cleanup`,
+and only cleanup/preservation repair is permitted. A row with `Z` has no retained ownership. A
+`stopped` result is never automatically retried; a `not_dispatched` result may become retry-
+eligible only through a newly approved, prebound generation.
 
-The remaining axes are constrained jointly:
+Candidate `verificationState` is exactly `unverified`, `verified`, `rejected`, or `inconclusive`
+when verification is respectively `not_required|pending`, `passed`, `candidate_failed`, or
+`inconclusive`. When `candidateRef` is non-null, its one top-level backing ref MUST byte-equal the
+corresponding embedded Candidate ref; no unrelated ref is permitted. Standalone artifact refs are
+mutually consistent and never imply a Candidate. A `PartialMapValue` contains only successful
+members but its required `mapSettlement` preserves every member disposition. A commit ref never
+grants checkout-write authority.
 
-| Constraint | Rule |
-| --- | --- |
-| succeeded value | `value` product requires `executionDisposition="succeeded"`, `verificationDisposition="not_required"`; selection `not_applicable|eligible|selected|unresolved` when selector schema admits it; integration `not_applicable` |
-| verified candidate | a non-null `candidateRef` with `verification="passed"` requires Candidate `verificationState="verified"` and admits selection `eligible|selected|unresolved` and integration `ineligible|eligible|approved|integrated|refused|failed_preserved` |
-| verified artifact | `artifact` product with `verification="passed"` admits selection `not_applicable|eligible|selected|unresolved` and integration `not_applicable|ineligible` |
-| rejected / inconclusive | `verification="candidate_failed|inconclusive"` forces selection `ineligible` and integration `ineligible` (an ownership block is `blocked_cleanup`); Candidate `verificationState` is `rejected` or `inconclusive` |
-| partial map | `partial_collection` requires `execution="failed|cancelled|ambiguous"` and `verification="not_required|inconclusive"`; selection and integration `ineligible` |
-| cancelled | `execution="cancelled"` permits only a checkpoint or an exact Candidate plus backing refs, not both; `verification="not_required|pending|inconclusive|not_dispatched"`; selection and integration `ineligible`; a cancelled Candidate is `unverified|inconclusive` |
-| stopped | `execution="stopped"` is a selective-stop member; its durable cleanup is preserved and it is never automatically retried |
-| not dispatched | `execution="not_dispatched"` requires `verification="not_dispatched"`, no provider observation, and selection and integration `ineligible`; it is retry-eligible on a new prebound generation |
-| preservation custody | `cleanup="open|attention"` with nonzero retained ownership is preservation-failed custody: `execution="failed|cancelled|ambiguous"`, any already-durable recoverable refs confer no eligibility until cleanup closes, and only cleanup/preservation repair is permitted |
-| failed without product | `absent` product requires `execution="failed|ambiguous"`; a fresh approved attempt is permitted, not revision |
-| notify / checkpoint | `notification` requires `execution="succeeded"` and is valid only for `notify`; `checkpoint` requires `execution="succeeded"` and is valid only for `checkpoint` |
-| succeeded needs zero ownership | `execution="succeeded"` requires zero remaining ownership (`cleanup="not_required|settled"`) |
-
-A `selected` Candidate must be verified (`verification="passed"`). Integration may be `eligible`
-only for that selected exact Candidate; `approved` requires a current separate integration approval;
-`integrated` requires a settled capability-gated application-registry apply/integrate action receipt
-and fresh verification of its exact result. That action is outside the seven-node Program effect
-grammar. Selection, integration, and export never repair failed verification.
-
-Ref nullability is closed by the product table. The `candidate`/`artifact` verification-bearing
-products permit `valueRef` only when it is the exact typed gate/review result for that subject, and
-require `checkpointRef` null. When `candidateRef` is non-null, every non-null top-level
-artifact/capsule/commit ref MUST be byte-identical to its corresponding embedded Candidate ref, and
-no unrelated ref is permitted. The product table's "one backing ref" means one non-null exact
-preserved backing ref in addition to the Candidate identity. A commit ref never grants checkout-write
-authority.
+A `selected` Candidate is necessarily in the verified-selected row. Integration may advance only
+for that exact Candidate; `approved` requires a separate integration approval, and `integrated`
+requires a settled capability-gated application-registry apply/integrate receipt plus fresh
+verification of its exact result. That action is outside the seven-node Program effect grammar.
+Selection, integration, and export never repair failed verification.
 
 Eligibility is constrained by axis: `revise` requires a preserved Candidate plus typed feedback;
 `reduce` requires a closed typed member collection; `select` requires all selector evidence;
@@ -1569,24 +1644,33 @@ ProgramResult = exact{
   workProductRefs,eligibility,resultSchema,evidenceRefs,effectResultDigests,
   finalRevisionDigest,revisionSchemaDigest,stateValueDigest,sourceLineageDigest,
   roleCatalogDigest,policyDigest,approvalDigest,verificationContractDigests,
-  routeAttestationDigests,workerPolicyAttestationDigests,cleanup,episodeDigest,
-  semanticTraceDigest,operationalTraceDigest,resultDigest
+  routeAttestationDigests,workerPolicyAttestationDigests,cleanup,
+  semanticTraceDigest,resultDigest
 }
+schemaVersion=1
 kind="baton.program_result"
+
+ProgramResultProjection = exact{
+  schemaVersion,kind,programResultDigest,episodeDigest,
+  operationalTraceDigest,projectionDigest
+}
+schemaVersion=1
+kind="baton.program_result_projection"
 ```
 
-It applies the same orthogonal axes and cross-axis constraints, validates any `valueRef` against
+It applies the same orthogonal axes and exhaustive table, validates any `valueRef` against
 `resultSchema`, binds every exact effect result and semantic revision, and preserves all
 route/service-tier/worker-policy attestations. Its revision-schema, state-value, and source-lineage
 digests MUST equal the exact
 final semantic revision. A succeeded Program requires zero remaining ownership. A verified Candidate may
 still await selection/integration. Completion never means integration, publication, push,
 promotion, or semantic correctness. `ProgramResult` is immutable and content-addressed:
-`resultDigest` hashes every field except itself, `episodeDigest`, and `operationalTraceDigest`;
-those arrival/presentation fields remain auditable without changing canonical semantic result
-identity. `semanticTraceDigest` is the canonical barrier/effect/revision projection and is
-included. Late observations after terminal settlement are append-only `ForensicLateResultRecord`
-sidecar records anchored to `resultDigest`; they never alter it.
+`resultDigest` hashes every field except itself. `semanticTraceDigest` is the canonical
+barrier/effect/revision projection and is included. Arrival-ordered operational trace and Episode
+presentation are not Program-result fields; an immutable `ProgramResultProjection` sidecar binds
+them to `programResultDigest`, and `projectionDigest` hashes that projection excluding itself.
+Late observations after terminal settlement are append-only `ForensicLateResultRecord` sidecar
+records with `resultKind="program"` anchored to `resultDigest`; neither sidecar alters it.
 
 The registered `baton.gate_result` used by `gate` is
 `exact{schemaVersion,kind,binding,candidate,contract,frozenVerificationContractDigest,
@@ -1594,13 +1678,16 @@ approvedPlanDigest,nodeKey,nodeTemplateDigest,approvalEvent,
 frozenTaskBriefVerificationDigest,verdict,verificationReceipt,resultDigest}` with
 `kind="baton.gate_result"`, `binding=GateBinding`, `candidate=CandidateRef|ArtifactRef`,
 `contract=VerificationContractRef`, and `verdict="passed|candidate_failed|inconclusive"`.
-`contract.contractDigest` MUST equal `frozenVerificationContractDigest`, which MUST equal the
-binding's frozen-contract artifact digest. Every duplicated coordinate MUST equal the binding. Its
-result digest excludes only itself. The `verdict` MUST equal the verdict that the frozen
+`contract` MUST byte-equal `binding.verificationContract`, and its `contractDigest` MUST equal
+`frozenVerificationContractDigest` and the parsed frozen contract's `contractDigest`. Separately,
+`binding.frozenVerificationContract.artifactDigest` MUST authenticate only the complete frozen
+artifact bytes; it is never compared to any of those contract digests. Every duplicated coordinate
+MUST equal the binding. Its result digest excludes only itself. The `verdict` MUST equal the verdict that the frozen
 `expectResult.verdictDerivation` prescribes for the observed verifier exit and frozen-contract
 quality-gate state; any other verdict is invalid. The referee's durable receipt MUST bind the same
-candidate/artifact, approved Plan digest, node key, node-template digest, approval event, frozen
-Task Brief verification digest, frozen verification-contract digest, and verdict. Substitution or
+Candidate by Candidate digest or artifact by artifact digest, approved Plan digest, node key,
+node-template digest, approval event, frozen Task Brief verification digest, frozen
+verification-contract digest, and verdict. Substitution or
 resolving any current/historical head fails authority before verifier effect; it does not yield a
 rejected verdict.
 
@@ -1839,11 +1926,14 @@ authorities remain the only routes.
 Knowledge failures cannot delay or reverse stop, kill, terminal settlement, verification,
 integration, or publication effects. Program completion does not invoke promotion.
 
-## 93.20 Deployment policy and derived safe defaults
+## 93.20 Deployment policy and exact lower-policy bindings
 
-One `baton.program_policy` schema v1 binds the current canonical-order, Context, Workflow, Goal,
-capacity, route-card, artifact, and lifecycle policies by digest. Ordinary callers and model
-workers never provide its numeric fields. Preview resolves and displays consequences, not knobs.
+One `baton.program_policy` schema v1 binds the admitted canonical-order, Context, Workflow,
+Goal/Plan, capacity, route-card, artifact, and lifecycle authorities by digest. Ordinary callers
+and model workers provide none of its numeric fields. This version defines no Program-local
+numeric default, ratio, floor, offset, empirically asserted constant, or caller-selectable narrower
+value. Every admitted number is copied from one exact pre-existing approved lower-policy field,
+except parallel concurrency, which is the minimum of exact reservable lower-authority facts.
 
 Its field set is exhaustive:
 
@@ -1851,8 +1941,8 @@ Its field set is exhaustive:
 ProgramPolicy = exact{
   schemaVersion,kind,canonicalOrderPolicyDigest,contextPolicyDigest,
   workflowPolicyDigest,goalPolicyDigest,capacityPolicyDigest,routeCardSetDigest,
-  artifactPolicyDigest,lifecyclePolicyDigest,deploymentCapsDigest,maxProgramBytes,
-  maxProgramNodes,maxProgramDepth,maxSchemaDefinitions,maxValueBytes,maxResultBytes,
+  artifactPolicyDigest,lifecyclePolicyDigest,maxProgramBytes,maxProgramNodes,
+  maxProgramDepth,maxSchemaDefinitions,maxValueBytes,maxResultBytes,
   maxEvidenceRefs,maxParallelBranches,maxRepeatRounds,maxChildDepth,
   maxEffectInstances,maxJoinMembers,maxJoinComparisons,maxStateRevisions,
   maxTraceBytes,policyDigest
@@ -1861,84 +1951,51 @@ schemaVersion=1
 kind="baton.program_policy"
 ```
 
-Every dependency digest is exact and current at preview/admission. `deploymentCapsDigest` binds the
-exact named deployment-ceiling vector in §93.20; `policyDigest` hashes every
-field except itself. Policy mismatch, omitted dependency, or an unknown field fails before effect.
+Every dependency is the exact immutable policy/card version admitted by the enclosing approved
+Plan and approval envelope. Preview and admission recompute the following like-for-like bindings;
+replay uses the recorded bytes and never re-resolves a newer policy:
 
-Let deployment inputs be:
+| Program field | Sole lower-authority value |
+| --- | --- |
+| `maxProgramBytes` | Context Program policy v1 `maxProgramBytes` |
+| `maxProgramNodes` | Context Program policy v1 `maxProgramNodes` |
+| `maxProgramDepth` | Context Program policy v1 `maxProgramDepth` |
+| `maxSchemaDefinitions` | Goal/Plan policy v1 `limits.maxItems` |
+| `maxValueBytes` | Context Program policy v1 `maxArtifactBytes` |
+| `maxResultBytes` | canonical-order policy v1 `maxReceiptBytes` |
+| `maxEvidenceRefs` | Goal/Plan policy v1 `limits.maxItems` |
+| `maxParallelBranches` | `min(C,W,min_role Q(role),Goal/Plan policy v1 limits.maxNodes)` |
+| `maxRepeatRounds` | Workflow policy v1 `maxRounds` |
+| `maxChildDepth` | Context Program policy v1 `recursionDepth` |
+| `maxEffectInstances` | Goal/Plan policy v1 `limits.maxProviderTurns` |
+| `maxJoinMembers` | Context Program policy v1 `maxResultItems` |
+| `maxJoinComparisons` | Context Program policy v1 `maxJoinComparisons` |
+| `maxStateRevisions` | canonical-order policy v1 `maxEvents` |
+| `maxTraceBytes` | Context Program policy v1 `maxArtifactBytes` |
 
-```text
-E = canonical-order maxEventBytes
-R = canonical-order maxReceiptBytes
-A = artifact policy maxArtifactBytes
-C = currently reservable worker capacity (concurrent worker slots)
-W = currently reservable private-worktree capacity (concurrent private checkouts)
-Q(role) = ready concurrency for that exact route/service tier (provider-native ready slots)
-T = approved Goal wall time in milliseconds
-P = minimum provider effect wall reservation in milliseconds
-```
+Here `C` is the capacity ledger's reservable worker slots, `W` is its reservable private-worktree
+slots, and `Q(role)` is the admitted route card's `concurrency_ceiling` after exact
+harness/model/effort, separately authorized service tier, and worker-policy resolution. These are
+typed deployment facts, not Program fields supplied by a caller. If any operand of the concurrency
+minimum is zero, preview refuses `program_capacity_unavailable`; `max(1,...)`, queuing capacity,
+worker prose, and missing-value defaults are forbidden. Admission reserves against the same facts.
+A later capacity decrease may delay or stop admitted work but cannot rewrite the frozen policy; an
+increase cannot widen it.
 
-Concurrency is a hard minimum over four independently reservable resources and refuses zero:
+`artifactPolicyDigest` and `lifecyclePolicyDigest` still bind storage and cleanup enforcement, but
+they do not manufacture additional numbers. If any exact lower field is absent, unapproved,
+version-mismatched, non-positive where positivity is required, or inconsistent with the referenced
+policy digest, preview refuses before Program admission. A different number requires approval of
+the lower authority that owns that named field and a successor Program policy/approval; it cannot
+be patched into `ProgramPolicy`. Verification `timeoutMs` and `maxOutputBytes` are likewise the
+exact fields of the approval-event-frozen `VerificationContract`, bounded by its already approved
+Goal/Plan node rather than by a Program constant. Evaluation-only limits belong solely to the
+versioned §93.21 evaluation contract and grant no Program runtime authority.
 
-```text
-maxParallelBranches = min(C, W, min_role Q(role), parallelBranchCeiling)
-```
-
-If any of `C`, `W`, `min_role Q(role)`, or `parallelBranchCeiling` is zero, preview refuses
-`program_capacity_unavailable` before admission; it never silently substitutes one. `max(1, ...)`
-and any default-of-one masking are forbidden. The minimum is the exact live resource truth at
-admission: capacity that is not reservable does not count, and no provider turn, scheduler queue,
-or worker prose widens it. Routine callers and model workers never supply `C`, `W`, `Q(role)`, or
-the ceiling; the deployment resolves and records them.
-
-Every numeric ceiling below is one of two closed kinds, never an opaque literal: either it is
-derived from a lower policy/envelope/compiled-graph/provider-turn bound already named in the table,
-or it is an explicitly named, versioned, empirically-tested deployment cap. The named caps form one
-closed vector bound by `deploymentCapsDigest`; a cap change is a successor policy. They are:
-
-| Named cap | Default | Derivation |
-| --- | --- | --- |
-| `parallelBranchCeiling` | 8 | empirically-tested live cross-controller ceiling from the issue-5 suites; bounds concurrent branch-local PCs per execution |
-| `repeatRoundsCeiling` | current Workflow `maxRounds` | Workflow safe default, versioned with `workflowPolicyDigest` |
-| `childDepthCeiling` | `context.recursionDepth + 3` | Context recursion authority plus bounded Program child nesting |
-| `programBytesCeiling` | 65,536 | compiled-graph floor of the current 16 MiB canonical-order event ceiling over 256 sources |
-| `programNodesCeiling` | 256 | compiled-graph bound: one node per source-byte floor under the event ceiling |
-| `programDepthCeiling` | 32 | static dominance/ownership walk bound |
-| `schemaDefinitionsCeiling` | 128 | half the node ceiling; shared by properties, variants, and enums |
-| `valueBytesCeiling` | 1,048,576 | `min(A/64, E/4)` artifact/event envelope floor |
-| `resultBytesCeiling` | 1,048,576 | `min(R, A/64)` receipt/artifact envelope floor |
-| `evidenceRefsCeiling` | 1,024 | `floor(resultBytesCeiling/128)` ref-record floor |
-| `effectInstancesCeiling` | 1,024 | compiled-graph provider-turn bound across nodes, rounds, and child depth |
-| `joinComparisonsCeiling` | 1,000,000 | worst-case pairwise `joinMembers^2` bound |
-| `stateRevisionsCeiling` | 65,536 | `2 + nodes + 5*effects + 4*joinMembers` revision-algebra bound |
-| `traceBytesCeiling` | 8,388,608 | `min(A/8, E)` artifact/event trace envelope floor |
-
-The normalized safe defaults are:
-
-| Field | Formula | Default when deployment omits a narrower value |
-| --- | --- | --- |
-| `maxProgramBytes` | `min(programBytesCeiling, floor(E/4))` | 65,536 with current 16 MiB event ceiling |
-| `maxProgramNodes` | `min(programNodesCeiling, floor(maxProgramBytes/256))` | 256 |
-| `maxProgramDepth` | `min(programDepthCeiling, maxProgramNodes)` | 32 |
-| `maxSchemaDefinitions` | `min(schemaDefinitionsCeiling, floor(maxProgramNodes/2))` | 128 |
-| `maxValueBytes` | `min(valueBytesCeiling, floor(A/64), floor(E/4))` | 1 MiB |
-| `maxResultBytes` | `min(resultBytesCeiling, R, floor(A/64))` | 1 MiB |
-| `maxEvidenceRefs` | `min(evidenceRefsCeiling, floor(maxResultBytes/128))` | 1,024 |
-| `maxParallelBranches` | `min(C, W, min_role Q(role), parallelBranchCeiling)`; zero refuses | capacity-derived, never above `parallelBranchCeiling` |
-| `maxRepeatRounds` | `min(repeatRoundsCeiling, workflow.maxRounds, floor(T/P))` | current Workflow safe default 8 |
-| `maxChildDepth` | `min(childDepthCeiling, context.recursionDepth+3, floor(T/P))` | 4 when authority permits |
-| `maxEffectInstances` | `min(effectInstancesCeiling, maxProgramNodes*maxRepeatRounds*(maxChildDepth+1), floor(T/P))` | derived |
-| `maxJoinMembers` | `min(maxProgramNodes, maxParallelBranches*maxRepeatRounds)` | derived |
-| `maxJoinComparisons` | `min(joinComparisonsCeiling, maxJoinMembers*maxJoinMembers)` | derived |
-| `maxStateRevisions` | `min(stateRevisionsCeiling, 2+maxProgramNodes+5*maxEffectInstances+4*maxJoinMembers)` | derived |
-| `maxTraceBytes` | `min(traceBytesCeiling, floor(A/8), E)` | 8 MiB |
-
-If an input makes a formula zero or inconsistent (other than the concurrency zero-refusal above),
-preview refuses `program_capacity_unavailable`. Deployment may configure a narrower positive value,
-recorded in policy and digest; it may not exceed the formula or its named cap. `max+1` refuses the
-whole admission. Runtime capacity changes may delay an already approved branch but cannot widen or
-rewrite its policy. Historical replay uses the exact old policy. A wider policy, cap, or capacity
-truth requires a successor approval.
+`policyDigest` hashes every Program-policy field except itself. Unknown fields, a value unequal to
+its table binding, or a parallel value unequal to the complete minimum fail before effect. This
+removes the former unsupported branch/depth/byte/ref/effect/revision/trace constants while
+preserving exact historical replay and the zero-capacity refusal.
 
 ## 93.21 Executable four-arm evaluation gate
 
@@ -1946,22 +2003,98 @@ The evaluation is a checked-in, executable corpus, not a prose aspiration.
 
 ### Evaluation plan
 
-The evaluation runs under one closed deployment-owned `EvaluationPlan`, approved once and bound by a
-single digest. It carries preflight ranges, total authority, pilot paired blocks, per-route
-rate-limit scheduling, early stop, cancellation/reap, crash-ambiguous handling, and a resume rule.
-It owns no Program effect grammar and no Program correctness rule.
+The evaluation runs under one closed deployment-owned `EvaluationPlan`, approved once and bound by
+a single digest. `phase93-evaluation-v1` is an actual versioned test contract: exactly 24 items,
+exactly four arms in the fixed order below, and exactly five paired repetitions create 120 paired
+blocks and 480 scheduled arm runs. These are contract constants, not Program defaults. The plan
+also freezes ordered route tuples, separate service tier and worker policy, per-arm envelopes, the
+toolchain, cache states, the Latin-square assignment, and every crash point. It owns no Program
+effect grammar and grants no Program runtime authority.
 
 ```text
 EvaluationPlan = exact{
-  schemaVersion,kind,planId,corpusDigest,arms,repetitionsPerArm,preflight,
-  authority,pilot,rateLimits,earlyStop,resumeRule,cancellation,
-  approvalDigest,planDigest
+  schemaVersion,kind,contractVersion,planId,corpus,arms,repetitionsPerArm,
+  pairedBlockCount,runCount,routes,envelopes,toolchain,cache,latinSquare,
+  blocks,preflight,authority,pilot,rateLimits,earlyStop,resumeRule,
+  cancellation,approvalDigest,planDigest
 }
 schemaVersion=1
 kind="baton.evaluation_plan"
+contractVersion="phase93-evaluation-v1"
 planId="eval-plan:"+planDigest
-arms=set-like subset of {direct,naive_parallel,lossy_episode,program}
-repetitionsPerArm=positive safe integer
+arms=["direct","naive_parallel","lossy_episode","program"]
+repetitionsPerArm=5
+pairedBlockCount=120
+runCount=480
+
+EvaluationCorpusRef = exact{kind,contractVersion,artifact,corpusDigest}
+kind="baton.evaluation_corpus_ref"
+contractVersion="phase93-evaluation-corpus-v1"
+artifact=ArtifactRef
+corpus=EvaluationCorpusRef
+
+EvaluationRoute = exact{
+  order,routeKey,routeRequest,serviceTierRequest,workerPolicyRequest,
+  workerPolicyRequestDigest,harnessCardVersion,adapterCardDigest,routeDigest
+}
+routes=EvaluationRoute[1..approved Goal/Plan policy v1 limits.maxRouteValues]
+N=routes.length
+order=contiguous non-negative safe integer
+routeKey=SafeId
+routeRequest=exact{harness,model,effort}
+serviceTierRequest=the exact §93.7 exact|none request
+workerPolicyRequest=the exact Phase 92/default schema-v1 request
+
+EvaluationEnvelope = exact{
+  arm,inputTokenCeiling,outputTokenCeiling,usdCeiling,
+  providerCallCeiling,wallMsCeiling,envelopeDigest
+}
+envelopes=EvaluationEnvelope[4]
+token/provider-call/wall ceilings=positive safe integers
+usdCeiling=positive finite deployment currency units
+
+EvaluationToolchain = exact{
+  schemaVersion,kind,contractVersion,runnerArtifact,lockfileArtifact,
+  runtimeArtifact,harnessCardSetDigest,modelCardSetDigest,toolchainDigest
+}
+schemaVersion=1
+kind="baton.evaluation_toolchain"
+contractVersion="phase93-evaluation-toolchain-v1"
+runnerArtifact/lockfileArtifact/runtimeArtifact=ArtifactRef
+toolchain=EvaluationToolchain
+
+EvaluationCache = exact{
+  schemaVersion,kind,contractVersion,namespaceDigest,
+  coldStateArtifact,warmStateArtifact,cacheDigest
+}
+schemaVersion=1
+kind="baton.evaluation_cache"
+contractVersion="phase93-evaluation-cache-v1"
+coldStateArtifact/warmStateArtifact=ArtifactRef
+cache=EvaluationCache
+
+LatinSquareSchedule = exact{
+  schemaVersion,kind,contractVersion,routeKeys,rows,scheduleDigest
+}
+schemaVersion=1
+kind="baton.evaluation_latin_square"
+contractVersion="phase93-evaluation-latin-square-v1"
+LatinSquareRow=exact{index,routeKeys,rowDigest}
+latinSquare=LatinSquareSchedule
+routeKeys=SafeId[N]
+rows=LatinSquareRow[N]
+
+EvaluationBlock = exact{
+  taskOrdinal,taskId,repetition,seedDigest,latinRow,cacheMode,cacheArtifactDigest,
+  crashPoint,parallelCrashPoint,blockDigest
+}
+blocks=EvaluationBlock[120]
+repetition=1..5
+seedDigest/cacheArtifactDigest=Digest
+latinRow=non-negative safe integer < N
+cacheMode="cold|warm"
+crashPoint="none|after_prepared_before_effect_started|after_effect_started_before_ack|after_ack_before_settlement|after_settlement_before_response"
+parallelCrashPoint="none|after_sibling_admission|before_join_settlement"
 
 preflight = exact{
   minRouteFamilies,minWorkerCapacityC,minWorktreeCapacityW,
@@ -1976,14 +2109,14 @@ authority = exact{
   totalInputTokens,totalOutputTokens,totalUsd,totalProviderCalls,totalWallMs
 }
 
-pilot = exact{pairedBlocks,pilotGate}
+pilot = exact{pairedBlocks,pilotGate}; pairedBlocks=positive safe integer <=120
 pilotGate = exact{minUtilityLiftBasisPoints,maxDuplicateAmbiguousBasisPoints}
 
-rateLimits = set-like exact{routeKey,perMinute,concurrency}[]
+rateLimits = semantic ordered exact{routeKey,perMinute,concurrency}[routes.length]
 
 earlyStop = exact{kind,futility}
 kind="futility_on_paired_utility|none"
-futility = exact{minPairedBlocks,utilityFloorBasisPoints}
+futility = exact{minPairedBlocks,utilityFloorBasisPoints}; minPairedBlocks=positive safe integer <=120
 
 resumeRule = exact{strategy}
 strategy="from_complete_paired_blocks_only"
@@ -1993,6 +2126,42 @@ reap = exact{selectiveStop,wholeRunStop,zeroResidueRequired}
 crashAmbiguous = exact{neverRepeat,preserveDisposition}
 ```
 
+`corpus.artifact` bytes MUST parse canonically as the exact versioned corpus below; its
+`ArtifactRef.artifactDigest` authenticates artifact bytes and is never compared to
+`corpusDigest`, which authenticates the corpus object excluding only its own digest. `routes` are
+ordered by contiguous `order`; `routeDigest` hashes its complete route excluding itself. Every
+requested harness/model/effort tuple, exact-or-none service tier, worker-policy request/digest,
+harness-card version, and adapter-card digest is therefore fixed before any run. Resolution or
+observation may only attest that exact route; a missing route invalidates the block and cannot be
+substituted.
+
+`envelopes` are in the byte-identical order of `arms`, name each arm exactly once, and each digest
+excludes itself. Their input-token, output-token, USD, and wall ceilings MUST be equal across all
+four arms. Provider-call ceilings are fixed per arm, with `naive_parallel` exactly equal to
+`program`; no arm may borrow unused authority from another. `authority` is the hard aggregate of
+those already approved envelope ceilings: each total is the exact sum of its four matching
+envelope fields and cannot be an independent widening value.
+
+Each toolchain artifact is immutable and revalidated in its artifact digest domain; the semantic
+`toolchainDigest` hashes the complete toolchain contract excluding itself. The cache contract
+likewise binds exact immutable empty/cold and prewarmed states under one namespace, and
+`cacheDigest` hashes the complete cache contract excluding itself. Every block's
+`cacheArtifactDigest` MUST equal the artifact digest selected by its `cacheMode`; ambient provider,
+harness, repository, or OS caches are disabled or make preflight fail.
+
+`latinSquare.routeKeys` MUST byte-equal `routes` projected in order. It contains exactly `N` rows
+for `N` routes; every row is a permutation of all route keys, and every column contains each route
+exactly once. `blocks` contains exactly one row for every `(taskOrdinal 0..23,repetition 1..5)`,
+and `latinRow` selects the precommitted row used by all four arms in that paired block. Each
+`blockDigest` and Latin-row `rowDigest` excludes itself; `scheduleDigest` hashes the complete Latin-square
+contract excluding itself. Repetition crash points are exact: 1 is `none`, 2 is
+`after_prepared_before_effect_started`, 3 is `after_effect_started_before_ack`, 4 is
+`after_ack_before_settlement`, and 5 is `after_settlement_before_response`. Any parallel crash is
+also named in the block; a task/arm with no parallel boundary requires `parallelCrashPoint="none"`.
+There is no runtime rotation or scheduler-selected injection. The
+schedule digest, block digests, cache state, routes, envelopes, and toolchain all participate in
+`planDigest`.
+
 `preflight.rangeChecks` are headroom basis points (0..10000) verified against the corpus and route
 inventory before any arm runs; the run refuses `evaluation_preflight_failed` if any measured range
 falls below its headroom, if reservable worker/worktree capacity is below `minWorkerCapacityC`/
@@ -2001,8 +2170,10 @@ falls below its headroom, if reservable worker/worktree capacity is below `minWo
 token/USD/provider-call/wall ceiling for the whole evaluation; the runner stops the evaluation when
 any ceiling is reached and records which ceiling bound it. `pilot` runs `pairedBlocks` paired
 blocks first and gates the full run on `pilotGate`; the pilot itself resumes only from complete
-paired blocks. `rateLimits` schedules per-route `perMinute` and `concurrency` caps; the runner paces
-and queues within them and never exceeds a route's native limit. `earlyStop` declares one named
+paired blocks. `rateLimits` has the same length and route-key order as `routes`; each positive
+`perMinute`/`concurrency` value is the exact approved provider/adapter rate contract for that route,
+never a plan-authored widening. The runner paces and queues within it and never exceeds the route's
+native limit. `earlyStop` declares one named
 futility rule (or `none`) computed only from complete paired blocks. `cancellation.reap` requires
 that a selective stop, a whole-run stop, and zero-residue cleanup all be demonstrated within the
 run. `cancellation.crashAmbiguous` requires that an ambiguous provider/Git/verifier effect is never
@@ -2010,22 +2181,49 @@ repeated and is preserved as the exact §93.15 `ambiguous` disposition. `resumeR
 only resume strategy: the evaluation resumes exclusively from complete paired blocks, replaying
 settled effects under their exact durable transition digests and never re-running an ambiguous or
 already-settled effect. `approvalDigest` binds the one concise approval; `planDigest` hashes the
-plan excluding itself and `planId`. A wider authority, a new arm, a different corpus, or a relaxed
-resume/rate/crash rule requires a successor plan.
+plan excluding itself and `planId`. Pilot and early stop may halt execution but never redefine the
+120-block/480-run schedule or produce a qualifying default-routing decision; such a run publishes
+an explicit incomplete result. A wider authority, changed route/order/envelope/toolchain/cache/
+schedule, different corpus, or relaxed resume/rate/crash rule requires a successor plan. A new arm,
+different repetition count, or different item count requires a successor evaluation contract
+version, not merely a successor plan.
 
 ### Corpus
 
-`impl/fixtures/phase93-eval/corpus.json` will contain exactly 24 immutable task manifests:
+`impl/fixtures/phase93-eval/corpus.json` will contain this exact object:
+
+```text
+EvaluationCorpus = exact{
+  schemaVersion,kind,contractVersion,items,corpusDigest
+}
+schemaVersion=1
+kind="baton.evaluation_corpus"
+contractVersion="phase93-evaluation-corpus-v1"
+items=EvaluationTask[24]
+
+EvaluationTask = exact{
+  taskOrdinal,taskId,category,repoTree,objective,contextManifest,resultSchema,
+  verificationContract,groundTruth,repetitionSeedDigests,crashSchedule
+}
+repetitionSeedDigests=Digest[5]
+crashSchedule=exact{contractVersion,scheduleDigest}
+contractVersion="phase93-evaluation-crash-v1"
+```
+
+The 24 immutable task manifests comprise:
 
 - six repository localization tasks requiring Atlas AST/CPG evidence;
 - six multi-file change tasks with deterministic fresh-sandbox verification;
 - six defect-review tasks with seeded authority/replay/lifecycle faults; and
 - six context synthesis tasks with at least one seeded contradiction.
 
-Each manifest is `exact{taskId,category,repoTree,objective,contextManifest,resultSchema,
-verificationContract,groundTruth,crashSchedule}`. `repoTree`, contract, schemas, and ground truth
-are content-addressed. Tasks are selected before running and cannot be replaced after seeing
-results.
+`taskOrdinal` is contiguous 0..23, items are canonical in that order, and `category` has exactly six
+members in each named category above. `repoTree`, contract, schemas, and ground truth are
+content-addressed. `corpusDigest` hashes the complete corpus excluding itself. Tasks are selected
+before approval and cannot be reordered or replaced after seeing results. Each task's
+`crashSchedule.scheduleDigest` MUST equal the digest of its five exact projected block crash rows;
+each block's `seedDigest` MUST equal that task's digest at `repetition-1`. The corpus and plan
+therefore bind seeds and crash schedule independently, and mismatch fails preflight.
 
 ### Arms and repetitions
 
@@ -2040,24 +2238,27 @@ Each task runs five paired repetitions per arm, 480 runs total:
    await -> select(settlement_value) -> gate -> await -> select(settlement_value)` Program with
    exact lineage, typed review where applicable, and deterministic joins.
 
-Repetition seeds are fixed in the corpus. Each arm receives the same ordered exact route inventory,
-model versions, effort, separately authorized service tier, worker policy, total token/USD/wall
-envelope, immutable tree, verification contract, toolchain, and warm/cold-cache schedule. Routes
-rotate by a precommitted Latin-square assignment. A missing route makes the paired block invalid;
-it is not substituted. Arm 4 cannot spend more provider calls than arm 2.
+Repetition seeds are fixed in the corpus. Each arm consumes the same block row and therefore the
+same ordered exact route inventory, model versions, effort, separately authorized service tier,
+worker policy, immutable tree, verification contract, toolchain, cache artifact, and Latin-square
+row. Its authority is exactly its ordered plan envelope. A missing route, changed ordering,
+unattested toolchain, ambient cache, or envelope mismatch makes the paired block invalid; none is
+substituted. The `program` arm cannot spend more provider calls than the byte-matched
+`naive_parallel` allowance.
 
 ### Crash injection
 
-For repetitions 2–5, the runner injects one crash at respectively:
+The precommitted block rows assign repetitions 2–5 one crash at respectively:
 
 - after `prepared` before `effect_started`;
 - after `effect_started` before provider acknowledgement;
 - after provider acknowledgement before settlement; and
 - after settlement before caller response.
 
-Parallel tasks additionally rotate crashes after sibling admission and before join settlement.
-Every injection restarts from the same durable ledger and records duplicate effects and residue.
-Ambiguous effects are never repeated.
+For a parallel task, `parallelCrashPoint` precommits either no additional injection, after sibling
+admission, or before join settlement. The runner performs exactly the block value; it does not
+rotate or choose at runtime. Every injection restarts from the same durable ledger and records
+duplicate effects and residue. Ambiguous effects are never repeated.
 
 ### Metrics and utility
 
@@ -2132,7 +2333,9 @@ program.help();
 actions. The progressive handle exposes only logical identities by default. `outline` summarizes
 objective/state/attention/cleanup/next action; `steps` expands nodes and branch states;
 `workstreams` exposes role/generation handles; `result`, `episode`, and `trace` progressively
-expand exact refs; `stop` fences and reaps; `help` is state-relative.
+expand exact refs; `episode` and arrival-ordered trace resolve the immutable
+`ProgramResultProjection` sidecar and never rewrite `ProgramResult`; `stop` fences and reaps;
+`help` is state-relative.
 
 One frozen application registry owns these semantic operations:
 
@@ -2192,7 +2395,8 @@ Implementation starts with these exact red suites:
 4. `phase93a-control-grammar-red.test.mjs`: every control node, PortRef type mismatch, every
    predicate/join/selector, split control/data cycles and dominance, demand-evaluation effect
    refusal, static effect ownership, branch/sequence/repeat/child bounds, all three exact handle
-   schemas, settlement-only await, explicit success extraction, and deterministic join permutations.
+   schemas, settlement-only await, explicit success extraction, derived-only Context/collect
+   output schemas, caller-schema substitution refusal, and deterministic join permutations.
 5. `phase93a-context-purity-red.test.mjs`: pure operations accepted; legacy
    map/reduce/review/verify and unknown operations rejected before effect; historical replay stable;
    explicit migration receives a new identity.
@@ -2202,21 +2406,24 @@ Implementation starts with these exact red suites:
    reducer purity, repeat/child ancestry, and tamper.
 7. `phase93b-effect-protocol-red.test.mjs`: deterministic effect IDs; every five-phase crash point;
    prebinding without input/result value digests; parent/member map identity and partial retry;
-   every five-phase crash point; response loss; no repeat after effect start; acknowledgement
-   attachment; forensic late-result sidecar records; cleanup convergence.
+   response loss; no repeat after effect start; acknowledgement
+   attachment; `resultKind`-discriminated EffectResult/MapMemberResult/ProgramResult forensic
+   sidecar anchors; cleanup convergence.
 8. `phase93c-effect-schema-red.test.mjs`: exhaustive call/map/reduce/gate/notify/checkpoint/finish
    fields and ports; gate raw-command/argv/cwd/env rejection; approval-event-bound frozen
    verification-contract bytes and frozen Task Brief verification (including `expectResult`),
-   binding-digest equality to Candidate/Plan commitments, complete verdict-to-`expectResult` mapping,
-   and historical/current substitution refusal.
+   separate artifact/contract/Task-Brief-verification/Candidate digest domains with only like-to-like
+   comparisons, binding equality to Candidate/Plan commitments, complete verdict-to-`expectResult`
+   mapping, no current-state resolution, and historical/current-head substitution refusal.
 9. `phase93c-route-policy-red.test.mjs`: exact harness/model/effort; separate service-tier
    exact/none null rules; immutable template bytes/approved content refs; nullable provider
    observation; worker-policy request/resolution/observation digests through transitions/results/
    replay; mismatch reap.
 10. `phase93c-result-disposition-red.test.mjs`: every orthogonal execution (incl. `stopped`/
-    `not_dispatched`)/verification/work-product/cleanup/selection/integration value and cross-axis
-    constraint, plus invalid cross-products; execution and verification causes; product-only
-    work-product states; artifact/capsule/commit consistency;
+    `not_dispatched`)/verification/work-product/cleanup/selection/integration value through every
+    row of the one exhaustive table, plus every invalid cross-product and row-overlap assertion;
+    execution and verification causes; product-only work-product states; gate-result-as-value and
+    artifact/capsule/commit consistency;
     retry/revise/reduce/select/integrate/export eligibility; partial map members; preservation-failed
     custody and open ownership; forensic late-result sidecar records; explicit capability-gated
     apply/integrate; completion requires zero.
@@ -2235,13 +2442,16 @@ Implementation starts with these exact red suites:
 16. `phase93e-surface-parity-red.test.mjs`: start/preview/approval/handle/outline/steps/workstreams/
     result/episode/trace/stop/help and the closed revise/reduce/select/apply/integrate/export action
     set from one registry across every transport.
-17. `phase93e-policy-red.test.mjs`: every formula, narrower deployment setting, zero/inconsistent
-    refusal, max+1, historical policy stability, and no caller numeric knobs.
+17. `phase93e-policy-red.test.mjs`: every exact lower-policy field binding, complete four-way
+    concurrency minimum, zero/missing/mismatched refusal, removal of unsupported constants,
+    historical policy stability, and no caller numeric knobs.
 18. `phase93f-evaluation-red.test.mjs`: closed deployment-owned `EvaluationPlan` (preflight ranges
     and refusal, total token/USD/provider-call/wall authority, one approval, pilot paired blocks,
     per-route rate-limit scheduling, early stop, cancellation/reap, crash-ambiguous never-repeat, and
-    resume only from complete paired blocks); 24-task corpus, five repetitions, route controls, crash
-    schedule, metric formula, artifacts, confidence rule, and losing-result publication.
+    resume only from complete paired blocks); fixed four-arm order × five repetitions × 24-task
+    corpus, 120 blocks/480 runs, ordered route/service-tier/worker-policy tuples, exact arm
+    envelopes, pinned toolchain/cache artifacts, valid precommitted Latin square, exact crash rows,
+    metric formula, artifacts, incomplete/losing-result publication, and confidence rule.
 19. Retain cross-phase CK8/CK9, RC2/RC3, RR recovery races, D4/D6 verifier freshness, Phase 88 route
     substitution, Phase 91 response loss, Phase 92 facade/reap, writer-lease release, issue-5
     cross-controller lifecycle, and full process-group descendant reap suites.
