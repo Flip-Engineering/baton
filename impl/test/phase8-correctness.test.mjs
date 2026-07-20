@@ -566,7 +566,7 @@ test('C5: a dirty-tree task ends with HEAD authored as baton-worker-<vendor> and
   const outcome = await driver.coordinator.result(handle.id);
   assert.equal(outcome.status, 'completed');
 
-  const worktreeDir = join(repoRoot, '.baton', 'wt', 'attrib-1');
+  const worktreeDir = driver.coordinator.list().find((row) => row.id === handle.id).sessionContext.worktree;
   const author = sh('git', ['log', '-1', '--format=%an'], worktreeDir);
   const body = sh('git', ['log', '-1', '--format=%B'], worktreeDir);
 
@@ -588,7 +588,7 @@ test('C5: a self-committed task still logs the vendor on verify.reverified, even
   const outcome = await driver.coordinator.result(handle.id);
   assert.equal(outcome.status, 'completed');
 
-  const worktreeDir = join(repoRoot, '.baton', 'wt', 'attrib-2');
+  const worktreeDir = driver.coordinator.list().find((row) => row.id === handle.id).sessionContext.worktree;
   const isClean = sh('git', ['status', '--porcelain'], worktreeDir) === '';
   assert.equal(isClean, true, 'MockAdapter self-commits its own edits — the tree must already be clean by capture time');
 
@@ -667,7 +667,7 @@ test('C7: createDriver() end-to-end — an honest task completes, is attributed,
   const stat = driver.router.getStat('["honestvendor","1.0.0","default","default","default","general"]', 'general');
   assert.ok(stat && stat.count >= 1, 'the router bucket must have been updated by the real createDriver() record() wiring');
 
-  const worktreeDir = join(repoRoot, '.baton', 'wt', 'c7-honest');
+  const worktreeDir = driver.coordinator.list().find((row) => row.id === handle.id).sessionContext.worktree;
   const author = sh('git', ['log', '-1', '--format=%an'], worktreeDir);
   assert.equal(author, 'baton-worker-honestvendor', 'vendor attribution must reach the real committed HEAD through the real entrypoint');
 });
