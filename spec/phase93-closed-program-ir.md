@@ -775,11 +775,17 @@ operator_selected = exact{kind}                    kind="operator_selected"
 ```
 
 `contractDigests` is sorted unique and separately approved. `preference` is the exact ordered
-branch/candidate-name list and is semantic. `all_terminal` waits for every member and preserves all
-dispositions. `all_verified` succeeds only when every named member has a verified disposition.
-`first_verified` chooses the earliest name in `preference`, never the earliest scheduler result.
-`operator_selected` settles attention until an authenticated semantic action records one exact
-choice. Non-selected members are preserved and stopped/reaped if active; they are never discarded.
+branch/candidate-name list and is semantic; every preference name resolves to one admitted member
+and duplicates are invalid. `all_terminal` waits for every member and preserves all dispositions.
+For join purposes a member is verified only when its execution disposition is `succeeded`, its
+verification disposition is `passed`, and its durable verification evidence covers every
+`contractDigest` required by the join. `not_required` is not verified. `all_verified` is satisfied
+only when every admitted member is verified by that definition. `first_verified` is satisfied only
+when there is at least one verified member named in `preference` and chooses exactly the earliest
+such member in `preference`, never the earliest scheduler result. `operator_selected` settles attention until an
+authenticated semantic action records one exact admitted choice. Non-selected members are
+preserved and stopped/reaped if active; they are never discarded. The closed unsatisfied and
+unresolved outcomes are defined in §93.11 and cannot be interpreted as successful joins.
 
 Join compatibility is closed: an `EffectHandle` or `ChildHandle` await uses `all_terminal` only;
 verification is inspected later from the settlement envelope. A `ParallelHandle` await MUST repeat
@@ -817,7 +823,13 @@ evidence settles `unresolved` and requires operator selection.
 branch name, or one exact map index. It is the only primitive that extracts the chosen settlement's
 success `valueRef`; it succeeds only when the named execution and verification dispositions match
 and the value validates against `select.outputSchema`. A missing/duplicate member, null value, or
-disposition mismatch settles typed attention. There is no implicit post-await value/result port.
+disposition mismatch settles typed attention. A parallel envelope in the §93.11 join-unsatisfied
+row is never an extraction source: `self` and every `branch` member selector settle typed attention
+with reason `parallel_join_unsatisfied`, even if an embedded member independently has execution
+`succeeded` and verification `not_required|passed`. For a satisfied `first_verified` or
+`operator_selected` join, a `branch` selector MUST name the one exact selected member derived by
+§93.11; naming any other member settles typed attention. There is no implicit post-await
+value/result port.
 
 ## 93.10 Context payload purity and legacy migration
 
@@ -1004,14 +1016,47 @@ For an effect handle, the envelope mirrors the exact `EffectResult`, including i
 cleanup. For a child handle, it mirrors the exact `ProgramResult`. For a parallel handle, every
 branch has a named `MemberSettlement`; the aggregate is a result in its own right and is computed
 from the declared join, not a worst-result or arrival-order heuristic.
-`all_terminal` succeeds only when every member succeeds. `all_verified` succeeds only when every
-member is verified. `first_verified` uses its preference list after the fenced terminal/stopped
-member set exists. `operator_selected` uses only the separately admitted selection event.
+`all_terminal` succeeds only when every member succeeds. Its join is nevertheless closed once the
+complete fenced member set is terminal/stopped, and member failures reduce through the ordinary
+aggregate rows below. `all_verified` is satisfied only when every admitted member is verified by
+the exact §93.9 definition. `first_verified` uses its preference list after the fenced
+terminal/stopped member set exists and is satisfied only with the one exact earliest verified
+member. `operator_selected` uses only the separately admitted selection event and is satisfied only
+when that event names one exact admitted member whose execution succeeded. A selected member name
+is derived solely from the frozen join, complete canonical member set, and, for
+`operator_selected`, the admitted event; it is never supplied by arrival order or aggregate
+normalization.
+
+Join outcome is a closed function. `all_verified` is **unsatisfied** if any required member is not
+verified, including when every member has execution `succeeded` and verification `not_required`.
+`first_verified` is **unresolved** if no member satisfies its exact verified-member predicate.
+`operator_selected` is **unresolved** until its exact satisfying selection exists. Each of those
+three non-satisfying cases normalizes to the one join-unsatisfied aggregate state:
+
+```text
+executionDisposition="failed"
+executionCause="parallel_join_unsatisfied"
+verificationDisposition="inconclusive"
+verificationCause="parallel_join_unsatisfied"
+workProductDisposition="absent"
+WorkProductRefs={artifactRef:null,capsuleRef:null,commitRef:null,candidateRef:null,
+                 valueRef:null,checkpointRef:null}
+SettlementEnvelope.valueRef=null
+selectionDisposition="unresolved"
+integrationDisposition="not_applicable"
+```
+
+No `ParallelAggregateValue` is created for that state. The complete members remain preserved in
+`memberSettlements`, and cleanup is still reduced over all members exactly as below. The frozen
+join plus the complete member set deterministically distinguishes unsatisfied from unresolved;
+both deliberately share the one fixed non-success cause and the one exhaustive-table row. They
+cannot fall through to contributor precedence, an ordinary aggregate row, or success extraction.
 
 Parallel aggregate execution is one closed function over that complete name-sorted set. For
-`all_terminal|all_verified`, every member contributes. For `first_verified|operator_selected`, a
-successfully chosen member is the sole aggregate contributor; if no choice satisfies the join, all
-members contribute and the join choice remains unresolved. Multiple contributing execution outcomes
+`all_terminal` and satisfied `all_verified`, every member contributes. For satisfied
+`first_verified|operator_selected`, the exact successfully chosen member is the sole aggregate
+contributor. The join-unsatisfied state above has no contributors and does not enter this
+precedence. Multiple contributing execution outcomes
 use this total precedence, highest first:
 `ambiguous > failed > cancelled > stopped > not_dispatched > succeeded`. Equal outcomes are equal;
 member names and arrival order never break a disposition tie. A non-chosen active branch stopped
@@ -1028,14 +1073,16 @@ null for `passed|not_required` and otherwise the exact fixed `SafeId` formed by
 `"parallel_aggregate_" + verificationDisposition`. Thus causes never depend on a member name,
 scheduler order, or arbitrarily selected member cause; the complete member causes remain present.
 
-A parallel aggregate always has `workProductDisposition="value"`. Its sole non-null
-`WorkProductRefs` field and its envelope `valueRef` are the same `ValueRef` to the registered
-`baton.parallel_aggregate_value`. That value repeats the exact handle `parallelId` and join and
-contains every complete branch `MemberSettlement` in canonical name order; its digest excludes
-only itself. The aggregate value is derived even when members have zero, one, or several different
-product kinds, so no heterogeneous product is discarded or coerced into a Candidate, artifact,
-notification, checkpoint, or partial map. Its members MUST byte-equal `memberSettlements`, and
-every original product and ref remains only in those members.
+A parallel aggregate outside the join-unsatisfied state always has
+`workProductDisposition="value"`. Its sole non-null `WorkProductRefs` field and its envelope
+`valueRef` are the same `ValueRef` to the registered `baton.parallel_aggregate_value`. That value
+repeats the exact handle `parallelId` and join and contains every complete branch
+`MemberSettlement` in canonical name order; its digest excludes only itself. The aggregate value
+is derived even when members have zero, one, or several different product kinds, so no
+heterogeneous product is discarded or coerced into a Candidate, artifact, notification,
+checkpoint, or partial map. Its members MUST byte-equal `memberSettlements`, and every original
+product and ref remains only in those members. In the join-unsatisfied state, those originals
+remain in `memberSettlements` but no aggregate work product or ref is fabricated.
 
 Aggregate cleanup is reduced over every member, including non-contributors. The envelope cleanup
 `remaining` counts are component-wise sums of the member cleanup records reached through their
@@ -1047,19 +1094,29 @@ member ownership sets MUST be disjoint, so component-wise remaining sums cannot 
 authority. Its non-null `ownershipSettlementDigest` is the existing lifecycle authority's canonical
 settlement of that exact aggregate snapshot. Each digest is null exactly when all corresponding
 member digests are null. The aggregate cleanup disposition equals
-`dispositions.cleanupDisposition`. Selection and integration are exactly `not_applicable`, because
-the aggregate work product is the closed settlement collection rather than one member's Candidate;
-member selection and integration truth remains in the members.
+`dispositions.cleanupDisposition`. Outside the join-unsatisfied state, selection and integration
+are exactly `not_applicable`, because the aggregate work product is the closed settlement
+collection rather than one member's Candidate. In the join-unsatisfied state selection is exactly
+`unresolved` and integration remains `not_applicable`; member selection and integration truth
+remains in the members.
 
 Downstream eligibility is also closed. If aggregate cleanup is `open|attention`, all six actions
-are `blocked_cleanup` with their own `program.<action>` capability and reason
-`parallel_aggregate_cleanup_open`. Otherwise `retry`, `revise`, `select`, `integrate`, and `export`
-are `ineligible` with null capability/approval and reason `parallel_aggregate_member_scoped`; their
-member-level eligibility remains actionable only at the named member. `reduce` addresses the
-complete aggregate collection: it is `eligible` with `requiredCapability="program.reduce"` and
-the exact separately admitted downstream approval digest when that approval exists, and otherwise
-`requires_approval` with the same capability, null approval, and reason
-`parallel_aggregate_reduce_approval_required`. No other aggregate eligibility tuple validates.
+are `blocked_cleanup` with their own `program.<action>` capability; `reduce` is the exact
+`blocked_cleanup` row in §93.15 and the other five use reason
+`parallel_aggregate_cleanup_open`. Otherwise, in the
+join-unsatisfied state all six actions are `blocked_selection`, each has its own
+`program.<action>` capability and null approval. Their reason codes, in EligibilitySet field order,
+are exactly `retry_selection_unresolved`, `revise_selection_unresolved`,
+`reduce_selection_unresolved`, `select_selection_unresolved`,
+`integrate_selection_unresolved`, and `export_selection_unresolved`; `program.<action>` means the
+corresponding literal capability from `program.retry`, `program.revise`, `program.reduce`,
+`program.select`, `program.integrate`, and `program.export`, not an open string namespace. Outside
+that state, `retry`, `revise`, `select`, `integrate`, and `export` are `ineligible` with null capability/approval and reason
+`parallel_aggregate_member_scoped`; their member-level eligibility remains actionable only at the
+named member. `reduce` addresses the complete aggregate collection: it is `eligible` with the
+exact `reduce` tuple in §93.15 when the separately admitted downstream approval exists, and is the
+exact `requires_approval` tuple there when it does not. No other aggregate eligibility tuple
+validates.
 
 The aggregate `effectResultDigests` and `terminalRevisionDigests` are respectively the sorted
 unique non-null member values of those fields. A parallel envelope cannot settle while an admitted
@@ -1391,11 +1448,15 @@ execution_settled = exact{result}
 ```
 
 The field lists above are exhaustive. Action lists are set-like by action kind. `join_settled` is
-legal only when the fenced join's mathematical condition is true over durable member settlements
-and the terminal revision set matches the admission fence. `first_verified` uses declared
-preference; `all_*` uses canonical member names; operator selection uses a separately admitted
-action. A repeated barrier digest is an idempotent read of the existing next revision; changed
-barrier bytes under the same expected revision are a CAS conflict. No partial mutation exists.
+legal only when the complete terminal revision set matches the admission fence and its settlement
+is the unique §93.11 reduction. When the fenced join's mathematical success condition is true, that
+is its ordinary aggregate settlement. When `all_verified|first_verified|operator_selected` has the
+closed unsatisfied/unresolved outcome defined there, it is exactly the join-unsatisfied aggregate
+settlement and the branch requires typed attention; it cannot advance through a success port.
+`first_verified` uses declared preference; `all_*` uses canonical member names; operator selection
+uses a separately admitted action. A repeated barrier digest is an idempotent read of the existing
+next revision; changed barrier bytes under the same expected revision are a CAS conflict. No
+partial mutation exists.
 
 Each `eventDigest` hashes its canonical event excluding itself. The barrier and reducer validate
 all `ValueRef`, `SettlementEnvelope`, and `ProgramResult` objects; provider values are never inline.
@@ -1476,6 +1537,28 @@ exact current action approval exists. `requires_approval`, `requires_repair`, `b
 performs the action. In particular, apply/integrate is a
 new authenticated semantic action requiring current `program.integrate`, repository-write, and
 generation-fenced integrator capability; neither `approved` nor `eligible` mutates a checkout.
+
+`EligibilitySet.reduce` is a total normalizer. Its state is selected in this strict order from the
+already-normalized result: retained ownership selects `blocked_cleanup`; the §93.11
+join-unsatisfied state selects `blocked_selection`; an unresolved ambiguous provider observation
+selects `requires_repair`; absence of a closed typed member collection selects `ineligible`; a closed
+collection without its exact current reduction approval selects `requires_approval`; otherwise the
+state is `eligible`. After state selection, the other three fields have exactly one valid form:
+
+| `reduce.state` | `reasonCode` | `requiredCapability` | `approvalDigest` |
+| --- | --- | --- | --- |
+| `eligible` | `reduce_eligible` | `program.reduce` | exact non-null current approval digest for this reduction |
+| `ineligible` | `reduce_ineligible` | null | null |
+| `requires_approval` | `reduce_approval_required` | `program.reduce` | null |
+| `requires_repair` | `reduce_repair_required` | `program.reduce` | null |
+| `blocked_cleanup` | `reduce_cleanup_open` | `program.reduce` | null |
+| `blocked_selection` | `reduce_selection_unresolved` | `program.reduce` | null |
+
+All six `reasonCode` cells are literal non-null `SafeId` values. In particular, `eligible` never
+normalizes its reason to null, and no owner-specific alias, inherited member reason, empty string,
+or omitted field validates. This table is the sole field normalizer for `EligibilitySet.reduce`;
+the axis and owner rules determine its state but cannot replace any tuple cell.
+
 `MemberSettlement.memberDigest` hashes the complete member excluding itself. `ownerKind` is the
 exact owner used by the one disposition table below; it is not inferred from a result's shape.
 Branch members sort by name; map members sort by contiguous index. A member's effect/result and
@@ -1647,15 +1730,18 @@ ownership count; `C=Z|O`; `V={not_required,pending,passed,candidate_failed,incon
 not_dispatched}`; `NA=not_applicable`; and `I=ineligible`. An owner is an
 `EffectResult.effectKind`, a `MemberSettlement.ownerKind` (`parallel_member|map_member`), a
 `SettlementEnvelope.ownerKind` (the exact underlying effect kind, `parallel_aggregate`, or
-`program`), or `ProgramResult`'s `program`. A `parallel_member` row
+`program`), or `ProgramResult`'s `program`; `A` means any owner in that universe except
+`parallel_aggregate`. A `parallel_member` row
 validates the member's axes and refs plus the exact evidence, map-settlement, and cleanup facts
 reached through its applicable non-null result/terminal-revision digests; required facts cannot be
 omitted by projecting them out of `MemberSettlement`. A `parallel_aggregate` row validates the
-complete envelope, its aggregate value, its cleanup record, and every embedded member under the
-§93.11 reductions. All `WorkProductRefs` not explicitly named in a row MUST be null.
+complete envelope, the presence or exact absence of its aggregate value as required by that row,
+its cleanup record, and every embedded member under the §93.11 reductions. All `WorkProductRefs`
+not explicitly named in a row MUST be null.
 
 | Profile | Owner | Execution | Verification | Product and exact refs | Cleanup | Selection | Integration |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| parallel aggregate join unsatisfied | `parallel_aggregate` | `failed`; cause exactly `parallel_join_unsatisfied` | `inconclusive`; cause exactly `parallel_join_unsatisfied` | `absent`; all refs and envelope `valueRef` null; no `ParallelAggregateValue` | `C` exactly derived by §93.11 | `unresolved` | `NA` |
 | parallel aggregate succeeded | `parallel_aggregate` | `succeeded` | `V` exactly derived by §93.11 | `value`; `valueRef` only, validating as the exact `baton.parallel_aggregate_value` over all members | `C` exactly derived by §93.11 | `NA` | `NA` |
 | parallel aggregate interrupted | `parallel_aggregate` | `F` | `V` exactly derived by §93.11 | `value`; same aggregate-value shape | `C` exactly derived by §93.11 | `NA` | `NA` |
 | parallel aggregate not dispatched | `parallel_aggregate` | `not_dispatched` | `V` exactly derived by §93.11 | `value`; same aggregate-value shape | `C` exactly derived by §93.11 | `NA` | `NA` |
@@ -1676,14 +1762,18 @@ complete envelope, its aggregate value, its cleanup record, and every embedded m
 | interrupted Candidate | `call|reduce|finish|parallel_member|map_member|program` | `F` | `not_required|pending|passed|candidate_failed|inconclusive` | `candidate`; `candidateRef` plus exactly one matching backing ref; state matches verification | `C` | `I` | `I` |
 | interrupted standalone artifact | `call|reduce|finish|parallel_member|map_member|program` | `F` | `not_required|pending|passed|candidate_failed|inconclusive` | `artifact`; the standalone shape above | `C` | `I` | `I` |
 | interrupted checkpoint | `checkpoint|parallel_member|program` | `F` | `not_required` | `checkpoint`; `checkpointRef` only and its ledger-receipt evidence ref | `C` | `I` | `I` |
-| terminal without product | any | `F` | `not_required|pending|inconclusive` | `absent`; all refs null | `C` | `I` | `I` |
-| not dispatched | any | `not_dispatched` | `not_dispatched` | `absent`; all refs null and no provider observation | `Z` | `I` | `I` |
+| terminal without product | `A` | `F` | `not_required|pending|inconclusive` | `absent`; all refs null | `C` | `I` | `I` |
+| not dispatched | `A` | `not_dispatched` | `not_dispatched` | `absent`; all refs null and no provider observation | `Z` | `I` | `I` |
 
 These rows partition the valid space by owner, execution, verification, product, and, for the two
-verified-Candidate rows, selection. The three `parallel_aggregate` rows additionally partition all
-six aggregate execution outcomes and the complete verification/cleanup product; §93.11 supplies
-one exact value for every other axis and field. Consequently every all-terminal, selected, and
-heterogeneous-member-product settlement matches exactly one row. A value-shaped gate result is
+verified-Candidate rows and the join-unsatisfied row, selection. The four `parallel_aggregate` rows
+additionally partition the closed join-unsatisfied outcome and all six ordinary aggregate
+execution outcomes with their complete verification/cleanup products; §93.11 supplies one exact
+value for every other axis and field. The join-unsatisfied row is the only aggregate row with no
+product, the only aggregate row with `selectionDisposition="unresolved"`, and the only row that
+permits its fixed pair of `parallel_join_unsatisfied` causes. Consequently every all-terminal,
+verified-join, selected, unresolved-join, and heterogeneous-member-product settlement matches
+exactly one row. A value-shaped gate result is
 therefore never smuggled into an artifact row; cancelled-before-product and stopped-before-product
 truth use the explicit `terminal without product` row; and `not_dispatched` is not a spelling of
 cancellation. The validator requires exactly one matching row; zero matches or multiple matches
@@ -1693,6 +1783,13 @@ row with `O` is preservation-failed custody: all six action eligibilities are `b
 and only cleanup/preservation repair is permitted. A row with `Z` has no retained ownership. A
 `stopped` result is never automatically retried; a `not_dispatched` result may become retry-
 eligible only through a newly approved, prebound generation.
+
+The join-unsatisfied row also validates the exact §93.11 eligibility, not merely its axes. With
+cleanup `open|attention`, every action is `blocked_cleanup`; with cleanup `not_required|settled`,
+every action is `blocked_selection`. In either case every approval digest is null, every required
+capability is that action's literal `program.<action>` capability, `EligibilitySet.reduce` is the
+matching exact row of its total normalizer, and the other action reasons are exactly those specified
+in §93.11. No ordinary parallel-aggregate eligibility tuple validates this row.
 
 Candidate `verificationState` is exactly `unverified`, `verified`, `rejected`, or `inconclusive`
 when verification is respectively `not_required|pending`, `passed`, `candidate_failed`, or
@@ -1718,8 +1815,11 @@ open ownership makes retry/revise/reduce/select/integrate/export `blocked_cleanu
 Selection/integration cross-fields are exact. `not_applicable|ineligible` makes the corresponding
 action eligibility `ineligible` (except an ownership block is `blocked_cleanup`). Selection
 `eligible` makes `eligibility.select` `eligible` with the Program approval for a deterministic
-approved selector, or `requires_approval` for `operator_selected`; `unresolved` always requires an
-operator approval. `selected` makes it `ineligible` with reason `already_selected`. Integration
+approved selector, or `requires_approval` for `operator_selected`. `unresolved` requires an
+operator approval for Candidate/artifact selection, while the single
+`parallel_aggregate` join-unsatisfied row requires the exact `blocked_selection` eligibility fixed
+by that row; these owner/product cases are disjoint. `selected` makes it `ineligible` with reason
+`already_selected`. Integration
 `eligible` makes `eligibility.integrate` `requires_approval`; `approved` makes it `eligible` with
 the exact approval digest; `integrated|refused|failed_preserved` makes it `ineligible` unless
 cleanup blocks all actions. No other pairing validates.
