@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import {
   existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync,
@@ -13,6 +14,7 @@ import { BatonApplication, GlmSessionCli, createDriver, openBaton } from '../src
 import {
   observeProcessGroupIdentity, processAuthorityState, processGroupAlive,
 } from '../src/process-lifecycle.mjs';
+import { physicalWorkspaceOwnerReceipt } from '../src/worktree.mjs';
 
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const repoId = 'repo-issue5-cross-controller';
@@ -71,6 +73,22 @@ const principal = (id) => ({
 });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const diagnostic = (label, value) => `${label}: ${JSON.stringify(value, null, 2)}`;
+
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+  }
+  return value;
+}
+
+function sealedOwnerReceipt(value) {
+  const { receiptDigest: _prior, ...core } = value;
+  return {
+    ...core,
+    receiptDigest: createHash('sha256').update(JSON.stringify(canonical(core))).digest('hex'),
+  };
+}
 
 function eventInventory(events) {
   return events.reduce((inventory, event) => {
@@ -168,6 +186,12 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+  const ancestorBaseSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: repo, encoding: 'utf8',
+  }).trim();
+  writeFileSync(join(repo, 'second.txt'), 'second\n');
+  execFileSync('git', ['add', 'second.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'second base'], { cwd: repo });
 
   const lifecycleBarrier = '.issue5-live-process.sock';
   const firstAdapter = adapter({ lifecycleBarrier });
@@ -177,6 +201,9 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
   let recoveredApplication = null;
   let pid = null;
   let durableProcessAuthority = null;
+  let exactWorkspaceExpectation = null;
+  let exactOwnerReceipt = null;
+  let ownerReceiptPath = null;
   const priorControllerEvents = [];
   t.after(async () => {
     const cleanupProcessRef = durableProcessAuthority ? {
@@ -234,6 +261,57 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
   const firstCapacity = firstDriver.worktreeCapacity.snapshot();
   assert.equal(firstCapacity.reservations.length, 1,
     diagnostic('initial live-generation capacity reservations', firstCapacity));
+  const liveLifecycle = firstDriver.log.read(workerId);
+  const ownerBound = liveLifecycle.find((event) => event.kind === 'worktree.owner_bound');
+  const processStarted = liveLifecycle.find((event) => event.kind === 'lifecycle.process_started');
+  assert.ok(ownerBound);
+  assert.ok(processStarted);
+  ownerReceiptPath = join(repo, '.git', 'baton', 'workspace-owners', `${physicalOwnerId}.json`);
+  exactOwnerReceipt = JSON.parse(readFileSync(ownerReceiptPath, 'utf8'));
+  assert.deepEqual({
+    physicalOwnerId: ownerBound.payload.physicalOwnerId,
+    receiptDigest: ownerBound.payload.receiptDigest,
+    logicalTaskId: ownerBound.payload.logicalTaskId,
+    runId: ownerBound.payload.runId,
+    attemptId: ownerBound.payload.attemptId,
+    branch: ownerBound.payload.branch,
+    worktree: ownerBound.payload.worktree,
+    baseSha: ownerBound.payload.baseSha,
+    processGeneration: ownerBound.payload.processGeneration,
+    deploymentId: ownerBound.payload.deploymentId,
+    controllerId: ownerBound.payload.controllerId,
+  }, {
+    physicalOwnerId,
+    receiptDigest: exactOwnerReceipt.receiptDigest,
+    logicalTaskId: taskId,
+    runId,
+    attemptId: workerId,
+    branch,
+    worktree,
+    baseSha: live.sessionContext.baseSha,
+    processGeneration: processStarted.payload.generation,
+    deploymentId: exactOwnerReceipt.deploymentId,
+    controllerId: exactOwnerReceipt.controllerId,
+  });
+  assert.equal(processStarted.payload.generation, live.processRef.generation);
+  assert.equal(durableProcessAuthority.generation, processStarted.payload.generation);
+  exactWorkspaceExpectation = {
+    expectationId: workerId,
+    handleRunId: runId,
+    physicalOwnerId,
+    binding: {
+      physicalOwnerId,
+      receiptDigest: exactOwnerReceipt.receiptDigest,
+      logicalTaskId: taskId,
+      runId,
+      attemptId: workerId,
+      processGeneration: processStarted.payload.generation,
+      branch,
+      worktree,
+      baseSha: live.sessionContext.baseSha,
+      ownerBound: ownerBound.payload,
+    },
+  };
 
   // Simulate abrupt controller death: its detached child stays alive, but its in-memory adapter
   // callback and timers can no longer write lifecycle facts. Durable writer authority transfers
@@ -249,12 +327,278 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
   firstDriver.coordinator._closed = true;
   assert.equal(firstDriver.coordination.releaseWriterLease({ requireOwned: true }), true);
 
+  const seededCapacityOwner = firstCapacity.reservations[0];
+  const bindingMismatches = [
+    ['receipt-digest', (binding) => { binding.receiptDigest = '0'.repeat(64); }],
+    ['physical-owner', (binding) => { binding.physicalOwnerId = `ws-${'1'.repeat(32)}`; }],
+    ['logical-owner', (binding) => { binding.logicalTaskId = 'mismatched-logical-task'; }],
+    ['attempt-worker', (binding) => { binding.attemptId = 'mismatched-worker'; }],
+    ['run', (binding) => { binding.runId = 'mismatched-run'; }],
+    ['branch', (binding) => { binding.branch = 'baton/ws-mismatched'; }],
+    ['worktree', (binding) => { binding.worktree = join(world, 'mismatched-worktree'); }],
+    ['base', (binding) => { binding.baseSha = '2'.repeat(40); }],
+    ['process-generation', (binding) => { binding.processGeneration += 1; }],
+    ['owner-bound-controller', (binding) => { binding.ownerBound.controllerId = '3'.repeat(64); }],
+    ['owner-bound-deployment', (binding) => { binding.ownerBound.deploymentId = '4'.repeat(64); }],
+  ];
+  for (const [label, mutate] of bindingMismatches) {
+    const candidate = structuredClone(exactWorkspaceExpectation);
+    mutate(candidate.binding);
+    const report = firstDriver.coordinator._worktrees.reconcile([candidate]);
+    assert.deepEqual(report.validatedExpectedOwners, [], label);
+    assert.deepEqual(report.retainedExpectedOwners, [physicalOwnerId], label);
+    assert.ok(report.diagnostics.some((row) => (
+      row.code === 'workspace_owner_binding_mismatch'
+      && row.physicalOwnerId === physicalOwnerId && row.retained === true
+    )), diagnostic(`typed ${label} retention`, report));
+    assert.equal(existsSync(worktree), true, label);
+    const retainedCapacity = firstDriver.worktreeCapacity.snapshot().reservations[0];
+    assert.deepEqual({ ownerId: retainedCapacity.ownerId, nonce: retainedCapacity.nonce }, {
+      ownerId: seededCapacityOwner.ownerId, nonce: seededCapacityOwner.nonce,
+    }, `${label} must not adopt capacity`);
+  }
+  const missingOwnerBound = structuredClone(exactWorkspaceExpectation);
+  missingOwnerBound.binding.ownerBound = null;
+  const missingOwnerBoundReport = firstDriver.coordinator._worktrees.reconcile([missingOwnerBound]);
+  assert.deepEqual(missingOwnerBoundReport.validatedExpectedBindings, []);
+  assert.deepEqual(missingOwnerBoundReport.retainedExpectedBindings, [workerId]);
+  assert.ok(missingOwnerBoundReport.diagnostics.some((row) => (
+    row.code === 'workspace_owner_binding_missing' && row.expectationId === workerId
+  )));
+  const duplicateExpectation = structuredClone(exactWorkspaceExpectation);
+  duplicateExpectation.expectationId = `${workerId}-duplicate`;
+  const duplicateReport = firstDriver.coordinator._worktrees.reconcile([
+    exactWorkspaceExpectation, duplicateExpectation,
+  ]);
+  assert.deepEqual(duplicateReport.validatedExpectedBindings, []);
+  assert.deepEqual(new Set(duplicateReport.retainedExpectedBindings), new Set([
+    workerId, `${workerId}-duplicate`,
+  ]));
+  assert.ok(duplicateReport.diagnostics.some((row) => (
+    row.code === 'workspace_owner_binding_ambiguous' && row.physicalOwnerId === physicalOwnerId
+  )));
+  assert.equal(firstDriver.worktreeCapacity.snapshot().reservations[0].nonce,
+    seededCapacityOwner.nonce);
+
+  const replayHandle = firstDriver.coordinator._workers.get(workerId);
+  const replayTask = firstDriver.coordinator._tasks.get(taskId);
+  const crossGrantRows = [
+    {
+      label: 'same-Run handle B cannot carry handle A allocation authority',
+      expectationId: `${workerId}-substitute`, handleRunId: runId,
+    },
+    {
+      label: 'cross-Run handle cannot carry another Run allocation authority',
+      expectationId: workerId, handleRunId: 'run-issue5-cross-controller-substitute',
+    },
+  ];
+  for (const row of crossGrantRows) {
+    await t.test(`P92.2-PO3: ${row.label}`, () => {
+      const substituted = structuredClone(exactWorkspaceExpectation);
+      substituted.expectationId = row.expectationId;
+      substituted.handleRunId = row.handleRunId;
+      const report = firstDriver.coordinator._worktrees.reconcile([substituted]);
+      assert.deepEqual(report.validatedExpectedOwners, []);
+      assert.deepEqual(report.validatedExpectedBindings, []);
+      assert.deepEqual(report.retainedExpectedOwners, [physicalOwnerId]);
+      assert.deepEqual(report.retainedExpectedBindings, [row.expectationId]);
+      assert.ok(report.diagnostics.some((diagnosticRow) => (
+        diagnosticRow.code === 'workspace_owner_handle_mismatch'
+        && diagnosticRow.expectationId === row.expectationId
+        && diagnosticRow.physicalOwnerId === physicalOwnerId
+        && diagnosticRow.retained === true
+      )), diagnostic(row.label, report));
+      assert.equal(existsSync(worktree), true);
+      const retainedCapacity = firstDriver.worktreeCapacity.snapshot().reservations[0];
+      assert.deepEqual({ ownerId: retainedCapacity.ownerId, nonce: retainedCapacity.nonce }, {
+        ownerId: seededCapacityOwner.ownerId, nonce: seededCapacityOwner.nonce,
+      });
+      const substitutedHandle = {
+        ...replayHandle,
+        id: row.expectationId,
+        runId: row.handleRunId,
+        workspaceOwnerBindingValid: false,
+        ownedWorktreeAuthority: false,
+      };
+      assert.equal(
+        firstDriver.coordinator._recoveryDispatchRefusal(substitutedHandle, replayTask),
+        'workspace_owner_binding_unproven',
+      );
+    });
+  }
+
+  await t.test('P92.2-PO3: caller-selected mock vendor cannot replace PID-start authority', () => {
+    const forged = {
+      ...replayHandle,
+      vendor: 'mock', processRef: null, processAuthority: null,
+      currentIncarnation: true, localAuthority: true,
+      workspaceOwnerBinding: ownerBound.payload,
+      workspaceOwnerBindingValid: true,
+      workspaceOwnerProcessAuthorityValid: false,
+      ownedWorktreeAuthority: false,
+    };
+    assert.equal(
+      firstDriver.coordinator._restoreRecoveredPhysicalWorkspaceAuthority(
+        forged, live.sessionContext,
+      ),
+      false,
+    );
+    assert.equal(forged.ownedWorktreeAuthority, false);
+    assert.equal(forged.workspaceOwnerProcessAuthorityValid, false);
+    assert.equal(forged.workspaceOwnerBindingDiagnostic,
+      'workspace_owner_process_authority_unproven');
+    assert.equal(existsSync(worktree), true);
+  });
+
+  const metadataPath = `${worktree}.meta.json`;
+  const exactMetadata = readFileSync(metadataPath, 'utf8');
+  writeFileSync(metadataPath, '{"schemaVersion":0}\n', { mode: 0o600 });
+  const corruptMetadataReport = firstDriver.coordinator._worktrees.reconcile([
+    exactWorkspaceExpectation,
+  ]);
+  assert.deepEqual(corruptMetadataReport.validatedExpectedBindings, []);
+  assert.deepEqual(corruptMetadataReport.retainedExpectedBindings, [workerId]);
+  assert.ok(corruptMetadataReport.diagnostics.some((row) => (
+    row.code === 'workspace_owner_checkout_invalid' && row.expectationId === workerId
+  )));
+  assert.equal(existsSync(worktree), true);
+  assert.equal(firstDriver.worktreeCapacity.snapshot().reservations[0].nonce,
+    seededCapacityOwner.nonce);
+  writeFileSync(metadataPath, exactMetadata, { mode: 0o600 });
+
+  await t.test('P92.2-PO3: schema-valid ancestor metadata base cannot grant recovery authority', async () => {
+    const tamperedMetadata = JSON.parse(exactMetadata);
+    tamperedMetadata.baseSha = ancestorBaseSha;
+    writeFileSync(metadataPath, `${JSON.stringify(tamperedMetadata, null, 2)}\n`, { mode: 0o600 });
+    const invalidSession = await firstDriver.coordinator._worktrees.validateSessionContext(
+      live.sessionContext,
+    );
+    assert.equal(invalidSession.ok, false);
+    assert.match(invalidSession.reason, /base metadata disagrees/u);
+    const tamperedReport = firstDriver.coordinator._worktrees.reconcile([
+      exactWorkspaceExpectation,
+    ]);
+    assert.deepEqual(tamperedReport.validatedExpectedBindings, []);
+    assert.deepEqual(tamperedReport.retainedExpectedBindings, [workerId]);
+    assert.ok(tamperedReport.diagnostics.some((row) => (
+      row.code === 'workspace_owner_checkout_invalid'
+      && row.expectationId === workerId && row.retained === true
+    )));
+    assert.equal(existsSync(worktree), true);
+    const retainedCapacity = firstDriver.worktreeCapacity.snapshot().reservations[0];
+    assert.deepEqual({ ownerId: retainedCapacity.ownerId, nonce: retainedCapacity.nonce }, {
+      ownerId: seededCapacityOwner.ownerId, nonce: seededCapacityOwner.nonce,
+    });
+
+    const rejected = driver(repo, logDir, adapter());
+    try {
+      await rejected.coordinator.startupReady();
+      const replay = rejected.coordinator._workers.get(workerId);
+      const task = rejected.coordinator._tasks.get(taskId);
+      assert.equal(replay.workspaceOwnerBindingValid, false);
+      assert.equal(replay.ownedWorktreeAuthority, false);
+      assert.equal(replay.workspaceOwnerBindingDiagnostic, 'workspace_owner_checkout_invalid');
+      assert.equal(
+        rejected.coordinator._recoveryDispatchRefusal(replay, task),
+        'workspace_owner_binding_unproven',
+      );
+      const unadopted = rejected.worktreeCapacity.snapshot().reservations[0];
+      assert.deepEqual({ ownerId: unadopted.ownerId, nonce: unadopted.nonce }, {
+        ownerId: seededCapacityOwner.ownerId, nonce: seededCapacityOwner.nonce,
+      });
+    } finally {
+      rejected.coordinator._closed = true;
+      rejected.coordination.releaseWriterLease({ requireOwned: true });
+      writeFileSync(metadataPath, exactMetadata, { mode: 0o600 });
+    }
+  });
+
+  const writeOwnerReceipt = (receipt) => writeFileSync(
+    ownerReceiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 },
+  );
+  const foreignDeployment = createHash('sha256').update('foreign-deployment').digest('hex');
+  const foreignController = createHash('sha256').update('foreign-controller').digest('hex');
+  const replayRefusals = [
+    {
+      label: 'missing', code: 'workspace_owner_receipt_missing',
+      install: () => rmSync(ownerReceiptPath, { force: true }),
+    },
+    {
+      label: 'malformed', code: 'workspace_owner_receipt_invalid',
+      install: () => writeOwnerReceipt({ schemaVersion: 1 }),
+    },
+    {
+      label: 'mismatched', code: 'workspace_owner_binding_mismatch',
+      install: () => writeOwnerReceipt(sealedOwnerReceipt({
+        ...exactOwnerReceipt, logicalTaskId: 'mismatched-logical-task',
+      })),
+    },
+    {
+      label: 'foreign', code: 'workspace_owner_live_foreign',
+      install: () => writeOwnerReceipt(sealedOwnerReceipt({
+        ...exactOwnerReceipt, deploymentId: foreignDeployment, controllerId: foreignController,
+      })),
+    },
+  ];
+  for (const refusal of replayRefusals) {
+    refusal.install();
+    const rejected = driver(repo, logDir, adapter());
+    try {
+      await rejected.coordinator.startupReady();
+      const replay = rejected.coordinator._workers.get(workerId);
+      const replayTask = rejected.coordinator._tasks.get(taskId);
+      assert.equal(replay.workspaceOwnerBindingValid, false, refusal.label);
+      assert.equal(replay.ownedWorktreeAuthority, false, refusal.label);
+      assert.equal(replay.workspaceOwnerBindingDiagnostic, refusal.code, refusal.label);
+      assert.equal(
+        rejected.coordinator._recoveryDispatchRefusal(replay, replayTask),
+        'workspace_owner_binding_unproven',
+        refusal.label,
+      );
+      replay.workspaceOwnerBindingValid = null;
+      assert.equal(
+        rejected.coordinator._recoveryDispatchRefusal(replay, replayTask),
+        'workspace_owner_binding_unproven',
+        `${refusal.label} unknown/null owner authority`,
+      );
+      replay.workspaceOwnerBindingValid = false;
+      await assert.rejects(
+        rejected.coordinator._removeOwnedTaskWorktree(replay, replayTask),
+        (error) => error?.code === 'workspace_owner_binding_unproven',
+      );
+      if (refusal.label === 'malformed') {
+        const retainedPath = replay.worktree;
+        replay.worktree = null;
+        replay.cleanupPending = false;
+        replay.physicalWorkspaceCleanupCompleted = false;
+        await assert.rejects(
+          rejected.coordinator._removeOwnedTaskWorktree(replay, replayTask),
+          (error) => error?.code === 'workspace_owner_binding_unproven',
+          'null presentation state cannot claim cleanup over retained unproven ownership',
+        );
+        replay.worktree = retainedPath;
+      }
+      assert.equal(existsSync(worktree), true, refusal.label);
+      const retainedCapacity = rejected.worktreeCapacity.snapshot().reservations[0];
+      assert.deepEqual({ ownerId: retainedCapacity.ownerId, nonce: retainedCapacity.nonce }, {
+        ownerId: seededCapacityOwner.ownerId, nonce: seededCapacityOwner.nonce,
+      }, `${refusal.label} replay must not adopt capacity`);
+    } finally {
+      rejected.coordinator._closed = true;
+      rejected.coordination.releaseWriterLease({ requireOwned: true });
+      writeOwnerReceipt(exactOwnerReceipt);
+    }
+  }
+
   const recoveredAdapter = adapter();
   recoveredDriver = driver(repo, logDir, recoveredAdapter);
   recoveredApplication = application(recoveredDriver);
   await recoveredApplication.ready;
 
   const replayed = recoveredDriver.coordinator.list().find((candidate) => candidate.id === workerId);
+  const recoveredInternal = recoveredDriver.coordinator._workers.get(workerId);
+  assert.equal(recoveredInternal.workspaceOwnerBindingValid, true);
+  assert.equal(recoveredInternal.ownedWorktreeAuthority, true);
   assert.equal(replayed.processRef.state, 'unconfirmed_after_restart');
   assert.equal(replayed.processRef.generation, live.processRef.generation);
   assert.equal(replayed.processRef.pid, pid);
@@ -266,6 +610,26 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
   assert.deepEqual(activeCapacity.reservations.map((row) => row.id), [`worker:${physicalOwnerId}`],
     diagnostic('replayed live-generation capacity reservations', activeCapacity));
   assert.equal(activeCapacity.reservations[0].ownerId, recoveredDriver.worktreeCapacity.ownerId);
+  const adoptedNonce = activeCapacity.reservations[0].nonce;
+  const exactRetry = recoveredDriver.coordinator._worktrees.reconcile([exactWorkspaceExpectation]);
+  assert.deepEqual(exactRetry.validatedExpectedOwners, [physicalOwnerId]);
+  assert.equal(exactRetry.diagnostics.some((row) => row.physicalOwnerId === physicalOwnerId), false);
+  const retryReceipt = JSON.parse(readFileSync(ownerReceiptPath, 'utf8'));
+  const retryCapacity = recoveredDriver.worktreeCapacity.snapshot().reservations[0];
+  assert.deepEqual({
+    physicalOwnerId: retryReceipt.physicalOwnerId,
+    receiptDigest: retryReceipt.receiptDigest,
+    processGeneration: retryReceipt.processGeneration,
+    capacityNonce: retryCapacity.nonce,
+    ownerBoundCount: recoveredDriver.log.read(workerId)
+      .filter((event) => event.kind === 'worktree.owner_bound').length,
+  }, {
+    physicalOwnerId,
+    receiptDigest: exactOwnerReceipt.receiptDigest,
+    processGeneration: processStarted.payload.generation,
+    capacityNonce: adoptedNonce,
+    ownerBoundCount: 1,
+  });
 
   const beforeStop = await recoveredApplication.status(runId, principal('owner'));
   assert.equal(beforeStop.ownership.workers, 1,
@@ -350,6 +714,27 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
     processGroupId: authority[0].payload.processGroupId,
     pidStart: authority[0].payload.pidStart,
   });
+  const nativeProcessClosed = await until(
+    () => priorControllerEvents.find((event) => event.kind === 'lifecycle.process_closed'),
+    'prior transport exact process closure observation',
+  );
+  assert.deepEqual({
+    ownerBoundGeneration: ownerBound.payload.processGeneration,
+    processStartedGeneration: processStarted.payload.generation,
+    processAuthorityGeneration: authority[0].payload.generation,
+    unconfirmedGeneration: replayed.processRef.generation,
+    nativeProcessClosedGeneration: nativeProcessClosed.payload.generation,
+    recoveredCloseGeneration: reaped[0].payload.generation,
+    ownerBoundCount: recoveredLifecycle.filter((event) => event.kind === 'worktree.owner_bound').length,
+  }, {
+    ownerBoundGeneration: 1,
+    processStartedGeneration: 1,
+    processAuthorityGeneration: 1,
+    unconfirmedGeneration: 1,
+    nativeProcessClosedGeneration: 1,
+    recoveredCloseGeneration: 1,
+    ownerBoundCount: 1,
+  });
   assert.equal(recoveredLifecycle.some((event) => event.kind === 'control.recovery_process_absent'), false);
 
   const afterStop = await recoveredApplication.status(runId, principal('owner'));
@@ -392,6 +777,315 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
     diagnostic('shutdown owned-capacity count', closed.receipt));
   assert.equal(recoveredDriver.coordination._writerLease, null);
   assert.equal(existsSync(join(logDir, 'coordination', 'writer.lease')), false);
+});
+
+test('P92.2-PO3: absent process cannot erase retained malformed workspace cleanup authority', async (t) => {
+  const world = mkdtempSync(join(tmpdir(), 'baton-phase92-absent-retained-owner-'));
+  const repo = join(world, 'repo'); const logDir = join(world, 'log');
+  mkdirSync(repo);
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'phase92-absent@example.invalid'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Phase 92 Absent Fixture'], { cwd: repo });
+  writeFileSync(join(repo, 'base.txt'), 'base\n');
+  execFileSync('git', ['add', 'base.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+  const firstAdapter = adapter({ lifecycleBarrier: '.phase92-absent.sock' });
+  const first = driver(repo, logDir, firstAdapter);
+  let second; let pid = null; let receiptPath = null; let exactReceipt = null;
+  t.after(async () => {
+    if (pid) try { process.kill(-pid, 'SIGKILL'); } catch { /* absent */ }
+    if (receiptPath && exactReceipt) {
+      try { writeFileSync(receiptPath, `${JSON.stringify(exactReceipt, null, 2)}\n`, { mode: 0o600 }); } catch {}
+    }
+    try {
+      const owner = second?.coordinator.list()[0]?.sessionContext?.ownerTaskId;
+      if (owner) await second.coordinator._worktrees.remove(owner);
+    } catch {}
+    try { second?.coordination.releaseWriterLease(); } catch {}
+    try { first.coordination.releaseWriterLease(); } catch {}
+    rmSync(world, { recursive: true, force: true });
+  });
+  const firstApp = application(first);
+  const runId = 'run-phase92-absent-retained';
+  const proposed = await firstApp.start({
+    runId, objective: 'HOLD_UNTIL_INTERRUPT before malformed retained-owner replay.',
+    profile: 'recovery', route, scope: ['**'],
+  }, principal('owner'));
+  await firstApp.approve(runId, proposed.plan.digest, principal('approver'));
+  const live = await until(() => {
+    const row = first.coordinator.list()[0];
+    return row?.processRef?.state === 'ready' && row.worktree ? row : null;
+  }, 'absent retained-owner live process');
+  pid = live.processRef.pid;
+  const workerId = live.id; const physicalOwnerId = live.sessionContext.ownerTaskId;
+  const worktree = live.worktree;
+  receiptPath = join(repo, '.git', 'baton', 'workspace-owners', `${physicalOwnerId}.json`);
+  exactReceipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+  const capacityBefore = first.worktreeCapacity.snapshot().reservations[0];
+  firstAdapter.onEvent(() => {});
+  for (const session of firstAdapter._sessions.values()) {
+    if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
+  }
+  for (const handle of first.coordinator._workers.values()) {
+    first.coordinator._clearWatchdog(handle);
+    if (handle.budgetStopTimer) { clearTimeout(handle.budgetStopTimer); handle.budgetStopTimer = null; }
+  }
+  first.coordinator._closed = true;
+  first.coordination.releaseWriterLease({ requireOwned: true });
+  try { process.kill(-pid, 'SIGKILL'); } catch { /* already absent */ }
+  await until(() => !processGroupAlive(pid), 'absent retained-owner process group');
+  writeFileSync(receiptPath, '{"schemaVersion":1}\n', { mode: 0o600 });
+
+  second = driver(repo, logDir, adapter());
+  await second.coordinator.startupReady();
+  const replay = second.coordinator._workers.get(workerId);
+  assert.equal(replay.workspaceOwnerBindingValid, false);
+  assert.equal(replay.workspaceOwnerBindingDiagnostic, 'workspace_owner_receipt_invalid');
+  assert.equal(replay.worktree, worktree,
+    'retained unproven checkout coordinate cannot be cleared by process absence');
+  assert.equal(replay.physicalWorkspaceCleanupCompleted, false);
+  assert.equal(replay.cleanupPending, true);
+  assert.equal(existsSync(worktree), true);
+  const capacityAfter = second.worktreeCapacity.snapshot().reservations[0];
+  assert.deepEqual({ ownerId: capacityAfter.ownerId, nonce: capacityAfter.nonce }, {
+    ownerId: capacityBefore.ownerId, nonce: capacityBefore.nonce,
+  });
+  let stopOutcome;
+  try { stopOutcome = await second.coordinator.kill(workerId, 'policy'); }
+  catch (error) { stopOutcome = { ok: false, result: error?.code }; }
+  assert.equal(stopOutcome.ok, false,
+    'same-controller stop cannot report clean over retained unproven workspace authority');
+  assert.ok(['session_not_attached', 'workspace_owner_binding_unproven'].includes(
+    stopOutcome.result,
+  ));
+  assert.equal(existsSync(worktree), true);
+  assert.equal(readFileSync(receiptPath, 'utf8'), '{"schemaVersion":1}\n');
+});
+
+test('P92.2-PO3: immutable gen1 workspace owner binds a separately proven live gen2 recovery', async (t) => {
+  const world = mkdtempSync(join(tmpdir(), 'baton-phase92-gen2-owner-'));
+  const repo = join(world, 'repo');
+  const logDir = join(world, 'log');
+  mkdirSync(repo);
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'phase92-gen2@example.invalid'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Phase 92 Gen2 Fixture'], { cwd: repo });
+  writeFileSync(join(repo, 'base.txt'), 'base\n');
+  execFileSync('git', ['add', 'base.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+  let first; let second; let third; let firstPid = null; let secondPid = null;
+  const detachController = (selectedDriver, selectedAdapter) => {
+    selectedAdapter.onEvent(() => {});
+    for (const session of selectedAdapter._sessions.values()) {
+      if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
+    }
+    for (const handle of selectedDriver.coordinator._workers.values()) {
+      selectedDriver.coordinator._clearWatchdog(handle);
+      if (handle.budgetStopTimer) {
+        clearTimeout(handle.budgetStopTimer); handle.budgetStopTimer = null;
+      }
+    }
+    selectedDriver.coordinator._closed = true;
+    selectedDriver.coordination.releaseWriterLease({ requireOwned: true });
+  };
+  t.after(async () => {
+    for (const pid of [firstPid, secondPid].filter(Boolean)) {
+      try { process.kill(-pid, 'SIGKILL'); } catch { /* already absent */ }
+    }
+    for (const selected of [third, second, first]) {
+      try { selected?.coordination.releaseWriterLease(); } catch { /* already released */ }
+    }
+    rmSync(world, { recursive: true, force: true });
+  });
+
+  const runId = 'run-phase92-gen2-owner';
+  const firstAdapter = adapter({ lifecycleBarrier: '.phase92-gen1.sock' });
+  first = driver(repo, logDir, firstAdapter);
+  const firstApp = application(first);
+  const proposed = await firstApp.start({
+    runId,
+    objective: 'HOLD_UNTIL_INTERRUPT while a recovered process generation keeps one workspace.',
+    profile: 'recovery', route, scope: ['**'],
+  }, principal('owner'));
+  await firstApp.approve(runId, proposed.plan.digest, principal('approver'));
+  const gen1 = await until(() => {
+    const row = first.coordinator.list()[0];
+    return row?.processRef?.state === 'ready' && row.worktree ? row : null;
+  }, 'gen1 workspace/process authority');
+  firstPid = gen1.processRef.pid;
+  const workerId = gen1.id;
+  const physicalOwnerId = gen1.sessionContext.ownerTaskId;
+  const worktree = gen1.worktree;
+  const ownerBound = first.log.read(workerId).find((event) => event.kind === 'worktree.owner_bound');
+  assert.equal(ownerBound.payload.processGeneration, 1);
+  const ownerReceiptPath = join(
+    repo, '.git', 'baton', 'workspace-owners', `${physicalOwnerId}.json`,
+  );
+  const immutableReceipt = JSON.parse(readFileSync(ownerReceiptPath, 'utf8'));
+
+  const preserved = await first.coordinator.interrupt(
+    workerId, undefined, 'semantic:owner', {
+      expectedFence: first.coordinator.list()[0].fence,
+      controlId: `control:${'a'.repeat(64)}`,
+      preserveTurn: true,
+    },
+  );
+  assert.equal(preserved.preservation?.state, 'preserved');
+  detachController(first, firstAdapter);
+  try { process.kill(-firstPid, 'SIGKILL'); } catch { /* already absent */ }
+  await until(() => !processGroupAlive(firstPid), 'gen1 transport absence');
+
+  const secondAdapter = adapter({ lifecycleBarrier: '.phase92-gen2.sock' });
+  second = driver(repo, logDir, secondAdapter);
+  await second.coordinator.startupReady();
+  assert.equal(existsSync(worktree), true, 'preserved owner survives gen1 process absence');
+  const attached = await second.coordinator.recover(workerId);
+  assert.equal(attached.ok, true);
+  const gen2 = await until(() => {
+    const row = second.coordinator.list().find((candidate) => candidate.id === workerId);
+    return row?.processRef?.generation === 2 && row.processRef.state === 'ready' ? row : null;
+  }, 'gen2 recovered process authority');
+  secondPid = gen2.processRef.pid;
+  assert.notEqual(secondPid, firstPid);
+  assert.equal(second.log.read(workerId).filter((event) => event.kind === 'worktree.owner_bound').length, 1);
+  assert.deepEqual(JSON.parse(readFileSync(ownerReceiptPath, 'utf8')), immutableReceipt);
+  detachController(second, secondAdapter);
+
+  const thirdAdapter = adapter();
+  third = driver(repo, logDir, thirdAdapter);
+  await third.coordinator.startupReady();
+  const replay = third.coordinator._workers.get(workerId);
+  assert.equal(replay.processRef.generation, 2);
+  assert.equal(replay.processRef.state, 'unconfirmed_after_restart');
+  assert.equal(replay.workspaceOwnerBinding.processGeneration, 1);
+  assert.equal(replay.workspaceOwnerBindingValid, true);
+  assert.equal(replay.workspaceOwnerProcessAuthorityValid, true);
+  assert.equal(replay.ownedWorktreeAuthority, true);
+  assert.equal(processAuthorityState(replay.processRef, replay.processAuthority), 'active');
+  assert.equal(replay.sessionContext.ownerTaskId, physicalOwnerId);
+  assert.deepEqual(JSON.parse(readFileSync(ownerReceiptPath, 'utf8')), immutableReceipt);
+  assert.deepEqual(third.worktreeCapacity.snapshot().reservations.map((row) => row.resourceId), [
+    physicalOwnerId,
+  ]);
+
+  const stopped = await application(third).stop(
+    runId, 'Close exact gen2 while reaping the immutable gen1 workspace owner.', principal('owner'),
+  );
+  assert.equal(stopped.phase, 'stopped');
+  assert.equal(processGroupAlive(secondPid), false);
+  assert.equal(existsSync(worktree), false);
+  assert.equal(physicalWorkspaceOwnerReceipt(repo, physicalOwnerId), null);
+  assert.deepEqual(third.worktreeCapacity.snapshot().reservations, []);
+  assert.equal(third.log.read(workerId).filter((event) => event.kind === 'worktree.owner_bound').length, 1);
+});
+
+test('P92.2-PO3: controller2 exact gen2 recovery restores authority for same-controller stop', async (t) => {
+  const world = mkdtempSync(join(tmpdir(), 'baton-phase92-gen2-same-controller-stop-'));
+  const repo = join(world, 'repo');
+  const logDir = join(world, 'log');
+  mkdirSync(repo);
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'phase92-gen2-stop@example.invalid'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Phase 92 Gen2 Stop Fixture'], { cwd: repo });
+  writeFileSync(join(repo, 'base.txt'), 'base\n');
+  execFileSync('git', ['add', 'base.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+  let first; let second; let firstPid = null; let secondPid = null;
+  const detachController = (selectedDriver, selectedAdapter) => {
+    selectedAdapter.onEvent(() => {});
+    for (const session of selectedAdapter._sessions.values()) {
+      if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
+    }
+    for (const handle of selectedDriver.coordinator._workers.values()) {
+      selectedDriver.coordinator._clearWatchdog(handle);
+      if (handle.budgetStopTimer) {
+        clearTimeout(handle.budgetStopTimer); handle.budgetStopTimer = null;
+      }
+    }
+    selectedDriver.coordinator._closed = true;
+    selectedDriver.coordination.releaseWriterLease({ requireOwned: true });
+  };
+  t.after(async () => {
+    for (const pid of [firstPid, secondPid].filter(Boolean)) {
+      try { process.kill(-pid, 'SIGKILL'); } catch { /* already absent */ }
+    }
+    for (const selected of [second, first]) {
+      try { selected?.coordination.releaseWriterLease(); } catch { /* already released */ }
+    }
+    rmSync(world, { recursive: true, force: true });
+  });
+
+  const runId = 'run-phase92-gen2-same-controller-stop';
+  const firstAdapter = adapter({ lifecycleBarrier: '.phase92-gen1-same-controller.sock' });
+  first = driver(repo, logDir, firstAdapter);
+  const firstApp = application(first);
+  const proposed = await firstApp.start({
+    runId,
+    objective: 'HOLD_UNTIL_INTERRUPT before exact gen2 recovery and same-controller stop.',
+    profile: 'recovery', route, scope: ['**'],
+  }, principal('owner'));
+  await firstApp.approve(runId, proposed.plan.digest, principal('approver'));
+  const gen1 = await until(() => {
+    const row = first.coordinator.list()[0];
+    return row?.processRef?.state === 'ready' && row.worktree ? row : null;
+  }, 'same-controller gen1 workspace/process authority');
+  firstPid = gen1.processRef.pid;
+  const workerId = gen1.id;
+  const physicalOwnerId = gen1.sessionContext.ownerTaskId;
+  const worktree = gen1.worktree;
+  const immutableReceipt = physicalWorkspaceOwnerReceipt(repo, physicalOwnerId);
+  assert.equal(immutableReceipt.processGeneration, 1);
+
+  const preserved = await first.coordinator.interrupt(
+    workerId, undefined, 'semantic:owner', {
+      expectedFence: first.coordinator.list()[0].fence,
+      controlId: `control:${'b'.repeat(64)}`,
+      preserveTurn: true,
+    },
+  );
+  assert.equal(preserved.preservation?.state, 'preserved');
+  detachController(first, firstAdapter);
+  try { process.kill(-firstPid, 'SIGKILL'); } catch { /* already absent */ }
+  await until(() => !processGroupAlive(firstPid), 'same-controller gen1 transport absence');
+
+  const secondAdapter = adapter({ lifecycleBarrier: '.phase92-gen2-same-controller.sock' });
+  second = driver(repo, logDir, secondAdapter);
+  await second.coordinator.startupReady();
+  const replayBeforeRecovery = second.coordinator._workers.get(workerId);
+  assert.equal(replayBeforeRecovery.worktree, worktree,
+    'dead-generation startup must retain the checkout coordinate until recovery proves authority');
+  assert.equal(replayBeforeRecovery.ownedWorktreeAuthority, false);
+  assert.equal(replayBeforeRecovery.physicalWorkspaceCleanupCompleted, false);
+  const attached = await second.coordinator.recover(workerId);
+  assert.equal(attached.ok, true);
+  const gen2 = await until(() => {
+    const row = second.coordinator.list().find((candidate) => candidate.id === workerId);
+    return row?.processRef?.generation === 2 && row.processRef.state === 'ready' ? row : null;
+  }, 'same-controller gen2 recovered process authority');
+  secondPid = gen2.processRef.pid;
+
+  const recovered = second.coordinator._workers.get(workerId);
+  assert.equal(recovered.workspaceOwnerBinding.processGeneration, 1);
+  assert.equal(recovered.workspaceOwnerBindingValid, true);
+  assert.equal(recovered.workspaceOwnerProcessAuthorityValid, true);
+  assert.equal(recovered.processRef.generation, 2);
+  assert.equal(processAuthorityState(recovered.processRef, recovered.processAuthority), 'active');
+  assert.equal(recovered.worktree, worktree);
+  assert.equal(recovered.ownedWorktreeAuthority, true);
+  assert.deepEqual(physicalWorkspaceOwnerReceipt(repo, physicalOwnerId), immutableReceipt);
+  assert.deepEqual(second.worktreeCapacity.snapshot().reservations.map((row) => row.resourceId), [
+    physicalOwnerId,
+  ]);
+
+  const stopped = await application(second).stop(
+    runId, 'Close exact gen2 and its immutable gen1 workspace on controller2.', principal('owner'),
+  );
+  assert.equal(stopped.phase, 'stopped');
+  assert.equal(processGroupAlive(secondPid), false);
+  assert.equal(existsSync(worktree), false);
+  assert.equal(physicalWorkspaceOwnerReceipt(repo, physicalOwnerId), null);
+  assert.deepEqual(second.worktreeCapacity.snapshot().reservations, []);
+  assert.equal(second.log.read(workerId).filter((event) => event.kind === 'worktree.owner_bound').length, 1);
 });
 
 test('issue 5: one deployment startup terminalizes two already-dead owned generations and reaps all stale resources', async (t) => {
