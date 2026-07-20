@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn as spawnChild } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,10 +13,52 @@ import { Log } from '../src/log.mjs';
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-session-recovery-${name}-`));
 const until = async (fn, label, timeoutMs = 5000) => { const deadline = Date.now() + timeoutMs; while (Date.now() < deadline) { const value = await fn(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 5)); } throw new Error(`timed out waiting for ${label}`); };
 const brief = () => createBrief({ goal: 'write proof', constraints: [], pathScope: ['proof.txt'], definitionOfDone: 'proof exists', verification: { command: 'test -s proof.txt', expectExit: 0, timeoutMs: 5000 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } });
+const nativeProcesses = new Map();
 class ResumeMock extends MockAdapter {
-  constructor(pid) { super({ card: { harness: 'resume-fixture', version: '1', concurrencyCeiling: 1 }, scenario: { outcome: 'completed', edits: [{ path: 'proof.txt', content: 'verified\n', delayMs: 20 }] } }); this.pid = pid; }
+  constructor(_pid) { super({ card: { harness: 'resume-fixture', version: '1', concurrencyCeiling: 1 }, scenario: { outcome: 'completed', edits: [{ path: 'proof.txt', content: 'verified\n', delayMs: 20 }] } }); }
   card() { return { ...super.card(), sessions: { multiTurn: 'native', resume: 'native', fork: 'unsupported' }, modelSelection: { mode: 'exact', configuredDefault: 'resume-fixture-model', available: ['resume-fixture-model'], family: 'resume-fixture', acceptedPrefixes: ['resume-fixture-'], acceptedAliases: [], reasoningEffort: ['low'], serviceTier: null, provenance: 'test', refreshedAt: null } }; }
-  async spawn(worker, taskBrief, opts = {}) { const ack = await super.spawn(worker, taskBrief, opts); if (ack.ok) { const session = this._sessions.get(worker); this._emit(session, 'lifecycle.spawned', { sessionId: opts.session?.id ?? 'resume-native-1', pid: this.pid }); } return ack; }
+  async spawn(worker, taskBrief, opts = {}) {
+    let child = nativeProcesses.get(worker);
+    if (!child && opts.attachOnly !== true) {
+      child = spawnChild(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        detached: true, stdio: 'ignore',
+      });
+      await new Promise((resolve, reject) => {
+        child.once('spawn', resolve); child.once('error', reject);
+      });
+      child.unref();
+      nativeProcesses.set(worker, child);
+    }
+    const ack = await super.spawn(worker, taskBrief, opts);
+    if (ack.ok) {
+      const session = this._sessions.get(worker);
+      if (opts.attachOnly !== true) this._emit(session, 'lifecycle.process_started', {
+        schemaVersion: 1, generation: opts.processGeneration,
+        pid: child.pid, processGroupId: child.pid, phase: 'initializing',
+      });
+      this._emit(session, 'lifecycle.spawned', {
+        sessionId: opts.session?.id ?? 'resume-native-1', processGeneration: opts.processGeneration,
+        pid: child.pid,
+      });
+    }
+    return ack;
+  }
+  async kill(worker) {
+    const child = nativeProcesses.get(worker);
+    if (child) {
+      const closed = new Promise((resolve) => child.once('close', (code, signal) => resolve({ code, signal })));
+      try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error?.code !== 'ESRCH') throw error; }
+      const outcome = await closed;
+      nativeProcesses.delete(worker);
+      const session = this._sessions.get(worker);
+      if (session) this._emit(session, 'lifecycle.process_closed', {
+        schemaVersion: 1, generation: session.opts.processGeneration,
+        pid: child.pid, processGroupId: child.pid, code: outcome.code,
+        signal: outcome.signal, ready: true,
+      });
+    }
+    return super.kill(worker);
+  }
 }
 
 function stub({ candidates = ['w-1', 'w-2'], outcomes = {} } = {}) {
