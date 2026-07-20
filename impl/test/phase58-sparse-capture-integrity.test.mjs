@@ -221,7 +221,9 @@ function sessionContext(repo, taskId, handle) {
     repoRoot: repo,
     baseSha: handle.baseSha,
     branch: handle.branch,
-    ownerTaskId: taskId,
+    ownerTaskId: handle.ownerTaskId,
+    logicalTaskId: handle.logicalTaskId ?? taskId,
+    ownerReceiptDigest: handle.ownerReceiptDigest,
     sparsePaths: [...handle.sparsePaths],
   };
 }
@@ -238,7 +240,7 @@ test('SP10: matching deployment, session, metadata, and live Git sparse identiti
   const { driver, logDir } = driverFixture('resume-green', repo, ['src']);
   let handle;
   t.after(async () => {
-    if (handle) await cleanupWorker(repo, taskId);
+    if (handle) await cleanupWorker(repo, handle.ownerTaskId);
     try { driver.close(); } catch { /* evidence root cleanup below remains */ }
     rmSync(logDir, { recursive: true, force: true });
     rmSync(world, { recursive: true, force: true });
@@ -267,7 +269,7 @@ for (const scenario of resumedContextAttacks) {
     const { driver, logDir } = driverFixture(taskId, repo, ['src']);
     let handle;
     t.after(async () => {
-      if (handle) await cleanupWorker(repo, taskId);
+      if (handle) await cleanupWorker(repo, handle.ownerTaskId);
       try { driver.close(); } catch { /* evidence root cleanup below remains */ }
       rmSync(logDir, { recursive: true, force: true });
       rmSync(world, { recursive: true, force: true });
@@ -293,7 +295,7 @@ test('SP10: native resume rejects a checkout created under a different deploymen
   const changed = driverFixture('resume-changed', repo, ['docs']);
   let handle;
   t.after(async () => {
-    if (handle) await cleanupWorker(repo, taskId);
+    if (handle) await cleanupWorker(repo, handle.ownerTaskId);
     for (const item of [source, changed]) {
       try { item.driver.close(); } catch { /* evidence root cleanup below remains */ }
       rmSync(item.logDir, { recursive: true, force: true });
@@ -334,14 +336,14 @@ const reconcileAttacks = [
 ];
 
 for (const scenario of reconcileAttacks) {
-  test(`SP11: reconciliation reaps an expected active worker when ${scenario.label}`, async (t) => {
+  test(`SP11/Phase 92.2: a foreign reconciler retains an expected active worker when ${scenario.label}`, async (t) => {
     const { world, repo, baseSha } = fixture(`reconcile-${scenario.label.replaceAll(' ', '-')}`);
     const taskId = `reconcile-${scenario.label.replaceAll(' ', '-')}`;
     const source = driverFixture(`${taskId}-source`, repo, scenario.sourcePolicy);
     const reconciler = driverFixture(`${taskId}-reconciler`, repo, scenario.reconcilePolicy);
     let handle;
     t.after(async () => {
-      if (handle && existsSync(handle.path)) await cleanupWorker(repo, taskId);
+      if (handle && existsSync(handle.path)) await cleanupWorker(repo, handle.ownerTaskId);
       for (const item of [source, reconciler]) {
         try { item.driver.close(); } catch { /* evidence root cleanup below remains */ }
         rmSync(item.logDir, { recursive: true, force: true });
@@ -350,14 +352,16 @@ for (const scenario of reconcileAttacks) {
     });
 
     handle = await source.driver.coordinator._worktrees.create(taskId, baseSha);
-    scenario.mutate(repo, taskId, handle.path);
-    const report = await reconciler.driver.coordinator._worktrees.reconcile([taskId]);
+    scenario.mutate(repo, handle.ownerTaskId, handle.path);
+    const report = await reconciler.driver.coordinator._worktrees.reconcile([handle.ownerTaskId]);
 
     assert.deepEqual(report.errors, []);
-    assert.equal(report.removedZombieDirs.includes(handle.path), true);
-    assert.equal(existsSync(handle.path), false);
-    assert.equal(existsSync(metadataPath(repo, taskId)), false);
-    assert.equal(git(['branch', '--list', `baton/${taskId}`], repo), '');
+    assert.equal(report.removedZombieDirs.includes(handle.path), false);
+    assert.equal(report.diagnostics.some((row) => row.physicalOwnerId === handle.ownerTaskId
+      && row.code === 'workspace_owner_live_foreign' && row.retained === true), true);
+    assert.equal(existsSync(handle.path), true);
+    assert.equal(existsSync(metadataPath(repo, handle.ownerTaskId)), true);
+    assert.equal(git(['branch', '--list', handle.branch, '--format=%(refname:short)'], repo), handle.branch);
   });
 }
 
@@ -454,9 +458,9 @@ test('SP12: createDriver native resume borrows one sparse projected worktree and
     toolchainProjection: config,
     stopDeadlineMs: 1_000,
   });
-  const ownerTaskId = 'resume-projection-owner';
+  const logicalOwnerTaskId = 'resume-projection-owner';
   driver.coordination.createTask({
-    id: ownerTaskId,
+    id: logicalOwnerTaskId,
     brief: {
       goal: 'own the sparse projected session context', constraints: [], pathScope: ['src/**'],
       definitionOfDone: 'the context is owned durably',
@@ -470,18 +474,20 @@ test('SP12: createDriver native resume borrows one sparse projected worktree and
   let resumed;
   t.after(async () => {
     if (resumed) await driver.coordinator.kill(resumed.id, 'test').catch(() => {});
-    if (owned?.path && existsSync(owned.path)) await driver.coordinator._worktrees.remove(ownerTaskId).catch(() => {});
+    if (owned?.path && existsSync(owned.path)) await driver.coordinator._worktrees.remove(owned.ownerTaskId).catch(() => {});
     try { driver.close(); } catch { /* owned fixture root cleanup below remains */ }
     rmSync(world, { recursive: true, force: true });
   });
 
-  owned = await driver.coordinator._worktrees.create(ownerTaskId, baseSha);
+  owned = await driver.coordinator._worktrees.create(logicalOwnerTaskId, baseSha);
   const context = {
     worktree: owned.path,
     repoRoot: repo,
     baseSha: owned.baseSha,
     branch: owned.branch,
-    ownerTaskId,
+    ownerTaskId: owned.ownerTaskId,
+    logicalTaskId: owned.logicalTaskId,
+    ownerReceiptDigest: owned.ownerReceiptDigest,
     sparsePaths: [...owned.sparsePaths],
     sparseCheckoutIdentity: owned.sparseCheckoutIdentity,
     toolchainProjection: owned.toolchainProjection,
@@ -505,7 +511,7 @@ test('SP12: createDriver native resume borrows one sparse projected worktree and
     budget: { tokens: 100, usd: 1, wallMin: 1 },
   }, {
     taskId: 'resume-projection-borrower',
-    refines: ownerTaskId,
+    refines: logicalOwnerTaskId,
     session: { mode: 'resume', id: 'phase58-native-session', context },
   });
   const spawn = await bounded(adapter.firstSpawn, 'native resume probe');
@@ -529,7 +535,7 @@ test('SP12: createDriver native resume borrows one sparse projected worktree and
     goal: 'must refuse substituted sparse identity', constraints: [], pathScope: ['docs/**'], definitionOfDone: 'refused',
     verification: { command: 'true', expectExit: 0 }, budget: { tokens: 100, usd: 1, wallMin: 1 },
   }, {
-    taskId: 'resume-substituted-sparse', refines: ownerTaskId,
+    taskId: 'resume-substituted-sparse', refines: logicalOwnerTaskId,
     session: {
       mode: 'resume', id: 'phase58-tampered-sparse',
       context: { ...context, sparsePaths: ['docs'], sparseCheckoutIdentity: substitutedSparse },
@@ -540,7 +546,7 @@ test('SP12: createDriver native resume borrows one sparse projected worktree and
     goal: 'must refuse substituted toolchain identity', constraints: [], pathScope: ['src/**'], definitionOfDone: 'refused',
     verification: { command: 'true', expectExit: 0 }, budget: { tokens: 100, usd: 1, wallMin: 1 },
   }, {
-    taskId: 'resume-substituted-toolchain', refines: ownerTaskId,
+    taskId: 'resume-substituted-toolchain', refines: logicalOwnerTaskId,
     session: {
       mode: 'resume', id: 'phase58-tampered-toolchain',
       context: {
