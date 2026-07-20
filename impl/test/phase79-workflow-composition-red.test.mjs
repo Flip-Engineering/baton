@@ -212,6 +212,7 @@ test('WF79-1: deployment workflow compiles one durable multi-node Plan and start
   assert.equal(selected.result.preservation.state, 'pinned');
   const evidence = await workflow.evidence();
   assert.equal(evidence.kind, 'baton.workflow.evidence');
+  assert.equal(evidence.schemaVersion, 2);
   assert.equal(evidence.resultIntent, 'change');
   assert.deepEqual(Object.keys(evidence), [
     'schemaVersion', 'kind', 'state', 'repoId', 'runId', 'resultIntent',

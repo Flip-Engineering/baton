@@ -93,7 +93,9 @@ test('P92-OR1: explicit evidence intent accepts a textual capsule and inverse pr
   );
   await review.approve();
   const reviewed = await terminal(review);
-  assert.equal(reviewed.phase, 'completed');
+  assert.equal(reviewed.phase, 'completed', JSON.stringify({
+    terminalCause: reviewed.terminalCause, result: reviewed.result, cleanup: reviewed.cleanup,
+  }));
   assert.equal(reviewed.terminalCause, null);
   assert.equal(reviewed.result?.state, 'accepted');
   assert.deepEqual(reviewed.planPreview.node.requiredEffects ?? [], []);
@@ -102,6 +104,7 @@ test('P92-OR1: explicit evidence intent accepts a textual capsule and inverse pr
   assert.equal(reviewed.objectiveResultPolicy.mode, 'read_only_evidence');
   const evidence = await review.evidence();
   assert.equal(evidence.kind, 'baton.run.evidence');
+  assert.equal(evidence.schemaVersion, 2);
   assert.equal(evidence.resultIntent, 'read_only_evidence');
   assert.equal(Object.hasOwn(evidence, 'objectiveResultPolicy'), false);
 

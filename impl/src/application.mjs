@@ -71,7 +71,15 @@ function closedEnum(value, allowed) {
   return typeof value === 'string' && allowed.has(value) ? value : null;
 }
 const SEMANTIC_ACTION_DISPATCH = Object.freeze({});
-const READ_ONLY_RESULT_CONSTRAINT = 'Baton objective/result policy read_only_evidence_v1';
+const RESULT_POLICY_CONSTRAINT_PREFIX = 'Baton objective/result policy ';
+// The unqualified marker predates explicit resultIntent and must remain replayable as
+// compatibility evidence. New explicit requests use a distinct reserved namespace so
+// recomputed historical manifests retain their schema-v1 identity.
+const LEGACY_READ_ONLY_RESULT_CONSTRAINT = `${RESULT_POLICY_CONSTRAINT_PREFIX}read_only_evidence_v1`;
+const EXPLICIT_RESULT_CONSTRAINTS = Object.freeze({
+  change: `${RESULT_POLICY_CONSTRAINT_PREFIX}explicit change_v1`,
+  read_only_evidence: `${RESULT_POLICY_CONSTRAINT_PREFIX}explicit read_only_evidence_v1`,
+});
 const RESULT_INTENTS = Object.freeze(new Set(['change', 'read_only_evidence']));
 const READ_ONLY_RESULT_DEFINITION = Object.freeze([
   'A bounded evidence-backed textual/result capsule answers the declared read-only objective.',
@@ -1220,8 +1228,47 @@ function parseProfileConstraint(constraints) {
   return { name: value.slice(0, split), digest: value.slice(split + 1) };
 }
 
+function resultIntentConstraint(constraints = []) {
+  const markers = constraints.filter((constraint) => (
+    constraint.startsWith(RESULT_POLICY_CONSTRAINT_PREFIX)
+  ));
+  if (markers.length === 0) {
+    return deepFreeze({ resultIntent: 'change', explicit: false, marker: null });
+  }
+  if (markers.length !== 1) {
+    throw applicationError('Goal has inconsistent result-policy constraints',
+      'application_goal_invalid');
+  }
+  const marker = markers[0];
+  if (marker === LEGACY_READ_ONLY_RESULT_CONSTRAINT) {
+    return deepFreeze({ resultIntent: 'read_only_evidence', explicit: false, marker });
+  }
+  const explicit = Object.entries(EXPLICIT_RESULT_CONSTRAINTS)
+    .find(([, candidate]) => candidate === marker);
+  if (!explicit) {
+    throw applicationError('Goal has an unsupported result-policy constraint',
+      'application_goal_invalid');
+  }
+  return deepFreeze({ resultIntent: explicit[0], explicit: true, marker });
+}
+
 function resultIntentFromConstraints(constraints = []) {
-  return constraints.includes(READ_ONLY_RESULT_CONSTRAINT) ? 'read_only_evidence' : 'change';
+  return resultIntentConstraint(constraints).resultIntent;
+}
+
+function assertResultIntentCoherence(goal, plans) {
+  const identity = resultIntentConstraint(goal.constraints);
+  if (identity.resultIntent !== 'read_only_evidence') return identity;
+  const definitionMatches = digest(goal.definitionOfDone) === digest(READ_ONLY_RESULT_DEFINITION);
+  const mutatingNode = plans.flatMap((candidate) => candidate.nodes ?? []).find((node) => (
+    node.effects?.includes('repository_edit')
+      || node.requiredEffects?.includes('repository_edit')
+  ));
+  if (!definitionMatches || mutatingNode) {
+    throw applicationError('read-only Goal and Plan authority are inconsistent',
+      'application_goal_invalid');
+  }
+  return identity;
 }
 
 function objectiveResultPolicy(resultIntent) {
@@ -2398,6 +2445,54 @@ export class BatonApplication {
       dispatch ??= null;
     }
     if (!goal) throw applicationError(`unknown run ${runId}`, 'application_run_not_found');
+    const resultIdentity = resultIntentConstraint(goal.constraints);
+    let relevantPlans = [];
+    if (resultIdentity.resultIntent === 'read_only_evidence') {
+      if (typeof this.driver.coordination.goalPlanRunPlans === 'function') {
+        try {
+          relevantPlans = this.driver.coordination.goalPlanRunPlans(
+            this.repoId, runId, MAX_RUN_RECORDS,
+          );
+        } catch (error) {
+          throw applicationError('read-only Run Plan history is unavailable',
+            error?.code === 'goal_plan_status_oversize'
+              ? 'application_run_lookup_oversize' : 'application_run_history_unavailable');
+        }
+      } else if (typeof this.driver.coordination.snapshot === 'function') {
+        let goalPlan;
+        try {
+          ({ goalPlan } = this.driver.coordination.snapshot());
+        } catch {
+          throw applicationError('read-only Run Plan history is unavailable',
+            'application_run_history_unavailable');
+        }
+        if (!Array.isArray(goalPlan?.plans)) {
+          throw applicationError('read-only Run Plan history is unavailable',
+            'application_run_history_unavailable');
+        }
+        if (goalPlan.plans.length > MAX_RUN_RECORDS) {
+          throw applicationError('application run projection exceeds its bounded lookup ceiling',
+            'application_run_lookup_oversize');
+        }
+        relevantPlans = goalPlan.plans.filter((candidate) => (
+          candidate.repoId === this.repoId && candidate.runId === runId
+          && candidate.goal.goalId === goal.goalId && candidate.goal.version === goal.version
+          && candidate.goal.digest === goal.digest
+        ));
+      } else {
+        throw applicationError('read-only Run Plan history is unavailable',
+          'application_run_history_unavailable');
+      }
+      if (!Array.isArray(relevantPlans)) {
+        throw applicationError('read-only Run Plan history is unavailable',
+          'application_run_history_unavailable');
+      }
+      if (relevantPlans.length > MAX_RUN_RECORDS) {
+        throw applicationError('application run projection exceeds its bounded lookup ceiling',
+          'application_run_lookup_oversize');
+      }
+    }
+    assertResultIntentCoherence(goal, relevantPlans);
     const profileRef = parseProfileConstraint(goal.constraints);
     const currentProfile = profileRef ? this.profiles.get(profileRef.name) : null;
     const profile = profileRef && currentProfile?.digest === profileRef.digest ? currentProfile
@@ -3384,15 +3479,14 @@ export class BatonApplication {
       ownerPrincipalId: owner.principalId,
     }).slice(0, 32)}`;
     const intent = deepFreeze({ ...requestedIntent, runId, scope });
-    let existingRun = false;
+    let existingRun = null;
     try {
-      this._findRun(intent.runId, { allowUnavailableProfile: true });
-      existingRun = true;
+      existingRun = this._findRun(intent.runId, { allowUnavailableProfile: true });
     } catch (error) {
       if (error?.code !== 'application_run_not_found') throw error;
     }
-    if (!existingRun && profile.constraints.some((constraint) => (
-      constraint.startsWith('Baton objective/result policy ')
+    if (existingRun === null && profile.constraints.some((constraint) => (
+      constraint.startsWith(RESULT_POLICY_CONSTRAINT_PREFIX)
     ))) {
       throw applicationError('deployment profile uses a reserved result-policy constraint',
         'application_profile_invalid');
@@ -3416,7 +3510,14 @@ export class BatonApplication {
     const workflowConstraint = intent.composition
       ? `Baton workflow ${intent.composition.strategy}:${intent.composition.workspace}:${intent.composition.join}`
       : null;
-    const objectivePolicy = objectiveResultPolicy(intent.resultIntent ?? 'change');
+    const durableResult = existingRun === null
+      ? null : resultIntentConstraint(existingRun.goal.constraints);
+    const explicitResultIntent = Object.hasOwn(intent, 'resultIntent');
+    const effectiveResultIntent = explicitResultIntent
+      ? intent.resultIntent : durableResult?.resultIntent ?? 'change';
+    const resultConstraint = explicitResultIntent
+      ? EXPLICIT_RESULT_CONSTRAINTS[intent.resultIntent] : durableResult?.marker ?? null;
+    const objectivePolicy = objectiveResultPolicy(effectiveResultIntent);
     const readOnlyResult = objectivePolicy.mode === 'read_only_evidence';
     const definitionOfDone = readOnlyResult
       ? clone(READ_ONLY_RESULT_DEFINITION) : clone(profile.definitionOfDone);
@@ -3424,7 +3525,8 @@ export class BatonApplication {
       objective: intent.objective,
       definitionOfDone,
       constraints: [...profile.constraints, constraint, ...(workflowConstraint ? [workflowConstraint] : []),
-        ...(readOnlyResult ? [READ_ONLY_RESULT_CONSTRAINT] : [])],
+        ...(resultConstraint !== null && !profile.constraints.includes(resultConstraint)
+          ? [resultConstraint] : [])],
       risk: profile.risk,
       budget: clone(profile.goalBudget),
       predecessor: null,
@@ -3791,6 +3893,7 @@ export class BatonApplication {
   async _buildEvidence(current) {
     const runId = current.goal.runId;
     const view = await this._buildView(current, this.principals.observer);
+    const resultIdentity = resultIntentConstraint(current.goal.constraints);
     if (!PROVIDER_EXECUTION_SETTLED_PHASES.has(view.phase)) {
       throw applicationError('Run evidence is available only after a terminal outcome', 'application_run_not_terminal');
     }
@@ -3807,12 +3910,12 @@ export class BatonApplication {
       this.driver.coordination.runStop?.(runId)?.admittedEvent,
       this.driver.coordination.runStop?.(runId)?.completedEvent].filter(Number.isSafeInteger);
     const core = {
-      schemaVersion: 1,
+      schemaVersion: resultIdentity.explicit ? 2 : 1,
       kind: 'baton.run.evidence',
       state: 'terminal',
       repoId: this.repoId,
       runId,
-      resultIntent: view.resultIntent,
+      ...(resultIdentity.explicit ? { resultIntent: resultIdentity.resultIntent } : {}),
       observedThroughSeq: relevantSeqs.length > 0 ? Math.max(...relevantSeqs) : 0,
       bindings: {
         profileDigest: view.profile.digest,
@@ -3862,6 +3965,7 @@ export class BatonApplication {
 
   _buildWorkflowEvidence(current, view) {
     const runId = current.goal.runId;
+    const resultIdentity = resultIntentConstraint(current.goal.constraints);
     const roundPlanDigests = new Set((view.rounds ?? []).map((round) => round.plan.digest));
     const workflowKinds = new Set([
       APPLICATION_WORKFLOW_RECORD_KIND,
@@ -3895,12 +3999,12 @@ export class BatonApplication {
       runStop?.admittedEvent, runStop?.completedEvent,
     ].filter(Number.isSafeInteger);
     const core = {
-      schemaVersion: 1,
+      schemaVersion: resultIdentity.explicit ? 2 : 1,
       kind: 'baton.workflow.evidence',
       state: APPLICATION_RUN_TERMINAL_PHASES.has(view.phase) ? 'terminal' : 'provider_settled',
       repoId: this.repoId,
       runId,
-      resultIntent: view.resultIntent,
+      ...(resultIdentity.explicit ? { resultIntent: resultIdentity.resultIntent } : {}),
       observedThroughSeq: relevantSeqs.length > 0 ? Math.max(...relevantSeqs) : 0,
       bindings: {
         profileDigest: view.profile.digest,
@@ -4547,7 +4651,8 @@ export class BatonApplication {
   }
 
   _planningView(current, cause = null) {
-    const resultIntent = resultIntentFromConstraints(current.goal.constraints);
+    const resultIdentity = resultIntentConstraint(current.goal.constraints);
+    const resultIntent = resultIdentity.resultIntent;
     const runStop = this.driver.coordination.runStop?.(current.goal.runId) ?? null;
     const stop = runStop ? {
       state: runStop.status, admittedAt: runStop.admittedAt, completedAt: runStop.completedAt,
@@ -6011,7 +6116,8 @@ export class BatonApplication {
       attempt.taskId !== null && !['accepted', 'failed', 'cancelled'].includes(attempt.state)
       && attempt.memberStop === null
     )).map((attempt) => attempt.role);
-    const resultIntent = resultIntentFromConstraints(current.goal.constraints);
+    const resultIdentity = resultIntentConstraint(current.goal.constraints);
+    const resultIntent = resultIdentity.resultIntent;
     const objectivePolicy = objectiveResultPolicy(resultIntent);
     const readOnlyResult = objectivePolicy.mode === 'read_only_evidence';
     let phase = !projection.approval ? 'awaiting_plan_approval'
@@ -6127,7 +6233,7 @@ export class BatonApplication {
       round: rounds.length,
       revision: current.plan.nodes[0]?.revision?.revisionId ?? null,
       profileDigest: current.profile.digest, planDigest: current.plan.digest,
-      resultIntent,
+      ...(resultIdentity.explicit ? { resultIntent } : {}),
     };
     const view = {
       schemaVersion: 1, runId, objective: current.goal.objective,
@@ -6279,7 +6385,8 @@ export class BatonApplication {
       throw applicationError('run projection differs from the compiled request', 'application_run_conflict');
     }
     const projection = await this._goalPlanStatus(current, observer);
-    const resultIntent = resultIntentFromConstraints(current.goal.constraints);
+    const resultIdentity = resultIntentConstraint(current.goal.constraints);
+    const resultIntent = resultIdentity.resultIntent;
     const objectivePolicy = objectiveResultPolicy(resultIntent);
     const readOnlyResult = objectivePolicy.mode === 'read_only_evidence';
     const node = projection.nodes[0];
@@ -6423,7 +6530,7 @@ export class BatonApplication {
       },
       profileDigest: current.profile.digest,
       planDigest: current.plan.digest,
-      resultIntent,
+      ...(resultIdentity.explicit ? { resultIntent } : {}),
       // Compatibility alias for clients predating the closed resultIntent enum.
       objectiveResultPolicy: clone(objectivePolicy),
     };

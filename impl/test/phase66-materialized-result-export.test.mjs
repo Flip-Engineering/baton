@@ -149,6 +149,8 @@ async function acceptedResult(f, runId) {
   }, principal('owner'));
   assert.equal(finished.phase, 'work_completed');
   const beforeAdoption = await f.application.command('run.evidence', { runId }, principal('owner'));
+  assert.equal(beforeAdoption.schemaVersion, 1);
+  assert.equal(Object.hasOwn(beforeAdoption, 'resultIntent'), false);
   await f.application.command('run.adopt', {
     runId,
     nodeKey: finished.result.nodeKey,
@@ -157,6 +159,8 @@ async function acceptedResult(f, runId) {
     reason: 'Preserve the exact verified result for materialization.',
   }, principal('adopter'));
   const evidence = await f.application.command('run.evidence', { runId }, principal('owner'));
+  assert.equal(evidence.schemaVersion, 1);
+  assert.equal(Object.hasOwn(evidence, 'resultIntent'), false);
   return { finished, evidence };
 }
 

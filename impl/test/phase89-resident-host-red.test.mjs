@@ -393,7 +393,11 @@ test('P92-RH5: the ordinary authenticated local owner can inspect help and invok
     await new Promise((resolveWait) => setTimeout(resolveWait, 20));
   }
   assert.equal(outline?.outline?.phase, 'failed');
-  assert.equal(outline.outline.actions.some((action) => action.kind === 'retry_verification'), true);
+  assert.equal(outline.outline.actions.some((action) => action.kind === 'retry_verification'), true,
+    JSON.stringify({
+      terminalCause: outline.outline.terminalCause,
+      actions: outline.outline.actions.map((action) => action.kind),
+    }));
 
   const help = await run.help('run.act.retry_verification', 'content');
   assert.match(JSON.stringify(help), /exact preserved candidate/iu);

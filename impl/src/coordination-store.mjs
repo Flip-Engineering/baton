@@ -9956,6 +9956,28 @@ export class CoordinationStore {
     });
   }
 
+  /** Bounded Plan history for the current durable Goal of one Run. */
+  goalPlanRunPlans(repoId, runId, limit = 100_000) {
+    if (!boundedText(repoId, 256) || !validRunId(runId)
+      || !Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
+      throw new TypeError('goal/plan Run history request is invalid');
+    }
+    const goal = this._goalHeads.get(this._goalScopeKey(repoId, runId)) ?? null;
+    if (!goal) return freeze([]);
+    const plans = [];
+    for (const plan of this._plans.values()) {
+      if (plan.repoId !== repoId || plan.runId !== runId
+        || plan.goal.goalId !== goal.goalId || plan.goal.version !== goal.version
+        || plan.goal.digest !== goal.digest) continue;
+      plans.push(plan);
+      if (plans.length > limit) throw new CoordinationRefusal(
+        'goal/plan Run history exceeds its bounded ceiling', 'goal_plan_status_oversize',
+      );
+    }
+    return freeze(plans.sort((left, right) => left.version - right.version
+      || compareCanonicalStrings(left.planId, right.planId)).map(clone));
+  }
+
   goalPlanRunIds(repoId, limit = 100_000) {
     if (!boundedText(repoId, 256) || !Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
       throw new TypeError('goal/plan Run index request is invalid');

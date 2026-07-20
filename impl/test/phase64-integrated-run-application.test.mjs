@@ -1767,9 +1767,10 @@ test('UA4-UA8: accepted result is pinned, evidenced, and explicitly adopted with
   const beforeEvidenceEvents = driver.coordination.events().length;
   const evidence = await application.command('run.evidence', { runId }, principal('result-owner'));
   assert.equal(evidence.kind, 'baton.run.evidence');
-  assert.equal(evidence.resultIntent, 'change');
+  assert.equal(evidence.schemaVersion, 1);
+  assert.equal(Object.hasOwn(evidence, 'resultIntent'), false);
   assert.deepEqual(Object.keys(evidence), [
-    'schemaVersion', 'kind', 'state', 'repoId', 'runId', 'resultIntent',
+    'schemaVersion', 'kind', 'state', 'repoId', 'runId',
     'observedThroughSeq', 'bindings', 'phase', 'progress', 'node', 'result',
     'integration', 'verification', 'semanticReview', 'artifacts', 'stop', 'ownership',
     'checks', 'manifestDigest',

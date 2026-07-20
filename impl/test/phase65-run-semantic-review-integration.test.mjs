@@ -196,6 +196,8 @@ test('SR1-SR10: exact independent structured review gates an evidence-bound inte
   assert.deepEqual(reviewed.semanticReview.route.requested, { harness: 'reviewer', model: 'review-model', effort: 'low' });
 
   const beforeAdoption = await f.application.command('run.evidence', { runId }, principal('owner'));
+  assert.equal(beforeAdoption.schemaVersion, 1);
+  assert.equal(Object.hasOwn(beforeAdoption, 'resultIntent'), false);
   const adopted = await f.application.command('run.adopt', {
     runId, nodeKey: reviewed.result.nodeKey, resultSha: reviewed.result.sha,
     evidenceDigest: beforeAdoption.manifestDigest, reason: 'Select the independently reviewed result.',
@@ -203,6 +205,8 @@ test('SR1-SR10: exact independent structured review gates an evidence-bound inte
   assert.equal(adopted.result.state, 'adopted');
 
   const beforeIntegration = await f.application.command('run.evidence', { runId }, principal('owner'));
+  assert.equal(beforeIntegration.schemaVersion, 1);
+  assert.equal(Object.hasOwn(beforeIntegration, 'resultIntent'), false);
   const integrated = await f.application.command('run.integrate', {
     runId, evidenceDigest: beforeIntegration.manifestDigest, strategy: 'ff-only',
     reason: 'Integrate the adopted result after independent semantic approval.',
