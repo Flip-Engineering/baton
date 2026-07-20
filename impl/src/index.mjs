@@ -227,8 +227,19 @@ function worktreeManager(repoRoot, opts = {}) {
     toolchainProjection: opts.toolchainProjection?.identity() ?? null,
     toolchainProjectionTargetParents: opts.toolchainProjection?.targetParentPaths() ?? [],
   });
+  const allocateOwner = (taskId, selected, binding) => worktreeMod.allocatePhysicalWorkspaceOwner(
+    repoRoot,
+    {
+      logicalTaskId: taskId,
+      runId: binding?.runId ?? null,
+      attemptId: binding?.attemptId ?? `legacy-${taskId}`,
+      processGeneration: binding?.processGeneration ?? 1,
+      baseSha: selected,
+    },
+    opts.ownerAuthority,
+  );
   return {
-    reserveCapacity(taskId, requestedBaseSha = null) {
+    reserveCapacity(taskId, requestedBaseSha = null, binding = null) {
       if (!opts.worktreeCapacity) return null;
       worktreeMod.normalizePhysicalOwnerId(taskId, 'taskId');
       const selected = requestedBaseSha ?? opts.deploymentBaseSha
@@ -244,18 +255,23 @@ function worktreeManager(repoRoot, opts = {}) {
         }
         return Object.freeze({ baseSha: selected, reservation: existing.reservation });
       }
-      const reservation = opts.worktreeCapacity.reserve(
-        `worker:${taskId}`,
+      const ownerReceipt = allocateOwner(taskId, selected, binding);
+      let reservation;
+      try { reservation = opts.worktreeCapacity.reserve(
+        `worker:${ownerReceipt.physicalOwnerId}`,
         capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
-      );
-      pendingWorkerReservations.set(taskId, { selected, reservation });
-      return Object.freeze({ baseSha: selected, reservation });
+      ); } catch (error) {
+        worktreeMod.releasePhysicalWorkspaceOwner(repoRoot, ownerReceipt.physicalOwnerId, { requireAllocated: true });
+        throw error;
+      }
+      pendingWorkerReservations.set(taskId, { selected, reservation, ownerReceipt });
+      return Object.freeze({ baseSha: selected, reservation, ownerReceipt });
     },
     reserveCapacityMany(entries) {
       if (!Array.isArray(entries) || entries.length === 0) throw new TypeError('capacity wave must contain at least one task');
       const prepared = entries.map((entry) => {
         if (!entry || typeof entry !== 'object' || Array.isArray(entry)
-          || Object.keys(entry).sort().join(',') !== ['requestedBaseSha', 'taskId'].sort().join(',')) {
+          || Object.keys(entry).sort().join(',') !== ['attemptId', 'processGeneration', 'requestedBaseSha', 'runId', 'taskId'].sort().join(',')) {
           throw new TypeError('capacity wave entry is invalid');
         }
         const { taskId, requestedBaseSha } = entry;
@@ -264,18 +280,33 @@ function worktreeManager(repoRoot, opts = {}) {
           ?? localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
         if (!/^[a-f0-9]{40}$/u.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
         localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
-        return { taskId, selected };
+        return { taskId, selected, binding: {
+          runId: entry.runId ?? null, attemptId: entry.attemptId,
+          processGeneration: entry.processGeneration,
+        } };
       });
       if (new Set(prepared.map(({ taskId }) => taskId)).size !== prepared.length) throw new TypeError('capacity wave contains duplicate tasks');
       if (!opts.worktreeCapacity) return Object.freeze(prepared.map(() => null));
-      const reservations = opts.worktreeCapacity.reserveMany(prepared.map(({ taskId, selected }) => ({
-        id: `worker:${taskId}`,
+      const owners = [];
+      try {
+        for (const { taskId, selected, binding } of prepared) owners.push(allocateOwner(taskId, selected, binding));
+      } catch (error) {
+        for (const owner of owners) worktreeMod.releasePhysicalWorkspaceOwner(repoRoot, owner.physicalOwnerId, { requireAllocated: true });
+        throw error;
+      }
+      let reservations;
+      try { reservations = opts.worktreeCapacity.reserveMany(prepared.map(({ selected }, index) => ({
+        id: `worker:${owners[index].physicalOwnerId}`,
         request: capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
-      })));
+      }))); } catch (error) {
+        for (const owner of owners) worktreeMod.releasePhysicalWorkspaceOwner(repoRoot, owner.physicalOwnerId, { requireAllocated: true });
+        throw error;
+      }
       const results = prepared.map(({ taskId, selected }, index) => {
         const reservation = reservations[index];
-        pendingWorkerReservations.set(taskId, { selected, reservation });
-        return Object.freeze({ baseSha: selected, reservation });
+        const ownerReceipt = owners[index];
+        pendingWorkerReservations.set(taskId, { selected, reservation, ownerReceipt });
+        return Object.freeze({ baseSha: selected, reservation, ownerReceipt });
       });
       return Object.freeze(results);
     },
@@ -283,7 +314,10 @@ function worktreeManager(repoRoot, opts = {}) {
       const pending = pendingWorkerReservations.get(taskId);
       if (!pending || !opts.worktreeCapacity) return false;
       const released = opts.worktreeCapacity.release(pending.reservation);
-      if (released) pendingWorkerReservations.delete(taskId);
+      if (released) {
+        pendingWorkerReservations.delete(taskId);
+        worktreeMod.releasePhysicalWorkspaceOwner(repoRoot, pending.ownerReceipt.physicalOwnerId, { requireAllocated: true });
+      }
       return released;
     },
     releaseCapacityMany(taskIds) {
@@ -295,7 +329,12 @@ function worktreeManager(repoRoot, opts = {}) {
       if (!opts.worktreeCapacity) return Object.freeze(taskIds.map(() => true));
       if (owned.length === 0) return Object.freeze(taskIds.map(() => false));
       const outcomes = opts.worktreeCapacity.releaseMany(owned.map(({ pending }) => pending.reservation));
-      owned.forEach(({ taskId }, index) => { if (outcomes[index]) pendingWorkerReservations.delete(taskId); });
+      owned.forEach(({ taskId, pending }, index) => {
+        if (outcomes[index]) {
+          pendingWorkerReservations.delete(taskId);
+          worktreeMod.releasePhysicalWorkspaceOwner(repoRoot, pending.ownerReceipt.physicalOwnerId, { requireAllocated: true });
+        }
+      });
       const byTask = new Map(owned.map(({ taskId }, index) => [taskId, outcomes[index]]));
       return Object.freeze(taskIds.map((taskId) => byTask.get(taskId) ?? false));
     },
@@ -313,10 +352,13 @@ function worktreeManager(repoRoot, opts = {}) {
           code: 'worktree_capacity_release_failed',
         });
       }
-      owned.forEach(({ taskId }) => pendingWorkerReservations.delete(taskId));
+      owned.forEach(({ taskId, pending }) => {
+        pendingWorkerReservations.delete(taskId);
+        worktreeMod.releasePhysicalWorkspaceOwner(repoRoot, pending.ownerReceipt.physicalOwnerId, { requireAllocated: true });
+      });
       return Object.freeze(taskIds.map(() => true));
     },
-    async create(taskId, requestedBaseSha = null) {
+    async create(taskId, requestedBaseSha = null, binding = null) {
       let selected = requestedBaseSha ?? opts.deploymentBaseSha ?? null;
       if (selected === null) {
         const base = await worktreeMod.pinBaseSha(repoRoot, {});
@@ -332,25 +374,45 @@ function worktreeManager(repoRoot, opts = {}) {
       }
       let capacityReservation = pending?.reservation;
       if (pending) pendingWorkerReservations.delete(taskId);
-      if (!capacityReservation && opts.worktreeCapacity) capacityReservation = opts.worktreeCapacity.reserve(
-        `worker:${taskId}`,
-        capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
-      );
+      let ownerReceipt = pending?.ownerReceipt ?? allocateOwner(taskId, selected, binding);
+      if (!capacityReservation && opts.worktreeCapacity) {
+        try { capacityReservation = opts.worktreeCapacity.reserve(
+          `worker:${ownerReceipt.physicalOwnerId}`,
+          capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
+        ); } catch (error) {
+          worktreeMod.releasePhysicalWorkspaceOwner(repoRoot, ownerReceipt.physicalOwnerId, { requireAllocated: true });
+          throw error;
+        }
+      }
       let r = null;
       try {
-        r = await worktreeMod.createFromBase(repoRoot, taskId, selected, { dependencyDirs: opts.workerDependencyDirs ?? [], sparsePaths: opts.workerSparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
+        r = await worktreeMod.createFromBase(repoRoot, ownerReceipt.physicalOwnerId, selected, {
+          ownerReceipt, dependencyDirs: opts.workerDependencyDirs ?? [], sparsePaths: opts.workerSparsePaths ?? [],
+          ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}),
+        });
+        ownerReceipt = r.ownerReceipt;
         if (capacityReservation) {
           capacityReservation = opts.worktreeCapacity.materialize(capacityReservation, r.dir);
-          workerReservations.set(taskId, capacityReservation);
+          workerReservations.set(ownerReceipt.physicalOwnerId, capacityReservation);
         }
-        return { path: r.dir, branch: r.branch, baseSha: r.baseSha, sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity, ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}), ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
+        return {
+          path: r.dir, branch: r.branch, baseSha: r.baseSha,
+          ownerTaskId: ownerReceipt.physicalOwnerId,
+          logicalTaskId: ownerReceipt.logicalTaskId,
+          ownerReceiptDigest: ownerReceipt.receiptDigest,
+          ownerReceipt,
+          sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity,
+          ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}),
+          ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}),
+        };
       } catch (error) {
         let cleanupError = null;
         if (r) {
-          try { await worktreeMod.reap(repoRoot, taskId, { force: true, deleteBranch: true }); }
+          try { await worktreeMod.reap(repoRoot, ownerReceipt.physicalOwnerId, { force: true, deleteBranch: true }); }
           catch (cause) { cleanupError = cause; }
         }
         if (capacityReservation) opts.worktreeCapacity.release(capacityReservation);
+        worktreeMod.releasePhysicalWorkspaceOwner(repoRoot, ownerReceipt.physicalOwnerId);
         if (cleanupError) {
           throw Object.assign(new Error('worktree capacity materialization cleanup failed', {
             cause: cleanupError,
@@ -361,11 +423,18 @@ function worktreeManager(repoRoot, opts = {}) {
     },
     worktreeAvailable(taskId, context) {
       try {
-        worktreeMod.normalizePhysicalOwnerId(taskId, 'taskId');
-        if (!context || context.ownerTaskId !== taskId || typeof context.worktree !== 'string') {
+        if (!context || typeof context.ownerTaskId !== 'string' || typeof context.worktree !== 'string') {
           return false;
         }
-        const expected = resolve(realpathSync(repoRoot), '.baton', 'wt', taskId);
+        const physicalOwnerId = worktreeMod.normalizePhysicalOwnerId(context.ownerTaskId, 'physical workspace owner');
+        const receipt = worktreeMod.physicalWorkspaceOwnerReceipt(repoRoot, physicalOwnerId);
+        if (/^ws-[a-f0-9]{32}$/u.test(physicalOwnerId)
+          && (!receipt || receipt.logicalTaskId !== taskId || receipt.state !== 'ready'
+            || context.ownerReceiptDigest !== receipt.receiptDigest
+            || context.branch !== receipt.branch || context.baseSha !== receipt.baseSha
+            || realpathSync(context.worktree) !== realpathSync(receipt.worktree))) return false;
+        if (receipt && receipt.logicalTaskId !== taskId) return false;
+        const expected = resolve(realpathSync(repoRoot), '.baton', 'wt', physicalOwnerId);
         if (!existsSync(context.worktree) || realpathSync(context.worktree) !== expected
           || !existsSync(expected) || !existsSync(`${expected}.meta.json`)) return false;
         const stat = lstatSync(expected);
@@ -566,7 +635,10 @@ function worktreeManager(repoRoot, opts = {}) {
     async remove(taskId) {
       const pending = pendingWorkerReservations.get(taskId);
       if (pending && opts.worktreeCapacity) {
-        if (opts.worktreeCapacity.release(pending.reservation)) pendingWorkerReservations.delete(taskId);
+        if (opts.worktreeCapacity.release(pending.reservation)) {
+          pendingWorkerReservations.delete(taskId);
+          worktreeMod.releasePhysicalWorkspaceOwner(repoRoot, pending.ownerReceipt.physicalOwnerId, { requireAllocated: true });
+        }
       }
       await worktreeMod.reap(repoRoot, taskId, { force: true, deleteBranch: true });
       if (opts.worktreeCapacity) {
@@ -586,6 +658,16 @@ function worktreeManager(repoRoot, opts = {}) {
         if (context.repoRoot && realpathSync(context.repoRoot) !== root) return { ok: false, reason: 'session repository identity mismatch' };
         if (worktree !== managedRoot && !worktree.startsWith(`${managedRoot}${sep}`)) return { ok: false, reason: 'session worktree is outside Baton ownership' };
         if (context.ownerTaskId && basename(worktree) !== context.ownerTaskId) return { ok: false, reason: 'session worktree owner mismatch' };
+        if (/^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')) {
+          const receipt = worktreeMod.physicalWorkspaceOwnerReceipt(repoRoot, context.ownerTaskId);
+          if (!receipt || receipt.state !== 'ready'
+            || context.ownerReceiptDigest !== receipt.receiptDigest
+            || context.logicalTaskId !== receipt.logicalTaskId
+            || context.branch !== receipt.branch || context.baseSha !== receipt.baseSha
+            || worktree !== realpathSync(receipt.worktree)) {
+            return { ok: false, reason: 'session physical workspace owner receipt mismatch' };
+          }
+        }
         const top = localGit(['rev-parse', '--show-toplevel'], worktree, { encoding: 'utf8' }).trim();
         if (realpathSync(top) !== worktree) return { ok: false, reason: 'session path is not the recorded git worktree root' };
         if (context.branch) {
@@ -623,8 +705,13 @@ function worktreeManager(repoRoot, opts = {}) {
       }
     },
     reconcile(expectedActiveTaskIds = []) {
-      const report = worktreeMod.reconcile(repoRoot, expectedActiveTaskIds, { sparseCheckoutIdentity: opts.workerSparseCheckoutIdentity });
-      if (report.errors.length > 0) throw Object.assign(new Error('worktree reconciliation was incomplete'), { code: 'worktree_cleanup_failed' });
+      const report = worktreeMod.reconcile(repoRoot, expectedActiveTaskIds, {
+        sparseCheckoutIdentity: opts.workerSparseCheckoutIdentity,
+        ownerAuthority: opts.ownerAuthority,
+      });
+      if (report.errors.length > 0) throw Object.assign(new Error('worktree reconciliation was incomplete'), {
+        code: 'worktree_cleanup_failed', report,
+      });
       if (opts.worktreeCapacity) {
         const retained = expectedActiveTaskIds.filter((taskId) => existsSync(join(repoRoot, '.baton', 'wt', taskId)));
         for (const taskId of expectedActiveTaskIds) if (!retained.includes(taskId)) opts.worktreeCapacity.releaseAbsent(`worker:${taskId}`);
@@ -864,6 +951,13 @@ export function createDriver(opts) {
   let writerLease = null;
   try {
   writerLease = coordination.claimWriterLease();
+  const workspaceDeploymentId = canonicalDigest({ repoId: deploymentRepoId, logDir: realpathSync(opts.logDir) });
+  const workspaceOwnerAuthority = Object.freeze({
+    deploymentId: workspaceDeploymentId,
+    controllerId: canonicalDigest({ deploymentId: workspaceDeploymentId, writerLeaseToken: writerLease.token }),
+    pid: writerLease.pid,
+    pidStart: writerLease.pidStart,
+  });
   const driverDrainIdempotencyKey = `driver:drain:${canonicalDigest({ repoId: deploymentRepoId, writerLeaseToken: writerLease.token })}`;
   if (routeLearningPolicy) router.hydrate(coordination.routeObservations());
   const configuredCapabilities = { ...(opts.capabilities ?? {}) };
@@ -985,6 +1079,7 @@ export function createDriver(opts) {
       verifySparseCheckoutIdentity,
       toolchainProjection,
       worktreeCapacity,
+      ownerAuthority: workspaceOwnerAuthority,
       structuredMerge: opts.structuredMerge,
     }),
     runtimeScopes,

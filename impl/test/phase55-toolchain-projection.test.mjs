@@ -305,11 +305,15 @@ test('TP7/TP8: session-context validation pins the configured projection identit
   const config = descriptor(source); const identity = inspectToolchainProjection(config);
   const driver = createDriver({ repoRoot: repo, logDir, adapters: {}, toolchainProjection: { ...config, expectedManifestDigest: identity.manifestDigest } });
   const created = await driver.coordinator._worktrees.create('projection-session', sha);
-  const context = { worktree: created.path, repoRoot: repo, baseSha: sha, branch: created.branch, ownerTaskId: 'projection-session', toolchainProjection: identity };
+  const context = {
+    worktree: created.path, repoRoot: repo, baseSha: sha, branch: created.branch,
+    ownerTaskId: created.ownerTaskId, logicalTaskId: created.logicalTaskId,
+    ownerReceiptDigest: created.ownerReceiptDigest, toolchainProjection: identity,
+  };
   assert.deepEqual(await driver.coordinator._worktrees.validateSessionContext(context), { ok: true });
   const forged = { ...context, toolchainProjection: { ...identity, manifestDigest: '0'.repeat(64) } };
   assert.equal((await driver.coordinator._worktrees.validateSessionContext(forged)).ok, false);
-  await driver.coordinator._worktrees.remove('projection-session'); driver.close();
+  await driver.coordinator._worktrees.remove(created.ownerTaskId); driver.close();
 });
 
 test('TP10: legacy same-root dependency copying remains compatible and mixed legacy/new driver configuration refuses before authority', async (t) => {
