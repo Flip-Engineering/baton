@@ -47,6 +47,11 @@ test('UC1: concise CLI vocabulary compiles only shipped commands into shared Run
     recipient: 'review', idempotencyKey: output.idempotencyKey,
   });
   assert.equal(parseBatonCli(['run', 'progress', 'run-a']).channel, 'progress');
+  const retry = parseBatonCli(['run', 'do', 'run-a', 'retry_route', '--idempotency-key', 'retry-a']);
+  assert.deepEqual(retry, {
+    kind: 'run-action-selector', runId: 'run-a', actionSelector: 'retry_route',
+    inputs: {}, idempotencyKey: 'retry-a',
+  });
   assert.deepEqual(parseBatonCli(['run', 'approve', 'run-a', '--plan', D]).args, { runId: 'run-a', planDigest: D });
   assert.deepEqual(parseBatonCli(['run', 'answer', 'run-a', 'question-a', '--allow']).args.answer, { decision: 'allow' });
   assert.deepEqual(parseBatonCli(['run', 'answer', 'run-a', 'question-a', '--text', 'Proceed.']).args.answer, { text: 'Proceed.' });
@@ -75,6 +80,28 @@ test('UC1: concise CLI vocabulary compiles only shipped commands into shared Run
   });
   assert.throws(() => parseBatonCli(['run', 'follow', 'run-a']), (error) => error.code === 'cli_command_unavailable');
   assert.throws(() => parseBatonCli(['run', 'start', 'x', '--profile', 'p', '--exact', 'gpt-5.6-sol']), /HARNESS\/MODEL@EFFORT/);
+});
+
+test('run do resolves a unique advertised action kind while preserving direct opaque IDs', async () => {
+  for (const selector of ['retry_route', 'opaque-action-7']) {
+    const calls = [];
+    const client = { async command(name, args, key) {
+      calls.push({ name, args, key });
+      if (name === 'run.inspect') return { outline: { actions: [
+        { kind: 'retry_route', actionId: 'opaque-action-7' },
+      ] } };
+      return { phase: 'running' };
+    } };
+    const parsed = parseBatonCli([
+      'run', 'do', 'run-a', selector, '--idempotency-key', `do-${selector}`,
+    ]);
+    assert.deepEqual(await runBatonCli(parsed, client), { phase: 'running' });
+    assert.equal(calls[1].args.actionId, 'opaque-action-7');
+  }
+  const duplicate = parseBatonCli(['run', 'do', 'run-a', 'retry_route']);
+  await assert.rejects(runBatonCli(duplicate, { async command() { return { outline: { actions: [
+    { kind: 'retry_route', actionId: 'a' }, { kind: 'retry_route', actionId: 'b' },
+  ] } }; } }), (error) => error.code === 'application_action_unavailable');
 });
 
 test('UC1b: ordinary CLI mutations project a true outline and hide internal authority chapters', () => {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
-  chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync,
+  chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -25,7 +25,7 @@ function repository(root) {
   return repo;
 }
 
-function kimiHome(root, credential) {
+function kimiHome(root, credential, marker) {
   const home = join(root, 'home');
   const kimi = join(home, '.kimi-code');
   for (const relative of ['bin/kimi', 'credentials/kimi-code.json', 'oauth/kimi-code']) {
@@ -41,8 +41,9 @@ function kimiHome(root, credential) {
     "  printf 'Kimi Code v9.8.7\\n'",
     '  exit 0',
     'fi',
-    'printf spawned > "$BATON_KIMI_SPAWN_MARKER"',
-    'exit 70',
+    `printf probe > ${JSON.stringify(marker)}`,
+    `export FAKE_KIMI_LOG=${JSON.stringify(`${marker}.frames`)}`,
+    `exec ${JSON.stringify(process.execPath)} ${JSON.stringify(join(import.meta.dirname, 'fixtures', 'fake-kimi-acp.mjs'))} --serve`,
     '',
   ].join('\n'));
   chmodSync(join(kimi, 'bin', 'kimi'), 0o700);
@@ -52,20 +53,20 @@ function kimiHome(root, credential) {
 function inspectDeployment({ credential, attemptRun = false }) {
   const root = mkdtempSync(join(tmpdir(), 'baton-phase78-kimi-auth-'));
   try {
-    const repo = repository(root);
-    const home = kimiHome(root, credential);
     const marker = join(root, 'provider-spawned');
+    const repo = repository(root);
+    const home = kimiHome(root, credential, marker);
     const deploymentRoot = join(root, 'deployment');
     const script = [
       `const { openBaton } = await import(${JSON.stringify(MODULE_URL)});`,
       `const route = ${JSON.stringify(ROUTE)};`,
       `const deployment = await openBaton({ repo: ${JSON.stringify(repo)}, advanced: {`,
       `  deploymentRoot: ${JSON.stringify(deploymentRoot)},`,
-      '  verification: { command: process.execPath, arguments: ["--version"] },',
+      '  verification: { command: "node", arguments: ["--version"] },',
       '} });',
       'let runError = null;',
       attemptRun
-        ? 'try { await deployment.run("must be refused before provider spawn", { exact: route }); } catch (error) { runError = { code: error?.code, message: error?.message }; }'
+        ? 'try { const run = await deployment.run("must wait before provider spawn", { exact: route }); await run.approve(); const view = await run.status(); const blocker = view.attention?.find((item) => item.kind === "route_readiness"); runError = blocker ? { code: blocker.blocker.code, message: blocker.blocker.summary } : null; } catch (error) { runError = { code: error?.code, message: error?.message }; }'
         : '',
       'const doctor = await deployment.doctor();',
       'const card = deployment.card();',
@@ -82,7 +83,12 @@ function inspectDeployment({ credential, attemptRun = false }) {
       maxBuffer: 4 * 1024 * 1024,
       timeout: 30_000,
     });
-    return { observed: JSON.parse(output), spawned: existsSync(marker), home };
+    return {
+      observed: JSON.parse(output), spawned: existsSync(marker),
+      frames: existsSync(`${marker}.frames`)
+        ? readFileSync(`${marker}.frames`, 'utf8').trim().split('\n').map(JSON.parse) : [],
+      home,
+    };
   } finally {
     rmSync(root, { force: true, recursive: true });
   }
@@ -190,15 +196,18 @@ test('KA2b: oversized native Kimi credential metadata is refused by the bounded 
   assert.equal(spawned, false);
 });
 
-test('KA3: bounded, owner-readable, unexpired native Kimi metadata preserves static route readiness', () => {
+test('KA3: unexpired native Kimi metadata becomes ready only after init/auth with no session or prompt', () => {
   const expiresAt = Math.floor(Date.now() / 1000) + 3600;
-  const { observed, spawned } = inspectDeployment({ credential: credential(expiresAt) });
+  const { observed, spawned, frames } = inspectDeployment({ credential: credential(expiresAt) });
   const route = observed.doctor.routes.find((candidate) => candidate.harness === 'kimi-code');
 
   assert.equal(observed.doctor.ready, true);
   assert.equal(route?.state, 'ready');
   assert.equal(route?.runtime?.authentication?.state, 'available');
-  assert.equal(spawned, false, 'static readiness never launches a provider');
+  assert.equal(spawned, true);
+  assert.equal(frames.filter((frame) => frame.method === 'initialize').length, 3);
+  assert.equal(frames.filter((frame) => frame.method === 'authenticate').length, 3);
+  assert.equal(frames.some((frame) => /^session\//u.test(frame.method)), false);
 });
 
 test('KA4: a provider Authentication required spawn refusal projects one typed remediable Run cause', async (t) => {
@@ -235,6 +244,11 @@ test('KA4: a provider Authentication required spawn refusal projects one typed r
         configuredPreferences: [], observation: 'unavailable',
       },
     },
+  });
+  adapter.credentialEpoch = () => 'phase78-kimi-provider-generation';
+  adapter.routeReadinessProbe = async () => ({
+    state: 'ready', initialized: true, authenticated: true,
+    sessionCreated: false, promptSent: false, reaped: true,
   });
   adapter.spawn = async () => ({ ok: false, code: -32000, reason: 'Authentication required' });
 

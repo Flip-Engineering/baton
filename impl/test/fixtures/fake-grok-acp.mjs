@@ -36,6 +36,22 @@
 
 import readline from 'node:readline';
 
+if (process.argv.includes('--models')) {
+  if (process.env.FAKE_GROK_DIAGNOSTIC_LOG) {
+    const { appendFileSync } = await import('node:fs');
+    appendFileSync(process.env.FAKE_GROK_DIAGNOSTIC_LOG, `${JSON.stringify({
+      argv: process.argv.slice(2), cwd: process.cwd(),
+      ambientCanary: process.env.BATON_GROK_AMBIENT_CANARY ?? null,
+      home: process.env.HOME ?? null,
+    })}\n`);
+  }
+  if (process.env.FAKE_GROK_MODELS_UNAUTH === '1') {
+    process.stdout.write('You are not authenticated\n');
+  }
+  process.stdout.write(`${process.env.FAKE_GROK_MODEL ?? 'grok-4.5'}\n`);
+  process.exit(0);
+}
+
 // Discovery guard (phase8 R1): node's test runner discovers every .mjs under test/ — without the
 // explicit sentinel this fixture would block forever on stdin and hang bare `node --test`.
 if (!process.argv.includes('--serve') && !process.argv.includes('agent')) {

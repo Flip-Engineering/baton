@@ -488,6 +488,13 @@ const actions = {
     destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
     helpTopic: 'run.act.retry_verification', expectedDepth: 'outline',
   },
+  retry_route: {
+    label: 'Retry exact route', summary: 'Re-evaluate the approved exact route and dispatch only if fresh effect-bound readiness is consumed.',
+    inputSchema: objectSchema({}, []),
+    serverDerived: ['planDigest', 'receiptDigest'], effect: 'provider_call',
+    destructive: false, irreversible: false, idempotent: true, priority: 'optional',
+    helpTopic: 'run.act.retry_route', expectedDepth: 'outline', genericCli: true,
+  },
   resume_work: {
     label: 'Resume preserved work', summary: 'Restore preserved progress in a fresh task using an orchestrator-selected harness, model, and effort.',
     inputSchema: objectSchema({ reason: { type: 'string', minLength: 1, maxLength: 1024 } }, ['reason']),
@@ -525,6 +532,7 @@ const APPLICATION_ACTION_CAPABILITY_SOURCE = {
   integrate: ['integrate_result', 'observe'],
   export_result: ['export_result', 'observe'],
   retry_verification: ['retry_verification', 'observe'],
+  retry_route: ['control', 'observe'],
   resume_work: ['resume_work', 'observe'],
   stop: ['emergency_stop', 'observe'],
 };
@@ -769,7 +777,7 @@ const cli = {
 
 const core = {
   schemaVersion: 1,
-  version: '1.3.0',
+  version: '1.4.0',
   depths: ['outline', 'index', 'section', 'item', 'content', 'evidence'],
   sections,
   operations,

@@ -11,6 +11,7 @@ import { bindBatonPort } from './application-client.mjs';
 import { foldCanonicalCase } from './canonical-order.mjs';
 import { createLocalSocketFetch } from './local-web-transport.mjs';
 import { publishResultExportNoReplace } from './result-export.mjs';
+import { projectRouteReadinessError } from './route-readiness-authority.mjs';
 
 const COMMANDS = new Set([
   'application.help',
@@ -1295,7 +1296,7 @@ export function parseBatonCli(rawArgs) {
     };
   }
   if (action === 'do') {
-    const actionId = id(args.shift(), 'action ID');
+    const actionSelector = id(args.shift(), 'action selector');
     const rawInputs = take(args, '--inputs');
     noRemainder(args);
     let inputs = {};
@@ -1303,7 +1304,7 @@ export function parseBatonCli(rawArgs) {
       try { inputs = JSON.parse(rawInputs); } catch { throw cliError('action inputs must be JSON', 'cli_action_inputs_invalid'); }
       if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) throw cliError('action inputs must be an object', 'cli_action_inputs_invalid');
     }
-    return { kind: 'command', name: 'run.act', args: { runId, actionId, inputs }, idempotencyKey };
+    return { kind: 'run-action-selector', runId, actionSelector, inputs, idempotencyKey };
   }
   if (action === 'recover') {
     noRemainder(args);
@@ -1526,7 +1527,16 @@ export class BatonWebClient {
         const receivedCode = body?.error?.code;
         const code = typeof receivedCode === 'string' && /^[a-z][a-z0-9_]{0,63}$/u.test(receivedCode)
           ? receivedCode : 'cli_command_failed';
-        throw cliError('Baton Web request was refused', code);
+        const failure = cliError('Baton Web request was refused', code);
+        const routeFailure = projectRouteReadinessError({ receipt: body?.error?.receipt });
+        if (code === 'route_waiting' && routeFailure) {
+          failure.message = routeFailure.message;
+          failure.route = routeFailure.route;
+          failure.blocker = routeFailure.blocker;
+          failure.remediation = routeFailure.remediation;
+          failure.receipt = routeFailure.receipt;
+        }
+        throw failure;
       }
       return body;
     } finally {
@@ -1535,8 +1545,8 @@ export class BatonWebClient {
   }
 
   async doctor() {
-    const readiness = await this._json('/readyz', { headers: { origin: this.origin } });
-    const card = await this._json('/v1/application-card', { headers: { ...this._headers(), 'sec-fetch-site': 'none' } });
+    const readiness = await this.ready();
+    const card = await this._json('/v1/doctor', { headers: { ...this._headers(), 'sec-fetch-site': 'none' } });
     const deployment = record(card?.application?.readiness)
       ? card.application.readiness : null;
     const routes = Array.isArray(deployment?.routes) ? deployment.routes : [];
@@ -1547,6 +1557,17 @@ export class BatonWebClient {
       routes,
       application: card.application,
     };
+  }
+
+  async ready() {
+    return this._json('/readyz', { headers: { origin: this.origin } });
+  }
+
+  async card() {
+    const body = await this._json('/v1/application-card', {
+      headers: { ...this._headers(), 'sec-fetch-site': 'none' },
+    });
+    return body?.application;
   }
 
   async session() {
@@ -1753,19 +1774,20 @@ export async function connectBaton({
       setTimeout(resolveSleep, milliseconds);
     })),
   });
-  const [doctor, session] = await Promise.all([client.doctor(), client.session()]);
+  const [readiness, card, session] = await Promise.all([
+    client.ready(), client.card(), client.session(),
+  ]);
   const requiredCommands = ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.act', 'run.stop'];
-  if (doctor.ready !== true
-    || doctor.application?.schemaVersion !== 1
-    || doctor.application?.repoId !== connection.repoId
-    || !Array.isArray(doctor.application?.commands)
-    || requiredCommands.some((command) => !doctor.application.commands.includes(command))
-    || doctor.application?.agentExperience?.registryDigest !== APPLICATION_SEMANTIC_REGISTRY.digest
+  if (readiness?.ready !== true || card?.schemaVersion !== 1
+    || card?.repoId !== connection.repoId
+    || !Array.isArray(card?.commands)
+    || requiredCommands.some((command) => !card.commands.includes(command))
+    || card?.agentExperience?.registryDigest !== APPLICATION_SEMANTIC_REGISTRY.digest
     || !session.identity.repoIds.includes(connection.repoId)
     || (connection.transport === 'local'
-      && (doctor.application?.resident?.schemaVersion !== 1
-        || doctor.application.resident.deploymentId !== connection.deploymentId
-        || doctor.application.resident.incarnation !== connection.incarnation))) {
+      && (card?.resident?.schemaVersion !== 1
+        || card.resident.deploymentId !== connection.deploymentId
+        || card.resident.incarnation !== connection.incarnation))) {
     throw cliError('Baton resident authority is incompatible or not ready',
       'cli_connection_incompatible');
   }
@@ -1897,6 +1919,22 @@ export async function runBatonCli(parsed, client, options = {}) {
     const matching = (view?.outline?.actions ?? []).filter((action) => action?.kind === parsed.actionKind);
     if (matching.length !== 1 || !nonempty(matching[0]?.actionId)) {
       throw cliError(`Run does not currently advertise ${parsed.actionKind}`, 'application_action_unavailable');
+    }
+    return client.command('run.act', {
+      runId: parsed.runId, actionId: matching[0].actionId, inputs: parsed.inputs,
+    }, `${parsed.idempotencyKey}:act`);
+  }
+  if (parsed.kind === 'run-action-selector') {
+    const view = await client.command('run.inspect', {
+      runId: parsed.runId, depth: 'outline',
+    }, `${parsed.idempotencyKey}:inspect`);
+    const actions = view?.outline?.actions ?? [];
+    const direct = actions.filter((action) => action?.actionId === parsed.actionSelector);
+    const matching = direct.length > 0
+      ? direct : actions.filter((action) => action?.kind === parsed.actionSelector);
+    if (matching.length !== 1 || !nonempty(matching[0]?.actionId)) {
+      throw cliError(`Run does not uniquely advertise ${parsed.actionSelector}`,
+        'application_action_unavailable');
     }
     return client.command('run.act', {
       runId: parsed.runId, actionId: matching[0].actionId, inputs: parsed.inputs,
