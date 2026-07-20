@@ -69,6 +69,37 @@ function adapter(route, path, tracker, delayMs = 40, outcome = 'completed') {
   return value;
 }
 
+function latchedAdapter(route, path, tracker) {
+  const value = adapter(route, path, tracker, 0);
+  const nativeRunSession = value._runSession.bind(value);
+  let markEntered;
+  let open;
+  let opened = false;
+  const entered = new Promise((resolve) => { markEntered = resolve; });
+  const released = new Promise((resolve) => { open = resolve; });
+  value._runSession = async (session, turn = {}) => {
+    markEntered();
+    const haltSignal = turn.haltSignal ?? session.haltSignal;
+    if (!opened && !haltSignal.aborted) {
+      await Promise.race([
+        released,
+        new Promise((resolve) => haltSignal.addEventListener('abort', resolve, { once: true })),
+      ]);
+    }
+    if (!opened) return;
+    await nativeRunSession(session, turn);
+  };
+  return {
+    value,
+    entered,
+    release() {
+      if (opened) return;
+      opened = true;
+      open();
+    },
+  };
+}
+
 test('WF79-1: deployment workflow compiles one durable multi-node Plan and starts no provider before approval', async (t) => {
   const repo = repository();
   const deploymentRoot = mkdtempSync(join(tmpdir(), 'baton-phase79-workflow-deployment-'));
@@ -410,7 +441,8 @@ test('WF79-6: role-addressed member stop is durable, exact, and leaves a sibling
   const repo = repository();
   const deploymentRoot = mkdtempSync(join(tmpdir(), 'baton-phase79-workflow-member-stop-'));
   const tracker = { active: 0, peak: 0, calls: [] };
-  const codex = adapter(routeA, 'surviving-member.txt', tracker, 150);
+  const builder = latchedAdapter(routeA, 'surviving-member.txt', tracker);
+  const codex = builder.value;
   const grok = adapter(routeB, 'stopped-member.txt', tracker, 60_000);
   let deployment;
   t.after(async () => {
@@ -439,6 +471,7 @@ test('WF79-6: role-addressed member stop is durable, exact, and leaves a sibling
   assert.equal(active.outline.phase, 'running');
   assert.deepEqual(active.outline.actions.find((action) => action.kind === 'stop_member').choices,
     ['builder', 'challenger']);
+  await builder.entered;
 
   const memberStopped = await workflow.stopMember('challenger', 'The challenger is no longer needed.');
   assert.notEqual(memberStopped.outline.phase, 'stopped');
@@ -446,6 +479,7 @@ test('WF79-6: role-addressed member stop is durable, exact, and leaves a sibling
   assert.equal([...codex._sessions.values()].some((session) => !session.terminal), true,
     'the sibling provider session remains active after selective stop');
 
+  builder.release();
   const paused = await workflow.complete();
   assert.equal(paused.outline.phase, 'selection_required');
   const status = await workflow.status();

@@ -23,6 +23,8 @@ import {
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const FAKE_CODEX = fileURLToPath(new URL('./fixtures/fake-codex-appserver.mjs', import.meta.url));
 const FAKE_GROK = fileURLToPath(new URL('./fixtures/fake-grok-acp.mjs', import.meta.url));
+const ONE_SHOT_REAP_TIMEOUT_MS = 5_000;
+const REAP_SCHEDULING_MARGIN_MS = 10_000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const groupAlive = (pid) => { try { process.kill(-pid, 0); return true; } catch { return false; } };
@@ -265,21 +267,37 @@ test('PL1/PL9: the live one-shot compatibility tier emits the same process pair 
 });
 
 test('PL7/PL9: one-shot turn completion does not surrender process-group authority over descendants', async () => {
-  const code = "const{spawn}=require('node:child_process');const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});c.unref();console.log(JSON.stringify({done:true}));setInterval(()=>{},1000)";
+  const code = "const{spawn}=require('node:child_process');const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});c.unref();console.log(JSON.stringify({done:true,descendantPid:c.pid}));setInterval(()=>{},1000)";
+  let descendantPid = null;
   const adapter = new PiCli({
     cmd: process.execPath,
     args: () => ['-e', code],
-    parse: (obj, worker, harness, turnEpoch) => obj.done === true ? { terminal: true, event: { worker, harness, turnEpoch, actor: 'worker', kind: 'lifecycle.turn_completed', payload: { status: 'completed' } } } : {},
+    parse: (obj, worker, harness, turnEpoch) => {
+      if (obj.done !== true) return {};
+      descendantPid = obj.descendantPid;
+      return { terminal: true, event: { worker, harness, turnEpoch, actor: 'worker', kind: 'lifecycle.turn_completed', payload: { status: 'completed' } } };
+    },
     live: true,
   });
   const worker = 'phase51-one-shot-descendant'; const events = collect(adapter);
   try {
-    assert.equal((await adapter.spawn(worker, brief(), { live: true, worktree: tmpdir(), processGeneration: 31 })).ok, true);
+    assert.equal((await adapter.spawn(worker, brief(), {
+      live: true, worktree: tmpdir(), processGeneration: 31,
+      processReapTimeoutMs: ONE_SHOT_REAP_TIMEOUT_MS,
+    })).ok, true);
     await until(() => events.some((event) => event.kind === 'lifecycle.turn_completed'), 'one-shot parsed terminal');
     const session = adapter._sessions.get(worker); const pid = session.child.pid;
-    assert.equal(session.turnSettled, true); assert.equal(session.terminal, false); assert.equal(groupAlive(pid), true);
-    await adapter.kill(worker); await until(() => events.some((event) => event.kind === 'kill.confirmed'), 'one-shot descendant reap', 8000);
-    assert.equal(groupAlive(pid), false); assertClosedPair(events, 31, false);
+    assert.equal(session.turnSettled, true); assert.equal(session.terminal, false);
+    assert.ok(Number.isSafeInteger(descendantPid) && descendantPid > 0);
+    assert.equal(alive(descendantPid), true); assert.equal(groupAlive(pid), true);
+    await adapter.kill(worker);
+    await until(
+      () => events.some((event) => event.kind === 'kill.confirmed'),
+      'one-shot descendant reap',
+      ONE_SHOT_REAP_TIMEOUT_MS + REAP_SCHEDULING_MARGIN_MS,
+    );
+    assert.equal(alive(descendantPid), false); assert.equal(groupAlive(pid), false);
+    assertClosedPair(events, 31, false);
   } finally { await emergencyCleanup(adapter, worker); }
 });
 
