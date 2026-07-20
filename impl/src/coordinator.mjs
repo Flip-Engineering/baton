@@ -101,6 +101,52 @@ function boundedProcessObservation(event, code, extra = {}) {
   };
 }
 
+function validWorkspaceOwnerBoundPayload(value) {
+  const fields = [
+    'attemptId', 'baseSha', 'branch', 'controllerId', 'deploymentId', 'logicalTaskId',
+    'physicalOwnerId', 'processGeneration', 'receiptDigest', 'runId', 'schemaVersion', 'worktree',
+  ];
+  return value && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).sort().join(',') === fields.sort().join(',')
+    && value.schemaVersion === 1
+    && /^ws-[a-f0-9]{32}$/u.test(value.physicalOwnerId ?? '')
+    && /^[a-f0-9]{64}$/u.test(value.receiptDigest ?? '')
+    && /^[a-f0-9]{64}$/u.test(value.deploymentId ?? '')
+    && /^[a-f0-9]{64}$/u.test(value.controllerId ?? '')
+    && /^[a-f0-9]{40}$/u.test(value.baseSha ?? '')
+    && value.branch === `baton/${value.physicalOwnerId}`
+    && typeof value.worktree === 'string' && value.worktree.length > 0
+    && typeof value.logicalTaskId === 'string' && value.logicalTaskId.length > 0
+    && (value.runId === null || (typeof value.runId === 'string' && value.runId.length > 0))
+    && typeof value.attemptId === 'string' && value.attemptId.length > 0
+    && Number.isSafeInteger(value.processGeneration) && value.processGeneration > 0;
+}
+
+function workspaceOwnerExpectation(handle) {
+  const context = handle?.sessionContext;
+  const physicalOwnerId = context?.ownerTaskId;
+  if (typeof physicalOwnerId !== 'string') return null;
+  if (!/^ws-[a-f0-9]{32}$/u.test(physicalOwnerId)) return physicalOwnerId;
+  const ownerBound = handle.workspaceOwnerBinding;
+  return {
+    expectationId: handle.id,
+    handleRunId: handle.runId ?? null,
+    physicalOwnerId,
+    binding: {
+      physicalOwnerId,
+      receiptDigest: context.ownerReceiptDigest,
+      logicalTaskId: context.logicalTaskId,
+      runId: ownerBound?.runId,
+      attemptId: ownerBound?.attemptId,
+      processGeneration: ownerBound?.processGeneration,
+      branch: context.branch,
+      worktree: context.worktree,
+      baseSha: context.baseSha,
+      ownerBound,
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Error taxonomy (thrown, not returned) — programmer-error / precondition failures.
 // ---------------------------------------------------------------------------
@@ -1063,13 +1109,80 @@ export class Coordinator {
       && handle.sessionContext?.ownerTaskId
     ));
     const recoveredProcessOwners = recoveredProcessHandles
-      .map((handle) => handle.sessionContext.ownerTaskId);
+      .map((handle) => workspaceOwnerExpectation(handle))
+      .filter(Boolean);
     const recoveredProcessWorkers = recoveredProcessHandles.map((handle) => handle.id);
+    const uniqueOwnerExpectations = (entries) => [...new Map(entries.filter(Boolean).map((entry) => [
+      typeof entry === 'string' ? entry : entry.expectationId, entry,
+    ])).values()];
     const reconcileStartupResources = (expectedOwners, expectedWorkers) => {
       const reconciliations = [];
       if (this._worktrees && typeof this._worktrees.reconcile === 'function') {
         reconciliations.push(this._trackStartupCleanup(
-          () => this._worktrees.reconcile(expectedOwners),
+          () => {
+            const applyOwnerAuthority = (report) => {
+              const validated = new Set(report?.validatedExpectedBindings ?? []);
+              const removed = new Set(report?.removedPhysicalOwners ?? []);
+              for (const handle of this._workers.values()) {
+                const physicalOwnerId = handle.sessionContext?.ownerTaskId;
+                if (!/^ws-[a-f0-9]{32}$/u.test(physicalOwnerId ?? '')) continue;
+                const requested = expectedOwners.some((entry) => (
+                  typeof entry === 'object' && entry?.expectationId === handle.id
+                ));
+                // Reconcile reports this only after exact capacity absence and path/admin/branch/
+                // receipt finalization. Reflect that completed transaction on replayed terminal
+                // handles so later idempotent resource settlement exercises no owner capability.
+                if (removed.has(physicalOwnerId)) {
+                  handle.worktree = null;
+                  handle.ownedWorktreeAuthority = false;
+                  handle.physicalWorkspaceCleanupCompleted = true;
+                  handle.workspaceOwnerBindingValid = false;
+                  handle.workspaceOwnerProcessAuthorityValid = false;
+                  handle.workspaceOwnerBindingDiagnostic = 'workspace_owner_reconciled_absent';
+                  continue;
+                }
+                if (!requested) {
+                  const retainedDiagnostic = report?.diagnostics?.find((row) => (
+                    row?.physicalOwnerId === physicalOwnerId && row.retained === true
+                  ));
+                  if (retainedDiagnostic) {
+                    handle.workspaceOwnerBindingValid = false;
+                    handle.workspaceOwnerProcessAuthorityValid = false;
+                    handle.ownedWorktreeAuthority = false;
+                    handle.physicalWorkspaceCleanupCompleted = false;
+                    handle.workspaceOwnerBindingDiagnostic = retainedDiagnostic.code
+                      ?? 'workspace_owner_binding_unproven';
+                  }
+                  continue;
+                }
+                const bindingValid = validated.has(handle.id);
+                const processValid = handle.processRef?.state === 'unconfirmed_after_restart'
+                  && handle.recoveredProcessAuthority === true
+                  && processAuthorityState(handle.processRef, handle.processAuthority) === 'active';
+                handle.workspaceOwnerBindingValid = bindingValid;
+                handle.physicalWorkspaceCleanupCompleted = false;
+                handle.workspaceOwnerProcessAuthorityValid = processValid;
+                handle.ownedWorktreeAuthority = bindingValid && processValid
+                  && typeof handle.worktree === 'string';
+                if (!bindingValid) {
+                  handle.workspaceOwnerBindingDiagnostic = report?.diagnostics?.find(
+                    (row) => (row.expectationId === handle.id || row.physicalOwnerId === physicalOwnerId)
+                      && row.retained === true,
+                  )?.code ?? 'workspace_owner_binding_unproven';
+                } else if (!processValid) {
+                  handle.workspaceOwnerBindingDiagnostic = 'workspace_owner_process_authority_unproven';
+                }
+              }
+              return report;
+            };
+            const knownPhysicalOwnerIds = [...new Set([...this._workers.values()]
+              .map((handle) => handle.sessionContext?.ownerTaskId)
+              .filter((owner) => /^ws-[a-f0-9]{32}$/u.test(owner ?? '')))];
+            const result = this._worktrees.reconcile(expectedOwners, knownPhysicalOwnerIds);
+            return result && typeof result.then === 'function'
+              ? Promise.resolve(result).then(applyOwnerAuthority)
+              : applyOwnerAuthority(result);
+          },
         ));
       }
       if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') {
@@ -1081,6 +1194,13 @@ export class Coordinator {
         this._trackStartupCleanup(() => Promise.all(reconciliations).then(() => {
           if (this._startupCleanupError) throw this._startupCleanupError;
           for (const handle of absentRecoveredProcessHandles) {
+            if (/^ws-[a-f0-9]{32}$/u.test(handle.sessionContext?.ownerTaskId ?? '')
+              && handle.physicalWorkspaceCleanupCompleted !== true) {
+              handle.cleanupPending = true;
+              handle.cleanupError = handle.workspaceOwnerBindingDiagnostic
+                ?? 'workspace_owner_binding_unproven';
+              continue;
+            }
             handle.worktree = null;
             handle.ownedWorktreeAuthority = false;
             handle.runtimeLease = null;
@@ -1105,8 +1225,8 @@ export class Coordinator {
           && handle.sessionPreservation?.transport === 'attached'
           && handle.sessionContext?.ownerTaskId
           && task && !TERMINAL_TASK_STATUSES.has(task.status);
-      }).map((handle) => handle.sessionContext.ownerTaskId);
-      const expectedOwners = [...new Set([...preservedOwners, ...recoveredProcessOwners])];
+      }).map((handle) => workspaceOwnerExpectation(handle));
+      const expectedOwners = uniqueOwnerExpectations([...preservedOwners, ...recoveredProcessOwners]);
       reconcileStartupResources(expectedOwners, recoveredProcessWorkers);
     } else {
       const eligible = [...this._workers.values()].filter((handle) => {
@@ -1114,11 +1234,12 @@ export class Coordinator {
         const task = this._tasks.get(handle.taskId);
         return handle.status === 'orphaned' && handle.sessionRef?.persistence === 'native'
           && handle.sessionContext?.ownerTaskId && adapter && cardSupportsSession(adapter.card(), { mode: 'resume' })
-          && this._recoveryDispatchRefusal(handle, task) === null;
+          && this._recoveryDispatchRefusal(handle, task, { allowUnvalidatedOwner: true }) === null;
       });
-      const expectedOwners = [...new Set([
-        ...eligible.map((handle) => handle.sessionContext.ownerTaskId), ...recoveredProcessOwners,
-      ])];
+      const expectedOwners = uniqueOwnerExpectations([
+        ...eligible.map((handle) => workspaceOwnerExpectation(handle)),
+        ...recoveredProcessOwners,
+      ]);
       const expectedWorkers = [...new Set([
         ...eligible.map((handle) => handle.id), ...recoveredProcessWorkers,
       ])];
@@ -1234,8 +1355,16 @@ export class Coordinator {
     return rows;
   }
 
-  _recoveryDispatchRefusal(handle, task) {
+  _recoveryDispatchRefusal(handle, task, opts = {}) {
     if (task && this._coordination?.taskResourceRelease?.(task.id)) return 'resources_released';
+    if (opts.allowUnvalidatedOwner !== true
+      && /^ws-[a-f0-9]{32}$/u.test(handle?.sessionContext?.ownerTaskId ?? '')
+      && handle.workspaceOwnerBindingValid !== true) return 'workspace_owner_binding_unproven';
+    if (opts.allowUnvalidatedOwner !== true
+      && handle?.processRef?.state === 'unconfirmed_after_restart'
+      && handle.workspaceOwnerProcessAuthorityValid !== true) {
+      return 'workspace_owner_process_authority_unproven';
+    }
     const state = handle && typeof this._coordination?.recoveryDispatchState === 'function'
       ? this._coordination.recoveryDispatchState(handle.id)
       : null;
@@ -2113,6 +2242,43 @@ export class Coordinator {
     } catch { return false; }
   }
 
+  _restoreRecoveredPhysicalWorkspaceAuthority(handle, context) {
+    const physicalOwnerId = context?.ownerTaskId;
+    if (!/^ws-[a-f0-9]{32}$/u.test(physicalOwnerId ?? '')) return true;
+    const binding = handle?.workspaceOwnerBinding;
+    const currentProcessExact = handle?.processRef?.generation === handle?.processGeneration
+      && ['initializing', 'ready'].includes(handle?.processRef?.state)
+      && processAuthorityState(handle.processRef, handle.processAuthority) === 'active';
+    const immutableBindingExact = handle?.workspaceOwnerBindingValid === true
+      && validWorkspaceOwnerBoundPayload(binding)
+      && binding.physicalOwnerId === physicalOwnerId
+      && binding.receiptDigest === context.ownerReceiptDigest
+      && binding.branch === context.branch
+      && binding.worktree === context.worktree
+      && binding.baseSha === context.baseSha;
+    let checkoutExact = false;
+    if (currentProcessExact && immutableBindingExact
+      && typeof this._worktrees?.worktreeAvailable === 'function') {
+      try {
+        checkoutExact = this._worktrees.worktreeAvailable(binding.logicalTaskId, context) === true;
+      } catch { checkoutExact = false; }
+    }
+    if (!currentProcessExact || !immutableBindingExact || !checkoutExact) {
+      handle.workspaceOwnerProcessAuthorityValid = false;
+      handle.workspaceOwnerBindingDiagnostic = !immutableBindingExact
+        ? 'workspace_owner_binding_unproven'
+        : !currentProcessExact
+          ? 'workspace_owner_process_authority_unproven'
+          : 'workspace_owner_checkout_invalid';
+      return false;
+    }
+    handle.workspaceOwnerProcessAuthorityValid = true;
+    handle.worktree = context.worktree;
+    handle.ownedWorktreeAuthority = true;
+    handle.workspaceOwnerBindingDiagnostic = null;
+    return true;
+  }
+
   _failWorktreeAuthority(handle) {
     if (!handle || handle.worktreeAuthorityLost === true) return false;
     const task = this._tasks.get(handle.taskId);
@@ -2402,6 +2568,7 @@ export class Coordinator {
           // A resumed/recovered session merely borrows its durable session checkout. Only a
           // checkout created for this task is independent local authority that must block drain.
           handle.ownedWorktreeAuthority = task.sessionRequest?.mode !== 'resume';
+          handle.physicalWorkspaceCleanupCompleted = false;
           const sessionContext = Object.freeze({
             worktree: res.path,
             ...(this._repoRoot ? { repoRoot: this._repoRoot } : {}),
@@ -3294,6 +3461,7 @@ export class Coordinator {
       cleanupAfterVerification: false,
       currentIncarnation: true,
       ownedWorktreeAuthority: false,
+      physicalWorkspaceCleanupCompleted: false,
       localAuthority: false,
       createdAt: new Date(this._now()).toISOString(),
     };
@@ -3352,7 +3520,8 @@ export class Coordinator {
         processGeneration: 0, processRef: null, processAuthority: null,
         recoveredProcessAuthority: false, cleanupPending: false, cleanupPromise: null,
         cleanupAfterVerification: false, createdAt: new Date(0).toISOString(),
-        currentIncarnation: false, ownedWorktreeAuthority: false, localAuthority: false,
+        currentIncarnation: false, ownedWorktreeAuthority: false,
+        physicalWorkspaceCleanupCompleted: false, localAuthority: false,
       });
       const match = /^w-(\d+)$/.exec(workerId);
       if (match) this._workerSeq = Math.max(this._workerSeq, Number(match[1]));
@@ -4012,6 +4181,9 @@ export class Coordinator {
       if (timerHandle && typeof timerHandle.unref === 'function') timerHandle.unref();
     });
     handle.processGeneration = (handle.processGeneration ?? 0) + 1;
+    if (/^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')) {
+      handle.workspaceOwnerProcessAuthorityValid = false;
+    }
     // Policy observation is bound to one exact process generation. A recovered child must
     // re-attest; replayed testimony from the dead predecessor cannot satisfy readiness.
     handle.workerPolicyObserved = null;
@@ -4128,6 +4300,11 @@ export class Coordinator {
     handle.turnAdmission = null;
     for (const event of admission.events) {
       this._handleEvent(event, handle.vendor, { admittedReady: event.kind === 'lifecycle.spawned' });
+    }
+    if (/^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')
+      && !this._restoreRecoveredPhysicalWorkspaceAuthority(handle, context)) {
+      await stopRecoveryTransport('recovery_workspace_authority_unproven');
+      return { ok: false, result: 'workspace_owner_process_authority_unproven' };
     }
     if (handle.modelMismatch || handle.effortMismatch || handle.workerPolicyMismatch
       || ['dead', 'exited', 'stopping'].includes(handle.status)) {
@@ -4416,6 +4593,9 @@ export class Coordinator {
     handle.currentIncarnation = true;
     handle.localAuthority = true;
     handle.processGeneration = (handle.processGeneration ?? 0) + 1;
+    if (/^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')) {
+      handle.workspaceOwnerProcessAuthorityValid = false;
+    }
     handle.workerPolicyObserved = null;
     handle.workerPolicyMismatch = null;
     const abort = new AbortController();
@@ -4475,6 +4655,12 @@ export class Coordinator {
     handle.turnAdmission = null;
     for (const event of admission.events) {
       this._handleEvent(event, handle.vendor, { admittedReady: event.kind === 'lifecycle.spawned' });
+    }
+    if (/^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')
+      && !this._restoreRecoveredPhysicalWorkspaceAuthority(handle, context)) {
+      return this._failPreservedReattachment(
+        handle, task, 'workspace_owner_process_authority_unproven',
+      );
     }
     if (handle.modelMismatch || handle.effortMismatch || handle.workerPolicyMismatch
       || handle.processRef?.state === 'closed') {
@@ -6673,6 +6859,40 @@ export class Coordinator {
   _removeOwnedTaskWorktree(handle, task) {
     if (!handle) return this._removeTaskWorktree(task);
     if (handle.cleanupPromise) return handle.cleanupPromise;
+    // Exact cleanup is idempotent. Once this handle has already finalized its checkout, a later
+    // already-dead kill has no owner capability to exercise and must not re-enter the opaque-owner
+    // authorization guard merely because the historical session context retains its coordinate.
+    const opaquePhysicalOwner = /^ws-[a-f0-9]{32}$/u.test(
+      handle.sessionContext?.ownerTaskId ?? '',
+    );
+    if (handle.worktree === null && handle.ownedWorktreeAuthority === false
+      && handle.runtimeScope?.active !== true
+      && (!opaquePhysicalOwner || handle.physicalWorkspaceCleanupCompleted === true)) {
+      handle.cleanupPending = false;
+      handle.cleanupError = null;
+      return Promise.resolve();
+    }
+    if (opaquePhysicalOwner
+      && handle.ownedWorktreeAuthority !== true) {
+      handle.cleanupPending = true;
+      handle.cleanupError = handle.workspaceOwnerBindingDiagnostic
+        ?? 'workspace_owner_binding_unproven';
+      return Promise.reject(Object.assign(
+        new Error('physical workspace owner binding is not proven for cleanup'),
+        {
+          code: 'workspace_owner_binding_unproven',
+          authorityState: Object.freeze({
+            physicalOwnerId: handle.sessionContext.ownerTaskId,
+            worktreePresent: typeof handle.worktree === 'string',
+            bindingValid: handle.workspaceOwnerBindingValid === true,
+            processAuthorityValid: handle.workspaceOwnerProcessAuthorityValid === true,
+            diagnostic: handle.workspaceOwnerBindingDiagnostic ?? null,
+            cleanupPending: handle.cleanupPending === true,
+            runtimeActive: handle.runtimeScope?.active === true,
+          }),
+        },
+      ));
+    }
     handle.cleanupPending = true;
     // Every exact-close cleanup path funnels through this fail-safe. A restart, already-dead kill,
     // fatal/emergency close, or coordination-error fallback may reach reap after terminalizing the
@@ -6687,6 +6907,7 @@ export class Coordinator {
       .then(() => this._removeTaskWorktree(task)).then(() => {
       handle.worktree = null;
       handle.ownedWorktreeAuthority = false;
+      if (opaquePhysicalOwner) handle.physicalWorkspaceCleanupCompleted = true;
       // Preserve the historical worker path on the task: the mandatory trust/freshness guard
       // compares it with later verification sandboxes even after the checkout was reaped.
       handle.cleanupPending = handle.runtimeScope?.active === true;
@@ -9590,6 +9811,7 @@ export class Coordinator {
       let processRef = null;
       let processAuthority = null;
       let sessionContext = null;
+      let workspaceOwnerBinding = null;
       let lineage = null;
       let capturedSha = null;
       let integration = null;
@@ -9750,6 +9972,11 @@ export class Coordinator {
             break;
           case 'worktree.ready':
             sessionContext = e.payload ?? sessionContext;
+            break;
+          case 'worktree.owner_bound':
+            if (e.actor === 'policy' && validWorkspaceOwnerBoundPayload(e.payload)) {
+              workspaceOwnerBinding = Object.freeze({ ...e.payload });
+            }
             break;
           case 'resource.tokens':
             if (e.actor !== 'worker') break;
@@ -10242,6 +10469,9 @@ export class Coordinator {
         sessionRequest,
         sessionRef,
         sessionContext,
+        workspaceOwnerBinding,
+        workspaceOwnerBindingValid: null,
+        workspaceOwnerProcessAuthorityValid: null,
         lineage,
         taskId,
         worktree: sessionContext?.worktree ?? null,
@@ -10290,7 +10520,9 @@ export class Coordinator {
         cleanupAfterVerification: false,
         currentIncarnation: false,
         ownedWorktreeAuthority: recoveredProcessAuthority
-          && typeof sessionContext?.worktree === 'string',
+          && typeof sessionContext?.worktree === 'string'
+          && !/^ws-[a-f0-9]{32}$/u.test(sessionContext?.ownerTaskId ?? ''),
+        physicalWorkspaceCleanupCompleted: false,
         localAuthority: false,
         createdAt: new Date(0).toISOString(),
       });
