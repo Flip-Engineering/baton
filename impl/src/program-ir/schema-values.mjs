@@ -480,14 +480,12 @@ function artifactBytes(reader, reference) {
   if (utilTypes.isProxy(result)) {
     fail('ValueRef artifact is unavailable', 'artifact_unavailable');
   }
-  if (result && typeof result.then === 'function') {
-    fail('ValueRef artifact reader must be synchronous and read-only');
-  }
   if (result === null || result === undefined
-    || !(Buffer.isBuffer(result) || result instanceof Uint8Array)) {
+    || !(Buffer.isBuffer(result) || (ArrayBuffer.isView(result) && result instanceof Uint8Array))) {
     fail('ValueRef artifact is unavailable', 'artifact_unavailable');
   }
-  return Buffer.from(result);
+  try { return Buffer.from(result); }
+  catch { fail('ValueRef artifact is unavailable', 'artifact_unavailable'); }
 }
 
 export function validateValueRef(input, { registry, authority: valueAuthority, artifactReader }) {

@@ -344,4 +344,12 @@ test('P93A1-V5: ValueRef reads are pure, canonical-byte exact, duplicate-aware, 
       registry: f.registry, authority, artifactReader: { readArtifact: () => lossyString },
     }), { code: 'artifact_unavailable' });
   }
+
+  let thenReads = 0;
+  const accessorResult = {};
+  Object.defineProperty(accessorResult, 'then', { get() { thenReads += 1; return () => {}; } });
+  assert.throws(() => validateValueRef(reference, {
+    registry: f.registry, authority, artifactReader: { readArtifact: () => accessorResult },
+  }), { code: 'artifact_unavailable' });
+  assert.equal(thenReads, 0);
 });
