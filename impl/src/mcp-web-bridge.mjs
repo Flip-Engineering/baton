@@ -49,6 +49,7 @@ function validOutline(value, runId) {
 export class BatonWebApplicationFacade {
   constructor(client, applicationCard, session) {
     if (!client || typeof client.command !== 'function' || typeof client.doctor !== 'function'
+      || typeof client.card !== 'function'
       || typeof client.session !== 'function'
       || !applicationCard || typeof applicationCard !== 'object' || Array.isArray(applicationCard)
       || typeof applicationCard.repoId !== 'string' || applicationCard.repoId !== client.repoId
@@ -78,6 +79,26 @@ export class BatonWebApplicationFacade {
   }
 
   card() { return this._card; }
+
+  async refreshCard() {
+    const card = await this.client.card();
+    if (card?.repoId !== this.repoId
+      || !Array.isArray(card.commands)
+      || ORDINARY_COMMANDS.some((command) => !card.commands.includes(command))) {
+      throw bridgeError('Remote Baton application card changed incompatibly');
+    }
+    this._card = Object.freeze(clone(card));
+    return this._card;
+  }
+
+  async readiness() {
+    const doctor = await this.client.doctor();
+    if (doctor?.application?.repoId !== this.repoId || !doctor.deployment) {
+      throw bridgeError('Remote Baton route diagnostic is incompatible');
+    }
+    this._card = Object.freeze(clone(doctor.application));
+    return doctor.deployment;
+  }
 
   principal() { return Object.freeze(clone(this._principal)); }
 
@@ -160,9 +181,8 @@ export class BatonWebApplicationFacade {
           'application_unauthorized');
       }
     }
-    const doctor = await this.client.doctor();
-    const card = doctor?.application;
-    if (doctor?.ready !== true || card?.repoId !== this.repoId
+    const card = await this.client.card();
+    if (card?.repoId !== this.repoId
       || !Array.isArray(card.commands) || !card.commands.includes(name)
       || (this._registryDigest !== null
         && card.agentExperience?.registryDigest !== this._registryDigest)) {
@@ -194,6 +214,7 @@ export class BatonWebApplicationFacade {
       throw bridgeError('Remote Baton MCP command authority is invalid', 'application_unauthorized');
     }
     await this._attestSession(principal);
+    await this.refreshCard();
     const idempotencyKey = MUTATIONS.has(name)
       ? this._mutationKey(name, args, principal)
       : `mcp-web-${digest({ repoId: this.repoId, key: context.idempotencyKey })}`;
@@ -226,12 +247,12 @@ export async function connectBatonWebApplication(options = {}) {
     clock: options.clock ?? options.now ?? Date.now,
     sleep: options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
   });
-  const doctor = await client.doctor();
-  if (doctor?.ready !== true || doctor.application?.repoId !== connection.repoId) {
+  const card = await client.card();
+  if (card?.repoId !== connection.repoId) {
     throw bridgeError('Remote Baton application is not ready');
   }
   const session = await client.session();
-  return new BatonWebApplicationFacade(client, doctor.application, session);
+  return new BatonWebApplicationFacade(client, card, session);
 }
 
 export async function createBatonWebMcpServer(options) {

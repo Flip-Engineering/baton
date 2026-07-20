@@ -109,7 +109,7 @@ test('BU3/BU4/BU5/BU6: static client makes Run flow primary and keeps fenced rea
   const s = system();
   const script = await get(s.web, '/control/app.js', { cookie: sessionCookie(s.issued), 'sec-fetch-site': 'same-origin' });
   assert.match(script.headers['content-type'], /^text\/javascript/);
-  for (const term of ['run_start', 'run_status', 'run_inspect', 'run_act', 'run_answer', 'run_steer', 'run_stop', 'actionId', 'inputSchema', 'approve_plan', 'semantic_review', 'integrate', 'Follow Run', 'activeFollowPolicy', 'followLoop', 'review-form', 'review-route', 'review-reason', 'integrate-form', 'integration-strategy', 'integration-reason', 'semantic-summary', 'steer-target', 'steer-mode', 'steer-reason', 'stop-form', 'stop-reason', 'progress-list', 'renderProgress', 'Run activity', 'activity-list', 'connectRunActivity', 'connectRunChannel', 'activityCursors', 'provider_output_opt_in_required', 'untrusted_provider', '/v1/application-card', 'harness', 'model', 'effort', 'expectedFence', 'kill', 'drain', 'idempotencyKey', 'crypto.randomUUID', 'x-baton-csrf', '/v1/stream-tickets', 'EventSource', '/v1/auth/logout']) {
+  for (const term of ['run_start', 'run_status', 'run_inspect', 'run_act', 'run_answer', 'run_steer', 'run_stop', 'actionId', 'inputSchema', 'approve_plan', 'retry_route', 'Retry exact route', 'semantic_review', 'integrate', 'Follow Run', 'activeFollowPolicy', 'followLoop', 'review-form', 'review-route', 'review-reason', 'integrate-form', 'integration-strategy', 'integration-reason', 'semantic-summary', 'steer-target', 'steer-mode', 'steer-reason', 'stop-form', 'stop-reason', 'progress-list', 'renderProgress', 'Run activity', 'activity-list', 'connectRunActivity', 'connectRunChannel', 'activityCursors', 'provider_output_opt_in_required', 'untrusted_provider', '/v1/application-card', 'harness', 'model', 'effort', 'expectedFence', 'kill', 'drain', 'idempotencyKey', 'crypto.randomUUID', 'x-baton-csrf', '/v1/stream-tickets', 'EventSource', '/v1/auth/logout']) {
     assert.equal(script.body.includes(term), true, term);
   }
   assert.equal(script.body.includes("command('spawn'"), false);
@@ -130,6 +130,41 @@ test('BU3/BU4/BU5/BU6: static client makes Run flow primary and keeps fenced rea
   assert.match(css.headers['content-type'], /^text\/css/);
   assert.ok(css.body.length > 100);
   assert.deepEqual(s.fleetCalls, []);
+});
+
+test('waiting-for-route retry control is advertised-action, observe, and control gated', async () => {
+  const s = system();
+  const script = await get(s.web, '/control/app.js', {
+    cookie: sessionCookie(s.issued), 'sec-fetch-site': 'same-origin',
+  });
+  const elements = new Map();
+  const element = (id = '') => ({
+    id, disabled: false, value: '', textContent: '', dataset: {}, children: [],
+    classList: { add() {}, remove() {}, toggle() {} },
+    addEventListener() {}, replaceChildren(...children) { this.children = children; },
+    append(...children) { this.children.push(...children); },
+  });
+  const document = {
+    cookie: '', body: element('body'), createElement: (tag) => element(tag),
+    getElementById(id) { if (!elements.has(id)) elements.set(id, element(id)); return elements.get(id); },
+  };
+  const context = createContext({
+    document, fetch: () => new Promise(() => {}),
+    crypto: { subtle: webcrypto.subtle, randomUUID }, TextEncoder,
+    setTimeout, clearTimeout, Promise, URL, Blob,
+    location: { origin: ORIGIN, replace() {} }, window: { confirm: () => false },
+    EventSource: class {}, console,
+  });
+  runInContext(script.body, context);
+  const view = {
+    runId: 'run-waiting', phase: 'waiting_for_route',
+    profile: { name: 'standard', digest: 'profile-digest' },
+    nextActions: [{ kind: 'retry_route' }],
+  };
+  context.testView = view;
+  runInContext("state.card={profiles:[{name:'standard',digest:'profile-digest',followPolicy:{mode:'disabled'}}]};state.session={identity:{capabilities:['observe']}};renderActions(testView);globalThis.withoutControl=byId('run-actions').children.map((item)=>item.textContent);state.session.identity.capabilities.push('control');renderActions(testView);globalThis.withControl=byId('run-actions').children.map((item)=>item.textContent);", context);
+  assert.equal(context.withoutControl.includes('Retry exact route'), false);
+  assert.equal(context.withControl.includes('Retry exact route'), true);
 });
 
 test('BU4 executed browser behavior rejects malformed Run frames and restores output opt-in across Runs', async () => {

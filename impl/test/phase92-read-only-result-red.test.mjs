@@ -59,6 +59,9 @@ function adapter() {
       },
     },
   });
+  value.credentialEpoch = ({ harness, model, effort }) => (
+    JSON.stringify({ harness, model, effort, fixtureGeneration: 1 })
+  );
   return value;
 }
 

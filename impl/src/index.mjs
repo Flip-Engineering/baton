@@ -39,6 +39,10 @@ import { materializeContextCallBrief } from './context-call.mjs';
 import { openBatonDeployment } from './application-deployment.mjs';
 
 export { DEFAULT_BATON_DEPLOYMENT_ROUTES } from './application-deployment.mjs';
+export {
+  normalizeExactRoute, normalizeRouteAdmissionReceipt, projectRouteReadinessError,
+  RouteReadinessAuthority, RouteReadinessBlockedError,
+} from './route-readiness-authority.mjs';
 
 /**
  * Open one repository-bound Baton application with deployment-owned runtime,
@@ -1340,6 +1344,7 @@ export function createDriver(opts) {
   const coordinator = new Coordinator({
     log, fences,
     adapters: opts.adapters,
+    routeReadinessAuthority: opts.routeReadinessAuthority,
     worktrees: worktreeManager(opts.repoRoot, {
       deploymentBaseSha: opts.deploymentBaseSha,
       workerDependencyDirs: opts.workerDependencyDirs,

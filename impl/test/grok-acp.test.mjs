@@ -17,7 +17,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,6 +39,8 @@ function makeBrief(goal = 'implement the thing') {
 }
 
 function makeAdapter(extra = {}) {
+  const diagnosticRoot = extra.diagnosticRuntime
+    ? null : mkdtempSync(join(tmpdir(), 'grok-diagnostic-owner-'));
   return new GrokAcpCli({
     cmd: process.execPath,
     // '--serve' is the fixture's discovery-guard sentinel (phase8 R1): without it the fixture
@@ -46,6 +48,7 @@ function makeAdapter(extra = {}) {
     args: [FIXTURE, '--serve'],
     env: extra.env,
     requestTimeoutMs: extra.requestTimeoutMs ?? 2000,
+    model: extra.model ?? 'grok-4.5',
     stopDeadlineMs: extra.stopDeadlineMs,
     ceiling: 4,
     maxContext: extra.maxContext,
@@ -53,8 +56,71 @@ function makeAdapter(extra = {}) {
     alwaysApprove: extra.alwaysApprove,
     maxEventPayloadBytes: extra.maxEventPayloadBytes,
     versionProbe: extra.versionProbe ?? (() => 'fake-grok/0.1.216-test'),
+    diagnosticArgs: [FIXTURE, '--models'],
+    diagnosticEnv: extra.diagnosticEnv,
+    diagnosticRuntime: extra.diagnosticRuntime ?? (async () => {
+      const cwd = join(diagnosticRoot, 'cwd');
+      mkdirSync(cwd, { recursive: true, mode: 0o700 });
+      return {
+        cwd, env: { HOME: join(diagnosticRoot, 'home') },
+        cleanup: async () => rmSync(diagnosticRoot, { recursive: true, force: true }),
+      };
+    }),
   });
 }
+
+test('Grok route readiness uses only the session-free models command and fails closed on explicit unauthenticated output', async () => {
+  const ready = makeAdapter();
+  assert.deepEqual(await ready.routeReadinessProbe({
+    route: { harness: 'grok', model: 'grok-4.5', effort: 'high' },
+    signal: new AbortController().signal,
+  }), {
+    state: 'ready', initialized: true, authenticated: true,
+    sessionCreated: false, promptSent: false, reaped: true,
+  });
+
+  const blocked = makeAdapter({ diagnosticEnv: { FAKE_GROK_MODELS_UNAUTH: '1' } });
+  assert.deepEqual(await blocked.routeReadinessProbe({
+    route: { harness: 'grok', model: 'grok-4.5', effort: 'high' },
+    signal: new AbortController().signal,
+  }), {
+    state: 'blocked', initialized: true, authenticated: false,
+    sessionCreated: false, promptSent: false, reaped: true,
+  });
+});
+
+test('Grok route readiness runs in its exact private cwd/env without ambient credential canaries', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'grok-diagnostic-canary-'));
+  const cwd = join(root, 'cwd');
+  const privateHome = join(root, 'home');
+  const marker = join(root, 'diagnostic.ndjson');
+  mkdirSync(cwd, { recursive: true, mode: 0o700 });
+  mkdirSync(privateHome, { recursive: true, mode: 0o700 });
+  const priorCanary = process.env.BATON_GROK_AMBIENT_CANARY;
+  process.env.BATON_GROK_AMBIENT_CANARY = 'must-not-cross';
+  t.after(() => {
+    if (priorCanary === undefined) delete process.env.BATON_GROK_AMBIENT_CANARY;
+    else process.env.BATON_GROK_AMBIENT_CANARY = priorCanary;
+    rmSync(root, { recursive: true, force: true });
+  });
+  const adapter = makeAdapter({
+    diagnosticEnv: { FAKE_GROK_DIAGNOSTIC_LOG: marker },
+    diagnosticRuntime: async () => ({
+      cwd, env: { HOME: privateHome }, cleanup: async () => ({ state: 'absent' }),
+    }),
+  });
+
+  const result = await adapter.routeReadinessProbe({
+    route: { harness: 'grok', model: 'grok-4.5', effort: 'high' },
+    signal: new AbortController().signal,
+  });
+  const observations = readFileSync(marker, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(result.state, 'ready');
+  assert.equal(result.reaped, true);
+  assert.deepEqual(observations, [{
+    argv: ['--models'], cwd, ambientCanary: null, home: privateHome,
+  }]);
+});
 
 function freshWorktree() {
   return mkdtempSync(join(tmpdir(), 'grok-acp-'));

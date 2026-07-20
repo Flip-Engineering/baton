@@ -3,6 +3,7 @@ import { northboundCapabilityToken } from './northbound-capability-authority.mjs
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs } from './application.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
+import { projectRouteReadinessError } from './route-readiness-authority.mjs';
 
 const MCP_APPLICATION_ENTRIES = Object.entries(APPLICATION_COMMAND_DEFINITIONS)
   .filter(([, definition]) => definition.mcp)
@@ -99,7 +100,13 @@ function toolResult(value, isError = false) {
   const structuredContent = record(normalizedValue) ? normalizedValue : { result: normalizedValue };
   return Object.freeze({ content: Object.freeze([{ type: 'text', text: JSON.stringify(structuredContent) }]), structuredContent: Object.freeze(structuredContent), isError });
 }
-function toolError(code) { return toolResult({ ok: false, error: { code } }, true); }
+function toolError(code, error = null) {
+  return toolResult({ ok: false, error: error ?? { code } }, true);
+}
+function stateFailure(cause) {
+  const routeFailure = projectRouteReadinessError(cause);
+  return routeFailure ? toolError(routeFailure.code, routeFailure) : toolError(stateFailureCode(cause));
+}
 function stateFailureCode(cause) {
   if (cause?.mcpCode === 'stale_fence') return 'stale_fence';
   if (cause?.code === 'application_unauthorized') return 'forbidden';
@@ -109,6 +116,7 @@ function stateFailureCode(cause) {
   if (typeof cause?.code === 'string' && cause.code.startsWith('worker_policy_')) return cause.code;
   if (typeof cause?.code === 'string' && cause.code.startsWith('run_orchestrator_')) return cause.code;
   if (cause?.code === 'run_stopping') return cause.code;
+  if (projectRouteReadinessError(cause)) return 'route_waiting';
   if (['capability_not_found', 'capability_op_unavailable', 'capability_budget_invalid', 'cancelled',
     'capability_result_invalid', 'capability_result_oversize', 'capability_authority_forbidden', 'capability_args_invalid',
     'capability_resume_invalid', 'capability_reverify_invalid', 'capability_actor_invalid', 'capability_repo_invalid', 'capability_idempotency_invalid',
@@ -798,7 +806,7 @@ export class McpFleetServer {
       } catch (cause) {
         try { this._audit('tool_refused', params.name, args, stateFailureCode(cause)); }
         catch { return protocolResult(id, toolError('temporarily_unavailable')); }
-        return protocolResult(id, toolError(stateFailureCode(cause)));
+        return protocolResult(id, stateFailure(cause));
       }
       if (!Array.isArray(semanticAuthority?.requiredCapabilities)
         || !semanticAuthority.requiredCapabilities.every(
@@ -841,7 +849,8 @@ export class McpFleetServer {
       } catch (cause) {
         try { this._audit('tool_failed', name, args, 'command_failed'); }
         catch { return toolError('temporarily_unavailable'); }
-        return toolError(name === 'fleet_goal_plan_status' || APPLICATION_TOOL[name] ? stateFailureCode(cause) : 'command_failed');
+        return name === 'fleet_goal_plan_status' || APPLICATION_TOOL[name]
+          ? stateFailure(cause) : toolError('command_failed');
       }
     }
     const callId = randomUUID();
@@ -867,7 +876,7 @@ export class McpFleetServer {
         let outcome;
         try { outcome = toolResult(await this._dispatchDrain(args, admittedActor, callId)); }
         catch (cause) {
-          outcome = toolError(stateFailureCode(cause));
+          outcome = stateFailure(cause);
           try { this.coordination.failMcpCall(callId, outcome, { actor: admittedActor, key: `mcp.fail:${callId}` }); }
           catch { return toolError('temporarily_unavailable'); }
           return outcome;
@@ -898,7 +907,7 @@ export class McpFleetServer {
             : this._dispatch(name, args, admittedActor, admittedCallId, admittedPrincipal)));
         }
         catch (cause) {
-          outcome = toolError(stateFailureCode(cause));
+          outcome = stateFailure(cause);
           try { this.coordination.failMcpCall(admittedCallId, outcome, { actor: admittedActor, key: `mcp.fail:${admittedCallId}` }); }
           catch { return toolError('temporarily_unavailable'); }
           if (APPLICATION_TOOL[name]) this._applicationDispatches.delete(admittedCallId);
@@ -942,7 +951,7 @@ export class McpFleetServer {
               orchestratorLeaseId: lease.leaseId,
             } } : {}),
           });
-        } catch (cause) { return toolError(stateFailureCode(cause)); }
+        } catch (cause) { return stateFailure(cause); }
       }
       if (GOAL_PLAN_MUTATIONS.has(name)) {
         const prior = admission.call.outcome;
@@ -963,7 +972,7 @@ export class McpFleetServer {
           : this._dispatch(name, args, actor, callId)));
     }
     catch (cause) {
-      outcome = toolError(stateFailureCode(cause));
+      outcome = stateFailure(cause);
       try { this.coordination.failMcpCall(callId, outcome, { actor, key: `mcp.fail:${callId}` }); }
       catch { return toolError('temporarily_unavailable'); }
       if (APPLICATION_TOOL[name]) this._applicationDispatches.delete(callId);

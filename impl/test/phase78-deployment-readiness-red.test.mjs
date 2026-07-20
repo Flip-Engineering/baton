@@ -10,6 +10,15 @@ import test from 'node:test';
 import { MockAdapter, openBaton } from '../src/index.mjs';
 
 const ROUTE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'xhigh' });
+const unattendedWorkerPolicy = () => ({
+  schemaVersion: 1,
+  autonomy: { supported: ['unattended'], default: 'unattended', perTask: false,
+    observation: 'launch', mechanisms: ['phase78-unattended'] },
+  access: { supported: ['full'], default: 'full', perTask: false,
+    observation: 'launch', mechanisms: ['phase78-full'] },
+  containment: { hostProcess: 'same_uid', guarantees: ['private_runtime'],
+    configuredPreferences: [], observation: 'unavailable' },
+});
 
 function repository(t, name, files = {}) {
   const root = mkdtempSync(join(tmpdir(), `baton-phase78-readiness-${name}-`));
@@ -117,6 +126,7 @@ test('DP3: card and doctor expose authentication-red routes without calling them
   adapter.card = () => ({
     ...baseCard(),
     authPosture: 'subscription',
+    workerPolicy: unattendedWorkerPolicy(),
     readiness: {
       state: 'blocked',
       code: 'authentication_required',
@@ -133,7 +143,7 @@ test('DP3: card and doctor expose authentication-red routes without calling them
 
   const deployment = await openBaton({
     repo,
-    advanced: advanced(root, adapter, { command: process.execPath, arguments: ['--version'] }),
+    advanced: advanced(root, adapter, { command: 'node', arguments: ['--version'] }),
   });
   t.after(async () => { try { await deployment.close(); } catch {} });
 
@@ -156,11 +166,9 @@ test('DP3: card and doctor expose authentication-red routes without calling them
   assert.equal(cardRoute?.state, 'blocked');
   assert.equal(cardRoute?.code, 'authentication_required');
 
-  await assert.rejects(
-    deployment.run('This must be rejected before provider spawn.', { exact: ROUTE }),
-    (error) => error?.code === 'authentication_required'
-      && /not authenticated/u.test(error.message),
-  );
+  const waiting = await deployment.run('This must wait before provider spawn.', { exact: ROUTE });
+  await waiting.approve();
+  assert.equal(waiting.last.outline?.phase ?? waiting.last.phase, 'waiting_for_route');
   assert.equal(spawnCalls, 0, 'doctor and card are static readiness reads, not provider probes');
 });
 
@@ -186,7 +194,7 @@ test('DP3b: adapter authentication is probed only inside the projected private w
     repo,
     advanced: {
       deploymentRoot: root, adapters: { 'claude-code:claude': adapter }, routes: [route],
-      verification: { command: process.execPath, arguments: ['--version'] },
+      verification: { command: 'node', arguments: ['--version'] },
     },
   });
   t.after(async () => { try { await deployment.close(); } catch {} });
@@ -202,10 +210,9 @@ test('DP3b: adapter authentication is probed only inside the projected private w
   assert.equal(routeReadiness.code, 'authentication_refresh_required');
   assert.equal(routeReadiness.runtime.authentication.state, 'refresh_required');
   assert.equal(JSON.stringify(routeReadiness).includes('must be replaced'), false);
-  await assert.rejects(
-    deployment.run('must remain pre-provider', { exact: route }),
-    (error) => error?.code === 'authentication_refresh_required',
-  );
+  const waiting = await deployment.run('must remain pre-provider', { exact: route });
+  await waiting.approve();
+  assert.equal(waiting.last.outline?.phase ?? waiting.last.phase, 'waiting_for_route');
   assert.equal(spawnCalls.count, 0);
 });
 
@@ -218,6 +225,7 @@ function routedAdapter(route, { version, credentialState = 'available', spawnCal
   adapter.card = () => ({
     ...baseCard(),
     version,
+    workerPolicy: unattendedWorkerPolicy(),
     authPosture: route.harness === 'glm' ? 'api_key' : 'subscription',
     providerCompatibility: { credentialState },
     modelSelection: {
@@ -233,14 +241,6 @@ function routedAdapter(route, { version, credentialState = 'available', spawnCal
     permissions: {
       mode: 'unattended-full',
       boundary: 'boundary-canary /private/credential-do-not-project',
-    },
-    workerPolicy: {
-      schemaVersion: 1,
-      autonomy: { default: 'unattended' },
-      access: { default: 'full' },
-      containment: {
-        hostProcess: 'same_uid', guarantees: ['private_runtime'], observation: 'unavailable',
-      },
     },
   });
   const spawn = adapter.spawn.bind(adapter);
@@ -269,7 +269,7 @@ test('DP4: credential-present Grok, Claude, GLM, and native Kimi stay blocked wh
     repo,
     advanced: {
       deploymentRoot: root, adapters, routes,
-      verification: { command: process.execPath, arguments: ['--version'] },
+      verification: { command: 'node', arguments: ['--version'] },
     },
   });
   t.after(async () => { try { await deployment.close(); } catch {} });
@@ -292,10 +292,9 @@ test('DP4: credential-present Grok, Claude, GLM, and native Kimi stay blocked wh
   assert.equal(publicJson.includes('boundary-canary'), false, 'adapter prose is not a route-summary field');
   assert.equal(publicJson.includes('/private/credential-do-not-project'), false, 'paths do not enter route summaries');
 
-  await assert.rejects(
-    deployment.run('must stay pre-provider', { exact: routes[0] }),
-    (error) => error?.code === 'harness_unavailable',
-  );
+  const waiting = await deployment.run('must stay pre-provider', { exact: routes[0] });
+  await waiting.approve();
+  assert.equal(waiting.last.outline?.phase ?? waiting.last.phase, 'waiting_for_route');
   assert.equal(spawnCalls.count, 0);
 });
 
@@ -307,11 +306,16 @@ test('DP5: an observed route publishes bounded permission, containment, authenti
   const adapter = routedAdapter(route, {
     version: 'Kimi Code v9.8.7+fixture', spawnCalls,
   });
+  adapter.credentialEpoch = () => 'phase78-kimi-credential-generation';
+  adapter.routeReadinessProbe = async () => ({
+    state: 'ready', initialized: true, authenticated: true,
+    sessionCreated: false, promptSent: false, reaped: true,
+  });
   const deployment = await openBaton({
     repo,
     advanced: {
       deploymentRoot: root, adapters: { 'kimi-code': adapter }, routes: [route],
-      verification: { command: process.execPath, arguments: ['--version'] },
+      verification: { command: 'node', arguments: ['--version'] },
     },
   });
   t.after(async () => { try { await deployment.close(); } catch {} });
@@ -321,7 +325,7 @@ test('DP5: an observed route publishes bounded permission, containment, authenti
   assert.deepEqual(doctor.routes[0], {
     ...route,
     state: 'ready',
-    summary: 'The exact route passed static deployment readiness.',
+    summary: 'The exact route passed a bounded authentication diagnostic and was reaped.',
     runtime: {
       version: { state: 'observed', value: '9.8.7+fixture' },
       authentication: { posture: 'subscription', state: 'available' },

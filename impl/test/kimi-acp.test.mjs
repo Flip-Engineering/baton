@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,12 +29,25 @@ function setup(mode = 'normal', extra = {}) {
   const root = mkdtempSync(join(tmpdir(), 'baton-kimi-acp-'));
   const log = join(root, 'frames.ndjson');
   const envLog = join(root, 'env.json');
+  const diagnosticRoot = join(root, 'diagnostic');
   const events = [];
   const { env: extraEnv = {}, ...adapterOptions } = extra;
   const adapter = new KimiAcpCli({
     cmd: process.execPath, args: [fixture, '--serve'], requestTimeoutMs: 1000,
     versionProbe: () => '0.27.0',
     env: { FAKE_KIMI_MODE: mode, FAKE_KIMI_LOG: log, FAKE_KIMI_ENV_LOG: envLog, ...extraEnv },
+    diagnosticArgs: [fixture, '--serve'],
+    diagnosticEnv: {
+      FAKE_KIMI_MODE: mode, FAKE_KIMI_LOG: log, FAKE_KIMI_ENV_LOG: envLog,
+    },
+    diagnosticRuntime: async () => {
+      mkdirSync(diagnosticRoot, { recursive: true, mode: 0o700 });
+      return {
+        cwd: diagnosticRoot,
+        env: { HOME: join(diagnosticRoot, 'home'), KIMI_CODE_HOME: join(diagnosticRoot, 'config') },
+        cleanup: async () => rmSync(diagnosticRoot, { recursive: true, force: true }),
+      };
+    },
     ...adapterOptions,
   });
   adapter.onEvent((event) => events.push(event));
@@ -127,6 +140,20 @@ test('native Kimi performs exact initialize, login auth, new session, and prompt
     assert.equal(spawned.payload.modelObserved, 'kimi-code/k3');
     assert.equal(spawned.payload.effortObserved, null);
   } finally { await adapter.kill('w'); await waitFor(events, (event) => event.kind === 'kill.confirmed'); }
+});
+
+test('native Kimi readiness probe initializes/authenticates only and proves exact reap', async () => {
+  const { adapter, log } = setup();
+  const result = await adapter.routeReadinessProbe({
+    route: { harness: 'kimi-code', model: 'kimi-code/k3', effort: 'max' },
+    signal: new AbortController().signal,
+  });
+  assert.deepEqual(result, {
+    state: 'ready', initialized: true, authenticated: true,
+    sessionCreated: false, promptSent: false, reaped: true,
+  });
+  const frames = readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.deepEqual(frames.map((frame) => frame.method), ['initialize', 'authenticate']);
 });
 
 test('model and exact effort admission refuse before a child exists', async () => {

@@ -58,7 +58,7 @@ test('SA1/SA3: every semantic action kind has canonical capability authority and
   assert.deepEqual(APPLICATION_COMMAND_DEFINITIONS['run.act'].capabilities, []);
   assert.equal(APPLICATION_COMMAND_DEFINITIONS['run.act'].semanticCapabilities, true);
   assert.equal(APPLICATION_SEMANTIC_REGISTRY.operations['run.act'].destructive, true);
-  assert.equal(APPLICATION_SEMANTIC_REGISTRY.version, '1.3.0');
+  assert.equal(APPLICATION_SEMANTIC_REGISTRY.version, '1.4.0');
 
   for (const [kind, definition] of Object.entries(APPLICATION_SEMANTIC_REGISTRY.actions)) {
     assert.ok(definition.requiredCapabilities.length > 0, `${kind} lacks semantic capabilities`);
@@ -349,9 +349,14 @@ test('SA4: Web client and MCP bridge preflight use the exact remote semantic mut
     expiresAt: '2099-01-01T00:00:00.000Z',
   };
   const remoteKeys = [];
+  const remoteCard = {
+    repoId: 'repo-phase87', commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS),
+    agentExperience: { registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest },
+  };
   const client = {
     repoId: 'repo-phase87',
     async session() { return session; },
+    async card() { return remoteCard; },
     async doctor() {
       return { ready: true, application: {
         repoId: 'repo-phase87', commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS),
@@ -364,10 +369,7 @@ test('SA4: Web client and MCP bridge preflight use the exact remote semantic mut
       return { schemaVersion: 1, runId: 'run-phase87', phase: 'running' };
     },
   };
-  const facade = new BatonWebApplicationFacade(client, {
-    repoId: 'repo-phase87', commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS),
-    agentExperience: { registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest },
-  }, session);
+  const facade = new BatonWebApplicationFacade(client, remoteCard, session);
   const principal = {
     actor: 'mcp:bridge-user:bridge-session',
     principalId: 'bridge-user', sessionId: 'bridge-session',

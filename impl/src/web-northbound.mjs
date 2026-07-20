@@ -9,6 +9,7 @@ import { operatorAsset } from './web-operator.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs } from './application.mjs';
+import { projectRouteReadinessError } from './route-readiness-authority.mjs';
 
 const WEB_APPLICATION_ENTRIES = Object.entries(APPLICATION_COMMAND_DEFINITIONS)
   .filter(([, definition]) => definition.web)
@@ -92,6 +93,8 @@ function actor(principal) { return `web:${principal.userId}:${principal.sessionI
 function result(status, body) { return Object.freeze({ status, body: Object.freeze(body) }); }
 function error(status, code, message = code) { return result(status, { ok: false, error: { code, message } }); }
 function dispatchFailure(cause) {
+  const routeFailure = projectRouteReadinessError(cause);
+  if (routeFailure) return { httpStatus: 409, body: { ok: false, error: routeFailure } };
   const goalPlanCode = cause?.code;
   if (typeof goalPlanCode === 'string' && goalPlanCode.startsWith('worker_policy_')) {
     const invalid = ['worker_policy_invalid', 'worker_policy_observation_invalid'].includes(goalPlanCode);
@@ -1048,7 +1051,7 @@ export class WebNorthbound {
     if (req.method === 'GET' && url.pathname === OIDC_CALLBACK_PATH) {
       return this._handleOidcCallback(req, res, url, origin);
     }
-    if (req.method === 'GET' && (['/v1/session', '/v1/application-card'].includes(url.pathname) || operatorAsset(url.pathname))) {
+    if (req.method === 'GET' && (['/v1/session', '/v1/application-card', '/v1/doctor'].includes(url.pathname) || operatorAsset(url.pathname))) {
       return this._handleOperatorRead(req, res, url.pathname, origin);
     }
     if (req.method === 'GET' && url.pathname.startsWith('/v1/commands/')) {
@@ -1357,7 +1360,9 @@ export class WebNorthbound {
     }
     try {
       this._audit('operator_read_authorized', { ...ctx, principal }, {
-        resourceClass: pathname === '/v1/session' ? 'session' : pathname === '/v1/application-card' ? 'application_card' : 'asset',
+        resourceClass: pathname === '/v1/session' ? 'session'
+          : pathname === '/v1/application-card' ? 'application_card'
+            : pathname === '/v1/doctor' ? 'route_diagnostic' : 'asset',
       });
     }
     catch { return this._write(res, error(503, 'temporarily_unavailable')); }
@@ -1371,12 +1376,18 @@ export class WebNorthbound {
         expiresAt: principal.expiresAt,
       }));
     }
-    if (pathname === '/v1/application-card') {
+    if (pathname === '/v1/application-card' || pathname === '/v1/doctor') {
       if (!this.application) return this._write(res, error(503, 'application_unavailable', 'run application unavailable'));
       const card = this.application.card();
+      let readiness = card.readiness;
+      if (pathname === '/v1/doctor' && typeof this.application.doctor === 'function') {
+        try { readiness = await this.application.doctor(); }
+        catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+      }
       return this._write(res, result(200, {
-        ok: true,
-        application: { ...card, commands: WEB_APPLICATION_ENTRIES.map(([, name]) => name) },
+        ok: true, application: {
+          ...card, readiness, commands: WEB_APPLICATION_ENTRIES.map(([, name]) => name),
+        },
       }));
     }
     const asset = operatorAsset(pathname);

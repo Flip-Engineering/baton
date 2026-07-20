@@ -20,6 +20,7 @@ import { GrokAcpCli } from './grok-acp.mjs';
 import { KimiAcpCli } from './kimi-acp.mjs';
 import { RuntimeIsolation } from './runtime-isolation.mjs';
 import { ResidentAuthority } from './resident-authority.mjs';
+import { RouteReadinessAuthority } from './route-readiness-authority.mjs';
 import { DEFAULT_RUN_LINEAGE_POLICY } from './run-lineage.mjs';
 import { inspectToolchainProjection } from './toolchain-projection.mjs';
 import { DEFAULT_WORKER_POLICY_REQUEST } from './worker-policy.mjs';
@@ -450,6 +451,25 @@ function grokAuthenticationState(credentialPath, nowMs = Date.now()) {
   }
 }
 
+function boundedCredentialEpoch(path, maxBytes) {
+  let descriptor;
+  try {
+    descriptor = openSync(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > maxBytes) {
+      return Object.freeze({ state: 'invalid' });
+    }
+    return Object.freeze({
+      state: 'observed', size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs,
+      digest: createHash('sha256').update(readFileSync(descriptor)).digest('hex'),
+    });
+  } catch {
+    return Object.freeze({ state: 'absent' });
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
 function requiredDependencyTrees(repoRoot) {
   const npmProjects = [
     { lock: 'package-lock.json', tree: 'node_modules', install: 'npm ci' },
@@ -612,7 +632,7 @@ function codexCommand() {
   throw deploymentError('Codex route requires a compatible app-server executable');
 }
 
-function builtInAdapters(routes, repoRoot) {
+function builtInAdapters(routes, repoRoot, diagnosticRuntime) {
   const adapters = {};
   const kimiCommand = existingRegular(join(homedir(), '.kimi-code', 'bin', 'kimi'))
     ? join(homedir(), '.kimi-code', 'bin', 'kimi') : 'kimi';
@@ -631,13 +651,16 @@ function builtInAdapters(routes, repoRoot) {
         cmd: codexCommand(), requestTimeoutMs: 45_000, model: route.model, ceiling: 4,
       });
     } else if (route.harness === 'grok') {
-      adapters[key] = new GrokAcpCli({ requestTimeoutMs: 45_000, model: route.model, ceiling: 4 });
+      adapters[key] = new GrokAcpCli({
+        requestTimeoutMs: 45_000, model: route.model, ceiling: 4, diagnosticRuntime,
+      });
     } else if (route.harness === 'kimi-code') {
       const catalog = Object.fromEntries([...new Set(rows.map((row) => row.model))].map((model) => [
         model, [...new Set(rows.filter((row) => row.model === model).map((row) => row.effort))],
       ]));
       adapters[key] = new KimiAcpCli({
-        cmd: kimiCommand, requestTimeoutMs: 45_000, model: route.model, modelCatalog: catalog, ceiling: 1,
+        cmd: kimiCommand, requestTimeoutMs: 45_000, model: route.model,
+        modelCatalog: catalog, ceiling: 1, diagnosticRuntime,
       });
     } else if (route.harness === 'claude-code' && (route.provider ?? 'claude') === 'claude') {
       adapters[key] = new ClaudeSessionCli({ model: route.model, approvals: false, ceiling: 4 });
@@ -660,6 +683,14 @@ function builtInAdapters(routes, repoRoot) {
     }
   }
   return Object.freeze(adapters);
+}
+
+function diagnosticBaseEnvironment(source = process.env) {
+  const allowed = [
+    'PATH', 'SHELL', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'USER', 'LOGNAME', 'TZ',
+  ];
+  return Object.fromEntries(allowed.filter((name) => source?.[name] !== undefined)
+    .map((name) => [name, source[name]]));
 }
 
 function goalPlanPolicy(repoId) {
@@ -933,6 +964,13 @@ function deploymentReadiness(
         summary: 'The configured harness executable was not observed as compatible.', runtime,
       });
     }
+    if (route.harness === 'kimi-code' || route.harness === 'grok') {
+      return Object.freeze({
+        ...publicFields, state: 'blocked', code: 'diagnostic_probe_required',
+        summary: 'Static credential metadata cannot prove live authentication for this route.',
+        runtime,
+      });
+    }
     return Object.freeze({
       ...publicFields, state: 'ready',
       summary: 'The exact route passed static deployment readiness.', runtime,
@@ -949,38 +987,38 @@ function deploymentReadiness(
   });
 }
 
-function requestedReadiness(options, routeStates) {
-  if (!record(options)) return null;
-  let selector = null;
-  if (record(options.exact)) selector = options.exact;
-  else if (['harness', 'model', 'effort'].some((field) => options[field] !== undefined)) {
-    selector = options;
-  } else if (routeStates.length === 1) {
-    return routeStates[0];
-  }
-  if (!selector) return null;
-  const matches = routeStates.filter((route) => (
-    (selector.harness === undefined || selector.harness === route.harness)
-    && (selector.model === undefined || selector.model === route.model)
-    && (selector.effort === undefined || selector.effort === route.effort)
-  ));
-  return matches.length === 1 ? matches[0] : null;
-}
-
-function assertRouteReady(options, readiness) {
-  const route = requestedReadiness(options, readiness.routes);
-  if (route?.state !== 'blocked') return;
-  throw Object.assign(new Error(route.summary), {
-    code: route.code,
-    route: Object.freeze({ harness: route.harness, model: route.model, effort: route.effort }),
+function publicReadinessSnapshot(snapshot, preflight) {
+  const routes = snapshot.routes.map(({ generation: _generation, ...route }) => Object.freeze(route));
+  return Object.freeze({
+    schemaVersion: 1,
+    ready: routes.some((route) => route.state === 'ready'),
+    repository: preflight.repository,
+    verification: preflight.verification,
+    dependencies: preflight.dependencies,
+    routes: Object.freeze(routes),
   });
 }
 
-function residentApplicationFacade(application, resident, readiness) {
+function readinessSnapshotSync(authority, preflight) {
+  return publicReadinessSnapshot(authority.snapshotSync(), preflight);
+}
+
+async function readinessSnapshot(authority, preflight) {
+  return publicReadinessSnapshot(await authority.snapshot(), preflight);
+}
+
+function deploymentApplicationFacade(application, readinessAuthority, preflight, resident = null) {
   return new Proxy(application, {
     get(target, key) {
       if (key === 'card') {
-        return () => Object.freeze({ ...target.card(), resident, readiness });
+        return () => Object.freeze({
+          ...target.card(), ...(resident ? { resident } : {}),
+          readiness: readinessSnapshotSync(readinessAuthority, preflight),
+        });
+      }
+      if (key === 'doctor') return () => readinessSnapshot(readinessAuthority, preflight);
+      if (key === 'command') {
+        return (name, args, ...rest) => target.command(name, args, ...rest);
       }
       const value = Reflect.get(target, key, target);
       return typeof value === 'function' ? value.bind(target) : value;
@@ -991,9 +1029,9 @@ function residentApplicationFacade(application, resident, readiness) {
 class BatonDeployment {
   #application;
   #baton;
-  #card;
   #principal;
-  #readiness;
+  #readinessAuthority;
+  #preflight;
   #closePromise = null;
   #hostHandle = null;
   #webHost = null;
@@ -1005,69 +1043,54 @@ class BatonDeployment {
   #residentSession = null;
   #ordinaryHostPromise = null;
 
-  constructor(application, principal, readiness, deployment) {
+  constructor(application, principal, readinessAuthority, deployment) {
     this.#application = application;
     this.#principal = principal;
     this.#baton = bindBaton(application, principal);
-    this.#readiness = readiness;
+    this.#readinessAuthority = readinessAuthority;
+    this.#preflight = deployment.preflight;
     this.#driver = deployment.driver;
     this.#repository = deployment.repository;
     this.#deploymentRoot = deployment.deploymentRoot;
     this.#residentOptions = deployment.residentOptions;
-    this.#card = Object.freeze({ ...application.card(), readiness });
     const runs = this.#baton.runs;
     this.runs = Object.freeze({
       list: (...args) => runs.list(...args),
       help: (...args) => runs.help(...args),
       open: (...args) => runs.open(...args),
       attach: (...args) => runs.attach(...args),
-      start: (objective, options = {}) => {
-        assertRouteReady(options, this.#readiness);
-        return runs.start(objective, options);
-      },
+      start: (objective, options = {}) => runs.start(objective, options),
       startMany: (requests) => this.startMany(requests),
     });
     this.ready = application.ready;
     Object.freeze(this);
   }
 
-  card() { return this.#card; }
-  async doctor() { return this.#readiness; }
+  card() {
+    return Object.freeze({
+      ...this.#application.card(),
+      readiness: readinessSnapshotSync(this.#readinessAuthority, this.#preflight),
+    });
+  }
+  async doctor() { return readinessSnapshot(this.#readinessAuthority, this.#preflight); }
 
   async run(objective, route = {}) {
-    assertRouteReady(route, this.#readiness);
     return this.#baton.runs.start(objective, route);
   }
 
   async startMany(requests) {
-    if (Array.isArray(requests)) {
-      for (const request of requests) {
-        if (record(request)) assertRouteReady(request, this.#readiness);
-      }
-    }
     return this.#baton.runs.startMany(requests);
   }
 
   async workflow(objective, options = {}) {
-    if (record(options) && Array.isArray(options.team)) {
-      for (const member of options.team) {
-        if (record(member) && record(member.exact)) assertRouteReady({ exact: member.exact }, this.#readiness);
-      }
-    }
     return this.#baton.workflow(objective, options);
   }
 
   async explore(objective, options = {}) {
-    assertRouteReady(options, this.#readiness);
     return this.#baton.explore(objective, options);
   }
 
   async review(objective, options = {}) {
-    if (record(options) && Array.isArray(options.routes)) {
-      for (const exact of options.routes) {
-        if (record(exact)) assertRouteReady({ exact }, this.#readiness);
-      }
-    }
     return this.#baton.review(objective, options);
   }
 
@@ -1116,7 +1139,9 @@ class BatonDeployment {
       });
     }
     const webHost = new BatonWebHost({
-      application: this.#application,
+      application: deploymentApplicationFacade(
+        this.#application, this.#readinessAuthority, this.#preflight,
+      ),
       server: advanced.server,
       shutdownPrincipal: this.#principal,
       listen: advanced.listen,
@@ -1183,7 +1208,9 @@ class BatonDeployment {
     }, { actor: `deployment:${this.#repository.repoId}:resident` });
     this.#residentSession = Object.freeze({ sessions, sessionId: issued.sessionId });
     const resident = authority.card();
-    const application = residentApplicationFacade(this.#application, resident, this.#readiness);
+    const application = deploymentApplicationFacade(
+      this.#application, this.#readinessAuthority, this.#preflight, resident,
+    );
     const web = new WebNorthbound({
       coordinator: this.#driver.coordinator,
       coordination: this.#driver.coordination,
@@ -1220,11 +1247,11 @@ class BatonDeployment {
         clock: options.now,
         sleep: (milliseconds) => new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds)),
       });
-      const [doctor, session] = await Promise.all([client.doctor(), client.session()]);
-      if (doctor.ready !== true || doctor.application?.repoId !== this.#repository.repoId
-        || doctor.application?.resident?.deploymentId !== authority.deploymentId
-        || doctor.application?.resident?.incarnation !== authority.incarnation
-        || doctor.application?.agentExperience?.registryDigest !== this.#application.card().agentExperience.registryDigest
+      const [card, session] = await Promise.all([client.card(), client.session()]);
+      if (card?.repoId !== this.#repository.repoId
+        || card?.resident?.deploymentId !== authority.deploymentId
+        || card?.resident?.incarnation !== authority.incarnation
+        || card?.agentExperience?.registryDigest !== this.#application.card().agentExperience.registryDigest
         || !session.identity.repoIds.includes(this.#repository.repoId)) {
         throw Object.assign(new Error('resident self-check returned incompatible authority'), {
           code: 'application_host_self_check_failed',
@@ -1232,7 +1259,7 @@ class BatonDeployment {
       }
       return authority.publish({
         token: issued.token,
-        registryDigest: doctor.application.agentExperience.registryDigest,
+        registryDigest: card.agentExperience.registryDigest,
       });
     } catch (error) {
       try { await server.batonShutdown({ drainMs: options.webDrainMs }); } catch {}
@@ -1250,28 +1277,54 @@ class BatonDeployment {
   close() {
     if (!this.#closePromise) {
       this.#closePromise = (async () => {
-        const hosted = this.#webHost ? await this.#webHost.shutdown() : null;
-        const application = hosted?.application ?? await this.#application.shutdown(this.#principal);
-        if (!this.#residentAuthority) {
-          if (!hosted || hosted.state === 'closed') return application;
-          return Object.freeze({ ...application, state: 'closed_degraded', host: Object.freeze({
-            state: 'reconciliation_required',
-          }) });
+        const errors = [];
+        const [readinessOutcome, ownerOutcome] = await Promise.allSettled([
+          this.#readinessAuthority.close(),
+          this.#webHost
+            ? this.#webHost.shutdown()
+            : this.#application.shutdown(this.#principal),
+        ]);
+        const readiness = readinessOutcome.status === 'fulfilled'
+          ? readinessOutcome.value : Object.freeze({ state: 'closed_degraded', reaped: false });
+        if (readinessOutcome.status === 'rejected') errors.push(readinessOutcome.reason);
+        let hosted = this.#webHost && ownerOutcome.status === 'fulfilled' ? ownerOutcome.value : null;
+        let application = this.#webHost ? hosted?.application : ownerOutcome.value;
+        if (ownerOutcome.status === 'rejected') {
+          errors.push(ownerOutcome.reason);
+          try { application = await this.#application.shutdown(this.#principal); }
+          catch (error) { errors.push(error); }
+          hosted = null;
         }
         let residentState = 'closed';
-        try {
-          this.#residentSession?.sessions.revoke(this.#residentSession.sessionId, {
-            actor: `deployment:${this.#repository.repoId}:resident`, reason: 'deployment_closed',
-          });
-          this.#residentAuthority.close();
-        } catch { residentState = 'reconciliation_required'; }
-        return Object.freeze({
+        if (this.#residentAuthority) {
+          try {
+            this.#residentSession?.sessions.revoke(this.#residentSession.sessionId, {
+              actor: `deployment:${this.#repository.repoId}:resident`, reason: 'deployment_closed',
+            });
+            this.#residentAuthority.close();
+          } catch (error) {
+            residentState = 'reconciliation_required';
+            errors.push(error);
+          }
+        }
+        const result = Object.freeze({
           ...application,
           state: application?.state === 'closed' && residentState === 'closed'
-            && (!hosted || hosted.state === 'closed')
+            && (!hosted || hosted.state === 'closed') && readiness.reaped === true
             ? 'closed' : 'closed_degraded',
-          resident: Object.freeze({ state: residentState }),
+          ...(this.#residentAuthority ? { resident: Object.freeze({ state: residentState }) } : {}),
+          ...(!hosted || hosted.state === 'closed' ? {} : {
+            host: Object.freeze({ state: 'reconciliation_required' }),
+          }),
+          readiness,
         });
+        if (errors.length > 0) {
+          const failure = new AggregateError(errors, 'Baton deployment cleanup was incomplete');
+          failure.code = 'deployment_close_incomplete';
+          failure.cleanup = result;
+          throw failure;
+        }
+        return result;
       })();
     }
     return this.#closePromise;
@@ -1319,12 +1372,10 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   const preflight = preflightDeployment(repository.root, verification);
   const toolchainProjection = dependencyProjection(repository.root, repository.repoId);
   const usesBuiltInAdapters = advanced.adapters === undefined;
-  const nativeKimiAuthentication = usesBuiltInAdapters
-    && routes.some((route) => route.harness === 'kimi-code')
-    ? kimiAuthenticationState(join(homedir(), '.kimi-code')) : null;
-  const nativeGrokAuthentication = usesBuiltInAdapters
-    && routes.some((route) => route.harness === 'grok')
-    ? grokAuthenticationState(join(homedir(), '.grok', 'auth.json')) : null;
+  const kimiCredentialRoot = join(homedir(), '.kimi-code');
+  const grokCredentialPath = join(homedir(), '.grok', 'auth.json');
+  const usesNativeKimi = usesBuiltInAdapters && routes.some((route) => route.harness === 'kimi-code');
+  const usesNativeGrok = usesBuiltInAdapters && routes.some((route) => route.harness === 'grok');
   ensureBatonExcluded(repository.root);
   // The default namespace is an on-disk compatibility boundary. Phase 83 adds durable Context
   // deployment authority and a private repository Context CAS. Older namespaces remain available
@@ -1336,13 +1387,42 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   const evidenceRoot = privateDirectory(join(deploymentRoot, 'evidence'));
   const contextRoot = privateDirectory(join(deploymentRoot, 'context'));
   const snapshot = repositorySnapshot(repository.root, stateRoot);
-  const adapters = advanced.adapters ?? builtInAdapters(routes, repository.root);
+  const projection = defaultCredentialProjection(repository.root, {
+    projectNativeKimi: usesNativeKimi && KIMI_CREDENTIAL_FILES.every(
+      (path) => existingRegular(join(kimiCredentialRoot, path)),
+    ),
+  });
+  const diagnosticIsolation = new RuntimeIsolation({
+    repoRoot: repository.root,
+    root: join(runtimeRoot, 'route-readiness'),
+    baseEnv: diagnosticBaseEnvironment(residentOptions.env),
+    credentialFiles: projection.credentialFiles,
+    credentialTrees: projection.credentialTrees,
+  });
+  let diagnosticSequence = 0;
+  const diagnosticRuntime = async ({ card }) => {
+    diagnosticSequence += 1;
+    const workerId = `probe-${diagnosticSequence}-${randomBytes(8).toString('hex')}`;
+    const scope = diagnosticIsolation.create(workerId, { card });
+    let cleaned = false;
+    return Object.freeze({
+      cwd: scope.paths.root,
+      env: Object.freeze({ ...scope.env }),
+      cleanup: async () => {
+        if (!cleaned) {
+          diagnosticIsolation.remove(workerId);
+          cleaned = true;
+        }
+        return Object.freeze({ state: 'absent' });
+      },
+    });
+  };
+  const adapters = advanced.adapters ?? builtInAdapters(
+    routes, repository.root, diagnosticRuntime,
+  );
   if (!record(adapters) || Object.keys(adapters).length === 0) {
     throw deploymentError('advanced adapters must be a non-empty object');
   }
-  const projection = defaultCredentialProjection(repository.root, {
-    projectNativeKimi: nativeKimiAuthentication?.state === 'ready',
-  });
   const adapterAuthentication = await projectedAdapterAuthentication(
     adapters, repository.root, runtimeRoot, projection,
   );
@@ -1353,10 +1433,73 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       state: 'blocked', code: 'route_unconfigured',
       summary: "Kimi-through-Claude is not configured; provision Baton's private Kimi credential to enable this exact route.",
     })] : [];
-  const readiness = deploymentReadiness(
-    preflight, routes, adapters, nativeKimiAuthentication, nativeGrokAuthentication,
-    adapterAuthentication, additionalRouteStates,
-  );
+  const evaluateReadiness = (route) => {
+    const snapshot = deploymentReadiness(
+      preflight, routes, adapters,
+      usesNativeKimi ? kimiAuthenticationState(kimiCredentialRoot, residentOptions.now()) : null,
+      usesNativeGrok ? grokAuthenticationState(grokCredentialPath, residentOptions.now()) : null,
+      adapterAuthentication,
+    );
+    return snapshot.routes.find((candidate) => candidate.harness === route.harness
+      && candidate.model === route.model && candidate.effort === route.effort)
+      ?? { state: 'blocked', code: 'route_unavailable', summary: 'No adapter advertises this exact route.' };
+  };
+  const routeAdapter = (route) => {
+    const configured = routes.find((candidate) => candidate.harness === route.harness
+      && candidate.model === route.model && candidate.effort === route.effort);
+    if (!configured) return null;
+    const preferredName = configured.provider ? `${configured.harness}:${configured.provider}` : null;
+    const entries = Object.entries(adapters).filter(([name, adapter]) => (
+      (!preferredName || name === preferredName) && routeCardMatches(adapter.card(), configured)
+    ));
+    return entries.length === 1 ? entries[0][1] : null;
+  };
+  const routeCredentialEpoch = (route) => {
+    const configured = routes.find((candidate) => candidate.harness === route.harness
+      && candidate.model === route.model && candidate.effort === route.effort);
+    if (!configured) throw new Error('route credential generation is unconfigured');
+    const sources = [];
+    if (route.harness === 'codex') sources.push(join(homedir(), '.codex', 'auth.json'));
+    else if (route.harness === 'grok') sources.push(grokCredentialPath);
+    else if (route.harness === 'kimi-code') {
+      for (const relative of KIMI_CREDENTIAL_FILES) sources.push(join(kimiCredentialRoot, relative));
+    } else if (route.harness === 'claude-code' && configured.provider === 'kimi') {
+      sources.push(kimiThroughClaudeCredential());
+    } else if (route.harness === 'claude-code') {
+      sources.push(join(homedir(), '.claude', '.credentials.json'));
+    } else if (route.harness === 'glm') sources.push(join(repository.root, 'glm_key.json'));
+    const adapter = routeAdapter(route);
+    const adapterGeneration = typeof adapter?.credentialEpoch === 'function'
+      ? adapter.credentialEpoch(Object.freeze({ ...route }))
+      : adapter?.card?.()?.providerCompatibility?.credentialGeneration ?? null;
+    const authenticationPosture = adapter?.card?.()?.authPosture ?? 'unobserved';
+    if (sources.length === 0 && adapterGeneration === null
+      && !['none', 'unobserved'].includes(authenticationPosture)) {
+      throw new Error('credentialed adapter lacks an opaque generation authority');
+    }
+    return Object.freeze({
+      schemaVersion: 1,
+      sources: Object.freeze(sources.map((path) => boundedCredentialEpoch(path, 1024 * 1024))),
+      adapterGeneration,
+    });
+  };
+  const routeReadinessAuthority = new RouteReadinessAuthority({
+    routes: publicRoutes,
+    evaluate: evaluateReadiness,
+    credentialEpoch: routeCredentialEpoch,
+    probe: async ({ route, signal }) => {
+      const adapter = routeAdapter(route);
+      if (typeof adapter?.routeReadinessProbe === 'function') {
+        return adapter.routeReadinessProbe({ route: Object.freeze({ ...route }), signal });
+      }
+      return Object.freeze({
+        state: 'blocked', initialized: false, authenticated: false,
+        sessionCreated: false, promptSent: false, reaped: true,
+      });
+    },
+    now: residentOptions.now,
+    additionalRoutes: additionalRouteStates,
+  });
   const policy = goalPlanPolicy(repository.repoId);
   const contextRuntime = new RepositoryContextRuntime({
     artifactRoot: contextRoot,
@@ -1371,6 +1514,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     deploymentBaseSha: snapshot.sha,
     logDir: stateRoot,
     adapters,
+    routeReadinessAuthority,
     worktreeCapacity: DEFAULT_WORKTREE_CAPACITY,
     ...(capacity ? {
       worktreeCapacityEstimate: capacity.estimate,
@@ -1421,8 +1565,8 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       authorize: async () => true,
     });
     await application.ready;
-    return new BatonDeployment(application, principal, readiness, {
-      driver, repository, deploymentRoot, residentOptions,
+    return new BatonDeployment(application, principal, routeReadinessAuthority, {
+      driver, repository, deploymentRoot, residentOptions, preflight,
     });
   } catch (error) {
     try {

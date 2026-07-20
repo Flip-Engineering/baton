@@ -291,6 +291,7 @@ test('DC4/DC5: a timed-out historical reconciliation remains owned and retries j
   driver.coordinator._worktrees.reconcile = async () => { reconciliations += 1; await gate.promise; lateMutation = true; };
   await assert.rejects(driver.coordinator.drain({ actor: 'orchestrator', repoId: 'repo-a', idempotencyKey: 'historical-timeout' }), (error) => error.code === 'coordinator_drain_incomplete');
   assert.equal(reconciliations, 1); assert.equal(lateMutation, false); assert.ok(driver.coordinator._drainHistoricalReconcilePromise);
+  driver.coordinator._drainPolicy = Object.freeze({ ...driver.coordinator._drainPolicy, timeoutMs: 1_000 });
   let settled = false; const closing = driver.drainAndClose().finally(() => { settled = true; }); await sleep(10);
   assert.equal(settled, false); assert.equal(reconciliations, 1, 'retry joins the original cleanup rather than starting a second mutation');
   gate.resolve(); const receipt = await closing;

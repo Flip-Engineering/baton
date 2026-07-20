@@ -39,6 +39,11 @@ function adapter() {
     scenario: { outcome: 'completed', delayMs: 1, summary: 'resident fixture' },
   });
   const card = value.card.bind(value);
+  value.credentialEpoch = () => 'phase89-resident-local-credential-generation';
+  value.routeReadinessProbe = async () => ({
+    state: 'ready', initialized: true, authenticated: true,
+    sessionCreated: false, promptSent: false, reaped: true,
+  });
   value.card = () => ({
     ...card(),
     authPosture: 'subscription',

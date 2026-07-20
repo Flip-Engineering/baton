@@ -114,6 +114,10 @@ test('I10-P0-3: connected doctor exposes sanitized deployment and exact route re
       ok: true,
       application: { schemaVersion: 1, repoId: 'repo-a', readiness },
     }],
+    ['/v1/doctor', {
+      ok: true,
+      application: { schemaVersion: 1, repoId: 'repo-a', readiness },
+    }],
   ]);
   const client = new BatonWebClient({
     baseUrl: 'https://baton.test', origin: 'https://control.test', repoId: 'repo-a',
