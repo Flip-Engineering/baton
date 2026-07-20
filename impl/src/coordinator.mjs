@@ -682,6 +682,7 @@ export class Coordinator {
     this._derivedResumePlanToken = Object.freeze({});
     this._derivedRevisionPlanToken = Object.freeze({});
     this._planRecoveryAuthority = Object.freeze({});
+    this._preservedProcesslessAttachAuthority = Object.freeze({});
     // Keep coordinator-local health/attribution wrappers on a facade. Reusing one Log across a
     // restart must not stack controller closures on the shared writer and let the prior
     // controller overwrite the fresh controller's task/run attribution.
@@ -2242,13 +2243,21 @@ export class Coordinator {
     } catch { return false; }
   }
 
-  _restoreRecoveredPhysicalWorkspaceAuthority(handle, context) {
+  _restoreRecoveredPhysicalWorkspaceAuthority(handle, context, opts = {}) {
     const physicalOwnerId = context?.ownerTaskId;
     if (!/^ws-[a-f0-9]{32}$/u.test(physicalOwnerId ?? '')) return true;
     const binding = handle?.workspaceOwnerBinding;
     const currentProcessExact = handle?.processRef?.generation === handle?.processGeneration
       && ['initializing', 'ready'].includes(handle?.processRef?.state)
       && processAuthorityState(handle.processRef, handle.processAuthority) === 'active';
+    const processlessPreservedAttachExact = opts.authority
+      === this._preservedProcesslessAttachAuthority
+      && opts.processGeneration === handle?.processGeneration
+      && handle?.processRef === null && handle?.processAuthority === null
+      && handle?.sessionPreservation?.state === 'preserved'
+      && handle.sessionPreservation.transport === 'attached'
+      && handle.sessionPreservation.processGeneration === handle.processGeneration;
+    const currentOwnerExact = currentProcessExact || processlessPreservedAttachExact;
     const immutableBindingExact = handle?.workspaceOwnerBindingValid === true
       && validWorkspaceOwnerBoundPayload(binding)
       && binding.physicalOwnerId === physicalOwnerId
@@ -2257,17 +2266,17 @@ export class Coordinator {
       && binding.worktree === context.worktree
       && binding.baseSha === context.baseSha;
     let checkoutExact = false;
-    if (currentProcessExact && immutableBindingExact
+    if (currentOwnerExact && immutableBindingExact
       && typeof this._worktrees?.worktreeAvailable === 'function') {
       try {
         checkoutExact = this._worktrees.worktreeAvailable(binding.logicalTaskId, context) === true;
       } catch { checkoutExact = false; }
     }
-    if (!currentProcessExact || !immutableBindingExact || !checkoutExact) {
+    if (!currentOwnerExact || !immutableBindingExact || !checkoutExact) {
       handle.workspaceOwnerProcessAuthorityValid = false;
       handle.workspaceOwnerBindingDiagnostic = !immutableBindingExact
         ? 'workspace_owner_binding_unproven'
-        : !currentProcessExact
+        : !currentOwnerExact
           ? 'workspace_owner_process_authority_unproven'
           : 'workspace_owner_checkout_invalid';
       return false;
@@ -3811,6 +3820,9 @@ export class Coordinator {
   recover(workerId, opts = {}) {
     const handle = this._workers.get(workerId);
     const task = handle ? this._tasks.get(handle.taskId) : null;
+    if (task?.brief?.goalPlan && handle?.sessionPreservation?.state !== 'preserved') {
+      return Promise.resolve({ ok: false, result: 'goal_plan_continuation_not_authorized' });
+    }
     const identity = canonicalDigest({
       workerId,
       taskId: task?.id ?? null,
@@ -4032,6 +4044,14 @@ export class Coordinator {
   }
 
   async _recover(workerId, opts = {}) {
+    const preflightHandle = this._workers.get(workerId);
+    const preflightTask = preflightHandle ? this._tasks.get(preflightHandle.taskId) : null;
+    const preflightPlanRecovery = opts.planRecovery?.authority === this._planRecoveryAuthority;
+    if (preflightTask?.brief?.goalPlan
+      && preflightHandle?.sessionPreservation?.state !== 'preserved'
+      && !preflightPlanRecovery) {
+      return { ok: false, result: 'goal_plan_continuation_not_authorized' };
+    }
     const startup = opts.startupAuthority === this._startupRecoveryAuthority && this._startupRecoveryState === 'pending';
     if (!startup) this.tick();
     else { if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' }); if (this._fatalError) throw this._fatalError; }
@@ -4039,6 +4059,10 @@ export class Coordinator {
     const task = this._tasks.get(handle.taskId);
     const planRecovery = opts.planRecovery?.authority === this._planRecoveryAuthority
       ? opts.planRecovery.request : null;
+    if (task?.brief?.goalPlan && handle.sessionPreservation?.state !== 'preserved'
+      && !planRecovery) {
+      return { ok: false, result: 'goal_plan_continuation_not_authorized' };
+    }
     const priorDispatchRefusal = this._recoveryDispatchRefusal(handle, task);
     if (priorDispatchRefusal !== null) return { ok: false, result: priorDispatchRefusal };
     if (handle.status !== 'orphaned') return { ok: false, result: 'worker_not_orphaned' };
@@ -4047,9 +4071,6 @@ export class Coordinator {
     }
     if (handle.sessionPreservation?.state === 'preserved') {
       return this._reattachPreservedSession(handle, task, opts);
-    }
-    if (task.brief?.goalPlan && !planRecovery) {
-      return { ok: false, result: 'goal_plan_continuation_not_authorized' };
     }
     let planRecoveryState = null;
     if (planRecovery) {
@@ -4592,8 +4613,17 @@ export class Coordinator {
     const runtime = this._ensureRuntimeScope(handle);
     handle.currentIncarnation = true;
     handle.localAuthority = true;
-    handle.processGeneration = (handle.processGeneration ?? 0) + 1;
-    if (/^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')) {
+    const processlessPreservedAttach = handle.processRef === null
+      && handle.processAuthority === null
+      && handle.workspaceOwnerBindingValid === true
+      && handle.sessionPreservation?.state === 'preserved'
+      && handle.sessionPreservation.transport === 'attached'
+      && handle.sessionPreservation.processGeneration === handle.processGeneration;
+    if (!processlessPreservedAttach) {
+      handle.processGeneration = (handle.processGeneration ?? 0) + 1;
+    }
+    if (!processlessPreservedAttach
+      && /^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')) {
       handle.workspaceOwnerProcessAuthorityValid = false;
     }
     handle.workerPolicyObserved = null;
@@ -4657,7 +4687,11 @@ export class Coordinator {
       this._handleEvent(event, handle.vendor, { admittedReady: event.kind === 'lifecycle.spawned' });
     }
     if (/^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')
-      && !this._restoreRecoveredPhysicalWorkspaceAuthority(handle, context)) {
+      && !this._restoreRecoveredPhysicalWorkspaceAuthority(handle, context,
+        processlessPreservedAttach && outcome?.ack?.attached === true ? {
+          authority: this._preservedProcesslessAttachAuthority,
+          processGeneration: handle.processGeneration,
+        } : {})) {
       return this._failPreservedReattachment(
         handle, task, 'workspace_owner_process_authority_unproven',
       );
@@ -5626,10 +5660,29 @@ export class Coordinator {
   // =========================================================================
 
   send(workerId, message, mode, opts = {}) {
+    const handle = this._workers.get(workerId);
+    const task = handle ? this._tasks.get(handle.taskId) : null;
+    const card = handle ? this._adapters[handle.vendor]?.card() : null;
+    if (mode === 'turn' && handle?.status === 'idle'
+      && task && TERMINAL_TASK_STATUSES.has(task.status)
+      && ['native', 'emulated'].includes(card?.sessions?.multiTurn)
+      && task.brief?.goalPlan) {
+      return Promise.resolve({ ok: false, result: 'goal_plan_continuation_not_authorized' });
+    }
     return this._withAuthorityOp(() => this._send(workerId, message, mode, opts));
   }
 
   async _send(workerId, message, mode, opts = {}) {
+    const preflightHandle = this._workers.get(workerId);
+    const preflightTask = preflightHandle ? this._tasks.get(preflightHandle.taskId) : null;
+    const preflightCard = preflightHandle
+      ? this._adapters[preflightHandle.vendor]?.card() : null;
+    if (mode === 'turn' && preflightHandle?.status === 'idle'
+      && preflightTask && TERMINAL_TASK_STATUSES.has(preflightTask.status)
+      && ['native', 'emulated'].includes(preflightCard?.sessions?.multiTurn)
+      && preflightTask.brief?.goalPlan) {
+      return { ok: false, result: 'goal_plan_continuation_not_authorized' };
+    }
     this.tick();
     if (opts.controlId !== undefined
       && !/^control:[a-f0-9]{64}$/u.test(opts.controlId)) {
@@ -6867,6 +6920,7 @@ export class Coordinator {
     );
     if (handle.worktree === null && handle.ownedWorktreeAuthority === false
       && handle.runtimeScope?.active !== true
+      && handle.worktreeCreationPending !== true
       && (!opaquePhysicalOwner || handle.physicalWorkspaceCleanupCompleted === true)) {
       handle.cleanupPending = false;
       handle.cleanupError = null;
