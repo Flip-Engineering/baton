@@ -3259,8 +3259,8 @@ export class BatonApplication {
     return deepFreeze({ schemaVersion: 1, state: 'ready', examinedRuns: runIds.length });
   }
 
-  async _dispatchCurrent(current) {
-    try { return await this._dispatchCurrentUnchecked(current); }
+  async _dispatchCurrent(current, options = {}) {
+    try { return await this._dispatchCurrentUnchecked(current, options); }
     catch (error) {
       const projected = projectRouteReadinessError(error);
       if (!projected) throw error;
@@ -3275,13 +3275,16 @@ export class BatonApplication {
     }
   }
 
-  async _dispatchCurrentUnchecked(current) {
+  async _dispatchCurrentUnchecked(current, { retryRoute = false } = {}) {
     const refreshed = this._findRun(current.goal.runId);
     this._assertRunMutable(refreshed.goal.runId);
     if (!refreshed.plan || refreshed.approval?.disposition !== 'approved') return refreshed.dispatch;
     if (refreshed.plan.nodes.length === 1 && refreshed.plan.nodes[0]?.revision) {
       await this._validateWorkflowRevisionPlan(refreshed);
-      if (refreshed.dispatch) return refreshed.dispatch;
+      if (refreshed.dispatch) {
+        if (retryRoute) await this.driver.coordinator.retryRoute([refreshed.dispatch.taskId]);
+        return refreshed.dispatch;
+      }
       if (typeof this.driver.coordinator.spawnPlanRevision !== 'function') {
         throw applicationError('coordinator lacks durable Workflow revision authority',
           'application_workflow_revision_unavailable');
@@ -3322,7 +3325,12 @@ export class BatonApplication {
     }
     if (this._isWorkflowRun(refreshed) && refreshed.plan.nodes.length > 1) {
       const definition = this._workflowDefinition(refreshed);
-      if (refreshed.dispatches.length === refreshed.plan.nodes.length) return refreshed.dispatches;
+      if (refreshed.dispatches.length === refreshed.plan.nodes.length) {
+        if (retryRoute) {
+          await this.driver.coordinator.retryRoute(refreshed.dispatches.map((dispatch) => dispatch.taskId));
+        }
+        return refreshed.dispatches;
+      }
       if (refreshed.dispatches.length !== 0) {
         throw applicationError('workflow Plan wave is partially dispatched',
           'application_workflow_wave_incomplete');
@@ -3372,7 +3380,10 @@ export class BatonApplication {
       });
       return this._findRun(refreshed.goal.runId).dispatches;
     }
-    if (refreshed.dispatch) return refreshed.dispatch;
+    if (refreshed.dispatch) {
+      if (retryRoute) await this.driver.coordinator.retryRoute([refreshed.dispatch.taskId]);
+      return refreshed.dispatch;
+    }
     const node = refreshed.plan.nodes[0];
     const gate = {
       goalId: refreshed.goal.goalId,
@@ -4739,7 +4750,7 @@ export class BatonApplication {
     const projection = current.plan ? await this._goalPlanStatus(current, observer) : null;
     const node = projection?.nodes?.[0] ?? null;
     const task = node?.taskId ? this.driver.coordination.task(node.taskId) : null;
-    const workerId = task?.assignee ?? null;
+    const workerId = task?.assignee ?? task?.reservedWorkerId ?? null;
     let terminalResult = null;
     if (workerId) {
       try { terminalResult = await this.driver.coordinator.result(workerId); }
@@ -6052,6 +6063,13 @@ export class BatonApplication {
       const node = projection.nodes.find((candidate) => candidate.key === binding.nodeKey);
       const task = node?.taskId ? this.driver.coordination.task(node.taskId) : null;
       const handle = task ? handlesByTask.get(task.id) ?? null : null;
+      const latestRouteAdmission = handle ? [...this.driver.log.read(handle.id)].reverse()
+        .find((event) => event.kind === 'resource.route_admission_consumed')?.payload?.receipt ?? null : null;
+      const loggedRouteAdmission = latestRouteAdmission?.state === 'waiting_for_route'
+        ? latestRouteAdmission : null;
+      const routeAdmission = handle?.routeAdmission
+        ? (handle.routeAdmission.state === 'waiting_for_route' ? handle.routeAdmission : null)
+        : loggedRouteAdmission;
       const workerStory = handle ? story.workers[handle.id] ?? null : null;
       let terminalResult = null;
       if (handle) {
@@ -6067,7 +6085,8 @@ export class BatonApplication {
       );
       const route = projectRunRouteEvidence({
         requested, liveHandle: handle, terminalResult,
-        phase: node?.state === 'accepted' ? 'work_completed'
+        phase: routeAdmission ? 'waiting_for_route'
+          : node?.state === 'accepted' ? 'work_completed'
           : ['failed', 'cancelled'].includes(node?.state) ? node.state : 'running',
       });
       const attemptVerification = this._closedVerdictProjection(
@@ -6079,10 +6098,12 @@ export class BatonApplication {
       };
       attempts.push({
         role: binding.role, nodeKey: binding.nodeKey, taskId: node?.taskId ?? null,
-        state: handle?.status === 'interrupted' && handle.controllableAttached === true
+        state: routeAdmission ? 'waiting_for_route'
+          : handle?.status === 'interrupted' && handle.controllableAttached === true
           ? 'interrupted'
           : sessionAttachmentUnproven(handle)
             ? 'interruption_uncertain' : node?.state ?? 'blocked', route,
+        ...(routeAdmission ? { routeAdmission: clone(routeAdmission) } : {}),
         candidateId: candidates.find((candidate) => candidate.role === binding.role)?.candidateId ?? null,
         memberStop: (() => {
           const stop = memberStops.find((candidate) => candidate.role === binding.role);
@@ -6132,6 +6153,9 @@ export class BatonApplication {
     const allAccepted = attempts.every((attempt) => attempt.state === 'accepted');
     const anyFailed = attempts.some((attempt) => ['failed', 'cancelled'].includes(attempt.state));
     const anyDispatched = attempts.some((attempt) => attempt.taskId !== null);
+    const routeWaitingAttempts = attempts.filter((attempt) => (
+      attempt.routeAdmission?.state === 'waiting_for_route'
+    ));
     const stoppableRoles = attempts.filter((attempt) => (
       attempt.taskId !== null && !['accepted', 'failed', 'cancelled'].includes(attempt.state)
       && attempt.memberStop === null
@@ -6149,6 +6173,7 @@ export class BatonApplication {
             : anyDispatched ? 'running' : 'approved';
     if (runStop?.status === 'stopped') phase = 'stopped';
     else if (runStop) phase = 'stopping';
+    else if (phase === 'running' && routeWaitingAttempts.length > 0) phase = 'waiting_for_route';
     else if (phase === 'running'
       && attempts.some((attempt) => attempt.state === 'interrupted')
       && workers.every((handle) => handle.activeProviderTurns === 0)) phase = 'interrupted';
@@ -6218,9 +6243,15 @@ export class BatonApplication {
       reason: 'session_attachment_unproven',
       summary: 'Reusable provider-session attachment is unproven; whole-Run stop is the only safe action.',
     }] : [];
+    const routeAttention = phase === 'waiting_for_route' ? routeWaitingAttempts.map((attempt) => ({
+      kind: 'route_readiness', state: 'blocked', role: attempt.role,
+      blocker: clone(attempt.routeAdmission.blocker),
+      remediation: attempt.routeAdmission.remediation,
+      receiptDigest: attempt.routeAdmission.receiptDigest,
+    })) : [];
     const attention = [
       ...workerAttention, ...selectionAttention, ...revisionAttention, ...recoveryAttention,
-      ...preservationAttention,
+      ...preservationAttention, ...routeAttention,
     ].slice(0, MAX_ATTENTION);
     const terminalCause = attempts.find((attempt) => attempt.terminalCause)?.terminalCause ?? null;
     const verificationState = allAccepted ? 'mechanically_verified'
@@ -6263,6 +6294,8 @@ export class BatonApplication {
       phase, cursor: projection.coordinationUpperBound,
       nextActions: phase === 'awaiting_plan_approval'
         ? [{ kind: 'approve_plan', planDigest: current.plan.digest }]
+        : phase === 'waiting_for_route'
+          ? [{ kind: 'retry_route' }, { kind: 'status' }, { kind: 'stop' }]
         : phase === 'selection_required'
           ? [
             { kind: 'send_feedback', roles: candidates.map((candidate) => candidate.role) },
@@ -6317,6 +6350,7 @@ export class BatonApplication {
       budget: { allocated: clone(current.goal.budget), node: null, termination: terminalCause },
       attention, attentionTruncated: workerAttention.length + selectionAttention.length
         + revisionAttention.length + recoveryAttention.length + preservationAttention.length
+        + routeAttention.length
         > attention.length,
       verification: {
         state: verificationState,
@@ -6370,7 +6404,9 @@ export class BatonApplication {
       },
       evidence: [],
       narrative: terminalCauseNarrative(terminalCause)
-        ?? (phase === 'selection_required'
+        ?? (phase === 'waiting_for_route'
+          ? 'The approved atomic Wave is waiting for deliberate fresh exact-route admission.'
+          : phase === 'selection_required'
           ? `${candidates.length} mechanically verified Candidates await explicit selection.`
           : phase === 'interruption_uncertain'
             ? 'Provider-session attachment is unproven and quarantined; stop is the only safe action.'
@@ -6411,7 +6447,13 @@ export class BatonApplication {
     const readOnlyResult = objectivePolicy.mode === 'read_only_evidence';
     const node = projection.nodes[0];
     const task = node.taskId ? this.driver.coordination.task(node.taskId) : null;
-    const workerId = task?.assignee ?? null;
+    const workerId = task?.assignee ?? task?.reservedWorkerId ?? null;
+    const routeWaitingHandle = workerId
+      ? this.driver.coordinator.list().find((handle) => handle.id === workerId) ?? null : null;
+    const latestRouteAdmission = workerId ? [...this.driver.log.read(workerId)].reverse()
+      .find((event) => event.kind === 'resource.route_admission_consumed')?.payload?.receipt ?? null : null;
+    const routeWaitingLogReceipt = latestRouteAdmission?.state === 'waiting_for_route'
+      ? latestRouteAdmission : null;
     let result = null;
     if (workerId) {
       try { result = await this.driver.coordinator.result(workerId); }
@@ -6438,11 +6480,15 @@ export class BatonApplication {
     else if (node.state === 'cancelled') phase = 'cancelled';
     else if (node.taskId) phase = 'running';
     else phase = 'approved';
-    const routeWaitingRecord = !node.taskId ? [...this.driver.coordination.events()].reverse().find((event) => (
+    const routeWaitingRecord = [...this.driver.coordination.events()].reverse().find((event) => (
       event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_ROUTE_WAITING_KIND
       && event.payload.runId === runId && event.payload.planDigest === current.plan.digest
-    )) ?? null : null;
-    if (phase === 'approved' && routeWaitingRecord) phase = 'waiting_for_route';
+    )) ?? null;
+    const routeWaitingReceipt = routeWaitingHandle?.routeAdmission
+      ? (routeWaitingHandle.routeAdmission.state === 'waiting_for_route'
+        ? routeWaitingHandle.routeAdmission : null)
+      : routeWaitingLogReceipt ?? (node.taskId ? null : routeWaitingRecord?.payload?.receipt ?? null);
+    if (['approved', 'running'].includes(phase) && routeWaitingReceipt) phase = 'waiting_for_route';
     const runStop = this.driver.coordination.runStop?.(runId) ?? null;
     if (runStop?.status === 'stopped') phase = 'stopped';
     else if (runStop) phase = 'stopping';
@@ -6534,9 +6580,9 @@ export class BatonApplication {
     if (phase === 'waiting_for_route') {
       allAttention.push({
         kind: 'route_readiness', state: 'blocked',
-        blocker: clone(routeWaitingRecord.payload.receipt.blocker),
-        remediation: routeWaitingRecord.payload.receipt.remediation,
-        receiptDigest: routeWaitingRecord.payload.receipt.receiptDigest,
+        blocker: clone(routeWaitingReceipt.blocker),
+        remediation: routeWaitingReceipt.remediation,
+        receiptDigest: routeWaitingReceipt.receiptDigest,
       });
     }
     const attention = allAttention.slice(0, MAX_ATTENTION);
@@ -10016,7 +10062,7 @@ export class BatonApplication {
       }
       await this.retryVerification({ runId: request.runId, reason: request.inputs.reason }, principal);
     } else if (action.kind === 'retry_route') {
-      await this._dispatchCurrent(current);
+      await this._dispatchCurrent(current, { retryRoute: true });
     } else if (action.kind === 'resume_work') {
       if (!validText(request.inputs.reason, 1_024)) {
         throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');

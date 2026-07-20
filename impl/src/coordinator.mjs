@@ -710,7 +710,7 @@ export class Coordinator {
     this._routeReadiness = opts.routeReadinessAuthority ?? null;
     if (this._routeReadiness) {
       for (const method of [
-        'issue', 'consume', 'admit', 'inspect', 'invalidate', 'validate',
+        'issue', 'consume', 'admit', 'inspect', 'invalidate', 'validate', 'waiting',
         'prepareMany', 'consumeMany',
       ]) {
         if (typeof this._routeReadiness[method] !== 'function') {
@@ -2068,7 +2068,7 @@ export class Coordinator {
       workerPolicy: workerPolicy ? Object.freeze({
         schemaVersion: 1,
         requestDigest: workerPolicy.requestDigest,
-        adapterCardDigest: workerPolicy.adapterCardDigest,
+        adapterCardDigest: canonicalDigest(card),
         resolutionDigest: workerPolicy.resolutionDigest,
       }) : null,
       effect: Object.freeze({ ...effect }),
@@ -2689,14 +2689,121 @@ export class Coordinator {
     });
   }
 
+  _routeEffect(task, handle, phase = 'spawn') {
+    return Object.freeze({
+      runId: task.runId ?? null, taskId: task.id,
+      nodeKey: task.brief?.goalPlan?.nodeKey ?? null, workerId: handle.id,
+      processGeneration: Math.max(1, (handle.processGeneration ?? 0) + 1), phase,
+    });
+  }
+
+  _routeBindingForTask(task, handle, phase = 'spawn') {
+    const selection = this._resolveVendor(task);
+    return {
+      selection,
+      binding: this._routeReadinessBinding(
+        selection.vendor, selection.model, selection.effort,
+        task.taskType ?? 'general', selection.workerPolicyResolution,
+        task.modelPolicy?.serviceTier ?? null, this._routeEffect(task, handle, phase),
+      ),
+    };
+  }
+
+  _assertLiveRouteBindings(bindings, receipts) {
+    const changed = bindings.findIndex((binding, index) => (
+      canonicalDigest(binding) !== receipts[index]?.bindingDigest
+    ));
+    if (changed < 0) return;
+    const waiting = bindings.map((binding, index) => (
+      this._routeReadiness.waiting(binding,
+        binding.card.adapterCardDigest !== receipts[index]?.cardDigest
+          ? 'adapter_card_changed' : 'route_binding_changed')
+    ));
+    const failure = new RouteReadinessBlockedError(waiting[changed]);
+    failure.receipts = deepFreeze(waiting);
+    throw failure;
+  }
+
+  async _releaseRouteWaitingCapacity(tasks, code = 'route_waiting_cleanup_incomplete') {
+    const releasable = tasks.filter((task) => task?.sessionRequest?.mode === 'new');
+    if (releasable.length === 0) return true;
+    const taskIds = releasable.map((task) => task.id);
+    let complete = true;
+    if (taskIds.length > 1 && typeof this._worktrees?.releaseCapacityMany === 'function') {
+      const outcomes = await Promise.resolve(this._worktrees.releaseCapacityMany(taskIds));
+      complete = Array.isArray(outcomes) && outcomes.length === taskIds.length
+        && outcomes.every((released) => released === true);
+    } else if (typeof this._worktrees?.releaseCapacity === 'function') {
+      const outcomes = await Promise.allSettled(taskIds.map((taskId) => (
+        Promise.resolve(this._worktrees.releaseCapacity(taskId))
+      )));
+      complete = outcomes.every((outcome) => outcome.status === 'fulfilled' && outcome.value === true);
+    }
+    if (!complete) {
+      throw Object.assign(new Error('route waiting capacity cleanup is incomplete'), {
+        code, taskIds: deepFreeze([...taskIds]),
+      });
+    }
+    return true;
+  }
+
+  async _reserveRouteRetryCapacity(tasks, handles) {
+    const members = tasks.map((task, index) => ({ task, handle: handles[index] }))
+      .filter(({ task }) => task.sessionRequest?.mode === 'new');
+    if (members.length === 0 || (typeof this._worktrees?.reserveCapacity !== 'function'
+      && typeof this._worktrees?.reserveCapacityMany !== 'function')) return true;
+    const releaseOnFailure = async () => {
+      await this._releaseRouteWaitingCapacity(members.map(({ task }) => task));
+    };
+    if (members.length > 1 && typeof this._worktrees?.reserveCapacityMany === 'function') {
+      const reservations = await Promise.resolve(this._worktrees.reserveCapacityMany(
+        members.map(({ task, handle }) => ({
+          taskId: task.id, requestedBaseSha: task.worktreeBaseSha ?? null,
+          runId: task.runId ?? null, attemptId: handle.id,
+          processGeneration: Math.max(1, (handle.processGeneration ?? 0) + 1),
+        })),
+      ));
+      if (!Array.isArray(reservations) || reservations.length !== members.length
+        || reservations.some((reservation) => reservation === null)) {
+        if (Array.isArray(reservations) && reservations.some((reservation) => reservation !== null)) {
+          await releaseOnFailure();
+        }
+        throw Object.assign(new Error('route retry capacity is unavailable'), {
+          code: 'route_retry_capacity_unavailable',
+        });
+      }
+      return true;
+    }
+    const reserved = [];
+    try {
+      for (const { task, handle } of members) {
+        const reservation = await Promise.resolve(this._worktrees.reserveCapacity(
+          task.id, task.worktreeBaseSha ?? null, {
+            runId: task.runId ?? null, attemptId: handle.id,
+            processGeneration: Math.max(1, (handle.processGeneration ?? 0) + 1),
+          },
+        ));
+        if (reservation === null) throw Object.assign(new Error('route retry capacity is unavailable'), {
+          code: 'route_retry_capacity_unavailable',
+        });
+        reserved.push(task);
+      }
+    } catch (error) {
+      if (reserved.length > 0) await this._releaseRouteWaitingCapacity(reserved);
+      throw error;
+    }
+    return true;
+  }
+
   _dispatch(task, vendor, model, effort, workerPolicyResolution = null) {
     if (!this._routeReadiness) {
       this._dispatchAdmitted(task, vendor, model, effort, workerPolicyResolution);
       return;
     }
+    if (task.routeRetryRequired === true) return;
     const group = task.routeReadinessGroup;
     if (group) {
-      if (group.pending) return;
+      if (group.pending || group.retryRequired === true) return;
       group.pending = true;
       this._trackAuthorityPromise(async () => {
         const currentBindings = group.members.map(({ taskId }, index) => {
@@ -2721,43 +2828,55 @@ export class Coordinator {
           group.batch = await this._routeReadiness.prepareMany(currentBindings);
           receipts = await this._routeReadiness.consumeMany(group.batch, currentBindings);
         }
-        group.bindings = currentBindings;
+        const liveStates = group.members.map(({ taskId }) => {
+          const memberTask = this._tasks.get(taskId);
+          const memberHandle = memberTask ? this._workers.get(memberTask.assignee) : null;
+          if (!memberTask || !memberHandle) throw Object.assign(
+            new Error('route admission Wave member is unavailable'), { code: 'route_lease_invalid' },
+          );
+          return this._routeBindingForTask(memberTask, memberHandle, 'plan_wave_spawn');
+        });
+        const liveBindings = liveStates.map(({ binding }) => binding);
+        this._assertLiveRouteBindings(liveBindings, receipts);
+        group.bindings = liveBindings;
         const dispatches = group.members.map(({ taskId }, index) => {
           const memberTask = this._tasks.get(taskId);
           const memberHandle = memberTask ? this._workers.get(memberTask.assignee) : null;
           if (!memberTask || !memberHandle) throw Object.assign(
             new Error('route admission Wave member is unavailable'), { code: 'route_lease_invalid' },
           );
-          this._recordRouteAdmission(memberTask, memberHandle, receipts[index]);
-          const selection = this._resolveVendor(memberTask);
-          return { memberTask, selection };
+          const { selection } = liveStates[index];
+          return { memberTask, memberHandle, selection, receipt: receipts[index] };
         });
-        for (const { memberTask, selection } of dispatches) {
+        for (const { memberTask, memberHandle, selection, receipt } of dispatches) {
+          this._recordRouteAdmission(memberTask, memberHandle, receipt);
+          memberTask.routeRetryRequired = false;
           delete memberTask.routeReadinessGroup;
           this._dispatchAdmitted(memberTask, selection.vendor, selection.model, selection.effort,
             selection.workerPolicyResolution);
         }
       }).catch(async (error) => {
         if (error instanceof RouteReadinessBlockedError) {
+          group.retryRequired = true;
           for (const [index, { taskId }] of group.members.entries()) {
             const memberTask = this._tasks.get(taskId);
             const memberHandle = memberTask ? this._workers.get(memberTask.assignee) : null;
             const receipt = error.receipts?.[index] ?? error.receipt;
             if (memberTask && memberHandle && receipt) {
               this._recordRouteAdmission(memberTask, memberHandle, receipt);
+              memberTask.routeRetryRequired = true;
               memberHandle.status = 'blocked';
+              if (!memberHandle.processRef && !memberHandle.runtimeScope && !memberHandle.worktree) {
+                memberHandle.localAuthority = false;
+              }
             }
           }
-          if (typeof this._worktrees?.releaseCapacityMany === 'function') {
-            await this._worktrees.releaseCapacityMany(group.members.map(({ taskId }) => taskId));
-          } else {
-            await Promise.all(group.members.map(({ taskId }) => (
-              Promise.resolve(this._worktrees?.releaseCapacity?.(taskId))
-            )));
-          }
+          try {
+            await this._releaseRouteWaitingCapacity(group.members.map(({ taskId }) => this._tasks.get(taskId)));
+          } catch (cleanupError) { this._poisonCoordination(cleanupError); }
           return;
         }
-        this._fatal(error);
+        this._poisonCoordination(error);
       }).finally(() => { group.pending = false; });
       return;
     }
@@ -2770,7 +2889,7 @@ export class Coordinator {
       nodeKey: task.brief?.goalPlan?.nodeKey ?? null, workerId: handle.id,
       processGeneration: (handle.processGeneration ?? 0) + 1, phase: 'spawn',
     };
-    const binding = this._routeReadinessBinding(
+    let binding = this._routeReadinessBinding(
       vendor, model, effort, task.taskType ?? 'general', workerPolicyResolution,
       task.modelPolicy?.serviceTier ?? null, effect,
     );
@@ -2778,6 +2897,7 @@ export class Coordinator {
     this._trackAuthorityPromise(async () => {
       const preparedLease = task.routeAdmissionLease;
       let lease = preparedLease ?? await this._routeReadiness.issue(binding);
+      binding = this._routeBindingForTask(task, handle).binding;
       let receipt;
       try { receipt = await this._routeReadiness.consume(lease, binding); }
       catch (error) {
@@ -2787,7 +2907,10 @@ export class Coordinator {
       }
       task.routeAdmissionLease = null;
       task.routeAdmissionBinding = null;
+      const liveBinding = this._routeBindingForTask(task, handle).binding;
+      this._assertLiveRouteBindings([liveBinding], [receipt]);
       if (receipt) this._recordRouteAdmission(task, handle, receipt);
+      task.routeRetryRequired = false;
       if (task.status === 'pending' && !this._closed && this._drainState === 'open') {
         task.initialRouteSelection = null;
         handle.status = 'pending';
@@ -2797,13 +2920,15 @@ export class Coordinator {
       if (error instanceof RouteReadinessBlockedError) {
         this._recordRouteAdmission(task, handle, error.receipt);
         handle.status = 'blocked';
+        task.routeRetryRequired = true;
         task.routeAdmissionLease = null;
         task.routeAdmissionBinding = null;
-        await Promise.resolve(this._worktrees?.releaseCapacity?.(task.id));
+        try { await this._releaseRouteWaitingCapacity([task]); }
+        catch (cleanupError) { this._poisonCoordination(cleanupError); }
         if (!handle.processRef && !handle.runtimeScope && !handle.worktree) handle.localAuthority = false;
         return;
       }
-      this._fatal(error);
+      this._poisonCoordination(error);
     }).finally(() => { task.routeAdmissionPending = false; });
   }
 
@@ -3110,17 +3235,19 @@ export class Coordinator {
     const refusalCode = worktreeFailure ? 'worktree_unavailable'
       : authenticationRequired ? 'authentication_required'
         : typedTerminalCode(ack?.code, null);
+    let invalidationFailure = null;
     if (this._routeReadiness && (authenticationRequired
       || /^authentication_(?:required|refresh_required|metadata_invalid|probe_failed)$/u.test(refusalCode ?? ''))) {
       try {
+        const exactHarness = this._adapters[handle.vendor]?.card?.()?.harness;
         const binding = {
-          harness: this._harnessOf(handle.vendor), model: handle.modelResolved,
+          harness: exactHarness, model: handle.modelResolved,
           effort: handle.effortResolved,
         };
         this._routeReadiness.invalidate({
           harness: binding.harness, model: binding.model, effort: binding.effort,
         }, refusalCode ?? 'authentication_required');
-      } catch { /* cleanup and the provider refusal remain authoritative */ }
+      } catch (error) { invalidationFailure = error; }
     }
     handle.terminalCause ??= deepFreeze({
       kind: 'provider_failure', code: refusalCode ?? 'provider_crashed',
@@ -3154,7 +3281,14 @@ export class Coordinator {
       }).catch(noop);
     }
     if (!handle.processRef && !handle.runtimeScope && !handle.ownedWorktreeAuthority) handle.localAuthority = false;
-    this._dispatchPass();
+    if (invalidationFailure) {
+      this._poisonCoordination(Object.assign(
+        new Error('provider authentication refusal could not invalidate its exact route', {
+          cause: invalidationFailure,
+        }),
+        { code: 'route_invalidation_failed' },
+      ));
+    } else this._dispatchPass();
     return true;
   }
 
@@ -3195,6 +3329,100 @@ export class Coordinator {
     return this._withAuthorityOp(async () => {
       const auth = await this._goalPlanAuth(ctx, 'goal:observe', 'goal_plan_status', fields);
       return this._coordination.goalPlanStatus(fields, auth);
+    });
+  }
+
+  retryRoute(taskIds) {
+    return this._withAuthorityOp(() => this._retryRoute(taskIds));
+  }
+
+  async _retryRoute(taskIds) {
+    if (!this._routeReadiness || !Array.isArray(taskIds) || taskIds.length === 0
+      || taskIds.length > 64 || new Set(taskIds).size !== taskIds.length
+      || taskIds.some((taskId) => typeof taskId !== 'string' || taskId.length === 0)) {
+      throw Object.assign(new Error('route retry request is invalid'), { code: 'route_retry_invalid' });
+    }
+    const tasks = taskIds.map((taskId) => this._tasks.get(taskId));
+    const handles = tasks.map((task) => task ? this._workers.get(task.assignee) : null);
+    if (tasks.some((task, index) => !task || !handles[index]
+      || task.status !== 'pending' || task.routeRetryRequired !== true
+      || handles[index].status !== 'blocked'
+      || task.routeAdmissionReceipt?.state !== 'waiting_for_route')) {
+      throw Object.assign(new Error('exact route retry is unavailable'), {
+        code: 'route_retry_unavailable',
+      });
+    }
+    const phase = taskIds.length > 1 ? 'retry_route_wave_spawn' : 'retry_route_spawn';
+    const preparedBindings = tasks.map((task, index) => (
+      this._routeBindingForTask(task, handles[index], phase).binding
+    ));
+    let authority;
+    const markWaiting = (error) => {
+      const receipts = Array.isArray(error?.receipts) ? error.receipts : [error?.receipt];
+      for (let index = 0; index < tasks.length; index += 1) {
+        const receipt = receipts.find((candidate) => candidate?.effect?.taskId === tasks[index].id)
+          ?? (receipts.length === tasks.length ? receipts[index] : null);
+        if (receipt) this._recordRouteAdmission(tasks[index], handles[index], receipt);
+        tasks[index].routeRetryRequired = true;
+        handles[index].status = 'blocked';
+        if (!handles[index].processRef && !handles[index].runtimeScope && !handles[index].worktree) {
+          handles[index].localAuthority = false;
+        }
+      }
+    };
+    try {
+      authority = taskIds.length === 1
+        ? await this._routeReadiness.issue(preparedBindings[0])
+        : await this._routeReadiness.prepareMany(preparedBindings);
+    } catch (error) {
+      if (error instanceof RouteReadinessBlockedError) {
+        markWaiting(error);
+        return deepFreeze({ state: 'waiting_for_route', taskIds: [...taskIds] });
+      }
+      throw error;
+    }
+
+    await this._reserveRouteRetryCapacity(tasks, handles);
+    let receipts;
+    let effectStates;
+    try {
+      const liveBindings = tasks.map((task, index) => (
+        this._routeBindingForTask(task, handles[index], phase).binding
+      ));
+      receipts = taskIds.length === 1
+        ? [await this._routeReadiness.consume(authority, liveBindings[0])]
+        : await this._routeReadiness.consumeMany(authority, liveBindings);
+      effectStates = tasks.map((task, index) => this._routeBindingForTask(task, handles[index], phase));
+      const effectBindings = effectStates.map(({ binding }) => binding);
+      this._assertLiveRouteBindings(effectBindings, receipts);
+    } catch (error) {
+      try { await this._releaseRouteWaitingCapacity(tasks); }
+      catch (cleanupError) { throw this._poisonCoordination(cleanupError); }
+      if (error instanceof RouteReadinessBlockedError) {
+        markWaiting(error);
+        return deepFreeze({ state: 'waiting_for_route', taskIds: [...taskIds] });
+      }
+      throw error;
+    }
+
+    for (let index = 0; index < tasks.length; index += 1) {
+      const task = tasks[index];
+      const handle = handles[index];
+      this._recordRouteAdmission(task, handle, receipts[index]);
+      task.routeRetryRequired = false;
+      task.routeAdmissionLease = null;
+      task.routeAdmissionBinding = null;
+      delete task.routeReadinessGroup;
+      handle.status = 'pending';
+    }
+    for (let index = 0; index < tasks.length; index += 1) {
+      const { selection } = effectStates[index];
+      this._dispatchAdmitted(tasks[index], selection.vendor, selection.model, selection.effort,
+        selection.workerPolicyResolution);
+    }
+    return deepFreeze({
+      state: 'dispatched', taskIds: [...taskIds],
+      workers: handles.map((handle) => this._publicHandle(handle)),
     });
   }
 
@@ -3947,7 +4175,13 @@ export class Coordinator {
       ));
       const projectedAdmission = replayAdmission
         ? normalizeRouteAdmissionReceipt(replayAdmission.payload.receipt) : null;
-      if (projectedAdmission) task.routeAdmissionEvidence = projectedAdmission;
+      if (projectedAdmission) {
+        task.routeAdmissionEvidence = projectedAdmission;
+        task.routeAdmissionReceipt = projectedAdmission;
+        if (projectedAdmission.state === 'waiting_for_route' && durable.status === 'pending') {
+          task.routeRetryRequired = true;
+        }
+      }
       this._tasks.set(task.id, task);
       this._taskOrder.push(task.id);
       this._workers.set(workerId, {
@@ -3959,7 +4193,9 @@ export class Coordinator {
         workerPolicyRequest, workerPolicyResolution: null,
         sessionRequest: task.sessionRequest, sessionContext: null, lineage: null,
         taskId: task.id, worktree: null,
-        status: durable.status === 'pending' ? 'pending' : (TERMINAL_TASK_STATUSES.has(durable.status) ? 'idle' : 'orphaned'), pendingApprovalId: null,
+        status: task.routeRetryRequired === true ? 'blocked'
+          : durable.status === 'pending' ? 'pending'
+            : (TERMINAL_TASK_STATUSES.has(durable.status) ? 'idle' : 'orphaned'), pendingApprovalId: null,
         pendingQuestionId: null, budgetUsed: { tokens: 0, usd: 0 }, budgetThresholdsFired: new Set(),
         budgetHardExceeded: false,
         terminalCause: null,
@@ -3976,6 +4212,7 @@ export class Coordinator {
         cleanupAfterVerification: false, createdAt: new Date(0).toISOString(),
         currentIncarnation: false, ownedWorktreeAuthority: false,
         physicalWorkspaceCleanupCompleted: false, localAuthority: false,
+        ...(projectedAdmission ? { routeAdmissionReceipt: projectedAdmission } : {}),
       });
       const match = /^w-(\d+)$/.exec(workerId);
       if (match) this._workerSeq = Math.max(this._workerSeq, Number(match[1]));
@@ -6119,6 +6356,7 @@ export class Coordinator {
       fence,
       turnEpoch,
       status: handle.recoveryPending === true && opts.exposeRecovery !== true ? 'orphaned' : handle.status,
+      ...(handle.routeAdmissionReceipt ? { routeAdmission: handle.routeAdmissionReceipt } : {}),
       pendingApprovalId: handle.pendingApprovalId,
       pendingQuestionId: handle.pendingQuestionId,
       budgetUsed: { ...handle.budgetUsed },
@@ -10916,6 +11154,14 @@ export class Coordinator {
       const durableWorkerTasks = durableTasksByWorker.get(workerId) ?? [];
       const currentDurableTask = durableWorkerTasks.at(-1) ?? null;
       if (currentDurableTask) taskId = currentDurableTask.id;
+      const replayRouteAdmissionEvent = taskId ? [...events].reverse()
+        .find((event) => event.kind === 'resource.route_admission_consumed'
+          && event.payload?.receipt?.effect?.taskId === taskId) ?? null : null;
+      const replayRouteAdmission = replayRouteAdmissionEvent
+        ? normalizeRouteAdmissionReceipt(replayRouteAdmissionEvent.payload?.receipt) : null;
+      const replayRouteWaiting = currentDurableTask?.status === 'pending'
+        && replayRouteAdmission?.state === 'waiting_for_route';
+      if (replayRouteWaiting) terminalStatus = 'pending';
       const revisionRecoveryUnknown = currentDurableTask?.relation === 'revision'
         && currentDurableTask.brief?.revisionContext;
 
@@ -10945,7 +11191,7 @@ export class Coordinator {
       // are durably failed. Exact Candidate-base revisions are the deliberate exception: their
       // external effect may be live, so they remain uncontrollable/unknown and never redeliver.
       const preservedInterrupt = terminalStatus === 'interrupted';
-      if (!revisionRecoveryUnknown && !preservedInterrupt
+      if (!revisionRecoveryUnknown && !preservedInterrupt && !replayRouteWaiting
         && !TERMINAL_TASK_STATUSES.has(terminalStatus)) {
         recoveryTerminalized = true;
         terminalStatus = 'failed';
@@ -11038,6 +11284,11 @@ export class Coordinator {
         task.workerPolicyResolution = workerPolicyResolution;
         task.workerPolicyObserved = workerPolicyObserved;
         task.workerPolicyMismatch = workerPolicyMismatch;
+        if (replayRouteWaiting) {
+          task.routeAdmissionEvidence = replayRouteAdmission;
+          task.routeAdmissionReceipt = replayRouteAdmission;
+          task.routeRetryRequired = true;
+        }
         task.worktree = sessionContext?.worktree ?? task.worktree;
         this._tasks.set(taskId, task);
         if (!this._taskOrder.includes(taskId)) this._taskOrder.push(taskId);
@@ -11075,8 +11326,10 @@ export class Coordinator {
         worktree: sessionContext?.worktree ?? null,
         // A durable native reference is not a live transport. Even a terminal task that was
         // reusable before restart must remain uncontrollable until PS7 proves reattachment.
-        status: (recoveryTerminalized || refinementAborted || sessionRef)
-          ? 'orphaned' : this._deriveWorkerStatus(terminalStatus),
+        status: replayRouteWaiting ? 'blocked'
+          : (recoveryTerminalized || refinementAborted || sessionRef)
+            ? 'orphaned' : this._deriveWorkerStatus(terminalStatus),
+        ...(replayRouteWaiting ? { routeAdmissionReceipt: replayRouteAdmission } : {}),
         pendingApprovalId: null,
         pendingQuestionId: null,
         budgetUsed,

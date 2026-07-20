@@ -17,7 +17,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -118,7 +118,7 @@ test('Grok route readiness runs in its exact private cwd/env without ambient cre
   assert.equal(result.state, 'ready');
   assert.equal(result.reaped, true);
   assert.deepEqual(observations, [{
-    argv: ['--models'], cwd, ambientCanary: null, home: privateHome,
+    argv: ['--models'], cwd: realpathSync(cwd), ambientCanary: null, home: privateHome,
   }]);
 });
 
