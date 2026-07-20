@@ -3738,23 +3738,29 @@ export class CoordinationStore {
     return { ...core, targetDigest: canonicalDigest(core) };
   }
 
-  _validSessionPreservationReceipt(receipt) {
+  _validSessionPreservationReceipt(receipt, allowHistorical = false) {
     if (receipt === null) return true;
-    const fields = [
+    const version = receipt?.schemaVersion;
+    const fields = version === 1 ? [
+      'fence', 'planBindingDigest', 'processGeneration', 'reattachment', 'receiptDigest',
+      'routeDigest', 'runAuthorityDigest', 'schemaVersion', 'sessionDigest', 'state',
+      'transport', 'turnEpoch', 'worktreeDigest',
+    ] : [
       'adapterCardDigest', 'attached', 'fence', 'planBindingDigest', 'processGeneration',
       'reattachment', 'receiptDigest', 'routeDigest', 'runAuthorityDigest', 'schemaVersion',
       'sessionDigest', 'state', 'transport', 'turnEpoch', 'worktreeDigest',
     ];
     if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
       || Object.keys(receipt).sort().join(',') !== fields.sort().join(',')
-      || receipt.schemaVersion !== 2 || receipt.state !== 'preserved'
-      || receipt.transport !== 'attached' || receipt.attached !== true
+      || (version !== 2 && !(allowHistorical && version === 1))
+      || receipt.state !== 'preserved' || receipt.transport !== 'attached'
+      || (version === 2 && receipt.attached !== true)
       || !['not_required', 'confirmed'].includes(receipt.reattachment)
       || !Number.isSafeInteger(receipt.processGeneration) || receipt.processGeneration < 0
       || !Number.isSafeInteger(receipt.turnEpoch) || receipt.turnEpoch < 0
       || !Number.isSafeInteger(receipt.fence) || receipt.fence < 0
-      || ['sessionDigest', 'worktreeDigest', 'routeDigest', 'planBindingDigest', 'adapterCardDigest',
-        'runAuthorityDigest', 'receiptDigest']
+      || ['sessionDigest', 'worktreeDigest', 'routeDigest', 'planBindingDigest',
+        ...(version === 2 ? ['adapterCardDigest'] : []), 'runAuthorityDigest', 'receiptDigest']
         .some((field) => !/^[a-f0-9]{64}$/u.test(receipt[field] ?? ''))) return false;
     const core = clone(receipt); delete core.receiptDigest;
     return receipt.receiptDigest === canonicalDigest(core);
@@ -3909,7 +3915,7 @@ export class CoordinationStore {
       || (p.schemaVersion >= 2 && (
         (p.outcome.actualDelivery !== null
           && !['nudge', 'now', 'turn'].includes(p.outcome.actualDelivery))
-        || !this._validSessionPreservationReceipt(p.outcome.preservation)
+        || !this._validSessionPreservationReceipt(p.outcome.preservation, integrity)
         || !this._validPreservedContinuationReceipt(p.outcome.continuation)
         || (control.operation === 'interrupt'
           && (p.outcome.actualDelivery !== null || p.outcome.continuation !== null))
@@ -3963,6 +3969,8 @@ export class CoordinationStore {
     const outcomeFields = ['code', 'deliveredDespiteStale', 'emulated', 'result',
       ...(p?.schemaVersion >= 2 ? ['actualDelivery', 'continuation', 'preservation'] : [])];
     const control = this._runControls.get(p?.controlId);
+    const continuesHistoricalAck = control?.status === 'provider_acked'
+      && control.providerAck?.outcome?.preservation?.schemaVersion === 1;
     if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',')
       || p.schemaVersion !== control?.schemaVersion || !control
       || !['admitted', 'provider_acked'].includes(control.status)
@@ -3977,7 +3985,9 @@ export class CoordinationStore {
       || (p.schemaVersion >= 2 && (
         (p.outcome.actualDelivery !== null
           && !['nudge', 'now', 'turn'].includes(p.outcome.actualDelivery))
-        || !this._validSessionPreservationReceipt(p.outcome.preservation)
+        || !this._validSessionPreservationReceipt(
+          p.outcome.preservation, integrity || continuesHistoricalAck,
+        )
         || !this._validPreservedContinuationReceipt(p.outcome.continuation)
         || (control.operation === 'interrupt'
           && (p.outcome.actualDelivery !== null || p.outcome.continuation !== null))
