@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import {
   ProgramIrError, canonicalValueText, createProgramValueAuthority, createSchemaRegistry,
-  normalizeCanonicalValue, parseRawProgramJson,
+  deepFreezeProgramValue, normalizeCanonicalValue, parseRawProgramJson,
 } from '../src/program-ir/index.mjs';
 
 const authority = createProgramValueAuthority({
@@ -61,6 +61,10 @@ test('P93A1-S1c: authority, raw JSON, and registry Proxy boundaries reject witho
     (() => {
       const observed = trapped([]);
       return { observed, run: () => createSchemaRegistry(observed.proxy, authority) };
+    })(),
+    (() => {
+      const observed = trapped({ value: 1 });
+      return { observed, run: () => deepFreezeProgramValue(observed.proxy) };
     })(),
   ]) {
     assert.throws(attempt.run, (error) => error instanceof ProgramIrError && error.code === 'program_invalid');

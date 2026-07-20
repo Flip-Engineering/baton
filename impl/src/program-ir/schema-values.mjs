@@ -477,11 +477,14 @@ function artifactBytes(reader, reference) {
   } catch {
     fail('ValueRef artifact is unavailable', 'artifact_unavailable');
   }
+  if (utilTypes.isProxy(result)) {
+    fail('ValueRef artifact is unavailable', 'artifact_unavailable');
+  }
   if (result && typeof result.then === 'function') {
     fail('ValueRef artifact reader must be synchronous and read-only');
   }
   if (result === null || result === undefined
-    || !(typeof result === 'string' || Buffer.isBuffer(result) || result instanceof Uint8Array)) {
+    || !(Buffer.isBuffer(result) || result instanceof Uint8Array)) {
     fail('ValueRef artifact is unavailable', 'artifact_unavailable');
   }
   return Buffer.from(result);

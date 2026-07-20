@@ -160,11 +160,45 @@ function fakeArraySchema(character, targetCharacter) {
   };
 }
 
+function fakeObjectSchema(character, targetCharacter) {
+  const digest = character.repeat(64);
+  const targetDigest = targetCharacter.repeat(64);
+  return {
+    schemaVersion: 1, kind: 'baton.value_schema', name: `cycle.${character}`, version: 1,
+    form: 'object', definition: {
+      type: 'object', properties: [{
+        name: 'next', required: true, schema: {
+          kind: 'schema_ref', schemaId: `schema:${targetDigest}`, name: `cycle.${targetCharacter}`,
+          version: 1, digest: targetDigest,
+        },
+      }], additionalProperties: false,
+    }, digest, schemaId: `schema:${digest}`,
+  };
+}
+
+function fakeUnionSchema(character, targetCharacter) {
+  const digest = character.repeat(64);
+  const targetDigest = targetCharacter.repeat(64);
+  return {
+    schemaVersion: 1, kind: 'baton.value_schema', name: `cycle.${character}`, version: 1,
+    form: 'union', definition: {
+      type: 'union', discriminator: 'kind', variants: [{
+        tag: 'next', schema: {
+          kind: 'schema_ref', schemaId: `schema:${targetDigest}`, name: `cycle.${targetCharacter}`,
+          version: 1, digest: targetDigest,
+        },
+      }],
+    }, digest, schemaId: `schema:${digest}`,
+  };
+}
+
 test('P93A1-V2: schema reference DAG refuses cycles of length one, two, and N', () => {
   for (const schemas of [
     [fakeArraySchema('a', 'a')],
     [fakeArraySchema('a', 'b'), fakeArraySchema('b', 'a')],
     [fakeArraySchema('a', 'b'), fakeArraySchema('b', 'c'), fakeArraySchema('c', 'd'), fakeArraySchema('d', 'a')],
+    [fakeObjectSchema('e', 'e')],
+    [fakeUnionSchema('f', 'f')],
   ]) assert.throws(() => createSchemaRegistry(schemas, authority), /cycle/u);
 });
 
@@ -180,10 +214,65 @@ test('P93A1-V3: every form validates closed values without coercion and unions m
     assert.deepEqual(validateTypedValue(typed, f.registry, authority), typed);
   }
   for (const [schema, value] of [
+    [f.nothing, false], [f.number, '1'], [f.number, 3], [f.text, 1], [f.text, 'x'.repeat(33)],
+    [f.integers, 1], [f.integers, [0, 1, 2, 3, 4, 5, 6, 7, 8]], [f.integers, [0, '1']],
     [f.integer, '1'], [f.integer, 1.5], [f.integer, Number.MAX_SAFE_INTEGER + 1],
     [f.flag, 1], [f.alpha, { kind: 'alpha' }], [f.alpha, { kind: 'alpha', n: 1, extra: true }],
     [f.union, { kind: 'unknown', n: 1 }], [f.union, { kind: 'alpha', n: 1, text: 'overlap' }],
   ]) assert.throws(() => createTypedValue({ schema: valueSchemaRef(schema), value }, f.registry, authority));
+});
+
+test('P93A1-V3b: union registry contracts require one tagged object shape', () => {
+  const f = fixture();
+  const nonObjectUnion = define('invalid.union.non_object', 'union', {
+    type: 'union', discriminator: 'kind', variants: [
+      { tag: 'alpha', schema: valueSchemaRef(f.integer) },
+    ],
+  });
+  assert.throws(() => createSchemaRegistry([f.integer, nonObjectUnion], authority), /object schemas/u);
+
+  const optionalObject = define('invalid.union.optional_object', 'object', {
+    type: 'object', properties: [
+      { name: 'kind', schema: valueSchemaRef(f.alphaTag), required: false },
+    ], additionalProperties: false,
+  });
+  const optionalUnion = define('invalid.union.optional', 'union', {
+    type: 'union', discriminator: 'kind', variants: [
+      { tag: 'alpha', schema: valueSchemaRef(optionalObject) },
+    ],
+  });
+  assert.throws(() => createSchemaRegistry([f.alphaTag, optionalObject, optionalUnion], authority),
+    /require its discriminator/u);
+
+  const missingObject = define('invalid.union.missing_object', 'object', {
+    type: 'object', properties: [
+      { name: 'n', schema: valueSchemaRef(f.integer), required: true },
+    ], additionalProperties: false,
+  });
+  const missingUnion = define('invalid.union.missing', 'union', {
+    type: 'union', discriminator: 'kind', variants: [
+      { tag: 'alpha', schema: valueSchemaRef(missingObject) },
+    ],
+  });
+  assert.throws(() => createSchemaRegistry([f.integer, missingObject, missingUnion], authority),
+    /require its discriminator/u);
+
+  const multipleTags = define('invalid.union.multiple_tags', 'string', {
+    type: 'string', minBytes: 4, maxBytes: 5, format: 'text', enum: ['alpha', 'beta'],
+  });
+  const multipleTagObject = define('invalid.union.multiple_tag_object', 'object', {
+    type: 'object', properties: [
+      { name: 'kind', schema: valueSchemaRef(multipleTags), required: true },
+    ], additionalProperties: false,
+  });
+  const multipleTagUnion = define('invalid.union.multiple', 'union', {
+    type: 'union', discriminator: 'kind', variants: [
+      { tag: 'alpha', schema: valueSchemaRef(multipleTagObject) },
+    ],
+  });
+  assert.throws(() => createSchemaRegistry([
+    multipleTags, multipleTagObject, multipleTagUnion,
+  ], authority), /enumerate exactly/u);
 });
 
 test('P93A1-V4: array uniqueness uses canonical bytes and never reorders semantic values', () => {
@@ -238,4 +327,21 @@ test('P93A1-V5: ValueRef reads are pure, canonical-byte exact, duplicate-aware, 
   assert.throws(() => validateValueRef({ ...reference, valueId: `pvalue:${'0'.repeat(64)}` }, {
     registry: f.registry, authority, artifactReader: reader,
   }), { code: 'program_invalid' });
+  assert.equal(reads, 1);
+
+  let proxyTraps = 0;
+  const trip = () => { proxyTraps += 1; throw new Error('artifact Proxy trap must not run'); };
+  const proxiedBytes = new Proxy(Buffer.from(canonical), {
+    get: trip, getOwnPropertyDescriptor: trip, getPrototypeOf: trip, has: trip, ownKeys: trip,
+  });
+  assert.throws(() => validateValueRef(reference, {
+    registry: f.registry, authority, artifactReader: { readArtifact: () => proxiedBytes },
+  }), { code: 'artifact_unavailable' });
+  assert.equal(proxyTraps, 0);
+
+  for (const lossyString of [canonical.toString('utf8'), `${canonical.toString('utf8')}\ud800`]) {
+    assert.throws(() => validateValueRef(reference, {
+      registry: f.registry, authority, artifactReader: { readArtifact: () => lossyString },
+    }), { code: 'artifact_unavailable' });
+  }
 });

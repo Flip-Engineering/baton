@@ -186,7 +186,9 @@ function serializeCanonical(value) {
 }
 
 export function deepFreezeProgramValue(value) {
-  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  if (!value || typeof value !== 'object') return value;
+  if (utilTypes.isProxy(value)) fail('Program value cannot be a Proxy');
+  if (Object.isFrozen(value)) return value;
   for (const child of Object.values(value)) deepFreezeProgramValue(child);
   return Object.freeze(value);
 }
