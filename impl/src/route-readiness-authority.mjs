@@ -501,6 +501,7 @@ export class RouteReadinessAuthority {
       || (value.serviceTier !== null && (typeof value.serviceTier !== 'string'
         || value.serviceTier.length === 0 || Buffer.byteLength(value.serviceTier) > 128))
       || !card || !effect || workerPolicy === undefined
+      || (workerPolicy !== null && workerPolicy.adapterCardDigest !== card.adapterCardDigest)
       || (value.serviceTier !== null && !card.modelSelection.serviceTier?.includes(value.serviceTier))) {
       throw routeError('route admission binding is invalid', 'route_admission_invalid', route);
     }
@@ -540,6 +541,24 @@ export class RouteReadinessAuthority {
       code: 'route_generation_changed',
       summary: 'Exact route readiness changed after admission was prepared.',
     });
+  }
+
+  waiting(bindingValue, code = 'adapter_card_changed') {
+    this.#assertOpen();
+    const binding = this.#normalizeBinding(bindingValue);
+    const route = bindingRoute(binding);
+    const allowed = new Map([
+      ['adapter_card_changed', 'The live adapter card changed before the provider effect boundary.'],
+      ['credential_generation_changed', 'The credential generation changed before the provider effect boundary.'],
+      ['route_binding_changed', 'The exact route binding changed before the provider effect boundary.'],
+    ]);
+    const safeCode = allowed.has(code) ? code : 'route_binding_changed';
+    const prior = this.#generations.get(routeKey(route));
+    const state = freeze({
+      ...route, state: 'blocked', code: safeCode, summary: allowed.get(safeCode),
+      generation: prior?.generation ?? 1,
+    });
+    return this.#receipt(binding, state);
   }
 
   issue(bindingValue) {
