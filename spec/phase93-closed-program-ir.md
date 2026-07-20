@@ -230,9 +230,9 @@ Every normative array is classified; an array field absent from this table is in
 | semantic ordered | `sequence.steps`, selector/join `preference`, `reduce.inputs`, NodeTemplate `definitionOfDone`, verification-contract `arguments`, `ownerControlPath`, `BranchState.stack`, `BranchState.rounds`, `controlOccurrencePath`, `repeatRounds`, `childPath`, Context v1 expression arrays, typed-value arrays, evaluation route inventory and crash schedule | preserve input order; order changes identity |
 | canonical ordered by integer | selector `criteria` by `order`, map `members` and map-handle `memberSettlements` by `index`, partial-map `members` by original index, effect phase history by phase rank, state revisions by semantic ordinal, operational revisions by arrival ordinal, corpus repetitions by repetition index | reject duplicate integers and sort ascending; gaps are invalid except in partial-map members; input typed arrays retain their semantic index |
 | canonical topological | `Program.nodes` | use §93.4 Kahn order |
-| set-like by name | `ProgramSource.nodes` by `nodeKey`, role catalog `roles`, Context `bindings`, parallel node/handle/fence `branches`, parallel-handle `memberSettlements`, join `branchTerminalRevisions`, collect `items`, select `candidates`, object-schema `properties`, union `variants`, NodeTemplate `capabilities/effects/requiredEffects`, verification environment allowlist | reject duplicate names, sort by unsigned UTF-16 name |
+| set-like by name | `ProgramSource.nodes` by `nodeKey`, role catalog `roles`, parallel node/handle/fence `branches`, parallel-handle `memberSettlements`, join `branchTerminalRevisions`, collect `items`, select `candidates`, object-schema `properties`, union `variants`, NodeTemplate `capabilities/effects/requiredEffects`, verification environment allowlist | reject duplicate names, sort by unsigned UTF-16 name |
 | set-like by path | NodeTemplate `pathScope/contextScope`, approval/template `repositoryScopes`, feedback/revision changed paths | reject duplicate normalized paths; sort by unsigned UTF-16 path |
-| set-like by digest/ID | `schemas`, `verificationContracts`, verification required-predecessor evidence, static-effect ownership `entries`, approval contract digests, predicate `and/or` children, join contract digests, finish/result/review/map evidence refs, route/worker attestations, `branchHeads`, state pending/settled effects, values/children/fences, join terminal revisions/member settlements, semantic-barrier events, source-lineage constituents, ownership arrays, review findings/anchors/evidence, effect/result/terminal/forensic/feedback digests, evaluation corpus tasks | reject duplicates; sort by the documented name/ID/digest tuple; barrier events use §93.13 total key |
+| set-like by digest/ID | `schemas`, `verificationContracts`, verification required-predecessor evidence, static-effect ownership `entries`, approval contract digests, predicate `and/or` children, join contract digests, finish/result/review/map evidence refs, route/worker attestations, `branchHeads`, state pending/settled effects, values/children/fences, join terminal revisions/member settlements, semantic-barrier events, source-lineage constituents, ownership arrays, review findings/anchors/evidence, effect/result/terminal/feedback digests and forensic sidecar records, evaluation corpus tasks | reject duplicates; sort by the documented name/ID/digest tuple; barrier events use §93.13 total key |
 | set-like scalar | string-schema `enum`, approval role/effect lists, action lists, and imported worker-policy `supported/mechanisms/guarantees/configuredPreferences` | reject duplicates; sort by canonical scalar bytes |
 | fixed positional | route tuple coordinates, disposition/eligibility records, process authority tuples | represented as objects, never arrays |
 
@@ -386,22 +386,59 @@ Gate preparation freezes this runtime-only binding; it is never accepted from Pr
 GateBinding = exact{
   schemaVersion,kind,effectId,candidate,approvedPlanDigest,nodeKey,
   nodeTemplateDigest,approvalEvent,frozenTaskBriefVerification,
-  frozenTaskBriefVerificationDigest,verificationContract,gateBindingDigest
+  frozenTaskBriefVerificationDigest,frozenVerificationContract,
+  frozenVerificationContractDigest,gateBindingDigest
 }
 kind="baton.gate_binding"
 frozenTaskBriefVerification=ArtifactRef
+frozenVerificationContract=ArtifactRef
 candidate=CandidateRef|ArtifactRef
 ```
 
-The frozen artifact contains the closed Task Brief verification object approved at
-`approvalEvent`; `frozenTaskBriefVerificationDigest` MUST equal its `artifactDigest` and both MUST
-equal the Plan node commitment and
-`frozenTaskBriefVerificationDigest`. `approvedPlanDigest`, `nodeKey`, and `nodeTemplateDigest` MUST
-equal the exact Candidate producer coordinates. The contract ref MUST be the separately approved
-contract for that frozen verification. `gateBindingDigest` hashes the complete binding excluding
-itself. Historical replay reads these stored bytes and approval
-event only; it MUST NOT resolve the current Plan head, current node template, current deployment
-verification, or current contract registry entry.
+The two frozen artifacts carry exact approval-event-bound bytes:
+
+```text
+TaskBriefVerification = exact{
+  schemaVersion,kind,taskBriefDigest,verificationContractDigest,
+  expectedExit,expectResult,taskBriefVerificationDigest
+}
+kind="baton.task_brief_verification"
+expectResult = exact{resultSchemaRef,verdictDerivation}
+resultSchemaRef = SchemaRef                  ; MUST resolve to baton.gate_result
+verdictDerivation = exact{passWhen,candidateFailedWhen,inconclusiveWhen}
+passWhen = exact{exitEquals,qualityGatesSatisfied}
+candidateFailedWhen = "exit_not_equals|quality_gate_failed"
+inconclusiveWhen = "provider_inconclusive"
+```
+
+The gate authority uses these frozen bytes and never current state. `frozenTaskBriefVerification`
+MUST be the immutable artifact whose bytes ARE the `TaskBriefVerification` object approved at
+`approvalEvent`; `frozenTaskBriefVerificationDigest` MUST equal its `artifactDigest`. The
+`expectResult` inside it pins the result schema and the complete exit/quality-gate → verdict mapping
+the referee applies. `frozenVerificationContract` MUST be the immutable artifact whose bytes ARE the
+exact `VerificationContract` object bound at that same `approvalEvent`;
+`frozenVerificationContractDigest` MUST equal its `artifactDigest`, equal
+`TaskBriefVerification.verificationContractDigest`, and equal the approval-event-bound contract
+digest. The gate executes those frozen contract bytes; it MUST NOT resolve the current Plan head,
+current node template, current deployment verification, current task brief, or current contract
+registry entry.
+
+The binding digest equals the CandidateRef and Plan commitments exactly. When `candidate` is a
+`CandidateRef`, `approvedPlanDigest`, `nodeKey`, `nodeTemplateDigest`, `approvalEvent`, and
+`frozenTaskBriefVerificationDigest` MUST respectively equal that Candidate's `planDigest`,
+`nodeKey`, `nodeTemplateDigest`, `approvalEvent`, and `taskBriefVerificationDigest`, and the
+Candidate's `candidateDigest`, `baseSha`, and `resultSha` MUST bind the exact verified result tree;
+when `candidate` is an `ArtifactRef`, the same Plan/node-template/approval-event/task-brief
+commitments MUST equal the Plan node that produced that artifact. `gateBindingDigest` hashes the
+complete binding excluding itself, and admission refuses any coordinate that diverges from the
+frozen Candidate/Plan commitments.
+
+The produced `baton.gate_result` maps completely to `expectResult`: its result schema MUST equal
+`expectResult.resultSchemaRef`, and its `verdict` MUST equal the verdict that
+`expectResult.verdictDerivation` prescribes for the observed verifier exit and frozen-contract
+quality-gate state. A verdict the frozen mapping does not produce is `program_invalid` before
+publication; substitution or resolving any current/historical head fails authority before verifier
+effect and never yields a rejected verdict.
 
 ## 93.7 Versioned role catalog, service tier, and worker policy
 
@@ -568,10 +605,9 @@ value = exact{nodeId,kind,value,schema}
   kind="value"; value=TypedValue; schema=value.schema
   ports: value:schema
 
-context = exact{nodeId,kind,program,bindings,outputSchema}
+context = exact{nodeId,kind,program,outputSchema}
   kind="context"
   program=normalized baton.context_program v1 proven pure under §93.10
-  bindings=set-like exact{name,value}[0..policy.maxJoinMembers]; value=PortRef
   ports: value:outputSchema
 
 sequence = exact{nodeId,kind,steps,result,outputSchema}
@@ -752,8 +788,17 @@ source outline index search slice chunk filter project sort unique join collect 
 
 It MUST reject `map`, `reduce`, `review`, and `verify`, even though the historical v1 normalizer
 parses them. It also rejects any future unknown operation. Pure Context evaluation may read only
-the exact manifest, immutable artifacts, and deterministic Atlas/ACI operations bound by the
-manifest and policy. It cannot append, dispatch, verify, notify, checkpoint, or finish a Program.
+the exact Program `manifest`, addressed immutable artifacts, and deterministic Atlas/ACI operations
+named inside that program and bound by the manifest and policy. It cannot append, dispatch, verify,
+notify, checkpoint, or finish a Program.
+
+A Program v1 `context` node has no per-node input bindings and no ambient variables. Context v1
+defines no variable or binding operator, so the pure program reaches every value it inspects through
+an addressed artifact/manifest reference written inside the program itself, never through an injected
+binding, an enclosing-scope name, or a caller-supplied substitution. The earlier `context.bindings`
+field is therefore removed for Program v1; a value the pure program must inspect is addressed inside
+the program, and any effectful binding need is compiled to an explicit `map`/`reduce`/`gate` effect
+under §93.10 migration rather than invented as an ambient input.
 
 Historical Context v1 cells and `context.call_*` events remain replay-only under their original
 bytes, identity, policy, and semantics. They are not silently relabeled pure and cannot be embedded
@@ -1247,26 +1292,43 @@ revision inputs and pure reduction produce byte-identical semantic state and res
 
 ## 93.15 Typed effect and Program results
 
-Result state is orthogonal. No field is inferred from another and the validity matrix below is
-checked as a closed union:
+Result state is orthogonal. Each axis carries an independent disposition; no axis is inferred from
+another, and the cross-axis constraints below are checked as a closed union. Execution and
+verification each carry an exact cause:
 
 ```text
 DispositionSet = exact{
-  executionDisposition,verificationDisposition,workProductDisposition,
+  executionDisposition,executionCause,
+  verificationDisposition,verificationCause,
+  workProductDisposition,
   cleanupDisposition,selectionDisposition,integrationDisposition
 }
 
-executionDisposition = "succeeded|failed|cancelled|ambiguous"
+executionDisposition = "succeeded|failed|cancelled|stopped|not_dispatched|ambiguous"
+executionCause = SafeId|null
 verificationDisposition =
-  "not_required|pending|passed|candidate_failed|inconclusive"
+  "not_required|pending|passed|candidate_failed|inconclusive|not_dispatched"
+verificationCause = SafeId|null
 workProductDisposition =
-  "completed_value|verified_candidate|verified_artifact|verification_rejected_preserved|
-   inconclusive_preserved|partial_results_preserved|cancelled|preservation_failed|
-   failed_without_work_product|notification_settled|checkpoint_settled"
+  "value|candidate|artifact|notification|checkpoint|partial_collection|absent"
 cleanupDisposition = "not_required|open|settled|attention"
 selectionDisposition = "not_applicable|ineligible|eligible|selected|unresolved"
 integrationDisposition =
   "not_applicable|ineligible|eligible|approved|integrated|refused|failed_preserved"
+
+The six execution values preserve the exact Phase 84/85 output truth: `succeeded` is accepted,
+`failed` is failed, `cancelled` is cancelled, and `not_dispatched` is not-dispatched; `stopped` is a
+Program selective stop and `ambiguous` is a crash-ambiguous effect. `not_dispatched` means the
+effect was admitted but never reached a provider boundary (superseded by selection, capacity never
+granted, or dispatch never approved); a `not_dispatched` effect has verification `not_dispatched`,
+preserves no provider observation, and is retry-eligible on a new prebound generation.
+`executionCause` is null only when `executionDisposition="succeeded"` and is otherwise a non-null
+`SafeId` reason code (for example `provider_fault`, `capacity_exhausted`, `selective_stop`,
+`operator_cancel`, `crash_ambiguous`). `verificationCause` is null only when
+`verificationDisposition` is `not_required` or `passed` and is otherwise a non-null reason code (for
+example `exit_mismatch`, `quality_gate_failed`, `provider_inconclusive`). The work-product axis is
+product-only: it names the kind of product produced and never encodes execution or verification
+outcome, which live on their own axes. `absent` means no work product was produced.
 
 WorkProductRefs = exact{
   artifactRef,capsuleRef,commitRef,candidateRef,valueRef,checkpointRef
@@ -1304,14 +1366,14 @@ generation-fenced integrator capability; neither `approved` nor `eligible` mutat
 by name; map members sort by contiguous index. A member's effect/result and terminal-revision
 digests are null only when that member kind has no such record; null never means pending.
 
-Every effect settlement embeds:
+Every effect settlement embeds an immutable, content-addressed result:
 
 ```text
 EffectResult = exact{
   schemaVersion,kind,effectId,effectKind,dispositions,workProductRefs,
   eligibility,evidenceRefs,routeAttestation,workerPolicyAttestation,
   roleCatalogDigest,policyDigest,approvalDigest,successor,mapSettlement,
-  cleanup,forensicLateResults,resultDigest
+  cleanup,resultDigest
 }
 kind="baton.program_effect_result"
 successor=null or exact{planDigest,programDigest,executionId}
@@ -1326,7 +1388,10 @@ remaining=exact{processes,sessions,worktrees,runtimes,branches,leases}
 Digest or null exactly as required by that disposition; every remaining count is a non-negative
 safe integer. `routeAttestation` and `workerPolicyAttestation` are null for effects that launch no
 worker; otherwise both are the exact §93.7 objects. `mapSettlement` is null except for `map`.
-`EffectResult.resultDigest` hashes every field except itself and `forensicLateResults`.
+`EffectResult` is immutable and content-addressed: `resultDigest` hashes every field except itself,
+so once an effect is settled its result digest never changes. Late observations arriving after
+settlement are append-only `ForensicLateResultRecord` sidecar records (§93.15); they reference this
+immutable digest by anchor and never alter it.
 
 ```text
 OwnershipSnapshot = exact{
@@ -1362,12 +1427,12 @@ kind="baton.map_settlement"
 
 MapMemberResult = exact{
   index,memberEffectId,generation,dispositions,workProductRefs,
-  eligibility,evidenceRefs,sourceLineageDigest,
-  forensicLateResults,memberResultDigest
+  eligibility,evidenceRefs,sourceLineageDigest,memberResultDigest
 }
 
 MapSummary = exact{
-  total,succeeded,failed,cancelled,ambiguous,preserved,retryEligible
+  total,succeeded,failed,cancelled,stopped,notDispatched,ambiguous,
+  preserved,retryEligible
 }
 
 PartialMapValue = exact{
@@ -1379,104 +1444,122 @@ PartialMapValueMember = exact{
   index,memberEffectId,valueRef,capsuleRef,memberResultDigest
 }
 
-ForensicLateResult = exact{
-  schemaVersion,kind,effectId,memberEffectId,observedAfterTransitionDigest,
+ForensicLateResultRecord = exact{
+  schemaVersion,kind,anchor,cursor,observedAfterTransitionDigest,
   providerReceiptDigest,artifactRef,capsuleRef,commitRef,routeAttestationDigest,
   workerPolicyAttestationDigest,reasonCode,forensicDigest
 }
-kind="baton.forensic_late_result"
+kind="baton.forensic_late_result_record"
+anchor = exact{resultDigest,effectId,memberEffectId,generation,fence}
+  resultDigest = the immutable EffectResult/MapMemberResult/ProgramResult digest referenced
+  effectId = EffectId (required)
+  memberEffectId = MemberEffectId|null (null for a non-map effect)
+  generation = retry generation safe integer
+  fence = ParallelAdmissionFence/JoinFence digest or null
 ```
 
 `members` is canonical ordered by integer `index`, which is contiguous from zero and matches the
-semantic input array. `total=succeeded+failed+cancelled+ambiguous`; `preserved` and `retryEligible`
+semantic input array. The six execution counts preserve the exact Phase 84/85 output truth:
+`succeeded` is accepted, `failed` is failed, `cancelled` is cancelled, `notDispatched` is
+not-dispatched, with `stopped` (selective stop) and `ambiguous` (crash-ambiguous) added by the
+Program effect protocol.
+`total=succeeded+failed+cancelled+stopped+notDispatched+ambiguous`; `preserved` and `retryEligible`
 are independently derived subset counts. Each member's refs and evidence survive
 parent failure. `retryEligible` counts only members whose `eligibility.retry.state` is
 `eligible|requires_approval`; a retry admits a new member generation/ID and consumes only those
-member refs. A succeeded member is ineligible and is never repeated. An ambiguous member is
-`requires_repair` until provider correlation settles or a separately approved replacement is
-admitted with a new identity; it is never automatically repeated.
+member refs. A succeeded member is ineligible and is never repeated. A `notDispatched` member was
+admitted but never reached a provider boundary (superseded by selection, capacity never granted, or
+dispatch never approved); it preserves no provider observation and is retry-eligible on a new
+prebound generation. A `stopped` member was selectively stopped while active and is preserved with
+its durable cleanup. An ambiguous member is `requires_repair` until provider correlation settles or
+a separately approved replacement is admitted with a new identity; it is never automatically
+repeated.
 
 `PartialMapValue.members` contains only successful schema-valid members, ordered by their original
 unique index (gaps are permitted), and each digest/ref MUST equal its `MapMemberResult`. Its
-`partialDigest` excludes itself. This is the only value schema permitted by the
-`partial_results_preserved` row; it cannot make a failed member disappear from `MapSettlement`.
+`partialDigest` excludes itself. This is the only value schema permitted by the `partial_collection`
+work-product row; it cannot make a failed member disappear from `MapSettlement`.
 
-`MapMemberResult.memberResultDigest` excludes itself and `forensicLateResults`.
-`MapSettlement.mapSettlementDigest` hashes the semantic projection of every member with forensic
-arrays removed, plus all other fields except itself. Late arrival therefore cannot rewrite parent
-or member identity.
+`MapMemberResult` is immutable and content-addressed: `memberResultDigest` hashes every field except
+itself. `MapSettlement` is immutable and content-addressed: `mapSettlementDigest` hashes the
+complete members, summary, and all other fields except itself. Neither embeds late results, so late
+arrival cannot rewrite parent or member identity.
 
-A `ForensicLateResult` is append-only trace evidence observed after cancellation, ambiguity,
-selective stop, generation replacement, or terminal settlement. It may preserve exact artifact,
-capsule, and commit refs, but it never changes a settlement, semantic revision, work-product,
-eligibility, selector input, verification verdict, integration state, learning, or result digest.
-`memberEffectId` is `MemberEffectId|null` and is null for a non-map effect. Artifact/capsule/commit
-refs and route/worker attestation digests are independently nullable; provider and observed-after
-transition digests are required. `forensicDigest` hashes the record excluding itself. Forensic
-arrays sort by `forensicDigest`.
+A `ForensicLateResultRecord` is append-only trace evidence in a separate sidecar ledger, observed
+after cancellation, ambiguity, selective stop, generation replacement, or terminal settlement. It
+may preserve exact artifact, capsule, and commit refs, but it never changes a settlement, semantic
+revision, work-product, eligibility, selector input, verification verdict, integration state,
+learning, or result digest. The `anchor` pins the exact immutable result/effect/member/generation/
+fence it pertains to; `resultDigest` is the already-settled digest it observes and never the digest
+of a record that embeds it. `cursor` is a per-anchor non-negative safe integer that strictly
+increases as records append and is the only append order. Artifact/capsule/commit refs and
+route/worker attestation digests are independently nullable; provider and observed-after-transition
+digests are required. `forensicDigest` hashes the record excluding itself. Records within an anchor
+sort by `(cursor,forensicDigest)`; across anchors they sort by `forensicDigest`. The sidecar is
+trace-only and projects to no semantic field.
 
-The complete validity matrix is:
+The axes are orthogonal; validity is the conjunction of the product-only work-product table below
+and the cross-axis constraints. No other combination is valid.
 
-| Work-product disposition | Execution | Verification | Cleanup | Required/non-null refs | Selection | Integration |
-| --- | --- | --- | --- | --- | --- | --- |
-| `completed_value` | `succeeded` | `not_required` | `not_required|settled` | `valueRef` | `not_applicable|eligible|selected|unresolved` when selector schema admits it | `not_applicable` |
-| `verified_candidate` | `succeeded` | `passed` | `settled` | `candidateRef` and one of artifact/capsule/commit | `eligible|selected|unresolved` | `ineligible|eligible|approved|integrated|refused|failed_preserved` |
-| `verified_artifact` | `succeeded` | `passed` | `settled` | standalone `artifactRef|capsuleRef|commitRef` | `not_applicable|eligible|selected|unresolved` | `not_applicable|ineligible` |
-| `verification_rejected_preserved` | `succeeded` | `candidate_failed` | `settled` | Candidate plus backing, or standalone artifact/capsule/commit | `ineligible` | `ineligible` |
-| `inconclusive_preserved` | `succeeded|ambiguous` | `inconclusive` | `settled|attention` | Candidate plus backing, or standalone artifact/capsule/commit | `ineligible` | `ineligible` |
-| `partial_results_preserved` | `failed|cancelled|ambiguous` | `not_required|inconclusive` | `settled|attention` | `valueRef` to closed partial collection and non-null `mapSettlement` | `ineligible` | `ineligible` |
-| `cancelled` | `cancelled` | `not_required|pending|inconclusive` | `settled|attention` | checkpoint or preserved artifact/capsule/commit | `ineligible` | `ineligible` |
-| `preservation_failed` | `failed|cancelled|ambiguous` | `not_required|pending|candidate_failed|inconclusive` | `open|attention` | zero or more recoverable refs and nonzero retained ownership | `ineligible` | `ineligible` |
-| `failed_without_work_product` | `failed|ambiguous` | `not_required|pending|inconclusive` | `not_required|settled|attention` | all work-product refs null | `ineligible` | `ineligible` |
-| `notification_settled` | `succeeded` | `not_required` | `settled` | delivery `EvidenceRef`, all work-product refs null | `not_applicable` | `not_applicable` |
-| `checkpoint_settled` | `succeeded` | `not_required` | `settled` | `checkpointRef` | `not_applicable` | `not_applicable` |
+The work-product axis is product-only. It names the product, the producing effect kinds, and its
+non-null refs, and never encodes execution or verification outcome:
 
-No other row or cross-product is valid. `notification_settled` is valid only for `notify` and
-`checkpoint_settled` only for `checkpoint`; `partial_results_preserved` is valid only for `map`.
-A `selected` Candidate must be verified. Integration
-may be `eligible` only for that selected exact Candidate; `approved` requires a current separate
-integration approval; `integrated` requires a settled capability-gated application-registry
-apply/integrate action receipt and fresh verification of its exact result. That action is outside
-the seven-node Program effect grammar. Selection, integration, and export never repair failed
-verification.
+| Work product | Produced by | Required non-null refs | Forbidden refs |
+| --- | --- | --- | --- |
+| `value` | `call`/`reduce` | `valueRef` only | every other ref null |
+| `candidate` | `call`/`reduce` | `candidateRef` and exactly one backing `artifactRef`/`capsuleRef`/`commitRef` | `valueRef`/`checkpointRef` null |
+| `artifact` | `call`/`reduce`/`gate` | `candidateRef` null and one or more mutually consistent standalone `artifactRef`/`capsuleRef`/`commitRef` | `valueRef`/`checkpointRef` null |
+| `notification` | `notify` only | all six refs null; `evidenceRefs` exactly one delivery receipt | any work-product ref |
+| `checkpoint` | `checkpoint` only | `checkpointRef`, also present in the checkpoint ledger receipt evidence | other refs null |
+| `partial_collection` | `map` only | `valueRef` to a closed partial collection and non-null `mapSettlement` | `candidateRef`/`checkpointRef` null |
+| `absent` | any | all six refs null | any work-product ref |
 
-Ref nullability is closed. `completed_value`, `partial_results_preserved`, and
-`checkpoint_settled` permit only the ref(s) named in their row. `notification_settled` and
-`failed_without_work_product` require all six refs null. `verified_candidate` requires
-`candidateRef` and its backing ref(s). The verified-artifact row requires `candidateRef` null and
-one or more mutually consistent standalone backing refs. Rejected/inconclusive rows permit either
-of those two shapes. These four verification rows permit `valueRef` only when it is the exact typed
-gate/review result for that subject, and require `checkpointRef` null. `cancelled` permits either only a
-checkpoint or an exact Candidate plus backing refs, not both. `preservation_failed` permits any
-already durable recoverable refs because the failure itself is loss of preservation/cleanup
-closure; those refs confer no eligibility while ownership is open.
+The remaining axes are constrained jointly:
 
-For `notification_settled`, `evidenceRefs` contains exactly one delivery receipt. For
-`checkpoint_settled`, the checkpoint ref is also present in the checkpoint ledger receipt evidence.
+| Constraint | Rule |
+| --- | --- |
+| succeeded value | `value` product requires `executionDisposition="succeeded"`, `verificationDisposition="not_required"`; selection `not_applicable|eligible|selected|unresolved` when selector schema admits it; integration `not_applicable` |
+| verified candidate | a non-null `candidateRef` with `verification="passed"` requires Candidate `verificationState="verified"` and admits selection `eligible|selected|unresolved` and integration `ineligible|eligible|approved|integrated|refused|failed_preserved` |
+| verified artifact | `artifact` product with `verification="passed"` admits selection `not_applicable|eligible|selected|unresolved` and integration `not_applicable|ineligible` |
+| rejected / inconclusive | `verification="candidate_failed|inconclusive"` forces selection `ineligible` and integration `ineligible` (an ownership block is `blocked_cleanup`); Candidate `verificationState` is `rejected` or `inconclusive` |
+| partial map | `partial_collection` requires `execution="failed|cancelled|ambiguous"` and `verification="not_required|inconclusive"`; selection and integration `ineligible` |
+| cancelled | `execution="cancelled"` permits only a checkpoint or an exact Candidate plus backing refs, not both; `verification="not_required|pending|inconclusive|not_dispatched"`; selection and integration `ineligible`; a cancelled Candidate is `unverified|inconclusive` |
+| stopped | `execution="stopped"` is a selective-stop member; its durable cleanup is preserved and it is never automatically retried |
+| not dispatched | `execution="not_dispatched"` requires `verification="not_dispatched"`, no provider observation, and selection and integration `ineligible`; it is retry-eligible on a new prebound generation |
+| preservation custody | `cleanup="open|attention"` with nonzero retained ownership is preservation-failed custody: `execution="failed|cancelled|ambiguous"`, any already-durable recoverable refs confer no eligibility until cleanup closes, and only cleanup/preservation repair is permitted |
+| failed without product | `absent` product requires `execution="failed|ambiguous"`; a fresh approved attempt is permitted, not revision |
+| notify / checkpoint | `notification` requires `execution="succeeded"` and is valid only for `notify`; `checkpoint` requires `execution="succeeded"` and is valid only for `checkpoint` |
+| succeeded needs zero ownership | `execution="succeeded"` requires zero remaining ownership (`cleanup="not_required|settled"`) |
 
-When `candidateRef` is non-null, every non-null top-level artifact/capsule/commit ref MUST be
-byte-identical to its corresponding embedded Candidate ref, and no unrelated ref is permitted.
-The matrix's “one of artifact/capsule/commit” means one non-null exact preserved backing ref in
-addition to the Candidate identity. Candidate `verificationState` MUST respectively be `verified`,
-`rejected`, or `inconclusive` for its applicable Candidate row; a cancelled Candidate is
-`unverified|inconclusive`. A commit ref never grants checkout-write authority.
+A `selected` Candidate must be verified (`verification="passed"`). Integration may be `eligible`
+only for that selected exact Candidate; `approved` requires a current separate integration approval;
+`integrated` requires a settled capability-gated application-registry apply/integrate action receipt
+and fresh verification of its exact result. That action is outside the seven-node Program effect
+grammar. Selection, integration, and export never repair failed verification.
 
-Eligibility is also constrained by row: `revise` requires a preserved Candidate plus typed
-feedback; `reduce` requires a closed typed member collection; `select` requires all selector
-evidence; `integrate` requires a selected verified Candidate and fenced integrator; `export`
-requires settled cleanup and an exportable artifact/capsule/commit; `retry` requires remaining
-authority and a new prebound generation. `preservation_failed` permits only cleanup/preservation
-repair. `failed_without_work_product` permits a fresh approved attempt, not revision. Any open
-ownership makes retry/revise/reduce/select/integrate/export `blocked_cleanup`.
+Ref nullability is closed by the product table. The `candidate`/`artifact` verification-bearing
+products permit `valueRef` only when it is the exact typed gate/review result for that subject, and
+require `checkpointRef` null. When `candidateRef` is non-null, every non-null top-level
+artifact/capsule/commit ref MUST be byte-identical to its corresponding embedded Candidate ref, and
+no unrelated ref is permitted. The product table's "one backing ref" means one non-null exact
+preserved backing ref in addition to the Candidate identity. A commit ref never grants checkout-write
+authority.
+
+Eligibility is constrained by axis: `revise` requires a preserved Candidate plus typed feedback;
+`reduce` requires a closed typed member collection; `select` requires all selector evidence;
+`integrate` requires a selected verified Candidate and fenced integrator; `export` requires settled
+cleanup and an exportable artifact/capsule/commit; `retry` requires remaining authority and a new
+prebound generation. `not_dispatched` effects are retry-eligible on a new prebound generation. Any
+open ownership makes retry/revise/reduce/select/integrate/export `blocked_cleanup`.
 
 Selection/integration cross-fields are exact. `not_applicable|ineligible` makes the corresponding
 action eligibility `ineligible` (except an ownership block is `blocked_cleanup`). Selection
 `eligible` makes `eligibility.select` `eligible` with the Program approval for a deterministic
 approved selector, or `requires_approval` for `operator_selected`; `unresolved` always requires an
-operator approval. `selected` makes it `ineligible` with reason `already_selected`. Integration `eligible`
-makes `eligibility.integrate` `requires_approval`; `approved` makes it `eligible` with the exact
-approval digest; `integrated|refused|failed_preserved` makes it `ineligible` unless cleanup blocks
-all actions. No other pairing validates.
+operator approval. `selected` makes it `ineligible` with reason `already_selected`. Integration
+`eligible` makes `eligibility.integrate` `requires_approval`; `approved` makes it `eligible` with
+the exact approval digest; `integrated|refused|failed_preserved` makes it `ineligible` unless
+cleanup blocks all actions. No other pairing validates.
 
 A Program result is:
 
@@ -1487,32 +1570,39 @@ ProgramResult = exact{
   finalRevisionDigest,revisionSchemaDigest,stateValueDigest,sourceLineageDigest,
   roleCatalogDigest,policyDigest,approvalDigest,verificationContractDigests,
   routeAttestationDigests,workerPolicyAttestationDigests,cleanup,episodeDigest,
-  semanticTraceDigest,operationalTraceDigest,forensicLateResultDigests,resultDigest
+  semanticTraceDigest,operationalTraceDigest,resultDigest
 }
 kind="baton.program_result"
 ```
 
-It applies the same validity matrix, validates any `valueRef` against `resultSchema`, binds every
-exact effect result and semantic revision, and preserves all route/service-tier/worker-policy
-attestations. Its revision-schema, state-value, and source-lineage digests MUST equal the exact
+It applies the same orthogonal axes and cross-axis constraints, validates any `valueRef` against
+`resultSchema`, binds every exact effect result and semantic revision, and preserves all
+route/service-tier/worker-policy attestations. Its revision-schema, state-value, and source-lineage
+digests MUST equal the exact
 final semantic revision. A succeeded Program requires zero remaining ownership. A verified Candidate may
 still await selection/integration. Completion never means integration, publication, push,
-promotion, or semantic correctness. `resultDigest` hashes every field except itself,
-`episodeDigest`, `operationalTraceDigest`, and `forensicLateResultDigests`; those
-arrival/presentation/late-evidence fields remain auditable without changing canonical semantic
-result identity. `semanticTraceDigest` is the canonical barrier/effect/revision projection and is
-included.
+promotion, or semantic correctness. `ProgramResult` is immutable and content-addressed:
+`resultDigest` hashes every field except itself, `episodeDigest`, and `operationalTraceDigest`;
+those arrival/presentation fields remain auditable without changing canonical semantic result
+identity. `semanticTraceDigest` is the canonical barrier/effect/revision projection and is
+included. Late observations after terminal settlement are append-only `ForensicLateResultRecord`
+sidecar records anchored to `resultDigest`; they never alter it.
 
 The registered `baton.gate_result` used by `gate` is
-`exact{schemaVersion,kind,binding,candidate,contract,approvedPlanDigest,nodeKey,
-nodeTemplateDigest,approvalEvent,frozenTaskBriefVerificationDigest,verdict,
-verificationReceipt,resultDigest}` with `kind="baton.gate_result"`, `binding=GateBinding`,
-`candidate=CandidateRef|ArtifactRef`, the exact `VerificationContractRef`, and
-`verdict="passed|candidate_failed|inconclusive"`. Every duplicated coordinate MUST equal the
-binding. Its result digest excludes only itself. The referee's durable receipt MUST bind the same
+`exact{schemaVersion,kind,binding,candidate,contract,frozenVerificationContractDigest,
+approvedPlanDigest,nodeKey,nodeTemplateDigest,approvalEvent,
+frozenTaskBriefVerificationDigest,verdict,verificationReceipt,resultDigest}` with
+`kind="baton.gate_result"`, `binding=GateBinding`, `candidate=CandidateRef|ArtifactRef`,
+`contract=VerificationContractRef`, and `verdict="passed|candidate_failed|inconclusive"`.
+`contract.contractDigest` MUST equal `frozenVerificationContractDigest`, which MUST equal the
+binding's frozen-contract artifact digest. Every duplicated coordinate MUST equal the binding. Its
+result digest excludes only itself. The `verdict` MUST equal the verdict that the frozen
+`expectResult.verdictDerivation` prescribes for the observed verifier exit and frozen-contract
+quality-gate state; any other verdict is invalid. The referee's durable receipt MUST bind the same
 candidate/artifact, approved Plan digest, node key, node-template digest, approval event, frozen
-Task Brief verification digest, and contract. Substitution or resolving any current/historical
-head fails authority before verifier effect; it does not yield a rejected verdict.
+Task Brief verification digest, frozen verification-contract digest, and verdict. Substitution or
+resolving any current/historical head fails authority before verifier effect; it does not yield a
+rejected verdict.
 
 ## 93.16 Typed feedback, revision, and independent review
 
@@ -1761,8 +1851,8 @@ Its field set is exhaustive:
 ProgramPolicy = exact{
   schemaVersion,kind,canonicalOrderPolicyDigest,contextPolicyDigest,
   workflowPolicyDigest,goalPolicyDigest,capacityPolicyDigest,routeCardSetDigest,
-  artifactPolicyDigest,lifecyclePolicyDigest,maxProgramBytes,maxProgramNodes,
-  maxProgramDepth,maxSchemaDefinitions,maxValueBytes,maxResultBytes,
+  artifactPolicyDigest,lifecyclePolicyDigest,deploymentCapsDigest,maxProgramBytes,
+  maxProgramNodes,maxProgramDepth,maxSchemaDefinitions,maxValueBytes,maxResultBytes,
   maxEvidenceRefs,maxParallelBranches,maxRepeatRounds,maxChildDepth,
   maxEffectInstances,maxJoinMembers,maxJoinComparisons,maxStateRevisions,
   maxTraceBytes,policyDigest
@@ -1771,7 +1861,8 @@ schemaVersion=1
 kind="baton.program_policy"
 ```
 
-Every dependency digest is exact and current at preview/admission. `policyDigest` hashes every
+Every dependency digest is exact and current at preview/admission. `deploymentCapsDigest` binds the
+exact named deployment-ceiling vector in §93.20; `policyDigest` hashes every
 field except itself. Policy mismatch, omitted dependency, or an unknown field fails before effect.
 
 Let deployment inputs be:
@@ -1780,42 +1871,147 @@ Let deployment inputs be:
 E = canonical-order maxEventBytes
 R = canonical-order maxReceiptBytes
 A = artifact policy maxArtifactBytes
-C = currently reservable worker capacity
-W = currently reservable private-worktree capacity
-Q(role) = ready concurrency for that exact route/service tier
+C = currently reservable worker capacity (concurrent worker slots)
+W = currently reservable private-worktree capacity (concurrent private checkouts)
+Q(role) = ready concurrency for that exact route/service tier (provider-native ready slots)
 T = approved Goal wall time in milliseconds
 P = minimum provider effect wall reservation in milliseconds
 ```
+
+Concurrency is a hard minimum over four independently reservable resources and refuses zero:
+
+```text
+maxParallelBranches = min(C, W, min_role Q(role), parallelBranchCeiling)
+```
+
+If any of `C`, `W`, `min_role Q(role)`, or `parallelBranchCeiling` is zero, preview refuses
+`program_capacity_unavailable` before admission; it never silently substitutes one. `max(1, ...)`
+and any default-of-one masking are forbidden. The minimum is the exact live resource truth at
+admission: capacity that is not reservable does not count, and no provider turn, scheduler queue,
+or worker prose widens it. Routine callers and model workers never supply `C`, `W`, `Q(role)`, or
+the ceiling; the deployment resolves and records them.
+
+Every numeric ceiling below is one of two closed kinds, never an opaque literal: either it is
+derived from a lower policy/envelope/compiled-graph/provider-turn bound already named in the table,
+or it is an explicitly named, versioned, empirically-tested deployment cap. The named caps form one
+closed vector bound by `deploymentCapsDigest`; a cap change is a successor policy. They are:
+
+| Named cap | Default | Derivation |
+| --- | --- | --- |
+| `parallelBranchCeiling` | 8 | empirically-tested live cross-controller ceiling from the issue-5 suites; bounds concurrent branch-local PCs per execution |
+| `repeatRoundsCeiling` | current Workflow `maxRounds` | Workflow safe default, versioned with `workflowPolicyDigest` |
+| `childDepthCeiling` | `context.recursionDepth + 3` | Context recursion authority plus bounded Program child nesting |
+| `programBytesCeiling` | 65,536 | compiled-graph floor of the current 16 MiB canonical-order event ceiling over 256 sources |
+| `programNodesCeiling` | 256 | compiled-graph bound: one node per source-byte floor under the event ceiling |
+| `programDepthCeiling` | 32 | static dominance/ownership walk bound |
+| `schemaDefinitionsCeiling` | 128 | half the node ceiling; shared by properties, variants, and enums |
+| `valueBytesCeiling` | 1,048,576 | `min(A/64, E/4)` artifact/event envelope floor |
+| `resultBytesCeiling` | 1,048,576 | `min(R, A/64)` receipt/artifact envelope floor |
+| `evidenceRefsCeiling` | 1,024 | `floor(resultBytesCeiling/128)` ref-record floor |
+| `effectInstancesCeiling` | 1,024 | compiled-graph provider-turn bound across nodes, rounds, and child depth |
+| `joinComparisonsCeiling` | 1,000,000 | worst-case pairwise `joinMembers^2` bound |
+| `stateRevisionsCeiling` | 65,536 | `2 + nodes + 5*effects + 4*joinMembers` revision-algebra bound |
+| `traceBytesCeiling` | 8,388,608 | `min(A/8, E)` artifact/event trace envelope floor |
 
 The normalized safe defaults are:
 
 | Field | Formula | Default when deployment omits a narrower value |
 | --- | --- | --- |
-| `maxProgramBytes` | `min(65536, floor(E/4))` | 65,536 with current 16 MiB event ceiling |
-| `maxProgramNodes` | `min(256, floor(maxProgramBytes/256))` | 256 |
-| `maxProgramDepth` | `min(32, maxProgramNodes)` | 32 |
-| `maxSchemaDefinitions` | `min(128, floor(maxProgramNodes/2))` | 128 |
-| `maxValueBytes` | `min(1048576, floor(A/64), floor(E/4))` | 1 MiB |
-| `maxResultBytes` | `min(1048576, R, floor(A/64))` | 1 MiB |
-| `maxEvidenceRefs` | `min(1024, floor(maxResultBytes/128))` | 1,024 |
-| `maxParallelBranches` | `max(1,min(8,C,W,min_role Q(role)))` | capacity-derived, never above 8 |
-| `maxRepeatRounds` | `min(8,workflow.maxRounds,floor(T/P))` | current Workflow safe default 8 |
-| `maxChildDepth` | `min(4,context.recursionDepth+3,floor(T/P))` | 4 when authority permits |
-| `maxEffectInstances` | `min(1024,maxProgramNodes*maxRepeatRounds*(maxChildDepth+1),floor(T/P))` | derived |
-| `maxJoinMembers` | `min(maxProgramNodes,maxParallelBranches*maxRepeatRounds)` | derived |
-| `maxJoinComparisons` | `min(1000000,maxJoinMembers*maxJoinMembers)` | derived |
-| `maxStateRevisions` | `min(65536,2+maxProgramNodes+5*maxEffectInstances+4*maxJoinMembers)` | derived |
-| `maxTraceBytes` | `min(8388608,floor(A/8),E)` | 8 MiB |
+| `maxProgramBytes` | `min(programBytesCeiling, floor(E/4))` | 65,536 with current 16 MiB event ceiling |
+| `maxProgramNodes` | `min(programNodesCeiling, floor(maxProgramBytes/256))` | 256 |
+| `maxProgramDepth` | `min(programDepthCeiling, maxProgramNodes)` | 32 |
+| `maxSchemaDefinitions` | `min(schemaDefinitionsCeiling, floor(maxProgramNodes/2))` | 128 |
+| `maxValueBytes` | `min(valueBytesCeiling, floor(A/64), floor(E/4))` | 1 MiB |
+| `maxResultBytes` | `min(resultBytesCeiling, R, floor(A/64))` | 1 MiB |
+| `maxEvidenceRefs` | `min(evidenceRefsCeiling, floor(maxResultBytes/128))` | 1,024 |
+| `maxParallelBranches` | `min(C, W, min_role Q(role), parallelBranchCeiling)`; zero refuses | capacity-derived, never above `parallelBranchCeiling` |
+| `maxRepeatRounds` | `min(repeatRoundsCeiling, workflow.maxRounds, floor(T/P))` | current Workflow safe default 8 |
+| `maxChildDepth` | `min(childDepthCeiling, context.recursionDepth+3, floor(T/P))` | 4 when authority permits |
+| `maxEffectInstances` | `min(effectInstancesCeiling, maxProgramNodes*maxRepeatRounds*(maxChildDepth+1), floor(T/P))` | derived |
+| `maxJoinMembers` | `min(maxProgramNodes, maxParallelBranches*maxRepeatRounds)` | derived |
+| `maxJoinComparisons` | `min(joinComparisonsCeiling, maxJoinMembers*maxJoinMembers)` | derived |
+| `maxStateRevisions` | `min(stateRevisionsCeiling, 2+maxProgramNodes+5*maxEffectInstances+4*maxJoinMembers)` | derived |
+| `maxTraceBytes` | `min(traceBytesCeiling, floor(A/8), E)` | 8 MiB |
 
-If an input makes a formula zero or inconsistent, preview refuses `program_capacity_unavailable`.
-Deployment may configure a narrower positive value, recorded in policy and digest; it may not
-exceed the formula. `max+1` refuses the whole admission. Runtime capacity changes may delay an
-already approved branch but cannot widen or rewrite its policy. Historical replay uses the exact
-old policy. A wider policy requires a successor approval.
+If an input makes a formula zero or inconsistent (other than the concurrency zero-refusal above),
+preview refuses `program_capacity_unavailable`. Deployment may configure a narrower positive value,
+recorded in policy and digest; it may not exceed the formula or its named cap. `max+1` refuses the
+whole admission. Runtime capacity changes may delay an already approved branch but cannot widen or
+rewrite its policy. Historical replay uses the exact old policy. A wider policy, cap, or capacity
+truth requires a successor approval.
 
 ## 93.21 Executable four-arm evaluation gate
 
 The evaluation is a checked-in, executable corpus, not a prose aspiration.
+
+### Evaluation plan
+
+The evaluation runs under one closed deployment-owned `EvaluationPlan`, approved once and bound by a
+single digest. It carries preflight ranges, total authority, pilot paired blocks, per-route
+rate-limit scheduling, early stop, cancellation/reap, crash-ambiguous handling, and a resume rule.
+It owns no Program effect grammar and no Program correctness rule.
+
+```text
+EvaluationPlan = exact{
+  schemaVersion,kind,planId,corpusDigest,arms,repetitionsPerArm,preflight,
+  authority,pilot,rateLimits,earlyStop,resumeRule,cancellation,
+  approvalDigest,planDigest
+}
+schemaVersion=1
+kind="baton.evaluation_plan"
+planId="eval-plan:"+planDigest
+arms=set-like subset of {direct,naive_parallel,lossy_episode,program}
+repetitionsPerArm=positive safe integer
+
+preflight = exact{
+  minRouteFamilies,minWorkerCapacityC,minWorktreeCapacityW,
+  requiredGreenContracts,rangeChecks
+}
+rangeChecks = exact{
+  tokenHeadroomBasisPoints,wallHeadroomBasisPoints,
+  usdHeadroomBasisPoints,providerCallHeadroomBasisPoints
+}
+
+authority = exact{
+  totalInputTokens,totalOutputTokens,totalUsd,totalProviderCalls,totalWallMs
+}
+
+pilot = exact{pairedBlocks,pilotGate}
+pilotGate = exact{minUtilityLiftBasisPoints,maxDuplicateAmbiguousBasisPoints}
+
+rateLimits = set-like exact{routeKey,perMinute,concurrency}[]
+
+earlyStop = exact{kind,futility}
+kind="futility_on_paired_utility|none"
+futility = exact{minPairedBlocks,utilityFloorBasisPoints}
+
+resumeRule = exact{strategy}
+strategy="from_complete_paired_blocks_only"
+
+cancellation = exact{reap,crashAmbiguous}
+reap = exact{selectiveStop,wholeRunStop,zeroResidueRequired}
+crashAmbiguous = exact{neverRepeat,preserveDisposition}
+```
+
+`preflight.rangeChecks` are headroom basis points (0..10000) verified against the corpus and route
+inventory before any arm runs; the run refuses `evaluation_preflight_failed` if any measured range
+falls below its headroom, if reservable worker/worktree capacity is below `minWorkerCapacityC`/
+`minWorktreeCapacityW`, if fewer than `minRouteFamilies` route families are ready, or if any
+`requiredGreenContracts` entry is not green at the candidate commit. `authority` is the hard total
+token/USD/provider-call/wall ceiling for the whole evaluation; the runner stops the evaluation when
+any ceiling is reached and records which ceiling bound it. `pilot` runs `pairedBlocks` paired
+blocks first and gates the full run on `pilotGate`; the pilot itself resumes only from complete
+paired blocks. `rateLimits` schedules per-route `perMinute` and `concurrency` caps; the runner paces
+and queues within them and never exceeds a route's native limit. `earlyStop` declares one named
+futility rule (or `none`) computed only from complete paired blocks. `cancellation.reap` requires
+that a selective stop, a whole-run stop, and zero-residue cleanup all be demonstrated within the
+run. `cancellation.crashAmbiguous` requires that an ambiguous provider/Git/verifier effect is never
+repeated and is preserved as the exact §93.15 `ambiguous` disposition. `resumeRule.strategy` is the
+only resume strategy: the evaluation resumes exclusively from complete paired blocks, replaying
+settled effects under their exact durable transition digests and never re-running an ambiguous or
+already-settled effect. `approvalDigest` binds the one concise approval; `planDigest` hashes the
+plan excluding itself and `planId`. A wider authority, a new arm, a different corpus, or a relaxed
+resume/rate/crash rule requires a successor plan.
 
 ### Corpus
 
@@ -2007,19 +2203,22 @@ Implementation starts with these exact red suites:
 7. `phase93b-effect-protocol-red.test.mjs`: deterministic effect IDs; every five-phase crash point;
    prebinding without input/result value digests; parent/member map identity and partial retry;
    every five-phase crash point; response loss; no repeat after effect start; acknowledgement
-   attachment; forensic late results; cleanup convergence.
+   attachment; forensic late-result sidecar records; cleanup convergence.
 8. `phase93c-effect-schema-red.test.mjs`: exhaustive call/map/reduce/gate/notify/checkpoint/finish
-   fields and ports; gate raw-command/argv/cwd/env rejection; separately approved contract and exact
-   Candidate/artifact, approved Plan, node key, node-template, approval-event, frozen Task Brief,
-   and historical-current substitution tests.
+   fields and ports; gate raw-command/argv/cwd/env rejection; approval-event-bound frozen
+   verification-contract bytes and frozen Task Brief verification (including `expectResult`),
+   binding-digest equality to Candidate/Plan commitments, complete verdict-to-`expectResult` mapping,
+   and historical/current substitution refusal.
 9. `phase93c-route-policy-red.test.mjs`: exact harness/model/effort; separate service-tier
    exact/none null rules; immutable template bytes/approved content refs; nullable provider
    observation; worker-policy request/resolution/observation digests through transitions/results/
    replay; mismatch reap.
-10. `phase93c-result-disposition-red.test.mjs`: every orthogonal execution/verification/work-product/
-    cleanup/selection/integration matrix row and invalid cross-product; artifact/capsule/commit
-    consistency; retry/revise/reduce/select/integrate/export eligibility; partial map members;
-    preservation failure/open ownership; typed forensic late results; explicit capability-gated
+10. `phase93c-result-disposition-red.test.mjs`: every orthogonal execution (incl. `stopped`/
+    `not_dispatched`)/verification/work-product/cleanup/selection/integration value and cross-axis
+    constraint, plus invalid cross-products; execution and verification causes; product-only
+    work-product states; artifact/capsule/commit consistency;
+    retry/revise/reduce/select/integrate/export eligibility; partial map members; preservation-failed
+    custody and open ownership; forensic late-result sidecar records; explicit capability-gated
     apply/integrate; completion requires zero.
 11. `phase93c-review-revision-red.test.mjs`: typed packets/revisions, revision schema/value/source-
     lineage digests, both-family independence, typed ReviewArtifact, same-family/prose substitution
@@ -2038,7 +2237,10 @@ Implementation starts with these exact red suites:
     set from one registry across every transport.
 17. `phase93e-policy-red.test.mjs`: every formula, narrower deployment setting, zero/inconsistent
     refusal, max+1, historical policy stability, and no caller numeric knobs.
-18. `phase93f-evaluation-red.test.mjs`: 24-task corpus, five repetitions, route controls, crash
+18. `phase93f-evaluation-red.test.mjs`: closed deployment-owned `EvaluationPlan` (preflight ranges
+    and refusal, total token/USD/provider-call/wall authority, one approval, pilot paired blocks,
+    per-route rate-limit scheduling, early stop, cancellation/reap, crash-ambiguous never-repeat, and
+    resume only from complete paired blocks); 24-task corpus, five repetitions, route controls, crash
     schedule, metric formula, artifacts, confidence rule, and losing-result publication.
 19. Retain cross-phase CK8/CK9, RC2/RC3, RR recovery races, D4/D6 verifier freshness, Phase 88 route
     substitution, Phase 91 response loss, Phase 92 facade/reap, writer-lease release, issue-5
