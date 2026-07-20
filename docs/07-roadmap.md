@@ -16,9 +16,12 @@
 > zero-assembly `baton serve`. Phases 90–92 now land durable semantic control settlement,
 > Run-scoped streams, semantic Episode/workstream handles across direct/CLI/authenticated
 > Web/MCP/browser, bounded replay, resident stale-authority recovery, verifier/result coherence,
-> and exact route/readiness truth. Phase 93 is next: closed Program IR, event-driven
-> recursive/parallel composition, immutable base plus private overlays, one fenced integrator, and
-> live multi-harness gates. The
+> and exact route/readiness truth. Phase 93 remains planned: the specification at
+> `spec/phase93-closed-program-ir.md` defines the 93A–93F sequence for a closed canonical Program
+> IR, durable effect protocol, event-driven recursive/parallel composition, immutable base plus
+> private overlays, one fenced integrator, four-arm evaluation, and live multi-harness gates. It is
+> a specification-only successor to the draft at `fa9e07a`; no Phase 93 runtime or shipped status
+> is claimed. The
 > milestone prose below is historical sequencing, not a claim that a Git worktree or private HOME
 > is an OS sandbox or that the capability and representation planes are complete.
 
