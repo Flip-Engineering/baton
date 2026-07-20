@@ -509,7 +509,8 @@ worker-supplied prose.
 `serviceTierRequest.authorizationDigest` comes from a distinct model-policy approval when exact;
 it cannot be inferred from harness/model/effort or adapter defaults. `workerPolicyRequest`
 is the exact Phase 92/default schema-v1 request and its digest MUST equal
-`workerPolicyRequestDigest`. An inline template binds its immutable canonical bytes. A content ref
+`workerPolicyRequestDigest`, where `workerPolicyRequestDigest = H(Program-canonical bytes of the
+normalized Phase 92/default schema-v1 worker-policy request object)`. An inline template binds its immutable canonical bytes. A content ref
 MUST be an immutable approved artifact whose bytes revalidate to the exact `NodeTemplate` and
 `nodeTemplateDigest`; replay reads that artifact, never current Plan/template defaults.
 `requiredEffects` MUST be a subset of `effects`; every capability/effect is deployment-known.
@@ -581,12 +582,32 @@ ApprovalTemplate = exact{
 schemaVersion = 1
 kind = "baton.program_approval_template"
 roles = set-like role names[1..policy.maxProgramNodes]
-effectKinds = set-like subset of the seven effect kinds[1..7]
+effectKinds = set-like subset of the seven effect kinds[0..7]
 repositoryScopes = set-like normalized repository-relative scopes[1..policy.maxEvidenceRefs]
 repeatBoundName = "program_repeat_rounds"
 childBoundName = "program_child_depth"
 effectBoundName = "program_effect_instances"
 ```
+
+The template projections are exact and closed:
+
+- `roles` MUST equal the sorted set of role names in the normalized role catalog.
+- `effectKinds` MUST equal the sorted set of the seven effect kinds statically present in the
+  Program's own nodes or in statically reachable repeat/child bodies. A Program that reaches no
+  effect node carries the empty set; the bound is [0..7] for exactly that case.
+- `repositoryScopes` MUST equal the sorted union of every catalog role template's `pathScope` and
+  `contextScope`.
+- The three constraint digests commit the template to the exact normalized catalog projections:
+  - `routeConstraintDigest = H(Program-canonical bytes of exact{kind:"baton.route_constraint",entries})`
+    where `entries` is the set-like-by-role array of `exact{role,routeRequest}`.
+  - `serviceTierConstraintDigest = H(Program-canonical bytes of exact{kind:"baton.service_tier_constraint",entries})`
+    where `entries` is the set-like-by-role array of `exact{role,serviceTierRequest}`.
+  - `workerPolicyConstraintDigest = H(Program-canonical bytes of exact{kind:"baton.worker_policy_constraint",entries})`
+    where `entries` is the set-like-by-role array of
+    `exact{role,workerPolicyRequest,workerPolicyRequestDigest}`.
+  Set-like-by-role here means: duplicate roles are invalid and entries sort by unsigned UTF-16 role
+  name.
+- `templateDigest` hashes the complete approval template excluding itself.
 
 The template grants nothing. Start requires this exact envelope, appended by existing distinct
 approval authority after preview:
@@ -615,9 +636,8 @@ role, exact route, service tier, worker policy, effect kind, repository scope, v
 contract, repeat depth, child depth, or effect count requires a successor envelope with the prior
 digest. Approval does not launch a provider, select a Candidate, integrate, or promote knowledge.
 
-`templateDigest` hashes the complete approval template excluding itself. The template's roles,
-effect kinds, scopes, and constraint digests MUST equal the corresponding normalized Program and
-catalog projections; it cannot omit Program authority merely to obtain a smaller approval.
+The projection rules above are exhaustive: the template cannot omit Program authority merely to
+obtain a smaller approval.
 
 ## 93.9 Exhaustive control-node schemas
 
@@ -2623,6 +2643,9 @@ Implementation starts with these exact red suites:
    refusal, static effect ownership, branch/sequence/repeat/child bounds, all three exact handle
    schemas, settlement-only await, explicit success extraction, derived-only Context/collect
    output schemas, caller-schema substitution refusal, and deterministic join permutations.
+   The derived-only Context output-schema rows land with the suite-5 sub-slice (93a.3); in 93a.2
+   this suite pins the `collect` derivation, the `context` source grammar and §93.10 purity gate,
+   and the temporary closed normalization refusal of `context` nodes pending 93a.3.
 5. `phase93a-context-purity-red.test.mjs`: pure operations accepted; legacy
    map/reduce/review/verify and unknown operations rejected before effect; historical replay stable;
    explicit migration receives a new identity.
@@ -2697,6 +2720,18 @@ validation, full validation, and a status update that distinguishes fixture from
 
 1. **93A — canonical pure core:** schemas, source/canonical Program, raw/Python/TypeScript builders,
    normalization, hashing, topo order, pure Context gate, and preview. No effect dispatch.
+   Landed sub-slices:
+   - **93a.1 (shipped):** canonical value kernel — JCS bytes/digests, strict raw-JSON parser,
+     closed schema registry, typed values, and ValueRefs (suites 1–3).
+   - **93a.2:** ProgramPolicy shape, role catalog v2, approval template with exact projections,
+     source grammar and canonical normalization for the nine non-`context` node kinds,
+     predicates/joins/selectors, collect schema derivation, control/data cycle and dominance
+     validation, static effect ownership, Kahn canonical order, coalescing, and Program identity.
+     `context` nodes validate grammar and §93.10 purity but fail closed at normalization until
+     93a.3; a Program containing one is not yet admitted.
+   - **93a.3:** §93.10 purity proof enforcement with `deriveContextResultSchema` checked-in
+     transformers, Python/TypeScript builders with shared conformance vectors, and preview.
+     Completes 93A.
 2. **93B — durable state machine:** Program admission, immutable revisions, branch PCs/stacks,
    parallel/await/join, repeat/child counters, pure reducer, and replay.
 3. **93C — effect authority:** five-phase protocol; call/map/reduce; separately approved gate;
