@@ -529,10 +529,18 @@ function normalizeSessionRequest(request) {
     if (typeof request.context.worktree !== 'string' || request.context.worktree.length === 0) {
       throw new SessionSelectionError('session.context.worktree must be a non-empty path', 'invalid_session_request');
     }
-    for (const key of ['repoRoot', 'baseSha', 'branch', 'ownerTaskId']) {
+    for (const key of ['repoRoot', 'baseSha', 'branch', 'ownerTaskId', 'logicalTaskId', 'ownerReceiptDigest']) {
       if (request.context[key] !== undefined && (typeof request.context[key] !== 'string' || request.context[key].length === 0)) {
         throw new SessionSelectionError(`session.context.${key} must be a non-empty string`, 'invalid_session_request');
       }
+    }
+    if (request.context.ownerReceiptDigest !== undefined
+      && !/^[a-f0-9]{64}$/u.test(request.context.ownerReceiptDigest)) {
+      throw new SessionSelectionError('session.context.ownerReceiptDigest must be an exact digest', 'invalid_session_request');
+    }
+    if (/^ws-[a-f0-9]{32}$/u.test(request.context.ownerTaskId ?? '')
+      && (request.context.logicalTaskId === undefined || request.context.ownerReceiptDigest === undefined)) {
+      throw new SessionSelectionError('physical session context requires its logical binding and receipt digest', 'invalid_session_request');
     }
     let sparsePaths;
     if (request.context.sparsePaths !== undefined) {
@@ -575,6 +583,8 @@ function normalizeSessionRequest(request) {
       ...(request.context.baseSha ? { baseSha: request.context.baseSha } : {}),
       ...(request.context.branch ? { branch: request.context.branch } : {}),
       ...(request.context.ownerTaskId ? { ownerTaskId: request.context.ownerTaskId } : {}),
+      ...(request.context.logicalTaskId ? { logicalTaskId: request.context.logicalTaskId } : {}),
+      ...(request.context.ownerReceiptDigest ? { ownerReceiptDigest: request.context.ownerReceiptDigest } : {}),
       ...(sparsePaths ? { sparsePaths } : {}),
       ...(sparseIdentity ? { sparseCheckoutIdentity: sparseIdentity } : {}),
       ...(toolchainProjection ? { toolchainProjection } : {}),
@@ -2361,6 +2371,7 @@ export class Coordinator {
     // 'working' and the adapter is invoked synchronously below (so a bare tick() dispatches
     // in one turn), while the worker's actual work is gated on the worktree being ready.
     handle.worktreeCreationPending = true;
+    handle.processGeneration = (handle.processGeneration ?? 0) + 1;
     let worktreeSource;
     if (task.sessionRequest?.mode === 'resume') {
       worktreeSource = Promise.resolve({
@@ -2368,13 +2379,19 @@ export class Coordinator {
           branch: task.sessionContext.branch,
           baseSha: task.sessionContext.baseSha,
           ownerTaskId: task.sessionContext.ownerTaskId,
+          ...(task.sessionContext.logicalTaskId ? { logicalTaskId: task.sessionContext.logicalTaskId } : {}),
+          ...(task.sessionContext.ownerReceiptDigest ? { ownerReceiptDigest: task.sessionContext.ownerReceiptDigest } : {}),
           ...(task.sessionContext.sparsePaths ? { sparsePaths: task.sessionContext.sparsePaths } : {}),
           ...(task.sessionContext.sparseCheckoutIdentity ? { sparseCheckoutIdentity: task.sessionContext.sparseCheckoutIdentity } : {}),
           ...(task.sessionContext.toolchainProjection ? { toolchainProjection: task.sessionContext.toolchainProjection } : {}),
           ...(task.sessionContext.capacityReservation ? { capacityReservation: task.sessionContext.capacityReservation } : {}),
         });
     } else {
-      try { worktreeSource = Promise.resolve(this._worktrees.create(task.id, task.worktreeBaseSha ?? null)); }
+      try { worktreeSource = Promise.resolve(this._worktrees.create(task.id, task.worktreeBaseSha ?? null, {
+        runId: task.runId ?? null,
+        attemptId: workerId,
+        processGeneration: handle.processGeneration,
+      })); }
       catch (error) { worktreeSource = Promise.reject(error); }
     }
     let worktreeReady = worktreeSource
@@ -2395,9 +2412,33 @@ export class Coordinator {
             ...(res.sparseCheckoutIdentity !== undefined ? { sparseCheckoutIdentity: normalizeSparseCheckoutIdentity(res.sparseCheckoutIdentity) } : {}),
             ...(res.capacityReservation ? { capacityReservation: Object.freeze({ ...res.capacityReservation }) } : {}),
             ownerTaskId: res.ownerTaskId ?? task.sessionContext?.ownerTaskId ?? task.id,
+            ...(res.logicalTaskId || task.sessionContext?.logicalTaskId
+              ? { logicalTaskId: res.logicalTaskId ?? task.sessionContext.logicalTaskId } : {}),
+            ...(res.ownerReceiptDigest || task.sessionContext?.ownerReceiptDigest
+              ? { ownerReceiptDigest: res.ownerReceiptDigest ?? task.sessionContext.ownerReceiptDigest } : {}),
           });
           task.sessionContext = sessionContext;
           handle.sessionContext = sessionContext;
+          if (res.ownerReceipt) {
+            this._log.append({
+              worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle),
+              kind: 'worktree.owner_bound', actor: 'policy',
+              payload: {
+                schemaVersion: 1,
+                physicalOwnerId: res.ownerReceipt.physicalOwnerId,
+                deploymentId: res.ownerReceipt.deploymentId,
+                controllerId: res.ownerReceipt.controllerId,
+                runId: res.ownerReceipt.runId,
+                attemptId: res.ownerReceipt.attemptId,
+                logicalTaskId: res.ownerReceipt.logicalTaskId,
+                processGeneration: res.ownerReceipt.processGeneration,
+                branch: res.ownerReceipt.branch,
+                worktree: res.ownerReceipt.worktree,
+                baseSha: res.ownerReceipt.baseSha,
+                receiptDigest: res.ownerReceipt.receiptDigest,
+              },
+            });
+          }
           this._log.append({
             worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'worktree.ready', actor: 'orchestrator',
             payload: sessionContext,
@@ -2432,6 +2473,7 @@ export class Coordinator {
       if (!terminalized && task.sessionRequest?.mode === 'new') this._removeOwnedTaskWorktree(handle, task).catch(noop);
       throw failure;
     }).finally(() => { handle.worktreeCreationPending = false; });
+    handle.worktreeReady = worktreeReady;
     // Some test/dummy adapters do not consume readiness. The prerequisite still owns failure,
     // while this observer prevents an otherwise-unhandled rejected promise.
     worktreeReady.catch(noop);
@@ -2465,7 +2507,6 @@ export class Coordinator {
     // coordinator's authority visible across the async worktree boundary.
     const spawnAbort = new AbortController();
     handle.spawnAbort = spawnAbort;
-    handle.processGeneration = (handle.processGeneration ?? 0) + 1;
     // SC1d: the spawn Ack is consumed, not discarded — a refused spawn must fail the task
     // instead of leaving a zombie in 'working' (the G1 audit's silent failure mode).
     handle.nativeSpawnPending = true;
@@ -2748,8 +2789,8 @@ export class Coordinator {
       }
     };
     if (typeof this._worktrees?.reserveCapacityMany === 'function') {
-      const reservations = await Promise.resolve(this._worktrees.reserveCapacityMany(prepared.map(({ taskId }) => ({
-        taskId, requestedBaseSha: null,
+      const reservations = await Promise.resolve(this._worktrees.reserveCapacityMany(prepared.map(({ taskId, runId, workerId }) => ({
+        taskId, requestedBaseSha: null, runId, attemptId: workerId, processGeneration: 1,
       }))));
       if (!Array.isArray(reservations) || reservations.length !== prepared.length) {
         throw Object.assign(new Error('plan wave capacity authority returned an invalid result'), {
@@ -2761,7 +2802,9 @@ export class Coordinator {
       });
     } else if (typeof this._worktrees?.reserveCapacity === 'function') {
       const reservations = await Promise.allSettled(prepared.map((member) => (
-        this._worktrees.reserveCapacity(member.taskId, null)
+        this._worktrees.reserveCapacity(member.taskId, null, {
+          runId: member.runId, attemptId: member.workerId, processGeneration: 1,
+        })
       )));
       prepared.forEach(({ taskId }, index) => {
         if (reservations[index].status === 'fulfilled' && reservations[index].value !== null) {
@@ -2989,6 +3032,7 @@ export class Coordinator {
     if (planMandatory && !opts.goalPlan && !derivedReviewAuthorized) throw Object.assign(new Error('an approved goal/plan node is required'), { code: 'goal_plan_required' });
     if (opts.goalPlan && !this._goalPlanAuthority) throw Object.assign(new Error('goal/plan authority is not configured'), { code: 'goal_plan_unavailable' });
     if (opts.goalPlan && vendor === 'auto') throw Object.assign(new Error('plan-gated dispatch requires an exact harness'), { code: 'plan_route_mismatch' });
+    const workerId = this._allocWorkerId();
     let planAuth = null; let planState = null; let capacityPrepared = false;
     let capacityPreflightDone = false;
     let revisionParentTaskId = null;
@@ -3031,7 +3075,9 @@ export class Coordinator {
             code: 'plan_revision_result_ref_mismatch',
           });
         }
-        const prepared = await this._worktrees.reserveCapacity(taskId, worktreeBaseSha);
+        const prepared = await this._worktrees.reserveCapacity(taskId, worktreeBaseSha, {
+          runId, attemptId: workerId, processGeneration: 1,
+        });
         capacityPreflightDone = true;
         if (prepared?.baseSha && prepared.baseSha !== worktreeBaseSha) {
           await Promise.resolve(this._worktrees.releaseCapacity?.(taskId));
@@ -3081,7 +3127,6 @@ export class Coordinator {
       }, derivedTopologyRelation);
     }
 
-    const workerId = this._allocWorkerId();
     const taskFields = () => ({
       id: taskId, brief: admittedBrief, deps, refines: revisionParentTaskId ?? opts.refines ?? null,
       runId,
@@ -3123,7 +3168,9 @@ export class Coordinator {
     try {
       if (!capacityPreflightDone && !capacityPrepared && sessionRequest.mode === 'new'
         && typeof this._worktrees?.reserveCapacity === 'function') {
-        const prepared = await this._worktrees.reserveCapacity(taskId, worktreeBaseSha);
+        const prepared = await this._worktrees.reserveCapacity(taskId, worktreeBaseSha, {
+          runId, attemptId: workerId, processGeneration: 1,
+        });
         if (prepared?.baseSha) worktreeBaseSha = prepared.baseSha;
         capacityPrepared = prepared !== null;
         if (this._drainState !== 'open') {
@@ -8919,7 +8966,11 @@ export class Coordinator {
         }
         if (this._drainState === 'open' && handle.status !== 'stopping' && handle.status !== 'dead') {
           const releaseAuthority = this._acquireAuthorityOp();
-          this._runTrustGate(handle, wr).catch(noop).finally(releaseAuthority);
+          // Adapters are required to consume worktreeReady, but terminal authority must remain
+          // correct even for a native/test adapter that emits completion before that promise's
+          // bookkeeping callback runs. Never capture through the logical placeholder path.
+          Promise.resolve(handle.worktreeReady).then(() => this._runTrustGate(handle, wr))
+            .catch(noop).finally(releaseAuthority);
         }
         break;
       }

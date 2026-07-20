@@ -178,8 +178,8 @@ test('Phase 58: createDriver composes worker/verify sparse views with projected 
   execFileSync(process.execPath, ['-e', verificationScript], { cwd: staleVerify.path, stdio: 'pipe' });
   assert.equal(existsSync(staleVerify.path), true);
   assert.equal(
-    git(['branch', '--list', 'baton/phase58-sparse-driver', '--format=%(refname:short)'], f.repo),
-    'baton/phase58-sparse-driver',
+    git(['branch', '--list', worker.sessionContext.branch, '--format=%(refname:short)'], f.repo),
+    worker.sessionContext.branch,
   );
 
   const receipt = await driver.drainAndClose('phase58:test');
@@ -188,9 +188,9 @@ test('Phase 58: createDriver composes worker/verify sparse views with projected 
   assert.equal(existsSync(workerPath), false);
   assert.equal(existsSync(staleVerify.path), false);
   assert.equal(existsSync(runtimePath), false);
-  assert.equal(existsSync(join(f.repo, '.baton', 'wt', 'phase58-sparse-driver.meta.json')), false);
-  assert.equal(existsSync(join(f.repo, '.baton', 'wt', 'phase58-sparse-driver.projection.exclude')), false);
-  assert.equal(git(['branch', '--list', 'baton/phase58-sparse-driver', '--format=%(refname:short)'], f.repo), '');
+  assert.equal(existsSync(join(f.repo, '.baton', 'wt', `${worker.sessionContext.ownerTaskId}.meta.json`)), false);
+  assert.equal(existsSync(join(f.repo, '.baton', 'wt', `${worker.sessionContext.ownerTaskId}.projection.exclude`)), false);
+  assert.equal(git(['branch', '--list', worker.sessionContext.branch, '--format=%(refname:short)'], f.repo), '');
   assert.equal(git(['worktree', 'list', '--porcelain'], f.repo).includes(join(f.repo, '.baton')), false);
   assert.equal(!existsSync(join(f.repo, '.baton', 'verify')) || readdirSync(join(f.repo, '.baton', 'verify')).length === 0, true);
   assert.equal(!existsSync(join(f.repo, '.baton', 'runtime')) || readdirSync(join(f.repo, '.baton', 'runtime')).length === 0, true);
