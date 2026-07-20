@@ -508,6 +508,21 @@ export class WorktreeCapacityAuthority {
     });
   }
 
+  settleForCleanup(id) {
+    if (typeof id !== 'string' || id.length === 0) {
+      throw new TypeError('capacity cleanup-settlement id is invalid');
+    }
+    return this._lock(() => {
+      const state = this._read();
+      const retained = state.reservations.filter((row) => row.id !== id);
+      if (retained.length !== state.reservations.length) {
+        state.reservations = retained;
+        this._write(state);
+      }
+      return state.reservations.every((row) => row.id !== id);
+    });
+  }
+
   adoptWorker(id) {
     return this._lock(() => {
       const state = this._read(); const index = state.reservations.findIndex((row) => row.id === id && row.kind === 'worker');
@@ -517,13 +532,17 @@ export class WorktreeCapacityAuthority {
     });
   }
 
-  reconcile(activeWorkerIds = []) {
+  reconcile(activeWorkerIds = [], retainedWorkerIds = []) {
     const active = new Set(activeWorkerIds.map((id) => `worker:${id}`));
+    const retained = new Set(retainedWorkerIds.map((id) => `worker:${id}`));
     return this._lock(() => {
       const state = this._read(); const removed = [];
       const adopted = [];
       state.reservations = state.reservations.filter((row) => {
         if (row.kind === 'verify') { removed.push(row.id); return false; }
+        // A retained checkout whose physical-owner binding failed validation is not cleanup or
+        // adoption authority. Preserve its reservation byte-for-byte for its owning controller.
+        if (row.kind === 'worker' && retained.has(row.id)) return true;
         const ownedInactive = row.ownerId === this.ownerId && !active.has(row.id);
         if (ownedInactive) { removed.push(row.id); return false; }
         const deadForeignInactive = row.ownerId !== this.ownerId && !active.has(row.id) && !livePid(row.pid);
