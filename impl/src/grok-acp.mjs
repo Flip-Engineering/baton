@@ -20,7 +20,10 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { renderBrief } from './adapter.mjs';
-import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
+import {
+  normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload,
+  reapOwnedProcessGroup,
+} from './process-lifecycle.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
@@ -148,6 +151,17 @@ export class GrokAcpCli {
     this._env = opts.env;
     this._spawnFn = opts.spawnFn ?? spawn;
     this._reapOwnedProcessGroup = opts.reapOwnedProcessGroup;
+    this._diagnosticRuntime = opts.diagnosticRuntime ?? null;
+    this._diagnosticArgs = opts.diagnosticArgs ? [...opts.diagnosticArgs] : ['models'];
+    this._diagnosticEnv = opts.diagnosticEnv ? { ...opts.diagnosticEnv } : {};
+    this._diagnosticMaxOutputBytes = opts.diagnosticMaxOutputBytes ?? 64 * 1024;
+    if (this._diagnosticRuntime !== null && typeof this._diagnosticRuntime !== 'function') {
+      throw new TypeError('GrokAcpCli: diagnosticRuntime must be a function');
+    }
+    if (!Number.isSafeInteger(this._diagnosticMaxOutputBytes)
+      || this._diagnosticMaxOutputBytes < 1024) {
+      throw new TypeError('GrokAcpCli: diagnosticMaxOutputBytes must be at least 1024 bytes');
+    }
     this._ceiling = opts.ceiling ?? 4;
     // GA4: 500000 is the live handshake's totalContextTokens for grok-build, not a guess.
     this._maxContext = opts.maxContext ?? 500000;
@@ -245,6 +259,84 @@ export class GrokAcpCli {
         pause: 'unsupported',
       },
     };
+  }
+
+  /** Session-free live authentication diagnostic using the installed `grok models` contract. */
+  async routeReadinessProbe({ route, signal } = {}) {
+    const closed = (state, initialized = false, authenticated = false, reaped = true) => ({
+      state, initialized, authenticated,
+      sessionCreated: false, promptSent: false, reaped,
+    });
+    if (!route || route.harness !== 'grok' || route.model !== this._model
+      || signal?.aborted || !this._diagnosticRuntime) return closed('blocked');
+    let runtime = null;
+    let child = null;
+    let initialized = false;
+    let reaped = true;
+    let stdout = '';
+    let stderr = '';
+    let overflow = false;
+    const kill = () => {
+      const pid = child?.pid;
+      if (!Number.isSafeInteger(pid) || pid <= 0) return;
+      try { process.kill(-pid, 'SIGKILL'); }
+      catch { try { child.kill('SIGKILL'); } catch {} }
+    };
+    signal?.addEventListener?.('abort', kill, { once: true });
+    let result = null;
+    try {
+      runtime = await this._diagnosticRuntime({ route: Object.freeze({ ...route }), card: this.card() });
+      if (!runtime || typeof runtime.cwd !== 'string' || !runtime.env
+        || typeof runtime.cleanup !== 'function') throw new Error('diagnostic runtime is invalid');
+      child = this._spawnFn(this._cmd, this._diagnosticArgs, {
+        cwd: runtime.cwd, env: { ...runtime.env, ...this._diagnosticEnv },
+        detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      initialized = Number.isSafeInteger(child?.pid) && child.pid > 0;
+      const append = (target, chunk) => {
+        const next = target + String(chunk);
+        if (Buffer.byteLength(next) > this._diagnosticMaxOutputBytes) {
+          overflow = true;
+          kill();
+          return target;
+        }
+        return next;
+      };
+      child.stdout?.on('data', (chunk) => { stdout = append(stdout, chunk); });
+      child.stderr?.on('data', (chunk) => { stderr = append(stderr, chunk); });
+      result = await new Promise((resolve) => {
+        let settled = false;
+        let spawnError = null;
+        const timer = setTimeout(kill, this._requestTimeoutMs);
+        timer.unref?.();
+        const finish = (value) => {
+          if (!settled) { settled = true; clearTimeout(timer); resolve({ ...value, error: spawnError }); }
+        };
+        child.once('error', (error) => { spawnError = error; kill(); });
+        child.once('close', (code, closeSignal) => finish({ code, signal: closeSignal }));
+        if (signal?.aborted) kill();
+      });
+      if (initialized) {
+        const reap = await (this._reapOwnedProcessGroup ?? reapOwnedProcessGroup)(child.pid, {
+          timeoutMs: Math.min(2_000, this._requestTimeoutMs),
+        });
+        reaped = reap?.confirmed === true;
+      }
+    } catch { reaped = child === null; }
+    finally {
+      signal?.removeEventListener?.('abort', kill);
+      kill();
+      if (reaped && runtime) {
+        try { await runtime.cleanup(); } catch { reaped = false; }
+      }
+    }
+    const unauthenticated = stdout.split(/\r?\n/u)
+      .some((line) => line.trim() === 'You are not authenticated');
+    const modelPresent = stdout.split(/\s+/u).includes(route.model);
+    const authenticated = initialized && reaped && !signal?.aborted && !overflow
+      && result?.code === 0 && !unauthenticated && modelPresent;
+    void stderr;
+    return closed(authenticated ? 'ready' : 'blocked', initialized, authenticated, reaped);
   }
 
   onEvent(cb) {

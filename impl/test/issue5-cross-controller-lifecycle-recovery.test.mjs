@@ -1113,6 +1113,7 @@ test('issue 5: one deployment startup terminalizes two already-dead owned genera
     `const { GlmSessionCli, openBaton } = await import(${JSON.stringify(moduleUrl)});`,
     `const route = ${JSON.stringify(deploymentRoute)};`,
     `const adapter = new GlmSessionCli({ cmd: process.execPath, args: [${JSON.stringify(FAKE_CLAUDE)}], authToken: 'fixture-only', model: route.model, killGraceMs: 20, versionProbe: () => '1.0.0' });`,
+    `adapter.credentialEpoch = ({ harness, model, effort }) => JSON.stringify({ harness, model, effort, fixtureGeneration: 1 });`,
     `const card = adapter.card.bind(adapter); adapter.card = () => ({ ...card(), concurrencyCeiling: 2 });`,
     `const deployment = await openBaton({ repo: ${JSON.stringify(repo)}, advanced: { deploymentRoot: ${JSON.stringify(deploymentRoot)}, routes: [route], adapters: { [route.harness]: adapter }, verification: { command: 'true', arguments: [] } } });`,
     `const readyWorkers = new Set();`,
@@ -1172,6 +1173,9 @@ test('issue 5: one deployment startup terminalizes two already-dead owned genera
     diagnostic('stale runtime scopes before recovered startup', { seeded, staleRuntimeScopes }));
 
   const recoveredAdapter = adapter();
+  recoveredAdapter.credentialEpoch = ({ harness, model, effort }) => (
+    JSON.stringify({ harness, model, effort, fixtureGeneration: 1 })
+  );
   const recoveredCard = recoveredAdapter.card.bind(recoveredAdapter);
   recoveredAdapter.card = () => ({ ...recoveredCard(), version: '1.0.0', concurrencyCeiling: 2 });
   recovered = await openBaton({

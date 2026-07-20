@@ -41,6 +41,7 @@ function exactBlockingAdapter() {
     },
   });
   const card = adapter.card.bind(adapter);
+  adapter.credentialEpoch = () => 'phase78-capacity-credential-generation';
   adapter.card = () => ({
     ...card(),
     authPosture: 'subscription',

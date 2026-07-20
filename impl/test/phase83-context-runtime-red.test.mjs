@@ -72,6 +72,11 @@ function adapter() {
     },
   });
   const card = value.card.bind(value);
+  value.credentialEpoch = () => `phase83-${route.harness}-credential-generation`;
+  value.routeReadinessProbe = async () => ({
+    state: 'ready', initialized: true, authenticated: true,
+    sessionCreated: false, promptSent: false, reaped: true,
+  });
   value.card = () => ({
     ...card(),
     authPosture: 'subscription',
