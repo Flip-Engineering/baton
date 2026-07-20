@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-import { BatonApplication, GlmSessionCli, createDriver, openBaton } from '../src/index.mjs';
+import { BatonApplication, GlmSessionCli, bindBaton, createDriver, openBaton } from '../src/index.mjs';
 import {
   observeProcessGroupIdentity, processAuthorityState, processGroupAlive,
 } from '../src/process-lifecycle.mjs';
@@ -923,14 +923,10 @@ test('P92.2-PO3: immutable gen1 workspace owner binds a separately proven live g
   );
   const immutableReceipt = JSON.parse(readFileSync(ownerReceiptPath, 'utf8'));
 
-  const preserved = await first.coordinator.interrupt(
-    workerId, undefined, 'semantic:owner', {
-      expectedFence: first.coordinator.list()[0].fence,
-      controlId: `control:${'a'.repeat(64)}`,
-      preserveTurn: true,
-    },
-  );
-  assert.equal(preserved.preservation?.state, 'preserved');
+  const preserved = await bindBaton(firstApp, principal('owner')).runs.open(runId)
+    .interrupt({ reason: 'Preserve gen1 before exact gen2 recovery.' });
+  assert.equal(preserved.phase, 'interrupted');
+  assert.equal(first.coordinator.list()[0].sessionPreservation?.state, 'preserved');
   detachController(first, firstAdapter);
   try { process.kill(-firstPid, 'SIGKILL'); } catch { /* already absent */ }
   await until(() => !processGroupAlive(firstPid), 'gen1 transport absence');
@@ -1036,14 +1032,10 @@ test('P92.2-PO3: controller2 exact gen2 recovery restores authority for same-con
   const immutableReceipt = physicalWorkspaceOwnerReceipt(repo, physicalOwnerId);
   assert.equal(immutableReceipt.processGeneration, 1);
 
-  const preserved = await first.coordinator.interrupt(
-    workerId, undefined, 'semantic:owner', {
-      expectedFence: first.coordinator.list()[0].fence,
-      controlId: `control:${'b'.repeat(64)}`,
-      preserveTurn: true,
-    },
-  );
-  assert.equal(preserved.preservation?.state, 'preserved');
+  const preserved = await bindBaton(firstApp, principal('owner')).runs.open(runId)
+    .interrupt({ reason: 'Preserve gen1 before same-controller gen2 recovery.' });
+  assert.equal(preserved.phase, 'interrupted');
+  assert.equal(first.coordinator.list()[0].sessionPreservation?.state, 'preserved');
   detachController(first, firstAdapter);
   try { process.kill(-firstPid, 'SIGKILL'); } catch { /* already absent */ }
   await until(() => !processGroupAlive(firstPid), 'same-controller gen1 transport absence');

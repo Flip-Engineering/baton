@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,6 +12,11 @@ import {
 } from '../src/index.mjs';
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase64-${name}-`));
+const canonical = (value) => Array.isArray(value) ? value.map(canonical)
+  : value && typeof value === 'object'
+    ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]))
+    : value;
+const digest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 const policy = Object.freeze({
   schemaVersion: 1,
   repoId: 'repo-phase64',
@@ -837,8 +843,71 @@ test('P91 application restart: coordinate-free recovery attach-only reuses the p
     handles: resumedDriver.coordinator.list(),
     attention: beforeRecovery.attention, contextVerdict,
   }));
-  assert.deepEqual(contextVerdict, { ok: true });
+  assert.deepEqual(contextVerdict, { ok: true }, JSON.stringify({
+    preservationDiagnostic: resumedDriver.coordinator._workers.get(workerId)
+      ?.preservationAuthorityDiagnostic,
+    receipt: resumedDriver.coordinator._workers.get(workerId)?.sessionPreservation,
+    controls: resumedDriver.coordination.runControls(proposed.runId),
+  }));
   assert.deepEqual(beforeRecovery.nextActions, [{ kind: 'stop' }]);
+
+  const replayHandle = resumedDriver.coordinator._workers.get(workerId);
+  const exactReceipt = replayHandle.sessionPreservation;
+  const exactControls = resumedDriver.coordination.runControls(proposed.runId);
+  const runControls = resumedDriver.coordination.runControls.bind(resumedDriver.coordination);
+  const reseal = (overrides) => {
+    const core = { ...exactReceipt, ...overrides };
+    delete core.receiptDigest;
+    return { ...core, receiptDigest: digest(core) };
+  };
+  const expectPreEffectRefusal = async (expected) => {
+    const seq = resumedDriver.coordination.snapshot().lastSeq;
+    const spawns = spawnOptions.length;
+    assert.equal((await resumedDriver.coordinator.recover(workerId)).result, expected);
+    assert.equal(resumedDriver.coordination.snapshot().lastSeq, seq);
+    assert.equal(spawnOptions.length, spawns);
+    assert.equal(promptCalls, 0);
+  };
+
+  replayHandle.sessionPreservation = { ...exactReceipt, unexpected: true };
+  await expectPreEffectRefusal('preservation_receipt_invalid');
+  replayHandle.sessionPreservation = { ...exactReceipt, receiptDigest: 'f'.repeat(64) };
+  await expectPreEffectRefusal('preservation_receipt_invalid');
+  replayHandle.sessionPreservation = reseal({ worktreeDigest: '0'.repeat(64) });
+  await expectPreEffectRefusal('preservation_receipt_stale');
+  replayHandle.sessionPreservation = reseal({ planBindingDigest: '1'.repeat(64) });
+  await expectPreEffectRefusal('preservation_receipt_stale');
+  replayHandle.sessionPreservation = reseal({ routeDigest: '2'.repeat(64) });
+  await expectPreEffectRefusal('preservation_receipt_stale');
+  replayHandle.sessionPreservation = reseal({ runAuthorityDigest: '3'.repeat(64) });
+  await expectPreEffectRefusal('preservation_receipt_stale');
+  replayHandle.sessionPreservation = reseal({ sessionDigest: '4'.repeat(64) });
+  await expectPreEffectRefusal('preservation_receipt_stale');
+  replayHandle.sessionPreservation = exactReceipt;
+  resumedDriver.coordination.runControls = () => [];
+  await expectPreEffectRefusal('preservation_control_unproven');
+  resumedDriver.coordination.runControls = () => [exactControls[0], exactControls[0]];
+  await expectPreEffectRefusal('preservation_control_ambiguous');
+  resumedDriver.coordination.runControls = () => [{
+    ...exactControls[0], target: { ...exactControls[0].target, workerId: 'foreign-worker' },
+  }];
+  await expectPreEffectRefusal('preservation_control_unproven');
+  resumedDriver.coordination.runControls = runControls;
+  replayHandle.processRef = {
+    generation: exactReceipt.processGeneration, pid: 1, processGroupId: 1,
+    state: 'unconfirmed_after_restart', ready: true, startedSeq: 1, closedSeq: null,
+  };
+  await expectPreEffectRefusal('preservation_receipt_invalid');
+  replayHandle.processRef = null;
+  replayHandle.sessionPreservation = reseal({ attached: false });
+  await expectPreEffectRefusal('preservation_receipt_invalid');
+  replayHandle.sessionPreservation = exactReceipt;
+  const exactCard = resumedAdapter.card;
+  resumedAdapter.card = () => ({
+    ...exactCard(), concurrencyCeiling: exactCard().concurrencyCeiling + 1,
+  });
+  await expectPreEffectRefusal('preservation_card_mismatch');
+  resumedAdapter.card = exactCard;
 
   const recovered = await restarted.recover(proposed.runId, principal('restart-owner'));
   assert.equal(recovered.phase, 'interrupted', JSON.stringify({

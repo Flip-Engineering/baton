@@ -3741,19 +3741,19 @@ export class CoordinationStore {
   _validSessionPreservationReceipt(receipt) {
     if (receipt === null) return true;
     const fields = [
-      'fence', 'planBindingDigest', 'processGeneration', 'reattachment', 'receiptDigest',
-      'routeDigest', 'runAuthorityDigest', 'schemaVersion', 'sessionDigest', 'state',
-      'transport', 'turnEpoch', 'worktreeDigest',
+      'adapterCardDigest', 'attached', 'fence', 'planBindingDigest', 'processGeneration',
+      'reattachment', 'receiptDigest', 'routeDigest', 'runAuthorityDigest', 'schemaVersion',
+      'sessionDigest', 'state', 'transport', 'turnEpoch', 'worktreeDigest',
     ];
     if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
       || Object.keys(receipt).sort().join(',') !== fields.sort().join(',')
-      || receipt.schemaVersion !== 1 || receipt.state !== 'preserved'
-      || receipt.transport !== 'attached'
+      || receipt.schemaVersion !== 2 || receipt.state !== 'preserved'
+      || receipt.transport !== 'attached' || receipt.attached !== true
       || !['not_required', 'confirmed'].includes(receipt.reattachment)
       || !Number.isSafeInteger(receipt.processGeneration) || receipt.processGeneration < 0
       || !Number.isSafeInteger(receipt.turnEpoch) || receipt.turnEpoch < 0
       || !Number.isSafeInteger(receipt.fence) || receipt.fence < 0
-      || ['sessionDigest', 'worktreeDigest', 'routeDigest', 'planBindingDigest',
+      || ['sessionDigest', 'worktreeDigest', 'routeDigest', 'planBindingDigest', 'adapterCardDigest',
         'runAuthorityDigest', 'receiptDigest']
         .some((field) => !/^[a-f0-9]{64}$/u.test(receipt[field] ?? ''))) return false;
     const core = clone(receipt); delete core.receiptDigest;
