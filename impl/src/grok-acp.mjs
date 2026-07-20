@@ -20,7 +20,7 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { renderBrief } from './adapter.mjs';
-import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
+import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
@@ -147,6 +147,7 @@ export class GrokAcpCli {
     this._args = opts.args ?? ['agent', 'stdio'];
     this._env = opts.env;
     this._spawnFn = opts.spawnFn ?? spawn;
+    this._reapOwnedProcessGroup = opts.reapOwnedProcessGroup;
     this._ceiling = opts.ceiling ?? 4;
     // GA4: 500000 is the live handshake's totalContextTokens for grok-build, not a guess.
     this._maxContext = opts.maxContext ?? 500000;
@@ -359,48 +360,40 @@ export class GrokAcpCli {
     if (session.processClosedEmitted || session.processClosePending) return;
     session.processClosePending = true;
     if (session.wallTimer) clearTimeout(session.wallTimer);
-    const groupReap = await reapOwnedProcessGroup(session.child.pid, { timeoutMs: session.processReapTimeoutMs });
+    if (!session.processClose) { session.closed = true; return; }
+    const wasKilling = session.killing === true;
+    const setupFailed = session.setupFailed === true;
+    const timeoutFailure = session.timeoutFailure;
+    const processFailure = session.processFailure;
+    const activeTurnId = session.activeTurn?.turnId ?? null;
+    const closeDerived = () => {
+      if (timeoutFailure) {
+        if (activeTurnId !== null) this._settleTurn(session, activeTurnId);
+        this._emit(session, 'lifecycle.crashed', timeoutFailure);
+      } else if (processFailure) {
+        if (activeTurnId !== null) this._settleTurn(session, activeTurnId);
+        this._emit(session, 'lifecycle.crashed', processFailure);
+      } else if (!wasKilling && !setupFailed && activeTurnId !== null) {
+        const turnId = activeTurnId;
+        this._settleTurn(session, turnId);
+        this._emit(session, 'lifecycle.crashed', { sessionId: session.sessionId, turnId, error: `transport closed${code === null ? '' : ` with code ${code}`}${signal ? ` (${signal})` : ''}`, usageSeal: unavailableUsageSeal() });
+      }
+    };
+    if (wasKilling) {
+      const terminalCause = timeoutFailure ? 'timeout' : processFailure ? 'process_error' : null;
+      session.processClose.authorizeStop('kill.confirmed', {
+        sessionId: session.sessionId,
+        ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal(),
+      });
+    }
     session.closed = true;
-    if (groupReap.confirmed) {
-      session.processClosedEmitted = true;
-      const processClosed = processClosedPayload(session.processGeneration, session.child.pid, code, signal, session.providerReady);
-      if (processClosed) this._emit(session, 'lifecycle.process_closed', processClosed);
-    } else {
-      const unconfirmed = processReapUnconfirmedPayload(session.processGeneration, session.child.pid, groupReap.reason);
-      if (unconfirmed) this._emit(session, 'lifecycle.process_reap_unconfirmed', unconfirmed);
-    }
-    // GA11: kill.confirmed fires once the OS confirms the process is gone (D1: an event, never
-    // the Ack); the pending-request settlement below then absorbs the prompt silently (killing).
-    if (session.timeoutFailure) {
-      if (session.activeTurn) this._settleTurn(session, session.activeTurn.turnId);
-      this._emit(session, 'lifecycle.crashed', session.timeoutFailure);
-      if (groupReap.confirmed && session.killing && !session.killConfirmed) {
-        session.killConfirmed = true;
-        this._emit(session, 'kill.confirmed', { sessionId: session.sessionId, terminalCause: 'timeout', usageSeal: unavailableUsageSeal() });
-      }
-    } else if (session.processFailure) {
-      if (session.activeTurn) this._settleTurn(session, session.activeTurn.turnId);
-      this._emit(session, 'lifecycle.crashed', session.processFailure);
-      if (groupReap.confirmed && session.killing && !session.killConfirmed) {
-        session.killConfirmed = true;
-        this._emit(session, 'kill.confirmed', { sessionId: session.sessionId, terminalCause: 'process_error', usageSeal: unavailableUsageSeal() });
-      }
-    } else if (session.killing) {
-      if (groupReap.confirmed && !session.killConfirmed) {
-        session.killConfirmed = true;
-        this._emit(session, 'kill.confirmed', { sessionId: session.sessionId, usageSeal: unavailableUsageSeal() });
-      }
-    } else if (!session.setupFailed && session.activeTurn) {
-      const turnId = session.activeTurn.turnId;
-      this._settleTurn(session, turnId);
-      this._emit(session, 'lifecycle.crashed', { sessionId: session.sessionId, turnId, error: `transport closed${code === null ? '' : ` with code ${code}`}${signal ? ` (${signal})` : ''}`, usageSeal: unavailableUsageSeal() });
-    }
-    // The unbounded prompt (and any in-flight bounded RPC) must not dangle past child death.
+    // The unbounded prompt (and any in-flight bounded RPC) must not dangle past leader death.
     for (const [id, pending] of session.pendingRequests) {
       session.pendingRequests.delete(id);
       if (pending.timer) clearTimeout(pending.timer);
       pending.reject(new Error('grok agent stdio closed before responding'));
     }
+    await session.processClose.close(code, signal, session.providerReady, closeDerived);
   }
 
   _onProcessError(session, error) {
@@ -635,6 +628,10 @@ export class GrokAcpCli {
   }
 
   _onTurnError(session, turnId, err) {
+    // Rejecting the unbounded prompt is an immediate transport-close consequence. The retained
+    // close callback owns that terminal classification and will settle this exact turn only after
+    // descendant absence is proven.
+    if (session.processClosePending) return;
     if (!this._settleTurn(session, turnId)) return;
     if (session.killing) return; // GA11: a deliberate kill is not a worker crash — kill.confirmed is the terminal
     this._emit(session, 'lifecycle.crashed', { sessionId: session.sessionId, turnId, error: err.message, usageSeal: unavailableUsageSeal() });
@@ -654,7 +651,7 @@ export class GrokAcpCli {
 
   async spawn(worker, brief, opts = {}) {
     const existing = this._sessions.get(worker);
-    if ((existing && !existing.closed) || this._pendingSpawns.has(worker)) {
+    if ((existing && (!existing.closed || (existing.processClose && !existing.processClose.confirmed))) || this._pendingSpawns.has(worker)) {
       return { ok: false, reason: `worker ${worker} already has an active session` };
     }
     if (opts.attachOnly === true && opts.session?.mode !== 'resume') {
@@ -733,6 +730,21 @@ export class GrokAcpCli {
       alwaysApproveRequested,
       workerPolicyObserved,
     };
+    session.processClose = Number.isSafeInteger(child.pid) && child.pid > 0 ? new ProcessCloseReapLatch({
+      generation: session.processGeneration,
+      pid: child.pid,
+      timeoutMs: session.processReapTimeoutMs,
+      reap: this._reapOwnedProcessGroup,
+      onProcessClosed: (payload) => {
+        session.processClosedEmitted = true;
+        this._emit(session, 'lifecycle.process_closed', payload);
+      },
+      onReapUnconfirmed: (payload) => this._emit(session, 'lifecycle.process_reap_unconfirmed', payload),
+      onStopConfirmed: (kind, payload) => {
+        session.killConfirmed = kind === 'kill.confirmed' || session.killConfirmed;
+        this._emit(session, kind, payload);
+      },
+    }) : null;
     this._sessions.set(worker, session);
     this._attachChild(session);
     const processStarted = processStartedPayload(session.processGeneration, child.pid);
@@ -931,12 +943,16 @@ export class GrokAcpCli {
     const session = this._sessions.get(worker);
     if (!session && this._emitPendingStop(worker, 'kill.confirmed')) return { ok: true };
     if (!session || !session.child) return { ok: true }; // already gone — a moot no-op
-    if (session.closed && session.processClosedEmitted) return { ok: true, terminal: true };
+    if (!session.processClose || session.processClose.confirmed) return { ok: true, terminal: true };
     session.steerPending = null;
     session.pendingFollowUp = null; // R5.1: abandon any pending auto-follow-up
-    if (session.killing) return { ok: true };
     session.killing = true;
-    this._killChild(session);
+    const terminalCause = session.timeoutFailure ? 'timeout' : session.processFailure ? 'process_error' : null;
+    void session.processClose.authorizeStop('kill.confirmed', {
+      sessionId: session.sessionId,
+      ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal(),
+    });
+    if (!session.closed) this._killChild(session);
     return { ok: true };
   }
 

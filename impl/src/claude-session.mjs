@@ -11,7 +11,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { renderPrompt } from './cli-adapters.mjs';
-import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
+import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 
@@ -285,6 +285,7 @@ export class ClaudeSessionCli {
       maxWireFrameBytes,
       authenticationProbe: opts.authenticationProbe ?? spawnSync,
       providerSecrets: Object.freeze((opts.providerSecrets ?? []).filter((value) => typeof value === 'string' && value.length > 0)),
+      reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
     };
     /** @type {Map<string, object>} worker -> session */
     this._sessions = new Map();
@@ -456,7 +457,7 @@ export class ClaudeSessionCli {
 
   async spawn(worker, brief, opts = {}) {
     const existing = this._sessions.get(worker);
-    if ((existing && !existing.deadEmitted) || this._pendingSpawns.has(worker)) {
+    if ((existing && (!existing.deadEmitted || (existing.processClose && !existing.processClose.confirmed))) || this._pendingSpawns.has(worker)) {
       return { ok: false, reason: `worker ${worker} already has an active session` };
     }
     if (opts.attachOnly === true && opts.session?.mode !== 'resume') {
@@ -564,6 +565,21 @@ export class ClaudeSessionCli {
       pendingBrief: opts.attachOnly === true ? null : renderPrompt(brief),
       bootstrapTurnPending: false,
     };
+    session.processClose = Number.isSafeInteger(session.pid) && session.pid > 0 ? new ProcessCloseReapLatch({
+      generation: session.processGeneration,
+      pid: session.pid,
+      timeoutMs: session.processReapTimeoutMs,
+      reap: this._cfg.reapOwnedProcessGroup,
+      onProcessClosed: (payload) => {
+        session.processClosedEmitted = true;
+        this._emit(session, 'lifecycle.process_closed', payload);
+      },
+      onReapUnconfirmed: (payload) => this._emit(session, 'lifecycle.process_reap_unconfirmed', payload),
+      onStopConfirmed: (kind, payload) => {
+        session.killConfirmed = kind === 'kill.confirmed' || session.killConfirmed;
+        this._emit(session, kind, payload);
+      },
+    }) : null;
     this._sessions.set(worker, session);
     if (opts.timeoutMs > 0) {
       session.wallTimer = setTimeout(() => this._onWallTimeout(session, opts.timeoutMs), opts.timeoutMs);
@@ -1010,17 +1026,24 @@ export class ClaudeSessionCli {
     const session = this._sessions.get(worker);
     if (!session && this._emitPendingStop(worker, 'kill.confirmed')) return { ok: true };
     if (!session) return { ok: true }; // D9: kill always resolves
-    if (session.terminal) return { ok: true, terminal: true };
+    if (!session.processClose || session.processClose.confirmed) return { ok: true, terminal: true };
     if (!session.stopping) {
       session.stopping = true;
       this._emit(session, 'kill.requested', {});
-      this._signal(session, 'SIGTERM');
+      if (!session.terminal) this._signal(session, 'SIGTERM');
       // killGraceMs derivation: same SIGTERM->SIGKILL window the Agent SDK's own
       // ProcessTransport.close() uses (§1) — not an arbitrary number, and constructor-injectable.
-      session.killTimer = setTimeout(() => {
-        if (!session.terminal) this._signal(session, 'SIGKILL');
-      }, this._cfg.killGraceMs);
+      if (!session.terminal) {
+        session.killTimer = setTimeout(() => {
+          if (!session.terminal) this._signal(session, 'SIGKILL');
+        }, this._cfg.killGraceMs);
+      }
     }
+    const terminalCause = session.timeoutFailure ? 'timeout' : session.processFailure ? 'process_error' : null;
+    void session.processClose.authorizeStop('kill.confirmed', {
+      signal: session.processClose.closeFact?.signal ?? 'SIGKILL',
+      ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal(),
+    });
     return { ok: true };
   }
 
@@ -1033,27 +1056,27 @@ export class ClaudeSessionCli {
     session.processClosePending = true;
     if (session.killTimer) clearTimeout(session.killTimer);
     if (session.wallTimer) clearTimeout(session.wallTimer);
-    const groupReap = await reapOwnedProcessGroup(session.pid, { timeoutMs: session.processReapTimeoutMs });
+    if (!session.processClose) { session.terminal = true; return; }
+    const wasStopping = session.stopping === true;
+    const timeoutFailure = session.timeoutFailure;
+    const processFailure = session.processFailure;
+    const closeDerived = () => {
+      if (timeoutFailure) {
+        this._emit(session, 'lifecycle.crashed', timeoutFailure);
+      } else if (processFailure) {
+        this._emit(session, 'lifecycle.crashed', processFailure);
+      } else if (!wasStopping && (session.turnInFlight || code !== 0)) {
+        this._emit(session, 'lifecycle.crashed', { error: `exited ${code}${signal ? ` (${signal})` : ''}`, usageSeal: unavailableUsageSeal() });
+      }
+    };
+    if (wasStopping) {
+      const terminalCause = timeoutFailure ? 'timeout' : processFailure ? 'process_error' : null;
+      session.processClose.authorizeStop('kill.confirmed', {
+        signal, ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal(),
+      });
+    }
     session.terminal = true;
-    if (groupReap.confirmed && !session.processClosedEmitted) {
-      session.processClosedEmitted = true;
-      const processClosed = processClosedPayload(session.processGeneration, session.pid, code, signal, session.spawnedEmitted);
-      if (processClosed) this._emit(session, 'lifecycle.process_closed', processClosed);
-    } else if (!groupReap.confirmed) {
-      const unconfirmed = processReapUnconfirmedPayload(session.processGeneration, session.pid, groupReap.reason);
-      if (unconfirmed) this._emit(session, 'lifecycle.process_reap_unconfirmed', unconfirmed);
-    }
-    if (session.timeoutFailure) {
-      this._emit(session, 'lifecycle.crashed', session.timeoutFailure);
-      if (groupReap.confirmed && session.stopping) this._emit(session, 'kill.confirmed', { signal, terminalCause: 'timeout', usageSeal: unavailableUsageSeal() });
-    } else if (session.processFailure) {
-      this._emit(session, 'lifecycle.crashed', session.processFailure);
-      if (groupReap.confirmed && session.stopping) this._emit(session, 'kill.confirmed', { signal, terminalCause: 'process_error', usageSeal: unavailableUsageSeal() });
-    } else if (session.stopping) {
-      if (groupReap.confirmed) this._emit(session, 'kill.confirmed', { signal, usageSeal: unavailableUsageSeal() });
-    } else if (session.turnInFlight || code !== 0) {
-      this._emit(session, 'lifecycle.crashed', { error: `exited ${code}${signal ? ` (${signal})` : ''}`, usageSeal: unavailableUsageSeal() });
-    }
+    await session.processClose.close(code, signal, session.spawnedEmitted, closeDerived);
   }
 
   _onSpawnError(session, err) {

@@ -3,8 +3,7 @@ import { createHash } from 'node:crypto';
 import { renderBrief } from './adapter.mjs';
 import { AcpJsonRpcProcess } from './acp-json-rpc-process.mjs';
 import {
-  normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload,
-  processStartedPayload,
+  normalizeProcessGeneration, processStartedPayload,
 } from './process-lifecycle.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 
@@ -104,6 +103,7 @@ export class KimiAcpCli {
     this._args = options.args ? [...options.args] : permissionArgs;
     this._env = options.env;
     this._spawnFn = options.spawnFn;
+    this._reapOwnedProcessGroup = options.reapOwnedProcessGroup;
     this._ceiling = options.ceiling ?? 1;
     this._maxContext = options.maxContext ?? null;
     this._maxWireFrameBytes = options.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
@@ -247,7 +247,9 @@ export class KimiAcpCli {
 
   async spawn(worker, brief, options = {}) {
     const existing = this._sessions.get(worker);
-    if ((existing && !existing.closed) || this._pendingSpawns.has(worker)) {
+    if ((existing && (!existing.closed
+      || (existing.process?.processClose && !existing.process.processClose.confirmed)))
+      || this._pendingSpawns.has(worker)) {
       return { ok: false, reason: `worker ${worker} already has an active session` };
     }
     if (options.attachOnly === true && options.session?.mode !== 'resume') {
@@ -279,15 +281,43 @@ export class KimiAcpCli {
         worker, process: null, sessionId: null, cwd,
         processGeneration, processReapTimeoutMs: options.processReapTimeoutMs ?? 2000,
         providerReady: false, setupFailed: false, closed: false, killing: false, killConfirmed: false,
+        processClosedEmitted: false,
         turnEpoch: 0, turnSequence: 0, activeTurn: null, terminalTurns: new Set(),
         pendingInterrupt: null, steerPending: null, permissionSequence: 0, waits: new Map(),
         configOptions: new Map(), modelRequested: model, effortRequested: effort,
         crashEmitted: false,
       };
+      const captureProcessCloseSnapshot = () => {
+        session.processCloseSnapshot ??= Object.freeze({
+          killing: session.killing === true,
+          setupFailed: session.setupFailed === true,
+          timeoutFailure: session.timeoutFailure,
+          processFailure: session.process.failure,
+          activeTurn: session.activeTurn ? { turnId: session.activeTurn.turnId } : null,
+        });
+      };
       session.process = new AcpJsonRpcProcess({
         command: this._cmd, args: this._args, cwd, env: childEnv,
         setupTimeoutMs: this._requestTimeoutMs, maxFrameBytes: this._maxWireFrameBytes,
         reapTimeoutMs: session.processReapTimeoutMs, spawnFn: this._spawnFn,
+        processGeneration,
+        processReady: () => session.providerReady,
+        reapOwnedProcessGroup: this._reapOwnedProcessGroup,
+        onProcessClosePending: captureProcessCloseSnapshot,
+        onProcessClosed: (payload) => {
+          captureProcessCloseSnapshot();
+          session.processClosedEmitted = true;
+          this._emit(session, 'lifecycle.process_closed', payload);
+        },
+        onProcessReapUnconfirmed: (payload) => this._emit(session, 'lifecycle.process_reap_unconfirmed', payload),
+        onStopConfirmed: (kind, payload) => {
+          session.killConfirmed = kind === 'kill.confirmed' || session.killConfirmed;
+          this._emit(session, kind, payload);
+          if (session.process?.processClose?.confirmed && this._sessions.get(session.worker) === session) {
+            this._sessions.delete(session.worker);
+          }
+        },
+        deferStopConfirmation: true,
         sanitizeFrame: options.redactProviderFrame,
         onNotification: (method, params) => this._onNotification(session, method, params),
         onReverseRequest: (method, params) => this._onReverseRequest(session, method, params),
@@ -308,7 +338,10 @@ export class KimiAcpCli {
           session.killing = true;
           session.pendingInterrupt = null;
           session.steerPending = null;
-          void session.process.kill();
+          void session.process.kill({
+            kind: 'kill.confirmed',
+            payload: { terminalCause: 'timeout', usageSeal: unavailableUsageSeal() },
+          });
         }, options.timeoutMs);
         session.wallTimer.unref?.();
       }
@@ -441,6 +474,9 @@ export class KimiAcpCli {
   }
 
   _onTurnError(session, turnId, error) {
+    // AcpJsonRpcProcess rejects the prompt as soon as the leader closes. Keep that derived
+    // terminal inside the generation-bound close latch until its descendant reap confirms.
+    if (session.process.processClose?.pending) return;
     this._flushTurnStreams(session, turnId);
     if (!this._settleTurn(session, turnId) || session.killing) return;
     this._emitCrash(session, {
@@ -556,47 +592,47 @@ export class KimiAcpCli {
     });
   }
 
-  async _onClose(session, outcome) {
+  async _onClose(session, _outcome) {
     if (session.closed) return;
-    this._flushTurnStreams(session, session.activeTurn?.turnId);
-    session.closed = true;
-    if (session.wallTimer) clearTimeout(session.wallTimer);
-    for (const wait of session.waits.values()) wait.reject(new Error('Kimi process closed'));
-    session.waits.clear();
-    if (outcome.confirmed) {
-      const payload = processClosedPayload(session.processGeneration, outcome.pid, outcome.code, outcome.signal, session.providerReady);
-      if (payload) this._emit(session, 'lifecycle.process_closed', payload);
-    } else {
-      const payload = processReapUnconfirmedPayload(session.processGeneration, outcome.pid, outcome.reason);
-      if (payload) this._emit(session, 'lifecycle.process_reap_unconfirmed', payload);
-    }
-    const releaseConfirmedOwnership = () => {
-      if (outcome.confirmed && this._sessions.get(session.worker) === session) {
-        this._sessions.delete(session.worker);
-      }
-    };
-    if (session.killing) {
-      if (outcome.confirmed && !session.killConfirmed) {
-        session.killConfirmed = true;
-        this._emit(session, 'kill.confirmed', { usageSeal: unavailableUsageSeal() });
-      }
-      releaseConfirmedOwnership();
-      return;
-    }
-    if (session.setupFailed) { releaseConfirmedOwnership(); return; }
-    if (session.timeoutFailure) {
-      this._emitCrash(session, session.timeoutFailure);
-      releaseConfirmedOwnership();
-      return;
-    }
-    if (session.process.failure || session.activeTurn) {
-      this._emitCrash(session, {
-        code: session.process.failure?.code ?? 'provider_process_closed',
-        error: session.process.failure?.message ?? 'Kimi process closed during an active turn',
-        usageSeal: unavailableUsageSeal(),
+    try {
+      const closeSnapshot = session.processCloseSnapshot ?? Object.freeze({
+        killing: session.killing === true,
+        setupFailed: session.setupFailed === true,
+        timeoutFailure: session.timeoutFailure,
+        processFailure: session.process.failure,
+        activeTurn: session.activeTurn ? { turnId: session.activeTurn.turnId } : null,
       });
+      this._flushTurnStreams(session, session.activeTurn?.turnId);
+      session.closed = true;
+      if (session.wallTimer) clearTimeout(session.wallTimer);
+      for (const wait of session.waits.values()) wait.reject(new Error('Kimi process closed'));
+      session.waits.clear();
+      const releaseConfirmedOwnership = () => {
+        if (session.process.processClose?.confirmed && this._sessions.get(session.worker) === session) {
+          this._sessions.delete(session.worker);
+        }
+      };
+      if (closeSnapshot.killing) {
+        releaseConfirmedOwnership();
+        return;
+      }
+      if (closeSnapshot.setupFailed) { releaseConfirmedOwnership(); return; }
+      if (closeSnapshot.timeoutFailure) {
+        this._emitCrash(session, closeSnapshot.timeoutFailure);
+        releaseConfirmedOwnership();
+        return;
+      }
+      if (closeSnapshot.processFailure || closeSnapshot.activeTurn) {
+        this._emitCrash(session, {
+          code: closeSnapshot.processFailure?.code ?? 'provider_process_closed',
+          error: closeSnapshot.processFailure?.message ?? 'Kimi process closed during an active turn',
+          usageSeal: unavailableUsageSeal(),
+        });
+      }
+      releaseConfirmedOwnership();
+    } finally {
+      session.process.processClose?.releaseStopConfirmation();
     }
-    releaseConfirmedOwnership();
   }
 
   async prompt(worker, content, mode = 'turn') {
@@ -649,12 +685,17 @@ export class KimiAcpCli {
   async kill(worker) {
     const session = this._sessions.get(worker);
     if (!session && this._emitPendingStop(worker, 'kill.confirmed')) return { ok: true };
-    if (!session?.process || session.closed) return { ok: true, terminal: true };
-    if (session.killing) return { ok: true };
+    if (!session?.process) return { ok: true, terminal: true };
+    if (session.process.processClose?.confirmed) return { ok: true, terminal: true };
     session.killing = true;
     session.pendingInterrupt = null;
     session.steerPending = null;
-    void session.process.kill();
+    const terminalCause = session.timeoutFailure ? 'timeout'
+      : session.process.failure ? 'process_error' : null;
+    void session.process.kill({
+      kind: 'kill.confirmed',
+      payload: { ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal() },
+    });
     return { ok: true };
   }
 }

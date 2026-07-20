@@ -13,7 +13,7 @@
 // tests never invoke a real CLI.
 
 import { spawn } from 'node:child_process';
-import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
+import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { renderVerificationExecution } from './verification-presentation.mjs';
@@ -243,7 +243,32 @@ class CliAdapter {
   onEvent(cb) { this._cb = cb; }
   _emit(e) { if (this._cb) this._cb(e); }
 
+  _processCloseLatch(session) {
+    if (session.processClose) return session.processClose;
+    if (!Number.isSafeInteger(session.child?.pid) || session.child.pid <= 0) return null;
+    session.processClose = new ProcessCloseReapLatch({
+      generation: session.processGeneration,
+      pid: session.child.pid,
+      timeoutMs: session.processReapTimeoutMs,
+      reap: this._cfg.reapOwnedProcessGroup,
+      onProcessClosed: (payload) => {
+        session.processClosedEmitted = true;
+        this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.process_closed', payload });
+      },
+      onReapUnconfirmed: (payload) => this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.process_reap_unconfirmed', payload }),
+      onStopConfirmed: (kind, payload) => {
+        session.killConfirmed = kind === 'kill.confirmed' || session.killConfirmed;
+        this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind, payload });
+      },
+    });
+    return session.processClose;
+  }
+
   async spawn(worker, brief, opts = {}) {
+    const existing = this._sessions.get(worker);
+    if (existing && (!existing.terminal || (existing.processClose && !existing.processClose.confirmed))) {
+      return { ok: false, reason: `worker ${worker} already owns an unreaped process generation` };
+    }
     const live = opts.live ?? this._live;
     if (!live) return { ok: false, reason: 'live:false — refusing to launch a real CLI (would spend quota)' };
     let cwd = opts.worktree;
@@ -281,6 +306,7 @@ class CliAdapter {
       spawnError: null, timeoutFailure: null,
       workerPolicyObserved,
     };
+    this._processCloseLatch(session);
     this._sessions.set(worker, session);
 
     child.stdout.setEncoding('utf8');
@@ -358,53 +384,47 @@ class CliAdapter {
     if (session.terminal || session.processClosePending) return;
     session.processClosePending = true;
     if (session.timer) clearTimeout(session.timer);
-    const groupReap = await reapOwnedProcessGroup(session.child.pid, { timeoutMs: session.processReapTimeoutMs });
-    session.terminal = true;
-    if (groupReap.confirmed && !session.processClosedEmitted) {
-      session.processClosedEmitted = true;
-      const processClosed = processClosedPayload(session.processGeneration, session.child.pid, code, signal, false);
-      if (processClosed) this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.process_closed', payload: processClosed });
-    } else if (!groupReap.confirmed) {
-      const unconfirmed = processReapUnconfirmedPayload(session.processGeneration, session.child.pid, groupReap.reason);
-      if (unconfirmed) this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.process_reap_unconfirmed', payload: unconfirmed });
-    }
-    if (session.timeoutFailure) {
-      this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: session.timeoutFailure });
-      session.turnSettled = true;
-      if (groupReap.confirmed && session.stopping) this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: session.killMode === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed', payload: { signal, terminalCause: 'timeout', usageSeal: unavailableUsageSeal() } });
-    } else if (session.wireFailure) {
-      // The oversize frame is a provider failure, but the adapter also initiated a real
-      // process-group kill. Preserve both facts: lifecycle.crashed describes the turn while
-      // kill.confirmed is emitted only after exact group reaping succeeds. A coordinator that
-      // begins/joins stop handling after the crash must not wait forever for confirmation.
-      if (groupReap.confirmed && !session.killConfirmed) {
-        session.killConfirmed = true;
-        this._emit({
-          worker: session.worker,
-          harness: this._cfg.harness,
-          turnEpoch: session.turnEpoch,
-          actor: 'worker',
-          kind: 'kill.confirmed',
-          payload: {
-            signal,
-            terminalCause: 'wire_frame_oversize',
-            usageSeal: unavailableUsageSeal(),
-          },
-        });
+    const processClose = this._processCloseLatch(session);
+    if (!processClose) { session.terminal = true; return; }
+    const wasStopping = session.stopping === true;
+    const timeoutFailure = session.timeoutFailure;
+    const wireFailure = session.wireFailure === true;
+    const turnSettled = session.turnSettled === true;
+    const spawnError = session.spawnError;
+    const closeDerived = () => {
+      if (timeoutFailure) {
+        this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: timeoutFailure });
+        session.turnSettled = true;
+      } else if (wireFailure) {
+        // The oversize frame is a provider failure, but the adapter also initiated a real
+        // process-group kill. Preserve both facts: lifecycle.crashed describes the turn while
+        // kill.confirmed is emitted only after exact group reaping succeeds. A coordinator that
+        // begins/joins stop handling after the crash must not wait forever for confirmation.
+        return;
+      } else if (wasStopping) {
+        session.turnSettled = true;
+      } else if (turnSettled) {
+        return;
+      } else if (spawnError) {
+        this._finish(session, { crashed: true, event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: String(spawnError.message), usageSeal: unavailableUsageSeal() } } });
+      } else if (code === 0) {
+        this._finish(session, { event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.turn_completed', payload: { result: makeResult('completed'), usageSeal: unavailableUsageSeal() } } });
+      } else {
+        this._finish(session, { crashed: true, event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: `exited ${code} (${signal})`, usageSeal: unavailableUsageSeal() } } });
       }
-      return;
-    } else if (session.stopping) {
-      if (groupReap.confirmed) this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: session.killMode === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed', payload: { signal, usageSeal: unavailableUsageSeal() } });
-      session.turnSettled = true;
-    } else if (session.turnSettled) {
-      return;
-    } else if (session.spawnError) {
-      this._finish(session, { crashed: true, event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: String(session.spawnError.message), usageSeal: unavailableUsageSeal() } } });
-    } else if (code === 0) {
-      this._finish(session, { event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.turn_completed', payload: { result: makeResult('completed'), usageSeal: unavailableUsageSeal() } } });
-    } else {
-      this._finish(session, { crashed: true, event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: `exited ${code} (${signal})`, usageSeal: unavailableUsageSeal() } } });
+    };
+    if (wasStopping) {
+      const terminalCause = timeoutFailure ? 'timeout' : wireFailure ? 'wire_frame_oversize' : null;
+      processClose.authorizeStop(
+        session.killMode === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed',
+        { signal, ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal() },
+      );
     }
+    // The leader is closed even while descendants remain owned. Marking it terminal prevents
+    // later control from signaling a reused leader PID; the latch retry still targets the exact
+    // retained process group.
+    session.terminal = true;
+    await processClose.close(code, signal, false, closeDerived);
   }
 
   _finish(session, parsed) {
@@ -424,13 +444,25 @@ class CliAdapter {
   // interrupt/kill: signal the process group; the confirmed-stop event fires on 'close'.
   async interrupt(worker) {
     const s = this._sessions.get(worker);
-    if (s && !s.terminal) { s.stopping = true; s.killMode = 'interrupt'; this._signal(worker, 'SIGINT'); }
+    if (s?.processClose && !s.processClose.confirmed) {
+      s.stopping = true; s.killMode = 'interrupt';
+      if (s.terminal) void s.processClose.authorizeStop('control.interrupt_confirmed', { signal: s.processClose.closeFact?.signal ?? null, usageSeal: unavailableUsageSeal() });
+      else this._signal(worker, 'SIGINT');
+    }
     return { ok: true, emulated: true }; // subprocess interrupt is emulated (signal, not a graceful turn/steer)
   }
   async kill(worker) {
     const s = this._sessions.get(worker);
-    if (s?.terminal && s.processClosedEmitted) return { ok: true, terminal: true };
-    if (s && !s.terminal) { s.stopping = true; s.killMode = 'kill'; this._signal(worker, 'SIGKILL'); }
+    if (s?.processClose?.confirmed) return { ok: true, terminal: true };
+    if (s?.processClose) {
+      s.stopping = true; s.killMode = 'kill';
+      const terminalCause = s.timeoutFailure ? 'timeout' : s.wireFailure ? 'wire_frame_oversize' : null;
+      void s.processClose.authorizeStop('kill.confirmed', {
+        signal: s.processClose.closeFact?.signal ?? 'SIGKILL',
+        ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal(),
+      });
+      if (!s.terminal) this._signal(worker, 'SIGKILL');
+    }
     return { ok: true };
   }
   // A one-shot `exec`/`-p` run can't be steered/answered mid-flight without the app-server/SDK.
@@ -451,6 +483,7 @@ export class CodexCli extends CliAdapter {
     super({
       harness: 'codex', version: opts.version ?? '0.144.0', ceiling: opts.ceiling ?? 4, maxContext: 272000, live: opts.live,
       maxWireFrameBytes: opts.maxWireFrameBytes,
+      reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
       governance: {
         usage: { tokens: 'native', usd: 'unavailable', tokenMetric: CODEX_TOKEN_METRIC, terminalSeal: 'native' },
         providerCalls: { observation: 'native', enforcement: 'unavailable' },
@@ -512,6 +545,7 @@ export class ClaudeCli extends CliAdapter {
     super({
       harness: opts.harness ?? 'claude-code', version: opts.version ?? '2.1.206', ceiling: opts.ceiling ?? 4, maxContext: 200000, live: opts.live,
       maxWireFrameBytes: opts.maxWireFrameBytes,
+      reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
       governance: {
         usage: { tokens: 'native', usd: 'native', tokenMetric: CLAUDE_TOKEN_METRIC, terminalSeal: 'native' },
         providerCalls: { observation: 'native', enforcement: 'unavailable' },
@@ -578,6 +612,7 @@ export class ZCodeCli extends ClaudeCli {
     super({
       harness: 'glm-via-claude', version: opts.version ?? 'claude-cli+zai-anthropic', ceiling: opts.ceiling ?? 1, // Z.ai Pro ≈ 1 in-flight
       model: opts.model, maxWireFrameBytes: opts.maxWireFrameBytes, live: opts.live,
+      reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
       permissionMode: opts.permissionMode, env: {
         ANTHROPIC_BASE_URL: opts.baseUrl ?? 'https://api.z.ai/api/anthropic',
         ANTHROPIC_AUTH_TOKEN: token ?? '',
@@ -598,6 +633,7 @@ export class PiCli extends CliAdapter {
     super({
       harness: 'pi', version: opts.version ?? '0.0.0', ceiling: opts.ceiling ?? 4, maxContext: opts.maxContext ?? 128000, live: opts.live,
       maxWireFrameBytes: opts.maxWireFrameBytes,
+      reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
       governance: {
         usage: { tokens: 'unavailable', usd: 'unavailable', tokenMetric: null, terminalSeal: 'native' },
         providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },

@@ -6224,6 +6224,7 @@ export class Coordinator {
       interactionReady: false,
       interactionResolutionOk: false,
       operationGeneration: 1,
+      reapRetryHandle: null,
     };
     this._stopWaiters.set(handle.id, waiter);
 
@@ -6255,6 +6256,39 @@ export class Coordinator {
       resolve, requestedMode: mode, preserveTurn: context?.preserveTurn === true,
       controlId: context?.controlId ?? null,
     }));
+  }
+
+  /**
+   * An unconfirmed descendant reap explicitly drives another bounded kill. The existing stop
+   * deadline remains the outer bound, and yielding through a short timer prevents deterministic
+   * immediate refusals from forming an unbounded microtask loop that starves that deadline.
+   */
+  _retryProcessReap(handle) {
+    const waiter = this._stopWaiters.get(handle.id);
+    if (!waiter) {
+      // A forced stop has already consumed its deadline. Preserve authority for a later explicit
+      // operator retry instead of silently creating an endless succession of deadline windows.
+      if (handle.status === 'dead' && handle.cleanupPending === true) return;
+      this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+      return;
+    }
+    if (waiter.finalized || this._now() >= waiter.deadlineAt) return;
+    if (waiter.mode !== 'kill') {
+      this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+      return;
+    }
+    if (waiter.reapRetryHandle != null) return;
+    const delayMs = Math.max(1, Math.min(5, waiter.deadlineAt - this._now()));
+    waiter.reapRetryHandle = this._setTimeout(() => {
+      waiter.reapRetryHandle = null;
+      if (waiter.finalized || this._stopWaiters.get(handle.id) !== waiter
+        || this._now() >= waiter.deadlineAt) return;
+      const call = Promise.resolve(this._adapters[handle.vendor].kill(handle.id));
+      this._wireAck(waiter, call, waiter.operationGeneration, 'kill');
+    }, delayMs);
+    if (waiter.reapRetryHandle && typeof waiter.reapRetryHandle.unref === 'function') {
+      waiter.reapRetryHandle.unref();
+    }
   }
 
   _resolveStopRequests(waiter, physicalResult) {
@@ -6659,6 +6693,10 @@ export class Coordinator {
 
   _removeRuntimeScope(handle) {
     if (!handle || !this._runtimeScopes || typeof this._runtimeScopes.remove !== 'function') return true;
+    // Confirmed close may converge an installed untrusted-transport cleanup with an ordinary stop
+    // waiter. They share worktree cleanup through handle.cleanupPromise; make the synchronous
+    // runtime half equally exact-once once its lease has already been released.
+    if (handle.runtimeLease == null && handle.runtimeScope?.active === false) return true;
     try { this._runtimeScopes.remove(handle.id); } catch {
       handle.cleanupPending = true;
       handle.cleanupError = 'runtime_cleanup_failed';
@@ -7369,6 +7407,7 @@ export class Coordinator {
     if (waiter.finalized) return;
     waiter.finalized = true;
     if (waiter.timerHandle != null) this._clearTimeout(waiter.timerHandle);
+    if (waiter.reapRetryHandle != null) this._clearTimeout(waiter.reapRetryHandle);
     const handle = this._workers.get(workerId);
     const harness = handle ? this._harnessOf(handle.vendor) : '';
     const kind = waiter.mode === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed';
@@ -7524,6 +7563,7 @@ export class Coordinator {
     if (waiter.finalized) return;
     waiter.finalized = true;
     if (waiter.timerHandle != null) this._clearTimeout(waiter.timerHandle);
+    if (waiter.reapRetryHandle != null) this._clearTimeout(waiter.reapRetryHandle);
     const handle = this._workers.get(workerId);
     const harness = handle ? this._harnessOf(handle.vendor) : '';
     let forcedEvent;
@@ -8843,8 +8883,10 @@ export class Coordinator {
           appendAttributed({ worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'lifecycle.process_attribution_refused', actor: 'policy', payload: boundedProcessObservation(event, 'invalid_process_reap_unconfirmed') });
         } else {
           appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+          handle.processRef = { ...current, state: 'unconfirmed_after_restart' };
+          handle.localAuthority = true;
         }
-        if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+        this._retryProcessReap(handle);
         break;
       }
       case 'resource.tokens':

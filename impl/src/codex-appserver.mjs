@@ -12,7 +12,7 @@
 
 import { spawn, execFileSync } from 'node:child_process';
 import { renderBrief } from './adapter.mjs';
-import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
+import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
@@ -234,6 +234,7 @@ export class CodexAppServerCli {
     this._args = opts.args ?? ['app-server'];
     this._env = opts.env;
     this._spawnFn = opts.spawnFn ?? spawn;
+    this._reapOwnedProcessGroup = opts.reapOwnedProcessGroup;
     this._ceiling = opts.ceiling ?? 4;
     this._maxContext = opts.maxContext ?? 200000;
     this._model = opts.model;
@@ -499,45 +500,37 @@ export class CodexAppServerCli {
     if (session.processClosedEmitted || session.processClosePending) return;
     session.processClosePending = true;
     if (session.wallTimer) clearTimeout(session.wallTimer);
-    const groupReap = await reapOwnedProcessGroup(session.child.pid, { timeoutMs: session.processReapTimeoutMs });
+    if (!session.processClose) { session.terminal = true; return; }
+    const wasKilling = session.killing === true;
+    const setupFailed = session.setupFailed === true;
+    const timeoutFailure = session.timeoutFailure;
+    const processFailure = session.processFailure;
+    const activeTurn = session.activeTurn ? { ...session.activeTurn } : null;
+    const closeDerived = () => {
+      if (timeoutFailure) {
+        this._emit(session, 'lifecycle.crashed', timeoutFailure);
+      } else if (processFailure) {
+        this._emit(session, 'lifecycle.crashed', processFailure);
+      } else if (!wasKilling && !setupFailed && activeTurn) {
+        const turnId = activeTurn.id;
+        session.terminalTurns.add(turnId);
+        if (session.activeTurn?.id === turnId) session.activeTurn = null;
+        this._emit(session, 'lifecycle.crashed', { threadId: session.threadId, turnId, error: `transport closed${code === null ? '' : ` with code ${code}`}${signal ? ` (${signal})` : ''}`, usageSeal: unavailableUsageSeal() });
+      }
+    };
+    if (wasKilling) {
+      const terminalCause = timeoutFailure ? 'timeout' : processFailure ? 'process_error' : null;
+      session.processClose.authorizeStop('kill.confirmed', {
+        threadId: session.threadId,
+        ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal(),
+      });
+    }
     session.terminal = true;
-    if (groupReap.confirmed) {
-      session.processClosedEmitted = true;
-      const processClosed = processClosedPayload(session.processGeneration, session.child.pid, code, signal, session.providerReady);
-      if (processClosed) this._emit(session, 'lifecycle.process_closed', processClosed);
-    } else {
-      const unconfirmed = processReapUnconfirmedPayload(session.processGeneration, session.child.pid, groupReap.reason);
-      if (unconfirmed) this._emit(session, 'lifecycle.process_reap_unconfirmed', unconfirmed);
-    }
-    // XA11: kill.confirmed is emitted from the child's 'close' handler, once the OS confirms
-    // the process is gone — never from the Ack itself (D1: confirmed-stop is always an event).
-    if (session.timeoutFailure) {
-      this._emit(session, 'lifecycle.crashed', session.timeoutFailure);
-      if (groupReap.confirmed && session.killing && !session.killConfirmed) {
-        session.killConfirmed = true;
-        this._emit(session, 'kill.confirmed', { threadId: session.threadId, terminalCause: 'timeout', usageSeal: unavailableUsageSeal() });
-      }
-    } else if (session.processFailure) {
-      this._emit(session, 'lifecycle.crashed', session.processFailure);
-      if (groupReap.confirmed && session.killing && !session.killConfirmed) {
-        session.killConfirmed = true;
-        this._emit(session, 'kill.confirmed', { threadId: session.threadId, terminalCause: 'process_error', usageSeal: unavailableUsageSeal() });
-      }
-    } else if (session.killing) {
-      if (groupReap.confirmed && !session.killConfirmed) {
-        session.killConfirmed = true;
-        this._emit(session, 'kill.confirmed', { threadId: session.threadId, usageSeal: unavailableUsageSeal() });
-      }
-    } else if (!session.setupFailed && session.activeTurn) {
-      const turnId = session.activeTurn.id;
-      session.terminalTurns.add(turnId);
-      session.activeTurn = null;
-      this._emit(session, 'lifecycle.crashed', { threadId: session.threadId, turnId, error: `transport closed${code === null ? '' : ` with code ${code}`}${signal ? ` (${signal})` : ''}`, usageSeal: unavailableUsageSeal() });
-    }
     for (const [id, pending] of session.pendingRequests) {
       session.pendingRequests.delete(id); if (pending.timer) clearTimeout(pending.timer);
       pending.reject(new Error('codex app-server closed before responding'));
     }
+    await session.processClose.close(code, signal, session.providerReady, closeDerived);
   }
 
   _onProcessError(session, error) {
@@ -759,7 +752,7 @@ export class CodexAppServerCli {
 
   async spawn(worker, brief, opts = {}) {
     const existing = this._sessions.get(worker);
-    if ((existing && !existing.terminal) || this._pendingSpawns.has(worker)) {
+    if ((existing && (!existing.terminal || (existing.processClose && !existing.processClose.confirmed))) || this._pendingSpawns.has(worker)) {
       return { ok: false, reason: `worker ${worker} already has an active session` };
     }
     if (opts.attachOnly === true && opts.session?.mode !== 'resume') {
@@ -821,6 +814,21 @@ export class CodexAppServerCli {
             excludeSlashTmp: false, excludeTmpdirEnvVar: false,
           }),
     };
+    session.processClose = Number.isSafeInteger(child.pid) && child.pid > 0 ? new ProcessCloseReapLatch({
+      generation: session.processGeneration,
+      pid: child.pid,
+      timeoutMs: session.processReapTimeoutMs,
+      reap: this._reapOwnedProcessGroup,
+      onProcessClosed: (payload) => {
+        session.processClosedEmitted = true;
+        this._emit(session, 'lifecycle.process_closed', payload);
+      },
+      onReapUnconfirmed: (payload) => this._emit(session, 'lifecycle.process_reap_unconfirmed', payload),
+      onStopConfirmed: (kind, payload) => {
+        session.killConfirmed = kind === 'kill.confirmed' || session.killConfirmed;
+        this._emit(session, kind, payload);
+      },
+    }) : null;
     this._sessions.set(worker, session);
     this._attachChild(session);
     const processStarted = processStartedPayload(session.processGeneration, child.pid);
@@ -1077,12 +1085,16 @@ export class CodexAppServerCli {
     const session = this._sessions.get(worker);
     if (!session && this._emitPendingStop(worker, 'kill.confirmed')) return { ok: true };
     if (!session || !session.child) return { ok: true }; // already gone — a moot no-op, not a failure
-    if (session.terminal && session.processClosedEmitted) return { ok: true, terminal: true };
+    if (!session.processClose || session.processClose.confirmed) return { ok: true, terminal: true };
     session.stopGeneration += 1;
     session.pendingFollowUp = null; // R5.1: abandon any pending auto-follow-up
-    if (session.killing) return { ok: true };
     session.killing = true;
-    this._killChild(session);
+    const terminalCause = session.timeoutFailure ? 'timeout' : session.processFailure ? 'process_error' : null;
+    void session.processClose.authorizeStop('kill.confirmed', {
+      threadId: session.threadId,
+      ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal(),
+    });
+    if (!session.terminal) this._killChild(session);
     return { ok: true };
   }
 
