@@ -39,6 +39,17 @@ function preservationReceipt(reattachment = 'not_required') {
   return { ...core, receiptDigest: digest(core) };
 }
 
+function legacyPreservationReceipt(reattachment = 'not_required') {
+  const core = {
+    schemaVersion: 1, state: 'preserved', transport: 'attached', reattachment,
+    sessionDigest: digest('phase91-session'), processGeneration: 3,
+    worktreeDigest: digest('phase91-worktree'), routeDigest: digest('phase91-route'),
+    planBindingDigest: digest('phase91-plan'), runAuthorityDigest: digest('phase91-run'),
+    turnEpoch: 9, fence: 12,
+  };
+  return { ...core, receiptDigest: digest(core) };
+}
+
 function admitV2Control(store, {
   suffix, operation = 'interrupt', turnState = 'working',
   preservationReceiptDigest = null,
@@ -972,6 +983,95 @@ test('P91-21: schema-v2 replay rejects a corrupted closed preservation receipt',
   assert.throws(() => new CoordinationStore(root), (error) => (
     error.name === 'CoordinationIntegrityError' && error.code === 'run_control_integrity'
   ));
+});
+
+test('P91-21a: replay accepts a digest-bound historical v1 preservation receipt without reopening v1 writes', () => {
+  const root = mkdtempSync(join(tmpdir(), 'baton-phase91-v1-compatible-replay-'));
+  const store = new CoordinationStore(root);
+  const seeded = admitV2Control(store, { suffix: '9121a' });
+  const control = beginV2Effect(store, seeded.control, seeded.source);
+  const outcome = {
+    result: 'confirmed', code: null, emulated: false, deliveredDespiteStale: false,
+    actualDelivery: null, preservation: legacyPreservationReceipt(), continuation: null,
+  };
+  const ackCore = {
+    schemaVersion: 2, controlId: control.controlId,
+    effectDigest: control.effect.effectDigest,
+    providerRequestId: control.effect.providerRequestId,
+    state: 'confirmed', outcome,
+  };
+  const acknowledgement = { ...ackCore, ackDigest: digest(ackCore) };
+  assert.throws(() => store.acknowledgeRunControl(acknowledgement, {
+    actor: seeded.source.actor, key: `run.control.ack:${control.controlId}`,
+  }), (error) => error.code === 'run_control_integrity');
+  store.releaseWriterLease({ requireOwned: true });
+
+  const settlementCore = {
+    schemaVersion: 2, repoId: control.repoId, runId: control.runId,
+    controlId: control.controlId, operation: control.operation,
+    admissionDigest: control.admissionDigest, state: 'confirmed', outcome,
+  };
+  const events = [
+    {
+      schemaVersion: 1, seq: 3, ts: '2026-07-20T03:39:40.969Z',
+      kind: 'run.control_provider_acked', actor: seeded.source.actor,
+      idempotencyKey: `run.control.ack:${control.controlId}`, payload: acknowledgement,
+    },
+    {
+      schemaVersion: 1, seq: 4, ts: '2026-07-20T03:39:40.970Z',
+      kind: 'run.control_settled', actor: seeded.source.actor,
+      idempotencyKey: `run.control.settle:${control.controlId}`,
+      payload: { ...settlementCore, settlementDigest: digest(settlementCore) },
+    },
+  ];
+  const file = join(root, 'events.jsonl');
+  writeFileSync(file, `${readFileSync(file, 'utf8')}${events.map(JSON.stringify).join('\n')}\n`);
+  const acceptedLedger = readFileSync(file, 'utf8');
+
+  const replay = new CoordinationStore(root);
+  assert.equal(replay.runControl(control.controlId).status, 'confirmed');
+  assert.deepEqual(replay.runControl(control.controlId).settlement.outcome, outcome);
+  replay.releaseWriterLease({ requireOwned: true });
+
+  const ackOnlyRoot = mkdtempSync(join(tmpdir(), 'baton-phase91-v1-ack-replay-'));
+  const ackOnlyEvents = acceptedLedger.trimEnd().split('\n').slice(0, 3);
+  writeFileSync(join(ackOnlyRoot, 'events.jsonl'), `${ackOnlyEvents.join('\n')}\n`);
+  const ackOnlyReplay = new CoordinationStore(ackOnlyRoot);
+  assert.equal(ackOnlyReplay.runControl(control.controlId).status, 'provider_acked');
+  assert.equal(ackOnlyReplay.settleRunControl({
+    ...settlementCore, settlementDigest: digest(settlementCore),
+  }, {
+    actor: seeded.source.actor, key: `run.control.settle:${control.controlId}`,
+  }).control.status, 'confirmed');
+  ackOnlyReplay.releaseWriterLease({ requireOwned: true });
+
+  const rejectMutation = (label, mutateReceipt) => {
+    const corruptRoot = mkdtempSync(join(tmpdir(), `baton-phase91-v1-${label}-`));
+    const rows = acceptedLedger.trimEnd().split('\n').map((line) => JSON.parse(line));
+    const ack = rows.find((event) => event.kind === 'run.control_provider_acked');
+    const settlement = rows.find((event) => event.kind === 'run.control_settled');
+    mutateReceipt(ack.payload.outcome.preservation);
+    settlement.payload.outcome = JSON.parse(JSON.stringify(ack.payload.outcome));
+    const ackBinding = { ...ack.payload };
+    delete ackBinding.ackDigest;
+    ack.payload.ackDigest = digest(ackBinding);
+    const settlementBinding = { ...settlement.payload };
+    delete settlementBinding.settlementDigest;
+    settlement.payload.settlementDigest = digest(settlementBinding);
+    writeFileSync(join(corruptRoot, 'events.jsonl'), `${rows.map(JSON.stringify).join('\n')}\n`);
+    assert.throws(() => new CoordinationStore(corruptRoot), (error) => (
+      error.name === 'CoordinationIntegrityError' && error.code === 'run_control_integrity'
+    ));
+  };
+  rejectMutation('digest-corruption', (receipt) => {
+    receipt.receiptDigest = '0'.repeat(64);
+  });
+  rejectMutation('authority-corruption', (receipt) => {
+    receipt.sessionDigest = digest('different-session-authority');
+    const receiptBinding = { ...receipt };
+    delete receiptBinding.receiptDigest;
+    receipt.receiptDigest = digest(receiptBinding);
+  });
 });
 
 test('P91-22: Story and Coordinator agree across preserved interrupt and successor admission', async () => {
