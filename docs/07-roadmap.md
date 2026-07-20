@@ -18,7 +18,13 @@
 > Web/MCP/browser, bounded replay, resident stale-authority recovery, verifier/result coherence,
 > and exact route/readiness truth. Phase 93 is next: closed Program IR, event-driven
 > recursive/parallel composition, immutable base plus private overlays, one fenced integrator, and
-> live multi-harness gates. The
+> live multi-harness gates. The implementation-ready Phase 93 spec is authored at
+> `spec/phase93-closed-program-ir.md`: the canonical Program IR (control grammar
+> `value/context/sequence/branch/parallel/await/collect/select/repeat/child` + effect grammar
+> `call/map/reduce/gate/notify/checkpoint/finish`, with the Context AST as the `context` node
+> payload), the immutable program counter / state-revision / pure reducer, gate+review compilation
+> through existing authority, harness-internal delegation as honest metadata, and a status mapping of
+> all prior planned features; no runtime code yet, suite remains green. The
 > milestone prose below is historical sequencing, not a claim that a Git worktree or private HOME
 > is an OS sandbox or that the capability and representation planes are complete.
 
