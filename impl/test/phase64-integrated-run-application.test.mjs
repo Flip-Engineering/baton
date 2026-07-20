@@ -797,6 +797,7 @@ test('P91 application restart: coordinate-free recovery attach-only reuses the p
   await run.inspect();
   await run.interrupt({ reason: 'Preserve for controller restart.' });
   const taskId = first.driver.coordinator.list()[0].taskId;
+  const preservedProcessGeneration = first.driver.coordinator.list()[0].processGeneration;
   const taskCount = first.driver.coordination.snapshot().tasks.length;
   first.driver.coordination.releaseWriterLease({ requireOwned: true });
 
@@ -859,6 +860,13 @@ test('P91 application restart: coordinate-free recovery attach-only reuses the p
   assert.equal(spawnOptions[0].session.id, `mock-native-${workerId}`);
   assert.equal(promptCalls, 0, 'reattachment cannot admit a successor prompt');
   assert.equal(resumedDriver.coordinator.list()[0].taskId, taskId);
+  assert.equal(resumedDriver.coordinator.list()[0].processGeneration,
+    preservedProcessGeneration, 'processless attach-only recovery reuses the preserved generation');
+  const recoveredHandle = resumedDriver.coordinator._workers.get(workerId);
+  assert.equal(recoveredHandle.workspaceOwnerBindingValid, true);
+  assert.equal(recoveredHandle.workspaceOwnerProcessAuthorityValid, true);
+  assert.equal(recoveredHandle.ownedWorktreeAuthority, true);
+  assert.equal(recoveredHandle.status, 'interrupted');
   assert.equal(resumedDriver.coordination.snapshot().tasks.length, taskCount);
 
   const resumedRun = bindBaton(restarted, principal('restart-owner')).runs.open(proposed.runId);
