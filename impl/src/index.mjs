@@ -432,7 +432,7 @@ function worktreeManager(repoRoot, opts = {}) {
           && (!receipt || receipt.logicalTaskId !== taskId || receipt.state !== 'ready'
             || context.ownerReceiptDigest !== receipt.receiptDigest
             || context.branch !== receipt.branch || context.baseSha !== receipt.baseSha
-            || resolve(context.worktree) !== receipt.worktree)) return false;
+            || realpathSync(context.worktree) !== realpathSync(receipt.worktree))) return false;
         if (receipt && receipt.logicalTaskId !== taskId) return false;
         const expected = resolve(realpathSync(repoRoot), '.baton', 'wt', physicalOwnerId);
         if (!existsSync(context.worktree) || realpathSync(context.worktree) !== expected
@@ -664,7 +664,7 @@ function worktreeManager(repoRoot, opts = {}) {
             || context.ownerReceiptDigest !== receipt.receiptDigest
             || context.logicalTaskId !== receipt.logicalTaskId
             || context.branch !== receipt.branch || context.baseSha !== receipt.baseSha
-            || worktree !== receipt.worktree) {
+            || worktree !== realpathSync(receipt.worktree)) {
             return { ok: false, reason: 'session physical workspace owner receipt mismatch' };
           }
         }

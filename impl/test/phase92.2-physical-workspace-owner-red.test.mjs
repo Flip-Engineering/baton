@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync,
+  symlinkSync, writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -146,6 +149,45 @@ test('P92.2-PO1/PO2: concurrent controllers keep one logical task but allocate d
     .filter((line) => line.startsWith('worktree ')).length, 1);
   const receipts = join(commonGit(f.repo), 'baton', 'workspace-owners');
   assert.equal(!existsSync(receipts) || readdirSync(receipts).length === 0, true);
+});
+
+test('P92.2-PO3: a symlinked deployment root preserves receipt-bound resume and self-committed capture identity', async (t) => {
+  const f = fixture('symlinked-root');
+  const repoAlias = join(f.world, 'repo-alias');
+  symlinkSync(f.repo, repoAlias, 'dir');
+  let driver;
+  t.after(async () => {
+    try { await driver?.drainAndClose('phase92.2:symlinked-root'); }
+    catch { try { driver?.coordination.releaseWriterLease(); } catch { /* best effort */ } }
+    rmSync(f.world, { recursive: true, force: true });
+  });
+  driver = createDriver({
+    repoRoot: repoAlias,
+    repoId: 'repo-phase92-2-symlinked',
+    logDir: join(f.world, 'deployment'),
+    adapters: { mock: new MockAdapter({ scenario: {
+      outcome: 'completed', edits: [{ path: 'captured.txt', content: 'captured through alias\n' }],
+    } }) },
+  });
+
+  const handle = await driver.coordinator.spawn('mock', brief(), {
+    taskId: 'symlinked-logical-task', runId: 'symlinked-run',
+  });
+  const outcome = await until(async () => {
+    const current = await driver.coordinator.result(handle.id);
+    return current.ready ? current : null;
+  }, 'symlinked task completion');
+  const context = driver.coordinator.list().find((row) => row.id === handle.id).sessionContext;
+  const receipt = physicalWorkspaceOwnerReceipt(repoAlias, context.ownerTaskId);
+  const verification = driver.log.read(handle.id).find((event) => event.kind === 'verify.reverified');
+
+  assert.equal(outcome.status, 'completed');
+  assert.notEqual(resolve(context.worktree), realpathSync(context.worktree));
+  assert.equal(receipt.receiptDigest, context.ownerReceiptDigest);
+  assert.equal(driver.coordinator._worktrees.worktreeAvailable('symlinked-logical-task', context), true);
+  assert.deepEqual(await driver.coordinator._worktrees.validateSessionContext(context), { ok: true });
+  assert.equal(readFileSync(join(context.worktree, 'captured.txt'), 'utf8'), 'captured through alias\n');
+  assert.equal(verification.payload.capture.snapshotted, false);
 });
 
 test('P92.2-RC1/RC2: branch-only response loss is reaped once after exact local-deployment restart proof', (t) => {
