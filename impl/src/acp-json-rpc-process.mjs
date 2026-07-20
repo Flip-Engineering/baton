@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { reapOwnedProcessGroup } from './process-lifecycle.mjs';
+import { ProcessCloseReapLatch } from './process-lifecycle.mjs';
 
 export class AcpProtocolError extends Error {
   constructor(message, code = 'acp_protocol_error') {
@@ -47,6 +47,14 @@ export class AcpJsonRpcProcess {
     this.pending = new Map();
     this.closed = false;
     this.failure = null;
+    this.processGeneration = options.processGeneration;
+    this.processReady = options.processReady ?? (() => false);
+    this.reapOwnedProcessGroup = options.reapOwnedProcessGroup;
+    this.onProcessClosed = options.onProcessClosed;
+    this.onProcessReapUnconfirmed = options.onProcessReapUnconfirmed;
+    this.onStopConfirmed = options.onStopConfirmed;
+    this.deferStopConfirmation = options.deferStopConfirmation === true;
+    this.processClose = null;
     this.closePromise = new Promise((resolve) => { this.resolveClose = resolve; });
   }
 
@@ -56,6 +64,17 @@ export class AcpJsonRpcProcess {
     this.child = this.spawnFn(this.command, this.args, {
       cwd: this.cwd, env: this.env, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
     });
+    if (Number.isSafeInteger(this.child?.pid) && this.child.pid > 0) {
+      this.processClose = new ProcessCloseReapLatch({
+        generation: this.processGeneration,
+        pid: this.child.pid,
+        timeoutMs: this.reapTimeoutMs,
+        reap: this.reapOwnedProcessGroup,
+        onProcessClosed: this.onProcessClosed,
+        onReapUnconfirmed: this.onProcessReapUnconfirmed,
+        onStopConfirmed: this.onStopConfirmed,
+      });
+    }
     this.child.stdout.setEncoding('utf8');
     this.child.stdout.on('data', (chunk) => this.#onData(chunk));
     this.child.stderr.on('data', () => {});
@@ -90,10 +109,20 @@ export class AcpJsonRpcProcess {
 
   notify(method, params = {}) { return this.#write({ jsonrpc: '2.0', method, params }); }
 
-  async kill() {
+  async kill(stopConfirmation = null) {
     if (!this.child) return { confirmed: true, reason: null };
+    if (this.processClose?.confirmed) return { confirmed: true, reason: null, terminal: true };
     this.#signalGroup();
-    return this.closePromise;
+    if (!this.closed) {
+      if (stopConfirmation && this.processClose) {
+        void this.processClose.authorizeStop(stopConfirmation.kind, stopConfirmation.payload);
+      }
+      return this.closePromise;
+    }
+    if (!this.processClose) return this.closePromise;
+    return stopConfirmation
+      ? this.processClose.authorizeStop(stopConfirmation.kind, stopConfirmation.payload)
+      : this.processClose.retry();
   }
 
   #write(frame) {
@@ -203,12 +232,15 @@ export class AcpJsonRpcProcess {
     if (this.closed) return;
     if (!this.failure && this.buffer.trim()) this.failure = new AcpProtocolError('ACP process closed with a truncated frame');
     const pid = this.child?.pid;
-    const reap = await reapOwnedProcessGroup(pid, { timeoutMs: this.reapTimeoutMs });
     this.closed = true;
     const error = this.failure ?? new Error(`ACP process closed${code === null ? '' : ` with code ${code}`}${signal ? ` (${signal})` : ''}`);
     for (const [id, pending] of this.pending) {
       this.pending.delete(id); if (pending.timer) clearTimeout(pending.timer); pending.reject(error);
     }
+    if (this.deferStopConfirmation) this.processClose?.holdStopConfirmation();
+    const reap = this.processClose
+      ? await this.processClose.close(code, signal, this.processReady() === true)
+      : Object.freeze({ confirmed: false, reason: 'invalid_group' });
     this.resolveClose(Object.freeze({ ...reap, code, signal, pid }));
   }
 }
