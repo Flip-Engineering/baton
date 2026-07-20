@@ -24,7 +24,7 @@ const MANIFEST_FIELDS = Object.freeze([
 const PROGRAM_FIELDS = Object.freeze(['expression', 'kind', 'schemaVersion']);
 const EFFECT_OPS = new Set(['map', 'reduce', 'review', 'verify']);
 
-function contextProgramPure(value) {
+export function contextProgramPure(value) {
   if (!value || typeof value !== 'object') return true;
   if (typeof value.op === 'string' && EFFECT_OPS.has(value.op)) return false;
   return Object.entries(value).every(([key, child]) => (
