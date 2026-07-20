@@ -682,6 +682,7 @@ export class Coordinator {
     this._derivedResumePlanToken = Object.freeze({});
     this._derivedRevisionPlanToken = Object.freeze({});
     this._planRecoveryAuthority = Object.freeze({});
+    this._preservedProcesslessAttachAuthority = Object.freeze({});
     // Keep coordinator-local health/attribution wrappers on a facade. Reusing one Log across a
     // restart must not stack controller closures on the shared writer and let the prior
     // controller overwrite the fresh controller's task/run attribution.
@@ -1220,11 +1221,16 @@ export class Coordinator {
       // still reconciled away. Runtime scopes are never trusted across controller incarnation.
       const preservedOwners = [...this._workers.values()].filter((handle) => {
         const task = this._tasks.get(handle.taskId);
+        const preservationAuthority = this._exactProcesslessPreservationAuthority(handle, task);
+        if (!preservationAuthority.ok) {
+          handle.preservationAuthorityDiagnostic = preservationAuthority.result;
+        }
         return handle.status === 'orphaned'
           && handle.sessionPreservation?.state === 'preserved'
           && handle.sessionPreservation?.transport === 'attached'
           && handle.sessionContext?.ownerTaskId
-          && task && !TERMINAL_TASK_STATUSES.has(task.status);
+          && task && !TERMINAL_TASK_STATUSES.has(task.status)
+          && preservationAuthority.ok;
       }).map((handle) => workspaceOwnerExpectation(handle));
       const expectedOwners = uniqueOwnerExpectations([...preservedOwners, ...recoveredProcessOwners]);
       reconcileStartupResources(expectedOwners, recoveredProcessWorkers);
@@ -2175,6 +2181,108 @@ export class Coordinator {
     };
   }
 
+  _exactProcesslessPreservationAuthority(handle, task) {
+    const receipt = handle?.sessionPreservation;
+    const fields = [
+      'adapterCardDigest', 'attached', 'fence', 'planBindingDigest',
+      'processGeneration', 'reattachment', 'receiptDigest', 'routeDigest',
+      'runAuthorityDigest', 'schemaVersion', 'sessionDigest', 'state', 'transport',
+      'turnEpoch', 'worktreeDigest',
+    ];
+    const processless = handle?.processRef === null && handle?.processAuthority === null;
+    const priorProcessClosed = handle?.processRef?.state === 'closed';
+    if (!handle || !task || !task.brief?.goalPlan || !task.runId
+      || handle.status !== 'orphaned' || (!processless && !priorProcessClosed)
+      || !receipt || typeof receipt !== 'object' || Array.isArray(receipt)
+      || Object.keys(receipt).sort().join(',') !== fields.sort().join(',')
+      || receipt.schemaVersion !== 2 || receipt.state !== 'preserved'
+      || receipt.transport !== 'attached' || receipt.attached !== true
+      || receipt.reattachment !== 'not_required'
+      || !Number.isSafeInteger(receipt.processGeneration)
+      || receipt.processGeneration !== handle.processGeneration
+      || !Number.isSafeInteger(receipt.turnEpoch) || receipt.turnEpoch < 0
+      || receipt.turnEpoch !== handle.preservedTurnEpoch
+      || !Number.isSafeInteger(receipt.fence) || receipt.fence < 0
+      || ['sessionDigest', 'worktreeDigest', 'routeDigest', 'planBindingDigest',
+        'runAuthorityDigest', 'adapterCardDigest', 'receiptDigest']
+        .some((field) => !/^[a-f0-9]{64}$/u.test(receipt[field] ?? ''))) {
+      return { ok: false, result: 'preservation_receipt_invalid' };
+    }
+    const core = { ...receipt }; delete core.receiptDigest;
+    if (receipt.receiptDigest !== canonicalDigest(core)) {
+      return { ok: false, result: 'preservation_receipt_invalid' };
+    }
+    const current = this._semanticControlBinding(handle, task);
+    if (['sessionDigest', 'processGeneration', 'worktreeDigest', 'routeDigest',
+      'planBindingDigest', 'runAuthorityDigest'].some((field) => receipt[field] !== current[field])) {
+      return { ok: false, result: 'preservation_receipt_stale' };
+    }
+    const controls = typeof this._coordination?.runControls === 'function'
+      ? this._coordination.runControls(task.runId, 100_000) : [];
+    const exactControls = controls.filter((control) => (
+      control?.schemaVersion === 2 && control.status === 'confirmed'
+      && control.operation === 'interrupt' && control.turnDisposition === 'preserve_turn'
+      && control.runId === task.runId && control.target?.workerId === handle.id
+      && control.target?.taskId === task.id
+      && control.target?.turnEpoch === receipt.turnEpoch
+      && control.target?.sessionDigest === receipt.sessionDigest
+      && control.target?.processGeneration === receipt.processGeneration
+      && control.target?.worktreeDigest === receipt.worktreeDigest
+      && control.target?.routeDigest === receipt.routeDigest
+      && control.target?.planBindingDigest === receipt.planBindingDigest
+      && control.target?.runAuthorityDigest === receipt.runAuthorityDigest
+      && control.providerAck?.state === 'confirmed'
+      && control.providerAck?.outcome?.preservation?.receiptDigest === receipt.receiptDigest
+      && control.settlement?.state === 'confirmed'
+      && control.settlement?.outcome?.preservation?.receiptDigest === receipt.receiptDigest
+      && control.settledEvent !== null
+    ));
+    if (exactControls.length !== 1) {
+      return { ok: false, result: exactControls.length === 0
+        ? 'preservation_control_unproven' : 'preservation_control_ambiguous' };
+    }
+    const adapter = this._adapters[handle.vendor];
+    if (!adapter) return { ok: false, result: 'session_not_resumable' };
+    let card;
+    try { card = adapter.card(); }
+    catch { return { ok: false, result: 'preservation_card_unavailable' }; }
+    if (!cardSupportsSession(card, { mode: 'resume' })
+      || canonicalDigest(card) !== receipt.adapterCardDigest) {
+      return { ok: false, result: 'preservation_card_mismatch' };
+    }
+    return { ok: true, receipt, card, control: exactControls[0], processless };
+  }
+
+  _exactPreservedRecoveryContext(handle, opts = {}) {
+    let receiptContext;
+    let context;
+    try {
+      receiptContext = handle?.sessionContext
+        ? normalizeSessionRequest({
+          mode: 'resume', id: handle.sessionRef.id, context: handle.sessionContext,
+        }).context
+        : null;
+      const rawContext = opts.context ?? receiptContext;
+      context = rawContext
+        ? normalizeSessionRequest({
+          mode: 'resume', id: handle.sessionRef.id, context: rawContext,
+        }).context
+        : null;
+    } catch (error) {
+      return { ok: false, result: error.code ?? 'session_context_mismatch', reason: error.message };
+    }
+    if (!receiptContext || !context) {
+      return { ok: false, result: 'session_context_required' };
+    }
+    if (canonicalDigest(context) !== canonicalDigest(receiptContext)) {
+      return {
+        ok: false, result: 'session_context_mismatch',
+        reason: 'preserved recovery context does not match the receipt-bound session context',
+      };
+    }
+    return { ok: true, context };
+  }
+
   _semanticTargetMatches(handle, expected, expectedDigest) {
     if (!handle || !expected || typeof expected !== 'object'
       || canonicalDigest(expected) !== expectedDigest) return false;
@@ -2238,17 +2346,29 @@ export class Coordinator {
       || typeof this._worktrees?.worktreeAvailable !== 'function') return true;
     if (handle.worktreeAuthorityLost === true) return false;
     try {
-      return this._worktrees.worktreeAvailable(handle.taskId, handle.sessionContext) === true;
+      const logicalOwner = validWorkspaceOwnerBoundPayload(handle.workspaceOwnerBinding)
+        ? handle.workspaceOwnerBinding.logicalTaskId : handle.taskId;
+      return this._worktrees.worktreeAvailable(logicalOwner, handle.sessionContext) === true;
     } catch { return false; }
   }
 
-  _restoreRecoveredPhysicalWorkspaceAuthority(handle, context) {
+  _restoreRecoveredPhysicalWorkspaceAuthority(handle, context, opts = {}) {
     const physicalOwnerId = context?.ownerTaskId;
     if (!/^ws-[a-f0-9]{32}$/u.test(physicalOwnerId ?? '')) return true;
     const binding = handle?.workspaceOwnerBinding;
     const currentProcessExact = handle?.processRef?.generation === handle?.processGeneration
-      && ['initializing', 'ready'].includes(handle?.processRef?.state)
+      && (['initializing', 'ready'].includes(handle?.processRef?.state)
+        || (handle?.processRef?.state === 'unconfirmed_after_restart'
+          && handle?.recoveredProcessAuthority === true))
       && processAuthorityState(handle.processRef, handle.processAuthority) === 'active';
+    const processlessPreservedAttachExact = opts.authority
+      === this._preservedProcesslessAttachAuthority
+      && opts.processGeneration === handle?.processGeneration
+      && handle?.processRef === null && handle?.processAuthority === null
+      && handle?.sessionPreservation?.state === 'preserved'
+      && handle.sessionPreservation.transport === 'attached'
+      && handle.sessionPreservation.processGeneration === handle.processGeneration;
+    const currentOwnerExact = currentProcessExact || processlessPreservedAttachExact;
     const immutableBindingExact = handle?.workspaceOwnerBindingValid === true
       && validWorkspaceOwnerBoundPayload(binding)
       && binding.physicalOwnerId === physicalOwnerId
@@ -2257,22 +2377,25 @@ export class Coordinator {
       && binding.worktree === context.worktree
       && binding.baseSha === context.baseSha;
     let checkoutExact = false;
-    if (currentProcessExact && immutableBindingExact
+    if (currentOwnerExact && immutableBindingExact
       && typeof this._worktrees?.worktreeAvailable === 'function') {
       try {
         checkoutExact = this._worktrees.worktreeAvailable(binding.logicalTaskId, context) === true;
       } catch { checkoutExact = false; }
     }
-    if (!currentProcessExact || !immutableBindingExact || !checkoutExact) {
+    if (!currentOwnerExact || !immutableBindingExact || !checkoutExact) {
       handle.workspaceOwnerProcessAuthorityValid = false;
       handle.workspaceOwnerBindingDiagnostic = !immutableBindingExact
         ? 'workspace_owner_binding_unproven'
-        : !currentProcessExact
+        : !currentOwnerExact
           ? 'workspace_owner_process_authority_unproven'
           : 'workspace_owner_checkout_invalid';
       return false;
     }
     handle.workspaceOwnerProcessAuthorityValid = true;
+    if (handle.processRef?.state === 'unconfirmed_after_restart') {
+      handle.processRef = { ...handle.processRef, state: 'ready', ready: true };
+    }
     handle.worktree = context.worktree;
     handle.ownedWorktreeAuthority = true;
     handle.workspaceOwnerBindingDiagnostic = null;
@@ -3811,6 +3934,20 @@ export class Coordinator {
   recover(workerId, opts = {}) {
     const handle = this._workers.get(workerId);
     const task = handle ? this._tasks.get(handle.taskId) : null;
+    if (task?.brief?.goalPlan && handle?.sessionPreservation?.state !== 'preserved') {
+      return Promise.resolve({ ok: false, result: 'goal_plan_continuation_not_authorized' });
+    }
+    if (task?.runId && this._coordination.run?.(task.runId)?.status === 'sealed') {
+      return Promise.reject(Object.assign(new Error(`run ${task.runId} is sealed`), {
+        name: 'CoordinationRefusal', code: 'run_sealed',
+      }));
+    }
+    if (handle?.sessionPreservation?.state === 'preserved') {
+      const contextAuthority = this._exactPreservedRecoveryContext(handle, opts);
+      if (!contextAuthority.ok) return Promise.resolve(contextAuthority);
+      const preservationAuthority = this._exactProcesslessPreservationAuthority(handle, task);
+      if (!preservationAuthority.ok) return Promise.resolve(preservationAuthority);
+    }
     const identity = canonicalDigest({
       workerId,
       taskId: task?.id ?? null,
@@ -4032,6 +4169,20 @@ export class Coordinator {
   }
 
   async _recover(workerId, opts = {}) {
+    const preflightHandle = this._workers.get(workerId);
+    const preflightTask = preflightHandle ? this._tasks.get(preflightHandle.taskId) : null;
+    const preflightPlanRecovery = opts.planRecovery?.authority === this._planRecoveryAuthority;
+    if (preflightTask?.brief?.goalPlan
+      && preflightHandle?.sessionPreservation?.state !== 'preserved'
+      && !preflightPlanRecovery) {
+      return { ok: false, result: 'goal_plan_continuation_not_authorized' };
+    }
+    if (preflightTask?.runId
+      && this._coordination.run?.(preflightTask.runId)?.status === 'sealed') {
+      throw Object.assign(new Error(`run ${preflightTask.runId} is sealed`), {
+        name: 'CoordinationRefusal', code: 'run_sealed',
+      });
+    }
     const startup = opts.startupAuthority === this._startupRecoveryAuthority && this._startupRecoveryState === 'pending';
     if (!startup) this.tick();
     else { if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' }); if (this._fatalError) throw this._fatalError; }
@@ -4039,17 +4190,27 @@ export class Coordinator {
     const task = this._tasks.get(handle.taskId);
     const planRecovery = opts.planRecovery?.authority === this._planRecoveryAuthority
       ? opts.planRecovery.request : null;
+    if (task?.brief?.goalPlan && handle.sessionPreservation?.state !== 'preserved'
+      && !planRecovery) {
+      return { ok: false, result: 'goal_plan_continuation_not_authorized' };
+    }
+    if (task?.runId && this._coordination.run?.(task.runId)?.status === 'sealed') {
+      throw Object.assign(new Error(`run ${task.runId} is sealed`), {
+        name: 'CoordinationRefusal', code: 'run_sealed',
+      });
+    }
+    if (handle.sessionPreservation?.state === 'preserved') {
+      if (handle.status !== 'orphaned') return { ok: false, result: 'worker_not_orphaned' };
+      if (!task || !handle.sessionRef || handle.sessionRef.persistence !== 'native') {
+        return { ok: false, result: 'session_not_resumable' };
+      }
+      return this._reattachPreservedSession(handle, task, opts);
+    }
     const priorDispatchRefusal = this._recoveryDispatchRefusal(handle, task);
     if (priorDispatchRefusal !== null) return { ok: false, result: priorDispatchRefusal };
     if (handle.status !== 'orphaned') return { ok: false, result: 'worker_not_orphaned' };
     if (!task || !handle.sessionRef || handle.sessionRef.persistence !== 'native') {
       return { ok: false, result: 'session_not_resumable' };
-    }
-    if (handle.sessionPreservation?.state === 'preserved') {
-      return this._reattachPreservedSession(handle, task, opts);
-    }
-    if (task.brief?.goalPlan && !planRecovery) {
-      return { ok: false, result: 'goal_plan_continuation_not_authorized' };
     }
     let planRecoveryState = null;
     if (planRecovery) {
@@ -4070,7 +4231,6 @@ export class Coordinator {
       }
       planRecoveryState = { request: planRecovery, preview, route };
     }
-    if (task.runId && this._coordination.run?.(task.runId)?.status === 'sealed') throw Object.assign(new Error(`run ${task.runId} is sealed`), { name: 'CoordinationRefusal', code: 'run_sealed' });
     const adapter = this._adapters[handle.vendor];
     if (!adapter || !cardSupportsSession(adapter.card(), { mode: 'resume' })) {
       return { ok: false, result: 'session_not_resumable' };
@@ -4180,8 +4340,12 @@ export class Coordinator {
       timerHandle = this._setTimeout(() => { timedOut = true; resolve({ timeout: true }); }, timeoutMs);
       if (timerHandle && typeof timerHandle.unref === 'function') timerHandle.unref();
     });
-    handle.processGeneration = (handle.processGeneration ?? 0) + 1;
-    if (/^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')) {
+    const exactRecoveredProcess = handle.processRef?.state === 'unconfirmed_after_restart'
+      && handle.processRef.generation === handle.processGeneration
+      && handle.recoveredProcessAuthority === true
+      && processAuthorityState(handle.processRef, handle.processAuthority) === 'active';
+    if (!exactRecoveredProcess) handle.processGeneration = (handle.processGeneration ?? 0) + 1;
+    if (!exactRecoveredProcess && /^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')) {
       handle.workspaceOwnerProcessAuthorityValid = false;
     }
     // Policy observation is bound to one exact process generation. A recovered child must
@@ -4242,7 +4406,7 @@ export class Coordinator {
             ? { result: 'session_identity_mismatch', reason: `expected ${expectedId}, observed ${observedId ?? '(none)'}` }
             : null;
     if (!failed && (handle.processRef?.state === 'closed'
-      || handle.processRef?.state === 'unconfirmed_after_restart'
+      || (handle.processRef?.state === 'unconfirmed_after_restart' && !exactRecoveredProcess)
       || ['dead', 'exited', 'stopping'].includes(handle.status))) {
       failed = { result: 'recovery_transport_closed', reason: 'native reattachment closed before admission committed' };
     }
@@ -4556,19 +4720,16 @@ export class Coordinator {
 
   async _reattachPreservedSession(handle, task, opts = {}) {
     const workerId = handle.id;
+    const contextAuthority = this._exactPreservedRecoveryContext(handle, opts);
+    if (!contextAuthority.ok) return contextAuthority;
+    const { context } = contextAuthority;
+    const preservationAuthority = this._exactProcesslessPreservationAuthority(handle, task);
+    if (!preservationAuthority.ok) return preservationAuthority;
     const adapter = this._adapters[handle.vendor];
-    if (!adapter || !cardSupportsSession(adapter.card(), { mode: 'resume' })) {
-      return { ok: false, result: 'session_not_resumable' };
-    }
     if (task.runId && (this._coordination.runStop?.(task.runId)
       || this._coordination.run?.(task.runId)?.status === 'sealed')) {
       return { ok: false, result: 'run_stopping' };
     }
-    const rawContext = opts.context ?? handle.sessionContext;
-    const context = rawContext
-      ? normalizeSessionRequest({ mode: 'resume', id: handle.sessionRef.id, context: rawContext }).context
-      : null;
-    if (!context) return { ok: false, result: 'session_context_required' };
     try { await this._validateSessionContext(context); }
     catch (error) {
       return { ok: false, result: error.code ?? 'session_context_mismatch', reason: error.message };
@@ -4592,9 +4753,12 @@ export class Coordinator {
     const runtime = this._ensureRuntimeScope(handle);
     handle.currentIncarnation = true;
     handle.localAuthority = true;
-    handle.processGeneration = (handle.processGeneration ?? 0) + 1;
-    if (/^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')) {
-      handle.workspaceOwnerProcessAuthorityValid = false;
+    const processlessPreservedAttach = preservationAuthority.processless === true;
+    if (!processlessPreservedAttach) {
+      handle.processGeneration = (handle.processGeneration ?? 0) + 1;
+      if (/^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')) {
+        handle.workspaceOwnerProcessAuthorityValid = false;
+      }
     }
     handle.workerPolicyObserved = null;
     handle.workerPolicyMismatch = null;
@@ -4638,6 +4802,7 @@ export class Coordinator {
     const failed = outcome?.timeout ? 'recovery_timeout'
       : outcome?.error ? 'recovery_exception'
         : outcome?.ack?.ok !== true ? 'recovery_refused'
+          : outcome.ack.attached !== true ? 'recovery_attachment_unproven'
           : observed !== handle.sessionRef.id ? 'session_identity_mismatch'
             : admission.events.filter((event) => event.kind === 'lifecycle.spawned').length !== 1
               || unexpected.length > 0 ? 'recovery_protocol_violation'
@@ -4657,7 +4822,11 @@ export class Coordinator {
       this._handleEvent(event, handle.vendor, { admittedReady: event.kind === 'lifecycle.spawned' });
     }
     if (/^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')
-      && !this._restoreRecoveredPhysicalWorkspaceAuthority(handle, context)) {
+      && !this._restoreRecoveredPhysicalWorkspaceAuthority(handle, context,
+        processlessPreservedAttach && outcome?.ack?.attached === true ? {
+          authority: this._preservedProcesslessAttachAuthority,
+          processGeneration: handle.processGeneration,
+        } : {})) {
       return this._failPreservedReattachment(
         handle, task, 'workspace_owner_process_authority_unproven',
       );
@@ -4668,8 +4837,9 @@ export class Coordinator {
     }
     const binding = this._semanticControlBinding(handle, task);
     const core = {
-      schemaVersion: 1, state: 'preserved', transport: 'attached',
+      schemaVersion: 2, state: 'preserved', transport: 'attached', attached: true,
       reattachment: 'confirmed', ...binding,
+      adapterCardDigest: canonicalDigest(preservationAuthority.card),
       turnEpoch: this._safeTurnEpoch(handle), fence: this._fences.current(workerId).fence,
     };
     const preservation = deepFreeze({ ...core, receiptDigest: canonicalDigest(core) });
@@ -4702,7 +4872,15 @@ export class Coordinator {
         `task.failed:${task.id}:preserved_reattachment:${failed.seq}`, evidence);
       task.status = 'failed';
     }
-    const reap = await this._beginStop(handle, 'kill', undefined, 'policy');
+    const retainUnownedWorktree = /^ws-[a-f0-9]{32}$/u.test(
+      handle.sessionContext?.ownerTaskId ?? '',
+    ) && handle.ownedWorktreeAuthority !== true;
+    // A failed attach did not mint physical-owner authority. Reap only the transport/runtime
+    // created by this attempt and retain the pre-existing checkout for authoritative restart
+    // reconciliation instead of either deleting it without authority or reporting false cleanup.
+    const reap = await this._beginStop(handle, 'kill', undefined, 'policy', {
+      retainUnownedWorktree,
+    });
     const reapConfirmed = reap?.ok === true
       && ['confirmed', 'already_dead', 'already_stopped'].includes(reap.result);
     return {
@@ -5626,10 +5804,36 @@ export class Coordinator {
   // =========================================================================
 
   send(workerId, message, mode, opts = {}) {
+    const handle = this._workers.get(workerId);
+    const task = handle ? this._tasks.get(handle.taskId) : null;
+    if (mode === 'turn' && handle?.status === 'idle'
+      && task && TERMINAL_TASK_STATUSES.has(task.status)
+      && task.brief?.goalPlan) {
+      return Promise.resolve({ ok: false, result: 'goal_plan_continuation_not_authorized' });
+    }
+    if (mode === 'turn' && task?.runId
+      && this._coordination.run?.(task.runId)?.status === 'sealed') {
+      return Promise.reject(Object.assign(new Error(`run ${task.runId} is sealed`), {
+        name: 'CoordinationRefusal', code: 'run_sealed',
+      }));
+    }
     return this._withAuthorityOp(() => this._send(workerId, message, mode, opts));
   }
 
   async _send(workerId, message, mode, opts = {}) {
+    const preflightHandle = this._workers.get(workerId);
+    const preflightTask = preflightHandle ? this._tasks.get(preflightHandle.taskId) : null;
+    if (mode === 'turn' && preflightHandle?.status === 'idle'
+      && preflightTask && TERMINAL_TASK_STATUSES.has(preflightTask.status)
+      && preflightTask.brief?.goalPlan) {
+      return { ok: false, result: 'goal_plan_continuation_not_authorized' };
+    }
+    if (mode === 'turn' && preflightTask?.runId
+      && this._coordination.run?.(preflightTask.runId)?.status === 'sealed') {
+      throw Object.assign(new Error(`run ${preflightTask.runId} is sealed`), {
+        name: 'CoordinationRefusal', code: 'run_sealed',
+      });
+    }
     this.tick();
     if (opts.controlId !== undefined
       && !/^control:[a-f0-9]{64}$/u.test(opts.controlId)) {
@@ -5700,6 +5904,20 @@ export class Coordinator {
   async _deliver(handle, message, mode, opts) {
     const workerId = handle.id;
     const task = this._tasks.get(handle.taskId);
+    // Plan continuation authority and sealed-Run authority precede the delivery slot's other
+    // observations. In particular, a queued turn that became terminal while waiting cannot
+    // consult a mutable adapter card, emit semantic-target telemetry, or cross any provider or
+    // coordination boundary before it is refused.
+    if (mode === 'turn' && handle.status === 'idle'
+      && task && TERMINAL_TASK_STATUSES.has(task.status) && task.brief?.goalPlan) {
+      return { ok: false, result: 'goal_plan_continuation_not_authorized' };
+    }
+    if (mode === 'turn' && task?.runId
+      && this._coordination.run?.(task.runId)?.status === 'sealed') {
+      throw Object.assign(new Error(`run ${task.runId} is sealed`), {
+        name: 'CoordinationRefusal', code: 'run_sealed',
+      });
+    }
     if (opts.semanticTarget && !this._semanticTargetMatches(
       handle, opts.semanticTarget, opts.semanticTargetDigest,
     )) {
@@ -5732,12 +5950,7 @@ export class Coordinator {
       && handle.status === 'idle'
       && task && TERMINAL_TASK_STATUSES.has(task.status)
       && ['native', 'emulated'].includes(card?.sessions?.multiTurn);
-    if (reusableFollowUp && task.brief?.goalPlan) {
-      return { ok: false, result: 'goal_plan_continuation_not_authorized' };
-    }
-    if (reusableFollowUp && task.runId && this._coordination.run?.(task.runId)?.status === 'sealed') {
-      throw Object.assign(new Error(`run ${task.runId} is sealed`), { name: 'CoordinationRefusal', code: 'run_sealed' });
-    }
+    if (reusableFollowUp && task.brief?.goalPlan) return { ok: false, result: 'goal_plan_continuation_not_authorized' };
     if (handle.status === 'idle' && !reusableFollowUp) return { ok: false, result: 'worker_not_active' };
     if (handle.status === 'dead' || handle.status === 'exited' || handle.status === 'orphaned'
       || handle.status === 'interrupted' || handle.status === 'pending') {
@@ -6453,6 +6666,7 @@ export class Coordinator {
       then: mode === 'interrupt' ? then : undefined,
       controlId: context?.controlId ?? null,
       preserveTurn: context?.preserveTurn === true,
+      retainUnownedWorktree: context?.retainUnownedWorktree === true,
       confirmationPayload: null,
       interactionReady: false,
       interactionResolutionOk: false,
@@ -6867,6 +7081,7 @@ export class Coordinator {
     );
     if (handle.worktree === null && handle.ownedWorktreeAuthority === false
       && handle.runtimeScope?.active !== true
+      && handle.worktreeCreationPending !== true
       && (!opaquePhysicalOwner || handle.physicalWorkspaceCleanupCompleted === true)) {
       handle.cleanupPending = false;
       handle.cleanupError = null;
@@ -7660,11 +7875,13 @@ export class Coordinator {
     if (!attached) return null;
     const binding = this._semanticControlBinding(handle, task);
     const core = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       state: 'preserved',
       transport: 'attached',
+      attached: true,
       reattachment: 'not_required',
       ...binding,
+      adapterCardDigest: canonicalDigest(card),
       turnEpoch: this._safeTurnEpoch(handle),
       fence: this._fences.current(handle.id).fence,
     };
@@ -7714,7 +7931,8 @@ export class Coordinator {
           const runtimeRemoved = this._removeRuntimeScope(handle);
           if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'cancelled';
           waiter.cleanupPromise = this._preserveProgressBeforeReap(handle, task, stopEvent, preserveProgress)
-            .then(() => this._removeOwnedTaskWorktree(handle, task)).then(() => {
+            .then(() => waiter.retainUnownedWorktree
+              ? undefined : this._removeOwnedTaskWorktree(handle, task)).then(() => {
             if (!runtimeRemoved) throw Object.assign(new Error('runtime cleanup failed'), { code: 'runtime_cleanup_failed' });
           });
         } else if (waiter.preserveTurn === true) {
@@ -8835,7 +9053,10 @@ export class Coordinator {
       const processBound = handle.processRef !== null
         || (payload?.processGeneration !== undefined && payload?.pid !== undefined);
       const validProviderReady = !processBound || ((handle.processRef?.state === 'initializing'
-        || (opts.admittedReady === true && handle.processRef?.state === 'ready'))
+        || ((opts.admittedReady === true || handle.turnAdmission)
+          && (handle.processRef?.state === 'ready'
+          || (handle.processRef?.state === 'unconfirmed_after_restart'
+            && handle.recoveredProcessAuthority === true))))
         && payload?.processGeneration === handle.processRef.generation
         && payload?.pid === handle.processRef.pid
         && typeof providerId === 'string' && providerId.length > 0);

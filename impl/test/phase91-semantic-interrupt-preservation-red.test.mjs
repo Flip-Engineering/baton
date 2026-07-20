@@ -29,10 +29,11 @@ const wireDigest = (value) => createHash('sha256').update(JSON.stringify(value))
 
 function preservationReceipt(reattachment = 'not_required') {
   const core = {
-    schemaVersion: 1, state: 'preserved', transport: 'attached', reattachment,
+    schemaVersion: 2, state: 'preserved', transport: 'attached', attached: true, reattachment,
     sessionDigest: digest('phase91-session'), processGeneration: 3,
     worktreeDigest: digest('phase91-worktree'), routeDigest: digest('phase91-route'),
     planBindingDigest: digest('phase91-plan'), runAuthorityDigest: digest('phase91-run'),
+    adapterCardDigest: digest('phase91-card'),
     turnEpoch: 9, fence: 12,
   };
   return { ...core, receiptDigest: digest(core) };
@@ -386,7 +387,7 @@ test('P91-6: interrupt resolves a blocked interaction before exposing the preser
   assert.deepEqual(f.adapter.calls.approve, [[handle.id, 'phase91-approval', 'cancel', undefined]]);
 });
 
-test('P91-7: replay reattaches the exact preserved session without a prompt or replacement task', async () => {
+test('P91-7: processless replay refuses a receipt without exact durable Plan control authority', async () => {
   const f = fixture();
   const handle = await spawn(f, 'phase91-restart-task');
   await f.coordinator.interrupt(handle.id, undefined, 'semantic:owner', {
@@ -406,23 +407,15 @@ test('P91-7: replay reattaches the exact preserved session without a prompt or r
   assert.equal(replay.list()[0].status, 'orphaned');
   assert.equal(replay.list()[0].sessionPreservation.receiptDigest, priorReceipt.receiptDigest);
 
+  const beforeSeq = f.coordination.snapshot().lastSeq;
   const attached = await replay.recover(handle.id);
-  assert.equal(attached.result, 'attached_preserved');
-  assert.equal(attached.preservation.reattachment, 'confirmed');
-  assert.equal(resumed.calls.spawn, 1);
+  assert.equal(attached.result, 'preservation_receipt_invalid');
+  assert.equal(resumed.calls.spawn, 0);
   assert.equal(resumed.calls.prompt.length, 0, 'reattachment alone must not admit provider work');
-  assert.equal(replay.list()[0].status, 'interrupted');
+  assert.equal(replay.list()[0].status, 'orphaned');
   assert.equal(replay.list()[0].sessionRef.id, `native-${handle.id}`);
   assert.equal(f.coordination.snapshot().tasks.length, 1);
-
-  const sent = await replay.send(handle.id, 'Resume after controller restart.', 'nudge', {
-    expectedFence: replay.list()[0].fence,
-    controlId: controlId('91d7'), resumePreservedTurn: true,
-  });
-  assert.equal(sent.actualDelivery, 'turn');
-  assert.equal(resumed.calls.spawn, 1);
-  assert.equal(resumed.calls.prompt.length, 1);
-  assert.equal(replay.list()[0].taskId, handle.taskId);
+  assert.equal(f.coordination.snapshot().lastSeq, beforeSeq);
 });
 
 test('P91-8: a stale semantic send fence cannot consume the preserved-session receipt', async () => {
@@ -740,7 +733,7 @@ test('P91-15: delayed interrupt Ack cannot satisfy the later kill operation gene
   assert.equal(f.removals.length, 1);
 });
 
-test('P91-16: failed preserved-session reattachment confirms kill and owned-worktree reap', async () => {
+test('P91-16: unplanned processless reattachment refuses before a wrong-session spawn or reap', async () => {
   const f = fixture();
   const handle = await spawn(f, 'phase91-reattach-failure-task');
   await f.coordinator.interrupt(handle.id, undefined, 'semantic:owner', {
@@ -765,18 +758,13 @@ test('P91-16: failed preserved-session reattachment confirms kill and owned-work
   });
 
   const failed = await replay.recover(handle.id);
-  assert.deepEqual({
-    ok: failed.ok, result: failed.result, reap: failed.reap, reapResult: failed.reapResult,
-  }, {
-    ok: false, result: 'session_identity_mismatch', reap: 'confirmed', reapResult: 'confirmed',
-  });
-  assert.equal(resumed.calls.spawn, 1);
+  assert.deepEqual(failed, { ok: false, result: 'preservation_receipt_invalid' });
+  assert.equal(resumed.calls.spawn, 0);
   assert.equal(resumed.calls.prompt.length, 0);
-  assert.equal(resumed.calls.kill, 1);
-  assert.equal(replay.list()[0].status, 'dead');
-  assert.equal(replay.list()[0].sessionPreservation, null);
-  assert.equal(f.coordination.task(handle.taskId).status, 'failed');
-  assert.equal(f.removals.length, 1);
+  assert.equal(resumed.calls.kill, 0);
+  assert.equal(replay.list()[0].status, 'orphaned');
+  assert.equal(f.coordination.task(handle.taskId).status, 'working');
+  assert.equal(f.removals.length, 0);
 });
 
 test('P91-17: process close after preservation fails the task, clears control, reaps, and agrees with Story', async () => {
