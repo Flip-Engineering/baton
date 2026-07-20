@@ -16,11 +16,13 @@ import { normalizeGoalPlanPolicy } from '../src/goal-plan.mjs';
 import { Log } from '../src/log.mjs';
 import {
   BatonWebClient, connectBaton, createBatonWebMcpServer, createLocalSocketFetch,
-  discoverBatonConnection, openBaton, parseBatonCli, runBatonCli,
+  createDriver, discoverBatonConnection, openBaton, parseBatonCli, runBatonCli,
 } from '../src/index.mjs';
+import { openBatonDeployment } from '../src/application-deployment.mjs';
 import {
   projectRouteReadinessError, RouteReadinessAuthority, RouteReadinessBlockedError,
 } from '../src/route-readiness-authority.mjs';
+import { DEFAULT_WORKER_POLICY_REQUEST, resolveWorkerPolicy } from '../src/worker-policy.mjs';
 
 const ROUTE = Object.freeze({ harness: 'grok', model: 'grok-4.5', effort: 'high' });
 const KIMI_ROUTE = Object.freeze({ harness: 'kimi-code', model: 'kimi-code/k3', effort: 'max' });
@@ -275,16 +277,67 @@ test('P94A-RA1i: worker policy authority is cross-bound to the exact adapter car
   const authority = new RouteReadinessAuthority({
     routes: [ROUTE], evaluate: () => ({ state: 'ready' }), credentialEpoch: () => 'epoch',
   });
-  const policy = {
-    schemaVersion: 1, requestDigest: 'b'.repeat(64),
-    adapterCardDigest: 'c'.repeat(64), resolutionDigest: 'd'.repeat(64),
-  };
-  await assert.rejects(authority.issue(binding({ workerPolicy: policy })), (error) => (
+  const policy = resolveWorkerPolicy(DEFAULT_WORKER_POLICY_REQUEST, card().workerPolicy);
+  await assert.rejects(authority.issue(binding({ workerPolicy: {
+    ...policy, adapterCardDigest: 'c'.repeat(64),
+  } })), (error) => (
     error.code === 'route_admission_invalid'
   ));
-  const exact = binding({ workerPolicy: { ...policy, adapterCardDigest: 'a'.repeat(64) } });
+  const exact = binding({ workerPolicy: policy });
   const lease = await authority.issue(exact);
   assert.equal((await authority.consume(lease, exact)).state, 'admitted');
+});
+
+test('P94A-RA1j: provider-edge revalidation binds the consumed receipt to live card, credential epoch, route, and signed worker policy', async (t) => {
+  let epoch = 'epoch-1';
+  const authority = new RouteReadinessAuthority({
+    routes: [ROUTE], credentialEpoch: () => epoch,
+    evaluate: () => ({ state: 'ready' }),
+  });
+  t.after(() => authority.close());
+  const adapterCard = card();
+  const policy = resolveWorkerPolicy(DEFAULT_WORKER_POLICY_REQUEST, adapterCard.workerPolicy);
+  const exactBinding = binding({
+    card: bindingCard(ROUTE, {
+      adapterCardDigest: authorityDigest(adapterCard),
+      family: adapterCard.modelSelection.family,
+    }),
+    workerPolicy: policy,
+  });
+  const receipt = await authority.admit(exactBinding);
+  assert.equal(authority.revalidate(receipt, exactBinding).receiptDigest, receipt.receiptDigest);
+
+  epoch = 'epoch-2';
+  await authority.inspect(ROUTE, { probe: false });
+  assert.throws(() => authority.revalidate(receipt, exactBinding), (error) => (
+    error instanceof RouteReadinessBlockedError
+      && error.receipt?.blocker?.code === 'credential_generation_changed'
+  ));
+
+  const coordinatorRoot = mkdtempSync(join(tmpdir(), 'baton-phase94a-policy-card-'));
+  t.after(() => rmSync(coordinatorRoot, { recursive: true, force: true }));
+  const log = new Log(join(coordinatorRoot, 'log'));
+  let liveCard = adapterCard;
+  const coordinator = new Coordinator({
+    log, coordination: coordinationForLog(log), fences: new FenceTable(),
+    adapters: { grok: { card: () => liveCard, onEvent() {}, async spawn() { return { ok: true }; },
+      async prompt() { return { ok: true }; }, async interrupt() { return { ok: true }; },
+      async kill() { return { ok: true }; } } },
+    referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'grok',
+    routeReadinessAuthority: authority,
+  });
+  const preserved = coordinator._routeReadinessBinding(
+    'grok', ROUTE.model, ROUTE.effort, 'general', policy, null, effect(),
+  );
+  assert.equal(preserved.workerPolicy.adapterCardDigest, policy.adapterCardDigest,
+    'signed worker-policy evidence is preserved instead of relabelled with the live card');
+  liveCard = { ...adapterCard, workerPolicy: {
+    ...adapterCard.workerPolicy,
+    autonomy: { ...adapterCard.workerPolicy.autonomy, mechanisms: ['drifted-unattended'] },
+  } };
+  assert.throws(() => coordinator._routeReadinessBinding(
+    'grok', ROUTE.model, ROUTE.effort, 'general', policy, null, effect(),
+  ), (error) => error.code === 'worker_policy_card_drift');
 });
 
 test('P94A-RA1f: credential generation failure blocks and rotation invalidates an atomic batch with unchanged public readiness', async () => {
@@ -640,6 +693,9 @@ test('P94A-RA3c: restart rechecks a capacity-delayed durable task and never reco
     definitionOfDone: 'no stale dispatch', verification: { command: 'true', expectExit: 0 },
     budget: { tokens: 1_000, usd: 1, wallMin: 1 } };
   await first.spawn('grok', brief, { model: ROUTE.model, effort: ROUTE.effort, taskId: 'occupier' });
+  for (let index = 0; index < 20 && firstCalls.spawn < 1; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
   const delayed = await first.spawn('grok', brief,
     { model: ROUTE.model, effort: ROUTE.effort, taskId: 'delayed' });
   assert.equal(delayed.status, 'pending');
@@ -796,6 +852,121 @@ test('P94A-RA3f: live adapter-card drift at the provider edge waits with zero ef
   assert.equal(providerStarts, 1);
 });
 
+test('P94A-RA3i: drift after post-consume validation is rechecked after runtime and worktree preparation at the provider edge', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'baton-phase94a-final-edge-drift-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const log = new Log(join(root, 'log'));
+  const coordination = coordinationForLog(log);
+  const reservations = new Set();
+  let drifted = false;
+  const calls = { runtimeCreate: 0, runtimeRemove: 0, worktreeCreate: 0, worktreeRemove: 0, spawn: 0 };
+  const adapter = {
+    card: () => ({ ...card(), version: drifted ? '2.0.0' : '1.2.3' }), onEvent() {},
+    async spawn() { calls.spawn += 1; return { ok: true }; },
+    async prompt() { return { ok: true }; }, async interrupt() { return { ok: true }; },
+    async kill() { return { ok: true }; },
+  };
+  const authority = new RouteReadinessAuthority({
+    routes: [ROUTE], credentialEpoch: () => 'epoch', evaluate: () => ({ state: 'ready' }),
+  });
+  t.after(() => authority.close());
+  const coordinator = new Coordinator({
+    log, coordination, fences: new FenceTable(), adapters: { grok: adapter },
+    worktrees: {
+      async reserveCapacity(taskId) { reservations.add(taskId); return {}; },
+      async releaseCapacity(taskId) { return reservations.delete(taskId); },
+      async create() { calls.worktreeCreate += 1; return { path: join(root, 'worker-tree') }; },
+      async remove() { calls.worktreeRemove += 1; reservations.clear(); return true; },
+      async reconcile() { return []; },
+    },
+    runtimeScopes: {
+      create() { calls.runtimeCreate += 1; drifted = true; return { posture: {}, env: {} }; },
+      remove() { calls.runtimeRemove += 1; return true; },
+    },
+    referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'grok',
+    routeReadinessAuthority: authority,
+  });
+  const taskId = 'phase94a-final-edge-drift';
+  const handle = await coordinator.spawn('grok', {
+    goal: 'revalidate after every local preparation', constraints: [], pathScope: ['impl/**'],
+    definitionOfDone: 'no stale provider edge', verification: { command: 'true', expectExit: 0 },
+    budget: { tokens: 1_000, usd: 1, wallMin: 1 },
+  }, { model: ROUTE.model, effort: ROUTE.effort, taskId });
+  for (let index = 0; index < 80
+    && coordinator.list().find((row) => row.id === handle.id)?.status !== 'blocked'; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const waiting = coordinator.list().find((row) => row.id === handle.id);
+  assert.equal(waiting.status, 'blocked');
+  assert.equal(waiting.routeAdmission.blocker.code, 'adapter_card_changed');
+  assert.equal(coordination.task(taskId).status, 'pending');
+  assert.equal(reservations.size, 0);
+  assert.deepEqual(calls, {
+    runtimeCreate: 1, runtimeRemove: 1, worktreeCreate: 1, worktreeRemove: 1, spawn: 0,
+  });
+  const internal = coordinator._workers.get(handle.id);
+  assert.equal(internal.localAuthority, false);
+  assert.equal(internal.worktree, null);
+  assert.notEqual(internal.runtimeScope?.active, true);
+});
+
+test('P94A-RA3j: deployment drain fences a dispatch held in final live inspection before adapter.spawn', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'baton-phase94a-edge-close-fence-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const log = new Log(join(root, 'log'));
+  const coordination = coordinationForLog(log);
+  t.after(() => { try { coordination.releaseWriterLease(); } catch {} });
+  const reservations = new Set();
+  let evaluations = 0;
+  let releaseEdge;
+  let edgeStartedResolve;
+  const edgeStarted = new Promise((resolve) => { edgeStartedResolve = resolve; });
+  const edgeGate = new Promise((resolve) => { releaseEdge = resolve; });
+  let providerStarts = 0;
+  const authority = new RouteReadinessAuthority({
+    routes: [ROUTE], credentialEpoch: () => 'epoch',
+    evaluate: async () => {
+      evaluations += 1;
+      if (evaluations === 3) { edgeStartedResolve(); await edgeGate; }
+      return { state: 'ready' };
+    },
+  });
+  t.after(() => authority.close());
+  const coordinator = new Coordinator({
+    repoId: 'local', log, coordination, fences: new FenceTable(),
+    adapters: { grok: { card, onEvent() {},
+      async spawn() { providerStarts += 1; return { ok: true }; },
+      async prompt() { return { ok: true }; }, async interrupt() { return { ok: true }; },
+      async kill() { return { ok: true }; } } },
+    worktrees: {
+      async reserveCapacity(taskId) { reservations.add(taskId); return {}; },
+      async releaseCapacity(taskId) { return reservations.delete(taskId); },
+      async create() { return { path: join(root, 'worker-tree') }; },
+      async remove() { reservations.clear(); return true; }, async reconcile() { return []; },
+    },
+    runtimeScopes: { create() { return { posture: {}, env: {} }; }, remove() { return true; },
+      async reconcile() { return []; } },
+    referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'grok',
+    routeReadinessAuthority: authority,
+    drainPolicy: { maxWorkers: 8, timeoutMs: 2_000, pollMs: 1 },
+  });
+  await coordinator.spawn('grok', {
+    goal: 'fence close at the provider edge', constraints: [], pathScope: ['impl/**'],
+    definitionOfDone: 'close wins before provider spawn', verification: { command: 'true', expectExit: 0 },
+    budget: { tokens: 1_000, usd: 1, wallMin: 1 },
+  }, { model: ROUTE.model, effort: ROUTE.effort, taskId: 'phase94a-edge-close-fence' });
+  await edgeStarted;
+  const draining = coordinator.drain({ actor: 'phase94a', repoId: 'local', idempotencyKey: 'edge-close' });
+  releaseEdge();
+  const receipt = await draining;
+  assert.equal(receipt.remainingCount, 0);
+  assert.equal(providerStarts, 0);
+  assert.equal(reservations.size, 0);
+  assert.equal(coordinator._authorityOps, 0);
+  assert.equal([...coordinator._workers.values()].some((handle) => coordinator._ownsLocalResources(handle)), false);
+  assert.equal(coordinator.closeAuthority(), true);
+});
+
 test('P94A-RA3g: a false single capacity release escalates exact cleanup failure and forbids further authority', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'baton-phase94a-cleanup-failure-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -873,6 +1044,7 @@ test('P94A-RA3h: spawn authentication refusal invalidates the unversioned exact 
   let rejectedRoute = null;
   const rejecting = Object.fromEntries([
     'issue', 'consume', 'admit', 'inspect', 'validate', 'waiting', 'prepareMany', 'consumeMany',
+    'revalidate',
   ].map((name) => [name, underlying[name].bind(underlying)]));
   rejecting.invalidate = (route) => {
     rejectedRoute = route;
@@ -895,6 +1067,58 @@ test('P94A-RA3h: spawn authentication refusal invalidates the unversioned exact 
   assert.deepEqual(rejectedRoute, ROUTE, 'versioned harness identity never crosses exact-route authority');
   assert.throws(() => rejected.list(), (error) => error.code === 'coordination_write_unavailable'
     && error.cause?.code === 'route_invalidation_failed');
+
+  const processLog = new Log(join(root, 'process-ref-log'));
+  const processUnderlying = new RouteReadinessAuthority({
+    routes: [ROUTE], credentialEpoch: () => 'epoch', evaluate: () => ({ state: 'ready' }),
+  });
+  t.after(() => processUnderlying.close());
+  let processRejectedRoute = null;
+  const processRejecting = Object.fromEntries([
+    'issue', 'consume', 'admit', 'inspect', 'validate', 'waiting', 'prepareMany', 'consumeMany',
+    'revalidate',
+  ].map((name) => [name, processUnderlying[name].bind(processUnderlying)]));
+  processRejecting.invalidate = (route) => {
+    processRejectedRoute = route;
+    throw Object.assign(new Error('process exact route rejection'), { code: 'route_unconfigured' });
+  };
+  let drifted = false;
+  let processCoordinator;
+  const processAdapter = {
+    card: () => drifted ? { ...card(), harness: 'mutated-after-consume' } : card(),
+    onEvent() {},
+    async spawn(worker, _providerBrief, options) {
+      drifted = true;
+      const live = processCoordinator._workers.get(worker);
+      live.processRef = {
+        generation: options.processGeneration, pid: 999_999, processGroupId: 999_999,
+        state: 'ready', ready: true, startedSeq: null, closedSeq: null,
+      };
+      return { ok: false, reason: 'Authentication required' };
+    },
+    async prompt() { return { ok: true }; }, async interrupt() { return { ok: true }; },
+    async kill() { return { ok: true }; },
+  };
+  processCoordinator = new Coordinator({
+    log: processLog, coordination: coordinationForLog(processLog), fences: new FenceTable(),
+    adapters: { grok: processAdapter }, worktrees: makeWorktrees(),
+    runtimeScopes: { create() { return {}; }, remove() { return true; } },
+    referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'grok',
+    routeReadinessAuthority: processRejecting, stopDeadlineMs: 10,
+  });
+  await processCoordinator.spawn('grok', brief, {
+    model: ROUTE.model, effort: ROUTE.effort, taskId: 'phase94a-auth-process-ref',
+  });
+  for (let index = 0; index < 40; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+    try { processCoordinator.list(); } catch { break; }
+  }
+  assert.deepEqual(processRejectedRoute, ROUTE,
+    'authentication invalidation consumes the receipt route without re-reading a changed card');
+  assert.throws(() => processCoordinator.list(), (error) => (
+    error.code === 'coordination_write_unavailable'
+      && error.cause?.code === 'route_invalidation_failed'
+  ), 'invalidation failure poisons even while process stop authority exists');
 });
 
 test('P94A-RA4: Wave authorization and approved preview precede all-or-none readiness, then no resource or provider effect occurs', async (t) => {
@@ -1304,11 +1528,21 @@ test('P94A-C2: deployment construction closes route authority and escalates fail
       closes += 1;
       return originalClose.call(this);
     };
+    const earlyRoot = join(root, 'deployment-context-construction');
+    mkdirSync(join(earlyRoot, 'context'), { recursive: true });
+    writeFileSync(join(earlyRoot, 'context', '.context-home'), 'constructor blocker');
+    await assert.rejects(openBaton({ repo, advanced: {
+      deploymentRoot: earlyRoot, routes: [ROUTE], adapters: { grok: adapter },
+      verification: { command: 'node', arguments: ['--version'] },
+    } }), (error) => ['EEXIST', 'ENOTDIR'].includes(error.code));
+    assert.equal(closes, 1,
+      'RepositoryContextRuntime construction failure remains inside route-authority cleanup');
+
     await assert.rejects(openBaton({ repo, advanced: {
       deploymentRoot: join(root, 'deployment-clean'), routes: [ROUTE], adapters: { grok: adapter },
       verification: { command: 'node', arguments: ['--version'] },
     } }), (error) => error.code === 'fixture_construction_refused');
-    assert.equal(closes, 1);
+    assert.equal(closes, 2);
 
     RouteReadinessAuthority.prototype.close = async function rejectConstructionClose() {
       throw Object.assign(new Error('fixture route close refused'), { code: 'route_probe_unreaped' });
@@ -1522,6 +1756,102 @@ test('P94A-P1: direct, resident Web, and connected MCP expose one sanitized live
   cleanupReopened = null;
 });
 
+test('P94A-P2: prepare-time blocked same- and mixed-route application Waves project sanitized waiting with zero tasks and retry atomically', async (t) => {
+  const scenarios = [
+    { name: 'same', routes: [ROUTE, ROUTE] },
+    { name: 'mixed', routes: [ROUTE, { harness: 'grok', model: 'grok-4.5-fast', effort: 'medium' }] },
+  ];
+  for (const scenario of scenarios) {
+    const root = mkdtempSync(join(tmpdir(), `baton-phase94a-prepare-wave-${scenario.name}-`));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const repo = join(root, 'repo');
+    mkdirSync(repo, { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: repo });
+    execFileSync('git', ['config', 'user.email', 'phase94a-prepare@example.invalid'], { cwd: repo });
+    execFileSync('git', ['config', 'user.name', 'Phase 94A Prepare Wave'], { cwd: repo });
+    writeFileSync(join(repo, 'README.md'), `# prepare ${scenario.name}\n`);
+    execFileSync('git', ['add', '.'], { cwd: repo });
+    execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+    let ready = false;
+    let blockMixedFinalEdge = scenario.name === 'mixed';
+    let providerStarts = 0;
+    const readyProbeCalls = new Map();
+    let capturedDriver;
+    const models = [...new Set(scenario.routes.map((route) => route.model))];
+    const efforts = [...new Set(scenario.routes.map((route) => route.effort))];
+    const adapter = {
+      card: () => ({
+        ...card(), concurrencyCeiling: 4, readiness: { state: 'ready' },
+        modelSelection: {
+          ...card().modelSelection, configuredDefault: models[0], available: models,
+          reasoningEffort: efforts,
+        },
+      }),
+      onEvent() {},
+      async routeReadinessProbe({ route }) {
+        const calls = ready ? (readyProbeCalls.get(route.model) ?? 0) + 1 : 0;
+        if (ready) readyProbeCalls.set(route.model, calls);
+        const edgeBlocked = blockMixedFinalEdge && route.model === models[1] && calls === 3;
+        const admitted = ready && !edgeBlocked;
+        return { state: admitted ? 'ready' : 'blocked', initialized: true,
+          authenticated: admitted, sessionCreated: false, promptSent: false, reaped: true };
+      },
+      async spawn(_worker, _brief, options) {
+        await options.worktreeReady;
+        providerStarts += 1;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return { ok: false, reason: 'prepare Wave fixture observed provider edge' };
+      },
+      async prompt() { return { ok: true }; }, async interrupt() { return { ok: true }; },
+      async kill() { return { ok: true }; },
+    };
+    const configuredRoutes = [...new Map(scenario.routes.map((route) => (
+      [`${route.harness}\0${route.model}\0${route.effort}`, route]
+    ))).values()];
+    const deployment = await openBatonDeployment({ repo, advanced: {
+      deploymentRoot: join(root, 'deployment'), routes: configuredRoutes,
+      adapters: { grok: adapter }, verification: { command: 'node', arguments: ['--version'] },
+      capacity: {
+        estimate: () => ({ bytes: 1, inodes: 1 }),
+        observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
+      },
+    } }, (options) => { capturedDriver = createDriver(options); return capturedDriver; });
+    try {
+      const workflow = await deployment.workflow(`Prepare-time ${scenario.name} Wave.`, {
+        team: scenario.routes.map((route, index) => ({ role: `member-${index}`, exact: route })),
+      });
+      await workflow.approve();
+      const waiting = await workflow.status();
+      const waitingOutline = (await workflow.outline()).outline;
+      assert.equal(waiting.phase, 'waiting_for_route', scenario.name);
+      assert.equal(waitingOutline.resources.ownedCount, 0, scenario.name);
+      assert.equal(waiting.attempts.every((attempt) => attempt.taskId === null), true, scenario.name);
+      assert.equal(waiting.nextActions.some((action) => action.kind === 'retry_route'), true, scenario.name);
+      assert.equal(waiting.attention.some((item) => item.kind === 'route_readiness'
+        && item.state === 'blocked' && typeof item.remediation === 'string'), true, scenario.name);
+      assert.equal(JSON.stringify(waiting).includes('must-not-cross'), false, scenario.name);
+      assert.equal(capturedDriver.coordination.snapshot().tasks.length, 0, scenario.name);
+      assert.equal(providerStarts, 0, scenario.name);
+
+      ready = true;
+      const firstRetry = await workflow.act('retry_route');
+      if (scenario.name === 'mixed') {
+        assert.equal(firstRetry.outline.phase, 'waiting_for_route', scenario.name);
+        assert.equal(providerStarts, 0,
+          'one final-edge member drift blocks every provider effect in the mixed Wave');
+        blockMixedFinalEdge = false;
+        assert.equal((await workflow.act('retry_route')).outline.phase, 'running', scenario.name);
+      } else {
+        assert.equal(firstRetry.outline.phase, 'running', scenario.name);
+      }
+      for (let index = 0; index < 80 && providerStarts < 2; index += 1) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      assert.equal(providerStarts, 2, scenario.name);
+    } finally { await deployment.close(); }
+  }
+});
+
 test('P94A-R1: consume-time blocked single dispatch is durably waiting and only deliberate retry crosses one provider edge', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'baton-phase94a-single-retry-'));
   let deployment;
@@ -1708,4 +2038,178 @@ test('P94A-R2: same- and mixed-route atomic Waves wait after consume and retry a
       }
     } finally { await deployment.close(); }
   }
+});
+
+test('P94A-R3: consume-time Wave waiting survives controller reopen, exact idempotency replay is inert, and one deliberate retry dispatches once', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'baton-phase94a-wave-reopen-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repo = join(root, 'repo');
+  mkdirSync(repo, { recursive: true });
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'phase94a-reopen@example.invalid'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Phase 94A Reopen'], { cwd: repo });
+  writeFileSync(join(repo, 'README.md'), '# reopen\n');
+  execFileSync('git', ['add', '.'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+  const deploymentRoot = join(root, 'deployment');
+  let ready = false;
+  let consumePhase = false;
+  let armed = false;
+  let probes = 0;
+  let providerStarts = 0;
+  const adapter = {
+    card: () => ({ ...card(), concurrencyCeiling: 4, readiness: { state: 'ready' } }),
+    onEvent() {},
+    async routeReadinessProbe() {
+      probes += 1;
+      const admitted = ready || !consumePhase;
+      return { state: admitted ? 'ready' : 'blocked', initialized: true,
+        authenticated: admitted, sessionCreated: false, promptSent: false, reaped: true };
+    },
+    async spawn(_worker, _brief, options) {
+      await options.worktreeReady;
+      providerStarts += 1;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return { ok: false, reason: 'reopen fixture observed provider edge' };
+    },
+    async prompt() { return { ok: true }; }, async interrupt() { return { ok: true }; },
+    async kill() { return { ok: true }; },
+  };
+  const advanced = {
+    deploymentRoot, routes: [ROUTE], adapters: { grok: adapter },
+    verification: { command: 'node', arguments: ['--version'] },
+    capacity: {
+      estimate: () => ({ bytes: 1, inodes: 1 }),
+      observe: () => {
+        if (armed) consumePhase = true;
+        return { freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER };
+      },
+    },
+  };
+  let firstDriver;
+  let capturedWave = null;
+  const first = await openBatonDeployment({ repo, advanced }, (options) => {
+    firstDriver = createDriver(options);
+    const original = firstDriver.coordinator.spawnPlanWave.bind(firstDriver.coordinator);
+    firstDriver.coordinator.spawnPlanWave = (members, waveOptions) => {
+      capturedWave ??= { members, options: waveOptions };
+      return original(members, waveOptions);
+    };
+    return firstDriver;
+  });
+  const workflow = await first.workflow('Reopen one consume-time waiting Wave.', {
+    team: [{ role: 'first', exact: ROUTE }, { role: 'second', exact: ROUTE }],
+  });
+  armed = true;
+  await workflow.approve();
+  for (let index = 0; index < 100; index += 1) {
+    const view = await workflow.outline();
+    if ((view.outline ?? view).phase === 'waiting_for_route') break;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.ok(capturedWave);
+  assert.equal(providerStarts, 0);
+  const probesBeforeReplay = probes;
+  const eventsBeforeReplay = firstDriver.coordination.snapshot().lastSeq;
+  const replayedHandles = await firstDriver.coordinator.spawnPlanWave(
+    capturedWave.members, capturedWave.options,
+  );
+  assert.equal(replayedHandles.length, 2);
+  assert.equal(probes, probesBeforeReplay, 'same-key replay acquires no fresh route authority');
+  assert.equal(firstDriver.coordination.snapshot().lastSeq, eventsBeforeReplay,
+    'same-key replay writes no duplicate durable authority');
+  assert.equal(providerStarts, 0);
+  for (let index = 0; index < 80 && firstDriver.coordinator._authorityOps > 0; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(firstDriver.worktreeCapacity.snapshot().reservations.length, 0);
+  assert.equal(firstDriver.coordinator.closeAuthority(), true);
+  assert.equal(firstDriver.coordination.releaseWriterLease({ requireOwned: true }), true);
+  await first.close().catch(() => {});
+
+  let reopenedDriver;
+  const reopened = await openBatonDeployment({ repo, advanced }, (options) => {
+    reopenedDriver = createDriver(options);
+    return reopenedDriver;
+  });
+  try {
+    const attached = await reopened.runs.attach(workflow.id);
+    assert.equal(attached.last.outline.phase, 'waiting_for_route');
+    assert.equal(attached.last.outline.resources.ownedCount, 0);
+    const probesAfterReopen = probes;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(probes, probesAfterReopen, 'reopen never automatically retries consumed Wave authority');
+    ready = true;
+    assert.equal((await attached.act('retry_route')).outline.phase, 'running');
+    for (let index = 0; index < 80 && providerStarts < 2; index += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal(providerStarts, 2);
+    await assert.rejects(attached.act('retry_route'));
+    assert.equal(providerStarts, 2);
+  } finally { await reopened.close(); }
+  assert.equal(reopenedDriver.worktreeCapacity.snapshot().reservations.length, 0);
+});
+
+test('P94A-C3: closing a deployment while an application Wave waits leaves zero authority, capacity, runtime, worktree, or provider residue', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'baton-phase94a-waiting-wave-close-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const repo = join(root, 'repo');
+  mkdirSync(repo, { recursive: true });
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'phase94a-close@example.invalid'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Phase 94A Close'], { cwd: repo });
+  writeFileSync(join(repo, 'README.md'), '# close waiting Wave\n');
+  execFileSync('git', ['add', '.'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+  let armed = false;
+  let consumePhase = false;
+  let providerStarts = 0;
+  const adapter = {
+    card: () => ({ ...card(), concurrencyCeiling: 4, readiness: { state: 'ready' } }), onEvent() {},
+    async routeReadinessProbe() {
+      const admitted = !consumePhase;
+      return { state: admitted ? 'ready' : 'blocked', initialized: true,
+        authenticated: admitted, sessionCreated: false, promptSent: false, reaped: true };
+    },
+    async spawn() { providerStarts += 1; return { ok: true }; },
+    async prompt() { return { ok: true }; }, async interrupt() { return { ok: true }; },
+    async kill() { return { ok: true }; },
+  };
+  let driver;
+  const deployment = await openBatonDeployment({ repo, advanced: {
+    deploymentRoot: join(root, 'deployment'), routes: [ROUTE], adapters: { grok: adapter },
+    verification: { command: 'node', arguments: ['--version'] },
+    capacity: {
+      estimate: () => ({ bytes: 1, inodes: 1 }),
+      observe: () => {
+        if (armed) consumePhase = true;
+        return { freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER };
+      },
+    },
+  } }, (options) => { driver = createDriver(options); return driver; });
+  const workflow = await deployment.workflow('Close one waiting application Wave exactly.', {
+    team: [{ role: 'first', exact: ROUTE }, { role: 'second', exact: ROUTE }],
+  });
+  armed = true;
+  await workflow.approve();
+  for (let index = 0; index < 100; index += 1) {
+    const view = await workflow.outline();
+    if ((view.outline ?? view).phase === 'waiting_for_route') break;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(providerStarts, 0);
+  const closed = await deployment.close();
+  assert.equal(closed.state, 'closed');
+  assert.equal(closed.ownership.workers, 0);
+  assert.equal(closed.receipt.fleet.remainingCount, 0);
+  assert.equal(closed.receipt.capacity.ownedReservations, 0);
+  assert.equal(driver.worktreeCapacity.snapshot().reservations.length, 0);
+  assert.equal(driver.coordinator._authorityOps, 0);
+  assert.equal([...driver.coordinator._workers.values()].some((handle) => (
+    driver.coordinator._ownsLocalResources(handle)
+      || handle.worktree !== null || handle.runtimeScope?.active === true
+      || (handle.processRef && handle.processRef.state !== 'closed')
+  )), false);
+  assert.equal(providerStarts, 0);
 });

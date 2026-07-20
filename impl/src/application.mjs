@@ -6052,6 +6052,12 @@ export class BatonApplication {
     });
     const rounds = await this._workflowRoundSummaries(current, observer);
     const runId = current.goal.runId;
+    const applicationRouteWaitingRecord = [...this.driver.coordination.events()].reverse()
+      .find((event) => event.kind === 'driver.recorded'
+        && event.payload?.kind === APPLICATION_ROUTE_WAITING_KIND
+        && event.payload.runId === runId
+        && event.payload.planDigest === current.plan.digest) ?? null;
+    const applicationRouteWaiting = applicationRouteWaitingRecord?.payload?.receipt ?? null;
     const { workers, ownedWorkers } = runWorkerOwnership(this.driver, runId);
     const story = this.driver.story.snapshot();
     const handlesByTask = new Map(workers.map((handle) => [handle.taskId, handle]));
@@ -6173,6 +6179,7 @@ export class BatonApplication {
             : anyDispatched ? 'running' : 'approved';
     if (runStop?.status === 'stopped') phase = 'stopped';
     else if (runStop) phase = 'stopping';
+    else if (phase === 'approved' && applicationRouteWaiting) phase = 'waiting_for_route';
     else if (phase === 'running' && routeWaitingAttempts.length > 0) phase = 'waiting_for_route';
     else if (phase === 'running'
       && attempts.some((attempt) => attempt.state === 'interrupted')
@@ -6249,6 +6256,14 @@ export class BatonApplication {
       remediation: attempt.routeAdmission.remediation,
       receiptDigest: attempt.routeAdmission.receiptDigest,
     })) : [];
+    if (phase === 'waiting_for_route' && routeAttention.length === 0 && applicationRouteWaiting) {
+      routeAttention.push({
+        kind: 'route_readiness', state: 'blocked',
+        blocker: clone(applicationRouteWaiting.blocker),
+        remediation: applicationRouteWaiting.remediation,
+        receiptDigest: applicationRouteWaiting.receiptDigest,
+      });
+    }
     const attention = [
       ...workerAttention, ...selectionAttention, ...revisionAttention, ...recoveryAttention,
       ...preservationAttention, ...routeAttention,
@@ -6450,8 +6465,10 @@ export class BatonApplication {
     const workerId = task?.assignee ?? task?.reservedWorkerId ?? null;
     const routeWaitingHandle = workerId
       ? this.driver.coordinator.list().find((handle) => handle.id === workerId) ?? null : null;
-    const latestRouteAdmission = workerId ? [...this.driver.log.read(workerId)].reverse()
-      .find((event) => event.kind === 'resource.route_admission_consumed')?.payload?.receipt ?? null : null;
+    const latestRouteAdmission = workerId && typeof this.driver.log?.read === 'function'
+      ? [...this.driver.log.read(workerId)].reverse()
+        .find((event) => event.kind === 'resource.route_admission_consumed')?.payload?.receipt ?? null
+      : null;
     const routeWaitingLogReceipt = latestRouteAdmission?.state === 'waiting_for_route'
       ? latestRouteAdmission : null;
     let result = null;

@@ -1,5 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 
+import { normalizeWorkerPolicyResolution } from './worker-policy.mjs';
+
 const ROUTE_FIELDS = Object.freeze(['effort', 'harness', 'model']);
 const BINDING_FIELDS = Object.freeze([
   'card', 'effect', 'effort', 'harness', 'model', 'serviceTier', 'taskType', 'version', 'workerPolicy',
@@ -11,9 +13,6 @@ const MODEL_SELECTION_FIELDS = Object.freeze([
 ]);
 const EFFECT_FIELDS = Object.freeze([
   'nodeKey', 'phase', 'processGeneration', 'runId', 'taskId', 'workerId',
-]);
-const WORKER_POLICY_FIELDS = Object.freeze([
-  'adapterCardDigest', 'requestDigest', 'resolutionDigest', 'schemaVersion',
 ]);
 const RUNTIME_FIELDS = Object.freeze(['authentication', 'containment', 'permissions', 'version']);
 const AUTHENTICATION_CODES = new Set([
@@ -124,10 +123,8 @@ function normalizeCard(value, route, version) {
 
 function normalizeWorkerPolicy(value) {
   if (value === null) return null;
-  if (!record(value) || !keysEqual(value, WORKER_POLICY_FIELDS) || value.schemaVersion !== 1
-    || !safeDigest(value.requestDigest) || !safeDigest(value.adapterCardDigest)
-    || !safeDigest(value.resolutionDigest)) return undefined;
-  return freeze(clone(value));
+  try { return freeze(clone(normalizeWorkerPolicyResolution(value))); }
+  catch { return undefined; }
 }
 
 function normalizeEffect(value) {
@@ -501,7 +498,6 @@ export class RouteReadinessAuthority {
       || (value.serviceTier !== null && (typeof value.serviceTier !== 'string'
         || value.serviceTier.length === 0 || Buffer.byteLength(value.serviceTier) > 128))
       || !card || !effect || workerPolicy === undefined
-      || (workerPolicy !== null && workerPolicy.adapterCardDigest !== card.adapterCardDigest)
       || (value.serviceTier !== null && !card.modelSelection.serviceTier?.includes(value.serviceTier))) {
       throw routeError('route admission binding is invalid', 'route_admission_invalid', route);
     }
@@ -559,6 +555,41 @@ export class RouteReadinessAuthority {
       generation: prior?.generation ?? 1,
     });
     return this.#receipt(binding, state);
+  }
+
+  revalidate(receiptValue, bindingValue) {
+    this.#assertOpen();
+    const receipt = normalizeRouteAdmissionReceipt(receiptValue);
+    if (!receipt || receipt.state !== 'admitted') {
+      throw routeError('provider effect lacks one consumed route admission', 'route_lease_invalid');
+    }
+    const binding = this.#normalizeBinding(bindingValue);
+    const route = bindingRoute(binding);
+    const bindingDigest = digest(binding);
+    let epochDigest;
+    try { epochDigest = this.#epoch(route); }
+    catch {
+      const unavailable = freeze({
+        ...route, state: 'blocked', code: 'credential_generation_changed',
+        summary: 'The credential generation changed before the provider effect boundary.',
+        generation: this.#generations.get(routeKey(route))?.generation ?? 1,
+      });
+      throw new RouteReadinessBlockedError(this.#receipt(binding, unavailable, bindingDigest));
+    }
+    const epochCommitment = digest({ schemaVersion: 1, epochDigest });
+    const generation = this.#generations.get(routeKey(route))?.generation ?? 1;
+    let code = null;
+    if (digest(receipt.route) !== digest(route) || receipt.bindingDigest !== bindingDigest) {
+      code = receipt.cardDigest !== binding.card.adapterCardDigest
+        ? 'adapter_card_changed' : 'route_binding_changed';
+    } else if (receipt.cardDigest !== binding.card.adapterCardDigest) {
+      code = 'adapter_card_changed';
+    } else if (receipt.credentialEpochCommitment !== epochCommitment
+      || receipt.generation !== generation) {
+      code = 'credential_generation_changed';
+    }
+    if (code) throw new RouteReadinessBlockedError(this.waiting(binding, code));
+    return receipt;
   }
 
   issue(bindingValue) {

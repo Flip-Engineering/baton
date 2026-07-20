@@ -711,7 +711,7 @@ export class Coordinator {
     if (this._routeReadiness) {
       for (const method of [
         'issue', 'consume', 'admit', 'inspect', 'invalidate', 'validate', 'waiting',
-        'prepareMany', 'consumeMany',
+        'prepareMany', 'consumeMany', 'revalidate',
       ]) {
         if (typeof this._routeReadiness[method] !== 'function') {
           throw Object.assign(
@@ -2062,15 +2062,27 @@ export class Coordinator {
     if (!effect) throw Object.assign(new Error('route effect identity is unavailable'), {
       code: 'route_admission_invalid',
     });
+    let exactWorkerPolicy = null;
+    if (workerPolicy) {
+      exactWorkerPolicy = normalizeWorkerPolicyResolution(workerPolicy);
+      const liveResolution = resolveWorkerPolicy({
+        schemaVersion: 1,
+        autonomy: { mode: exactWorkerPolicy.autonomy.requested },
+        access: { mode: exactWorkerPolicy.access.requested },
+        containment: { ...exactWorkerPolicy.containment.requested },
+      }, card.workerPolicy);
+      if (liveResolution.requestDigest !== exactWorkerPolicy.requestDigest
+        || liveResolution.adapterCardDigest !== exactWorkerPolicy.adapterCardDigest
+        || liveResolution.resolutionDigest !== exactWorkerPolicy.resolutionDigest) {
+        throw Object.assign(new Error('signed worker policy differs from the live adapter card'), {
+          code: 'worker_policy_card_drift',
+        });
+      }
+    }
     return Object.freeze({
       harness: card.harness, model, effort, version: card.version,
       taskType, serviceTier: serviceTier ?? null,
-      workerPolicy: workerPolicy ? Object.freeze({
-        schemaVersion: 1,
-        requestDigest: workerPolicy.requestDigest,
-        adapterCardDigest: canonicalDigest(card),
-        resolutionDigest: workerPolicy.resolutionDigest,
-      }) : null,
+      workerPolicy: exactWorkerPolicy,
       effect: Object.freeze({ ...effect }),
       card: Object.freeze({
         harness: card.harness, version: card.version, family: selection.family,
@@ -2697,14 +2709,15 @@ export class Coordinator {
     });
   }
 
-  _routeBindingForTask(task, handle, phase = 'spawn') {
+  _routeBindingForTask(task, handle, phase = 'spawn', exactEffect = null) {
     const selection = this._resolveVendor(task);
     return {
       selection,
       binding: this._routeReadinessBinding(
         selection.vendor, selection.model, selection.effort,
         task.taskType ?? 'general', selection.workerPolicyResolution,
-        task.modelPolicy?.serviceTier ?? null, this._routeEffect(task, handle, phase),
+        task.modelPolicy?.serviceTier ?? null,
+        exactEffect ?? this._routeEffect(task, handle, phase),
       ),
     };
   }
@@ -2724,8 +2737,66 @@ export class Coordinator {
     throw failure;
   }
 
+  _routeProviderBarrier(count) {
+    if (!Number.isSafeInteger(count) || count < 2) return null;
+    let remaining = count;
+    let settled = false;
+    const effects = [];
+    let resolveBarrier;
+    let rejectBarrier;
+    const promise = new Promise((resolve, reject) => {
+      resolveBarrier = resolve;
+      rejectBarrier = reject;
+    });
+    promise.catch(noop);
+    return {
+      arrive(effect) {
+        if (!settled) {
+          effects.push(effect);
+          remaining -= 1;
+          if (remaining === 0) {
+            try {
+              for (const crossProviderEdge of effects) crossProviderEdge();
+              settled = true;
+              resolveBarrier();
+            } catch (error) {
+              settled = true;
+              rejectBarrier(error);
+            }
+          }
+        }
+        return promise;
+      },
+      fail(error) {
+        if (!settled) {
+          settled = true;
+          rejectBarrier(error);
+        }
+      },
+    };
+  }
+
+  _routeDispatchFailure(outcomes) {
+    const failures = outcomes.filter((outcome) => outcome.status === 'rejected');
+    if (failures.length === 0) return null;
+    if (failures.length === outcomes.length
+      && failures.every((outcome) => outcome.reason instanceof RouteReadinessBlockedError)) {
+      const receipts = failures.map((outcome) => outcome.reason.receipt);
+      const failure = new RouteReadinessBlockedError(receipts[0]);
+      failure.receipts = deepFreeze(receipts);
+      return failure;
+    }
+    return failures[0].reason;
+  }
+
   async _releaseRouteWaitingCapacity(tasks, code = 'route_waiting_cleanup_incomplete') {
-    const releasable = tasks.filter((task) => task?.sessionRequest?.mode === 'new');
+    const releasable = tasks.filter((task) => {
+      if (task?.routeWaitingCapacitySettled === true) {
+        delete task.routeWaitingCapacitySettled;
+        return false;
+      }
+      return task?.sessionRequest?.mode === 'new';
+    });
     if (releasable.length === 0) return true;
     const taskIds = releasable.map((task) => task.id);
     let complete = true;
@@ -2805,7 +2876,7 @@ export class Coordinator {
     if (group) {
       if (group.pending || group.retryRequired === true) return;
       group.pending = true;
-      this._trackAuthorityPromise(async () => {
+      group.operation = this._trackAuthorityPromise(async () => {
         const currentBindings = group.members.map(({ taskId }, index) => {
           const memberTask = this._tasks.get(taskId);
           const memberHandle = memberTask ? this._workers.get(memberTask.assignee) : null;
@@ -2848,13 +2919,20 @@ export class Coordinator {
           const { selection } = liveStates[index];
           return { memberTask, memberHandle, selection, receipt: receipts[index] };
         });
-        for (const { memberTask, memberHandle, selection, receipt } of dispatches) {
+        for (const { memberTask, memberHandle, receipt } of dispatches) {
           this._recordRouteAdmission(memberTask, memberHandle, receipt);
           memberTask.routeRetryRequired = false;
-          delete memberTask.routeReadinessGroup;
-          this._dispatchAdmitted(memberTask, selection.vendor, selection.model, selection.effort,
-            selection.workerPolicyResolution);
         }
+        const edgeBarrier = this._routeProviderBarrier(dispatches.length);
+        const outcomes = await Promise.allSettled(dispatches.map(({
+          memberTask, selection,
+        }) => this._dispatchAdmitted(
+          memberTask, selection.vendor, selection.model, selection.effort,
+          selection.workerPolicyResolution, edgeBarrier,
+        )));
+        const failure = this._routeDispatchFailure(outcomes);
+        if (failure) throw failure;
+        for (const { memberTask } of dispatches) delete memberTask.routeReadinessGroup;
       }).catch(async (error) => {
         if (error instanceof RouteReadinessBlockedError) {
           group.retryRequired = true;
@@ -2876,8 +2954,12 @@ export class Coordinator {
           } catch (cleanupError) { this._poisonCoordination(cleanupError); }
           return;
         }
+        if (error?.code === 'coordinator_draining' && this._drainState !== 'open') return;
         this._poisonCoordination(error);
-      }).finally(() => { group.pending = false; });
+      }).finally(() => {
+        group.pending = false;
+        group.operation = null;
+      });
       return;
     }
     if (task.routeAdmissionPending) return;
@@ -2914,7 +2996,7 @@ export class Coordinator {
       if (task.status === 'pending' && !this._closed && this._drainState === 'open') {
         task.initialRouteSelection = null;
         handle.status = 'pending';
-        this._dispatchAdmitted(task, vendor, model, effort, workerPolicyResolution);
+        await this._dispatchAdmitted(task, vendor, model, effort, workerPolicyResolution);
       }
     }).catch(async (error) => {
       if (error instanceof RouteReadinessBlockedError) {
@@ -2928,11 +3010,13 @@ export class Coordinator {
         if (!handle.processRef && !handle.runtimeScope && !handle.worktree) handle.localAuthority = false;
         return;
       }
+      if (error?.code === 'coordinator_draining' && this._drainState !== 'open') return;
       this._poisonCoordination(error);
     }).finally(() => { task.routeAdmissionPending = false; });
   }
 
-  _dispatchAdmitted(task, vendor, model, effort, workerPolicyResolution = null) {
+  _dispatchAdmitted(task, vendor, model, effort, workerPolicyResolution = null,
+    edgeBarrier = null) {
     if (this._routeReadiness && task.routeAdmissionReceipt?.state !== 'admitted') {
       throw Object.assign(new Error('provider effect lacks consumed route admission'), {
         code: 'route_lease_invalid',
@@ -2940,17 +3024,6 @@ export class Coordinator {
     }
     const handle = this._workers.get(task.assignee);
     const workerId = handle.id;
-    if (this._coordination) {
-      const claim = this._coordination.claimTask(task.id, workerId, task.coordinationVersion, {
-        actor: 'orchestrator', key: `task.claimed:${task.id}:${task.coordinationVersion}`,
-      }, {
-        harnessRequested: task.vendorRequested, harnessResolved: this._harnessOf(vendor),
-        modelRequested: task.modelRequested ?? null, modelResolved: model ?? null, modelObserved: null,
-        effortRequested: task.effortRequested ?? null, effortResolved: effort ?? null, effortObserved: null,
-        routeKey: routeTupleKey(this._adapters[vendor]?.card(), model, effort, task.taskType, workerPolicyResolution),
-      });
-      task.coordinationVersion = claim.task.version;
-    }
     this._fences.register(workerId);
     handle.vendor = vendor;
     handle.modelResolved = model ?? null;
@@ -2964,6 +3037,19 @@ export class Coordinator {
       workerPolicyResolution,
     );
     handle.routeKey = task.routeKey;
+    const claimCoordinationTask = () => {
+      if (!this._coordination) return;
+      const claim = this._coordination.claimTask(task.id, workerId, task.coordinationVersion, {
+        actor: 'orchestrator', key: `task.claimed:${task.id}:${task.coordinationVersion}`,
+      }, {
+        harnessRequested: task.vendorRequested, harnessResolved: this._harnessOf(vendor),
+        modelRequested: task.modelRequested ?? null, modelResolved: model ?? null, modelObserved: null,
+        effortRequested: task.effortRequested ?? null, effortResolved: effort ?? null, effortObserved: null,
+        routeKey: task.routeKey,
+      });
+      task.coordinationVersion = claim.task.version;
+    };
+    if (!this._routeReadiness) claimCoordinationTask();
     const harness = this._harnessOf(vendor);
     handle.currentIncarnation = true;
     handle.localAuthority = true;
@@ -2988,11 +3074,18 @@ export class Coordinator {
       task.status = 'failed';
       handle.status = 'exited';
       handle.localAuthority = false;
+      edgeBarrier?.fail(error);
+      if (edgeBarrier) throw error;
       return;
     }
     const providerAdmission = this._admitProviderTurn(handle, task, 'spawn');
     if (!providerAdmission.ok) {
       this._failInitialProviderAdmission(handle, task, providerAdmission);
+      const error = Object.assign(new Error('provider turn admission failed before Wave spawn'), {
+        code: 'provider_turn_refused',
+      });
+      edgeBarrier?.fail(error);
+      if (edgeBarrier) throw error;
       return;
     }
     let runtime;
@@ -3011,6 +3104,8 @@ export class Coordinator {
       this._coordTransition(task, 'failed', `task.failed:${task.id}:runtime_scope`, evidence);
       task.status = 'failed';
       handle.status = 'exited';
+      edgeBarrier?.fail(err);
+      if (edgeBarrier) throw err;
       return;
     }
     if (runtime) task.runtimeScope = handle.runtimeScope;
@@ -3128,6 +3223,8 @@ export class Coordinator {
     // while this observer prevents an otherwise-unhandled rejected promise.
     worktreeReady.catch(noop);
 
+    const crossProviderEdge = () => {
+    if (this._routeReadiness) claimCoordinationTask();
     const spawnTurnEpoch = this._fences.current(workerId).turnEpoch;
     this._log.append({
       worker: workerId, harness, turnEpoch: spawnTurnEpoch, kind: 'lifecycle.spawned', actor: 'orchestrator',
@@ -3206,6 +3303,64 @@ export class Coordinator {
       this._clearBudgetStop(handle);
       this._resetWatchdogTurn(handle);
     }
+    };
+
+    if (!this._routeReadiness) return crossProviderEdge();
+    const consumedReceipt = task.routeAdmissionReceipt;
+    const cleanupRouteEdge = async (error) => {
+      this._releaseProviderTurnAdmission(handle, 'route_effect_revalidation_failed');
+      const runtimeRemoved = this._removeRuntimeScope(handle);
+      let worktreeRemoved = true;
+      try {
+        await worktreeReady;
+        await this._removeOwnedTaskWorktree(handle, task);
+        if (task.sessionRequest?.mode === 'new') task.routeWaitingCapacitySettled = true;
+      } catch (cleanupError) {
+        worktreeRemoved = false;
+        this._poisonCoordination(Object.assign(
+          new Error('provider-edge route refusal cleanup was incomplete', { cause: cleanupError }),
+          { code: 'route_waiting_cleanup_incomplete' },
+        ));
+      }
+      if (!runtimeRemoved) {
+        this._poisonCoordination(Object.assign(
+          new Error('provider-edge route runtime cleanup was incomplete'),
+          { code: 'route_waiting_cleanup_incomplete' },
+        ));
+      }
+      if (runtimeRemoved && worktreeRemoved
+        && !handle.processRef && !handle.runtimeScope?.active && !handle.worktree) {
+        handle.localAuthority = false;
+      }
+      if (this._fatalError) throw this._fatalError;
+      throw error;
+    };
+    let liveEdgeBinding = null;
+    return Promise.resolve(worktreeReady).then(() => (
+      this._routeReadiness.inspect(consumedReceipt.route)
+    )).then(() => {
+      if (this._closed || this._drainState !== 'open') {
+        throw Object.assign(new Error('coordinator admission closed before provider spawn'), {
+          code: 'coordinator_draining',
+        });
+      }
+      const live = this._routeBindingForTask(
+        task, handle, consumedReceipt.effect.phase, consumedReceipt.effect,
+      );
+      liveEdgeBinding = live.binding;
+      this._routeReadiness.revalidate(consumedReceipt, live.binding);
+      return edgeBarrier ? edgeBarrier.arrive(crossProviderEdge) : crossProviderEdge();
+    }).catch((error) => {
+      edgeBarrier?.fail(error);
+      let localError = error;
+      if (liveEdgeBinding && error instanceof RouteReadinessBlockedError
+        && error.receipt?.effect?.taskId !== task.id) {
+        localError = new RouteReadinessBlockedError(this._routeReadiness.waiting(
+          liveEdgeBinding, error.routeCode,
+        ));
+      }
+      return cleanupRouteEdge(localError);
+    });
   }
 
   _providerBrief(brief) {
@@ -3239,14 +3394,14 @@ export class Coordinator {
     if (this._routeReadiness && (authenticationRequired
       || /^authentication_(?:required|refresh_required|metadata_invalid|probe_failed)$/u.test(refusalCode ?? ''))) {
       try {
-        const exactHarness = this._adapters[handle.vendor]?.card?.()?.harness;
-        const binding = {
-          harness: exactHarness, model: handle.modelResolved,
-          effort: handle.effortResolved,
-        };
-        this._routeReadiness.invalidate({
-          harness: binding.harness, model: binding.model, effort: binding.effort,
-        }, refusalCode ?? 'authentication_required');
+        const consumed = handle.routeAdmissionReceipt;
+        if (consumed?.state !== 'admitted' || !consumed.route) {
+          throw Object.assign(new Error('authentication refusal lacks consumed route identity'), {
+            code: 'route_lease_invalid',
+          });
+        }
+        this._routeReadiness.invalidate({ ...consumed.route },
+          refusalCode ?? 'authentication_required');
       } catch (error) { invalidationFailure = error; }
     }
     handle.terminalCause ??= deepFreeze({
@@ -3269,18 +3424,12 @@ export class Coordinator {
     this._coordTransition(task, 'failed', `task.failed:${task.id}:${phase}`, evidence, 'orchestrator');
     handle.status = 'exited';
     task.status = 'failed';
-    if (handle.processRef && ['initializing', 'ready'].includes(handle.processRef.state)) {
+    const processStopRequired = handle.processRef
+      && ['initializing', 'ready'].includes(handle.processRef.state);
+    if (processStopRequired) {
       handle.status = 'working';
       this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
-      return true;
     }
-    this._removeRuntimeScope(handle);
-    if (task.sessionRequest?.mode === 'new') {
-      this._removeOwnedTaskWorktree(handle, task).then(() => {
-        if (!handle.processRef && !handle.runtimeScope && !handle.worktree) handle.localAuthority = false;
-      }).catch(noop);
-    }
-    if (!handle.processRef && !handle.runtimeScope && !handle.ownedWorktreeAuthority) handle.localAuthority = false;
     if (invalidationFailure) {
       this._poisonCoordination(Object.assign(
         new Error('provider authentication refusal could not invalidate its exact route', {
@@ -3288,7 +3437,16 @@ export class Coordinator {
         }),
         { code: 'route_invalidation_failed' },
       ));
-    } else this._dispatchPass();
+    }
+    if (processStopRequired) return true;
+    this._removeRuntimeScope(handle);
+    if (task.sessionRequest?.mode === 'new') {
+      this._removeOwnedTaskWorktree(handle, task).then(() => {
+        if (!handle.processRef && !handle.runtimeScope && !handle.worktree) handle.localAuthority = false;
+      }).catch(noop);
+    }
+    if (!handle.processRef && !handle.runtimeScope && !handle.ownedWorktreeAuthority) handle.localAuthority = false;
+    if (!invalidationFailure) this._dispatchPass();
     return true;
   }
 
@@ -3413,12 +3571,27 @@ export class Coordinator {
       task.routeAdmissionLease = null;
       task.routeAdmissionBinding = null;
       delete task.routeReadinessGroup;
+      task.routeAdmissionPending = true;
       handle.status = 'pending';
     }
-    for (let index = 0; index < tasks.length; index += 1) {
-      const { selection } = effectStates[index];
-      this._dispatchAdmitted(tasks[index], selection.vendor, selection.model, selection.effort,
-        selection.workerPolicyResolution);
+    let dispatchFailure = null;
+    try {
+      const edgeBarrier = this._routeProviderBarrier(tasks.length);
+      const outcomes = await Promise.allSettled(tasks.map((task, index) => {
+        const { selection } = effectStates[index];
+        return this._dispatchAdmitted(task, selection.vendor, selection.model, selection.effort,
+          selection.workerPolicyResolution, edgeBarrier);
+      }));
+      dispatchFailure = this._routeDispatchFailure(outcomes);
+    } finally {
+      for (const task of tasks) task.routeAdmissionPending = false;
+    }
+    if (dispatchFailure) {
+      if (dispatchFailure instanceof RouteReadinessBlockedError) {
+        markWaiting(dispatchFailure);
+        return deepFreeze({ state: 'waiting_for_route', taskIds: [...taskIds] });
+      }
+      throw dispatchFailure;
     }
     return deepFreeze({
       state: 'dispatched', taskIds: [...taskIds],
@@ -3428,6 +3601,57 @@ export class Coordinator {
 
   spawnPlanWave(members, opts = {}) {
     return this._withAuthorityOp(() => this._spawnPlanWave(members, opts));
+  }
+
+  _replayPlanWave(members, auth) {
+    const allEvents = this._coordination.events?.() ?? [];
+    const prior = allEvents.find((event) => event.idempotencyKey === auth.key);
+    if (!prior) return null;
+    const count = members.length * 2;
+    const events = allEvents.slice(prior.seq - 1, prior.seq - 1 + count);
+    const exactBatch = prior.kind === 'plan.node_dispatched' && prior.actor === auth.actor
+      && prior.batch?.kind === 'goal_plan_wave_dispatch' && prior.batch.index === 0
+      && prior.batch.count === count && events.length === count
+      && events.every((event, index) => event.batch?.id === prior.batch.id
+        && event.batch?.index === index);
+    const exactMembers = exactBatch && members.every((member, index) => {
+      const dispatched = events[index * 2];
+      const created = events[index * 2 + 1];
+      const route = { vendor: member.vendor, model: member.model, effort: member.effort };
+      const requestDigest = goalPlanDigest({
+        principalId: auth.principalId, gate: member.goalPlan, route, task: created?.payload,
+      });
+      return dispatched?.kind === 'plan.node_dispatched'
+        && created?.kind === 'task.created'
+        && dispatched.payload?.taskId === member.taskId
+        && created.payload?.id === member.taskId
+        && created.payload?.reservedWorkerId === member.workerId
+        && created.payload?.runId === member.runId
+        && dispatched.payload?.requestDigest === requestDigest
+        && canonicalDigest(dispatched.payload?.route) === canonicalDigest(route)
+        && planBriefMatches(member.brief, created.payload?.brief)
+        && dispatched.payload?.authority?.principalId === auth.principalId
+        && dispatched.payload?.authority?.repoId === auth.repoId
+        && (dispatched.payload?.authority?.runId ?? null) === auth.runId;
+    });
+    if (!exactMembers) {
+      throw Object.assign(new Error('plan wave idempotency key is bound differently'), {
+        code: 'plan_wave_conflict',
+      });
+    }
+    this._seedCoordinationTasks();
+    const handles = members.map((member) => {
+      const task = this._tasks.get(member.taskId);
+      const handle = task ? this._workers.get(task.assignee) : null;
+      if (!task || !handle || handle.id !== member.workerId) {
+        throw this._poisonCoordination(Object.assign(
+          new Error('idempotent plan Wave lacks its durable local handle'),
+          { code: 'plan_wave_install_incomplete' },
+        ));
+      }
+      return this._publicHandle(handle);
+    });
+    return handles;
   }
 
   spawnPlanRevision(member, opts = {}) {
@@ -3477,8 +3701,7 @@ export class Coordinator {
       }
       const runId = normalizeRunId(member.runId);
       normalizePhysicalOwnerId(member.taskId, 'taskId');
-      if (!member.goalPlan || member.vendor === 'auto' || member.brief?.goalPlan !== undefined
-        || this._tasks.has(member.taskId)) {
+      if (!member.goalPlan || member.vendor === 'auto' || member.brief?.goalPlan !== undefined) {
         throw Object.assign(new Error('plan wave member authority is invalid'), { code: 'plan_wave_invalid' });
       }
       const workerPolicyRequest = member.brief?.workerPolicy === undefined
@@ -3506,6 +3729,8 @@ export class Coordinator {
         goalPlan, taskId, vendor, model, effort,
       })),
     });
+    const replay = this._replayPlanWave(members, auth);
+    if (replay) return replay;
     members = members.map((member) => {
       const explicit = this._resolveExplicitRoute(member.vendor, {
         sessionRequest: { mode: 'new' }, model: member.model,
@@ -3659,8 +3884,9 @@ export class Coordinator {
         }
         return handle;
       });
+      let routeReadinessGroup = null;
       if (preparedReadiness) {
-        const routeReadinessGroup = {
+        routeReadinessGroup = {
           batch: preparedReadiness, bindings: readinessBindings,
           members: prepared.map((member) => ({ taskId: member.taskId })), pending: false,
         };
@@ -3669,6 +3895,7 @@ export class Coordinator {
         }
       }
       this.tick();
+      if (routeReadinessGroup?.operation) await routeReadinessGroup.operation;
       return handles.map((handle) => this._publicHandle(handle));
     } catch (error) {
       let cleanupReceipt;

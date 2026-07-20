@@ -1500,23 +1500,24 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     now: residentOptions.now,
     additionalRoutes: additionalRouteStates,
   });
-  const policy = goalPlanPolicy(repository.repoId);
-  const contextRuntime = new RepositoryContextRuntime({
-    artifactRoot: contextRoot,
-    policy: defaultRepositoryContextPolicy(),
-    repoId: repository.repoId,
-    repoRoot: repository.root,
-    treeSha: snapshot.sha,
-  });
-  const principal = Object.freeze({
-    actor: `deployment:${repository.repoId}`, principalId: 'local-owner', sessionId: 'local-owner-session',
-  });
-  const service = (name) => Object.freeze({
-    actor: `deployment:${name}`, principalId: `service-${name}`, sessionId: `service-${name}-session`,
-  });
   let driver = null;
   let application;
+  let principal = null;
   try {
+    const policy = goalPlanPolicy(repository.repoId);
+    const contextRuntime = new RepositoryContextRuntime({
+      artifactRoot: contextRoot,
+      policy: defaultRepositoryContextPolicy(),
+      repoId: repository.repoId,
+      repoRoot: repository.root,
+      treeSha: snapshot.sha,
+    });
+    principal = Object.freeze({
+      actor: `deployment:${repository.repoId}`, principalId: 'local-owner', sessionId: 'local-owner-session',
+    });
+    const service = (name) => Object.freeze({
+      actor: `deployment:${name}`, principalId: `service-${name}`, sessionId: `service-${name}-session`,
+    });
     driver = createDriver({
       repoRoot: repository.root,
       repoId: repository.repoId,
