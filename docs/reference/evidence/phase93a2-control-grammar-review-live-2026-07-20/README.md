@@ -49,7 +49,30 @@ stop/reap, as designed.
    route table carries it; `advanced.routes` rejects duplicate exact tuples.
 7. **Scope guards work.** The impl-review worker was killed by `health.scope_violation` when it
    edited outside its declared scope — the failure was in my brief ("mutate a fixture"), not
-   the guard.
+   the guard. A second worker was killed for a `/tmp` log redirect under the same rule.
+8. **`run.start` objectives are capped at 4 KiB** (`application-client.mjs` `nonempty`). Long
+   contracts belong in checked-in files referenced by path (`wave35-fix-decisions.md`).
+9. **Run-scope entries are globs, not paths.** A bare directory (`impl/src/program-ir`) matches
+   only itself; children need `dir/**`. The trust gate correctly rejected the wave-3.5 capture
+   (`inScopeChangedPathCount: 2` of 5) — the work survived via `refs/baton/checkpoints`.
+10. **Context actions (`context_eval`/`context_map`/…) advertise only on Workflow runs.**
+    Plain single-node Runs return `application_action_unavailable` — the REPL layer is
+    workflow-scoped (wave-4 arm-1 first draft hit this).
+11. **`stopMember` requires an active, addressable member** (`application_workflow_member_stop_unavailable`
+    when the node is already `accepted`/cancelled or the task is gone). A 6-minute stop window
+    missed replica-C, which had already completed — selective stops must fire early.
+12. **Role-addressed `run.send` requires the member to be in a send-able state**
+    (`application_action_scope_mismatch` when the recipient's task has settled).
+13. **An `operator_selected` join blocks at `selection_required` until the operator selects** —
+    truthful attention, and a driver that only polls `status()` must also act on it.
+14. **Killing the driver kills the resident; the Run records `interruption_uncertain`**
+    (`provider_timeout` narrative) rather than fabricating a state — crash honesty works.
+15. **Preserved-ref fallback needs path-existence disambiguation.** When runs complete close
+    together, the newest `refs/baton/results/*` pin may belong to a sibling run; probe
+    `git cat-file -e <sha>:<path>` before attributing.
+16. **Drain-close deadlines are load-sensitive** (issue #7 territory): one transient
+    `coordinator_drain_incomplete` under a machine running several other agents; the rerun was
+    clean.
 
 ## Reflexive steering proof (wave 2)
 
