@@ -237,3 +237,56 @@ test('P93A3A-PURITY1: every effect op refuses before derivation, nested or top-l
   }
   assert.throws(() => f.deriveContext('c', { op: 'teleport' }), invalid);
 });
+
+test('P93A3A-POL1: a ProgramPolicy above the injected authority maxJoinMembers fails at admission '
+  + 'with the field named (acceptance P1-A)', () => {
+  const f = programFixture();
+  assert.ok(f.policy.maxJoinMembers <= f.authority.maxJoinMembers);
+  const built = f.deriveContext('c', f.contextExpression());
+  const overPolicy = f.makePolicy({ maxJoinMembers: f.authority.maxJoinMembers + 1 });
+  assert.throws(() => normalize(f.source([
+    built.node, f.nodes.select('main', [['a', 'c', 'value']]),
+  ], { nodeKey: 'main' }, { schemas: built.schemas, policy: overPolicy }), f.authority),
+    (error) => error instanceof ProgramIrError && error.code === 'program_policy_invalid'
+      && /maxJoinMembers/u.test(error.message));
+  // The same over-ceiling policy dies at admission for a context-free Program too (uniform).
+  assert.throws(() => normalize(f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('main', [['k', 'vs']]),
+  ], { nodeKey: 'main' }, { policy: overPolicy }), f.authority),
+    (error) => error instanceof ProgramIrError && error.code === 'program_policy_invalid');
+});
+
+test('P93A3A-STRUCT1: derived array bounds are fully pinned in the structural bytes '
+  + '(acceptance P1-D)', () => {
+  const f = programFixture();
+  const src = f.contextExpression();
+  const coverage = f.deriveContext('c', { op: 'coverage', input: src });
+  const outline = f.deriveContext('c', { op: 'outline', input: src });
+  const arrayDefs = (built) => built.derived
+    .filter((definition) => definition.form === 'array')
+    .map(({ definition }) => definition);
+  const safeIdArrays = (built) => arrayDefs(built).filter((array) => {
+    const itemDef = built.derived.find((definition) => definition.schemaId === array.items.schemaId);
+    return itemDef?.definition?.format === 'safe_id';
+  });
+  for (const built of [coverage, outline]) {
+    const named = safeIdArrays(built);
+    assert.ok(named.length > 0, 'derived SafeId arrays exist');
+    for (const array of named) {
+      assert.equal(array.minItems, 0);
+      assert.equal(array.maxItems, f.contextPolicy.maxJoinMembers);
+      assert.equal(array.unique, true);
+    }
+  }
+});
+
+test('P93A3A-DEPTH1: context normalization never gates the Program repeat/child depth bound '
+  + '(acceptance P1-C)', () => {
+  const f = programFixture();
+  assert.equal(f.policy.maxChildDepth > 1, true);
+  const built = f.deriveContext('c', f.contextExpression(), { policy: f.policy });
+  const result = normalizeContextOnly(f, built);
+  assert.match(result.program.nodes.find((node) => node.kind === 'context').outputSchema.name,
+    /^baton\.derived\.[0-9a-f]{16}$/u);
+});

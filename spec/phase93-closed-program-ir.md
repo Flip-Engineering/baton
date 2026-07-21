@@ -746,10 +746,11 @@ input without an exact result schema is `program_invalid`. For `collect`, the no
 the object definition `exact{type:"object",properties:[exact{name:<item name>,schema:<item
 value.schema>,required:true}...],additionalProperties:false}` in canonical item-name order. In both cases the resulting definition
 MUST already be present in `schemas`; `outputSchema` is its byte-matching `SchemaRef`. A missing,
-ambiguous, unregistered, or caller-substituted result schema fails normalization. For new Programs
-the derivation requires the §93.10A pinned derived name and version
-(`"baton.derived." + H(structural definition)[0:16]`, version 1), so author labels never reach
-Program identity; historical collect-derived nodes replay as-is. Evaluation then
+ambiguous, unregistered, misnamed, or caller-substituted result schema fails normalization. For
+new Programs the derivation requires the §93.10A pinned derived name and version
+(`"baton.derived." + lowercaseHex(SHA-256(canonical(definition)))[0:16]` over the `definition`
+member alone, version 1), so author labels never reach Program identity; historical
+collect-derived nodes replay as-is. Evaluation then
 validates the exact produced `TypedValue` against that derived ref before publishing the port.
 
 The node table is inert data. Execution enters only `root:ControlRef`; a `PortRef` never schedules
@@ -961,6 +962,22 @@ takes no manifest parameter: the Program carries a digest-only `ManifestRef`, no
 reads manifest bytes, and whether the named branch exists in that exact manifest is a
 preview/admission question (93E), never a normalization guess.
 
+The embedded `baton.context_program` is normalized under a Context policy synthesized from the
+Program's own `ProgramPolicy`, never from a deployment Context policy read directly. Seven fields
+copy exactly per §93.20's table: `maxProgramBytes`, `maxProgramNodes`, `maxProgramDepth`,
+`maxValueBytes` (→ `maxArtifactBytes`), `maxJoinMembers` (→ `maxResultItems`),
+`maxJoinComparisons`, and `maxChildDepth` (→ `recursionDepth`); every other Context policy v1
+field (`language`, `stateMode`, `maxManifestBranches`, `maxCellsPerSession`, `maxTextBytes`,
+`maxEvidenceCoordinates`) takes its Context v1 default in 93a.3a, and the deployment's bound
+values for those six are out of scope until the 93E binding proof. `recursionDepth` remains the
+Context v1 constant 1 (Context v1 programs are depth-1 by construction); this is independent of
+`ProgramPolicy.maxChildDepth`, which remains the Program's repeat/child depth bound and is never
+rewritten or gated by context normalization. Admission additionally requires
+`policy.maxJoinMembers <= <the injected Program value authority's maxJoinMembers>`: the envelope
+arrays are bounded by `policy.maxJoinMembers` and §93.5 array `maxItems` may not exceed the
+authority's, so a ProgramPolicy above the authority ceiling fails `program_policy_invalid` at
+policy admission with the field named — not a bare per-node `array schema bounds are invalid`.
+
 The published value of a pure Context cell is the closed envelope, and `outputSchema` describes
 exactly it:
 
@@ -1030,14 +1047,14 @@ schema is:
 | op | items schema |
 | --- | --- |
 | `source("repository")` | `RepositoryChunkItem[]` |
-| `outline` | `[exact{itemCount:integer minimum 0 maximum null, fields:SafeId[]}]` (exactly one item; the SafeId claim is construction-backed by the closed 93a.3a op set and `fieldName` validation, never assumed of arbitrary content) |
+| `outline` | `[exact{itemCount:integer minimum 0 maximum null, fields:exact{type:"array", items:SafeId, minItems:0, maxItems:policy.maxJoinMembers, unique:true}}]` (exactly one item; the SafeId claim is construction-backed by the closed 93a.3a op set and `fieldName` validation, never assumed of arbitrary content; `fields` is `unique:true` because the evaluator emits a sorted unique union by construction — order is never re-checked) |
 | `index` | `exact{index:integer minimum 0 maximum null, value:I}[]` |
 | `search`, `slice`, `filter`, `sort`, `unique` | `I[]` (identity) |
 | `chunk(by)` | in 93a.3a only `by="item"` is admitted: `exact{key:Digest, items:I[]}[]` (the magic value reads no field; the evaluator emits `contextValueDigest(item)`). Field-keyed chunking fails `program_invalid` at derivation: the evaluator emits the raw field value or `null`, and §93.5 unions require object variants with discriminators, so a scalar-or-null key is inexpressible — the canonical-text evaluator rung or a §93.5 nullable form (also needed by §93.11 `valueRef = ValueRef|null`) restores it later. The required-field rule stands: the evaluator hard-fails the cell when any item lacks `by` |
 | `project(fields)` | `exact{type:"object", properties:fields∩I.properties, additionalProperties:false}[]` with every projected property `required:false`, matching the evaluator's silent omission of absent fields |
 | `join` | `exact{left:L, right:R}[]` (the evaluator hard-fails the cell unless the join key is present on every item of both sides before any matching) |
 | `collect` | `exact{type:"array", items:ContextCellValue(V), minItems:<inputs.length>, maxItems:<inputs.length>, unique:false}` — in 93a.3a ALL inputs MUST derive the same envelope schema `V`; heterogeneous `collect` chains fail `program_invalid` because §93.5 `array.items` is a single `SchemaRef` and no discriminator distinguishes envelopes (a positional/tuple form is a later schema-algebra rung, not 93a.3a) |
-| `coverage` | `[exact{selectedItems:integer minimum 0 maximum null, sourceBranches:SafeId[], manifestBranches:integer minimum 0 maximum null, unreadBranches:integer minimum 0 maximum null, chunks:integer minimum 0 maximum null, sourceItems:integer minimum 0 maximum null, selectedSourceItems:integer minimum 0 maximum null}]` (exactly one item) |
+| `coverage` | `[exact{selectedItems:integer minimum 0 maximum null, sourceBranches:exact{type:"array", items:SafeId, minItems:0, maxItems:policy.maxJoinMembers, unique:true}, manifestBranches:integer minimum 0 maximum null, unreadBranches:integer minimum 0 maximum null, chunks:integer minimum 0 maximum null, sourceItems:integer minimum 0 maximum null, selectedSourceItems:integer minimum 0 maximum null}]` (exactly one item; `sourceBranches` is `unique:true` because `mergeMeta` deduplicates branch names by construction, the same guarantee the envelope's `sourceBranches` relies on) |
 | `finish` | `[exact{value:ContextCellValue(V), evidence:exact{type:"array", items:ContextCellValue(V), minItems:<evidence.length>, maxItems:<evidence.length>, unique:false}, grounding:string-enum["asserted"]}]` (exactly one item) — value and every evidence input MUST likewise derive the same envelope schema `V`; heterogeneous `finish` chains fail `program_invalid`. The evaluator additionally caps `collect` inputs and `finish` evidence at 1..128; a chain whose arity exceeds `policy.maxJoinMembers` evaluates and then fails port validation, never publishing (fail-closed, recorded) |
 
 `sort` likewise hard-fails the cell unless every sort key is present on every item; these
@@ -1052,10 +1069,11 @@ cell whose envelope does not validate never publishes. No runtime measurement, m
 content sniffing, or manifest lookup participates in the derivation.
 
 Known adjacent inconsistencies recorded for a later Context-policy slice (not 93a.3a):
-`boundedText`/`safeId` in `context-program.mjs` normalize NFKC while §93.3 mandates NFC; the
+`boundedText`/`safeId` in `context-program.mjs` normalize NFKC while §93.3 mandates NFC; and the
 Context `SAFE_ID` alphabet is stricter than §93.3's (no `@`, no `/`), so a `format:"safe_id"`
-schema accepts branch names the evaluator cannot emit; and Program-side context normalization
-must pass the Program's bound context policy rather than the v1 default.
+schema accepts branch names the evaluator cannot emit. §93.23 suite 5's historical-replay and
+explicit-migration rows are deferred to the slice that ships the §93.10 migration tool; no
+migration tool ships in 93a.3a.
 
 ## 93.11 Exhaustive effect-node schemas and asynchronous handles
 

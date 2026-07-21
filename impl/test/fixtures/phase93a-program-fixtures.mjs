@@ -89,10 +89,9 @@ export function programFixture() {
   }, authority);
   const policy = makePolicy();
   const parallelPolicy = makePolicy({ maxParallelBranches: 4 });
-  // §93.20's exact table binds a Program's maxChildDepth to Context Program policy v1's
-  // recursionDepth, which normalizeContextProgramPolicy pins to exactly 1 (93a.3a performs only
-  // the arithmetic-free field copy per rule 1; the deployment-binding proof is 93E scope). A
-  // Program embedding a context node therefore requires maxChildDepth=1.
+  // recursionDepth stays the Context v1 constant 1 in the synthesized Context policy; the
+  // Program's own repeat/child depth bound (maxChildDepth: 4 above) is a different axis that
+  // context normalization never gates on (§93.10A). Kept as a named convenience only.
   const contextPolicy = makePolicy({ maxChildDepth: 1 });
 
   const workerPolicyRequest = {

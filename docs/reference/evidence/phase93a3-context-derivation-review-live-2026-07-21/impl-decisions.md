@@ -53,7 +53,7 @@ document rules.
    in the normalizer.
 6. **Author aid.** Export `deriveContextSchemaDefinitions(program, { authority, policy })`
    returning the complete frozen definition list an author must register (the SAME code path the
-   normalizer uses), plus `deriveCollectSchemaDefinition(items, { authority, policy })` for the
+   normalizer uses), plus `deriveCollectSchemaDefinition(items, { authority })` for the
    §93.9 collect derivation (pinned-name back-port). Tests and fixtures use ONLY these helpers.
 7. **Collect back-port.** The §93.9 `collect` derivation gains the same pinned-name rule for new
    Programs. The matcher becomes: structural-byte match AND pinned name/version match; anything

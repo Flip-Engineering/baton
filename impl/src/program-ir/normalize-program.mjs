@@ -67,6 +67,14 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
   if (parsed.language !== 'baton-program-ir-v1') fail('Program source language is invalid');
 
   const policy = normalizeProgramPolicy(parsed.policy, deployed);
+  // §93.10A admission constraint: the ContextCellValue envelope arrays are bounded by
+  // policy.maxJoinMembers, and §93.5 array maxItems may not exceed the injected value authority's
+  // — so a ProgramPolicy above the authority ceiling dies at policy admission with the field
+  // named, not at every context node with a bare "array schema bounds are invalid".
+  if (policy.maxJoinMembers > deployed.maxJoinMembers) {
+    fail('ProgramPolicy maxJoinMembers exceeds the injected value authority maxJoinMembers; '
+      + 'the §93.10A envelope would be unregistrable on this deployment', 'program_policy_invalid');
+  }
   const manifest = normalizeManifestRef(parsed.manifest, 'Program manifest');
   if (!Array.isArray(parsed.schemas) || parsed.schemas.length > policy.maxSchemaDefinitions) {
     fail('Program source schemas must contain at most maxSchemaDefinitions entries');

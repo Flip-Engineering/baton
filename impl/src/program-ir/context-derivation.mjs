@@ -45,10 +45,9 @@ function sortedProperties(properties) {
 // §93.20's table binds Program.maxChildDepth one-to-one to Context Program policy v1's
 // recursionDepth, which normalizeContextProgramPolicy pins to exactly 1 (a Context v1 constant,
 // not a caller-selectable value). `recursionDepth` is threaded through as a parameter, not read
-// from `policy`, so the pure-grammar/purity walk below (rule 2) can run under a Context policy
-// shaped exactly like a genuine deployment binding would produce — independent of whatever the
-// caller's own ProgramPolicy.maxChildDepth happens to carry — and the maxChildDepth=1 consistency
-// check can be applied afterward, never gating the purity gate itself.
+// from `policy`: Context v1 programs are depth-1 by construction, and the Program's own
+// repeat/child depth bound (ProgramPolicy.maxChildDepth) is a different axis that context
+// normalization never gates on (§93.10A).
 function synthesizeContextPolicy(policy, recursionDepth) {
   return normalizeContextProgramPolicy({
     schemaVersion: 1,
@@ -69,10 +68,9 @@ function synthesizeContextPolicy(policy, recursionDepth) {
 }
 
 export function mapProgramPolicyToContextPolicy(policy) {
-  if (policy.maxChildDepth !== 1) {
-    fail('ProgramPolicy maxChildDepth must equal 1 for a Program containing a context node '
-      + '(§93.20 binds it to Context Program policy v1\'s fixed recursionDepth constant)');
-  }
+  // recursionDepth stays the Context v1 constant 1 (Context v1 programs are depth-1 by
+  // construction). ProgramPolicy.maxChildDepth is the Program's repeat/child depth bound and is
+  // never rewritten or gated by context normalization (§93.10A).
   return synthesizeContextPolicy(policy, 1);
 }
 
@@ -82,16 +80,12 @@ export function normalizeContextNodeProgram(program, { policy }) {
     normalized = normalizeContextProgram(program, synthesizeContextPolicy(policy, 1));
   } catch (error) {
     if (error?.code === 'program_invalid') throw error;
-    fail('context node program is not a valid normalized baton.context_program v1 under the '
-      + 'Context policy mapped from ProgramPolicy per §93.20');
+    fail(`context node program is not a valid normalized baton.context_program v1 under the `
+      + `Context policy mapped from ProgramPolicy per §93.20: ${error?.message ?? error}`);
   }
   if (!contextProgramPure(normalized.expression)) {
     fail('context node program must be pure under §93.10 (map/reduce/review/verify and unknown '
       + 'operations are forbidden)');
-  }
-  if (policy.maxChildDepth !== 1) {
-    fail('ProgramPolicy maxChildDepth must equal 1 for a Program containing a context node '
-      + '(§93.20 binds it to Context Program policy v1\'s fixed recursionDepth constant)');
   }
   return normalized;
 }
@@ -201,7 +195,7 @@ function repositoryChunkItemSchema(ctx) {
 
 function assertHomogeneous(envelopes, label) {
   const [first] = envelopes;
-  if (envelopes.some((entry) => entry.definition !== first.definition)) {
+  if (!first || envelopes.some((entry) => entry.definition !== first.definition)) {
     fail(`Context Program ${label} requires every input to derive the byte-identical envelope `
       + 'schema (heterogeneous chains are program_invalid in 93a.3a)');
   }
@@ -224,7 +218,7 @@ function deriveItem(expr, ctx) {
     case 'outline': {
       deriveItem(expr.input, ctx);
       const fieldsArray = arrayOf(ctx, scalarRef(ctx, 'safeId'),
-        { minItems: 0, maxItems: ctx.policy.maxJoinMembers, unique: false });
+        { minItems: 0, maxItems: ctx.policy.maxJoinMembers, unique: true });
       return objectOf(ctx, [
         { name: 'itemCount', schema: scalarRef(ctx, 'int'), required: true },
         { name: 'fields', schema: fieldsArray.schema, required: true },
@@ -284,7 +278,7 @@ function deriveItem(expr, ctx) {
     case 'coverage': {
       deriveItem(expr.input, ctx);
       const sourceBranchesArray = arrayOf(ctx, scalarRef(ctx, 'safeId'),
-        { minItems: 0, maxItems: ctx.policy.maxJoinMembers, unique: false });
+        { minItems: 0, maxItems: ctx.policy.maxJoinMembers, unique: true });
       return objectOf(ctx, [
         { name: 'selectedItems', schema: scalarRef(ctx, 'int'), required: true },
         { name: 'sourceBranches', schema: sourceBranchesArray.schema, required: true },
