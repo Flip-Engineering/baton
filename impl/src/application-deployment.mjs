@@ -1027,6 +1027,14 @@ class BatonDeployment {
       },
       startMany: (requests) => this.startMany(requests),
     });
+    this.waves = Object.freeze({
+      start: (options = {}) => {
+        for (const member of options?.members ?? []) {
+          assertRouteReady(member?.exact ? { exact: member.exact } : member, this.#readiness);
+        }
+        return this.#baton.waves.start(options);
+      },
+    });
     this.ready = application.ready;
     Object.freeze(this);
   }
