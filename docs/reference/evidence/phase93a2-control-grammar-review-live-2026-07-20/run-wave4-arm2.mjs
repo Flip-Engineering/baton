@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { openBaton } from '../../../../impl/src/index.mjs';
 
 // Wave 4, arm 2 — HETEROGENEOUS swarm dogfood: a three-vendor artifact chain
-// (claude-sonnet-5 claims -> glm-5.2 adversarial verification -> kimi-k3
+// (claude-sonnet-5 claims -> glm-5.2 (typed-red: Z.ai 529s) -> claude-opus-4-8 adversarial verification -> kimi-k3
 // synthesis) where every hand-off is a shared immutable reference (pinned
 // result commit), plus a data-derived dynamic-topology successor: the
 // synthesis verdict decides what runs next. Steering: glm is steered mid-turn.
@@ -33,7 +33,7 @@ const baton = await openBaton({
   advanced: {
     routes: [
       { harness: 'claude-code', model: 'claude-sonnet-5', effort: 'high' },
-      { harness: 'glm', model: 'glm-5.2', effort: 'xhigh' },
+      { harness: 'claude-code', model: 'claude-opus-4-8', effort: 'high' },
       { harness: 'kimi-code', model: 'kimi-code/k3', effort: 'high' },
     ],
     verification: VERIFY,
@@ -133,11 +133,11 @@ let failure = null;
 const startedRuns = [];
 try {
   const readiness = await baton.doctor();
-  for (const exact of CHAIN ? [
+  for (const exact of [
     { harness: 'claude-code', model: 'claude-sonnet-5', effort: 'high' },
-    { harness: 'glm', model: 'glm-5.2', effort: 'xhigh' },
+    { harness: 'claude-code', model: 'claude-opus-4-8', effort: 'high' },
     { harness: 'kimi-code', model: 'kimi-code/k3', effort: 'high' },
-  ] : []) {
+  ]) {
     const ready = readiness.routes.find((candidate) => (
       candidate.harness === exact.harness && candidate.model === exact.model && candidate.effort === exact.effort
     ));
@@ -174,8 +174,16 @@ try {
     if (!memberA.resultSha) throw new Error('member A produced no artifact to chain');
   }
 
-  // B — adversarial verifier (glm-5.2), brief addresses A's immutable artifact.
-  const memberB = await chainMember('B-verification', { harness: 'glm', model: 'glm-5.2', effort: 'xhigh' }, [
+  // B — adversarial verifier. GLM glm-5.2 was routed here but is typed-red tonight (four
+  // transient Z.ai 529 overloads in a row); the seat runs claude-opus-4-8 instead.
+  // ARM2_RESUME_B=<sha> skips a completed B on resume.
+  let memberB;
+  if (process.env.ARM2_RESUME_B && /^[a-f0-9]{40}$/u.test(process.env.ARM2_RESUME_B)) {
+    memberB = { role: 'B-verification', resultSha: process.env.ARM2_RESUME_B, run: null };
+    evidence.chain.push(memberB);
+    log(`resuming with B artifact ${memberB.resultSha}`);
+  } else {
+    memberB = await chainMember('B-verification', { harness: 'claude-code', model: 'claude-opus-4-8', effort: 'high' }, [
     `You are member B of a heterogeneous artifact chain. Member A's claims artifact is the`,
     `immutable pinned commit ${memberA.resultSha}; read it with`,
     `\`git show ${memberA.resultSha}:${CHAIN.claims}\`.`,
@@ -191,9 +199,17 @@ try {
   });
   startedRuns.push(memberB.run);
   if (!memberB.resultSha) throw new Error('member B produced no artifact to chain');
+  }
 
   // C — synthesizer (kimi-k3), brief addresses both upstream artifacts.
-  const memberC = await chainMember('C-synthesis', { harness: 'kimi-code', model: 'kimi-code/k3', effort: 'high' }, [
+  // ARM2_RESUME_C=<sha> skips a completed C on resume.
+  let memberC;
+  if (process.env.ARM2_RESUME_C && /^[a-f0-9]{40}$/u.test(process.env.ARM2_RESUME_C)) {
+    memberC = { role: 'C-synthesis', resultSha: process.env.ARM2_RESUME_C, run: null };
+    evidence.chain.push(memberC);
+    log(`resuming with C artifact ${memberC.resultSha}`);
+  } else {
+    memberC = await chainMember('C-synthesis', { harness: 'kimi-code', model: 'kimi-code/k3', effort: 'high' }, [
     'You are member C (synthesis) of a heterogeneous artifact chain. Upstream immutable',
     `artifacts: A claims at commit ${memberA.resultSha} (\`git show ${memberA.resultSha}:${CHAIN.claims}\`)`,
     `and B verification at commit ${memberB.resultSha} (\`git show ${memberB.resultSha}:${CHAIN.verification}\`).`,
@@ -206,6 +222,7 @@ try {
   ].join(' '), CHAIN.synthesis);
   startedRuns.push(memberC.run);
   if (!memberC.resultSha) throw new Error('member C produced no synthesis');
+  }
 
   // D — data-derived dynamic topology: the synthesis content decides the successor.
   const synthesisBody = execFileSync('/usr/bin/git', ['show', `${memberC.resultSha}:${CHAIN.synthesis}`], { cwd: repo, encoding: 'utf8', maxBuffer: 512 * 1024 });
@@ -230,7 +247,7 @@ try {
     mode: residueLines.length > 0 ? 'residue-verification' : 'clean-verdict-refutation',
   });
   log(`dynamic topology: ${residueLines.length} residue lines -> ${evidence.dynamicTopology[0].mode}`);
-  const memberD = await chainMember('D-successor', { harness: 'claude-code', model: 'claude-sonnet-5', effort: 'high' }, successorObjective, CHAIN.successor);
+  const memberD = await chainMember('D-successor', { harness: 'kimi-code', model: 'kimi-code/k3', effort: 'high' }, successorObjective, CHAIN.successor);
   startedRuns.push(memberD.run);
 } catch (error) {
   failure = error;
