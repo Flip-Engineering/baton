@@ -949,6 +949,69 @@ worker policy, verification contract, schemas, and approval envelope. The result
 `programDigest`. A crosswalk artifact records the old Context digest and new Program digest; it
 never claims identity equivalence.
 
+## 93.10A Context result-schema derivation (93a.3a)
+
+`deriveContextResultSchema(program, manifest, schemas)` is a closed normalization operation, not
+runtime inference. It performs the §93.10 complete pure-AST walk over the already-normalized
+`baton.context_program` v1 and produces the one exact `SchemaRef` the node's port publishes. The
+derivation never reads manifest bytes at normalization time (the Program carries a digest-only
+`ManifestRef`); branch-to-schema bindings are the checked-in constants below. Whether the named
+branch exists in that exact manifest is a preview/admission question (93E), never a normalization
+guess.
+
+The published value of a pure Context cell is the closed envelope, and `outputSchema` describes
+exactly it:
+
+```text
+ContextCellValue = exact{schemaVersion,kind,items,sourceBranches,sourceItems,selectedSourceItems,chunks}
+schemaVersion = 1
+kind = "baton.context_value"
+items = <op-derived item schema>[0..policy.maxJoinMembers]
+sourceBranches = SafeId[0..policy.maxEvidenceRefs], sorted unique
+sourceItems/selectedSourceItems/chunks = non-negative safe integer
+```
+
+In 93a.3a the only branch kind with a checked-in item shape is `repository`; a `source` op naming
+any other branch fails `program_invalid` (other branch kinds require a branch→schema binding that
+no shipped authority provides):
+
+```text
+RepositoryChunkItem = exact{path,chunk,gitMode,gitBlobOid,blobBytes,byteStart,byteEnd,contentDigest,text,language}
+path = normalized repository-relative path
+chunk = non-negative safe integer (ordinal)
+gitMode = git mode string
+gitBlobOid = GitSha
+blobBytes/byteStart/byteEnd = non-negative safe integer
+contentDigest = Digest
+text = bounded text
+language = SafeId
+```
+
+Each operation has exactly one checked-in schema transformer. Given input item schema(s) `I`
+(and `L`, `R` for `join`, and per-input `V_i`/`E_i` for `collect`/`finish`), the output `items`
+schema is:
+
+| op | items schema |
+| --- | --- |
+| `source("repository")` | `RepositoryChunkItem[]` |
+| `outline` | `[exact{itemCount:non-negative safe integer, fields:SafeId[]}]` (exactly one item) |
+| `index` | `exact{index:non-negative safe integer, value:I}[]` |
+| `search`, `slice`, `filter`, `sort`, `unique` | `I[]` (identity) |
+| `chunk` | `exact{key:string, items:I[]}[]` |
+| `project(fields)` | `exact{type:"object", properties:fields∩I.properties (required iff in I.required and named), additionalProperties:false}[]` |
+| `join` | `exact{left:L, right:R}[]` |
+| `collect` | one `ContextCellValue` per input, in input order: `ContextCellValue(V_i)[]` |
+| `coverage` | `[exact{selectedItems:integer, sourceBranches:SafeId[], manifestBranches:integer, unreadBranches:integer, chunks:integer, sourceItems:integer, selectedSourceItems:integer}]` (exactly one item) |
+| `finish` | `[exact{value:ContextCellValue(V), evidence:ContextCellValue(E_i)[1..], grounding:string-enum["asserted"]}]` (exactly one item) |
+
+The full derived definition (envelope with the op-derived `items`, recursively through
+`collect`/`finish`) MUST already be present in `schemas`; `outputSchema` is its byte-matching
+`SchemaRef`, resolved exactly like a `collect` derivation. A missing, ambiguous, unregistered, or
+caller-substituted result schema fails normalization. Evaluation validates the exact produced
+`TypedValue` against the derived ref before publishing the port; a cell whose envelope does not
+validate never publishes. No runtime measurement, media type, content sniffing, or manifest
+lookup participates in the derivation.
+
 ## 93.11 Exhaustive effect-node schemas and asynchronous handles
 
 Effect nodes are canonical nodes and use these exact fields:
@@ -2726,7 +2789,11 @@ Implementation starts with these exact red suites:
    and the temporary closed normalization refusal of `context` nodes pending 93a.3.
 5. `phase93a-context-purity-red.test.mjs`: pure operations accepted; legacy
    map/reduce/review/verify and unknown operations rejected before effect; historical replay stable;
-   explicit migration receives a new identity.
+   explicit migration receives a new identity. In 93a.3a this suite additionally pins the §93.10A
+   derivation rows: every per-op transformer (including `collect`/`finish` envelope recursion and
+   `project` field/required intersection), the checked-in `repository` item shape and non-
+   `repository` branch refusal, unregistered/ambiguous derived-definition refusal, and caller
+   `outputSchema` substitution refusal.
 6. `phase93b-state-reducer-red.test.mjs`: branch-local PCs/stacks/rounds, pending/settled sets,
    immutable per-branch revision/CAS, schema/value/source-lineage digests, arrival-order operational
    revisions excluded from identity, canonical barrier permutations, admission/join fences,
@@ -2811,7 +2878,15 @@ validation, full validation, and a status update that distinguishes fixture from
      minimum binding proof is 93E.
    - **93a.3:** §93.10 purity proof enforcement with `deriveContextResultSchema` checked-in
      transformers, Python/TypeScript builders with shared conformance vectors, and preview.
-     Completes 93A.
+     Completes 93A. Sub-slices:
+     - **93a.3a:** §93.10A derivation — the closed envelope, the checked-in `repository`
+       branch item shape, the per-op transformer table, registry byte-match resolution, and
+       removal of the 93a.2 closed refusal for pure context nodes (suite 5 acceptance rows).
+     - **93a.3b:** TypeScript and Python builders over the closed Program grammar with the
+       checked-in shared conformance vectors (non-ASCII keys, exponent boundaries, zero,
+       escaped control characters, nested objects); both normalize to byte-identical Programs.
+     - **93a.3c:** preview — one admission-free normalization+derivation report (no cell
+       admission, no event append, no artifact write), matching the §93.22 registry entry.
 2. **93B — durable state machine:** Program admission, immutable revisions, branch PCs/stacks,
    parallel/await/join, repeat/child counters, pure reducer, and replay.
 3. **93C — effect authority:** five-phase protocol; call/map/reduce; separately approved gate;
