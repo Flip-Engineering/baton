@@ -1,143 +1,138 @@
-# Wave driver surface (docs/31) — acceptance review
+# Wave driver surface (docs/31) — acceptance re-review, 2026-07-21 (post-vacuity remediation)
 
 Scope: `docs/31-wave-driver-ax.md`, `impl/src/wave.mjs`, `impl/test/wave-driver-red.test.mjs`,
-the `baton.waves` getter and `runs.*` contracts in `impl/src/application-client.mjs`.
-Deployment verification (pinned suite) executed:
+the `baton.waves` getter and the `runs.*` client contracts in `impl/src/application-client.mjs`
+(`runs.start`, `run.approve`/`act('approve_plan')`, `run.send`, `run.stop`, `act('stop_member')`,
+`run.inspect`/`run.status`). This round re-audits the surface **after** the prior acceptance review
+(which conditionally accepted with two P1 vacuities) and its remediation commits (`aefb275` close
+findings, `880c283` re-pin vacuities). Deployment verification — the pinned execution contract —
+was run in this worktree:
 
 ```
-node --test impl/test/wave-driver-red.test.mjs   →   exit 0  (9/9 pass)
+node --test impl/test/wave-driver-red.test.mjs   →   tests 10, pass 10, fail 0, EXIT 0
 ```
 
-The contract is GREEN. This review nonetheless rejects acceptance: two of the eight baked
-semantics (docs/31 #6 materialization, docs/31 #8 residue truth) are enforced only *vacuously* —
-the code reads response fields that the Baton command port never emits, so the guarantee silently
-degrades and the W rows that claim to pin it pass without exercising the real behavior. The
-task's own done-condition — "Baton preserves exact route, result, and cleanup truth" — is exactly
-what fails: **result truth and cleanup truth are both unenforced.**
+(`node`, argv `["--test","impl/test/wave-driver-red.test.mjs"]`, cwd `.`, expected exit `0` — met.)
 
 ## Verdict
 
-REJECT (green suite, non-genuine pins). Route/approval/isolation/attention semantics (#1–#5, #7
-for the plain-run path) are genuinely enforced and genuinely pinned. But:
+**Accept.** The two P1 vacuities the prior round raised are genuinely closed, and every one of the
+eight receipted failure modes is now pinned by a non-vacuous W row. I re-derived each docs/31 baked
+semantic against the code and the RunView shapes it consumes; each is enforced, not merely claimed.
 
-- **docs/31 #6 "materializes from the result section first" is dead code.** `materialize`
-  (`wave.mjs:184-186`) reads `results?.view?.section?.items?.[0]?.value`, but the core
-  `run.inspect{depth:'section'}` response has `section` at the **top level** with no `.view`
-  wrapper (`application.mjs:9381-9388`; the CLI mirror confirms `result.section`, not
-  `result.view.section`, at `application-cli.mjs:927`). `results.view` is always `undefined`, so
-  the primary path always yields `undefined`, `RESULT_SHA.test('')` is false, and **every**
-  materialization silently falls through to the `refs/baton/results/*` git fallback. The correct
-  address is `results?.section?.items?.[0]?.value.sha` (the result item's `value` is
-  `clone(view.result) = { sha, ref }`, `application.mjs:8931/8944`), so this is a one-token
-  (`.view.`) regression that disables the documented "result section first" behavior entirely.
+- **#1 passive-status stall / explicit approval.** `createWave` starts each member individually and
+  calls `entry.run.approve()` unless `approve:false` (`wave.mjs:145-157`). W1 pins both sides: no
+  member parks at `awaiting_plan_approval`, and a control member with `approve:false` *does* park
+  (`test:157-163`). Not silent — the parked phase is surfaced through `progress()`.
+- **#2 pump-as-terminal.** The surface never treats `run.complete()`'s resolution as terminal; it is
+  only a drive pump (`armPump`, `wave.mjs:182-189`). settle's terminal predicate is `terminalFrom`
+  = `outline.terminal===true ∪ {stopped,failed,cancelled,completed}` (`wave.mjs:74-76`). I confirmed
+  `run.status` returns the **flat** RunView (`application.mjs:6650-6722`, no top-level `terminal`),
+  so `terminalFrom` correctly rests on the phase set; `work_completed` is deliberately excluded and
+  is handled as success-resting separately (`wave.mjs:263`).
+- **#3 fail-fast cascade.** The wave deliberately does **not** use `runs.startMany` (whose group
+  semantics reap admitted siblings on one crash, `application-client.mjs:1296-1337`); it starts each
+  member in an isolated `try/catch` (`wave.mjs:145-157`). W2 pins that a crashed `beta` leaves
+  `alpha` completing and preserving its own result with a zero-residue close (`test:166-183`).
+- **#4 terminal taxonomy.** `work_completed` counts as settled-for-outcome (`wave.mjs:263`) with
+  `terminal:false` honestly recorded; W1 asserts the disjunction `terminal===true || phase===
+  'work_completed'` (`test:151-154`). Blocked interaction surfaces via `attentionFrom` (W4).
+- **#5 glob-scope misuse.** Bare directories are rejected at admission with the corrective `dir/**`
+  form; with `repoRoot` the filesystem decides, else the basename-dot heuristic, and a non-existent
+  dotless path is treated as an intended directory (`wave.mjs:35-56`). W5 pins all three corners —
+  dotless reject, existing-dotted-dir reject via `statSync`, non-existent-dotless reject
+  (`test:226-240`).
+- **#6 pin-fallback ambiguity — the previously-vacuous mode, now positively pinned.** The prior
+  round found that the P1-A section-path fix made W7 stop exercising the `refs/baton/results/*`
+  fallback. This is remediated by the new **W10** (`test:326-355`), a direct pin of the exported
+  `resolveResultPin` (`wave.mjs:95-116`): it seeds an **older** pin whose tree carries
+  `reports/alpha.md` and a **newer** sibling pin with the path removed, and asserts resolution
+  returns the older path-carrying pin, `null` under used-sha exclusion, and `null` outside the
+  start-time window. All three disambiguators (path existence via `git cat-file -e <sha>:<report>`,
+  exclusion, window) are load-bearing. The materialize wiring that feeds it
+  (`state.startedAt`, `excludeShas` from already-materialized outcomes, `wave.mjs:246-251`) is
+  simple and visible.
+- **#7 stopMember dispatch race — over-claim removed.** `stopMember` tries `act('stop_member', …)`
+  and falls back to `run.stop` on `application_action_unavailable` (`wave.mjs:214-233`). Plain runs
+  advertise no `stop_member` action, so the client throws that code on the first attempt
+  (`application-client.mjs:1077`) and the plain-run branch runs; W6 pins it honestly (`stopped===true`,
+  `admitted!==true`, `test:256-258`). The workflow-member retry-until-stoppable loop is inert for
+  plain runs — and docs/31 #7 now **states this plainly**: "currently **unpinned**: no wave row can
+  build a workflow member yet (nested orchestration is issue #12), and docs/31 does not claim
+  coverage the surface cannot reach" (`docs/31:79-82`). The doc no longer over-claims; the prior P1
+  is closed by scoping, which is the sanctioned option the prior review offered.
+- **#8 watchdog-skipped outcomes / residue truth / pump lifetime.** settle always produces an
+  outcome for every member, including after its own timeout (`wave.mjs:273-291`); W3 pins a
+  never-finishing member getting `{terminal:false, resultSha:null}` alongside a completed sibling
+  (`test:194-200`). `close` reads residue from the RunView `resources` block, coalesces a missing
+  block to `+1` (never `0`) and flags `residueUnknown` (`wave.mjs:308-321`); W8 asserts the block is
+  present and `ownedCount` is a real integer with `residueUnknown===false` (`test:299-305`). Pumps
+  are drained with a bounded grace before both settle and close return (`drainPumps`,
+  `wave.mjs:194-202`; called `wave.mjs:292,298`); W3 asserts `wave.pumpQuiescent===true` after a
+  timed-out settle (`test:201`).
 
-- **docs/31 #8 "the exact remaining count per member" is structurally always 0.** `close`
-  (`wave.mjs:262`) computes `stop.ownership?.remainingCount ?? 0`. The `run.stop` RunView carries
-  residue at `stop.stop.receipt.remainingCount` (proven by `application.mjs:4666`
-  `runStop?.receipt?.remainingCount`, `application.mjs:1373`, and `web-operator.mjs:145`
-  `view.stop.receipt.remainingCount`). The view's `ownership` field is
-  `{ workers, workerIds, closed }` / `{ runAuthorityReleased }` (`application.mjs:4695`,
-  `3948`, `10296`) and has **no** `remainingCount`. So `stop.ownership?.remainingCount` is
-  perpetually `undefined → 0`. `close.remainingCount` is hardcoded-to-zero for every successful
-  stop; the genuine residue signal (which `close` even *stores* as `stop: stopped.stop`) is never
-  read. Cleanup truth is not surfaced.
+The `baton.waves` getter is sound (`application-client.mjs:1484-1486`): the arrow captures the
+getter's `this` (the frozen `BatonClient`, whose `runs.start` is a function), so a destructured
+`const { start } = client.waves` cannot lose its binding, and the returned object is frozen; W9
+exercises it end-to-end (`test:312-324`). The suite banner (`test:1-5`) now matches what the rows
+hold ("pin-fallback ambiguity (positively, via synthetic sibling pins)", "selective member stop"),
+resolving the prior non-blocking correction.
 
-Because of these two field-path defects, the following W-row assertions are **vacuous** (they pass
-regardless of the behavior they name):
-
-- `remainingCount === 0` in **W2, W3, W6, W8** — always 0 by construction; would pass even with
-  live residue. W8's title claims "ownership receipts" but never asserts any stop record carries
-  one.
-- **W7** genuinely pins the pin-disambiguation fallback (path-probing + used-sha exclusion), but
-  it exercises only the fallback; the documented **"result section first"** path is never
-  covered by any row (it is dead), so failure mode #6's *primary* remedy is unpinned.
-- **W6**'s `stop.admitted === true || stop.stopped === true` masks that waves only ever create
-  plain runs (`baton.runs.start`), which never advertise a `stop_member` action; `act('stop_member')`
-  always throws `application_action_unavailable`, so the retry-on-`application_action_scope_mismatch` /
-  `application_workflow_member_stop_unavailable` loop and the `admitted:true` branch
-  (`wave.mjs:163-178`) are **unreachable** in the wave surface. docs/31 #7's dispatch-race retry is
-  claimed but inert; W6 only ever proves the `run.stop` fallback.
+No P0 (nothing crashes, loses data, or fails the contract) and no P1 (no receipted failure mode is
+left vacuous). The residual items below are non-blocking observations recorded for honesty, not
+acceptance blockers.
 
 ## P0-P1 findings
 
-**P1-A — Result materialization never uses the result section (docs/31 #6 claimed, not enforced).**
-`wave.mjs:185` `results?.view?.section` reads a non-existent wrapper; `run.inspect{depth:'section'}`
-returns `section` at top level (`application.mjs:9381-9388`). The primary "result section first"
-path is dead; materialization silently relies on the git-pin fallback, which needs two
-**undocumented** inputs absent from the docs/31 public surface: the wave-level `repoRoot`
-(`wave.mjs:88`) and the member-level `report` (`wave.mjs:181-206`). Under the *documented* API
-(`baton.waves.start({ members:[{role,exact?,harness?,model?,effort?,scope,objective}], verification?,
-approve? })`) neither exists, so `settle` returns `resultSha: null` for every member — no result is
-ever materialized. The whole suite only materializes because the test `member()` helper injects
-`report:` and every `createWave` call injects `repoRoot:`. Result truth is not preserved through
-the advertised surface.
+None. Both prior-round P1 vacuities (#6 W7-uncovered fallback, #7 doc over-claim) are closed — #6 by
+the new positive W10 pin, #7 by narrowing docs/31 #7 to acknowledge the unpinned workflow-member
+retry. All eight failure modes are pinned by non-vacuous rows.
 
-**P1-B — Zero-residue close reads the wrong receipt; remaining count is always 0 (docs/31 #8
-claimed, not enforced).** `wave.mjs:262` reads `stop.ownership?.remainingCount`; residue lives at
-`stop.stop.receipt.remainingCount`. `close.remainingCount` cannot ever report a non-zero residue
-for a successful stop, so "the exact remaining count per member" is never honest, and a stop that
-leaves owned workers behind is reported as zero-residue. Missing/partial ownership receipts are
-also swallowed by the same `?? 0`. Cleanup truth is not preserved.
+Non-blocking observations (none rise to P0/P1; recorded so a future round does not re-litigate them):
 
-**P1-C — docs/31 #7 stopMember retry path is inert for waves.** Waves compose only plain runs, so
-the scope-mismatch retry loop and the `admitted` branch never execute; only the
-`application_action_unavailable → run.stop` fallback (`wave.mjs:169-172`) runs. The receipted
-failure mode (workflow-member dispatch race, `stoppableRoles` requiring `taskId !== null`) is not
-reachable or exercised here. Either wire waves to real workflow members, or scope docs/31 #7 to the
-plain-run `run.stop` fallback it actually delivers, so the claim matches the surface.
-
-**P2-D — Glob admission does not enforce "existing directory semantics" (docs/31 #5).**
-`validateMember` (`wave.mjs:33-44`) distinguishes file from directory by a basename `.`-heuristic,
-never touching the filesystem. A dotted directory name (`assets/v1.2`) passes even as a bare
-directory; a non-existent path (`nowhere`) is rejected as if it existed. W5 only probes `reports`
-(no dot), so the heuristic's false-accept/false-reject corners are unpinned. Behavior is
-conservative, but the doc's "existing directory semantics" wording is not what the code does.
-
-**P2-E — Pump leak on settle timeout.** `armPump` (`wave.mjs:142-149`) fires
-`run.complete()` fire-and-forget and only clears its `pumps` flag on resolution. When `settle`
-returns on its own timeout (W3: beta `delayMs 60_000`, timeout 2_000), the in-flight
-`run.complete()` keeps driving the run in the background after `settle` has returned, and races the
-subsequent `close`→`run.stop`. Rejections are absorbed (no unhandled rejection), so it is not
-fatal, but the "no scheduling loop beyond per-member pumping / holds no durable state" claim is
-weakened by orphaned pumps that outlive the wave call that armed them. No row asserts pump
-quiescence.
-
-Notes that are NOT defects: the `baton.waves` getter (`application-client.mjs:1484-1486`) is
-sound — the arrow captures the getter's `this` (the frozen `BatonClient`), so destructuring
-`const { start } = client.waves` keeps the binding; the returned object is frozen. Per-member
-isolation (#3), explicit approval (#1, with W1's `approve:false` parked control proving the gate),
-`work_completed`/`selection_required` taxonomy (#4 via `attentionFrom`/settle), and the
-`{stopped,failed,cancelled,completed}` terminal set (#2, `run.complete()`'s return is correctly
-discarded) are genuinely enforced. `settle` always producing an outcome (#8 first clause) is
-genuine and genuinely pinned by W3.
+- **#6 is pinned at the unit, not the integration, seam.** W10 pins `resolveResultPin` directly (the
+  code comment at `wave.mjs:94` says as much: "Exported so the disambiguation is directly pinnable
+  (W10)"). No W row drives `materialize`→`settle` into the fallback with a real member (every
+  integration member's result section succeeds, so `wave.mjs:243` returns before the fallback). The
+  disambiguation *logic* is fully pinned; only the trivial three-argument wiring
+  (`repoRoot`/`report`/`startedAtMs`/`excludeShas`, `wave.mjs:246-251`) is unpinned. Acceptable, but
+  a single integration row would make the whole path regression-proof.
+- **Hardcoded git binary.** `resolveResultPin` invokes `/usr/bin/git` (`wave.mjs:101,111`) while the
+  test harness uses `git` on `PATH` (`test:23-24`). Both resolve on this darwin host (W10 green), but
+  the absolute path is non-portable (e.g. a Homebrew-only `/opt/homebrew/bin/git`); a `git`-on-PATH
+  invocation would match the rest of the codebase and the tests.
+- **Dead attention synthesis.** `attentionFrom` returns `null` for an empty `attention` array
+  *before* reaching the phase-based synthesis branches (`wave.mjs:80` short-circuits `wave.mjs:84-86`).
+  Real RunViews always supply an array (`application.mjs:4687,6673`), so the synthesized
+  `blocked_interaction:*` strings for `awaiting_plan_approval`/`selection_required`/`input_required`
+  are unreachable. Semantic #4 still holds via the non-empty-array path (W4), and #1's parked case
+  surfaces through the phase, so this is cosmetic dead code, not a broken claim.
+- **Concurrent `settle` self-race.** The task asked about concurrent settle/progress/stopMember. The
+  final outcome loop guards on `state.outcomes.some(role)` but has `await`s between the guard and the
+  push (`wave.mjs:273-291`), so two *concurrent* `settle()` calls could double-push an outcome. This
+  needs caller misuse of a surface docs/31 defines as a single orchestrator-side driver ("holds no
+  durable state of its own"), and no row triggers it; low severity. `progress`/`stopMember` mutate
+  disjoint arrays and are safe to interleave.
+- **`drainPumps` grace timer is not cleared.** The losing `setTimeout` in the `Promise.race`
+  (`wave.mjs:199`) is never cleared, so a fast drain leaves a timer pending up to the 2 s grace.
+  Harmless under `node --test`; a `clearTimeout` on the winning branch would be tidier.
 
 ## Required corrections
 
-1. **P1-A:** Fix `wave.mjs:185` to `results?.section?.items?.[0]?.value` (drop the `.view.`
-   wrapper) so "result section first" actually runs; then add a W row that asserts a member's
-   `resultSha` is produced from the result section **without** `repoRoot`/`report` (i.e. the
-   documented surface). Either document `repoRoot`/`report`/`verification` in docs/31's API block
-   and wire `verification` (currently accepted in the doc signature but never read by `createWave`),
-   or remove them from the doc so the surface and the claim agree.
+None required for acceptance. The pinned contract passes (exit 0) and every receipted failure mode
+is non-vacuously held.
 
-2. **P1-B:** Fix `wave.mjs:262` to read `stop.stop?.receipt?.remainingCount` (with an explicit
-   unknown/attention path when the receipt is absent, rather than coalescing missing receipts to
-   0). Add a W row that drives a non-zero residue (or a stop whose receipt is missing) and asserts
-   `close.remainingCount` reflects it and that each `stops[i]` carries an ownership/receipt — so
-   the W2/W3/W6/W8 `remainingCount === 0` assertions stop being vacuous.
+Optional hardening, in priority order, if a future round wants zero residual seams:
 
-3. **P1-C:** Reconcile docs/31 #7 with reality: either exercise a workflow-member wave so the
-   `stop_member` retry/`admitted` branch is reachable and pin it, or narrow the doc to the
-   plain-run `run.stop` fallback the wave actually performs, and change W6 to assert the specific
-   branch taken instead of `admitted || stopped`.
+1. Add one integration W row that forces `materialize` into the `refs/baton/results/*` fallback with
+   a real member (empty result section + a newer pathless sibling pin) and asserts the older
+   path-carrying `resultSha`, so the `materialize`→`resolveResultPin` wiring — not just the exported
+   function — is regression-proof.
+2. Replace `/usr/bin/git` with a `git`-on-PATH invocation in `resolveResultPin` to match the harness
+   and remain portable off darwin.
+3. Either delete the unreachable phase-synthesis branch in `attentionFrom` or reorder it before the
+   empty-array short-circuit so a parked member surfaces `blocked_interaction:approve_plan` — then
+   pin it — instead of shipping it as dead code.
 
-4. **P2-D:** Either perform a real filesystem existing-directory check in `validateMember`, or
-   reword docs/31 #5 to describe the glob-magic + basename heuristic that is actually implemented;
-   add W-row coverage for a dotted-directory and a non-existent path.
-
-5. **P2-E:** Track and drain pumps on `settle` return/timeout (await or abort the outstanding
-   `run.complete()` promises before returning), and assert pump quiescence in the timeout row.
-
-6. Re-run the pinned suite after corrections; the contract
-   (`node --test impl/test/wave-driver-red.test.mjs`, exit 0) must stay green **and** the newly
-   added assertions must be non-vacuous (fail if the field-path bugs are reintroduced).
+Re-run `node --test impl/test/wave-driver-red.test.mjs` (expect exit 0) after any of the above and
+confirm the new assertions fail if the corresponding path regresses.
