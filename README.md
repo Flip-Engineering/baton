@@ -30,7 +30,7 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## Status
 
 **Full-system pursuit active.** Baton is a runnable dependency-free Node ESM reference
-implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **1540/1540
+implementation, not a prototype skeleton. The canonical `npm test` in `impl/` is **2478/2478
 green** and lifecycle-owns its temporary fixture root. Its public
 `createDriver()` has driven real Claude Code, Codex app-server, and Grok ACP session workers
 concurrently on this repository, with mid-turn steer, confirmed interrupt, approvals, isolated git
@@ -232,6 +232,32 @@ pinned tests), mandatory Goal/Plan binding, budget settlement, lifecycle, and cl
 `gpt-5.6-sol`/low at `9ce83e9` and project-key
 GLM `glm-4.7`/low at `230db8e`. These focused greens do not relabel the original five-provider
 matrix.
+
+Phases 90–92.x then shipped the durable Run control and product spine: semantic
+`run.send`/`run.interrupt` through one `run.act` authority with
+admitted→effect-started→provider-acknowledged→settled durability, progressive Run timelines,
+turn-preserving semantic interrupt with attach-only recovery, the Episode/workstream facade with
+role/generation attribution, replay verifiers, route discovery, and the issue-10 objective-first
+AX vertical (two-exact-route review preset, capability-filtered actions, connected doctor).
+Phase 92.2 separates logical task identity from opaque physical workspace owners with pre-effect
+ownership receipts and cross-controller crash reconciliation. The canonical suite passed
+**2411/2411** at that checkpoint.
+
+Phases 93a.1–93a.3a build the closed Baton Program IR (issue #9) through the repository's
+spec-driven, adversarial-wave methodology: the canonical value kernel (JCS identity, strict raw
+JSON, closed schema registry, typed values, ValueRefs); the control-grammar normalizer
+(ProgramPolicy shape, role catalog v2 with separate service-tier and worker-policy bindings,
+exact approval-template projections, Kahn canonical order, coalescing, demand-edge dominance and
+settle-then-read settlement domains); and the closed Context result-schema derivation (§93.10A
+purity gate, per-op transformers, pinned `baton.derived` names with bottom-up resolution,
+homogeneous-only collect/finish, `by:"item"`-only chunk). Every slice was spec-drafted,
+adversarially red-teamed, re-drafted, implemented, and acceptance-reviewed by Baton-orchestrated
+multi-harness workers (Claude Opus/Sonnet, GLM 5.2, Kimi k3) in isolated worktrees — including
+homogeneous workflow swarms, heterogeneous artifact chains, reflexive mid-turn steering with
+durable receipts, and selective member stop proofs — with findings closed before merge. Open
+tracker: issues #2–#12 (routing axes, locale-independent canonical ordering, cross-controller
+process forests, review-report semantics, worker policy, Program v1 composition, the AX spine,
+Claude credential projection, nested orchestration). The canonical suite is **2478/2478 green**.
 
 **What baton is:** a run-centric **fleet application** — one orchestrator agent directs full Claude
 Code / Codex / Kimi Code / GLM 5.2 / Grok workers across vendors while Baton compiles the objective into approved
