@@ -1,0 +1,163 @@
+{
+  "record": {
+    "schemaVersion": 1,
+    "deploymentRoot": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-phase85-effect-dispatch-UG5GAa",
+    "runId": "run-0aaf8e29182b6fb25cb391545c34d50e",
+    "readiness": [
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "minimal",
+        "state": "ready",
+        "code": null
+      },
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "low",
+        "state": "ready",
+        "code": null
+      },
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "medium",
+        "state": "ready",
+        "code": null
+      },
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "state": "ready",
+        "code": null
+      },
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+        "state": "ready",
+        "code": null
+      },
+      {
+        "harness": "kimi-code",
+        "model": "kimi-code/k3",
+        "effort": "low",
+        "state": "blocked",
+        "code": "authentication_refresh_required"
+      },
+      {
+        "harness": "kimi-code",
+        "model": "kimi-code/k3",
+        "effort": "high",
+        "state": "blocked",
+        "code": "authentication_refresh_required"
+      },
+      {
+        "harness": "kimi-code",
+        "model": "kimi-code/k3",
+        "effort": "max",
+        "state": "blocked",
+        "code": "authentication_refresh_required"
+      },
+      {
+        "harness": "grok",
+        "model": "grok-4.5",
+        "effort": "low",
+        "state": "blocked",
+        "code": "authentication_refresh_required"
+      },
+      {
+        "harness": "grok",
+        "model": "grok-4.5",
+        "effort": "medium",
+        "state": "blocked",
+        "code": "authentication_refresh_required"
+      },
+      {
+        "harness": "grok",
+        "model": "grok-4.5",
+        "effort": "high",
+        "state": "blocked",
+        "code": "authentication_refresh_required"
+      },
+      {
+        "harness": "glm",
+        "model": "glm-5.2",
+        "effort": "xhigh",
+        "state": "ready",
+        "code": null
+      }
+    ],
+    "selectedTeam": [
+      {
+        "role": "effect-dispatch-builder",
+        "exact": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        }
+      },
+      {
+        "role": "effect-dispatch-adversary",
+        "exact": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "xhigh"
+        }
+      }
+    ],
+    "candidates": []
+  },
+  "cleanup": {
+    "stopped": {
+      "stop": {
+        "state": "stopped",
+        "admittedAt": "2026-07-19T00:29:11.167Z",
+        "completedAt": "2026-07-19T00:29:11.168Z",
+        "targetCount": 2,
+        "targetDigest": "4a959c7dc020d9a72a8e815b7249fe012aaea591bb23ad0396f08b405c780008",
+        "receipt": {
+          "schemaVersion": 1,
+          "state": "stopped",
+          "scope": "run_subtree",
+          "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+          "runId": "run-0aaf8e29182b6fb25cb391545c34d50e",
+          "targetCount": 2,
+          "remainingCount": 0,
+          "targetDigest": "4a959c7dc020d9a72a8e815b7249fe012aaea591bb23ad0396f08b405c780008",
+          "counts": {
+            "pendingCancelled": 0,
+            "killConfirmed": 0,
+            "alreadyTerminal": 2,
+            "processesObserved": 2,
+            "processesClosed": 2
+          },
+          "checks": {
+            "dispatchClosed": true,
+            "interactionsResolved": true,
+            "runAuthorityReleased": true
+          },
+          "effects": {
+            "coordinatorClosed": false,
+            "writerReleased": false,
+            "transportsClosed": false
+          },
+          "receiptDigest": "800aebfd81187d8be36be38eee306e8fcf3fc988736bd6b259aad0e254e24e26"
+        }
+      },
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      }
+    },
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    },
+    "callerStatusUnchanged": true,
+    "callerIndexUnchanged": true
+  }
+}

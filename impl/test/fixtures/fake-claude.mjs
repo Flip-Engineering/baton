@@ -38,6 +38,7 @@
 //                                     effect-level proof of which directory the child actually runs in.
 //   "REPORT_ENV:<VAR>"             -> completes with result text `env:<VAR>=<value-or-<unset>>` — phase10
 //                                     SC6's effect-level proof of env threading (tests use fake values only).
+//   "REPORT_ARGV"                  -> completes with the JSON encoded child argv.
 //   anything else                  -> emits an assistant text event ("Echo: <text>") then a success
 //                                     result.
 //
@@ -49,11 +50,17 @@
 // env FAKE_CLAUDE_SESSION_ID: fallback for --resume/--session-id.
 // env FAKE_CLAUDE_IGNORE_SIGTERM=1: install a no-op SIGTERM handler once, simulating an unresponsive
 //   vendor process so a caller's kill() must escalate to SIGKILL to actually end it.
+// env FAKE_CLAUDE_LIFECYCLE_BARRIER=<unix-socket-path>: listen before provider init and retain the
+//   process if controller stdin closes. Cross-controller tests use the listening socket as an
+//   explicit readiness/ownership barrier; only an exact process-group signal closes the fixture.
 //
-// Exits 0 when stdin closes (EOF) with nothing further to do — mirrors sdk.mjs's own contract:
-// "stream-json input requires a readable stdin for the lifetime of the session."
+// Unless the explicit lifecycle barrier is enabled, exits 0 when stdin closes (EOF) with nothing
+// further to do — mirrors sdk.mjs's own contract: "stream-json input requires a readable stdin
+// for the lifetime of the session."
 
 import { randomUUID } from 'node:crypto';
+import { rmSync } from 'node:fs';
+import { createServer } from 'node:net';
 import readline from 'node:readline';
 
 // Discovery guard (phase8 cross-cluster reconciliation R1): Node's test runner discovers
@@ -74,6 +81,7 @@ function parseArgs(argv) {
     if (a === '--resume' || a === '-r') out.resume = argv[i + 1];
     else if (a === '--session-id') out.sessionId = argv[i + 1];
     else if (a === '--model') out.model = argv[i + 1];
+    else if (a === '--permission-mode') out.permissionMode = argv[i + 1];
     else if (a === '--fork-session') out.forkSession = true;
   }
   return out;
@@ -85,6 +93,17 @@ const sessionId = args.forkSession && resumedId ? `${resumedId}-fork` : (resumed
 
 if (process.env.FAKE_CLAUDE_IGNORE_SIGTERM === '1') {
   process.on('SIGTERM', () => { /* deliberately unresponsive, for kill() escalation tests */ });
+}
+
+const lifecycleBarrierPath = process.env.FAKE_CLAUDE_LIFECYCLE_BARRIER;
+let lifecycleBarrier = null;
+if (lifecycleBarrierPath) {
+  rmSync(lifecycleBarrierPath, { force: true });
+  lifecycleBarrier = createServer();
+  await new Promise((resolve, reject) => {
+    lifecycleBarrier.once('error', reject);
+    lifecycleBarrier.listen(lifecycleBarrierPath, resolve);
+  });
 }
 
 function send(obj) {
@@ -203,9 +222,29 @@ function startNonApprovalTurn(text) {
     process.exit(1);
   }
 
+  if (text.includes('TRIGGER_AUTH_REFUSAL')) {
+    emitResult({ text: 'Not logged in · Please run /login', isError: true });
+    currentTurn = null;
+    drainQueue();
+    return;
+  }
+
+  if (text.includes('REPORT_SECRET_STDERR')) {
+    process.stderr.write(process.env.ANTHROPIC_AUTH_TOKEN ?? '');
+    return; // adapter must detect and kill; never provide a competing terminal result
+  }
+
   if (text.includes('REPORT_CWD')) {
     emitAssistantText(`cwd is ${process.cwd()}`);
     emitResult({ text: `cwd:${process.cwd()}` });
+    currentTurn = null;
+    drainQueue();
+    return;
+  }
+
+  if (text.includes('REPORT_ARGV')) {
+    emitAssistantText('argv probe');
+    emitResult({ text: `argv:${JSON.stringify(process.argv.slice(2))}` });
     currentTurn = null;
     drainQueue();
     return;
@@ -240,6 +279,16 @@ function startNonApprovalTurn(text) {
     return;
   }
 
+  const envPresenceMatch = text.match(/REPORT_ENV_PRESENT:([A-Z0-9_]+)/);
+  if (envPresenceMatch) {
+    const name = envPresenceMatch[1];
+    emitAssistantText(`env presence probe ${name}`);
+    emitResult({ text: `env-present:${name}=${process.env[name] === undefined ? 'false' : 'true'}` });
+    currentTurn = null;
+    drainQueue();
+    return;
+  }
+
   emitAssistantText(`Echo: ${text}`);
   emitResult({ text });
   currentTurn = null;
@@ -256,18 +305,25 @@ function handleInterrupt(requestId) {
   drainQueue();
 }
 
-send({
-  type: 'system',
-  subtype: 'init',
-  session_id: sessionId,
-  cwd: process.cwd(),
-  tools: [],
-  model: args.model ?? 'claude-sonnet-5-fake',
-  permissionMode: 'acceptEdits',
-  apiKeySource: 'user',
-  claude_code_version: '2.1.206-fake',
-  capabilities: ['interrupt_receipt_v1'],
-});
+let initEmitted = false;
+function emitInit() {
+  if (initEmitted) return;
+  initEmitted = true;
+  send({
+    type: 'system',
+    subtype: 'init',
+    session_id: sessionId,
+    cwd: process.cwd(),
+    tools: [],
+    model: process.env.FAKE_CLAUDE_REPORTED_MODEL ?? args.model ?? 'claude-sonnet-5-fake',
+    permissionMode: args.permissionMode ?? 'manual',
+    apiKeySource: 'user',
+    claude_code_version: '2.1.211-fake',
+    capabilities: ['interrupt_receipt_v1'],
+  });
+}
+
+if (process.env.FAKE_CLAUDE_INIT_AFTER_INPUT !== '1') emitInit();
 
 const rl = readline.createInterface({ input: process.stdin, terminal: false });
 
@@ -277,6 +333,7 @@ rl.on('line', (line) => {
   try { obj = JSON.parse(line); } catch { return; }
 
   if (obj.type === 'user') {
+    emitInit();
     const text = (obj.message?.content ?? []).map((c) => c.text ?? '').join('');
     if (currentTurn && currentTurn.kind === 'hold') {
       // Erratum E2 (live-faithful): a user frame landing mid-turn is ABSORBED by the running
@@ -309,5 +366,5 @@ rl.on('line', (line) => {
 });
 
 rl.on('close', () => {
-  process.exit(0);
+  if (!lifecycleBarrier) process.exit(0);
 });

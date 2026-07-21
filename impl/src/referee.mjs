@@ -12,6 +12,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { dirname, isAbsolute, resolve, sep } from 'node:path';
+import { verifierFailureCapsule } from './verifier-diagnostics.mjs';
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
@@ -115,7 +116,16 @@ function runCommand(command, cwd, timeoutMs, environment, signal = null) {
       settled = true;
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
-      resolve({ exitCode: timedOut || aborted ? null : exitCode, output: Buffer.concat(chunks).toString('utf8'), timedOut, outputExceeded: false, aborted });
+      const captured = Buffer.concat(chunks);
+      resolve({
+        exitCode: timedOut || aborted ? null : exitCode,
+        output: captured.toString('utf8'),
+        capturedOutputBytes: captured.length,
+        capturedOutputDigest: createHash('sha256').update(captured).digest('hex'),
+        timedOut,
+        outputExceeded: false,
+        aborted,
+      });
     };
 
     const armTimer = () => {
@@ -154,7 +164,15 @@ function runClosedCommand(verification, sandboxDir, timeoutMs, runtime, signal =
     const root = resolve(sandboxDir);
     const cwd = resolve(root, verification.cwd);
     if (cwd !== root && !cwd.startsWith(`${root}${sep}`)) {
-      settle({ exitCode: null, output: '', timedOut: false, outputExceeded: false, invalid: 'cwd_outside_sandbox' });
+      settle({
+        exitCode: null,
+        output: '',
+        capturedOutputBytes: 0,
+        capturedOutputDigest: createHash('sha256').update('').digest('hex'),
+        timedOut: false,
+        outputExceeded: false,
+        invalid: 'cwd_outside_sandbox',
+      });
       return;
     }
     const env = Object.fromEntries(verification.envAllowlist
@@ -172,7 +190,16 @@ function runClosedCommand(verification, sandboxDir, timeoutMs, runtime, signal =
       if (settled) return;
       settled = true; clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
-      settle({ exitCode: timedOut || outputExceeded || aborted ? null : exitCode, output: Buffer.concat(chunks).toString('utf8'), timedOut, outputExceeded, aborted });
+      const captured = Buffer.concat(chunks);
+      settle({
+        exitCode: timedOut || outputExceeded || aborted ? null : exitCode,
+        output: captured.toString('utf8'),
+        capturedOutputBytes: captured.length,
+        capturedOutputDigest: createHash('sha256').update(captured).digest('hex'),
+        timedOut,
+        outputExceeded,
+        aborted,
+      });
     };
     const capture = (chunk) => {
       if (outputExceeded) return;
@@ -311,27 +338,30 @@ export async function verify(task, result, sandbox, opts = {}) {
     }
   }
 
-  let note;
+  let diagnosticCode;
   if (resultRun.outputExceeded) {
-    note = `FAIL: verification output exceeded ${task.verification.maxOutputBytes} bytes.`;
-  } else if (!matchesClaim) {
-    note = `Diverged from claim: worker claimed exit ${claimedExit}, hub observed ${observedExit}`
-      + `${resultRun.timedOut ? ' (timeout: verification command exceeded the deadline)' : ''}.`;
+    diagnosticCode = 'verification_output_exceeded';
   } else if (resultRun.timedOut) {
-    note = `Timeout: verification command exceeded ${timeoutMs}ms.`;
+    diagnosticCode = 'verification_timed_out';
+  } else if (execution.state !== 'completed') {
+    diagnosticCode = execution.code;
+  } else if (!matchesClaim) {
+    diagnosticCode = 'verification_claim_diverged';
   } else if (passed && redGreen === false) {
-    note = `PASS but not red->green: the check already passed before the change (base exit ${baseExit}).`;
+    diagnosticCode = 'verification_red_green_failed';
   } else if (passed && coverageOfChange === false) {
-    note = `PASS but undercovered: ${uncoveredChangedLines.length} changed line(s) never executed.`;
+    diagnosticCode = 'verification_coverage_failed';
   } else if (passed && mutationPassed === false) {
-    note = `PASS but mutation-weak: ${survivedMutants.length} mutant(s) survived.`;
+    diagnosticCode = 'verification_mutation_failed';
+  } else if (passed && coverageNote) {
+    diagnosticCode = 'verification_coverage_unavailable';
+  } else if (passed && mutationNote) {
+    diagnosticCode = 'verification_mutation_unavailable';
   } else if (passed) {
-    note = `PASS: observed exit ${observedExit} matches expected ${task.verification.expectExit}.`;
+    diagnosticCode = 'verification_passed';
   } else {
-    note = `FAIL: observed exit ${observedExit}, expected ${task.verification.expectExit}.`;
+    diagnosticCode = 'verification_exit_mismatch';
   }
-  note += coverageNote;
-  note += mutationNote;
 
   const verdict = {
     reverified: true,
@@ -348,13 +378,20 @@ export async function verify(task, result, sandbox, opts = {}) {
     mutationStrength,
     mutationPassed,
     survivedMutants,
-    observedOutputTail: resultRun.output.slice(-4000),
-    note,
+    capturedOutputBytes: resultRun.capturedOutputBytes,
+    capturedOutputDigest: resultRun.capturedOutputDigest,
+    diagnosticCode,
     durationMs,
     execution,
     baseExecution,
     runtimeDigest: runtime.digest,
   };
+
+  verdict.failureCapsule = passed ? null : verifierFailureCapsule(resultRun.output, {
+    capturedOutputBytes: resultRun.capturedOutputBytes,
+    capturedOutputDigest: resultRun.capturedOutputDigest,
+    sandboxRoots: [sandbox.dir, opts.baseSandbox?.dir].filter(Boolean),
+  });
 
   if (execution.state !== 'completed') Object.assign(verdict, { reverified: false, passed: false, outcome: 'inconclusive', failureOwnership: 'verifier' });
   else if (!passed && opts.classifyFailureOwnership && baseExecution?.state === 'completed' && baseExit === task.verification.expectExit) Object.assign(verdict, { outcome: 'candidate_failed', failureOwnership: 'candidate' });

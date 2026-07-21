@@ -7,11 +7,12 @@
 import { join, basename, sep, resolve, relative, isAbsolute } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync, rmSync } from 'node:fs';
 
 import { Log } from './log.mjs';
 import { FenceTable } from './fence.mjs';
 import { Coordinator } from './coordinator.mjs';
+export { WorkerPolicySelectionError } from './coordinator.mjs';
 import * as worktreeMod from './worktree.mjs';
 import { verify, accept, defaultVerificationRuntime, prepareVerificationRuntime } from './referee.mjs';
 import { AdaptiveRouter } from './router.mjs';
@@ -30,6 +31,22 @@ import { normalizeProviderGovernancePolicy } from './provider-governance.mjs';
 import { loadOrCreateWorktreeCapacityIntegrityKey, normalizeWorktreeCapacityPolicy, WorktreeCapacityAuthority } from './worktree-capacity.mjs';
 import { normalizeGoalPlanPolicy } from './goal-plan.mjs';
 import { normalizeCanonicalOrderPolicy } from './canonical-order.mjs';
+import { normalizeTaskTopologyPolicy } from './task-topology.mjs';
+import { normalizeRunLineagePolicy } from './run-lineage.mjs';
+import { normalizeWorkflowPolicy } from './workflow-policy.mjs';
+import { normalizeContextProgramPolicy } from './context-program-policy.mjs';
+import { materializeContextCallBrief } from './context-call.mjs';
+import { openBatonDeployment } from './application-deployment.mjs';
+
+export { DEFAULT_BATON_DEPLOYMENT_ROUTES } from './application-deployment.mjs';
+
+/**
+ * Open one repository-bound Baton application with deployment-owned runtime,
+ * authority, route, evidence, and shutdown policy.
+ */
+export function openBaton(options = {}) {
+  return openBatonDeployment(options, createDriver);
+}
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
 const canonicalDigest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
@@ -54,18 +71,67 @@ export { Coordinator, ModelSelectionError, SessionSelectionError, IntegrationErr
 export { MockAdapter, CodexAdapter, ClaudeAdapter, GlmAdapter } from './adapter.mjs';
 export { inspectToolchainProjection, prepareToolchainProjection, ToolchainProjectionError } from './toolchain-projection.mjs';
 export { normalizeProviderGovernancePolicy, providerGovernanceRoute } from './provider-governance.mjs';
+export {
+  DEFAULT_TASK_TOPOLOGY_POLICY, TASK_TOPOLOGY_RELATIONS, inferTaskTopologyRelation,
+  normalizeTaskTopologyPolicy,
+} from './task-topology.mjs';
+export {
+  DEFAULT_WORKFLOW_POLICY, LEGACY_WORKFLOW_POLICY, MAX_WORKFLOW_ROUNDS,
+  WORKFLOW_STOP_CONDITIONS, normalizeWorkflowPolicy,
+} from './workflow-policy.mjs';
+export {
+  buildWorkflowRoleCatalog, normalizeWorkflowDefinition, normalizeWorkflowRoleCatalog,
+  validateWorkflowDefinitionLegacy, validateWorkflowDefinitionV3,
+  workflowAttempt, workflowAttemptLogicalRole,
+  workflowAttemptRoute, workflowCatalogRole, workflowDefinitionDigest,
+  workflowNodeTemplate, workflowNodeTemplateDigest,
+} from './workflow-definition.mjs';
+export {
+  contextEffectCallIdentity, contextEffectNodeBinding, contextEffectRetryCallIdentity,
+  contextEffectUnitIdentity,
+  contextMapCallToEffectCall, materializeContextCallBrief,
+  normalizeContextEffectCall, normalizeContextEffectNodeBinding,
+  normalizeContextEffectSource,
+} from './context-call.mjs';
+export {
+  buildContextMapResultLineage, validateContextMapResultLineage,
+} from './context-result-lineage.mjs';
+export {
+  buildContextEffectResultLineage, validateContextEffectResultLineage,
+} from './context-effect-result-lineage.mjs';
+export {
+  DEFAULT_CONTEXT_PROGRAM_POLICY, contextValueDigest,
+  normalizeContextManifest, normalizeContextProgram, normalizeContextProgramPolicy,
+} from './context-program.mjs';
+export {
+  contextCellIdentity, contextProgramInputRefs, contextProgramIsPure, contextSessionIdentity,
+  normalizeContextArtifactRef,
+} from './context-authority.mjs';
 export { loadOrCreateWorktreeCapacityIntegrityKey, normalizeWorktreeCapacityPolicy, WorktreeCapacityAuthority, WorktreeCapacityError } from './worktree-capacity.mjs';
 // SC2: the session tier IS the product surface — constructible from the entry point.
-export { ClaudeSessionCli, GlmSessionCli } from './claude-session.mjs';
+export { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from './claude-session.mjs';
 export { CodexAppServerCli } from './codex-appserver.mjs';
 export { GrokAcpCli } from './grok-acp.mjs';
+export { KimiAcpCli } from './kimi-acp.mjs';
+export { AcpJsonRpcProcess, AcpProtocolError, AcpSetupTimeoutError } from './acp-json-rpc-process.mjs';
 export { createBrief } from './messages.mjs';
 export { verify, accept, defaultVerificationRuntime, prepareVerificationRuntime } from './referee.mjs';
 export { AdaptiveRouter } from './router.mjs';
-export { routeTupleKey, resolveEffort } from './route-tuple.mjs';
+export { parseRouteTupleKey, routeTupleKey, resolveEffort } from './route-tuple.mjs';
+export {
+  DEFAULT_WORKER_POLICY_REQUEST, attestWorkerPolicyObservation, compareWorkerPolicyObservation,
+  createWorkerPolicyObservation,
+  normalizeWorkerPolicyCard, normalizeWorkerPolicyObservation, normalizeWorkerPolicyRequest,
+  normalizeWorkerPolicyResolution, resolveWorkerPolicy, workerPolicyObservationRequired,
+  workerPolicyRequestDigest,
+} from './worker-policy.mjs';
 export { RuntimeIsolation, isSecretEnvName } from './runtime-isolation.mjs';
 export { CoordinationStore, CoordinationIntegrityError, CoordinationRefusal, coordinationForLog, migrateCanonicalOrderLedger } from './coordination-store.mjs';
-export { WebNorthbound, createAuthenticatedWebServer, validateWebCommandEnvelope } from './web-northbound.mjs';
+export { projectRunTimelinePage, RunTimelineError } from './run-timeline.mjs';
+export { renderVerificationExecution } from './verification-presentation.mjs';
+export { DEFAULT_RUN_LINEAGE_POLICY, normalizeRunLineagePolicy, RUN_ORCHESTRATOR_CAPABILITIES, RUN_ORCHESTRATOR_REVOCATION_REASONS } from './run-lineage.mjs';
+export { WebNorthbound, createAuthenticatedWebServer, createLocalAuthenticatedWebServer, validateWebCommandEnvelope } from './web-northbound.mjs';
+export { createLocalSocketFetch } from './local-web-transport.mjs';
 export { WebEventStream } from './web-stream.mjs';
 export { WebResultExportDelivery } from './web-result-export-delivery.mjs';
 export { WebEdgePolicy, WebReadinessAuthority, FixedWindowQuota, ConcurrentQuota, resolveEdgeRequest } from './web-edge.mjs';
@@ -73,6 +139,10 @@ export { WebSessionStore, WebSessionIntegrityError, WEB_SESSION_COOKIE_NAME } fr
 export { OidcBrowserFlow, OidcFlowError, OIDC_FLOW_COOKIE_NAME, WEB_CSRF_COOKIE_NAME, csrfCookie } from './web-oidc.mjs';
 export { operatorAsset } from './web-operator.mjs';
 export { McpFleetServer, serveMcpStdio } from './mcp-northbound.mjs';
+export {
+  BatonWebApplicationFacade, connectBatonWebApplication, createBatonWebMcpServer,
+  kimiBatonAcpMcpServer, kimiBatonMcpEntry,
+} from './mcp-web-bridge.mjs';
 export { AtlasStructuralDelta } from './atlas-structural.mjs';
 export { AtlasStructuralRewrite } from './atlas-rewrite.mjs';
 export { AtlasCpgSlice } from './atlas-cpg.mjs';
@@ -99,9 +169,19 @@ export {
   validateApplicationCommandArgs,
 } from './application.mjs';
 export {
-  BATON_CLI_HELP, BatonWebClient, batonCliHelp, discoverBatonConnection, parseBatonCli, runBatonCli,
+  BATON_CLI_HELP, BatonWebClient, batonCliHelp, discoverBatonConnection, inspectBatonConnection,
+  setupBatonConnection, connectBaton,
+  parseBatonCli, projectBatonCliResult, runBatonCli,
 } from './application-cli.mjs';
-export { BatonClient, BatonRun, BatonRuns, bindBaton } from './application-client.mjs';
+export {
+  formatKimiCredentialInstallResult, installKimiCredential, kimiCredentialPath,
+  KIMI_CREDENTIAL_HELP, promptAndInstallKimiCredential, readHiddenKimiCredential,
+} from './kimi-credential-setup.mjs';
+export {
+  BatonClient, BatonContextCall, BatonContextCell, BatonContextExpression, BatonEpisode,
+  BatonRun, BatonRunContext, BatonRunGroup, BatonRuns, BatonWorkstream, BatonWorkstreams,
+  bindBaton, bindBatonPort,
+} from './application-client.mjs';
 export { BatonWebHost, SignalLifecycleOwner } from './application-host.mjs';
 export { HttpsHmacAdvisoryFeedSource, signHmacAdvisoryPollPageForTest } from './https-hmac-advisory-feed.mjs';
 export { Ed25519AdvisoryWebhookSource, HmacAdvisoryWebhookSource, signEd25519AdvisoryWebhookForTest, signHmacAdvisoryWebhookForTest } from './hmac-advisory-webhook.mjs';
@@ -111,7 +191,11 @@ function localGitEnv() {
   return { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
 }
 
-function localGit(args, cwd, opts = {}) { return execFileSync('git', args, { ...opts, cwd, env: localGitEnv() }); }
+function localGit(args, cwd, opts = {}) {
+  return execFileSync('git', args, {
+    stdio: ['ignore', 'pipe', 'pipe'], ...opts, cwd, env: localGitEnv(),
+  });
+}
 
 function boundedRepoPath(value) {
   return typeof value === 'string' && value.length > 0 && Buffer.byteLength(value) <= 4_096
@@ -123,8 +207,10 @@ function capacityReservationIdentity(row) {
   if (!row) return null;
   return Object.freeze({
     id: row.id, kind: row.kind, resourceId: row.resourceId, bytes: row.bytes, inodes: row.inodes,
+    outstandingBytes: row.outstandingBytes, outstandingInodes: row.outstandingInodes,
     baseSha: row.baseSha, sparseDigest: row.sparseDigest,
     toolchainProjectionDigest: row.toolchainProjectionDigest ?? null, createdAt: row.createdAt,
+    materializedAt: row.materializedAt,
   });
 }
 
@@ -134,6 +220,7 @@ function worktreeManager(repoRoot, opts = {}) {
   const verifyReservations = new Map();
   const workerReservations = new Map();
   const pendingWorkerReservations = new Map();
+  const failedWorkerTransactions = new Map();
   const capacityRequest = (baseSha, sparsePaths, sparseCheckoutIdentity) => ({
     baseSha,
     sparsePaths,
@@ -141,52 +228,420 @@ function worktreeManager(repoRoot, opts = {}) {
     toolchainProjection: opts.toolchainProjection?.identity() ?? null,
     toolchainProjectionTargetParents: opts.toolchainProjection?.targetParentPaths() ?? [],
   });
+  const allocationBinding = (taskId, binding) => ({
+    runId: binding?.runId ?? null,
+    attemptId: binding?.attemptId ?? `legacy-${taskId}`,
+    processGeneration: binding?.processGeneration ?? 1,
+  });
+  const pendingBindingMatches = (pending, taskId, binding) => {
+    const expected = allocationBinding(taskId, binding);
+    return pending.ownerReceipt.runId === expected.runId
+      && pending.ownerReceipt.attemptId === expected.attemptId
+      && pending.ownerReceipt.processGeneration === expected.processGeneration;
+  };
+  const finalizePendingReceipt = (taskId, pending) => {
+    if (!worktreeMod.releasePhysicalWorkspaceOwner(
+      repoRoot, pending.ownerReceipt.physicalOwnerId, { requireAllocated: true },
+    )) return false;
+    pendingWorkerReservations.delete(taskId);
+    return true;
+  };
+  const allocateOwner = (taskId, selected, binding) => worktreeMod.allocatePhysicalWorkspaceOwner(
+    repoRoot,
+    {
+      logicalTaskId: taskId,
+      ...allocationBinding(taskId, binding),
+      baseSha: selected,
+    },
+    opts.ownerAuthority,
+  );
+  const rememberFailedTransaction = (taskId, transaction) => {
+    failedWorkerTransactions.set(taskId, transaction);
+    failedWorkerTransactions.set(transaction.physicalOwnerId, transaction);
+  };
+  const forgetFailedTransaction = (transaction) => {
+    failedWorkerTransactions.delete(transaction.logicalTaskId);
+    failedWorkerTransactions.delete(transaction.physicalOwnerId);
+  };
+  const failedTransactionPending = () => Object.assign(
+    new Error('a prior physical workspace transaction must be finalized before reservation'),
+    { code: 'worktree_capacity_transaction_pending' },
+  );
+  const retainUnknownCapacityOutcome = (taskId, ownerReceipt) => {
+    const transaction = {
+      logicalTaskId: taskId,
+      physicalOwnerId: ownerReceipt.physicalOwnerId,
+      capacityReservation: null,
+      capacityOutcomeUnknown: true,
+    };
+    rememberFailedTransaction(taskId, transaction);
+    try {
+      if (!opts.worktreeCapacity.settleForCleanup(`worker:${ownerReceipt.physicalOwnerId}`)) {
+        throw Object.assign(new Error('unknown capacity reservation could not be settled'), {
+          code: 'worktree_capacity_unavailable',
+        });
+      }
+      transaction.capacityOutcomeUnknown = false;
+      if (!worktreeMod.releasePhysicalWorkspaceOwner(
+        repoRoot, ownerReceipt.physicalOwnerId, { requireAllocated: true },
+      )) {
+        throw Object.assign(new Error('physical workspace allocation receipt was not finalized'), {
+          code: 'worktree_cleanup_failed',
+        });
+      }
+      forgetFailedTransaction(transaction);
+      return null;
+    } catch (error) {
+      return error;
+    }
+  };
+  const finalizeFailedTransaction = (transaction) => {
+    if (transaction.finalizationPromise) return transaction.finalizationPromise;
+    const operation = Promise.resolve().then(async () => {
+      if (transaction.capacityReservation && opts.worktreeCapacity) {
+        if (!opts.worktreeCapacity.release(transaction.capacityReservation)) {
+          throw Object.assign(new Error('physical workspace capacity release was not confirmed'), {
+            code: 'worktree_capacity_unavailable',
+          });
+        }
+        transaction.capacityReservation = null;
+      }
+      if (transaction.capacityOutcomeUnknown && opts.worktreeCapacity) {
+        if (!opts.worktreeCapacity.settleForCleanup(`worker:${transaction.physicalOwnerId}`)) {
+          throw Object.assign(new Error('unknown physical workspace capacity was not settled'), {
+            code: 'worktree_capacity_unavailable',
+          });
+        }
+        transaction.capacityOutcomeUnknown = false;
+      }
+      // createFromBase may have crossed git worktree-add even when it returned no handle. Its
+      // exact reap is deliberately idempotent across pre-branch, branch-only, registered, and
+      // fully materialized response-loss states, and must always follow capacity absence.
+      await worktreeMod.reap(repoRoot, transaction.physicalOwnerId, {
+        force: true, deleteBranch: true, ...(opts.log ? { log: opts.log } : {}),
+      });
+      forgetFailedTransaction(transaction);
+    });
+    const tracked = operation.finally(() => {
+      if (transaction.finalizationPromise === tracked) transaction.finalizationPromise = null;
+    });
+    transaction.finalizationPromise = tracked;
+    return tracked;
+  };
   return {
-    reserveCapacity(taskId, requestedBaseSha = null) {
-      if (!opts.worktreeCapacity) return null;
+    reserveCapacity(taskId, requestedBaseSha = null, binding = null) {
       worktreeMod.normalizePhysicalOwnerId(taskId, 'taskId');
-      const selected = requestedBaseSha ?? localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
+      if (failedWorkerTransactions.has(taskId)) throw failedTransactionPending();
+      if (!opts.worktreeCapacity) return null;
+      const selected = requestedBaseSha ?? opts.deploymentBaseSha
+        ?? localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
       if (!/^[a-f0-9]{40}$/u.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
       localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
-      const reservation = opts.worktreeCapacity.reserve(
-        `worker:${taskId}`,
+      const existing = pendingWorkerReservations.get(taskId);
+      if (existing) {
+        if (existing.capacitySettled === true) throw failedTransactionPending();
+        if (existing.selected !== selected || !pendingBindingMatches(existing, taskId, binding)) {
+          throw Object.assign(new Error('pending capacity reservation is bound to another base'), {
+            code: 'worktree_capacity_reservation_conflict',
+          });
+        }
+        return existing.result ?? Object.freeze({
+          baseSha: selected, reservation: existing.reservation, ownerReceipt: existing.ownerReceipt,
+        });
+      }
+      const ownerReceipt = allocateOwner(taskId, selected, binding);
+      let reservation;
+      try { reservation = opts.worktreeCapacity.reserve(
+        `worker:${ownerReceipt.physicalOwnerId}`,
         capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
-      );
-      pendingWorkerReservations.set(taskId, { selected, reservation });
-      return Object.freeze({ baseSha: selected, reservation });
+      ); } catch (error) {
+        const cleanupError = retainUnknownCapacityOutcome(taskId, ownerReceipt);
+        if (cleanupError) {
+          throw Object.assign(new Error('capacity reservation outcome requires exact cleanup', {
+            cause: cleanupError,
+          }), {
+            code: cleanupError?.code ?? 'worktree_capacity_unavailable',
+            reservationError: error?.code ?? null,
+          });
+        }
+        throw error;
+      }
+      const result = Object.freeze({ baseSha: selected, reservation, ownerReceipt });
+      pendingWorkerReservations.set(taskId, { selected, reservation, ownerReceipt, result });
+      return result;
+    },
+    reserveCapacityMany(entries) {
+      if (!Array.isArray(entries) || entries.length === 0) throw new TypeError('capacity wave must contain at least one task');
+      const prepared = entries.map((entry) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)
+          || Object.keys(entry).sort().join(',') !== ['attemptId', 'processGeneration', 'requestedBaseSha', 'runId', 'taskId'].sort().join(',')) {
+          throw new TypeError('capacity wave entry is invalid');
+        }
+        const { taskId, requestedBaseSha } = entry;
+        worktreeMod.normalizePhysicalOwnerId(taskId, 'taskId');
+        const selected = requestedBaseSha ?? opts.deploymentBaseSha
+          ?? localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
+        if (!/^[a-f0-9]{40}$/u.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
+        localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
+        return { taskId, selected, binding: {
+          runId: entry.runId ?? null, attemptId: entry.attemptId,
+          processGeneration: entry.processGeneration,
+        } };
+      });
+      if (new Set(prepared.map(({ taskId }) => taskId)).size !== prepared.length) throw new TypeError('capacity wave contains duplicate tasks');
+      if (prepared.some(({ taskId }) => failedWorkerTransactions.has(taskId))) {
+        throw failedTransactionPending();
+      }
+      if (!opts.worktreeCapacity) return Object.freeze(prepared.map(() => null));
+      const priorPending = prepared.map(({ taskId }) => pendingWorkerReservations.get(taskId) ?? null);
+      if (priorPending.some(Boolean)) {
+        if (priorPending.some((pending) => pending?.capacitySettled === true)) {
+          throw failedTransactionPending();
+        }
+        const exactReplay = priorPending.every(Boolean) && priorPending.every((pending, index) => {
+          const candidate = prepared[index];
+          const receipt = pending.ownerReceipt;
+          return pending.selected === candidate.selected
+            && receipt.runId === candidate.binding.runId
+            && receipt.attemptId === candidate.binding.attemptId
+            && receipt.processGeneration === candidate.binding.processGeneration;
+        });
+        if (!exactReplay) {
+          throw Object.assign(new Error('capacity wave conflicts with pending physical reservations'), {
+            code: 'worktree_capacity_reservation_conflict',
+          });
+        }
+        return Object.freeze(priorPending.map((pending) => pending.result ?? Object.freeze({
+          baseSha: pending.selected,
+          reservation: pending.reservation,
+          ownerReceipt: pending.ownerReceipt,
+        })));
+      }
+      const owners = [];
+      try {
+        for (const { taskId, selected, binding } of prepared) owners.push(allocateOwner(taskId, selected, binding));
+      } catch (error) {
+        for (const owner of owners) worktreeMod.releasePhysicalWorkspaceOwner(repoRoot, owner.physicalOwnerId, { requireAllocated: true });
+        throw error;
+      }
+      let reservations;
+      try { reservations = opts.worktreeCapacity.reserveMany(prepared.map(({ selected }, index) => ({
+        id: `worker:${owners[index].physicalOwnerId}`,
+        request: capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
+      }))); } catch (error) {
+        const cleanupErrors = owners.map((owner, index) => retainUnknownCapacityOutcome(
+          prepared[index].taskId, owner,
+        )).filter(Boolean);
+        if (cleanupErrors.length > 0) {
+          throw Object.assign(new Error('capacity wave outcome requires exact cleanup', {
+            cause: cleanupErrors[0],
+          }), {
+            code: cleanupErrors[0]?.code ?? 'worktree_capacity_unavailable',
+            reservationError: error?.code ?? null,
+          });
+        }
+        throw error;
+      }
+      const results = prepared.map(({ taskId, selected }, index) => {
+        const reservation = reservations[index];
+        const ownerReceipt = owners[index];
+        const result = Object.freeze({ baseSha: selected, reservation, ownerReceipt });
+        pendingWorkerReservations.set(taskId, { selected, reservation, ownerReceipt, result });
+        return result;
+      });
+      return Object.freeze(results);
     },
     releaseCapacity(taskId) {
       const pending = pendingWorkerReservations.get(taskId);
       if (!pending || !opts.worktreeCapacity) return false;
-      const released = opts.worktreeCapacity.release(pending.reservation);
-      if (released) pendingWorkerReservations.delete(taskId);
-      return released;
+      if (pending.capacitySettled !== true) {
+        if (!opts.worktreeCapacity.release(pending.reservation)) return false;
+        pending.capacitySettled = true;
+      }
+      return finalizePendingReceipt(taskId, pending);
     },
-    async create(taskId, requestedBaseSha = null) {
-      const base = await worktreeMod.pinBaseSha(repoRoot, {});
-      const selected = requestedBaseSha ?? base.sha;
+    releaseCapacityMany(taskIds) {
+      if (!Array.isArray(taskIds) || taskIds.length === 0 || new Set(taskIds).size !== taskIds.length) {
+        throw new TypeError('capacity release wave requires unique task ids');
+      }
+      const entries = taskIds.map((taskId) => ({ taskId, pending: pendingWorkerReservations.get(taskId) }));
+      const owned = entries.filter(({ pending }) => pending);
+      if (!opts.worktreeCapacity) return Object.freeze(taskIds.map(() => true));
+      if (owned.length === 0) return Object.freeze(taskIds.map(() => false));
+      const unsettled = owned.filter(({ pending }) => pending.capacitySettled !== true);
+      if (unsettled.length > 0) {
+        const released = opts.worktreeCapacity.releaseMany(
+          unsettled.map(({ pending }) => pending.reservation),
+        );
+        unsettled.forEach(({ pending }, index) => {
+          if (released[index]) pending.capacitySettled = true;
+        });
+      }
+      const byTask = new Map();
+      for (const { taskId, pending } of owned) {
+        if (pending.capacitySettled !== true) { byTask.set(taskId, false); continue; }
+        try { byTask.set(taskId, finalizePendingReceipt(taskId, pending)); }
+        catch { byTask.set(taskId, false); }
+      }
+      return Object.freeze(taskIds.map((taskId) => byTask.get(taskId) ?? false));
+    },
+    settleCapacityMany(taskIds) {
+      if (!Array.isArray(taskIds) || taskIds.length === 0 || new Set(taskIds).size !== taskIds.length) {
+        throw new TypeError('capacity settlement wave requires unique task ids');
+      }
+      const owned = taskIds.map((taskId) => ({ taskId, pending: pendingWorkerReservations.get(taskId) }))
+        .filter(({ pending }) => pending);
+      if (!opts.worktreeCapacity || owned.length === 0) return Object.freeze(taskIds.map(() => true));
+      const unsettled = owned.filter(({ pending }) => pending.capacitySettled !== true);
+      const outcomes = unsettled.length === 0 ? [] : opts.worktreeCapacity.releaseMany(
+        unsettled.map(({ pending }) => pending.reservation),
+      );
+      if (!Array.isArray(outcomes) || outcomes.length !== unsettled.length) {
+        throw Object.assign(new Error('capacity settlement wave is incomplete'), {
+          code: 'worktree_capacity_release_failed',
+        });
+      }
+      unsettled.forEach(({ pending }, index) => {
+        if (outcomes[index]) pending.capacitySettled = true;
+      });
+      if (owned.some(({ pending }) => pending.capacitySettled !== true)) {
+        throw Object.assign(new Error('capacity settlement wave is incomplete'), {
+          code: 'worktree_capacity_release_failed',
+        });
+      }
+      for (const { taskId, pending } of owned) {
+        try {
+          if (!finalizePendingReceipt(taskId, pending)) throw new Error('receipt finalization refused');
+        } catch (cause) {
+          throw Object.assign(new Error('capacity settlement receipt finalization is incomplete', {
+            cause,
+          }), { code: 'worktree_cleanup_failed' });
+        }
+      }
+      return Object.freeze(taskIds.map(() => true));
+    },
+    async create(taskId, requestedBaseSha = null, binding = null) {
+      const failedTransaction = failedWorkerTransactions.get(taskId);
+      if (failedTransaction) await finalizeFailedTransaction(failedTransaction);
+      let selected = requestedBaseSha ?? opts.deploymentBaseSha ?? null;
+      if (selected === null) {
+        const base = await worktreeMod.pinBaseSha(repoRoot, {});
+        selected = base.sha;
+      }
       if (!/^[a-f0-9]{40}$/.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
       localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
-      const pending = pendingWorkerReservations.get(taskId);
+      let pending = pendingWorkerReservations.get(taskId);
+      if (pending?.capacitySettled === true) {
+        const settlementReason = pending.settlementReason ?? null;
+        if (!finalizePendingReceipt(taskId, pending)) {
+          throw Object.assign(new Error('pending physical workspace allocation was not finalized'), {
+            code: 'worktree_cleanup_failed',
+          });
+        }
+        pending = null;
+        if (settlementReason === 'base_mismatch') {
+          throw new TypeError('capacity reservation base SHA disagrees with worktree creation');
+        }
+      }
+      if (pending && !pendingBindingMatches(pending, taskId, binding)) {
+        throw Object.assign(new Error('pending capacity reservation has another allocation binding'), {
+          code: 'worktree_capacity_reservation_conflict',
+        });
+      }
       if (pending && pending.selected !== selected) {
-        const released = opts.worktreeCapacity.release(pending.reservation);
-        if (released) pendingWorkerReservations.delete(taskId);
+        if (pending.capacitySettled !== true) {
+          const released = opts.worktreeCapacity.release(pending.reservation);
+          if (!released) throw new TypeError('capacity reservation base SHA disagrees with worktree creation');
+          pending.capacitySettled = true;
+        }
+        pending.settlementReason = 'base_mismatch';
+        if (!finalizePendingReceipt(taskId, pending)) {
+          throw Object.assign(new Error('pending physical workspace allocation was not finalized'), {
+            code: 'worktree_cleanup_failed',
+          });
+        }
         throw new TypeError('capacity reservation base SHA disagrees with worktree creation');
       }
       let capacityReservation = pending?.reservation;
       if (pending) pendingWorkerReservations.delete(taskId);
-      if (!capacityReservation && opts.worktreeCapacity) capacityReservation = opts.worktreeCapacity.reserve(
-        `worker:${taskId}`,
-        capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
-      );
+      let ownerReceipt = pending?.ownerReceipt ?? allocateOwner(taskId, selected, binding);
+      if (!capacityReservation && opts.worktreeCapacity) {
+        try { capacityReservation = opts.worktreeCapacity.reserve(
+          `worker:${ownerReceipt.physicalOwnerId}`,
+          capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
+        ); } catch (error) {
+          const cleanupError = retainUnknownCapacityOutcome(taskId, ownerReceipt);
+          if (cleanupError) {
+            throw Object.assign(new Error('capacity reservation outcome requires exact cleanup', {
+              cause: cleanupError,
+            }), {
+              code: cleanupError?.code ?? 'worktree_capacity_unavailable',
+              reservationError: error?.code ?? null,
+            });
+          }
+          throw error;
+        }
+      }
+      let r = null;
       try {
-        const r = await worktreeMod.createFromBase(repoRoot, taskId, selected, { dependencyDirs: opts.workerDependencyDirs ?? [], sparsePaths: opts.workerSparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
-        if (capacityReservation) workerReservations.set(taskId, capacityReservation);
-        return { path: r.dir, branch: r.branch, baseSha: r.baseSha, sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity, ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}), ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
+        r = await worktreeMod.createFromBase(repoRoot, ownerReceipt.physicalOwnerId, selected, {
+          ownerReceipt, dependencyDirs: opts.workerDependencyDirs ?? [], sparsePaths: opts.workerSparsePaths ?? [],
+          ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}),
+        });
+        ownerReceipt = r.ownerReceipt;
+        if (capacityReservation) {
+          capacityReservation = opts.worktreeCapacity.materialize(capacityReservation, r.dir);
+          workerReservations.set(ownerReceipt.physicalOwnerId, capacityReservation);
+        }
+        return {
+          path: r.dir, branch: r.branch, baseSha: r.baseSha,
+          ownerTaskId: ownerReceipt.physicalOwnerId,
+          logicalTaskId: ownerReceipt.logicalTaskId,
+          ownerReceiptDigest: ownerReceipt.receiptDigest,
+          ownerReceipt,
+          sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity,
+          ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}),
+          ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}),
+        };
       } catch (error) {
-        if (capacityReservation) opts.worktreeCapacity.release(capacityReservation);
+        const transaction = {
+          logicalTaskId: taskId,
+          physicalOwnerId: ownerReceipt.physicalOwnerId,
+          capacityReservation,
+        };
+        rememberFailedTransaction(taskId, transaction);
+        try { await finalizeFailedTransaction(transaction); }
+        catch (cleanupError) {
+          throw Object.assign(new Error('worktree capacity materialization cleanup failed', {
+            cause: cleanupError,
+          }), {
+            code: cleanupError?.code ?? 'worktree_cleanup_failed',
+            admissionError: error?.code ?? null,
+          });
+        }
         throw error;
       }
+    },
+    worktreeAvailable(taskId, context) {
+      try {
+        if (!context || typeof context.ownerTaskId !== 'string' || typeof context.worktree !== 'string') {
+          return false;
+        }
+        const physicalOwnerId = worktreeMod.normalizePhysicalOwnerId(context.ownerTaskId, 'physical workspace owner');
+        const receipt = worktreeMod.physicalWorkspaceOwnerReceipt(repoRoot, physicalOwnerId);
+        if (/^ws-[a-f0-9]{32}$/u.test(physicalOwnerId)
+          && (!receipt || receipt.logicalTaskId !== taskId || receipt.state !== 'ready'
+            || context.ownerReceiptDigest !== receipt.receiptDigest
+            || context.branch !== receipt.branch || context.baseSha !== receipt.baseSha
+            || realpathSync(context.worktree) !== realpathSync(receipt.worktree))) return false;
+        if (receipt && receipt.logicalTaskId !== taskId) return false;
+        const expected = resolve(realpathSync(repoRoot), '.baton', 'wt', physicalOwnerId);
+        if (!existsSync(context.worktree) || realpathSync(context.worktree) !== expected
+          || !existsSync(expected) || !existsSync(`${expected}.meta.json`)) return false;
+        const stat = lstatSync(expected);
+        return stat.isDirectory() && !stat.isSymbolicLink()
+          && realpathSync(expected) === expected;
+      } catch { return false; }
     },
     async capture(worktreePath, captureOpts = {}) {
       if (typeof captureOpts.ownerTaskId !== 'string') throw new TypeError('capture requires an explicit physical worktree owner');
@@ -206,11 +661,16 @@ function worktreeManager(repoRoot, opts = {}) {
         reservationId,
         capacityRequest(sha, opts.verifySparsePaths ?? [], opts.verifySparseCheckoutIdentity),
       );
+      let r = null;
       try {
-        const r = await worktreeMod.freshVerifySandbox(repoRoot, taskId, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], requiredPaths: verifyOpts.requiredPaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
-        if (capacityReservation) verifyReservations.set(resolve(r.dir ?? r.path), capacityReservation);
+        r = await worktreeMod.freshVerifySandbox(repoRoot, taskId, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], requiredPaths: verifyOpts.requiredPaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
+        if (capacityReservation) {
+          capacityReservation = opts.worktreeCapacity.materialize(capacityReservation, r.dir ?? r.path);
+          verifyReservations.set(resolve(r.dir ?? r.path), capacityReservation);
+        }
         return { path: r.dir ?? r.path, sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity, ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}), ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
       } catch (error) {
+        if (r?.cleanup) await r.cleanup();
         if (capacityReservation) opts.worktreeCapacity.release(capacityReservation);
         throw error;
       }
@@ -222,11 +682,16 @@ function worktreeManager(repoRoot, opts = {}) {
         reservationId,
         capacityRequest(sha, opts.verifySparsePaths ?? [], opts.verifySparseCheckoutIdentity),
       );
+      let r = null;
       try {
-        const r = await worktreeMod.freshVerifySandbox(repoRoot, label, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
-        if (capacityReservation) verifyReservations.set(resolve(r.dir ?? r.path), capacityReservation);
+        r = await worktreeMod.freshVerifySandbox(repoRoot, label, sha, { dependencyDirs: opts.verifyDependencyDirs ?? [], sparsePaths: opts.verifySparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
+        if (capacityReservation) {
+          capacityReservation = opts.worktreeCapacity.materialize(capacityReservation, r.dir ?? r.path);
+          verifyReservations.set(resolve(r.dir ?? r.path), capacityReservation);
+        }
         return { path: r.dir ?? r.path, sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity, ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}), ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
       } catch (error) {
+        if (r?.cleanup) await r.cleanup();
         if (capacityReservation) opts.worktreeCapacity.release(capacityReservation);
         throw error;
       }
@@ -271,10 +736,47 @@ function worktreeManager(repoRoot, opts = {}) {
       const strategy = opts.strategy ?? 'ff-only';
       if (strategy !== 'ff-only') throw new Error(`unsupported integration strategy: ${strategy}`);
       const dirty = localGit(['status', '--porcelain'], repoRoot, { encoding: 'utf8' }).trim();
-      if (dirty) throw new Error('main checkout is dirty');
+      if (dirty) {
+        throw Object.assign(new Error('main checkout is dirty'), { code: 'ff_only_main_dirty' });
+      }
       const beforeSha = localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
-      localGit(['merge', '--ff-only', sha], repoRoot, { stdio: 'pipe' });
-      const afterSha = localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
+      const postEffectError = (message, cause = null) => {
+        let afterSha = null;
+        let status = null;
+        try { afterSha = localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim(); } catch {}
+        try { status = localGit(['status', '--porcelain'], repoRoot, { encoding: 'utf8' }).trim(); } catch {}
+        return Object.assign(new Error(message, cause ? { cause } : undefined), {
+          code: 'ff_only_post_effect_inconsistent', postEffect: true,
+          beforeSha, afterSha, resultSha: sha, statusClean: status === '',
+        });
+      };
+      try {
+        localGit([
+          '-c', 'core.hooksPath=/dev/null', 'merge', '--no-verify', '--ff-only', sha,
+        ], repoRoot, { stdio: 'pipe' });
+      } catch (cause) {
+        let afterSha = null;
+        let status = null;
+        try { afterSha = localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim(); } catch {}
+        try { status = localGit(['status', '--porcelain'], repoRoot, { encoding: 'utf8' }).trim(); } catch {}
+        if (afterSha !== beforeSha || status !== '') {
+          throw postEffectError('ff-only integration crossed its Git effect boundary before failing', cause);
+        }
+        throw Object.assign(new Error('main could not fast-forward to the accepted result', { cause }), {
+          code: 'ff_only_refused', beforeSha, afterSha, resultSha: sha,
+        });
+      }
+      let afterSha;
+      let status;
+      try {
+        afterSha = localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
+        status = localGit(['status', '--porcelain'], repoRoot, { encoding: 'utf8' }).trim();
+      } catch (cause) {
+        throw postEffectError('ff-only integration post-effect state is unreadable', cause);
+      }
+      if (afterSha !== sha || status !== '') {
+        throw postEffectError('ff-only integration post-effect validation failed');
+      }
       return { beforeSha, resultSha: sha, afterSha };
     },
     async stageStructuredIntegration(taskId, sha) {
@@ -332,18 +834,48 @@ function worktreeManager(repoRoot, opts = {}) {
     },
     // Terminal policy cleanup owns non-evidence task branches as well as their checkout/metadata.
     async remove(taskId) {
+      const failed = failedWorkerTransactions.get(taskId);
+      if (failed) return finalizeFailedTransaction(failed);
       const pending = pendingWorkerReservations.get(taskId);
       if (pending && opts.worktreeCapacity) {
-        if (opts.worktreeCapacity.release(pending.reservation)) pendingWorkerReservations.delete(taskId);
+        if (pending.capacitySettled !== true) {
+          if (!opts.worktreeCapacity.release(pending.reservation)) {
+            throw Object.assign(new Error('pending physical workspace capacity release was not confirmed'), {
+              code: 'worktree_capacity_unavailable',
+            });
+          }
+          pending.capacitySettled = true;
+        }
+        pending.settlementReason = 'remove';
+        if (!finalizePendingReceipt(taskId, pending)) {
+          throw Object.assign(new Error('pending physical workspace allocation was not finalized'), {
+            code: 'worktree_cleanup_failed',
+          });
+        }
+        return;
       }
-      await worktreeMod.reap(repoRoot, taskId, { force: true, deleteBranch: true });
       if (opts.worktreeCapacity) {
         const reservation = workerReservations.get(taskId);
         if (reservation) {
-          if (opts.worktreeCapacity.release(reservation)) workerReservations.delete(taskId);
+          if (!opts.worktreeCapacity.release(reservation)) {
+            throw Object.assign(new Error('physical workspace capacity release was not confirmed'), {
+              code: 'worktree_capacity_unavailable',
+            });
+          }
+          workerReservations.delete(taskId);
         }
-        else opts.worktreeCapacity.releaseAbsent(`worker:${taskId}`);
+        else if (!opts.worktreeCapacity.settleForCleanup(`worker:${taskId}`)) {
+          throw Object.assign(new Error('physical workspace capacity settlement was not confirmed'), {
+            code: 'worktree_capacity_unavailable',
+          });
+        }
       }
+      // The common-Git receipt remains the exact cleanup authority until capacity absence is
+      // durable. reap() finalizes that receipt only after directory, registration, and branch
+      // absence, so a failed capacity release leaves the complete transaction retryable.
+      await worktreeMod.reap(repoRoot, taskId, {
+        force: true, deleteBranch: true, ...(opts.log ? { log: opts.log } : {}),
+      });
     },
     async validateSessionContext(context) {
       try {
@@ -354,6 +886,20 @@ function worktreeManager(repoRoot, opts = {}) {
         if (context.repoRoot && realpathSync(context.repoRoot) !== root) return { ok: false, reason: 'session repository identity mismatch' };
         if (worktree !== managedRoot && !worktree.startsWith(`${managedRoot}${sep}`)) return { ok: false, reason: 'session worktree is outside Baton ownership' };
         if (context.ownerTaskId && basename(worktree) !== context.ownerTaskId) return { ok: false, reason: 'session worktree owner mismatch' };
+        let physicalOwnerReceipt = null;
+        if (/^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')) {
+          physicalOwnerReceipt = worktreeMod.physicalWorkspaceOwnerReceipt(
+            repoRoot, context.ownerTaskId,
+          );
+          if (!physicalOwnerReceipt || physicalOwnerReceipt.state !== 'ready'
+            || context.ownerReceiptDigest !== physicalOwnerReceipt.receiptDigest
+            || context.logicalTaskId !== physicalOwnerReceipt.logicalTaskId
+            || context.branch !== physicalOwnerReceipt.branch
+            || context.baseSha !== physicalOwnerReceipt.baseSha
+            || worktree !== realpathSync(physicalOwnerReceipt.worktree)) {
+            return { ok: false, reason: 'session physical workspace owner receipt mismatch' };
+          }
+        }
         const top = localGit(['rev-parse', '--show-toplevel'], worktree, { encoding: 'utf8' }).trim();
         if (realpathSync(top) !== worktree) return { ok: false, reason: 'session path is not the recorded git worktree root' };
         if (context.branch) {
@@ -371,7 +917,11 @@ function worktreeManager(repoRoot, opts = {}) {
         if (JSON.stringify(contextSparseIdentity.paths) !== JSON.stringify(worktreeMod.normalizeSparsePaths(contextSparsePaths))) return { ok: false, reason: 'session sparse checkout paths disagree with identity' };
         if (contextSparseIdentity.digest !== opts.workerSparseCheckoutIdentity.digest) return { ok: false, reason: 'session sparse checkout deployment identity mismatch' };
         worktreeMod.validateOwnedWorktree(repoRoot, context.ownerTaskId ?? basename(worktree), {
-          expectedPath: worktree,
+          expectedPath: physicalOwnerReceipt?.worktree ?? worktree,
+          ...(physicalOwnerReceipt || context.baseSha
+            ? { expectedBaseSha: physicalOwnerReceipt?.baseSha ?? context.baseSha } : {}),
+          ...(physicalOwnerReceipt || context.branch
+            ? { expectedBranch: physicalOwnerReceipt?.branch ?? context.branch } : {}),
           sparseCheckoutIdentity: opts.workerSparseCheckoutIdentity,
         });
         if (opts.worktreeCapacity) {
@@ -390,18 +940,58 @@ function worktreeManager(repoRoot, opts = {}) {
         return { ok: false, reason: `session context validation failed: ${err?.message ?? err}` };
       }
     },
-    reconcile(expectedActiveTaskIds = []) {
-      const report = worktreeMod.reconcile(repoRoot, expectedActiveTaskIds, { sparseCheckoutIdentity: opts.workerSparseCheckoutIdentity });
-      if (report.errors.length > 0) throw Object.assign(new Error('worktree reconciliation was incomplete'), { code: 'worktree_cleanup_failed' });
+    reconcile(expectedActiveOwners = [], knownPhysicalOwnerIds = []) {
+      if (!Array.isArray(knownPhysicalOwnerIds)
+        || knownPhysicalOwnerIds.some((id) => !/^ws-[a-f0-9]{32}$/u.test(id))) {
+        throw new TypeError('known physical workspace owners are invalid');
+      }
+      const expectedEntries = expectedActiveOwners.map((entry) => (
+        typeof entry === 'string'
+          ? { expectationId: entry, physicalOwnerId: entry, binding: null }
+          : {
+            expectationId: entry?.expectationId ?? null,
+            handleRunId: entry?.handleRunId ?? null,
+            physicalOwnerId: entry?.physicalOwnerId,
+            binding: entry?.binding ?? null,
+          }
+      ));
+      const expectedActiveTaskIds = expectedEntries.map((entry) => entry.physicalOwnerId);
+      const report = worktreeMod.reconcile(repoRoot, expectedActiveTaskIds, {
+        sparseCheckoutIdentity: opts.workerSparseCheckoutIdentity,
+        ownerAuthority: opts.ownerAuthority,
+        expectedOwnerBindings: expectedEntries,
+        ...(opts.worktreeCapacity ? {
+          beforeOwnerCleanup: (physicalOwnerId) => opts.worktreeCapacity
+            .settleForCleanup(`worker:${physicalOwnerId}`),
+        } : {}),
+      });
+      if (report.errors.length > 0) throw Object.assign(new Error('worktree reconciliation was incomplete'), {
+        code: 'worktree_cleanup_failed', report,
+      });
       if (opts.worktreeCapacity) {
-        const retained = expectedActiveTaskIds.filter((taskId) => existsSync(join(repoRoot, '.baton', 'wt', taskId)));
-        for (const taskId of expectedActiveTaskIds) if (!retained.includes(taskId)) opts.worktreeCapacity.releaseAbsent(`worker:${taskId}`);
-        for (const row of opts.worktreeCapacity.snapshot().reservations) {
-          if (row.kind === 'verify') opts.worktreeCapacity.releaseAbsent(row.id);
-          else if (row.kind === 'worker' && !existsSync(join(repoRoot, '.baton', 'wt', row.resourceId))) opts.worktreeCapacity.releaseAbsent(row.id);
+        for (const physicalOwnerId of knownPhysicalOwnerIds) {
+          if (expectedActiveTaskIds.includes(physicalOwnerId)
+            || report.removedPhysicalOwners.includes(physicalOwnerId)
+            || !worktreeMod.physicalWorkspaceOwnerCleanupAbsent(repoRoot, physicalOwnerId)) continue;
+          if (!opts.worktreeCapacity.settleForCleanup(`worker:${physicalOwnerId}`)) continue;
+          if (!opts.worktreeCapacity.snapshot().reservations.some(
+            (row) => row.id === `worker:${physicalOwnerId}`,
+          )) report.removedPhysicalOwners.push(physicalOwnerId);
         }
-        const capacityReconcile = opts.worktreeCapacity.reconcile(retained);
+        const retained = report.validatedExpectedOwners
+          .filter((taskId) => existsSync(join(repoRoot, '.baton', 'wt', taskId)));
+        const retainedUnproven = report.retainedExpectedOwners
+          .filter((taskId) => existsSync(join(repoRoot, '.baton', 'wt', taskId)));
+        const capacityReconcile = opts.worktreeCapacity.reconcile(retained, retainedUnproven);
         for (const row of capacityReconcile.adopted) workerReservations.set(row.resourceId, row);
+      } else {
+        for (const physicalOwnerId of knownPhysicalOwnerIds) {
+          if (!expectedActiveTaskIds.includes(physicalOwnerId)
+            && !report.removedPhysicalOwners.includes(physicalOwnerId)
+            && worktreeMod.physicalWorkspaceOwnerCleanupAbsent(repoRoot, physicalOwnerId)) {
+            report.removedPhysicalOwners.push(physicalOwnerId);
+          }
+        }
       }
       return report;
     },
@@ -431,13 +1021,14 @@ function refereeFn(runtime, task, result, opts) {
  *          providerProcessingSchedule?:{intervalMs:number,maxBatch:number,maxAttempts:number,initialBackoffMs:number,maxBackoffMs:number,maxStateRows:number},
  *          providerRead?:{maxProviders:number,maxProcessing:number,maxStateRows:number,maxBytes:number},
  *          routeLearningPolicy?:{mode:'round-robin'|'adaptive'|'auto',halfLifeMs:number,explorationConstant:number,seedDiscount:number,minSamplesForAdaptive:number,defaultPriorSuccessRate:number},
- *          sessionRecoveryPolicy?:{maxSessions:number,maxStateRows:number,timeoutMs:number},
+ *          sessionRecoveryPolicy?:{maxAttempts:number,maxSessions:number,maxStateRows:number,timeoutMs:number},
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
  *          representationProduction?:{policy:object,artifactRoot:string,authorize:Function,resolveEnvironment:Function},
  *          goalPlanAuthority?:{policy:object,authorize:Function},
  *          canonicalOrderPolicy?:{maxLedgerBytes:number,maxEventBytes:number,maxEvents:number,maxReceiptBytes:number},
- *          repoId?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
+ *          repoId?:string, deploymentBaseSha?:string, reuseDecisionPolicy?:{authorize:Function,authorizeRecheck?:Function,maxNeedBytes:number,maxRationaleBytes:number,policyReconcile:object},
  *          runtimeIsolation?:object, runtimeScopes?:object, coordination?:CoordinationStore,
+ *          runLineagePolicy?:object, taskTopologyPolicy?:object,
  *          providerGovernance?:object,
  *          workerDependencyDirs?:string[], workerSparsePaths?:string[], verifyDependencyDirs?:string[], verifySparsePaths?:string[], toolchainProjection?:object,
  *          worktreeCapacity?:object, worktreeCapacityObserve?:Function, worktreeCapacityEstimate?:Function}} opts
@@ -454,6 +1045,23 @@ export function createDriver(opts) {
     ? null
     : normalizeProviderGovernancePolicy(opts.providerGovernance, Object.keys(opts.adapters ?? {}));
   const deploymentRepoId = opts.repoId ?? 'local';
+  if (opts.deploymentBaseSha !== undefined) {
+    if (!/^[a-f0-9]{40}$/u.test(opts.deploymentBaseSha)) {
+      throw new TypeError('deployment base SHA must be an exact commit ID');
+    }
+    try {
+      localGit(['cat-file', '-e', `${opts.deploymentBaseSha}^{commit}`], opts.repoRoot, {
+        stdio: 'ignore',
+      });
+    } catch {
+      throw new TypeError('deployment base SHA is unavailable');
+    }
+  }
+  const taskTopologyPolicy = opts.taskTopologyPolicy === undefined
+    ? (opts.coordination ? null : normalizeTaskTopologyPolicy())
+    : normalizeTaskTopologyPolicy(opts.taskTopologyPolicy);
+  const runLineagePolicy = opts.runLineagePolicy === undefined
+    ? null : normalizeRunLineagePolicy(opts.runLineagePolicy);
   const representationProduction = opts.representationProduction;
   if (representationProduction !== undefined
     && (!representationProduction || Object.keys(representationProduction).sort().join(',') !== ['artifactRoot', 'authorize', 'policy', 'resolveEnvironment'].sort().join(',')
@@ -506,8 +1114,10 @@ export function createDriver(opts) {
   }
   let sessionRecoveryPolicy;
   if (opts.sessionRecoveryPolicy !== undefined) {
-    const policy = opts.sessionRecoveryPolicy; const fields = ['maxSessions', 'maxStateRows', 'timeoutMs'];
-    if (!policy || Object.keys(policy).sort().join(',') !== fields.sort().join(',') || !Number.isSafeInteger(policy.maxSessions) || policy.maxSessions <= 0 || policy.maxSessions > 1_000
+    const policy = opts.sessionRecoveryPolicy; const fields = ['maxAttempts', 'maxSessions', 'maxStateRows', 'timeoutMs'];
+    if (!policy || Object.keys(policy).sort().join(',') !== fields.sort().join(',')
+      || !Number.isSafeInteger(policy.maxAttempts) || policy.maxAttempts <= 0 || policy.maxAttempts > 1_000_000
+      || !Number.isSafeInteger(policy.maxSessions) || policy.maxSessions <= 0 || policy.maxSessions > 1_000
       || !Number.isSafeInteger(policy.maxStateRows) || policy.maxStateRows < policy.maxSessions || policy.maxStateRows > 100_000
       || !Number.isSafeInteger(policy.timeoutMs) || policy.timeoutMs <= 0 || policy.timeoutMs > 5 * 60_000) throw new TypeError('session recovery policy is invalid');
     sessionRecoveryPolicy = Object.freeze({ ...policy });
@@ -517,6 +1127,9 @@ export function createDriver(opts) {
   const fences = new FenceTable();
   const router = new AdaptiveRouter({ ...(routeLearningPolicy ?? { mode: 'adaptive' }), now });
   const story = new StoryCompiler({ now });
+  for (const workerId of log.workers()) {
+    for (const event of log.read(workerId)) story.ingest(event);
+  }
   const runtimeScopes = opts.runtimeScopes ?? new RuntimeIsolation({
     repoRoot: opts.repoRoot,
     ...(opts.runtimeIsolation ?? {}),
@@ -532,9 +1145,32 @@ export function createDriver(opts) {
       || policy.maxBatch > 10_000 || policy.maxBatch > policy.maxStateRows || policy.maxAttempts > 1_000_000 || policy.maxBackoffMs > 24 * 60 * 60 * 1_000 || policy.maxStateRows > 1_000_000) throw new TypeError('providerProcessingSchedule requires exact bounded deployment retry and reconciliation authority');
     providerProcessingPolicy = Object.freeze({ ...policy });
   }
+  const workflowPolicy = normalizeWorkflowPolicy(opts.workflowPolicy);
+  let contextProgram = null;
+  if (opts.contextProgram !== undefined) {
+    if (!opts.contextProgram || typeof opts.contextProgram !== 'object'
+      || Array.isArray(opts.contextProgram)
+      || Object.keys(opts.contextProgram).sort().join(',')
+        !== ['environmentDigest', 'policy', 'referenceIdentity', 'referenceRead', 'sourceAttest'].sort().join(',')
+      || typeof opts.contextProgram.referenceRead !== 'function'
+      || typeof opts.contextProgram.sourceAttest !== 'function'
+      || !/^[a-f0-9]{64}$/u.test(opts.contextProgram.environmentDigest ?? '')
+      || !/^[a-f0-9]{64}$/u.test(opts.contextProgram.referenceIdentity ?? '')
+      || !/^[a-f0-9]{40}$/u.test(opts.deploymentBaseSha ?? '')) {
+      throw new TypeError('Context Program requires one closed deployment tree, environment, policy, and reference resolver identity');
+    }
+    contextProgram = Object.freeze({
+      environmentDigest: opts.contextProgram.environmentDigest,
+      policy: normalizeContextProgramPolicy(opts.contextProgram.policy),
+      referenceIdentity: opts.contextProgram.referenceIdentity,
+      referenceRead: opts.contextProgram.referenceRead,
+      sourceAttest: opts.contextProgram.sourceAttest,
+    });
+  }
   const coordination = opts.coordination ?? new CoordinationStore(join(opts.logDir, 'coordination'), {
-    operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
-    operationalRangeRead: (worker, throughSeq) => log.read(worker).filter((event) => event.seq <= throughSeq),
+    repoId: deploymentRepoId,
+    operationalRead: (worker, seq) => log.at(worker, seq),
+    operationalRangeRead: (worker, throughSeq) => log.range(worker, throughSeq),
     clock: () => new Date(now()).toISOString(),
     advisoryFeedCards,
     advisoryReceiptReverify: (receipt) => advisoryFeeds.reverifyReceiptSync(receipt),
@@ -544,6 +1180,17 @@ export function createDriver(opts) {
     ...(representationProduction ? { representationPolicy: representationProduction.policy } : {}),
     ...(goalPlanAuthority ? { goalPlanPolicy: goalPlanAuthority.policy } : {}),
     ...(canonicalOrderPolicy ? { canonicalOrderPolicy } : {}),
+    ...(taskTopologyPolicy ? { taskTopologyPolicy } : {}),
+    ...(runLineagePolicy ? { runLineagePolicy } : {}),
+    ...(contextProgram ? {
+      deploymentBaseSha: opts.deploymentBaseSha,
+      contextEnvironmentDigest: contextProgram.environmentDigest,
+      contextProgramPolicy: contextProgram.policy,
+      contextReferenceIdentity: contextProgram.referenceIdentity,
+      contextReferenceRead: contextProgram.referenceRead,
+      contextSourceAttest: contextProgram.sourceAttest,
+    } : {}),
+    workflowPolicy,
   });
   if (opts.coordination && advisoryFeedCards.length > 0) {
     if (typeof coordination.advisoryFeedCards !== 'function' || canonicalDigest(coordination.advisoryFeedCards()) !== canonicalDigest(advisoryFeedCards)) throw new TypeError('custom coordination store disagrees with deployment advisory feed cards');
@@ -553,9 +1200,35 @@ export function createDriver(opts) {
   if (opts.coordination && representationProduction && (typeof coordination.representationPolicy !== 'function' || canonicalDigest(coordination.representationPolicy()) !== canonicalDigest(representationProduction.policy))) throw new TypeError('custom coordination store disagrees with deployment representation policy');
   if (opts.coordination && goalPlanAuthority && (typeof coordination.goalPlanPolicy !== 'function' || canonicalDigest(coordination.goalPlanPolicy()) !== canonicalDigest(goalPlanAuthority.policy))) throw new TypeError('custom coordination store disagrees with deployment goal/plan policy');
   if (opts.coordination && canonicalOrderPolicy && (typeof coordination.canonicalOrderPolicy !== 'function' || typeof coordination.canonicalOrderReceipt !== 'function' || canonicalDigest(coordination.canonicalOrderPolicy()) !== canonicalDigest(canonicalOrderPolicy))) throw new TypeError('custom coordination store disagrees with deployment canonical-order policy');
+  if (opts.coordination && taskTopologyPolicy && (typeof coordination.taskTopologyPolicy !== 'function' || canonicalDigest(coordination.taskTopologyPolicy()) !== canonicalDigest(taskTopologyPolicy))) throw new TypeError('custom coordination store disagrees with deployment task topology policy');
+  if (opts.coordination && runLineagePolicy && (typeof coordination.runLineagePolicy !== 'function' || canonicalDigest(coordination.runLineagePolicy()) !== canonicalDigest(runLineagePolicy))) throw new TypeError('custom coordination store disagrees with deployment run lineage policy');
+  if (opts.coordination && opts.workflowPolicy !== undefined && (typeof coordination.workflowPolicy !== 'function' || canonicalDigest(coordination.workflowPolicy()) !== canonicalDigest(workflowPolicy))) throw new TypeError('custom coordination store disagrees with deployment Workflow policy');
+  if (opts.coordination && contextProgram) {
+    const expectedContextAuthority = {
+      schemaVersion: 1,
+      deploymentBaseSha: opts.deploymentBaseSha,
+      environmentDigest: contextProgram.environmentDigest,
+      policyDigest: contextProgram.policy.policyDigest,
+      referenceIdentity: contextProgram.referenceIdentity,
+    };
+    if (typeof coordination.contextProgramPolicy !== 'function'
+      || typeof coordination.contextProgramAuthority !== 'function'
+      || canonicalDigest(coordination.contextProgramPolicy()) !== canonicalDigest(contextProgram.policy)
+      || canonicalDigest(coordination.contextProgramAuthority())
+        !== canonicalDigest(expectedContextAuthority)) {
+      throw new TypeError('custom coordination store disagrees with deployment Context Program authority');
+    }
+  }
   let writerLease = null;
   try {
   writerLease = coordination.claimWriterLease();
+  const workspaceDeploymentId = canonicalDigest({ repoId: deploymentRepoId, logDir: realpathSync(opts.logDir) });
+  const workspaceOwnerAuthority = Object.freeze({
+    deploymentId: workspaceDeploymentId,
+    controllerId: canonicalDigest({ deploymentId: workspaceDeploymentId, writerLeaseToken: writerLease.token }),
+    pid: writerLease.pid,
+    pidStart: writerLease.pidStart,
+  });
   const driverDrainIdempotencyKey = `driver:drain:${canonicalDigest({ repoId: deploymentRepoId, writerLeaseToken: writerLease.token })}`;
   if (routeLearningPolicy) router.hydrate(coordination.routeObservations());
   const configuredCapabilities = { ...(opts.capabilities ?? {}) };
@@ -668,6 +1341,7 @@ export function createDriver(opts) {
     log, fences,
     adapters: opts.adapters,
     worktrees: worktreeManager(opts.repoRoot, {
+      deploymentBaseSha: opts.deploymentBaseSha,
       workerDependencyDirs: opts.workerDependencyDirs,
       workerSparsePaths,
       workerSparseCheckoutIdentity,
@@ -676,6 +1350,8 @@ export function createDriver(opts) {
       verifySparseCheckoutIdentity,
       toolchainProjection,
       worktreeCapacity,
+      ownerAuthority: workspaceOwnerAuthority,
+      log,
       structuredMerge: opts.structuredMerge,
     }),
     runtimeScopes,
@@ -685,6 +1361,8 @@ export function createDriver(opts) {
     providerProcessingSchedule: providerProcessingPolicy ? { repoId: opts.repoId, ...providerProcessingPolicy } : undefined,
     providerRead,
     routeLearningPolicy,
+    ...(taskTopologyPolicy ? { taskTopologyPolicy } : {}),
+    ...(runLineagePolicy ? { runLineagePolicy } : {}),
     coordination,
     repoRoot: opts.repoRoot,
     repoId: deploymentRepoId,
@@ -712,12 +1390,20 @@ export function createDriver(opts) {
     approvalTimeoutMs: opts.approvalTimeoutMs ?? 60000,
     stopDeadlineMs: opts.stopDeadlineMs ?? 15000,
     recoveryTimeoutMs: opts.recoveryTimeoutMs ?? 15000,
+    recoveryMaxAttempts: sessionRecoveryPolicy?.maxAttempts ?? opts.recoveryMaxAttempts ?? 3,
     startupRecoveryAuthority,
     budgetPolicy: opts.budgetPolicy,
     ...(providerGovernance ? { providerGovernance: providerGovernance.projection } : {}),
     watchdog: opts.watchdog,
     drainPolicy,
     ...(goalPlanAuthority ? { goalPlanAuthority } : {}),
+    ...(contextProgram ? {
+      contextBriefMaterializer: (brief) => materializeContextCallBrief(
+        brief,
+        contextProgram.referenceRead,
+        Math.min(contextProgram.policy.maxArtifactBytes, contextProgram.policy.maxTextBytes * 2),
+      ),
+    } : {}),
   });
 
   let providerPoller = null;

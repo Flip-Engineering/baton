@@ -145,8 +145,13 @@ test('UA5/WN: authenticated Run commands are thin mappings to one application co
   }));
   assert.equal(applicationCalls[2].args.timeoutMs, 30_000, 'Web forwards the exact journaled follow timeout');
   assert.equal(applicationCalls[4].args.timeoutMs, 30_000, 'Web forwards the exact journaled wait timeout');
+  const mutations = new Set([
+    'run_start', 'run_approve', 'run_answer', 'run_steer', 'run_stop', 'run_adopt',
+    'run_review', 'run_integrate',
+  ]);
   assert.deepEqual(coordination.events().filter((event) => event.kind === 'web.command_admitted')
-    .map((event) => [event.payload.command, event.payload.runId]), commands.map(([command]) => [command, 'run-web-a']));
+    .map((event) => [event.payload.command, event.payload.runId]), commands
+    .filter(([command]) => mutations.has(command)).map(([command]) => [command, 'run-web-a']));
 });
 
 test('CE5/WN: a Run follow cannot return after its live Web principal is revoked', async () => {
@@ -171,7 +176,8 @@ test('CE5/WN: a Run follow cannot return after its live Web principal is revoked
   const response = await pending;
   assert.equal(response.status, 401);
   assert.equal(response.body.error.code, 'unauthenticated');
-  assert.equal(coordination.webCommand('run-follow-revoked').status, 'failed');
+  assert.equal(coordination.webCommand('run-follow-revoked'), null);
+  assert.equal(coordination.events().some((event) => event.kind.startsWith('web.command_')), false);
 });
 
 test('UA5/WN: malformed Run intent, inconsistent Run identity, and capability refusal occur before application admission', async () => {
@@ -297,7 +303,7 @@ test('UA5/WN: completed Run replay rechecks current application policy before re
   assert.equal(dispatches, 1);
 });
 
-test('UA5/WN: an admitted Run read reconstructs after completion journaling failure instead of sticking at 202', async () => {
+test('UA5/WN: a Run read is independent of command-ledger completion writes and bounded retries replay in memory', async () => {
   let appends = 0;
   const coordination = new CoordinationStore(root(), {
     appendFile: (...args) => {
@@ -317,14 +323,15 @@ test('UA5/WN: an admitted Run read reconstructs after completion journaling fail
     allowedOrigins: ['https://control.example.test'], now: () => Date.parse('2026-07-11T12:00:00.000Z'),
   });
   const request = envelope({ commandId: 'run-reconcile-a', idempotencyKey: 'run-reconcile', command: 'run_status', args: { runId: 'run-web-a' } });
-  assert.equal((await web.execute(context(), request)).status, 503);
+  assert.equal((await web.execute(context(), request)).status, 200);
   const retry = await web.execute(context(), { ...request, commandId: 'run-reconcile-b' });
   assert.equal(retry.status, 200);
   assert.equal(retry.body.replayed, true);
-  assert.equal(dispatches, 2, 'read is safely reconstructed after the failed completion append');
+  assert.equal(dispatches, 1);
+  assert.equal(appends, 0, 'read observation never reached the durable command ledger');
 });
 
-test('UA5/WN: application authorization refusal is typed, non-leaking, and durably failed', async () => {
+test('UA5/WN: application read authorization refusal is typed, non-leaking, and non-ledger-mutating', async () => {
   const application = {
     repoId: 'repo-a',
     card: runApplicationCard,
@@ -338,7 +345,8 @@ test('UA5/WN: application authorization refusal is typed, non-leaking, and durab
   assert.equal(response.status, 403);
   assert.equal(response.body.error.code, 'application_unauthorized');
   assert.equal(JSON.stringify(response).includes('private deployment policy detail'), false);
-  assert.equal(coordination.webCommand('run-app-denied').status, 'failed');
+  assert.equal(coordination.webCommand('run-app-denied'), null);
+  assert.equal(coordination.events().some((event) => event.kind.startsWith('web.command_')), false);
 });
 
 test('RD10: authenticated web reuse decision preserves principal actor, repo, budget, and durable idempotency', async () => {
@@ -694,6 +702,106 @@ test('WN5/WN6: cookie ticket CSRF fails before issue and Last-Event-ID wins over
   const res = { writeHead(status) { this.status = status; }, end() {} };
   await web.handle(req, res);
   assert.equal(calls.find((call) => call.op === 'open').args.cursor, '7');
+});
+
+test('RT1/RT4/RT6: HTTP Run ticketing is strict, authorized by run.inspect, and binds its atomic outline', async () => {
+  const calls = [];
+  let allowed = true;
+  let authenticated = principal({ authMethod: 'bearer' });
+  const application = {
+    repoId: 'repo-a',
+    card: () => ({ ...runApplicationCard(), resident: { incarnation: 'instance-http-a' } }),
+    async authorizeReplay() { return true; },
+    async command(name, args, observer, commandContext) {
+      calls.push({ name, args, observer, commandContext });
+      if (!allowed) throw Object.assign(new Error('private policy'), { code: 'application_unauthorized' });
+      return {
+        schemaVersion: 1, runId: args.runId, depth: 'outline', cursor: 17, terminal: false,
+        outline: { objective: 'Exact HTTP Run', phase: 'running' },
+      };
+    },
+  };
+  const web = new WebNorthbound({
+    coordinator: {}, coordination: new CoordinationStore(root()), application,
+    repoIds: ['repo-a'], allowedOrigins: ['https://control.example.test'],
+    authenticate: async () => authenticated,
+    now: () => Date.parse('2026-07-11T12:00:00.000Z'),
+  });
+  const issue = async (body) => {
+    const req = Readable.from([Buffer.from(JSON.stringify(body))]);
+    Object.assign(req, {
+      method: 'POST', url: '/v1/stream-tickets',
+      headers: { 'content-type': 'application/json', origin: 'https://control.example.test' },
+      socket: { encrypted: true },
+    });
+    return new Promise((resolve, reject) => {
+      const res = { writeHead(status) { this.status = status; }, end(payload) { resolve({ status: this.status, body: JSON.parse(payload) }); } };
+      web.handle(req, res).catch(reject);
+    });
+  };
+  assert.equal((await issue({ repoId: 'repo-a', runId: 'run-a', channel: 'events', recipient: 'work' })).status, 400);
+  assert.equal((await issue({ repoId: 'repo-a', runId: 'run-a', channel: 'events', extra: true })).status, 400);
+  assert.equal(calls.length, 0);
+  authenticated = principal({ authMethod: 'bearer', capabilities: ['control'] });
+  assert.equal((await issue({ repoId: 'repo-a', runId: 'run-a', channel: 'events' })).status, 403);
+  assert.equal(calls.length, 0, 'stream authorization refusal precedes every application read');
+  authenticated = principal({ authMethod: 'bearer' });
+  const issued = await issue({ repoId: 'repo-a', runId: 'run-a', channel: 'events' });
+  assert.equal(issued.status, 201);
+  assert.deepEqual(calls[0].args, { runId: 'run-a', depth: 'outline' });
+  assert.equal(calls[0].observer.principalId, 'user-1');
+  assert.equal(calls[0].observer.sessionId, 'session-1');
+  assert.equal(calls[0].commandContext.transport, 'web-stream');
+  const grant = [...web.stream.tickets.values()][0];
+  assert.deepEqual({
+    runId: grant.runId, channel: grant.channel, snapshotCursor: grant.snapshot.cursor,
+    incarnation: grant.incarnation,
+  }, { runId: 'run-a', channel: 'events', snapshotCursor: 17, incarnation: 'instance-http-a' });
+  allowed = false;
+  const refused = await issue({ repoId: 'repo-a', runId: 'run-a', channel: 'output', recipient: 'review' });
+  assert.equal(refused.status, 403);
+  assert.equal(refused.body.error.code, 'application_unauthorized');
+  assert.equal(JSON.stringify(refused).includes('private policy'), false);
+  assert.equal(web.stream.tickets.size, 1, 'authorization loss creates no second ticket');
+});
+
+test('RT1 admission ordering: exhausted edge ticket quota causes zero application reads for the refused request', async () => {
+  let reads = 0;
+  const now = () => Date.parse('2026-07-11T12:00:00.000Z');
+  const application = {
+    repoId: 'repo-a', card: runApplicationCard,
+    async authorizeReplay() { return true; },
+    async command(_name, args) {
+      reads += 1;
+      return { schemaVersion: 1, runId: args.runId, depth: 'outline', cursor: 4,
+        terminal: false, outline: { phase: 'running' } };
+    },
+  };
+  const web = new WebNorthbound({
+    coordinator: {}, coordination: new CoordinationStore(root()), application,
+    repoIds: ['repo-a'], allowedOrigins: ['https://control.example.test'], now,
+    authenticate: async () => principal({ authMethod: 'bearer' }),
+    edgePolicy: { addressKey: 'run-stream-ordering-key', now, limits: { ticket: 1 } },
+  });
+  const issue = async () => {
+    const req = Readable.from([Buffer.from(JSON.stringify({
+      repoId: 'repo-a', runId: 'run-a', channel: 'events',
+    }))]);
+    const headers = { 'content-type': 'application/json', origin: 'https://control.example.test' };
+    Object.assign(req, {
+      method: 'POST', url: '/v1/stream-tickets',
+      headers, rawHeaders: Object.entries(headers).flatMap(([name, value]) => [name, value]),
+      socket: { encrypted: true, remoteAddress: '127.0.0.1' },
+    });
+    return new Promise((resolve, reject) => {
+      const res = { writeHead(status) { this.status = status; }, end(payload) { resolve({ status: this.status, body: JSON.parse(payload) }); } };
+      web.handle(req, res).catch(reject);
+    });
+  };
+  assert.equal((await issue()).status, 201);
+  assert.equal(reads, 1);
+  assert.equal((await issue()).status, 429);
+  assert.equal(reads, 1, 'quota exhaustion is decided before run.inspect');
 });
 
 test('WN4/WN9: the real coordinator rejects stale web stop fences before adapter mutation', async () => {

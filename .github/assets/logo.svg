@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Baton logo — the Flip chip as the conductor">
+  <defs>
+    <linearGradient id="field" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#14141F"/>
+      <stop offset="1" stop-color="#1D1D2E"/>
+    </linearGradient>
+    <linearGradient id="chip" x1="120" y1="130" x2="360" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFDF7"/>
+      <stop offset="1" stop-color="#EFE8D8"/>
+    </linearGradient>
+    <linearGradient id="hatBlue" x1="150" y1="70" x2="330" y2="220" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3B4FA8"/>
+      <stop offset="1" stop-color="#1B2452"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#E5B45C"/>
+      <stop offset="1" stop-color="#8E6230"/>
+    </linearGradient>
+    <linearGradient id="warmRed" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F26D5B"/>
+      <stop offset="1" stop-color="#A63F35"/>
+    </linearGradient>
+    <linearGradient id="cool" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#83C8BF"/>
+      <stop offset="1" stop-color="#315F6E"/>
+    </linearGradient>
+  </defs>
+
+  <!-- dark field -->
+  <rect width="512" height="512" rx="112" fill="url(#field)"/>
+
+  <!-- orbit of the fleet -->
+  <ellipse cx="252" cy="276" rx="212" ry="142" fill="none" stroke="#9B59B6" stroke-opacity="0.45" stroke-width="4" stroke-dasharray="11 10" transform="rotate(-8 252 276)"/>
+  <g stroke="#0B0B12" stroke-width="5">
+    <rect x="34" y="240" width="46" height="46" rx="12" fill="url(#cool)"/>
+    <rect x="428" y="332" width="46" height="46" rx="12" fill="url(#gold)"/>
+    <rect x="120" y="420" width="46" height="46" rx="12" fill="url(#warmRed)"/>
+  </g>
+
+  <!-- the Flip chip, conducting -->
+  <g>
+    <rect x="104" y="140" width="272" height="272" rx="64" fill="url(#chip)" stroke="#292313" stroke-width="10"/>
+
+    <!-- sorcerer hat (Fantasia) -->
+    <path d="M140 176 C164 98 212 56 248 48 C252 92 284 118 332 130 C290 148 216 164 140 176 Z" fill="url(#hatBlue)" stroke="#292313" stroke-width="8" stroke-linejoin="round"/>
+    <path d="M140 176 C206 158 286 146 342 138 C348 150 344 164 330 170 C268 184 200 192 148 194 C137 190 133 182 140 176 Z" fill="url(#hatBlue)" stroke="#292313" stroke-width="8" stroke-linejoin="round"/>
+    <path d="M222 96 l5 12 12 5 -12 5 -5 12 -5-12 -12-5 12-5 z" fill="#FFE9A8"/>
+    <path d="M278 124 l4 9 9 4 -9 4 -4 9 -4-9 -9-4 9-4 z" fill="#FFE9A8"/>
+    <path d="M192 138 a13 13 0 1 0 11 21 a9.5 9.5 0 1 1 -11 -21 z" fill="#FFE9A8"/>
+
+    <!-- face -->
+    <circle cx="196" cy="258" r="8" fill="#292313"/>
+    <circle cx="288" cy="258" r="8" fill="#292313"/>
+    <path d="M206 306 C228 326 260 326 280 306" fill="none" stroke="#292313" stroke-width="10" stroke-linecap="round"/>
+
+    <!-- raised arm -->
+    <path d="M356 316 C396 300 412 272 416 236" fill="none" stroke="#292313" stroke-width="12" stroke-linecap="round"/>
+    <circle cx="416" cy="236" r="13" fill="#FFFDF7" stroke="#292313" stroke-width="8"/>
+  </g>
+
+  <!-- conductor's baton: long diagonal, clear of the chip -->
+  <g stroke-linecap="round">
+    <path d="M420 224 L470 96" stroke="#8E6230" stroke-width="9"/>
+    <path d="M470 96 L478 72" stroke="#FFFDF7" stroke-width="9"/>
+  </g>
+
+  <!-- sparkles off the baton tip -->
+  <g fill="url(#gold)" stroke="#0B0B12" stroke-width="4" stroke-linejoin="round">
+    <path d="M476 30 l7 18 18 7 -18 7 -7 18 -7-18 -18-7 18-7 z"/>
+    <path d="M424 56 l5 12 12 5 -12 5 -5 12 -5-12 -12-5 12-5 z"/>
+  </g>
+</svg>

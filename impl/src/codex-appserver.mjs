@@ -12,10 +12,143 @@
 
 import { spawn, execFileSync } from 'node:child_process';
 import { renderBrief } from './adapter.mjs';
-import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
+import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
+import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const CODEX_TOKEN_METRIC = 'codex_thread_total_tokens';
+const MAX_NOTIFICATION_METHOD_PREFIX_CHARS = 512;
+
+// These app-server methods are server notifications, never JSON-RPC responses or requests.
+// Their payloads are telemetry/content and a later turn/completed notification remains the
+// authoritative lifecycle boundary. In particular, command output may be repeated in a very
+// large item/completed frame by real Codex versions. An oversized frame for any other method is
+// ambiguous and therefore fatal: it might contain a response id or a server request that Baton
+// must correlate/answer.
+const DISCARDABLE_OVERSIZE_NOTIFICATIONS = new Set([
+  'item/completed',
+  'item/agentMessage/delta',
+  'item/plan/delta',
+  'item/reasoning/summaryTextDelta',
+  'item/reasoning/summaryPartAdded',
+  'item/reasoning/textDelta',
+  'item/commandExecution/outputDelta',
+  'item/commandExecution/terminalInteraction',
+  'item/fileChange/outputDelta',
+  'item/fileChange/patchUpdated',
+  'item/mcpToolCall/progress',
+  'command/exec/outputDelta',
+  'process/outputDelta',
+  'turn/diff/updated',
+]);
+
+function saturatingByteCount(current, addition) {
+  return Math.min(Number.MAX_SAFE_INTEGER, current + addition);
+}
+
+/**
+ * Classify only a closed, method-first notification header. JSON object member order is normally
+ * irrelevant, but accepting params-first here would require retaining the whole oversized frame
+ * to discover whether it later contains an id. Fail closed on that ambiguity instead.
+ */
+function discardableNotificationMethod(prefix) {
+  const match = /^\s*\{\s*"method"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(
+    prefix.slice(0, MAX_NOTIFICATION_METHOD_PREFIX_CHARS),
+  );
+  if (!match) return null;
+  let method;
+  try {
+    method = JSON.parse(`"${match[1]}"`);
+  } catch {
+    return null;
+  }
+  return DISCARDABLE_OVERSIZE_NOTIFICATIONS.has(method) ? method : null;
+}
+
+function newOversizeStructure() {
+  return {
+    stack: [], rootStarted: false, complete: false, invalid: false,
+    inString: false, escaped: false, captureKey: false, key: '', expectTopKey: false,
+    sawMethod: false, sawId: false,
+  };
+}
+
+/**
+ * Constant-space structural scan for the discarded remainder. It is deliberately not a JSON
+ * value materializer. Its safety job is narrower: reject broken nesting, trailing syntax, a
+ * duplicate method, or any top-level id that would turn the apparent notification into an RPC
+ * request/response. Nested item ids are ordinary telemetry and do not trigger this guard.
+ */
+function scanOversizeStructure(state, text) {
+  for (const char of text) {
+    if (state.invalid) return;
+    if (state.complete) {
+      if (!/\s/.test(char)) state.invalid = true;
+      continue;
+    }
+    if (state.inString) {
+      if (state.escaped) {
+        state.escaped = false;
+        if (state.captureKey) state.key += `\\${char}`;
+        continue;
+      }
+      if (char === '\\') {
+        state.escaped = true;
+        continue;
+      }
+      if (char !== '"') {
+        if (state.captureKey) {
+          state.key += char;
+          if (state.key.length > 128) state.invalid = true;
+        }
+        continue;
+      }
+      state.inString = false;
+      if (state.captureKey) {
+        let key;
+        try { key = JSON.parse(`"${state.key}"`); } catch { state.invalid = true; return; }
+        if (key === 'id') state.sawId = true;
+        if (key === 'method') {
+          if (state.sawMethod) state.invalid = true;
+          state.sawMethod = true;
+        }
+        state.captureKey = false;
+        state.key = '';
+        state.expectTopKey = false;
+      }
+      continue;
+    }
+
+    if (!state.rootStarted) {
+      if (/\s/.test(char)) continue;
+      if (char !== '{') { state.invalid = true; return; }
+      state.rootStarted = true;
+      state.stack.push('{');
+      state.expectTopKey = true;
+      continue;
+    }
+    if (char === '"') {
+      state.inString = true;
+      state.captureKey = state.stack.length === 1 && state.stack[0] === '{' && state.expectTopKey;
+      state.key = '';
+      continue;
+    }
+    if (char === '{' || char === '[') {
+      if (state.stack.length >= 256) { state.invalid = true; return; }
+      state.stack.push(char);
+      continue;
+    }
+    if (char === '}' || char === ']') {
+      const expected = char === '}' ? '{' : '[';
+      if (state.stack.pop() !== expected) { state.invalid = true; return; }
+      if (state.stack.length === 0) state.complete = true;
+      continue;
+    }
+    if (char === ',' && state.stack.length === 1 && state.stack[0] === '{') {
+      state.expectTopKey = true;
+    }
+  }
+}
 
 function unavailableUsageSeal() {
   return { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null };
@@ -101,9 +234,12 @@ export class CodexAppServerCli {
     this._args = opts.args ?? ['app-server'];
     this._env = opts.env;
     this._spawnFn = opts.spawnFn ?? spawn;
+    this._reapOwnedProcessGroup = opts.reapOwnedProcessGroup;
     this._ceiling = opts.ceiling ?? 4;
     this._maxContext = opts.maxContext ?? 200000;
     this._model = opts.model;
+    this._sandbox = opts.sandbox ?? 'danger-full-access';
+    this._approvalPolicy = opts.approvalPolicy ?? 'never';
     this._maxWireFrameBytes = opts.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
     if (!Number.isSafeInteger(this._maxWireFrameBytes) || this._maxWireFrameBytes <= 0) throw new TypeError('maxWireFrameBytes must be a positive safe integer');
 
@@ -128,6 +264,7 @@ export class CodexAppServerCli {
   // -------------------------------------------------------------------------
 
   card() {
+    const autonomy = this._approvalPolicy === 'never' ? 'unattended' : 'interactive';
     return {
       harness: 'codex',
       version: this._version,
@@ -148,8 +285,30 @@ export class CodexAppServerCli {
       },
       sessions: { multiTurn: 'native', resume: 'native', fork: 'native', rejoin: 'native' },
       isolation: {
-        configHome: 'driver-scoped', environment: 'driver-scoped', filesystem: 'workspace-write',
-        osSandbox: 'harness-native', network: 'harness-policy', credentialProjection: 'explicit',
+        configHome: 'driver-scoped', environment: 'driver-scoped', filesystem: 'unverified',
+        osSandbox: 'unverified', network: 'uncontrolled', credentialProjection: 'explicit',
+      },
+      permissions: {
+        mode: this._approvalPolicy, sandbox: this._sandbox,
+        boundary: this._sandbox === 'danger-full-access'
+          ? 'Unattended full host permissions by default; containment is a separate deployment boundary'
+          : 'Harness sandbox requested; its containment remains separately attested',
+      },
+      workerPolicy: {
+        schemaVersion: 1,
+        autonomy: {
+          supported: [autonomy], default: autonomy, perTask: false,
+          observation: 'launch', mechanisms: [`approval-policy-${this._approvalPolicy}`],
+        },
+        access: {
+          supported: [this._sandbox === 'danger-full-access' ? 'full' : 'workspace'],
+          default: this._sandbox === 'danger-full-access' ? 'full' : 'workspace', perTask: false,
+          observation: 'launch', mechanisms: [`codex-sandbox-${this._sandbox}`],
+        },
+        containment: {
+          hostProcess: 'same_uid', guarantees: ['private_runtime'],
+          configuredPreferences: [], observation: 'unavailable',
+        },
       },
       verbs: {
         spawn: 'native',
@@ -222,24 +381,106 @@ export class CodexAppServerCli {
   }
 
   _attachChild(session) {
+    session.buf ??= '';
+    session.bufBytes = Buffer.byteLength(session.buf, 'utf8');
+    session.discardingOversizeNotification = null;
     session.child.stdout.setEncoding('utf8');
-    session.child.stdout.on('data', (chunk) => {
-      session.buf += chunk;
-      let nl;
-      while ((nl = session.buf.indexOf('\n')) !== -1) {
-        const line = session.buf.slice(0, nl);
-        session.buf = session.buf.slice(nl + 1);
-        if (Buffer.byteLength(line, 'utf8') > this._maxWireFrameBytes) {
-          this._wireFrameFailure(session);
-          return;
-        }
-        this._onLine(session, line);
-      }
-      if (!session.terminal && Buffer.byteLength(session.buf, 'utf8') > this._maxWireFrameBytes) this._wireFrameFailure(session);
-    });
+    session.child.stdout.on('data', (chunk) => this._onWireData(session, chunk));
     session.child.stderr.on('data', () => {}); // discard; nothing on this wire is diagnosed from stderr
     session.child.on('close', (code, signal) => this._onClose(session, code, signal));
     session.child.on('error', (error) => this._onProcessError(session, error));
+  }
+
+  _notificationPrefix(session, segment) {
+    const fromBuffer = session.buf.slice(0, MAX_NOTIFICATION_METHOD_PREFIX_CHARS);
+    const remaining = MAX_NOTIFICATION_METHOD_PREFIX_CHARS - fromBuffer.length;
+    return remaining > 0 ? fromBuffer + segment.slice(0, remaining) : fromBuffer;
+  }
+
+  _beginOversizeNotificationDiscard(session, segment, segmentBytes) {
+    const method = discardableNotificationMethod(this._notificationPrefix(session, segment));
+    if (!method) return false;
+    const structure = newOversizeStructure();
+    scanOversizeStructure(structure, session.buf);
+    scanOversizeStructure(structure, segment);
+    session.discardingOversizeNotification = {
+      method,
+      bytes: saturatingByteCount(session.bufBytes, segmentBytes),
+      structure,
+    };
+    session.buf = '';
+    session.bufBytes = 0;
+    return true;
+  }
+
+  _completeOversizeNotificationDiscard(session) {
+    const discarded = session.discardingOversizeNotification;
+    session.discardingOversizeNotification = null;
+    if (!discarded || session.terminal) return;
+    if (discarded.structure.invalid || !discarded.structure.complete
+      || discarded.structure.inString || discarded.structure.sawId
+      || !discarded.structure.sawMethod) {
+      this._wireFrameFailure(session);
+      return;
+    }
+    this._emit(session, 'error', {
+      message: 'oversized Codex provider notification discarded; turn lifecycle remains active',
+      code: 'wire_notification_truncated',
+      correlated: false,
+      serverMethod: discarded.method,
+      observedBytes: discarded.bytes,
+      byteCeiling: this._maxWireFrameBytes,
+      remediation: 'Use the terminal turn result; inspect provider-side output artifacts instead of replaying the dropped telemetry frame.',
+    });
+  }
+
+  /**
+   * Incremental NDJSON framing. At most maxWireFrameBytes of one ordinary frame is retained.
+   * Once a closed telemetry notification crosses that ceiling, bytes are counted and discarded
+   * until newline without growing session memory; the following frame is then parsed normally.
+   */
+  _onWireData(session, rawChunk) {
+    if (session.terminal || session.processFailure) return;
+    const chunk = typeof rawChunk === 'string' ? rawChunk : rawChunk.toString('utf8');
+    let offset = 0;
+    while (offset < chunk.length && !session.terminal && !session.processFailure) {
+      const newline = chunk.indexOf('\n', offset);
+      const end = newline === -1 ? chunk.length : newline;
+      const segment = chunk.slice(offset, end);
+      const segmentBytes = Buffer.byteLength(segment, 'utf8');
+
+      if (session.discardingOversizeNotification) {
+        session.discardingOversizeNotification.bytes = saturatingByteCount(
+          session.discardingOversizeNotification.bytes,
+          segmentBytes,
+        );
+        scanOversizeStructure(session.discardingOversizeNotification.structure, segment);
+        if (newline === -1) return;
+        this._completeOversizeNotificationDiscard(session);
+        offset = newline + 1;
+        continue;
+      }
+
+      if (session.bufBytes + segmentBytes > this._maxWireFrameBytes) {
+        if (!this._beginOversizeNotificationDiscard(session, segment, segmentBytes)) {
+          this._wireFrameFailure(session);
+          return;
+        }
+        if (newline === -1) return;
+        this._completeOversizeNotificationDiscard(session);
+        offset = newline + 1;
+        continue;
+      }
+
+      session.buf += segment;
+      session.bufBytes += segmentBytes;
+      if (newline === -1) return;
+      const line = session.buf;
+      session.buf = '';
+      session.bufBytes = 0;
+      this._onLine(session, line);
+      offset = newline + 1;
+    }
   }
 
   _wireFrameFailure(session) {
@@ -249,6 +490,7 @@ export class CodexAppServerCli {
       error: 'provider wire frame exceeded configured byte ceiling',
       code: 'wire_frame_oversize',
       phase: 'wire',
+      remediation: 'The frame could affect RPC correlation, so Baton terminated and reaped this Codex session. Retry with an updated Codex app-server.',
       usageSeal: unavailableUsageSeal(),
     };
     this._killChild(session);
@@ -258,45 +500,37 @@ export class CodexAppServerCli {
     if (session.processClosedEmitted || session.processClosePending) return;
     session.processClosePending = true;
     if (session.wallTimer) clearTimeout(session.wallTimer);
-    const groupReap = await reapOwnedProcessGroup(session.child.pid, { timeoutMs: session.processReapTimeoutMs });
+    if (!session.processClose) { session.terminal = true; return; }
+    const wasKilling = session.killing === true;
+    const setupFailed = session.setupFailed === true;
+    const timeoutFailure = session.timeoutFailure;
+    const processFailure = session.processFailure;
+    const activeTurn = session.activeTurn ? { ...session.activeTurn } : null;
+    const closeDerived = () => {
+      if (timeoutFailure) {
+        this._emit(session, 'lifecycle.crashed', timeoutFailure);
+      } else if (processFailure) {
+        this._emit(session, 'lifecycle.crashed', processFailure);
+      } else if (!wasKilling && !setupFailed && activeTurn) {
+        const turnId = activeTurn.id;
+        session.terminalTurns.add(turnId);
+        if (session.activeTurn?.id === turnId) session.activeTurn = null;
+        this._emit(session, 'lifecycle.crashed', { threadId: session.threadId, turnId, error: `transport closed${code === null ? '' : ` with code ${code}`}${signal ? ` (${signal})` : ''}`, usageSeal: unavailableUsageSeal() });
+      }
+    };
+    if (wasKilling) {
+      const terminalCause = timeoutFailure ? 'timeout' : processFailure ? 'process_error' : null;
+      session.processClose.authorizeStop('kill.confirmed', {
+        threadId: session.threadId,
+        ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal(),
+      });
+    }
     session.terminal = true;
-    if (groupReap.confirmed) {
-      session.processClosedEmitted = true;
-      const processClosed = processClosedPayload(session.processGeneration, session.child.pid, code, signal, session.providerReady);
-      if (processClosed) this._emit(session, 'lifecycle.process_closed', processClosed);
-    } else {
-      const unconfirmed = processReapUnconfirmedPayload(session.processGeneration, session.child.pid, groupReap.reason);
-      if (unconfirmed) this._emit(session, 'lifecycle.process_reap_unconfirmed', unconfirmed);
-    }
-    // XA11: kill.confirmed is emitted from the child's 'close' handler, once the OS confirms
-    // the process is gone — never from the Ack itself (D1: confirmed-stop is always an event).
-    if (session.timeoutFailure) {
-      this._emit(session, 'lifecycle.crashed', session.timeoutFailure);
-      if (groupReap.confirmed && session.killing && !session.killConfirmed) {
-        session.killConfirmed = true;
-        this._emit(session, 'kill.confirmed', { threadId: session.threadId, terminalCause: 'timeout', usageSeal: unavailableUsageSeal() });
-      }
-    } else if (session.processFailure) {
-      this._emit(session, 'lifecycle.crashed', session.processFailure);
-      if (groupReap.confirmed && session.killing && !session.killConfirmed) {
-        session.killConfirmed = true;
-        this._emit(session, 'kill.confirmed', { threadId: session.threadId, terminalCause: 'process_error', usageSeal: unavailableUsageSeal() });
-      }
-    } else if (session.killing) {
-      if (groupReap.confirmed && !session.killConfirmed) {
-        session.killConfirmed = true;
-        this._emit(session, 'kill.confirmed', { threadId: session.threadId, usageSeal: unavailableUsageSeal() });
-      }
-    } else if (!session.setupFailed && session.activeTurn) {
-      const turnId = session.activeTurn.id;
-      session.terminalTurns.add(turnId);
-      session.activeTurn = null;
-      this._emit(session, 'lifecycle.crashed', { threadId: session.threadId, turnId, error: `transport closed${code === null ? '' : ` with code ${code}`}${signal ? ` (${signal})` : ''}`, usageSeal: unavailableUsageSeal() });
-    }
     for (const [id, pending] of session.pendingRequests) {
       session.pendingRequests.delete(id); if (pending.timer) clearTimeout(pending.timer);
       pending.reject(new Error('codex app-server closed before responding'));
     }
+    await session.processClose.close(code, signal, session.providerReady, closeDerived);
   }
 
   _onProcessError(session, error) {
@@ -458,7 +692,10 @@ export class CodexAppServerCli {
           // coordinator awaits; the thread survives (activeTurn cleared above, session stays).
           const result = makeResult('cancelled', 'interrupted', session.lastTokenUsage);
           if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
-          this._emit(session, 'control.interrupt_confirmed', { threadId: params.threadId, turnId, result, usageSeal: tokenUsageSeal(session, turnId) });
+          this._emit(session, 'control.interrupt_confirmed', {
+            threadId: params.threadId, turnId, result, transportOpen: true,
+            usageSeal: tokenUsageSeal(session, turnId),
+          });
           this._maybeIssueFollowUp(session, turnId);
           return;
         }
@@ -515,7 +752,7 @@ export class CodexAppServerCli {
 
   async spawn(worker, brief, opts = {}) {
     const existing = this._sessions.get(worker);
-    if ((existing && !existing.terminal) || this._pendingSpawns.has(worker)) {
+    if ((existing && (!existing.terminal || (existing.processClose && !existing.processClose.confirmed))) || this._pendingSpawns.has(worker)) {
       return { ok: false, reason: `worker ${worker} already has an active session` };
     }
     if (opts.attachOnly === true && opts.session?.mode !== 'resume') {
@@ -570,11 +807,28 @@ export class CodexAppServerCli {
       modelObserved: null,
       reasoningEffort: opts.reasoningEffort ?? null,
       serviceTier: opts.serviceTier ?? null,
-      sandboxPolicy: opts.sandboxPolicy ?? {
-        type: 'workspaceWrite', writableRoots: [cwd], networkAccess: false,
-        excludeSlashTmp: false, excludeTmpdirEnvVar: false,
-      },
+      sandboxPolicy: opts.sandboxPolicy ?? (this._sandbox === 'danger-full-access'
+        ? { type: 'dangerFullAccess' }
+        : {
+            type: 'workspaceWrite', writableRoots: [cwd], networkAccess: false,
+            excludeSlashTmp: false, excludeTmpdirEnvVar: false,
+          }),
     };
+    session.processClose = Number.isSafeInteger(child.pid) && child.pid > 0 ? new ProcessCloseReapLatch({
+      generation: session.processGeneration,
+      pid: child.pid,
+      timeoutMs: session.processReapTimeoutMs,
+      reap: this._reapOwnedProcessGroup,
+      onProcessClosed: (payload) => {
+        session.processClosedEmitted = true;
+        this._emit(session, 'lifecycle.process_closed', payload);
+      },
+      onReapUnconfirmed: (payload) => this._emit(session, 'lifecycle.process_reap_unconfirmed', payload),
+      onStopConfirmed: (kind, payload) => {
+        session.killConfirmed = kind === 'kill.confirmed' || session.killConfirmed;
+        this._emit(session, kind, payload);
+      },
+    }) : null;
     this._sessions.set(worker, session);
     this._attachChild(session);
     const processStarted = processStartedPayload(session.processGeneration, child.pid);
@@ -603,8 +857,8 @@ export class CodexAppServerCli {
         cwd,
         model: session.modelRequested ?? undefined,
         effort: session.reasoningEffort ?? undefined,
-        sandbox: opts.sandbox ?? 'workspace-write',
-        approvalPolicy: opts.approvalPolicy ?? 'never',
+        sandbox: opts.sandbox ?? this._sandbox,
+        approvalPolicy: opts.approvalPolicy ?? this._approvalPolicy,
         serviceTier: session.serviceTier ?? undefined,
         ...(threadMethod !== 'thread/resume' ? { ephemeral: true } : {}),
         ...(threadMethod !== 'thread/start' ? { threadId: sessionRequest.id } : {}),
@@ -628,7 +882,31 @@ export class CodexAppServerCli {
         reason: `expected native thread ${opts.session.id}, observed ${session.threadId ?? '(none)'}`,
       };
     }
-    session.modelObserved = threadResult.model ?? session.modelRequested;
+    // Requested and resolved route authority is not provider observation. When app-server omits
+    // the model field, preserve that absence instead of manufacturing native testimony.
+    session.modelObserved = threadResult.model ?? null;
+    let workerPolicyObserved = null;
+    if (opts.workerPolicy) {
+      try {
+        workerPolicyObserved = attestWorkerPolicyObservation(opts.workerPolicy, {
+          autonomy: (opts.approvalPolicy ?? this._approvalPolicy) === 'never' ? 'unattended' : 'interactive',
+          access: (opts.sandbox ?? this._sandbox) === 'danger-full-access' ? 'full' : 'workspace',
+        });
+      } catch (error) {
+        session.setupFailed = true;
+        this._killChild(session);
+        return { ok: false, code: error?.code, reason: String(error?.message ?? error) };
+      }
+    }
+    if (workerPolicyObserved) {
+      this._emit(session, 'worker_policy.observed', {
+        processGeneration: session.processGeneration, pid: child.pid, processGroupId: child.pid,
+        workerPolicyObserved,
+      });
+      if (session.killing || session.terminal) {
+        return { ok: false, code: 'provider_ready_refused', reason: 'launch worker policy was rejected by coordinator policy' };
+      }
+    }
     session.providerReady = true;
     // R6.1: parity with the Claude session adapter's lifecycle.spawned — the wire's own
     // testimony to its session identifier, additive alongside the coordinator's own record.
@@ -637,7 +915,12 @@ export class CodexAppServerCli {
       processGeneration: session.processGeneration,
       modelRequested: session.modelRequested, modelObserved: session.modelObserved,
       effortObserved: threadResult.effort ?? null, serviceTier: session.serviceTier,
+      ...(workerPolicyObserved ? { workerPolicyObserved } : {}),
     });
+
+    if (session.killing || session.terminal) {
+      return { ok: false, code: 'provider_ready_refused', reason: 'provider readiness was rejected by coordinator policy' };
+    }
 
     // Recovery attaches and proves identity before a durable refinement is allowed to dispatch.
     if (opts.attachOnly === true) return { ok: true, attached: true };
@@ -802,12 +1085,16 @@ export class CodexAppServerCli {
     const session = this._sessions.get(worker);
     if (!session && this._emitPendingStop(worker, 'kill.confirmed')) return { ok: true };
     if (!session || !session.child) return { ok: true }; // already gone — a moot no-op, not a failure
-    if (session.terminal && session.processClosedEmitted) return { ok: true, terminal: true };
+    if (!session.processClose || session.processClose.confirmed) return { ok: true, terminal: true };
     session.stopGeneration += 1;
     session.pendingFollowUp = null; // R5.1: abandon any pending auto-follow-up
-    if (session.killing) return { ok: true };
     session.killing = true;
-    this._killChild(session);
+    const terminalCause = session.timeoutFailure ? 'timeout' : session.processFailure ? 'process_error' : null;
+    void session.processClose.authorizeStop('kill.confirmed', {
+      threadId: session.threadId,
+      ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal(),
+    });
+    if (!session.terminal) this._killChild(session);
     return { ok: true };
   }
 

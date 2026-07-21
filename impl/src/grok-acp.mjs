@@ -20,7 +20,8 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { renderBrief } from './adapter.mjs';
-import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
+import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
+import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const GROK_TOKEN_METRIC = 'grok_prompt_meta_total_tokens';
@@ -104,7 +105,9 @@ function boundedEvidence(value, maxBytes) {
   };
 }
 
-export function withGrokModelArgs(baseArgs, { model, reasoningEffort, sandbox } = {}) {
+export function withGrokModelArgs(baseArgs, {
+  model, reasoningEffort, sandbox, alwaysApprove = true,
+} = {}) {
   const args = [...baseArgs];
   // `--sandbox` is a top-level Grok flag and is rejected after `agent`; model/effort are agent
   // flags and belong between `agent` and `stdio`. The live governance probe caught this split.
@@ -115,6 +118,7 @@ export function withGrokModelArgs(baseArgs, { model, reasoningEffort, sandbox } 
   }
   const insertion = agentIndex >= 0 ? agentIndex + 1 : args.length;
   const selection = [];
+  if (alwaysApprove) selection.push('--always-approve');
   if (model) selection.push('--model', model);
   if (reasoningEffort) selection.push('--reasoning-effort', reasoningEffort);
   args.splice(insertion, 0, ...selection);
@@ -143,11 +147,15 @@ export class GrokAcpCli {
     this._args = opts.args ?? ['agent', 'stdio'];
     this._env = opts.env;
     this._spawnFn = opts.spawnFn ?? spawn;
+    this._reapOwnedProcessGroup = opts.reapOwnedProcessGroup;
     this._ceiling = opts.ceiling ?? 4;
     // GA4: 500000 is the live handshake's totalContextTokens for grok-build, not a guess.
     this._maxContext = opts.maxContext ?? 500000;
     this._model = opts.model;
     this._reasoningEffort = opts.reasoningEffort;
+    this._sandbox = opts.sandbox ?? 'off';
+    this._alwaysApprove = opts.alwaysApprove ?? true;
+    if (typeof this._alwaysApprove !== 'boolean') throw new TypeError('GrokAcpCli: alwaysApprove must be boolean');
     this._maxEventPayloadBytes = opts.maxEventPayloadBytes ?? 64 * 1024;
     if (!Number.isSafeInteger(this._maxEventPayloadBytes) || this._maxEventPayloadBytes < 1024) {
       throw new TypeError('GrokAcpCli: maxEventPayloadBytes must be an integer of at least 1024 bytes');
@@ -200,8 +208,31 @@ export class GrokAcpCli {
       // request/result schemas pinned, so advertising them as native would be a lying card.
       sessions: { multiTurn: 'native', resume: 'native', fork: 'planned', rewind: 'planned' },
       isolation: {
-        configHome: 'driver-scoped', environment: 'driver-scoped', filesystem: 'worktree+harness-policy',
+        configHome: 'driver-scoped', environment: 'driver-scoped', filesystem: 'unverified',
         osSandbox: 'unverified', network: 'uncontrolled', credentialProjection: 'explicit',
+      },
+      permissions: {
+        mode: this._alwaysApprove ? 'always-approve' : 'interactive', sandbox: this._sandbox,
+        boundary: this._sandbox === 'off'
+          ? 'Unattended full host permissions by default; containment is a separate deployment boundary'
+          : 'Harness sandbox requested; its containment remains separately attested',
+      },
+      workerPolicy: {
+        schemaVersion: 1,
+        autonomy: {
+          supported: [this._alwaysApprove ? 'unattended' : 'interactive'],
+          default: this._alwaysApprove ? 'unattended' : 'interactive', perTask: false,
+          observation: 'launch', mechanisms: [this._alwaysApprove ? 'always-approve' : 'interactive'],
+        },
+        access: {
+          supported: [this._sandbox === 'off' ? 'full' : 'workspace'],
+          default: this._sandbox === 'off' ? 'full' : 'workspace', perTask: false,
+          observation: 'launch', mechanisms: [`grok-sandbox-${this._sandbox}`],
+        },
+        containment: {
+          hostProcess: 'same_uid', guarantees: ['private_runtime'],
+          configuredPreferences: [], observation: 'unavailable',
+        },
       },
       verbs: {
         spawn: 'native',
@@ -329,48 +360,40 @@ export class GrokAcpCli {
     if (session.processClosedEmitted || session.processClosePending) return;
     session.processClosePending = true;
     if (session.wallTimer) clearTimeout(session.wallTimer);
-    const groupReap = await reapOwnedProcessGroup(session.child.pid, { timeoutMs: session.processReapTimeoutMs });
+    if (!session.processClose) { session.closed = true; return; }
+    const wasKilling = session.killing === true;
+    const setupFailed = session.setupFailed === true;
+    const timeoutFailure = session.timeoutFailure;
+    const processFailure = session.processFailure;
+    const activeTurnId = session.activeTurn?.turnId ?? null;
+    const closeDerived = () => {
+      if (timeoutFailure) {
+        if (activeTurnId !== null) this._settleTurn(session, activeTurnId);
+        this._emit(session, 'lifecycle.crashed', timeoutFailure);
+      } else if (processFailure) {
+        if (activeTurnId !== null) this._settleTurn(session, activeTurnId);
+        this._emit(session, 'lifecycle.crashed', processFailure);
+      } else if (!wasKilling && !setupFailed && activeTurnId !== null) {
+        const turnId = activeTurnId;
+        this._settleTurn(session, turnId);
+        this._emit(session, 'lifecycle.crashed', { sessionId: session.sessionId, turnId, error: `transport closed${code === null ? '' : ` with code ${code}`}${signal ? ` (${signal})` : ''}`, usageSeal: unavailableUsageSeal() });
+      }
+    };
+    if (wasKilling) {
+      const terminalCause = timeoutFailure ? 'timeout' : processFailure ? 'process_error' : null;
+      session.processClose.authorizeStop('kill.confirmed', {
+        sessionId: session.sessionId,
+        ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal(),
+      });
+    }
     session.closed = true;
-    if (groupReap.confirmed) {
-      session.processClosedEmitted = true;
-      const processClosed = processClosedPayload(session.processGeneration, session.child.pid, code, signal, session.providerReady);
-      if (processClosed) this._emit(session, 'lifecycle.process_closed', processClosed);
-    } else {
-      const unconfirmed = processReapUnconfirmedPayload(session.processGeneration, session.child.pid, groupReap.reason);
-      if (unconfirmed) this._emit(session, 'lifecycle.process_reap_unconfirmed', unconfirmed);
-    }
-    // GA11: kill.confirmed fires once the OS confirms the process is gone (D1: an event, never
-    // the Ack); the pending-request settlement below then absorbs the prompt silently (killing).
-    if (session.timeoutFailure) {
-      if (session.activeTurn) this._settleTurn(session, session.activeTurn.turnId);
-      this._emit(session, 'lifecycle.crashed', session.timeoutFailure);
-      if (groupReap.confirmed && session.killing && !session.killConfirmed) {
-        session.killConfirmed = true;
-        this._emit(session, 'kill.confirmed', { sessionId: session.sessionId, terminalCause: 'timeout', usageSeal: unavailableUsageSeal() });
-      }
-    } else if (session.processFailure) {
-      if (session.activeTurn) this._settleTurn(session, session.activeTurn.turnId);
-      this._emit(session, 'lifecycle.crashed', session.processFailure);
-      if (groupReap.confirmed && session.killing && !session.killConfirmed) {
-        session.killConfirmed = true;
-        this._emit(session, 'kill.confirmed', { sessionId: session.sessionId, terminalCause: 'process_error', usageSeal: unavailableUsageSeal() });
-      }
-    } else if (session.killing) {
-      if (groupReap.confirmed && !session.killConfirmed) {
-        session.killConfirmed = true;
-        this._emit(session, 'kill.confirmed', { sessionId: session.sessionId, usageSeal: unavailableUsageSeal() });
-      }
-    } else if (!session.setupFailed && session.activeTurn) {
-      const turnId = session.activeTurn.turnId;
-      this._settleTurn(session, turnId);
-      this._emit(session, 'lifecycle.crashed', { sessionId: session.sessionId, turnId, error: `transport closed${code === null ? '' : ` with code ${code}`}${signal ? ` (${signal})` : ''}`, usageSeal: unavailableUsageSeal() });
-    }
-    // The unbounded prompt (and any in-flight bounded RPC) must not dangle past child death.
+    // The unbounded prompt (and any in-flight bounded RPC) must not dangle past leader death.
     for (const [id, pending] of session.pendingRequests) {
       session.pendingRequests.delete(id);
       if (pending.timer) clearTimeout(pending.timer);
       pending.reject(new Error('grok agent stdio closed before responding'));
     }
+    await session.processClose.close(code, signal, session.providerReady, closeDerived);
   }
 
   _onProcessError(session, error) {
@@ -581,7 +604,10 @@ export class GrokAcpCli {
       }
       const res = makeResult('cancelled', 'interrupted', tokens);
       if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
-      this._emit(session, 'control.interrupt_confirmed', { sessionId: session.sessionId, turnId, result: res, usageSeal: usage.seal });
+      this._emit(session, 'control.interrupt_confirmed', {
+        sessionId: session.sessionId, turnId, result: res, transportOpen: true,
+        usageSeal: usage.seal,
+      });
       this._maybeIssueFollowUp(session, turnId);
       return;
     }
@@ -602,6 +628,10 @@ export class GrokAcpCli {
   }
 
   _onTurnError(session, turnId, err) {
+    // Rejecting the unbounded prompt is an immediate transport-close consequence. The retained
+    // close callback owns that terminal classification and will settle this exact turn only after
+    // descendant absence is proven.
+    if (session.processClosePending) return;
     if (!this._settleTurn(session, turnId)) return;
     if (session.killing) return; // GA11: a deliberate kill is not a worker crash — kill.confirmed is the terminal
     this._emit(session, 'lifecycle.crashed', { sessionId: session.sessionId, turnId, error: err.message, usageSeal: unavailableUsageSeal() });
@@ -621,7 +651,7 @@ export class GrokAcpCli {
 
   async spawn(worker, brief, opts = {}) {
     const existing = this._sessions.get(worker);
-    if ((existing && !existing.closed) || this._pendingSpawns.has(worker)) {
+    if ((existing && (!existing.closed || (existing.processClose && !existing.processClose.confirmed))) || this._pendingSpawns.has(worker)) {
       return { ok: false, reason: `worker ${worker} already has an active session` };
     }
     if (opts.attachOnly === true && opts.session?.mode !== 'resume') {
@@ -649,11 +679,27 @@ export class GrokAcpCli {
 
     const processGeneration = normalizeProcessGeneration(opts.processGeneration);
     const modelRequested = opts.model ?? this._model ?? null;
-    const sandboxRequested = opts.sandbox ?? 'workspace';
+    const sandboxRequested = opts.sandbox ?? this._sandbox;
+    const alwaysApproveRequested = opts.alwaysApprove ?? this._alwaysApprove;
+    if (typeof alwaysApproveRequested !== 'boolean') {
+      return { ok: false, reason: 'alwaysApprove must be boolean' };
+    }
+    let workerPolicyObserved = null;
+    if (opts.workerPolicy) {
+      try {
+        workerPolicyObserved = attestWorkerPolicyObservation(opts.workerPolicy, {
+          autonomy: alwaysApproveRequested ? 'unattended' : 'interactive',
+          access: sandboxRequested === 'off' ? 'full' : 'workspace',
+        });
+      } catch (error) {
+        return { ok: false, code: error?.code, reason: String(error?.message ?? error) };
+      }
+    }
     const childArgs = withGrokModelArgs(this._args, {
       model: modelRequested,
       reasoningEffort: opts.reasoningEffort ?? this._reasoningEffort,
       sandbox: sandboxRequested,
+      alwaysApprove: alwaysApproveRequested,
     });
     const child = this._spawnFn(this._cmd, childArgs, {
       env: opts.replaceEnv
@@ -681,11 +727,37 @@ export class GrokAcpCli {
       modelRequested,
       modelObserved: null,
       sandboxRequested,
+      alwaysApproveRequested,
+      workerPolicyObserved,
     };
+    session.processClose = Number.isSafeInteger(child.pid) && child.pid > 0 ? new ProcessCloseReapLatch({
+      generation: session.processGeneration,
+      pid: child.pid,
+      timeoutMs: session.processReapTimeoutMs,
+      reap: this._reapOwnedProcessGroup,
+      onProcessClosed: (payload) => {
+        session.processClosedEmitted = true;
+        this._emit(session, 'lifecycle.process_closed', payload);
+      },
+      onReapUnconfirmed: (payload) => this._emit(session, 'lifecycle.process_reap_unconfirmed', payload),
+      onStopConfirmed: (kind, payload) => {
+        session.killConfirmed = kind === 'kill.confirmed' || session.killConfirmed;
+        this._emit(session, kind, payload);
+      },
+    }) : null;
     this._sessions.set(worker, session);
     this._attachChild(session);
     const processStarted = processStartedPayload(session.processGeneration, child.pid);
     if (processStarted) this._emit(session, 'lifecycle.process_started', processStarted);
+    if (session.workerPolicyObserved) {
+      this._emit(session, 'worker_policy.observed', {
+        processGeneration: session.processGeneration, pid: child.pid, processGroupId: child.pid,
+        workerPolicyObserved: session.workerPolicyObserved,
+      });
+      if (session.killing || session.closed) {
+        return { ok: false, code: 'provider_ready_refused', reason: 'launch worker policy was rejected by coordinator policy' };
+      }
+    }
     if (opts.timeoutMs > 0) {
       session.wallTimer = setTimeout(() => this._onWallTimeout(session, opts.timeoutMs), opts.timeoutMs);
       if (typeof session.wallTimer.unref === 'function') session.wallTimer.unref();
@@ -740,7 +812,12 @@ export class GrokAcpCli {
       processGeneration: session.processGeneration,
       modelRequested: session.modelRequested, modelObserved: session.modelObserved,
       sandboxRequested: session.sandboxRequested,
+      ...(session.workerPolicyObserved ? { workerPolicyObserved: session.workerPolicyObserved } : {}),
     });
+
+    if (session.killing || session.closed) {
+      return { ok: false, code: 'provider_ready_refused', reason: 'provider readiness was rejected by coordinator policy' };
+    }
 
     // Recovery attaches and proves identity before a durable refinement is allowed to dispatch.
     if (opts.attachOnly === true) return { ok: true, attached: true };
@@ -866,12 +943,16 @@ export class GrokAcpCli {
     const session = this._sessions.get(worker);
     if (!session && this._emitPendingStop(worker, 'kill.confirmed')) return { ok: true };
     if (!session || !session.child) return { ok: true }; // already gone — a moot no-op
-    if (session.closed && session.processClosedEmitted) return { ok: true, terminal: true };
+    if (!session.processClose || session.processClose.confirmed) return { ok: true, terminal: true };
     session.steerPending = null;
     session.pendingFollowUp = null; // R5.1: abandon any pending auto-follow-up
-    if (session.killing) return { ok: true };
     session.killing = true;
-    this._killChild(session);
+    const terminalCause = session.timeoutFailure ? 'timeout' : session.processFailure ? 'process_error' : null;
+    void session.processClose.authorizeStop('kill.confirmed', {
+      sessionId: session.sessionId,
+      ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal(),
+    });
+    if (!session.closed) this._killChild(session);
     return { ok: true };
   }
 

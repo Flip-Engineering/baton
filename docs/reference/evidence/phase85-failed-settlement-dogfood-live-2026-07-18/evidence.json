@@ -1,0 +1,224 @@
+{
+  "record": {
+    "schemaVersion": 1,
+    "deploymentRoot": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-phase85-failed-settlement-TKlYUg",
+    "runId": "run-6d691f60c1a14a89c3804bd6fc659ea0",
+    "outcome": "operator_interrupted",
+    "readiness": [
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "state": "ready",
+        "code": null
+      },
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+        "state": "ready",
+        "code": null
+      },
+      {
+        "harness": "glm",
+        "model": "glm-5.2",
+        "effort": "xhigh",
+        "state": "ready",
+        "code": null
+      }
+    ],
+    "selectedTeam": [
+      {
+        "role": "failure-settlement-builder",
+        "exact": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        }
+      },
+      {
+        "role": "failure-replay-adversary",
+        "exact": {
+          "harness": "glm",
+          "model": "glm-5.2",
+          "effort": "xhigh"
+        }
+      }
+    ],
+    "phase": "running",
+    "candidates": [
+      {
+        "role": "failure-settlement-builder",
+        "route": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        },
+        "candidateId": "candidate:c1dab8dd2e665cc5cebe9b7ae4fb892d0955a09a8d9f198a2ed1b2d54445c8b0",
+        "resultSha": "61a29e00a43de74c8bb2042ad6b288c040db3ad2",
+        "retainedResultRef": "refs/baton/results/61a29e00a43de74c8bb2042ad6b288c040db3ad2",
+        "changedPaths": [
+          "impl/src/application.mjs",
+          "impl/src/context-runtime.mjs",
+          "impl/src/coordination-store.mjs"
+        ],
+        "patch": {
+          "name": "candidate-failure-settlement-builder.patch",
+          "digest": "3569816dd3fe33d95f9cc3639dd4bee8234ed535abba3ec89cb4946af7c37442",
+          "bytes": 24492
+        }
+      }
+    ],
+    "attempts": [
+      {
+        "role": "failure-replay-adversary",
+        "state": "dispatched",
+        "route": {
+          "requested": {
+            "harness": "glm",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "resolved": {
+            "harness": "glm@claude-code-2.1.211+zai-anthropic",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "observed": null,
+          "launchEnforcement": {
+            "harness": {
+              "requested": "glm",
+              "resolved": "glm@claude-code-2.1.211+zai-anthropic",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "glm-5.2",
+              "resolved": "glm-5.2",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": "xhigh",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "pending"
+            },
+            "model": {
+              "observed": null,
+              "state": "pending"
+            },
+            "effort": {
+              "observed": null,
+              "state": "pending"
+            }
+          }
+        },
+        "taskId": "baton-97a445f959eadebc4e394b51-attempt-failure-replay-adversary",
+        "candidateId": null
+      },
+      {
+        "role": "failure-settlement-builder",
+        "state": "accepted",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "high"
+          },
+          "resolved": {
+            "harness": "codex@codex-cli 0.144.6",
+            "model": "gpt-5.6-sol",
+            "effort": "high"
+          },
+          "observed": {
+            "harness": null,
+            "model": "gpt-5.6-sol",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": "codex@codex-cli 0.144.6",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "high",
+              "resolved": "high",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          }
+        },
+        "taskId": "baton-be0317878c9f76111ef38434-attempt-failure-settlement-builder",
+        "candidateId": "candidate:c1dab8dd2e665cc5cebe9b7ae4fb892d0955a09a8d9f198a2ed1b2d54445c8b0"
+      }
+    ]
+  },
+  "cleanup": {
+    "stopped": {
+      "state": "stopped",
+      "receipt": {
+        "schemaVersion": 1,
+        "state": "stopped",
+        "scope": "run_subtree",
+        "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+        "runId": "run-6d691f60c1a14a89c3804bd6fc659ea0",
+        "targetCount": 2,
+        "remainingCount": 0,
+        "targetDigest": "adaf504c503864814c298a86a904e471da8f55f0e595e6ec72cbd0b715048b8d",
+        "counts": {
+          "pendingCancelled": 0,
+          "killConfirmed": 2,
+          "alreadyTerminal": 0,
+          "processesObserved": 2,
+          "processesClosed": 2
+        },
+        "checks": {
+          "dispatchClosed": true,
+          "interactionsResolved": true,
+          "runAuthorityReleased": true
+        },
+        "effects": {
+          "coordinatorClosed": false,
+          "writerReleased": false,
+          "transportsClosed": false
+        },
+        "receiptDigest": "f67cd0a1d0964e25cce125da04e5f384b075e7311c8ca2c6fd75b5be20e89955"
+      },
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      }
+    },
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    },
+    "callerStatusUnchanged": true,
+    "callerIndexUnchanged": true
+  }
+}

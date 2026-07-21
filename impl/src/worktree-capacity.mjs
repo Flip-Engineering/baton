@@ -7,7 +7,7 @@ import {
   chmodSync, closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync,
   realpathSync, renameSync, rmSync, statfsSync, unlinkSync, writeFileSync,
 } from 'node:fs';
-import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { compareCanonicalStrings } from './canonical-order.mjs';
 
@@ -23,7 +23,8 @@ const MAX_STATE_BYTES = 4 * 1024 * 1024;
 const MAX_RESERVATIONS = 10_000;
 const RESERVATION_FIELDS = Object.freeze([
   'id', 'kind', 'resourceId', 'ownerId', 'nonce', 'pid', 'bytes', 'inodes', 'baseSha',
-  'sparseDigest', 'toolchainProjectionDigest', 'createdAt',
+  'sparseDigest', 'toolchainProjectionDigest', 'createdAt', 'materializedAt',
+  'outstandingBytes', 'outstandingInodes',
 ]);
 
 function digest(value) {
@@ -270,10 +271,22 @@ export class WorktreeCapacityAuthority {
         || typeof row.ownerId !== 'string' || !/^[a-f0-9]{32}$/u.test(row.ownerId) || typeof row.nonce !== 'string' || !/^[a-f0-9]{32}$/u.test(row.nonce)
         || !Number.isSafeInteger(row.pid) || row.pid <= 0
         || !Number.isSafeInteger(row.bytes) || row.bytes < 0 || !Number.isSafeInteger(row.inodes) || row.inodes < 0
+        || !Number.isSafeInteger(row.outstandingBytes) || row.outstandingBytes < 0
+        || row.outstandingBytes > row.bytes
+        || !Number.isSafeInteger(row.outstandingInodes) || row.outstandingInodes < 0
+        || row.outstandingInodes > row.inodes
         || typeof row.baseSha !== 'string' || !/^[a-f0-9]{40}$/u.test(row.baseSha)
         || typeof row.sparseDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(row.sparseDigest)
         || (row.toolchainProjectionDigest !== null && (typeof row.toolchainProjectionDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(row.toolchainProjectionDigest)))
-        || typeof row.createdAt !== 'string' || !Number.isFinite(Date.parse(row.createdAt))) throw typed('worktree capacity reservation state is malformed', 'worktree_capacity_unavailable');
+        || typeof row.createdAt !== 'string' || !Number.isFinite(Date.parse(row.createdAt))
+        || (row.materializedAt !== null && (typeof row.materializedAt !== 'string'
+          || !Number.isFinite(Date.parse(row.materializedAt))))
+        || (row.materializedAt === null
+          ? row.outstandingBytes !== row.bytes || row.outstandingInodes !== row.inodes
+          : row.outstandingBytes !== Math.min(row.bytes, this.policy.runtimeReserveBytes)
+            || row.outstandingInodes !== Math.min(row.inodes, this.policy.runtimeReserveInodes))) {
+        throw typed('worktree capacity reservation state is malformed', 'worktree_capacity_unavailable');
+      }
     }
     const totals = state.reservations.reduce((sum, row) => ({ bytes: sum.bytes + row.bytes, inodes: sum.inodes + row.inodes }), { bytes: 0, inodes: 0 });
     if (!Number.isSafeInteger(totals.bytes) || !Number.isSafeInteger(totals.inodes)) throw typed('worktree capacity reservation totals overflow', 'worktree_capacity_unavailable');
@@ -332,13 +345,33 @@ export class WorktreeCapacityAuthority {
   }
 
   reserve(id, request) {
-    if (typeof id !== 'string' || id.length === 0 || Buffer.byteLength(id) > 256) throw new TypeError('capacity reservation id is invalid');
-    let estimate;
-    try {
-      estimate = validateMeasurement(this.estimate({ ...request, repoRoot: this.repoRoot, policy: this.policy }), 'worktreeCapacityEstimate', ['bytes', 'inodes']);
-    } catch (error) {
-      if (error instanceof WorktreeCapacityError) throw error;
-      throw typed('worktree capacity could not be observed', 'worktree_capacity_unavailable', error);
+    return this.reserveMany([{ id, request }])[0];
+  }
+
+  reserveMany(entries) {
+    if (!Array.isArray(entries) || entries.length === 0 || entries.length > MAX_RESERVATIONS) {
+      throw new TypeError('capacity reservation wave must contain a bounded non-empty entry list');
+    }
+    const prepared = entries.map((entry) => {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)
+        || Object.keys(entry).sort().join(',') !== ['id', 'request'].sort().join(',')) {
+        throw new TypeError('capacity reservation wave entry is invalid');
+      }
+      const { id, request } = entry;
+      if (typeof id !== 'string' || id.length === 0 || Buffer.byteLength(id) > 256) throw new TypeError('capacity reservation id is invalid');
+      const separator = id.indexOf(':'); const kind = id.slice(0, separator); const resourceId = id.slice(separator + 1);
+      if (!['worker', 'verify'].includes(kind) || !resourceId) throw new TypeError('capacity reservation id kind is invalid');
+      let estimate;
+      try {
+        estimate = validateMeasurement(this.estimate({ ...request, repoRoot: this.repoRoot, policy: this.policy }), 'worktreeCapacityEstimate', ['bytes', 'inodes']);
+      } catch (error) {
+        if (error instanceof WorktreeCapacityError) throw error;
+        throw typed('worktree capacity could not be observed', 'worktree_capacity_unavailable', error);
+      }
+      return { id, request, kind, resourceId, estimate };
+    });
+    if (new Set(prepared.map(({ id }) => id)).size !== prepared.length) {
+      throw new TypeError('capacity reservation wave contains duplicate ids');
     }
     return this._lock(() => {
       const state = this._read();
@@ -348,34 +381,120 @@ export class WorktreeCapacityAuthority {
         if (error instanceof WorktreeCapacityError) throw error;
         throw typed('worktree capacity could not be observed', 'worktree_capacity_unavailable', error);
       }
-      if (state.reservations.some((row) => row.id === id)) throw typed('worktree capacity reservation already exists', 'worktree_capacity_exceeded');
-      if (state.reservations.length >= MAX_RESERVATIONS) throw typed('worktree capacity reservation count is exhausted', 'worktree_capacity_exceeded');
+      const requested = new Set(prepared.map(({ id }) => id));
+      if (state.reservations.some((row) => requested.has(row.id))) throw typed('worktree capacity reservation already exists', 'worktree_capacity_exceeded');
+      if (state.reservations.length + prepared.length > MAX_RESERVATIONS) throw typed('worktree capacity reservation count is exhausted', 'worktree_capacity_exceeded');
       const totals = state.reservations.reduce((sum, row) => ({ bytes: sum.bytes + row.bytes, inodes: sum.inodes + row.inodes }), { bytes: 0, inodes: 0 });
-      if (totals.bytes + estimate.bytes > this.policy.maxReservedBytes || totals.inodes + estimate.inodes > this.policy.maxReservedInodes
-        || observation.freeBytes - totals.bytes - estimate.bytes < this.policy.minFreeBytes
-        || observation.freeInodes - totals.inodes - estimate.inodes < this.policy.minFreeInodes) {
-        throw typed('worktree capacity is unavailable for this reservation', 'worktree_capacity_exceeded');
+      const outstanding = state.reservations.reduce((sum, row) => ({
+        bytes: sum.bytes + row.outstandingBytes,
+        inodes: sum.inodes + row.outstandingInodes,
+      }), { bytes: 0, inodes: 0 });
+      const wave = prepared.reduce((sum, row) => ({ bytes: sum.bytes + row.estimate.bytes, inodes: sum.inodes + row.estimate.inodes }), { bytes: 0, inodes: 0 });
+      if (!Number.isSafeInteger(wave.bytes) || !Number.isSafeInteger(wave.inodes)
+        || !Number.isSafeInteger(totals.bytes + wave.bytes) || !Number.isSafeInteger(totals.inodes + wave.inodes)
+        || !Number.isSafeInteger(outstanding.bytes + wave.bytes)
+        || !Number.isSafeInteger(outstanding.inodes + wave.inodes)) {
+        throw typed('worktree capacity reservation totals overflow', 'worktree_capacity_unavailable');
       }
-      const separator = id.indexOf(':'); const kind = id.slice(0, separator); const resourceId = id.slice(separator + 1);
-      if (!['worker', 'verify'].includes(kind) || !resourceId) throw new TypeError('capacity reservation id kind is invalid');
-      const row = Object.freeze({
-        id, kind, resourceId, ownerId: this.ownerId, nonce: randomBytes(16).toString('hex'), pid: process.pid, bytes: estimate.bytes, inodes: estimate.inodes,
-        baseSha: request.baseSha, sparseDigest: request.sparseCheckoutIdentity.digest,
+      if (totals.bytes + wave.bytes > this.policy.maxReservedBytes || totals.inodes + wave.inodes > this.policy.maxReservedInodes
+        || observation.freeBytes - outstanding.bytes - wave.bytes < this.policy.minFreeBytes
+        || observation.freeInodes - outstanding.inodes - wave.inodes < this.policy.minFreeInodes) {
+        throw typed('worktree capacity is unavailable for this reservation wave', 'worktree_capacity_exceeded');
+      }
+      const createdAt = new Date(this.now()).toISOString();
+      const rows = prepared.map(({ id, request, kind, resourceId, estimate }) => Object.freeze({
+        id, kind, resourceId, ownerId: this.ownerId, nonce: randomBytes(16).toString('hex'), pid: process.pid,
+        bytes: estimate.bytes, inodes: estimate.inodes, baseSha: request.baseSha,
+        outstandingBytes: estimate.bytes, outstandingInodes: estimate.inodes,
+        sparseDigest: request.sparseCheckoutIdentity.digest,
         toolchainProjectionDigest: request.toolchainProjection?.projectionDigest ?? null,
-        createdAt: new Date(this.now()).toISOString(),
-      });
-      state.reservations.push(row); this._write(state);
-      return row;
+        createdAt, materializedAt: null,
+      }));
+      state.reservations.push(...rows); this._write(state);
+      return Object.freeze(rows);
     });
   }
 
   release(token) {
-    if (!token || typeof token !== 'object' || typeof token.id !== 'string' || typeof token.ownerId !== 'string' || typeof token.nonce !== 'string') throw new TypeError('capacity release requires an exact reservation token');
+    return this.releaseMany([token])[0];
+  }
+
+  materialize(token, resourcePath) {
+    if (!token || typeof token !== 'object' || typeof token.id !== 'string'
+      || typeof token.ownerId !== 'string' || typeof token.nonce !== 'string') {
+      throw new TypeError('capacity materialization requires an exact reservation token');
+    }
+    if (typeof resourcePath !== 'string' || resourcePath.length === 0) {
+      throw new TypeError('capacity materialization requires an exact resource path');
+    }
     return this._lock(() => {
-      const state = this._read(); const before = state.reservations.length;
-      state.reservations = state.reservations.filter((row) => !(row.id === token.id && row.ownerId === token.ownerId && row.nonce === token.nonce));
-      if (state.reservations.length !== before) this._write(state);
-      return state.reservations.length !== before;
+      const state = this._read();
+      const row = state.reservations.find((candidate) => (
+        candidate.id === token.id && candidate.ownerId === token.ownerId
+          && candidate.nonce === token.nonce
+      ));
+      if (!row) throw typed('capacity materialization reservation is unavailable',
+        'worktree_capacity_unavailable');
+      const root = join(realpathSync(this.repoRoot), '.baton', row.kind === 'worker' ? 'wt' : 'verify');
+      let materializedRoot;
+      let materializedPath;
+      try {
+        const rootStat = lstatSync(root);
+        const resourceStat = lstatSync(resourcePath);
+        if (!rootStat.isDirectory() || rootStat.isSymbolicLink()
+          || !resourceStat.isDirectory() || resourceStat.isSymbolicLink()) throw new Error();
+        materializedRoot = realpathSync(root);
+        materializedPath = realpathSync(resourcePath);
+      } catch {
+        throw typed('capacity materialization resource is unavailable',
+          'worktree_capacity_unavailable');
+      }
+      const within = relative(materializedRoot, materializedPath);
+      const verifyLabel = row.resourceId.slice(0, row.resourceId.lastIndexOf(':'));
+      if (within === '' || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)
+        || within.includes(sep)
+        || (row.kind === 'worker' && basename(materializedPath) !== row.resourceId)
+        || (row.kind === 'verify' && (verifyLabel.length === 0
+          || !basename(materializedPath).startsWith(`${verifyLabel}-`)))) {
+        throw typed('capacity materialization resource identity changed',
+          'worktree_capacity_unavailable');
+      }
+      if (row.materializedAt !== null) return Object.freeze({ ...row });
+      const next = Object.freeze({
+        ...row,
+        outstandingBytes: Math.min(row.bytes, this.policy.runtimeReserveBytes),
+        outstandingInodes: Math.min(row.inodes, this.policy.runtimeReserveInodes),
+        materializedAt: new Date(this.now()).toISOString(),
+      });
+      const index = state.reservations.indexOf(row);
+      state.reservations[index] = next;
+      this._write(state);
+      return next;
+    });
+  }
+
+  releaseMany(tokens) {
+    if (!Array.isArray(tokens) || tokens.length === 0 || tokens.length > MAX_RESERVATIONS) {
+      throw new TypeError('capacity release wave must contain a bounded non-empty token list');
+    }
+    for (const token of tokens) {
+      if (!token || typeof token !== 'object' || typeof token.id !== 'string'
+        || typeof token.ownerId !== 'string' || typeof token.nonce !== 'string') {
+        throw new TypeError('capacity release requires an exact reservation token');
+      }
+    }
+    if (new Set(tokens.map(({ id }) => id)).size !== tokens.length) throw new TypeError('capacity release wave contains duplicate ids');
+    return this._lock(() => {
+      const state = this._read();
+      const exact = new Set(tokens.map((token) => `${token.id}\0${token.ownerId}\0${token.nonce}`));
+      const released = new Set();
+      state.reservations = state.reservations.filter((row) => {
+        const identity = `${row.id}\0${row.ownerId}\0${row.nonce}`;
+        if (!exact.has(identity)) return true;
+        released.add(row.id); return false;
+      });
+      if (released.size > 0) this._write(state);
+      return Object.freeze(tokens.map(({ id }) => released.has(id)));
     });
   }
 
@@ -389,6 +508,21 @@ export class WorktreeCapacityAuthority {
     });
   }
 
+  settleForCleanup(id) {
+    if (typeof id !== 'string' || id.length === 0) {
+      throw new TypeError('capacity cleanup-settlement id is invalid');
+    }
+    return this._lock(() => {
+      const state = this._read();
+      const retained = state.reservations.filter((row) => row.id !== id);
+      if (retained.length !== state.reservations.length) {
+        state.reservations = retained;
+        this._write(state);
+      }
+      return state.reservations.every((row) => row.id !== id);
+    });
+  }
+
   adoptWorker(id) {
     return this._lock(() => {
       const state = this._read(); const index = state.reservations.findIndex((row) => row.id === id && row.kind === 'worker');
@@ -398,13 +532,17 @@ export class WorktreeCapacityAuthority {
     });
   }
 
-  reconcile(activeWorkerIds = []) {
+  reconcile(activeWorkerIds = [], retainedWorkerIds = []) {
     const active = new Set(activeWorkerIds.map((id) => `worker:${id}`));
+    const retained = new Set(retainedWorkerIds.map((id) => `worker:${id}`));
     return this._lock(() => {
       const state = this._read(); const removed = [];
       const adopted = [];
       state.reservations = state.reservations.filter((row) => {
         if (row.kind === 'verify') { removed.push(row.id); return false; }
+        // A retained checkout whose physical-owner binding failed validation is not cleanup or
+        // adoption authority. Preserve its reservation byte-for-byte for its owning controller.
+        if (row.kind === 'worker' && retained.has(row.id)) return true;
         const ownedInactive = row.ownerId === this.ownerId && !active.has(row.id);
         if (ownedInactive) { removed.push(row.id); return false; }
         const deadForeignInactive = row.ownerId !== this.ownerId && !active.has(row.id) && !livePid(row.pid);
@@ -425,8 +563,16 @@ export class WorktreeCapacityAuthority {
     return this._lock(() => {
       const state = this._read();
       const totals = state.reservations.reduce((sum, row) => ({ bytes: sum.bytes + row.bytes, inodes: sum.inodes + row.inodes }), { bytes: 0, inodes: 0 });
+      const outstanding = state.reservations.reduce((sum, row) => ({
+        bytes: sum.bytes + row.outstandingBytes,
+        inodes: sum.inodes + row.outstandingInodes,
+      }), { bytes: 0, inodes: 0 });
       const stateDigest = digest({ schemaVersion: state.schemaVersion, policyDigest: state.policyDigest, reservations: state.reservations });
-      return Object.freeze({ policyDigest: this.policy.digest, stateDigest, totals: Object.freeze(totals), reservations: Object.freeze(state.reservations.map((row) => Object.freeze({ ...row }))) });
+      return Object.freeze({
+        policyDigest: this.policy.digest, stateDigest,
+        totals: Object.freeze(totals), outstanding: Object.freeze(outstanding),
+        reservations: Object.freeze(state.reservations.map((row) => Object.freeze({ ...row }))),
+      });
     });
   }
 }

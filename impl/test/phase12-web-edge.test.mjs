@@ -165,14 +165,14 @@ test('EP4/EP5: secure transport is listener-wide for direct and proxy health/rea
   assert.equal(direct.coordination.events().filter((event) => event.payload?.kind === 'transport_refused').length, 1);
 });
 
-test('EP3: authenticated principal and weighted cost quotas refuse before durable command admission', async () => {
+test('EP3: authenticated principal and weighted cost quotas refuse before effects while reads stay off-ledger', async () => {
   const policy = edge({ limits: { principal: 1, cost: 1 } }); const s = system({ edgePolicy: policy });
   const issued = s.sessions.issue({ userId: 'u', authMethod: 'bearer', capabilities: ['observe'], repoIds: ['repo-a'], ttlMs: 60_000 }, { actor: 'provider' });
   const envelope = (id) => ({ schemaVersion: 1, commandId: id, idempotencyKey: id, command: 'list', args: {}, repoId: 'repo-a', origin: ORIGIN });
   const ctx = { principal: s.sessions.authenticate({ headers: { authorization: `Bearer ${issued.token}` } }), origin: ORIGIN, transport: 'https' };
   assert.equal((await s.web.execute(ctx, envelope('one'))).status, 200);
   assert.equal((await s.web.execute(ctx, envelope('two'))).status, 429);
-  assert.equal(s.coordination.events().filter((event) => event.kind === 'web.command_admitted').length, 1);
+  assert.equal(s.coordination.events().filter((event) => event.kind === 'web.command_admitted').length, 0);
   assert.equal(s.fleetCalls.filter((call) => call.key === 'list').length, 1);
 });
 

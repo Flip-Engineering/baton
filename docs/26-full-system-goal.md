@@ -35,6 +35,15 @@ Low-level Coordinator verbs and raw receipts remain an advanced kernel/debugging
 normal agent control surface. A phase-specific runner that manually recreates this choreography is
 evidence that the application is incomplete, not an acceptable product interface.
 
+The ordinary agent experience is one Pythonic, self-describing surface with logical methods and
+closed parameter branches, not a bag of phase runners or kernel commands. Information and control
+cascade from an outline to a table of contents, section summaries, and exact items only when the
+caller asks for more depth. Every distinct CLI, Web, MCP, and embedding surface provides contextual
+help at the same levels and projects the same application semantics. Routine callers never manage
+token/USD/wall budgets, provider-turn counts, export byte/file ceilings, temporary roots, leases,
+or capacity arithmetic. Baton owns safe defaults, readiness, capacity, cleanup, and progressively
+discloses the exceptional condition and remediation when operator authority is actually needed.
+
 The implementation loop for every increment is:
 
 1. verify current reality;
@@ -91,10 +100,14 @@ Harness/CLI, exact model, and model effort are independent axes. The orchestrato
 Selection must map to real controls: Claude/GLM `--model`, Codex thread/turn model overrides, Grok
 `--model`/ACP model state, and future adapters’ native mechanism.
 
-The current recursive-dogfood route is `CodexAppServerCli` + exact `gpt-5.6-sol` + `low` effort for
-efficient implementation work. `gpt-5.6` is not an alias and was correctly rejected by the live
-ChatGPT transport; Baton may not silently substitute it or any older default. Once isolated Grok
-authentication is available, Grok 4.5 through Grok Build is the intended cross-family,
+Recursive dogfood uses orchestrator-selected routes per task. Exact `gpt-5.6-sol` may use lower
+effort for bounded implementation or higher effort for architectural/adversarial work; there is no
+global `low` default. GLM work uses exact `glm-5.2` with explicit task effort (including `xhigh`
+where warranted), never the obsolete GLM examples retained in historical evidence. Kimi adds two
+separate planned routes: K3 through the `claude-code` harness and native Kimi Code through its own
+ACP harness. The ordinary Claude Code route currently pins exact `claude-opus-4-6`. Baton may not
+silently substitute a model, harness, or effort. Once isolated Grok authentication is available,
+Grok 4.5 through Grok Build remains the intended cross-family,
 Opus-class review/implementation stand-in. These are operator policy inputs backed by live cards,
 not timeless model folklore. GitHub issue
 [#2](https://github.com/wahargis/baton/issues/2) records the completed deterministic and recursive
@@ -116,26 +129,49 @@ runtime isolation.
 
 ### C. Southbound harness depth
 
+The general launch default is the harness's approval-free/high-autonomy mode. Baton maps that
+intent per harness (for example, native Kimi ACP `yolo`) and observes it before work where the
+protocol permits. This does not delegate Plan, route, credential, verification, result adoption,
+integration, publication, or kill/reap authority to the worker.
+
+Autonomy, access, and containment are separate axes. Today, Codex uses `approvalPolicy=never` with
+`danger-full-access`, Claude-family workers use `bypassPermissions` with their command sandbox
+disabled, Grok uses `--always-approve` with sandbox `off`, and native Kimi uses ACP `yolo`. A private runtime isolates projected configuration and credentials; a
+worktree selects the worker's repository context. Neither fact proves OS filesystem or network
+containment. Claude, Codex, Grok, and native Kimi therefore report same-UID containment as unverified, and Baton's
+one-shot tier consumes the private replacement environment instead of inheriting ambient host
+state. Profile schema v2 now binds requested autonomy, full-versus-workspace access, and containment
+through Plan, authoritative Brief, dispatch, and route-learning identity. Provider-observed mismatch,
+complete recovery propagation, and concise Run/evidence projection remain before this policy is complete;
+host-unrestricted execution is never mislabeled as worktree-contained.
+
 - Claude: native session steering/interrupt, approvals/questions, hooks, context/usage
   introspection, compaction events, constraint reinjection, model/permission reconfiguration,
-  resume/fork/rewind, config-home isolation, and live capability discovery.
+  resume/fork/rewind, config-home isolation, live capability discovery, and an isolated
+  Kimi-through-Claude route that selects exact K3/max without mutating the user's Claude install.
 - Codex: app-server sessions, steer/interrupt, approvals/questions, thread inject/resume/fork,
   goal pinning, structured outputs, review, compaction, usage/rate limits, broker/daemon topology,
   model/service/reasoning selection, sandbox policy, and schema-driven feature detection.
 - Grok: ACP core plus model selection/state, session load/fork/rewind, auth, extensions, usage,
   multi-client attach, home/MCP isolation, and explicit handling of unsupported ask-user behavior.
+- Native Kimi Code: ACP worker and orchestrator/recipient roles, exact `kimi-code/k3` selection,
+  `max` effort, subscription-auth projection, full-permission `yolo`, session lifecycle, and honest
+  cards for controls that ACP cannot observe.
 - GLM: Claude-harness session parity, exact model mapping, non-refuser capability metadata,
-  concurrency/quota inputs, scoped credentials, and live proof when credentials are available.
+  concurrency/quota inputs, scoped credentials, and live proof using only exact `glm-5.2` with
+  orchestrator-selected effort (including `xhigh` for the intended dogfood), never an old example.
 - Honest one-shot tier and future ACP adapters remain separately carded; no reduced tier may pose
   as the session product.
 
 ### D. Safety and governance
 
 - Real OS sandbox profiles, worktree confinement, network policy, scoped environment/credentials,
-  isolated harness homes, and approval-gated outside-world side effects.
-- Dry-run/approve-all/sample/autonomous trust ramp with emergency stop always available.
+  isolated harness homes, and Baton-gated outside-world side effects.
+- Explicit dry-run/restricted/sample modes plus high-autonomy harness execution by default, with
+  emergency stop always available and exact resource reap remaining mandatory.
 - Wall, token, USD, rate-limit, account-seat, and quota-window budgets folded into authoritative
-  state with thresholds, hard stops, and degradation policies.
+  state with thresholds, hard stops, and degradation policies. These are deployment-owned safety
+  authority and observability, not routine caller arguments or environment choreography.
 - Deterministic watchdog actions for mechanical stall/loop/scope/churn cases; semantic failure
   classifiers remain explicitly untrusted model judgments.
 - Correct provenance: hub facts, worker prose, external evidence, and derived claims never share a
@@ -246,7 +282,8 @@ proof; every one remains visible under its existing Decision gate.
   compaction, context usage governance, and retractable views.
 - MCP northbound fleet tools and tasks, a long-lived daemon, resumable waits/subscriptions, and an
   operator text/TUI seat with narrative, provenance, takeover, approvals, budgets, and emergency
-  control.
+  control. MCP and Web expose the same bounded, self-describing Run cascade and contextual help as
+  direct embedding; they do not force callers down to receipt, ledger, lease, or task coordinates.
 - An **authenticated web northbound** for the human user ↔ orchestrator direction. HTTPS command
   requests and a resumable WebSocket/event stream expose the same coordinator authority—not a
   parallel state machine—including spawn/harness/model selection, steer/nudge/turn, approval and
@@ -581,7 +618,7 @@ projection nor the live router. Immutable verified `RouteStat` nodes retain task
 fresh router hydrates from their ordered observations before dispatch on restart. Cairn's bounded
 `route.advice` reads this evidence through the sole direct/authenticated-web/MCP capability plane
 without accepting outcomes or gaining routing-mutation authority. Live two-route restart proof and
-an exact credentialed `glm-4.7`/low recursive run both verify no replay double-count and complete
+an exact credentialed `glm-5.2`/orchestrator-selected-effort recursive run both verify no replay double-count and complete
 kill/reap. Phase 45 supervised auto-rejoin, Phase 46 representation attestation, later causal
 audit/recall and contradiction hardening, and every higher AST/SCIP/CPG/IR/behavior/merge/e-graph
 contract remain in the goal. No homelab or external project-manager runtime is introduced.
@@ -1014,5 +1051,352 @@ is explicitly out of scope.
     authenticated `baton` client now uses the Web command bus and owns no fleet authority;
     `baton serve` separately owns Web admission plus exact host shutdown. Cursor follow,
     materialized export, recovery, and semantic depth remain red.**
+
+## 2026-07-17 continuation ledger
+
+This ledger is the current execution tracker layered over the retained catalog above:
+
+- **Phase 69 — green/shipped:** application-owned verifier retry cascade and regression evidence.
+- **Phase 70 — local green, live safety proof obtained:** exact stop checkpoints unaccepted work
+  before reap; `resume_work` restores a pinned checkpoint without caller coordinates; repeated
+  same-node resumes form one linear lineage. Focused and affected validation is 207/207 green. A
+  live resource stop preserved a reviewer's dirty tree under an immutable checkpoint and reaped its
+  process/worktree.
+- **Provider-result honesty — failure gate locally green; required-effect authority red:** the GLM
+  5.2/xhigh wire correctly reported a structured failed result after a 429, but Baton ignored that
+  status and accepted an unchanged passing base. Only exact completed results now reach the trust
+  gate; failed work instead becomes a durable provider failure, optional Phase 70 checkpoint, and
+  confirmed kill/reap with no accepted/adoptable/exportable artifact. Phase 73 separately adds an
+  explicit Plan `requiredEffects` contract; existing authorized `effects` is not misused for that
+  meaning. GLM is rate-limited until 2026-07-18 09:32:19 and is not retried before then.
+- **Phase 71 — deterministic implementation/KK8 expansion in progress:** isolated Kimi K3 routing through the existing Claude
+  Code harness, exact `kimi-k3[1m]`, provider-required `max` effort, private owner-only API key,
+  per-dispatch environment, and no global Claude mutation. The Kimi API key is not requested until
+  the credential-free KK8 gate passes.
+- **Phase 72 — deterministic worker implementation green; live dogfood active:** native Kimi Code 0.27.0 ACP worker support plus a
+  separately authenticated Kimi orchestrator client over Baton's MCP/application semantics. The
+  installed subscription login permits later live proof without a new API key, but only after
+  private projection and global-state immutability tests pass. Native Kimi now selects and observes
+  K3 plus ACP `yolo` before prompt, while exact effort remains configured privately and reported as
+  unobservable where ACP exposes only thinking on/off. Pending provider approvals/questions are
+  advertised as ordinary collision-safe Run actions rather than forcing raw request choreography.
+  Live dogfood also exposed provider-granularity event amplification; native Kimi now promptly emits
+  the first content chunk while coalescing repeated thought/message and tool-progress deltas without
+  losing file edits or requested/progress/terminal milestones. Native worker live proof is green:
+  K3/max produced an exact required edit, passed the 249-test candidate/base gate, was adopted and
+  exported, and then emitted process-close before kill-confirmed with empty worker/runtime roots.
+  The Kimi-orchestrator Web/MCP bridge is deterministic-green and exposes only the five compact Run
+  tools; its transport cannot shut down the resident Baton application. Packaged live orchestrator
+  proof and direct pre/post global-Kimi source digests remain the Phase 72 closure items.
+- **Parallel host ownership — red/AX:** separate Baton application hosts cannot reconcile one shared
+  target `.baton/wt` namespace concurrently. Current parallel dogfood uses one exact snapshot clone
+  per host; future deployment assembly needs explicit namespace/lease authority rather than racing
+  startup cleanup.
+- **Phase 74 — deterministic application connection green:** `baton setup`, progressive `doctor`,
+  connection help, and authenticated repository selection now form one owner-only Git-common-dir
+  connection path. Setup never asks an agent to manage token budgets, export byte ceilings, or
+  provider credentials on argv; ambiguous profiles remain explicit user input. The authenticated
+  Web-to-MCP bridge derives user, session, capabilities, repository scope, and expiry from the
+  remote session and re-attests them before every command and replay.
+- **Phase 75 — deterministic task topology green:** one closed deployment policy now bounds task
+  depth, total and per-relation fanout, and tasks per Run. Root, follow-up, review, oracle, recovery,
+  and preserved-resume lineage is prospectively refused before capacity/worktree/provider effects,
+  independently revalidated by the store, and deterministically reconstructed on replay. The
+  strict test fixture also proves public drain/reap rather than leaving asynchronous workers behind.
+- **Phase 76 — deterministic recovery-attempt authority green:** store, Coordinator, application,
+  and startup recovery now share two-phase `recovery.attempt_admitted` /
+  `recovery.attempt_completed` CAS authority. Admission binds the exact prior task and hub-verified
+  owner, Run, route/card/model policy, worker policy, Plan/profile/recovery policy, immutable
+  deployment `maxAttempts`, session generation, and deterministic recovery-task identity before any
+  provider, operational-log, runtime, or adapter effect. The application supplies policy but never
+  an attempt coordinate. Replay reconstructs exact heads and receipts; startup eligibility passes
+  this attempt-state gate only after `not_started` or `closed`, while `pending`, `attached`, and
+  `unknown` fence automatic redelivery. Focused Phase 76 store and integration contracts are green;
+  this entry does not claim a new full-suite result or recursive Run authority.
+- **Phase 77 — deterministic durable recursive authority green:** an opt-in closed policy now binds
+  fixed-capability application leases to the exact repository, authenticated principal/session,
+  live parent Run/task version, and current worker. Child lineage is derived and durably admitted
+  before its first Goal/Plan effect under independent depth, direct-child, and root-descendant
+  ceilings. The only recursive capabilities are `run.start`, `run.status`, and `run.stop`; Web and
+  MCP derive the same private authority from authenticated server state without adding lease or
+  ancestry fields to public schemas, and replay re-attests it. Recursive stop snapshots one
+  immutable `throughSeq`-bound descendant Run/task/worker union, fences prospective descendants,
+  leaves unrelated sibling subtrees open, and completes only with `remainingCount === 0` plus
+  `processesObserved === processesClosed`. Focused store, Coordinator/application, authenticated
+  Web, and MCP matrices are green under
+  `spec/phase77-durable-recursive-run-authority.md`. This is application authorization and
+  lifecycle ownership, not OS sandboxing or same-UID credential secrecy. Adversarial closure also
+  binds repository identity to deployment authority, prevents an inactive historical recipient
+  lease from degrading into ordinary authority, preserves exact recursive refusal through Web/MCP,
+  reauthorizes inspect/follow after waits and before return, sanitizes recursive proof fields from
+  SSE, and adds one progressive `orchestration` chapter to the Run outline/index/section cascade.
+  It shows role/depth, direct-child and descendant counts, effective recipient authority, and
+  subtree-stop target counts without exposing repository paths, task/worker/session coordinates,
+  or lease/request/authority digests. Unconfigured deployments retain an empty chapter and no
+  recursive outline claim.
+- **Recursive dogfood AX — active findings:** the objective-first Baton/Kimi route exposed two
+  integration frictions before and during real provider work. A clean target missing its declared
+  dependency projection collapsed to the generic `worktree_unavailable` terminal instead of a
+  setup/doctor action, and public harness attestation initially compared the private adapter key
+  (`kimi-code:dogfood`) against the public requested harness (`kimi-code`). The attestation mapping
+  is now fixed and deterministically tested. Setup must next preflight declared dependency
+  projections and return a self-describing remediation without exposing internal paths by default.
+- **Recursive Baton-on-Baton dogfood — authority green, application assembly still active:** native
+  Kimi Code K3/max reached the objective-first surface and produced a useful checkpoint before the
+  configured wall boundary. The run exposed an ACP-close race that mislabeled Baton's timeout kill
+  as a protocol failure; the timeout now wins the race, emits one typed terminal failure before
+  exact process-close/kill confirmation, releases session ownership, and is regression-covered.
+  The checkpoint's deployment-factory extraction is a useful AX direction, but its route table,
+  profile, and one-adapter assembly are stale relative to current Kimi, full-access worker policy,
+  provider attestation, recursive authority, and multi-harness routing. Adapt the concept; do not
+  cherry-pick the checkpoint. Multi-harness recursive application proof remains pending. Same-UID
+  full-access workers still cannot provide adversarial credential secrecy without a distinct
+  UID/container/VM or external broker.
+- **Harness matrix — live lifecycle progress, provider gates red where measured:** two exact
+  Grok 4.5/high Runs were admitted concurrently through the concise bound-Run group; one was
+  selectively stopped while the sibling continued, and deployment close/reopen proved zero local
+  ownership and no stale stop action. The sibling then failed honestly at
+  `authentication_required`: bounded local Grok expiry metadata was stale, so current doctor now
+  blocks all Grok efforts before spawn with `grok login` remediation. A literal Grok Build request
+  is still provider-observed as `grok-4.5` and therefore rejected as an exact-model mismatch.
+  Claude, native Kimi, Kimi-through-Claude, Codex, GLM, and Grok provider-success receipts remain
+  separate gates; lifecycle success is not relabeled as provider-work success.
+- **Phase 78 — integrated deployment surface active, not a capability-plane completion claim:**
+  `openBaton({repo})`, bound Runs, exact route triples, hidden deployment policy, repository
+  snapshotting, parallel Run groups, and joined close/reap are the concise application direction.
+  Deployment-owned dependency/verification readiness, fixed internal host-capacity admission,
+  crash-safe export-owner recovery, profile replay, contextual doctor/help, expired Kimi/Grok auth
+  refusal, and current-incarnation-only ownership projection are deterministic-green. Real Codex
+  `gpt-5.6-sol`/medium dogfood survived an intentional >1 MiB telemetry event, freshly verified and
+  adopted its scoped result, exactly closed, and reopened with cleanup complete and no owned
+  resources. Remaining closure requires broader recursive multi-harness live proof through the
+  same surface. That proof continues to exercise multiple harnesses in parallel, select exact
+  harness/model/effort per task, interrupt or kill a chosen worker, and leave zero process,
+  worktree, runtime, lease, and export ownership. It includes Codex `gpt-5.6-sol` with
+  task-appropriate effort, native Kimi `kimi-code/k3` at `max`, isolated Kimi-through-Claude K3 at
+  `max` when configured, Grok 4.5 (with literal Grok Build remaining red until provider-observed),
+  and GLM only as `glm-5.2` at orchestrator-selected effort after provider readiness. Ordinary
+  callers do not supply budgets, file-size ceilings, temporary roots, or capacity knobs. Native
+  Kimi and Grok are currently auth-red until their ordinary harness logins are refreshed;
+  Kimi-through-Claude now has `baton credentials install kimi` but no key has been requested. The
+  concise profile now prepares an adopted result and pauses at an explicit destructive `apply()`
+  boundary; clean repositories default to `ff-only`, dirty/diverged repositories refuse without
+  overwrite, and ambiguous post-fast-forward failure poisons authority rather than being recorded
+  as a harmless refusal. Export cannot auto-skip that boundary. Two real Codex workers were then
+  dispatched concurrently through `startMany` at exact high and medium effort for Atlas and shared
+  knowledge/AX audits. Both passed fresh verification, were adopted and pinned, and close returned
+  zero workers. The run also exposed the absence of a compact live group progress method: one
+  sibling was verified while the other remained actively editing, but ordinary group output could
+  not summarize that without inspecting durable ledgers.
+- **Phase 79 — bounded parallel Workflow composition green; strategy expansion active:**
+  `spec/phase79-dynamic-workflow-composition.md` adds the missing durable application layer above
+  Goal/Plan, task topology, Run lineage, and exact lifecycle ownership. One Workflow owns logical
+  WorkItems, parallel attributable Attempts, Waves, immutable Candidates, typed feedback,
+  review/revision successor Plan versions, synthesis, deterministic gates, selective stop/reap,
+  and replay/recovery. The shipped vertical atomically dispatches one parallel Wave for a shared
+  WorkItem, retains role-attributed Candidates, records typed feedback, selects by role, exposes
+  compact group state, and supports selective or whole-Workflow stop/reap. Batch requests are fully
+  preflighted before effects; partial admission and stop join every affected Run and report exact
+  cleanup-incomplete identities. Parallel workers share immutable bases, addressed context, Atlas/artifacts,
+  Scratch, and causal knowledge but keep private writable overlays. A shared writable lineage is
+  explicitly one fenced writer generation at a time; hub-composed overlays serialize selected
+  private deltas. Direct concurrent multi-writer checkout access is refused under Baton's current
+  full-permission same-UID posture. Later slices compile review/debate/synthesis/partition strategies,
+  deeper workspace composition, and causal projection from the same primitive. This is one multi-node Run
+  application, not a second Airflow-like engine or hidden worker chat system.
+- **Phase 80 — bounded recursive Candidate revision vertical green; multi-round hardening active:**
+  `spec/phase80-recursive-candidate-revision.md` turns typed feedback into executable work only by
+  appending a successor Plan version under the same Goal, requiring distinct approval, and
+  launching a fresh isolated Attempt from the exact still-resolving retained Candidate SHA. A
+  closed content-addressed revision envelope, truthful `revision` topology relation, dedicated
+  atomic Candidate-base admission, bounded Plan-history projection, evidence, CLI verbs, replay,
+  and one correction round are implemented and tested. A live two-Candidate Codex Workflow then
+  attached exact feedback, selected one Candidate, proposed and approved Plan v2, freshly verified
+  a distinct exact-base revision Candidate, selected it, and closed with zero workers/worktrees.
+  Deployment-owned multi-round policy, cumulative Goal headroom, Plan v3 replay, repeated-feedback,
+  identical-Candidate/no-progress and contradiction stopping, lost-approval replay, and typed
+  ambiguous-worker recovery are now deterministic-green. The failed attempts also repaired
+  too-small internal default execution envelopes, oversized
+  historical snapshot projection, durable absence proof for old process groups without signaling
+  reused PIDs, and stale historical-worktree cleanup. Remaining Phase 80 work is the adverse
+  revision restart/stop effect-boundary matrix and explicit Web/browser/MCP multi-round parity.
+  Review, resume, recovery, generic spawn, and shared
+  multiwriter shortcuts remain explicitly forbidden.
+- **Phase 81 — common Context Program and RLM-style externalized-context strategy active:**
+  `spec/phase81-context-program-rlm.md` separates the stateless Bench substrate, Pythonic
+  ContextSession AX, and `context_recursive` Workflow strategy. The public experience is concise,
+  while the durable language is a closed canonical AST rather than arbitrary Python, shell, host
+  `exec`, or a model-controlled provider callback. Exact harness/model/effort remains an outer
+  orchestrator role-map decision; ordinary agents and users do not manage recursion, call-count,
+  budget, concurrency, export, file, storage, or provider-turn limits. The first local vertical is
+  green for immutable tree-bound manifests, closed AST validation, deterministic pure
+  search/chunk/coverage cells, content-addressed artifacts, durable session/cell/settlement events,
+  restart identity, historical-policy reads, Context-aware Run-stop receipts, exact source
+  provenance, owned process-group kill/reap, credential-minimal Git execution, shutdown admission
+  fencing, non-poisoning lifecycle abort, and contextual help. Narrow write scope is now distinct
+  from deployment-authorized immutable Context read scope. It deliberately does not claim dynamic
+  model-backed map/reduce, ContextManifest/Atlas/Scratch partition-to-successor-Plan/Wave
+  compilation, child-call synthesis/review/termination, or RLM utility evaluation yet. Those are
+  the next gated slices; depth greater than one and persistent shared kernels remain closed.
+- **Phase 81 live dogfood — useful friction, not a polished success claim:** the first ordinary
+  `openBaton()` attempt collided with stale default coordination state before provider launch,
+  showing that default deployment-state compatibility/isolation still needs product handling. An
+  internally owned ephemeral deployment then correctly blocked an expired Kimi subscription;
+  ordinary Kimi device login refreshed it. The subsequent Wave admitted exact Codex
+  `gpt-5.6-sol`/low and native Kimi `kimi-code/k3`/high routes in parallel private worktrees. Codex
+  produced and freshly verified a Candidate while Kimi stalled inside a harness-internal recursive
+  analysis. A terminal interrupt durably admitted the Run stop and exact kill requests but exited
+  before the foreground runner could present confirmation. Reopening the same ledger joined that
+  stop, truthfully failed the interrupted Kimi task, observed both provider processes closed,
+  removed both worktrees, completed with `remainingCount: 0`, and closed with zero workers. The run
+  exposed weak concise in-flight progress, incomplete visibility into harness-internal descendants,
+  and the need to keep idempotent signal handlers installed until awaited cleanup finishes. It is a
+  recovery/reap proof, not a successful Kimi Candidate. A tightened rerun then kept Kimi inside one
+  direct-tool provider generation: exact Codex low and Kimi high both produced freshly verified
+  Candidates; typed feedback selected the exact Kimi Candidate; Baton appended and distinctly
+  approved Plan v2; the revision launched from the exact retained Kimi SHA and freshly verified a
+  revised Candidate. Final Workflow stop and deployment close returned zero workers, and caller
+  status/index were unchanged. The live run therefore proves the Kimi parallel and successor-Plan
+  path while retaining the progress/auth-lifetime friction honestly.
+- **Phase 83 — durable owned Context application vertical:** Context sessions and pure cells now
+  have append-only admission/settlement authority, exact restart and historical-policy replay,
+  v2 Git/tree/blob/range source receipts, private attester capability, Context-aware Run-stop
+  receipts, an open/closing/closed deployment gate, and owned minimal-environment process groups
+  whose result cannot settle before whole-group reap. Lifecycle abort leaves the logical cell
+  recoverable. Deployment-authorized `contextScope` is distinct from narrow write `pathScope`, a
+  split derived from live Baton dogfood rather than exposed as another routine caller knob. The
+  remaining Context successor is real provider-backed AST `map/reduce/review/verify` compilation
+  through separately approved Plans/Waves, durable child synthesis/termination, richer Atlas and
+  shared-knowledge branches, transport evaluation, and a four-arm RLM utility gate.
+- **Phase 83 live dogfood — exact stop/reap success, Candidate failure kept honest:** two parallel
+  exact Codex `gpt-5.6-sol` routes at high/xhigh effort and a concurrent pure Context cell were
+  admitted. The report-only edit scope initially yielded zero repository Context items, which led
+  directly to the `contextScope` correction. Both provider workers then over-inspected for roughly
+  ten minutes without writing their single scoped report, exposing the lack of a concise
+  finish-now/synthesis policy. The operator interrupted; Baton returned a durable stop receipt,
+  zero workers, zero worktrees/processes, zero ownership on close, and unchanged caller
+  status/index. No Candidate success is claimed. Current native Kimi and Grok subscription caches
+  were expired and correctly refused before spawn; earlier Kimi/Grok receipts remain historical.
+- **Phase 84 — first provider-backed Context successor is implementation-green:** one addressed
+  `context.map(...)` call now binds a completed pure cell to a content-addressed partition set,
+  durable call admission, ordinary successor Plan, distinct approval, and one atomic parallel Wave.
+  Raw selected partition bytes materialize only into the physical provider Brief. Terminal
+  settlement refuses failed/cancelled children, records the exact provider-effect count, and cannot
+  succeed until every mapped task has a policy-authored operational cleanup attestation, mapped
+  coordination evidence, and dedicated `task.resources_released` event proving process, session,
+  worktree, runtime, interaction, and local-authority closure. Restart after physical cleanup but
+  before settlement converges without a second provider effect; Run stop v3 includes Context calls.
+  The Pythonic cell/call surface now includes output/evidence/help and singleton-role inference,
+  while empty/singleton map input returns typed guidance instead of a fake Wave. Dedicated Phase 84
+  tests are 17/17, focused recursive/lifecycle coverage is 150/150, transport coverage is 82/82,
+  and the current complete implementation suite is green at 2,081/2,081.
+- **Phase 85 — addressed lineage and recursive synthesis underway:**
+  `spec/phase85-context-lineage-recursive-synthesis.md` preserves exact per-output source lineage,
+  a root Workflow role catalog across synthetic successor Attempts, one generic durable
+  `map | reduce` call envelope, terminal failed-call cleanup, selective retry generations, and an
+  immutable expression builder compiling through one `context_eval` action. The intended bounded
+  workflow is pure selection -> parallel map -> separately approved reduce -> optional selective
+  retry. The first implementation slice now emits and validates immutable cell-evidence v2 across
+  every pure operator, dual-reads historical v1 evidence, refuses aggregate-only v1 provider
+  admission, binds map partitions/physical Briefs to exact per-output coordinates, and releases
+  completed, failed, and cancelled terminal task resources. Failed map generations now also settle
+  durably only after release with the complete ordered accepted/failed/cancelled set, evidence-only
+  private CAS, typed termination, `outputRef: null`, exact idempotency, restart convergence, and
+  terminal preservation through Run stop. The retained-commit provider-result capsule core now
+  projects only canonical protected result refs descending from the runtime base, requires the full
+  changed-path set to be in scope and supported, rejects sensitive/partial projections, writes raw
+  content only to private Context source CAS, and binds the complete source ref plus child, route,
+  artifact, cleanup, scope, and extractor-policy identities. Accepted capsules now attach atomically
+  as an ordered sibling set without changing or cycling terminal child digests. The application
+  rederives inputs from the exact historical successor Plan; coordination rereads and reprojects
+  capsule/source CAS against child, route, commit/ref, cleanup, and path-scope authority both at
+  settlement and replay. Completed output exposes only safe refs; failed aggregates retain refs only
+  for accepted children with null output and the full attempted provider-effect count. The focused
+  Phase 84/85 attachment matrix is green at 31/31. Workflow definition v3 now also separates
+  durable semantic roles from physical Attempts through one closed, digest-bound root catalog with
+  exact node templates and independent harness/model/effort routes. Map and revision successors
+  retain unused roles, instantiate exact templates, bind synthetic Attempt identity to canonical
+  partition indexes, and preserve a complete non-cyclic root/parent/generation chain. Historical
+  v1/v2 definitions replay under their recorded schema; new successors upgrade once to v3 without
+  inferring roles from synthetic names, and unbound derived v1 revisions are durably anchored before
+  v3 succession. Mixed v2→v3 map admission survives close/reopen with its exact route tuple. The
+  focused role/revision/map authority matrix is green at 26/26. A pure CLR3 generation-1
+  `map | reduce` request/call/unit identity core now also derives requester authorization and exact
+  selected-output lineage, with a one-way map-v2 compatibility projection and no competing ledger
+  identity. Successful map settlements now add closed call-evidence v3 with one exact source-output
+  parent and one Plan/node/task/terminal/route/artifact/capsule/source/cleanup/child derivation per
+  ordered safe result ref. Coordination rebuilds the complete lineage on live append, event replay,
+  and artifact reads; the settlement event does not duplicate it. Historical successful v2 remains
+  replay-readable but cannot become a reduce source by inference, failed v2 remains lineage-free,
+  and only a fully reverified v3 settlement derives the distinct call-evidence source contract.
+  Cleanup-gap recovery and a second restart preserve that source without another provider effect.
+  Generic effect-call admission now shares the same `context.call_admitted` event and `_contextCalls`
+  projection: historical map payload schema v1 remains stable, while schema v2 durably prebinds one
+  closed generic map or reduce call to an exact successor Plan. Live admission revalidates service
+  plus requester identity, current Plan/definition/catalog/template/route authority, completed-cell
+  evidence v2 or completed-call evidence v3, and every exact unit; idempotency, restart, tamper
+  replay, application map-reconciliation exclusion, and Run-stop targeting are covered without a
+  provider effect. Parallel dispatch dogfood then exposed a restart AX defect: live worker journals
+  contained real turns, token deltas, tools, tests, and edits while reopened Workflow status showed
+  zero turns/usage/paths and no terminal cause. Driver startup now rebuilds Story from durable logs,
+  batched adapter edit paths normalize to repository-relative paths, recovery/process-close events
+  terminalize activity, and Plan terminal outcomes supply typed provider causes when no live result
+  survives. The exact stopped Codex/GLM Run now reopens showing Codex's 3,326,408 tokens, both exited
+  states, both `recovery_terminalized` causes, and zero workers on close. Generic reduce dispatch
+  now also ships through the existing application surface: `context_reduce {callId, instruction,
+  role?}` rederives only a fully verified successful call-evidence-v3 source, binds the requester and
+  current Workflow v3 catalog/template/route, admits and proposes the exact successor Plan without
+  provider work, recovers a missing proposal on restart, and crosses the provider edge only after
+  separate approval. The selected provider Brief reopens each result ref, capsule, retained-result
+  projection, and private source; durable coordination stays reference-only. Reopen proves no
+  duplicate dispatch and Run stop reaps the generic worker. The full suite is green at 2,110/2,110.
+  Baton itself produced two reviewed exact
+  Codex high/xhigh Candidates and then kill-confirmed/closed both observed process groups with zero
+  remaining workers; a native Kimi K3 max-effort attempt was truthfully preflight-refused because
+  its cached authentication had expired and closed with zero workers. A later exact Codex high/xhigh
+  admission run was interrupted before either Attempt produced a Candidate; Baton reopened the exact
+  deployment, recovery-terminalized both honestly, observed/closed both process records, and proved
+  zero remaining workers. A fresh exact Codex high/xhigh Baton review then retained two accepted
+  Candidates, independently passed the focused 16/16 gate, found no concrete defect, and stopped
+  with both observed processes closed and zero workers. An exact Kimi Code K3 high route was
+  truthfully refused before Run creation because its cached authentication had expired; no harness
+  substitution occurred and close returned zero workers. Generic successful/failed settlement still
+  must be generalized without duplicating map-specific authority. The accepted-artifact variant,
+  projection-failure terminalization, workerless
+  non-admission, generic reduce/retry/eval semantics, and live recursive proof remain.
+  Generic dispatch dogfood also showed that `complete()` still needs integrated live member progress,
+  concurrent member stop/timeout, and explicit zero-Candidate terminal-cause presentation. GLM-5.2
+  xhigh repeatedly resolved through the Claude-Code/Z.ai adapter but remained initialization-stalled;
+  Codex could complete focused tests yet lose its final provider response. These are retained harness/
+  control-plane gaps, not successful design Candidates.
+  Goal/Plan authority also still represents harness/model/effort as independently admitted sets;
+  exact authorized tuple anti-recombination is tracked in
+  [GitHub #2](https://github.com/wahargis/baton/issues/2#issuecomment-5012736166).
+  Executable review/verify, custom syntax, persistent kernels, and deeper recursion remain
+  closed until their independence/gate authorities exist; they are not silently claimed or erased.
+- **Phase 92 — Episode/workstream facade and resident trust/liveness closure green:**
+  `spec/phase92-episode-workstream-facade.md` projects one progressive Episode/workstream surface
+  through direct API, selector-free CLI, authenticated Web, MCP, and browser. Aggregate and exact
+  role/generation Episodes retain separate result, artifact, route, verification, and cleanup
+  truth; pending result is explicit; help and continuation are closed. Temporal Run/Plan/Attempt/
+  Context evidence joins Atlas and Cairn through immutable evidence-bearing edges. Replay uses
+  append-aware one-parse-per-byte worker indexes and parsed-event checkpoints that still execute
+  every current replay validator; a checkpoint cannot bless ledger drift or block writer-lease
+  release. Ordinary reads do not amplify the ledger, while readiness/status security audits remain
+  durable. Stale resident replacement is deployment/PID-start exact, serve construction is unified,
+  false verifier verdicts cannot accept, read-only reviews can settle without edits, and route
+  readiness explains blocked Kimi/Grok/Claude/Kimi-through-Claude states. Built-in GLM exposes only
+  `glm-5.2` with exact selectable `low`, `medium`, `high`, `xhigh`, and `max`; `xhigh` remains an
+  explicit dogfood choice and provider-omitted Codex model observation remains null. The complete
+  deterministic implementation suite is green at 2,302/2,302. Fixtures are not live-provider or
+  real-PID proof.
+- **Retained next systems:** the evidence-backed Episode/workstream/closed-Program-IR assessment in
+  `docs/29-slate-architecture-assessment.md` complements rather than replaces Context, Atlas,
+  Cairn, stop/reap, and Web authority. Adapter identity/capability metadata, authenticated bidirectional Kimi
+  control, AST/CST/SCIP/CPG and semantic-delta precision, shared causal knowledge graph, Web control
+  depth, Vantage/Evidence/Scratch/Skill Forge, evaluations, and the rest of this catalog remain
+  tracked. Phase 93 next preserves this sequence: closed Program IR; event-driven recursive/
+  parallel composition; immutable base plus private overlays; one fenced integrator; live
+  multi-harness gates. No homelab integration is included.
 
 No later step is permission to erase it from the goal.

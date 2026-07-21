@@ -1,0 +1,362 @@
+{
+  "schemaVersion": 1,
+  "deploymentRoot": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-phase85-effect-admission-EaRJCq",
+  "runId": "run-41128026e7896be6525242e84bb5ed78",
+  "outcome": "interrupted_then_recovered",
+  "runStatus": {
+    "phase": "failed",
+    "attempts": [
+      {
+        "role": "effect-admission-adversary",
+        "nodeKey": "attempt:effect-admission-adversary",
+        "taskId": "baton-40ea58cbc81d535b5dde01f0-attempt-effect-admission-adversary",
+        "state": "failed",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "xhigh"
+          },
+          "resolved": {
+            "harness": "codex@codex-cli 0.144.6",
+            "model": "gpt-5.6-sol",
+            "effort": "xhigh"
+          },
+          "observed": {
+            "harness": null,
+            "model": "gpt-5.6-sol",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": "codex@codex-cli 0.144.6",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": "xhigh",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          }
+        },
+        "candidateId": null,
+        "memberStop": null,
+        "activity": {
+          "state": "idle",
+          "lastEventAt": "2026-07-18T23:45:43.751Z",
+          "lastEventSeq": 138,
+          "turnCount": 0,
+          "usage": {
+            "tokens": 0,
+            "usd": 0
+          },
+          "editedPaths": [],
+          "warnings": []
+        },
+        "verification": "failed",
+        "terminalCause": null
+      },
+      {
+        "role": "effect-admission-builder",
+        "nodeKey": "attempt:effect-admission-builder",
+        "taskId": "baton-3efc5ad4df6671e901f5a477-attempt-effect-admission-builder",
+        "state": "failed",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "high"
+          },
+          "resolved": {
+            "harness": "codex@codex-cli 0.144.6",
+            "model": "gpt-5.6-sol",
+            "effort": "high"
+          },
+          "observed": {
+            "harness": null,
+            "model": "gpt-5.6-sol",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": "codex@codex-cli 0.144.6",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "high",
+              "resolved": "high",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          }
+        },
+        "candidateId": null,
+        "memberStop": null,
+        "activity": {
+          "state": "idle",
+          "lastEventAt": "2026-07-18T23:45:43.763Z",
+          "lastEventSeq": 128,
+          "turnCount": 0,
+          "usage": {
+            "tokens": 0,
+            "usd": 0
+          },
+          "editedPaths": [],
+          "warnings": []
+        },
+        "verification": "failed",
+        "terminalCause": null
+      }
+    ],
+    "nodes": [
+      {
+        "key": "attempt:effect-admission-adversary",
+        "deps": [],
+        "state": "failed",
+        "dispatchVersion": 1,
+        "taskId": "baton-40ea58cbc81d535b5dde01f0-attempt-effect-admission-adversary",
+        "terminalEvent": 17,
+        "terminalOutcome": {
+          "status": "failed",
+          "accepted": false,
+          "code": "recovery_terminalized"
+        },
+        "budget": {
+          "status": "pending",
+          "initial": {
+            "tokens": 6250000,
+            "usd": 62.5,
+            "wallMin": 30,
+            "providerTurns": 128
+          },
+          "reserved": {
+            "tokens": 6250000,
+            "usd": 62.5,
+            "wallMin": 30,
+            "providerTurns": 128
+          },
+          "consumed": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "released": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "held": {
+            "tokens": 6250000,
+            "usd": 62.5,
+            "wallMin": 30,
+            "providerTurns": 128
+          },
+          "overrun": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "availability": {
+            "tokens": "unavailable",
+            "usd": "unavailable",
+            "wallMin": "unavailable",
+            "providerTurns": "unavailable"
+          },
+          "settledEvent": null
+        }
+      },
+      {
+        "key": "attempt:effect-admission-builder",
+        "deps": [],
+        "state": "failed",
+        "dispatchVersion": 1,
+        "taskId": "baton-3efc5ad4df6671e901f5a477-attempt-effect-admission-builder",
+        "terminalEvent": 19,
+        "terminalOutcome": {
+          "status": "failed",
+          "accepted": false,
+          "code": "recovery_terminalized"
+        },
+        "budget": {
+          "status": "pending",
+          "initial": {
+            "tokens": 6250000,
+            "usd": 62.5,
+            "wallMin": 30,
+            "providerTurns": 128
+          },
+          "reserved": {
+            "tokens": 6250000,
+            "usd": 62.5,
+            "wallMin": 30,
+            "providerTurns": 128
+          },
+          "consumed": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "released": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "held": {
+            "tokens": 6250000,
+            "usd": 62.5,
+            "wallMin": 30,
+            "providerTurns": 128
+          },
+          "overrun": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "availability": {
+            "tokens": "unavailable",
+            "usd": "unavailable",
+            "wallMin": "unavailable",
+            "providerTurns": "unavailable"
+          },
+          "settledEvent": null
+        }
+      }
+    ],
+    "verification": {
+      "state": "failed",
+      "verdict": null
+    },
+    "attention": [],
+    "progress": {
+      "current": "selection",
+      "summary": "Candidate selection: Awaiting verified Candidates.",
+      "stages": [
+        {
+          "key": "intent",
+          "label": "Workflow intent",
+          "state": "complete",
+          "detail": "Workflow definition bound to exact Goal and Plan."
+        },
+        {
+          "key": "plan",
+          "label": "Workflow Plan",
+          "state": "complete",
+          "detail": "2 attributable isolated Attempts."
+        },
+        {
+          "key": "wave",
+          "label": "Parallel Wave",
+          "state": "complete",
+          "detail": "2/2 settled."
+        },
+        {
+          "key": "selection",
+          "label": "Candidate selection",
+          "state": "pending",
+          "detail": "Awaiting verified Candidates."
+        },
+        {
+          "key": "cleanup",
+          "label": "Owned-resource cleanup",
+          "state": "complete",
+          "detail": "Owned resources settled."
+        }
+      ]
+    }
+  },
+  "candidates": [],
+  "stopped": {
+    "beforePhase": "failed",
+    "afterPhase": "stopped",
+    "stop": {
+      "state": "stopped",
+      "admittedAt": "2026-07-18T23:45:44.017Z",
+      "completedAt": "2026-07-18T23:45:44.078Z",
+      "targetCount": 2,
+      "targetDigest": "8a881d09907ad060456e9c2a452b557f10412b3239e69abf9678d9c968cc5d2e",
+      "receipt": {
+        "schemaVersion": 1,
+        "state": "stopped",
+        "scope": "run_subtree",
+        "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+        "runId": "run-41128026e7896be6525242e84bb5ed78",
+        "targetCount": 2,
+        "remainingCount": 0,
+        "targetDigest": "8a881d09907ad060456e9c2a452b557f10412b3239e69abf9678d9c968cc5d2e",
+        "counts": {
+          "pendingCancelled": 0,
+          "killConfirmed": 0,
+          "alreadyTerminal": 2,
+          "processesObserved": 2,
+          "processesClosed": 2
+        },
+        "checks": {
+          "dispatchClosed": true,
+          "interactionsResolved": true,
+          "runAuthorityReleased": true
+        },
+        "effects": {
+          "coordinatorClosed": false,
+          "writerReleased": false,
+          "transportsClosed": false
+        },
+        "receiptDigest": "c2a57dd2562f2882c6791e1a665881ac67903bffa57eb53ad0dcdaa995c8f644"
+      }
+    },
+    "ownership": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": false
+    }
+  },
+  "closed": {
+    "workers": 0,
+    "workerIds": [],
+    "closed": true
+  }
+}

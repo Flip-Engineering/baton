@@ -41,7 +41,10 @@ import { MockAdapter } from '../src/adapter.mjs';
 // ---------- helpers ----------
 
 function sh(cmd, args, cwd, input) {
-  return execFileSync(cmd, args, { cwd, encoding: 'utf8', ...(input !== undefined ? { input } : {}) }).trim();
+  return execFileSync(cmd, args, {
+    cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+    ...(input !== undefined ? { input } : {}),
+  }).trim();
 }
 
 /** A real git repo with one base commit. Returns { dir, baseSha }. */
@@ -267,7 +270,7 @@ test('two freshVerifySandbox calls with the same label produce two non-colliding
 
   const s1 = await freshVerifySandbox(dir, 'dup-label', baseSha);
   const s2 = await freshVerifySandbox(dir, 'dup-label', baseSha);
-  t.after(() => { s1.cleanup(); s2.cleanup(); });
+  t.after(() => Promise.all([s1.cleanup(), s2.cleanup()]));
 
   assert.notEqual(s1.dir, s2.dir);
   assert.ok(existsSync(s1.dir));
@@ -335,6 +338,23 @@ test('sandbox.cleanup() removes the directory and is idempotent', async (t) => {
   await sandbox.cleanup();
   assert.ok(!existsSync(sandbox.dir));
   await assert.doesNotReject(() => sandbox.cleanup());
+});
+
+test('sandbox cleanup joins concurrent callers and preserves a sibling verifier in the same common Git directory', async (t) => {
+  const { dir, baseSha } = makeRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const first = await freshVerifySandbox(dir, 'shared-cleanup', baseSha);
+  const sibling = await freshVerifySandbox(dir, 'shared-cleanup', baseSha);
+
+  await Promise.all([first.cleanup(), first.cleanup(), first.cleanup()]);
+  assert.equal(existsSync(first.dir), false);
+  assert.equal(existsSync(sibling.dir), true,
+    'one verifier cleanup must not reap a concurrently active sibling registration');
+  assert.equal((await listWorktrees(dir)).some((entry) => entry.dir === sibling.dir), true);
+
+  await Promise.all([sibling.cleanup(), sibling.cleanup()]);
+  assert.equal(existsSync(sibling.dir), false);
+  assert.deepEqual(await listWorktrees(dir), []);
 });
 
 test('freshVerifySandbox with a garbage sha throws InvalidShaError before creating any directory', async (t) => {

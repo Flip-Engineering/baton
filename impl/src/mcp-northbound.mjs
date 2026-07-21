@@ -10,16 +10,26 @@ const MCP_APPLICATION_ENTRIES = Object.entries(APPLICATION_COMMAND_DEFINITIONS)
 const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
   [...MCP_APPLICATION_ENTRIES,
     ['baton_help', 'application.help'],
+    ['baton_runs', 'runs.list'],
     ['baton_run_start', 'run.start'],
     ['baton_run_inspect', 'run.inspect'],
+    ['baton_run_episode', 'run.episode'],
+    ['baton_run_workstreams', 'run.workstreams'],
+    ['baton_workstream_notify', 'run.workstream.notify'],
+    ['baton_workstream_stop', 'run.workstream.stop'],
     ['baton_run_act', 'run.act'],
     ['baton_run_stop', 'run.stop'],
   ].map(([tool, name]) => [tool, name]),
 ));
 const ORDINARY_APPLICATION_ENTRIES = Object.freeze([
   ['baton_help', 'application.help', APPLICATION_COMMAND_DEFINITIONS['application.help']],
+  ['baton_runs', 'runs.list', APPLICATION_COMMAND_DEFINITIONS['runs.list']],
   ['baton_run_start', 'run.start', APPLICATION_COMMAND_DEFINITIONS['run.start']],
   ['baton_run_inspect', 'run.inspect', APPLICATION_COMMAND_DEFINITIONS['run.inspect']],
+  ['baton_run_episode', 'run.episode', APPLICATION_COMMAND_DEFINITIONS['run.episode']],
+  ['baton_run_workstreams', 'run.workstreams', APPLICATION_COMMAND_DEFINITIONS['run.workstreams']],
+  ['baton_workstream_notify', 'run.workstream.notify', APPLICATION_COMMAND_DEFINITIONS['run.workstream.notify']],
+  ['baton_workstream_stop', 'run.workstream.stop', APPLICATION_COMMAND_DEFINITIONS['run.workstream.stop']],
   ['baton_run_act', 'run.act', APPLICATION_COMMAND_DEFINITIONS['run.act']],
   ['baton_run_stop', 'run.stop', APPLICATION_COMMAND_DEFINITIONS['run.stop']],
 ]);
@@ -41,6 +51,7 @@ const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful && definition.reconcilable).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful && definition.reconcilable) RECONCILABLE.add(tool);
 const GOAL_PLAN_MUTATIONS = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve']);
+const BOUNDED_OBSERVATION_AUDITS = new Set(['tool_completed']);
 const FENCED = new Set(['fleet_send', 'fleet_interrupt', 'fleet_kill']);
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
 const SESSION_FIELDS = new Set(['mode', 'id', 'lastTurnId', 'context']);
@@ -95,6 +106,9 @@ function stateFailureCode(cause) {
   if (['application_run_not_found', 'application_interaction_not_found', 'application_profile_not_found', 'application_worker_not_found'].includes(cause?.code)) return 'not_found';
   if (['application_unavailable', 'application_run_lookup_oversize', 'application_run_view_oversize'].includes(cause?.code)) return 'temporarily_unavailable';
   if (typeof cause?.code === 'string' && cause.code.startsWith('application_')) return cause.code;
+  if (typeof cause?.code === 'string' && cause.code.startsWith('worker_policy_')) return cause.code;
+  if (typeof cause?.code === 'string' && cause.code.startsWith('run_orchestrator_')) return cause.code;
+  if (cause?.code === 'run_stopping') return cause.code;
   if (['capability_not_found', 'capability_op_unavailable', 'capability_budget_invalid', 'cancelled',
     'capability_result_invalid', 'capability_result_oversize', 'capability_authority_forbidden', 'capability_args_invalid',
     'capability_resume_invalid', 'capability_reverify_invalid', 'capability_actor_invalid', 'capability_repo_invalid', 'capability_idempotency_invalid',
@@ -120,6 +134,7 @@ function stateFailureCode(cause) {
     'plan_conflict', 'plan_cycle', 'plan_dangling_dependency', 'plan_dependency_incomplete', 'plan_dependency_mismatch', 'plan_dispatch_conflict',
     'plan_dispatch_invalid', 'plan_dispatch_stale', 'plan_duplicate_node', 'plan_effect_invalid', 'plan_effect_mismatch', 'plan_goal_mismatch',
     'plan_node_invalid', 'plan_node_limit', 'plan_node_not_found', 'plan_not_approved', 'plan_predecessor_required', 'plan_risk_mismatch', 'plan_route_mismatch',
+    'plan_route_invalid', 'plan_route_authority_legacy_ambiguous',
     'plan_scope_invalid', 'plan_self_approval', 'plan_stale', 'plan_too_large', 'plan_verification_invalid', 'plan_version_limit',
     'coordinator_drain_capacity', 'coordinator_drain_incomplete', 'coordinator_draining', 'coordinator_closed'].includes(cause?.code)) return cause.code;
   if (['ModelSelectionError', 'SessionSelectionError', 'DuplicateTaskIdError', 'UnknownVendorError', 'DependencyCycleError', 'TypeError'].includes(cause?.name)) return 'invalid_command';
@@ -167,18 +182,30 @@ const planBriefSchema = schema({
   goal: text, constraints: textArray, pathScope: textArray, tools: textArray,
   outputFormat: { type: 'string' }, definitionOfDone: { type: 'string' },
   verification: goalPlanVerificationSchema, budget: planBriefBudgetSchema,
-  providerTurns: { type: 'integer', minimum: 1 }, capabilities: textArray, effects: textArray,
+  providerTurns: { type: 'integer', minimum: 1 }, capabilities: textArray, effects: textArray, requiredEffects: textArray,
 }, PLAN_BRIEF_FIELDS);
-const goalPlanRoutesSchema = schema({ harnesses: textArray, models: textArray, efforts: textArray }, ['harnesses', 'models', 'efforts']);
+const goalPlanRouteTupleSchema = schema({ harness: text, model: text, effort: text }, ['harness', 'model', 'effort']);
+const goalPlanRoutesSchema = {
+  oneOf: [
+    schema({ schemaVersion: { const: 2 }, allowed: {
+      type: 'array', minItems: 1, uniqueItems: true, items: goalPlanRouteTupleSchema,
+    } }, ['schemaVersion', 'allowed']),
+    schema({
+      harnesses: { type: 'array', minItems: 1, maxItems: 1, items: text },
+      models: { type: 'array', minItems: 1, maxItems: 1, items: text },
+      efforts: { type: 'array', minItems: 1, maxItems: 1, items: text },
+    }, ['harnesses', 'models', 'efforts']),
+  ],
+};
 const goalPlanNodeSchema = schema({
   key: text, objective: text, definitionOfDone: textArray, deps: textArray, pathScope: textArray, risk: text,
   budget: goalPlanBudgetSchema, verification: goalPlanVerificationSchema, routes: goalPlanRoutesSchema,
-  capabilities: textArray, effects: textArray,
+  capabilities: textArray, effects: textArray, requiredEffects: textArray,
 }, ['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects']);
 const spawnGoalPlanSchema = schema({
   goalId: { type: 'string', pattern: '^goal:[a-f0-9]{64}$' }, goalVersion: { type: 'integer', minimum: 1 }, goalDigest: digest,
   planId: { type: 'string', pattern: '^plan:[a-f0-9]{64}$' }, planVersion: { type: 'integer', minimum: 1 }, planDigest: digest,
-  nodeKey: text, expectedDispatchVersion: { const: 0 }, capabilities: textArray, effects: textArray,
+  nodeKey: text, expectedDispatchVersion: { const: 0 }, capabilities: textArray, effects: textArray, requiredEffects: textArray,
 }, ['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'expectedDispatchVersion', 'capabilities', 'effects']);
 const fleetSpawnSchema = {
   ...schema({ ...repo, ...idem, runId, harness: text, model: text, effort: text, modelPolicy: schema({ allow: textArray, deny: textArray, prefer: textArray, allowFamilies: textArray, denyFamilies: textArray, reasoningEffort: text, serviceTier: text }), brief: { type: 'object' }, taskId: text, deps: textArray, taskType: text, session: schema({ mode: { type: 'string', enum: ['new', 'resume', 'fork'] }, id: text, lastTurnId: text, context: schema({ worktree: text, repoRoot: text, baseSha: text, branch: text, ownerTaskId: text }, ['worktree']) }), refines: text, goalPlan: spawnGoalPlanSchema }, ['repoId', 'idempotencyKey', 'harness', 'brief']),
@@ -188,27 +215,49 @@ const applicationRouteSchema = schema({ harness: text, model: text, effort: text
 const applicationIntentSchema = schema({
   runId,
   objective: { type: 'string', minLength: 1, maxLength: 4_096 },
+  resultIntent: { type: 'string', enum: ['change', 'read_only_evidence'], default: 'change' },
   profile: runId,
   route: applicationRouteSchema,
   scope: { type: 'array', minItems: 1, maxItems: 64, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4_096 } },
-}, ['objective', 'profile', 'route']);
+}, ['objective']);
 const applicationAnswerSchema = {
   oneOf: [
     schema({ text: { type: 'string', minLength: 1, maxLength: 4_096 } }, ['text']),
     schema({ decision: { type: 'string', enum: ['allow', 'deny', 'cancel'] } }, ['decision']),
   ],
 };
+const applicationFeedbackFindingSchema = schema({
+  kind: { type: 'string', enum: ['defect', 'risk', 'suggestion', 'question', 'observation'] },
+  severity: { type: 'string', enum: ['info', 'low', 'medium', 'high', 'critical'] },
+  message: { type: 'string', minLength: 1, maxLength: 4_096 },
+  path: { oneOf: [{ type: 'string', minLength: 1, maxLength: 4_096 }, { type: 'null' }] },
+  line: { oneOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
+}, ['kind', 'severity', 'message', 'path', 'line']);
+const applicationFeedbackSchema = {
+  oneOf: [
+    { type: 'string', minLength: 1, maxLength: 4_096 },
+    schema({
+      summary: { type: 'string', minLength: 1, maxLength: 4_096 },
+      findings: { type: 'array', minItems: 1, maxItems: 32, items: applicationFeedbackFindingSchema },
+    }, ['summary', 'findings']),
+  ],
+};
 const APPLICATION_TOOL_DEFINITIONS = Object.freeze([
-  { name: 'fleet_run_start', description: 'Start one Baton Run from a concise objective, deployment profile, and exact harness/model/effort route; returns a readable Plan awaiting approval.', inputSchema: schema({ ...repo, ...idem, intent: applicationIntentSchema }, ['repoId', 'idempotencyKey', 'intent']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_start', description: 'Start one Baton Run from a concise objective, explicit change or read-only evidence result intent, deployment profile, and exact harness/model/effort route; returns a readable Plan awaiting approval.', inputSchema: schema({ ...repo, ...idem, intent: applicationIntentSchema }, ['repoId', 'idempotencyKey', 'intent']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_status', description: 'Read the fresh bounded authoritative RunView for one Run.', inputSchema: schema({ ...repo, runId }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_follow', description: 'Resume one Run-specific bounded at-least-once change page after an acknowledged coordination cursor.', inputSchema: schema({ ...repo, runId, afterCursor: { type: 'integer', minimum: 0 }, timeoutMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId', 'afterCursor', 'timeoutMs']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_recover', description: 'Recover the one server-selected eligible orphan for a Run under its deployment-owned recovery policy and approved Plan authority.', inputSchema: schema({ ...repo, ...idem, runId }, ['repoId', 'idempotencyKey', 'runId']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_approve', description: 'Approve the exact displayed Plan digest and let the resident Baton application dispatch it once.', inputSchema: schema({ ...repo, ...idem, runId, planDigest: digest }, ['repoId', 'idempotencyKey', 'runId', 'planDigest']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_wait', description: 'Wait a bounded deployment-approved interval and return a fresh authoritative RunView.', inputSchema: schema({ ...repo, runId, timeoutMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId', 'timeoutMs']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_answer', description: 'Answer one Run-owned pending question or approval exactly once.', inputSchema: schema({ ...repo, ...idem, runId, requestId: { type: 'string', minLength: 1, maxLength: 4_096 }, answer: applicationAnswerSchema }, ['repoId', 'idempotencyKey', 'runId', 'requestId', 'answer']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_feedback', description: 'Attach typed operator feedback to one immutable verified Workflow candidate selected by role.', inputSchema: schema({ ...repo, ...idem, runId, role: runId, feedback: applicationFeedbackSchema }, ['repoId', 'idempotencyKey', 'runId', 'role', 'feedback']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_steer', description: 'Steer one current Run-owned worker using its server-resolved fence and an explicit human reason.', inputSchema: schema({ ...repo, ...idem, runId, target: runId, mode: { type: 'string', enum: ['nudge', 'now', 'turn'] }, message: { type: 'string', minLength: 1, maxLength: 4_096 }, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'target', 'mode', 'message', 'reason']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_stop', description: 'Durably close one Run to new effects, then kill and reap only its exact workers and return its stop receipt.', inputSchema: schema({ ...repo, ...idem, runId, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'reason']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_evidence', description: 'Return one bounded content-addressed terminal evidence manifest for a Run.', inputSchema: schema({ ...repo, runId }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_episode', description: 'Read one progressively addressed Episode chapter without inspect selectors.', inputSchema: schema({ ...repo, runId, topic: runId, detail: { type: 'string', enum: ['item', 'content', 'evidence'] }, role: runId, generation: { type: 'integer', minimum: 1 }, pageCursor: { type: 'string', minLength: 1, maxLength: 4096 }, cursor: { type: 'integer', minimum: 0 }, waitMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_workstreams', description: 'List or open durable semantic workstream generations.', inputSchema: schema({ ...repo, runId, role: runId, generation: { type: 'integer', minimum: 1 }, cursor: { type: 'integer', minimum: 0 }, waitMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_workstream_notify', description: 'Notify one exact current semantic workstream generation.', inputSchema: schema({ ...repo, ...idem, runId, role: runId, generation: { type: 'integer', minimum: 1 }, message: { type: 'string', minLength: 1, maxLength: 16384 }, delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] } }, ['repoId', 'idempotencyKey', 'runId', 'role', 'message']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_workstream_stop', description: 'Stop and reap one exact current semantic workstream generation.', inputSchema: schema({ ...repo, ...idem, runId, role: runId, generation: { type: 'integer', minimum: 1 }, reason: { type: 'string', minLength: 1, maxLength: 1024 } }, ['repoId', 'idempotencyKey', 'runId', 'role']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_adopt', description: 'Designate one exact preserved and verified Run result without merging, checking out, or publishing it.', inputSchema: schema({ ...repo, ...idem, runId, nodeKey: runId, resultSha: commitSha, evidenceDigest: digest, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'nodeKey', 'resultSha', 'evidenceDigest', 'reason']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_review', description: 'Start one exact independently-routed structured semantic review over the immutable accepted Run result.', inputSchema: schema({ ...repo, ...idem, runId, route: applicationRouteSchema, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'route', 'reason']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_integrate', description: 'Integrate the exact adopted and semantically reviewed result under fresh evidence and deployment policy; never pushes.', inputSchema: schema({ ...repo, ...idem, runId, evidenceDigest: digest, strategy: { type: 'string', enum: ['ff-only', 'structured'] }, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'evidenceDigest', 'strategy', 'reason']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
@@ -223,7 +272,7 @@ const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   },
   {
     name: 'baton_run_start',
-    description: 'Start one Run from a concise intent; Baton returns the progressive outline.',
+    description: 'Start one Run from a concise explicit change or read-only evidence intent; Baton returns the progressive outline.',
     inputSchema: schema({ ...repo, ...idem, intent: applicationIntentSchema }, ['repoId', 'idempotencyKey', 'intent']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
@@ -232,16 +281,42 @@ const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     description: 'Inspect one Run at outline, index, section, item, or evidence depth.',
     inputSchema: schema({
       ...repo, runId, depth: { type: 'string', enum: APPLICATION_SEMANTIC_REGISTRY.depths },
-      section: runId, item: runId, cursor: { type: 'string', minLength: 1, maxLength: 4_096 },
+      section: runId, item: runId, cursor: { type: 'integer', minimum: 0 },
+      offset: { type: 'integer', minimum: 0 },
+      pageCursor: { type: 'string', minLength: 1, maxLength: 4096 }, recipient: runId,
       waitMs: { type: 'integer', minimum: 1 },
     }, ['repoId', 'runId']),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: 'baton_run_episode',
+    description: 'Read one Episode chapter with direct topic, role, generation, and continuation coordinates.',
+    inputSchema: schema({ ...repo, runId, topic: runId, detail: { type: 'string', enum: ['item', 'content', 'evidence'] }, role: runId, generation: { type: 'integer', minimum: 1 }, pageCursor: { type: 'string', minLength: 1, maxLength: 4096 }, cursor: { type: 'integer', minimum: 0 }, waitMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_workstreams',
+    description: 'List or open one durable role/generation workstream without worker coordinates.',
+    inputSchema: schema({ ...repo, runId, role: runId, generation: { type: 'integer', minimum: 1 }, cursor: { type: 'integer', minimum: 0 }, waitMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_workstream_notify',
+    description: 'Notify one exact current workstream generation while Baton resolves worker and fence authority.',
+    inputSchema: schema({ ...repo, ...idem, runId, role: runId, generation: { type: 'integer', minimum: 1 }, message: { type: 'string', minLength: 1, maxLength: 16384 }, delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] } }, ['repoId', 'idempotencyKey', 'runId', 'role', 'message']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_workstream_stop',
+    description: 'Stop and reap one exact current workstream generation.',
+    inputSchema: schema({ ...repo, ...idem, runId, role: runId, generation: { type: 'integer', minimum: 1 }, reason: { type: 'string', minLength: 1, maxLength: 1024 } }, ['repoId', 'idempotencyKey', 'runId', 'role']),
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: 'baton_run_act',
     description: 'Perform one currently offered Run-bound action while Baton derives authoritative coordinates.',
     inputSchema: schema({ ...repo, ...idem, runId, actionId: runId, inputs: { type: 'object' } }, ['repoId', 'idempotencyKey', 'runId', 'actionId', 'inputs']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'baton_run_stop',
@@ -261,7 +336,7 @@ const ADVANCED_TOOL_DEFINITIONS = Object.freeze([
     ...repo, ...idem, runId, objective: text, definitionOfDone: textArray, constraints: textArray, risk: text,
     budget: goalPlanBudgetSchema, predecessor: { oneOf: [goalRefSchema, { type: 'null' }] },
   }, ['repoId', 'idempotencyKey', 'objective', 'definitionOfDone', 'constraints', 'risk', 'budget', 'predecessor']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-  { name: 'fleet_plan_propose', description: 'Propose one immutable bounded Plan DAG against an exact Goal version.', inputSchema: schema({
+  { name: 'fleet_plan_propose', description: 'Propose one immutable bounded Plan DAG against an exact Goal version, with routes authorized as exact harness/model/effort tuples.', inputSchema: schema({
     ...repo, ...idem, runId, goal: goalRefSchema, predecessor: { oneOf: [planRefSchema, { type: 'null' }] },
     nodes: { type: 'array', minItems: 1, items: goalPlanNodeSchema },
   }, ['repoId', 'idempotencyKey', 'goal', 'predecessor', 'nodes']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
@@ -339,28 +414,36 @@ function validGoalPlanVerification(value) {
     && validTextArray(value.requiredPredecessorEvidence);
 }
 function validGoalPlanRoutes(value) {
+  if (closedRecord(value, ['schemaVersion', 'allowed'])) {
+    return value.schemaVersion === 2 && Array.isArray(value.allowed) && value.allowed.length > 0
+      && value.allowed.every((route) => closedRecord(route, ['harness', 'model', 'effort'])
+        && nonempty(route.harness) && nonempty(route.model) && nonempty(route.effort));
+  }
   return closedRecord(value, ['harnesses', 'models', 'efforts'])
-    && validTextArray(value.harnesses, { empty: false })
-    && validTextArray(value.models, { empty: false })
-    && validTextArray(value.efforts, { empty: false });
+    && validTextArray(value.harnesses, { empty: false }) && value.harnesses.length === 1
+    && validTextArray(value.models, { empty: false }) && value.models.length === 1
+    && validTextArray(value.efforts, { empty: false }) && value.efforts.length === 1;
 }
 function validGoalPlanNode(value) {
-  return closedRecord(value, ['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects'])
+  return closedRecord(value, ['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects', ...(Object.hasOwn(value ?? {}, 'requiredEffects') ? ['requiredEffects'] : [])])
     && nonempty(value.key) && nonempty(value.objective) && validTextArray(value.definitionOfDone) && validTextArray(value.deps)
     && validTextArray(value.pathScope, { empty: false }) && nonempty(value.risk) && validGoalPlanBudget(value.budget)
     && validGoalPlanVerification(value.verification) && validGoalPlanRoutes(value.routes)
-    && validTextArray(value.capabilities) && validTextArray(value.effects);
+    && validTextArray(value.capabilities) && validTextArray(value.effects)
+    && (!Object.hasOwn(value, 'requiredEffects') || validTextArray(value.requiredEffects));
 }
 function validSpawnGoalPlan(value) {
-  return closedRecord(value, ['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'expectedDispatchVersion', 'capabilities', 'effects'])
+  return closedRecord(value, ['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'nodeKey', 'expectedDispatchVersion', 'capabilities', 'effects', ...(Object.hasOwn(value ?? {}, 'requiredEffects') ? ['requiredEffects'] : [])])
     && /^goal:[a-f0-9]{64}$/.test(value.goalId ?? '') && Number.isSafeInteger(value.goalVersion) && value.goalVersion > 0
     && /^[a-f0-9]{64}$/.test(value.goalDigest ?? '') && /^plan:[a-f0-9]{64}$/.test(value.planId ?? '')
     && Number.isSafeInteger(value.planVersion) && value.planVersion > 0 && /^[a-f0-9]{64}$/.test(value.planDigest ?? '')
     && nonempty(value.nodeKey) && value.expectedDispatchVersion === 0
-    && validTextArray(value.capabilities) && validTextArray(value.effects);
+    && validTextArray(value.capabilities) && validTextArray(value.effects)
+    && (!Object.hasOwn(value, 'requiredEffects') || validTextArray(value.requiredEffects));
 }
 function validPlanBrief(value) {
-  return closedRecord(value, PLAN_BRIEF_FIELDS) && nonempty(value.goal)
+  const fields = [...PLAN_BRIEF_FIELDS, ...(Object.hasOwn(value ?? {}, 'requiredEffects') ? ['requiredEffects'] : [])];
+  return closedRecord(value, fields) && nonempty(value.goal)
     && validTextArray(value.constraints) && validTextArray(value.pathScope) && validTextArray(value.tools)
     && typeof value.outputFormat === 'string' && typeof value.definitionOfDone === 'string'
     && validGoalPlanVerification(value.verification) && closedRecord(value.budget, BUDGET_FIELDS)
@@ -368,7 +451,8 @@ function validPlanBrief(value) {
     && Number.isFinite(value.budget.usd) && value.budget.usd >= 0
     && Number.isSafeInteger(value.budget.wallMin) && value.budget.wallMin > 0
     && Number.isSafeInteger(value.providerTurns) && value.providerTurns > 0
-    && validTextArray(value.capabilities) && validTextArray(value.effects);
+    && validTextArray(value.capabilities) && validTextArray(value.effects)
+    && (!Object.hasOwn(value, 'requiredEffects') || validTextArray(value.requiredEffects));
 }
 
 function applicationArgs(name, args) {
@@ -500,7 +584,11 @@ export class McpFleetServer {
       || typeof this.application.card !== 'function' || typeof this.application.authorizeReplay !== 'function')) {
       throw new TypeError('MCP application facade is invalid');
     }
-    this.shutdownPrincipal = this.application === null
+    this.applicationOwned = opts.applicationOwned ?? this.application !== null;
+    if (typeof this.applicationOwned !== 'boolean' || (this.application === null && this.applicationOwned)) {
+      throw new TypeError('MCP application ownership is invalid');
+    }
+    this.shutdownPrincipal = this.application === null || !this.applicationOwned
       ? null
       : applicationPrincipal(opts.shutdownPrincipal, 'MCP shutdownPrincipal');
     this.principal = Object.freeze(clone(opts.principal));
@@ -525,6 +613,12 @@ export class McpFleetServer {
         throw new TypeError('MCP application facade does not match the served repository or command contract');
       }
     }
+    this.bindApplicationContext = opts.bindApplicationContext ?? false;
+    if (typeof this.bindApplicationContext !== 'boolean'
+      || (this.bindApplicationContext && this.surface !== 'application')) {
+      throw new TypeError('MCP bound application context requires the ordinary application surface');
+    }
+    this.boundRepoId = this.bindApplicationContext ? [...this.repoIds][0] : null;
     this.now = opts.now ?? Date.now;
     this.maxWaitMs = opts.maxWaitMs ?? 25_000;
     this.maxMessageBytes = opts.maxMessageBytes;
@@ -537,11 +631,22 @@ export class McpFleetServer {
     this.toolDefinitions = selectedTools.map((tool) => {
       const copy = clone(tool);
       if (['fleet_run_wait', 'fleet_run_follow'].includes(copy.name)) copy.inputSchema.properties.timeoutMs.maximum = this.maxWaitMs;
+      if (this.bindApplicationContext) {
+        delete copy.inputSchema.properties.repoId;
+        delete copy.inputSchema.properties.idempotencyKey;
+        copy.inputSchema.required = copy.inputSchema.required
+          .filter((field) => field !== 'repoId' && field !== 'idempotencyKey');
+      }
       return Object.freeze(copy);
     });
     this.toolNames = new Set(this.toolDefinitions.map((tool) => tool.name));
     this._drainDispatches = new Map();
     this._applicationDispatches = new Map();
+    this.maxObservationAudits = opts.maxObservationAudits ?? 512;
+    if (!Number.isSafeInteger(this.maxObservationAudits) || this.maxObservationAudits <= 0) {
+      throw new TypeError('MCP observation audit bound must be a positive safe integer');
+    }
+    this._observationAudits = [];
     this._closePromise = null;
   }
 
@@ -549,7 +654,7 @@ export class McpFleetServer {
     if (this._closePromise) return this._closePromise;
     const closing = Promise.resolve().then(async () => {
       this.lifecycle = 'closed';
-      if (this.application === null) {
+      if (this.application === null || !this.applicationOwned) {
         return Object.freeze({ schemaVersion: 1, state: 'transport_closed', applicationOwned: false });
       }
       return this.application.command('application.shutdown', {}, this.shutdownPrincipal);
@@ -585,10 +690,19 @@ export class McpFleetServer {
   }
 
   _audit(kind, tool, args, detail = null) {
-    return this.coordination.recordMcpAudit({
+    const entry = {
       kind, tool, userId: this.principal.userId, sessionId: this.principal.sessionId,
       repoId: nonempty(args?.repoId) ? args.repoId : null, detail,
-    }, { actor: `mcp:${this.principal.userId}:${this.principal.sessionId}`, key: `mcp.audit:${randomUUID()}` });
+    };
+    if (BOUNDED_OBSERVATION_AUDITS.has(kind)) {
+      this._observationAudits.push(Object.freeze(entry));
+      if (this._observationAudits.length > this.maxObservationAudits) this._observationAudits.shift();
+      return Object.freeze({ schemaVersion: 1, storage: 'bounded_memory' });
+    }
+    return this.coordination.recordMcpAudit(entry, {
+      actor: `mcp:${this.principal.userId}:${this.principal.sessionId}`,
+      key: `mcp.audit:${randomUUID()}`,
+    });
   }
 
   async handle(message) {
@@ -612,7 +726,33 @@ export class McpFleetServer {
     if (method === 'tools/list') return id === undefined ? null : protocolResult(id, { tools: this.toolDefinitions.map(clone) });
     if (method !== 'tools/call') return protocolError(id, -32601, 'Method not found');
     if (id === undefined || !record(params) || !nonempty(params.name) || !this.toolNames.has(params.name)) return protocolError(id, -32602, 'Invalid params');
-    const args = params.arguments ?? {};
+    const suppliedArgs = params.arguments ?? {};
+    if (this.bindApplicationContext && record(suppliedArgs)
+      && (Object.hasOwn(suppliedArgs, 'repoId') || Object.hasOwn(suppliedArgs, 'idempotencyKey'))) {
+      try { this._audit('tool_invalid', params.name, {}, 'invalid_arguments'); }
+      catch { return protocolResult(id, toolError('temporarily_unavailable')); }
+      return protocolResult(id, toolError('invalid_arguments'));
+    }
+    if (this.bindApplicationContext
+      && !(typeof id === 'string' && id.length > 0 && Buffer.byteLength(id) <= 256)
+      && !(Number.isSafeInteger(id) && id >= 0)) {
+      return protocolError(id, -32600, 'Invalid Request');
+    }
+    const args = this.bindApplicationContext ? {
+      ...suppliedArgs,
+      repoId: this.boundRepoId,
+      ...(STATEFUL.has(params.name) ? {
+        idempotencyKey: `bound:${hash({
+          repoId: this.boundRepoId,
+          userId: this.principal.userId,
+          sessionId: this.principal.sessionId,
+          tool: params.name,
+          ...(APPLICATION_TOOL[params.name] === 'run.act'
+            ? { semanticRequest: suppliedArgs }
+            : { requestId: id }),
+        })}`,
+      } : {}),
+    } : suppliedArgs;
     const invalid = validateArguments(params.name, args, this.maxWaitMs);
     if (invalid) {
       try { this._audit('tool_invalid', params.name, args, invalid); } catch { return protocolResult(id, toolError('temporarily_unavailable')); }
@@ -628,6 +768,47 @@ export class McpFleetServer {
       catch { return protocolResult(id, toolError('temporarily_unavailable')); }
       return protocolResult(id, toolError('application_unavailable'));
     }
+    let semanticAuthority = null;
+    if (APPLICATION_TOOL[params.name] === 'run.act') {
+      if (typeof this.application.actionAuthority !== 'function') {
+        return protocolResult(id, toolError('application_unavailable'));
+      }
+      const scopeKey = this.callScope(params.name, args);
+      const requestDigest = this.callDigest(args);
+      const prior = this.coordination.mcpCallByScope?.(scopeKey) ?? null;
+      if (prior && prior.requestDigest !== requestDigest) {
+        try { this._audit('tool_refused', params.name, args, 'idempotency_conflict'); }
+        catch { return protocolResult(id, toolError('temporarily_unavailable')); }
+        return protocolResult(id, toolError('idempotency_conflict'));
+      }
+      try {
+        semanticAuthority = prior?.semanticAuthority ?? await this.application.actionAuthority(
+          applicationArgs(params.name, args),
+          {
+            actor: `mcp:${this.principal.userId}:${this.principal.sessionId}`,
+            principalId: this.principal.userId,
+            sessionId: this.principal.sessionId,
+          },
+          {
+            transport: 'mcp', requestId: String(id), idempotencyKey: `mcp.call:${id}`,
+            capabilityAuthority: northboundCapabilityToken('mcp'),
+            capabilities: [...this.principal.capabilities],
+          },
+        );
+      } catch (cause) {
+        try { this._audit('tool_refused', params.name, args, stateFailureCode(cause)); }
+        catch { return protocolResult(id, toolError('temporarily_unavailable')); }
+        return protocolResult(id, toolError(stateFailureCode(cause)));
+      }
+      if (!Array.isArray(semanticAuthority?.requiredCapabilities)
+        || !semanticAuthority.requiredCapabilities.every(
+          (capability) => this.principal.capabilities.includes(capability),
+        )) {
+        try { this._audit('tool_refused', params.name, args, 'forbidden'); }
+        catch { return protocolResult(id, toolError('temporarily_unavailable')); }
+        return protocolResult(id, toolError('forbidden'));
+      }
+    }
     let quota;
     try { quota = await this.takeToolQuota({ userId: this.principal.userId, sessionId: this.principal.sessionId, tool: params.name, repoId: args.repoId }); }
     catch { return protocolResult(id, toolError('temporarily_unavailable')); }
@@ -635,13 +816,20 @@ export class McpFleetServer {
       try { this._audit('tool_rate_limited', params.name, args); } catch { return protocolResult(id, toolError('temporarily_unavailable')); }
       return protocolResult(id, toolError('rate_limited'));
     }
-    return protocolResult(id, await this._callTool(params.name, args));
+    return protocolResult(id, await this._callTool(params.name, args, id, semanticAuthority));
   }
 
-  async _callTool(name, args) {
+  async _callTool(name, args, requestId, semanticAuthority = null) {
     if (!STATEFUL.has(name)) {
       try {
-        const value = await this._dispatch(name, args);
+        const observeCallId = `observe-${hash({
+          repoId: args.repoId,
+          userId: this.principal.userId,
+          sessionId: this.principal.sessionId,
+          tool: name,
+          requestId,
+        })}`;
+        const value = await this._dispatch(name, args, null, observeCallId, this.principal);
         const refused = ['fleet_run_follow', 'fleet_run_wait'].includes(name) ? this._authority(name, args) : null;
         if (refused) {
           this._audit('tool_refused_after_wait', name, args, refused);
@@ -664,9 +852,14 @@ export class McpFleetServer {
       admission = this.coordination.admitMcpCall({
         callId, scopeKey, requestDigest: this.callDigest(args), tool: name, repoId: args.repoId,
         runId: applicationRunId(name, args), userId: this.principal.userId, sessionId: this.principal.sessionId,
+        ...(semanticAuthority ? { semanticAuthority } : {}),
       }, { actor, key: `mcp.admit:${scopeKey}` });
     } catch { return toolError('temporarily_unavailable'); }
     if (!admission.ok) return toolError(admission.result === 'idempotency_conflict' ? 'idempotency_conflict' : 'invalid_call');
+    if (APPLICATION_TOOL[name] === 'run.act'
+      && admission.call.semanticAuthority?.authorityDigest !== semanticAuthority?.authorityDigest) {
+      return toolError('application_action_authority_invalid');
+    }
     if (admission.result === 'replay') {
       if (admission.call.status === 'admitted' && name === 'fleet_drain') {
         const callId = admission.call.callId;
@@ -684,6 +877,10 @@ export class McpFleetServer {
         return outcome;
       }
       if (admission.call.status === 'admitted' && (RECONCILABLE.has(name) || (name === 'fleet_spawn' && args.goalPlan))) {
+        if (APPLICATION_TOOL[name] === 'run.act'
+          && admission.call.sessionId !== this.principal.sessionId) {
+          return toolError('forbidden');
+        }
         const admittedCallId = admission.call.callId;
         const admittedActor = `mcp:${admission.call.userId}:${admission.call.sessionId ?? this.principal.sessionId}`;
         const admittedPrincipal = {
@@ -694,7 +891,10 @@ export class McpFleetServer {
         let outcome;
         try {
           outcome = toolResult(await (APPLICATION_TOOL[name]
-            ? this._dispatchApplicationOnce(name, args, admittedActor, admittedCallId, admittedPrincipal)
+            ? this._dispatchApplicationOnce(
+              name, args, admittedActor, admittedCallId, admittedPrincipal,
+              admission.call.semanticAuthority ?? null,
+            )
             : this._dispatch(name, args, admittedActor, admittedCallId, admittedPrincipal)));
         }
         catch (cause) {
@@ -718,8 +918,29 @@ export class McpFleetServer {
       }
       if (admission.call.status === 'completed' && APPLICATION_TOOL[name]) {
         try {
+          const lease = typeof this.coordination.activeRunOrchestratorLeaseForSession === 'function'
+            ? this.coordination.activeRunOrchestratorLeaseForSession({
+              repoId: args.repoId,
+              principalId: this.principal.userId,
+              sessionId: this.principal.sessionId,
+              expiresAt: this.principal.expiresAt,
+            }) : null;
           await this.application.authorizeReplay(APPLICATION_TOOL[name], applicationArgs(name, args), {
             actor, principalId: this.principal.userId, sessionId: this.principal.sessionId,
+          }, {
+            transport: 'mcp', requestId: String(admission.call.callId),
+            idempotencyKey: `mcp.call:${admission.call.callId}`,
+            capabilityAuthority: northboundCapabilityToken('mcp'),
+            capabilities: [...this.principal.capabilities],
+            ...(APPLICATION_TOOL[name] === 'run.act' ? {
+              semanticAuthority: admission.call.semanticAuthority,
+            } : {}),
+            ...(lease ? { sessionAuthority: {
+              schemaVersion: 1,
+              authorityDigest: lease.session.authorityDigest,
+              expiresAt: lease.session.expiresAt,
+              orchestratorLeaseId: lease.leaseId,
+            } } : {}),
           });
         } catch (cause) { return toolError(stateFailureCode(cause)); }
       }
@@ -735,7 +956,10 @@ export class McpFleetServer {
       outcome = toolResult(await (name === 'fleet_drain'
         ? this._dispatchDrain(args, actor, callId)
         : APPLICATION_TOOL[name]
-          ? this._dispatchApplicationOnce(name, args, actor, callId, this.principal)
+          ? this._dispatchApplicationOnce(
+            name, args, actor, callId, this.principal,
+            admission.call.semanticAuthority ?? null,
+          )
           : this._dispatch(name, args, actor, callId)));
     }
     catch (cause) {
@@ -766,25 +990,50 @@ export class McpFleetServer {
     return pending;
   }
 
-  _dispatchApplicationOnce(name, args, actor, callId, principal) {
+  _dispatchApplicationOnce(name, args, actor, callId, principal, semanticAuthority = null) {
     const existing = this._applicationDispatches.get(callId);
     if (existing) return existing;
-    const pending = Promise.resolve().then(() => this._dispatch(name, args, actor, callId, principal));
+    const pending = Promise.resolve().then(
+      () => this._dispatch(name, args, actor, callId, principal, semanticAuthority),
+    );
     this._applicationDispatches.set(callId, pending);
     return pending;
   }
 
-  async _dispatch(name, args, actor, callId, principal = this.principal) {
+  async _dispatch(name, args, actor, callId, principal = this.principal, semanticAuthority = null) {
     let value;
-    if (APPLICATION_TOOL[name]) value = await this.application.command(
-      APPLICATION_TOOL[name],
-      applicationArgs(name, args),
-      {
-        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
-        principalId: principal.userId,
-        sessionId: principal.sessionId,
-      },
-    );
+    if (APPLICATION_TOOL[name]) {
+      const lease = typeof this.coordination.activeRunOrchestratorLeaseForSession === 'function'
+        ? this.coordination.activeRunOrchestratorLeaseForSession({
+          repoId: args.repoId,
+          principalId: principal.userId,
+          sessionId: principal.sessionId,
+          expiresAt: principal.expiresAt,
+        }) : null;
+      value = await this.application.command(
+        APPLICATION_TOOL[name],
+        applicationArgs(name, args),
+        {
+          actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+          principalId: principal.userId,
+          sessionId: principal.sessionId,
+        },
+        {
+          transport: 'mcp', requestId: String(callId), idempotencyKey: `mcp.call:${callId}`,
+          capabilityAuthority: northboundCapabilityToken('mcp'),
+          capabilities: [...principal.capabilities],
+          ...(APPLICATION_TOOL[name] === 'run.act' ? {
+            semanticAuthority,
+          } : {}),
+          ...(lease ? { sessionAuthority: {
+            schemaVersion: 1,
+            authorityDigest: lease.session.authorityDigest,
+            expiresAt: lease.session.expiresAt,
+            orchestratorLeaseId: lease.leaseId,
+          } } : {}),
+        },
+      );
+    }
     else if (name === 'fleet_spawn') value = await this.coordinator.spawn(args.harness, args.brief, {
       model: args.model, effort: args.effort, modelPolicy: args.modelPolicy, taskId: args.taskId ?? `mcp-${callId}`,
       deps: args.deps, taskType: args.taskType, session: args.session, refines: args.refines,
@@ -796,7 +1045,7 @@ export class McpFleetServer {
     else if (name === 'fleet_scratch_oracle') value = await this.coordinator.spawnScratchOracle(args.scratchFactId, args.harness, {
       model: args.model, effort: args.effort, modelPolicy: args.modelPolicy, verification: args.verification,
       budget: args.budget, constraints: args.constraints, goal: args.goal, definitionOfDone: args.definitionOfDone,
-      taskId: args.taskId ?? `mcp-${callId}`, runId: args.runId ?? null,
+      taskId: args.taskId ?? `mcp-${callId}`,
       actor: `operator:${actor}`, idempotencyKey: `mcp.call:${callId}`,
     });
     else if (name === 'fleet_goal_define') value = await this.coordinator.defineGoal({

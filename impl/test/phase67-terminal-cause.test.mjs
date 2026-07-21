@@ -54,17 +54,108 @@ test('coordinator rehydrates the provider-native root cause ahead of later clean
 
 test('later cleanup stop preserves a worker cause and exposes no receipt coordinates', () => {
   const cause = projectTypedTerminalCause({
-    terminalResult: { terminalCause: { kind: 'provider_failure', code: 'provider_crashed' } },
+    terminalResult: { terminalCause: {
+      kind: 'provider_failure', code: 'provider_crashed',
+      error: 'provider said token=secret-value', path: '/private/provider/session',
+    } },
     runStop: { status: 'stopped', targetWorkerIds: ['worker-secret'], reasonDigest: 'digest' },
   });
-  assert.deepEqual(cause, { kind: 'provider_failure', code: 'provider_crashed' });
-  assert.equal(JSON.stringify(cause).includes('worker-secret'), false);
+  assert.deepEqual(cause, {
+    kind: 'provider_failure', code: 'provider_crashed', category: 'provider_runtime',
+    summary: 'The provider process or session ended unexpectedly; the specific cause is unclassified.',
+    remediation: 'Check Baton route readiness and the harness-native status, then retry. If it repeats, inspect the Run\'s bounded evidence.',
+    retryable: true,
+  });
+  assert.doesNotMatch(JSON.stringify(cause), /worker-secret|secret-value|\/private\/provider|token=/u);
+});
+
+for (const [code, category, summary, remediation] of [
+  [
+    'authentication_required', 'provider_authentication',
+    'The selected provider route requires authentication.',
+    'Establish or refresh the harness-native login outside Baton, rerun baton doctor, then retry the Run.',
+  ],
+  [
+    'authentication_refresh_required', 'provider_authentication',
+    'The selected provider route requires refreshed authentication.',
+    'Refresh the harness-native login outside Baton, rerun baton doctor, then retry the Run.',
+  ],
+  [
+    'wire_frame_oversize', 'provider_protocol',
+    'The provider emitted a frame that exceeded Baton\'s safe wire boundary.',
+    'Baton requires exact termination and reaping of the ambiguous session. Update or repair the harness integration, then retry the Run.',
+  ],
+]) {
+  test(`canonical provider cause ${code} has fixed actionable guidance and discards provider payload`, () => {
+    const projected = projectTypedTerminalCause({
+      terminalResult: {
+        terminalCause: {
+          kind: 'provider_failure', code,
+          error: 'Authentication required token=secret-value',
+          path: '/private/secret/provider/session',
+          workerId: 'worker-secret', taskId: 'task-secret',
+          remediation: 'print the credential',
+        },
+      },
+    });
+    assert.deepEqual(projected, {
+      kind: 'provider_failure', code, category, summary, remediation, retryable: true,
+    });
+    assert.equal(Object.isFrozen(projected), true);
+    assert.doesNotMatch(JSON.stringify(projected), /secret|worker-|task-|\/private|token=/iu);
+  });
+}
+
+test('provider cause codes remain canonical and malformed values cannot become operator-visible text', () => {
+  const projected = projectTypedTerminalCause({
+    terminalResult: {
+      terminalCause: {
+        kind: 'provider_failure',
+        code: 'Authentication required at /private/secret; token=credential',
+      },
+    },
+  });
+  assert.deepEqual(projected, {
+    kind: 'provider_failure', code: 'provider_failure_unclassified', category: 'provider_failure',
+    summary: 'The provider route failed.',
+    remediation: 'Inspect the Run\'s bounded evidence and provider readiness, then retry or select another exact route.',
+    retryable: true,
+  });
+  assert.doesNotMatch(JSON.stringify(projected), /private|secret|token=|Authentication required/u);
+});
+
+test('canonical codes cannot select inherited object properties as terminal guidance', () => {
+  const projected = projectTypedTerminalCause({
+    terminalResult: { terminalCause: { kind: 'provider_failure', code: 'constructor' } },
+  });
+  assert.deepEqual(projected, {
+    kind: 'provider_failure', code: 'constructor', category: 'provider_failure',
+    summary: 'The provider route failed.',
+    remediation: 'Inspect the Run\'s bounded evidence and provider readiness, then retry or select another exact route.',
+    retryable: true,
+  });
 });
 
 test('operator stop is the cause only when it initiated termination', () => {
   assert.deepEqual(projectTypedTerminalCause({ runStop: { status: 'stopped' } }), {
     kind: 'operator_stop', code: 'operator_stop',
   });
+});
+
+test('durable Plan terminal outcome remains typed when no live worker result survives restart', () => {
+  assert.deepEqual(projectTypedTerminalCause({
+    terminalOutcome: {
+      status: 'failed', accepted: false, code: 'recovery_terminalized',
+    },
+  }), {
+    kind: 'provider_failure', code: 'recovery_terminalized',
+    category: 'provider_failure', summary: 'The provider route failed.',
+    remediation: 'Inspect the Run\'s bounded evidence and provider readiness, then retry or select another exact route.',
+    retryable: true,
+  });
+  assert.equal(projectTypedTerminalCause({
+    terminalOutcome: { status: 'completed', accepted: true, code: 'accepted' },
+  }), null);
 });
 
 test('coordinator rehydrates the exact policy-owned budget cause', async () => {

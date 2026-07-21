@@ -41,10 +41,12 @@ function makeAdapter(extra = {}) {
     // `node --test` (which discovers every .mjs under test/) never hangs on it.
     args: [FIXTURE, '--serve'],
     env: extra.env,
+    model: extra.model,
     requestTimeoutMs: extra.requestTimeoutMs ?? 2000,
     stopDeadlineMs: extra.stopDeadlineMs,
     ceiling: 4,
     maxContext: 272000,
+    maxWireFrameBytes: extra.maxWireFrameBytes,
     versionProbe: extra.versionProbe ?? (() => 'fake-codex/0.144.0-test'),
   });
 }
@@ -122,6 +124,9 @@ test('XA14/XA15: card() reports harness codex, the injected version, and the nat
     toolCalls: { observation: 'native', enforcement: 'unavailable' },
     maxWireFrameBytes: 1024 * 1024,
   });
+  assert.deepEqual(card.permissions, {
+    mode: 'never', sandbox: 'danger-full-access', boundary: 'Unattended full host permissions by default; containment is a separate deployment boundary',
+  });
 });
 
 test('XA15: the default version probe describes the injected executable, not a different bare codex on PATH', () => {
@@ -153,6 +158,26 @@ test('XA6: spawn() acks ok:true and drives turn_started -> content.message -> li
     assert.ok(usage);
     assert.equal(usage.payload.counterId, terminal.payload.usageSeal.counterId);
     assert.ok(events.indexOf(usage) < events.indexOf(terminal));
+  } finally {
+    await cleanup(adapter, worker);
+  }
+});
+
+test('P92 route truth: an omitted native thread model remains unobserved instead of copying the request', async () => {
+  const adapter = makeAdapter({
+    model: 'gpt-requested-only', env: { FAKE_CODEX_OMIT_THREAD_MODEL: '1' },
+  });
+  const events = collect(adapter);
+  const worker = 'p92-model-observation';
+  try {
+    const ack = await adapter.spawn(worker, makeBrief('preserve route truth'), {
+      worktree: freshWorktree(), model: 'gpt-requested-only', reasoningEffort: 'high',
+    });
+    assert.equal(ack.ok, true);
+    const spawned = await until(events, (event) => event.kind === 'lifecycle.spawned');
+    assert.equal(spawned.payload.modelRequested, 'gpt-requested-only');
+    assert.equal(spawned.payload.modelObserved, null);
+    assert.equal(spawned.payload.effortObserved, 'high');
   } finally {
     await cleanup(adapter, worker);
   }
@@ -325,6 +350,8 @@ test('XA8: interrupt() ends the turn as interrupted via onEvent (control.interru
 
     const confirmed = await until(events, (e) => e.kind === 'control.interrupt_confirmed');
     assert.equal(confirmed.worker, worker);
+    assert.equal(typeof confirmed.payload.threadId, 'string');
+    assert.equal(confirmed.payload.transportOpen, true);
     assert.deepEqual(confirmed.payload.usageSeal, { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null });
     // D9: interrupt/kill confirmation is ALWAYS an event, never smuggled onto the Ack return.
     assert.equal(ack.emulated, undefined, 'a native protocol interrupt is not an emulated signal-kill');
@@ -519,6 +546,50 @@ test('XA17: malformed JSON lines and unknown-method notifications never crash th
     await cleanup(adapter, worker);
   }
 });
+
+test('wire P0: one oversized tool-item notification is bounded, credential-free, and the same worker still completes', async () => {
+  const adapter = makeAdapter({ maxWireFrameBytes: 1024 });
+  const events = collect(adapter);
+  const worker = 'wire-oversize-notification';
+  try {
+    const ack = await adapter.spawn(worker, makeBrief('FAKE:OVERSIZE_ITEM continue after telemetry loss'), { worktree: freshWorktree() });
+    assert.equal(ack.ok, true);
+    const truncated = await until(events, (event) => event.kind === 'error' && event.payload.code === 'wire_notification_truncated');
+    assert.equal(truncated.payload.serverMethod, 'item/completed');
+    assert.ok(truncated.payload.observedBytes > truncated.payload.byteCeiling);
+    assert.match(truncated.payload.remediation, /terminal turn result/i);
+    assert.doesNotMatch(JSON.stringify(truncated), /fixture-output-secret-must-not-echo/);
+    const terminal = await until(events, (event) => event.kind === 'lifecycle.turn_completed');
+    assert.equal(terminal.payload.result.status, 'completed');
+    assert.equal(events.some((event) => event.kind === 'lifecycle.crashed'), false);
+  } finally {
+    await cleanup(adapter, worker);
+  }
+});
+
+for (const [label, directive, spawnAccepted] of [
+  ['RPC response', 'FAKE:OVERSIZE_RESPONSE', false],
+  ['late-id ambiguous frame', 'FAKE:OVERSIZE_AMBIGUOUS', true],
+]) {
+  test(`wire P0: oversized ${label} fails closed and exactly reaps the provider process`, async () => {
+    const adapter = makeAdapter({ maxWireFrameBytes: 1024 });
+    const events = collect(adapter);
+    const worker = `wire-fatal-${directive}`;
+    try {
+      const ack = await adapter.spawn(worker, makeBrief(directive), { worktree: freshWorktree() });
+      assert.equal(ack.ok, spawnAccepted);
+      const crashed = await until(events, (event) => event.kind === 'lifecycle.crashed');
+      assert.equal(crashed.payload.code, 'wire_frame_oversize');
+      assert.match(crashed.payload.remediation, /terminated and reaped/i);
+      await until(events, (event) => event.kind === 'lifecycle.process_closed');
+      assert.equal(events.some((event) => event.kind === 'lifecycle.process_reap_unconfirmed'), false);
+      assert.equal(events.some((event) => event.kind === 'lifecycle.turn_completed'), false);
+      assert.doesNotMatch(JSON.stringify(events), /oversized-response-|ambiguous-frame-/);
+    } finally {
+      await cleanup(adapter, worker);
+    }
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Anti-wedge (live-schema-informed): server->client requests OUTSIDE the mapped table (the real

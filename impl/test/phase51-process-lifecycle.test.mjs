@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { ClaudeSessionCli, GlmSessionCli } from '../src/claude-session.mjs';
 import { CodexAppServerCli } from '../src/codex-appserver.mjs';
 import { GrokAcpCli } from '../src/grok-acp.mjs';
+import { KimiAcpCli } from '../src/kimi-acp.mjs';
 import { PiCli } from '../src/cli-adapters.mjs';
 import { Coordinator } from '../src/coordinator.mjs';
 import { Log } from '../src/log.mjs';
@@ -15,11 +16,17 @@ import { FenceTable } from '../src/fence.mjs';
 import { coordinationForLog } from '../src/coordination-store.mjs';
 import { WebNorthbound } from '../src/web-northbound.mjs';
 import { McpFleetServer } from '../src/mcp-northbound.mjs';
-import { reapOwnedProcessGroup } from '../src/process-lifecycle.mjs';
+import {
+  ProcessCloseReapLatch, processAuthorityPayload, processAuthorityState, reapOwnedProcessGroup,
+  reapRecoveredProcessGroup,
+} from '../src/process-lifecycle.mjs';
 
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const FAKE_CODEX = fileURLToPath(new URL('./fixtures/fake-codex-appserver.mjs', import.meta.url));
 const FAKE_GROK = fileURLToPath(new URL('./fixtures/fake-grok-acp.mjs', import.meta.url));
+const FAKE_KIMI = fileURLToPath(new URL('./fixtures/fake-kimi-acp.mjs', import.meta.url));
+const ONE_SHOT_REAP_TIMEOUT_MS = 5_000;
+const REAP_SCHEDULING_MARGIN_MS = 10_000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const groupAlive = (pid) => { try { process.kill(-pid, 0); return true; } catch { return false; } };
@@ -66,6 +73,164 @@ function assertClosedPair(events, generation, ready) {
   if (closeDerived >= 0) assert.ok(events.indexOf(closed[0]) < closeDerived);
   assert.equal(alive(started[0].payload.pid), false); assert.equal(groupAlive(started[0].payload.pid), false);
 }
+
+test('PL7/PL9: every native harness retains a natural-close terminal across an unconfirmed first reap', async (t) => {
+  const cases = [
+    ['one-shot', (reap) => new PiCli({
+      cmd: process.execPath, args: () => ['-e', 'setInterval(() => {}, 1000)'], parse: () => ({}),
+      live: true, reapOwnedProcessGroup: reap,
+    }), { live: true }, false],
+    ['claude', (reap) => new ClaudeSessionCli({
+      cmd: process.execPath, args: [FAKE_CLAUDE], killGraceMs: 20, reapOwnedProcessGroup: reap,
+    }), {}, true],
+    ['codex', (reap) => new CodexAppServerCli({
+      cmd: process.execPath, args: [FAKE_CODEX, '--serve'], requestTimeoutMs: 1500,
+      versionProbe: () => 'fake', reapOwnedProcessGroup: reap,
+    }), {}, true],
+    ['grok', (reap) => new GrokAcpCli({
+      cmd: process.execPath, args: [FAKE_GROK, '--serve'], requestTimeoutMs: 1500,
+      versionProbe: () => 'fake', reapOwnedProcessGroup: reap,
+    }), {}, true],
+    ['kimi', (reap) => new KimiAcpCli({
+      cmd: process.execPath, args: [FAKE_KIMI, '--serve'], requestTimeoutMs: 1500,
+      versionProbe: () => 'fake', reapOwnedProcessGroup: reap,
+    }), { model: 'kimi-code/k3', reasoningEffort: 'max' }, true],
+  ];
+  for (const [name, make, extraSpawn, ready] of cases) {
+    await t.test(name, async () => {
+      const attempts = [];
+      const reap = async (processGroupId, options) => {
+        attempts.push(processGroupId);
+        if (attempts.length === 1) return Object.freeze({ confirmed: false, reason: 'deadline' });
+        void options;
+        return Object.freeze({ confirmed: true, reason: null });
+      };
+      const adapter = make(reap); const worker = `phase51-retry-${name}`; const events = collect(adapter);
+      const worktree = mkdtempSync(join(tmpdir(), `phase51-retry-${name}-`));
+      try {
+        const ack = await adapter.spawn(worker, brief(name === 'claude' ? 'HOLD_UNTIL_INTERRUPT' : 'FAKE:STAY_OPEN'), {
+          worktree, processGeneration: 37, processReapTimeoutMs: 500, ...extraSpawn,
+        });
+        assert.equal(ack.ok, true);
+        await until(() => events.some((event) => event.kind === 'lifecycle.process_started'), `${name} process start`);
+        if (ready) await until(() => events.some((event) => event.kind === 'lifecycle.spawned'), `${name} provider readiness`);
+
+        const session = adapter._sessions.get(worker);
+        const pid = session?.child?.pid ?? session?.pid ?? session?.process?.child?.pid;
+        assert.ok(Number.isSafeInteger(pid) && pid > 0);
+        process.kill(-pid, 'SIGKILL');
+        await until(() => events.some((event) => event.kind === 'lifecycle.process_reap_unconfirmed'), `${name} first reap refusal`);
+        assert.equal(events.some((event) => event.kind === 'lifecycle.process_closed'), false,
+          `${name} cannot publish close while descendant absence remains unconfirmed`);
+        assert.equal(events.some((event) => event.kind === 'lifecycle.crashed'), false,
+          `${name} must retain its natural-close terminal until descendant absence is proven`);
+        assert.equal(events.some((event) => event.kind === 'kill.confirmed'), false);
+        const latch = session?.processClose ?? session?.process?.processClose;
+        assert.ok(latch?.pending, `${name} must retain exact cleanup ownership`);
+        assert.equal(Object.isFrozen(latch.closeFact), true);
+        assert.deepEqual({
+          generation: latch.closeFact.generation,
+          pid: latch.closeFact.pid,
+          processGroupId: latch.closeFact.processGroupId,
+          ready: latch.closeFact.ready,
+        }, {
+          generation: 37,
+          pid: events.find((event) => event.kind === 'lifecycle.process_started').payload.pid,
+          processGroupId: events.find((event) => event.kind === 'lifecycle.process_started').payload.processGroupId,
+          ready,
+        });
+
+        assert.equal((await adapter.kill(worker)).ok, true);
+        await until(() => events.some((event) => event.kind === 'kill.confirmed'), `${name} retry confirmation`);
+        assertClosedPair(events, 37, ready);
+        const order = events.map((event) => event.kind);
+        assert.ok(order.indexOf('lifecycle.process_reap_unconfirmed') < order.indexOf('lifecycle.process_closed'));
+        assert.ok(order.indexOf('lifecycle.process_closed') < order.indexOf('lifecycle.crashed'), order.join(' > '));
+        assert.ok(order.indexOf('lifecycle.crashed') < order.indexOf('kill.confirmed'));
+        assert.equal(events.filter((event) => event.kind === 'lifecycle.crashed').length, 1);
+        assert.equal(events.filter((event) => event.kind === 'lifecycle.process_reap_unconfirmed').length, 1);
+        assert.equal(events.filter((event) => event.kind === 'lifecycle.process_closed').length, 1);
+        assert.equal(events.filter((event) => event.kind === 'kill.confirmed').length, 1);
+        assert.equal(attempts.length, 2);
+        assert.equal(attempts.every((pid) => pid === latch.closeFact.processGroupId), true);
+
+        const third = await adapter.kill(worker);
+        assert.equal(third.ok, true); assert.equal(third.terminal, true);
+        assert.equal(attempts.length, 2, 'a terminal third kill cannot signal or probe again');
+      } finally { await emergencyCleanup(adapter, worker); }
+    });
+  }
+});
+
+test('PL7: concurrent retry callers join one reap and kill supersedes interrupt before one final terminal', async () => {
+  let attempts = 0;
+  let confirmSecond;
+  const events = [];
+  const closeDerived = (fact) => events.push(['lifecycle.crashed', fact.generation]);
+  const latch = new ProcessCloseReapLatch({
+    generation: 41,
+    pid: 4242,
+    reap: async () => {
+      attempts += 1;
+      if (attempts === 1) return { confirmed: false, reason: 'deadline' };
+      return new Promise((resolve) => { confirmSecond = resolve; });
+    },
+    onProcessClosed: (payload) => events.push(['lifecycle.process_closed', payload.generation]),
+    onReapUnconfirmed: (payload) => events.push(['lifecycle.process_reap_unconfirmed', payload.generation]),
+    onStopConfirmed: (kind) => events.push([kind, 41]),
+  });
+
+  assert.deepEqual(await latch.close(9, null, true, closeDerived), {
+    confirmed: false, reason: 'deadline',
+  });
+  assert.deepEqual(events.map(([kind]) => kind), [
+    'lifecycle.process_reap_unconfirmed',
+  ]);
+
+  const interrupted = latch.authorizeStop('control.interrupt_confirmed', { disposition: 'interrupt' });
+  const secondKill = latch.authorizeStop('kill.confirmed', { disposition: 'kill' });
+  const thirdKill = latch.authorizeStop('kill.confirmed', { disposition: 'kill' });
+  assert.equal(interrupted, secondKill);
+  assert.equal(secondKill, thirdKill);
+  assert.equal(attempts, 2, 'concurrent second and third kill must join one physical reap');
+  confirmSecond({ confirmed: true, reason: null });
+  await Promise.all([interrupted, secondKill, thirdKill]);
+
+  assert.deepEqual(events.map(([kind]) => kind), [
+    'lifecycle.process_reap_unconfirmed',
+    'lifecycle.process_closed',
+    'lifecycle.crashed',
+    'kill.confirmed',
+  ]);
+  assert.equal(events.filter(([kind]) => kind === 'control.interrupt_confirmed').length, 0);
+  assert.equal(events.filter(([kind]) => kind === 'kill.confirmed').length, 1);
+  assert.equal((await latch.retry()).confirmed, true);
+  assert.equal(attempts, 2);
+});
+
+test('PL3/PL7: generation N confirmation cannot mutate a reused N+1 PID coordinate', async () => {
+  const mutations = [];
+  const closes = [];
+  const first = new ProcessCloseReapLatch({
+    generation: 51, pid: 5151, reap: async () => ({ confirmed: true, reason: null }),
+    onProcessClosed: (payload) => closes.push(payload),
+  });
+  await first.close(0, null, true, (fact) => mutations.push(`terminal:${fact.generation}`));
+  assert.equal(first.confirmed, true);
+
+  const second = new ProcessCloseReapLatch({
+    generation: 52, pid: 5151, reap: async () => ({ confirmed: true, reason: null }),
+    onProcessClosed: (payload) => closes.push(payload),
+  });
+  await second.close(0, null, false, (fact) => mutations.push(`terminal:${fact.generation}`));
+  await Promise.all([first.retry(), first.authorizeStop('kill.confirmed', {})]);
+
+  assert.deepEqual(mutations, ['terminal:51', 'terminal:52']);
+  assert.deepEqual(closes.map(({ generation, pid, processGroupId }) => ({ generation, pid, processGroupId })), [
+    { generation: 51, pid: 5151, processGroupId: 5151 },
+    { generation: 52, pid: 5151, processGroupId: 5151 },
+  ]);
+});
 
 test('PL1/PL2/PL7/PL9: every shipped session adapter separates process start, provider readiness, close, and confirmed kill', async (t) => {
   for (const [name, make, marker] of adapterCases()) {
@@ -145,6 +310,79 @@ test('PL7: wall timeout records the exact close before the timeout crash for eve
       } finally { await emergencyCleanup(adapter, worker); }
     });
   }
+});
+
+test('PL7/PL10: pre-close Kimi timeout retains runtime, worktree, and local authority through an unconfirmed reap', async () => {
+  let attempts = 0;
+  let confirmRetry;
+  const adapter = new KimiAcpCli({
+    cmd: process.execPath, args: [FAKE_KIMI, '--serve'], requestTimeoutMs: 1500,
+    versionProbe: () => 'fake',
+    reapOwnedProcessGroup: async () => {
+      attempts += 1;
+      if (attempts === 1) return Object.freeze({ confirmed: false, reason: 'deadline' });
+      return new Promise((resolve) => { confirmRetry = resolve; });
+    },
+  });
+  const root = mkdtempSync(join(tmpdir(), 'phase51-kimi-preclose-timeout-'));
+  const worktree = join(root, 'worktree');
+  mkdirSync(worktree);
+  const log = new Log(join(root, 'log'));
+  let runtimeRemovals = 0;
+  let worktreeRemovals = 0;
+  const coordinator = new Coordinator({
+    log, coordination: coordinationForLog(log), fences: new FenceTable(),
+    adapters: { kimi: adapter },
+    runtimeScopes: {
+      create: (worker) => ({ env: {}, replaceEnv: false, posture: { root: `/runtime/${worker}` } }),
+      remove: () => { runtimeRemovals += 1; }, reconcile: () => {},
+    },
+    worktrees: {
+      create: async () => ({ path: worktree }),
+      capture: async () => ({ sha: 'x', snapshotted: false, changedPaths: [] }),
+      remove: async () => { worktreeRemovals += 1; }, reconcile: async () => {},
+    },
+    referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'kimi',
+    approvalTimeoutMs: 100, stopDeadlineMs: 500,
+  });
+  const handle = await coordinator.spawn('kimi', brief('FAKE:STAY_OPEN'), {
+    taskId: 'phase51-kimi-preclose-timeout', model: 'kimi-code/k3', effort: 'max',
+  });
+  try {
+    await until(() => log.read(handle.id).some((event) => event.kind === 'lifecycle.spawned' && event.actor === 'worker'), 'pre-close Kimi ready');
+    const session = adapter._sessions.get(handle.id);
+    // Model a transport that has already been classified as untrusted. The scheduler normally
+    // requests its own kill; use a no-op request boundary here so the wall timeout remains the
+    // authoritative pre-close cause while the installed record still owns runtime/worktree reap.
+    const ownedHandle = coordinator._workers.get(handle.id);
+    coordinator._scheduleUntrustedTransportReap(ownedHandle, {
+      kill: async () => ({ ok: true }),
+    }, { removeWorktree: true, reason: 'fixture_untrusted_transport' });
+    assert.equal(ownedHandle.untrustedTransportReap?.reason, 'fixture_untrusted_transport');
+    assert.equal(typeof session.wallTimer?._onTimeout, 'function');
+    session.wallTimer._onTimeout();
+
+    await until(() => attempts === 2, 'held second reap after pre-close timeout');
+    const owned = coordinator._workers.get(handle.id);
+    assert.equal(owned.localAuthority, true);
+    assert.equal(owned.runtimeScope.active, true);
+    assert.equal(owned.ownedWorktreeAuthority, true);
+    assert.equal(runtimeRemovals, 0);
+    assert.equal(worktreeRemovals, 0);
+    assert.equal(log.read(handle.id).some((event) => event.kind === 'lifecycle.process_reap_unconfirmed'), true);
+    assert.equal(log.read(handle.id).some((event) => event.kind === 'lifecycle.process_closed'), false);
+    assert.equal(log.read(handle.id).some((event) => event.kind === 'kill.confirmed'), false);
+
+    confirmRetry({ confirmed: true, reason: null });
+    await until(() => log.read(handle.id).some((event) => event.kind === 'kill.confirmed'), 'pre-close timeout final stop');
+    await until(() => coordinator._workers.get(handle.id).localAuthority === false, 'pre-close timeout cleanup');
+    assert.equal(runtimeRemovals, 1);
+    assert.equal(worktreeRemovals, 1);
+    const kinds = log.read(handle.id).map((event) => event.kind);
+    assert.ok(kinds.indexOf('lifecycle.crashed') < kinds.indexOf('lifecycle.process_reap_unconfirmed'));
+    assert.ok(kinds.indexOf('lifecycle.process_reap_unconfirmed') < kinds.indexOf('lifecycle.process_closed'));
+    assert.ok(kinds.indexOf('lifecycle.process_closed') < kinds.indexOf('kill.confirmed'));
+  } finally { await emergencyCleanup(adapter, handle.id); }
 });
 
 test('PL7: an earlier positive-PID process error remains the terminal cause when user kill races it', async (t) => {
@@ -262,21 +500,37 @@ test('PL1/PL9: the live one-shot compatibility tier emits the same process pair 
 });
 
 test('PL7/PL9: one-shot turn completion does not surrender process-group authority over descendants', async () => {
-  const code = "const{spawn}=require('node:child_process');const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});c.unref();console.log(JSON.stringify({done:true}));setInterval(()=>{},1000)";
+  const code = "const{spawn}=require('node:child_process');const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});c.unref();console.log(JSON.stringify({done:true,descendantPid:c.pid}));setInterval(()=>{},1000)";
+  let descendantPid = null;
   const adapter = new PiCli({
     cmd: process.execPath,
     args: () => ['-e', code],
-    parse: (obj, worker, harness, turnEpoch) => obj.done === true ? { terminal: true, event: { worker, harness, turnEpoch, actor: 'worker', kind: 'lifecycle.turn_completed', payload: { status: 'completed' } } } : {},
+    parse: (obj, worker, harness, turnEpoch) => {
+      if (obj.done !== true) return {};
+      descendantPid = obj.descendantPid;
+      return { terminal: true, event: { worker, harness, turnEpoch, actor: 'worker', kind: 'lifecycle.turn_completed', payload: { status: 'completed' } } };
+    },
     live: true,
   });
   const worker = 'phase51-one-shot-descendant'; const events = collect(adapter);
   try {
-    assert.equal((await adapter.spawn(worker, brief(), { live: true, worktree: tmpdir(), processGeneration: 31 })).ok, true);
+    assert.equal((await adapter.spawn(worker, brief(), {
+      live: true, worktree: tmpdir(), processGeneration: 31,
+      processReapTimeoutMs: ONE_SHOT_REAP_TIMEOUT_MS,
+    })).ok, true);
     await until(() => events.some((event) => event.kind === 'lifecycle.turn_completed'), 'one-shot parsed terminal');
     const session = adapter._sessions.get(worker); const pid = session.child.pid;
-    assert.equal(session.turnSettled, true); assert.equal(session.terminal, false); assert.equal(groupAlive(pid), true);
-    await adapter.kill(worker); await until(() => events.some((event) => event.kind === 'kill.confirmed'), 'one-shot descendant reap', 8000);
-    assert.equal(groupAlive(pid), false); assertClosedPair(events, 31, false);
+    assert.equal(session.turnSettled, true); assert.equal(session.terminal, false);
+    assert.ok(Number.isSafeInteger(descendantPid) && descendantPid > 0);
+    assert.equal(alive(descendantPid), true); assert.equal(groupAlive(pid), true);
+    await adapter.kill(worker);
+    await until(
+      () => events.some((event) => event.kind === 'kill.confirmed'),
+      'one-shot descendant reap',
+      ONE_SHOT_REAP_TIMEOUT_MS + REAP_SCHEDULING_MARGIN_MS,
+    );
+    assert.equal(alive(descendantPid), false); assert.equal(groupAlive(pid), false);
+    assertClosedPair(events, 31, false);
   } finally { await emergencyCleanup(adapter, worker); }
 });
 
@@ -298,6 +552,122 @@ function coordinatorFixture(adapter, log = new Log(mkdtempSync(join(tmpdir(), 'p
   return { coordinator: make(), make, log, coordination };
 }
 
+test('PL7: each observed unconfirmed reap drives a bounded coordinator kill and converges without restart', async () => {
+  let attempts = 0;
+  const exactGroups = [];
+  const adapter = new CodexAppServerCli({
+    cmd: process.execPath, args: [FAKE_CODEX, '--serve'], requestTimeoutMs: 1500,
+    versionProbe: () => 'fake',
+    reapOwnedProcessGroup: async (processGroupId, options) => {
+      exactGroups.push(processGroupId);
+      attempts += 1;
+      if (attempts === 1) return Object.freeze({ confirmed: false, reason: 'deadline' });
+      return reapOwnedProcessGroup(processGroupId, options);
+    },
+  });
+  const log = new Log(mkdtempSync(join(tmpdir(), 'phase51-retry-coordinator-log-')));
+  const coordination = coordinationForLog(log);
+  const worktrees = {
+    create: async () => ({ path: mkdtempSync(join(tmpdir(), 'phase51-retry-coordinator-wt-')) }),
+    capture: async () => ({ sha: 'x' }), createVerifyWorktree: async () => ({ path: tmpdir() }),
+    removeVerifyWorktree: async () => {}, remove: async () => {}, reconcile: async () => {},
+  };
+  const coordinator = new Coordinator({
+    log, coordination, fences: new FenceTable(), adapters: { codex: adapter }, worktrees,
+    referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'codex',
+    approvalTimeoutMs: 100, stopDeadlineMs: 100,
+  });
+  const handle = await coordinator.spawn('codex', brief('FAKE:STAY_OPEN'), {
+    taskId: 'phase51-current-generation-retry',
+  });
+  try {
+    await until(() => coordinator.list()[0]?.processRef?.state === 'ready', 'coordinator retry process ready');
+    const generation = coordinator.list()[0].processRef.generation;
+    const pid = coordinator.list()[0].processRef.pid;
+
+    const first = await coordinator.kill(handle.id);
+    assert.equal(first.ok, true); assert.equal(first.result, 'confirmed');
+    await until(() => coordinator.list()[0]?.processRef?.state === 'closed', 'coordinator retry exact close');
+    const events = log.read(handle.id);
+    const closed = events.filter((event) => event.kind === 'lifecycle.process_closed');
+    const confirmed = events.filter((event) => event.kind === 'kill.confirmed');
+    assert.equal(closed.length, 1); assert.equal(confirmed.length, 1);
+    assert.equal(closed[0].payload.generation, generation);
+    assert.equal(closed[0].payload.pid, pid); assert.equal(closed[0].payload.processGroupId, pid);
+    assert.ok(closed[0].seq < confirmed[0].seq);
+    assert.deepEqual(exactGroups, [pid, pid]);
+    assert.equal(coordinator._workers.get(handle.id).localAuthority, false);
+    assert.equal(alive(pid), false); assert.equal(groupAlive(pid), false);
+
+    const second = await coordinator.kill(handle.id);
+    assert.equal(second.ok, true); assert.equal(second.result, 'already_dead');
+    assert.equal(attempts, 2);
+  } finally { await emergencyCleanup(adapter, handle.id); }
+});
+
+test('PL7/PL10: explicit reap retries stop at the outer deadline and remain operator-retryable', async () => {
+  let kills = 0;
+  let confirm = false;
+  const adapter = stubAdapter({
+    async kill(worker) {
+      kills += 1;
+      const generation = this.spawnOpts.processGeneration;
+      queueMicrotask(() => {
+        if (confirm) {
+          this.emit('lifecycle.process_closed', worker, {
+            schemaVersion: 1, generation, pid: 4242, processGroupId: 4242,
+            code: 9, signal: null, ready: false,
+          });
+          this.emit('kill.confirmed', worker, {});
+          return;
+        }
+        this.emit('lifecycle.process_reap_unconfirmed', worker, {
+          schemaVersion: 1, generation, pid: 4242, processGroupId: 4242, reason: 'deadline',
+        });
+      });
+      return { ok: true };
+    },
+  });
+  const log = new Log(mkdtempSync(join(tmpdir(), 'phase51-bounded-retry-log-')));
+  const { coordinator } = coordinatorFixture(adapter, log);
+  const handle = await coordinator.spawn('stub', brief(), { taskId: 'phase51-bounded-retry' });
+  const generation = adapter.spawnOpts.processGeneration;
+  await until(() => coordinator.list()[0]?.processRef?.state === 'initializing', 'bounded retry process start');
+  adapter.emit('lifecycle.process_reap_unconfirmed', handle.id, {
+    schemaVersion: 1, generation, pid: 4242, processGroupId: 4242, reason: 'deadline',
+  });
+
+  await until(() => log.read(handle.id).some((event) => event.kind === 'control.forced_stop'), 'bounded retry outer deadline');
+  assert.ok(kills >= 2, 'an observed refusal must drive another physical kill');
+  assert.ok(kills < 100, `bounded retry count was unexpectedly high: ${kills}`);
+  const atDeadline = kills;
+  await sleep(30);
+  assert.equal(kills, atDeadline, 'no automatic retry may escape the outer deadline');
+  assert.equal(coordinator._workers.get(handle.id).localAuthority, true);
+  assert.equal(coordinator.list()[0].processRef.state, 'unconfirmed_after_restart');
+
+  confirm = true;
+  const retried = await coordinator.kill(handle.id);
+  assert.equal(retried.ok, true); assert.equal(retried.result, 'confirmed');
+  assert.equal(coordinator.list()[0].processRef.state, 'closed');
+  assert.equal(coordinator._workers.get(handle.id).localAuthority, false);
+});
+
+async function establishVerifiedRecoveryPrior(coordinator, adapter, handle) {
+  adapter.emit('lifecycle.turn_completed', handle.id, {
+    status: 'completed',
+    summary: 'hub-verified recovery prior',
+    artifacts: { commits: [], files: [] },
+    verification: { command: 'true', claimedExit: 0 },
+    openQuestions: [],
+    budgetUsed: { tokens: 1, usd: 0 },
+  });
+  await until(async () => {
+    const result = await coordinator.result(handle.id);
+    return result.ready && result.status === 'completed';
+  }, 'durable hub-verified recovery prior');
+}
+
 test('PL7/PL10: process-group reap is bounded and never fabricates exact close on non-convergence', async () => {
   let now = 0; let signals = 0; let probes = 0;
   const result = await reapOwnedProcessGroup(4242, {
@@ -315,6 +685,36 @@ test('PL7/PL10: process-group reap is bounded and never fabricates exact close o
     signal: () => {},
   });
   assert.deepEqual(denied, { confirmed: false, reason: 'permission_denied' });
+});
+
+test('PL8: recovered signaling requires the exact durable PID-start authority', async () => {
+  const processRef = { generation: 7, pid: 4242, processGroupId: 4242 };
+  const execFileSync = () => '4242 4242 Sun Jul 19 13:53:51 2026\n';
+  const authority = processAuthorityPayload(processRef, { execFileSync });
+  assert.deepEqual(authority, {
+    schemaVersion: 1, generation: 7, pid: 4242, processGroupId: 4242,
+    pidStart: 'Sun Jul 19 13:53:51 2026',
+  });
+  assert.equal(processAuthorityState(processRef, authority, { execFileSync }), 'active');
+
+  let signals = 0;
+  const mismatched = { ...authority, pidStart: 'Sun Jul 19 13:53:52 2026' };
+  assert.deepEqual(await reapRecoveredProcessGroup(processRef, mismatched, {
+    execFileSync, signal: () => { signals += 1; }, probe: () => {},
+  }), { confirmed: false, signaled: false, reason: 'mismatch' });
+  assert.equal(signals, 0, 'a reused or mismatched process coordinate is never signaled');
+
+  let probes = 0;
+  assert.deepEqual(await reapRecoveredProcessGroup(processRef, authority, {
+    execFileSync,
+    signal: (target, signal) => { signals += 1; assert.equal(target, -4242); assert.equal(signal, 'SIGKILL'); },
+    probe: () => {
+      probes += 1;
+      if (probes > 1) { const error = new Error('gone'); error.code = 'ESRCH'; throw error; }
+    },
+    sleep: async () => {},
+  }), { confirmed: true, signaled: true, reason: null });
+  assert.equal(signals, 1);
 });
 
 test('PL2/PL3: provider readiness requires the exact active initializing generation', async () => {
@@ -559,7 +959,9 @@ test('PL3/PL8: rejected recovery identity persists only sanitized readiness and 
   const handle = await coordinator.spawn('stub', brief(), { taskId: 'phase51-recovery-identity', model: 'stub-model', effort: 'low' });
   await until(() => coordinator.list()[0]?.processRef, 'recovery identity seed process');
   adapter.emit('lifecycle.spawned', handle.id, { sessionId: 'expected-native', pid: 4242, processGeneration: 1 });
+  await establishVerifiedRecoveryPrior(coordinator, adapter, handle);
   adapter.emit('lifecycle.process_closed', handle.id, { schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, code: 0, signal: null, ready: true });
+  await until(() => coordinator._workers.get(handle.id).localAuthority === false, 'verified identity seed cleanup');
   const internal = coordinator._workers.get(handle.id); const task = coordinator._tasks.get(handle.taskId);
   internal.status = 'orphaned'; internal.localAuthority = false; internal.sessionContext = { worktree: tmpdir(), ownerTaskId: task.id }; task.sessionContext = internal.sessionContext;
   adapter.spawn = async (worker, _brief, opts) => {
@@ -584,7 +986,9 @@ test('PL7/PL8: recovery refuses a matching provider session that closes before a
   const handle = await coordinator.spawn('stub', brief(), { taskId: 'phase51-recovery-fast-close', model: 'stub-model', effort: 'low' });
   await until(() => coordinator.list()[0]?.processRef, 'fast-close recovery seed');
   adapter.emit('lifecycle.spawned', handle.id, { sessionId: 'fast-close-native', pid: 4242, processGeneration: 1 });
+  await establishVerifiedRecoveryPrior(coordinator, adapter, handle);
   adapter.emit('lifecycle.process_closed', handle.id, { schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, code: 0, signal: null, ready: true });
+  await until(() => coordinator._workers.get(handle.id).localAuthority === false, 'verified fast-close seed cleanup');
   const internal = coordinator._workers.get(handle.id); const task = coordinator._tasks.get(handle.taskId); const worktree = mkdtempSync(join(tmpdir(), 'phase51-fast-close-recovery-wt-'));
   internal.status = 'orphaned'; internal.localAuthority = false; internal.sessionContext = { worktree, ownerTaskId: task.id }; task.sessionContext = internal.sessionContext;
   adapter.spawn = async (worker, _brief, opts) => {
@@ -686,7 +1090,10 @@ test('PL7/PL8: failed native recovery retains writer authority and runtime owner
   const worktree = mkdtempSync(join(tmpdir(), 'phase51-recovery-wt-'));
   const handle = await coordinator.spawn('stub', brief('FAKE:STAY_OPEN'), { taskId: 'phase51-recovery-reap', model: 'stub-model', effort: 'low' });
   await until(() => coordinator.list()[0]?.processRef, 'seed process start');
-  seed.emit('lifecycle.process_closed', handle.id, { schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, code: 0, signal: null, ready: false });
+  seed.emit('lifecycle.spawned', handle.id, { sessionId: 'phase51-native-recovery', pid: 4242, processGeneration: 1 });
+  await establishVerifiedRecoveryPrior(coordinator, seed, handle);
+  seed.emit('lifecycle.process_closed', handle.id, { schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, code: 0, signal: null, ready: true });
+  await until(() => coordinator._workers.get(handle.id).localAuthority === false, 'verified recovery seed cleanup');
 
   const internal = coordinator._workers.get(handle.id); const task = coordinator._tasks.get(handle.taskId);
   internal.status = 'orphaned'; internal.localAuthority = false;

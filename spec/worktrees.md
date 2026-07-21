@@ -13,7 +13,8 @@
 The worker (Codex/Claude/GLM) just sees **a normal repo in a normal directory** and works as usual. All the worktree bookkeeping is the coordinator's job — the worker doesn't need to know it's in a worktree. The coordinator:
 
 - creates the worktree before spawning the worker and points the worker's working directory at it,
-- confines the worker to that directory (the OS sandbox boundary — the worker cannot escape its worktree),
+- gives the worker that directory as its repository/collision boundary and working directory;
+  containment is a separate harness or external-OS policy and is never inferred from Git,
 - tracks every worktree in its registry (rebuilt from the log, so it survives a coordinator restart),
 - cleans up when the task is done or the worker dies.
 
@@ -60,6 +61,12 @@ CLEANUP
 - **Attribution.** Each worker commits as itself — author set to `baton-worker-<vendor>` with a trailer naming the vendor, model version, and task id — so `git blame` across the fleet answers "which worker wrote this, under whose direction," and the routing stats can be tied to real outcomes.
 - **Interrupt interaction (ties to confirm-it-stopped).** When you interrupt a worker, its worktree may have a half-written file or an in-flight `git` operation. The coordinator must **not** touch or reap a worktree until the worker has *confirmed it stopped* (the two-phase-stop rule) — otherwise two writers corrupt the index. Worktree cleanup is gated on confirmed-stop.
 - **Zombie worktrees.** If a worker crashes, its worktree is left behind. The coordinator's registry (from the log) knows which worktrees should exist; on boot it reconciles — `git worktree prune` for git's stale admin files, plus removing directories for tasks that ended. Nothing is left to rot.
+- **Concurrent verifier cleanup.** Every detached verifier path has a collision-resistant suffix and
+  one joined cleanup operation. Cleanup removes only that exact directory/administrative record,
+  may prune common-Git stale metadata, and then postchecks exact absence. Repeated or concurrent
+  callers receive the same settlement; they never reap a sibling verifier sharing the common Git
+  directory. Expected Git failures are captured as evidence rather than leaked as process stderr,
+  while an unresolved registration remains a typed cleanup failure.
 - **Don't collide with the user's own worktrees.** Everything baton creates lives under `.baton/` (git-ignored, and ideally outside the main working tree) so it never clashes with worktrees the developer already uses, and never recurses into itself.
 - **Non-git projects.** Fallback: a plain directory copy per worker (degraded — no cheap history sharing, no branch merge, so integration is a manual diff apply). The isolation property still holds. Flag it as a lesser mode.
 

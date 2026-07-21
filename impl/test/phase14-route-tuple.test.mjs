@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { routeTupleKey, resolveEffort } from '../src/route-tuple.mjs';
+import { parseRouteTupleKey, routeTupleKey, resolveEffort } from '../src/route-tuple.mjs';
 import { Coordinator, ModelSelectionError } from '../src/coordinator.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { Log } from '../src/log.mjs';
@@ -55,6 +55,20 @@ function stubAdapter(name, efforts, calls = []) {
     },
   };
 }
+function sharedHarnessAdapter(model, calls = []) {
+  const adapter = stubAdapter('claude-code', ['max'], calls);
+  const baseCard = adapter.card;
+  adapter.card = () => ({
+    ...baseCard(),
+    harness: 'claude-code',
+    modelSelection: {
+      mode: 'exact', family: model.startsWith('kimi-') ? 'kimi' : 'anthropic',
+      configuredDefault: model, available: [model], acceptedAliases: [], acceptedPrefixes: [],
+      reasoningEffort: ['max'], effortRequired: true,
+    },
+  });
+  return adapter;
+}
 function system(adapters, route, hooks = {}) {
   const log = hooks.log ?? new Log(mkdtempSync(join(tmpdir(), 'baton-rt-log-')));
   const coordination = hooks.coordination ?? coordinationForLog(log);
@@ -79,6 +93,10 @@ test('RT11.2: exact effort validation rejects empty inventories and unsupported 
   assert.deepEqual(resolveEffort(card(), 'high'), { ok: true, effort: 'high' });
   assert.equal(resolveEffort(card([]), 'high').ok, false);
   assert.equal(resolveEffort({ ...card(), modelSelection: { reasoningEffort: null } }, 'high').ok, false);
+  assert.deepEqual(
+    resolveEffort({ ...card(), modelSelection: { reasoningEffort: ['max'], effortRequired: true } }),
+    { ok: false, reason: 'reasoning_effort_required' },
+  );
 });
 
 test('RT11.3/4: stable tuple learning identity separates resolved low and high buckets', () => {
@@ -86,6 +104,23 @@ test('RT11.3/4: stable tuple learning identity separates resolved low and high b
   const high = routeTupleKey(card(), 'gpt-exact', 'high', 'build');
   assert.notEqual(low, high);
   assert.equal(low, routeTupleKey(card(), 'gpt-exact', 'low', 'build'));
+});
+
+test('RT11.3a: the shared tuple parser accepts legacy and policy-attested identities only', () => {
+  const legacy = parseRouteTupleKey(routeTupleKey(card(), 'gpt-exact', 'high', 'build'));
+  assert.equal(legacy.attested, false);
+  assert.equal(legacy.modelFamily, 'openai');
+  assert.equal(legacy.taskType, 'build');
+  const digest = 'a'.repeat(64);
+  const attested = parseRouteTupleKey(routeTupleKey(card(), 'gpt-exact', 'high', 'build', {
+    resolutionDigest: digest,
+  }));
+  assert.equal(attested.attested, true);
+  assert.equal(attested.workerPolicyResolutionDigest, digest);
+  assert.throws(() => parseRouteTupleKey(JSON.stringify([...legacy.fields, 'not-a-digest'])),
+    (error) => error.code === 'route_tuple_invalid');
+  assert.throws(() => parseRouteTupleKey(JSON.stringify([...legacy.fields, digest, 'extra'])),
+    (error) => error.code === 'route_tuple_invalid');
 });
 
 test('RT11.1/9: web dispatch forwards effort independently of modelPolicy', async () => {
@@ -107,7 +142,9 @@ test('RT11.1/9: web dispatch forwards effort independently of modelPolicy', asyn
 
 test('RT11.7: Claude and Grok native controls preserve exact effort', () => {
   assert.deepEqual(buildClaudeSessionArgs({ effort: 'high', permissionMode: null }).slice(-2), ['--effort', 'high']);
-  assert.deepEqual(withGrokModelArgs([], { reasoningEffort: 'low' }), ['--reasoning-effort', 'low']);
+  assert.deepEqual(withGrokModelArgs([], { reasoningEffort: 'low' }), [
+    '--always-approve', '--reasoning-effort', 'low',
+  ]);
 });
 
 test('RT11.1/2: direct spawn forwards exact effort and conflicts/refusals allocate nothing', async () => {
@@ -156,6 +193,30 @@ test('RT11.3: auto routing filters by effort and returns the tuple it scored', a
   assert.equal(highCalls[0].opts.reasoningEffort, 'high');
   assert.equal(lowCalls.length, 0);
   assert.equal(handle.routeKey, routeTupleKey(routed.card, 'gpt-exact', 'high', 'build'));
+});
+
+test('RT11.1: public harness plus exact model and effort selects one private adapter route', async () => {
+  const anthropicCalls = []; const kimiCalls = [];
+  const { coordinator } = system({
+    'claude-native': sharedHarnessAdapter('claude-opus', anthropicCalls),
+    'claude-kimi': sharedHarnessAdapter('kimi-k3', kimiCalls),
+  }, () => { throw new Error('explicit routing must not invoke adaptive routing'); });
+  const handle = await coordinator.spawn('claude-code', brief(), {
+    taskId: 'shared-harness-kimi', model: 'kimi-k3', effort: 'max',
+  });
+  assert.equal(handle.vendor, 'claude-kimi');
+  assert.equal(handle.harnessRequested, 'claude-code');
+  assert.equal(handle.harnessResolved, 'claude-code@2');
+  assert.equal(anthropicCalls.length, 0);
+  assert.equal(kimiCalls.length, 1);
+
+  const ambiguous = system({
+    first: sharedHarnessAdapter('kimi-k3'), second: sharedHarnessAdapter('kimi-k3'),
+  }, () => 'first').coordinator;
+  await assert.rejects(
+    () => ambiguous.spawn('claude-code', brief(), { model: 'kimi-k3', effort: 'max' }),
+    (error) => error instanceof ModelSelectionError && error.code === 'route_ambiguous',
+  );
 });
 
 test('RT11.1/3/9: assembled direct and web auto routing dispatch only cards surviving exact effort filtering', async () => {

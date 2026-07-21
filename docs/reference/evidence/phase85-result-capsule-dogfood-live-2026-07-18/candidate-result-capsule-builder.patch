@@ -1,0 +1,535 @@
+diff --git a/impl/src/context-authority.mjs b/impl/src/context-authority.mjs
+index b10953d..b406f71 100644
+--- a/impl/src/context-authority.mjs
++++ b/impl/src/context-authority.mjs
+@@ -9,6 +9,7 @@ const ARTIFACT_MEDIA = Object.freeze({
+   context_value: 'application/vnd.baton.context-value+json',
+   context_evidence: 'application/vnd.baton.context-cell-evidence+json',
+   context_call_evidence: 'application/vnd.baton.context-call-evidence+json',
++  context_provider_result: 'application/vnd.baton.context-provider-result+json',
+ });
+ const AUTHORITY_FIELDS = Object.freeze(['actor', 'principalId', 'repoId', 'runId']);
+ 
+diff --git a/impl/src/context-program.mjs b/impl/src/context-program.mjs
+index dfd1a34..8b20774 100644
+--- a/impl/src/context-program.mjs
++++ b/impl/src/context-program.mjs
+@@ -9,6 +9,7 @@ import {
+   DEFAULT_CONTEXT_PROGRAM_POLICY, normalizeContextProgramPolicy,
+ } from './context-program-policy.mjs';
+ import { buildPureContextOutputLineage } from './context-lineage.mjs';
++import { validateContextProviderResultCapsule } from './context-result.mjs';
+ 
+ export { DEFAULT_CONTEXT_PROGRAM_POLICY, normalizeContextProgramPolicy };
+ 
+@@ -610,6 +611,16 @@ export class StatelessContextBench {
+     });
+   }
+ 
++  admitProviderResult(value) {
++    const capsule = validateContextProviderResultCapsule(value);
++    this.readReference(capsule.sourceRef);
++    return this._writeArtifact(
++      capsule,
++      'context_provider_result',
++      'application/vnd.baton.context-provider-result+json',
++    );
++  }
++
+   _readSource(digest) {
+     const ref = `ctx:sha256:${digest}`;
+     if (this.sources.has(ref)) return clone(this.sources.get(ref), 'context_source_integrity');
+@@ -994,6 +1005,17 @@ export class StatelessContextBench {
+     );
+   }
+ 
++  readProviderResult(ref) {
++    const value = this._readArtifact(
++      ref,
++      'context_provider_result',
++      'application/vnd.baton.context-provider-result+json',
++    );
++    const capsule = validateContextProviderResultCapsule(value);
++    this.readReference(capsule.sourceRef);
++    return capsule;
++  }
++
+   readArtifact(ref) {
+     if (ref?.kind === 'context_value') return this.readOutput(ref);
+     if (ref?.kind === 'context_evidence') return this.readEvidence(ref);
+@@ -1002,6 +1024,7 @@ export class StatelessContextBench {
+         ref, 'context_call_evidence', 'application/vnd.baton.context-call-evidence+json',
+       );
+     }
++    if (ref?.kind === 'context_provider_result') return this.readProviderResult(ref);
+     throw typed('Context artifact ref kind is invalid', 'context_artifact_integrity');
+   }
+ 
+diff --git a/impl/src/context-result.mjs b/impl/src/context-result.mjs
+new file mode 100644
+index 0000000..e0246c4
+--- /dev/null
++++ b/impl/src/context-result.mjs
+@@ -0,0 +1,208 @@
++import { createHash } from 'node:crypto';
++
++const DIGEST = /^[a-f0-9]{64}$/u;
++const GIT_SHA = /^[a-f0-9]{40}$/u;
++const CALL_ID = /^context-call:[a-f0-9]{64}$/u;
++const UNIT_ID = /^context-partition:[a-f0-9]{64}$/u;
++const SOURCE_REF = /^ctx:sha256:([a-f0-9]{64})$/u;
++const CAPSULE_ID = /^context-result:([a-f0-9]{64})$/u;
++const CAPSULE_FIELDS = Object.freeze([
++  'artifactDigest', 'callId', 'capsuleDigest', 'capsuleId', 'cleanupDigest', 'kind',
++  'result', 'resultSourceDigest', 'route', 'schemaVersion', 'sourceRef', 'taskId',
++  'taskVersion', 'terminalEvent', 'unitId',
++]);
++const CAPSULE_INPUT_FIELDS = Object.freeze([
++  'artifactDigest', 'callId', 'cleanupDigest', 'result', 'route', 'sourceRef', 'taskId',
++  'taskVersion', 'terminalEvent', 'unitId',
++]);
++const RESULT_FIELDS = Object.freeze([
++  'baseSha', 'changedPaths', 'kind', 'projectionDigest', 'resultSha', 'retainedResultRef',
++]);
++const SOURCE_FIELDS = Object.freeze(['digest', 'itemCount', 'kind', 'mediaType', 'ref']);
++
++function resultError(message) {
++  return Object.assign(new TypeError(message), { code: 'context_result_integrity' });
++}
++
++function exact(value, fields, label) {
++  if (!value || typeof value !== 'object' || Array.isArray(value)
++    || Object.keys(value).sort().join(',') !== [...fields].sort().join(',')) {
++    throw resultError(`${label} is malformed`);
++  }
++}
++
++function json(value, active = new Set()) {
++  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
++  if (typeof value === 'number') {
++    if (!Number.isFinite(value)) throw resultError('Context result contains a non-finite number');
++    return Object.is(value, -0) ? 0 : value;
++  }
++  if (!value || typeof value !== 'object' || active.has(value)) {
++    throw resultError('Context result must contain finite JSON data');
++  }
++  active.add(value);
++  let normalized;
++  if (Array.isArray(value)) {
++    if (Object.keys(value).some((key) => !/^(0|[1-9]\d*)$/u.test(key)
++      || Number(key) >= value.length)
++      || Array.from({ length: value.length }, (_, index) => index)
++        .some((index) => !Object.hasOwn(value, index))) {
++      throw resultError('Context result contains a sparse or decorated array');
++    }
++    normalized = value.map((entry) => json(entry, active));
++  } else {
++    const prototype = Object.getPrototypeOf(value);
++    if (prototype !== Object.prototype && prototype !== null) {
++      throw resultError('Context result contains a non-JSON object');
++    }
++    normalized = Object.fromEntries(Object.keys(value).sort().map((key) => [
++      key, json(value[key], active),
++    ]));
++  }
++  active.delete(value);
++  return normalized;
++}
++
++function digest(value) {
++  return createHash('sha256').update(JSON.stringify(json(value))).digest('hex');
++}
++
++function deepFreeze(value) {
++  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
++  for (const child of Object.values(value)) deepFreeze(child);
++  return Object.freeze(value);
++}
++
++function bounded(value, label, maximum = 512) {
++  if (typeof value !== 'string' || value.length === 0 || value.includes('\0')
++    || Buffer.byteLength(value) > maximum) throw resultError(`${label} is invalid`);
++  return value;
++}
++
++function safePath(value) {
++  bounded(value, 'Context result changed path', 4_096);
++  if (/[\u0000-\u001f\u007f]/u.test(value) || value.startsWith('/') || value.includes('\\')
++    || value.split('/').some((part) => part.length === 0 || part === '.' || part === '..')) {
++    throw resultError('Context result changed path is invalid');
++  }
++  return value;
++}
++
++function normalizeSourceRef(value) {
++  exact(value, SOURCE_FIELDS, 'Context result source ref');
++  const match = SOURCE_REF.exec(value.ref ?? '');
++  if (value.kind !== 'context_source' || value.mediaType !== 'application/json'
++    || !DIGEST.test(value.digest ?? '') || !match || match[1] !== value.digest
++    || !Number.isSafeInteger(value.itemCount) || value.itemCount <= 0
++    || value.itemCount > 1_000_000) {
++    throw resultError('Context result source ref is invalid');
++  }
++  return { ...value };
++}
++
++function projectionCore(value, sourceDigest) {
++  return {
++    kind: 'retained_commit_projection',
++    baseSha: value.baseSha,
++    resultSha: value.resultSha,
++    retainedResultRef: value.retainedResultRef,
++    changedPaths: value.changedPaths,
++    sourceDigest,
++  };
++}
++
++function normalizeResult(value, sourceDigest) {
++  exact(value, RESULT_FIELDS, 'Context retained result projection');
++  if (value.kind !== 'retained_commit_projection'
++    || !GIT_SHA.test(value.baseSha ?? '') || !GIT_SHA.test(value.resultSha ?? '')
++    || value.baseSha === value.resultSha
++    || value.retainedResultRef !== `refs/baton/results/${value.resultSha}`
++    || !Array.isArray(value.changedPaths) || value.changedPaths.length === 0
++    || value.changedPaths.length > 100_000) {
++    throw resultError('Context retained result identity is invalid');
++  }
++  const changedPaths = value.changedPaths.map(safePath);
++  const sorted = [...changedPaths].sort();
++  if (new Set(changedPaths).size !== changedPaths.length
++    || changedPaths.some((path, index) => path !== sorted[index])) {
++    throw resultError('Context retained result changed paths are not canonical');
++  }
++  const normalized = {
++    kind: value.kind, baseSha: value.baseSha, resultSha: value.resultSha,
++    retainedResultRef: value.retainedResultRef, changedPaths,
++    projectionDigest: value.projectionDigest,
++  };
++  if (value.projectionDigest !== digest(projectionCore(normalized, sourceDigest))) {
++    throw resultError('Context retained result projection digest changed');
++  }
++  return normalized;
++}
++
++function normalizeRoute(value) {
++  exact(value, ['effort', 'harness', 'model'], 'Context result route');
++  for (const field of ['harness', 'model', 'effort']) bounded(value[field], `Context route ${field}`, 256);
++  return { harness: value.harness, model: value.model, effort: value.effort };
++}
++
++function capsuleCore(value) {
++  if (!CALL_ID.test(value.callId ?? '') || !UNIT_ID.test(value.unitId ?? '')
++    || !/^[A-Za-z0-9._:-]{1,512}$/u.test(value.taskId ?? '')
++    || !Number.isSafeInteger(value.taskVersion) || value.taskVersion <= 0
++    || !Number.isSafeInteger(value.terminalEvent) || value.terminalEvent <= 0
++    || !DIGEST.test(value.artifactDigest ?? '') || !DIGEST.test(value.cleanupDigest ?? '')) {
++    throw resultError('Context result authority is invalid');
++  }
++  const sourceRef = normalizeSourceRef(value.sourceRef);
++  if (value.resultSourceDigest !== undefined && value.resultSourceDigest !== sourceRef.digest) {
++    throw resultError('Context result source digest changed');
++  }
++  return {
++    schemaVersion: 1,
++    kind: 'baton.context_provider_result',
++    callId: value.callId,
++    unitId: value.unitId,
++    taskId: value.taskId,
++    taskVersion: value.taskVersion,
++    terminalEvent: value.terminalEvent,
++    route: normalizeRoute(value.route),
++    artifactDigest: value.artifactDigest,
++    cleanupDigest: value.cleanupDigest,
++    result: normalizeResult(value.result, sourceRef.digest),
++    resultSourceDigest: sourceRef.digest,
++    sourceRef,
++  };
++}
++
++export function contextRetainedCommitProjection({
++  baseSha, resultSha, retainedResultRef, changedPaths, sourceRef,
++}) {
++  const normalizedSource = normalizeSourceRef(sourceRef);
++  const partial = {
++    kind: 'retained_commit_projection', baseSha, resultSha, retainedResultRef, changedPaths,
++  };
++  const projectionDigest = digest(projectionCore(partial, normalizedSource.digest));
++  return deepFreeze(normalizeResult({ ...partial, projectionDigest }, normalizedSource.digest));
++}
++
++export function contextProviderResultCapsule(value) {
++  exact(value, CAPSULE_INPUT_FIELDS, 'Context provider result input');
++  const core = capsuleCore(value);
++  const capsuleDigest = digest(core);
++  return deepFreeze({ ...core, capsuleId: `context-result:${capsuleDigest}`, capsuleDigest });
++}
++
++export function validateContextProviderResultCapsule(value) {
++  exact(value, CAPSULE_FIELDS, 'Context provider result capsule');
++  if (value.schemaVersion !== 1 || value.kind !== 'baton.context_provider_result'
++    || !DIGEST.test(value.capsuleDigest ?? '') || !CAPSULE_ID.test(value.capsuleId ?? '')) {
++    throw resultError('Context provider result capsule header is invalid');
++  }
++  const rebuilt = contextProviderResultCapsule(Object.fromEntries(
++    CAPSULE_INPUT_FIELDS.map((field) => [field, value[field]]),
++  ));
++  if (value.capsuleDigest !== rebuilt.capsuleDigest || value.capsuleId !== rebuilt.capsuleId
++    || digest(value) !== digest(rebuilt)) {
++    throw resultError('Context provider result capsule identity changed');
++  }
++  return rebuilt;
++}
+diff --git a/impl/src/context-runtime.mjs b/impl/src/context-runtime.mjs
+index bda56cc..852ec5e 100644
+--- a/impl/src/context-runtime.mjs
++++ b/impl/src/context-runtime.mjs
+@@ -11,7 +11,11 @@ import {
+   contextValueDigest, normalizeContextManifest, normalizeContextProgramPolicy,
+ } from './context-program.mjs';
+ import { normalizeContextMapCall } from './context-map.mjs';
+-import { pathInScopes } from './path-scope.mjs';
++import {
++  contextProviderResultCapsule, contextRetainedCommitProjection,
++  validateContextProviderResultCapsule,
++} from './context-result.mjs';
++import { pathInScopes, pathScopeRegex } from './path-scope.mjs';
+ 
+ const WORKFLOW_DEFINITION = 'application.workflow_definition_bound';
+ const TEXT_EXTENSIONS = new Set([
+@@ -186,6 +190,126 @@ function verifiedRepositoryEntries(repoRoot, gitAuthority, commitSha, policy) {
+   };
+ }
+ 
++function retainedCommitIsDescendant(repoRoot, gitAuthority, baseSha, resultSha, policy) {
++  const pending = [resultSha];
++  const visited = new Set();
++  while (pending.length > 0) {
++    const commitSha = pending.pop();
++    if (commitSha === baseSha) return true;
++    if (visited.has(commitSha)) continue;
++    visited.add(commitSha);
++    if (visited.size > policy.maxEvidenceCoordinates) {
++      throw runtimeError('Retained result ancestry exceeds Context authority',
++        'context_result_ancestry_invalid');
++    }
++    const commit = gitObject(repoRoot, gitAuthority, 'commit', commitSha,
++      Math.min(policy.maxArtifactBytes, 1024 * 1024));
++    const parents = [...commit.toString('utf8').matchAll(/^parent ([a-f0-9]{40})$/gmu)]
++      .map((match) => match[1]);
++    pending.push(...parents);
++  }
++  return false;
++}
++
++function retainedResultSource(repoRoot, gitAuthority, entries, changedPaths, policy) {
++  const byPath = new Map(entries.map((entry) => [entry.path, entry]));
++  const items = [];
++  let artifactBytes = 0;
++  const chunkBytes = Math.min(12 * 1024, policy.maxTextBytes);
++  for (const path of changedPaths) {
++    const entry = byPath.get(path);
++    if (!entry || !['100644', '100755'].includes(entry.mode)
++      || EXCLUDED_PATH.test(path) || !TEXT_EXTENSIONS.has(extname(path).toLowerCase())) {
++      throw runtimeError('Retained result contains an unsupported changed path',
++        'context_result_content_invalid');
++    }
++    const content = gitObject(repoRoot, gitAuthority, 'blob', entry.oid, policy.maxArtifactBytes);
++    if (content.byteLength === 0
++      || content.byteLength > Math.min(policy.maxArtifactBytes, 2 * 1024 * 1024)
++      || content.includes(0)) {
++      throw runtimeError('Retained result contains unsupported regular-file content',
++        'context_result_content_invalid');
++    }
++    const text = content.toString('utf8');
++    if (Buffer.from(text).compare(content) !== 0
++      || SECRET_SHAPED.some((pattern) => pattern.test(text))) {
++      throw runtimeError('Retained result contains sensitive or invalid text',
++        'context_result_content_invalid');
++    }
++    const contentDigest = contextValueDigest(text);
++    const firstItem = items.length;
++    for (let offset = 0, byteOffset = 0, chunk = 0; offset < text.length; chunk += 1) {
++      let end = Math.min(text.length, offset + chunkBytes);
++      while (end > offset && Buffer.byteLength(text.slice(offset, end)) > chunkBytes) end -= 1;
++      if (end < text.length && end > offset
++        && /[\uD800-\uDBFF]/u.test(text[end - 1]) && /[\uDC00-\uDFFF]/u.test(text[end])) end -= 1;
++      if (end <= offset) {
++        throw runtimeError('Retained result text cannot be projected safely',
++          'context_result_content_invalid');
++      }
++      const selected = text.slice(offset, end);
++      offset = end;
++      const selectedBytes = Buffer.byteLength(selected);
++      const item = {
++        path, chunk, gitMode: entry.mode, gitBlobOid: entry.oid,
++        blobBytes: content.byteLength, byteStart: byteOffset,
++        byteEnd: byteOffset + selectedBytes, contentDigest, text: selected,
++        language: extname(path).slice(1).toLowerCase() || 'text',
++      };
++      byteOffset += selectedBytes;
++      const itemBytes = Buffer.byteLength(JSON.stringify(item));
++      if (artifactBytes + itemBytes > policy.maxArtifactBytes
++        || items.length >= policy.maxResultItems) {
++        throw runtimeError('Retained result projection exceeds Context authority',
++          'context_result_content_invalid');
++      }
++      artifactBytes += itemBytes;
++      items.push(item);
++    }
++    if (items.length === firstItem) {
++      throw runtimeError('Retained result changed content produced no source item',
++        'context_result_content_invalid');
++    }
++  }
++  return items;
++}
++
++function validateRetainedResultRequest(value) {
++  const fields = [
++    'artifactDigest', 'baseSha', 'callId', 'cleanupDigest', 'pathScope', 'resultSha',
++    'retainedResultRef', 'route', 'taskId', 'taskVersion', 'terminalEvent', 'unitId',
++  ];
++  if (!value || typeof value !== 'object' || Array.isArray(value)
++    || Object.keys(value).sort().join(',') !== fields.sort().join(',')
++    || !/^context-call:[a-f0-9]{64}$/u.test(value.callId ?? '')
++    || !/^context-partition:[a-f0-9]{64}$/u.test(value.unitId ?? '')
++    || !/^[A-Za-z0-9._:-]{1,512}$/u.test(value.taskId ?? '')
++    || !Number.isSafeInteger(value.taskVersion) || value.taskVersion <= 0
++    || !Number.isSafeInteger(value.terminalEvent) || value.terminalEvent <= 0
++    || !/^[a-f0-9]{64}$/u.test(value.artifactDigest ?? '')
++    || !/^[a-f0-9]{64}$/u.test(value.cleanupDigest ?? '')
++    || !/^[a-f0-9]{40}$/u.test(value.baseSha ?? '')
++    || !/^[a-f0-9]{40}$/u.test(value.resultSha ?? '')
++    || !value.route || typeof value.route !== 'object' || Array.isArray(value.route)
++    || Object.keys(value.route).sort().join(',') !== 'effort,harness,model'
++    || ['effort', 'harness', 'model'].some((field) => (
++      typeof value.route[field] !== 'string' || value.route[field].length === 0
++      || value.route[field].includes('\0') || Buffer.byteLength(value.route[field]) > 256
++    ))
++    || !Array.isArray(value.pathScope) || value.pathScope.length === 0
++    || value.pathScope.length > 1_024 || new Set(value.pathScope).size !== value.pathScope.length) {
++    throw runtimeError('Retained result projection request is invalid',
++      'context_result_integrity');
++  }
++  try {
++    for (const scope of value.pathScope) pathScopeRegex(scope);
++  } catch (cause) {
++    throw Object.assign(runtimeError('Retained result path scope is invalid',
++      'context_result_scope_invalid'), { cause });
++  }
++  return value;
++}
++
+ export function produceRepositoryContextSource(repoRoot, treeSha, scopes, policy,
+   gitAuthority = resolveGitExecutable()) {
+   const verifiedGit = verifyGitExecutableAuthority(gitAuthority);
+@@ -323,6 +447,109 @@ export class RepositoryContextRuntime {
+     this.#sourceAttestations = new Map();
+   }
+ 
++  projectRetainedCommitResult(value) {
++    const request = validateRetainedResultRequest(value);
++    if (request.retainedResultRef !== `refs/baton/results/${request.resultSha}`) {
++      throw runtimeError('Retained result ref does not name the exact result commit',
++        'context_result_ref_invalid');
++    }
++    let retainedSha;
++    try {
++      retainedSha = immutableGit(this.repoRoot, this.gitAuthority,
++        ['show-ref', '--verify', '--hash', request.retainedResultRef], {
++          encoding: 'utf8', maxBuffer: 4_096,
++        }).trim();
++    } catch (cause) {
++      throw Object.assign(runtimeError('Retained result ref is unavailable',
++        'context_result_ref_invalid'), { cause });
++    }
++    if (retainedSha !== request.resultSha) {
++      throw runtimeError('Retained result ref changed target', 'context_result_ref_invalid');
++    }
++    if (request.baseSha !== this.treeSha) {
++      throw runtimeError('Retained result base differs from runtime tree authority',
++        'context_result_ancestry_invalid');
++    }
++
++    let baseTree;
++    let resultTree;
++    try {
++      baseTree = verifiedRepositoryEntries(
++        this.repoRoot, this.gitAuthority, request.baseSha, this.policy,
++      );
++    } catch (cause) {
++      throw Object.assign(runtimeError('Retained result base commit is invalid',
++        'context_result_ancestry_invalid'), { cause });
++    }
++    try {
++      resultTree = verifiedRepositoryEntries(
++        this.repoRoot, this.gitAuthority, request.resultSha, this.policy,
++      );
++    } catch (cause) {
++      throw Object.assign(runtimeError('Retained result ref is not a supported commit',
++        'context_result_ref_invalid'), { cause });
++    }
++    if (!retainedCommitIsDescendant(
++      this.repoRoot, this.gitAuthority, request.baseSha, request.resultSha, this.policy,
++    )) {
++      throw runtimeError('Retained result commit does not descend from its base',
++        'context_result_ancestry_invalid');
++    }
++
++    const baseEntries = new Map(baseTree.entries.map((entry) => [entry.path, entry]));
++    const resultEntries = new Map(resultTree.entries.map((entry) => [entry.path, entry]));
++    const changedPaths = [...new Set([...baseEntries.keys(), ...resultEntries.keys()])]
++      .filter((path) => {
++        const before = baseEntries.get(path);
++        const after = resultEntries.get(path);
++        return !before || !after || before.mode !== after.mode || before.oid !== after.oid;
++      }).sort();
++    if (changedPaths.length === 0 || changedPaths.length > this.policy.maxEvidenceCoordinates) {
++      throw runtimeError('Retained result changed path set is invalid',
++        'context_result_content_invalid');
++    }
++    if (changedPaths.some((path) => !pathInScopes(path, request.pathScope))) {
++      throw runtimeError('Retained result changed path escapes its path scope',
++        'context_result_scope_invalid');
++    }
++
++    const source = retainedResultSource(
++      this.repoRoot, this.gitAuthority, resultTree.entries, changedPaths, this.policy,
++    );
++    const resultSourceDigest = contextValueDigest(source);
++    const expectedSourceRef = Object.freeze({
++      kind: 'context_source', ref: `ctx:sha256:${resultSourceDigest}`,
++      digest: resultSourceDigest, mediaType: 'application/json', itemCount: source.length,
++    });
++    const result = contextRetainedCommitProjection({
++      baseSha: request.baseSha,
++      resultSha: request.resultSha,
++      retainedResultRef: request.retainedResultRef,
++      changedPaths,
++      sourceRef: expectedSourceRef,
++    });
++    const capsule = validateContextProviderResultCapsule(contextProviderResultCapsule({
++      callId: request.callId,
++      unitId: request.unitId,
++      taskId: request.taskId,
++      taskVersion: request.taskVersion,
++      terminalEvent: request.terminalEvent,
++      route: request.route,
++      artifactDigest: request.artifactDigest,
++      cleanupDigest: request.cleanupDigest,
++      result,
++      sourceRef: expectedSourceRef,
++    }));
++
++    const sourceRef = this.bench.admitSource(source);
++    if (contextValueDigest(sourceRef) !== contextValueDigest(expectedSourceRef)) {
++      throw runtimeError('Retained result source admission changed identity',
++        'context_result_integrity');
++    }
++    const capsuleRef = this.bench.admitProviderResult(capsule);
++    return Object.freeze({ capsule, capsuleRef });
++  }
++
+   _executeOwned(operation, payload, signal = null) {
+     if (signal !== null && !(signal instanceof AbortSignal)) {
+       throw runtimeError('Repository Context execution signal is invalid');

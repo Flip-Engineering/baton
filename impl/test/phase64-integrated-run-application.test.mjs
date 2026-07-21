@@ -1,13 +1,22 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { BatonApplication, CoordinationStore, MockAdapter, createDriver } from '../src/index.mjs';
+import {
+  BatonApplication, CoordinationStore, DEFAULT_WORKER_POLICY_REQUEST, MockAdapter, bindBaton,
+  bindBatonPort, createBrief, createDriver,
+} from '../src/index.mjs';
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase64-${name}-`));
+const canonical = (value) => Array.isArray(value) ? value.map(canonical)
+  : value && typeof value === 'object'
+    ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]))
+    : value;
+const digest = (value) => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
 const policy = Object.freeze({
   schemaVersion: 1,
   repoId: 'repo-phase64',
@@ -66,6 +75,54 @@ function configuredAdapter(scenario) {
   return adapter;
 }
 
+function enablePreservedMockSession(adapter) {
+  const baseCard = adapter.card.bind(adapter);
+  adapter.card = () => ({
+    ...baseCard(), sessions: { multiTurn: 'native', resume: 'native', fork: 'unsupported' },
+  });
+  const spawn = adapter.spawn.bind(adapter);
+  adapter.spawn = async (worker, brief, opts) => {
+    const ack = await spawn(worker, brief, opts);
+    const session = adapter._sessions.get(worker);
+    if (ack.ok && session) queueMicrotask(() => adapter._emit(session, 'lifecycle.spawned', {
+      sessionId: `mock-native-${worker}`, modelObserved: opts.model ?? null,
+    }));
+    return ack;
+  };
+  const prompt = adapter.prompt.bind(adapter);
+  adapter.prompt = async (worker, content, mode = 'turn') => {
+    const session = adapter._sessions.get(worker);
+    if (mode === 'turn' && session && !session.runStarted && !session.terminal) {
+      if (session.haltSignal.aborted) {
+        const controller = new AbortController();
+        session.haltController = controller;
+        session.haltSignal = controller.signal;
+      }
+      // MockAdapter's reusable test session keeps its wire epoch in spawn options. Initial
+      // Application dispatch is epoch 2; the preserved successor is the next exact epoch.
+      session.opts.turnEpoch = (session.opts.turnEpoch ?? 2) + 1;
+      adapter._emit(session, 'control.send', { content, mode });
+      adapter._startSession(session);
+      return { ok: true };
+    }
+    return prompt(worker, content, mode);
+  };
+  adapter.interrupt = async (worker, _then, options = {}) => {
+    const session = adapter._sessions.get(worker);
+    if (!session || session.terminal) return { ok: true, terminal: true };
+    session.haltController.abort();
+    session.runStarted = false;
+    session.stopKind = null;
+    queueMicrotask(() => adapter._emit(session, 'control.interrupt_confirmed', {
+      sessionId: `mock-native-${worker}`, transportOpen: true,
+      preservationRequested: options.preserveTurn === true,
+      usageSeal: { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null },
+    }));
+    return { ok: true };
+  };
+  return adapter;
+}
+
 function fixture(name, {
   delayMs = 20,
   goalPlanAuthorize = async () => true,
@@ -106,6 +163,20 @@ function fixture(name, {
   return { application, adapter, driver, repo, logDir };
 }
 
+function reopenApplication(driver, authorize = async () => true) {
+  return new BatonApplication({
+    driver,
+    repoId: 'repo-phase64',
+    profiles: { 'safe-code': profile },
+    principals: {
+      planner: principal('application-planner'),
+      dispatcher: principal('application-dispatcher'),
+      observer: principal('application-observer'),
+    },
+    authorize,
+  });
+}
+
 const intent = (overrides = {}) => ({
   runId: 'run-phase64-one',
   objective: 'Repair provider accounting and prove the result',
@@ -113,6 +184,201 @@ const intent = (overrides = {}) => ({
   route: { harness: 'mock', model: 'model-a', effort: 'low' },
   scope: ['impl/**'],
   ...overrides,
+});
+
+const managedContextBrief = () => createBrief({
+  goal: 'hold a second Baton-managed workspace for adversarial recovery coverage',
+  constraints: [], pathScope: ['**'], definitionOfDone: 'wait for an addressed answer',
+  verification: { command: 'true', expectExit: 0, timeoutMs: 2_000 },
+  budget: { tokens: 1_000, usd: 1, wallMin: 1 },
+});
+
+async function until(read, label, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = await read();
+    if (value) return value;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`timeout waiting for ${label}`);
+}
+
+test('UA2/RT5: Pythonic Run streams consume internal pagination and expose attributed facts only', async () => {
+  const calls = [];
+  const pages = [
+    {
+      schemaVersion: 1, runId: 'run-stream-client', depth: 'content', cursor: 7,
+      terminal: false, content: {
+        kind: 'baton.run_timeline.page', runId: 'run-stream-client',
+        channel: 'events', cursor: 'opaque-a',
+        hasMore: true, items: [{ runId: 'run-stream-client', position: 1, kind: 'task.created' }],
+      },
+    },
+    {
+      schemaVersion: 1, runId: 'run-stream-client', depth: 'content', cursor: 8,
+      terminal: true, content: {
+        kind: 'baton.run_timeline.page', runId: 'run-stream-client',
+        channel: 'events', cursor: 'opaque-b',
+        hasMore: false, items: [{ runId: 'run-stream-client', position: 2, kind: 'run.stop_completed' }],
+      },
+    },
+  ];
+  const baton = bindBatonPort({ command: async (name, args) => {
+    calls.push({ name, args });
+    return pages.shift();
+  } });
+  const collected = [];
+  for await (const event of baton.runs.open('run-stream-client').events()) collected.push(event);
+  assert.deepEqual(collected.map((event) => event.position), [1, 2]);
+  assert.deepEqual(calls, [
+    { name: 'run.inspect', args: {
+      runId: 'run-stream-client', depth: 'content', section: 'execution', item: 'execution:events',
+    } },
+    { name: 'run.inspect', args: {
+      runId: 'run-stream-client', depth: 'content', section: 'execution',
+      item: 'execution:events', pageCursor: 'opaque-a',
+    } },
+  ]);
+
+  const outputCalls = [];
+  const outputBaton = bindBatonPort({ command: async (name, args) => {
+    outputCalls.push({ name, args });
+    return {
+      schemaVersion: 1, runId: 'run-output-client', depth: 'content', cursor: 2,
+      terminal: true, content: {
+        kind: 'baton.run_timeline.page', runId: 'run-output-client',
+        channel: 'output', cursor: 'opaque-output',
+        hasMore: false, items: [{ runId: 'run-output-client', recipient: 'review', contentTrust: 'untrusted_provider' }],
+      },
+    };
+  } });
+  const output = [];
+  for await (const item of outputBaton.runs.open('run-output-client').output({ recipient: 'review' })) {
+    output.push(item);
+  }
+  assert.equal(output[0].contentTrust, 'untrusted_provider');
+  assert.equal(outputCalls[0].args.recipient, 'review');
+
+  const crossed = bindBatonPort({ command: async () => ({
+    schemaVersion: 1, runId: 'run-sibling', depth: 'content', cursor: 1, terminal: true,
+    content: {
+      kind: 'baton.run_timeline.page', runId: 'run-sibling', channel: 'events',
+      cursor: 'opaque-crossed', hasMore: false, items: [],
+    },
+  }) }).runs.open('run-stream-client');
+  await assert.rejects(async () => {
+    for await (const event of crossed.events()) void event;
+  }, (error) => error.code === 'application_client_protocol_invalid');
+});
+
+test('UA1/KC1: application profiles resolve a public harness through one exact private adapter route', async () => {
+  const repo = root('public-private-route-repo');
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'phase64@example.invalid'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Phase 64'], { cwd: repo });
+  writeFileSync(join(repo, 'base.txt'), 'base\n');
+  execFileSync('git', ['add', 'base.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+  const adapter = configuredAdapter({ outcome: 'completed', delayMs: 10, summary: 'done', files: {} });
+  const card = adapter.card.bind(adapter);
+  adapter.card = () => ({
+    ...card(), harness: 'claude-code',
+    modelSelection: {
+      mode: 'exact', configuredDefault: 'kimi-k3', available: ['kimi-k3'], family: 'kimi',
+      acceptedPrefixes: [], acceptedAliases: [], reasoningEffort: ['max'], effortRequired: true,
+      serviceTier: null, provenance: 'test', refreshedAt: null,
+    },
+  });
+  const driver = createDriver({
+    repoRoot: repo, repoId: 'repo-phase64', logDir: root('public-private-route-log'),
+    adapters: { 'private-kimi-provider': adapter }, goalPlanAuthority: { policy, authorize: async () => true },
+    stopDeadlineMs: 2000,
+  });
+  const publicProfile = {
+    ...profile,
+    routes: [{ harness: 'claude-code', model: 'kimi-k3', effort: 'max' }],
+  };
+  const application = new BatonApplication({
+    driver, repoId: 'repo-phase64', profiles: { public: publicProfile },
+    principals: { planner: principal('planner'), dispatcher: principal('dispatcher'), observer: principal('observer') },
+    authorize: async () => true,
+  });
+  const proposed = await application.start({
+    runId: 'run-public-private-route', objective: 'prove public to private routing', profile: 'public',
+    route: publicProfile.routes[0], scope: ['impl/**'],
+  }, principal('owner'));
+  assert.deepEqual(proposed.route.requested, publicProfile.routes[0]);
+  await application.approve(proposed.runId, proposed.plan.digest, principal('approver'));
+  assert.equal(driver.coordinator.list()[0].vendor, 'private-kimi-provider');
+  await application.shutdown(principal('shutdown'));
+});
+
+test('WP9: profile v2 binds unattended full access through Plan, Brief, adapter options, and route identity', async () => {
+  const repo = root('worker-policy-profile-repo');
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'phase64@example.invalid'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Phase 64'], { cwd: repo });
+  writeFileSync(join(repo, 'base.txt'), 'base\n');
+  execFileSync('git', ['add', 'base.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+
+  const adapter = configuredAdapter({ outcome: 'completed', delayMs: 10, summary: 'done', files: {} });
+  const originalCard = adapter.card.bind(adapter);
+  adapter.card = () => ({
+    ...originalCard(),
+    workerPolicy: {
+      schemaVersion: 1,
+      autonomy: { supported: ['unattended'], default: 'unattended', perTask: false, observation: 'launch', mechanisms: ['test-unattended'] },
+      access: { supported: ['full'], default: 'full', perTask: false, observation: 'launch', mechanisms: ['test-full-access'] },
+      containment: { hostProcess: 'same_uid', guarantees: ['private_runtime'], configuredPreferences: [], observation: 'unavailable' },
+    },
+  });
+  const spawnCalls = [];
+  const originalSpawn = adapter.spawn.bind(adapter);
+  adapter.spawn = (worker, brief, options) => {
+    spawnCalls.push({ worker, brief, options });
+    return originalSpawn(worker, brief, options);
+  };
+  const driver = createDriver({
+    repoRoot: repo, repoId: 'repo-phase64', logDir: root('worker-policy-profile-log'),
+    adapters: { mock: adapter }, goalPlanAuthority: { policy, authorize: async () => true },
+    stopDeadlineMs: 2_000,
+  });
+  const policyProfile = { ...profile, schemaVersion: 2, workerPolicy: DEFAULT_WORKER_POLICY_REQUEST };
+  const application = new BatonApplication({
+    driver, repoId: 'repo-phase64', profiles: { full: policyProfile },
+    principals: { planner: principal('planner'), dispatcher: principal('dispatcher'), observer: principal('observer') },
+    authorize: async () => true,
+  });
+  const proposed = await application.start({
+    runId: 'run-worker-policy-profile', objective: 'prove durable worker policy', profile: 'full',
+    route: policyProfile.routes[0], scope: ['impl/**'],
+  }, principal('owner'));
+  assert.deepEqual(application.card().profiles[0].workerPolicy, DEFAULT_WORKER_POLICY_REQUEST);
+  assert.deepEqual(driver.coordination.snapshot().goalPlan.plans[0].nodes[0].workerPolicy, DEFAULT_WORKER_POLICY_REQUEST);
+  const pendingOutline = await application.inspect({
+    runId: proposed.runId, depth: 'outline',
+  }, principal('observer'));
+  assert.equal(pendingOutline.outline.workerPolicy.state, 'requested');
+  assert.equal(pendingOutline.outline.workerPolicy.request.access.mode, 'full');
+  await application.approve(proposed.runId, proposed.plan.digest, principal('approver'));
+  assert.equal(spawnCalls.length, 1);
+  assert.deepEqual(spawnCalls[0].brief.workerPolicy, DEFAULT_WORKER_POLICY_REQUEST);
+  assert.equal(spawnCalls[0].options.workerPolicy.access.resolved, 'full');
+  assert.equal(JSON.parse(driver.coordinator.list()[0].routeKey).length, 7);
+  const activeOutline = await application.inspect({
+    runId: proposed.runId, depth: 'outline',
+  }, principal('observer'));
+  assert.equal(activeOutline.outline.workerPolicy.access.resolved, 'full');
+  assert.equal(activeOutline.outline.workerPolicy.containment.attestation, 'preferred_gap');
+  const help = await application.help({
+    topic: 'worker-policy', depth: 'outline', runId: proposed.runId,
+  }, principal('observer'));
+  assert.match(help.summary, /default is unattended full access/u);
+  await application.wait(proposed.runId, principal('observer'), { timeoutMs: 2_000 });
+  const evidence = await application.evidence(proposed.runId, principal('observer'));
+  assert.equal(evidence.bindings.workerPolicy.access.resolved, 'full');
+  await application.shutdown(principal('shutdown'));
 });
 
 test('UA1-UA5: concise start stops at a readable distinct-authority approval checkpoint without effects', async () => {
@@ -165,6 +431,24 @@ test('UA3/UA6: approval return and dispatch use service authorities, not acciden
   await application.shutdown(principal('shutdown-admin'));
 });
 
+test('UA3/UA4: a structured provider failure exposes no adoptable or exportable result', async () => {
+  const { application, driver } = fixture('provider-failure', {
+    scenario: { outcome: 'failed', delayMs: 10, summary: 'provider rejected the turn', files: {} },
+  });
+  const proposed = await application.start(intent({ runId: 'run-provider-failure' }), principal('failure-owner'));
+  await application.approve('run-provider-failure', proposed.plan.digest, principal('failure-approver'));
+  const failed = await application.wait('run-provider-failure', principal('failure-owner'), { timeoutMs: 5_000 });
+  assert.equal(failed.phase, 'failed');
+  assert.equal(failed.result, null);
+  assert.equal(failed.nodes[0].state, 'failed');
+  assert.equal(failed.nextActions.some((action) => ['adopt_result', 'export_result'].includes(action.kind)), false);
+  const task = driver.coordination.snapshot().tasks.find((row) => row.runId === 'run-provider-failure');
+  assert.equal(task.status, 'failed');
+  assert.equal(driver.coordination.snapshot().artifacts.filter((artifact) => artifact.taskId === task.id)
+    .some((artifact) => artifact.accepted === true), false);
+  await application.shutdown(principal('shutdown-admin'));
+});
+
 test('UA2/UA6: a durable Goal-only planning failure remains a readable retryable RunView', async () => {
   const goalPlanAuthorize = async ({ power, principalId }) => !(principalId === 'application-planner' && power === 'plan:propose');
   const { application, driver } = fixture('planning-failure', { goalPlanAuthorize });
@@ -205,12 +489,14 @@ test('UA4/UA6: RunView redacts credential-shaped attention and answers it exactl
   assert.equal(view.phase, 'running');
   assert.equal(view.attention[0].question, '[credential-shaped content redacted]');
   assert.equal(JSON.stringify(view).includes(secret), false);
-  const answered = await application.answer(
-    'run-attention-redaction', view.attention[0].requestId, { text: 'Use the configured credential reference only.' },
-    principal('attention-owner'),
-  );
-  assert.equal(answered.lastAction.result, 'applied');
-  assert.equal(answered.attention.length, 0);
+  const run = bindBaton(application, principal('attention-owner')).runs.open('run-attention-redaction');
+  const outline = await run.inspect();
+  const answer = outline.outline.actions.find((action) => action.kind === 'answer_question');
+  assert.equal(answer.target.requestId, view.attention[0].requestId);
+  assert.equal(answer.target.question, '[credential-shaped content redacted]');
+  assert.equal(JSON.stringify(answer).includes(secret), false);
+  const answered = await run.act(answer.actionId, { text: 'Use the configured credential reference only.' });
+  assert.equal(answered.outline.attention.count, 0);
   const finished = await application.wait('run-attention-redaction', principal('attention-owner'), { timeoutMs: 5_000 });
   assert.equal(finished.phase, 'work_completed');
   const retry = await application.answer(
@@ -218,6 +504,29 @@ test('UA4/UA6: RunView redacts credential-shaped attention and answers it exactl
     principal('attention-owner'),
   );
   assert.equal(retry.lastAction.result, 'already_resolved');
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('UA4/UA6: pending worker approvals are unique Run actions and need no raw request choreography', async () => {
+  const { application } = fixture('approval-action', {
+    scenario: {
+      outcome: 'completed', delayMs: 1, summary: 'approval handled', files: {},
+      ask: { kind: 'approval', question: 'Allow the bounded tool call?', blocking: true, afterEditIndex: 0 },
+    },
+  });
+  const proposed = await application.start(intent({ runId: 'run-approval-action' }), principal('approval-owner'));
+  await application.approve(proposed.runId, proposed.plan.digest, principal('approval-approver'));
+  await application.wait(proposed.runId, principal('approval-owner'), { timeoutMs: 250 });
+  const run = bindBaton(application, principal('approval-owner')).runs.open(proposed.runId);
+  const outline = await run.inspect();
+  const action = outline.outline.actions.find((candidate) => candidate.kind === 'answer_approval');
+  assert.ok(action);
+  assert.match(action.target.requestId, /^req_/u);
+  assert.deepEqual(action.inputSchema.properties.decision.enum, ['allow', 'deny', 'cancel']);
+  const answered = await run.act(action.actionId, { decision: 'allow' });
+  assert.equal(answered.outline.attention.count, 0);
+  const finished = await application.wait(proposed.runId, principal('approval-owner'), { timeoutMs: 5_000 });
+  assert.equal(finished.phase, 'work_completed');
   await application.shutdown(principal('shutdown-admin'));
 });
 
@@ -297,8 +606,11 @@ test('UA1: profiles permit narrowing but reject route, scope, and input widening
   await application.shutdown(principal('shutdown-admin'));
 });
 
-test('UA1: the ordinary concise intent can derive a stable Run ID and default profile scope', async () => {
-  const { application } = fixture('concise-intent');
+test('UA1: explicit result intent binds Run/auth identity while a missing legacy field preserves its old preimage', async () => {
+  const authorizations = [];
+  const { application } = fixture('concise-intent', {
+    applicationAuthorize: async (request) => { authorizations.push(request); return true; },
+  });
   const concise = {
     objective: 'Fix the bounded accounting path',
     profile: 'safe-code',
@@ -306,10 +618,35 @@ test('UA1: the ordinary concise intent can derive a stable Run ID and default pr
   };
   const first = await application.start(concise, principal('concise-owner'));
   const replay = await application.start(concise, principal('concise-owner'));
-  assert.match(first.runId, /^run-[a-f0-9]{32}$/);
+  const expectedLegacyRunId = `run-${digest({
+    objective: concise.objective,
+    profileDigest: application.profiles.get('safe-code').digest,
+    route: concise.route, composition: null, scope: ['impl/**', 'spec/**'],
+    ownerPrincipalId: 'concise-owner',
+  }).slice(0, 32)}`;
+  assert.equal(first.runId, expectedLegacyRunId);
   assert.equal(replay.runId, first.runId);
   assert.equal(replay.plan.digest, first.plan.digest);
   assert.deepEqual(first.planPreview.node.pathScope, ['impl/**', 'spec/**']);
+  assert.equal(first.resultIntent, 'change');
+  assert.equal(first.objectiveResultPolicy.mode, 'change');
+
+  const explicitChange = await application.start({ ...concise, resultIntent: 'change' }, principal('concise-owner'));
+  const evidence = await application.start({
+    ...concise, resultIntent: 'read_only_evidence',
+  }, principal('concise-owner'));
+  assert.notEqual(explicitChange.runId, first.runId);
+  assert.notEqual(evidence.runId, explicitChange.runId);
+  assert.equal(explicitChange.resultIntent, 'change');
+  assert.equal(explicitChange.planPreview.node.effects.includes('repository_edit'), true);
+  assert.equal(evidence.resultIntent, 'read_only_evidence');
+  assert.equal(evidence.objectiveResultPolicy.mode, 'read_only_evidence');
+  assert.equal(evidence.planPreview.node.effects.includes('repository_edit'), false);
+  const startSubjects = authorizations.filter(({ command }) => command === 'run.start')
+    .map(({ subject }) => subject);
+  assert.equal(Object.hasOwn(startSubjects[0], 'resultIntent'), false);
+  assert.equal(startSubjects.some((subject) => subject.resultIntent === 'change'), true);
+  assert.equal(startSubjects.some((subject) => subject.resultIntent === 'read_only_evidence'), true);
   await application.shutdown(principal('shutdown-admin'));
 });
 
@@ -319,7 +656,7 @@ test('UA5: the shared command bus exposes the same run flow and a deployment-der
   const spawn = adapter.spawn.bind(adapter);
   adapter.spawn = (...args) => { spawnCalls += 1; return spawn(...args); };
   const card = application.card();
-  assert.deepEqual(card.commands, ['application.help', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.approve', 'run.wait', 'run.answer', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.review', 'run.integrate', 'run.export', 'run.recover', 'application.shutdown']);
+  assert.deepEqual(card.commands, ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'run.recover', 'application.shutdown']);
   assert.deepEqual(card.profiles[0].routes, [{ harness: 'mock', model: 'model-a', effort: 'low' }]);
 
   const proposed = await application.command('run.start', { intent: intent({ runId: 'run-command-bus' }) }, principal('command-owner'));
@@ -369,6 +706,885 @@ test('UA5/UA6: Run steering resolves ownership and the current fence inside the 
     message: 'Redirect.', reason: 'Wrong owner must be rejected.',
   }, principal('steer-owner')), (error) => error.code === 'application_worker_not_found');
   await application.shutdown(principal('shutdown-admin'));
+});
+
+test('RC1/P91: Pythonic send settles durably and interrupt is not advertised without reusable-session proof', async () => {
+  const { application, driver } = fixture('semantic-control', { delayMs: 1_500 });
+  const proposed = await application.start(
+    intent({ runId: 'run-semantic-control' }), principal('control-owner'),
+  );
+  const running = await application.approve(
+    proposed.runId, proposed.plan.digest, principal('control-approver'),
+  );
+  const workerId = running.ownership.workerIds[0];
+  const run = bindBaton(application, principal('control-owner')).runs.open(proposed.runId);
+  const outline = await run.inspect();
+  const sendAction = outline.outline.actions.find((action) => action.kind === 'send');
+  const interruptAction = outline.outline.actions.find((action) => action.kind === 'interrupt');
+  assert.deepEqual(sendAction.choices, ['work']);
+  assert.deepEqual(sendAction.target, { recipients: ['work'] });
+  assert.equal(JSON.stringify(sendAction).includes(workerId), false);
+  assert.equal(interruptAction, undefined);
+
+  const sent = await run.send('Keep the verification boundary explicit.');
+  assert.deepEqual(sent.lastAction, {
+    command: 'run.send', recipient: 'work', delivery: 'nudge', result: 'ok',
+    state: 'confirmed', emulated: false, deliveredDespiteStale: false,
+    actualDelivery: 'nudge', sessionPreserved: false, continuation: null,
+    onlyActiveMember: true, needsAttention: false,
+  });
+  const records = driver.coordination.events().filter((event) => (
+    ['run.control_admitted', 'run.control_effect_started',
+      'run.control_provider_acked', 'run.control_settled'].includes(event.kind)
+  ));
+  assert.deepEqual(records.map((event) => event.kind), [
+    'run.control_admitted', 'run.control_effect_started',
+    'run.control_provider_acked', 'run.control_settled',
+  ]);
+  assert.equal(records.every((event) => /^control:[a-f0-9]{64}$/u.test(event.payload.controlId)), true);
+  assert.equal(driver.log.read(workerId).some((event) => event.kind === 'control.delivery_requested'
+    && /^control:[a-f0-9]{64}$/u.test(event.payload.controlId)), true);
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('P91 application: interrupt projects one paused attached member, then send resumes the same Plan task and completes normally', async () => {
+  const { application, adapter, driver } = fixture('semantic-preserved-session', {
+    scenario: {
+      outcome: 'completed', summary: 'preserved session completed',
+      edits: [{ path: 'impl/phase91.txt', content: 'same session\n', delayMs: 1_200 }],
+    },
+  });
+  enablePreservedMockSession(adapter);
+  let spawnCalls = 0;
+  const spawn = adapter.spawn.bind(adapter);
+  adapter.spawn = (...args) => { spawnCalls += 1; return spawn(...args); };
+  const proposed = await application.start(
+    intent({ runId: 'run-semantic-preserved-session' }), principal('control-owner'),
+  );
+  const running = await application.approve(
+    proposed.runId, proposed.plan.digest, principal('control-approver'),
+  );
+  const workerId = running.ownership.workerIds[0];
+  await new Promise((resolve) => setImmediate(resolve));
+  const before = driver.coordinator.list().find((worker) => worker.id === workerId);
+  const taskCount = driver.coordination.snapshot().tasks.length;
+  const run = bindBaton(application, principal('control-owner')).runs.open(proposed.runId);
+  const initial = await run.inspect();
+  assert.ok(initial.outline.actions.some((action) => action.kind === 'interrupt'));
+
+  const interrupted = await run.interrupt({ reason: 'Pause only this provider turn.' });
+  assert.deepEqual({
+    phase: interrupted.phase,
+    state: interrupted.lastAction.state,
+    preserved: interrupted.lastAction.sessionPreserved,
+    activeProviderTurns: interrupted.execution.activeProviderTurns,
+    controllableAttachedMembers: interrupted.execution.controllableAttachedMembers,
+  }, {
+    phase: 'interrupted', state: 'confirmed', preserved: true,
+    activeProviderTurns: 0, controllableAttachedMembers: 1,
+  });
+  assert.equal(driver.coordination.task(before.taskId).status, 'working');
+  assert.equal(driver.coordination.runStop(proposed.runId), null);
+  const interruptControl = driver.coordination.runControls(proposed.runId)[0];
+  assert.equal(interruptControl.schemaVersion, 2);
+  assert.equal(interruptControl.turnDisposition, 'preserve_turn');
+  assert.equal(interruptControl.target.turnState, 'working');
+  assert.equal(interruptControl.target.preservationReceiptDigest, null);
+  assert.equal(interruptControl.target.sessionDigest, before.semanticControlBinding.sessionDigest);
+  assert.equal(interruptControl.providerAck.outcome.preservation.state, 'preserved');
+  assert.equal(driver.coordination.events().some((event) => event.kind === 'evidence.mapped'
+    && event.payload.kind === 'control.interrupt_confirmed'), true);
+  const paused = await run.inspect();
+  assert.deepEqual(paused.outline.actions.map((action) => action.kind)
+    .filter((kind) => ['send', 'interrupt', 'stop'].includes(kind)), ['send', 'stop']);
+
+  const sent = await run.send('Continue and finish the same exact approved task.');
+  assert.equal(sent.lastAction.actualDelivery, 'turn');
+  assert.equal(sent.lastAction.continuation, 'admitted');
+  assert.equal(spawnCalls, 1);
+  assert.equal(driver.coordinator.list()[0].taskId, before.taskId);
+  assert.deepEqual(driver.coordinator.list()[0].sessionRef, before.sessionRef);
+  assert.equal(driver.coordinator.list()[0].worktree, before.worktree);
+  assert.equal(driver.coordinator.list()[0].routeKey, before.routeKey);
+  assert.equal(driver.coordination.snapshot().tasks.length, taskCount);
+  const sendControl = driver.coordination.runControls(proposed.runId)[1];
+  assert.equal(sendControl.schemaVersion, 2);
+  assert.equal(sendControl.target.turnState, 'interrupted');
+  assert.equal(sendControl.target.preservationReceiptDigest,
+    interruptControl.providerAck.outcome.preservation.receiptDigest);
+  assert.equal(sendControl.providerAck.outcome.actualDelivery, 'turn');
+  assert.equal(sendControl.providerAck.outcome.continuation.state, 'admitted');
+
+  const completed = await application.command(
+    'run.wait', { runId: proposed.runId, timeoutMs: 5_000 }, principal('control-owner'),
+  );
+  assert.equal(completed.phase, 'work_completed');
+  assert.equal(completed.nodes[0].state, 'accepted');
+  assert.equal(completed.verification.state, 'mechanically_verified');
+  assert.equal(completed.result.state, 'accepted');
+  assert.equal(completed.evidence.some((artifact) => (
+    artifact.kind === 'verification' && artifact.accepted === true
+  )), true, 'the hub freshly verifies the resumed exact task before acceptance');
+  assert.equal(driver.coordination.snapshot().tasks.length, taskCount);
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('P91 application restart: coordinate-free recovery attach-only reuses the preserved member without a prompt', async (t) => {
+  const first = fixture('phase91-application-restart', {
+    scenario: {
+      outcome: 'completed', summary: 'preserved restart completes',
+      edits: [{ path: 'impl/restarted.txt', content: 'same native session\n', delayMs: 1_200 }],
+    },
+  });
+  enablePreservedMockSession(first.adapter);
+  const proposed = await first.application.start(
+    intent({ runId: 'run-phase91-application-restart' }), principal('restart-owner'),
+  );
+  const running = await first.application.approve(
+    proposed.runId, proposed.plan.digest, principal('restart-approver'),
+  );
+  const workerId = running.ownership.workerIds[0];
+  const run = bindBaton(first.application, principal('restart-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  await run.interrupt({ reason: 'Preserve for controller restart.' });
+  const taskId = first.driver.coordinator.list()[0].taskId;
+  const preservedProcessGeneration = first.driver.coordinator.list()[0].processGeneration;
+  const taskCount = first.driver.coordination.snapshot().tasks.length;
+  first.driver.coordination.releaseWriterLease({ requireOwned: true });
+
+  const resumedAdapter = configuredAdapter({
+    outcome: 'completed', summary: 'preserved restart completes',
+    edits: [{ path: 'impl/restarted.txt', content: 'same native session\n', delayMs: 1 }],
+  });
+  enablePreservedMockSession(resumedAdapter);
+  const spawnOptions = [];
+  let promptCalls = 0;
+  let cardCalls = 0;
+  const cardResumed = resumedAdapter.card.bind(resumedAdapter);
+  resumedAdapter.card = (...args) => {
+    cardCalls += 1;
+    return cardResumed(...args);
+  };
+  const spawnResumed = resumedAdapter.spawn.bind(resumedAdapter);
+  resumedAdapter.spawn = (worker, brief, opts) => {
+    spawnOptions.push(opts);
+    return spawnResumed(worker, brief, opts);
+  };
+  const promptResumed = resumedAdapter.prompt.bind(resumedAdapter);
+  resumedAdapter.prompt = (...args) => {
+    promptCalls += 1;
+    return promptResumed(...args);
+  };
+  const resumedDriver = createDriver({
+    repoRoot: first.repo,
+    repoId: 'repo-phase64',
+    logDir: first.logDir,
+    adapters: { mock: resumedAdapter },
+    goalPlanAuthority: { policy, authorize: async () => true },
+    stopDeadlineMs: 2_000,
+  });
+  const restarted = reopenApplication(resumedDriver);
+  await restarted.ready;
+  const beforeRecovery = await restarted.status(proposed.runId, principal('restart-owner'));
+  const contextVerdict = await resumedDriver.coordinator._worktrees.validateSessionContext(
+    resumedDriver.coordinator.list()[0].sessionContext,
+  );
+  assert.equal(beforeRecovery.phase, 'interruption_uncertain', JSON.stringify({
+    task: resumedDriver.coordination.task(taskId),
+    handles: resumedDriver.coordinator.list(),
+    attention: beforeRecovery.attention, contextVerdict,
+  }));
+  assert.deepEqual(contextVerdict, { ok: true }, JSON.stringify({
+    preservationDiagnostic: resumedDriver.coordinator._workers.get(workerId)
+      ?.preservationAuthorityDiagnostic,
+    receipt: resumedDriver.coordinator._workers.get(workerId)?.sessionPreservation,
+    controls: resumedDriver.coordination.runControls(proposed.runId),
+  }));
+  assert.deepEqual(beforeRecovery.nextActions, [{ kind: 'stop' }]);
+
+  const replayHandle = resumedDriver.coordinator._workers.get(workerId);
+  const exactReceipt = replayHandle.sessionPreservation;
+  const exactControls = resumedDriver.coordination.runControls(proposed.runId);
+  const runControls = resumedDriver.coordination.runControls.bind(resumedDriver.coordination);
+  const reseal = (overrides) => {
+    const core = { ...exactReceipt, ...overrides };
+    delete core.receiptDigest;
+    return { ...core, receiptDigest: digest(core) };
+  };
+
+  let adversaryDriver = createDriver({
+    repoRoot: first.repo,
+    repoId: 'repo-phase64-adversarial-context',
+    logDir: root('phase91-adversarial-context-log'),
+    adapters: { mock: new MockAdapter({ scenario: {
+      outcome: 'completed', edits: [],
+      ask: { kind: 'question', question: 'continue?', blocking: true, afterEditIndex: 0 },
+    } }) },
+    stopDeadlineMs: 2_000,
+  });
+  t.after(async () => {
+    try { await adversaryDriver?.drainAndClose('phase91:adversarial-context-cleanup'); }
+    catch { try { adversaryDriver?.coordination.releaseWriterLease(); } catch { /* best effort */ } }
+  });
+  await adversaryDriver.ready;
+  const adversary = await adversaryDriver.coordinator.spawn('mock', managedContextBrief(), {
+    taskId: 'adversarial-context-task', runId: 'adversarial-context-run',
+  });
+  const adversaryContext = await until(() => adversaryDriver.coordinator.list()
+    .find((row) => row.id === adversary.id)?.sessionContext, 'second Baton-managed context');
+  assert.deepEqual(await adversaryDriver.coordinator._worktrees.validateSessionContext(
+    adversaryContext,
+  ), { ok: true });
+  assert.notEqual(adversaryContext.ownerTaskId, replayHandle.sessionContext.ownerTaskId);
+
+  const logSequence = resumedDriver.log.read(workerId).map((event) => [event.seq, event.kind]);
+  const coordinationSequence = resumedDriver.coordination.events()
+    .map((event) => [event.seq, event.kind]);
+  const preEffectState = {
+    status: replayHandle.status,
+    processGeneration: replayHandle.processGeneration,
+    runtimeScope: replayHandle.runtimeScope,
+    currentIncarnation: replayHandle.currentIncarnation,
+    localAuthority: replayHandle.localAuthority,
+    ownedWorktreeAuthority: replayHandle.ownedWorktreeAuthority,
+    workspaceOwnerProcessAuthorityValid: replayHandle.workspaceOwnerProcessAuthorityValid,
+    sessionContext: replayHandle.sessionContext,
+  };
+  const cardCount = cardCalls;
+  const spawnCount = spawnOptions.length;
+  const promptCount = promptCalls;
+  let ownerChecks = 0;
+  const restoreWorkspaceAuthority = resumedDriver.coordinator
+    ._restoreRecoveredPhysicalWorkspaceAuthority.bind(resumedDriver.coordinator);
+  resumedDriver.coordinator._restoreRecoveredPhysicalWorkspaceAuthority = (...args) => {
+    ownerChecks += 1;
+    return restoreWorkspaceAuthority(...args);
+  };
+  assert.deepEqual(await resumedDriver.coordinator.recover(workerId, {
+    context: adversaryContext,
+  }), {
+    ok: false, result: 'session_context_mismatch',
+    reason: 'preserved recovery context does not match the receipt-bound session context',
+  });
+  assert.deepEqual(resumedDriver.log.read(workerId)
+    .map((event) => [event.seq, event.kind]), logSequence);
+  assert.deepEqual(resumedDriver.coordination.events()
+    .map((event) => [event.seq, event.kind]), coordinationSequence);
+  assert.deepEqual({
+    status: replayHandle.status,
+    processGeneration: replayHandle.processGeneration,
+    runtimeScope: replayHandle.runtimeScope,
+    currentIncarnation: replayHandle.currentIncarnation,
+    localAuthority: replayHandle.localAuthority,
+    ownedWorktreeAuthority: replayHandle.ownedWorktreeAuthority,
+    workspaceOwnerProcessAuthorityValid: replayHandle.workspaceOwnerProcessAuthorityValid,
+    sessionContext: replayHandle.sessionContext,
+  }, preEffectState);
+  assert.equal(cardCalls, cardCount);
+  assert.equal(spawnOptions.length, spawnCount);
+  assert.equal(promptCalls, promptCount);
+  assert.equal(ownerChecks, 0);
+  assert.equal(resumedDriver.coordinator._recoveryAttempts.size, 0);
+  await adversaryDriver.drainAndClose('phase91:adversarial-context-complete');
+  adversaryDriver = null;
+
+  const expectPreEffectRefusal = async (expected) => {
+    const seq = resumedDriver.coordination.snapshot().lastSeq;
+    const spawns = spawnOptions.length;
+    assert.equal((await resumedDriver.coordinator.recover(workerId)).result, expected);
+    assert.equal(resumedDriver.coordination.snapshot().lastSeq, seq);
+    assert.equal(spawnOptions.length, spawns);
+    assert.equal(promptCalls, 0);
+  };
+
+  replayHandle.sessionPreservation = { ...exactReceipt, unexpected: true };
+  await expectPreEffectRefusal('preservation_receipt_invalid');
+  replayHandle.sessionPreservation = { ...exactReceipt, receiptDigest: 'f'.repeat(64) };
+  await expectPreEffectRefusal('preservation_receipt_invalid');
+  replayHandle.sessionPreservation = reseal({ worktreeDigest: '0'.repeat(64) });
+  await expectPreEffectRefusal('preservation_receipt_stale');
+  replayHandle.sessionPreservation = reseal({ planBindingDigest: '1'.repeat(64) });
+  await expectPreEffectRefusal('preservation_receipt_stale');
+  replayHandle.sessionPreservation = reseal({ routeDigest: '2'.repeat(64) });
+  await expectPreEffectRefusal('preservation_receipt_stale');
+  replayHandle.sessionPreservation = reseal({ runAuthorityDigest: '3'.repeat(64) });
+  await expectPreEffectRefusal('preservation_receipt_stale');
+  replayHandle.sessionPreservation = reseal({ sessionDigest: '4'.repeat(64) });
+  await expectPreEffectRefusal('preservation_receipt_stale');
+  replayHandle.sessionPreservation = reseal({
+    processGeneration: exactReceipt.processGeneration + 1,
+  });
+  await expectPreEffectRefusal('preservation_receipt_invalid');
+  replayHandle.sessionPreservation = exactReceipt;
+  resumedDriver.coordination.runControls = () => [];
+  await expectPreEffectRefusal('preservation_control_unproven');
+  resumedDriver.coordination.runControls = () => [exactControls[0], exactControls[0]];
+  await expectPreEffectRefusal('preservation_control_ambiguous');
+  resumedDriver.coordination.runControls = () => [{
+    ...exactControls[0], target: { ...exactControls[0].target, workerId: 'foreign-worker' },
+  }];
+  await expectPreEffectRefusal('preservation_control_unproven');
+  resumedDriver.coordination.runControls = runControls;
+  replayHandle.processRef = {
+    generation: exactReceipt.processGeneration, pid: 1, processGroupId: 1,
+    state: 'unconfirmed_after_restart', ready: true, startedSeq: 1, closedSeq: null,
+  };
+  await expectPreEffectRefusal('preservation_receipt_invalid');
+  replayHandle.processRef = null;
+  replayHandle.sessionPreservation = reseal({ attached: false });
+  await expectPreEffectRefusal('preservation_receipt_invalid');
+  replayHandle.sessionPreservation = exactReceipt;
+  const exactCard = resumedAdapter.card;
+  resumedAdapter.card = () => ({
+    ...exactCard(), concurrencyCeiling: exactCard().concurrencyCeiling + 1,
+  });
+  await expectPreEffectRefusal('preservation_card_mismatch');
+  resumedAdapter.card = exactCard;
+
+  const recovered = await restarted.recover(proposed.runId, principal('restart-owner'));
+  assert.equal(recovered.phase, 'interrupted', JSON.stringify({
+    action: recovered.lastAction, recovery: recovered.recovery,
+    handle: resumedDriver.coordinator.list()[0],
+    task: resumedDriver.coordination.task(taskId),
+  }));
+  assert.deepEqual(recovered.lastAction, {
+    command: 'run.recover', result: 'attached_preserved',
+  });
+  assert.deepEqual(recovered.recovery, {
+    state: 'interrupted', reattachment: 'confirmed', attempt: 1,
+    targetCount: 1, target: null, dispatchDisposition: 'attach_only',
+    cleanup: { state: 'owned' },
+  });
+  assert.equal(spawnOptions.length, 1);
+  assert.equal(spawnOptions[0].attachOnly, true);
+  assert.equal(spawnOptions[0].session.mode, 'resume');
+  assert.equal(spawnOptions[0].session.id, `mock-native-${workerId}`);
+  assert.equal(promptCalls, 0, 'reattachment cannot admit a successor prompt');
+  assert.equal(resumedDriver.coordinator.list()[0].taskId, taskId);
+  assert.equal(resumedDriver.coordinator.list()[0].processGeneration,
+    preservedProcessGeneration, 'processless attach-only recovery reuses the preserved generation');
+  const recoveredHandle = resumedDriver.coordinator._workers.get(workerId);
+  assert.equal(recoveredHandle.workspaceOwnerBindingValid, true);
+  assert.equal(recoveredHandle.workspaceOwnerProcessAuthorityValid, true);
+  assert.equal(recoveredHandle.ownedWorktreeAuthority, true);
+  assert.equal(recoveredHandle.status, 'interrupted');
+  assert.equal(resumedDriver.coordination.snapshot().tasks.length, taskCount);
+
+  const resumedRun = bindBaton(restarted, principal('restart-owner')).runs.open(proposed.runId);
+  const sent = await resumedRun.send('Continue the same Plan-bound task after restart.');
+  assert.equal(sent.lastAction.actualDelivery, 'turn');
+  assert.equal(promptCalls, 1);
+  assert.equal(spawnOptions.length, 1);
+  assert.equal(resumedDriver.coordinator.list()[0].taskId, taskId);
+  assert.equal(resumedDriver.coordination.snapshot().tasks.length, taskCount);
+  await restarted.shutdown(principal('shutdown-admin'));
+
+  // The first controller is intentionally crash-simulated, so detach its in-memory mock wire
+  // from durable authority and clear its long budget timer without emitting stale evidence.
+  first.adapter.onEvent(() => {});
+  await first.adapter.kill(workerId);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+});
+
+test('P92.2 processless recovery: ack.ok without attached authority exposes nothing and cleans up exactly', async (t) => {
+  const first = fixture('phase92-2-unattached-ack', {
+    scenario: {
+      outcome: 'completed', summary: 'must remain preserved until restart',
+      edits: [{ path: 'impl/unattached-ack.txt', content: 'untrusted\n', delayMs: 1_200 }],
+    },
+  });
+  enablePreservedMockSession(first.adapter);
+  let resumedDriver = null;
+  let restarted = null;
+  t.after(async () => {
+    try { resumedDriver?.coordination.releaseWriterLease(); } catch { /* best effort */ }
+    first.adapter.onEvent(() => {});
+    try { await first.adapter.kill(first.driver.coordinator.list()[0]?.id); } catch { /* best effort */ }
+  });
+
+  const proposed = await first.application.start(
+    intent({ runId: 'run-phase92-2-unattached-ack' }), principal('unattached-owner'),
+  );
+  const running = await first.application.approve(
+    proposed.runId, proposed.plan.digest, principal('unattached-approver'),
+  );
+  const workerId = running.ownership.workerIds[0];
+  const run = bindBaton(first.application, principal('unattached-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  await run.interrupt({ reason: 'Preserve for unattached acknowledgement coverage.' });
+  const preserved = first.driver.coordinator.list()[0];
+  const receiptContext = preserved.sessionContext;
+  const preservedGeneration = first.driver.coordinator._workers.get(workerId).processGeneration;
+  first.driver.coordination.releaseWriterLease({ requireOwned: true });
+
+  const resumedAdapter = configuredAdapter({
+    outcome: 'completed', summary: 'unattached acknowledgement must never resume work',
+    edits: [{ path: 'impl/unattached-ack.txt', content: 'must not commit\n', delayMs: 1 }],
+  });
+  enablePreservedMockSession(resumedAdapter);
+  let spawnCalls = 0;
+  let promptCalls = 0;
+  const spawn = resumedAdapter.spawn.bind(resumedAdapter);
+  resumedAdapter.spawn = async (...args) => {
+    spawnCalls += 1;
+    const ack = await spawn(...args);
+    return ack?.ok === true ? { ...ack, attached: false } : ack;
+  };
+  const prompt = resumedAdapter.prompt.bind(resumedAdapter);
+  resumedAdapter.prompt = (...args) => {
+    promptCalls += 1;
+    return prompt(...args);
+  };
+  resumedDriver = createDriver({
+    repoRoot: first.repo,
+    repoId: 'repo-phase64',
+    logDir: first.logDir,
+    adapters: { mock: resumedAdapter },
+    goalPlanAuthority: { policy, authorize: async () => true },
+    stopDeadlineMs: 2_000,
+  });
+  restarted = reopenApplication(resumedDriver);
+  await restarted.ready;
+  const handle = resumedDriver.coordinator._workers.get(workerId);
+  assert.equal(handle.processRef, null);
+  assert.equal(handle.processAuthority, null);
+  assert.equal(handle.workspaceOwnerProcessAuthorityValid, false);
+
+  let ownerRestorations = 0;
+  const restoreWorkspaceAuthority = resumedDriver.coordinator
+    ._restoreRecoveredPhysicalWorkspaceAuthority.bind(resumedDriver.coordinator);
+  resumedDriver.coordinator._restoreRecoveredPhysicalWorkspaceAuthority = (...args) => {
+    ownerRestorations += 1;
+    return restoreWorkspaceAuthority(...args);
+  };
+  const beforeKinds = resumedDriver.log.read(workerId).map((event) => event.kind);
+  const outcome = await resumedDriver.coordinator.recover(workerId);
+  assert.deepEqual(outcome, {
+    ok: false,
+    result: 'recovery_attachment_unproven',
+    reap: 'confirmed',
+    reapResult: 'confirmed',
+  });
+  assert.equal(spawnCalls, 1);
+  assert.equal(promptCalls, 0);
+  assert.equal(ownerRestorations, 0);
+  assert.equal(outcome.handle, undefined);
+  assert.equal(handle.status, 'dead');
+  assert.equal(handle.localAuthority, false);
+  assert.equal(handle.runtimeScope?.active ?? false, false);
+  assert.equal(handle.processRef?.state ?? 'closed', 'closed');
+  assert.equal(handle.processAuthority, null);
+  assert.equal(handle.processGeneration, preservedGeneration);
+  assert.equal(handle.workspaceOwnerProcessAuthorityValid, false);
+  assert.equal(handle.ownedWorktreeAuthority, false);
+  assert.equal(handle.sessionPreservation, null);
+  assert.equal(handle.preservedTurnEpoch, null);
+  assert.deepEqual(handle.sessionContext, receiptContext);
+  assert.equal(handle.worktree, receiptContext.worktree);
+  assert.equal(existsSync(receiptContext.worktree), true);
+  assert.equal(handle.cleanupPending, false);
+  assert.equal(handle.cleanupError, null);
+  assert.equal(resumedDriver.coordinator._recoveryAttempts.size, 0);
+  assert.equal(resumedAdapter._sessions.get(workerId)?.terminal, true);
+  assert.equal(resumedAdapter._sessions.get(workerId)?.haltSignal.aborted, true);
+  assert.deepEqual(resumedDriver.log.read(workerId).map((event) => event.kind)
+    .slice(beforeKinds.length), [
+    'control.recovery_requested',
+    'runtime.scope_created',
+    'control.recovery_failed',
+    'kill.requested',
+    'kill.requested',
+    'kill.confirmed',
+  ]);
+  assert.equal(resumedDriver.log.read(workerId)
+    .some((event) => event.kind === 'control.session_preservation_reattached'), false);
+  assert.equal(resumedDriver.coordination.task(handle.taskId).status, 'failed');
+
+  await restarted.shutdown(principal('shutdown-admin'));
+  restarted = null;
+  resumedDriver = null;
+  first.adapter.onEvent(() => {});
+  await first.adapter.kill(workerId);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+});
+
+test('P91 application: process-close attachment uncertainty is quarantined with stop as the only safe action', async () => {
+  const { application, adapter, driver } = fixture('phase91-unproven-attachment', {
+    scenario: {
+      outcome: 'completed', summary: 'attachment becomes unproven',
+      edits: [{ path: 'impl/unproven.txt', content: 'unproven\n', delayMs: 1_200 }],
+    },
+  });
+  enablePreservedMockSession(adapter);
+  const proposed = await application.start(
+    intent({ runId: 'run-phase91-unproven-attachment' }), principal('unproven-owner'),
+  );
+  await application.approve(
+    proposed.runId, proposed.plan.digest, principal('unproven-approver'),
+  );
+  const run = bindBaton(application, principal('unproven-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  await run.interrupt({ reason: 'Establish the preserved-session boundary.' });
+  const internal = driver.coordinator._workers.get(driver.coordinator.list()[0].id);
+  internal.status = 'exited';
+
+  const quarantined = await application.status(proposed.runId, principal('unproven-owner'));
+  assert.equal(quarantined.phase, 'interruption_uncertain');
+  assert.deepEqual(quarantined.nextActions, [{ kind: 'stop' }]);
+  assert.equal(quarantined.execution.activeProviderTurns, 0);
+  assert.equal(quarantined.execution.controllableAttachedMembers, 0);
+  assert.deepEqual(quarantined.attention.find((item) => item.kind === 'session_preservation'), {
+    kind: 'session_preservation', state: 'quarantined',
+    reason: 'session_attachment_unproven',
+    summary: 'Reusable provider-session attachment is unproven; whole-Run stop is the only safe action.',
+  });
+  const stopped = await application.stop(
+    proposed.runId, 'Reap the quarantined provider session.', principal('unproven-stopper'),
+  );
+  assert.equal(stopped.stop.receipt.remainingCount, 0);
+  assert.equal(driver.coordinator.list()[0].status, 'dead');
+  assert.equal(adapter._sessions.get(driver.coordinator.list()[0].id).terminal, true,
+    'stop confirms the quarantined preserved transport is physically terminal');
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('P91 application: a stop admitted after successor prompt acceptance maps to outcome_unknown and exactly reaps', async () => {
+  const { application, adapter, driver } = fixture('phase91-post-prompt-stop', {
+    scenario: {
+      outcome: 'completed', summary: 'successor raced stop',
+      edits: [{ path: 'impl/post-prompt-stop.txt', content: 'raced\n', delayMs: 1_200 }],
+    },
+  });
+  enablePreservedMockSession(adapter);
+  const proposed = await application.start(
+    intent({ runId: 'run-phase91-post-prompt-stop' }), principal('race-owner'),
+  );
+  await application.approve(proposed.runId, proposed.plan.digest, principal('race-approver'));
+  const run = bindBaton(application, principal('race-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  await run.interrupt({ reason: 'Pause before the successor race.' });
+
+  let promptObserved;
+  let releasePrompt;
+  const observed = new Promise((resolve) => { promptObserved = resolve; });
+  const gate = new Promise((resolve) => { releasePrompt = resolve; });
+  const prompt = adapter.prompt.bind(adapter);
+  adapter.prompt = async (...args) => {
+    const accepted = await prompt(...args);
+    promptObserved();
+    await gate;
+    return accepted;
+  };
+  const sendPromise = run.send('This prompt is accepted before stop admission.');
+  await observed;
+  const stopPromise = application.stop(
+    proposed.runId, 'Stop after prompt acceptance.', principal('race-stopper'),
+  );
+  for (let attempt = 0; attempt < 200
+    && !driver.coordination.runStop(proposed.runId); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.ok(driver.coordination.runStop(proposed.runId), 'stop must be admitted before prompt return');
+  releasePrompt();
+  const [sent, stopped] = await Promise.all([sendPromise, stopPromise]);
+
+  assert.equal(sent.lastAction.state, 'outcome_unknown');
+  assert.equal(sent.lastAction.deliveredDespiteStale, true);
+  assert.equal(sent.lastAction.actualDelivery, 'turn');
+  assert.equal(stopped.phase, 'stopped');
+  assert.equal(stopped.stop.receipt.remainingCount, 0);
+  assert.equal(driver.coordination.runControls(proposed.runId).at(-1).status, 'outcome_unknown');
+  assert.equal(driver.coordinator.list()[0].status, 'dead');
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('P91 blocked Application: interaction resolution precedes admission and binds the resulting task generation', async () => {
+  const { application, adapter, driver } = fixture('phase91-blocked-admission', {
+    scenario: {
+      outcome: 'completed', summary: 'blocked turn',
+      ask: { kind: 'approval', question: 'May the provider continue?', afterEditIndex: 0 },
+    },
+  });
+  enablePreservedMockSession(adapter);
+  let approvalDeliveries = 0;
+  const approve = adapter.approve.bind(adapter);
+  adapter.approve = (...args) => { approvalDeliveries += 1; return approve(...args); };
+  const proposed = await application.start(
+    intent({ runId: 'run-phase91-blocked-admission' }), principal('blocked-owner'),
+  );
+  const running = await application.approve(
+    proposed.runId, proposed.plan.digest, principal('blocked-approver'),
+  );
+  const workerId = running.ownership.workerIds[0];
+  for (let attempt = 0; attempt < 200
+    && driver.coordinator.list()[0]?.status !== 'blocked'; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(driver.coordinator.list()[0].status, 'blocked');
+  const versionBefore = driver.coordination.task(driver.coordinator.list()[0].taskId).version;
+  const run = bindBaton(application, principal('blocked-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  const interrupted = await run.interrupt({ reason: 'End only the blocked provider turn.' });
+  assert.equal(interrupted.phase, 'interrupted');
+  assert.equal(approvalDeliveries, 0, 'supersession is local authority; the interrupt ends the wire turn');
+
+  const events = driver.coordination.events();
+  const resolution = events.find((event) => event.kind === 'evidence.mapped'
+    && event.payload.kind === 'control.interaction_superseded');
+  const admission = events.find((event) => event.kind === 'run.control_admitted');
+  assert.ok(resolution && admission && resolution.seq < admission.seq);
+  const task = driver.coordination.task(driver.coordinator.list()[0].taskId);
+  assert.ok(task.version > versionBefore);
+  const control = driver.coordination.runControls(proposed.runId)[0];
+  assert.equal(control.target.runAuthorityDigest,
+    driver.coordinator.list()[0].sessionPreservation.runAuthorityDigest);
+  assert.equal(task.status, 'working');
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('P91 binding: task-version-only drift before effect settles refused without a provider call', async () => {
+  const { application, adapter, driver } = fixture('phase91-pre-effect-drift', {
+    scenario: {
+      outcome: 'completed', summary: 'drift target',
+      edits: [{ path: 'impl/drift.txt', content: 'drift\n', delayMs: 1_000 }],
+    },
+  });
+  const proposed = await application.start(
+    intent({ runId: 'run-phase91-pre-effect-drift' }), principal('drift-owner'),
+  );
+  const running = await application.approve(
+    proposed.runId, proposed.plan.digest, principal('drift-approver'),
+  );
+  const workerId = running.ownership.workerIds[0];
+  let promptCalls = 0;
+  const prompt = adapter.prompt.bind(adapter);
+  adapter.prompt = (...args) => { promptCalls += 1; return prompt(...args); };
+  const admit = driver.coordination.admitRunControl.bind(driver.coordination);
+  driver.coordination.admitRunControl = (...args) => {
+    const admitted = admit(...args);
+    const task = driver.coordinator._tasks.get(driver.coordinator.list()[0].taskId);
+    driver.coordinator._coordTransition(
+      task, 'input_required', `phase91.version-drift.blocked:${task.id}`,
+    );
+    task.status = 'input_required';
+    driver.coordinator._coordTransition(
+      task, 'working', `phase91.version-drift.working:${task.id}`,
+    );
+    task.status = 'working';
+    return admitted;
+  };
+  const run = bindBaton(application, principal('drift-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  const result = await run.send('This must not cross a drifted target.');
+  assert.equal(result.lastAction.state, 'refused');
+  assert.equal(result.lastAction.result, 'semantic_target_drift');
+  assert.equal(promptCalls, 0);
+  assert.equal(driver.coordination.events()
+    .some((event) => event.kind === 'run.control_effect_started'), false);
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('P91 binding: non-fence drift after effect start is refused again in the serialized delivery slot', async () => {
+  const { application, adapter, driver } = fixture('phase91-delivery-slot-drift', {
+    scenario: {
+      outcome: 'completed', summary: 'slot drift target',
+      edits: [{ path: 'impl/slot-drift.txt', content: 'drift\n', delayMs: 1_000 }],
+    },
+  });
+  const proposed = await application.start(
+    intent({ runId: 'run-phase91-delivery-slot-drift' }), principal('slot-owner'),
+  );
+  const running = await application.approve(
+    proposed.runId, proposed.plan.digest, principal('slot-approver'),
+  );
+  const workerId = running.ownership.workerIds[0];
+  let promptCalls = 0;
+  const prompt = adapter.prompt.bind(adapter);
+  adapter.prompt = (...args) => { promptCalls += 1; return prompt(...args); };
+  const begin = driver.coordination.beginRunControlEffect.bind(driver.coordination);
+  driver.coordination.beginRunControlEffect = (...args) => {
+    const started = begin(...args);
+    driver.coordinator._workers.get(workerId).processGeneration += 1;
+    return started;
+  };
+  const run = bindBaton(application, principal('slot-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  const result = await run.send('The slot must recheck every v2 binding field.');
+  assert.equal(result.lastAction.state, 'refused');
+  assert.equal(result.lastAction.result, 'semantic_target_drift');
+  assert.equal(promptCalls, 0);
+  assert.equal(driver.coordination.events()
+    .filter((event) => event.kind === 'run.control_effect_started').length, 1);
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('P91 response loss: preserved interrupt and successor replay from evidence without redelivery', async () => {
+  const { application, adapter, driver } = fixture('phase91-preserved-response-loss', {
+    scenario: {
+      outcome: 'completed', summary: 'response-loss continuation completed',
+      edits: [{ path: 'impl/response-loss.txt', content: 'done\n', delayMs: 1_000 }],
+    },
+  });
+  enablePreservedMockSession(adapter);
+  let interruptCalls = 0;
+  const interrupt = adapter.interrupt.bind(adapter);
+  adapter.interrupt = (...args) => { interruptCalls += 1; return interrupt(...args); };
+  let promptCalls = 0;
+  const prompt = adapter.prompt.bind(adapter);
+  adapter.prompt = (...args) => { promptCalls += 1; return prompt(...args); };
+  const proposed = await application.start(
+    intent({ runId: 'run-phase91-preserved-response-loss' }), principal('loss-owner'),
+  );
+  await application.approve(proposed.runId, proposed.plan.digest, principal('loss-approver'));
+  const run = bindBaton(application, principal('loss-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  const acknowledge = driver.coordination.acknowledgeRunControl.bind(driver.coordination);
+  driver.coordination.acknowledgeRunControl = () => {
+    throw Object.assign(new Error('response lost after interrupt confirmation'), { code: 'response_lost' });
+  };
+  await assert.rejects(run.interrupt({ reason: 'Preserve despite response loss.' }),
+    (error) => error.code === 'response_lost');
+  driver.coordination.acknowledgeRunControl = acknowledge;
+  const afterInterruptRestart = reopenApplication(driver);
+  await afterInterruptRestart.ready;
+  assert.equal(interruptCalls, 1);
+  assert.equal(driver.coordination.runControls(proposed.runId)[0].status, 'confirmed');
+
+  const resumedRun = bindBaton(afterInterruptRestart, principal('loss-owner'))
+    .runs.open(proposed.runId);
+  const paused = await resumedRun.inspect();
+  assert.equal(paused.outline.phase, 'interrupted');
+  driver.coordination.acknowledgeRunControl = () => {
+    throw Object.assign(new Error('response lost after successor acceptance'), { code: 'response_lost' });
+  };
+  await assert.rejects(resumedRun.send('Resume exactly once after response loss.'),
+    (error) => error.code === 'response_lost');
+  driver.coordination.acknowledgeRunControl = acknowledge;
+  const afterSendRestart = reopenApplication(driver);
+  await afterSendRestart.ready;
+  assert.equal(promptCalls, 1);
+  assert.deepEqual(driver.coordination.runControls(proposed.runId)
+    .map((control) => control.status), ['confirmed', 'confirmed']);
+  await afterSendRestart.shutdown(principal('shutdown-admin'));
+});
+
+test('P91 compatibility: schema-v1 outcomes retain the Phase90 replay shape', async () => {
+  const { application } = fixture('phase91-v1-outcome-shape');
+  assert.deepEqual(application._normalizeRunControlOutcome({
+    result: 'ok', code: null, emulated: false, deliveredDespiteStale: false,
+    actualDelivery: 'turn', preservation: { state: 'preserved' },
+  }, 1), {
+    result: 'ok', code: null, emulated: false, deliveredDespiteStale: false,
+  });
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('RC2: a post-boundary send exception settles outcome_unknown and is never reported as success', async () => {
+  const { application, adapter, driver } = fixture('semantic-control-unknown', { delayMs: 1_500 });
+  const proposed = await application.start(
+    intent({ runId: 'run-semantic-control-unknown' }), principal('control-owner'),
+  );
+  await application.approve(proposed.runId, proposed.plan.digest, principal('control-approver'));
+  adapter.prompt = async () => { throw Object.assign(new Error('wire acknowledgement lost'), { code: 'wire_lost' }); };
+  const run = bindBaton(application, principal('control-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  const result = await run.send('Recheck the current implementation boundary.');
+  assert.equal(result.lastAction.state, 'outcome_unknown');
+  assert.equal(result.lastAction.result, 'provider_outcome_unknown');
+  const settlement = driver.coordination.events()
+    .findLast((event) => event.kind === 'run.control_settled');
+  assert.equal(settlement.payload.state, 'outcome_unknown');
+  assert.equal(settlement.payload.outcome.code, 'provider_boundary_observed');
+  assert.equal(driver.log.read(driver.coordinator.list()[0].id)
+    .filter((event) => event.kind === 'control.delivery_requested').length, 1);
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('RC3: response-loss replay returns the durable semantic outcome without a second provider call', async () => {
+  const { application, adapter, driver } = fixture('semantic-control-replay', { delayMs: 1_500 });
+  const proposed = await application.start(
+    intent({ runId: 'run-semantic-control-replay' }), principal('control-owner'),
+  );
+  await application.approve(proposed.runId, proposed.plan.digest, principal('control-approver'));
+  const outline = await application.inspect({
+    runId: proposed.runId, depth: 'outline',
+  }, principal('control-owner'));
+  const action = outline.outline.actions.find((candidate) => candidate.kind === 'send');
+  const prompt = adapter.prompt.bind(adapter);
+  let promptCalls = 0;
+  adapter.prompt = (...args) => { promptCalls += 1; return prompt(...args); };
+  const args = {
+    runId: proposed.runId,
+    actionId: action.actionId,
+    inputs: { message: 'Preserve the same provider effect.', recipient: 'work', delivery: 'nudge' },
+  };
+  const context = { transport: 'web', requestId: 'lost-response', idempotencyKey: 'web.command:lost-response' };
+  const first = await application.command('run.act', args, principal('control-owner'), context);
+  const replay = await application.command('run.act', args, principal('control-owner'), context);
+  assert.equal(first.lastAction.state, 'confirmed');
+  assert.deepEqual(replay.lastAction, first.lastAction);
+  assert.equal(promptCalls, 1);
+  const records = driver.coordination.events().filter((event) => (
+    ['run.control_admitted', 'run.control_effect_started',
+      'run.control_provider_acked', 'run.control_settled'].includes(event.kind)
+  ));
+  assert.equal(records.length, 4);
+  await application.shutdown(principal('shutdown-admin'));
+});
+
+test('RC4: restart after admission but before effect starts performs the provider call exactly once', async () => {
+  const { application, adapter, driver } = fixture('semantic-control-admission-crash', { delayMs: 1_500 });
+  const proposed = await application.start(
+    intent({ runId: 'run-semantic-control-admission-crash' }), principal('control-owner'),
+  );
+  await application.approve(proposed.runId, proposed.plan.digest, principal('control-approver'));
+  const run = bindBaton(application, principal('control-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  const prompt = adapter.prompt.bind(adapter);
+  let promptCalls = 0;
+  adapter.prompt = (...args) => { promptCalls += 1; return prompt(...args); };
+  const begin = driver.coordination.beginRunControlEffect.bind(driver.coordination);
+  driver.coordination.beginRunControlEffect = () => {
+    throw Object.assign(new Error('crash before effect start'), { code: 'injected_crash' });
+  };
+  await assert.rejects(run.send('Resume this exact admitted delivery.'),
+    (error) => error.code === 'injected_crash');
+  assert.equal(promptCalls, 0);
+  driver.coordination.beginRunControlEffect = begin;
+
+  const recovered = reopenApplication(driver);
+  await recovered.ready;
+  assert.equal(promptCalls, 1);
+  assert.equal(driver.coordination.runControls(proposed.runId)[0].status, 'confirmed');
+  await recovered.shutdown(principal('shutdown-admin'));
+});
+
+test('RC5: restart after provider acknowledgement settles without redelivery', async () => {
+  const { application, adapter, driver } = fixture('semantic-control-ack-crash', { delayMs: 1_500 });
+  const proposed = await application.start(
+    intent({ runId: 'run-semantic-control-ack-crash' }), principal('control-owner'),
+  );
+  await application.approve(proposed.runId, proposed.plan.digest, principal('control-approver'));
+  const run = bindBaton(application, principal('control-owner')).runs.open(proposed.runId);
+  await run.inspect();
+  const prompt = adapter.prompt.bind(adapter);
+  let promptCalls = 0;
+  adapter.prompt = (...args) => { promptCalls += 1; return prompt(...args); };
+  const settle = driver.coordination.settleRunControl.bind(driver.coordination);
+  driver.coordination.settleRunControl = () => {
+    throw Object.assign(new Error('crash after provider acknowledgement'), { code: 'injected_crash' });
+  };
+  await assert.rejects(run.send('Do not redeliver after acknowledgement.'),
+    (error) => error.code === 'injected_crash');
+  assert.equal(promptCalls, 1);
+  assert.equal(driver.coordination.runControls(proposed.runId)[0].status, 'provider_acked');
+  driver.coordination.settleRunControl = settle;
+
+  const recovered = reopenApplication(driver);
+  await recovered.ready;
+  assert.equal(promptCalls, 1);
+  assert.equal(driver.coordination.runControls(proposed.runId)[0].status, 'confirmed');
+  await recovered.shutdown(principal('shutdown-admin'));
 });
 
 test('UA5/UA8: Run stop before approval closes dispatch durably without spawning or closing Baton', async () => {
@@ -551,6 +1767,16 @@ test('UA4-UA8: accepted result is pinned, evidenced, and explicitly adopted with
   const beforeEvidenceEvents = driver.coordination.events().length;
   const evidence = await application.command('run.evidence', { runId }, principal('result-owner'));
   assert.equal(evidence.kind, 'baton.run.evidence');
+  assert.equal(evidence.schemaVersion, 1);
+  assert.equal(Object.hasOwn(evidence, 'resultIntent'), false);
+  assert.deepEqual(Object.keys(evidence), [
+    'schemaVersion', 'kind', 'state', 'repoId', 'runId',
+    'observedThroughSeq', 'bindings', 'phase', 'progress', 'node', 'result',
+    'integration', 'verification', 'semanticReview', 'artifacts', 'stop', 'ownership',
+    'checks', 'manifestDigest',
+  ]);
+  const { manifestDigest, ...evidenceCore } = evidence;
+  assert.equal(manifestDigest, digest(evidenceCore));
   assert.equal(evidence.phase, 'work_completed');
   assert.equal(evidence.progress.current, 'result');
   assert.equal(evidence.result.sha, finished.result.sha);

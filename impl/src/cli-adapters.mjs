@@ -13,8 +13,10 @@
 // tests never invoke a real CLI.
 
 import { spawn } from 'node:child_process';
-import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
+import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { usdToNanos } from './usd.mjs';
+import { attestWorkerPolicyObservation } from './worker-policy.mjs';
+import { renderVerificationExecution } from './verification-presentation.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const CODEX_TOKEN_METRIC = 'codex_turn_input_plus_output_tokens';
@@ -74,13 +76,34 @@ function fixedWireFailure(base) {
 // ---------------------------------------------------------------------------
 
 export function renderPrompt(brief) {
+  const advertisesBatonTool = (brief.tools ?? []).some((tool) => (
+    /baton/iu.test(typeof tool === 'string' ? tool : JSON.stringify(tool))
+  ));
+  const attachedContext = brief.contextInput ? [
+    'Attached immutable Context (the authoritative input for this task):',
+    `Call: ${brief.contextInput.callId}`,
+    brief.contextInput.unitId
+      ? `Unit: ${brief.contextInput.unitId}`
+      : `Partition: ${brief.contextInput.partitionId}`,
+    'Use the attached value directly. Do not search the repository for this source or replace it with a broader review.',
+    JSON.stringify(brief.contextInput.value, null, 2),
+  ].join('\n') : '';
+  const dispatchGuidance = brief.contextInput
+    ? (advertisesBatonTool
+      ? 'This task is already dispatched by Baton. The attached immutable Context is the complete task input; do not inspect repository files, prior Run artifacts, receipts, or ledgers to reconstruct or broaden it. Writing a named output path does not authorize reading its preexisting contents. Orchestration actions may use only the Baton control surface explicitly listed in this Brief.'
+      : 'This task is already dispatched and supervised by Baton. The attached immutable Context is the complete task input; do not inspect repository files, prior Run artifacts, receipts, or ledgers to reconstruct or broaden it. Writing a named output path does not authorize reading its preexisting contents. Do not search for or launch another Baton CLI, MCP server, or Run; use one only when this Brief explicitly advertises it.')
+    : 'This task is already dispatched by Baton. Perform the assigned work in this worktree and use only tools explicitly advertised in this Brief.';
   const lines = [
     `Task: ${brief.goal}`,
+    dispatchGuidance,
+    attachedContext,
     brief.constraints?.length ? `Constraints:\n- ${brief.constraints.join('\n- ')}` : '',
     brief.pathScope?.length ? `Work only within: ${brief.pathScope.join(', ')}` : '',
     `Done when: ${brief.definitionOfDone}`,
     `You are in a dedicated git worktree; edit files here directly. Do not push or run destructive commands.`,
-    brief.verification?.command ? `A reviewer will independently run this to check your work: \`${brief.verification.command}\` (must exit ${brief.verification.expectExit}). Make that pass.` : '',
+    brief.verification?.command ? (brief.contextInput
+      ? `A reviewer independently enforces the following exact execution contract. Run it only when the requested work needs code verification; do not substitute it for analyzing the attached Context.\n${renderVerificationExecution(brief.verification)}`
+      : `A reviewer will independently enforce the following exact execution contract. Make it pass without changing its executable, argv, working directory, or expected exit.\n${renderVerificationExecution(brief.verification)}`) : '',
   ];
   return lines.filter(Boolean).join('\n');
 }
@@ -211,6 +234,8 @@ class CliAdapter {
       maxContext: this._cfg.maxContext,
       governance: this._cfg.governance,
       modelSelection: this._cfg.modelSelection,
+      permissions: this._cfg.permissions,
+      workerPolicy: this._cfg.workerPolicy,
       verbs: this._cfg.verbs,
     };
   }
@@ -218,7 +243,32 @@ class CliAdapter {
   onEvent(cb) { this._cb = cb; }
   _emit(e) { if (this._cb) this._cb(e); }
 
+  _processCloseLatch(session) {
+    if (session.processClose) return session.processClose;
+    if (!Number.isSafeInteger(session.child?.pid) || session.child.pid <= 0) return null;
+    session.processClose = new ProcessCloseReapLatch({
+      generation: session.processGeneration,
+      pid: session.child.pid,
+      timeoutMs: session.processReapTimeoutMs,
+      reap: this._cfg.reapOwnedProcessGroup,
+      onProcessClosed: (payload) => {
+        session.processClosedEmitted = true;
+        this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.process_closed', payload });
+      },
+      onReapUnconfirmed: (payload) => this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.process_reap_unconfirmed', payload }),
+      onStopConfirmed: (kind, payload) => {
+        session.killConfirmed = kind === 'kill.confirmed' || session.killConfirmed;
+        this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind, payload });
+      },
+    });
+    return session.processClose;
+  }
+
   async spawn(worker, brief, opts = {}) {
+    const existing = this._sessions.get(worker);
+    if (existing && (!existing.terminal || (existing.processClose && !existing.processClose.confirmed))) {
+      return { ok: false, reason: `worker ${worker} already owns an unreaped process generation` };
+    }
     const live = opts.live ?? this._live;
     if (!live) return { ok: false, reason: 'live:false — refusing to launch a real CLI (would spend quota)' };
     let cwd = opts.worktree;
@@ -228,9 +278,24 @@ class CliAdapter {
     const turnEpoch = opts.turnEpoch ?? 1;
     const processGeneration = normalizeProcessGeneration(opts.processGeneration);
     const args = this._cfg.args(brief, { model: opts.model, reasoningEffort: opts.reasoningEffort, serviceTier: opts.serviceTier });
+    let workerPolicyObserved = null;
+    if (opts.workerPolicy) {
+      try {
+        const actual = typeof this._cfg.workerPolicyObservation === 'function'
+          ? this._cfg.workerPolicyObservation(opts) : {};
+        workerPolicyObserved = attestWorkerPolicyObservation(opts.workerPolicy, actual);
+      } catch (error) {
+        return { ok: false, code: error?.code, reason: String(error?.message ?? error) };
+      }
+    }
+    const childEnv = {
+      ...(opts.replaceEnv === true ? {} : process.env),
+      ...(opts.env ?? {}),
+      ...(this._cfg.env ?? {}),
+    };
     const child = spawn(this._cfg.cmd, args, {
       cwd,
-      env: { ...process.env, ...(this._cfg.env ?? {}) },
+      env: childEnv,
       detached: true, // own process group, so interrupt can signal the whole tree
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -239,7 +304,9 @@ class CliAdapter {
       turnEpoch, buf: '', logicalSequence: 0, processGeneration, processClosedEmitted: false,
       processReapTimeoutMs: Number.isSafeInteger(opts.processReapTimeoutMs) && opts.processReapTimeoutMs > 0 ? opts.processReapTimeoutMs : 2000,
       spawnError: null, timeoutFailure: null,
+      workerPolicyObserved,
     };
+    this._processCloseLatch(session);
     this._sessions.set(worker, session);
 
     child.stdout.setEncoding('utf8');
@@ -254,6 +321,18 @@ class CliAdapter {
 
     const processStarted = processStartedPayload(session.processGeneration, child.pid);
     if (processStarted) this._emit({ worker, harness: this._cfg.harness, turnEpoch, actor: 'worker', kind: 'lifecycle.process_started', payload: processStarted });
+    if (session.workerPolicyObserved) {
+      this._emit({
+        worker, harness: this._cfg.harness, turnEpoch, actor: 'worker', kind: 'worker_policy.observed',
+        payload: {
+          processGeneration: session.processGeneration, pid: child.pid, processGroupId: child.pid,
+          workerPolicyObserved: session.workerPolicyObserved,
+        },
+      });
+      if (session.stopping || session.terminal) {
+        return { ok: false, code: 'provider_ready_refused', reason: 'launch worker policy was rejected by coordinator policy' };
+      }
+    }
 
     // The prompt is fed on stdin (both codex exec and claude -p accept piped stdin).
     try { child.stdin.write(renderPrompt(brief) + '\n'); child.stdin.end(); } catch { /* pipe race */ }
@@ -305,53 +384,47 @@ class CliAdapter {
     if (session.terminal || session.processClosePending) return;
     session.processClosePending = true;
     if (session.timer) clearTimeout(session.timer);
-    const groupReap = await reapOwnedProcessGroup(session.child.pid, { timeoutMs: session.processReapTimeoutMs });
-    session.terminal = true;
-    if (groupReap.confirmed && !session.processClosedEmitted) {
-      session.processClosedEmitted = true;
-      const processClosed = processClosedPayload(session.processGeneration, session.child.pid, code, signal, false);
-      if (processClosed) this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.process_closed', payload: processClosed });
-    } else if (!groupReap.confirmed) {
-      const unconfirmed = processReapUnconfirmedPayload(session.processGeneration, session.child.pid, groupReap.reason);
-      if (unconfirmed) this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.process_reap_unconfirmed', payload: unconfirmed });
-    }
-    if (session.timeoutFailure) {
-      this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: session.timeoutFailure });
-      session.turnSettled = true;
-      if (groupReap.confirmed && session.stopping) this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: session.killMode === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed', payload: { signal, terminalCause: 'timeout', usageSeal: unavailableUsageSeal() } });
-    } else if (session.wireFailure) {
-      // The oversize frame is a provider failure, but the adapter also initiated a real
-      // process-group kill. Preserve both facts: lifecycle.crashed describes the turn while
-      // kill.confirmed is emitted only after exact group reaping succeeds. A coordinator that
-      // begins/joins stop handling after the crash must not wait forever for confirmation.
-      if (groupReap.confirmed && !session.killConfirmed) {
-        session.killConfirmed = true;
-        this._emit({
-          worker: session.worker,
-          harness: this._cfg.harness,
-          turnEpoch: session.turnEpoch,
-          actor: 'worker',
-          kind: 'kill.confirmed',
-          payload: {
-            signal,
-            terminalCause: 'wire_frame_oversize',
-            usageSeal: unavailableUsageSeal(),
-          },
-        });
+    const processClose = this._processCloseLatch(session);
+    if (!processClose) { session.terminal = true; return; }
+    const wasStopping = session.stopping === true;
+    const timeoutFailure = session.timeoutFailure;
+    const wireFailure = session.wireFailure === true;
+    const turnSettled = session.turnSettled === true;
+    const spawnError = session.spawnError;
+    const closeDerived = () => {
+      if (timeoutFailure) {
+        this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: timeoutFailure });
+        session.turnSettled = true;
+      } else if (wireFailure) {
+        // The oversize frame is a provider failure, but the adapter also initiated a real
+        // process-group kill. Preserve both facts: lifecycle.crashed describes the turn while
+        // kill.confirmed is emitted only after exact group reaping succeeds. A coordinator that
+        // begins/joins stop handling after the crash must not wait forever for confirmation.
+        return;
+      } else if (wasStopping) {
+        session.turnSettled = true;
+      } else if (turnSettled) {
+        return;
+      } else if (spawnError) {
+        this._finish(session, { crashed: true, event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: String(spawnError.message), usageSeal: unavailableUsageSeal() } } });
+      } else if (code === 0) {
+        this._finish(session, { event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.turn_completed', payload: { result: makeResult('completed'), usageSeal: unavailableUsageSeal() } } });
+      } else {
+        this._finish(session, { crashed: true, event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: `exited ${code} (${signal})`, usageSeal: unavailableUsageSeal() } } });
       }
-      return;
-    } else if (session.stopping) {
-      if (groupReap.confirmed) this._emit({ worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: session.killMode === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed', payload: { signal, usageSeal: unavailableUsageSeal() } });
-      session.turnSettled = true;
-    } else if (session.turnSettled) {
-      return;
-    } else if (session.spawnError) {
-      this._finish(session, { crashed: true, event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: String(session.spawnError.message), usageSeal: unavailableUsageSeal() } } });
-    } else if (code === 0) {
-      this._finish(session, { event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.turn_completed', payload: { result: makeResult('completed'), usageSeal: unavailableUsageSeal() } } });
-    } else {
-      this._finish(session, { crashed: true, event: { worker: session.worker, harness: this._cfg.harness, turnEpoch: session.turnEpoch, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: `exited ${code} (${signal})`, usageSeal: unavailableUsageSeal() } } });
+    };
+    if (wasStopping) {
+      const terminalCause = timeoutFailure ? 'timeout' : wireFailure ? 'wire_frame_oversize' : null;
+      processClose.authorizeStop(
+        session.killMode === 'kill' ? 'kill.confirmed' : 'control.interrupt_confirmed',
+        { signal, ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal() },
+      );
     }
+    // The leader is closed even while descendants remain owned. Marking it terminal prevents
+    // later control from signaling a reused leader PID; the latch retry still targets the exact
+    // retained process group.
+    session.terminal = true;
+    await processClose.close(code, signal, false, closeDerived);
   }
 
   _finish(session, parsed) {
@@ -371,13 +444,25 @@ class CliAdapter {
   // interrupt/kill: signal the process group; the confirmed-stop event fires on 'close'.
   async interrupt(worker) {
     const s = this._sessions.get(worker);
-    if (s && !s.terminal) { s.stopping = true; s.killMode = 'interrupt'; this._signal(worker, 'SIGINT'); }
+    if (s?.processClose && !s.processClose.confirmed) {
+      s.stopping = true; s.killMode = 'interrupt';
+      if (s.terminal) void s.processClose.authorizeStop('control.interrupt_confirmed', { signal: s.processClose.closeFact?.signal ?? null, usageSeal: unavailableUsageSeal() });
+      else this._signal(worker, 'SIGINT');
+    }
     return { ok: true, emulated: true }; // subprocess interrupt is emulated (signal, not a graceful turn/steer)
   }
   async kill(worker) {
     const s = this._sessions.get(worker);
-    if (s?.terminal && s.processClosedEmitted) return { ok: true, terminal: true };
-    if (s && !s.terminal) { s.stopping = true; s.killMode = 'kill'; this._signal(worker, 'SIGKILL'); }
+    if (s?.processClose?.confirmed) return { ok: true, terminal: true };
+    if (s?.processClose) {
+      s.stopping = true; s.killMode = 'kill';
+      const terminalCause = s.timeoutFailure ? 'timeout' : s.wireFailure ? 'wire_frame_oversize' : null;
+      void s.processClose.authorizeStop('kill.confirmed', {
+        signal: s.processClose.closeFact?.signal ?? 'SIGKILL',
+        ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal(),
+      });
+      if (!s.terminal) this._signal(worker, 'SIGKILL');
+    }
     return { ok: true };
   }
   // A one-shot `exec`/`-p` run can't be steered/answered mid-flight without the app-server/SDK.
@@ -393,9 +478,12 @@ class CliAdapter {
 
 export class CodexCli extends CliAdapter {
   constructor(opts = {}) {
+    const sandbox = opts.sandbox ?? 'danger-full-access';
+    const approvalPolicy = opts.approvalPolicy ?? 'never';
     super({
       harness: 'codex', version: opts.version ?? '0.144.0', ceiling: opts.ceiling ?? 4, maxContext: 272000, live: opts.live,
       maxWireFrameBytes: opts.maxWireFrameBytes,
+      reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
       governance: {
         usage: { tokens: 'native', usd: 'unavailable', tokenMetric: CODEX_TOKEN_METRIC, terminalSeal: 'native' },
         providerCalls: { observation: 'native', enforcement: 'unavailable' },
@@ -408,15 +496,40 @@ export class CodexCli extends CliAdapter {
         reasoningEffort: ['minimal', 'low', 'medium', 'high', 'xhigh'], serviceTier: null,
         provenance: 'adapter-configuration', refreshedAt: null,
       },
+      permissions: {
+        mode: approvalPolicy, sandbox,
+        boundary: sandbox === 'danger-full-access'
+          ? 'Unattended full host permissions by default; containment is a separate deployment boundary'
+          : 'Harness sandbox requested; its containment remains separately attested',
+      },
+      workerPolicy: {
+        schemaVersion: 1,
+        autonomy: {
+          supported: ['unattended'], default: 'unattended', perTask: false,
+          observation: 'launch', mechanisms: ['approval-policy-never'],
+        },
+        access: {
+          supported: [sandbox === 'danger-full-access' ? 'full' : 'workspace'],
+          default: sandbox === 'danger-full-access' ? 'full' : 'workspace', perTask: false,
+          observation: 'launch', mechanisms: [`codex-sandbox-${sandbox}`],
+        },
+        containment: {
+          hostProcess: 'same_uid', guarantees: ['private_runtime'],
+          configuredPreferences: [], observation: 'unavailable',
+        },
+      },
       cmd: 'codex',
-      // exec is one-shot + JSONL; sandbox to workspace writes; skip the git-repo check (we ARE in a worktree).
+      // exec is one-shot + JSONL. Baton defaults to unattended, full-permission harness access;
+      // deployments can still construct a workspace-scoped adapter explicitly.
       args: (_brief, route = {}) => {
         const model = route.model ?? opts.model;
         const effort = route.reasoningEffort;
-        return ['exec', '--json', '--skip-git-repo-check', '--sandbox', 'workspace-write',
+        return ['--ask-for-approval', approvalPolicy, '--sandbox', sandbox,
+          'exec', '--json', '--skip-git-repo-check',
           ...(model ? ['-m', model] : []),
           ...(effort ? ['-c', `model_reasoning_effort=${JSON.stringify(effort)}`] : [])];
       },
+      workerPolicyObservation: () => ({ autonomy: 'unattended', access: sandbox === 'danger-full-access' ? 'full' : 'workspace' }),
       parse: parseCodexEvent,
       env: opts.env,
       // SC8: canonical 8 keys, honest values — interrupt is a signal (emulated), kill is a real
@@ -428,9 +541,11 @@ export class CodexCli extends CliAdapter {
 
 export class ClaudeCli extends CliAdapter {
   constructor(opts = {}) {
+    const permissionMode = opts.permissionMode === undefined ? 'bypassPermissions' : opts.permissionMode;
     super({
       harness: opts.harness ?? 'claude-code', version: opts.version ?? '2.1.206', ceiling: opts.ceiling ?? 4, maxContext: 200000, live: opts.live,
       maxWireFrameBytes: opts.maxWireFrameBytes,
+      reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
       governance: {
         usage: { tokens: 'native', usd: 'native', tokenMetric: CLAUDE_TOKEN_METRIC, terminalSeal: 'native' },
         providerCalls: { observation: 'native', enforcement: 'unavailable' },
@@ -445,13 +560,39 @@ export class ClaudeCli extends CliAdapter {
         reasoningEffort: ['low', 'medium', 'high', 'xhigh', 'max'], serviceTier: null,
         provenance: 'adapter-configuration', refreshedAt: null,
       },
+      permissions: {
+        mode: permissionMode ?? 'external', sandbox: 'unverified',
+        boundary: 'Full same-UID host access by default; filesystem and network containment are unverified',
+      },
+      workerPolicy: {
+        schemaVersion: 1,
+        autonomy: {
+          supported: permissionMode === 'bypassPermissions' ? ['unattended'] : ['interactive'],
+          default: permissionMode === 'bypassPermissions' ? 'unattended' : 'interactive',
+          perTask: false, observation: 'launch',
+          mechanisms: permissionMode === 'bypassPermissions'
+            ? ['permission-mode-bypassPermissions'] : ['permission-mode-interactive'],
+        },
+        access: {
+          supported: ['full'], default: 'full', perTask: false,
+          observation: 'launch', mechanisms: ['claude-unsandboxed-permissions'],
+        },
+        containment: {
+          hostProcess: 'same_uid', guarantees: ['private_runtime'],
+          configuredPreferences: [], observation: 'unavailable',
+        },
+      },
       cmd: 'claude',
       args: (_brief, route = {}) => {
         const model = route.model ?? opts.model;
-        return ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits',
+        return ['-p', '--output-format', 'stream-json', '--verbose',
+          ...(permissionMode == null ? [] : ['--permission-mode', permissionMode]),
           ...(model ? ['--model', model] : []),
           ...(route.reasoningEffort ? ['--effort', route.reasoningEffort] : [])];
       },
+      workerPolicyObservation: () => ({
+        autonomy: permissionMode === 'bypassPermissions' ? 'unattended' : 'interactive', access: 'full',
+      }),
       parse: parseClaudeEvent,
       env: opts.env,
       // SC8: steer/pause previously claimed 'emulated' while steer() is an honest ok:false stub
@@ -470,7 +611,9 @@ export class ZCodeCli extends ClaudeCli {
     const token = opts.authToken ?? process.env.Z_AI_API_KEY ?? process.env.ZHIPU_API_KEY;
     super({
       harness: 'glm-via-claude', version: opts.version ?? 'claude-cli+zai-anthropic', ceiling: opts.ceiling ?? 1, // Z.ai Pro ≈ 1 in-flight
-      model: opts.model, maxWireFrameBytes: opts.maxWireFrameBytes, env: {
+      model: opts.model, maxWireFrameBytes: opts.maxWireFrameBytes, live: opts.live,
+      reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
+      permissionMode: opts.permissionMode, env: {
         ANTHROPIC_BASE_URL: opts.baseUrl ?? 'https://api.z.ai/api/anthropic',
         ANTHROPIC_AUTH_TOKEN: token ?? '',
         ...(opts.model ? { ANTHROPIC_DEFAULT_OPUS_MODEL: opts.model, ANTHROPIC_DEFAULT_SONNET_MODEL: opts.model } : {}),
@@ -490,6 +633,7 @@ export class PiCli extends CliAdapter {
     super({
       harness: 'pi', version: opts.version ?? '0.0.0', ceiling: opts.ceiling ?? 4, maxContext: opts.maxContext ?? 128000, live: opts.live,
       maxWireFrameBytes: opts.maxWireFrameBytes,
+      reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
       governance: {
         usage: { tokens: 'unavailable', usd: 'unavailable', tokenMetric: null, terminalSeal: 'native' },
         providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },
@@ -500,6 +644,25 @@ export class PiCli extends CliAdapter {
         mode: 'exact', configuredDefault: opts.model ?? null, available: opts.model ? [opts.model] : null,
         family: 'pi', acceptedPrefixes: [], acceptedAliases: [], reasoningEffort: null, serviceTier: null,
         provenance: 'adapter-configuration', refreshedAt: null,
+      },
+      permissions: {
+        mode: 'deployment-defined', sandbox: 'unverified',
+        boundary: 'configured deployment contract',
+      },
+      workerPolicy: {
+        schemaVersion: 1,
+        autonomy: {
+          supported: ['unattended'], default: 'unattended', perTask: false,
+          observation: 'unavailable', mechanisms: [],
+        },
+        access: {
+          supported: ['full'], default: 'full', perTask: false,
+          observation: 'unavailable', mechanisms: [],
+        },
+        containment: {
+          hostProcess: 'same_uid', guarantees: ['private_runtime'], configuredPreferences: [],
+          observation: 'unavailable',
+        },
       },
       cmd: opts.cmd ?? 'pi',
       args: opts.args ?? (() => ['--headless']),
