@@ -1,7 +1,8 @@
 // Wave driver surface (docs/31) red suite: first-class orchestration waves over any Baton
 // command port. Every row pins one receipted bespoke-driver failure mode: passive-status
 // stalls, pump-as-terminal kills, fail-fast cascades, terminal-taxonomy confusion, glob-scope
-// misuse, pin-fallback ambiguity, stopMember dispatch races, and watchdog-skipped outcomes.
+// misuse, pin-fallback ambiguity (positively, via synthetic sibling pins), selective member
+// stop, pump leaks on settle timeout, and watchdog-skipped outcomes.
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -320,4 +321,35 @@ test('W9: the baton.waves facade starts a wave through the client getter', async
   const outcomes = await wave.settle({ timeoutMs: 20_000 });
   assert.match(outcomes[0].resultSha ?? '', /^[a-f0-9]{40}$/u);
   await wave.close({ reason: 'W9 settled.' });
+});
+
+test('W10: pin resolution returns the path-carrying pin, never the newest pin (failure mode #6 positively pinned)', async (t) => {
+  const repo = root('pins');
+  mkdirSync(join(repo, 'reports'), { recursive: true });
+  writeFileSync(join(repo, 'reports', 'alpha.md'), 'alpha report\n');
+  execFileSync('git', ['add', 'reports/alpha.md'], { cwd: repo });
+  execFileSync('git', ['-c', 'user.name=Baton Test', '-c', 'user.email=baton@example.test', 'commit', '-q', '-m', 'alpha pin'], {
+    cwd: repo,
+    env: { ...process.env, GIT_AUTHOR_DATE: '@1700000000 +0000', GIT_COMMITTER_DATE: '@1700000000 +0000' },
+  });
+  const olderPin = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  execFileSync('git', ['update-ref', `refs/baton/results/${olderPin}`, olderPin], { cwd: repo });
+  execFileSync('git', ['rm', '-q', 'reports/alpha.md'], { cwd: repo });
+  execFileSync('git', ['-c', 'user.name=Baton Test', '-c', 'user.email=baton@example.test', 'commit', '-q', '-m', 'newer sibling pin without the path'], {
+    cwd: repo,
+    env: { ...process.env, GIT_AUTHOR_DATE: '@1700003600 +0000', GIT_COMMITTER_DATE: '@1700003600 +0000' },
+  });
+  const newerPin = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  execFileSync('git', ['update-ref', `refs/baton/results/${newerPin}`, newerPin], { cwd: repo });
+  t.after(() => rmSync(repo, { recursive: true, force: true }));
+
+  const { resolveResultPin } = await import('../src/wave.mjs');
+  const startedAtMs = 1_700_000_000_000 - 30_000;
+  const resolved = await resolveResultPin({ repoRoot: repo, report: 'reports/alpha.md', startedAtMs });
+  assert.equal(resolved, olderPin, 'the path-carrying pin wins over the newer pathless sibling');
+  assert.notEqual(resolved, newerPin);
+  const excluded = await resolveResultPin({ repoRoot: repo, report: 'reports/alpha.md', startedAtMs, excludeShas: [olderPin] });
+  assert.equal(excluded, null, 'used-sha exclusion is honored');
+  const windowed = await resolveResultPin({ repoRoot: repo, report: 'reports/alpha.md', startedAtMs: 1_700_003_700_000 });
+  assert.equal(windowed, null, 'the start-time window filters stale pins');
 });

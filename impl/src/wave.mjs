@@ -87,6 +87,34 @@ function attentionFrom(outline) {
   return null;
 }
 
+// Resolve one preserved result pin for a member from refs/baton/results/* — the documented
+// fallback when the result section has no authoritative sha (docs/31 #6). Disambiguation is by
+// git path existence (the pin's tree must carry `report`), a start-time window, and an exclusion
+// set for pins already attributed to other members — never by newest-pin guessing. Exported so
+// the disambiguation is directly pinnable (W10).
+export async function resolveResultPin({ repoRoot, report, startedAtMs, excludeShas = [] }) {
+  if (typeof repoRoot !== 'string' || repoRoot.length === 0 || typeof report !== 'string'
+    || report.length === 0 || !Number.isSafeInteger(startedAtMs)) return null;
+  const { execFileSync } = await import('node:child_process');
+  let pins;
+  try {
+    pins = execFileSync('/usr/bin/git', ['for-each-ref', 'refs/baton/results/', '--format=%(objectname) %(committerdate:unix)'], { cwd: repoRoot, encoding: 'utf8' })
+      .trim().split('\n').filter(Boolean)
+      .map((row) => ({ sha: row.split(' ')[0], at: Number(row.split(' ')[1]) }))
+      .filter((pin) => pin.at * 1000 >= startedAtMs - 60_000)
+      .sort((left, right) => right.at - left.at);
+  } catch { return null; }
+  const excluded = new Set(excludeShas);
+  for (const pin of pins) {
+    if (excluded.has(pin.sha)) continue;
+    try {
+      execFileSync('/usr/bin/git', ['cat-file', '-e', `${pin.sha}:${report}`], { cwd: repoRoot, stdio: 'ignore' });
+      return pin.sha;
+    } catch { /* pin does not carry this report path */ }
+  }
+  return null;
+}
+
 export async function createWave(baton, options = {}) {
   if (!baton || !baton.runs || typeof baton.runs.start !== 'function') {
     throw waveError('createWave requires a Baton client facade with runs.start');
@@ -215,24 +243,12 @@ export async function createWave(baton, options = {}) {
       if (RESULT_SHA.test(value?.sha ?? '')) return value.sha;
     } catch { /* section projection can be empty post-stop */ }
     if (!repoRoot || !member.report) return null;
-    let pins;
-    try {
-      pins = (await import('node:child_process')).execFileSync('/usr/bin/git', ['for-each-ref', 'refs/baton/results/', '--format=%(objectname) %(committerdate:unix)'], { cwd: repoRoot, encoding: 'utf8' })
-        .trim().split('\n').filter(Boolean)
-        .map((row) => ({ sha: row.split(' ')[0], at: Number(row.split(' ')[1]) }))
-        .filter((pin) => pin.at * 1000 >= state.startedAt - 60_000)
-        .sort((left, right) => right.at - left.at);
-    } catch { return null; }
-    const used = state.outcomes.map((outcome) => outcome.resultSha).filter(Boolean);
-    const { execFileSync } = await import('node:child_process');
-    for (const pin of pins) {
-      if (used.includes(pin.sha)) continue;
-      try {
-        execFileSync('/usr/bin/git', ['cat-file', '-e', `${pin.sha}:${member.report}`], { cwd: repoRoot, stdio: 'ignore' });
-        return pin.sha;
-      } catch { /* pin does not carry this report path */ }
-    }
-    return null;
+    return resolveResultPin({
+      repoRoot,
+      report: member.report,
+      startedAtMs: state.startedAt,
+      excludeShas: state.outcomes.map((outcome) => outcome.resultSha).filter(Boolean),
+    });
   }
 
   async function settle({ timeoutMs = 60_000 } = {}) {

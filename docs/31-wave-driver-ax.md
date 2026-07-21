@@ -77,6 +77,9 @@ Baked semantics (each numbered to its failure mode):
 7. Waves compose plain runs today, so selective stop means: `stop_member` when the member run
    advertises it (workflow members, retried while the attempt's `taskId` is unassigned — the
    receipted dispatch race), else `run.stop` for plain members. The branch taken is recorded.
+   The workflow-member dispatch-race retry is currently **unpinned**: no wave row can build a
+   workflow member yet (nested orchestration is issue #12), and docs/31 does not claim coverage
+   the surface cannot reach.
 8. `settle` always produces an outcome for every member — including after its own timeout —
    and `close` reports residue per member from the RunView `resources` block
    (`ownedCount`/`cleanupState`); a stop view without it is reported as `residueUnknown`, never
