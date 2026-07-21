@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { openBaton } from '../../../../impl/src/index.mjs';
 
 // Wave 4, arm 2 — HETEROGENEOUS swarm dogfood: a three-vendor artifact chain
-// (claude-sonnet-5 claims -> glm-5.2 adversarial verification -> kimi-k3
+// (claude-sonnet-5 claims -> glm-5.2 (typed-red: Z.ai 529s) -> claude-opus-4-8 adversarial verification -> kimi-k3
 // synthesis) where every hand-off is a shared immutable reference (pinned
 // result commit), plus a data-derived dynamic-topology successor: the
 // synthesis verdict decides what runs next. Steering: glm is steered mid-turn.
@@ -33,7 +33,7 @@ const baton = await openBaton({
   advanced: {
     routes: [
       { harness: 'claude-code', model: 'claude-sonnet-5', effort: 'high' },
-      { harness: 'glm', model: 'glm-5.2', effort: 'xhigh' },
+      { harness: 'claude-code', model: 'claude-opus-4-8', effort: 'high' },
       { harness: 'kimi-code', model: 'kimi-code/k3', effort: 'high' },
     ],
     verification: VERIFY,
@@ -133,11 +133,11 @@ let failure = null;
 const startedRuns = [];
 try {
   const readiness = await baton.doctor();
-  for (const exact of CHAIN ? [
+  for (const exact of [
     { harness: 'claude-code', model: 'claude-sonnet-5', effort: 'high' },
-    { harness: 'glm', model: 'glm-5.2', effort: 'xhigh' },
+    { harness: 'claude-code', model: 'claude-opus-4-8', effort: 'high' },
     { harness: 'kimi-code', model: 'kimi-code/k3', effort: 'high' },
-  ] : []) {
+  ]) {
     const ready = readiness.routes.find((candidate) => (
       candidate.harness === exact.harness && candidate.model === exact.model && candidate.effort === exact.effort
     ));
@@ -174,8 +174,9 @@ try {
     if (!memberA.resultSha) throw new Error('member A produced no artifact to chain');
   }
 
-  // B — adversarial verifier (glm-5.2), brief addresses A's immutable artifact.
-  const memberB = await chainMember('B-verification', { harness: 'glm', model: 'glm-5.2', effort: 'xhigh' }, [
+  // B — adversarial verifier. GLM glm-5.2 was routed here but is typed-red tonight (four
+  // transient Z.ai 529 overloads in a row); the seat runs claude-opus-4-8 instead.
+  const memberB = await chainMember('B-verification', { harness: 'claude-code', model: 'claude-opus-4-8', effort: 'high' }, [
     `You are member B of a heterogeneous artifact chain. Member A's claims artifact is the`,
     `immutable pinned commit ${memberA.resultSha}; read it with`,
     `\`git show ${memberA.resultSha}:${CHAIN.claims}\`.`,
