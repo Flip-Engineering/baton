@@ -11,3 +11,7 @@ export {
   EFFECT_KINDS, approvalTemplateProjections, createApprovalTemplate, normalizeApprovalTemplate,
 } from './approval-template.mjs';
 export { normalizeProgramSource } from './normalize-program.mjs';
+export {
+  deriveCollectSchemaDefinition, deriveContextSchemaDefinitions, deriveContextResultSchema,
+  mapProgramPolicyToContextPolicy, resolveCollectResultSchema,
+} from './context-derivation.mjs';

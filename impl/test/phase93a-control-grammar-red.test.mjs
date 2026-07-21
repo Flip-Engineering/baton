@@ -618,16 +618,28 @@ test('P93A2-CTX1: context source grammar rejects outputSchema, impure ops, and u
       && /pure/u.test(error.message));
 });
 
-test('P93A2-CTX2: a pure context node still fails closed at normalization pending 93a.3', () => {
+test('P93A2-CTX2: a pure context node normalizes to its derived-only outputSchema (93a.3a)', () => {
   const f = programFixture();
-  const pureProgram = {
-    schemaVersion: 1, kind: 'baton.context_program', expression: { op: 'source', branch: 'repository' },
-  };
-  assert.throws(() => normalize(f.source([
-    f.nodes.context('c', pureProgram), f.nodes.select('main', [['a', 'c', 'value']]),
-  ], { nodeKey: 'main' }), f.authority),
-    (error) => error instanceof ProgramIrError && error.code === 'program_invalid'
-      && /93a\.3/u.test(error.message));
+  const built = f.deriveContext('c', f.contextExpression());
+  const envelopeDefinition = built.derived.at(-1);
+  const source = f.source([
+    built.node, f.nodes.select('main', [['a', 'c', 'value']]),
+  ], { nodeKey: 'main' }, { schemas: built.schemas, policy: built.policy });
+  const result = normalize(source, f.authority);
+  const contextNode = result.program.nodes.find((node) => node.kind === 'context');
+  assert.equal(contextNode.kind, 'context');
+  assert.equal(contextNode.program.kind, 'baton.context_program');
+  assert.equal(contextNode.program.expression.op, 'source');
+  assert.match(contextNode.outputSchema.name, /^baton\.derived\.[0-9a-f]{16}$/u);
+  assert.equal(contextNode.outputSchema.name, envelopeDefinition.name);
+  assert.equal(contextNode.outputSchema.digest, envelopeDefinition.digest);
+  const select = result.program.nodes.find((node) => node.kind === 'select');
+  assert.deepEqual(select.candidates[0].value.schema, contextNode.outputSchema);
+  // Deterministic and reproducible: the same source normalizes to the same programDigest twice,
+  // and JSON.stringify never leaks the source nodeKey (author labels never reach identity).
+  const again = normalize(source, f.authority);
+  assert.equal(again.program.programDigest, result.program.programDigest);
+  assert.equal(JSON.stringify(result.program).includes('nodeKey'), false);
 });
 
 test('P93A2-G1: SourcePortRef and SourceControlRef shapes are not interchangeable', () => {
