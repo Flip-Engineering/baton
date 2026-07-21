@@ -285,7 +285,12 @@ true`, and unknown schema keywords are forbidden.
 `schemas` is the canonical array of definitions sorted by `schemaId`.
 It has at most `policy.maxSchemaDefinitions` members; object properties, union variants, and string
 enums share that ceiling, and an array schema's `maxItems` cannot exceed
-`policy.maxJoinMembers`.
+`policy.maxJoinMembers`. In Program v1 the `policy` named by these schema-internal ceilings is the
+deployment-injected Program value authority, which also bounds canonical value bytes.
+`ProgramPolicy.maxSchemaDefinitions` bounds the Program-level `schemas` and
+`verificationContracts` arrays, and `ProgramPolicy.maxJoinMembers` bounds Program-level arrays
+(collect/select items, predicate arity, selector criteria, and the §93.4 canonical-integer
+classes); the two authorities are never interchangeable.
 `schemaRegistryDigest=H(schemas)`. Every `SchemaRef` MUST match one registry definition on all four
 fields; same name/version with different digest, an unregistered ref, or an unused definition with
 a colliding name/version fails normalization.
@@ -583,7 +588,7 @@ schemaVersion = 1
 kind = "baton.program_approval_template"
 roles = set-like role names[1..policy.maxProgramNodes]
 effectKinds = set-like subset of the seven effect kinds[0..7]
-repositoryScopes = set-like normalized repository-relative scopes[1..policy.maxEvidenceRefs]
+repositoryScopes = set-like normalized repository-relative scopes[0..policy.maxEvidenceRefs]
 repeatBoundName = "program_repeat_rounds"
 childBoundName = "program_child_depth"
 effectBoundName = "program_effect_instances"
@@ -593,10 +598,15 @@ The template projections are exact and closed:
 
 - `roles` MUST equal the sorted set of role names in the normalized role catalog.
 - `effectKinds` MUST equal the sorted set of the seven effect kinds statically present in the
-  Program's own nodes or in statically reachable repeat/child bodies. A Program that reaches no
-  effect node carries the empty set; the bound is [0..7] for exactly that case.
-- `repositoryScopes` MUST equal the sorted union of every catalog role template's `pathScope` and
-  `contextScope`.
+  Program's own nodes. A Program that contains no effect node carries the empty set; the bound is
+  [0..7] for exactly that case. Repeat/child bodies are independently normalized Programs
+  (§93.9): their effect kinds are bound by their own approval envelopes and are never restated in
+  the parent template, because a body reference carries only a `programDigest`.
+- `repositoryScopes` MUST equal the sorted union of every **inline** catalog role template's
+  `pathScope` and `contextScope`. A `content_ref` template's scopes are bound by that artifact's
+  own `approvalDigest` and are read only at replay (§93.7); they are never restated in the
+  template. The bound is [0..policy.maxEvidenceRefs]: a catalog whose roles are all `content_ref`
+  carries an empty `repositoryScopes` projection.
 - The three constraint digests commit the template to the exact normalized catalog projections:
   - `routeConstraintDigest = H(Program-canonical bytes of exact{kind:"baton.route_constraint",entries})`
     where `entries` is the set-like-by-role array of `exact{role,routeRequest}`.
@@ -708,6 +718,10 @@ child = exact{nodeId,kind,program,input,bound,resultSchema}
   ports: handle:registered "baton.child_handle"
 ```
 
+For both `repeat` and `child`, `bound.policyDigest` MUST equal the enclosing Program's
+`policy.policyDigest`; the named bounds take their values from that one policy and no other
+authority.
+
 `ProgramRef = exact{kind,programId,programDigest,resultSchema}` with `kind="program_ref"`, and
 `ChildProgramRef = exact{kind,program,inputSchema,resultSchema}` with
 `kind="child_program_ref"`. A child/repeat body is already normalized, independently approved or
@@ -726,10 +740,32 @@ validates the exact produced `TypedValue` against that derived ref before publis
 
 The node table is inert data. Execution enters only `root:ControlRef`; a `PortRef` never schedules
 its producer. When an entered control node needs a value, demand evaluation recursively evaluates
-only `value`, pure `context`, and `collect` data nodes. A demanded port produced by `await`,
-`select`, `sequence`, `branch`, `repeat`, or `finish` MUST already be settled on a dominating
-control edge. Demand can never enter an effect, parallel branch, child, repeat body, approval, or
-operator action.
+only `value`, pure `context`, and `collect` data nodes. Demand can never enter an effect, parallel
+branch, child, repeat body, approval, or operator action.
+
+The validator enforces two distinct read relations, never one universal rule:
+
+1. **Demand edges (dominator-checked).** Exactly these consumer positions read a port whose
+   producer may not yet have settled: `branch.predicate` operands, `await.target`,
+   `select.candidates`, `repeat.initial` and `repeat.continueWhen` operands, and `child.input`,
+   plus the transitive pure-data walk (`value`/`collect`/`context` chains) from each such root.
+   For every `PortRef` reached from a demand edge whose producer is a control node (`sequence`,
+   `branch`, `parallel`, `await`, `select`, `repeat`, `child`, or `finish`), that producer MUST
+   dominate the consumer's control position. Every `await` is therefore dominated by the handle
+   producer it awaits. Undominated demand reads fail before execution admission.
+2. **Settle-then-read positions (settlement-domain-checked, never dominator-checked).** Exactly
+   these positions read only after the enclosing node's settlement contract guarantees the
+   producer: `sequence.result`, `parallel.branches[].result`, and
+   `branch.{then,otherwise}.result`. Each such `PortRef` MUST resolve either to a pure data-node
+   port (`value`/`collect`/`context`, which demand evaluation settles) or to a port of a control
+   node inside the enclosing position's **settlement domain**: the smallest set closed under
+   (a) the enclosing node itself; (b) for `sequence` nodes, every step and every step's
+   settlement domain; and (c) for `parallel` nodes whose join is `all_terminal`, every branch's
+   control chain and those chains' settlement domains. A `branch` node's own `value` port is in
+   its settlement domain (exactly one arm always settles and the branch exposes only that arm's
+   result), but nodes inside branch arms are never in any outer settlement domain, and branches
+   of a non-`all_terminal` parallel are never in any outer settlement domain. A settle-then-read
+   ref to a control-produced port outside the settlement domain is `program_invalid`.
 
 `sequence` enters its control steps in array order and exposes only its explicit `result` ref after
 all steps settle. `branch` evaluates its predicate by demand, enters exactly one arm control, and
@@ -737,11 +773,9 @@ exposes only that arm's explicit result. `parallel` creates all named branch-loc
 single durable admission fence. `repeat`/`child` enter their referenced Program only through their
 own counters and approval. Unselected branch nodes cause no effect.
 
-The validator computes control dominance and static effect ownership. Pure data nodes MAY be
-shared. Every effect node has exactly one static controlling owner path; every await is dominated
-by the handle producer it awaits; every data ref to a control-produced port is dominated by that
-producer's settlement. The only repeated effect invocation is its enclosing repeat/child path,
-which has a distinct prebound effect ID. Multiple owners, undominated reads, control reached by
+The validator computes control dominance and static effect ownership. Every effect node has
+exactly one static controlling owner path. The only repeated effect invocation is its enclosing
+repeat/child path, which has a distinct prebound effect ID. Multiple owners, control reached by
 demand, and effect reachability outside the selected arm fail before execution admission.
 
 The derived ownership artifact is exact:
@@ -2191,7 +2225,11 @@ separately authorized service-tier, and worker-policy resolution. Its existing c
 `concurrencyCeiling` field is the sole lower-policy concurrency authority. Roles that resolve to
 the same card share that card's ceiling; normalization additionally rejects a parallel frontier
 whose count for that card exceeds the field. A Program with no `parallel` node carries
-`maxParallelBranches=null`, because it consumes no parallel authority. For each `parallel`, the
+`maxParallelBranches=null`, because it consumes no parallel authority. Serial classification keys
+on `parallel` nodes reachable from `root`: an unreachable `parallel` node is inert and never
+forces a non-null `maxParallelBranches`. Until slice 93E injects the lower-policy authorities,
+`maxParallelBranches` is shape-validated only (null or a positive safe integer) and the
+route-card/structural minimum binding proof is deferred; §93.24 marks the deferral. For each `parallel`, the
 normalizer computes the set of `call|map|reduce` roles reachable through every branch's static
 control and data-dependency closure, including reachable repeat/child bodies. If that set is empty,
 normalization and preview refuse `program_parallel_authority_unavailable` before constructing the
@@ -2725,10 +2763,12 @@ validation, full validation, and a status update that distinguishes fixture from
      closed schema registry, typed values, and ValueRefs (suites 1–3).
    - **93a.2:** ProgramPolicy shape, role catalog v2, approval template with exact projections,
      source grammar and canonical normalization for the nine non-`context` node kinds,
-     predicates/joins/selectors, collect schema derivation, control/data cycle and dominance
-     validation, static effect ownership, Kahn canonical order, coalescing, and Program identity.
-     `context` nodes validate grammar and §93.10 purity but fail closed at normalization until
-     93a.3; a Program containing one is not yet admitted.
+     predicates/joins/selectors, collect schema derivation, control/data cycle, demand-edge
+     dominance, and settle-then-read settlement-domain validation, static effect ownership, Kahn
+     canonical order, coalescing, and Program identity. `context` nodes validate grammar and
+     §93.10 purity but fail closed at normalization until 93a.3; a Program containing one is not
+     yet admitted. `maxParallelBranches` is shape-validated only; its route-card/structural
+     minimum binding proof is 93E.
    - **93a.3:** §93.10 purity proof enforcement with `deriveContextResultSchema` checked-in
      transformers, Python/TypeScript builders with shared conformance vectors, and preview.
      Completes 93A.
