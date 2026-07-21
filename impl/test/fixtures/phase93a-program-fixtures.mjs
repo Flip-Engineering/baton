@@ -9,7 +9,8 @@ import { createHash } from 'node:crypto';
 import {
   canonicalProgramDigest, createApprovalTemplate, createProgramPolicy,
   createProgramValueAuthority, createSchemaRegistry, createTypedValue,
-  createValueSchemaDefinition, normalizeRoleCatalog, valueSchemaRef,
+  createValueSchemaDefinition, deriveCollectSchemaDefinition, deriveContextSchemaDefinitions,
+  normalizeRoleCatalog, valueSchemaRef,
 } from '../../src/program-ir/index.mjs';
 
 const sha256 = (text) => createHash('sha256').update(text, 'utf8').digest('hex');
@@ -38,26 +39,25 @@ export function programFixture() {
   const childHandleSchema = define('baton.child_handle', 'object', {
     type: 'object', properties: [], additionalProperties: false,
   });
-  const collectResultSchema = define('fixture.collect_result', 'object', {
-    type: 'object', properties: [
-      { name: 'alpha', schema: valueSchemaRef(stringSchema), required: true },
-      { name: 'beta', schema: valueSchemaRef(booleanSchema), required: true },
-    ], additionalProperties: false,
-  });
+  // §93.9/93a.3a rule 7: the collect result schema's name is pinned by the derivation itself
+  // ("baton.derived." + hash of its structural definition alone), never an author label — built
+  // via the SAME author-aid the normalizer's pinned-name resolver requires, never hand-named.
+  const collectResultSchema = deriveCollectSchemaDefinition([
+    { name: 'alpha', schema: valueSchemaRef(stringSchema) },
+    { name: 'beta', schema: valueSchemaRef(booleanSchema) },
+  ], { authority });
   const registry = createSchemaRegistry([
     stringSchema, booleanSchema, stringsSchema, envelopeSchema, parallelHandleSchema,
     childHandleSchema, collectResultSchema,
   ], authority);
-  // Wraps fixture.collect_result so a two-hop collect chain (colOuter <- colInner <- producer)
-  // is constructible: fixture.collect_result cannot nest itself (wave-3.5 decision 8). Kept out
-  // of the shared `registry`/default `source()` schemas array so it never shifts the canonical
-  // bytes (and pinned digest vectors) of every other fixture-built Program; tests that need it
-  // pass `{ schemas: schemasWithCollectOuter }` as a per-call override instead.
-  const collectOuterSchema = define('fixture.collect_outer', 'object', {
-    type: 'object', properties: [
-      { name: 'inner', schema: valueSchemaRef(collectResultSchema), required: true },
-    ], additionalProperties: false,
-  });
+  // Wraps the collect-result envelope so a two-hop collect chain (colOuter <- colInner <-
+  // producer) is constructible: the collect-result schema cannot nest itself (wave-3.5 decision
+  // 8). Kept out of the shared `registry`/default `source()` schemas array so it never shifts the
+  // canonical bytes (and pinned digest vectors) of every other fixture-built Program; tests that
+  // need it pass `{ schemas: schemasWithCollectOuter }` as a per-call override instead.
+  const collectOuterSchema = deriveCollectSchemaDefinition([
+    { name: 'inner', schema: valueSchemaRef(collectResultSchema) },
+  ], { authority });
   const schemasWithCollectOuter = [...registry.schemas, collectOuterSchema];
   const refs = {
     string: valueSchemaRef(stringSchema),
@@ -89,6 +89,11 @@ export function programFixture() {
   }, authority);
   const policy = makePolicy();
   const parallelPolicy = makePolicy({ maxParallelBranches: 4 });
+  // §93.20's exact table binds a Program's maxChildDepth to Context Program policy v1's
+  // recursionDepth, which normalizeContextProgramPolicy pins to exactly 1 (93a.3a performs only
+  // the arithmetic-free field copy per rule 1; the deployment-binding proof is 93E scope). A
+  // Program embedding a context node therefore requires maxChildDepth=1.
+  const contextPolicy = makePolicy({ maxChildDepth: 1 });
 
   const workerPolicyRequest = {
     schemaVersion: 1,
@@ -218,6 +223,29 @@ export function programFixture() {
   ];
   const baseSource = (overrides = {}) => source(baseNodes(), { nodeKey: 'main' }, overrides);
 
+  // §93.10A author-aid fixtures (rule 6): build a raw baton.context_program from an expression,
+  // derive+register every schema its result requires via the SAME code path the normalizer uses
+  // (never hand-computed digests), and hand back a ready-to-embed context node plus the schemas
+  // array a test's `f.source(...)` override needs. `extraSchemas` folds in registrations another
+  // expression already derived (e.g. a nested collect input reused across two context nodes).
+  const contextProgram = (expression) => ({
+    schemaVersion: 1, kind: 'baton.context_program', expression,
+  });
+  const contextExpression = (branch = 'repository') => ({ op: 'source', branch });
+  const deriveContext = (nodeKey, expression, {
+    policy: nodePolicy = contextPolicy, extraSchemas = [],
+  } = {}) => {
+    const program = contextProgram(expression);
+    const derived = deriveContextSchemaDefinitions(program, { authority, policy: nodePolicy });
+    return {
+      node: nodes.context(nodeKey, program),
+      schemas: [...registry.schemas, ...extraSchemas, ...derived],
+      policy: nodePolicy,
+      program,
+      derived,
+    };
+  };
+
   return {
     authority, registry, refs, schemasWithCollectOuter, schemas: {
       string: stringSchema, boolean: booleanSchema, strings: stringsSchema,
@@ -225,10 +253,11 @@ export function programFixture() {
       childHandle: childHandleSchema, collectResult: collectResultSchema,
       collectOuter: collectOuterSchema,
     },
-    policy, makePolicy, parallelPolicy, catalog, catalogSource, makeCatalogSource,
+    policy, makePolicy, parallelPolicy, contextPolicy, catalog, catalogSource, makeCatalogSource,
     approvalTemplate, manifest, verificationContract, role, nodeTemplate, nodeTemplateDigest,
     workerPolicyRequest, workerPolicyRequestDigest, childProgramRef,
     typed, stringValue, booleanValue, stringsValue, envelopeValue,
-    nodes, source, baseSource, valueSchemaRef, sha256,
+    nodes, source, baseSource, contextProgram, contextExpression, deriveContext,
+    valueSchemaRef, sha256,
   };
 }
