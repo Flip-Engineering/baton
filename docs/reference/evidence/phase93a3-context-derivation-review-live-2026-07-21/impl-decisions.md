@@ -33,13 +33,13 @@ document rules.
    unknown op before any derivation work (reuse `contextProgramPure` from
    `impl/src/context-program.mjs`).
 3. **Transformers.** One per op, exactly the §93.10A table. Identity ops pass `I` through.
-   `chunk(by)`: `by="item"` → Digest key; otherwise `by` MUST be a required property of `I`
-   (else `program_invalid`) and the key is that property's schema unioned with `null`... if the
-   schema algebra cannot express the union (e.g. property is not an object form), refuse:
-   union construction uses an object with a string discriminator per §93.5 union contracts, or
-   fails `program_invalid` when inexpressible. `project`: properties = named ∩ `I.properties`,
-   ALL `required:false`. `collect`/`finish`: ALL inputs MUST derive the byte-identical envelope
-   definition, else `program_invalid`. `join`: `exact{left:L,right:R}`.
+   `chunk`: in 93a.3a only `by="item"` is admitted (Digest key); any field-keyed `by` fails
+   `program_invalid` at derivation (§93.5 unions require object variants with discriminators, so
+   a scalar-or-null key is inexpressible; the canonical-text/nullable rung restores it later).
+   `project`: properties = named ∩ `I.properties`, ALL `required:false`. Every other derived
+   object is all-required. `collect`/`finish`: ALL inputs MUST derive the byte-identical envelope
+   definition, else `program_invalid`; array bounds are exact arity (`minItems=maxItems=<count>`).
+   `join`: `exact{left:L,right:R}`.
 4. **Pinned derived names.** Every derived definition (envelope and every derived child) carries
    `name = "baton.derived." + sha256(canonical bytes of the structural definition alone)[0:16]`,
    `version = 1`. The preimage is the `definition` field's canonical bytes ONLY (never
@@ -68,14 +68,15 @@ document rules.
    `program_invalid` with a message naming the 93a.3a deferral.
 10. **Red suite rows (suite 5).** Per §93.23: every per-op transformer (acceptance with real
     registry definitions built via the author aid); purity refusals (each effect op, nested and
-    top-level, unknown op); non-`repository` branch refusal; chunk key rows (integer field,
-    string field, null union, `by="item"` digest, non-required `by` refusal, inexpressible key
-    union refusal); heterogeneous `collect`/`finish` refusal + homogeneous acceptance; pinned
-    name rules (misnamed registered definition refuses; renamed-but-structural-match refuses;
-    author-supplied child ref refuses); bottom-up order independence; caller `outputSchema`
-    substitution refusal; unsatisfiable-chain rows (a chain whose derived definition is absent
-    from the registry fails `program_invalid`, never publishes); `programDigest` identity across
-    author `nodeKey` renames AND across registry insertion order.
+    top-level, unknown op); non-`repository` branch refusal; chunk rows (`by="item"` Digest
+    acceptance; every field-keyed `by` refused in 93a.3a); heterogeneous `collect`/`finish`
+    refusal + homogeneous acceptance with exact arity bounds; pinned name rules (misnamed
+    registered definition refuses; renamed-but-structural-match refuses; author-supplied child
+    ref refuses); all-required objects except all-optional `project`; bottom-up order
+    independence; caller `outputSchema` substitution refusal; unsatisfiable-chain rows (a chain
+    whose derived definition is absent from the registry fails `program_invalid`, never
+    publishes); `programDigest` identity across author `nodeKey` renames AND across registry
+    insertion order.
 11. **Boundaries.** No effect nodes, no preview, no builders, no manifest reads, no auto-
     registration, no changes to `canonical-value.mjs`/`schema-values.mjs`/`context-program.mjs`
     beyond what is listed, no git commits by the worker, no scratch/log writes anywhere

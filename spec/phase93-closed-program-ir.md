@@ -975,27 +975,33 @@ sourceItems/selectedSourceItems/chunks = integer minimum 0, maximum null
 
 Both array bounds use `policy.maxJoinMembers` so the envelope definition is always registrable
 (§93.5 array `maxItems` cannot exceed it), and §93.20 binds `maxJoinMembers` to the Context
-Program policy `maxResultItems` — the ceiling the evaluator actually enforces. A cell that
-evaluates successfully but exceeds the Program bound fails port validation and is never
-published; that refusal is intended, not a derivation error. The evaluator emits `sourceBranches`
-in ascending unsigned-UTF-16 order; the schema enforces uniqueness only and never re-checks
-order. `mergeMeta` sums the integer counters across inputs, so no finite maximum is honest.
-Schema derivation is **non-injective**: the identity operations below make semantically distinct
-chains derive byte-identical schemas, and `collect` over equivalent inputs collapses order, so
-`outputSchema` MUST never be consumed as a program or derivation identifier.
+Program policy `maxResultItems` — the ceiling the evaluator actually enforces **on `items`**.
+A cell that evaluates successfully but exceeds the Program bound fails port validation and is
+never published; that refusal is intended, not a derivation error. The same honesty applies to
+`sourceBranches`: the evaluator's only branch-name bound is the Context policy
+`maxManifestBranches`, which no cross-constraint keeps under `maxResultItems`, so a sufficiently
+branchy cell is equally valid-and-unpublishable (recorded fail-closed gap). The evaluator emits
+`sourceBranches` in ascending unsigned-UTF-16 order; the schema enforces uniqueness only and
+never re-checks order. `mergeMeta` sums the integer counters across inputs, so no finite maximum
+is honest. Schema derivation is **non-injective**: the identity operations below make
+semantically distinct chains derive byte-identical schemas, and `collect` over equivalent inputs
+collapses order, so `outputSchema` MUST never be consumed as a program or derivation identifier.
 
 **Derived naming.** Every derived definition carries a pinned canonical name and version:
-`name = "baton.derived." + H(canonical bytes of the structural definition alone)[0:16]`,
-`version = 1`. Resolution is bottom-up: derive each child schema, byte-match it against the
-registry to obtain its `SchemaRef` (definition-byte equality AND pinned name/version equality),
-substitute, then match the parent. A candidate whose structural bytes match but whose
-`name`/`version` differ from the pinned pair fails `program_invalid`, so an author label can
-never reach `nodeDigest`/`programDigest` (§93.4: "Author labels never affect identity").
-Byte-identical definitions under other names are ignored; ambiguity after the pinned filter
-fails. A child `SchemaRef` the author supplied but the derivation did not produce is
-`program_invalid` — no weaker registered schema can stand in for the derived one. The same
-pinned-name rule back-ports to the §93.9 `collect` derivation for new Programs; historical
-collect-derived nodes replay as-is.
+`name = "baton.derived." + lowercaseHex(SHA-256(canonical(definition)))[0:16]`, where
+`definition` is the §93.5 `definition` member ALONE (never `schemaVersion`/`kind`/`name`/
+`version`/`digest`/`schemaId`), and `version = 1`. Resolution is bottom-up: derive each child
+schema, byte-match it against the registry to obtain its `SchemaRef` (definition-byte equality
+AND pinned name/version equality), substitute, then match the parent. A candidate whose
+structural bytes match but whose `name`/`version` differ from the pinned pair fails
+`program_invalid`, so an author label can never reach `nodeDigest`/`programDigest` (§93.4:
+"Author labels never affect identity"). Byte-identical definitions under other names are ignored;
+ambiguity after the pinned filter fails. A child `SchemaRef` the author supplied but the
+derivation did not produce is `program_invalid` — no weaker registered schema can stand in for
+the derived one. The same pinned-name rule back-ports to the §93.9 `collect` derivation for new
+Programs; historical collect-derived nodes replay as-is. Every derived object schema requires
+every property (`required:true`) — construction already guarantees presence — EXCEPT `project`,
+whose properties are all `required:false` to match the evaluator's silent omission.
 
 In 93a.3a the derivation keys on the reserved branch NAME `"repository"` (a manifest branch has
 no kind field; `name` is an arbitrary SafeId). A `source` op naming any other branch fails
@@ -1007,7 +1013,7 @@ never publishes) and is additionally previewable in 93a.3c. The checked-in item 
 
 ```text
 RepositoryChunkItem = exact{path,chunk,gitMode,gitBlobOid,blobBytes,byteStart,byteEnd,contentDigest,text,language}
-path = string format:"text", 1..1024 bytes
+path = string format:"text", 1..4096 bytes
 chunk = integer minimum 0, maximum null (ordinal)
 gitMode = string enum ["100644","100755"]
 gitBlobOid = GitSha
@@ -1027,12 +1033,12 @@ schema is:
 | `outline` | `[exact{itemCount:integer minimum 0 maximum null, fields:SafeId[]}]` (exactly one item; the SafeId claim is construction-backed by the closed 93a.3a op set and `fieldName` validation, never assumed of arbitrary content) |
 | `index` | `exact{index:integer minimum 0 maximum null, value:I}[]` |
 | `search`, `slice`, `filter`, `sort`, `unique` | `I[]` (identity) |
-| `chunk(by)` | `exact{key:K, items:I[]}[]` where the magic value `by="item"` reads no field and derives `K`=Digest, and otherwise `K` is the `by` field's property schema in `I` unioned with `null` (the evaluator emits the raw field value or `null`, never canonical text); `by` MUST be a required property of `I` — the evaluator hard-fails the cell when any item lacks it, and the derivation refuses chains whose `I` does not require it |
+| `chunk(by)` | in 93a.3a only `by="item"` is admitted: `exact{key:Digest, items:I[]}[]` (the magic value reads no field; the evaluator emits `contextValueDigest(item)`). Field-keyed chunking fails `program_invalid` at derivation: the evaluator emits the raw field value or `null`, and §93.5 unions require object variants with discriminators, so a scalar-or-null key is inexpressible — the canonical-text evaluator rung or a §93.5 nullable form (also needed by §93.11 `valueRef = ValueRef|null`) restores it later. The required-field rule stands: the evaluator hard-fails the cell when any item lacks `by` |
 | `project(fields)` | `exact{type:"object", properties:fields∩I.properties, additionalProperties:false}[]` with every projected property `required:false`, matching the evaluator's silent omission of absent fields |
 | `join` | `exact{left:L, right:R}[]` (the evaluator hard-fails the cell unless the join key is present on every item of both sides before any matching) |
-| `collect` | `[ContextCellValue(V)]` — in 93a.3a ALL inputs MUST derive the same envelope schema `V`; heterogeneous `collect` chains fail `program_invalid` because §93.5 `array.items` is a single `SchemaRef` and no discriminator distinguishes envelopes (a positional/tuple form is a later schema-algebra rung, not 93a.3a) |
+| `collect` | `exact{type:"array", items:ContextCellValue(V), minItems:<inputs.length>, maxItems:<inputs.length>, unique:false}` — in 93a.3a ALL inputs MUST derive the same envelope schema `V`; heterogeneous `collect` chains fail `program_invalid` because §93.5 `array.items` is a single `SchemaRef` and no discriminator distinguishes envelopes (a positional/tuple form is a later schema-algebra rung, not 93a.3a) |
 | `coverage` | `[exact{selectedItems:integer minimum 0 maximum null, sourceBranches:SafeId[], manifestBranches:integer minimum 0 maximum null, unreadBranches:integer minimum 0 maximum null, chunks:integer minimum 0 maximum null, sourceItems:integer minimum 0 maximum null, selectedSourceItems:integer minimum 0 maximum null}]` (exactly one item) |
-| `finish` | `[exact{value:ContextCellValue(V), evidence:ContextCellValue(V)[1..policy.maxJoinMembers], grounding:string-enum["asserted"]}]` (exactly one item) — value and every evidence input MUST likewise derive the same envelope schema `V`, heterogeneous `finish` chains fail `program_invalid` |
+| `finish` | `[exact{value:ContextCellValue(V), evidence:exact{type:"array", items:ContextCellValue(V), minItems:<evidence.length>, maxItems:<evidence.length>, unique:false}, grounding:string-enum["asserted"]}]` (exactly one item) — value and every evidence input MUST likewise derive the same envelope schema `V`; heterogeneous `finish` chains fail `program_invalid`. The evaluator additionally caps `collect` inputs and `finish` evidence at 1..128; a chain whose arity exceeds `policy.maxJoinMembers` evaluates and then fails port validation, never publishing (fail-closed, recorded) |
 
 `sort` likewise hard-fails the cell unless every sort key is present on every item; these
 evaluator pre-failures are part of each op's contract and never weaken the derived schema.
@@ -2830,12 +2836,13 @@ Implementation starts with these exact red suites:
    map/reduce/review/verify and unknown operations rejected before effect; historical replay stable;
    explicit migration receives a new identity. In 93a.3a this suite additionally pins the §93.10A
    derivation rows: every per-op transformer (including homogeneous-only `collect`/`finish`
-   envelope recursion and heterogeneous-chain refusal), the pinned derived name/version rule
-   (author labels never reach Program identity; misnamed or author-substituted child refs refuse),
-   the checked-in `repository` item shape and non-`repository` branch refusal, `chunk` key
-   derivation (raw field value, `null` union, `by="item"` digest, required-field refusal),
-   `project` all-optional properties, bottom-up resolution, and caller `outputSchema`
-   substitution refusal.
+   envelope recursion with exact arity bounds and heterogeneous-chain refusal), the pinned
+   derived name/version rule (`"baton.derived." + lowercaseHex(SHA-256(canonical(definition)))[0:16]`;
+   author labels never reach Program identity; misnamed or author-substituted child refs refuse),
+   all-required objects except all-optional `project`, the checked-in `repository` item shape and
+   non-`repository` branch refusal, `chunk` limited to `by="item"` (Digest key) with field-keyed
+   chunking refused until the canonical-text/nullable rung, bottom-up resolution, and caller
+   `outputSchema` substitution refusal.
 6. `phase93b-state-reducer-red.test.mjs`: branch-local PCs/stacks/rounds, pending/settled sets,
    immutable per-branch revision/CAS, schema/value/source-lineage digests, arrival-order operational
    revisions excluded from identity, canonical barrier permutations, admission/join fences,
