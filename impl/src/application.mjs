@@ -1734,7 +1734,8 @@ export class BatonApplication {
   }
 
   _controlOperationalState(control) {
-    const workerEvents = this.driver.log.read(control.target.workerId);
+    const workerEvents = typeof this.driver.log?.read === 'function'
+      ? this.driver.log.read(control.target.workerId) : [];
     const events = workerEvents.filter((event) => event.payload?.controlId === control.controlId);
     const confirmed = control.operation === 'send'
       ? events.find((event) => ['control.nudge', 'control.steer', 'control.send']
@@ -5178,6 +5179,7 @@ export class BatonApplication {
       const worker = verification.refs?.worker;
       const workerSeq = verification.refs?.workerSeq;
       const operational = validText(worker, 4_096) && Number.isSafeInteger(workerSeq)
+        && typeof this.driver.log?.read === 'function'
         ? this.driver.log.read(worker).find((event) => event.seq === workerSeq
           && event.kind === 'verify.reverified') : null;
       if (!operational || operational.payload?.accept !== true
@@ -6069,8 +6071,10 @@ export class BatonApplication {
       const node = projection.nodes.find((candidate) => candidate.key === binding.nodeKey);
       const task = node?.taskId ? this.driver.coordination.task(node.taskId) : null;
       const handle = task ? handlesByTask.get(task.id) ?? null : null;
-      const latestRouteAdmission = handle ? [...this.driver.log.read(handle.id)].reverse()
-        .find((event) => event.kind === 'resource.route_admission_consumed')?.payload?.receipt ?? null : null;
+      const latestRouteAdmission = handle && typeof this.driver.log?.read === 'function'
+        ? [...this.driver.log.read(handle.id)].reverse()
+          .find((event) => event.kind === 'resource.route_admission_consumed')?.payload?.receipt ?? null
+        : null;
       const loggedRouteAdmission = latestRouteAdmission?.state === 'waiting_for_route'
         ? latestRouteAdmission : null;
       const routeAdmission = handle?.routeAdmission
@@ -6867,6 +6871,7 @@ export class BatonApplication {
     const payload = event.payload ?? {};
     const runId = current.goal.runId;
     if (event.kind === 'evidence.mapped') {
+      if (typeof this.driver.log?.read !== 'function') return false;
       const operational = typeof this.driver.log.at === 'function'
         ? this.driver.log.at(payload.worker, payload.workerSeq)
         : this.driver.log.read(payload.worker, payload.workerSeq)
@@ -7091,6 +7096,7 @@ export class BatonApplication {
       || !validText(request.inputs.reason, 1_024)) return null;
     const principalScopeDigest = digest({ principalId: principal.principalId, sessionId: principal.sessionId });
     const reasonDigest = digest(request.inputs.reason);
+    if (typeof this.driver.log?.read !== 'function') return null;
     const workers = this.driver.coordinator.list().filter((handle) => handle.runId === request.runId);
     for (const handle of workers) {
       const replay = this.driver.log.read(handle.id).findLast?.((event) => event.kind === 'work.resumed'
@@ -9085,7 +9091,8 @@ export class BatonApplication {
         recipient: request.recipient ?? null,
         taskIds,
         maxFragmentBytes: Math.max(256, Math.min(4_096, bounds.maxBytes - 16_384)),
-        resolveOperational: ({ worker, workerSeq }) => typeof this.driver.log.at === 'function'
+        resolveOperational: ({ worker, workerSeq }) => typeof this.driver.log?.read !== 'function'
+          ? null : typeof this.driver.log.at === 'function'
           ? this.driver.log.at(worker, workerSeq)
           : this.driver.log.read(worker, workerSeq)
             .find((event) => event.seq === workerSeq) ?? null,

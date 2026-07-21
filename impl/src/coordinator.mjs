@@ -2711,15 +2711,18 @@ export class Coordinator {
 
   _routeBindingForTask(task, handle, phase = 'spawn', exactEffect = null) {
     const selection = this._resolveVendor(task);
-    return {
-      selection,
+    if (!selection) throw Object.assign(new Error('exact live route selection is unavailable'), {
+      code: 'route_admission_invalid',
+    });
+    return Object.freeze({
+      selection: Object.freeze({ ...selection }),
       binding: this._routeReadinessBinding(
         selection.vendor, selection.model, selection.effort,
         task.taskType ?? 'general', selection.workerPolicyResolution,
         task.modelPolicy?.serviceTier ?? null,
         exactEffect ?? this._routeEffect(task, handle, phase),
       ),
-    };
+    });
   }
 
   _assertLiveRouteBindings(bindings, receipts) {
@@ -2750,13 +2753,14 @@ export class Coordinator {
     });
     promise.catch(noop);
     return {
-      arrive(effect) {
+      arrive(precommit) {
         if (!settled) {
-          effects.push(effect);
+          effects.push(precommit);
           remaining -= 1;
           if (remaining === 0) {
             try {
-              for (const crossProviderEdge of effects) crossProviderEdge();
+              const providerEffects = effects.map((prepareProviderEffect) => prepareProviderEffect());
+              for (const crossProviderEdge of providerEffects) crossProviderEdge();
               settled = true;
               resolveBarrier();
             } catch (error) {
@@ -2823,6 +2827,9 @@ export class Coordinator {
       .filter(({ task }) => task.sessionRequest?.mode === 'new');
     if (members.length === 0 || (typeof this._worktrees?.reserveCapacity !== 'function'
       && typeof this._worktrees?.reserveCapacityMany !== 'function')) return true;
+    // A prior provider-edge refusal may already have settled an older reservation. A deliberate
+    // retry creates a new reservation generation, so the old settlement marker cannot apply.
+    for (const { task } of members) delete task.routeWaitingCapacitySettled;
     const releaseOnFailure = async () => {
       await this._releaseRouteWaitingCapacity(members.map(({ task }) => task));
     };
@@ -2868,7 +2875,9 @@ export class Coordinator {
 
   _dispatch(task, vendor, model, effort, workerPolicyResolution = null) {
     if (!this._routeReadiness) {
-      this._dispatchAdmitted(task, vendor, model, effort, workerPolicyResolution);
+      this._dispatchAdmitted(task, {
+        selection: Object.freeze({ vendor, model, effort, workerPolicyResolution }), binding: null,
+      });
       return;
     }
     if (task.routeRetryRequired === true) return;
@@ -2925,11 +2934,8 @@ export class Coordinator {
         }
         const edgeBarrier = this._routeProviderBarrier(dispatches.length);
         const outcomes = await Promise.allSettled(dispatches.map(({
-          memberTask, selection,
-        }) => this._dispatchAdmitted(
-          memberTask, selection.vendor, selection.model, selection.effort,
-          selection.workerPolicyResolution, edgeBarrier,
-        )));
+          memberTask,
+        }, index) => this._dispatchAdmitted(memberTask, liveStates[index], edgeBarrier)));
         const failure = this._routeDispatchFailure(outcomes);
         if (failure) throw failure;
         for (const { memberTask } of dispatches) delete memberTask.routeReadinessGroup;
@@ -2989,14 +2995,14 @@ export class Coordinator {
       }
       task.routeAdmissionLease = null;
       task.routeAdmissionBinding = null;
-      const liveBinding = this._routeBindingForTask(task, handle).binding;
-      this._assertLiveRouteBindings([liveBinding], [receipt]);
+      const liveState = this._routeBindingForTask(task, handle);
+      this._assertLiveRouteBindings([liveState.binding], [receipt]);
       if (receipt) this._recordRouteAdmission(task, handle, receipt);
       task.routeRetryRequired = false;
       if (task.status === 'pending' && !this._closed && this._drainState === 'open') {
         task.initialRouteSelection = null;
         handle.status = 'pending';
-        await this._dispatchAdmitted(task, vendor, model, effort, workerPolicyResolution);
+        await this._dispatchAdmitted(task, liveState);
       }
     }).catch(async (error) => {
       if (error instanceof RouteReadinessBlockedError) {
@@ -3015,10 +3021,29 @@ export class Coordinator {
     }).finally(() => { task.routeAdmissionPending = false; });
   }
 
-  _dispatchAdmitted(task, vendor, model, effort, workerPolicyResolution = null,
-    edgeBarrier = null) {
+  _dispatchAdmitted(task, routeState, edgeBarrier = null) {
     if (this._routeReadiness && task.routeAdmissionReceipt?.state !== 'admitted') {
       throw Object.assign(new Error('provider effect lacks consumed route admission'), {
+        code: 'route_lease_invalid',
+      });
+    }
+    const selection = routeState?.selection;
+    const admittedBinding = routeState?.binding ?? null;
+    if (!selection || typeof selection.vendor !== 'string'
+      || (this._routeReadiness && (!admittedBinding
+        || canonicalDigest(admittedBinding) !== task.routeAdmissionReceipt.bindingDigest))) {
+      throw Object.assign(new Error('provider effect differs from its consumed route admission'), {
+        code: 'route_lease_invalid',
+      });
+    }
+    const { vendor, model, effort, workerPolicyResolution = null } = selection;
+    const liveAdapterCard = this._adapters[vendor]?.card?.();
+    if (!liveAdapterCard || (this._routeReadiness && (
+      admittedBinding.harness !== admittedBinding.card.harness
+      || admittedBinding.model !== model || admittedBinding.effort !== effort
+      || canonicalDigest(admittedBinding.workerPolicy) !== canonicalDigest(workerPolicyResolution)
+    ))) {
+      throw Object.assign(new Error('provider adapter differs from its consumed route admission'), {
         code: 'route_lease_invalid',
       });
     }
@@ -3223,91 +3248,99 @@ export class Coordinator {
     // while this observer prevents an otherwise-unhandled rejected promise.
     worktreeReady.catch(noop);
 
-    const crossProviderEdge = () => {
-    if (this._routeReadiness) claimCoordinationTask();
-    const spawnTurnEpoch = this._fences.current(workerId).turnEpoch;
-    this._log.append({
-      worker: workerId, harness, turnEpoch: spawnTurnEpoch, kind: 'lifecycle.spawned', actor: 'orchestrator',
-      harnessRequested: task.vendorRequested, harnessResolved: harness,
-      modelRequested: task.modelRequested ?? null, modelResolved: task.modelResolved ?? null, modelObserved: null,
-      effortRequested: task.effortRequested ?? null, effortResolved: task.effortResolved ?? null, effortObserved: null,
-      routeKey: task.routeKey ?? null,
-      payload: {
-        taskId: task.id, brief: task.brief, vendorRequested: task.vendorRequested, vendorResolved: vendor,
-        modelRequested: task.modelRequested, modelResolved: task.modelResolved, modelPolicy: task.modelPolicy,
-        effortRequested: task.effortRequested, effortResolved: task.effortResolved, routeKey: task.routeKey,
-        workerPolicyRequest: task.workerPolicyRequest,
-        workerPolicyResolution: task.workerPolicyResolution,
-        ...(handle.providerGovernance ? { providerGovernance: handle.providerGovernance } : {}),
-        sessionRequest: task.sessionRequest,
-        lineage: task.lineage,
-        topology: this._taskTopologyProjection(task.id),
-        review: task.review,
-      },
-    });
-
-    const stamp = this._fences.bumpTurn(workerId);
-
-    const wallMin = task.brief && task.brief.budget && task.brief.budget.wallMin;
-    // SC12: adapters receive an explicit cancellation signal in addition to their verb call.
-    // Session adapters own the stronger pending-spawn reservation, while this signal makes the
-    // coordinator's authority visible across the async worktree boundary.
-    const spawnAbort = new AbortController();
-    handle.spawnAbort = spawnAbort;
-    // SC1d: the spawn Ack is consumed, not discarded — a refused spawn must fail the task
-    // instead of leaving a zombie in 'working' (the G1 audit's silent failure mode).
-    handle.nativeSpawnPending = true;
-    let nativeSpawnSource;
-    try {
-      nativeSpawnSource = this._adapters[vendor].spawn(workerId, providerBrief, {
-        worktreeReady,
-        timeoutMs: wallMin ? wallMin * 60000 : undefined,
-        signal: spawnAbort.signal,
-        model: task.modelResolved ?? undefined,
-        reasoningEffort: task.effortResolved ?? undefined,
-        workerPolicy: task.workerPolicyResolution ?? undefined,
-        serviceTier: task.modelPolicy?.serviceTier,
-        session: task.sessionRequest?.mode === 'new' ? undefined : task.sessionRequest,
-        env: runtime?.env,
-        replaceEnv: runtime?.replaceEnv === true,
-        redactProviderFrame: runtime?.redactProviderFrame,
-        processGeneration: handle.processGeneration,
-        processReapTimeoutMs: Math.max(1, Math.floor(this._stopDeadlineMs * 0.8)),
-      });
-    } catch (error) { nativeSpawnSource = Promise.reject(error); }
-    const nativeSpawnPromise = Promise.resolve(nativeSpawnSource).then((ack) => {
-      if (handle.spawnAbort === spawnAbort) handle.spawnAbort = null;
-      if (ack && ack.ok === false) this._onSpawnRefused(handle, task, harness, ack);
-    }).catch((err) => {
-      if (handle.spawnAbort === spawnAbort) handle.spawnAbort = null;
-      // SC15: rejection and resolved refusal are the same durable failure channel.
-      this._onSpawnRefused(handle, task, harness, { ok: false, reason: String(err?.message ?? err) });
-    }).finally(() => {
-      if (handle.nativeSpawnPromise === nativeSpawnPromise) handle.nativeSpawnPromise = null;
-      handle.nativeSpawnPending = false;
-    });
-    handle.nativeSpawnPromise = nativeSpawnPromise;
-
-    // A synchronous adapter observation can fail policy and begin a two-phase stop before
-    // spawn() returns its Promise. Never overwrite that authoritative terminal/stop transition
-    // with the optimistic dispatch state (the same guard protects model/effort mismatches).
-    if (!TERMINAL_TASK_STATUSES.has(task.status)
-      && !['stopping', 'dead', 'exited'].includes(handle.status)) {
+    const prepareProviderEffect = () => {
+      if (this._routeReadiness) claimCoordinationTask();
+      const spawnTurnEpoch = this._fences.current(workerId).turnEpoch;
       this._log.append({
-        worker: workerId, harness, turnEpoch: stamp.turnEpoch, kind: 'lifecycle.turn_started', actor: 'orchestrator', payload: {},
-        ...this._routeAttribution(handle, task),
+        worker: workerId, harness, turnEpoch: spawnTurnEpoch, kind: 'lifecycle.spawned', actor: 'orchestrator',
+        harnessRequested: task.vendorRequested, harnessResolved: harness,
+        modelRequested: task.modelRequested ?? null, modelResolved: task.modelResolved ?? null, modelObserved: null,
+        effortRequested: task.effortRequested ?? null, effortResolved: task.effortResolved ?? null, effortObserved: null,
+        routeKey: task.routeKey ?? null,
+        payload: {
+          taskId: task.id, brief: task.brief, vendorRequested: task.vendorRequested, vendorResolved: vendor,
+          modelRequested: task.modelRequested, modelResolved: task.modelResolved, modelPolicy: task.modelPolicy,
+          effortRequested: task.effortRequested, effortResolved: task.effortResolved, routeKey: task.routeKey,
+          workerPolicyRequest: task.workerPolicyRequest,
+          workerPolicyResolution: task.workerPolicyResolution,
+          ...(handle.providerGovernance ? { providerGovernance: handle.providerGovernance } : {}),
+          sessionRequest: task.sessionRequest,
+          lineage: task.lineage,
+          topology: this._taskTopologyProjection(task.id),
+          review: task.review,
+        },
       });
-      task.status = 'working';
-      handle.status = 'working';
-      handle.turnTerminalObserved = false;
-      this._clearBudgetStop(handle);
-      this._resetWatchdogTurn(handle);
-    }
+
+      const stamp = this._fences.bumpTurn(workerId);
+      const wallMin = task.brief && task.brief.budget && task.brief.budget.wallMin;
+      // SC12: adapters receive an explicit cancellation signal in addition to their verb call.
+      // Session adapters own the stronger pending-spawn reservation, while this signal makes the
+      // coordinator's authority visible across the async worktree boundary.
+      const spawnAbort = new AbortController();
+      handle.spawnAbort = spawnAbort;
+      handle.nativeSpawnPending = true;
+
+      // Every fallible claim/log/fence/watchdog mutation is a no-provider precommit. A Wave
+      // barrier completes this phase for every member before invoking any adapter.
+      if (!TERMINAL_TASK_STATUSES.has(task.status)
+        && !['stopping', 'dead', 'exited'].includes(handle.status)) {
+        this._log.append({
+          worker: workerId, harness, turnEpoch: stamp.turnEpoch, kind: 'lifecycle.turn_started', actor: 'orchestrator', payload: {},
+          ...this._routeAttribution(handle, task),
+        });
+        task.status = 'working';
+        handle.status = 'working';
+        handle.turnTerminalObserved = false;
+        this._clearBudgetStop(handle);
+        this._resetWatchdogTurn(handle);
+      }
+
+      return () => {
+        // SC1d: the spawn Ack is consumed, not discarded — a refused spawn must fail the task
+        // instead of leaving a zombie in 'working' (the G1 audit's silent failure mode).
+        let nativeSpawnSource;
+        try {
+          nativeSpawnSource = this._adapters[vendor].spawn(workerId, providerBrief, {
+            worktreeReady,
+            timeoutMs: wallMin ? wallMin * 60000 : undefined,
+            signal: spawnAbort.signal,
+            model: task.modelResolved ?? undefined,
+            reasoningEffort: task.effortResolved ?? undefined,
+            workerPolicy: task.workerPolicyResolution ?? undefined,
+            serviceTier: task.modelPolicy?.serviceTier,
+            session: task.sessionRequest?.mode === 'new' ? undefined : task.sessionRequest,
+            env: runtime?.env,
+            replaceEnv: runtime?.replaceEnv === true,
+            redactProviderFrame: runtime?.redactProviderFrame,
+            processGeneration: handle.processGeneration,
+            processReapTimeoutMs: Math.max(1, Math.floor(this._stopDeadlineMs * 0.8)),
+          });
+        } catch (error) { nativeSpawnSource = Promise.reject(error); }
+        const nativeSpawnPromise = Promise.resolve(nativeSpawnSource).then((ack) => {
+          if (handle.spawnAbort === spawnAbort) handle.spawnAbort = null;
+          if (ack && ack.ok === false) this._onSpawnRefused(handle, task, harness, ack);
+        }).catch((err) => {
+          if (handle.spawnAbort === spawnAbort) handle.spawnAbort = null;
+          // SC15: rejection and resolved refusal are the same durable failure channel.
+          this._onSpawnRefused(handle, task, harness, { ok: false, reason: String(err?.message ?? err) });
+        }).finally(() => {
+          if (handle.nativeSpawnPromise === nativeSpawnPromise) handle.nativeSpawnPromise = null;
+          handle.nativeSpawnPending = false;
+        });
+        handle.nativeSpawnPromise = nativeSpawnPromise;
+      };
     };
 
-    if (!this._routeReadiness) return crossProviderEdge();
+    if (!this._routeReadiness) return prepareProviderEffect()();
     const consumedReceipt = task.routeAdmissionReceipt;
     const cleanupRouteEdge = async (error) => {
+      if (handle.nativeSpawnPending && !handle.nativeSpawnPromise) {
+        if (handle.spawnAbort && !handle.spawnAbort.signal.aborted) {
+          handle.spawnAbort.abort({ reason: 'route_effect_precommit_failed' });
+        }
+        handle.spawnAbort = null;
+        handle.nativeSpawnPending = false;
+      }
       this._releaseProviderTurnAdmission(handle, 'route_effect_revalidation_failed');
       const runtimeRemoved = this._removeRuntimeScope(handle);
       let worktreeRemoved = true;
@@ -3349,7 +3382,7 @@ export class Coordinator {
       );
       liveEdgeBinding = live.binding;
       this._routeReadiness.revalidate(consumedReceipt, live.binding);
-      return edgeBarrier ? edgeBarrier.arrive(crossProviderEdge) : crossProviderEdge();
+      return edgeBarrier ? edgeBarrier.arrive(prepareProviderEffect) : prepareProviderEffect()();
     }).catch((error) => {
       edgeBarrier?.fail(error);
       let localError = error;
@@ -3577,11 +3610,9 @@ export class Coordinator {
     let dispatchFailure = null;
     try {
       const edgeBarrier = this._routeProviderBarrier(tasks.length);
-      const outcomes = await Promise.allSettled(tasks.map((task, index) => {
-        const { selection } = effectStates[index];
-        return this._dispatchAdmitted(task, selection.vendor, selection.model, selection.effort,
-          selection.workerPolicyResolution, edgeBarrier);
-      }));
+      const outcomes = await Promise.allSettled(tasks.map((task, index) => (
+        this._dispatchAdmitted(task, effectStates[index], edgeBarrier)
+      )));
       dispatchFailure = this._routeDispatchFailure(outcomes);
     } finally {
       for (const task of tasks) task.routeAdmissionPending = false;

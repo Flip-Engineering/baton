@@ -194,6 +194,39 @@ test('P94A-RA1c: prepareMany is all-or-none and consumeMany preserves exact orde
   );
 });
 
+test('P94A-RA1k: one consume-time blocker converts every genuinely distinct Wave member to waiting authority', async () => {
+  const secondRoute = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'medium' });
+  let consumePhase = false;
+  const authority = new RouteReadinessAuthority({
+    routes: [ROUTE, secondRoute],
+    evaluate: (route) => consumePhase && route.harness === secondRoute.harness
+      ? { state: 'blocked', code: 'authentication_required', summary: 'second route is not ready' }
+      : { state: 'ready' },
+  });
+  const secondCard = bindingCard(secondRoute, { version: '2.0.0', family: 'openai' });
+  const bindings = [binding(), {
+    ...secondRoute, version: secondCard.version, taskType: 'general', serviceTier: null,
+    workerPolicy: null, card: secondCard,
+    effect: effect({ taskId: 'task-wave-second', nodeKey: 'node-wave-second', workerId: 'worker-wave-second' }),
+  }];
+  const batch = await authority.prepareMany(bindings);
+  consumePhase = true;
+  await assert.rejects(authority.consumeMany(batch, bindings), (error) => {
+    assert.equal(error instanceof RouteReadinessBlockedError, true);
+    assert.equal(error.receipts?.length, 2);
+    assert.equal(error.receipts.every((receipt) => receipt.state === 'waiting_for_route'), true);
+    assert.equal(error.receipts[0].blocker.code, 'route_wave_waiting');
+    assert.equal(error.receipts[1].blocker.code, 'authentication_required');
+    assert.equal(error.receipts[0].batch.digest, error.receipts[1].batch.digest);
+    return true;
+  });
+  consumePhase = false;
+  const retry = await authority.prepareMany(bindings);
+  assert.equal((await authority.consumeMany(retry, bindings)).every((receipt) => (
+    receipt.state === 'admitted'
+  )), true);
+});
+
 test('P94A-RA1d: same-route fan-out is effect-attributed, atomic, recomputable, and cross-effect replay is refused', async () => {
   let now = Date.parse('2026-07-20T12:00:00.000Z');
   const authority = new RouteReadinessAuthority({
@@ -606,6 +639,81 @@ test('P94A-RA3b: initial auto-route refusal leaves no durable task, claim, capac
   assert.equal(events.some((event) => event.kind === 'resource.route_admission_consumed'), false);
 });
 
+test('P94A-RA3k: auto reselection carries one exact post-consume route through the actual provider effect', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'baton-phase94a-live-reselection-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const log = new Log(join(root, 'log'));
+  const coordination = coordinationForLog(log);
+  const routes = [
+    Object.freeze({ harness: 'alpha', model: 'alpha-model', effort: 'high' }),
+    Object.freeze({ harness: 'beta', model: 'beta-model', effort: 'high' }),
+  ];
+  const adapterCard = (route, version) => ({
+    ...card(), harness: route.harness, version, concurrencyCeiling: 2,
+    modelSelection: {
+      ...card().modelSelection, configuredDefault: route.model, available: [route.model],
+      reasoningEffort: [route.effort], family: route.harness,
+    },
+  });
+  const cards = {
+    alpha: adapterCard(routes[0], '1.0.0'), beta: adapterCard(routes[1], '2.0.0'),
+  };
+  const starts = [];
+  const adapters = Object.fromEntries(Object.entries(cards).map(([name, liveCard]) => [name, {
+    card: () => liveCard, onEvent() {},
+    async spawn(workerId, _brief, options) {
+      starts.push({ name, workerId, options });
+      return { ok: false, reason: 'reselection edge observed' };
+    },
+    async prompt() { return { ok: true }; }, async interrupt() { return { ok: true }; },
+    async kill() { return { ok: true }; },
+  }]));
+  let routeCalls = 0;
+  const coordinator = new Coordinator({
+    log, coordination, fences: new FenceTable(), adapters,
+    worktrees: {
+      async reserveCapacity() { return {}; }, async releaseCapacity() { return true; },
+      async create() { return {}; }, async remove() { return true; }, async reconcile() { return []; },
+    },
+    runtimeScopes: { create() { return {}; }, remove() { return true; } },
+    referee: async () => ({ reverified: true, observedExit: 0 }),
+    route: () => (++routeCalls === 1 ? 'alpha' : 'beta'),
+    routeReadinessAuthority: new RouteReadinessAuthority({
+      routes, credentialEpoch: (route) => `epoch:${route.harness}`,
+      evaluate: () => ({ state: 'ready' }),
+    }),
+  });
+  const taskId = 'phase94a-live-reselection';
+  const publicHandle = await coordinator.spawn('auto', {
+    goal: 'carry live route selection', constraints: [], pathScope: ['impl/**'],
+    definitionOfDone: 'only the reselected provider starts',
+    verification: { command: 'true', expectExit: 0 },
+    budget: { tokens: 1_000, usd: 1, wallMin: 1 },
+    workerPolicy: DEFAULT_WORKER_POLICY_REQUEST,
+  }, { effort: 'high', taskId });
+  for (let index = 0; index < 40 && starts.length === 0; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(routeCalls >= 3, true);
+  assert.deepEqual(starts.map((start) => start.name), ['beta']);
+  const task = coordinator._tasks.get(taskId);
+  const handle = coordinator._workers.get(publicHandle.id);
+  assert.equal(task.routeAdmissionReceipt.route.harness, routes[1].harness);
+  assert.equal(task.routeAdmissionReceipt.cardDigest, authorityDigest(cards.beta));
+  assert.equal(task.modelResolved, routes[1].model);
+  assert.equal(task.effortResolved, routes[1].effort);
+  assert.equal(handle.vendor, 'beta');
+  assert.equal(starts[0].options.model, routes[1].model);
+  assert.equal(starts[0].options.reasoningEffort, routes[1].effort);
+  assert.equal(starts[0].options.workerPolicy.resolutionDigest,
+    task.workerPolicyResolution.resolutionDigest);
+  assert.equal(starts[0].options.workerPolicy.adapterCardDigest,
+    resolveWorkerPolicy(DEFAULT_WORKER_POLICY_REQUEST, cards.beta.workerPolicy).adapterCardDigest);
+  assert.equal(log.read(publicHandle.id).find((event) => (
+    event.kind === 'lifecycle.spawned'
+  )).payload.vendorResolved, 'beta');
+});
+
 test('P94A-RA3d: a stale post-issue credential race returns to durable waiting with zero resource or provider residue', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'baton-phase94a-stale-consume-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -908,6 +1016,98 @@ test('P94A-RA3i: drift after post-consume validation is rechecked after runtime 
   assert.equal(internal.localAuthority, false);
   assert.equal(internal.worktree, null);
   assert.notEqual(internal.runtimeScope?.active, true);
+});
+
+test('P94A-RA3l: final-edge settlement cannot suppress release of a fresh consume-time retry reservation', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'baton-phase94a-reservation-generation-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const log = new Log(join(root, 'log'));
+  const coordination = coordinationForLog(log);
+  const capacity = new Set();
+  const runtime = new Set();
+  const calls = { evaluations: 0, reserve: 0, release: 0, remove: 0, spawn: 0 };
+  const readiness = ['ready', 'ready', 'blocked', 'ready', 'blocked'];
+  const authority = new RouteReadinessAuthority({
+    routes: [ROUTE], credentialEpoch: () => 'epoch', evaluate: () => {
+      const state = readiness[calls.evaluations++] ?? 'blocked';
+      return state === 'ready' ? { state: 'ready' }
+        : { state: 'blocked', code: 'authentication_refresh_required', summary: 'retry later' };
+    },
+  });
+  const adapter = { card, onEvent() {},
+    async spawn() { calls.spawn += 1; return { ok: true }; },
+    async prompt() { return { ok: true }; }, async interrupt() { return { ok: true }; },
+    async kill() { return { ok: true }; } };
+  const worktrees = {
+    async reserveCapacity(taskId) { calls.reserve += 1; capacity.add(taskId); return {}; },
+    async releaseCapacity(taskId) { calls.release += 1; return capacity.delete(taskId); },
+    async create(taskId) { return { path: join(root, taskId) }; },
+    async remove(taskId) { calls.remove += 1; capacity.delete(taskId); return true; },
+    async reconcile() { return []; },
+  };
+  const runtimeScopes = {
+    create(workerId) { runtime.add(workerId); return { posture: {}, env: {} }; },
+    remove(workerId) { return runtime.delete(workerId); },
+  };
+  const first = new Coordinator({
+    log, coordination, fences: new FenceTable(), adapters: { grok: adapter }, worktrees,
+    runtimeScopes, referee: async () => ({ reverified: true, observedExit: 0 }),
+    route: () => 'grok', routeReadinessAuthority: authority,
+  });
+  const taskId = 'phase94a-reservation-generation';
+  const spawned = await first.spawn('grok', {
+    goal: 'bind capacity settlement to its reservation generation', constraints: [],
+    pathScope: ['impl/**'], definitionOfDone: 'reopen owns no stale capacity',
+    verification: { command: 'true', expectExit: 0 },
+    budget: { tokens: 1_000, usd: 1, wallMin: 1 },
+  }, { model: ROUTE.model, effort: ROUTE.effort, taskId });
+  for (let index = 0; index < 80
+    && first.list().find((row) => row.id === spawned.id)?.status !== 'blocked'; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(first.list().find((row) => row.id === spawned.id)?.status, 'blocked');
+  assert.equal(capacity.size, 0);
+  assert.equal(runtime.size, 0);
+  assert.equal(calls.spawn, 0);
+
+  const retry = await first.retryRoute([taskId]);
+  assert.equal(retry.state, 'waiting_for_route');
+  assert.equal(calls.reserve, 2, 'the deliberate retry acquired one fresh reservation');
+  assert.equal(calls.remove, 1, 'the first provider-edge refusal settled only its own reservation');
+  assert.equal(calls.release, 1, 'the later consume-time refusal released the fresh reservation');
+  assert.equal(capacity.size, 0);
+  assert.equal(runtime.size, 0);
+  assert.equal(calls.spawn, 0);
+  const firstHandle = first._workers.get(spawned.id);
+  assert.equal(firstHandle.worktree, null);
+  assert.notEqual(firstHandle.runtimeScope?.active, true);
+  assert.equal(first.closeAuthority(), true);
+  await authority.close();
+
+  let reopenedEvaluations = 0;
+  const reopenedAuthority = new RouteReadinessAuthority({
+    routes: [ROUTE], credentialEpoch: () => 'epoch-reopened',
+    evaluate: () => { reopenedEvaluations += 1; return { state: 'ready' }; },
+  });
+  const reopened = new Coordinator({
+    log, coordination, fences: new FenceTable(), adapters: { grok: adapter }, worktrees,
+    runtimeScopes, referee: async () => ({ reverified: true, observedExit: 0 }),
+    route: () => 'grok', routeReadinessAuthority: reopenedAuthority,
+  });
+  await reopened.startupReady();
+  reopened.tick();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(reopenedEvaluations, 0, 'reopen does not automatically mint retry authority');
+  assert.equal(reopened.list().find((row) => row.taskId === taskId)?.status, 'blocked');
+  assert.equal(capacity.size, 0);
+  assert.equal(runtime.size, 0);
+  assert.equal([...reopened._workers.values()].some((handle) => (
+    reopened._ownsLocalResources(handle) || typeof handle.worktree === 'string'
+      || handle.runtimeScope?.active === true
+      || (handle.processRef && handle.processRef.state !== 'closed')
+  )), false);
+  assert.equal(reopened.closeAuthority(), true);
+  await reopenedAuthority.close();
 });
 
 test('P94A-RA3j: deployment drain fences a dispatch held in final live inspection before adapter.spawn', async (t) => {
@@ -1372,6 +1572,78 @@ test('P94A-RA4: Wave authorization and approved preview precede all-or-none read
   priorReceiptCount);
 });
 
+test('P94A-RA4b: second-member precommit failure starts no provider and reaps every local Wave resource', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'baton-phase94a-wave-precommit-'));
+  let deployment;
+  t.after(async () => {
+    try { await deployment?.close(); } catch {}
+    rmSync(root, { recursive: true, force: true });
+  });
+  const repo = join(root, 'repo');
+  mkdirSync(repo, { recursive: true });
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'phase94a-precommit@example.invalid'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Phase 94A precommit'], { cwd: repo });
+  writeFileSync(join(repo, 'README.md'), '# Wave precommit\n');
+  execFileSync('git', ['add', '.'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+  let providerStarts = 0;
+  let precommits = 0;
+  const adapter = {
+    card: () => ({ ...card(), concurrencyCeiling: 4, readiness: { state: 'ready' } }),
+    onEvent() {},
+    async routeReadinessProbe() {
+      return { state: 'ready', initialized: true, authenticated: true,
+        sessionCreated: false, promptSent: false, reaped: true };
+    },
+    async spawn() { providerStarts += 1; return { ok: true }; },
+    async prompt() { return { ok: true }; }, async interrupt() { return { ok: true }; },
+    async kill() { return { ok: true }; },
+  };
+  let driver;
+  deployment = await openBatonDeployment({ repo, advanced: {
+    deploymentRoot: join(root, 'deployment'), routes: [ROUTE], adapters: { grok: adapter },
+    verification: { command: 'node', arguments: ['--version'] },
+    capacity: {
+      estimate: () => ({ bytes: 1, inodes: 1 }),
+      observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
+    },
+  } }, (options) => {
+    driver = createDriver(options);
+    const append = driver.log.append.bind(driver.log);
+    driver.log.append = (event) => {
+      if (event.kind === 'lifecycle.spawned') {
+        precommits += 1;
+        if (precommits === 2) {
+          throw Object.assign(new Error('injected second-member precommit failure'), {
+            code: 'injected_wave_precommit_failure',
+          });
+        }
+      }
+      return append(event);
+    };
+    return driver;
+  });
+  const workflow = await deployment.workflow('Fail the second Wave precommit atomically.', {
+    team: [{ role: 'first', exact: ROUTE }, { role: 'second', exact: ROUTE }],
+  });
+  await workflow.approve().catch(() => null);
+  for (let index = 0; index < 400
+    && (precommits < 2 || driver.coordinator._authorityOps > 0); index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(precommits, 2, 'both members reached the all-member no-provider precommit');
+  assert.equal(providerStarts, 0);
+  assert.equal(driver.worktreeCapacity.snapshot().reservations.length, 0);
+  assert.equal(driver.coordinator._authorityOps, 0);
+  assert.equal([...driver.coordinator._workers.values()].some((handle) => (
+    driver.coordinator._ownsLocalResources(handle)
+      || handle.worktree !== null || handle.runtimeScope?.active === true
+      || handle.nativeSpawnPending === true
+      || (handle.processRef && handle.processRef.state !== 'closed')
+  )), false);
+});
+
 test('P94A-K1: revoked Kimi metadata is zero-process and valid metadata uses only a reaped auth probe', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'baton-phase94a-kimi-revoked-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -1815,7 +2087,11 @@ test('P94A-P2: prepare-time blocked same- and mixed-route application Waves proj
         estimate: () => ({ bytes: 1, inodes: 1 }),
         observe: () => ({ freeBytes: Number.MAX_SAFE_INTEGER, freeInodes: Number.MAX_SAFE_INTEGER }),
       },
-    } }, (options) => { capturedDriver = createDriver(options); return capturedDriver; });
+    } }, (options) => {
+      const { log: _operationalLog, ...noLogDriver } = createDriver(options);
+      capturedDriver = noLogDriver;
+      return noLogDriver;
+    });
     try {
       const workflow = await deployment.workflow(`Prepare-time ${scenario.name} Wave.`, {
         team: scenario.routes.map((route, index) => ({ role: `member-${index}`, exact: route })),
@@ -1823,6 +2099,8 @@ test('P94A-P2: prepare-time blocked same- and mixed-route application Waves proj
       await workflow.approve();
       const waiting = await workflow.status();
       const waitingOutline = (await workflow.outline()).outline;
+      assert.equal(Object.hasOwn(capturedDriver, 'log'), false,
+        'Workflow projection accepts the same constructor-valid no-log driver as a single Run');
       assert.equal(waiting.phase, 'waiting_for_route', scenario.name);
       assert.equal(waitingOutline.resources.ownedCount, 0, scenario.name);
       assert.equal(waiting.attempts.every((attempt) => attempt.taskId === null), true, scenario.name);
@@ -1977,7 +2255,8 @@ test('P94A-R2: same- and mixed-route atomic Waves wait after consume and retry a
         const key = `${route.model}\0${route.effort}`;
         const calls = (probeCalls.get(key) ?? 0) + 1;
         probeCalls.set(key, calls);
-        const admitted = ready || !consumePhase;
+        const admitted = ready || !consumePhase
+          || (scenario.name === 'mixed' && route.model === available[0]);
         return { state: admitted ? 'ready' : 'blocked', initialized: true,
           authenticated: admitted, sessionCreated: false, promptSent: false, reaped: true };
       },
@@ -2020,6 +2299,12 @@ test('P94A-R2: same- and mixed-route atomic Waves wait after consume and retry a
       assert.equal(waitingView.phase, 'waiting_for_route', `${scenario.name}: ${JSON.stringify(waiting)}`);
       assert.equal(waitingView.resources.ownedCount, 0, scenario.name);
       assert.equal(providerStarts, 0, scenario.name);
+      if (scenario.name === 'mixed') {
+        const waitingStatus = await workflow.status();
+        assert.equal(waitingStatus.attempts.every((attempt) => (
+          attempt.routeAdmission?.state === 'waiting_for_route'
+        )), true, 'one genuinely ready member receives fail-closed Wave waiting authority');
+      }
       const probesAtWaiting = [...probeCalls.values()].reduce((sum, value) => sum + value, 0);
       assert.equal((await workflow.drive()).outline.phase, 'waiting_for_route');
       assert.equal([...probeCalls.values()].reduce((sum, value) => sum + value, 0), probesAtWaiting);
@@ -2057,12 +2342,20 @@ test('P94A-R3: consume-time Wave waiting survives controller reopen, exact idemp
   let armed = false;
   let probes = 0;
   let providerStarts = 0;
+  const routes = [ROUTE, { harness: 'grok', model: 'grok-4.5-fast', effort: 'medium' }];
   const adapter = {
-    card: () => ({ ...card(), concurrencyCeiling: 4, readiness: { state: 'ready' } }),
+    card: () => ({
+      ...card(), concurrencyCeiling: 4, readiness: { state: 'ready' },
+      modelSelection: {
+        ...card().modelSelection, configuredDefault: routes[0].model,
+        available: routes.map((route) => route.model),
+        reasoningEffort: routes.map((route) => route.effort),
+      },
+    }),
     onEvent() {},
-    async routeReadinessProbe() {
+    async routeReadinessProbe({ route }) {
       probes += 1;
-      const admitted = ready || !consumePhase;
+      const admitted = ready || !consumePhase || route.model === routes[0].model;
       return { state: admitted ? 'ready' : 'blocked', initialized: true,
         authenticated: admitted, sessionCreated: false, promptSent: false, reaped: true };
     },
@@ -2076,7 +2369,7 @@ test('P94A-R3: consume-time Wave waiting survives controller reopen, exact idemp
     async kill() { return { ok: true }; },
   };
   const advanced = {
-    deploymentRoot, routes: [ROUTE], adapters: { grok: adapter },
+    deploymentRoot, routes, adapters: { grok: adapter },
     verification: { command: 'node', arguments: ['--version'] },
     capacity: {
       estimate: () => ({ bytes: 1, inodes: 1 }),
@@ -2098,7 +2391,7 @@ test('P94A-R3: consume-time Wave waiting survives controller reopen, exact idemp
     return firstDriver;
   });
   const workflow = await first.workflow('Reopen one consume-time waiting Wave.', {
-    team: [{ role: 'first', exact: ROUTE }, { role: 'second', exact: ROUTE }],
+    team: routes.map((route, index) => ({ role: `member-${index}`, exact: route })),
   });
   armed = true;
   await workflow.approve();
@@ -2109,6 +2402,9 @@ test('P94A-R3: consume-time Wave waiting survives controller reopen, exact idemp
   }
   assert.ok(capturedWave);
   assert.equal(providerStarts, 0);
+  assert.equal((await workflow.status()).attempts.every((attempt) => (
+    attempt.routeAdmission?.state === 'waiting_for_route'
+  )), true, 'the ready route is durably fenced by whole-Wave waiting authority');
   const probesBeforeReplay = probes;
   const eventsBeforeReplay = firstDriver.coordination.snapshot().lastSeq;
   const replayedHandles = await firstDriver.coordinator.spawnPlanWave(

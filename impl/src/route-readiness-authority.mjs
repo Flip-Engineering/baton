@@ -547,6 +547,7 @@ export class RouteReadinessAuthority {
       ['adapter_card_changed', 'The live adapter card changed before the provider effect boundary.'],
       ['credential_generation_changed', 'The credential generation changed before the provider effect boundary.'],
       ['route_binding_changed', 'The exact route binding changed before the provider effect boundary.'],
+      ['route_wave_waiting', 'Atomic Wave admission is waiting for every exact route to become ready.'],
     ]);
     const safeCode = allowed.has(code) ? code : 'route_binding_changed';
     const prior = this.#generations.get(routeKey(route));
@@ -718,10 +719,18 @@ export class RouteReadinessAuthority {
       state.state !== 'ready' || state.generation !== held.bindings[index].generation
     ));
     const consumedAt = this.#now();
-    const receiptStates = states.map((state, index) => (
-      state.state === 'ready' && state.generation !== held.bindings[index].generation
-        ? this.#generationChanged(state) : state
-    ));
+    const receiptStates = states.map((state, index) => {
+      if (state.state === 'ready' && state.generation !== held.bindings[index].generation) {
+        return this.#generationChanged(state);
+      }
+      if (blocked >= 0 && state.state === 'ready') {
+        return freeze({
+          ...state, state: 'blocked', code: 'route_wave_waiting',
+          summary: 'Atomic Wave admission is waiting for every exact route to become ready.',
+        });
+      }
+      return state;
+    });
     const receipts = held.bindings.map((entry, index) => this.#receipt(
       entry.binding, receiptStates[index], entry.bindingDigest, entry.epochDigest,
       { issuedAt: held.issuedAt, consumedAt, expiresAt: held.expiresAt },
