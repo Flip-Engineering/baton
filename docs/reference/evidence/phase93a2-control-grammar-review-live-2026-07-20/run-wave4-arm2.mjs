@@ -153,8 +153,14 @@ try {
     '(node --test impl/test/phase93a-control-grammar-red.test.mjs) before finishing.',
   ].join(' ');
 
-  // A — claims author (claude-sonnet-5)
-  const memberA = await chainMember('A-claims', { harness: 'claude-code', model: 'claude-sonnet-5', effort: 'high' }, [
+  // A — claims author (claude-sonnet-5); ARM2_RESUME_A=<sha> resumes with A's pinned artifact.
+  let memberA;
+  if (process.env.ARM2_RESUME_A && /^[a-f0-9]{40}$/u.test(process.env.ARM2_RESUME_A)) {
+    memberA = { role: 'A-claims', resultSha: process.env.ARM2_RESUME_A, run: null };
+    evidence.chain.push(memberA);
+    log(`resuming with A artifact ${memberA.resultSha}`);
+  } else {
+    memberA = await chainMember('A-claims', { harness: 'claude-code', model: 'claude-sonnet-5', effort: 'high' }, [
     'You are member A of a heterogeneous artifact chain reviewing the corrected Phase 93a.2',
     'Program-IR slice. Read spec/phase93-closed-program-ir.md sections 93.5, 93.8, 93.9, 93.20',
     'and impl/src/program-ir/{normalize-program,approval-template}.mjs. Author EXACTLY 10 precise,',
@@ -164,8 +170,9 @@ try {
     'Two of your claims MUST be subtle statements you are unsure of (mark them UNCERTAIN).',
     `Write only ${CHAIN.claims} with headings: ## Claims, ## Uncertain. ${common}`,
   ].join(' '), CHAIN.claims);
-  startedRuns.push(memberA.run);
-  if (!memberA.resultSha) throw new Error('member A produced no artifact to chain');
+    startedRuns.push(memberA.run);
+    if (!memberA.resultSha) throw new Error('member A produced no artifact to chain');
+  }
 
   // B — adversarial verifier (glm-5.2), brief addresses A's immutable artifact.
   const memberB = await chainMember('B-verification', { harness: 'glm', model: 'glm-5.2', effort: 'xhigh' }, [
@@ -230,6 +237,7 @@ try {
   evidence.failure = { name: error.name, code: error.code ?? null, message: error.message };
 } finally {
   for (const entry of evidence.chain) {
+    if (!entry.run) continue;
     try {
       const stopped = await entry.run.stop('Phase 93a.2 wave-4 arm-2 settled.');
       evidence.stops.push({ role: entry.role, runId: entry.runId, stop: stopped.stop ?? null, ownership: stopped.ownership ?? null });

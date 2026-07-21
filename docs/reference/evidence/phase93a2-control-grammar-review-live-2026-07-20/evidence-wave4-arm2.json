@@ -1,0 +1,205 @@
+{
+  "schemaVersion": 1,
+  "arm": "heterogeneous",
+  "chain": [
+    {
+      "role": "A-claims",
+      "exact": {
+        "harness": "claude-code",
+        "model": "claude-sonnet-5",
+        "effort": "high"
+      },
+      "runId": "run-56a9099368a03f99ba1abdb115f20af7",
+      "terminal": {
+        "phase": "work_completed",
+        "narrative": "0 worker(s) active, 1 done."
+      },
+      "resultSha": "7c5246eea5c46e6baee706f89dcf29630e18bb85",
+      "materialized": "docs/reference/evidence/phase93a2-control-grammar-review-live-2026-07-20/chain-A-claims.md"
+    },
+    {
+      "role": "B-verification",
+      "exact": {
+        "harness": "glm",
+        "model": "glm-5.2",
+        "effort": "xhigh"
+      },
+      "runId": "run-1441fcd896d7b7c721f9c8dfe8f11442",
+      "terminal": {
+        "phase": "failed",
+        "narrative": "Run terminated: provider_turn_failed."
+      },
+      "resultSha": null
+    }
+  ],
+  "steering": [
+    {
+      "role": "B-verification",
+      "at": "2026-07-21T06:33:09.675Z",
+      "state": "sent",
+      "message": "Orchestrator steer: finish the CONFIRMED/REFUTED disposition for every numbered claim BEFORE attempting counterexamples; the synthesis member downstream needs complete dispositions more than exploits."
+    }
+  ],
+  "dynamicTopology": [],
+  "stops": [
+    {
+      "role": "A-claims",
+      "runId": "run-56a9099368a03f99ba1abdb115f20af7",
+      "stop": null,
+      "ownership": null
+    },
+    {
+      "role": "B-verification",
+      "runId": "run-1441fcd896d7b7c721f9c8dfe8f11442",
+      "stop": null,
+      "ownership": null
+    }
+  ],
+  "progress": [
+    {
+      "at": "2026-07-21T06:29:19.157Z",
+      "role": "A-claims",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:29:34.247Z",
+      "role": "A-claims",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:29:49.331Z",
+      "role": "A-claims",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:30:04.421Z",
+      "role": "A-claims",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:30:19.512Z",
+      "role": "A-claims",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:30:34.609Z",
+      "role": "A-claims",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:30:49.704Z",
+      "role": "A-claims",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:31:05.061Z",
+      "role": "A-claims",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:31:20.154Z",
+      "role": "A-claims",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:31:35.232Z",
+      "role": "A-claims",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:31:50.301Z",
+      "role": "A-claims",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:32:05.368Z",
+      "role": "A-claims",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:32:20.439Z",
+      "role": "A-claims",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:32:35.507Z",
+      "role": "A-claims",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:32:50.601Z",
+      "role": "A-claims",
+      "phase": "work_completed"
+    },
+    {
+      "at": "2026-07-21T06:33:09.743Z",
+      "role": "B-verification",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:33:24.846Z",
+      "role": "B-verification",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:33:39.946Z",
+      "role": "B-verification",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:33:55.045Z",
+      "role": "B-verification",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:34:10.143Z",
+      "role": "B-verification",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:34:25.243Z",
+      "role": "B-verification",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:34:40.319Z",
+      "role": "B-verification",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:34:55.412Z",
+      "role": "B-verification",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:35:10.509Z",
+      "role": "B-verification",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:35:25.616Z",
+      "role": "B-verification",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:35:40.703Z",
+      "role": "B-verification",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:35:55.794Z",
+      "role": "B-verification",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T06:36:10.889Z",
+      "role": "B-verification",
+      "phase": "failed"
+    }
+  ],
+  "failure": {
+    "name": "Error",
+    "code": null,
+    "message": "member B produced no artifact to chain"
+  }
+}
