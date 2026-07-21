@@ -340,7 +340,7 @@ export function validateSelector(selector, { policy, candidateNames = null, labe
     exactFields(selector, ['kind', 'criteria', 'tie'], `${label} evidence_ranked`);
     if (selector.tie !== 'unresolved') fail(`${label} evidence_ranked.tie must be "unresolved"`);
     if (!Array.isArray(selector.criteria) || selector.criteria.length < 1
-      || selector.criteria.length > policy.maxEvidenceRefs) {
+      || selector.criteria.length > policy.maxJoinMembers) {
       fail(`${label} evidence_ranked.criteria is invalid`);
     }
     const criteria = selector.criteria.map((criterion, index) => {

@@ -1034,6 +1034,17 @@ test('P93A2-SEL2: selector grammar pins evidence_ranked criteria and settlement_
   }), f.authority);
   const select = ranked.program.nodes.find((node) => node.kind === 'select');
   assert.deepEqual(select.selector.criteria.map((criterion) => criterion.order), [0, 1]);
+  // replica-C finding: criteria are a Program-level array bounded by policy.maxJoinMembers,
+  // never maxEvidenceRefs — maxJoinMembers rows pass, maxJoinMembers+1 fails even though it
+  // is within maxEvidenceRefs.
+  const boundCriteria = (count) => Array.from({ length: count },
+    (_unused, index) => ({ contractDigest: f.sha256(`criterion ${index}`), required: true, order: index }));
+  assert.doesNotThrow(() => normalize(selectWith({
+    kind: 'evidence_ranked', criteria: boundCriteria(f.policy.maxJoinMembers), tie: 'unresolved',
+  }), f.authority));
+  assert.throws(() => normalize(selectWith({
+    kind: 'evidence_ranked', criteria: boundCriteria(f.policy.maxJoinMembers + 1), tie: 'unresolved',
+  }), f.authority), invalid);
   const base = { kind: 'settlement_value', member: { kind: 'self' } };
   assert.throws(() => normalize(selectWith({
     ...base, requiredExecution: 'failed', requiredVerification: 'passed',
