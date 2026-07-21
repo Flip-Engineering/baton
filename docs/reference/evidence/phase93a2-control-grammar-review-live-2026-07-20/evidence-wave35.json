@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "outcomes": [],
+  "stops": [],
+  "progress": [],
+  "steering": [],
+  "failure": {
+    "name": "Error",
+    "code": "application_client_invalid",
+    "message": "Run objective is required"
+  }
+}
