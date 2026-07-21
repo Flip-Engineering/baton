@@ -606,7 +606,14 @@ The template projections are exact and closed:
   `pathScope` and `contextScope`. A `content_ref` template's scopes are bound by that artifact's
   own `approvalDigest` and are read only at replay (§93.7); they are never restated in the
   template. The bound is [0..policy.maxEvidenceRefs]: a catalog whose roles are all `content_ref`
-  carries an empty `repositoryScopes` projection.
+  carries an empty `repositoryScopes` projection. A `content_ref` template's `pathScope`/
+  `contextScope` MUST still be covered by the enclosing `ApprovalEnvelope`'s `repositoryScopes` at
+  approval time: the inline-only projection is a Program v1 authoring-time bound, never a grant of
+  unconstrained repository access for `content_ref` roles. Until slice 93E injects the envelope-side
+  content_ref scope-coverage authority, this coverage check is deferred, exactly as the
+  `maxParallelBranches` route-card binding is deferred (§93.20); an empty `repositoryScopes`
+  projection means the envelope grants **no** repository access, never unconstrained access, for
+  every role approved under it, including `content_ref` roles.
 - The three constraint digests commit the template to the exact normalized catalog projections:
   - `routeConstraintDigest = H(Program-canonical bytes of exact{kind:"baton.route_constraint",entries})`
     where `entries` is the set-like-by-role array of `exact{role,routeRequest}`.
@@ -681,7 +688,9 @@ branch = exact{nodeId,kind,predicate,then,otherwise,outputSchema}
 
 parallel = exact{nodeId,kind,branches,join,outputSchema}
   kind="parallel"
-  branches=set-like exact{name,control,result,resultSchema}[1..policy.maxParallelBranches]
+  branches=set-like exact{name,control,result,resultSchema}[1..policy.maxProgramNodes] as a pure
+    node-shape bound; a `parallel` reachable from its Program's `root` (§93.20) is additionally
+    bounded by [1..policy.maxParallelBranches] once reachability is known at the Program level
   control=ControlRef; result=PortRef; result.schema=resultSchema
   join=Join
   outputSchema MUST be registered "baton.parallel_handle"
@@ -724,8 +733,10 @@ authority.
 
 `ProgramRef = exact{kind,programId,programDigest,resultSchema}` with `kind="program_ref"`, and
 `ChildProgramRef = exact{kind,program,inputSchema,resultSchema}` with
-`kind="child_program_ref"`. A child/repeat body is already normalized, independently approved or
-within the parent envelope shape, acyclic by `programDigest`, and cannot widen authority.
+`kind="child_program_ref"`. A child/repeat body is already normalized, acyclic by `programDigest`,
+and cannot widen authority. In Program v1 every repeat/child body MUST be independently approved;
+there is no alternative under which a body dispatches its effects within the parent envelope's
+shape.
 
 The two schema derivations are closed normalization operations, not runtime inference. For
 `context`, the normalizer performs the §93.10 complete pure-AST walk and derives the exact result
@@ -754,18 +765,32 @@ The validator enforces two distinct read relations, never one universal rule:
    dominate the consumer's control position. Every `await` is therefore dominated by the handle
    producer it awaits. Undominated demand reads fail before execution admission.
 2. **Settle-then-read positions (settlement-domain-checked, never dominator-checked).** Exactly
-   these positions read only after the enclosing node's settlement contract guarantees the
-   producer: `sequence.result`, `parallel.branches[].result`, and
-   `branch.{then,otherwise}.result`. Each such `PortRef` MUST resolve either to a pure data-node
-   port (`value`/`collect`/`context`, which demand evaluation settles) or to a port of a control
-   node inside the enclosing position's **settlement domain**: the smallest set closed under
-   (a) the enclosing node itself; (b) for `sequence` nodes, every step and every step's
-   settlement domain; and (c) for `parallel` nodes whose join is `all_terminal`, every branch's
-   control chain and those chains' settlement domains. A `branch` node's own `value` port is in
-   its settlement domain (exactly one arm always settles and the branch exposes only that arm's
-   result), but nodes inside branch arms are never in any outer settlement domain, and branches
-   of a non-`all_terminal` parallel are never in any outer settlement domain. A settle-then-read
-   ref to a control-produced port outside the settlement domain is `program_invalid`.
+   these positions read only after their governing control chain settles: `sequence.result`,
+   `parallel.branches[].result`, and `branch.{then,otherwise}.result`. Each such `PortRef` MUST be
+   checked at the end of the transitive pure-data walk from it (`collect` items walked recursively;
+   `value`/`context` add no further node refs, the same walk clause 1 performs from a demand root):
+   every control producer so reached MUST lie inside the **settlement domain** of the position's own
+   governing control chain, never the enclosing node's domain; pure-data leaves reached by the walk
+   are unrestricted. The governing chain is keyed per position, not per enclosing node:
+   `sequence.result` is keyed on the sequence node itself; `parallel.branches[b].result` is keyed on
+   branch `b`'s own control node, regardless of the parallel's join kind; `branch.{then,otherwise}.result`
+   is keyed on that arm's own control node. A control node's settlement domain is the smallest set
+   closed under (a) the node itself; (b) when it is itself a `sequence`, every step and each step's
+   own settlement domain; and (c) when it is itself an `all_terminal` `parallel`, every one of its
+   own branches' control-chain settlement domains. A `branch` node contributes only itself to any
+   domain — arm internals never leak into an outer domain — and a non-`all_terminal` `parallel` node
+   likewise contributes only itself, so under an `all_terminal` parallel one branch's
+   settle-then-read position can never read a *different* branch's control port: each branch keys
+   its own domain. A settle-then-read ref whose pure-data walk terminates at a control-produced port
+   outside this domain is `program_invalid`.
+
+   Effect-node input positions are demand edges under clause 1, not settle-then-read positions, so
+   93C cannot silently re-open this gap: `call.input`, `map.input`, `reduce.inputs`,
+   `gate.candidate`, `notify.{target,message}`, `checkpoint.value`, and `finish.{value,evidence}`
+   (§93.11) are dominator-checked demand edges, including the transitive pure-data walk, even though
+   the 93a.2 grammar constructs no effect node and admits no `call`/`map`/`reduce`/`gate`/`notify`/
+   `checkpoint`/`finish` source kind. The two relations above are exhaustive across every
+   `PortRef`-typed node field defined in this document.
 
 `sequence` enters its control steps in array order and exposes only its explicit `result` ref after
 all steps settle. `branch` evaluates its predicate by demand, enters exactly one arm control, and
@@ -2225,13 +2250,28 @@ separately authorized service-tier, and worker-policy resolution. Its existing c
 `concurrencyCeiling` field is the sole lower-policy concurrency authority. Roles that resolve to
 the same card share that card's ceiling; normalization additionally rejects a parallel frontier
 whose count for that card exceeds the field. A Program with no `parallel` node carries
-`maxParallelBranches=null`, because it consumes no parallel authority. Serial classification keys
-on `parallel` nodes reachable from `root`: an unreachable `parallel` node is inert and never
-forces a non-null `maxParallelBranches`. Until slice 93E injects the lower-policy authorities,
-`maxParallelBranches` is shape-validated only (null or a positive safe integer) and the
-route-card/structural minimum binding proof is deferred; §93.24 marks the deferral. For each `parallel`, the
-normalizer computes the set of `call|map|reduce` roles reachable through every branch's static
-control and data-dependency closure, including reachable repeat/child bodies. If that set is empty,
+`maxParallelBranches=null`, because it consumes no parallel authority. Serial classification is
+**per-Program**: it keys on `parallel` nodes reachable from *that Program's own* `root` through
+control edges, and an unreachable `parallel` node is inert and never forces a non-null
+`maxParallelBranches`. A `repeat`/`child` body is a distinct, independently normalized Program
+(§93.9); its own control-reachability is computed against its own `root` and is never folded into
+the enclosing Program's reachability or vice versa — the two scopes are never conflated.
+
+Until slice 93E injects the lower-policy authorities, the entire role-set/route-card mechanism
+described in this paragraph is deferred wholesale, not only the `maxParallelBranches` shape check:
+the reachable-`call|map|reduce`-role computation, the `program_parallel_authority_unavailable`
+refusal for an empty or under-authorized role set, and the route-card/structural minimum binding
+proof are all deferred; §93.24 marks the deferral. In Program v1 (93a.2), `maxParallelBranches` is
+shape-validated only (null, or a positive safe integer bounding `parallel.branches` per §93.9), and
+normalization never computes or refuses on the reachable-role set. Because 93a.2 admits no
+`call`/`map`/`reduce` effect node, that reachable-role set is vacuously empty for every 93a.2
+parallel; the wholesale deferral is what keeps 93a.2 parallels constructible despite this, and
+nothing in 93a.2 enforces the paragraph below.
+
+Once slice 93E lands, for each `parallel` the normalizer computes the set of `call|map|reduce`
+roles reachable through every branch's static control and data-dependency closure, including
+reachable repeat/child bodies (a distinct scope from the per-Program serial-classification
+reachability above, since it deliberately follows into body Programs). If that set is empty,
 normalization and preview refuse `program_parallel_authority_unavailable` before constructing the
 parallel node, admitting Program state, or producing any effect; route-free parallelism has no
 Program v1 authority. If any role in the set lacks one exact approved positive
