@@ -1,6 +1,7 @@
 import { contextProgramIsPure } from './context-authority.mjs';
 import { normalizeContextProgram } from './context-program.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
+import { createWave } from './wave.mjs';
 
 function clientError(message, code = 'application_client_invalid') {
   return Object.assign(new Error(message), { code });
@@ -1478,6 +1479,10 @@ export class BatonClient {
     this.runs = new BatonRuns(application);
     this.#application = application;
     Object.freeze(this);
+  }
+
+  get waves() {
+    return Object.freeze({ start: (options = {}) => createWave(this, options) });
   }
 
   help(topic = 'application', depth = 'outline') {
