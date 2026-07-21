@@ -1,13 +1,16 @@
-// Phase 93a.2 approval template (§93.8). The authoring Program carries a non-authoritative
-// template whose projections are exact and closed: roles equal the sorted normalized-catalog role
-// names, effectKinds equal the sorted set of the seven effect kinds statically present in the
-// Program's nodes or statically reachable repeat/child bodies (the caller computes and passes
-// usedEffectKinds; 93a.2 control-only Programs yield the empty set), repositoryScopes equal the
-// sorted union of every inline catalog role template's pathScope and contextScope, and the three
-// constraint digests recompute over the Program-canonical exact{kind, entries} preimages with
-// set-like-by-role entries. templateDigest hashes the complete template excluding itself.
+// Phase 93a.2 approval template (§93.8, amended). The authoring Program carries a
+// non-authoritative template whose projections are exact and closed: roles equal the sorted
+// normalized-catalog role names, effectKinds equal the sorted set of the seven effect kinds
+// statically present in the Program's own nodes only (the caller computes and passes
+// usedEffectKinds; 93a.2 control-only Programs yield the empty set; repeat/child bodies are
+// independently normalized Programs bound by their own approval envelopes, never restated here),
+// repositoryScopes equal the sorted union of every **inline** catalog role template's pathScope
+// and contextScope with a [0..policy.maxEvidenceRefs] bound, and the three constraint digests
+// recompute over the Program-canonical exact{kind, entries} preimages with set-like-by-role
+// entries. templateDigest hashes the complete template excluding itself.
 // A content_ref role template's bytes are an immutable approved artifact read only at replay, so
-// its scopes cannot join the static union here; that projection completes with replay (93E).
+// its scopes are bound by that artifact's own approvalDigest and never join the static union
+// here; a catalog whose roles are all content_ref carries an empty repositoryScopes projection.
 // No I/O, no clocks, no randomness: every rejection happens before any effect.
 
 import {
@@ -103,7 +106,7 @@ export function normalizeApprovalTemplate(value, {
     fail('Approval template effectKinds contains duplicates');
   }
   const repositoryScopes = normalizePathArray(normalized.repositoryScopes,
-    'Approval template repositoryScopes', { min: 1, max: policy.maxEvidenceRefs });
+    'Approval template repositoryScopes', { min: 0, max: policy.maxEvidenceRefs });
   const routeConstraintDigest = digestValue(normalized.routeConstraintDigest,
     'Approval template routeConstraintDigest');
   const serviceTierConstraintDigest = digestValue(normalized.serviceTierConstraintDigest,
