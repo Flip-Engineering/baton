@@ -673,7 +673,7 @@ value = exact{nodeId,kind,value,schema}
 context source = exact{nodeKey,kind,program}
 context canonical = exact{nodeId,kind,program,outputSchema}
   kind="context"; program=normalized baton.context_program v1 proven pure under §93.10
-  outputSchema=deriveContextResultSchema(program,manifest,schemas)
+  outputSchema=deriveContextResultSchema(program,schemas)
   ports: value:outputSchema
 
 sequence = exact{nodeId,kind,steps,result,outputSchema}
@@ -746,7 +746,11 @@ input without an exact result schema is `program_invalid`. For `collect`, the no
 the object definition `exact{type:"object",properties:[exact{name:<item name>,schema:<item
 value.schema>,required:true}...],additionalProperties:false}` in canonical item-name order. In both cases the resulting definition
 MUST already be present in `schemas`; `outputSchema` is its byte-matching `SchemaRef`. A missing,
-ambiguous, unregistered, or caller-substituted result schema fails normalization. Evaluation then
+ambiguous, unregistered, misnamed, or caller-substituted result schema fails normalization. For
+new Programs the derivation requires the §93.10A pinned derived name and version
+(`"baton.derived." + lowercaseHex(SHA-256(canonical(definition)))[0:16]` over the `definition`
+member alone, version 1), so author labels never reach Program identity; historical
+collect-derived nodes replay as-is. Evaluation then
 validates the exact produced `TypedValue` against that derived ref before publishing the port.
 
 The node table is inert data. Execution enters only `root:ControlRef`; a `PortRef` never schedules
@@ -948,6 +952,128 @@ but only when the caller supplies the required approved role catalog, service-ti
 worker policy, verification contract, schemas, and approval envelope. The result receives a new
 `programDigest`. A crosswalk artifact records the old Context digest and new Program digest; it
 never claims identity equivalence.
+
+## 93.10A Context result-schema derivation (93a.3a)
+
+`deriveContextResultSchema(program, schemas)` is a closed normalization operation, not runtime
+inference. It performs the §93.10 complete pure-AST walk over the already-normalized
+`baton.context_program` v1 and produces the one exact `SchemaRef` the node's port publishes. It
+takes no manifest parameter: the Program carries a digest-only `ManifestRef`, normalization never
+reads manifest bytes, and whether the named branch exists in that exact manifest is a
+preview/admission question (93E), never a normalization guess.
+
+The embedded `baton.context_program` is normalized under a Context policy synthesized from the
+Program's own `ProgramPolicy`, never from a deployment Context policy read directly. Seven fields
+copy exactly per §93.20's table: `maxProgramBytes`, `maxProgramNodes`, `maxProgramDepth`,
+`maxValueBytes` (→ `maxArtifactBytes`), `maxJoinMembers` (→ `maxResultItems`),
+`maxJoinComparisons`, and `maxChildDepth` (→ `recursionDepth`); every other Context policy v1
+field (`language`, `stateMode`, `maxManifestBranches`, `maxCellsPerSession`, `maxTextBytes`,
+`maxEvidenceCoordinates`) takes its Context v1 default in 93a.3a, and the deployment's bound
+values for those six are out of scope until the 93E binding proof. `recursionDepth` remains the
+Context v1 constant 1 (Context v1 programs are depth-1 by construction); this is independent of
+`ProgramPolicy.maxChildDepth`, which remains the Program's repeat/child depth bound and is never
+rewritten or gated by context normalization. Admission additionally requires
+`policy.maxJoinMembers <= <the injected Program value authority's maxJoinMembers>`: the envelope
+arrays are bounded by `policy.maxJoinMembers` and §93.5 array `maxItems` may not exceed the
+authority's, so a ProgramPolicy above the authority ceiling fails `program_policy_invalid` at
+policy admission with the field named — not a bare per-node `array schema bounds are invalid`.
+
+The published value of a pure Context cell is the closed envelope, and `outputSchema` describes
+exactly it:
+
+```text
+ContextCellValue = exact{schemaVersion,kind,items,sourceBranches,sourceItems,selectedSourceItems,chunks}
+schemaVersion = 1
+kind = "baton.context_value"
+items = <op-derived item schema>[0..policy.maxJoinMembers]
+sourceBranches = SafeId[0..policy.maxJoinMembers], unique
+sourceItems/selectedSourceItems/chunks = integer minimum 0, maximum null
+```
+
+Both array bounds use `policy.maxJoinMembers` so the envelope definition is always registrable
+(§93.5 array `maxItems` cannot exceed it), and §93.20 binds `maxJoinMembers` to the Context
+Program policy `maxResultItems` — the ceiling the evaluator actually enforces **on `items`**.
+A cell that evaluates successfully but exceeds the Program bound fails port validation and is
+never published; that refusal is intended, not a derivation error. The same honesty applies to
+`sourceBranches`: the evaluator's only branch-name bound is the Context policy
+`maxManifestBranches`, which no cross-constraint keeps under `maxResultItems`, so a sufficiently
+branchy cell is equally valid-and-unpublishable (recorded fail-closed gap). The evaluator emits
+`sourceBranches` in ascending unsigned-UTF-16 order; the schema enforces uniqueness only and
+never re-checks order. `mergeMeta` sums the integer counters across inputs, so no finite maximum
+is honest. Schema derivation is **non-injective**: the identity operations below make
+semantically distinct chains derive byte-identical schemas, and `collect` over equivalent inputs
+collapses order, so `outputSchema` MUST never be consumed as a program or derivation identifier.
+
+**Derived naming.** Every derived definition carries a pinned canonical name and version:
+`name = "baton.derived." + lowercaseHex(SHA-256(canonical(definition)))[0:16]`, where
+`definition` is the §93.5 `definition` member ALONE (never `schemaVersion`/`kind`/`name`/
+`version`/`digest`/`schemaId`), and `version = 1`. Resolution is bottom-up: derive each child
+schema, byte-match it against the registry to obtain its `SchemaRef` (definition-byte equality
+AND pinned name/version equality), substitute, then match the parent. A candidate whose
+structural bytes match but whose `name`/`version` differ from the pinned pair fails
+`program_invalid`, so an author label can never reach `nodeDigest`/`programDigest` (§93.4:
+"Author labels never affect identity"). Byte-identical definitions under other names are ignored;
+ambiguity after the pinned filter fails. A child `SchemaRef` the author supplied but the
+derivation did not produce is `program_invalid` — no weaker registered schema can stand in for
+the derived one. The same pinned-name rule back-ports to the §93.9 `collect` derivation for new
+Programs; historical collect-derived nodes replay as-is. Every derived object schema requires
+every property (`required:true`) — construction already guarantees presence — EXCEPT `project`,
+whose properties are all `required:false` to match the evaluator's silent omission.
+
+In 93a.3a the derivation keys on the reserved branch NAME `"repository"` (a manifest branch has
+no kind field; `name` is an arbitrary SafeId). A `source` op naming any other branch fails
+`program_invalid`: other branch kinds require a branch→schema binding no shipped authority
+provides. Nothing at normalization proves a `"repository"`-named branch actually contains
+repository chunks; conformance is established fail-closed at evaluation (a non-conforming cell
+never publishes) and is additionally previewable in 93a.3c. The checked-in item shape, with only
+§93.5-expressible constraints:
+
+```text
+RepositoryChunkItem = exact{path,chunk,gitMode,gitBlobOid,blobBytes,byteStart,byteEnd,contentDigest,text,language}
+path = string format:"text", 1..4096 bytes
+chunk = integer minimum 0, maximum null (ordinal)
+gitMode = string enum ["100644","100755"]
+gitBlobOid = GitSha
+blobBytes/byteStart/byteEnd = integer minimum 0, maximum null
+contentDigest = Digest
+text = string format:"text", 0..policy.maxValueBytes bytes (whitespace and empty permitted)
+language = string format:"text", 0..128 bytes
+```
+
+Each operation has exactly one checked-in schema transformer. Given input item schema(s) `I`
+(and `L`, `R` for `join`, and per-input `V_i`/`E_i` for `collect`/`finish`), the output `items`
+schema is:
+
+| op | items schema |
+| --- | --- |
+| `source("repository")` | `RepositoryChunkItem[]` |
+| `outline` | `[exact{itemCount:integer minimum 0 maximum null, fields:exact{type:"array", items:SafeId, minItems:0, maxItems:policy.maxJoinMembers, unique:true}}]` (exactly one item; the SafeId claim is construction-backed by the closed 93a.3a op set and `fieldName` validation, never assumed of arbitrary content; `fields` is `unique:true` because the evaluator emits a sorted unique union by construction — order is never re-checked) |
+| `index` | `exact{index:integer minimum 0 maximum null, value:I}[]` |
+| `search`, `slice`, `filter`, `sort`, `unique` | `I[]` (identity) |
+| `chunk(by)` | in 93a.3a only `by="item"` is admitted: `exact{key:Digest, items:I[]}[]` (the magic value reads no field; the evaluator emits `contextValueDigest(item)`). Field-keyed chunking fails `program_invalid` at derivation: the evaluator emits the raw field value or `null`, and §93.5 unions require object variants with discriminators, so a scalar-or-null key is inexpressible — the canonical-text evaluator rung or a §93.5 nullable form (also needed by §93.11 `valueRef = ValueRef|null`) restores it later. The required-field rule stands: the evaluator hard-fails the cell when any item lacks `by` |
+| `project(fields)` | `exact{type:"object", properties:fields∩I.properties, additionalProperties:false}[]` with every projected property `required:false`, matching the evaluator's silent omission of absent fields |
+| `join` | `exact{left:L, right:R}[]` (the evaluator hard-fails the cell unless the join key is present on every item of both sides before any matching) |
+| `collect` | `exact{type:"array", items:ContextCellValue(V), minItems:<inputs.length>, maxItems:<inputs.length>, unique:false}` — in 93a.3a ALL inputs MUST derive the same envelope schema `V`; heterogeneous `collect` chains fail `program_invalid` because §93.5 `array.items` is a single `SchemaRef` and no discriminator distinguishes envelopes (a positional/tuple form is a later schema-algebra rung, not 93a.3a) |
+| `coverage` | `[exact{selectedItems:integer minimum 0 maximum null, sourceBranches:exact{type:"array", items:SafeId, minItems:0, maxItems:policy.maxJoinMembers, unique:true}, manifestBranches:integer minimum 0 maximum null, unreadBranches:integer minimum 0 maximum null, chunks:integer minimum 0 maximum null, sourceItems:integer minimum 0 maximum null, selectedSourceItems:integer minimum 0 maximum null}]` (exactly one item; `sourceBranches` is `unique:true` because `mergeMeta` deduplicates branch names by construction, the same guarantee the envelope's `sourceBranches` relies on) |
+| `finish` | `[exact{value:ContextCellValue(V), evidence:exact{type:"array", items:ContextCellValue(V), minItems:<evidence.length>, maxItems:<evidence.length>, unique:false}, grounding:string-enum["asserted"]}]` (exactly one item) — value and every evidence input MUST likewise derive the same envelope schema `V`; heterogeneous `finish` chains fail `program_invalid`. The evaluator additionally caps `collect` inputs and `finish` evidence at 1..128; a chain whose arity exceeds `policy.maxJoinMembers` evaluates and then fails port validation, never publishing (fail-closed, recorded) |
+
+`sort` likewise hard-fails the cell unless every sort key is present on every item; these
+evaluator pre-failures are part of each op's contract and never weaken the derived schema.
+
+The full derived definition (envelope with the op-derived `items`, recursively through
+`collect`/`finish`) MUST already be present in `schemas` under its pinned name/version, resolved
+bottom-up as above; `outputSchema` is its byte-matching `SchemaRef`. A missing, ambiguous,
+unregistered, misnamed, or caller-substituted result schema fails normalization. Evaluation
+validates the exact produced `TypedValue` against the derived ref before publishing the port; a
+cell whose envelope does not validate never publishes. No runtime measurement, media type,
+content sniffing, or manifest lookup participates in the derivation.
+
+Known adjacent inconsistencies recorded for a later Context-policy slice (not 93a.3a):
+`boundedText`/`safeId` in `context-program.mjs` normalize NFKC while §93.3 mandates NFC; and the
+Context `SAFE_ID` alphabet is stricter than §93.3's (no `@`, no `/`), so a `format:"safe_id"`
+schema accepts branch names the evaluator cannot emit. §93.23 suite 5's historical-replay and
+explicit-migration rows are deferred to the slice that ships the §93.10 migration tool; no
+migration tool ships in 93a.3a.
 
 ## 93.11 Exhaustive effect-node schemas and asynchronous handles
 
@@ -2726,7 +2852,15 @@ Implementation starts with these exact red suites:
    and the temporary closed normalization refusal of `context` nodes pending 93a.3.
 5. `phase93a-context-purity-red.test.mjs`: pure operations accepted; legacy
    map/reduce/review/verify and unknown operations rejected before effect; historical replay stable;
-   explicit migration receives a new identity.
+   explicit migration receives a new identity. In 93a.3a this suite additionally pins the §93.10A
+   derivation rows: every per-op transformer (including homogeneous-only `collect`/`finish`
+   envelope recursion with exact arity bounds and heterogeneous-chain refusal), the pinned
+   derived name/version rule (`"baton.derived." + lowercaseHex(SHA-256(canonical(definition)))[0:16]`;
+   author labels never reach Program identity; misnamed or author-substituted child refs refuse),
+   all-required objects except all-optional `project`, the checked-in `repository` item shape and
+   non-`repository` branch refusal, `chunk` limited to `by="item"` (Digest key) with field-keyed
+   chunking refused until the canonical-text/nullable rung, bottom-up resolution, and caller
+   `outputSchema` substitution refusal.
 6. `phase93b-state-reducer-red.test.mjs`: branch-local PCs/stacks/rounds, pending/settled sets,
    immutable per-branch revision/CAS, schema/value/source-lineage digests, arrival-order operational
    revisions excluded from identity, canonical barrier permutations, admission/join fences,
@@ -2811,7 +2945,15 @@ validation, full validation, and a status update that distinguishes fixture from
      minimum binding proof is 93E.
    - **93a.3:** §93.10 purity proof enforcement with `deriveContextResultSchema` checked-in
      transformers, Python/TypeScript builders with shared conformance vectors, and preview.
-     Completes 93A.
+     Completes 93A. Sub-slices:
+     - **93a.3a:** §93.10A derivation — the closed envelope, the checked-in `repository`
+       branch item shape, the per-op transformer table, registry byte-match resolution, and
+       removal of the 93a.2 closed refusal for pure context nodes (suite 5 acceptance rows).
+     - **93a.3b:** TypeScript and Python builders over the closed Program grammar with the
+       checked-in shared conformance vectors (non-ASCII keys, exponent boundaries, zero,
+       escaped control characters, nested objects); both normalize to byte-identical Programs.
+     - **93a.3c:** preview — one admission-free normalization+derivation report (no cell
+       admission, no event append, no artifact write), matching the §93.22 registry entry.
 2. **93B — durable state machine:** Program admission, immutable revisions, branch PCs/stacks,
    parallel/await/join, repeat/child counters, pure reducer, and replay.
 3. **93C — effect authority:** five-phase protocol; call/map/reduce; separately approved gate;
