@@ -971,6 +971,17 @@ sourceBranches = SafeId[0..policy.maxEvidenceRefs], sorted unique
 sourceItems/selectedSourceItems/chunks = non-negative safe integer
 ```
 
+Both envelope bounds are Program-side projections, and cells beyond them never publish. Per
+§93.20, `policy.maxJoinMembers` is bound to the Context Program policy `maxResultItems` — the
+ceiling the evaluator actually enforces — so a cell that evaluates successfully but exceeds the
+Program bound fails port validation and is never published; that refusal is intended, not a
+derivation error. `sourceBranches` likewise caps at `policy.maxEvidenceRefs`: the evaluator merges
+branch names without a per-envelope cap, so a cell over more branches than the Program bound is
+equally valid-and-unpublishable. Schema derivation is **non-injective**: the identity operations
+below make semantically distinct chains derive byte-identical schemas, and `collect` over
+equivalent inputs collapses order, so `outputSchema` MUST never be consumed as a program or
+derivation identifier.
+
 In 93a.3a the only branch kind with a checked-in item shape is `repository`; a `source` op naming
 any other branch fails `program_invalid` (other branch kinds require a branch→schema binding that
 no shipped authority provides):
@@ -994,15 +1005,18 @@ schema is:
 | op | items schema |
 | --- | --- |
 | `source("repository")` | `RepositoryChunkItem[]` |
-| `outline` | `[exact{itemCount:non-negative safe integer, fields:SafeId[]}]` (exactly one item) |
+| `outline` | `[exact{itemCount:non-negative safe integer, fields:SafeId[]}]` (exactly one item; the SafeId claim is construction-backed by the closed 93a.3a op set and `fieldName` validation, never assumed of arbitrary content) |
 | `index` | `exact{index:non-negative safe integer, value:I}[]` |
 | `search`, `slice`, `filter`, `sort`, `unique` | `I[]` (identity) |
-| `chunk` | `exact{key:string, items:I[]}[]` |
+| `chunk(by)` | `exact{key:K, items:I[]}[]` where `by="item"` derives `K`=Digest, and otherwise `K` is the `by` field's property schema in `I` unioned with `null` (the evaluator emits the raw field value or `null`, never canonical text); `by` MUST be a required property of `I` — the evaluator hard-fails the cell when any item lacks it, and the derivation refuses chains whose `I` does not require it |
 | `project(fields)` | `exact{type:"object", properties:fields∩I.properties (required iff in I.required and named), additionalProperties:false}[]` |
-| `join` | `exact{left:L, right:R}[]` |
+| `join` | `exact{left:L, right:R}[]` (the evaluator hard-fails the cell unless the join key is present on every item of both sides before any matching) |
 | `collect` | one `ContextCellValue` per input, in input order: `ContextCellValue(V_i)[]` |
-| `coverage` | `[exact{selectedItems:integer, sourceBranches:SafeId[], manifestBranches:integer, unreadBranches:integer, chunks:integer, sourceItems:integer, selectedSourceItems:integer}]` (exactly one item) |
+| `coverage` | `[exact{selectedItems:non-negative safe integer, sourceBranches:SafeId[], manifestBranches:non-negative safe integer, unreadBranches:non-negative safe integer, chunks:non-negative safe integer, sourceItems:non-negative safe integer, selectedSourceItems:non-negative safe integer}]` (exactly one item) |
 | `finish` | `[exact{value:ContextCellValue(V), evidence:ContextCellValue(E_i)[1..], grounding:string-enum["asserted"]}]` (exactly one item) |
+
+`sort` likewise hard-fails the cell unless every sort key is present on every item; these
+evaluator pre-failures are part of each op's contract and never weaken the derived schema.
 
 The full derived definition (envelope with the op-derived `items`, recursively through
 `collect`/`finish`) MUST already be present in `schemas`; `outputSchema` is its byte-matching
