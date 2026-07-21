@@ -111,13 +111,6 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
     if (node.kind === 'context') contextNodeRefusal(node);
     records.set(node.nodeKey, { source: node, kind: node.kind });
   }
-  const hasParallel = [...records.values()].some((record) => record.kind === 'parallel');
-  if (!hasParallel && policy.maxParallelBranches !== null) {
-    fail('ProgramPolicy maxParallelBranches must be null for a Program without parallel nodes');
-  }
-  if (hasParallel && policy.maxParallelBranches === null) {
-    fail('ProgramPolicy maxParallelBranches must be a positive integer for a Program with parallel nodes');
-  }
   // 93a.2 statically present effect kinds are always empty: the source grammar admits only the
   // ten control/data node kinds above, and repeat/child bodies are digest refs to separately
   // normalized Programs rather than inline nodes, so no effect node is statically present.
@@ -154,6 +147,27 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
   if (!CONTROL_NODE_KINDS.includes(records.get(parsed.root.nodeKey).kind)) {
     fail('Program root must name a control node');
   }
+  const rootKey = parsed.root.nodeKey;
+
+  // §93.20 amended: serial classification keys on parallel nodes reachable from root through
+  // control edges. An unreachable parallel node is inert and never forces maxParallelBranches
+  // to be non-null.
+  const controlReachable = new Set();
+  const reachStack = [rootKey];
+  while (reachStack.length > 0) {
+    const key = reachStack.pop();
+    if (controlReachable.has(key)) continue;
+    controlReachable.add(key);
+    for (const ref of records.get(key).controlRefs) reachStack.push(ref.nodeKey);
+  }
+  const hasReachableParallel = [...controlReachable]
+    .some((key) => records.get(key).kind === 'parallel');
+  if (!hasReachableParallel && policy.maxParallelBranches !== null) {
+    fail('ProgramPolicy maxParallelBranches must be null for a Program without a reachable parallel node');
+  }
+  if (hasReachableParallel && policy.maxParallelBranches === null) {
+    fail('ProgramPolicy maxParallelBranches must be a positive integer for a Program with a reachable parallel node');
+  }
   const dataEdges = new Map();
   const controlEdges = new Map();
   const unionEdges = new Map();
@@ -188,7 +202,6 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
       for (const branch of record.source.branches) addDomEdge(key, branch.control.nodeKey);
     }
   }
-  const rootKey = parsed.root.nodeKey;
   const allKeys = [...records.keys()];
   const dominators = new Map();
   for (const key of allKeys) {
@@ -246,6 +259,51 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
         walked.add(ref.nodeKey);
         stack.push(...producer.source.items.map((item) => item.value));
       }
+    }
+  }
+
+  // Settle-then-read settlement domains (§93.9 amended). sequence.result,
+  // parallel.branches[].result, and branch.{then,otherwise}.result read only after their
+  // governing control chain settles, and are never dominator-checked. Each such PortRef must
+  // resolve to a pure data node (always safe) or to a control node inside the settlement domain
+  // of the chain that governs it: for a sequence, every step and each step's own domain; for a
+  // parallel branch, its own control chain's domain; for a branch arm, that arm's own control
+  // chain's domain. A branch/await/select/repeat/child node's domain is only itself: arm
+  // internals and non-all_terminal parallel branches never leak into an outer domain.
+  const settlementDomainCache = new Map();
+  const settlementDomain = (key) => {
+    if (settlementDomainCache.has(key)) return settlementDomainCache.get(key);
+    const record = records.get(key);
+    const domain = new Set([key]);
+    if (record.kind === 'sequence') {
+      for (const step of record.source.steps) {
+        for (const entry of settlementDomain(step.nodeKey)) domain.add(entry);
+      }
+    } else if (record.kind === 'parallel' && record.source.join.kind === 'all_terminal') {
+      for (const branch of record.source.branches) {
+        for (const entry of settlementDomain(branch.control.nodeKey)) domain.add(entry);
+      }
+    }
+    settlementDomainCache.set(key, domain);
+    return domain;
+  };
+  const checkSettleThenRead = (key, ref, domainKey) => {
+    const producer = records.get(ref.nodeKey);
+    if (!CONTROL_NODE_KINDS.includes(producer.kind)) return;
+    if (!settlementDomain(domainKey).has(ref.nodeKey)) {
+      fail(`Program node ${key} settle-then-read ref to ${ref.nodeKey} is outside its settlement domain`);
+    }
+  };
+  for (const [key, record] of records) {
+    if (record.kind === 'sequence') {
+      checkSettleThenRead(key, record.source.result, key);
+    } else if (record.kind === 'parallel') {
+      for (const branch of record.source.branches) {
+        checkSettleThenRead(key, branch.result, branch.control.nodeKey);
+      }
+    } else if (record.kind === 'branch') {
+      checkSettleThenRead(key, record.source.then.result, record.source.then.control.nodeKey);
+      checkSettleThenRead(key, record.source.otherwise.result, record.source.otherwise.control.nodeKey);
     }
   }
 

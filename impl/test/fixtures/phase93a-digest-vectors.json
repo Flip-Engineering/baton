@@ -1,0 +1,18 @@
+{
+  "_comment": "Phase 93a.2 externally-computed digest literals (tests-redteam.md P0-1/P0-2). Each digest was produced by hashing an independently-authored (clean-room, non-imported) canonicalizer's output with the external `shasum -a 256` tool, never by calling canonicalProgramDigest/canonicalProgramBytes from impl/src/program-ir. They pin exact canonical bytes so a canonicalization drift (code-point vs UTF-16 code-unit key sort, non-JCS number formatting, stray whitespace) fails these assertions even though the implementation would agree with itself. Preimages match the fixtures in phase93a-program-fixtures.mjs's programFixture() and the P93A2-R1 kitchen-sink Program.",
+  "workerPolicyRequestDigest": "754c3f5f9ceb530a6cf3e0322ce3cd0684e0911f9f1da174cfedf419d7bcb2e8",
+  "nodeTemplateDigest": "795e36b5e08c998819e3200bc493edea9a56058ea6b752c87890468f6249d0e4",
+  "catalogDigest": "f652718802cb3ea8d7f2b4f043339e4ee3960ca605f00b844d39271a534983d6",
+  "approvalTemplateDigest": "1970bf80fe3a00284f45296ef390f625407d30604c9cf7f414ad9a63af1f047d",
+  "kitchenSinkProgramDigest": "b217ef404e58b59b6ec7f214b8f8d48eb330411abf8705520ffdb6bf54fb65ad",
+  "kitchenSinkValueNodeId": "pnode:c1134d08fc4b8ba4fa4f86e4716e122fa7c72c00aa3c5528450fd458c5872da1",
+  "policyDigest": "1111e3651fe38551c696c47d58aa838f8bfeb72c61c6279472475cd2b296b805",
+  "baseSourceProgramDigest": "0a3be2bc303c63b0b7aeaab9554a4cfdb258cdcb52167a284046572bff047c71",
+  "baseSourceOwnershipDigest": "77de55a280639e9118ccf26cdb7885492b2b2eefbc9da129572d3d388515afac",
+  "nonBmpKeyVector": {
+    "_comment": "Classic UTF-16 code-unit vs Unicode code-point sort divergence: U+10000 (surrogate pair D800,DC00) sorts BEFORE U+E000 under unsigned UTF-16 code-unit comparison (0xD800 < 0xE000), but AFTER it under full code-point comparison (0x10000 > 0xE000).",
+    "object": { "𐀀": 2, "": 1 },
+    "canonicalBytesUtf16CodeUnitOrder": "{\"𐀀\":2,\"\":1}",
+    "digest": "9d4cdc71dda603c42f9b21d88d0c2ffc31a76cd1bd461d7359406cf169845f1e"
+  }
+}

@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import {
   ProgramIrError, canonicalProgramBytes, canonicalProgramDigest, canonicalValueText,
-  normalizeApprovalTemplate, normalizeProgramPolicy, normalizeProgramSource,
+  createApprovalTemplate, normalizeApprovalTemplate, normalizeProgramPolicy, normalizeProgramSource,
   normalizeRoleCatalog,
 } from '../src/program-ir/index.mjs';
 import { programFixture } from './fixtures/phase93a-program-fixtures.mjs';
@@ -11,6 +13,29 @@ import { programFixture } from './fixtures/phase93a-program-fixtures.mjs';
 const invalid = { code: 'program_invalid' };
 const policyInvalid = { code: 'program_policy_invalid' };
 const normalize = (source, authority) => normalizeProgramSource(source, { authority });
+// Externally-computed digest literals (tests-redteam.md P0-1): produced by an independent
+// clean-room canonicalizer plus the external `shasum -a 256` tool, never by calling this
+// module's own canonicalProgramDigest/canonicalProgramBytes. Breaks the self-referential
+// circularity where a comparison recomputes both sides with the implementation under test.
+const digestVectors = JSON.parse(readFileSync(
+  fileURLToPath(new URL('./fixtures/phase93a-digest-vectors.json', import.meta.url)), 'utf8'));
+
+test('P93A2-DV1: canonical byte serialization matches an independently-computed digest vector, '
+  + 'and non-BMP object keys sort by unsigned UTF-16 code unit, not code point', () => {
+  const f = programFixture();
+  const vector = digestVectors.nonBmpKeyVector;
+  assert.equal(
+    canonicalProgramBytes(vector.object, f.authority).toString('utf8'),
+    vector.canonicalBytesUtf16CodeUnitOrder);
+  assert.equal(canonicalProgramDigest(vector.object, f.authority), vector.digest);
+  // Sanity: this vector only pins UTF-16 code-unit ordering if a naive code-point sort would
+  // disagree with it (U+10000 > U+E000 as a code point, but its leading surrogate 0xD800 is
+  // less than 0xE000 as a UTF-16 code unit).
+  const [nonBmpKey, bmpKey] = Object.keys(vector.object);
+  assert.ok(nonBmpKey.codePointAt(0) > bmpKey.codePointAt(0));
+  assert.equal(vector.canonicalBytesUtf16CodeUnitOrder.indexOf(JSON.stringify(nonBmpKey))
+    < vector.canonicalBytesUtf16CodeUnitOrder.indexOf(JSON.stringify(bmpKey)), true);
+});
 
 test('P93A2-E1: ProgramSource envelope field set, version, kind, and language are closed', () => {
   const f = programFixture();
@@ -51,12 +76,83 @@ test('P93A2-RAW1: raw JSON text, bytes, duplicate keys, and byte authority behav
   assert.throws(() => normalize(oversized, f.authority), invalid);
 });
 
+test('P93A2-RAW2: raw JSON text at exactly maxProgramBytes is accepted', () => {
+  const f = programFixture();
+  const text = JSON.stringify(f.baseSource());
+  const padLength = f.authority.maxProgramBytes - Buffer.byteLength(text, 'utf8');
+  const padded = text.replace('{', `{${' '.repeat(padLength)}`);
+  assert.equal(Buffer.byteLength(padded, 'utf8'), f.authority.maxProgramBytes);
+  const result = normalize(padded, f.authority);
+  assert.equal(result.program.programDigest, normalize(f.baseSource(), f.authority).program.programDigest);
+});
+
+test('P93A2-BYTES1: policy maxProgramBytes bounds the normalized canonical Program', () => {
+  const f = programFixture();
+  const tight = f.makePolicy({ maxProgramBytes: 100 });
+  assert.throws(() => normalize(f.baseSource({ policy: tight }), f.authority),
+    (error) => error instanceof ProgramIrError && /maxProgramBytes/u.test(error.message));
+});
+
+test('P93A2-VC1: verificationContracts validate, refuse duplicates and malformed refs, and sort by contractDigest', () => {
+  const f = programFixture();
+  const contractA = f.verificationContract;
+  const contractB = {
+    ...f.verificationContract, contractId: 'fixture.contract.b',
+    contractDigest: f.sha256('fixture verification contract b'),
+  };
+  assert.doesNotThrow(() => normalize(f.baseSource({ verificationContracts: [contractA] }), f.authority));
+  assert.throws(() => normalize(
+    f.baseSource({ verificationContracts: [contractA, contractA] }), f.authority),
+    (error) => error instanceof ProgramIrError && /duplicate contractDigest/iu.test(error.message));
+  assert.throws(() => normalize(
+    f.baseSource({ verificationContracts: [{ ...contractA, approvalDigest: 'nope' }] }), f.authority),
+    (error) => error instanceof ProgramIrError && /is not a Digest/iu.test(error.message));
+  const [first, second] = [contractA, contractB].sort(
+    (left, right) => (left.contractDigest < right.contractDigest ? -1 : 1));
+  const result = normalize(
+    f.baseSource({ verificationContracts: [contractB, contractA] }), f.authority);
+  assert.deepEqual(result.program.verificationContracts.map((contract) => contract.contractDigest),
+    [first.contractDigest, second.contractDigest]);
+});
+
+test('P93A2-BOUND1: at-boundary counts for branches, candidates, and program nodes are accepted', () => {
+  const f = programFixture();
+  const branches = ['a', 'b', 'c', 'd'].map((name) => [name, 'selA', 'vs']);
+  assert.equal(branches.length, f.parallelPolicy.maxParallelBranches);
+  assert.doesNotThrow(() => normalize(f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('selA', [['k', 'vs']]),
+    f.nodes.parallel('par', branches, { kind: 'all_terminal' }),
+  ], { nodeKey: 'par' }, { policy: f.parallelPolicy }), f.authority));
+
+  const candidates = Array.from({ length: f.policy.maxJoinMembers }, (_unused, index) => [`c${index}`, 'vs']);
+  assert.doesNotThrow(() => normalize(f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('main', candidates),
+  ], { nodeKey: 'main' }), f.authority));
+
+  const steps = Array.from({ length: f.policy.maxProgramNodes }, () => 'main');
+  assert.doesNotThrow(() => normalize(f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('main', [['k', 'vs']]),
+    f.nodes.sequence('seq', steps, { nodeKey: 'vs', port: 'value' }),
+  ], { nodeKey: 'seq' }), f.authority));
+
+  const crowd = Array.from({ length: f.policy.maxProgramNodes - 1 },
+    (_unused, index) => f.nodes.value(`v${index}`, f.stringValue('x')));
+  assert.doesNotThrow(() => normalize(f.source([
+    ...crowd,
+    f.nodes.select('main', [['a', 'v0']]),
+  ], { nodeKey: 'main' }), f.authority));
+});
+
 test('P93A2-P1: ProgramPolicy shape, kind, version, digest formats, and policyDigest are exact', () => {
   const f = programFixture();
   const { policyDigest: _digest, ...body } = f.policy;
   const source = { ...body, policyDigest: f.policy.policyDigest };
   assert.deepEqual(normalizeProgramPolicy(source, f.authority), f.policy);
   assert.equal(Object.isFrozen(f.policy), true);
+  assert.equal(f.policy.policyDigest, digestVectors.policyDigest);
   assert.throws(() => normalizeProgramPolicy({ ...source, bogus: 1 }, f.authority), invalid);
   const { kind: _kind, ...missingKind } = source;
   assert.throws(() => normalizeProgramPolicy(missingKind, f.authority), invalid);
@@ -67,6 +163,13 @@ test('P93A2-P1: ProgramPolicy shape, kind, version, digest formats, and policyDi
     () => normalizeProgramPolicy({ ...source, contextPolicyDigest: 'xyz' }, f.authority), invalid);
   assert.throws(() => normalizeProgramPolicy(
     { ...source, policyDigest: f.sha256('tampered policy') }, f.authority), invalid);
+  for (const field of [
+    'canonicalOrderPolicyDigest', 'contextPolicyDigest', 'workflowPolicyDigest', 'goalPolicyDigest',
+    'capacityPolicyDigest', 'routeCardSetDigest', 'artifactPolicyDigest', 'lifecyclePolicyDigest',
+  ]) {
+    const candidate = { ...source, [field]: 'not-a-hex-digest' };
+    assert.throws(() => normalizeProgramPolicy(candidate, f.authority), invalid, field);
+  }
 });
 
 test('P93A2-P2: ProgramPolicy numerics fail program_policy_invalid and require the authority', () => {
@@ -86,6 +189,21 @@ test('P93A2-P2: ProgramPolicy numerics fail program_policy_invalid and require t
   }
   assert.throws(() => normalizeProgramPolicy(make({ maxParallelBranches: 4 })), policyInvalid);
   assert.throws(() => normalizeProgramPolicy(make({}), undefined), policyInvalid);
+  const NUMERIC_FIELDS = [
+    'maxProgramBytes', 'maxProgramNodes', 'maxProgramDepth', 'maxSchemaDefinitions', 'maxValueBytes',
+    'maxResultBytes', 'maxEvidenceRefs', 'maxRepeatRounds', 'maxChildDepth', 'maxEffectInstances',
+    'maxJoinMembers', 'maxJoinComparisons', 'maxStateRevisions', 'maxTraceBytes',
+  ];
+  for (const field of NUMERIC_FIELDS) {
+    for (const value of [0, -1, 1.5, '8']) {
+      assert.throws(() => normalizeProgramPolicy(make({ [field]: value }), f.authority),
+        policyInvalid, `${field}=${JSON.stringify(value)}`);
+    }
+  }
+  for (const value of [0, -1, 1.5, '8']) {
+    assert.throws(() => normalizeProgramPolicy(make({ maxParallelBranches: value }), f.authority),
+      policyInvalid, `maxParallelBranches=${JSON.stringify(value)}`);
+  }
 });
 
 test('P93A2-P3: serial Programs refuse a non-null maxParallelBranches and parallel refuses null', () => {
@@ -105,6 +223,15 @@ test('P93A2-P3: serial Programs refuse a non-null maxParallelBranches and parall
       && /maxParallelBranches/u.test(error.message));
   assert.doesNotThrow(() => normalize(
     f.source(parNodes, { nodeKey: 'par' }, { policy: f.parallelPolicy }), f.authority));
+  // §93.20 amended: serial classification keys on parallel nodes reachable from root. An
+  // unreachable parallel node is inert and never forces a non-null maxParallelBranches.
+  const unreachable = [
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('selA', [['k', 'vs']]),
+    f.nodes.parallel('par', [['a', 'selA', 'vs']], { kind: 'all_terminal' }),
+    f.nodes.select('main', [['a', 'vs']]),
+  ];
+  assert.doesNotThrow(() => normalize(f.source(unreachable, { nodeKey: 'main' }), f.authority));
 });
 
 test('P93A2-C1: catalog v2 accepts one valid role and rejects duplicate, empty, and over-bound roles', () => {
@@ -150,6 +277,7 @@ test('P93A2-C2: serviceTierRequest null rules are exhaustive for exact and none'
 
 test('P93A2-C3: workerPolicyRequest validates and its digest recomputes byte-exactly', () => {
   const f = programFixture();
+  assert.equal(f.workerPolicyRequestDigest, digestVectors.workerPolicyRequestDigest);
   const withRequest = (workerPolicyRequest, workerPolicyRequestDigest) => f.makeCatalogSource([{
     ...f.role, workerPolicyRequest, workerPolicyRequestDigest,
   }]);
@@ -190,6 +318,8 @@ test('P93A2-C3: workerPolicyRequest validates and its digest recomputes byte-exa
 
 test('P93A2-C4: inline NodeTemplate digest, worker-policy byte identity, and requiredEffects subset', () => {
   const f = programFixture();
+  assert.equal(f.nodeTemplateDigest, digestVectors.nodeTemplateDigest);
+  assert.equal(f.catalog.catalogDigest, digestVectors.catalogDigest);
   const withTemplate = (template, digest = canonicalProgramDigest(template, f.authority)) => {
     const role = {
       ...f.role,
@@ -280,6 +410,11 @@ test('P93A2-C5: content_ref template bindings validate shape only', () => {
   assert.throws(() => normalizeRoleCatalog(
     withBinding((draft) => { draft.kind = 'inline'; return draft; }),
     { authority: f.authority, policy: f.policy }), invalid);
+  // role.nodeTemplateDigest !== binding.nodeTemplateDigest for the content_ref form (C4 only
+  // covers this mismatch for the inline form).
+  const mismatchedRole = { ...f.role, templateBinding: binding, nodeTemplateDigest: f.sha256('unrelated digest') };
+  assert.throws(() => normalizeRoleCatalog(
+    f.makeCatalogSource([mismatchedRole]), { authority: f.authority, policy: f.policy }), invalid);
 });
 
 test('P93A2-T1: approval template projections reject role, effect-kind, and scope drift', () => {
@@ -305,10 +440,50 @@ test('P93A2-T1: approval template projections reject role, effect-kind, and scop
     { ...args, usedEffectKinds: ['call'] }), invalid);
   assert.throws(() => normalizeApprovalTemplate({ ...f.approvalTemplate, schemaVersion: 2 }, args), invalid);
   assert.throws(() => normalizeApprovalTemplate({ ...f.approvalTemplate, bogus: 1 }, args), invalid);
+  // §93.8 amended: repositoryScopes unions only inline template scopes; a catalog whose only
+  // role is content_ref is approvable with an empty repositoryScopes projection ([0..] bound).
+  const artifactDigest = f.sha256('immutable template bytes for scope test');
+  const contentRefBinding = {
+    kind: 'content_ref',
+    artifact: {
+      kind: 'artifact_ref', artifactId: `artifact:${artifactDigest}`, artifactDigest,
+      mediaType: 'application/json', bytes: 128,
+    },
+    nodeTemplateDigest: f.sha256('referenced template for scope test'),
+    approvalDigest: f.sha256('template approval for scope test'),
+  };
+  const contentRefRole = {
+    ...f.role, templateBinding: contentRefBinding, nodeTemplateDigest: contentRefBinding.nodeTemplateDigest,
+  };
+  const contentRefCatalog = normalizeRoleCatalog(
+    f.makeCatalogSource([contentRefRole]), { authority: f.authority, policy: f.policy });
+  const contentRefTemplate = createApprovalTemplate({
+    catalog: contentRefCatalog, usedEffectKinds: [], authority: f.authority, policy: f.policy,
+  });
+  assert.deepEqual(contentRefTemplate.repositoryScopes, []);
+  // repositoryScopes is accepted in unsorted input order and normalizes to canonical order.
+  assert.doesNotThrow(() => normalizeApprovalTemplate(
+    { ...f.approvalTemplate, repositoryScopes: ['src', 'docs'] }, args));
+  // A valid two-role catalog: roles and repositoryScopes both project as the sorted union.
+  const role2Template = { ...f.nodeTemplate, pathScope: ['lib'], contextScope: ['notes'] };
+  const role2TemplateDigest = canonicalProgramDigest(role2Template, f.authority);
+  const role2 = {
+    ...f.role, role: 'fixture.role.two',
+    templateBinding: { kind: 'inline', nodeTemplate: role2Template, nodeTemplateDigest: role2TemplateDigest },
+    nodeTemplateDigest: role2TemplateDigest,
+  };
+  const twoRoleCatalog = normalizeRoleCatalog(
+    f.makeCatalogSource([f.role, role2]), { authority: f.authority, policy: f.policy });
+  const twoRoleTemplate = createApprovalTemplate({
+    catalog: twoRoleCatalog, usedEffectKinds: [], authority: f.authority, policy: f.policy,
+  });
+  assert.deepEqual(twoRoleTemplate.roles, ['fixture.role', 'fixture.role.two'].sort());
+  assert.deepEqual(twoRoleTemplate.repositoryScopes, ['docs', 'lib', 'notes', 'src'].sort());
 });
 
 test('P93A2-T2: constraint digests, bound names, and templateDigest recompute exactly', () => {
   const f = programFixture();
+  assert.equal(f.approvalTemplate.templateDigest, digestVectors.approvalTemplateDigest);
   const args = { authority: f.authority, policy: f.policy, catalog: f.catalog, usedEffectKinds: [] };
   for (const tamper of [
     { routeConstraintDigest: f.sha256('tampered route constraint') },
@@ -324,26 +499,35 @@ test('P93A2-T2: constraint digests, bound names, and templateDigest recompute ex
   }
 });
 
-test('P93A2-N1: every source node kind rejects unknown and missing fields', () => {
+test('P93A2-N1: every source node kind rejects unknown fields and every exact field of its own field set', () => {
   const f = programFixture();
-  const v = f.nodes.value('v', f.stringValue('x'));
+  // The value probe uses a distinct nodeKey from wrap()'s own baseline 'v' node so the
+  // unknown-field/missing-field assertion isolates exactly one violation (P1-9: the original
+  // probe shared nodeKey 'v' with wrap's baseline, so it also always tripped a duplicate-nodeKey
+  // failure and never proved the exact-field check alone was doing the rejecting).
+  const v = f.nodes.value('vprobe', f.stringValue('x'));
   const cases = {
-    value: [v, ['nodeKey']],
+    value: [v, ['nodeKey', 'value', 'schema']],
     context: [f.nodes.context('c', {
       schemaVersion: 1, kind: 'baton.context_program', expression: { op: 'source', branch: 'repository' },
-    }), ['program']],
-    sequence: [f.nodes.sequence('s', ['main'], { nodeKey: 'v', port: 'value' }), ['steps']],
+    }), ['nodeKey', 'program']],
+    sequence: [f.nodes.sequence('s', ['main'], { nodeKey: 'v', port: 'value' }),
+      ['nodeKey', 'steps', 'result', 'outputSchema']],
     branch: [f.nodes.branch('b',
       { kind: 'is_true', value: { nodeKey: 'v', port: 'value' } },
       { control: { nodeKey: 'main' }, result: { nodeKey: 'v', port: 'value' } },
-      { control: { nodeKey: 'main' }, result: { nodeKey: 'v', port: 'value' } }), ['predicate']],
-    parallel: [f.nodes.parallel('p', [['a', 'main', 'v']], { kind: 'all_terminal' }), ['join']],
-    await: [f.nodes.await('a', 'p', { kind: 'all_terminal' }), ['target']],
-    collect: [f.nodes.collect('c2', [['alpha', 'v']]), ['items']],
-    select: [f.nodes.select('s2', [['a', 'v']]), ['selector']],
+      { control: { nodeKey: 'main' }, result: { nodeKey: 'v', port: 'value' } }),
+      ['nodeKey', 'predicate', 'then', 'otherwise', 'outputSchema']],
+    parallel: [f.nodes.parallel('p', [['a', 'main', 'v']], { kind: 'all_terminal' }),
+      ['nodeKey', 'branches', 'join', 'outputSchema']],
+    await: [f.nodes.await('a', 'p', { kind: 'all_terminal' }), ['nodeKey', 'target', 'join', 'outputSchema']],
+    collect: [f.nodes.collect('c2', [['alpha', 'v']]), ['nodeKey', 'items']],
+    select: [f.nodes.select('s2', [['a', 'v']]), ['nodeKey', 'candidates', 'selector', 'outputSchema']],
     repeat: [f.nodes.repeat('r', { nodeKey: 'v', port: 'value' },
-      { kind: 'is_true', value: { nodeKey: 'v', port: 'value' } }), ['bound']],
-    child: [f.nodes.child('k', { nodeKey: 'v', port: 'value' }), ['program']],
+      { kind: 'is_true', value: { nodeKey: 'v', port: 'value' } }),
+      ['nodeKey', 'initial', 'body', 'continueWhen', 'bound', 'resultSchema']],
+    child: [f.nodes.child('k', { nodeKey: 'v', port: 'value' }),
+      ['nodeKey', 'program', 'input', 'bound', 'resultSchema']],
   };
   for (const [kind, [node, required]] of Object.entries(cases)) {
     const policy = kind === 'parallel' || kind === 'await' ? f.parallelPolicy : f.policy;
@@ -414,6 +598,24 @@ test('P93A2-CTX1: context source grammar rejects outputSchema, impure ops, and u
   assert.throws(() => normalize(f.source([
     f.nodes.context('c', unknownOp), f.nodes.select('main', [['a', 'c', 'value']]),
   ], { nodeKey: 'main' }), f.authority), invalid);
+  // §93.10 "complete AST walk": a legacy op nested under a pure wrapper (filter's input) is
+  // still refused, not just an impure op at the top expression level.
+  const nestedImpure = {
+    schemaVersion: 1, kind: 'baton.context_program',
+    expression: {
+      op: 'filter',
+      input: {
+        op: 'map', input: { op: 'source', branch: 'repository' },
+        role: 'fixture.role', instruction: 'do it',
+      },
+      predicate: { field: 'name', operator: 'exists' },
+    },
+  };
+  assert.throws(() => normalize(f.source([
+    f.nodes.context('c', nestedImpure), f.nodes.select('main', [['a', 'c', 'value']]),
+  ], { nodeKey: 'main' }), f.authority),
+    (error) => error instanceof ProgramIrError && error.code === 'program_invalid'
+      && /pure/u.test(error.message));
 });
 
 test('P93A2-CTX2: a pure context node still fails closed at normalization pending 93a.3', () => {
@@ -586,8 +788,14 @@ test('P93A2-S1: collect derives its object schema, refuses caller schemas, and r
     f.nodes.select('main', [['packed', 'col']]),
   ], { nodeKey: 'main' }), f.authority);
   const collect = ok.program.nodes.find((node) => node.kind === 'collect');
-  assert.equal(collect.outputSchema.name, 'fixture.collect_result');
+  assert.deepEqual(collect.outputSchema, f.refs.collectResult);
   assert.deepEqual(collect.items.map((item) => item.name), ['alpha', 'beta']);
+  const vsNode = ok.program.nodes.find((node) => node.kind === 'value' && node.value.value === 's');
+  const vbNode = ok.program.nodes.find((node) => node.kind === 'value' && node.value.value === true);
+  assert.match(collect.items[0].value.nodeId, /^pnode:[a-f0-9]{64}$/u);
+  assert.deepEqual(collect.items[0].value, { nodeId: vsNode.nodeId, port: 'value', schema: f.refs.string });
+  assert.match(collect.items[1].value.nodeId, /^pnode:[a-f0-9]{64}$/u);
+  assert.deepEqual(collect.items[1].value, { nodeId: vbNode.nodeId, port: 'value', schema: f.refs.boolean });
   const withCallerSchema = {
     ...f.nodes.collect('col', [['alpha', 'vs'], ['beta', 'vb']]), outputSchema: f.refs.collectResult,
   };
@@ -633,6 +841,12 @@ test('P93A2-A1: await accepts only parallel/child handles with compatible joins'
   assert.throws(() => normalize(f.source([
     f.nodes.value('vs', f.stringValue('s')),
     f.nodes.await('aw', 'vs', { kind: 'all_terminal' }, 'value'),
+  ], { nodeKey: 'aw' }), f.authority), invalid);
+  // await-target refusal against a non-handle CONTROL producer (select), not just a data node.
+  assert.throws(() => normalize(f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('sel', [['k', 'vs']]),
+    f.nodes.await('aw', 'sel', { kind: 'all_terminal' }, 'value'),
   ], { nodeKey: 'aw' }), f.authority), invalid);
   const withChild = (join) => f.source([
     f.nodes.value('vs', f.stringValue('s')),
@@ -757,6 +971,28 @@ test('P93A2-SEL1: settlement_value requires exactly one settlement_envelope cand
   ], { nodeKey: 'seq' }, overrides), f.authority), invalid);
 });
 
+test('P93A2-RV1: settlement_value selector accepts requiredVerification "not_required"', () => {
+  const f = programFixture();
+  const selector = {
+    kind: 'settlement_value', member: { kind: 'self' },
+    requiredExecution: 'succeeded', requiredVerification: 'not_required',
+  };
+  const parAwait = [
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('selA', [['k', 'vs']]),
+    f.nodes.parallel('par', [['a', 'selA', 'vs']], { kind: 'all_terminal' }),
+    f.nodes.await('aw', 'par', { kind: 'all_terminal' }),
+  ];
+  const overrides = { policy: f.parallelPolicy };
+  const ok = normalize(f.source([
+    ...parAwait,
+    f.nodes.select('main', [['chosen', 'aw', 'settlement']], selector, f.refs.string),
+    f.nodes.sequence('seq', ['par', 'aw', 'main'], { nodeKey: 'main', port: 'value' }),
+  ], { nodeKey: 'seq' }, overrides), f.authority);
+  const select = ok.program.nodes.find((node) => node.kind === 'select' && node.selector.kind === 'settlement_value');
+  assert.equal(select.selector.requiredVerification, 'not_required');
+});
+
 test('P93A2-SEL2: selector grammar pins evidence_ranked criteria and settlement_value scalars', () => {
   const f = programFixture();
   const selectWith = (selector) => f.source([
@@ -817,6 +1053,223 @@ test('P93A2-SEL2: selector grammar pins evidence_ranked criteria and settlement_
     ...base, requiredExecution: 'succeeded', requiredVerification: 'passed',
     member: { kind: 'branch' },
   }), f.authority), invalid);
+});
+
+test('P93A2-DUP1: duplicate names are refused for collect items, select candidates, and parallel branches', () => {
+  const f = programFixture();
+  assert.throws(() => normalize(f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.collect('col', [['alpha', 'vs'], ['alpha', 'vs']]),
+    f.nodes.select('main', [['a', 'col']]),
+  ], { nodeKey: 'main' }), f.authority),
+    (error) => error instanceof ProgramIrError && /duplicate name/iu.test(error.message));
+  assert.throws(() => normalize(f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('main', [['a', 'vs'], ['a', 'vs']]),
+  ], { nodeKey: 'main' }), f.authority),
+    (error) => error instanceof ProgramIrError && /duplicate name/iu.test(error.message));
+  assert.throws(() => normalize(f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('selA', [['k', 'vs']]),
+    f.nodes.parallel('par', [['a', 'selA', 'vs'], ['a', 'selA', 'vs']], { kind: 'all_terminal' }),
+  ], { nodeKey: 'par' }, { policy: f.parallelPolicy }), f.authority),
+    (error) => error instanceof ProgramIrError && /duplicate name/iu.test(error.message));
+});
+
+test('P93A2-PERM1: preference order is semantic identity; unsorted set-like inputs normalize to sorted order', () => {
+  const f = programFixture();
+  const withPreference = (preference) => f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('selA', [['k', 'vs']]),
+    f.nodes.select('selB', [['k', 'vs']]),
+    f.nodes.parallel('par', [['a', 'selA', 'vs'], ['b', 'selB', 'vs']],
+      { kind: 'first_verified', preference }),
+  ], { nodeKey: 'par' }, { policy: f.parallelPolicy });
+  const ab = normalize(withPreference(['a', 'b']), f.authority);
+  const ba = normalize(withPreference(['b', 'a']), f.authority);
+  assert.notEqual(ab.program.programDigest, ba.program.programDigest);
+
+  const collectOrdered = normalize(f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.value('vb', f.booleanValue(true)),
+    f.nodes.collect('col', [['alpha', 'vs'], ['beta', 'vb']]),
+    f.nodes.select('main', [['packed', 'col']]),
+  ], { nodeKey: 'main' }), f.authority);
+  const collectReversed = normalize(f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.value('vb', f.booleanValue(true)),
+    f.nodes.collect('col', [['beta', 'vb'], ['alpha', 'vs']]),
+    f.nodes.select('main', [['packed', 'col']]),
+  ], { nodeKey: 'main' }), f.authority);
+  assert.equal(collectReversed.program.programDigest, collectOrdered.program.programDigest);
+  const col = collectOrdered.program.nodes.find((node) => node.kind === 'collect');
+  assert.deepEqual(col.items.map((item) => item.name), ['alpha', 'beta']);
+
+  const selOrdered = normalize(f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('main', [['a', 'vs'], ['b', 'vs']]),
+  ], { nodeKey: 'main' }), f.authority);
+  const selReversed = normalize(f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('main', [['b', 'vs'], ['a', 'vs']]),
+  ], { nodeKey: 'main' }), f.authority);
+  assert.equal(selReversed.program.programDigest, selOrdered.program.programDigest);
+
+  const parOrdered = normalize(f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('selA', [['k', 'vs']]),
+    f.nodes.select('selB', [['k', 'vs']]),
+    f.nodes.parallel('par', [['a', 'selA', 'vs'], ['b', 'selB', 'vs']], { kind: 'all_terminal' }),
+  ], { nodeKey: 'par' }, { policy: f.parallelPolicy }), f.authority);
+  const parReversed = normalize(f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('selA', [['k', 'vs']]),
+    f.nodes.select('selB', [['k', 'vs']]),
+    f.nodes.parallel('par', [['b', 'selB', 'vs'], ['a', 'selA', 'vs']], { kind: 'all_terminal' }),
+  ], { nodeKey: 'par' }, { policy: f.parallelPolicy }), f.authority);
+  assert.equal(parReversed.program.programDigest, parOrdered.program.programDigest);
+});
+
+test('P93A2-SELV1: all_verified selector accepts a sorted digest set and rejects duplicates and empty', () => {
+  const f = programFixture();
+  const selectWith = (selector) => f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('main', [['a', 'vs']], selector),
+  ], { nodeKey: 'main' });
+  const digestOne = f.sha256('all_verified selector contract one');
+  const digestTwo = f.sha256('all_verified selector contract two');
+  assert.throws(() => normalize(selectWith({
+    kind: 'all_verified', contractDigests: [digestOne, digestOne],
+  }), f.authority), invalid);
+  assert.throws(() => normalize(selectWith({
+    kind: 'all_verified', contractDigests: [],
+  }), f.authority), invalid);
+  const sorted = normalize(selectWith({
+    kind: 'all_verified', contractDigests: [digestTwo, digestOne],
+  }), f.authority);
+  const select = sorted.program.nodes.find((node) => node.kind === 'select');
+  assert.deepEqual(select.selector.contractDigests, [digestOne, digestTwo].sort());
+});
+
+test('P93A2-J2: await may repeat a byte-identical non-all_terminal join embedded on a parallel handle', () => {
+  const f = programFixture();
+  const parAwait = (join) => [
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('selA', [['k', 'vs']]),
+    f.nodes.parallel('par', [['a', 'selA', 'vs']], join),
+    f.nodes.await('aw', 'par', join),
+    f.nodes.sequence('seq', ['par', 'aw'], { nodeKey: 'aw', port: 'settlement' }, f.refs.envelope),
+  ];
+  const overrides = { policy: f.parallelPolicy, resultSchema: f.refs.envelope };
+  assert.doesNotThrow(() => normalize(
+    f.source(parAwait({ kind: 'operator_selected' }), { nodeKey: 'seq' }, overrides), f.authority));
+});
+
+test('P93A2-DOM1: await, predicate-operand, repeat.initial, and child.input dominance gaps are refused', () => {
+  const f = programFixture();
+  const dominanceInvalid = (error) => error instanceof ProgramIrError && /dominat/iu.test(error.message);
+  // Undominated await: br enters par only in its then-arm; aw awaits par as a sibling step.
+  const awaitNodes = [
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.value('vb', f.booleanValue(true)),
+    f.nodes.select('selA', [['k', 'vs']]),
+    f.nodes.parallel('par', [['a', 'selA', 'vs']], { kind: 'all_terminal' }),
+    f.nodes.select('selO', [['k', 'vs']]),
+    f.nodes.branch('br', { kind: 'is_true', value: { nodeKey: 'vb', port: 'value' } },
+      { control: { nodeKey: 'par' }, result: { nodeKey: 'vs', port: 'value' } },
+      { control: { nodeKey: 'selO' }, result: { nodeKey: 'vs', port: 'value' } }),
+    f.nodes.await('aw', 'par', { kind: 'all_terminal' }),
+    f.nodes.sequence('seq', ['br', 'aw'], { nodeKey: 'vs', port: 'value' }),
+  ];
+  assert.throws(() => normalize(
+    f.source(awaitNodes, { nodeKey: 'seq' }, { policy: f.parallelPolicy }), f.authority),
+    dominanceInvalid);
+  // Predicate-operand dominance: br2's predicate reads selT, which only dominates br1's then-arm.
+  const predicateNodes = [
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.value('vb', f.booleanValue(true)),
+    f.nodes.select('selT', [['k', 'vs']], { kind: 'operator_selected' }, f.refs.boolean),
+    f.nodes.select('selO', [['k', 'vs']]),
+    f.nodes.branch('br1', { kind: 'is_true', value: { nodeKey: 'vb', port: 'value' } },
+      { control: { nodeKey: 'selT' }, result: { nodeKey: 'vs', port: 'value' } },
+      { control: { nodeKey: 'selO' }, result: { nodeKey: 'vs', port: 'value' } }),
+    f.nodes.branch('br2', { kind: 'is_true', value: { nodeKey: 'selT', port: 'value' } },
+      { control: { nodeKey: 'selO' }, result: { nodeKey: 'vs', port: 'value' } },
+      { control: { nodeKey: 'selO' }, result: { nodeKey: 'vs', port: 'value' } }),
+    f.nodes.sequence('seq', ['br1', 'br2'], { nodeKey: 'vs', port: 'value' }),
+  ];
+  assert.throws(() => normalize(f.source(predicateNodes, { nodeKey: 'seq' }), f.authority),
+    dominanceInvalid);
+  // repeat.initial dominance: rep reads selT, which only dominates br's then-arm.
+  const repeatNodes = [
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.value('vb', f.booleanValue(true)),
+    f.nodes.select('selT', [['k', 'vs']]),
+    f.nodes.select('selO', [['k', 'vs']]),
+    f.nodes.branch('br', { kind: 'is_true', value: { nodeKey: 'vb', port: 'value' } },
+      { control: { nodeKey: 'selT' }, result: { nodeKey: 'vs', port: 'value' } },
+      { control: { nodeKey: 'selO' }, result: { nodeKey: 'vs', port: 'value' } }),
+    f.nodes.repeat('rep', { nodeKey: 'selT', port: 'value' },
+      { kind: 'is_true', value: { nodeKey: 'vb', port: 'value' } }),
+    f.nodes.sequence('seq', ['br', 'rep'], { nodeKey: 'vs', port: 'value' }),
+  ];
+  assert.throws(() => normalize(f.source(repeatNodes, { nodeKey: 'seq' }), f.authority),
+    dominanceInvalid);
+  // child.input dominance: ch reads selT, which only dominates br's then-arm.
+  const childNodes = [
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.value('vb', f.booleanValue(true)),
+    f.nodes.select('selT', [['k', 'vs']]),
+    f.nodes.select('selO', [['k', 'vs']]),
+    f.nodes.branch('br', { kind: 'is_true', value: { nodeKey: 'vb', port: 'value' } },
+      { control: { nodeKey: 'selT' }, result: { nodeKey: 'vs', port: 'value' } },
+      { control: { nodeKey: 'selO' }, result: { nodeKey: 'vs', port: 'value' } }),
+    f.nodes.child('ch', { nodeKey: 'selT', port: 'value' }),
+    f.nodes.sequence('seq', ['br', 'ch'], { nodeKey: 'vs', port: 'value' }),
+  ];
+  assert.throws(() => normalize(f.source(childNodes, { nodeKey: 'seq' }), f.authority),
+    dominanceInvalid);
+  // Predicate self-edge: br's own predicate reads its own not-yet-settled value port.
+  const selfEdgeNodes = [
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('selT', [['k', 'vs']]),
+    f.nodes.branch('br', { kind: 'is_true', value: { nodeKey: 'br', port: 'value' } },
+      { control: { nodeKey: 'selT' }, result: { nodeKey: 'vs', port: 'value' } },
+      { control: { nodeKey: 'selT' }, result: { nodeKey: 'vs', port: 'value' } }),
+  ];
+  assert.throws(() => normalize(f.source(selfEdgeNodes, { nodeKey: 'br' }), f.authority),
+    (error) => error instanceof ProgramIrError && /self/iu.test(error.message));
+  // Two-hop collect chain: selX <- colOuter <- colInner <- selT (undominated).
+  const twoHopNodes = [
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.value('vb', f.booleanValue(true)),
+    f.nodes.select('selT', [['k', 'vs']]),
+    f.nodes.branch('br', { kind: 'is_true', value: { nodeKey: 'vb', port: 'value' } },
+      { control: { nodeKey: 'selT' }, result: { nodeKey: 'selT', port: 'value' } },
+      { control: { nodeKey: 'selT' }, result: { nodeKey: 'vs', port: 'value' } }),
+    f.nodes.collect('colInner', [['x', 'selT']]),
+    f.nodes.collect('colOuter', [['y', 'colInner']]),
+    f.nodes.select('selX', [['packed', 'colOuter']]),
+    f.nodes.sequence('seq', ['br', 'selX'], { nodeKey: 'selX', port: 'value' }),
+  ];
+  assert.throws(() => normalize(f.source(twoHopNodes, { nodeKey: 'seq' }), f.authority),
+    dominanceInvalid);
+});
+
+test('P93A2-K5: byte-identical control nodes coalesce and rewrite sequence.steps refs', () => {
+  const f = programFixture();
+  const result = normalize(f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('selA', [['k', 'vs']]),
+    f.nodes.select('selB', [['k', 'vs']]),
+    f.nodes.sequence('seq', ['selA', 'selB'], { nodeKey: 'vs', port: 'value' }),
+  ], { nodeKey: 'seq' }), f.authority);
+  const selectNodes = result.program.nodes.filter((node) => node.kind === 'select');
+  assert.equal(selectNodes.length, 1);
+  const seq = result.program.nodes.find((node) => node.kind === 'sequence');
+  assert.equal(seq.steps.length, 2);
+  assert.equal(seq.steps[0].nodeId, selectNodes[0].nodeId);
+  assert.equal(seq.steps[1].nodeId, selectNodes[0].nodeId);
 });
 
 test('P93A2-J1: join grammar pins kind vocabulary, digest sets, and preference lists', () => {
@@ -1001,6 +1454,63 @@ test('P93A2-D2: dominance walks transitive collect chains to the control produce
   assert.doesNotThrow(() => normalize(build('br'), f.authority));
 });
 
+test('P93A2-D3: settle-then-read positions are settlement-domain-checked, not dominator-checked', () => {
+  const f = programFixture();
+  const settlementInvalid = (error) => error instanceof ProgramIrError
+    && error.code === 'program_invalid' && /settlement domain/iu.test(error.message);
+  // Exploit (sequence.result): selT is reached only through br's then-arm and does not settle
+  // seq; §93.9 requires this read refused even though selT never demand-dominance-fails.
+  const seqExploit = [
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.value('vb', f.booleanValue(true)),
+    f.nodes.select('selT', [['k', 'vs']]),
+    f.nodes.select('selO', [['k', 'vs']]),
+    f.nodes.branch('br', { kind: 'is_true', value: { nodeKey: 'vb', port: 'value' } },
+      { control: { nodeKey: 'selT' }, result: { nodeKey: 'selT', port: 'value' } },
+      { control: { nodeKey: 'selO' }, result: { nodeKey: 'vs', port: 'value' } }),
+    f.nodes.sequence('seq', ['br'], { nodeKey: 'selT', port: 'value' }),
+  ];
+  assert.throws(() => normalize(f.source(seqExploit, { nodeKey: 'seq' }), f.authority), settlementInvalid);
+  // Exploit (parallel.branches[].result): branch b's result names selT, which is not produced
+  // by branch b's own control chain (selA); the parallel's fence never settles selT for b.
+  const parExploit = [
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('selA', [['k', 'vs']]),
+    f.nodes.select('selT', [['k', 'vs']]),
+    f.nodes.parallel('par', [['a', 'selA', 'vs'], ['b', 'selA', 'selT']], { kind: 'all_terminal' }),
+  ];
+  assert.throws(() => normalize(
+    f.source(parExploit, { nodeKey: 'par' }, { policy: f.parallelPolicy }), f.authority),
+    settlementInvalid);
+  // Exploit (branch.{then,otherwise}.result): br2's then-arm control is selA, but its result
+  // names selT, which selA's settlement never produces.
+  const branchExploit = [
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.value('vb', f.booleanValue(true)),
+    f.nodes.select('selA', [['k', 'vs']]),
+    f.nodes.select('selT', [['k', 'vs']]),
+    f.nodes.branch('br2', { kind: 'is_true', value: { nodeKey: 'vb', port: 'value' } },
+      { control: { nodeKey: 'selA' }, result: { nodeKey: 'selT', port: 'value' } },
+      { control: { nodeKey: 'selA' }, result: { nodeKey: 'vs', port: 'value' } }),
+  ];
+  assert.throws(() => normalize(f.source(branchExploit, { nodeKey: 'br2' }), f.authority),
+    settlementInvalid);
+  // R1 natural form stays accepted: sequence.result = lastStep.value, lastStep a direct step.
+  const natural = [
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('sel', [['k', 'vs']]),
+    f.nodes.sequence('seq', ['sel'], { nodeKey: 'sel', port: 'value' }),
+  ];
+  assert.doesNotThrow(() => normalize(f.source(natural, { nodeKey: 'seq' }), f.authority));
+  // Pure data settle-then-read reads (value/collect/context) are always exempt from the check.
+  const pureData = [
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('sel', [['k', 'vs']]),
+    f.nodes.sequence('seq', ['sel'], { nodeKey: 'vs', port: 'value' }),
+  ];
+  assert.doesNotThrow(() => normalize(f.source(pureData, { nodeKey: 'seq' }), f.authority));
+});
+
 test('P93A2-PORT: producer port vocabulary is pinned per node kind', () => {
   const f = programFixture();
   const controlLeaves = [
@@ -1099,6 +1609,7 @@ test('P93A2-R1: a serial kitchen-sink Program normalizes to exact canonical shap
   assert.equal(program.language, 'baton-program-ir-v1');
   assert.equal(program.programId, `program:${program.programDigest}`);
   assert.match(program.programDigest, /^[a-f0-9]{64}$/u);
+  assert.equal(program.programDigest, digestVectors.kitchenSinkProgramDigest);
   assert.equal(program.schemaRegistryDigest, f.registry.schemaRegistryDigest);
   assert.equal(program.nodes.length, 9);
   assert.equal(program.root.nodeId, program.nodes.find((node) => node.kind === 'sequence').nodeId);
@@ -1109,6 +1620,8 @@ test('P93A2-R1: a serial kitchen-sink Program normalizes to exact canonical shap
     assert.equal(Object.hasOwn(node, 'nodeKey'), false);
     assert.equal(Object.isFrozen(node), true);
   }
+  const helloValueNode = program.nodes.find((node) => node.kind === 'value' && node.value.value === 'hello');
+  assert.equal(helloValueNode.nodeId, digestVectors.kitchenSinkValueNodeId);
   assert.equal(Object.isFrozen(program), true);
   assert.equal(Object.isFrozen(result), true);
   const reparsed = normalize(JSON.stringify(sourceObject), f.authority);
@@ -1157,9 +1670,11 @@ test('P93A2-O1: StaticEffectOwnership is exact, digest-bound, and empty for cont
   assert.equal(ownership.schemaVersion, 1);
   assert.equal(ownership.kind, 'baton.static_effect_ownership');
   assert.equal(ownership.programDigest, result.program.programDigest);
+  assert.equal(result.program.programDigest, digestVectors.baseSourceProgramDigest);
   assert.deepEqual(ownership.entries, []);
   const { ownershipDigest, ...sansDigest } = ownership;
   assert.equal(ownershipDigest, canonicalProgramDigest(sansDigest, f.authority));
+  assert.equal(ownershipDigest, digestVectors.baseSourceOwnershipDigest);
   assert.equal(Object.isFrozen(ownership), true);
   assert.deepEqual(Object.keys(result).sort(), ['program', 'staticEffectOwnership']);
 });

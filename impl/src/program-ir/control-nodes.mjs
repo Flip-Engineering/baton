@@ -474,11 +474,14 @@ export function validateSourceNode(node, { policy }) {
     branchArm(node.otherwise, `${label}.otherwise`);
     schemaRefShape(node.outputSchema, `${label}.outputSchema`);
   } else if (kind === 'parallel') {
-    if (policy.maxParallelBranches === null) {
-      fail('ProgramPolicy maxParallelBranches must be a positive integer for a Program with parallel nodes');
-    }
+    // §93.20 amended: an unreachable parallel node never forces policy.maxParallelBranches to
+    // be non-null, so this per-node shape check cannot assume it (reachability is determined
+    // later, at the Program level, once root and control edges are known). When null, fall back
+    // to the generic maxProgramNodes ceiling; the Program-level reachable-parallel check is what
+    // actually enforces the null/non-null binding.
+    const maxBranches = policy.maxParallelBranches ?? policy.maxProgramNodes;
     if (!Array.isArray(node.branches) || node.branches.length < 1
-      || node.branches.length > policy.maxParallelBranches) {
+      || node.branches.length > maxBranches) {
       fail(`${label}.branches must contain 1..maxParallelBranches entries`);
     }
     const names = new Set();
