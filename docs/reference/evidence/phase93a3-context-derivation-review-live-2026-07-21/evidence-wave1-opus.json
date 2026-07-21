@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "outcome": {
+    "role": "spec-redteam",
+    "phase": "work_completed",
+    "materializedVia": "refs/baton/results fallback",
+    "resultSha": "395c066aacdfd2157021e999554f466f4035ea29",
+    "materialized": "docs/reference/evidence/phase93a3-context-derivation-review-live-2026-07-21/spec-redteam.md"
+  },
+  "stops": [
+    {
+      "runId": "run-f12acdcea80c75f10e33222fb9aa69ca",
+      "stop": null,
+      "ownership": null
+    }
+  ],
+  "failure": null
+}
