@@ -38,7 +38,7 @@ export function programFixture() {
   const childHandleSchema = define('baton.child_handle', 'object', {
     type: 'object', properties: [], additionalProperties: false,
   });
-  const collectResultSchema = define('fixture.collect_result', 'object', {
+  const collectResultSchema = define('fixture.collect_renamed', 'object', {
     type: 'object', properties: [
       { name: 'alpha', schema: valueSchemaRef(stringSchema), required: true },
       { name: 'beta', schema: valueSchemaRef(booleanSchema), required: true },
