@@ -131,13 +131,14 @@ const member = (role, objective, options = {}) => ({
   ...options,
 });
 
-test('W1: waves.start begins members individually and explicitly approves them — nothing parks at awaiting_plan_approval', async (t) => {
+test('W1: waves.start begins members individually and explicitly approves them — nothing parks at awaiting_plan_approval; the result section alone materializes results', async (t) => {
   const scenarios = {
     alpha: { outcome: 'completed', edits: [{ path: 'reports/alpha.md', content: 'alpha report\n' }] },
     beta: { outcome: 'completed', edits: [{ path: 'reports/beta.md', content: 'beta report\n' }] },
   };
   const { baton, repo } = harness(t, scenarios);
-  const wave = await createWave(baton, { repoRoot: repo, 
+  // No repoRoot: the documented surface alone must materialize via the result section (P1-A fix).
+  const wave = await createWave(baton, {
     members: [member('alpha', 'write the alpha report'), member('beta', 'write the beta report')],
   });
   const progress = await wave.progress();
@@ -148,7 +149,7 @@ test('W1: waves.start begins members individually and explicitly approves them �
   assert.equal(outcomes.length, 2);
   for (const outcome of outcomes) {
     assert.ok(outcome.terminal === true || outcome.phase === 'work_completed', `${outcome.role} settled`);
-    assert.match(outcome.resultSha ?? '', /^[a-f0-9]{40}$/u, `${outcome.role} preserved result`);
+    assert.match(outcome.resultSha ?? '', /^[a-f0-9]{40}$/u, `${outcome.role} result section preserved result`);
   }
   await wave.close({ reason: 'W1 settled.' });
 
@@ -196,6 +197,7 @@ test('W3: settle always produces an outcome for every member, including a member
   assert.match(alpha.resultSha ?? '', /^[a-f0-9]{40}$/u);
   assert.equal(beta.resultSha, null);
   assert.equal(beta.terminal, false);
+  assert.equal(wave.pumpQuiescent, true, 'no pump outlives a timed-out settle (P2-E fix)');
   const stop = await wave.close({ reason: 'W3 watchdog cleanup.' });
   assert.equal(stop.remainingCount, 0);
 });
@@ -228,6 +230,13 @@ test('W5: a bare-directory scope fails admission with the corrective glob form; 
   await assert.rejects(() => createWave(baton, {
     members: [member('alpha', 'write the alpha report', { scope: ['reports'] })],
   }), (error) => error.code === 'wave_scope_invalid' && /reports\/\*\*/u.test(error.message));
+  mkdirSync(join(repo, 'assets', 'v1.2'), { recursive: true });
+  await assert.rejects(() => createWave(baton, { repoRoot: repo, members: [member('alpha', 'x', { scope: ['assets/v1.2'] })] }),
+    (error) => error.code === 'wave_scope_invalid' && /v1\.2\/\*\*/u.test(error.message),
+    'an existing dotted directory is rejected by the filesystem check');
+  await assert.rejects(() => createWave(baton, { repoRoot: repo, members: [member('alpha', 'x', { scope: ['nowhere'] })] }),
+    (error) => error.code === 'wave_scope_invalid' && /nowhere\/\*\*/u.test(error.message),
+    'a non-existent dotless path is rejected as an intended directory');
   const wave = await createWave(baton, { repoRoot: repo,  members: [member('alpha', 'write the alpha report')] });
   const outcomes = await wave.settle({ timeoutMs: 20_000 });
   assert.match(outcomes[0].resultSha ?? '', /^[a-f0-9]{40}$/u);
@@ -244,7 +253,8 @@ test('W6: stopMember stops exactly that member and the sibling continues to comp
     members: [member('alpha', 'write the alpha report'), member('beta', 'write the beta report slowly')],
   });
   const stop = await wave.stopMember('beta', { reason: 'selective stop proof' });
-  assert.ok(stop.admitted === true || stop.stopped === true, 'selective stop admitted');
+  assert.equal(stop.stopped, true, 'plain-run members stop through run.stop (P1-C branch honesty)');
+  assert.notEqual(stop.admitted, true, 'stop_member is a workflow-member path and must not be claimed for plain runs');
   const outcomes = await wave.settle({ timeoutMs: 20_000 });
   const alpha = outcomes.find((outcome) => outcome.role === 'alpha');
   const beta = outcomes.find((outcome) => outcome.role === 'beta');
@@ -252,6 +262,7 @@ test('W6: stopMember stops exactly that member and the sibling continues to comp
   assert.notEqual(beta.phase, 'work_completed');
   const closeStop = await wave.close({ reason: 'W6 settled.' });
   assert.equal(closeStop.remainingCount, 0);
+  assert.equal(closeStop.residueUnknown, false);
 });
 
 test('W7: materialized results disambiguate preserved pins by report path, never by newest-pin guessing', async (t) => {
@@ -285,10 +296,16 @@ test('W8: close returns per-member stops with ownership receipts and a zero-resi
   await wave.settle({ timeoutMs: 20_000 });
   const stop = await wave.close({ reason: 'W8 settled.' });
   assert.equal(stop.stops.length, 2);
+  for (const entry of stop.stops) {
+    assert.ok(entry.resources !== null, 'every stop carries the RunView resources block (P1-B fix)');
+    assert.equal(Number.isSafeInteger(entry.ownedCount), true, 'residue is a real count, never coalesced');
+  }
   assert.equal(stop.remainingCount, 0);
+  assert.equal(stop.residueUnknown, false);
   const record = wave.evidence();
   assert.equal(record.members.length, 2);
   assert.ok(Array.isArray(record.outcomes) && Array.isArray(record.progress) && Array.isArray(record.stops));
+  assert.equal(record.pumpDrained, true);
 });
 
 test('W9: the baton.waves facade starts a wave through the client getter', async (t) => {

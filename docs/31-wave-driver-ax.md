@@ -36,18 +36,23 @@ roster plus objectives — and the lifecycle semantics above are baton's own, no
 
 ```js
 const wave = await baton.waves.start({
-  members: [{ role, exact?, harness?, model?, effort?, scope, objective }],
-  verification?,              // optional deployment verification override
+  members: [{ role, exact?, harness?, model?, effort?, scope, objective, report? }],
   approve? = true,            // explicit distinct approval, receipted per member
+  repoRoot?,                  // optional: enables the refs/baton/results pin fallback AND the
+                              // filesystem bare-directory scope check
 });
 wave.runs                     // role -> BatonRun
 await wave.send(role, message, { delivery: 'now' });
 await wave.progress()         // per-member: phase, attention, elapsed, stoppable
 await wave.stopMember(role, { reason, timeoutMs? })   // retry-until-stoppable inside
 const outcomes = await wave.settle({ timeoutMs });    // per-member outcome, always produced
-const stop = await wave.close({ reason });            // per-member stops, zero-residue summary
+const stop = await wave.close({ reason });            // per-member stops, residue summary
 const record = wave.evidence();                       // structured wave record
 ```
+
+`report` is the member's own report path used only by the pin fallback's path-existence
+disambiguation. `verification` is deployment-level (openBaton `advanced.verification`), never a
+wave option.
 
 Baked semantics (each numbered to its failure mode):
 
@@ -60,16 +65,23 @@ Baked semantics (each numbered to its failure mode):
    changes nothing about the others' lifecycles.
 4. `work_completed` counts as success-terminal for outcome purposes; `selection_required`
    surfaces as attention, never as completion.
-5. Scopes are validated as globs at admission: a bare directory path (no glob magic, existing
-   directory semantics) fails `wave_scope_invalid` with the corrective form (`dir/**`).
-6. `settle` materializes each member's preserved result from the result section first, then
+5. Scopes are validated as globs at admission: a bare directory fails `wave_scope_invalid`
+   with the corrective form (`dir/**`). With `repoRoot` the filesystem decides; otherwise a
+   glob-magic + basename-dot heuristic decides, and a non-existent dotless path is treated as an
+   intended directory.
+6. `settle` materializes each member's preserved result from the result section first
+   (`run.inspect{depth:'section'}` — `section` is top-level, there is no `.view` wrapper), then
    from `refs/baton/results/*` **only** with git path-existence disambiguation and a start-time
-   window, never by newest-pin guessing.
-7. `stopMember` retries `application_action_scope_mismatch` /
-   `application_workflow_member_stop_unavailable` until the member's attempt is dispatched or a
-   bounded deadline, then reports honestly.
+   window, never by newest-pin guessing. The fallback needs both `repoRoot` and the member's
+   `report`.
+7. Waves compose plain runs today, so selective stop means: `stop_member` when the member run
+   advertises it (workflow members, retried while the attempt's `taskId` is unassigned — the
+   receipted dispatch race), else `run.stop` for plain members. The branch taken is recorded.
 8. `settle` always produces an outcome for every member — including after its own timeout —
-   and `close` returns a zero-residue summary (or the exact remaining count per member).
+   and `close` reports residue per member from the RunView `resources` block
+   (`ownedCount`/`cleanupState`); a stop view without it is reported as `residueUnknown`, never
+   coalesced to zero. Pumps never outlive the call that armed them: `settle` and `close` drain
+   outstanding `run.complete()` promises with a bounded grace before returning.
 
 ## Program-IR alignment (not a second scheduler)
 

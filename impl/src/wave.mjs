@@ -6,6 +6,8 @@
 // Program-IR aligned: members ↔ parallel branches, settle ↔ join, materialization ↔ collect,
 // stopMember ↔ selective stop, evidence() ↔ the wave trace. It holds no durable state of its own.
 
+import { statSync } from 'node:fs';
+
 const TERMINAL_PHASES = new Set(['stopped', 'failed', 'cancelled', 'completed']);
 const SUCCESS_RESTING = 'work_completed';
 const RESULT_SHA = /^[a-f0-9]{40,64}$/u;
@@ -16,7 +18,7 @@ function waveError(message, code = 'wave_invalid') {
   return Object.assign(new TypeError(message), { code });
 }
 
-function validateMember(member, index) {
+function validateMember(member, index, repoRoot = null) {
   if (!member || typeof member !== 'object' || Array.isArray(member)) {
     throw waveError(`wave member[${index}] must be an object`);
   }
@@ -32,11 +34,21 @@ function validateMember(member, index) {
   }
   for (const entry of member.scope) {
     if (!GLOB_MAGIC.test(entry)) {
-      const basename = entry.replace(/\/+$/u, '').split('/').pop() ?? '';
-      if (!basename.includes('.')) {
+      const trimmed = entry.replace(/\/+$/u, '');
+      const basename = trimmed.split('/').pop() ?? '';
+      // docs/31 #5: bare directories match only themselves under glob semantics. When repoRoot
+      // is available the filesystem decides; otherwise the basename-dot heuristic decides, and a
+      // non-existent dotless path is treated as an intended directory (corrective form shown).
+      let isDirectory = !basename.includes('.');
+      if (repoRoot) {
+        try {
+          isDirectory = statSync(`${repoRoot}/${trimmed}`).isDirectory() || isDirectory;
+        } catch { /* path does not exist yet; the heuristic stands */ }
+      }
+      if (isDirectory) {
         throw waveError(
           `wave member ${role} scope entry "${entry}" names a bare directory, which matches only `
-          + `itself under glob scope semantics; use "${entry.replace(/\/+$/u, '')}/**" instead`,
+          + `itself under glob scope semantics; use "${trimmed}/**" instead`,
           'wave_scope_invalid',
         );
       }
@@ -86,7 +98,7 @@ export async function createWave(baton, options = {}) {
   }
   const approve = options.approve !== false;
   const repoRoot = typeof options.repoRoot === 'string' && options.repoRoot.length > 0 ? options.repoRoot : null;
-  const members = membersInput.map(validateMember);
+  const members = membersInput.map((member, index) => validateMember(member, index, repoRoot));
   if (new Set(members.map(({ role }) => role)).size !== members.length) {
     throw waveError('wave member roles contain duplicates');
   }
@@ -140,13 +152,28 @@ export async function createWave(baton, options = {}) {
 
   const pumps = new Map();
   function armPump(entry) {
-    if (!entry.run || pumps.get(entry.member.role) === true) return;
-    pumps.set(entry.member.role, true);
-    entry.run.complete().then(
-      () => { pumps.set(entry.member.role, false); },
-      () => { pumps.set(entry.member.role, false); },
+    if (!entry.run || pumps.get(entry.member.role)) return;
+    const promise = entry.run.complete().then(
+      () => { pumps.delete(entry.member.role); },
+      () => { pumps.delete(entry.member.role); },
     );
+    pumps.set(entry.member.role, promise);
   }
+
+  // docs/31: pumps never outlive the call that armed them. Before settle returns (including its
+  // own timeout), drain outstanding pumps with a bounded grace so nothing keeps driving in the
+  // background and races close().
+  async function drainPumps(graceMs = 2_000) {
+    if (pumps.size === 0) return true;
+    const pending = [...pumps.values()];
+    const drained = await Promise.race([
+      Promise.allSettled(pending).then(() => true),
+      new Promise((resolve) => setTimeout(() => resolve(false), graceMs)),
+    ]);
+    return drained;
+  }
+
+  function pumpQuiescent() { return pumps.size === 0; }
 
   async function send(role, message, options = {}) {
     const entry = state.members.get(role);
@@ -180,9 +207,11 @@ export async function createWave(baton, options = {}) {
 
   async function materialize(entry) {
     const { member, run } = entry;
+    // Result section first (docs/31 #6): run.inspect returns `section` at top level — there is
+    // no `.view` wrapper; a `.view.section` read silently disables this path.
     try {
       const results = await run.inspect({ depth: 'section', section: 'result' });
-      const value = results?.view?.section?.items?.[0]?.value;
+      const value = results?.section?.items?.[0]?.value;
       if (RESULT_SHA.test(value?.sha ?? '')) return value.sha;
     } catch { /* section projection can be empty post-stop */ }
     if (!repoRoot || !member.report) return null;
@@ -244,23 +273,37 @@ export async function createWave(baton, options = {}) {
       }
       state.outcomes.push(outcome);
     }
+    const pumpsDrained = await drainPumps();
+    state.pumpDrained = pumpsDrained && pumpQuiescent();
     return [...state.outcomes];
   }
 
   async function close({ reason = 'Wave settled.' } = {}) {
+    await drainPumps();
     const stops = [];
     for (const [role, entry] of state.members) {
       if (!entry.run) continue;
       try {
         const stopped = await entry.run.stop(reason);
-        stops.push({ role, stop: stopped?.stop ?? null, ownership: stopped?.ownership ?? null });
+        const outline = stopped?.outline ?? {};
+        // Residue truth is the RunView's resources block (ownedCount/cleanupState); a stop view
+        // without it is reported as unknown, never coalesced to zero (docs/31 #8).
+        const resources = outline.resources ?? null;
+        const ownedCount = Number.isSafeInteger(resources?.ownedCount) ? resources.ownedCount : null;
+        stops.push({
+          role,
+          stop: stopped?.stop ?? null,
+          resources: resources ? { state: resources.state ?? null, cleanupState: resources.cleanupState ?? null, ownedCount } : null,
+          ownedCount,
+        });
       } catch (error) {
-        stops.push({ role, error: { code: error?.code ?? null, message: String(error?.message ?? error) } });
+        stops.push({ role, ownedCount: null, error: { code: error?.code ?? null, message: String(error?.message ?? error) } });
       }
     }
     state.stops.push(...stops);
-    const remainingCount = stops.reduce((total, stop) => total + (stop.error ? 1 : (stop.ownership?.remainingCount ?? 0)), 0);
-    return { reason, stops, remainingCount };
+    const remainingCount = stops.reduce((total, stop) => total + (stop.ownedCount ?? 1), 0);
+    const residueUnknown = stops.some((stop) => stop.ownedCount === null);
+    return { reason, stops, remainingCount, residueUnknown };
   }
 
   function evidence() {
@@ -272,6 +315,7 @@ export async function createWave(baton, options = {}) {
       steering: [...state.steering],
       stops: [...state.stops],
       progress: [...state.progress],
+      pumpDrained: state.pumpDrained === true,
     };
   }
 
@@ -279,6 +323,7 @@ export async function createWave(baton, options = {}) {
     get runs() {
       return new Map([...state.members.entries()].filter(([, entry]) => entry.run).map(([role, entry]) => [role, entry.run]));
     },
+    get pumpQuiescent() { return pumpQuiescent(); },
     progress, send, stopMember, settle, close, evidence,
   };
   return Object.freeze(wave);
