@@ -9,12 +9,16 @@ issue list.
 
 ## Current checkpoint (2026-07-21)
 
-- Canonical `npm test` in `impl/`: **2478/2478 green**.
-- Frontier: Phase 93a.3a (closed Context result-schema derivation) merged as PR #14; Phase 93a.2
-  (closed Program source grammar + canonical normalizer) merged as PR #13.
-- Open tracker: issues #2–#12 (routing axes, locale-independent canonical ordering,
+- Canonical `npm test` in `impl/`: **2488/2488 green**.
+- Frontier: the Wave driver surface (doc 31) merged as PR #15 — first-class orchestration
+  waves with failure-mode-baked semantics; Phase 93a.3a (closed Context result-schema
+  derivation) merged as PR #14; Phase 93a.2 (closed Program source grammar + canonical
+  normalizer) merged as PR #13.
+- Open tracker: issues #2–#19 (routing axes, locale-independent canonical ordering,
   cross-controller process forests, review-report semantics, worker policy, Program v1
-  composition, the AX spine, Claude credential projection, nested orchestration).
+  composition, the AX spine, Claude credential projection, nested orchestration, and the
+  REFLEX-1..4 reflexive-orchestration verticals — decision channels, task boards, knowledge
+  hand-off objects, REPL objects, docs/32).
 
 ## Phase history
 
