@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "failure": {
+    "name": "TypeError",
+    "code": null,
+    "message": "Cannot read properties of undefined (reading 'start')"
+  },
+  "steering": []
+}
