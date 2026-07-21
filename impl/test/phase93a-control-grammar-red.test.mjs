@@ -1393,6 +1393,26 @@ test('P93A2-B1: branch, item, step, and node counts obey policy bounds', () => {
     f.nodes.parallel('par', branches, { kind: 'all_terminal' }),
   ], { nodeKey: 'par' }, { policy: f.parallelPolicy }), f.authority),
     (error) => error instanceof ProgramIrError && /maxParallelBranches/u.test(error.message));
+  // §93.20/§93.9 + code (wave-3.5 decision 7): an UNREACHABLE parallel's branch count is bounded
+  // by the pure shape ceiling maxProgramNodes, never by the concurrency authority
+  // maxParallelBranches — an inert node grants no execution authority. 'par' here is never
+  // referenced from root ('main'), so it is unreachable; the serial policy's
+  // maxParallelBranches=null is consistent with §93.20's reachable-parallel invariant.
+  const inertBranches = (count) => Array.from(
+    { length: count }, (_unused, index) => [`b${index}`, 'selA', 'vs']);
+  assert.throws(() => normalize(f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('selA', [['k', 'vs']]),
+    f.nodes.parallel('par', inertBranches(f.policy.maxProgramNodes + 1), { kind: 'all_terminal' }),
+    f.nodes.select('main', [['a', 'vs']]),
+  ], { nodeKey: 'main' }), f.authority),
+    (error) => error instanceof ProgramIrError && /maxProgramNodes/u.test(error.message));
+  assert.doesNotThrow(() => normalize(f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.select('selA', [['k', 'vs']]),
+    f.nodes.parallel('par', inertBranches(f.policy.maxProgramNodes), { kind: 'all_terminal' }),
+    f.nodes.select('main', [['a', 'vs']]),
+  ], { nodeKey: 'main' }), f.authority));
   const items = Array.from({ length: f.policy.maxJoinMembers + 1 },
     (_unused, index) => [`item${index}`, 'vs']);
   assert.throws(() => normalize(f.source([
@@ -1452,6 +1472,25 @@ test('P93A2-D2: dominance walks transitive collect chains to the control produce
   assert.throws(() => normalize(build('selT'), f.authority),
     (error) => error instanceof ProgramIrError && /dominat/iu.test(error.message));
   assert.doesNotThrow(() => normalize(build('br'), f.authority));
+
+  // True two-hop row (Blue P1-3 / wave-3.5 decision 8): colOuter <- colInner <- itemTarget. A
+  // one-level-only walk would refuse the accepted row below (it would stop at colInner's own
+  // "value" port, a pure-data leaf, and never see through to colOuter's item).
+  const buildTwoHop = (itemTarget) => f.source([
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.value('vb', f.booleanValue(true)),
+    f.nodes.select('selT', [['k', 'vs']]),
+    f.nodes.branch('br', { kind: 'is_true', value: { nodeKey: 'vb', port: 'value' } },
+      { control: { nodeKey: 'selT' }, result: { nodeKey: 'selT', port: 'value' } },
+      { control: { nodeKey: 'selT' }, result: { nodeKey: 'vs', port: 'value' } }),
+    f.nodes.collect('colInner', [['alpha', itemTarget], ['beta', 'vb']]),
+    f.nodes.collect('colOuter', [['inner', 'colInner']]),
+    f.nodes.select('selX', [['packed', 'colOuter']]),
+    f.nodes.sequence('seq', ['br', 'selX'], { nodeKey: 'selX', port: 'value' }),
+  ], { nodeKey: 'seq' }, { schemas: f.schemasWithCollectOuter });
+  assert.throws(() => normalize(buildTwoHop('selT'), f.authority),
+    (error) => error instanceof ProgramIrError && /dominat/iu.test(error.message));
+  assert.doesNotThrow(() => normalize(buildTwoHop('br'), f.authority));
 });
 
 test('P93A2-D3: settle-then-read positions are settlement-domain-checked, not dominator-checked', () => {
@@ -1495,6 +1534,74 @@ test('P93A2-D3: settle-then-read positions are settlement-domain-checked, not do
   ];
   assert.throws(() => normalize(f.source(branchExploit, { nodeKey: 'br2' }), f.authority),
     settlementInvalid);
+  // Laundered exploit (sequence.result via one collect hop): §93.9 clause 2 must walk the
+  // transitive pure-data closure, not just the immediate producer, or this re-admits seqExploit
+  // above through a single collect of indirection (wave-3.5 decision 1 / blue-review P0-1).
+  const seqLaundered = [
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.value('vb', f.booleanValue(true)),
+    f.nodes.select('selT', [['k', 'vs']]),
+    f.nodes.select('selO', [['k', 'vs']]),
+    f.nodes.branch('br', { kind: 'is_true', value: { nodeKey: 'vb', port: 'value' } },
+      { control: { nodeKey: 'selT' }, result: { nodeKey: 'selT', port: 'value' } },
+      { control: { nodeKey: 'selO' }, result: { nodeKey: 'vs', port: 'value' } }),
+    f.nodes.collect('col', [['alpha', 'selT'], ['beta', 'vb']]),
+    f.nodes.sequence('seq', ['br'], { nodeKey: 'col', port: 'value' }, f.refs.collectResult),
+  ];
+  assert.throws(() => normalize(f.source(seqLaundered, { nodeKey: 'seq' }), f.authority),
+    settlementInvalid);
+  // Laundered exploit (parallel.branches[].result via one collect hop): branch b's result names
+  // col.value, and col reads selT, which branch b's own control chain (selA) never produces.
+  const parLaundered = [
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.value('vb', f.booleanValue(true)),
+    f.nodes.select('selA', [['k', 'vs']]),
+    f.nodes.select('selT', [['k', 'vs']]),
+    f.nodes.collect('col', [['alpha', 'selT'], ['beta', 'vb']]),
+    f.nodes.parallel('par', [
+      ['a', 'selA', 'vs'],
+      ['b', 'selA', 'col', 'value', f.refs.collectResult],
+    ], { kind: 'all_terminal' }),
+  ];
+  assert.throws(() => normalize(
+    f.source(parLaundered, { nodeKey: 'par' }, { policy: f.parallelPolicy }), f.authority),
+    settlementInvalid);
+  // Laundered exploit (branch.{then,otherwise}.result via one collect hop): br2's then-arm
+  // control is selA, but its result names colBad.value, and colBad reads selT, which selA's
+  // settlement never produces. The otherwise arm reads a same-shape collect over only pure data
+  // (colSafe), which stays accepted, so the arm outputSchema is consistent while only the then
+  // arm is unsound.
+  const branchLaundered = [
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.value('vb', f.booleanValue(true)),
+    f.nodes.select('selA', [['k', 'vs']]),
+    f.nodes.select('selT', [['k', 'vs']]),
+    f.nodes.collect('colBad', [['alpha', 'selT'], ['beta', 'vb']]),
+    f.nodes.collect('colSafe', [['alpha', 'vs'], ['beta', 'vb']]),
+    f.nodes.branch('br2', { kind: 'is_true', value: { nodeKey: 'vb', port: 'value' } },
+      { control: { nodeKey: 'selA' }, result: { nodeKey: 'colBad', port: 'value' } },
+      { control: { nodeKey: 'selA' }, result: { nodeKey: 'colSafe', port: 'value' } },
+      f.refs.collectResult),
+  ];
+  assert.throws(() => normalize(f.source(branchLaundered, { nodeKey: 'br2' }), f.authority),
+    settlementInvalid);
+  // Two-hop collect chain (wave-3.5 decision 8): the settle-then-read walk must recurse through
+  // nested collects, not stop after one level.
+  const seqTwoHop = [
+    f.nodes.value('vs', f.stringValue('s')),
+    f.nodes.value('vb', f.booleanValue(true)),
+    f.nodes.select('selT', [['k', 'vs']]),
+    f.nodes.select('selO', [['k', 'vs']]),
+    f.nodes.branch('br', { kind: 'is_true', value: { nodeKey: 'vb', port: 'value' } },
+      { control: { nodeKey: 'selT' }, result: { nodeKey: 'selT', port: 'value' } },
+      { control: { nodeKey: 'selO' }, result: { nodeKey: 'vs', port: 'value' } }),
+    f.nodes.collect('colInner', [['alpha', 'selT'], ['beta', 'vb']]),
+    f.nodes.collect('colOuter', [['inner', 'colInner']]),
+    f.nodes.sequence('seq', ['br'], { nodeKey: 'colOuter', port: 'value' }, f.refs.collectOuter),
+  ];
+  assert.throws(() => normalize(
+    f.source(seqTwoHop, { nodeKey: 'seq' }, { schemas: f.schemasWithCollectOuter }), f.authority),
+    settlementInvalid);
   // R1 natural form stays accepted: sequence.result = lastStep.value, lastStep a direct step.
   const natural = [
     f.nodes.value('vs', f.stringValue('s')),
@@ -1502,7 +1609,9 @@ test('P93A2-D3: settle-then-read positions are settlement-domain-checked, not do
     f.nodes.sequence('seq', ['sel'], { nodeKey: 'sel', port: 'value' }),
   ];
   assert.doesNotThrow(() => normalize(f.source(natural, { nodeKey: 'seq' }), f.authority));
-  // Pure data settle-then-read reads (value/collect/context) are always exempt from the check.
+  // Pure data reads are exempt from the *dominator* check (clause 1), not from the
+  // settlement-domain check (clause 2): the read below targets vs directly, a plain value node,
+  // which trivially passes the settlement-domain walk (it is never a control producer at all).
   const pureData = [
     f.nodes.value('vs', f.stringValue('s')),
     f.nodes.select('sel', [['k', 'vs']]),

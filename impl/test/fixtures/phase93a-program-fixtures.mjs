@@ -48,6 +48,17 @@ export function programFixture() {
     stringSchema, booleanSchema, stringsSchema, envelopeSchema, parallelHandleSchema,
     childHandleSchema, collectResultSchema,
   ], authority);
+  // Wraps fixture.collect_result so a two-hop collect chain (colOuter <- colInner <- producer)
+  // is constructible: fixture.collect_result cannot nest itself (wave-3.5 decision 8). Kept out
+  // of the shared `registry`/default `source()` schemas array so it never shifts the canonical
+  // bytes (and pinned digest vectors) of every other fixture-built Program; tests that need it
+  // pass `{ schemas: schemasWithCollectOuter }` as a per-call override instead.
+  const collectOuterSchema = define('fixture.collect_outer', 'object', {
+    type: 'object', properties: [
+      { name: 'inner', schema: valueSchemaRef(collectResultSchema), required: true },
+    ], additionalProperties: false,
+  });
+  const schemasWithCollectOuter = [...registry.schemas, collectOuterSchema];
   const refs = {
     string: valueSchemaRef(stringSchema),
     boolean: valueSchemaRef(booleanSchema),
@@ -56,6 +67,7 @@ export function programFixture() {
     parallelHandle: valueSchemaRef(parallelHandleSchema),
     childHandle: valueSchemaRef(childHandleSchema),
     collectResult: valueSchemaRef(collectResultSchema),
+    collectOuter: valueSchemaRef(collectOuterSchema),
   };
 
   const makePolicy = (overrides = {}) => createProgramPolicy({
@@ -207,10 +219,11 @@ export function programFixture() {
   const baseSource = (overrides = {}) => source(baseNodes(), { nodeKey: 'main' }, overrides);
 
   return {
-    authority, registry, refs, schemas: {
+    authority, registry, refs, schemasWithCollectOuter, schemas: {
       string: stringSchema, boolean: booleanSchema, strings: stringsSchema,
       envelope: envelopeSchema, parallelHandle: parallelHandleSchema,
       childHandle: childHandleSchema, collectResult: collectResultSchema,
+      collectOuter: collectOuterSchema,
     },
     policy, makePolicy, parallelPolicy, catalog, catalogSource, makeCatalogSource,
     approvalTemplate, manifest, verificationContract, role, nodeTemplate, nodeTemplateDigest,

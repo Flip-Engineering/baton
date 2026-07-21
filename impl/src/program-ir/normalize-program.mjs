@@ -168,6 +168,16 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
   if (hasReachableParallel && policy.maxParallelBranches === null) {
     fail('ProgramPolicy maxParallelBranches must be a positive integer for a Program with a reachable parallel node');
   }
+  // §93.20 amended: a reachable parallel's branch count is additionally bounded by the
+  // concurrency authority maxParallelBranches now that reachability is known; an unreachable
+  // (inert) parallel keeps only the pure-shape maxProgramNodes ceiling already enforced in
+  // control-nodes.mjs, since it grants no execution authority.
+  for (const key of controlReachable) {
+    const record = records.get(key);
+    if (record.kind === 'parallel' && record.source.branches.length > policy.maxParallelBranches) {
+      fail(`Program parallel node ${key} branches must contain 1..maxParallelBranches entries`);
+    }
+  }
   const dataEdges = new Map();
   const controlEdges = new Map();
   const unionEdges = new Map();
@@ -264,12 +274,15 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
 
   // Settle-then-read settlement domains (§93.9 amended). sequence.result,
   // parallel.branches[].result, and branch.{then,otherwise}.result read only after their
-  // governing control chain settles, and are never dominator-checked. Each such PortRef must
-  // resolve to a pure data node (always safe) or to a control node inside the settlement domain
-  // of the chain that governs it: for a sequence, every step and each step's own domain; for a
-  // parallel branch, its own control chain's domain; for a branch arm, that arm's own control
-  // chain's domain. A branch/await/select/repeat/child node's domain is only itself: arm
-  // internals and non-all_terminal parallel branches never leak into an outer domain.
+  // governing control chain settles, and are never dominator-checked. Each such PortRef is walked
+  // through the transitive pure-data closure (collect items recursively; value/context add no
+  // further refs — the same walk the demand-edge relation performs above) and every control
+  // producer so reached must lie inside the settlement domain of the chain that governs the
+  // position: for a sequence, every step and each step's own domain; for a parallel branch, its
+  // own control chain's domain; for a branch arm, that arm's own control chain's domain. A pure
+  // data leaf reached by the walk is unrestricted; only a control producer is domain-checked. A
+  // branch/await/select/repeat/child node's own domain is only itself: arm internals and
+  // non-all_terminal parallel branches never leak into an outer domain.
   const settlementDomainCache = new Map();
   const settlementDomain = (key) => {
     if (settlementDomainCache.has(key)) return settlementDomainCache.get(key);
@@ -288,10 +301,20 @@ export function normalizeProgramSource(source, { authority: valueAuthority } = {
     return domain;
   };
   const checkSettleThenRead = (key, ref, domainKey) => {
-    const producer = records.get(ref.nodeKey);
-    if (!CONTROL_NODE_KINDS.includes(producer.kind)) return;
-    if (!settlementDomain(domainKey).has(ref.nodeKey)) {
-      fail(`Program node ${key} settle-then-read ref to ${ref.nodeKey} is outside its settlement domain`);
+    const domain = settlementDomain(domainKey);
+    const stack = [ref];
+    const walked = new Set();
+    while (stack.length > 0) {
+      const current = stack.pop();
+      const producer = records.get(current.nodeKey);
+      if (CONTROL_NODE_KINDS.includes(producer.kind)) {
+        if (!domain.has(current.nodeKey)) {
+          fail(`Program node ${key} settle-then-read ref to ${current.nodeKey} is outside its settlement domain`);
+        }
+      } else if (producer.kind === 'collect' && !walked.has(current.nodeKey)) {
+        walked.add(current.nodeKey);
+        stack.push(...producer.source.items.map((item) => item.value));
+      }
     }
   };
   for (const [key, record] of records) {
