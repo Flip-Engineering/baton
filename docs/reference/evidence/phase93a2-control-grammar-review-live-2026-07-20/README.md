@@ -88,5 +88,53 @@ touching implementation." Steering request → durable receipt → observable be
 - `spec-redteam.md`, `tests-redteam.md` — wave-1 adversarial reports (heading contract:
   `## Verdict`, `## P0-P1 findings`, `## Required corrections`).
 - `redraft-redteam.md` — wave-2 re-draft attack (materialized by the wave-2 driver).
+- `blue-review.md` — wave-3 acceptance review (Opus 4.8; "Not accepted": collect-laundering P0).
+- `wave35-fix-decisions.md` — the orchestrator's 8-decision fix contract for wave-3.5.
 - `evidence.json` (wave 1), `evidence-wave2.json` (wave 2) — outcomes, steering, stops, ownership
   receipts.
+
+## Wave 4 — swarm demonstrations (2026-07-21)
+
+**Arm 1 — homogeneous workflow swarm** (`run-wave4-arm1.mjs`): three identical `kimi-code/k3/high`
+replicas under `parallel_attempts` with an `operator_selected` join, partitions A/B/C of the
+amended spec. A pure Context cell (`cell:db2b0753…`) computed the shared partition manifest on the
+Workflow run (REPL Bench). Reports: `swarm-replica-{A,B,C}.md` — replica-A PASS (zero findings),
+replica-B PASS, replica-C PASS with one P1 (`evidence_ranked.criteria` charged to
+`maxEvidenceRefs`, fixed in `7d0c258` with a BOUND1/SEL2 pin). Kimi's concurrency ceiling is 1
+(`application-deployment.mjs:640`), so homogeneous kimi replicas serialize — recorded as routing
+truth; claude/codex/grok ceilings are 4.
+
+**Arm 2 — heterogeneous artifact chain** (`run-wave4-arm2.mjs`): `claude-sonnet-5` claims
+(`chain-A-claims.md`, 10 claims + 2 UNCERTAIN) → `claude-opus-4-8` adversarial verification
+(`chain-B-verification.md`, all claims confirmed; one mechanism sub-assertion refuted) →
+`kimi-k3` synthesis (`chain-C-synthesis.md`, zero residue) → data-derived dynamic-topology
+successor: the synthesis content selected `clean-verdict-refutation`, and `kimi-k3` attempted 16
+adversarial Programs against the clean verdict (`chain-D-successor.md`; refutation failed, verdict
+stands). Every hand-off addressed an immutable pinned result commit by digest. GLM was typed-red
+(four Z.ai 529s); Codex rate-limited; Claude OAuth expired mid-wave (rotation — issue #11) and was
+restored by the owner.
+
+**Selective member stop** (`run-selective-stop.mjs`, `evidence-selective-stop.json`): two
+`claude-sonnet-5` replicas; `stopMember beta` admitted mid-flight (retry-until-stoppable after the
+dispatch timing race — `stoppableRoles` requires `taskId !== null`); sibling `alpha` continued to
+`verify.reverified` passed completion, even self-correcting a `/tmp` redirect violation mid-turn.
+Join honestly reached `selection_required`. `selstop-alpha.md` (122 lines) preserved.
+
+## Wave 5 — dynamic responsive workflow (2026-07-21)
+
+**Scripted pattern** (`baton.review` preset): `glm-5.2` reviewer + `kimi-k3` challenger, truly
+concurrent (different harnesses, both ceilings respected). Round 1 completed with the challenger
+producing a verified immutable Candidate (`candidate:38c7fd47…`, mechanism-verified) — the
+pattern runs end-to-end.
+
+**Nested task set** (`wave5-nested.md`, issue #12): a `claude-sonnet-5` worker attempted a bounded
+child run through the resident CLI. Repository discovery succeeded (`connection: ready`) but
+`run start` failed with `cli_config_invalid: user connection profile is unavailable` — the
+owner's profile store is (correctly) not projected into the private runtime. The worker also
+caught and corrected the brief's `--exact` grammar error before hitting the real blocker. Honest
+negative result, filed as issue #12 with two fix options.
+
+**Responsive revision round** (`run-wave5b.mjs`, `evidence-wave5b.json`): typed `sendFeedback` +
+`revise_candidate` over the selected candidate; the wave-5 driver's one-shot candidate scan raced
+verification (`state: verified` settles after `selection_required` appears), fixed in 5b by
+polling. Outcome in `evidence-wave5b.json`.
