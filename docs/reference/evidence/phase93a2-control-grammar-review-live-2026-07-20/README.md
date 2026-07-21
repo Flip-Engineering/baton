@@ -134,7 +134,13 @@ owner's profile store is (correctly) not projected into the private runtime. The
 caught and corrected the brief's `--exact` grammar error before hitting the real blocker. Honest
 negative result, filed as issue #12 with two fix options.
 
-**Responsive revision round** (`run-wave5b.mjs`, `evidence-wave5b.json`): typed `sendFeedback` +
-`revise_candidate` over the selected candidate; the wave-5 driver's one-shot candidate scan raced
-verification (`state: verified` settles after `selection_required` appears), fixed in 5b by
-polling. Outcome in `evidence-wave5b.json`.
+**Responsive revision round** (`run-wave5b.mjs`, `evidence-wave5b.json`): **not proven live.**
+Two reviewer/challenger members (sonnet + kimi) both completed and passed `verify.reverified`,
+but no Workflow Candidate formed and the Run went straight to `completed` — contrasted with the
+wave-5 leg1 run, which reached `selection_required` with one verified Candidate. The visible
+difference is that 5b's members produced empty-diff results (review-only, `changedPaths: []`),
+while leg1's challenger candidate also had `changedPaths: []` — so candidate formation on
+empty-diff verified results is at minimum inconsistent and at best under-documented: an
+orchestrator cannot tell from the surface whether to expect a Candidate. Recorded as an AX
+finding; `sendFeedback`/`revise_candidate` therefore never fired in anger and remain
+acceptance-gated for a future wave.
