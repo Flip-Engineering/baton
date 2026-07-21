@@ -45,6 +45,12 @@ const MAX_RUN_VIEW_WORKERS = 1_024;
 const MAX_RUN_LIST_ITEMS = 64;
 const MAX_ATTENTION = 64;
 const MAX_ATTENTION_TEXT_BYTES = 4_096;
+const MAX_BLOCKED_INTERACTION_SUMMARY_BYTES = 160;
+// AX-1 rule 3 (issue #10): these operational kinds are real-time provider narration/tool-use
+// telemetry — repeated bursts of them are not distinct forward-progress milestones the way a
+// committed file edit or a lifecycle/control/verification fact is, so an `evidence.mapped`
+// ledger coordinate wrapping one of them must not count as meaningful Run progress.
+const NOISE_TELEMETRY_OPERATIONAL_KINDS = new Set(['content.tool_call', 'content.message']);
 const MAX_REVIEW_SOURCE_BYTES = 4 * 1024 * 1024;
 const MAX_WORKFLOW_PLAN_HISTORY = 16;
 // VR9/RV closed verifier projection bounds. Durable verdicts carry exact captured-byte metadata,
@@ -200,6 +206,33 @@ function boundedAttentionText(value) {
   const bytes = Buffer.from(normalized);
   if (bytes.length <= MAX_ATTENTION_TEXT_BYTES) return normalized;
   return `${bytes.subarray(0, MAX_ATTENTION_TEXT_BYTES).toString('utf8')}…`;
+}
+
+// issue #10 / docs/32 §5 (AX-1): a bounded (<=160 bytes, ellipsis included), NFC-normalized,
+// credential-sanitized projection of a pending worker request's own text — never worker prose
+// beyond the request text itself.
+function boundedBlockedInteractionSummary(value) {
+  if (typeof value !== 'string' || value.length === 0) return '';
+  const normalized = value.normalize('NFC').trim();
+  if (SECRET_SHAPED_TEXT.some((pattern) => pattern.test(normalized))) return '[credential-shaped content redacted]';
+  const bytes = Buffer.from(normalized);
+  if (bytes.length <= MAX_BLOCKED_INTERACTION_SUMMARY_BYTES) return normalized;
+  const ellipsisBytes = Buffer.byteLength('…');
+  return `${bytes.subarray(0, MAX_BLOCKED_INTERACTION_SUMMARY_BYTES - ellipsisBytes).toString('utf8')}…`;
+}
+
+// AX-1 rule 1/2: the single projection helper for `blockedInteraction`, consumed identically
+// by the single-attempt view, the workflow view, and (through those) `runs.list` and the CLI
+// outline. `kind:'decision'` is reserved (issue #16) but never emitted here.
+function projectBlockedInteraction(phase, attention) {
+  if (phase === 'awaiting_plan_approval') return { kind: 'approve_plan' };
+  if (phase === 'selection_required') return { kind: 'select_candidate' };
+  const pending = (attention ?? []).find((entry) => (
+    entry?.kind === 'answer_question' || entry?.kind === 'answer_approval'
+  ));
+  if (!pending) return null;
+  const text = pending.kind === 'answer_question' ? pending.question : pending.approvalKind;
+  return { kind: 'answer_question', summary: boundedBlockedInteractionSummary(text) };
 }
 
 function normalizeAnswer(value) {
@@ -4686,6 +4719,7 @@ export class BatonApplication {
       },
       attention: [],
       attentionTruncated: false,
+      blockedInteraction: projectBlockedInteraction(phase, []),
       verification: { state: 'pending', verdict: null },
       semanticReview,
       progress,
@@ -4764,6 +4798,11 @@ export class BatonApplication {
     });
     const terminalCause = projectTypedTerminalCause({ terminalResult, runStop });
     const planNode = current.plan?.nodes?.[0] ?? null;
+    const historicalAttention = phase === 'interruption_uncertain' ? [{
+      kind: 'session_preservation', state: 'quarantined',
+      reason: 'session_attachment_unproven',
+      summary: 'Reusable provider-session attachment is unproven; whole-Run stop is the only safe action.',
+    }] : [];
     const view = {
       schemaVersion: 1,
       runId,
@@ -4812,11 +4851,8 @@ export class BatonApplication {
         ? { state: 'requested', request: clone(planNode.workerPolicy) }
         : { state: 'legacy_unattested' },
       budget: { allocated: clone(current.goal.budget), node: clone(node?.budget ?? null), termination: terminalCause },
-      attention: phase === 'interruption_uncertain' ? [{
-        kind: 'session_preservation', state: 'quarantined',
-        reason: 'session_attachment_unproven',
-        summary: 'Reusable provider-session attachment is unproven; whole-Run stop is the only safe action.',
-      }] : [], attentionTruncated: false,
+      attention: historicalAttention, attentionTruncated: false,
+      blockedInteraction: projectBlockedInteraction(phase, historicalAttention),
       verification: { state: verificationState, verdict: null },
       semanticReview,
       progress,
@@ -6202,6 +6238,7 @@ export class BatonApplication {
       ...workerAttention, ...selectionAttention, ...revisionAttention, ...recoveryAttention,
       ...preservationAttention,
     ].slice(0, MAX_ATTENTION);
+    const blockedInteraction = projectBlockedInteraction(phase, attention);
     const terminalCause = attempts.find((attempt) => attempt.terminalCause)?.terminalCause ?? null;
     const verificationState = allAccepted ? 'mechanically_verified'
       : candidates.length > 0 && allSettled ? 'partially_verified'
@@ -6298,6 +6335,7 @@ export class BatonApplication {
       attention, attentionTruncated: workerAttention.length + selectionAttention.length
         + revisionAttention.length + recoveryAttention.length + preservationAttention.length
         > attention.length,
+      blockedInteraction,
       verification: {
         state: verificationState,
         verdict: candidates.length > 0 ? {
@@ -6592,6 +6630,7 @@ export class BatonApplication {
         && (current.profile.reviewPolicy.mode === 'none' || semanticReview.state === 'semantic_reviewed')) phase = 'completed';
       else phase = 'work_completed';
     }
+    const blockedInteraction = projectBlockedInteraction(phase, attention);
     const canAdopt = !readOnlyResult && resultSha && preservation?.state === 'pinned'
       && current.profile.resultPolicy.mode === 'manual' && adoptionState(adoption) !== 'adopted';
     const canReview = !readOnlyResult && current.profile.reviewPolicy.mode === 'required' && semanticReview.state === 'semantics_unverified';
@@ -6672,6 +6711,7 @@ export class BatonApplication {
       budget: { allocated: clone(current.goal.budget), node: clone(node.budget), termination: terminalCause },
       attention,
       attentionTruncated,
+      blockedInteraction,
       verification: {
         state: verificationState,
         stability: resultStability,
@@ -6749,7 +6789,10 @@ export class BatonApplication {
     if (['task.created', 'task.claimed', 'task.transitioned', 'task.acceptance_revoked'].includes(event.kind)) return 'execution';
     if (event.kind.startsWith('run.orchestrator_lease_') || event.kind.startsWith('run.lineage_')) return 'orchestration';
     if (event.kind.startsWith('context.')) return 'context';
-    if (['artifact.registered', 'artifact.superseded', 'evidence.mapped'].includes(event.kind)) return 'evidence';
+    if (['artifact.registered', 'artifact.superseded'].includes(event.kind)) return 'evidence';
+    if (event.kind === 'evidence.mapped') {
+      return NOISE_TELEMETRY_OPERATIONAL_KINDS.has(event.payload?.kind) ? null : 'evidence';
+    }
     if (event.kind.startsWith('run.result_')) return 'result';
     if (event.kind.startsWith('run.stop_')) return 'cleanup';
     if (event.kind === 'driver.recorded') {
@@ -9699,6 +9742,7 @@ export class BatonApplication {
         ...timing,
         terminal: APPLICATION_RUN_TERMINAL_PHASES.has(view.phase),
         attention: attention.length > 0 ? 'required' : 'clear',
+        blockedInteraction: clone(view.blockedInteraction ?? null),
         route: clone(view.route),
         resources: {
           state: projectedCleanupState(view),
