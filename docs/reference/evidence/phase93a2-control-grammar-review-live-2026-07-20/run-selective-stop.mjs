@@ -16,7 +16,7 @@ const VERIFY = Object.freeze({
   command: 'node',
   arguments: ['--test', 'impl/test/phase93a-control-grammar-red.test.mjs'],
 });
-const KIMI = Object.freeze({ harness: 'kimi-code', model: 'kimi-code/k3', effort: 'high' });
+const KIMI = Object.freeze({ harness: 'claude-code', model: 'claude-sonnet-5', effort: 'high' });
 
 const baton = await openBaton({ repo, advanced: { routes: [KIMI], verification: VERIFY } });
 const log = (line) => console.log(`[selstop ${new Date().toISOString()}] ${line}`);
@@ -30,11 +30,11 @@ try {
     candidate.harness === KIMI.harness && candidate.model === KIMI.model && candidate.effort === KIMI.effort
   ));
   if (ready?.state !== 'ready') {
-    throw Object.assign(new Error(ready?.summary ?? 'kimi route unavailable'), { code: ready?.code ?? 'route_unavailable' });
+    throw Object.assign(new Error(ready?.summary ?? 'sonnet route unavailable'), { code: ready?.code ?? 'route_unavailable' });
   }
   const team = ['alpha', 'beta'].map((role) => ({ role, exact: KIMI }));
   run = await baton.workflow([
-    'You are one of two identical kimi-code/k3/high replicas. Perform a THOROUGH, unhurried',
+    'You are one of two identical claude-sonnet-5/high replicas. Perform a THOROUGH, unhurried',
     'review of impl/src/program-ir/normalize-program.mjs against spec/phase93-closed-program-ir.md',
     '§93.9: read every function, trace the demand walk and settlement domains by hand, and write',
     'a detailed report of at least 60 lines covering conformance, corner cases, and anything',
@@ -45,15 +45,24 @@ try {
   ].join(' '), { team, scope: [`${relativeRoot}/selstop-*`] });
   log(`workflow started as ${run.id}`);
   await run.approve();
-  log('approved; waiting for both members active, then selective stop on beta');
-  await new Promise((resolveWait) => setTimeout(resolveWait, 75000));
-  try {
-    await run.stopMember('beta', 'Selective member stop: sibling-survival proof.');
-    evidence.stopReceipt = { state: 'admitted', at: new Date().toISOString() };
-    log('stopMember beta admitted');
-  } catch (error) {
-    evidence.stopReceipt = { state: 'failed', code: error.code ?? null, message: error.message };
-    log(`stopMember beta failed: ${error.code ?? error.message}`);
+  log('approved; waiting for beta attempt dispatchable, then selective stop on beta');
+  // stoppableRoles = attempts with taskId assigned and nonterminal. Wave members dispatch as the
+  // scheduler claims them, so poll stopMember until beta is admitted (or give up at 6 minutes).
+  const stopDeadline = Date.now() + 6 * 60 * 1000;
+  for (;;) {
+    try {
+      await run.stopMember('beta', 'Selective member stop: sibling-survival proof.');
+      evidence.stopReceipt = { state: 'admitted', at: new Date().toISOString() };
+      log('stopMember beta admitted');
+      break;
+    } catch (error) {
+      if (Date.now() > stopDeadline || !['application_action_scope_mismatch', 'application_workflow_member_stop_unavailable'].includes(error.code)) {
+        evidence.stopReceipt = { state: 'failed', code: error.code ?? null, message: error.message };
+        log(`stopMember beta failed permanently: ${error.code ?? error.message}`);
+        break;
+      }
+      await new Promise((resolveWait) => setTimeout(resolveWait, 15000));
+    }
   }
   const pumpArm = { active: false };
   const armPump = () => {
