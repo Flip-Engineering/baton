@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "outcomes": [
+    {
+      "role": "repl1-implementer",
+      "phase": "failed",
+      "terminal": true,
+      "narrative": "Run terminated: worker_path_scope_violation.",
+      "resultSha": null
+    },
+    {
+      "role": "repl23-implementer",
+      "phase": "failed",
+      "terminal": true,
+      "narrative": "Run terminated: wire_frame_oversize.",
+      "resultSha": null
+    }
+  ],
+  "stops": [
+    {
+      "role": "repl1-implementer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "repl23-implementer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "remainingCount": 0,
+  "residueUnknown": false
+}
