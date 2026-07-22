@@ -227,6 +227,28 @@ function boundedAttentionText(value) {
   return `${bytes.subarray(0, MAX_ATTENTION_TEXT_BYTES).toString('utf8')}…`;
 }
 
+// REFLEX-3 (docs/32 §3.3 Part D, issue #18; red-team F14): a context package branch's resolved
+// content is untrusted input to every reader (a worker or a prior package can shape it). Every
+// non-null slice routes through the same `boundedAttentionText`/`SECRET_SHAPED_TEXT` discipline as
+// worker prose elsewhere in this file, and the projection carries an explicit untrusted-prose
+// provenance marker rather than hub-styled visual weight.
+export function projectContextPackageBranch(resolved) {
+  if (!resolved || typeof resolved !== 'object' || Array.isArray(resolved)) {
+    throw applicationError('context package branch is invalid', 'application_context_package_branch_invalid');
+  }
+  const projectSlice = (value) => (value === null || value === undefined ? null : boundedAttentionText(
+    typeof value === 'string' ? value : JSON.stringify(value),
+  ));
+  return deepFreeze({
+    name: resolved.name,
+    schema: resolved.schema ? clone(resolved.schema) : null,
+    provenance: 'untrusted',
+    source: projectSlice(resolved.source),
+    artifact: projectSlice(resolved.artifact),
+    valueRef: projectSlice(resolved.valueRef),
+  });
+}
+
 // issue #10 / docs/32 §5 (AX-1): a bounded (<=160 bytes, ellipsis included), NFC-normalized,
 // credential-sanitized projection of a pending worker request's own text — never worker prose
 // beyond the request text itself.
@@ -8526,6 +8548,62 @@ export class BatonApplication {
         'application_context_eval_manifest_unavailable');
     }
     return { current, target };
+  }
+
+  // REFLEX-3 (docs/32 §3.3, issue #18; contract: docs/reference/evidence/
+  // reflex-wave-live-2026-07-21/reflex3-packages-decisions.md, Part D / red-team F14): direct
+  // command ports for context-package admit/attach/branch-resolve, mirroring `contextEval`'s
+  // "direct command port" transport above — deliberately NOT entries in
+  // `APPLICATION_COMMAND_DEFINITIONS` for the identical reason documented at that table (:136-147):
+  // any new key there breaks `card().commands`/MCP-tool-derivation fixtures this task cannot touch.
+  // Web, MCP, and generic `application.command(...)` string dispatch remain a documented gap.
+  async admitContextPackage(rawFields, rawPrincipal, rawContext = null) {
+    this._assertOpen();
+    await this.ready;
+    const context = normalizeCommandContext(rawContext);
+    const principal = normalizePrincipal(rawPrincipal, 'context package principal');
+    await this._authorize('application.context_package_admit', principal, null, {});
+    this._assertOpen();
+    const auth = {
+      actor: principal.actor,
+      key: context?.idempotencyKey ?? `context-package.admit:${digest(rawFields)}`,
+    };
+    const admitted = this.driver.coordination.admitContextPackage(rawFields, auth);
+    return { result: admitted.result, package: clone(admitted.package) };
+  }
+
+  async attachContextPackage(rawFields, rawPrincipal, rawContext = null) {
+    this._assertOpen();
+    await this.ready;
+    normalizeCommandContext(rawContext);
+    const principal = normalizePrincipal(rawPrincipal, 'context package principal');
+    if (!validId(rawFields?.runId)) {
+      throw applicationError('Context package attach target is invalid',
+        'application_context_package_attach_invalid');
+    }
+    await this._authorize('application.context_package_attach', principal, rawFields.runId, {});
+    this._assertOpen();
+    const auth = {
+      actor: principal.actor,
+      key: `package.attach:${rawFields?.packageDigest}:${rawFields.runId}:${rawFields?.scope}`,
+    };
+    const attached = this.driver.coordination.attachContextPackage(rawFields, auth);
+    return { result: attached.result, attachment: clone(attached.attachment) };
+  }
+
+  async contextPackageBranch(packageDigest, branchName, rawPrincipal, rawContext = null) {
+    this._assertOpen();
+    await this.ready;
+    normalizeCommandContext(rawContext);
+    const principal = normalizePrincipal(rawPrincipal, 'context package principal');
+    await this._authorize('application.context_package_branch', principal, null, {
+      packageDigest, branchName,
+    });
+    this._assertOpen();
+    const resolved = this.driver.coordination.withContextArtifactVerification(
+      () => this.driver.coordination.resolveContextPackageBranch(packageDigest, branchName),
+    );
+    return projectContextPackageBranch(resolved);
   }
 
   _semanticActions(current, view, principal, context = null) {

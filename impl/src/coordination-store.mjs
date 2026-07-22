@@ -106,6 +106,7 @@ const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_contextCalls', '_contextPrograms', '_contextArtifacts', '_taskResourceReleases',
   '_boardItems', '_boardItemHistory', '_boardItemsByBoard', '_boardClaims',
   '_boardReports', '_boardFences',
+  '_contextPackages', '_contextPackageAttachments',
 ]);
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
@@ -796,6 +797,7 @@ export class CoordinationStore {
     // log in _apply, so replay reconstructs each board fence exactly by re-counting.
     this._boardItems = new Map(); this._boardItemHistory = new Map(); this._boardItemsByBoard = new Map();
     this._boardClaims = new Map(); this._boardReports = []; this._boardFences = new Map();
+    this._contextPackages = new Map(); this._contextPackageAttachments = new Map();
   }
 
   _configureAdvisoryFeedCards(cards) {
@@ -7292,6 +7294,26 @@ export class CoordinationStore {
       const children = [...(this._runChildrenByParent.get(lineage.parentRunId) ?? [])];
       children.push(lineage.childRunId);
       this._runChildrenByParent.set(lineage.parentRunId, freeze(children));
+    } else if (event.kind === 'package.admitted') {
+      const normalized = this._normalizeContextPackage(p, true);
+      this._contextPackages.set(normalized.packageDigest, freeze({
+        schemaVersion: normalized.schemaVersion, kind: normalized.kind, branches: normalized.branches,
+        provenance: normalized.provenance, policyDigest: normalized.policyDigest,
+        packageDigest: normalized.packageDigest, admittedEvent: event.seq, admittedAt: event.ts,
+      }));
+    } else if (event.kind === 'package.attached') {
+      if (!p || typeof p !== 'object' || Array.isArray(p)
+        || Object.keys(p).sort().join(',') !== ['packageDigest', 'runId', 'scope'].sort().join(',')
+        || !this._contextPackages.has(p.packageDigest) || !validRunId(p.runId)
+        || !/^(run|worker:[A-Za-z0-9._:-]{1,256}|board:[A-Za-z0-9._:-]{1,256})$/u.test(p.scope ?? '')) {
+        throw new CoordinationIntegrityError('context package attachment is invalid',
+          'context_package_attach_integrity');
+      }
+      const attachments = [...(this._contextPackageAttachments.get(p.runId) ?? [])];
+      attachments.push(freeze({
+        packageDigest: p.packageDigest, scope: p.scope, attachedEvent: event.seq, attachedAt: event.ts,
+      }));
+      this._contextPackageAttachments.set(p.runId, freeze(attachments));
     } else if (event.kind === 'context.session_admitted') {
       const validated = this._validateContextSessionPayload(p, event, true);
       this._contextSessions.set(validated.session.sessionId, freeze({
@@ -8514,6 +8536,324 @@ export class CoordinationStore {
   canonicalOrderPolicy() { return clone(this._canonicalOrderPolicy); }
   goalVersion(goalId, version) { return clone(this._goals.get(this._goalVersionKey(goalId, version)) ?? null); }
   planVersion(planId, version) { return clone(this._plans.get(this._planVersionKey(planId, version)) ?? null); }
+
+  // REFLEX-3 (docs/32 §3.3, issue #18; contract: docs/reference/evidence/
+  // reflex-wave-live-2026-07-21/reflex3-packages-decisions.md, red-team F11/F14 lines 205-231,
+  // 282-294): a typed, immutable, replay-safe knowledge/context hand-off package.
+  //
+  // Provenance (Part A): `provenance.packageEvent` is never submitted (refused
+  // `reserved_package_field` — the `_knowledgePayload` reserved-field stance, :11648-11651) and is
+  // hub-derived from the admission ledger event itself, exactly the `scratchFactOracleTarget`
+  // ledger-binding pattern (:11566-11585): `_contextPackageProvenance` dereferences
+  // `this._events[admittedEvent - 1]`, cross-checks it still matches the durable projection, and
+  // raises the loud `package_provenance_integrity` (never a silent accept) on any divergence — a
+  // fresh derivation every read, so replay reproduces the identical binding.
+  //
+  // Shape (Part B): `_normalizeContextPackage` runs the `normalizeContextManifest` mold
+  // (context-program.mjs:183-192) — delete-and-recompute `packageDigest` without `packageEvent`,
+  // exact()-check every field, reject unknown fields, unique branch names
+  // (`package_branch_name_conflict`), and every branch requires >=1 of source/artifact/valueRef
+  // (`package_branch_empty` — a `schema` alone is not content).
+  //
+  // Attach vs resolve (Part C): admission resolves every branch ref exactly once
+  // (`_resolveContextPackageBranchContent`, called from `admitContextPackage`).
+  // `attachContextPackage` is a fenced O(1) pointer binding — it never re-reads branch bytes.
+  // `resolveContextPackageBranch` is the lazy, resolve-time revalidation point per §93.5, settling
+  // `context_artifact_unavailable` on missing/changed bytes; callers wrap it in
+  // `withContextArtifactVerification` exactly like the existing Context Program read paths.
+  //
+  // Sanitization (Part D, F14): branch content is untrusted input to every reader — the
+  // application layer projects it through `boundedAttentionText`/`SECRET_SHAPED_TEXT` with
+  // untrusted-prose provenance marking before it reaches a Brief/RunView/MCP surface.
+
+  contextPackage(packageDigest) {
+    const record = this._contextPackages.get(packageDigest);
+    if (!record) return null;
+    const packageEvent = this._contextPackageProvenance(record);
+    return freeze({
+      schemaVersion: record.schemaVersion, kind: record.kind,
+      packageId: `context-package:${record.packageDigest}`, packageDigest: record.packageDigest,
+      branches: clone(record.branches),
+      provenance: {
+        runId: record.provenance.runId, principalId: record.provenance.principalId, packageEvent,
+      },
+      policyDigest: record.policyDigest, admittedEvent: record.admittedEvent, admittedAt: record.admittedAt,
+    });
+  }
+
+  contextPackageAttachments(runId) {
+    return (this._contextPackageAttachments.get(runId) ?? []).map(clone);
+  }
+
+  _contextPackageProvenance(record) {
+    const source = this._events[record.admittedEvent - 1];
+    const expectedPayload = {
+      schemaVersion: record.schemaVersion, kind: record.kind, branches: record.branches,
+      provenance: record.provenance, policyDigest: record.policyDigest, packageDigest: record.packageDigest,
+    };
+    if (!source || source.kind !== 'package.admitted' || source.seq !== record.admittedEvent
+      || canonicalDigest(source.payload) !== canonicalDigest(expectedPayload)) {
+      throw new CoordinationIntegrityError('Context package provenance source binding is invalid',
+        'package_provenance_integrity');
+    }
+    return freeze({ sourceEventSeq: source.seq, sourceEventDigest: canonicalDigest(source) });
+  }
+
+  _normalizeContextPackageSourceRef(value, integrity) {
+    if (value === null || value === undefined) return null;
+    const fail = (message) => this._contextFailure(message, 'context_package_invalid', integrity);
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).sort().join(',') !== ['digest', 'itemCount', 'kind', 'mediaType', 'ref'].sort().join(',')
+      || value.kind !== 'context_source') fail('context package branch source is invalid');
+    if (!/^[a-f0-9]{64}$/.test(value.digest ?? '')) fail('context package branch source digest is invalid');
+    if (value.ref !== `ctx:sha256:${value.digest}`) fail('context package branch source ref is invalid');
+    if (!Number.isSafeInteger(value.itemCount) || value.itemCount < 0) {
+      fail('context package branch source item count is invalid');
+    }
+    if (typeof value.mediaType !== 'string'
+      || !/^[a-z0-9][a-z0-9.+-]*\/[a-z0-9][a-z0-9.+-]*$/u.test(value.mediaType)) {
+      fail('context package branch source media type is invalid');
+    }
+    return {
+      kind: 'context_source', ref: value.ref, digest: value.digest,
+      mediaType: value.mediaType, itemCount: value.itemCount,
+    };
+  }
+
+  _normalizeContextPackageArtifactRef(value, integrity) {
+    if (value === null || value === undefined) return null;
+    const fail = (message) => this._contextFailure(message, 'context_package_invalid', integrity);
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).sort().join(',') !== ['bytes', 'digest', 'handle', 'kind', 'mediaType'].sort().join(',')
+      || typeof value.kind !== 'string' || value.kind.length === 0 || Buffer.byteLength(value.kind) > 128) {
+      fail('context package branch artifact is invalid');
+    }
+    if (!/^[a-f0-9]{64}$/.test(value.digest ?? '')) fail('context package branch artifact digest is invalid');
+    if (value.handle !== `art:sha256:${value.digest}`) fail('context package branch artifact handle is invalid');
+    if (typeof value.mediaType !== 'string'
+      || !/^[a-z0-9][a-z0-9.+-]*\/[a-z0-9][a-z0-9.+-]*$/u.test(value.mediaType)) {
+      fail('context package branch artifact media type is invalid');
+    }
+    if (!Number.isSafeInteger(value.bytes) || value.bytes <= 0) fail('context package branch artifact bytes is invalid');
+    return {
+      kind: value.kind, digest: value.digest, handle: value.handle,
+      mediaType: value.mediaType, bytes: value.bytes,
+    };
+  }
+
+  _normalizeContextPackageValueRef(value, integrity) {
+    if (value === null || value === undefined) return null;
+    const fail = (message) => this._contextFailure(message, 'context_package_invalid', integrity);
+    const fields = ['artifactDigest', 'artifactId', 'kind', 'lineageDigest', 'schemaId', 'valueDigest', 'valueId'];
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).sort().join(',') !== fields.sort().join(',')
+      || value.kind !== 'value_ref') fail('context package branch value ref is invalid');
+    if (!/^[a-f0-9]{64}$/.test(value.artifactDigest ?? '')) fail('context package branch value artifact digest is invalid');
+    if (typeof value.artifactId !== 'string' || value.artifactId.length === 0
+      || Buffer.byteLength(value.artifactId) > 512) fail('context package branch value artifact id is invalid');
+    if (!/^[a-f0-9]{64}$/.test(value.valueDigest ?? '')) fail('context package branch value digest is invalid');
+    if (!/^[a-f0-9]{64}$/.test(value.lineageDigest ?? '')) fail('context package branch value lineage digest is invalid');
+    if (typeof value.schemaId !== 'string' || value.schemaId.length === 0
+      || Buffer.byteLength(value.schemaId) > 512) fail('context package branch value schema id is invalid');
+    const expectedValueId = `pvalue:${canonicalDigest({
+      artifactDigest: value.artifactDigest, schemaId: value.schemaId,
+      valueDigest: value.valueDigest, lineageDigest: value.lineageDigest,
+    })}`;
+    if (value.valueId !== expectedValueId) fail('context package branch value id is invalid');
+    return {
+      kind: 'value_ref', valueId: value.valueId, artifactId: value.artifactId,
+      artifactDigest: value.artifactDigest, schemaId: value.schemaId,
+      valueDigest: value.valueDigest, lineageDigest: value.lineageDigest,
+    };
+  }
+
+  _normalizeContextPackageSchemaRef(value, integrity) {
+    if (value === null || value === undefined) return null;
+    const fail = (message) => this._contextFailure(message, 'context_package_invalid', integrity);
+    const fields = ['digest', 'kind', 'name', 'schemaId', 'version'];
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).sort().join(',') !== fields.sort().join(',')
+      || value.kind !== 'schema_ref') fail('context package branch schema ref is invalid');
+    if (typeof value.name !== 'string' || value.name.length === 0 || Buffer.byteLength(value.name) > 256
+      || !/^[A-Za-z0-9._:-]+$/u.test(value.name)) fail('context package branch schema name is invalid');
+    if (!Number.isSafeInteger(value.version) || value.version <= 0) fail('context package branch schema version is invalid');
+    if (!/^[a-f0-9]{64}$/.test(value.digest ?? '')) fail('context package branch schema digest is invalid');
+    if (value.schemaId !== `schema:${value.digest}`) fail('context package branch schema id is invalid');
+    return {
+      kind: 'schema_ref', schemaId: value.schemaId, name: value.name,
+      version: value.version, digest: value.digest,
+    };
+  }
+
+  _normalizeContextPackageBranch(value, integrity) {
+    const fail = (message, code = 'context_package_invalid') => this._contextFailure(message, code, integrity);
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).sort().join(',') !== ['artifact', 'name', 'schema', 'source', 'valueRef'].sort().join(',')) {
+      fail('context package branch has unknown or missing fields');
+    }
+    if (typeof value.name !== 'string' || value.name.length === 0 || Buffer.byteLength(value.name) > 512
+      || !/^[A-Za-z0-9._:-]+$/u.test(value.name)) fail('context package branch name is invalid');
+    const source = this._normalizeContextPackageSourceRef(value.source, integrity);
+    const artifact = this._normalizeContextPackageArtifactRef(value.artifact, integrity);
+    const valueRef = this._normalizeContextPackageValueRef(value.valueRef, integrity);
+    const schema = this._normalizeContextPackageSchemaRef(value.schema, integrity);
+    if (source === null && artifact === null && valueRef === null) {
+      fail(`context package branch ${value.name} has no content reference`, 'package_branch_empty');
+    }
+    return freeze({ name: value.name, source, artifact, valueRef, schema });
+  }
+
+  _normalizeContextPackage(fields, integrity = false) {
+    const fail = (message, code = 'context_package_invalid') => this._contextFailure(message, code, integrity);
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)) fail('context package request is invalid');
+    const raw = clone(fields);
+    const suppliedDigest = raw.packageDigest;
+    delete raw.packageDigest;
+    if (!raw.provenance || typeof raw.provenance !== 'object' || Array.isArray(raw.provenance)) {
+      fail('context package provenance is invalid');
+    }
+    if (Object.hasOwn(raw.provenance, 'packageEvent')) {
+      fail('context package submission uses a lifecycle-owned field', 'reserved_package_field');
+    }
+    if (Object.keys(raw).sort().join(',')
+      !== ['branches', 'kind', 'policyDigest', 'provenance', 'schemaVersion'].sort().join(',')) {
+      fail('context package has unknown or missing fields');
+    }
+    if (raw.schemaVersion !== 1 || raw.kind !== 'baton.context_package') fail('context package header is invalid');
+    if (Object.keys(raw.provenance).sort().join(',') !== ['principalId', 'runId'].sort().join(',')) {
+      fail('context package provenance has unknown or missing fields');
+    }
+    if (raw.provenance.runId !== null && !validRunId(raw.provenance.runId)) {
+      fail('context package provenance runId is invalid');
+    }
+    if (typeof raw.provenance.principalId !== 'string' || raw.provenance.principalId.length === 0
+      || Buffer.byteLength(raw.provenance.principalId) > 512
+      || !/^[A-Za-z0-9._:@-]+$/u.test(raw.provenance.principalId)) {
+      fail('context package provenance principalId is invalid');
+    }
+    if (!this._contextProgramPolicy) fail('Context Program authority is unavailable', 'context_package_unavailable');
+    if (!Array.isArray(raw.branches) || raw.branches.length === 0
+      || raw.branches.length > this._contextProgramPolicy.maxManifestBranches) {
+      fail('context package branches are invalid');
+    }
+    const branches = raw.branches.map((branch) => this._normalizeContextPackageBranch(branch, integrity))
+      .sort((left, right) => compareCanonicalStrings(left.name, right.name));
+    if (new Set(branches.map((branch) => branch.name)).size !== branches.length) {
+      fail('context package branches must have unique names', 'package_branch_name_conflict');
+    }
+    if (!/^[a-f0-9]{64}$/.test(raw.policyDigest ?? '')
+      || raw.policyDigest !== this._contextProgramPolicy.policyDigest) {
+      fail('context package policy differs from the normalization authority');
+    }
+    const body = {
+      schemaVersion: 1, kind: 'baton.context_package', branches,
+      provenance: { runId: raw.provenance.runId, principalId: raw.provenance.principalId },
+      policyDigest: raw.policyDigest,
+    };
+    const packageDigest = canonicalDigest(body);
+    if (suppliedDigest !== undefined && suppliedDigest !== packageDigest) fail('context package digest is invalid');
+    return freeze({ ...body, packageDigest, packageId: `context-package:${packageDigest}` });
+  }
+
+  _resolveContextPackageBranchContent(branch, integrity) {
+    const fail = (message, code = 'context_artifact_unavailable') => this._contextFailure(message, code, integrity);
+    const verification = this._contextArtifactVerification();
+    let source = null; let artifact = null; let value = null;
+    try {
+      if (branch.source) source = this._contextArtifactRead(branch.source, verification);
+      if (branch.artifact) artifact = this._contextArtifactRead(branch.artifact, verification);
+    } catch (error) {
+      fail(error?.message ?? `context package branch ${branch.name} content is unavailable`,
+        error?.code ?? 'context_artifact_unavailable');
+    }
+    if (branch.valueRef) {
+      const registered = this._artifacts.get(branch.valueRef.artifactId);
+      if (!registered || registered.digest !== branch.valueRef.artifactDigest) {
+        fail(`context package branch ${branch.name} value is unavailable`);
+      }
+      value = registered;
+    }
+    return { source, artifact, value };
+  }
+
+  resolveContextPackageBranch(packageDigest, branchName) {
+    const record = this._contextPackages.get(packageDigest);
+    if (!record) throw new CoordinationRefusal('Context package is unavailable', 'context_package_not_found');
+    const branch = record.branches.find((candidate) => candidate.name === branchName);
+    if (!branch) {
+      throw new CoordinationRefusal(`Context package branch ${branchName} is unavailable`,
+        'context_package_branch_not_found');
+    }
+    const resolved = this._resolveContextPackageBranchContent(branch, false);
+    return freeze({
+      name: branch.name, schema: branch.schema,
+      source: resolved.source === null ? null : clone(resolved.source),
+      artifact: resolved.artifact === null ? null : clone(resolved.artifact),
+      valueRef: resolved.value === null ? null : clone(resolved.value),
+    });
+  }
+
+  admitContextPackage(fields, auth) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      return {
+        ok: true, result: 'idempotent', event: clone(prior),
+        package: this.contextPackage(prior.payload?.packageDigest),
+      };
+    }
+    if (!this._contextProgramPolicy) {
+      throw new CoordinationRefusal('Context Program authority is unavailable', 'context_package_unavailable');
+    }
+    const normalized = this._normalizeContextPackage(fields, false);
+    if (this._contextPackages.has(normalized.packageDigest)) {
+      throw new CoordinationRefusal(`duplicate context package ${normalized.packageDigest}`,
+        'context_package_conflict');
+    }
+    for (const branch of normalized.branches) this._resolveContextPackageBranchContent(branch, false);
+    const { packageId: _packageId, ...payload } = normalized;
+    const event = this._append('package.admitted', payload, auth);
+    const pkg = this.contextPackage(normalized.packageDigest);
+    if (!pkg || pkg.admittedEvent !== event.seq) {
+      throw new CoordinationIntegrityError('Context package admission did not materialize',
+        'context_package_integrity');
+    }
+    return { ok: true, result: 'admitted', event: clone(event), package: pkg };
+  }
+
+  _contextPackageAttachmentView(event) {
+    return freeze({
+      packageDigest: event.payload.packageDigest, runId: event.payload.runId, scope: event.payload.scope,
+      attachedEvent: event.seq, attachedAt: event.ts,
+    });
+  }
+
+  attachContextPackage(fields, auth) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      return {
+        ok: true, result: 'idempotent', event: clone(prior),
+        attachment: this._contextPackageAttachmentView(prior),
+      };
+    }
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+      || Object.keys(fields).sort().join(',') !== ['packageDigest', 'runId', 'scope'].sort().join(',')
+      || !/^[a-f0-9]{64}$/.test(fields.packageDigest ?? '') || !validRunId(fields.runId)
+      || !/^(run|worker:[A-Za-z0-9._:-]{1,256}|board:[A-Za-z0-9._:-]{1,256})$/u.test(fields.scope ?? '')) {
+      throw new CoordinationRefusal('context package attach request is invalid', 'context_package_attach_invalid');
+    }
+    if (auth?.key !== `package.attach:${fields.packageDigest}:${fields.runId}:${fields.scope}`) {
+      throw new CoordinationRefusal('context package attach authority is invalid', 'context_package_attach_invalid');
+    }
+    if (!this._contextPackages.has(fields.packageDigest)) {
+      throw new CoordinationRefusal('Context package is unavailable', 'context_package_not_found');
+    }
+    const payload = { packageDigest: fields.packageDigest, runId: fields.runId, scope: fields.scope };
+    const event = this._append('package.attached', payload, auth);
+    return {
+      ok: true, result: 'attached', event: clone(event),
+      attachment: this._contextPackageAttachmentView(event),
+    };
+  }
 
   admitContextSession(fields, auth) {
     if (!this._contextProgramPolicy) {
