@@ -97,8 +97,20 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
   assert.equal(response.result.tools.some((tool) => /shutdown|close|drain/.test(tool.name)), false);
   const advanced = setup({ application, surface: 'combined' }); await initialized(advanced.server);
   const combined = await request(advanced.server, 3, 'tools/list', {});
-  assert.equal(combined.result.tools.length, 47);
+  // MCP reflex surface contract Slice 1 (docs/reference/evidence/mcp-reflex-live-2026-07-22/
+  // mcp-reflex-surface-decisions.md, Part H): 47 pre-existing + 3 baton_context_eval/
+  // baton_decision_list/baton_decision_answer, names verbatim, taskSupport forbidden,
+  // additionalProperties false, and _meta present on the reflex tools like the ordinary table.
+  const reflexNames = ['baton_context_eval', 'baton_decision_list', 'baton_decision_answer'];
+  assert.equal(combined.result.tools.length, 50);
   assert.deepEqual(combined.result.tools.slice(0, 9).map((tool) => tool.name), response.result.tools.map((tool) => tool.name));
+  assert.deepEqual(combined.result.tools.map((tool) => tool.name).filter((name) => reflexNames.includes(name)), reflexNames);
+  assert.equal(combined.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
+  assert.equal(combined.result.tools.every((tool) => tool.execution.taskSupport === 'forbidden'), true);
+  for (const name of reflexNames) {
+    const tool = combined.result.tools.find((candidate) => candidate.name === name);
+    assert.ok(tool._meta && typeof tool._meta['baton/registryDigest'] === 'string', `${name} carries _meta.baton/registryDigest`);
+  }
 });
 
 test('P92/MN: Episode continuation and exact workstream generation round-trip through MCP', async () => {

@@ -8607,6 +8607,29 @@ export class BatonApplication {
     return { current, target };
   }
 
+  // MCP reflex surface contract Part C.6 (docs/reference/evidence/mcp-reflex-live-2026-07-22/
+  // mcp-reflex-surface-decisions.md, issue #16): a direct command port (mirroring `contextEval`'s
+  // transport above, deliberately NOT an APPLICATION_COMMAND_DEFINITIONS entry for the identical
+  // reason documented at that table) returning every pending decision request for one Run's own
+  // workers, projected through `projectDecisionAttention` — the full `{requestId, question,
+  // options, allowFreeResponse, recommended}` shape, never the single-summary
+  // `projectBlockedInteraction` slice `run.inspect` shows. Read-only: never a ledger event.
+  async decisionList(rawRequest, rawPrincipal, rawContext = null) {
+    this._assertOpen();
+    await this.ready;
+    normalizeCommandContext(rawContext);
+    const principal = normalizePrincipal(rawPrincipal, 'decision list principal');
+    exactObject(rawRequest, ['runId'], 'application_decision_list_invalid', 'Decision list request');
+    if (!validId(rawRequest.runId)) {
+      throw applicationError('Decision list request is invalid', 'application_decision_list_invalid');
+    }
+    const { runId } = rawRequest;
+    this._findRun(runId);
+    await this._authorize('application.decision_list', principal, runId, {});
+    const { workers } = runWorkerOwnership(this.driver, runId);
+    return { decisions: projectDecisionAttention(this.driver.coordinator, workers) };
+  }
+
   // REFLEX-3 (docs/32 §3.3, issue #18; contract: docs/reference/evidence/
   // reflex-wave-live-2026-07-21/reflex3-packages-decisions.md, Part D / red-team F14): direct
   // command ports for context-package admit/attach/branch-resolve, mirroring `contextEval`'s
