@@ -9,7 +9,20 @@ issue list.
 
 ## Current checkpoint (2026-07-21)
 
-- Canonical `npm test` in `impl/`: **2488/2488 green**.
+- Canonical `npm test` in `impl/`: **2493/2493 green**.
+- Frontier: REFLEX-4 slice A (doc 32 §3.4, issue #19) adds `application.context_eval` —
+  pure-only Bench evaluation without a Workflow *action* gate, addressed by `manifestDigest` or
+  `runId`, reusing the exact `DurableContextSession` admission path (and idempotent cell
+  identity) the Workflow `context_eval` action already uses, with no new manifest admission and
+  no new Plan/dispatch/effect authority. It ships as a direct method,
+  `BatonApplication.prototype.contextEval`, plus real CLI argv parsing (`baton context eval`) —
+  not as an `APPLICATION_COMMAND_DEFINITIONS` entry: `card().commands` and several derived
+  Web/MCP command inventories are exactly asserted by fixed, hand-typed mocks in test files
+  outside this slice's scope (`phase12-web-operator`, `phase16-mcp-northbound`,
+  `phase64-integrated-run-application`, `phase67-progressive-agent-experience`,
+  `phase72-kimi-orchestrator-mcp`), so command-bus/Web/MCP reachability is a real, documented gap
+  for a follow-up slice that can touch those fixtures. Red suite:
+  `impl/test/reflex4-context-eval-red.test.mjs`.
 - Frontier: the Wave driver surface (doc 31) merged as PR #15 — first-class orchestration
   waves with failure-mode-baked semantics; Phase 93a.3a (closed Context result-schema
   derivation) merged as PR #14; Phase 93a.2 (closed Program source grammar + canonical

@@ -20,6 +20,12 @@ const COMMANDS = new Set([
   'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification',
   'run.resume_work', 'run.review', 'run.integrate', 'run.export',
 ]);
+// REFLEX-4 slice A (docs/32 §3.4, issue #19): `application.context_eval` is deliberately absent
+// from COMMANDS above — it names commands BatonWebClient.command() may POST to a resident server,
+// and application.context_eval is not (yet) registered server-side (see the note above
+// APPLICATION_COMMAND_DEFINITIONS in application.mjs). `parseBatonCli`'s `context eval` branch
+// below still does real, tested client-side argv parsing; it is just not wired to remote
+// execution yet.
 const TERMINAL_RUN_PHASES = new Set(['work_completed', 'completed', 'failed', 'cancelled', 'denied', 'stopped', 'closed']);
 const CONNECTION_ENV = Object.freeze(['BATON_URL', 'BATON_ORIGIN', 'BATON_REPO_ID', 'BATON_TOKEN']);
 const DEFAULT_APPLICATION_WAIT_MS = 30_000;
@@ -1170,8 +1176,43 @@ export function parseBatonCli(rawArgs) {
     args.shift();
     return parseStart(args, args.shift(), idempotencyKey, 'read_only_evidence');
   }
+  if (args[0] === 'context') {
+    args.shift();
+    if (args.shift() !== 'eval') throw cliError('expected context eval');
+    const manifestDigest = take(args, '--manifest');
+    const runId = take(args, '--run');
+    const role = take(args, '--role');
+    const programPath = take(args, '--program');
+    const programJson = take(args, '--json');
+    noRemainder(args);
+    if ((manifestDigest === null) === (runId === null)) {
+      throw cliError('context eval requires exactly one of --manifest or --run');
+    }
+    if ((programPath === null) === (programJson === null)) {
+      throw cliError('context eval requires exactly one of --program or --json');
+    }
+    let program;
+    try {
+      program = JSON.parse(programPath !== null
+        ? readBoundedFile(programPath, 'context program file') : programJson);
+    } catch (error) {
+      if (error?.code) throw error;
+      throw cliError('context program must be JSON', 'cli_context_program_invalid');
+    }
+    if (!record(program)) throw cliError('context program must be an object', 'cli_context_program_invalid');
+    return {
+      kind: 'command', name: 'application.context_eval',
+      args: {
+        ...(manifestDigest === null ? {} : { manifestDigest: digest(manifestDigest, 'manifest digest') }),
+        ...(runId === null ? {} : { runId: id(runId, 'Run ID') }),
+        ...(role === null ? {} : { role: id(role, 'context role') }),
+        program,
+      },
+      idempotencyKey,
+    };
+  }
   if (args.shift() !== 'run') {
-    throw cliError('expected credentials, setup, doctor, route, explore, review, or run');
+    throw cliError('expected credentials, setup, doctor, route, explore, review, context, or run');
   }
   const action = args.shift();
   if (action === 'follow') {

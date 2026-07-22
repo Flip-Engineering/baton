@@ -21,6 +21,11 @@ const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
     ['baton_run_stop', 'run.stop'],
   ].map(([tool, name]) => [tool, name]),
 ));
+// REFLEX-4 slice A (docs/32 §3.4, issue #19): application.context_eval has no MCP tool here (not
+// in MCP_APPLICATION_ENTRIES above, not in ORDINARY_APPLICATION_ENTRIES/
+// ORDINARY_APPLICATION_TOOL_DEFINITIONS below) because it is not an APPLICATION_COMMAND_DEFINITIONS
+// entry at all — see the note above that table in application.mjs. It is reachable only as a
+// direct method call, `application.contextEval(...)`, today.
 const ORDINARY_APPLICATION_ENTRIES = Object.freeze([
   ['baton_help', 'application.help', APPLICATION_COMMAND_DEFINITIONS['application.help']],
   ['baton_runs', 'runs.list', APPLICATION_COMMAND_DEFINITIONS['runs.list']],

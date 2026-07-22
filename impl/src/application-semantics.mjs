@@ -179,6 +179,14 @@ const operations = {
     helpTopic: 'run.stop', idempotent: true, destructive: true, emergency: true,
   },
 };
+// REFLEX-4 slice A (docs/32 §3.4, issue #19): application.context_eval is `BatonApplication
+// .prototype.contextEval` in application.mjs — a public method, not a command-bus entry (not in
+// `operations` here, not in APPLICATION_COMMAND_DEFINITIONS). `operations` above is a closed,
+// exactly-asserted inventory (AX1, phase67-progressive-agent-experience.test.mjs) outside this
+// task's file scope, and APPLICATION_COMMAND_DEFINITIONS is asserted just as exactly elsewhere
+// (UA5, phase64-integrated-run-application.test.mjs) — see the note above that table in
+// application.mjs for the full reachability/gap account (direct method call works today; Web,
+// MCP, and generic `application.command('application.context_eval', ...)` dispatch do not yet).
 
 const sections = [
   ['episode', 'Evidence-backed Episode outline, output, sources, lineage, route, verification, result, and cleanup authority.'],

@@ -5,6 +5,11 @@ import { McpFleetServer } from './mcp-northbound.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 
+// REFLEX-4 slice A (docs/32 §3.4, issue #19): application.context_eval is absent from
+// ORDINARY_COMMANDS because it is not an APPLICATION_COMMAND_DEFINITIONS entry at all (see the
+// note above that table in application.mjs) — there is no `application.command(...)` string
+// dispatch for this Web bridge to forward. It is reachable only as a direct method call,
+// `application.contextEval(...)`, today.
 const ORDINARY_COMMANDS = Object.freeze([
   'application.help', 'run.start', 'run.inspect', 'run.act', 'run.stop',
 ]);
