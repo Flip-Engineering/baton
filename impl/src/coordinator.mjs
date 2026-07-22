@@ -825,6 +825,14 @@ export class Coordinator {
       throw new TypeError('Context Brief materializer must be a function');
     }
     this._contextBriefMaterializer = opts.contextBriefMaterializer ?? null;
+    // KG-3 rule 6/6a (v2-P0-1): the briefing rides the `{ brief, briefing }` wrapper the
+    // provider seam passes to spawn (:2814) and the recovery prompt (:4553-4555), NEVER
+    // task.brief. Inert unless a briefing provider is configured, so existing dispatch
+    // behavior (and every adapter that reads the inner brief) is byte-unchanged.
+    if (opts.knowledgeBriefingProvider !== undefined && typeof opts.knowledgeBriefingProvider !== 'function') {
+      throw new TypeError('Knowledge briefing provider must be a function');
+    }
+    this._knowledgeBriefingProvider = opts.knowledgeBriefingProvider ?? null;
     this._goalPlanAuthority = null;
     if (opts.goalPlanAuthority !== undefined) {
       const authority = opts.goalPlanAuthority;
@@ -2868,13 +2876,26 @@ export class Coordinator {
   }
 
   _providerBrief(brief) {
-    if (!brief?.contextCall) return brief;
-    if (!this._contextBriefMaterializer) {
+    let inner;
+    if (!brief?.contextCall) {
+      inner = brief;
+    } else if (!this._contextBriefMaterializer) {
       throw Object.assign(new Error('Context Brief materialization is unavailable'), {
         code: 'context_map_attachment_unavailable',
       });
+    } else {
+      inner = createBrief(this._contextBriefMaterializer(brief));
     }
-    return createBrief(this._contextBriefMaterializer(brief));
+    // KG-3 rule 6/6a: augment the provider-facing value with a separate `briefing` block.
+    // `briefDigest = canonicalDigest(activeTask.brief)` (:4506) hashes only the inner brief,
+    // matched store-side at :2599; a briefing that changes between spawn and recovery cannot
+    // move the digest because it never enters task.brief. When no provider is configured we
+    // return the inner brief itself — byte-identical to prior behavior for all adapters.
+    if (!this._knowledgeBriefingProvider) return inner;
+    let briefing = null;
+    try { briefing = this._knowledgeBriefingProvider(inner); } catch { briefing = null; }
+    if (!briefing) return inner;
+    return { ...inner, briefing };
   }
 
   /** SC1d: a refused spawn Ack may never strand its task in 'working'. `lifecycle.crashed` is

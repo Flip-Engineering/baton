@@ -204,6 +204,76 @@ function validKnowledgeRecallPolicy(policy) {
     && policy.maxGraphRows <= 1_000_000 && policy.maxSnippetBytes <= 64 * 1024
     && policy.maxReceiptBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
 }
+// KG-3/KG-4 (v2-P1-3, P2-7). The preview policy is a two-level split so `policy.recall` stays
+// byte-exactly the 11 recall fields (accepted verbatim by validKnowledgeRecallPolicy) while
+// `policy.preview` carries the composite weights, byte caps, per-type auto-link thresholds, K,
+// the LRU cache bound, and the staleness age. Unlike the recall numeric guard (≤0 ⇒ invalid) the
+// composite weights admit 0 — a disabled term is legal (v2-P2-12).
+const KNOWLEDGE_AUTOLINK_TYPES = ['Supports', 'Refines', 'Cites'];
+const KNOWLEDGE_PREVIEW_POLICY_FIELDS = ['weightTerm', 'weightEdgeDegree', 'weightEvidence', 'weightRecency', 'autoLinkThresholds', 'K', 'maxBriefingBytes', 'maxSidebarBytes', 'maxPreviewCacheEntries', 'staleAfterSeq'];
+function validKnowledgePreviewPolicy(policy) {
+  if (!policy || typeof policy !== 'object' || Array.isArray(policy)
+    || Object.keys(policy).sort().join(',') !== [...KNOWLEDGE_PREVIEW_POLICY_FIELDS].sort().join(',')) return false;
+  for (const name of ['weightTerm', 'weightEdgeDegree', 'weightEvidence', 'weightRecency']) {
+    if (!Number.isFinite(policy[name]) || policy[name] < 0) return false; // 0 disables the term
+  }
+  for (const name of ['K', 'maxBriefingBytes', 'maxSidebarBytes', 'maxPreviewCacheEntries']) {
+    if (!Number.isSafeInteger(policy[name]) || policy[name] <= 0) return false;
+  }
+  if (!Number.isSafeInteger(policy.staleAfterSeq) || policy.staleAfterSeq < 0) return false;
+  const thresholds = policy.autoLinkThresholds;
+  if (!thresholds || typeof thresholds !== 'object' || Array.isArray(thresholds)
+    || Object.keys(thresholds).sort().join(',') !== [...KNOWLEDGE_AUTOLINK_TYPES].sort().join(',')) return false;
+  for (const type of KNOWLEDGE_AUTOLINK_TYPES) if (!Number.isFinite(thresholds[type]) || thresholds[type] < 0) return false;
+  return true;
+}
+
+// The MAD confidence oracle, vendored inline from pm-kg-reference/confidence.rs (v2-P1-6). A single
+// linear-time global scan (no overlapping quantifiers, no ReDoS); a fixed unit-normalization table;
+// finite-value guards; median/MAD/confidence with the source's HIGH(≥2)/MODERATE(≥1)/LOW/HIGH-INF
+// thresholds. Numbers are bare decimals (no exponent/Infinity/NaN token) so adversarial Finding
+// text cannot inject a non-finite value.
+const MAD_METRIC = /(?<sign>[+-])?(?<number>\d+(?:\.\d+)?)\s*(?<unit>tok\/s|tokens?\/s|ms|us|ns|sec|seconds?|min|minutes?|GB|MB|KB|TFLOPS|GFLOPS|tokens?|%|x)/gu;
+const MAD_UNIT_CANON = new Map([
+  ['tok/s', 'tok/s'], ['tokens/s', 'tok/s'], ['token/s', 'tok/s'],
+  ['token', 'token'], ['tokens', 'token'],
+  ['sec', 's'], ['second', 's'], ['seconds', 's'],
+  ['min', 'min'], ['minute', 'min'], ['minutes', 'min'],
+]);
+function madCanonUnit(unit) { const lower = unit.toLowerCase(); return MAD_UNIT_CANON.get(lower) ?? lower; }
+function madMedian(sortedAscending) {
+  const n = sortedAscending.length; const mid = Math.floor(n / 2);
+  return n % 2 === 0 ? (sortedAscending[mid - 1] + sortedAscending[mid]) / 2 : sortedAscending[mid];
+}
+function madConfidenceOf(body, maxMetrics) {
+  const text = recallBody(body); const groups = new Map(); let count = 0;
+  MAD_METRIC.lastIndex = 0;
+  for (let match = MAD_METRIC.exec(text); match !== null; match = MAD_METRIC.exec(text)) {
+    if (count >= maxMetrics) break;
+    count += 1;
+    const value = (match.groups.sign === '-' ? -1 : 1) * Number(match.groups.number);
+    if (!Number.isFinite(value)) continue;
+    const unit = madCanonUnit(match.groups.unit);
+    const rows = groups.get(unit) ?? []; rows.push(value); groups.set(unit, rows);
+  }
+  let best = null;
+  for (const [unit, values] of [...groups.entries()].sort((a, b) => compareCanonicalStrings(a[0], b[0]))) {
+    if (values.length < 3) continue;
+    const sorted = [...values].sort((a, b) => a - b);
+    const median = madMedian(sorted);
+    const mad = madMedian(sorted.map((v) => Math.abs(v - median)).sort((a, b) => a - b));
+    const bestDelta = Math.max(...sorted.map((v) => Math.abs(v - median)));
+    const confidence = mad === 0 ? Infinity : bestDelta / mad;
+    const label = !Number.isFinite(confidence) ? 'HIGH-INF' : confidence >= 2.0 ? 'HIGH' : confidence >= 1.0 ? 'MODERATE' : 'LOW';
+    const candidate = { unit, samples: values.length, confidence, label };
+    const better = best === null || candidate.samples > best.samples
+      || (candidate.samples === best.samples && (candidate.confidence === Infinity ? best.confidence !== Infinity : (best.confidence !== Infinity && candidate.confidence > best.confidence)));
+    if (better) best = candidate;
+  }
+  if (best === null) return null;
+  return { label: best.label, value: best.confidence === Infinity ? null : best.confidence, unit: best.unit, samples: best.samples };
+}
+
 function validKnowledgeRecallAssessmentPolicy(policy) {
   if (!policy || Object.keys(policy).sort().join(',') !== [...KNOWLEDGE_RECALL_ASSESSMENT_POLICY_FIELDS].sort().join(',') || typeof policy.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId)) return false;
   const numeric = KNOWLEDGE_RECALL_ASSESSMENT_POLICY_FIELDS.filter((name) => name !== 'repoId');
@@ -362,6 +432,11 @@ export class CoordinationRefusal extends Error {
 export class CoordinationStore {
   constructor(root, opts = {}) {
     this.root = root;
+    // KG-3 rule 3/17: process-local, LRU-bounded, KG-fence-keyed preview cache. Never serialized
+    // into the checkpoint (absent from PROJECTION_CHECKPOINT_FIELDS) — a preview is a pure function
+    // of (projectFence, query, previewPolicy) and projectFence is derived from folded history, so
+    // replay reconstructs the identical projection with no persisted cache.
+    this._previewCache = new Map();
     this.file = join(root, 'events.jsonl');
     this._checkpointFile = join(root, PROJECTION_CHECKPOINT);
     this._startupProgress = opts.startupProgress ?? null;
@@ -13639,6 +13714,175 @@ export class CoordinationStore {
     return { ok: true, resolution: clone(resolution), contamination: clone(contamination), edge: clone(this._knowledgeEdges.get(payload.edgeId)), winner: clone(this._knowledgeNodes.get(payload.winnerId)), loser: clone(this._knowledgeNodes.get(payload.loserId)) };
   }
 
+  /** KG-3 rule 3: the KG's last-applied graph event seq — the `max` observedSeq over the folded
+   * knowledge node + edge history, or 0 when empty. NOT `this._events.length`: a non-KG event
+   * (task claim, lifecycle) does not advance it, so previews are served from cache through
+   * dispatch bursts and recompute only when a node/edge actually folds. Derived from folded
+   * state, so replay reconstructs the identical fence. */
+  _knowledgeProjectFence() {
+    let fence = 0;
+    for (const versions of this._knowledgeNodeHistory.values()) { const seq = versions.at(-1)?.observedSeq ?? 0; if (seq > fence) fence = seq; }
+    for (const versions of this._knowledgeEdgeHistory.values()) { const seq = versions.at(-1)?.observedSeq ?? 0; if (seq > fence) fence = seq; }
+    return fence;
+  }
+
+  /** KG-4 rule 15/15a: read-time MAD confidence over a Finding body. Exposed for direct
+   * verification; the preview overlays it via madConfidenceOf. Never stored node state. */
+  _madConfidence(body, maxMetrics = 100_000) { return madConfidenceOf(body, maxMetrics); }
+
+  /** KG-4 rule 16: read-time staleness overlay. `unreferenced` is scoped to *evented* reads
+   * (`_knowledgeReads`); preview traffic is non-evented (Part A) so it never counts as a
+   * reference. Read-time only — never a stored flag, never a mutation. */
+  _knowledgeStaleness(node, fence, liveContradictNodeIds, liveSupersedeTargetIds, staleAfterSeq) {
+    const reasons = [];
+    if (node.validTo || liveSupersedeTargetIds.has(node.id)) reasons.push('superseded');
+    if (liveContradictNodeIds.has(node.id)) reasons.push('contradicted');
+    const referenced = this._knowledgeReads.some((read) => (read.nodeIds ?? []).includes(node.id));
+    const age = Math.max(0, fence - (node.eventTimeSeq ?? node.observedSeq ?? 0));
+    if (!referenced && age >= staleAfterSeq) reasons.push('unreferenced');
+    return reasons.length === 0 ? null : { reasons, age };
+  }
+
+  _cachePreview(key, value, previewPolicy) {
+    this._previewCache.set(key, value);
+    while (this._previewCache.size > previewPolicy.maxPreviewCacheEntries) {
+      const oldest = this._previewCache.keys().next().value;
+      if (oldest === undefined) break;
+      this._previewCache.delete(oldest);
+    }
+    return value;
+  }
+
+  /** KG-3 Parts A/C/D/F/G: a pure, non-evented, LRU-cached, fail-open read projection that
+   * reuses the recall candidate/graph/ranking body (`_buildKnowledgeRecall`) with every append
+   * path severed. Overlays the KG-4 read-time `confidence` (MAD) and `staleness`, ranks
+   * contradiction parties first with `warning:true`, and peels the ranked tail before ever
+   * degrading. Returns a RecallPreview or, on a ceiling breach, a `briefingUnavailable:true`
+   * marker — never throws except on a caller-shape fault (`causal_recall_invalid`). */
+  recallPreview(repoId, request, policy) {
+    if (typeof repoId !== 'string' || !policy || typeof policy !== 'object' || Array.isArray(policy)
+      || Object.keys(policy).sort().join(',') !== 'preview,recall'
+      || !validKnowledgeRecallPolicy(policy.recall) || policy.recall.repoId !== repoId
+      || !validKnowledgePreviewPolicy(policy.preview)) {
+      throw new CoordinationRefusal('knowledge preview policy is invalid', 'causal_recall_invalid');
+    }
+    const recallPolicy = policy.recall; const previewPolicy = policy.preview;
+    const allowed = new Set(['text', 'types', 'grounding', 'seedNodeIds', 'limit']);
+    if (!request || typeof request !== 'object' || Array.isArray(request) || Object.keys(request).some((key) => !allowed.has(key))
+      || typeof request.text !== 'string' || request.text.trim().length === 0 || request.text.includes('\0') || !validUnicodeScalarString(request.text)
+      || !Number.isSafeInteger(request.limit) || request.limit <= 0 || request.limit > recallPolicy.maxResults) {
+      throw new CoordinationRefusal('knowledge preview request is invalid', 'causal_recall_invalid');
+    }
+    const terms = recallTerms(request.text);
+    if (terms.length === 0) throw new CoordinationRefusal('knowledge preview query has no searchable terms', 'causal_recall_invalid');
+    const types = request.types ?? []; const grounding = request.grounding ?? []; const seedNodeIds = request.seedNodeIds ?? [];
+    if (!Array.isArray(types) || new Set(types).size !== types.length || types.some((type) => !KNOWLEDGE_NODE_TYPES.has(type))
+      || !Array.isArray(grounding) || new Set(grounding).size !== grounding.length || grounding.some((value) => !KNOWLEDGE_GROUNDINGS.has(value))
+      || !Array.isArray(seedNodeIds) || new Set(seedNodeIds).size !== seedNodeIds.length || seedNodeIds.length > request.limit || seedNodeIds.some((id) => !boundedText(id, 4_096))) {
+      throw new CoordinationRefusal('knowledge preview filters or seeds are invalid', 'causal_recall_invalid');
+    }
+    const projectFence = this._knowledgeProjectFence();
+    const observedAt = this.observationTime(projectFence);
+    const degrade = (reason, extra = {}) => freeze({ schemaVersion: 1, repoId, projectFence, briefingUnavailable: true, reason, ...extra, nodes: [], contradictions: [] });
+    if (Buffer.byteLength(request.text) > recallPolicy.maxQueryBytes || terms.length > recallPolicy.maxQueryTerms) {
+      return degrade('causal_recall_oversize');
+    }
+    // Rule 10a: pre-filter seeds against current eligibility so the body's :12876 seed gate can
+    // never fire on ordinary KG churn; dropped seeds are counted, never silently discarded.
+    const eligibleNodes = this.queryKnowledge({ observedSeq: projectFence, asOf: observedAt })
+      .filter((node) => (types.length === 0 || types.includes(node.type)) && (grounding.length === 0 || grounding.includes(node.grounding)));
+    const eligibleMap = new Map(eligibleNodes.map((node) => [node.id, node]));
+    const seedsDropped = seedNodeIds.filter((id) => !eligibleMap.has(id)).sort();
+    const eligibleSeeds = seedNodeIds.filter((id) => eligibleMap.has(id)).sort();
+    const query = freeze({
+      schemaVersion: 1,
+      normalizedTextDigest: canonicalDigest(normalizedRecallText(request.text)),
+      termDigests: terms.map((term) => canonicalDigest(term)).sort(),
+      types: [...types].sort(), grounding: [...grounding].sort(), seedNodeIds: [...eligibleSeeds].sort(),
+      limit: request.limit, observedSeq: projectFence, asOf: observedAt,
+    });
+    const cacheKey = `${repoId} ${projectFence} ${canonicalDigest(query)} ${canonicalDigest(previewPolicy)}`;
+    const hit = this._previewCache.get(cacheKey);
+    if (hit !== undefined) { this._previewCache.delete(cacheKey); this._previewCache.set(cacheKey, hit); return hit; }
+
+    let projection; let contradictionPeeled = 0;
+    try {
+      projection = this._buildKnowledgeRecall(query, recallPolicy);
+    } catch (error) {
+      if (!(error instanceof CoordinationRefusal) || error.code !== 'causal_recall_oversize') throw error;
+      if (!/contradiction bundle/.test(error.message)) {
+        return this._cachePreview(cacheKey, degrade('causal_recall_oversize'), previewPolicy);
+      }
+      // Rule 11a: contradiction-peel. Re-run against the maxResults ceiling with a shrinking
+      // SELECTION cap, preserving the top node + its live-Contradicts peers, until the bundle
+      // fits. Only a single-node bundle that still overflows degrades — with contradictionFlood.
+      const peelQuery = freeze({ ...query, limit: recallPolicy.maxResults });
+      let peeled = null;
+      for (let selectionLimit = request.limit - 1; selectionLimit >= 1; selectionLimit -= 1) {
+        try { peeled = this._buildKnowledgeRecall(peelQuery, recallPolicy, { selectionLimit }); contradictionPeeled = request.limit - selectionLimit; break; }
+        catch (peelError) { if (!(peelError instanceof CoordinationRefusal) || peelError.code !== 'causal_recall_oversize' || !/contradiction bundle/.test(peelError.message)) throw peelError; }
+      }
+      if (peeled === null) {
+        return this._cachePreview(cacheKey, degrade('causal_recall_oversize', { contradictionFlood: true }), previewPolicy);
+      }
+      projection = peeled;
+    }
+
+    const fenceEdges = this.queryKnowledgeEdges({ observedSeq: projectFence, asOf: observedAt });
+    const incident = new Map();
+    const liveContradictNodeIds = new Set(); const liveSupersedeTargetIds = new Set();
+    for (const edge of fenceEdges) {
+      if (edge.type === 'Contradicts') { liveContradictNodeIds.add(edge.from); liveContradictNodeIds.add(edge.to); }
+      if (edge.type === 'Supersedes') liveSupersedeTargetIds.add(edge.to);
+      if (edge.type === 'ReadBy') continue;
+      for (const id of [edge.from, edge.to]) incident.set(id, (incident.get(id) ?? 0) + 1);
+    }
+    const warningIds = new Set(); for (const edge of projection.contradictions) { warningIds.add(edge.from); warningIds.add(edge.to); }
+    const rows = projection.nodes.map((pn) => {
+      const full = eligibleMap.get(pn.id);
+      const termScore = pn.score - (pn.reason?.graphScore ?? 0);
+      const edgeDegree = incident.get(pn.id) ?? 0;
+      const evidenceCount = full?.evidence?.length ?? 0;
+      const eventSeq = full?.eventTimeSeq ?? full?.observedSeq ?? pn.eventTimeSeq ?? pn.observedSeq ?? 0;
+      const recency = projectFence > 0 ? Math.max(0, Math.min(1, eventSeq / projectFence)) : 0;
+      const composite = previewPolicy.weightTerm * termScore + previewPolicy.weightEdgeDegree * edgeDegree
+        + previewPolicy.weightEvidence * evidenceCount + previewPolicy.weightRecency * recency;
+      const confidence = full?.type === 'Finding' ? madConfidenceOf(full.body, recallPolicy.maxCandidates) : null;
+      const staleness = full ? this._knowledgeStaleness(full, projectFence, liveContradictNodeIds, liveSupersedeTargetIds, previewPolicy.staleAfterSeq) : null;
+      return { ...clone(pn), composite, confidence, staleness, warning: warningIds.has(pn.id) };
+    });
+    rows.sort((a, b) => (Number(b.warning) - Number(a.warning)) || (b.composite - a.composite) || compareCanonicalStrings(a.id, b.id));
+    const publicQuery = { normalizedTextDigest: query.normalizedTextDigest, termDigests: [...query.termDigests], types: [...query.types], grounding: [...query.grounding], seedNodeIds: [...query.seedNodeIds], limit: query.limit };
+    const core = { schemaVersion: 1, repoId, projectFence, asOf: observedAt, query: publicQuery, nodes: rows, contradictions: clone(projection.contradictions), seedsDropped, contradictionPeeled, briefingUnavailable: false };
+    return this._cachePreview(cacheKey, freeze({ ...core, projectionDigest: canonicalDigest(core) }), previewPolicy);
+  }
+
+  /** KG-4 rules 12–14: auto-link on admission, restricted to Supports/Refines/Cites (edges carry
+   * NO grounding — v2-P2-9). The wave proposes scored candidates; this admits only allowed types
+   * clearing their per-type threshold, each under a DETERMINISTIC `auth.key` so a re-proposal is a
+   * clean idempotent no-op (v2-P2-10). Contradicts/Supersedes are never auto-minted — the store
+   * refuses them (rule 13 red test drives that path directly). Every drop is counted, never
+   * silently discarded (No-Arbitrary-Limits honesty). */
+  autoLinkKnowledgeNode(nodeId, candidates, policy, auth) {
+    if (!policy || typeof policy !== 'object' || !validKnowledgePreviewPolicy(policy.preview)) {
+      throw new CoordinationRefusal('knowledge preview policy is invalid', 'causal_recall_invalid');
+    }
+    if (!this._knowledgeNodes.has(nodeId)) throw new CoordinationRefusal('auto-link source node is unknown', 'missing_endpoint');
+    if (!Array.isArray(candidates)) throw new CoordinationRefusal('auto-link candidates must be an array', 'causal_recall_invalid');
+    const preview = policy.preview;
+    const ordered = [...candidates].sort((a, b) => (Number(b.score) - Number(a.score)) || compareCanonicalStrings(a.to ?? '', b.to ?? '') || compareCanonicalStrings(a.type ?? '', b.type ?? ''));
+    const admitted = []; const autoLinkDropped = [];
+    ordered.slice(preview.K).forEach((candidate) => autoLinkDropped.push({ to: candidate.to, type: candidate.type, score: candidate.score, reason: 'over_k' }));
+    for (const candidate of ordered.slice(0, preview.K)) {
+      if (!KNOWLEDGE_AUTOLINK_TYPES.includes(candidate.type)) { autoLinkDropped.push({ to: candidate.to, type: candidate.type, score: candidate.score, reason: 'type_not_allowed' }); continue; }
+      if (!(Number.isFinite(candidate.score) && candidate.score >= preview.autoLinkThresholds[candidate.type])) { autoLinkDropped.push({ to: candidate.to, type: candidate.type, score: candidate.score, reason: 'below_threshold' }); continue; }
+      const key = `knowledge.autolink:${nodeId}:${candidate.to}:${candidate.type}`;
+      const result = this.addKnowledgeEdge({ type: candidate.type, from: nodeId, to: candidate.to, evidence: candidate.evidence ?? [] }, { actor: auth.actor, key });
+      admitted.push({ to: candidate.to, type: candidate.type, edgeId: result.edge?.id ?? null, result: result.result ?? 'admitted' });
+    }
+    return { admitted, autoLinkDropped };
+  }
+
   queryKnowledge(query = {}) {
     const observedSeq = query.observedSeq ?? Number.POSITIVE_INFINITY;
     const observedAt = query.observedAt == null ? null : Date.parse(query.observedAt);
@@ -13703,7 +13947,7 @@ export class CoordinationStore {
     return { query, policy: policyProjection, policyDigest, reader, requestDigest, observedAt };
   }
 
-  _buildKnowledgeRecall(query, policy) {
+  _buildKnowledgeRecall(query, policy, opts = {}) {
     if (!validKnowledgeRecallPolicy(policy) || query?.schemaVersion !== 1 || Object.keys(query).sort().join(',') !== ['schemaVersion', 'normalizedTextDigest', 'termDigests', 'types', 'grounding', 'seedNodeIds', 'limit', 'observedSeq', 'asOf'].sort().join(',')
       || !/^[a-f0-9]{64}$/.test(query.normalizedTextDigest ?? '') || !Array.isArray(query.termDigests) || query.termDigests.length === 0 || query.termDigests.length > policy.maxQueryTerms || query.termDigests.some((value) => !/^[a-f0-9]{64}$/.test(value)) || new Set(query.termDigests).size !== query.termDigests.length
       || !Number.isSafeInteger(query.limit) || query.limit <= 0 || query.limit > policy.maxResults || !Number.isSafeInteger(query.observedSeq) || query.observedSeq < 0 || query.observedSeq > this._events.length
@@ -13750,7 +13994,11 @@ export class CoordinationStore {
       return { node, score: lex.score + graphScore, reason: { idExact: lex.idExact, idMatches: lex.idMatches, typeMatches: lex.typeMatches, bodyMatches: lex.bodyMatches, graphDistance, graphScore } };
     };
     const ranked = eligible.map(rank).filter((row) => row.score > 0).sort((a, b) => b.score - a.score || compareCanonicalStrings(a.node.id, b.node.id));
-    const selected = ranked.slice(0, query.limit); const selectedIds = new Set(selected.map((row) => row.node.id)); const finalIds = new Set(selectedIds); const contradictionEdges = allEdges.filter((edge) => edge.type === 'Contradicts').sort((a, b) => compareCanonicalStrings(a.id, b.id));
+    // KG-3 rule 11a: contradiction-peel decouples the SELECTION cap (opts.selectionLimit, default
+    // query.limit) from the bundle ceiling (query.limit/maxResults). Reducing selectionLimit shrinks
+    // the seed set the Contradicts bundle expands from, preserving the top node + its live peers.
+    const selectionLimit = Number.isSafeInteger(opts.selectionLimit) ? opts.selectionLimit : query.limit;
+    const selected = ranked.slice(0, selectionLimit); const selectedIds = new Set(selected.map((row) => row.node.id)); const finalIds = new Set(selectedIds); const contradictionEdges = allEdges.filter((edge) => edge.type === 'Contradicts').sort((a, b) => compareCanonicalStrings(a.id, b.id));
     let changed = true; while (changed) { changed = false; for (const edge of contradictionEdges) if (finalIds.has(edge.from) || finalIds.has(edge.to)) for (const id of [edge.from, edge.to]) if (!finalIds.has(id)) { finalIds.add(id); changed = true; } }
     if (finalIds.size > query.limit || finalIds.size > policy.maxResults) throw new CoordinationRefusal('knowledge recall contradiction bundle exceeded deployment ceiling', 'causal_recall_oversize');
     const rows = [...finalIds].map((id) => rank(nodeMap.get(id))).sort((a, b) => b.score - a.score || compareCanonicalStrings(a.node.id, b.node.id)).map(({ node, score, reason }) => {
