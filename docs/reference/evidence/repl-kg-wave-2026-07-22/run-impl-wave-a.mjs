@@ -24,6 +24,16 @@ const VERIFY = Object.freeze({
   arguments: ['--test', 'impl/test/wave-driver-red.test.mjs'],
 });
 
+const OVERSIZE = [
+  'HARD CONSTRAINT (wire_frame_oversize killed both previous seats): a single stream-json',
+  'frame over 1MiB terminates your run instantly (issue #28). NEVER Read a whole file over',
+  '~1500 lines (coordination-store.mjs/coordinator.mjs/application.mjs/context-program.mjs are',
+  '5-13k lines) — Grep to locate, then Read targeted line ranges. NEVER run a suite or command',
+  'whose full output could be large without bounding it: pipe through tail/grep (e.g.',
+  '`node scripts/run-suite.mjs 2>&1 | tail -60`). Write large files in chunks (Write then',
+  'append) rather than one giant call.',
+].join(' ');
+
 const MEMBERS = Object.freeze([
   Object.freeze({
     role: 'repl1-implementer',
@@ -49,6 +59,7 @@ const MEMBERS = Object.freeze([
       'root. No git commits, no scratch/log writes anywhere (including /tmp), no evaluator',
       'changes (StatelessContextBench and the 14+4 op whitelist are untouched — authority',
       'layer only).',
+      OVERSIZE,
     ].join(' '),
   }),
   Object.freeze({
@@ -74,6 +85,7 @@ const MEMBERS = Object.freeze([
       'then green, then full suite from the worktree root. End your test file with a comment',
       'listing every new event kind you introduced (for the kind-inventory fold). No git',
       'commits, no scratch/log writes anywhere (including /tmp).',
+      OVERSIZE,
     ].join(' '),
   }),
 ]);
