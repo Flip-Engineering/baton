@@ -8539,6 +8539,8 @@ export class Coordinator {
       if (task && this._coordination?.task(task.id)?.status === 'input_required') {
         const evidence = this._coordMapEvent(staleEvent);
         this._coordTransition(task, 'working', `task.working:${task.id}:${staleEvent.seq}`, { ...evidence, interaction: { requestId, disposition: 'stale_discarded' } }, actor);
+        // Same durable/in-memory parity as the delivered path below (DG2, decision-live-2026-07-22).
+        if (task.status === 'input_required') task.status = 'working';
       }
       if (handle.status === 'blocked') handle.status = 'working';
       return discard('stale_discarded', 'stale_discarded', { note: 'answer arrived after the asking turn ended; discarded per fencing' });
@@ -8581,6 +8583,11 @@ export class Coordinator {
       try {
         const evidence = this._coordMapEvent(resolvedEvent);
         this._coordTransition(task, 'working', `task.working:${task.id}:${resolvedEvent.seq}`, { ...evidence, interaction: { requestId, disposition: 'delivered' } }, actor);
+        // The question/approval path's clearPending keeps the durable and in-memory views in
+        // step (:8377-8381); the decision resolver must too — durable-only leaves the
+        // coordinator's in-memory task parked at input_required forever (found by DG2,
+        // decision-live-2026-07-22).
+        if (task.status === 'input_required') task.status = 'working';
       } catch (err) {
         this._resolveInteractionAuthority(requestId, record);
         record.consumer = actor;
@@ -9901,6 +9908,22 @@ export class Coordinator {
         if (wr?.status !== 'completed') {
           this._failProviderResult(handle, terminalEvent, wr);
           break;
+        }
+        // REFLEX-1 live finding (decision-live-2026-07-22, w-144): the emulated blocking
+        // decision channel is turn-ending by construction — the worker asks, the hub parks the
+        // task input_required, and THEN the provider's result frame arrives as an ordinary
+        // completed turn. A turn that ends with a blocking interaction STILL PENDING (unsettled)
+        // has by definition not produced its final diff, so the trust gate must not evaluate it
+        // (required_effect_absent killed the gated worker before the orchestrator could
+        // answer). Deferral, never exemption: the post-settlement continuation turn faces the
+        // gate. The guard keys on an actually-pending record — a turn that completes DURING
+        // answer delivery (record resolving/resolved, e.g. elicitation-style questions, CK2/CK8
+        // phase11) is a completed result and must verify normally.
+        {
+          const task = this._tasks.get(handle.taskId);
+          const parkedUnsettled = task?.status === 'input_required'
+            && [...this._pending.values()].some((record) => record.worker === handle.id && record.state === 'pending');
+          if (parkedUnsettled) break;
         }
         if (this._drainState === 'open' && handle.status !== 'stopping' && handle.status !== 'dead') {
           const releaseAuthority = this._acquireAuthorityOp();
